@@ -76,6 +76,10 @@ LOGS_CONSOLE = "https://console.logs.svc.test"
 LANE_SUBNET = "172.31.240.0/24"
 # The lane's Secrets keeps its records in this schema of the lane's database.
 SECRETS_SCHEMA = "secrets"
+SECRETS_DATABASE = "secrets_content"
+SECRETS_RUNTIME_ROLE = "secrets_runtime"
+# Explicit expiry ceiling for this synthetic, disposable lane.
+E2E_BACKUP_MAX_AGE_SECONDS = 604800
 # The notice contact the owner designates the holder with.
 CONTACT = "holder@h.test"
 # Every setting the Logs base service names, as a deployment's .env gives
@@ -135,7 +139,7 @@ def secrets_env() -> dict[str, str]:
     service token), its key files, its mail, and its hook events to the
     lane's Logs, inside the lane's network."""
     return {
-        "SECRETS_DATABASE_URL": "postgresql://secrets:disposable@postgres:5432/secrets",
+        "SECRETS_DATABASE_URL_FILE": "/run/secrets-keys/database-url",
         "SECRETS_DB_SCHEMA": SECRETS_SCHEMA,
         "SECRETS_APP_ID": APP_ID,
         "SECRETS_PUBLIC_ORIGIN": API,
@@ -185,11 +189,14 @@ class Lane:
     runtime: Path
     env: dict[str, str]
 
-    def compose(self, *args: str, timeout: int = 900) -> subprocess.CompletedProcess[str]:
+    def compose(
+        self, *args: str, timeout: int = 900, input: str | None = None
+    ) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             ["docker", "compose", "-p", self.project, "-f", str(APP_DIR / "docker-compose.e2e.yml"),
              "--profile", "logs", *args],
-            cwd=APP_DIR, env=self.env, text=True, capture_output=True, timeout=timeout, check=False,
+            cwd=APP_DIR, env=self.env, text=True, capture_output=True, timeout=timeout,
+            input=input, check=False,
         )
 
     def up(self, *services: str) -> None:
@@ -398,12 +405,66 @@ def create_logs_databases(lane: Lane) -> None:
         assert created.returncode == 0, created.stdout + created.stderr
 
 
+def write_secrets_database_files(lane: Lane) -> str:
+    """Write this fresh lane's role-specific DSNs; return provisioning SQL for stdin."""
+    operator = lane.runtime / "operator"
+    operator.mkdir(mode=0o700)
+    operator.chmod(0o700)
+    password = secrets.token_urlsafe(32)
+    runtime_dsn = f"postgresql://{SECRETS_RUNTIME_ROLE}:{password}@postgres:5432/{SECRETS_DATABASE}"
+    runtime_file = lane.runtime / "keys" / "database-url"
+    with runtime_file.open("x") as file:
+        file.write(runtime_dsn + "\n")
+    runtime_file.chmod(0o444)  # Readable by the production image's UID10001.
+    operator_file = operator / "database-url"
+    operator_file.write_text(
+        f"postgresql://secrets:disposable@postgres:5432/{SECRETS_DATABASE}\n"
+    )
+    operator_file.chmod(0o400)
+    # Only generated URL-safe bytes enter the psql variable. No password in
+    # argv/env, echoed SQL or failing-statement server logs.
+    return (
+        "\\set VERBOSITY terse\n"
+        "SET log_min_error_statement = panic;\n"
+        f"\\set password '{password}'\n"
+        f"CREATE ROLE {SECRETS_RUNTIME_ROLE} LOGIN NOSUPERUSER NOCREATEROLE NOCREATEDB "
+        "PASSWORD :'password';\n"
+        f"CREATE DATABASE {SECRETS_DATABASE};\n"
+        f"REVOKE ALL ON DATABASE {SECRETS_DATABASE} FROM PUBLIC;\n"
+    )
+
+
+def prepare_secrets_database(lane: Lane) -> None:
+    """Provision a fresh dedicated DB, then invoke the existing offline erasure owner."""
+    script = write_secrets_database_files(lane)
+    provisioned = lane.compose(
+        "exec", "-T", "postgres", "psql", "-U", "secrets", "-d", "secrets",
+        "-v", "ON_ERROR_STOP=1", input=script,
+    )
+    # CREATE ROLE/DATABASE deliberately refuse retained state. A provisioning
+    # failure must never fall through to initializing that existing content.
+    if provisioned.returncode:
+        raise AssertionError("Fresh Secrets database/runtime role provisioning refused")
+    initialized = lane.compose(
+        "run", "--rm", "--no-deps", "--build", "--user", "0", "--entrypoint", "python",
+        "-v", f"{lane.runtime / 'operator'}:/run/operator:ro", "secrets",
+        "-m", "aweb_secrets.erasure", "init-erasure",
+        "--operator-dsn-file", "/run/operator/database-url",
+        "--application-role", SECRETS_RUNTIME_ROLE,
+        "--content-schema", SECRETS_SCHEMA,
+        "--max-backup-age-seconds", str(E2E_BACKUP_MAX_AGE_SECONDS),
+    )
+    if initialized.returncode:
+        raise AssertionError("Offline Secrets erasure initialization refused")
+
+
 def start_apps(lane: Lane, controller: str) -> None:
     """The lane's Secrets and Logs, with their members, files and databases,
     behind the TLS front."""
     write_service_member(lane, controller)
     write_logs_files(lane, controller)
     create_logs_databases(lane)
+    prepare_secrets_database(lane)
     lane.up("secrets", "logs", "front")
 
 
@@ -419,7 +480,7 @@ def install_apps(lane: Lane, controller: str, owner_did_key: str) -> None:
 
 def secrets_query(lane: Lane):
     def query(select: str) -> str:
-        result = lane.compose("exec", "-T", "postgres", *read_only_psql("secrets", "secrets", select))
+        result = lane.compose("exec", "-T", "postgres", *read_only_psql("secrets", SECRETS_DATABASE, select))
         assert result.returncode == 0, result.stdout + result.stderr
         return result.stdout.strip()
     return query
