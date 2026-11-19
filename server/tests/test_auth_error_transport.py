@@ -62,4 +62,6 @@ async def test_missing_serving_registry_keeps_its_expected_actionable_503():
         response = await client.get("/registry")
     assert response.status_code == 503
     assert response.json()["detail"]["code"] == RegistryClientUnavailable.code
-    assert "Configure the serving registry client" in response.json()["detail"]["message"]
+    assert (
+        "Configure the serving registry client" in response.json()["detail"]["message"]
+    )

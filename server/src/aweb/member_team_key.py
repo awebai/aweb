@@ -39,9 +39,7 @@ class MemberStatus(StrEnum):
     DELETED = "deleted"
 
 
-RECIPIENT_RECONNECT_DETAIL = (
-    "Check the name; if the agent exists, ask it to reconnect with a current team certificate."
-)
+RECIPIENT_RECONNECT_DETAIL = "Check the name; if the agent exists, ask it to reconnect with a current team certificate."
 
 
 CURRENT_MEMBERSHIP_REQUIRED_DETAIL = (
@@ -119,13 +117,17 @@ class MemberProjection(Mapping[str, Any]):
         columns = (*_MEMBER_COLUMNS, "current_team_did_key")
         missing = [column for column in columns if column not in source]
         if missing:
-            raise ValueError("Incomplete native member projection: " + ", ".join(missing))
+            raise ValueError(
+                "Incomplete native member projection: " + ", ".join(missing)
+            )
         values = {column: source[column] for column in columns}
         for column in columns:
             if column in ("agent_id", "deleted_at"):
                 continue
             if values[column] is not None and not isinstance(values[column], str):
-                raise ValueError(f"Native member projection column {column} must be text or NULL")
+                raise ValueError(
+                    f"Native member projection column {column} must be text or NULL"
+                )
         # PostgreSQL row_to_json/to_jsonb encodes UUIDs/timestamps as strings.
         # A host's joined snapshot and the native SELECT have one public shape.
         values["agent_id"] = UUID(str(values["agent_id"]))
@@ -133,8 +135,12 @@ class MemberProjection(Mapping[str, Any]):
             values["deleted_at"] = datetime.fromisoformat(
                 values["deleted_at"].replace("Z", "+00:00")
             )
-        if values["deleted_at"] is not None and not isinstance(values["deleted_at"], datetime):
-            raise ValueError("Native member projection deleted_at must be a timestamp or NULL")
+        if values["deleted_at"] is not None and not isinstance(
+            values["deleted_at"], datetime
+        ):
+            raise ValueError(
+                "Native member projection deleted_at must be a timestamp or NULL"
+            )
         object.__setattr__(self, "_row", MappingProxyType(values))
 
     @classmethod
@@ -210,7 +216,10 @@ def member_key_current(row) -> bool:
     member_key_columns_sql) was accepted under its team's current key. A row
     read without those columns is not."""
     accepted = str(row.get("accepted_team_did_key") or "").strip()
-    return bool(accepted) and accepted == str(row.get("current_team_did_key") or "").strip()
+    return (
+        bool(accepted)
+        and accepted == str(row.get("current_team_did_key") or "").strip()
+    )
 
 
 def current_member(row: Mapping[str, Any] | None) -> bool:
@@ -325,7 +334,9 @@ async def read_participant_identity_projection(
     projections = [MemberProjection.from_row(row) for row in rows]
     if not projections:
         return None
-    identities = {(row.verified_identity().get("did_aw"), row["did_key"]) for row in projections}
+    identities = {
+        (row.verified_identity().get("did_aw"), row["did_key"]) for row in projections
+    }
     if len(identities) != 1:
         raise ConflictError(
             "Participant identity is ambiguous. Reconnect with current identity credentials."
