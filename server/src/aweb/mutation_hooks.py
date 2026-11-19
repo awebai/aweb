@@ -39,7 +39,10 @@ from .events import (
     publish_event,
     publish_team_event,
 )
-from .identity_metadata import lookup_identity_metadata_by_agent_id, lookup_identity_metadata_by_did
+from .identity_metadata import (
+    lookup_identity_metadata_by_agent_id,
+    lookup_identity_metadata_by_did,
+)
 from .lifecycle import (
     LifecycleActor,
     LifecycleCascadeRequest,
@@ -74,12 +77,14 @@ async def _enrich_identity_context(db_infra: "DatabaseInfra", context: dict) -> 
     agent_ids = [
         str(ctx.get(agent_key, "")).strip()
         for agent_key, _, stable_key in identity_fields
-        if not str(ctx.get(stable_key, "")).strip() and str(ctx.get(agent_key, "")).strip()
+        if not str(ctx.get(stable_key, "")).strip()
+        and str(ctx.get(agent_key, "")).strip()
     ]
     dids = [
         str(ctx.get(did_key, "")).strip()
         for _, did_key, stable_key in identity_fields
-        if not str(ctx.get(stable_key, "")).strip() and str(ctx.get(did_key, "")).strip()
+        if not str(ctx.get(stable_key, "")).strip()
+        and str(ctx.get(did_key, "")).strip()
     ]
 
     agent_meta = await lookup_identity_metadata_by_agent_id(db_infra, agent_ids)
@@ -110,7 +115,8 @@ async def _enrich_workspace_context(db_infra: "DatabaseInfra", context: dict) ->
     agent_ids = [
         str(ctx.get(agent_key, "")).strip()
         for workspace_key, agent_key, _team_key in workspace_fields
-        if not str(ctx.get(workspace_key, "")).strip() and str(ctx.get(agent_key, "")).strip()
+        if not str(ctx.get(workspace_key, "")).strip()
+        and str(ctx.get(agent_key, "")).strip()
     ]
     if not agent_ids:
         return ctx
@@ -139,7 +145,11 @@ async def _enrich_workspace_context(db_infra: "DatabaseInfra", context: dict) ->
             continue
         agent_id = str(ctx.get(agent_key, "")).strip()
         team_id = str(ctx.get(team_key, "")).strip()
-        workspace_id = workspace_by_agent_team.get((agent_id, team_id), "") if team_id else workspace_by_agent.get(agent_id, "")
+        workspace_id = (
+            workspace_by_agent_team.get((agent_id, team_id), "")
+            if team_id
+            else workspace_by_agent.get(agent_id, "")
+        )
         if workspace_id:
             ctx[workspace_key] = workspace_id
     return ctx
@@ -183,13 +193,17 @@ def create_mutation_handler(redis: Redis, db_infra: DatabaseInfra):
                 return
             if event is not None:
                 if not event.workspace_id:
-                    logger.warning("Skipping %s event: no workspace_id in context", event_type)
+                    logger.warning(
+                        "Skipping %s event: no workspace_id in context", event_type
+                    )
                 else:
                     try:
                         await _enrich(event, redis, db_infra, context)
                     except Exception:
                         logger.warning(
-                            "Enrichment failed for %s, publishing with defaults", event_type, exc_info=True
+                            "Enrichment failed for %s, publishing with defaults",
+                            event_type,
+                            exc_info=True,
                         )
                     await publish_event(redis, event)
             if team_event is not None:
@@ -293,7 +307,9 @@ async def _cascade_task_status_changed(
         actor_workspace_id,
     )
     if workspace is None:
-        logger.warning("task.status_changed: no workspace for actor %s", actor_workspace_id)
+        logger.warning(
+            "task.status_changed: no workspace for actor %s", actor_workspace_id
+        )
         return
 
     team_id = str(workspace["team_id"])
@@ -310,7 +326,9 @@ async def _cascade_task_status_changed(
             )
             if conflict:
                 logger.info(
-                    "Task %s already claimed by %s, skipping event", task_ref, conflict["alias"]
+                    "Task %s already claimed by %s, skipping event",
+                    task_ref,
+                    conflict["alias"],
                 )
                 return
 
@@ -333,9 +351,13 @@ async def _cascade_task_status_changed(
             ),
         )
     else:
-        claimant_ids = [str(cid) for cid in context.get("released_claim_workspace_ids") or []]
+        claimant_ids = [
+            str(cid) for cid in context.get("released_claim_workspace_ids") or []
+        ]
         if claimant_ids:
-            claimant_aliases = await fetch_workspace_aliases(db_infra, team_id, claimant_ids)
+            claimant_aliases = await fetch_workspace_aliases(
+                db_infra, team_id, claimant_ids
+            )
             for cid in claimant_ids:
                 await publish_event(
                     redis,
@@ -369,7 +391,10 @@ async def _cascade_task_status_changed(
         ),
     )
 
-async def _cascade_task_deleted(redis: Redis, db_infra: "DatabaseInfra", context: dict) -> None:
+
+async def _cascade_task_deleted(
+    redis: Redis, db_infra: "DatabaseInfra", context: dict
+) -> None:
     """Release all claims on a deleted task and publish unclaim events.
 
     The task.deleted hook provides {task_id, task_ref}; use task_id as the
@@ -396,7 +421,9 @@ async def _cascade_task_deleted(redis: Redis, db_infra: "DatabaseInfra", context
         task_ref=task_ref,
     )
     if claimant_ids:
-        claimant_aliases = await fetch_workspace_aliases(db_infra, team_id, claimant_ids)
+        claimant_aliases = await fetch_workspace_aliases(
+            db_infra, team_id, claimant_ids
+        )
         for cid in claimant_ids:
             await publish_event(
                 redis,
@@ -426,7 +453,9 @@ async def _alias_for(redis: Redis, workspace_id: str) -> str:
     return presence.get("alias", "")
 
 
-async def _enrich(event: Event, redis: Redis, db_infra: DatabaseInfra, context: dict) -> None:
+async def _enrich(
+    event: Event, redis: Redis, db_infra: DatabaseInfra, context: dict
+) -> None:
     """Add aliases, subjects, and previews via Redis/DB lookups."""
 
     if isinstance(event, MessageDeliveredEvent):
@@ -442,7 +471,9 @@ async def _enrich(event: Event, redis: Redis, db_infra: DatabaseInfra, context: 
             )
             if row:
                 event.from_alias = row["from_alias"]
-                event.content_mode = str(row.get("content_mode") or "legacy_plaintext_v1")
+                event.content_mode = str(
+                    row.get("content_mode") or "legacy_plaintext_v1"
+                )
                 event.encrypted = event.content_mode == "encrypted_v2"
                 event.subject = "" if event.encrypted else (row["subject"] or "")
 
@@ -483,7 +514,10 @@ async def _enrich(event: Event, redis: Redis, db_infra: DatabaseInfra, context: 
         else:
             event.alias = await _alias_for(redis, event.workspace_id)
 
-    elif isinstance(event, (ReservationAcquiredEvent, ReservationReleasedEvent, ReservationRenewedEvent)):
+    elif isinstance(
+        event,
+        (ReservationAcquiredEvent, ReservationReleasedEvent, ReservationRenewedEvent),
+    ):
         event.alias = await _alias_for(redis, event.workspace_id)
 
 
@@ -530,7 +564,8 @@ def _translate(event_type: str, ctx: dict):
 
     if event_type == "task.claimed":
         return TaskClaimedEvent(
-            workspace_id=ctx.get("actor_workspace_id", "") or ctx.get("workspace_id", ""),
+            workspace_id=ctx.get("actor_workspace_id", "")
+            or ctx.get("workspace_id", ""),
             task_ref=ctx.get("task_ref", ""),
             alias=ctx.get("actor_alias", "") or ctx.get("alias", ""),
             title=ctx.get("title"),
@@ -538,7 +573,8 @@ def _translate(event_type: str, ctx: dict):
 
     if event_type == "task.unclaimed":
         return TaskUnclaimedEvent(
-            workspace_id=ctx.get("actor_workspace_id", "") or ctx.get("workspace_id", ""),
+            workspace_id=ctx.get("actor_workspace_id", "")
+            or ctx.get("workspace_id", ""),
             task_ref=ctx.get("task_ref", ""),
             alias=ctx.get("actor_alias", "") or ctx.get("alias", ""),
             title=ctx.get("title"),
