@@ -112,7 +112,13 @@ try {
   const sent = parseObject(aw({ identity: values.sender, args: ["mail", "send", "--to", recipient, "--subject", subject, "--body", "Disposable wake-path qualification; no action.", "--json"] }));
   assert.ok(sent.message_id, "mail send must return its message id");
   evidence.message_id = sent.message_id;
-  evidence.wake_after = await until({ read: wakeStatus, ready: (status) => wakeInstances(status).some((row) => row.home === instanceHome && row.channel_core?.trace_message_id === sent.message_id && row.channel_core?.last_input_at && row.channel_core.last_input_at !== wakeInstances(before).find((entry) => entry.home === instanceHome)?.channel_core?.last_input_at), label: "broker wake receipt" });
+  evidence.wake_after = await until({ read: wakeStatus, ready: (status) => wakeInstances(status).some((row) => row.home === instanceHome && row.channel_core?.last_input_at && row.channel_core.last_input_at !== wakeInstances(before).find((entry) => entry.home === instanceHome)?.channel_core?.last_input_at), label: "broker input receipt" });
+  const capture = () => {
+    const panes = command({ argv: ["tmux", "-L", "oats", "list-panes", "-a", "-F", "#{pane_id}"] }).trim().split("\n");
+    assert.ok(panes.length && panes.every((pane) => /^%[0-9]+$/.test(pane)), "owned kernel server reports valid panes");
+    return panes.map((pane) => command({ argv: ["tmux", "-L", "oats", "capture-pane", "-p", "-S", "-400", "-t", pane] })).join("\n");
+  };
+  evidence.presented_wake = await until({ read: capture, ready: (text) => text.includes(sent.message_id) && text.includes(subject), label: "fresh wake in the isolated kernel session" });
   evidence.permissions_after = [join(home, ".config/aw"), state, cache].map(permission);
   evidence.kernel_events = oats("instance", "events", instance, "--json");
   evidence.kernel_status_after = parseObject(oats("status", "--json"));
