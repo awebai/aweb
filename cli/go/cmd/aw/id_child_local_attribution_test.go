@@ -32,7 +32,7 @@ func TestHumanApprovalExplainsLocalAttributionBeforeSigning(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	identity, err := awconfig.LoadWorktreeIdentity(run.childDir)
+	identity, err := awconfig.LoadWorktreeIdentityFrom(filepath.Join(run.childDir, ".aw", "identity.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
