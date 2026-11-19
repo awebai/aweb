@@ -42,7 +42,13 @@ from aweb_secrets.owners import OWNER_ROLE, owner_scope
 from aweb_secrets.policy import Policy
 from aweb_secrets.secret import SecretRecord
 from tests.human_owner import apply_holder, fixture_principal, member_key
-from tests.production_authority import authority, install, install_audit_receiver, no_dns_override
+from tests.production_authority import (
+    SERVER,
+    authority,
+    install,
+    install_audit_receiver,
+    no_dns_override,
+)
 from tests.test_composition import settings
 from tests.test_console_bootstrap import delivered_url
 from tests.test_jobs import after as job_after
@@ -84,6 +90,7 @@ async def root(test_db_factory, registry, tmp_path, request, monkeypatch):
                 update={
                     "public_origin": AUDIENCE,
                     "awid_service_token": SERVICE_TOKEN,
+                    "team_server_internal_origins": frozenset({SERVER}),
                 }
             )
             service_member = None

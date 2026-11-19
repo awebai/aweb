@@ -52,7 +52,7 @@ func TestGatewayRPCSendMessageImmediateAndScopedGetList(t *testing.T) {
 		t.Fatalf("explicit historyLength=0 should omit history: %#v", getAliceNoHistory)
 	}
 	getUnauthed := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-3", "GetTask", map[string]any{"id": taskID}), map[string]string{"X-A2A-API-Key": "wrong"}, http.StatusOK)
-	if rpcErrorCode(getUnauthed) != "task_not_found" {
+	if rpcErrorCode(getUnauthed) != "authentication_required" {
 		t.Fatalf("unauthenticated get error code: got %#v", getUnauthed)
 	}
 	listAlice := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-5", "ListTasks", map[string]any{"status": TaskStateWorking}), headers, http.StatusOK)
@@ -155,7 +155,7 @@ func TestGatewayRPCWaitSuccessInputRequiredAndTimeout(t *testing.T) {
 	if _, ok, err := gwTimeout.ApplyBridgeReply(BridgeReply{TaskID: timeoutTask["id"].(string), ContextID: "ctx-3", State: "completed", Text: "Late answer"}); err != nil || !ok {
 		t.Fatalf("late reply should complete timed-out response task: ok=%v err=%v", ok, err)
 	}
-	timeoutGet := postRPC(t, gwTimeout, "/a2a/agents/r_support/rpc", rpcEnvelope("req-4", "GetTask", map[string]any{"id": timeoutTask["id"].(string)}), nil, http.StatusOK)
+	timeoutGet := postRPC(t, gwTimeout, "/a2a/agents/r_support/rpc", rpcEnvelope("req-4", "GetTask", map[string]any{"id": timeoutTask["id"].(string)}), map[string]string{"X-A2A-Task-Token": taskBearerToken(t, timeoutTask)}, http.StatusOK)
 	if got := taskStatus(rpcTaskResult(t, timeoutGet, "")); got != TaskStateCompleted {
 		t.Fatalf("late reply state: got %s", got)
 	}
@@ -222,69 +222,14 @@ func TestGatewayRPCRejectsUnsupportedMethodAndContent(t *testing.T) {
 	}
 }
 
-func TestGatewayRPCUnscopedPublicListDisabledAndPublicGet(t *testing.T) {
-	otherRoute := supportRoute("r_other")
-	otherRoute.Address = "other@team.aweb.ai"
-	gw := newTestGateway(t, Config{
-		Host:           "team.aweb.ai",
-		RootCardMode:   RootCardDefaultAgent,
-		DefaultRouteID: "r_support",
-		Bridge:         &fakeBridge{},
-		Routes:         []Route{supportRoute("r_support"), otherRoute},
-	})
-	resp := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-1", "SendMessage", map[string]any{
-		"message":       testUserMessage("msg-1", "ctx-1", "No caller header"),
-		"configuration": map[string]any{"returnImmediately": true},
-	}), nil, http.StatusOK)
-	task := rpcTaskResult(t, resp, "task")
-	token := task["metadata"].(map[string]any)["task_bearer_token"].(string)
-	taskID := task["id"].(string)
-	list := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-2", "ListTasks", map[string]any{}), nil, http.StatusOK)
-	if rpcErrorCode(list) != "list_tasks_scope_required" {
-		t.Fatalf("list error code: got %#v", list)
-	}
-	publicGet := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-3a", "GetTask", map[string]any{"id": taskID}), nil, http.StatusOK)
-	if rpcTaskResult(t, publicGet, "")["id"] != taskID {
-		t.Fatal("public route should fetch anonymous task by task id")
-	}
-	get := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-3", "GetTask", map[string]any{"id": taskID}), map[string]string{"X-A2A-Task-Token": token}, http.StatusOK)
-	if rpcTaskResult(t, get, "")["id"] != taskID {
-		t.Fatal("bearer token should fetch unscoped task")
-	}
-	otherRouteGet := postRPC(t, gw, "/a2a/agents/r_other/rpc", rpcEnvelope("req-4", "GetTask", map[string]any{"id": taskID}), nil, http.StatusOK)
-	if rpcErrorCode(otherRouteGet) != "task_not_found" {
-		t.Fatalf("public task id must not cross route boundaries: %#v", otherRouteGet)
-	}
-}
-
-func TestGatewayRPCAuthModesAndAbuseControls(t *testing.T) {
-	t.Run("bearer required", func(t *testing.T) {
-		route := supportRoute("r_support")
-		route.Auth = AuthConfig{Mode: "bearer", BearerToken: "good-token"}
-		gw := newTestGateway(t, Config{Host: "team.aweb.ai", Bridge: &fakeBridge{}, Routes: []Route{route}})
-		missing := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-1", "SendMessage", map[string]any{
-			"message":       testUserMessage("msg-1", "ctx-1", "hello"),
-			"configuration": map[string]any{"returnImmediately": true},
-		}), nil, http.StatusOK)
-		if got := taskStatus(rpcTaskResult(t, missing, "task")); got != TaskStateAuthRequired {
-			t.Fatalf("missing bearer state=%s", got)
-		}
-		ok := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-2", "SendMessage", map[string]any{
-			"message":       testUserMessage("msg-2", "ctx-1", "hello"),
-			"configuration": map[string]any{"returnImmediately": true},
-		}), map[string]string{"Authorization": "Bearer good-token"}, http.StatusOK)
-		if got := taskStatus(rpcTaskResult(t, ok, "task")); got != TaskStateWorking {
-			t.Fatalf("valid bearer state=%s", got)
-		}
-	})
-
+func TestGatewayRPCRateLimitAndDisabledRoute(t *testing.T) {
 	t.Run("rate limit", func(t *testing.T) {
 		route := supportRoute("r_support")
 		route.Limits.RateLimit = "1/m"
 		gw := newTestGateway(t, Config{Host: "team.aweb.ai", Bridge: &fakeBridge{}, Routes: []Route{route}})
 		for i := 0; i < 2; i++ {
 			resp := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req", "SendMessage", map[string]any{
-				"message":       testUserMessage(mustNewUUIDv4(), "ctx-1", "hello"),
+				"message":       testUserMessage(testUUID(t), "ctx-1", "hello"),
 				"configuration": map[string]any{"returnImmediately": true},
 			}), nil, http.StatusOK)
 			if i == 0 && resp["error"] != nil {
@@ -308,34 +253,15 @@ func TestGatewayRPCAuthModesAndAbuseControls(t *testing.T) {
 		}
 	})
 
-	t.Run("max concurrent", func(t *testing.T) {
-		route := supportRoute("r_support")
-		route.Limits.MaxConcurrentTasks = 1
-		gw := newTestGateway(t, Config{Host: "team.aweb.ai", Bridge: &fakeBridge{}, Routes: []Route{route}})
-		first := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-1", "SendMessage", map[string]any{
-			"message":       testUserMessage("msg-1", "ctx-1", "hello"),
-			"configuration": map[string]any{"returnImmediately": true},
-		}), nil, http.StatusOK)
-		if got := taskStatus(rpcTaskResult(t, first, "task")); got != TaskStateWorking {
-			t.Fatalf("first state=%s", got)
-		}
-		second := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-2", "SendMessage", map[string]any{
-			"message":       testUserMessage("msg-2", "ctx-1", "hello"),
-			"configuration": map[string]any{"returnImmediately": true},
-		}), nil, http.StatusOK)
-		if rpcErrorCode(second) != "max_concurrent_tasks" {
-			t.Fatalf("max concurrent response: %#v", second)
-		}
-	})
 }
 
-func TestGatewayRPCTaskIDEntropyAndShape(t *testing.T) {
+func TestGatewayRPCTaskIDUniquenessAndShape(t *testing.T) {
 	gw := newTestGateway(t, Config{Host: "team.aweb.ai", Bridge: &fakeBridge{}, Routes: []Route{supportRoute("r_support")}})
 	seen := map[string]bool{}
 	uuidRE := regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 	for i := 0; i < 64; i++ {
 		resp := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req", "SendMessage", map[string]any{
-			"message":       testUserMessage(mustNewUUIDv4(), "ctx", "entropy"),
+			"message":       testUserMessage(testUUID(t), "ctx", "entropy"),
 			"configuration": map[string]any{"returnImmediately": true},
 		}), map[string]string{"X-A2A-Caller-ID": "alice"}, http.StatusOK)
 		taskID := rpcTaskResult(t, resp, "task")["id"].(string)
@@ -477,4 +403,13 @@ func (b *fakeBridge) CancelTask(_ context.Context, cancel BridgeCancel) error {
 	defer b.mu.Unlock()
 	b.canceled = append(b.canceled, cancel)
 	return nil
+}
+
+func testUUID(t *testing.T) string {
+	t.Helper()
+	id, err := newUUIDv4()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
 }

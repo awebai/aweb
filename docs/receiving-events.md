@@ -179,6 +179,13 @@ Beyond dispatch, the channel also:
   configuration errors with a concrete agent action retain their onboarding
   messages; they are distinct from connection diagnostics.
 
+The Go CLI's delivery-id store is a ten-minute suppression cache, not delivery
+authority. An unreadable or malformed cache is moved into a uniquely named,
+timestamped quarantine beside the store and replaced with an empty cache. A
+warning names the quarantine and says that messages may be shown again. Recovery
+and receipt updates share the store lock. A failure to locate the workspace
+still refuses the operation; missing stores and expired receipts remain empty.
+
 ## Raw event stream
 
 Start a raw machine-readable stream from the recipient's connected directory:

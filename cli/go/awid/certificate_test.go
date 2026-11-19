@@ -298,18 +298,7 @@ func TestLegacyLifetimeTeamCertificatePreservesSignedWireShape(t *testing.T) {
 	teamDIDKey := ComputeDIDKey(teamPub)
 	issuedAt := "2026-05-22T00:00:00Z"
 
-	payload := canonicalCertificatePayload(
-		certID,
-		teamID,
-		teamDIDKey,
-		memberDIDKey,
-		"",
-		"",
-		"alice",
-		"persistent",
-		issuedAt,
-		true,
-	)
+	payload := canonicalCertificatePayload(certificatePayloadFields{CertificateID: certID, TeamID: teamID, TeamDIDKey: teamDIDKey, MemberDIDKey: memberDIDKey, MemberDIDAW: "", MemberAddress: "", Alias: "alice", Scope: "persistent", IssuedAt: issuedAt, ScopeField: certificateLifetimeField})
 	signature := base64.RawStdEncoding.EncodeToString(ed25519.Sign(teamPriv, []byte(payload)))
 	type legacyWire struct {
 		Version       int    `json:"version"`
@@ -381,18 +370,7 @@ func TestLegacyLifetimeTeamCertificatePreservesSignedWireShape(t *testing.T) {
 }
 
 func TestCanonicalCertificatePayloadSortsKeys(t *testing.T) {
-	payload := canonicalCertificatePayload(
-		"cert-1",
-		"backend:acme.com",
-		"did:key:zteam",
-		"did:key:zmember",
-		"did:aw:test",
-		"acme.com/alice",
-		"alice",
-		IdentityModeGlobal,
-		"2026-04-09T00:00:00Z",
-		false,
-	)
+	payload := canonicalCertificatePayload(certificatePayloadFields{CertificateID: "cert-1", TeamID: "backend:acme.com", TeamDIDKey: "did:key:zteam", MemberDIDKey: "did:key:zmember", MemberDIDAW: "did:aw:test", MemberAddress: "acme.com/alice", Alias: "alice", Scope: IdentityModeGlobal, IssuedAt: "2026-04-09T00:00:00Z", ScopeField: certificateIdentityScopeField})
 
 	if strings.Index(payload, `"team_did_key"`) > strings.Index(payload, `"team_id"`) {
 		t.Fatalf("payload keys not sorted as expected: %s", payload)

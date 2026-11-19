@@ -2124,6 +2124,117 @@ import { createInterface } from "node:readline";
 // channel-core/src/api/client.ts
 import { createHash as createHash2 } from "node:crypto";
 
+// channel-core/src/api/response.ts
+var MAX_HTTP_RESPONSE_BYTES = 10 * 1024 * 1024;
+var MAX_HTTP_ERROR_BYTES = 64 * 1024;
+async function readBoundedResponse(response, maxBytes = MAX_HTTP_RESPONSE_BYTES) {
+  const declaredLength = Number(response.headers.get("Content-Length"));
+  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+    await response.body?.cancel().catch(() => {
+    });
+    throw new Error(`HTTP response exceeds maximum size of ${maxBytes} bytes`);
+  }
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const chunks = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => {
+        });
+        throw new Error(`HTTP response exceeds maximum size of ${maxBytes} bytes`);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const body = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder("utf-8", { fatal: true }).decode(body);
+}
+async function readSafeErrorExcerpt(response) {
+  const text2 = await readBoundedResponse(response, MAX_HTTP_ERROR_BYTES);
+  return text2.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").replace(/\s+/g, " ").trim();
+}
+async function readBoundedJSON(response) {
+  return JSON.parse(await readBoundedResponse(response));
+}
+
+// channel-core/src/identity/canonical.ts
+function compareByCodePoint(a, b) {
+  for (let i = 0; i < a.length && i < b.length; ) {
+    const x = a.codePointAt(i);
+    const y = b.codePointAt(i);
+    if (x !== y) return x < y ? -1 : 1;
+    i += x > 65535 ? 2 : 1;
+  }
+  return a.length - b.length;
+}
+function canonicalJSONValue(value, unsupported) {
+  if (Array.isArray(value)) return `[${value.map((item) => canonicalJSONValue(item, unsupported)).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    const obj = value;
+    return `{${Object.keys(obj).sort(compareByCodePoint).map((key) => `${JSON.stringify(key)}:${canonicalJSONValue(obj[key], unsupported)}`).join(",")}}`;
+  }
+  if (typeof value === "string" || typeof value === "boolean" || value === null || typeof value === "number" && Number.isSafeInteger(value)) return JSON.stringify(value);
+  throw new Error(unsupported);
+}
+function escapeJSONString(s) {
+  let result = "";
+  for (const ch of s) {
+    const code = ch.codePointAt(0);
+    switch (ch) {
+      case '"':
+        result += '\\"';
+        break;
+      case "\\":
+        result += "\\\\";
+        break;
+      case "\n":
+        result += "\\n";
+        break;
+      case "\r":
+        result += "\\r";
+        break;
+      case "	":
+        result += "\\t";
+        break;
+      case "\b":
+        result += "\\b";
+        break;
+      case "\f":
+        result += "\\f";
+        break;
+      default:
+        if (code < 32) {
+          result += "\\u" + code.toString(16).padStart(4, "0");
+        } else {
+          result += ch;
+        }
+    }
+  }
+  return result;
+}
+function canonicalStringObject(fields) {
+  const sorted = [...fields].sort(([left], [right]) => compareByCodePoint(left, right));
+  const members = sorted.map(
+    ([key, value]) => `"${escapeJSONString(key)}":"${escapeJSONString(value)}"`
+  );
+  return `{${members.join(",")}}`;
+}
+
+// channel-core/src/identity/did.ts
+import { createHash } from "node:crypto";
+
 // channel-core/node_modules/@noble/ed25519/index.js
 var ed25519_CURVE = {
   p: 0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffedn,
@@ -2491,37 +2602,6 @@ var sign = (msg, privKey) => {
   const rBytes = sha512s(e.prefix, m);
   return hashFinishS(_sign(e, rBytes, m));
 };
-var veriOpts = { zip215: true };
-var _verify = (sig, msg, pub, opts = veriOpts) => {
-  sig = toU8(sig, L2);
-  msg = toU8(msg);
-  pub = toU8(pub, L);
-  const { zip215 } = opts;
-  let A;
-  let R;
-  let s;
-  let SB;
-  let hashable = Uint8Array.of();
-  try {
-    A = Point.fromHex(pub, zip215);
-    R = Point.fromHex(sig.slice(0, L), zip215);
-    s = bytesToNumLE(sig.slice(L, L2));
-    SB = G.multiply(s, false);
-    hashable = concatBytes(R.toBytes(), A.toBytes(), msg);
-  } catch (error) {
-  }
-  const finish = (hashed) => {
-    if (SB == null)
-      return false;
-    if (!zip215 && A.isSmallOrder())
-      return false;
-    const k = modL_LE(hashed);
-    const RkA = R.add(A.multiply(k, false));
-    return RkA.add(SB.negate()).clearCofactor().is0();
-  };
-  return { hashable, finish };
-};
-var verify = (s, m, p, opts = veriOpts) => hashFinishS(_verify(s, m, p, opts));
 var etc = {
   sha512Async: async (...messages) => {
     const s = subtle();
@@ -3173,73 +3253,59 @@ var sha512 = /* @__PURE__ */ createHasher(
   /* @__PURE__ */ oidNist(3)
 );
 
-// channel-core/src/api/response.ts
-var MAX_HTTP_RESPONSE_BYTES = 10 * 1024 * 1024;
-var MAX_HTTP_ERROR_BYTES = 64 * 1024;
-async function readBoundedResponse(response, maxBytes = MAX_HTTP_RESPONSE_BYTES) {
-  const declaredLength = Number(response.headers.get("Content-Length"));
-  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
-    await response.body?.cancel().catch(() => {
-    });
-    throw new Error(`HTTP response exceeds maximum size of ${maxBytes} bytes`);
+// channel-core/src/identity/signature_wire.ts
+etc.sha512Sync = (...messages) => sha512(etc.concatBytes(...messages));
+function signBytes(input) {
+  return sign(input.message, input.seed);
+}
+function publicKeyFromSeed(seed) {
+  return getPublicKey(seed);
+}
+function littleEndian(bytes) {
+  let value = 0n;
+  for (let index = bytes.length - 1; index >= 0; index -= 1) {
+    value = value << 8n | BigInt(bytes[index]);
   }
-  if (!response.body) return "";
-  const reader = response.body.getReader();
-  const chunks = [];
-  let total = 0;
+  return value;
+}
+function canonicalPoint(encoded) {
+  if (!canonicalPointEncoding(encoded)) return void 0;
+  let point;
   try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      total += value.byteLength;
-      if (total > maxBytes) {
-        await reader.cancel().catch(() => {
-        });
-        throw new Error(`HTTP response exceeds maximum size of ${maxBytes} bytes`);
-      }
-      chunks.push(value);
-    }
-  } finally {
-    reader.releaseLock();
+    point = Point.fromHex(encoded, false);
+  } catch {
+    return void 0;
   }
-  const body = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    body.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return new TextDecoder("utf-8", { fatal: true }).decode(body);
+  if (point.is0()) return void 0;
+  return point;
 }
-async function readSafeErrorExcerpt(response) {
-  const text2 = await readBoundedResponse(response, MAX_HTTP_ERROR_BYTES);
-  return text2.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").replace(/\s+/g, " ").trim();
+function primeSubgroupPoint(encoded) {
+  const point = canonicalPoint(encoded);
+  return point?.isTorsionFree() ? point : void 0;
 }
-async function readBoundedJSON(response) {
-  return JSON.parse(await readBoundedResponse(response));
+function verifyBytes(proof) {
+  const { signature, message, publicKey, profile = 0 /* Message */ } = proof;
+  const publicPoint = primeSubgroupPoint(publicKey);
+  if (!publicPoint || signature.length !== 64) return false;
+  const encodedR = signature.subarray(0, 32);
+  const pointR = profile === 1 /* IdentityCertificate */ ? primeSubgroupPoint(encodedR) : canonicalPoint(encodedR);
+  const scalarS = littleEndian(signature.subarray(32));
+  if (!pointR || scalarS >= ed25519_CURVE.n) return false;
+  const challenge = littleEndian(
+    sha512(etc.concatBytes(encodedR, publicKey, message))
+  ) % ed25519_CURVE.n;
+  const left = scalarS === 0n ? Point.ZERO : Point.BASE.multiply(scalarS);
+  const challengePoint = challenge === 0n ? Point.ZERO : publicPoint.multiply(challenge);
+  return left.equals(pointR.add(challengePoint));
 }
-
-// channel-core/src/identity/canonical.ts
-function compareByCodePoint(a, b) {
-  for (let i = 0; i < a.length && i < b.length; ) {
-    const x = a.codePointAt(i);
-    const y = b.codePointAt(i);
-    if (x !== y) return x < y ? -1 : 1;
-    i += x > 65535 ? 2 : 1;
-  }
-  return a.length - b.length;
+function canonicalPointEncoding(encoded) {
+  if (encoded.length !== 32) return false;
+  const coordinate = littleEndian(encoded);
+  const sign2 = coordinate >> 255n;
+  const y = coordinate & (1n << 255n) - 1n;
+  const fieldPrime = (1n << 255n) - 19n;
+  return y < fieldPrime && !(sign2 === 1n && (y === 1n || y === fieldPrime - 1n));
 }
-function canonicalJSONValue(value, unsupported) {
-  if (Array.isArray(value)) return `[${value.map((item) => canonicalJSONValue(item, unsupported)).join(",")}]`;
-  if (value !== null && typeof value === "object") {
-    const obj = value;
-    return `{${Object.keys(obj).sort(compareByCodePoint).map((key) => `${JSON.stringify(key)}:${canonicalJSONValue(obj[key], unsupported)}`).join(",")}}`;
-  }
-  if (typeof value === "string" || typeof value === "boolean" || value === null || typeof value === "number" && Number.isSafeInteger(value)) return JSON.stringify(value);
-  throw new Error(unsupported);
-}
-
-// channel-core/src/identity/did.ts
-import { createHash } from "node:crypto";
 
 // channel-core/node_modules/base-x/src/esm/index.js
 function base(ALPHABET2) {
@@ -3385,18 +3451,6 @@ function computeDIDKey(publicKey) {
   buf.set(publicKey, 2);
   return DID_KEY_PREFIX + esm_default2.encode(buf);
 }
-function primeSubgroupPoint(encoded) {
-  if (encoded.length !== 32) return void 0;
-  let point;
-  try {
-    point = Point.fromHex(encoded, false);
-  } catch {
-    return void 0;
-  }
-  if (point.is0() || !point.isTorsionFree()) return void 0;
-  if (Buffer.compare(Buffer.from(point.toRawBytes()), Buffer.from(encoded)) !== 0) return void 0;
-  return point;
-}
 function extractPublicKey(did) {
   if (!did.startsWith(DID_KEY_PREFIX)) {
     throw new Error(`invalid did:key: missing prefix "${DID_KEY_PREFIX}"`);
@@ -3424,7 +3478,6 @@ function computeStableID(publicKey) {
 }
 
 // channel-core/src/api/client.ts
-etc.sha512Sync = (...m) => sha512(etc.concatBytes(...m));
 function canonicalTimestamp() {
   return (/* @__PURE__ */ new Date()).toISOString().replace(/\.\d{3}Z$/, "Z");
 }
@@ -3440,8 +3493,8 @@ function signedTarget(baseURL, path, method, bodyText) {
 function signCanonical(payload, signingKey) {
   const canonicalPayload = canonicalJSONValue(payload, "unsupported request signing value");
   return {
-    did: computeDIDKey(getPublicKey(signingKey)),
-    signature: Buffer.from(sign(new TextEncoder().encode(canonicalPayload), signingKey)).toString("base64").replace(/=+$/, ""),
+    did: computeDIDKey(publicKeyFromSeed(signingKey)),
+    signature: Buffer.from(signBytes({ message: new TextEncoder().encode(canonicalPayload), seed: signingKey })).toString("base64").replace(/=+$/, ""),
     canonicalPayload,
     signedPayload: Buffer.from(canonicalPayload, "utf-8").toString("base64url")
   };
@@ -3661,9 +3714,14 @@ function decodeRawStdBase64(value) {
   for (let i = 0; i < binary2.length; i += 1) bytes[i] = binary2.charCodeAt(i);
   return bytes;
 }
+function decodeRawURLBase64(value) {
+  if (!/^[A-Za-z0-9_-]*$/.test(value) || value.length % 4 === 1) throw new Error("invalid unpadded base64url");
+  const raw = Buffer.from(value, "base64url");
+  if (raw.toString("base64url") !== value) throw new Error("noncanonical base64url");
+  return new Uint8Array(raw);
+}
 
 // channel-core/src/identity/signing.ts
-etc.sha512Sync = (...m) => sha512(etc.concatBytes(...m));
 function canonicalJSON(env) {
   const fields = [
     ["body", env.body],
@@ -3679,50 +3737,7 @@ function canonicalJSON(env) {
   if (env.conversation_id) fields.push(["conversation_id", env.conversation_id]);
   if (env.message_id) fields.push(["message_id", env.message_id]);
   if (env.to_stable_id) fields.push(["to_stable_id", env.to_stable_id]);
-  fields.sort((a, b) => compareByCodePoint(a[0], b[0]));
-  let result = "{";
-  for (let i = 0; i < fields.length; i++) {
-    if (i > 0) result += ",";
-    result += '"' + fields[i][0] + '":"' + escapeJSON(fields[i][1]) + '"';
-  }
-  result += "}";
-  return result;
-}
-function escapeJSON(s) {
-  let result = "";
-  for (const ch of s) {
-    const code = ch.codePointAt(0);
-    switch (ch) {
-      case '"':
-        result += '\\"';
-        break;
-      case "\\":
-        result += "\\\\";
-        break;
-      case "\n":
-        result += "\\n";
-        break;
-      case "\r":
-        result += "\\r";
-        break;
-      case "	":
-        result += "\\t";
-        break;
-      case "\b":
-        result += "\\b";
-        break;
-      case "\f":
-        result += "\\f";
-        break;
-      default:
-        if (code < 32) {
-          result += "\\u" + code.toString(16).padStart(4, "0");
-        } else {
-          result += ch;
-        }
-    }
-  }
-  return result;
+  return canonicalStringObject(fields);
 }
 function b64Decode(s) {
   return decodeRawStdBase64(s);
@@ -3746,11 +3761,11 @@ async function verifyMessage(env) {
   try {
     const sigBytes = b64Decode(env.signature);
     const payload = canonicalJSON(env);
-    const valid = verify(
-      sigBytes,
-      new TextEncoder().encode(payload),
+    const valid = verifyBytes({
+      signature: sigBytes,
+      message: new TextEncoder().encode(payload),
       publicKey
-    );
+    });
     return valid ? "verified" : "failed";
   } catch {
     return "failed";
@@ -3774,11 +3789,11 @@ async function verifySignedPayload(signedPayload, signatureB64, fromDID, signing
   }
   try {
     const sigBytes = b64Decode(signatureB64);
-    const valid = verify(
-      sigBytes,
-      new TextEncoder().encode(signedPayload),
+    const valid = verifyBytes({
+      signature: sigBytes,
+      message: new TextEncoder().encode(signedPayload),
       publicKey
-    );
+    });
     return valid ? "verified" : "failed";
   } catch {
     return "failed";
@@ -3789,8 +3804,10 @@ function signedPayloadConversationStatus(signedPayload, conversationID) {
   if (!expected) return "verified";
   try {
     const payload = JSON.parse(signedPayload);
-    if (payload.conversation_id === expected) return "verified";
-    if (payload.conversation_id === void 0 || payload.conversation_id === "") {
+    if (payload === null) return "failed";
+    const conversationID2 = typeof payload === "object" && "conversation_id" in payload ? payload.conversation_id : void 0;
+    if (conversationID2 === expected) return "verified";
+    if (conversationID2 === void 0 || conversationID2 === "") {
       return "verified_legacy";
     }
     return "failed";
@@ -7704,7 +7721,6 @@ var Reader = class {
 };
 
 // channel-core/src/identity/id_certificates.ts
-etc.sha512Sync = (...m) => sha512(etc.concatBytes(...m));
 var ID_CERTIFICATE_PREFIX = "aweb.id-certificate/1\n";
 var ID_CHAIN_MAX_CERTIFICATES = 8;
 var ID_CHAIN_MAX_DECODED_BYTES = 6144;
@@ -7787,31 +7803,16 @@ function signatureRefusal(signed) {
   const result = idEd25519Verify(publicKey, idCertificateSigningBytes(signed.certificate), signature);
   return result.accepted ? void 0 : "invalid_signature";
 }
-var GROUP_ORDER = ed25519_CURVE.n;
 function idEd25519Verify(publicKey, message, signature) {
-  const A = primeSubgroupPoint(publicKey);
-  if (!A) return { accepted: false, reason: "invalid_shape" };
-  if (signature.length !== 64) return { accepted: false, reason: "invalid_signature" };
-  const encodedR = signature.subarray(0, 32);
-  const R = primeSubgroupPoint(encodedR);
-  const S = littleEndian(signature.subarray(32));
-  if (!R || S >= GROUP_ORDER) return { accepted: false, reason: "invalid_signature" };
-  const k = littleEndian(sha512(etc.concatBytes(encodedR, publicKey, message))) % GROUP_ORDER;
-  const SB = S === 0n ? Point.ZERO : Point.BASE.multiply(S);
-  const kA = k === 0n ? Point.ZERO : A.multiply(k);
-  return SB.equals(R.add(kA)) ? { accepted: true, reason: null } : { accepted: false, reason: "invalid_signature" };
+  if (!primeSubgroupPoint(publicKey)) return { accepted: false, reason: "invalid_shape" };
+  return verifyBytes({ signature, message, publicKey, profile: 1 /* IdentityCertificate */ }) ? { accepted: true, reason: null } : { accepted: false, reason: "invalid_signature" };
 }
-function littleEndian(bytes) {
-  let value = 0n;
-  for (let i = bytes.length - 1; i >= 0; i -= 1) value = value << 8n | BigInt(bytes[i]);
-  return value;
-}
-var BASE64URL = /^[A-Za-z0-9_-]*$/;
 function decodeBase64URL(value) {
-  if (!BASE64URL.test(value) || value.length % 4 === 1) return void 0;
-  const bytes = Buffer.from(value, "base64url");
-  if (bytes.toString("base64url") !== value) return void 0;
-  return new Uint8Array(bytes);
+  try {
+    return decodeRawURLBase64(value);
+  } catch {
+    return void 0;
+  }
 }
 var DOMAIN_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 function isCanonicalDomain(domain) {
@@ -7891,7 +7892,7 @@ function idStatusRequest(chain, subject, domain) {
 }
 function verifyIdChain(chain, subject, evidence) {
   try {
-    return verify2(chain, subject, evidence);
+    return verify(chain, subject, evidence);
   } catch (error) {
     if (error instanceof Refusal) return refusal(error.reason);
     throw error;
@@ -7915,7 +7916,7 @@ function refusal(reason) {
     reason
   };
 }
-function verify2(presented, subject, evidence) {
+function verify(presented, subject, evidence) {
   let chain = presented;
   if (chain === null) {
     if (!subject.id.startsWith("did:aw:")) return refusal("legacy_no_chain");
@@ -8302,7 +8303,6 @@ var IdStatusClient = class {
 import * as dns2 from "node:dns/promises";
 import { isIP } from "node:net";
 var import_tldts = __toESM(require_cjs(), 1);
-etc.sha512Sync = (...m) => sha512(etc.concatBytes(...m));
 var DEFAULT_AWID_REGISTRY_URL = "https://api.awid.ai";
 var REGISTRY_DISCOVERY_TTL_MS = 15 * 60 * 1e3;
 var REGISTRY_ADDRESS_TTL_MS = 5 * 60 * 1e3;
@@ -8768,11 +8768,7 @@ function verifyDidKeyResolution(resolution, cached, nowMs) {
   }
   let validSignature = false;
   try {
-    validSignature = verify(
-      b64Decode2(head.signature),
-      new TextEncoder().encode(payload),
-      extractPublicKey(head.authorized_by)
-    );
+    validSignature = verifyBytes({ signature: b64Decode2(head.signature), message: new TextEncoder().encode(payload), publicKey: extractPublicKey(head.authorized_by) });
   } catch (error) {
     return { outcome: "HARD_ERROR", error: String(error) };
   }
@@ -8845,20 +8841,20 @@ function verifyDidLogEntries(didAW, entries, nowMs) {
   return { head: cached };
 }
 function stableIdentityStateHash(didAW, currentDidKey) {
-  const payload = `{"current_did_key":"${escapeJSON2(currentDidKey)}","did_aw":"${escapeJSON2(didAW)}"}`;
+  const payload = `{"current_did_key":"${escapeJSONString(currentDidKey)}","did_aw":"${escapeJSONString(didAW)}"}`;
   return bytesToHex2(sha256(new TextEncoder().encode(payload)));
 }
 function canonicalDidLogPayload(didAW, head) {
   const fields = [
-    `"authorized_by":"${escapeJSON2(head.authorized_by)}"`,
-    `"did_aw":"${escapeJSON2(didAW)}"`,
-    `"new_did_key":"${escapeJSON2(head.new_did_key)}"`,
-    `"operation":"${escapeJSON2(head.operation)}"`,
-    `"prev_entry_hash":${head.prev_entry_hash == null ? "null" : `"${escapeJSON2(head.prev_entry_hash)}"`}`,
-    `"previous_did_key":${head.previous_did_key == null ? "null" : `"${escapeJSON2(head.previous_did_key)}"`}`,
+    `"authorized_by":"${escapeJSONString(head.authorized_by)}"`,
+    `"did_aw":"${escapeJSONString(didAW)}"`,
+    `"new_did_key":"${escapeJSONString(head.new_did_key)}"`,
+    `"operation":"${escapeJSONString(head.operation)}"`,
+    `"prev_entry_hash":${head.prev_entry_hash == null ? "null" : `"${escapeJSONString(head.prev_entry_hash)}"`}`,
+    `"previous_did_key":${head.previous_did_key == null ? "null" : `"${escapeJSONString(head.previous_did_key)}"`}`,
     `"seq":${head.seq}`,
-    `"state_hash":"${escapeJSON2(head.state_hash)}"`,
-    `"timestamp":"${escapeJSON2(head.timestamp)}"`
+    `"state_hash":"${escapeJSONString(head.state_hash)}"`,
+    `"timestamp":"${escapeJSONString(head.timestamp)}"`
   ];
   return `{${fields.join(",")}}`;
 }
@@ -8956,42 +8952,6 @@ function b64Decode2(value) {
 }
 function bytesToHex2(bytes) {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-function escapeJSON2(s) {
-  let result = "";
-  for (const ch of s) {
-    const code = ch.codePointAt(0);
-    switch (ch) {
-      case '"':
-        result += '\\"';
-        break;
-      case "\\":
-        result += "\\\\";
-        break;
-      case "\n":
-        result += "\\n";
-        break;
-      case "\r":
-        result += "\\r";
-        break;
-      case "	":
-        result += "\\t";
-        break;
-      case "\b":
-        result += "\\b";
-        break;
-      case "\f":
-        result += "\\f";
-        break;
-      default:
-        if (code < 32) {
-          result += `\\u${code.toString(16).padStart(4, "0")}`;
-        } else {
-          result += ch;
-        }
-    }
-  }
-  return result;
 }
 function didLogContainsEntry(entries, seq2, entryHash) {
   const want = entryHash.trim();
@@ -9510,7 +9470,6 @@ async function readReceivedIdChain(message, authenticated, status2) {
 }
 
 // channel-core/src/identity/trust.ts
-etc.sha512Sync = (...m) => sha512(etc.concatBytes(...m));
 var ANNOUNCEMENT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
 var AGENT_META_CACHE_TTL_MS = 60 * 60 * 1e3;
 var AGENT_META_FAILURE_CACHE_MIN_MS = 3e4;
@@ -10017,11 +9976,7 @@ var SenderTrustManager = class {
     if (announcement.old_did !== pinnedDID) return false;
     try {
       const oldPub = extractPublicKey(announcement.old_did);
-      return verify(
-        b64Decode3(announcement.old_key_signature),
-        new TextEncoder().encode(canonicalRotationJSON(announcement.old_did, announcement.new_did, announcement.timestamp)),
-        oldPub
-      );
+      return verifyBytes({ signature: b64Decode3(announcement.old_key_signature), message: new TextEncoder().encode(canonicalRotationJSON(announcement.old_did, announcement.new_did, announcement.timestamp)), publicKey: oldPub });
     } catch {
       return false;
     }
@@ -10039,19 +9994,15 @@ var SenderTrustManager = class {
     }
     try {
       const controllerPub = extractPublicKey(announcement.controller_did);
-      return verify(
-        b64Decode3(announcement.controller_signature),
-        new TextEncoder().encode(
-          canonicalReplacementJSON(
-            announcement.address,
-            announcement.controller_did,
-            announcement.old_did,
-            announcement.new_did,
-            announcement.timestamp
-          )
-        ),
-        controllerPub
-      );
+      return verifyBytes({ signature: b64Decode3(announcement.controller_signature), message: new TextEncoder().encode(
+        canonicalReplacementJSON(
+          announcement.address,
+          announcement.controller_did,
+          announcement.old_did,
+          announcement.new_did,
+          announcement.timestamp
+        )
+      ), publicKey: controllerPub });
     } catch {
       return false;
     }
@@ -10231,14 +10182,14 @@ function isTimestampFresh(value) {
   return Math.abs(Date.now() - time) <= ANNOUNCEMENT_MAX_AGE_MS;
 }
 function canonicalRotationJSON(oldDID, newDID, timestamp2) {
-  return canonicalObject([
+  return canonicalStringObject([
     ["new_did", newDID],
     ["old_did", oldDID],
     ["timestamp", timestamp2]
   ]);
 }
 function canonicalReplacementJSON(address, controllerDID, oldDID, newDID, timestamp2) {
-  return canonicalObject([
+  return canonicalStringObject([
     ["address", address],
     ["controller_did", controllerDID],
     ["new_did", newDID],
@@ -10246,48 +10197,8 @@ function canonicalReplacementJSON(address, controllerDID, oldDID, newDID, timest
     ["timestamp", timestamp2]
   ]);
 }
-function canonicalObject(fields) {
-  const sorted = [...fields].sort(([a], [b]) => compareByCodePoint(a, b));
-  return `{${sorted.map(([key, value]) => `"${key}":"${escapeJSON3(value)}"`).join(",")}}`;
-}
 function b64Decode3(value) {
   return decodeRawStdBase64(value);
-}
-function escapeJSON3(s) {
-  let result = "";
-  for (const ch of s) {
-    const code = ch.codePointAt(0);
-    switch (ch) {
-      case '"':
-        result += '\\"';
-        break;
-      case "\\":
-        result += "\\\\";
-        break;
-      case "\n":
-        result += "\\n";
-        break;
-      case "\r":
-        result += "\\r";
-        break;
-      case "	":
-        result += "\\t";
-        break;
-      case "\b":
-        result += "\\b";
-        break;
-      case "\f":
-        result += "\\f";
-        break;
-      default:
-        if (code < 32) {
-          result += `\\u${code.toString(16).padStart(4, "0")}`;
-        } else {
-          result += ch;
-        }
-    }
-  }
-  return result;
 }
 
 // channel-core/src/channel.ts

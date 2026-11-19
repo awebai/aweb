@@ -124,6 +124,14 @@ func runRun(cmd *cobra.Command, args []string) error {
 		}
 		fmt.Fprintf(cmd.ErrOrStderr(), "aw run: trusted %s as it is now (%s).\n", trusted, digest)
 	}
+
+	if runInitConfig {
+		globalConfig, err := awrun.LoadGlobalUserConfig()
+		if err != nil {
+			return err
+		}
+		return runInitUserConfig(cmd.InOrStdin(), cmd.OutOrStdout(), globalConfig)
+	}
 	runCfg, err := runLoadUserConfig(workingDir)
 	if err != nil {
 		return err
@@ -134,9 +142,6 @@ func runRun(cmd *cobra.Command, args []string) error {
 	}
 	if note := localConfigState.IgnoredNote(localConfigPath); note != "" {
 		fmt.Fprintln(cmd.ErrOrStderr(), note)
-	}
-	if runInitConfig {
-		return runInitUserConfig(cmd.InOrStdin(), cmd.OutOrStdout(), runCfg)
 	}
 
 	settings, err := runResolveSettings(runCfg, awrun.SettingOverrides{
@@ -193,7 +198,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 	var lastBuildOptions awrun.BuildOptions
 	loop.EventBus = runNewEventBus(client, runEventStreamReload(workingDir))
 	loop.Control = screen
-	loop.Dispatch = newRunDispatcher(settings, newRunWakeValidator(client, sel.Alias))
+	loop.Dispatch = newRunDispatcher(settings, newRunWakeValidator(client, runWakeOptions{SelfAlias: sel.Alias, WorkingDir: workingDir}))
 	loop.StatusIdentity = statusIdentity
 	loop.OnSessionID = func(sessionID string) {
 		lastSessionID = strings.TrimSpace(sessionID)

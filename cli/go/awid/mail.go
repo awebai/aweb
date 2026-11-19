@@ -52,10 +52,12 @@ type SendMessageRequest struct {
 }
 
 type SendMessageResponse struct {
-	MessageID      string `json:"message_id"`
-	ConversationID string `json:"conversation_id,omitempty"`
-	Status         string `json:"status"`
-	DeliveredAt    string `json:"delivered_at"`
+	RecipientDID      string `json:"recipient_did,omitempty"`
+	RecipientStableID string `json:"recipient_stable_id,omitempty"`
+	MessageID         string `json:"message_id"`
+	ConversationID    string `json:"conversation_id,omitempty"`
+	Status            string `json:"status"`
+	DeliveredAt       string `json:"delivered_at"`
 }
 
 func (c *Client) SendMessage(ctx context.Context, req *SendMessageRequest) (*SendMessageResponse, error) {
@@ -194,7 +196,17 @@ func (c *Client) sendMessage(ctx context.Context, req *SendMessageRequest, ident
 	if err := c.Post(ctx, "/v1/messages", &payload, &out); err != nil {
 		return nil, err
 	}
+	// These are the exact recipient claims signed by this send, not a later
+	// address lookup. Bridges bind subsequent replies to this identity.
+	out.RecipientDID, out.RecipientStableID = sf.ToDID, sf.ToStableID
 	return &out, nil
+}
+
+// VerifyInboxResponse uses the mail reader's verification and display-binding
+// owner for a conversation fetched through an authenticated provider transport
+// (docs/a2a.md:976-977).
+func (c *Client) VerifyInboxResponse(ctx context.Context, out *InboxResponse) (*InboxResponse, error) {
+	return c.normalizeInboxResponse(ctx, out)
 }
 
 func (c *Client) prepareE2EEMail(ctx context.Context, payload *SendMessageRequest, identityTarget bool, initialConversationID string, hasRecipient bool) error {
