@@ -1742,18 +1742,9 @@ func isTransientServiceUnavailableBody(body string) bool {
 	return strings.Contains(body, "awid registry unavailable") || strings.Contains(body, "temporarily unavailable")
 }
 
-func traceEnabled() bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("AW_TRACE"))) {
-	case "1", "true", "yes", "on":
-		return true
-	default:
-		return false
-	}
-}
-
 // TraceHTTPRequest writes redacted request detail when AW_TRACE is enabled.
 func TraceHTTPRequest(req *http.Request, body []byte) {
-	if !traceEnabled() || req == nil {
+	if !TraceEnabled() || req == nil {
 		return
 	}
 	if isAttachmentFetchPath(req.URL.Path) {
@@ -1771,7 +1762,7 @@ func TraceHTTPRequest(req *http.Request, body []byte) {
 
 // TraceHTTPResponse writes redacted response detail when AW_TRACE is enabled.
 func TraceHTTPResponse(resp *http.Response) error {
-	if !traceEnabled() || resp == nil {
+	if !TraceEnabled() || resp == nil {
 		return nil
 	}
 	if resp.Request != nil && resp.Request.URL != nil && isAttachmentFetchPath(resp.Request.URL.Path) {
