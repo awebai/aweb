@@ -14,6 +14,7 @@ import json
 import logging
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
+from enum import StrEnum
 from typing import Literal
 from uuid import UUID, uuid4
 
@@ -547,9 +548,35 @@ def _agent_precondition_errors(
     return []
 
 
+class _TargetRead(StrEnum):
+    PLAN = "plan"
+    LOCK_FOR_CLEANUP = "lock_for_cleanup"
+
+
+async def lock_workspace_cleanup_targets_on(
+    db, *, targets: tuple[LocalWorkspaceTarget, ...], team_id: str
+) -> None:
+    """Lock the complete workspace set in UUID order before claim/focus writes.
+
+    Claim acquisition and release use this same workspace order. Locking the
+    whole set first prevents one cleanup from holding a claim another needs
+    while they each wait for the other's workspace (docs/aweb-sot.md:1232–1241).
+    """
+    workspace_ids = list({target.workspace_id for target in targets})
+    if workspace_ids:
+        await db.fetch_all(
+            "SELECT workspace_id FROM {{tables.workspaces}} "
+            "WHERE workspace_id=ANY($1::uuid[]) AND team_id=$2 "
+            "ORDER BY workspace_id FOR UPDATE",
+            workspace_ids,
+            team_id,
+        )
+
+
 @dataclass(frozen=True)
 class _LifecycleTargets:
     workspaces: list[dict]
+    removed_workspaces: list[dict]
     errors: list[LifecycleError]
     team_id: str
 
@@ -558,6 +585,7 @@ async def _load_lifecycle_targets(
     db,
     *,
     request: LifecycleCascadeRequest,
+    read: _TargetRead,
     redis: Redis | None,
     registry_client: RegistryClient | None,
     request_context: Request | None,
@@ -569,24 +597,6 @@ async def _load_lifecycle_targets(
     agent = await _load_target_agent(db, request)
     workspaces = await _load_target_workspaces(db, request)
     errors = _agent_precondition_errors(request, agent) + _precondition_errors(request, workspaces)
-    if request.stale_before is not None:
-        activity = await workspace_activity_by_id(
-            db,
-            redis,
-            workspace_ids=[str(row["workspace_id"]) for row in workspaces],
-            registry_client=registry_client,
-            request=request_context,
-            failure_policy=GrantLivenessFailurePolicy.REQUIRE_KNOWN,
-        )
-        for workspace_id, observation in activity.items():
-            if observation.is_newer_than(cutoff=request.stale_before):
-                errors.append(
-                    LifecycleError(
-                        code=WorkspaceActivityRefusal.STILL_ACTIVE,
-                        message="Workspace activity is not stale enough for lifecycle cleanup.",
-                        target=workspace_id,
-                    )
-                )
     # Released embedding requests may omit the team. Resolve exactly one
     # canonical team before any native write; there is no unscoped erasure.
     team_id = (
@@ -611,7 +621,51 @@ async def _load_lifecycle_targets(
             )
         )
         team_id = ""
-    return _LifecycleTargets(workspaces=workspaces, errors=errors, team_id=team_id)
+    removed_workspaces = []
+    if not errors:
+        removed_workspaces = await load_removed_claim_workspaces(
+            db,
+            agent_ids=_target_agent_ids(request, workspaces),
+            team_id=team_id,
+        )
+        if read == _TargetRead.LOCK_FOR_CLEANUP:
+            await lock_workspace_cleanup_targets_on(
+                db,
+                targets=tuple(
+                    LocalWorkspaceTarget(
+                        workspace_id=UUID(str(row["workspace_id"])),
+                        agent_id=UUID(str(row["agent_id"]))
+                        if row.get("agent_id") is not None
+                        else None,
+                    )
+                    for row in workspaces + removed_workspaces
+                ),
+                team_id=team_id,
+            )
+        if request.stale_before is not None:
+            activity = await workspace_activity_by_id(
+                db,
+                redis,
+                workspace_ids=[str(row["workspace_id"]) for row in workspaces],
+                registry_client=registry_client,
+                request=request_context,
+                failure_policy=GrantLivenessFailurePolicy.REQUIRE_KNOWN,
+            )
+            for workspace_id, observation in activity.items():
+                if observation.is_newer_than(cutoff=request.stale_before):
+                    errors.append(
+                        LifecycleError(
+                            code=WorkspaceActivityRefusal.STILL_ACTIVE,
+                            message="Workspace activity is not stale enough for lifecycle cleanup.",
+                            target=workspace_id,
+                        )
+                    )
+    return _LifecycleTargets(
+        workspaces=workspaces,
+        removed_workspaces=removed_workspaces,
+        errors=errors,
+        team_id=team_id,
+    )
 
 
 async def _plan_claim_count(db, workspace_ids: list[str]) -> int:
@@ -823,6 +877,7 @@ async def plan_lifecycle_cascade(
     targets = await _load_lifecycle_targets(
         db,
         request=request,
+        read=_TargetRead.PLAN,
         redis=redis,
         registry_client=registry_client,
         request_context=request_context,
@@ -833,9 +888,7 @@ async def plan_lifecycle_cascade(
     workspace_changes = _workspace_changes(workspaces, status="planned")
     workspace_ids = [str(workspace["workspace_id"]) for workspace in workspaces]
     agent_ids = _target_agent_ids(request, workspaces)
-    removed_workspaces = await _removed_claim_workspaces(
-        db, agent_ids=agent_ids, team_id=request.team_id
-    )
+    removed_workspaces = targets.removed_workspaces
     claim_ids = list(
         dict.fromkeys(workspace_ids + [str(row["workspace_id"]) for row in removed_workspaces])
     )
@@ -1358,7 +1411,8 @@ async def _soft_delete_workspaces_on(
     return _WorkspaceCleanup(claim_count=claim_count, events=tuple(events))
 
 
-async def _removed_claim_workspaces(db, *, agent_ids: list[UUID], team_id: str) -> list[dict]:
+async def load_removed_claim_workspaces(db, *, agent_ids: list[UUID], team_id: str) -> list[dict]:
+    """Find retained workspace bindings that still hold this agent set's claims."""
     rows = await db.fetch_all(
         """SELECT w.workspace_id,w.agent_id,w.team_id,w.alias
         FROM {{tables.workspaces}} w
@@ -1548,6 +1602,7 @@ async def apply_lifecycle_cascade(
             targets = await _load_lifecycle_targets(
                 tx,
                 request=request,
+                read=_TargetRead.LOCK_FOR_CLEANUP,
                 redis=redis,
                 registry_client=registry_client,
                 request_context=request_context,
@@ -1578,9 +1633,7 @@ async def apply_lifecycle_cascade(
             )
             task_unclaim_count = workspace_cleanup.claim_count
             event_intents.extend(workspace_cleanup.events)
-            removed_workspaces = await _removed_claim_workspaces(
-                tx, agent_ids=agent_ids, team_id=request.team_id
-            )
+            removed_workspaces = targets.removed_workspaces
             removed_cleanup = await _soft_delete_workspaces_on(
                 tx, workspaces=removed_workspaces, deleted_at=deleted_at
             )

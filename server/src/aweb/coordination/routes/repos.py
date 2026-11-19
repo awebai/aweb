@@ -27,6 +27,8 @@ from ...lifecycle import (
     LifecycleActor,
     LocalWorkspaceTarget,
     apply_local_workspace_cleanup,
+    load_removed_claim_workspaces,
+    lock_workspace_cleanup_targets_on,
     replay_lifecycle_side_effects,
 )
 from ...redis_client import get_redis
@@ -318,6 +320,20 @@ async def delete_repo(
             """,
             str(repo_id),
             identity.team_id,
+        )
+        removed = await load_removed_claim_workspaces(
+            aweb_db,
+            agent_ids=[row["agent_id"] for row in workspace_rows if row["agent_id"] is not None],
+            team_id=identity.team_id,
+        )
+        # One outer transaction locks the full repo set before any claim release.
+        await lock_workspace_cleanup_targets_on(
+            aweb_db,
+            targets=tuple(
+                LocalWorkspaceTarget(workspace_id=row["workspace_id"], agent_id=row["agent_id"])
+                for row in workspace_rows + removed
+            ),
+            team_id=identity.team_id,
         )
         skipped: list[SkippedWorkspace] = []
         deleted_count = 0

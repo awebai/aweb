@@ -1238,7 +1238,10 @@ workspace cleanup already uses the named choice. Explicit `target_agent_id`
 cleanup works with zero or already-deleted workspaces; `all_for_agent` cleans all active workspace paths. Claims on deleted
 paths, reservations, session admission leases, grant liveness, pending controls,
 status and presence are also cleared. Pending controls become consumed history;
-chat participants become left, retaining chat/mail/identity history.
+chat participants become left, retaining chat/mail/identity history. Cleanup
+locks the complete active/retained-claim workspace set in UUID order before
+claim/focus writes; claim acquisition/release uses the same workspace order.
+Bulk repo cleanup locks its combined target set before invoking each cleanup.
 
 `DELETED` and `RETIRED` set the corresponding native status and `deleted_at`.
 `PREPARED_REMOVAL` atomically requires the agent still be active, then sets

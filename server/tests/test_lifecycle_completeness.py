@@ -1,6 +1,7 @@
 """Lifecycle cleanup through the real SQL transaction and Redis outbox."""
 
 import asyncio
+from contextlib import suppress
 from dataclasses import replace
 from datetime import datetime, timezone
 from enum import StrEnum
@@ -421,7 +422,8 @@ async def test_concurrent_terminal_disposition_cannot_be_restored_by_prepared_re
     finally:
         if prepared_task is not None and not prepared_task.done():
             prepared_task.cancel()
-            await asyncio.gather(prepared_task, return_exceptions=True)
+            with suppress(asyncio.CancelledError):
+                await prepared_task
 
 
 @pytest.mark.asyncio
@@ -504,3 +506,84 @@ async def test_explicit_workspace_cannot_select_another_agent_for_cleanup(privac
         )
         is None
     )
+
+
+@pytest.mark.asyncio
+async def test_cleanup_locks_all_workspaces_before_deleting_any_claim(
+    aweb_cloud_db, lifecycle_redis
+):
+    """Cleanup and claim release share UUID workspace order before claim writes."""
+    db = aweb_cloud_db.aweb_db
+    team, agent, first = await _seed_workspace_with_claim(db, identity_scope="global")
+    second = uuid4()
+    await db.execute(
+        "INSERT INTO {{tables.workspaces}} (workspace_id,team_id,agent_id,alias,workspace_type,last_seen_at) "
+        "VALUES ($1,$2,$3,'alice-second','manual',NOW()-INTERVAL '2 hours')",
+        second,
+        team,
+        agent,
+    )
+    await db.execute(
+        "INSERT INTO {{tables.task_claims}} (team_id,workspace_id,alias,human_name,task_ref,claimed_at) "
+        "VALUES ($1,$2,'alice-second','Alice','backend-778',NOW())",
+        team,
+        second,
+    )
+    low, high = sorted((first, second))
+    await db.execute(
+        "UPDATE {{tables.workspaces}} SET updated_at=NOW()-INTERVAL '1 hour' WHERE workspace_id=$1",
+        high,
+    )
+    cleanup_pid = asyncio.get_running_loop().create_future()
+
+    async def clean():
+        async with db.transaction() as cleanup_tx:
+            cleanup_pid.set_result(await cleanup_tx.fetch_value("SELECT pg_backend_pid()"))
+            return await apply_lifecycle_cascade(
+                cleanup_tx,
+                lifecycle_redis,
+                LifecycleCascadeRequest(
+                    operation="cleanup_agent_coordination_state",
+                    actor=LifecycleActor(
+                        actor_id="owner", actor_type="system", authority="embedding"
+                    ),
+                    team_id=team,
+                    target_agent_id=str(agent),
+                    workspace_scope="all_for_agent",
+                    agent_disposition=AgentDisposition.PRESERVED,
+                ),
+            )
+
+    cleanup_task = None
+    try:
+        async with db.transaction() as holder:
+            await holder.fetch_one(
+                "SELECT workspace_id FROM {{tables.workspaces}} WHERE workspace_id=$1 FOR UPDATE",
+                high,
+            )
+            cleanup_task = asyncio.create_task(clean())
+            pid = await cleanup_pid
+            async with asyncio.timeout(5):
+                while not await db.fetch_value("SELECT cardinality(pg_blocking_pids($1)) > 0", pid):
+                    assert not cleanup_task.done()
+                    await asyncio.sleep(0.01)
+            # A delete before the full workspace lock set would lock this row.
+            claim = await holder.fetch_one(
+                "SELECT task_ref FROM {{tables.task_claims}} WHERE workspace_id=$1 FOR UPDATE NOWAIT",
+                low,
+            )
+            assert claim is not None
+        result = await cleanup_task
+        assert result.errors == ()
+        assert result.task_unclaim_count == 2
+        assert (
+            await db.fetch_value(
+                "SELECT count(*) FROM {{tables.task_claims}} WHERE team_id=$1", team
+            )
+            == 0
+        )
+    finally:
+        if cleanup_task is not None and not cleanup_task.done():
+            cleanup_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await cleanup_task
