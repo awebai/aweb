@@ -3,12 +3,18 @@ before any container starts (docker-compose.e2e.yml and the lane fixtures)."""
 
 import json
 import re
+from types import SimpleNamespace
 
+import pytest
 import yaml
+from awid.did import did_from_public_key
+from awid.dns_verify import _parse_awid_record
+from nacl.signing import SigningKey
 
 from tests.test_e2e_owner_acts import (
     APP_DIR,
     CONSOLE,
+    DOMAIN,
     LANE_SUBNET,
     LOGS_API,
     LOGS_COMPOSE_ENV,
@@ -18,12 +24,18 @@ from tests.test_e2e_owner_acts import (
     front_caddyfile,
     identity_folder,
     machine_dir,
+    publish_awid_txt,
     secrets_env,
 )
 
 LANE = yaml.safe_load((APP_DIR / "docker-compose.e2e.yml").read_text())
 LOGS_BASE = (APP_DIR.parent / "logs" / "compose.logs.yaml").read_text()
 REQUIRED = re.compile(r"\$\{([A-Z0-9_]+):\?")
+# Settings only the lane's Logs has, which never belong in the deployment
+# base: the lane's http registry is accepted only in development, its
+# certificates are the lane's own CA, and its coordination server is the
+# operator's own. Every other setting comes through the base.
+LANE_ONLY_LOGS_SETTINGS = frozenset({"APP_ENV", "SSL_CERT_FILE", "LOGS_TEAM_SERVER_INTERNAL_ORIGINS"})
 
 
 def test_every_setting_the_logs_base_requires_is_in_the_lanes_compose_environment():
@@ -39,8 +51,9 @@ def test_the_lanes_logs_is_the_deployments_base_with_its_files_read_only():
     assert logs["extends"] == {"file": "../logs/compose.logs.yaml", "service": "logs"}
     assert logs["profiles"] == ["logs"]
     assert "${SECRETS_E2E_RUNTIME:?}/logs:/run/secrets/logs:ro" in logs["volumes"]
-    # Every setting reaches it through the base, as in a deployment.
-    assert "environment" not in logs and "env_file" not in logs
+    # Every deployment setting reaches it through the base, as in a deployment.
+    assert set(logs.get("environment", {})) == LANE_ONLY_LOGS_SETTINGS
+    assert "env_file" not in logs
     assert logs["depends_on"]["postgres"] == {"condition": "service_healthy"}
     assert "logs" in LANE["services"]["smtp-tls"]["profiles"]
 
@@ -93,3 +106,22 @@ def test_the_owners_identity_is_issued_into_the_folder_the_controller_machine_se
     assert machine_dir("controller") == "/runtime/controller"
     assert identity_folder("controller") == machine_dir("controller") + "/.aw"
     assert identity_folder("controller") != identity_folder("holder")
+
+
+@pytest.mark.parametrize(
+    "app_env",
+    [secrets_env, lambda: LANE["services"]["logs"]["environment"]],
+    ids=["secrets", "logs"],
+)
+def test_the_lanes_apps_accept_the_registry_the_lanes_dns_names(app_env, tmp_path, monkeypatch):
+    # The app checks the team's domain names its registry before it reads the
+    # team's server; the lane's registry is http, as every lane service runs it.
+    (tmp_path / "dns").mkdir()
+    controller = did_from_public_key(bytes(SigningKey.generate().verify_key))
+    publish_awid_txt(SimpleNamespace(runtime=tmp_path), controller)
+    record = re.search(r'TXT "(.*)"', next((tmp_path / "dns").glob("*.zone")).read_text()).group(1)
+    for name in ("APP_ENV", "ENVIRONMENT"):
+        monkeypatch.delenv(name, raising=False)
+    for name, value in app_env().items():
+        monkeypatch.setenv(name, value)
+    assert _parse_awid_record(record, dns_name=f"_awid.{DOMAIN}").registry_url == REGISTRY

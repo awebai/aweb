@@ -180,6 +180,9 @@ def secrets_env() -> dict[str, str]:
         "SECRETS_HOOK_INTERNAL_CIDR": LANE_SUBNET,
         "SECRETS_HOOK_CA_FILE": "/run/secrets-keys/hook-ca.pem",
         "SECRETS_TEAM_SERVER_INTERNAL_ORIGINS": json.dumps([AWEB]),
+        # The team's domain names the lane's http registry, which awid accepts
+        # only in development, as every other lane service runs.
+        "APP_ENV": "development",
         # The lane's CA, which the team server's TLS front presents.
         "SSL_CERT_FILE": "/run/secrets-keys/hook-ca.pem",
     }
