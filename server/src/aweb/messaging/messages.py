@@ -432,11 +432,12 @@ async def deliver_message(
         if from_agent_id
         else None
     )
-    to_uuid = (
-        _parse_uuid(to_agent_id, field_name="to_agent_id")
-        if to_agent_id
-        else (UUID(str(recipient["agent_id"])) if recipient.get("agent_id") else None)
-    )
+    if to_agent_id:
+        to_uuid = _parse_uuid(to_agent_id, field_name="to_agent_id")
+    elif recipient.get("agent_id"):
+        to_uuid = UUID(str(recipient["agent_id"]))
+    else:
+        to_uuid = None
     from_alias_value = (from_alias or sender_address or sender_did).strip()
     from_address_value = (sender_address or "").strip() or None
     to_alias_value = (
