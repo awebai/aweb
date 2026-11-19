@@ -8,6 +8,7 @@ from uuid import uuid4
 
 import asyncpg
 import pytest
+from aweb_naapp.runtime.db import prepared_pool_config
 from pgdbm import AsyncDatabaseManager
 
 from aweb_secrets.custody import Custody, LocalKeyFileProvider, SealContext, encode_value
@@ -57,16 +58,19 @@ async def erasedb(test_db_factory, tmp_path):
         runtime_dsn = original._replace(
             netloc=f"{quote(role, safe='')}:{quote(password, safe='')}@{original.netloc.rsplit('@', 1)[-1]}"
         ).geturl()
-        config = db.config.model_copy(
-            update={
-                "connection_string": runtime_dsn,
-                "min_connections": 1,
-                "max_connections": 2,
-                "server_settings": None,
-            }
+        content_schema = db.schema or "public"
+        config = prepared_pool_config(
+            db.config.model_copy(
+                update={
+                    "connection_string": runtime_dsn,
+                    "min_connections": 1,
+                    "max_connections": 2,
+                }
+            ),
+            content_schema=content_schema,
         )
         pool = await AsyncDatabaseManager.create_shared_pool(config)
-        service = AsyncDatabaseManager(pool=pool, schema=db.schema)
+        service = AsyncDatabaseManager(pool=pool, schema=content_schema)
         try:
             yield db, service, role, Custody(LocalKeyFileProvider(key), service)
         finally:
