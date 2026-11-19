@@ -645,6 +645,7 @@ func init() {
 	teamImportRequestCmd.Flags().StringVar(&teamImportRequestTimestamp, "timestamp", "", "RFC3339 timestamp to sign (defaults to now; accepted for five minutes by cloud)")
 	teamImportRequestCmd.Flags().BoolVar(&teamImportRequestApply, "apply", false, "Create an apply request instead of the default dry-run request")
 	teamCmd.AddCommand(teamImportRequestCmd)
+	teamCmd.AddCommand(teamClaimHumanRequestCmd)
 
 	teamRegisterCmd.Flags().StringVar(&teamRegisterTeam, "team", "", "Canonical AWID team id (<team>:<namespace>)")
 	teamRegisterCmd.Flags().StringVar(&teamRegisterServiceURL, "service", "", "Service URL to register with")
