@@ -163,15 +163,8 @@ async def _ensure_agent(
     did_aw and address come from independently verified identity bindings. Empty strings are stored as NULL (local
     certificates do not carry these fields).
     """
-    existing_agent = await db.fetch_one(
-        """
-        SELECT agent_id, alias FROM {{tables.agents}}
-        WHERE team_id = $1 AND did_key = $2 AND deleted_at IS NULL
-        """,
-        team_id,
-        did_key,
-    )
-    if existing_agent:
+
+    async def _update_existing_agent(existing_agent) -> str:
         _require_planned_id(existing_agent["agent_id"], planned_agent_id)
         existing_alias = existing_agent["alias"]
         if existing_alias != alias:
@@ -200,6 +193,17 @@ async def _ensure_agent(
             accepted_team_did_key,
         )
         return str(existing_agent["agent_id"])
+
+    existing_agent = await db.fetch_one(
+        """
+        SELECT agent_id, alias FROM {{tables.agents}}
+        WHERE team_id = $1 AND did_key = $2 AND deleted_at IS NULL
+        """,
+        team_id,
+        did_key,
+    )
+    if existing_agent:
+        return await _update_existing_agent(existing_agent)
 
     existing_alias = await db.fetch_one(
         """
@@ -258,34 +262,10 @@ async def _ensure_agent(
             did_key,
         )
         if existing_agent:
-            _require_planned_id(existing_agent["agent_id"], planned_agent_id)
-            existing_alias = existing_agent["alias"]
-            if existing_alias != alias:
-                raise AliasConflictError(
-                    f"cert claims alias {alias!r} but did_key is already bound to alias {existing_alias!r} in team {team_id}",
-                    code="alias_mismatch",
-                ) from exc
-            await db.execute(
-                """
-                UPDATE {{tables.agents}}
-                SET did_aw = $1, address = $2, identity_scope = $3, human_name = $4,
-                    agent_type = $5, role = $6, status = 'active', certificate_id = $8, did_aw_verified_key = $9, human_verified_key = $10,
-                    accepted_team_did_key = $11
-                WHERE agent_id = $7
-                """,
-                did_aw or None,
-                address or None,
-                identity_scope,
-                human_name,
-                agent_type,
-                role,
-                existing_agent["agent_id"],
-                (certificate_id or "").strip() or None,
-                did_key if did_aw else None,
-                human_verified_key,
-                accepted_team_did_key,
-            )
-            return str(existing_agent["agent_id"])
+            try:
+                return await _update_existing_agent(existing_agent)
+            except AliasConflictError as conflict:
+                raise conflict from exc
         existing_alias = await db.fetch_one(
             """
             SELECT agent_id, did_key FROM {{tables.agents}}
