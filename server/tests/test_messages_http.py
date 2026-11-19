@@ -3737,7 +3737,10 @@ async def test_signed_plaintext_mail_rejects_timestamp_outside_federation_window
         response = await client.post("/v1/messages", json=payload)
 
     assert response.status_code == 422, response.text
-    assert response.json()["detail"] == "timestamp outside accepted skew"
+    assert response.json()["detail"] == (
+        "timestamp outside accepted skew. Sign the message again with the current UTC time and retry."
+    )
+    assert response.headers["X-AWEB-Error-Code"] == "message_timestamp_outside_skew"
 
 
 @pytest.mark.asyncio

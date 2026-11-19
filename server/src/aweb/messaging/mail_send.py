@@ -79,6 +79,7 @@ from aweb.messaging.recipient_bindings import signed_recipient_matches
 from aweb.messaging.kinds import MessageKind, MessageTransport
 from aweb.messaging.recipients import resolve_address_recipient
 from aweb.messaging.runtime import MessagingRuntime
+from aweb.messaging.refusals import DeliveryRefusalCode
 from aweb.messaging.sender_address import sender_address as _sender_address
 from aweb.messaging.signatures import (
     MessageSignatureShapeError,
@@ -97,6 +98,9 @@ if TYPE_CHECKING:
     from aweb.routes.messages import SendMessageRequest
 
 
+logger = logging.getLogger(__name__)
+
+
 @dataclass(frozen=True)
 class SentMail:
     """A stored mail send, as its sender is told of it."""
@@ -107,29 +111,51 @@ class SentMail:
     delivered_at: str
 
 
+def _timestamp_refusal(
+    detail: str,
+    *,
+    code: DeliveryRefusalCode | None = None,
+) -> HTTPException:
+    """Log a content-free timestamp refusal with a signing action."""
+    logger.warning("mail_timestamp_refused reason=%s", detail)
+    return HTTPException(
+        status_code=422,
+        detail=detail + ". Sign the message again with the current UTC time and retry.",
+        headers={"X-AWEB-Error-Code": code.value} if code is not None else None,
+    )
+
+
 def _parse_signed_timestamp(value: str) -> datetime:
     try:
         dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except Exception:
-        raise HTTPException(status_code=422, detail="Invalid timestamp format")
+    except ValueError as exc:
+        raise _timestamp_refusal("Invalid timestamp format") from exc
     if dt.tzinfo is None:
-        raise HTTPException(status_code=422, detail="timestamp must be timezone-aware")
+        raise _timestamp_refusal("timestamp must be timezone-aware")
     dt = dt.astimezone(timezone.utc)
     if dt.microsecond != 0:
-        raise HTTPException(
-            status_code=422, detail="timestamp must be second precision"
-        )
+        raise _timestamp_refusal("timestamp must be second precision")
     try:
         enforce_message_timestamp_skew(dt)
     except FederationEnvelopeError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise _timestamp_refusal(
+            str(exc),
+            code=DeliveryRefusalCode.TIMESTAMP_OUTSIDE_SKEW,
+        ) from exc
     return dt
 
 
 def _require_fresh_mail_attestation(payload: SendMessageRequest) -> None:
-    """Require current attestation time for a new signed mail submission."""
-    if payload.signature is not None:
-        _parse_signed_timestamp(payload.timestamp)
+    """Require fresh attestation only after excluding an exact stored retry.
+
+    docs/identity-messaging-contract.md, Receiver-Wide Replay And Contact
+    Compatibility: answering an identical stored send is not a new attestation.
+    """
+    if payload.signature is None:
+        return
+    if payload.timestamp is None:
+        raise _timestamp_refusal("timestamp is required for a signed message")
+    _parse_signed_timestamp(payload.timestamp)
 
 
 def _validate_signed_mail_payload(
@@ -956,10 +982,6 @@ async def send_mail_conversation_continuation(
                     sender_did_key=auth.did_key,
                 )
                 _validate_signed_mail_payload(**validation)
-            # payload.timestamp is the sender's attestation retained in
-            # signed_payload; deliver_message separately assigns server receipt
-            # time for ordering, so the two values may disagree.
-            _require_fresh_mail_attestation(payload)
         encrypted_metadata = _validate_encrypted_payload(
             payload,
             auth=auth,
@@ -992,6 +1014,7 @@ async def send_mail_conversation_continuation(
         )
         if stored is not None:
             return stored
+        _require_fresh_mail_attestation(payload)
         try:
             with agent_wake_scope(runtime.agent_wake_publisher):
                 message_id, server_received_at = await deliver_message(
@@ -1559,12 +1582,9 @@ async def _send_mail_to_resolved_target(
             timestamp=payload.timestamp,
             conversation_id=payload.conversation_id,
         )
-        # payload.timestamp is the sender's attestation retained in
-        # signed_payload; deliver_message separately assigns server receipt
-        # time for ordering, so the two values may disagree.
-        _require_fresh_mail_attestation(payload)
 
     if (recipient or {}).get("external"):
+        _require_fresh_mail_attestation(payload)
         return await deliver_remote_mail_and_project_locally(
             runtime,
             payload,
@@ -1611,6 +1631,7 @@ async def _send_mail_to_resolved_target(
         )
         if stored is not None:
             return stored
+        _require_fresh_mail_attestation(payload)
         try:
             with agent_wake_scope(runtime.agent_wake_publisher):
                 # The conversation and its first message commit together: a refused

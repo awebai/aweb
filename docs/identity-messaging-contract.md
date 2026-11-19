@@ -316,6 +316,17 @@ signature, signed payload, or
 protected encrypted bytes returns `federation_message_replay_conflict`.
 Receipts survive ordinary message garbage collection.
 
+For native signed mail, an exact retry whose identical signed payload is
+already stored returns that stored result before applying the attestation age
+limit. Signature, sender/recipient binding, encryption and current delivery
+admission checks still precede this lookup. A stored answer is not a new
+attestation; a new message still requires a timestamp within the accepted skew.
+Age refusal is HTTP 422 with the existing human `detail` plus a signing action
+and additive `X-AWEB-Error-Code: message_timestamp_outside_skew` header. Shape
+errors do not carry that age code. A client may re-sign a new submission after
+that specific age refusal; it must retain the original payload for exact retry.
+
+
 Migration backfill marks historical rows whose exact original envelope cannot
 be reconstructed as `legacy_unreplayable`; any attempt that reaches a new
 receipt claim conflicts rather than being guessed idempotent. A historical

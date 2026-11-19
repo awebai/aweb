@@ -64,4 +64,6 @@ async def test_accepted_mail_mode_is_observed_on_exact_retry_without_another_eve
         UUID(message_id),
     )
     assert row["signed_payload"] == original
-    assert row["content_mode"] == payload["content_mode"]
+    # Storage keeps its existing canonical plaintext mode; only the callback
+    # carries the accepted raw metadata observed at ingress.
+    assert row["content_mode"] == "legacy_plaintext_v1"
