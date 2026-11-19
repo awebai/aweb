@@ -75,8 +75,9 @@ func TestAPIKeyCreationInvitationFixesParentAndIntentBeforeRequest(t *testing.T)
 					t.Fatal(err)
 				}
 				selected.CreationInvitation.Parent["id"] = v.Keys["bob"].DIDAW
-				if _, err := prepareAPIKeyBootstrapIdentity(req, req.Name, registry); err == nil {
-					t.Fatal("retry changed parent")
+				resumed, err := prepareAPIKeyBootstrapIdentity(req, req.Name, registry)
+				if err != nil || resumed.DIDKey != first.DIDKey {
+					t.Fatalf("retry replaced the frozen invitation with refreshed metadata: %v", err)
 				}
 				state, err := loadAPIKeyPartialInit(apiKeyPartialInitPath(req.WorkingDir, req.IdentityHome))
 				if err != nil {
@@ -130,12 +131,13 @@ func TestAPIKeyInitSendsAndRetainsInvitationBoundRequest(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("AW_CONFIG_PATH", "")
 	v := adoptionVectors(t)
-	posts := 0
+	posts, teamReads := 0, 0
 	parent := v.Keys["alice"].DIDAW
 	var origin string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/v1/teams/current":
+			teamReads++
 			json.NewEncoder(w).Encode(map[string]any{"team_id": "22222222-2222-4222-8222-222222222222", "canonical_team_id": "agents:other.example", "creation_invitation": map[string]any{"id": "11111111-1111-4111-8111-111111111111", "parent": map[string]any{"kind": "identity", "id": parent}, "domain": "example.com", "name": "terminal", "identity_scope": "local"}})
 		case "/api/v1/workspaces/init":
 			posts++
@@ -167,10 +169,10 @@ func TestAPIKeyInitSendsAndRetainsInvitationBoundRequest(t *testing.T) {
 	key, requestID := state.DIDKey, state.IDTree.RequestID
 	parent = v.Keys["bob"].DIDAW
 	if _, err := runAPIKeyBootstrapInit(req); err == nil {
-		t.Fatal("changed invitation accepted on retry")
+		t.Fatal("the endpoint's second temporary failure was hidden")
 	}
-	if posts != 1 {
-		t.Fatal("changed parent reached creation")
+	if posts != 2 || teamReads != 1 {
+		t.Fatalf("retry did not use frozen original selection: posts=%d selection reads=%d", posts, teamReads)
 	}
 	state, err = loadAPIKeyPartialInit(apiKeyPartialInitPath(req.WorkingDir))
 	if err != nil {
