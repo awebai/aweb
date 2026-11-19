@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from aweb.messaging.kinds import ContentMode
+from aweb.event_types import TransportEventType
 
 import asyncio
 import json
@@ -57,7 +58,7 @@ class Event:
 class ReservationAcquiredEvent(Event):
     """Event emitted when reservations are acquired."""
 
-    type: str = field(default="reservation.acquired", init=False)
+    type: str = field(default=TransportEventType.RESERVATION_ACQUIRED.value, init=False)
     paths: list[str] = field(default_factory=list)
     alias: str = ""
     ttl_seconds: int = 0
@@ -69,7 +70,7 @@ class ReservationAcquiredEvent(Event):
 class ReservationReleasedEvent(Event):
     """Event emitted when reservations are released."""
 
-    type: str = field(default="reservation.released", init=False)
+    type: str = field(default=TransportEventType.RESERVATION_RELEASED.value, init=False)
     paths: list[str] = field(default_factory=list)
     alias: str = ""
 
@@ -78,7 +79,7 @@ class ReservationReleasedEvent(Event):
 class ReservationRenewedEvent(Event):
     """Event emitted when reservation TTLs are extended."""
 
-    type: str = field(default="reservation.renewed", init=False)
+    type: str = field(default=TransportEventType.RESERVATION_RENEWED.value, init=False)
     paths: list[str] = field(default_factory=list)
     alias: str = ""
     ttl_seconds: int = 0
@@ -88,7 +89,7 @@ class ReservationRenewedEvent(Event):
 class MessageDeliveredEvent(Event):
     """Event emitted when a message is delivered to a workspace inbox."""
 
-    type: str = field(default="message.delivered", init=False)
+    type: str = field(default=TransportEventType.MAIL_DELIVERED.value, init=False)
     message_id: str = ""
     from_workspace: str = ""
     from_alias: str = ""
@@ -103,7 +104,7 @@ class MessageDeliveredEvent(Event):
 class MessageAcknowledgedEvent(Event):
     """Event emitted when a message is acknowledged."""
 
-    type: str = field(default="message.acknowledged", init=False)
+    type: str = field(default=TransportEventType.MAIL_ACKNOWLEDGED.value, init=False)
     message_id: str = ""
     from_alias: str = ""
     subject: str = ""
@@ -115,7 +116,7 @@ class MessageAcknowledgedEvent(Event):
 class ChatMessageEvent(Event):
     """Event emitted when a chat message is sent."""
 
-    type: str = field(default="chat.message_sent", init=False)
+    type: str = field(default=TransportEventType.CHAT_MESSAGE_SENT.value, init=False)
     session_id: str = ""
     message_id: str = ""
     from_alias: str = ""
@@ -127,7 +128,7 @@ class ChatMessageEvent(Event):
 class TaskStatusChangedEvent(Event):
     """Event emitted when a task's status changes."""
 
-    type: str = field(default="task.status_changed", init=False)
+    type: str = field(default=TransportEventType.TASK_STATUS_CHANGED.value, init=False)
     team_id: str = ""
     task_ref: str = ""
     old_status: str = ""
@@ -140,7 +141,7 @@ class TaskStatusChangedEvent(Event):
 class TaskCreatedEvent(Event):
     """Event emitted when a task is created."""
 
-    type: str = field(default="task.created", init=False)
+    type: str = field(default=TransportEventType.TASK_CREATED.value, init=False)
     team_id: str = ""
     task_ref: str = ""
     title: str | None = None
@@ -151,7 +152,7 @@ class TaskCreatedEvent(Event):
 class TaskClaimedEvent(Event):
     """Event emitted when a workspace claims a task."""
 
-    type: str = field(default="task.claimed", init=False)
+    type: str = field(default=TransportEventType.TASK_CLAIMED.value, init=False)
     task_ref: str = ""
     alias: str = ""
     title: str | None = None
@@ -161,7 +162,7 @@ class TaskClaimedEvent(Event):
 class TaskUnclaimedEvent(Event):
     """Event emitted when a workspace releases a task claim."""
 
-    type: str = field(default="task.unclaimed", init=False)
+    type: str = field(default=TransportEventType.TASK_UNCLAIMED.value, init=False)
     task_ref: str = ""
     alias: str = ""
     title: str | None = None
@@ -186,7 +187,7 @@ class TeamEvent:
 
 @dataclass
 class TeamTaskCreatedEvent(TeamEvent):
-    type: str = field(default="task.created", init=False)
+    type: str = field(default=TransportEventType.TASK_CREATED.value, init=False)
     task_ref: str = ""
     alias: str = ""
     title: str = ""
@@ -196,7 +197,7 @@ class TeamTaskCreatedEvent(TeamEvent):
 
 @dataclass
 class TeamTaskStatusChangedEvent(TeamEvent):
-    type: str = field(default="task.status_changed", init=False)
+    type: str = field(default=TransportEventType.TASK_STATUS_CHANGED.value, init=False)
     task_ref: str = ""
     alias: str = ""
     title: str = ""
@@ -207,7 +208,9 @@ class TeamTaskStatusChangedEvent(TeamEvent):
 
 @dataclass
 class TeamTaskAssigneeChangedEvent(TeamEvent):
-    type: str = field(default="task.assignee_changed", init=False)
+    type: str = field(
+        default=TransportEventType.TASK_ASSIGNEE_CHANGED.value, init=False
+    )
     task_ref: str = ""
     alias: str = ""
     title: str = ""
@@ -219,7 +222,7 @@ class TeamTaskAssigneeChangedEvent(TeamEvent):
 class TeamAgentStatusEvent(TeamEvent):
     """An agent's host-published reachability verdict changed (docs/agent-health.md)."""
 
-    type: str = field(default="agent.status", init=False)
+    type: str = field(default=TransportEventType.AGENT_STATUS.value, init=False)
     agent_id: str = ""
     alias: str = ""
     reachable: str = ""
@@ -233,7 +236,7 @@ class TeamAgentStatusEvent(TeamEvent):
 
 @dataclass
 class TeamTaskClaimedEvent(TeamEvent):
-    type: str = field(default="task.claimed", init=False)
+    type: str = field(default=TransportEventType.TASK_CLAIMED.value, init=False)
     task_ref: str = ""
     alias: str = ""
     title: str = ""
@@ -241,7 +244,7 @@ class TeamTaskClaimedEvent(TeamEvent):
 
 @dataclass
 class TeamTaskUnclaimedEvent(TeamEvent):
-    type: str = field(default="task.unclaimed", init=False)
+    type: str = field(default=TransportEventType.TASK_UNCLAIMED.value, init=False)
     task_ref: str = ""
     alias: str = ""
     title: str = ""
@@ -249,7 +252,7 @@ class TeamTaskUnclaimedEvent(TeamEvent):
 
 @dataclass
 class TeamMessageSentEvent(TeamEvent):
-    type: str = field(default="message.delivered", init=False)
+    type: str = field(default=TransportEventType.MAIL_DELIVERED.value, init=False)
     message_id: str = ""
     from_alias: str = ""
     to_alias: str = ""
@@ -261,7 +264,7 @@ class TeamMessageSentEvent(TeamEvent):
 
 @dataclass
 class TeamMessageAcknowledgedEvent(TeamEvent):
-    type: str = field(default="message.acknowledged", init=False)
+    type: str = field(default=TransportEventType.MAIL_ACKNOWLEDGED.value, init=False)
     alias: str = ""
     from_alias: str = ""
     subject: str = ""
@@ -271,7 +274,7 @@ class TeamMessageAcknowledgedEvent(TeamEvent):
 
 @dataclass
 class TeamChatMessageSentEvent(TeamEvent):
-    type: str = field(default="chat.message_sent", init=False)
+    type: str = field(default=TransportEventType.CHAT_MESSAGE_SENT.value, init=False)
     from_alias: str = ""
     to_aliases: list[str] = field(default_factory=list)
     preview: str = ""
@@ -279,34 +282,34 @@ class TeamChatMessageSentEvent(TeamEvent):
 
 @dataclass
 class TeamReservationAcquiredEvent(TeamEvent):
-    type: str = field(default="reservation.acquired", init=False)
+    type: str = field(default=TransportEventType.RESERVATION_ACQUIRED.value, init=False)
     alias: str = ""
     paths: list[str] = field(default_factory=list)
 
 
 @dataclass
 class TeamReservationReleasedEvent(TeamEvent):
-    type: str = field(default="reservation.released", init=False)
+    type: str = field(default=TransportEventType.RESERVATION_RELEASED.value, init=False)
     alias: str = ""
     paths: list[str] = field(default_factory=list)
 
 
 @dataclass
 class TeamReservationRenewedEvent(TeamEvent):
-    type: str = field(default="reservation.renewed", init=False)
+    type: str = field(default=TransportEventType.RESERVATION_RENEWED.value, init=False)
     alias: str = ""
     paths: list[str] = field(default_factory=list)
 
 
 @dataclass
 class TeamAgentOnlineEvent(TeamEvent):
-    type: str = field(default="agent.online", init=False)
+    type: str = field(default=TransportEventType.AGENT_ONLINE.value, init=False)
     alias: str = ""
 
 
 @dataclass
 class TeamAgentOfflineEvent(TeamEvent):
-    type: str = field(default="agent.offline", init=False)
+    type: str = field(default=TransportEventType.AGENT_OFFLINE.value, init=False)
     alias: str = ""
 
 

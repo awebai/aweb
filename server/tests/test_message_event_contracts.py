@@ -271,6 +271,15 @@ def test_transport_vocabulary_names_every_existing_standard_dto():
                 and field.default
             ):
                 names.add(field.default)
+                event = definition(
+                    **(
+                        {"team_id": "team"}
+                        if issubclass(definition, existing_transport.TeamEvent)
+                        else {"workspace_id": "workspace"}
+                    )
+                )
+                assert type(event.type) is str
+                assert json.loads(event.to_json())["type"] == field.default
     assert names == {event.value for event in TransportEventType}
 
 
