@@ -81,6 +81,10 @@ async def test_repo_delete_applies_self_or_stale_rule_and_reports_live_peer_skip
         env.actors["carol"].workspace,
     ), "a live teammate's workspace must survive repo cleanup"
     assert response.json()["workspaces_deleted"] == 2
+    assert response.json()["repo_deleted"] is False
+    assert await env.db.fetch_value(
+        "SELECT deleted_at IS NULL FROM {{tables.repos}} WHERE id=$1", repo_id
+    )
     assert response.json()["skipped_workspaces"] == [
         {
             "workspace_id": str(env.actors["carol"].workspace),
@@ -182,3 +186,36 @@ async def test_emergency_revoke_records_member_and_notifies_every_affected_holde
         body={"resource_key": "untouched/carol"},
     )
     assert ordinary_release.status_code == 409, ordinary_release.text
+
+
+@pytest.mark.asyncio
+async def test_failed_emergency_revoke_audit_preserves_lock_and_emits_no_release(privacy_app):
+    """The required audit and lock release commit together (docs/operator-audit.md)."""
+    env = privacy_app
+    await _acquire_lock(env, alias="bob", resource_key="audit-rollback/bob")
+    await env.db.execute(
+        "ALTER TABLE {{tables.audit_log}} ADD CONSTRAINT reject_emergency_revoke_audit "
+        "CHECK (event_type <> 'reservations.revoke') NOT VALID"
+    )
+    try:
+        response = await _send_member_request(
+            env,
+            alias="alice",
+            method="POST",
+            path="/v1/reservations/revoke",
+            body={"prefix": "audit-rollback/"},
+        )
+        assert response.status_code == 500, response.text
+        assert (
+            await env.db.fetch_value(
+                "SELECT count(*) FROM {{tables.reservations}} WHERE team_id=$1 AND resource_key=$2",
+                TEAM,
+                "audit-rollback/bob",
+            )
+            == 1
+        )
+        assert not [context for event, context in env.dispatched if event == "reservation.released"]
+    finally:
+        await env.db.execute(
+            "ALTER TABLE {{tables.audit_log}} DROP CONSTRAINT reject_emergency_revoke_audit"
+        )

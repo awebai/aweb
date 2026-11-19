@@ -30,6 +30,7 @@ _ACTIONS = {
     "activate_team_instructions_endpoint": "instructions.activate",
     "reset_team_instructions_to_default_endpoint": "instructions.reset",
     "delete_repo": "repos.delete",
+    "revoke_reservations": "reservations.revoke",
     "install_app_route": "apps.install",
     "approve_installation_request_route": "apps.requests.approve",
     "decline_installation_request_route": "apps.requests.decline",

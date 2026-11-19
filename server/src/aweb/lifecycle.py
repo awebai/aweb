@@ -30,7 +30,11 @@ from .identity_scope import normalize_identity_scope
 from .agent_wake import did_wake_key, send_agent_wakes
 from .messaging.waiting import unregister_waiting_strict
 from .presence import clear_workspace_presence
-from .workspace_activity import WorkspaceActivityRefusal, workspace_activity_by_id
+from .workspace_activity import (
+    WorkspaceActivityRefusal,
+    workspace_activity_by_id,
+    workspace_stale_cutoff,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1231,6 +1235,49 @@ async def _clear_presence(
             exc_info=True,
         )
         return "failed", None
+
+
+@dataclass(frozen=True, kw_only=True)
+class LocalWorkspaceTarget:
+    """Canonical workspace binding loaded by an authorized coordination caller."""
+
+    workspace_id: UUID
+    agent_id: UUID | None
+
+
+async def apply_local_workspace_cleanup(
+    db,
+    redis: Redis | None,
+    *,
+    team_id: str,
+    target: LocalWorkspaceTarget,
+    actor: LifecycleActor,
+    deleted_at: datetime,
+) -> LifecycleCascadeResult:
+    """Clean self immediately, or a stale local peer, through the same cascade.
+
+    Implements docs/aweb-sot.md:1199–1217. Repo bulk cleanup and the single
+    workspace route use this owner; neither bypasses identity scope, liveness
+    or transactional side-effect intents.
+    """
+    is_self = target.agent_id is not None and actor.actor_id == str(target.agent_id)
+    cutoff = None if is_self else workspace_stale_cutoff(now=deleted_at)
+    return await apply_lifecycle_cascade(
+        db,
+        redis,
+        LifecycleCascadeRequest(
+            operation="delete_local_workspace",
+            actor=actor,
+            team_id=team_id,
+            target_agent_id=str(target.agent_id) if target.agent_id is not None else None,
+            target_workspace_ids=(str(target.workspace_id),),
+            workspace_scope="explicit",
+            require_identity_scope="local",
+            stale_before=cutoff,
+            deleted_at=deleted_at,
+            mark_local_agent_deleted=True,
+        ),
+    )
 
 
 async def apply_lifecycle_cascade(

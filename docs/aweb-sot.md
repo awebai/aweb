@@ -1210,6 +1210,20 @@ Expired, revoked or stale grants do not keep a workspace live. Self cleanup
 remains immediate. The caller must present a team certificate for the same
 `team_id` as the target workspace.
 
+Repo deletion applies that same local-workspace cleanup owner to every workspace
+in the repo. It reports ineligible targets in `skipped_workspaces` with their
+refusal codes. A repo with skipped live or global workspaces stays available
+(`repo_deleted: false`); eligible cleanup still commits and emits the lifecycle
+events. Redis cleanup failures remain in the outbox and set `cleanup_pending`.
+
+Ordinary reservation release protects another active holder. Emergency
+`POST /v1/reservations/revoke` remains available to any team-certificate member,
+including an empty prefix to revoke all active team reservations. It records the
+verified actor in the operator audit transaction, emits the ordinary
+`reservation.released` event for each affected reservation and notifies its
+holder's workspace. Grants cannot invoke emergency revoke. Neither operation
+deletes coordination history.
+
 Lifecycle Redis effects are driven by `lifecycle_side_effect_outbox`, not by
 reconstructing deleted claim rows. Claim release captures workspace/team
 unclaim events, chat-waiting cleanup, and presence cleanup in the same

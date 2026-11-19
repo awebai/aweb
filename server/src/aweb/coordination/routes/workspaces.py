@@ -28,12 +28,11 @@ from ...presence import (
     update_agent_presence,
 )
 from ...redis_client import get_redis
-from ...workspace_activity import workspace_stale_cutoff
 from ...role_name_compat import normalize_optional_role_name, resolve_role_name_aliases
 from ...lifecycle import (
     LifecycleActor,
-    LifecycleCascadeRequest,
-    apply_lifecycle_cascade,
+    LocalWorkspaceTarget,
+    apply_local_workspace_cleanup,
 )
 from ..roles import (
     ROLE_MAX_LENGTH,
@@ -447,17 +446,6 @@ def _workspace_delete_refusal_detail(
     }
 
 
-def _workspace_cleanup_cutoff(*, identity: TeamIdentity, workspace: dict) -> datetime | None:
-    """Self cleanup is immediate; the cascade checks foreign-workspace activity.
-
-    Implements docs/aweb-sot.md:1199–1205 and self retirement at :236–248.
-    """
-    requesting_agent_id = identity.agent_id.strip()
-    if requesting_agent_id and str(workspace.get("agent_id")) == requesting_agent_id:
-        return None
-    return workspace_stale_cutoff(now=datetime.now(timezone.utc))
-
-
 @router.delete("/{workspace_id}", response_model=DeleteWorkspaceResponse)
 async def delete_workspace(
     workspace_id: str = Path(..., description="Workspace ID to delete"),
@@ -595,30 +583,21 @@ async def delete_workspace(
             ),
         )
 
-    stale_cutoff = _workspace_cleanup_cutoff(identity=identity, workspace=existing)
-
     deleted_at = datetime.now(timezone.utc)
-    cascade_result = await apply_lifecycle_cascade(
+    cascade_result = await apply_local_workspace_cleanup(
         aweb_db,
         redis,
-        LifecycleCascadeRequest(
-            operation="delete_local_workspace",
-            actor=LifecycleActor(
-                actor_id=identity.agent_id,
-                actor_type="agent",
-                authority="team_identity",
-            ),
-            team_id=team_id,
-            target_agent_id=(
-                str(existing["agent_id"]) if existing.get("agent_id") is not None else None
-            ),
-            target_workspace_ids=(validated_id,),
-            workspace_scope="explicit",
-            require_identity_scope="local",
-            stale_before=stale_cutoff,
-            deleted_at=deleted_at,
-            mark_local_agent_deleted=True,
+        team_id=team_id,
+        target=LocalWorkspaceTarget(
+            workspace_id=UUID(validated_id),
+            agent_id=UUID(str(existing["agent_id"]))
+            if existing.get("agent_id") is not None
+            else None,
         ),
+        actor=LifecycleActor(
+            actor_id=identity.agent_id, actor_type="agent", authority="team_identity"
+        ),
+        deleted_at=deleted_at,
     )
     if cascade_result.errors:
         error = cascade_result.errors[0]
