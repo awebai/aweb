@@ -111,7 +111,7 @@ from aweb.messaging.recipients import (
     resolve_address_recipient,
 )
 from aweb.messaging.runtime import MessagingRuntime
-from aweb.messaging.delivery_policy import DeliverySender
+from aweb.messaging.delivery_policy import DeliverySender, DeliveryPolicyRefused
 from aweb.messaging.refusals import DeliveryRefusalCode
 from aweb.messaging.sender_address import sender_address as _sender_address
 from aweb.messaging.signatures import (
@@ -2037,6 +2037,8 @@ async def _send_mail_to_resolved_target(
             if replay_lookup.stored is None:
                 raise
             return replay_lookup.stored
+    except DeliveryPolicyRefused:
+        raise
     except (ValidationError, NotFoundError, ForbiddenError, ConflictError) as exc:
         if (
             isinstance(exc, ForbiddenError)

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from aweb.messaging.delivery_policy import DeliveryPolicyRefused
+
 from aweb.messaging.kinds import ContentMode
 
 import json
@@ -1191,6 +1193,8 @@ async def _resolve_named_recipients(
                 sender_verified_team_id=auth.verified_team_id,
                 sender_verified_dids=auth_dids(auth),
             )
+        except DeliveryPolicyRefused:
+            raise
         except (ValidationError, NotFoundError, ForbiddenError) as exc:
             if (
                 isinstance(exc, ForbiddenError)

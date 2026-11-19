@@ -39,7 +39,9 @@ async def test_http_keeps_age_code_and_structured_refusal_data():
     ) as client:
         response = await client.get("/refused")
     assert response.status_code == 422
-    assert response.json() == {"detail": error.detail}
+    assert response.json() == {
+        "detail": "timestamp outside accepted skew. Sign the message again with the current UTC time and retry."
+    }
     assert response.headers["X-AWEB-Error-Code"] == "message_timestamp_outside_skew"
     assert error.code is DeliveryRefusalCode.TIMESTAMP_OUTSIDE_SKEW
 
@@ -203,3 +205,33 @@ def test_send_refusal_rejects_unnamed_mode_before_inspecting_the_error(mode):
     with pytest.raises(TypeError) as human_refused:
         _send_refusal(UnreadableHumanChatRefused("peer"), mode=mode)
     assert str(human_refused.value) == str(refused.value)
+
+
+@pytest.mark.asyncio
+async def test_policy_refusal_code_and_action_reach_http_and_mcp():
+    from aweb.messaging.delivery_policy import DeliveryPolicyRefused
+
+    detail = "Recipient refuses this sender. Ask the recipient to add your exact address as a contact and retry."
+    error = DeliveryPolicyRefused(
+        code=DeliveryRefusalCode.RECIPIENT_POLICY_REJECTED, detail=detail
+    )
+    app = FastAPI()
+    app.add_exception_handler(ServiceError, service_error_handler)
+
+    @app.get("/policy")
+    async def policy():
+        raise error
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.get("/policy")
+    assert response.status_code == 403
+    assert response.json() == {
+        "detail": "Recipient refuses this sender. Ask the recipient to add your exact address as a contact and retry.",
+        "reason": "recipient_policy_rejected",
+    }
+    assert json.loads(send_refusal(error)) == {
+        "error": "Recipient refuses this sender. Ask the recipient to add your exact address as a contact and retry.",
+        "reason": "recipient_policy_rejected",
+    }
