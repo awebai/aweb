@@ -561,8 +561,8 @@ async def test_warm_client_deliveries_do_not_read_registry_again(world):
     assert (await world.send(delivery)).status_code == 200
     cold = len(world.coordination.registry.transport.calls)
     world.coordination.registry.transport.calls.clear()
-    # Compare the actual uncached component the previous ingest called on
-    # each delivery with the complete HTTP path now using bounded facts.
+    # Compare the actual uncached key component with the complete HTTP path
+    # using bounded facts.
     for _ in range(16):
         assert await world.runtime.team_cache().current_team_did_key(world.member.team_id)
     uncached_reads = len(world.coordination.registry.transport.calls)

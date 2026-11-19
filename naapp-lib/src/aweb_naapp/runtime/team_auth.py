@@ -392,13 +392,6 @@ class AWIDTeamCache:
 
     async def get(self, team_id: str, certificate_id: str | None = None) -> CachedTeamFacts:
         self._refuse_known_unknown_team(team_id)
-        try:
-            async with asyncio.timeout(5):
-                return await self._get(team_id, certificate_id)
-        except TimeoutError as exc:
-            raise HTTPException(status_code=503, detail="AWID registry unavailable") from exc
-
-    async def _get(self, team_id: str, certificate_id: str | None = None) -> CachedTeamFacts:
         if certificate_id and not self._reads_team_history(team_id):
             return await self._get_certificate_status(team_id, certificate_id)
         now = time.monotonic_ns()
