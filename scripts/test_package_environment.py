@@ -4,6 +4,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -268,24 +269,160 @@ class SourceImagePreparation(unittest.TestCase):
             evidence.mkdir()
             real_run = subprocess.run
             builds = []
+            # Native job inputs are private0400; COPY must override that mode.
+            tools = Path(temporary) / "tools"
+            tools.mkdir()
+            helper = tools / "prepare_projects.py"
+            helper.write_bytes((HERE / "test-egress/prepare_projects.py").read_bytes())
+            helper.chmod(0o400)
 
             def invoke(args, **kwargs):
                 if args[:2] == ["docker", "build"]:
                     context = Path(args[-1])
                     self.assertTrue((context / "source.bundle").is_file())
+                    self.assertEqual(
+                        (context / "package-environment.py").stat().st_mode & 0o777,
+                        0o400,
+                    )
                     builds.append((context / "isolated.Dockerfile").read_text())
                     return subprocess.CompletedProcess(args, 0)
                 return real_run(args, **kwargs)
 
-            with patch.object(images.subprocess, "run", side_effect=invoke):
+            with (
+                patch.object(images.subprocess, "run", side_effect=invoke),
+                patch.object(images, "__file__", str(tools / "package_image.py")),
+            ):
                 images.prepare_image(root, evidence, "owned-image", ["naapp/folio"])
             self.assertEqual(len(builds), 1)
             self.assertIn("--project naapp/folio --mode prepare", builds[0])
-            self.assertIn("USER 1000:1000\nRUN", builds[0])
-            self.assertIn("--mode verify", builds[0])
+            self.assertIn(
+                "COPY --chmod=0644 package-environment.py /opt/package-environment.py",
+                builds[0],
+            )
+            self.assertIn("USER 1000:1000\nRUN python3 -c", builds[0])
+            self.assertIn("package-helper-readable.json", builds[0])
+            # The Dockerfile instruction stays one physical line despite Python's multiline code.
+            verify_line = next(
+                line
+                for line in builds[0].splitlines()
+                if line.startswith("RUN python3 -c ")
+            )
+            read_argv = shlex.split(
+                verify_line.removeprefix("RUN ").split(" && ", 1)[0]
+            )
+            compile(read_argv[2], "image-helper-readability", "exec")
+            self.assertIn("os.getuid()==os.getgid()==1000", read_argv[2])
+            self.assertLess(
+                builds[0].index("package-helper-readable.json"),
+                builds[0].index("--mode verify"),
+            )
             self.assertNotIn("1243", builds[0])
             self.assertNotIn("2.41.5", builds[0])
             self.assertTrue((evidence / "package-preparation-tool.sha256").is_file())
+
+    def test_image_binding_retains_uid_read_receipt_and_refuses_inherited_private_mode(
+        self,
+    ):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = (Path(temporary) / "source").resolve()
+            root.mkdir()
+            for name, text in {
+                "candidate-gate/Dockerfile": "FROM python:3.12\n",
+                "scripts/test-egress/Dockerfile": "WORKDIR /src\nCOPY . .\n",
+                "server/pyproject.toml": "[project]\nname='fixture'\nversion='0'\n",
+                "server/uv.lock": "version=1\n",
+            }.items():
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(text)
+            for args in (
+                ["init", "-q"],
+                ["add", "."],
+                [
+                    "-c",
+                    "user.name=fixture",
+                    "-c",
+                    "user.email=fixture@example.test",
+                    "commit",
+                    "-qm",
+                    "source",
+                ],
+            ):
+                subprocess.run(["git", *args], cwd=root, check=True)
+            sha = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=root, text=True
+            ).strip()
+            lock_hash = hashlib.sha256(
+                (root / "server/uv.lock").read_bytes()
+            ).hexdigest()
+            helper_hash = hashlib.sha256(
+                (HERE / "test-egress/prepare_projects.py").read_bytes()
+            ).hexdigest()
+            verified = dict(
+                status="PASS", uid=1000, source=sha, locks={"server/uv.lock": lock_hash}
+            )
+            read_receipt = dict(
+                status="PASS",
+                uid=1000,
+                gid=1000,
+                mode="0644",
+                sha256=helper_hash,
+                parents={
+                    "/opt": {"traversable": True, "mode": "0755"},
+                    "/": {"traversable": True, "mode": "0755"},
+                },
+            )
+            real_output, real_run = subprocess.check_output, subprocess.run
+            removed = []
+
+            def output(args, **kwargs):
+                if args[0] != "docker":
+                    return real_output(args, **kwargs)
+                if args[:3] == ["docker", "image", "inspect"]:
+                    return "sha256:" + "a" * 64
+                self.assertIn("--user", args)
+                self.assertIn("1000:1000", args)
+                return json.dumps(
+                    read_receipt
+                    if args[-1].endswith("package-helper-readable.json")
+                    else verified
+                )
+
+            def invoke(args, **kwargs):
+                if args[:2] == ["docker", "build"]:
+                    return subprocess.CompletedProcess(args, 0)
+                if args[:3] == ["docker", "image", "rm"]:
+                    removed.append(args[-1])
+                    return subprocess.CompletedProcess(args, 0)
+                return real_run(args, **kwargs)
+
+            with (
+                patch.object(runner.subprocess, "check_output", side_effect=output),
+                patch.object(runner.subprocess, "run", side_effect=invoke),
+                patch.dict(sys.modules, {"prepare_projects": preparation}),
+            ):
+                binding = Path(temporary) / "binding.json"
+                runner.prepare(
+                    root, sha, ["server"], Path(temporary) / "evidence", binding
+                )
+                retained = json.loads(binding.read_text())
+                self.assertEqual(retained["helper_readability"], read_receipt)
+                self.assertEqual(retained["image"], "sha256:" + "a" * 64)
+                read_receipt["mode"] = "0400"
+                refused = Path(temporary) / "refused-binding.json"
+                with self.assertRaisesRegex(
+                    RuntimeError, "PACKAGE_HELPER_READABILITY_INVALID"
+                ):
+                    runner.prepare(
+                        root,
+                        sha,
+                        ["server"],
+                        Path(temporary) / "refused-evidence",
+                        refused,
+                    )
+                self.assertFalse(refused.exists())
+                self.assertEqual(len(removed), 1)
+                self.assertRegex(removed[0], "^aw-package-[0-9a-f]{32}$")
 
     def test_package_runtime_keeps_private_home_and_forwards_only_fixture_environment(
         self,

@@ -101,6 +101,38 @@ def prepare(root, sha, projects, evidence, binding):
                 text=True,
             )
         )
+        helper_readability = json.loads(
+            subprocess.check_output(
+                [
+                    "docker",
+                    "run",
+                    "--rm",
+                    "--network",
+                    "none",
+                    "--user",
+                    "1000:1000",
+                    image_id,
+                    "cat",
+                    "/home/test-runner/package-helper-readable.json",
+                ],
+                text=True,
+            )
+        )
+        helper_hash = hashlib.sha256(
+            Path(__file__).with_name("prepare_projects.py").read_bytes()
+        ).hexdigest()
+        if (
+            helper_readability.get("status") != "PASS"
+            or helper_readability.get("uid") != 1000
+            or helper_readability.get("gid") != 1000
+            or helper_readability.get("mode") != "0644"
+            or helper_readability.get("sha256") != helper_hash
+            or not helper_readability.get("parents")
+            or not all(
+                row.get("traversable") for row in helper_readability["parents"].values()
+            )
+        ):
+            raise RuntimeError("PACKAGE_HELPER_READABILITY_INVALID")
         if (
             verified.get("status") != "PASS"
             or verified.get("uid") != 1000
@@ -117,6 +149,7 @@ def prepare(root, sha, projects, evidence, binding):
                     "image": image_id,
                     "tag": image,
                     "verified": verified,
+                    "helper_readability": helper_readability,
                     "status": "PASS",
                 },
                 indent=2,

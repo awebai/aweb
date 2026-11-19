@@ -8,6 +8,19 @@ import tempfile
 from pathlib import Path
 
 
+HELPER_READABILITY_CHECK = """from pathlib import Path
+import hashlib,json,os,stat
+p=Path('/opt/package-environment.py')
+data=p.read_bytes()
+parents={str(parent):dict(mode=format(stat.S_IMODE(parent.stat().st_mode),'04o'),traversable=os.access(parent,os.X_OK)) for parent in p.parents}
+mode=format(stat.S_IMODE(p.stat().st_mode),'04o')
+assert os.getuid()==os.getgid()==1000 and mode=='0644' and all(row['traversable'] for row in parents.values())
+receipt=dict(status='PASS',uid=os.getuid(),gid=os.getgid(),path=str(p),mode=mode,bytes=len(data),sha256=hashlib.sha256(data).hexdigest(),parents=parents)
+Path('/home/test-runner/package-helper-readable.json').write_text(json.dumps(receipt,indent=2)+'\\n')
+print(json.dumps(receipt))
+"""
+
+
 def prepare_image(root, evidence, image, projects=None):
     if projects is None:
         projects = [
@@ -80,7 +93,7 @@ def prepare_image(root, evidence, image, projects=None):
             for project in projects:
                 argv += ["--project", project]
             recipe += (
-                "\nCOPY package-environment.py /opt/package-environment.py\n"
+                "\nCOPY --chmod=0644 package-environment.py /opt/package-environment.py\n"
                 + "RUN "
                 + shlex.join(
                     [
@@ -94,6 +107,10 @@ def prepare_image(root, evidence, image, projects=None):
                 + " && chown -R 1000:1000 /src /home/test-runner"
                 + " && chmod -R a+rX /opt/ms-playwright\nUSER 1000:1000\n"
                 + "RUN "
+                + shlex.join(
+                    ["python3", "-c", "exec(" + repr(HELPER_READABILITY_CHECK) + ")"]
+                )
+                + " && "
                 + shlex.join(
                     [
                         *argv,
