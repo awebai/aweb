@@ -28,8 +28,9 @@ def application_registry_client(state: State) -> RegistryClient:
     """Borrow the exact configured registry without constructing serving resources.
 
     A native resource reference is authoritative even when its client is
-    unavailable. Only applications without that reference use the initialized
-    legacy slot. This selects configuration, not readiness or request proof.
+    unavailable. When no native resources object exists, use the initialized
+    application-state ``awid_registry_client`` slot that the server sets.
+    This selects configuration, not readiness or request proof.
     """
     resources = getattr(state, "native_resources", None)
     client = (
@@ -39,7 +40,8 @@ def application_registry_client(state: State) -> RegistryClient:
     if not isinstance(client, RegistryClient):
         logger.error(
             "Native serving registry client is missing or invalid; source=%s",
-            "resources" if resources is not None else "legacy",
+            "resources" if resources is not None
+            else "application-state awid_registry_client slot (server without a native resources object)",
         )
         raise RegistryClientUnavailable()
     return client

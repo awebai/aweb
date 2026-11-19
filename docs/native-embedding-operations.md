@@ -223,7 +223,7 @@ raises `RegistryClientUnavailable`, a `ServiceError` with `status_code=503`,
 its configure/start instruction; generic unexpected service failures retain
 their existing masking. Hosted adapters preserve this refusal instead of
 turning it into a negative grant or presence result. A missing resource client
-never falls through to a wrapper's legacy client.
+never falls through to a wrapper's application-state client.
 
 Startup failures raise `EmbeddingStartupError` with named
 `ResourceStartupStage` and a safe actionable `NativeResourceReadiness` result;
