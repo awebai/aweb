@@ -222,7 +222,7 @@ func (tm *e2eTeam) idRequest(method, url string) (body, stderr string, err error
 func TestRealStackTeamAuthReachesLibrary(t *testing.T) {
 	requireE2E(t)
 	tm := newThrowawayTeam(t)
-	installLibrary(t, tm.workspace, tm.env, tm.namespace, "default")
+	installLibrary(t, libraryInstall{dir: tm.workspace, env: tm.env, namespace: tm.namespace, team: "default"})
 
 	body, stderr, err := tm.idRequest("GET", libraryURL()+"/v1/proposals")
 	if err != nil {
@@ -365,13 +365,23 @@ func TestRealStackWorkspacePresenceAndLocksUseDistinctIdentifiers(t *testing.T) 
 	}
 }
 
+// libraryInstall names the workspace that installs Library and the team it
+// installs it for.
+type libraryInstall struct {
+	dir       string
+	env       []string
+	namespace string
+	team      string
+}
+
 // installLibrary installs the stack's Library for the team the workspace in dir
 // acts for, as a team admin does: the stack's server is published as the
 // team's server, the member becomes an install admin there, and the real
 // `aw plugin install` approves the install. Library admits a member request
 // only for a team that installed it.
-func installLibrary(t *testing.T, dir string, env []string, namespace, team string) {
+func installLibrary(t *testing.T, install libraryInstall) {
 	t.Helper()
+	dir, env, namespace, team := install.dir, install.env, install.namespace, install.team
 	bin := awBinary(t)
 	run := func(args ...string) []byte {
 		t.Helper()
@@ -394,14 +404,21 @@ func installLibrary(t *testing.T, dir string, env []string, namespace, team stri
 	if err := json.Unmarshal(run("--json", "id", "show"), &identity); err != nil || identity.DIDKey == "" {
 		t.Fatalf("aw id show gave no did_key: %v", err)
 	}
-	grantInstallAdmin(t, team+":"+namespace, identity.DIDKey)
+	grantInstallAdmin(t, installAdmin{teamID: team + ":" + namespace, principalDID: identity.DIDKey})
 	run("plugin", "install", libraryURL())
 }
 
-// grantInstallAdmin makes principalDID an install admin of teamID on the stack's
-// coordination server, through the operator command in its container.
-func grantInstallAdmin(t *testing.T, teamID, principalDID string) {
+// installAdmin names the member a team makes an install admin.
+type installAdmin struct {
+	teamID       string
+	principalDID string
+}
+
+// grantInstallAdmin makes the member an install admin of its team on the
+// stack's coordination server, through the operator command in its container.
+func grantInstallAdmin(t *testing.T, admin installAdmin) {
 	t.Helper()
+	teamID, principalDID := admin.teamID, admin.principalDID
 	project := strings.TrimSpace(os.Getenv("LIBRARY_E2E_PROJECT"))
 	if project == "" {
 		t.Fatal("LIBRARY_E2E_PROJECT names the stack's compose project; run through make -C cli e2e")

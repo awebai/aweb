@@ -51,7 +51,7 @@ class E2EStack:
     redis_url: str | None = None
 
 
-def candidate_hostname(project: str, service: str) -> str:
+def candidate_hostname(*, project: str, service: str) -> str:
     helper = REPOSITORY_ROOT / "scripts/candidate-network.py"
     return subprocess.check_output(
         [sys.executable, str(helper), "hostname", project, service], text=True
@@ -75,17 +75,17 @@ def e2e_stack(env: Mapping[str, str], *, project: str, database: str) -> E2EStac
     return E2EStack(
         host=host,
         awid_url=(
-            f"http://{candidate_hostname(project, 'awid')}:8010"
+            f"http://{candidate_hostname(project=project, service='awid')}:8010"
             if container_network
             else f"http://{host}:{awid_port}"
         ),
         postgres_url=(
-            f"postgresql://{credentials}@{candidate_hostname(project, 'postgres')}:5432/{database}"
+            f"postgresql://{credentials}@{candidate_hostname(project=project, service='postgres')}:5432/{database}"
             if container_network
             else f"postgresql://{credentials}@{host}:{postgres_port}/{database}"
         ),
         compose=["docker", "compose", "-p", project, "-f", "docker-compose.e2e.yml"],
-        redis_url=f"redis://{candidate_hostname(project, 'redis')}:6379/0"
+        redis_url=f"redis://{candidate_hostname(project=project, service='redis')}:6379/0"
         if container_network
         else None,
     )

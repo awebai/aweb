@@ -67,7 +67,7 @@ def test_candidate_stack_uses_its_owned_compose_network() -> None:
     )
 
     def hostname(service: str) -> str:
-        return candidate_hostname("gate-run-example", service)
+        return candidate_hostname(project="gate-run-example", service=service)
 
     assert stack.awid_url == f"http://{hostname('awid')}:8010"
     assert stack.postgres_url == f"postgresql://example:example@{hostname('postgres')}:5432/example"

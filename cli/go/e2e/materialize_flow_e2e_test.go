@@ -98,7 +98,7 @@ func realDir(t *testing.T, path string) string {
 func TestRealStackShelfAdoptIsIdempotent(t *testing.T) {
 	requireE2E(t)
 	tm := newThrowawayTeam(t)
-	installLibrary(t, tm.workspace, tm.env, tm.namespace, "default")
+	installLibrary(t, libraryInstall{dir: tm.workspace, env: tm.env, namespace: tm.namespace, team: "default"})
 
 	first := tm.library(t, "import-to-shelf",
 		"--source_blueprint_ref", seededBlueprintRef, "--profile_ref", "reviewer")
@@ -146,7 +146,7 @@ const reviewerMissionText = "Give independent, fresh-eyes review of a change bef
 func TestRealStackFoldedScalarMissionMaterializes(t *testing.T) {
 	requireE2E(t)
 	tm := newThrowawayTeam(t)
-	installLibrary(t, tm.workspace, tm.env, tm.namespace, "default")
+	installLibrary(t, libraryInstall{dir: tm.workspace, env: tm.env, namespace: tm.namespace, team: "default"})
 
 	// Library round-trip: the served profile carries the folded mission intact.
 	profile := tm.library(t, "get-profile",
