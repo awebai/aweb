@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
+from typing import Any
+
 from aweb.human_kind import human_predicate_sql
 
 from uuid import uuid4
@@ -36,7 +39,7 @@ class HumanChatRefused(ValidationError):
         )
 
 
-def recipient_label(row: dict) -> str:
+def recipient_label(row: Mapping[str, Any]) -> str:
     """Choose an actionable recipient label without treating it as identity authority."""
     return str(
         row.get("address")
@@ -48,7 +51,7 @@ def recipient_label(row: dict) -> str:
     )
 
 
-async def require_agent_chat(db, recipients: list[dict]) -> None:
+async def require_agent_chat(db, recipients: Sequence[Mapping[str, Any]]) -> None:
     """Refuse verified-human projections; unknown kind remains allowed.
 
     This policy preflight deliberately performs no registry I/O. Strict federation

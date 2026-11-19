@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
+from typing import Any
+
 from aweb.messaging.recipient_lookup import (
     get_agent_by_id as get_agent_by_id,
     resolve_agent_by_did as resolve_agent_by_did,
@@ -59,7 +62,7 @@ async def policy_rows_for_participant(
 async def authorize_message_delivery(
     db,
     *,
-    recipient_agent: dict,
+    recipient_agent: Mapping[str, Any],
     sender_did: str,
     sender_address: str | None,
     sender_team_id: str | None = None,
@@ -85,7 +88,7 @@ async def authorize_message_delivery(
 async def admit_message_delivery(
     db,
     *,
-    recipient: dict,
+    recipient: Mapping[str, Any],
     recipient_did: str,
     to_agent_id: str | None,
     sender_did: str,
@@ -100,7 +103,7 @@ async def admit_message_delivery(
         stored_route_continuation and not recipient.get("delivery_origin")
     ):
         return
-    policies = [recipient]
+    policies: Sequence[Mapping[str, Any]] = [recipient]
     if stored_route_continuation:
         policies = await policy_rows_for_participant(
             db,

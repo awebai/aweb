@@ -146,7 +146,7 @@ LOCAL_DID_KEY_RECIPIENT_UNREACHABLE = (
 )
 
 
-def _target_delivery_origin(row: dict[str, Any] | None) -> str:
+def _target_delivery_origin(row: Mapping[str, Any] | None) -> str:
     return str((row or {}).get("delivery_origin") or "").strip()
 
 
@@ -213,7 +213,7 @@ def validate_encrypted_chat_payload(
     auth: MessagingAuth,
     actor_did: str,
     session_id: str,
-    recipient_rows: list[dict[str, Any]],
+    recipient_rows: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any] | None:
     """Verify protected chat fields and recipients, returning metadata for storage."""
     if not _payload_is_encrypted(payload):
@@ -280,7 +280,7 @@ def _chat_federation_signature(
 async def resolve_stored_remote_chat_route(
     *,
     registry_client,
-    recipient: dict[str, Any],
+    recipient: Mapping[str, Any],
 ) -> dict[str, str | bool]:
     """Read the participant's recorded DID, key and delivery route without an address lookup."""
     address = str(recipient.get("address") or "").strip()
@@ -461,7 +461,7 @@ async def deliver_federated_chat(
         raise DeliveryRefusal(status_code=exc.status_code, detail=str(exc)) from exc
 
 
-def _target_did(row: dict[str, Any]) -> str:
+def _target_did(row: Mapping[str, Any]) -> str:
     return (row.get("did_aw") or row.get("did_key") or row.get("did") or "").strip()
 
 
@@ -507,7 +507,7 @@ def _validate_signed_chat_payload(
     *,
     signature: str,
     signed_payload: str | None,
-    recipient_rows: list[dict[str, Any]] | None = None,
+    recipient_rows: Sequence[Mapping[str, Any]] | None = None,
     requested_to_aliases: list[str] | None = None,
     from_alias: str | None = None,
     from_address: str | None = None,
@@ -650,7 +650,7 @@ async def _record_successful_chat_contacts(
     *,
     owner_did: str,
     sender_team_id: str | None,
-    recipients: list[dict[str, Any]],
+    recipients: Sequence[Mapping[str, Any]],
     registry_client=None,
 ) -> None:
     owner = str(owner_did or "").strip()
@@ -842,7 +842,7 @@ async def _resolve_remote_chat_route(
     runtime: MessagingRuntime,
     source: str,
     registry_client,
-    recipient: dict[str, Any],
+    recipient: Mapping[str, Any],
     requester_did_key: str | None = None,
 ) -> dict[str, Any]:
     address = str(recipient.get("address") or "").strip()
@@ -1057,7 +1057,7 @@ def _address_from_alias(value: str | None) -> str:
     return text if "/" in text else ""
 
 
-def _target_did_refs(row: dict[str, Any]) -> set[str]:
+def _target_did_refs(row: Mapping[str, Any]) -> set[str]:
     return {
         value
         for value in (
