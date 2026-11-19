@@ -1793,6 +1793,7 @@ async def send_mail(
         if (
             isinstance(exc, ForbiddenError)
             and payload.to_address
+            and recipient is not None
             and recipient.get("identity_scope") == "local"
             and not recipient.get("has_global_claim")
             and not recipient.get("did_aw")

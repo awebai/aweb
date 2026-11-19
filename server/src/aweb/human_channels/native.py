@@ -681,7 +681,7 @@ class NativeMessagingUnitOfWork:
                 raise HumanChatRefused(recipient_label(current_recipient))
         for old in (retained.author, retained.recipient):
             row = by_id.get(str(old["agent_id"]))
-            if not current_member(row):
+            if row is None or not current_member(row):
                 raise ContractError("forbidden", CURRENT_MEMBERSHIP_REQUIRED_DETAIL)
             if any(
                 row.get(k) != old.get(k)
