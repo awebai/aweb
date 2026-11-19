@@ -108,6 +108,7 @@ async def privacy_stack(shared_test_pool, monkeypatch, tls=None):
                 registry_url="http://registry.test",
                 transport=httpx.ASGITransport(app=registry_app),
                 service_token=service_token,
+                domain_verifier=fixture_registry.namespace_authority,
             )
             app = create_app()
             # Externally provisioned resources, exactly as an embedding host
