@@ -433,6 +433,7 @@ async def record_successful_contact_side_effect(
     recipient: dict | None,
     registry_client=None,
 ) -> bool:
+    """Record an accepted cross-team address contact through its binding owner."""
     recipient_address = _concrete_contact_address(recipient)
     if not recipient_address:
         return False
@@ -594,6 +595,7 @@ async def deliver_remote_mail_and_project_locally(
     to_alias: str | None,
     msg_uuid: UUID | None,
 ) -> SentMail:
+    """Deliver a signed remote send, then retain its local thread and message projection."""
     refuse_remote_attachments()
     delivery_origin = _remote_delivery_origin(recipient)
     if not delivery_origin:
@@ -1045,6 +1047,7 @@ async def send_mail_conversation_continuation(
     local_recipient: dict | None = None,
     continuation: MailContinuationContext | None = None,
 ) -> SentMail:
+    """Validate a stored participant route and append or acknowledge an exact local mail send."""
     msg_uuid = UUID(payload.message_id) if payload.message_id else None
 
     if continuation is None:
@@ -1272,6 +1275,7 @@ async def send_federated_mail_conversation_continuation(
     id_chain: dict | None,
     continuation: MailContinuationContext,
 ) -> SentMail:
+    """Reply through the recorded remote participant without resolving its address as first contact."""
     refuse_remote_attachments()
     recipient_participant = continuation.recipient_participant
     recipient = await remote_recipient_from_participant(

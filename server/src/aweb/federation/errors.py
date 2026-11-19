@@ -36,6 +36,7 @@ def authority_error_body(
     *,
     correlation_id: str,
 ) -> dict[str, Any]:
+    """Serialize the canonical federation reason, retryability and correlation identifier."""
     body: dict[str, Any] = {
         "detail": error.detail
         if isinstance(error, (RecipientNotResidentError, FederationPolicyRefused))

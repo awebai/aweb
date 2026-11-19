@@ -365,6 +365,7 @@ class FederationAuthorityActivation:
 def build_federation_authority_activation(
     db, *, public_origin: str
 ) -> FederationAuthorityActivation:
+    """Build the shared resolver, coordination owner and checked outbound transport."""
     manager = db.get_manager("aweb")
     repository = AuthorityRepository(manager)
     work = AuthorityWorkRepository(manager)

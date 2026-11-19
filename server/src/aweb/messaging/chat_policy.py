@@ -37,6 +37,7 @@ class HumanChatRefused(ValidationError):
 
 
 def recipient_label(row: dict) -> str:
+    """Choose an actionable recipient label without treating it as identity authority."""
     return str(
         row.get("address")
         or row.get("alias")

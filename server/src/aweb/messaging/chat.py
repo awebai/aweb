@@ -118,6 +118,7 @@ async def find_session_between(
     did_a: str,
     did_b: str,
 ) -> UUID | None:
+    """Find the active canonical one-to-one chat shared by the two participant DIDs."""
     conversation = await find_active_one_to_one_conversation_between(
         db,
         conversation_type="chat",
@@ -213,6 +214,7 @@ async def ensure_session(
     created_by: str,
     session_id: UUID | None = None,
 ) -> UUID:
+    """Create canonical chat coverage or reuse an admitted active participant session."""
     aweb_db = db.get_manager("aweb")
     normalized_participants: list[dict[str, Any]] = []
     seen_dids: set[str] = set()
@@ -334,6 +336,7 @@ async def send_in_session(
     encrypted_metadata: dict[str, Any] | None = None,
     message_id: UUID | None = None,
 ) -> dict[str, Any] | None:
+    """Store a participant's admitted chat message and receipt, then update its session state."""
     aweb_db = db.get_manager("aweb")
     participant = await aweb_db.fetch_one(
         """
@@ -442,6 +445,7 @@ async def get_pending_conversations(
     participant_did: str,
     participant_agent_id: str | None = None,
 ) -> list[dict[str, Any]]:
+    """Read pending chat state for the caller's participant DIDs, including departed sessions."""
     aweb_db = db.get_manager("aweb")
     participant_agent_uuid = _uuid_or_none(participant_agent_id)
     # Materialize the viewer's session set before the per-session work. Keep
@@ -587,6 +591,7 @@ async def get_message_history(
     limit: int = 200,
     message_id: str | None = None,
 ) -> list[dict[str, Any]]:
+    """Read session history visible to the caller's participant DIDs."""
     aweb_db = db.get_manager("aweb")
     is_participant = await aweb_db.fetch_one(
         """
@@ -693,6 +698,7 @@ async def mark_messages_read(
     message_ids: list[str],
     participant_agent_id: str | None = None,
 ) -> dict[str, Any]:
+    """Acknowledge only presented messages belonging to the authenticated session participant."""
     aweb_db = db.get_manager("aweb")
     participant_agent_uuid = _uuid_or_none(participant_agent_id)
     if not message_ids:
