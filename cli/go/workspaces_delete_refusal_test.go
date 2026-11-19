@@ -13,20 +13,22 @@ import (
 // through a consumer. A rename or a reworded message would leave those consumers
 // compiling and behaving differently with nothing naming the sentinel itself.
 //
-// The two 404s are told apart by the server's structured code, never by message
-// text, so each case here supplies the code and leaves the prose free to change.
-func TestWorkspaceDeleteDistinguishesTheTwo404s(t *testing.T) {
+// Each supported status/code pair preserves its distinct evidence, regardless
+// of message wording.
+func TestWorkspaceDeleteClassifiesStructuredRefusals(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		code string
-		want error
+		name   string
+		status int
+		code   string
+		want   error
 	}{
-		{"already deleted establishes the row is gone and its identity is not", "workspace_already_deleted", ErrWorkspaceAlreadyDeleted},
-		{"not found establishes nothing", "workspace_not_found", ErrWorkspaceNotFound},
+		{"already deleted from released server", http.StatusNotFound, "workspace_already_deleted", ErrWorkspaceAlreadyDeleted},
+		{"already deleted from hosted server", http.StatusConflict, "workspace_already_deleted", ErrWorkspaceAlreadyDeleted},
+		{"not found establishes nothing", http.StatusNotFound, "workspace_not_found", ErrWorkspaceNotFound},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.WriteHeader(http.StatusNotFound)
+				w.WriteHeader(tc.status)
 				_ = json.NewEncoder(w).Encode(map[string]any{
 					"detail": map[string]any{"code": tc.code, "recommended_next_step": "prose that may be reworded"},
 				})
