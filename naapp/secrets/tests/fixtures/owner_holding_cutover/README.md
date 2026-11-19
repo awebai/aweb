@@ -2,9 +2,9 @@
 
 The checked-in JSON captures the genuine pre-cutover `OwnerConsole.apply_owner_act`
 and B3 registration path. Each file records its source SHA and generation command.
-`generate.py` is a deliberate capture tool, not a test-time migration helper; it
-refuses to run once the cutover migration exists. Ordinary tests never run a Git
-checkout or a legacy writer to construct these rows.
+The capture tool belongs to each recorded pre-cutover source, rather than the
+current runtime. To reproduce a capture, use that recorded checkout. Ordinary
+tests load the checked-in public data and never run an old writer.
 
 Capture runs require an assigned private PostgreSQL fixture and the suite/load
 guard. From `naapp/secrets` at the recorded pre-cutover head, the generator command

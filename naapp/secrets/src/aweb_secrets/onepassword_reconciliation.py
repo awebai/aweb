@@ -33,7 +33,7 @@ async def require_current_backend_version(
     admitted: AdmittedInstallation,
     reconciler: BackendReconciler | None,
 ) -> None:
-    """Decision 92 (secrets.md:2898): activate only for a later fresh admission."""
+    """Decision 92 (secrets.md §5.3): activate only for a later fresh admission."""
     if observation is None or observation.item_version == observation.binding.item_version:
         return
     if reconciler is None:

@@ -1,9 +1,9 @@
 """Read-only broker receipt lookup under current installation/read authority.
 
 This service owns no dispatch machine, opener, cache or approval consumer.
-Original provenance is never relabeled by a renewed caller certificate. Job-run
-registry/reconciliation lookup will extend this service when those associations
-are composed; their absent implementation grants no fallback read authority.
+Original provenance is never relabeled by a renewed caller certificate.
+The production root supplies the shared run reader; neither reader grants
+admission, settlement or release authority.
 """
 
 from __future__ import annotations
