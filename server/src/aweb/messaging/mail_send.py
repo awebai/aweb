@@ -30,6 +30,7 @@ from aweb.messaging.refusals import (
 )
 from http import HTTPStatus
 from pgdbm.errors import QueryError
+from aweb.messaging.write_conflicts import is_unique_write_conflict
 
 from awid.federation_errors import FederationAuthorityError
 from awid.registry import RegistryError
@@ -835,8 +836,7 @@ def _lost_send_race(exc: BaseException) -> bool:
     """A concurrent send claimed this message_id or conversation_id and committed first."""
     if isinstance(exc, MailConversationExists):
         return True
-    cause = exc.__cause__ if isinstance(exc, QueryError) else exc
-    return isinstance(cause, asyncpg.exceptions.UniqueViolationError)
+    return is_unique_write_conflict(exc)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -1306,8 +1306,8 @@ async def send_federated_mail_conversation_continuation(
         registry_client, recipient_participant
     )
     msg_uuid = UUID(payload.message_id) if payload.message_id else None
-    if payload.timestamp:
-        _parse_signed_timestamp(payload.timestamp)
+    # The remote projection owner checks age after recognizing exact plaintext
+    # retries. Encrypted envelope verification retains its existing window.
     return await deliver_remote_mail_and_project_locally(
         runtime,
         payload,

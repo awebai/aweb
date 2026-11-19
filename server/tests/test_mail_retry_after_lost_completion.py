@@ -6,7 +6,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from enum import Enum, auto
 from urllib.parse import urlsplit
 from uuid import UUID, uuid4
@@ -19,7 +19,8 @@ from identity_binding_support import register_global_identity
 from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
 from test_messages_http import _signed_team_headers
 
-HOLD_COMPLETION_SECONDS = 301
+HOLD_COMPLETION_SECONDS = 6
+INITIAL_ATTESTATION_AGE_SECONDS = 297
 
 
 class RetryPath(Enum):
@@ -120,10 +121,11 @@ def signed_mail(
     path: RetryPath,
     recipient_stable_id: str,
     conversation_id: str | None = None,
+    attestation_age_seconds: int = 0,
 ):
     sender, recipient = env.actors["alice"], env.actors["bob"]
     timestamp = (
-        datetime.now(timezone.utc)
+        (datetime.now(timezone.utc) - timedelta(seconds=attestation_age_seconds))
         .replace(microsecond=0)
         .isoformat()
         .replace("+00:00", "Z")
@@ -176,7 +178,7 @@ async def send_signed_mail(client, env, payload):
 
 
 @pytest.mark.asyncio
-async def test_exact_mail_retries_after_301_second_completion_fault_deliver_once(
+async def test_exact_mail_retry_after_completion_fault_crosses_attestation_window(
     privacy_app,
 ):
     env = privacy_app
@@ -194,13 +196,17 @@ async def test_exact_mail_retries_after_301_second_completion_fault_deliver_once
     assert opened.status_code == 200, opened.text
     payloads = {
         RetryPath.NAMED_RECIPIENT: signed_mail(
-            env, path=RetryPath.NAMED_RECIPIENT, recipient_stable_id=stable_id
+            env,
+            path=RetryPath.NAMED_RECIPIENT,
+            recipient_stable_id=stable_id,
+            attestation_age_seconds=INITIAL_ATTESTATION_AGE_SECONDS,
         ),
         RetryPath.STORED_CONVERSATION: signed_mail(
             env,
             path=RetryPath.STORED_CONVERSATION,
             recipient_stable_id=stable_id,
             conversation_id=opened.json()["conversation_id"],
+            attestation_age_seconds=INITIAL_ATTESTATION_AGE_SECONDS,
         ),
     }
     proxy = HeldMailCompletions(
@@ -231,7 +237,17 @@ async def test_exact_mail_retries_after_301_second_completion_fault_deliver_once
             started = time.monotonic()
             await asyncio.sleep(HOLD_COMPLETION_SECONDS)
             proxy.release.set()
-            assert time.monotonic() - started > 300
+            assert time.monotonic() - started >= HOLD_COMPLETION_SECONDS
+            assert all(
+                (
+                    datetime.now(timezone.utc)
+                    - datetime.fromisoformat(
+                        payload["timestamp"].replace("Z", "+00:00")
+                    )
+                ).total_seconds()
+                > 300
+                for payload in payloads.values()
+            )
             losses = await asyncio.wait_for(
                 asyncio.gather(*attempts, return_exceptions=True), timeout=10
             )
@@ -268,6 +284,9 @@ async def test_exact_mail_retries_after_301_second_completion_fault_deliver_once
                 },
             )
             assert changed.status_code == 422, changed.text
+            assert (
+                changed.headers["X-AWEB-Error-Code"] == "message_timestamp_outside_skew"
+            )
 
         assert (
             await env.db.fetch_value("SELECT count(*) FROM {{tables.messages}}"),

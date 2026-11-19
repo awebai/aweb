@@ -260,3 +260,78 @@ async def test_exact_create_retry_without_outer_session_id(
     assert await _status(pair.source, newest.cid) == "active"
     assert await _snapshot(pair) == before
     assert len(pair.target.calls) == posts
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("foreign", [False, True], ids=["local", "federated"])
+@pytest.mark.parametrize("encrypted", [False, True], ids=["plaintext", "v2"])
+async def test_continued_chat_exact_retry_returns_one_accepted_message(
+    route_pair, foreign, encrypted
+):
+    pair = route_pair
+    sender = pair.source.global_actor if foreign else pair.source.local
+    target = (pair.target if foreign else pair.source).global_actor
+    opened, session = await _send(sender, target, "chat", encrypted=encrypted)
+    assert opened.status_code == 200, opened.text
+    request = _submission(
+        sender, target, "chat", encrypted=encrypted, continuation=str(session.cid)
+    )
+    accepted = await _post(sender, request)
+    assert accepted.status_code == 200, accepted.text
+    before = await _snapshot(pair)
+    posts = len(pair.target.calls)
+    repeated = await _post(sender, request)
+    assert repeated.status_code == 200, repeated.text
+    assert repeated.json() == accepted.json()
+    assert await _snapshot(pair) == before
+    assert len(pair.target.calls) == posts
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("foreign", [False, True], ids=["local", "federated"])
+@pytest.mark.parametrize("encrypted", [False, True], ids=["plaintext", "v2"])
+async def test_concurrent_continued_chat_exact_retry_rereads_committed_winner(
+    route_pair, monkeypatch, foreign, encrypted
+):
+    """A real unique violation is forced after two actual empty stored reads."""
+    import asyncio
+    import aweb.messaging.chat_send as chat_send
+
+    pair = route_pair
+    sender = pair.source.global_actor if foreign else pair.source.local
+    target = (pair.target if foreign else pair.source).global_actor
+    opened, session = await _send(sender, target, "chat", encrypted=encrypted)
+    assert opened.status_code == 200, opened.text
+    request = _submission(
+        sender, target, "chat", encrypted=encrypted, continuation=str(session.cid)
+    )
+    original = chat_send._stored_exact_chat_send
+    arrivals = 0
+    both = asyncio.Event()
+
+    async def held_read(db, payload, **kwargs):
+        nonlocal arrivals
+        result = await original(db, payload, **kwargs)
+        if payload.message_id == str(request[2].mid) and arrivals < 2:
+            assert result is None
+            arrivals += 1
+            if arrivals == 2:
+                both.set()
+            await asyncio.wait_for(both.wait(), timeout=10)
+        return result
+
+    monkeypatch.setattr(chat_send, "_stored_exact_chat_send", held_read)
+    results = await asyncio.gather(_post(sender, request), _post(sender, request))
+    assert arrivals == 2
+    assert [response.status_code for response in results] == [200, 200], [
+        response.text for response in results
+    ]
+    assert results[0].json() == results[1].json()
+    for node in (pair.source, pair.target) if foreign else (pair.source,):
+        assert (
+            await node.db.fetch_value(
+                "SELECT count(*) FROM {{tables.chat_messages}} WHERE message_id=$1",
+                request[2].mid,
+            )
+            == 1
+        )

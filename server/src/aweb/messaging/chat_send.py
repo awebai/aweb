@@ -9,6 +9,8 @@ from aweb.messaging.kinds import ContentMode
 import json
 import logging
 import uuid as uuid_mod
+from pgdbm.errors import QueryError
+from aweb.messaging.write_conflicts import is_unique_write_conflict
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -20,6 +22,7 @@ from uuid import UUID
 
 import asyncpg.exceptions
 from aweb.messaging.refusals import (
+    DeliveryRefusalCode,
     registry_configuration_refusal,
     registry_dependency_refusal,
 )
@@ -484,6 +487,10 @@ def _parse_signed_timestamp(value: str) -> datetime:
             status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
             detail=str(exc)
             + ". Sign the message again with the current UTC time and retry.",
+            code=DeliveryRefusalCode.TIMESTAMP_OUTSIDE_SKEW,
+            headers={
+                "X-AWEB-Error-Code": DeliveryRefusalCode.TIMESTAMP_OUTSIDE_SKEW.value
+            },
         ) from exc
     return dt
 
@@ -735,10 +742,21 @@ def _sender_bound_fresh_session(
     return True
 
 
-async def _chat_create_retry(
-    db, payload: CreateSessionRequest, *, actor_dids: list[str], target_dids: list[str]
+async def _stored_exact_chat_send(
+    db,
+    payload: CreateSessionRequest | SendMessageRequest,
+    *,
+    auth: MessagingAuth,
+    session_id: UUID | None,
+    recipient_rows: Sequence[Mapping[str, Any]],
+    actor_dids: list[str],
+    target_dids: list[str],
 ):
-    """Acknowledge an exact accepted message without replacing a later session."""
+    """Return the accepted chat artifact after current admission, without effects.
+
+    docs/identity-messaging-contract.md:354-365 exempts exact plaintext retries
+    from freshness only. Integrity and encrypted expiry remain required.
+    """
     if payload.message_id is None:
         return None
     manager = db.get_manager("aweb")
@@ -753,8 +771,8 @@ async def _chat_create_retry(
         envelope = json.loads(envelope)
     matches = (
         row["from_did"] in actor_dids
-        and (payload.session_id is None or str(row["session_id"]) == payload.session_id)
-        and row["body"] == payload.message
+        and (session_id is None or row["session_id"] == session_id)
+        and row["body"] == _chat_payload_body(payload)
         and row.get("signature") == payload.signature
         and row.get("signed_payload") == payload.signed_payload
         and envelope == payload.encrypted_envelope
@@ -795,12 +813,29 @@ async def _chat_create_retry(
         target_dids
     )
     if not matches:
+        if payload.signature is not None and not _payload_is_encrypted(payload):
+            _parse_signed_timestamp(str(payload.timestamp))
         raise DeliveryRefusal(
             status_code=HTTPStatus.CONFLICT,
             detail=(
                 "This message ID has already been used for a different chat request. "
                 "Retry the original request unchanged. Use a new message ID only if you intend to send a new message."
             ),
+        )
+    if _payload_is_encrypted(payload):
+        validate_encrypted_chat_payload(
+            payload,
+            auth=auth,
+            actor_did=str(row["from_did"]),
+            session_id=str(row["session_id"]),
+            recipient_rows=recipient_rows,
+        )
+        _parse_signed_timestamp(str(payload.timestamp))
+    elif payload.signature is not None:
+        require_verified_message_signature(
+            signed_payload=payload.signed_payload or "",
+            signature=payload.signature,
+            did_key=auth.did_key,
         )
     return row
 
@@ -1620,13 +1655,37 @@ async def _send_local_chat(
     """Commit native chat under admission locks, then perform external effects."""
     events = HeldMutationEvents()
     held_runtime = replace(runtime, on_mutation=events.record)
-    with agent_wake_scope(runtime.agent_wake_publisher):
+    try:
+        with agent_wake_scope(runtime.agent_wake_publisher):
+            async with db.get_manager("aweb").transaction() as tx:
+                send_db = TransactionInfra(db, tx)
+                await _authorize_local_chat_commit(send_db, auth=auth, target=target)
+                sent = await _dispatch_chat(
+                    send_db,
+                    auth=auth,
+                    target=target,
+                    payload=payload,
+                    runtime=held_runtime,
+                )
+    except (QueryError, asyncpg.exceptions.UniqueViolationError) as exc:
+        if not is_unique_write_conflict(exc):
+            raise
         async with db.get_manager("aweb").transaction() as tx:
             send_db = TransactionInfra(db, tx)
             await _authorize_local_chat_commit(send_db, auth=auth, target=target)
-            sent = await _dispatch_chat(
-                send_db, auth=auth, target=target, payload=payload, runtime=held_runtime
+            stored = await _stored_exact_chat_send(
+                send_db,
+                payload,
+                auth=auth,
+                session_id=target.session_id,
+                recipient_rows=target.recipients,
+                actor_dids=participant_dids(auth),
+                target_dids=[_target_did(row) for row in target.recipients],
             )
+            if stored is None:
+                raise
+            sent = SentChat(session_id=stored["session_id"], message=dict(stored))
+        events = HeldMutationEvents()
     # New named sends alone learn contacts; replay receipts have no participants.
     # Namespace/controller resolution belongs outside the message transaction.
     if target.session_id is None and sent.participants is not None:
@@ -1723,9 +1782,12 @@ async def _send_to_named_recipients(
         for row in target_rows
     ]
 
-    existing_message = await _chat_create_retry(
+    existing_message = await _stored_exact_chat_send(
         db,
         payload,
+        auth=auth,
+        session_id=requested_session_id,
+        recipient_rows=target_rows,
         actor_dids=actor_dids,
         target_dids=target_dids,
     )
@@ -2111,33 +2173,28 @@ async def _send_to_local_named_chat(
                 status_code=HTTPStatus.NOT_FOUND, detail="Replied-to message not found"
             )
 
-    try:
-        with agent_wake_scope(runtime.agent_wake_publisher):
-            msg_row = await send_in_session(
-                db,
-                id_chain=id_chain,
-                session_id=session_id,
-                sender_did=actor_did,
-                sender_agent_id=actor_agent_id,
-                sender_address=sender_address,
-                body=payload.message,
-                reply_to=uuid_mod.UUID(payload.reply_to)
-                if payload.reply_to is not None
-                else None,
-                leaving=payload.leaving,
-                hang_on=payload.hang_on,
-                signature=payload.signature,
-                signed_payload=payload.signed_payload,
-                content_mode=payload.content_mode,
-                message_version=payload.message_version,
-                encrypted_envelope=payload.encrypted_envelope,
-                encrypted_metadata=encrypted_metadata,
-                message_id=pre_message_id,
-            )
-    except asyncpg.exceptions.UniqueViolationError as exc:
-        raise DeliveryRefusal(
-            status_code=HTTPStatus.CONFLICT, detail="message_id already exists"
-        ) from exc
+    with agent_wake_scope(runtime.agent_wake_publisher):
+        msg_row = await send_in_session(
+            db,
+            id_chain=id_chain,
+            session_id=session_id,
+            sender_did=actor_did,
+            sender_agent_id=actor_agent_id,
+            sender_address=sender_address,
+            body=payload.message,
+            reply_to=uuid_mod.UUID(payload.reply_to)
+            if payload.reply_to is not None
+            else None,
+            leaving=payload.leaving,
+            hang_on=payload.hang_on,
+            signature=payload.signature,
+            signed_payload=payload.signed_payload,
+            content_mode=payload.content_mode,
+            message_version=payload.message_version,
+            encrypted_envelope=payload.encrypted_envelope,
+            encrypted_metadata=encrypted_metadata,
+            message_id=pre_message_id,
+        )
     if msg_row is None:
         raise DeliveryRefusal(
             status_code=HTTPStatus.NOT_FOUND, detail=SENDER_NOT_IN_SESSION
@@ -2276,6 +2333,18 @@ async def _send_in_continued_session(
         recipient_rows=recipient_rows,
     )
 
+    existing_message = await _stored_exact_chat_send(
+        db,
+        payload,
+        auth=auth,
+        session_id=session_uuid,
+        recipient_rows=recipient_rows,
+        actor_dids=actor_dids,
+        target_dids=[_target_did(row) for row in recipient_rows],
+    )
+    if existing_message is not None:
+        return SentChat(session_id=session_uuid, message=dict(existing_message))
+
     remote_recipients = [row for row in recipient_rows if _target_delivery_origin(row)]
     if (
         not remote_recipients
@@ -2346,21 +2415,6 @@ async def _send_in_continued_session(
                 detail="Federated chat response message_id mismatch",
             )
 
-    if remote_recipients and not _payload_is_encrypted(payload):
-        projection = await read_plaintext_projection(
-            db,
-            claim=PlaintextProjectionClaim(
-                kind=MessageKind.CHAT,
-                message_id=pre_message_id,
-                conversation_id=session_uuid,
-                sender_did=actor_did,
-                signature=str(payload.signature),
-                signed_payload=payload.signed_payload or "",
-            ),
-        )
-        if projection.message is not None:
-            return SentChat(session_id=session_uuid, message=projection.message)
-
     try:
         with agent_wake_scope(runtime.agent_wake_publisher):
             msg_row = await send_in_session(
@@ -2384,10 +2438,21 @@ async def _send_in_continued_session(
                 encrypted_metadata=encrypted_metadata,
                 message_id=pre_message_id,
             )
-    except asyncpg.exceptions.UniqueViolationError as exc:
-        raise DeliveryRefusal(
-            status_code=HTTPStatus.CONFLICT, detail="message_id already exists"
-        ) from exc
+    except (QueryError, asyncpg.exceptions.UniqueViolationError) as exc:
+        if not remote_recipients or not is_unique_write_conflict(exc):
+            raise
+        stored = await _stored_exact_chat_send(
+            db,
+            payload,
+            auth=auth,
+            session_id=session_uuid,
+            recipient_rows=recipient_rows,
+            actor_dids=actor_dids,
+            target_dids=[_target_did(row) for row in recipient_rows],
+        )
+        if stored is None:
+            raise
+        return SentChat(session_id=session_uuid, message=dict(stored))
     if msg_row is None:
         raise DeliveryRefusal(
             status_code=HTTPStatus.NOT_FOUND, detail=SENDER_NOT_IN_SESSION
