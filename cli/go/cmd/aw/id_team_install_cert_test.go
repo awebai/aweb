@@ -278,6 +278,9 @@ func TestACertificateThatIsNotThisHomesCurrentMembershipIsRefusedAndNothingInsta
 		if code := errorCodeOf(err); code != tc.code {
 			t.Errorf("%s: code %q, err %v", name, code, err)
 		}
+		if (tc.code == "certificate_revoked" || name == "a status aw does not know") && (err == nil || !strings.Contains(err.Error(), "ask the team's owner")) {
+			t.Errorf("%s: missing next action: %v", name, err)
+		}
 		if !maps.Equal(contents, homeContents(t, home)) {
 			t.Errorf("%s: the refusal changed the home", name)
 		}

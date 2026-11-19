@@ -91,8 +91,8 @@ func (c *RegistryClient) CheckCurrentTeamCertificate(ctx context.Context, check 
 		if status.RevokedAt != nil {
 			revokedAt = " at " + *status.RevokedAt
 		}
-		return currentCertificateRefusal(CurrentCertificateRevoked, fmt.Errorf("certificate %s of %s was revoked%s", cert.CertificateID, cert.Team, revokedAt))
+		return currentCertificateRefusal(CurrentCertificateRevoked, fmt.Errorf("certificate %s of %s was revoked%s; ask the team's owner for a current certificate", cert.CertificateID, cert.Team, revokedAt))
 	default:
-		return currentCertificateRefusal(CurrentCertificateInvalid, fmt.Errorf("the registry reports status %q for certificate %s, which aw does not know", status.Status, cert.CertificateID))
+		return currentCertificateRefusal(CurrentCertificateInvalid, fmt.Errorf("the registry reports status %q for certificate %s, which aw does not know; ask the team's owner to check its registry status", status.Status, cert.CertificateID))
 	}
 }
