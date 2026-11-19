@@ -512,19 +512,24 @@ type initInviteConnection struct {
 
 func acceptInitInviteAndConnect(cmd *cobra.Command, request initInviteConnection) error {
 	workingDir := request.WorkingDir
+	home, err := awconfig.ResolveIdentityHome(workingDir, firstNonEmptyString(request.IdentityHome, identityHomeFlag))
+	if err != nil {
+		return err
+	}
 	alias := resolveAliasValue(resolveInitLocalName())
 	accepted, err := acceptAndStoreTeamInvite(teamInviteStoreRequest{
 		Acceptance: teamInviteAcceptanceRequest{
 			WorkingDir: workingDir,
 			Token:      request.Token,
 			Options: teamAcceptInviteOptions{
-				ParentHome: request.ParentHome,
-				Name:       alias,
-				Scope:      initInviteIdentityScope(),
-				AwebURL:    strings.TrimSpace(request.PreferredAwebURL),
+				IdentityHome: externalIdentityHomeRoot(home),
+				ParentHome:   request.ParentHome,
+				Name:         alias,
+				Scope:        initInviteIdentityScope(),
+				AwebURL:      strings.TrimSpace(request.PreferredAwebURL),
 			},
 		},
-		Store: teamInviteStoreOptions{IdentityHome: currentEncryptionKeyIdentityHome(), Activation: membershipMakeActive},
+		Store: teamInviteStoreOptions{IdentityHome: resolvedEncryptionKeyIdentityHome(home), Activation: membershipMakeActive},
 	})
 	if err != nil {
 		return err
@@ -534,7 +539,7 @@ func acceptInitInviteAndConnect(cmd *cobra.Command, request initInviteConnection
 		return usageError("accepted invite did not include an aweb URL; rerun aw init with --aweb-url")
 	}
 	result, err := initCertificateConnectWithOptions(workingDir, awebURL, certificateConnectOptions{
-		IdentityHome: request.IdentityHome,
+		IdentityHome: home.Root,
 		Role:         resolveRequestedRole(strings.TrimSpace(initRole)),
 		HumanName:    resolveHumanNameValue(initHumanName, resolveAgentType()),
 		AgentType:    resolveAgentTypeValue(strings.TrimSpace(initAgentType)),

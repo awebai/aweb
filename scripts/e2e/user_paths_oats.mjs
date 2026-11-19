@@ -94,11 +94,17 @@ function prepareMintAuthority({ seat, fixtureHome, team }) {
   assert.ok(typeof invite.token === "string" && invite.token, "mint preflight must create a disposable invite; its token is not retained");
   return { team, service: workspace.aweb_url, mint_authority: ProbeOutcome.Passed, invite_cleanup: "disposable team; unconsumed preflight invite removed with the team" };
 }
-function activeKernelStatus() {
+function kernelInstanceStatus() {
   const status = parseObject(oats("status", "--json"));
   assert.ok(Array.isArray(status.agents), "kernel status must list agents");
   const rows = status.agents.flatMap((agent) => { assert.ok(Array.isArray(agent.instances)); return agent.instances; });
-  assert.ok(rows.some((row) => row.home === instanceHome && row.instance === instance && row.running === true), "kernel must report the probe instance active");
+  const row = rows.find((row) => row.home === instanceHome && row.instance === instance);
+  assert.ok(row, "kernel must record the probe instance");
+  return { status, row };
+}
+function activeKernelStatus() {
+  const { status, row } = kernelInstanceStatus();
+  assert.equal(row.running, true, "kernel must report the probe instance active");
   return status;
 }
 function permission(path) {
@@ -149,7 +155,9 @@ try {
   assert.equal(spawned.ok, true);
   ({ instance, home: instanceHome } = spawned.result);
   assert.ok(instance && instanceHome, "kernel spawn must return its instance and home");
-  evidence.kernel_status_before = activeKernelStatus();
+  const beforeLaunch = kernelInstanceStatus();
+  assert.equal(beforeLaunch.row.running, false, "a no-launch instance is recorded without a running session");
+  evidence.kernel_status_before = beforeLaunch.status;
   const runnerReady = (status) => status.daemon_running === true && status.daemon_pid === broker.pid && wakeInstances(status).some((row) => row.home === instanceHome && row.channel_core?.running === true);
   const prelaunchKernel = parseObject(oats("session", "inspect", "--home", instanceHome, "--json"));
   assert.equal(prelaunchKernel.result.state, "not-launched");
@@ -164,6 +172,7 @@ try {
   assert.equal(liveKernel.result.present, true);
   assert.equal(liveKernel.result.running, true);
   evidence.kernel_started_idle = liveKernel;
+  evidence.kernel_status_started_idle = activeKernelStatus();
   const fresh = await until({ read: wakeStatus, ready: (status) => runnerReady(status) && wakeInstances(status).some((row) => row.home === instanceHome && row.phase === "active") && status.readiness?.some((verdict) => verdict.home === instanceHome && verdict.ready === true), label: "quiet startup readiness before any mail" });
   const freshRow = wakeInstances(fresh).find((row) => row.home === instanceHome);
   assert.equal(freshRow.channel_core.generation, prelaunchRow.channel_core.generation);

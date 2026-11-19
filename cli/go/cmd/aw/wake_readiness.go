@@ -92,11 +92,9 @@ func runWakeStatus(cmd *cobra.Command, args []string) error {
 		controlErrorText = controlErr.Error()
 	}
 	if wakeStatusHome != "" {
-		printOutput(wakeHomeReadinessOutput{Status: status, Readiness: verdicts[0], ControlError: controlErrorText}, formatter)
-	} else {
-		printOutput(wakeReadinessOutput{Status: status, Readiness: verdicts, ControlError: controlErrorText}, formatter)
+		return printOutput(wakeHomeReadinessOutput{Status: status, Readiness: verdicts[0], ControlError: controlErrorText}, formatter)
 	}
-	return nil
+	return printOutput(wakeReadinessOutput{Status: status, Readiness: verdicts, ControlError: controlErrorText}, formatter)
 }
 
 func foreignReadinessGrant(registration wake.Registration, status wake.Status) string {

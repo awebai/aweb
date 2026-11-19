@@ -1299,6 +1299,9 @@ func acceptAndStoreTeamInvite(request teamInviteStoreRequest) (*acceptedTeamInvi
 	if err != nil {
 		return nil, err
 	}
+	if explicitIdentityHome {
+		opts.IdentityHome = identityHomeRoot
+	}
 	var teamState *awconfig.TeamState
 	if store.Duplicates == membershipRejectDuplicate {
 		loaded, err := requireTeamStateForMembershipAt(workingDir, identityHomeRoot)

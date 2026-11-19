@@ -119,8 +119,8 @@ func retireLocalControllerMember(request localRetirementRequest) (bool, error) {
 		out := receipt.Delete
 		out.RetirementCode, out.AliasReleasedReason = retiredRevocationPending, string(retiredRevocationPending)
 		out.NextStep = "Retain this identity home and have the key holder run " + localRetirementRevokeCommand(receipt)
-		printOutput(out, formatWorkspaceDelete)
-		return true, withErrorCode(string(retiredRevocationPending), fmt.Errorf("workspace was deleted but its retirement receipt could not be saved: %w; %s", err, out.NextStep))
+		outputErr := printOutput(out, formatWorkspaceDelete)
+		return true, errors.Join(withErrorCode(string(retiredRevocationPending), fmt.Errorf("workspace was deleted but its retirement receipt could not be saved: %w; %s", err, out.NextStep)), outputErr)
 	}
 	return true, finishLocalControllerRevocation(request.Command, path, receipt)
 }
@@ -190,22 +190,21 @@ func finishLocalControllerRevocation(cmd *cobra.Command, path string, receipt lo
 	out.NextStep = "Retain this identity home and retry aw workspace delete " + out.WorkspaceID + "; the key holder can instead run " + localRetirementRevokeCommand(receipt)
 	if receipt.Revoked {
 		out.AliasReleased, out.AliasReleasedReason, out.RetirementCode, out.NextStep = true, string(retiredAndRevoked), retiredAndRevoked, ""
-		printOutput(out, formatWorkspaceDelete)
-		return nil
+		return printOutput(out, formatWorkspaceDelete)
 	}
 	ctx, cancel := commandAPIContext(cmd)
 	err := revokeRetiredCertificate(ctx, receipt)
 	cancel()
 	if errorCodeOf(err) == codeControllerKeyMissing {
 		out.RetirementCode, out.AliasReleasedReason = retiredKeyHolderRequired, codeControllerKeyMissing
-		printOutput(out, formatWorkspaceDelete)
-		return withErrorCode(string(retiredKeyHolderRequired), fmt.Errorf("workspace was deleted but certificate revocation is not confirmed; give the key holder this command: %s", localRetirementRevokeCommand(receipt)))
+		outputErr := printOutput(out, formatWorkspaceDelete)
+		return errors.Join(withErrorCode(string(retiredKeyHolderRequired), fmt.Errorf("workspace was deleted but certificate revocation is not confirmed; give the key holder this command: %s", localRetirementRevokeCommand(receipt))), outputErr)
 	}
 
 	if err != nil {
 		out.RetirementCode, out.AliasReleasedReason = retiredRevocationPending, string(retiredRevocationPending)
-		printOutput(out, formatWorkspaceDelete)
-		return withErrorCode(string(retiredRevocationPending), fmt.Errorf("workspace was deleted but certificate revocation is unconfirmed: %w; receipt retained at %s; retry aw workspace delete %s", err, path, out.WorkspaceID))
+		outputErr := printOutput(out, formatWorkspaceDelete)
+		return errors.Join(withErrorCode(string(retiredRevocationPending), fmt.Errorf("workspace was deleted but certificate revocation is unconfirmed: %w; receipt retained at %s; retry aw workspace delete %s", err, path, out.WorkspaceID)), outputErr)
 	}
 	out.AliasReleased, out.AliasReleasedReason, out.RetirementCode = true, string(retiredAndRevoked), retiredAndRevoked
 	out.NextStep = ""
@@ -213,8 +212,7 @@ func finishLocalControllerRevocation(cmd *cobra.Command, path string, receipt lo
 	if saveErr := saveLocalRetirementReceipt(path, receipt); saveErr != nil {
 		return fmt.Errorf("certificate revocation was confirmed but saving its receipt failed: %w; retain this identity home and verify the certificate before retrying", saveErr)
 	}
-	printOutput(out, formatWorkspaceDelete)
-	return nil
+	return printOutput(out, formatWorkspaceDelete)
 }
 
 // The registry, not a local key filename, verifies controller authority. A prior
