@@ -160,9 +160,9 @@ def _sigv4(
 
 def inject(
     kind: str,
+    *,
     value: Mapping[str, str],
     kind_params: Mapping[str, str],
-    *,
     secret_ref: str,
     url: str,
     method: str = "GET",

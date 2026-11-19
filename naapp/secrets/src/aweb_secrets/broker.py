@@ -172,7 +172,9 @@ async def _oauth2_injection(
         if lifetime is not None and lifetime > TOKEN_EXPIRY_MARGIN.total_seconds():
             expires_at = datetime.now(UTC) + timedelta(seconds=lifetime) - TOKEN_EXPIRY_MARGIN
             await tokens.put(key, token, expires_at)
-    injection = inject("bearer", {"value": token}, {}, secret_ref=secret_ref, url=url)
+    injection = inject(
+        "bearer", value={"value": token}, kind_params={}, secret_ref=secret_ref, url=url
+    )
     injection.known.add_basic(secret_ref, client_id, client_secret)
     # client_secret_basic form-encodes the pair before base64 (RFC 6749 §2.3.1).
     injection.known.add(secret_ref, f"{quote_plus(client_id)}:{quote_plus(client_secret)}")
@@ -226,8 +228,8 @@ async def broker(
     else:
         injection = inject(
             kind,
-            value,
-            kind_params,
+            value=value,
+            kind_params=kind_params,
             secret_ref=secret_ref,
             url=url,
             method=method,
