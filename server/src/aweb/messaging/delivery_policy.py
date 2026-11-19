@@ -10,7 +10,7 @@ from aweb.inbound_modes import (
     effective_inbound_mode,
     normalize_inbound_mode,
 )
-from aweb.member_team_key import current_member_team_ids_for_identity
+from aweb.member_team_key import MemberReadLock, current_member_team_ids_for_identity
 from aweb.messaging.contacts import IdentityContactMatch, identity_contact_match
 from aweb.messaging.refusals import CONTACT_REBIND_ACTION, DeliveryRefusalCode
 from aweb.service_errors import ForbiddenError
@@ -91,8 +91,12 @@ async def has_current_shared_team(
     recipient_dids = [
         str(recipient[field]) for field in ("did_aw", "did_key") if recipient.get(field)
     ]
-    recipient_teams = await current_member_team_ids_for_identity(db, recipient_dids)
-    sender_teams = await current_member_team_ids_for_identity(db, sender_dids)
+    recipient_teams = await current_member_team_ids_for_identity(
+        db, recipient_dids, read_lock=MemberReadLock.SHARE
+    )
+    sender_teams = await current_member_team_ids_for_identity(
+        db, sender_dids, read_lock=MemberReadLock.SHARE
+    )
     return bool(recipient_teams & sender_teams)
 
 
