@@ -7,7 +7,6 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-import aweb.coordination.routes.tasks as tasks_routes
 from aweb.coordination.routes.tasks import router as tasks_router
 from aweb.coordination.tasks_service import (
     create_task,
