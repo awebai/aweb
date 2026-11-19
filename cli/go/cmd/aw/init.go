@@ -683,87 +683,11 @@ func runInit(cmd *cobra.Command, args []string) error {
 		}
 	}
 	if apiKey != "" {
-		wd := creationDir
-		awebURL, err := resolveAPIKeyInitAwebURL()
-		if err != nil {
-			return err
-		}
-		registryURL, err := resolveInitAWIDRegistryURL()
-		if err != nil {
-			return err
-		}
-		identityHome, err := identityHomeForDir(wd)
-		if err != nil {
-			return err
-		}
-		if identityHome.External() {
-			identityHome = awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(wd)}
-			oldHome := activeIdentityHome
-			activeIdentityHome = identityHome
-			defer func() { activeIdentityHome = oldHome }()
-		}
-		requestedAlias := resolveAliasValue(resolveInitLocalName())
-		result, err := runAPIKeyBootstrapInit(apiKeyInitRequest{
-			SelectedTeam: apiSelected,
-			WorkingDir:   wd,
-			IdentityHome: identityHome.Root,
-			AwebURL:      awebURL,
-			RegistryURL:  registryURL,
-			APIKey:       apiKey,
-			Name:         resolveInitGlobalName(initGlobal),
-			Alias:        requestedAlias,
-			Role:         resolveRequestedRole(strings.TrimSpace(initRole)),
-			HumanName:    resolveHumanNameValue(initHumanName, resolveAgentType()),
-			AgentType:    resolveAgentTypeValue(strings.TrimSpace(initAgentType)),
-			Global:       initGlobal,
-			InboundMode:  canonicalInitInboundModeForWire(initInboundMode),
-		})
-		if err != nil {
-			return err
-		}
-		resultInit := &initResult{
-			ServerName:         hostFromBaseURL(result.AwebURL),
-			ExportBaseURL:      result.AwebURL,
-			Alias:              strings.TrimSpace(result.Alias),
-			APIKeyAuth:         true,
-			ServerAssignedName: !initGlobal && requestedAlias == "",
-			Path:               initPathAPIKey,
-		}
-		return printInitOutcome(result, resultInit, wd, initDefaultSetup(resultInit, wd))
+		return runInitFromAPIKey(cmd, initAPIKeySelection{WorkingDir: creationDir, APIKey: apiKey, SelectedTeam: apiSelected})
 	}
 
-	// Certificate-based init: when a team certificate exists and a server URL is provided.
-	{
-		wd, _ := os.Getwd()
-		if hasCertificateForInit(wd) {
-			path := initPathReconnect
-			if firstConnect, err := initWorkspaceMissing(wd); err == nil && firstConnect {
-				path = initPathJoined
-			}
-			awebURL, err := resolveExplicitInitAwebURL()
-			if err != nil {
-				return err
-			}
-			serviceURLs, err := resolveOnboardingServiceURLs(awebURL)
-			if err != nil {
-				return err
-			}
-			result, err := initCertificateConnectWithOptions(wd, serviceURLs.AwebURL, certificateConnectOptions{
-				Role:      resolveRequestedRole(strings.TrimSpace(initRole)),
-				HumanName: strings.TrimSpace(initHumanName),
-				AgentType: resolveAgentType(),
-			})
-			if err != nil {
-				return err
-			}
-			resultInit := &initResult{
-				ServerName:    hostFromBaseURL(serviceURLs.AwebURL),
-				ExportBaseURL: serviceURLs.AwebURL,
-				Alias:         strings.TrimSpace(result.Alias),
-				Path:          path,
-			}
-			return printInitOutcome(result, resultInit, wd, initDefaultSetup(resultInit, wd))
-		}
+	if connected, err := runInitFromExistingCertificate(cmd); connected || err != nil {
+		return err
 	}
 
 	wd, _ := os.Getwd()
@@ -873,6 +797,97 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 	return usageError("this directory already has a workspace; use a fresh directory")
+}
+
+type initAPIKeySelection struct {
+	WorkingDir   string
+	APIKey       string
+	SelectedTeam *apiKeyCreationTeam
+}
+
+func runInitFromAPIKey(cmd *cobra.Command, selected initAPIKeySelection) error {
+	creationDir, apiKey, apiSelected := selected.WorkingDir, selected.APIKey, selected.SelectedTeam
+	wd := creationDir
+	awebURL, err := resolveAPIKeyInitAwebURL()
+	if err != nil {
+		return err
+	}
+	registryURL, err := resolveInitAWIDRegistryURL()
+	if err != nil {
+		return err
+	}
+	identityHome, err := identityHomeForDir(wd)
+	if err != nil {
+		return err
+	}
+	if identityHome.External() {
+		identityHome = awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(wd)}
+		oldHome := activeIdentityHome
+		activeIdentityHome = identityHome
+		defer func() { activeIdentityHome = oldHome }()
+	}
+	requestedAlias := resolveAliasValue(resolveInitLocalName())
+	result, err := runAPIKeyBootstrapInit(apiKeyInitRequest{
+		SelectedTeam: apiSelected,
+		WorkingDir:   wd,
+		IdentityHome: identityHome.Root,
+		AwebURL:      awebURL,
+		RegistryURL:  registryURL,
+		APIKey:       apiKey,
+		Name:         resolveInitGlobalName(initGlobal),
+		Alias:        requestedAlias,
+		Role:         resolveRequestedRole(strings.TrimSpace(initRole)),
+		HumanName:    resolveHumanNameValue(initHumanName, resolveAgentType()),
+		AgentType:    resolveAgentTypeValue(strings.TrimSpace(initAgentType)),
+		Global:       initGlobal,
+		InboundMode:  canonicalInitInboundModeForWire(initInboundMode),
+	})
+	if err != nil {
+		return err
+	}
+	resultInit := &initResult{
+		ServerName:         hostFromBaseURL(result.AwebURL),
+		ExportBaseURL:      result.AwebURL,
+		Alias:              strings.TrimSpace(result.Alias),
+		APIKeyAuth:         true,
+		ServerAssignedName: !initGlobal && requestedAlias == "",
+		Path:               initPathAPIKey,
+	}
+	return printInitOutcome(result, resultInit, wd, initDefaultSetup(resultInit, wd))
+}
+
+func runInitFromExistingCertificate(cmd *cobra.Command) (bool, error) {
+	wd, _ := os.Getwd()
+	if hasCertificateForInit(wd) {
+		path := initPathReconnect
+		if firstConnect, err := initWorkspaceMissing(wd); err == nil && firstConnect {
+			path = initPathJoined
+		}
+		awebURL, err := resolveExplicitInitAwebURL()
+		if err != nil {
+			return true, err
+		}
+		serviceURLs, err := resolveOnboardingServiceURLs(awebURL)
+		if err != nil {
+			return true, err
+		}
+		result, err := initCertificateConnectWithOptions(wd, serviceURLs.AwebURL, certificateConnectOptions{
+			Role:      resolveRequestedRole(strings.TrimSpace(initRole)),
+			HumanName: strings.TrimSpace(initHumanName),
+			AgentType: resolveAgentType(),
+		})
+		if err != nil {
+			return true, err
+		}
+		resultInit := &initResult{
+			ServerName:    hostFromBaseURL(serviceURLs.AwebURL),
+			ExportBaseURL: serviceURLs.AwebURL,
+			Alias:         strings.TrimSpace(result.Alias),
+			Path:          path,
+		}
+		return true, printInitOutcome(result, resultInit, wd, initDefaultSetup(resultInit, wd))
+	}
+	return false, nil
 }
 
 func initHasExplicitOnboardingArgs() bool {
