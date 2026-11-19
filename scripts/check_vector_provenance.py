@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import ast
+import io
+import tokenize
 import json
 import subprocess
 import sys
@@ -964,6 +967,40 @@ def _reader(
     return read
 
 
+def _python_tokens(source: str) -> tuple[tuple[int, str], ...] | None:
+    """Keep Python syntax and literal values, ignoring formatting and comments."""
+    ignored = {tokenize.ENCODING, tokenize.ENDMARKER, tokenize.NEWLINE,
+               tokenize.NL, tokenize.INDENT, tokenize.DEDENT, tokenize.COMMENT}
+    result = []
+    try:
+        for token in tokenize.generate_tokens(io.StringIO(source).readline):
+            if token.type in ignored:
+                continue
+            value = token.string
+            if token.type == tokenize.STRING:
+                try:
+                    value = repr(ast.literal_eval(value))
+                except (ValueError, SyntaxError):
+                    # Older Python tokenizers retain an entire f-string token.
+                    # It is not a literal path expression and cannot supply one.
+                    pass
+            result.append((token.type, value))
+    except (tokenize.TokenError, IndentationError, SyntaxError):
+        return None
+    return tuple(result)
+
+
+def _root_marker_present(consumer: PurePosixPath, source: str, marker: str) -> bool:
+    """Require the inventoried root expression without depending on quote style."""
+    if consumer.suffix != ".py":
+        return marker in source
+    actual, expected = _python_tokens(source), _python_tokens(marker)
+    if actual is None or not expected:
+        return False
+    return any(actual[index:index+len(expected)] == expected
+               for index in range(len(actual)-len(expected)+1))
+
+
 def check(
     root: Path,
     tracked: Iterable[PurePosixPath] | None = None,
@@ -1069,7 +1106,7 @@ def check(
                 f"{consumer} has unclassified public vector references: {', '.join(unexpected_names)}"
             )
         for marker in spec.root_markers:
-            if marker not in source:
+            if not _root_marker_present(consumer, source, marker):
                 failures.append(
                     f"{consumer} does not resolve the repository-root authority: {marker}"
                 )
