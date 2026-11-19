@@ -135,16 +135,26 @@ async def _get_team_visibility(request: Request, team_id: str) -> str:
 
     registry_client = getattr(request.app.state, "awid_registry_client", None)
     if registry_client is None:
-        raise awid_registry_not_configured_exception(operation="AWID dashboard team visibility lookup")
+        raise awid_registry_not_configured_exception(
+            operation="AWID dashboard team visibility lookup"
+        )
 
     try:
         team = await registry_client.get_team(domain, team_name)
     except AWID_DEPENDENCY_ERRORS as exc:
-        logger.warning("AWID registry dependency failed for team visibility lookup: %s", team_id, exc_info=True)
-        raise awid_dependency_http_exception(exc, operation="AWID dashboard team visibility lookup") from exc
+        logger.warning(
+            "AWID registry dependency failed for team visibility lookup: %s", team_id, exc_info=True
+        )
+        raise awid_dependency_http_exception(
+            exc, operation="AWID dashboard team visibility lookup"
+        ) from exc
     except Exception as exc:
-        logger.exception("Unexpected AWID registry dependency error for team visibility lookup: %s", team_id)
-        raise awid_dependency_http_exception(exc, operation="AWID dashboard team visibility lookup") from exc
+        logger.exception(
+            "Unexpected AWID registry dependency error for team visibility lookup: %s", team_id
+        )
+        raise awid_dependency_http_exception(
+            exc, operation="AWID dashboard team visibility lookup"
+        ) from exc
 
     if team is None:
         return "private"
@@ -290,7 +300,9 @@ async def _sse_dashboard_events(*, request: Request, db, redis, team_id: str):
     pubsub = await open_subscription(redis, channel)
     try:
         yield ": keepalive\n\n"
-        yield _format_sse("connected", {"type": "connected", "team_id": team_id, "timestamp": _utc_now_iso()})
+        yield _format_sse(
+            "connected", {"type": "connected", "team_id": team_id, "timestamp": _utc_now_iso()}
+        )
 
         snapshot = await _build_dashboard_snapshot(db, redis, team_id=team_id)
         yield _format_sse("snapshot", {"type": "snapshot", **snapshot})
@@ -360,9 +372,7 @@ async def _sse_dashboard_events(*, request: Request, db, redis, team_id: str):
 
 
 @router.get("/v1/teams/{team_id:path}/agents")
-async def list_team_agents(
-    request: Request, team_id: str, db=Depends(get_db)
-) -> dict:
+async def list_team_agents(request: Request, team_id: str, db=Depends(get_db)) -> dict:
     await _require_dashboard_auth(request, team_id)
     aweb_db = db.get_manager("aweb")
 
@@ -440,9 +450,7 @@ async def list_team_claims(
 
 
 @router.get("/v1/teams/{team_id:path}/agents/{alias}")
-async def get_team_agent(
-    request: Request, team_id: str, alias: str, db=Depends(get_db)
-) -> dict:
+async def get_team_agent(request: Request, team_id: str, alias: str, db=Depends(get_db)) -> dict:
     await _require_dashboard_auth(request, team_id)
     aweb_db = db.get_manager("aweb")
 
@@ -594,9 +602,7 @@ async def stream_team_events(
 
 
 @router.get("/v1/teams/{team_id:path}/roles/active")
-async def get_active_roles(
-    request: Request, team_id: str, db=Depends(get_db)
-) -> dict:
+async def get_active_roles(request: Request, team_id: str, db=Depends(get_db)) -> dict:
     await _require_dashboard_auth(request, team_id)
     aweb_db = db.get_manager("aweb")
 
@@ -623,9 +629,7 @@ async def get_active_roles(
 
 
 @router.get("/v1/teams/{team_id:path}/instructions/active")
-async def get_active_instructions(
-    request: Request, team_id: str, db=Depends(get_db)
-) -> dict:
+async def get_active_instructions(request: Request, team_id: str, db=Depends(get_db)) -> dict:
     await _require_dashboard_auth(request, team_id)
     aweb_db = db.get_manager("aweb")
 
@@ -652,9 +656,7 @@ async def get_active_instructions(
 
 
 @router.get("/v1/teams/{team_id:path}/status")
-async def get_team_status(
-    request: Request, team_id: str, db=Depends(get_db)
-) -> dict:
+async def get_team_status(request: Request, team_id: str, db=Depends(get_db)) -> dict:
     await _require_dashboard_auth(request, team_id)
     aweb_db = db.get_manager("aweb")
 
@@ -692,7 +694,11 @@ async def get_team_status(
         agent_count=agent_count,
         online_agents=online_agents,
         active_claims=[
-            {"task_ref": r["task_ref"], "alias": r["alias"], "claimed_at": r["claimed_at"].isoformat()}
+            {
+                "task_ref": r["task_ref"],
+                "alias": r["alias"],
+                "claimed_at": r["claimed_at"].isoformat(),
+            }
             for r in claim_rows
         ],
         active_locks=[

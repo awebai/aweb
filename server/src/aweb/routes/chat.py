@@ -4,7 +4,11 @@ from aweb.identity_binding import verified_key_sql
 
 from aweb.agent_wake import agent_wake_publisher
 
-from aweb.attachment_service import prepare_attachment_send, attachment_retry, attachment_references_by_message
+from aweb.attachment_service import (
+    prepare_attachment_send,
+    attachment_retry,
+    attachment_references_by_message,
+)
 
 from aweb.messaging.sender_membership import sender_memberships
 from aweb.identity_metadata import native_participant_reference
@@ -203,7 +207,9 @@ class CreateSessionRequest(BaseModel):
                 aliases.append(text)
         if promoted_addresses:
             normalized["to_aliases"] = aliases
-            normalized["to_addresses"] = list(normalized.get("to_addresses") or []) + promoted_addresses
+            normalized["to_addresses"] = (
+                list(normalized.get("to_addresses") or []) + promoted_addresses
+            )
         if normalized.get("to_addresses"):
             normalized["to_addresses"] = [
                 normalize_hosted_handle_reference(str(value), require_agent=True)
@@ -291,7 +297,12 @@ class CreateSessionResponse(BaseModel):
 
 
 async def _create_session_response(
-    db, redis, *, session_id: UUID, message_id: str, target_dids: list[str],
+    db,
+    redis,
+    *,
+    session_id: UUID,
+    message_id: str,
+    target_dids: list[str],
     participants_rows: list[dict[str, Any]] | None = None,
 ) -> CreateSessionResponse:
     """Project the sent message and current session without repeating effects.
@@ -321,7 +332,8 @@ async def _create_session_response(
     targets_connected = [
         row["alias"]
         for row in participants_rows
-        if (row.get("did") or "").strip() in waiting_set and (row.get("did") or "").strip() in set(target_dids)
+        if (row.get("did") or "").strip() in waiting_set
+        and (row.get("did") or "").strip() in set(target_dids)
     ]
 
     return CreateSessionResponse(
@@ -355,7 +367,9 @@ async def create_or_send(
     auth: MessagingAuth = Depends(get_messaging_auth),
 ):
     attachment_context = prepare_attachment_send(
-        getattr(request.app.state, "attachment_backend", None), payload, auth,
+        getattr(request.app.state, "attachment_backend", None),
+        payload,
+        auth,
     )
     if attachment_context is not None:
         with attachment_context:
@@ -363,7 +377,10 @@ async def create_or_send(
     runtime = messaging_runtime(request.app.state)
     sender = replace(auth, id_chain=getattr(getattr(request, "state", None), "id_chain", None))
     target = await resolve_chat_targets(
-        db, sender, payload, runtime,
+        db,
+        sender,
+        payload,
+        runtime,
         source=str(request.client.host if request.client else "unknown"),
     )
     target_dids = sorted({_target_did(row) for row in target.recipients if _target_did(row)})
@@ -387,7 +404,11 @@ async def create_or_send(
             targets_left=[],
         )
     return await _create_session_response(
-        db, redis, session_id=sent.session_id, message_id=str(sent.message["message_id"]), target_dids=target_dids,
+        db,
+        redis,
+        session_id=sent.session_id,
+        message_id=str(sent.message["message_id"]),
+        target_dids=target_dids,
         participants_rows=sent.participants,
     )
 
@@ -408,7 +429,9 @@ async def pending(
     actor_dids = _actor_dids(auth)
     actor_did = actor_dids[0] if actor_dids else ""
     if not actor_did:
-        raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
+        raise HTTPException(
+            status_code=401, detail="Authenticated identity is missing a routing DID"
+        )
     actor_agent = await resolve_actor_agent(db, actor_dids)
     actor_agent_id = auth.agent_id or (str(actor_agent["agent_id"]) if actor_agent else None)
 
@@ -463,7 +486,9 @@ async def pending(
     waiting_by_session = await get_waiting_agents_by_session(
         redis,
         {
-            item["session_id"]: [did for did in item.get("participant_dids", []) if did not in set(actor_dids)]
+            item["session_id"]: [
+                did for did in item.get("participant_dids", []) if did not in set(actor_dids)
+            ]
             for item in conversations
         },
     )
@@ -480,7 +505,8 @@ async def pending(
             if (row.get("did") or "").strip() not in hidden_dids
         ]
         participant_addresses = [
-            (row.get("address") or "").strip() or routable_chat_address(
+            (row.get("address") or "").strip()
+            or routable_chat_address(
                 identity_map.get((row.get("did") or "").strip(), {}),
                 auth.team_id,
                 row["alias"],
@@ -495,7 +521,9 @@ async def pending(
                 + int(item["extended_wait_seconds"] or 0)
                 - int((datetime.now(timezone.utc) - item["wait_started_at"]).total_seconds()),
             )
-            if item.get("wait_seconds") is not None and item.get("wait_started_at") is not None and waiting
+            if item.get("wait_seconds") is not None
+            and item.get("wait_started_at") is not None
+            and waiting
             else 0
         )
         if int(item["unread_count"] or 0) <= 0 and time_remaining_seconds <= 0:
@@ -513,7 +541,8 @@ async def pending(
                 ],
                 "participant_addresses": participant_addresses,
                 "last_message": item["last_message"],
-                "last_message_content_mode": item.get("last_message_content_mode") or "legacy_plaintext_v1",
+                "last_message_content_mode": item.get("last_message_content_mode")
+                or "legacy_plaintext_v1",
                 "last_message_version": item.get("last_message_version") or 1,
                 "last_encrypted_envelope": item.get("last_encrypted_envelope"),
                 "last_from": item["last_from"],
@@ -521,7 +550,8 @@ async def pending(
                     (item.get("last_from_did") or "").strip(), {}
                 ).get("stable_id", ""),
                 "last_from_did": (item.get("last_from_did") or "").strip(),
-                "last_from_address": item.get("last_from_address") or routable_chat_address(
+                "last_from_address": item.get("last_from_address")
+                or routable_chat_address(
                     identity_map.get((item.get("last_from_did") or "").strip(), {}),
                     auth.team_id,
                     item["last_from"],
@@ -553,7 +583,9 @@ async def history(
     actor_dids = _actor_dids(auth)
     owner_dids = _actor_dids(auth)
     if not owner_dids:
-        raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
+        raise HTTPException(
+            status_code=401, detail="Authenticated identity is missing a routing DID"
+        )
 
     try:
         session_uuid = UUID(session_id.strip())
@@ -561,7 +593,9 @@ async def history(
         raise HTTPException(status_code=422, detail="Invalid id format")
 
     aweb_db = db.get_manager("aweb")
-    sess = await aweb_db.fetch_one("SELECT team_id FROM {{tables.chat_sessions}} WHERE session_id = $1", session_uuid)
+    sess = await aweb_db.fetch_one(
+        "SELECT team_id FROM {{tables.chat_sessions}} WHERE session_id = $1", session_uuid
+    )
     if not sess:
         raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
 
@@ -593,8 +627,12 @@ async def history(
         [m["from_did"] for m in messages if m.get("from_did")],
     )
 
-    memberships = await sender_memberships(request, db, [dict(m, team_id=sess["team_id"]) for m in messages])
-    attachment_refs = await attachment_references_by_message(db, "chat", [m["message_id"] for m in messages])
+    memberships = await sender_memberships(
+        request, db, [dict(m, team_id=sess["team_id"]) for m in messages]
+    )
+    attachment_refs = await attachment_references_by_message(
+        db, "chat", [m["message_id"] for m in messages]
+    )
     history_items: list[dict[str, Any]] = []
     for msg in messages:
         from_did = (msg.get("from_did") or "").strip()
@@ -606,7 +644,9 @@ async def history(
         history_items.append(
             {
                 "attachment_refs": attachment_refs[str(msg["message_id"])],
-                "sender_membership": memberships[(str(sess["team_id"] or ""), str(msg.get("from_agent_id") or ""))],
+                "sender_membership": memberships[
+                    (str(sess["team_id"] or ""), str(msg.get("from_agent_id") or ""))
+                ],
                 "conversation_id": str(session_uuid),
                 "message_id": msg["message_id"],
                 "seq": msg["seq"],
@@ -637,7 +677,9 @@ class MarkReadRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     up_to_message_id: str | None = Field(default=None, min_length=1)
-    message_ids: list[str] | None = Field(default=None, min_length=1, max_length=MAX_CHAT_MARK_READ_IDS)
+    message_ids: list[str] | None = Field(
+        default=None, min_length=1, max_length=MAX_CHAT_MARK_READ_IDS
+    )
 
     @field_validator("up_to_message_id")
     @classmethod
@@ -669,11 +711,15 @@ async def mark_read(
 ) -> dict[str, Any]:
     actor_dids = _actor_dids(auth)
     if not actor_dids:
-        raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
+        raise HTTPException(
+            status_code=401, detail="Authenticated identity is missing a routing DID"
+        )
     session_uuid = UUID(session_id.strip())
 
     aweb_db = db.get_manager("aweb")
-    sess = await aweb_db.fetch_one("SELECT 1 FROM {{tables.chat_sessions}} WHERE session_id = $1", session_uuid)
+    sess = await aweb_db.fetch_one(
+        "SELECT 1 FROM {{tables.chat_sessions}} WHERE session_id = $1", session_uuid
+    )
     if not sess:
         raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
 
@@ -773,7 +819,9 @@ async def _sse_events(
         if not participant_rows:
             yield f"event: error\ndata: {json.dumps({'error': 'Session not found'})}\n\n"
             return
-        viewer_row = next((row for row in participant_rows if (row.get("did") or "").strip() == viewer_did), None)
+        viewer_row = next(
+            (row for row in participant_rows if (row.get("did") or "").strip() == viewer_did), None
+        )
         if viewer_row is None:
             yield f"event: error\ndata: {json.dumps({'error': 'Session not found'})}\n\n"
             return
@@ -816,9 +864,13 @@ async def _sse_events(
                 pubsub = await _connect_pubsub()
                 last_pubsub_ping = time.monotonic()
             except RedisError:
-                logger.info("Chat session pubsub subscribe failed; using DB fallback polling", exc_info=True)
+                logger.info(
+                    "Chat session pubsub subscribe failed; using DB fallback polling", exc_info=True
+                )
                 next_reconnect_at = time.monotonic() + reconnect_delay_seconds
-                reconnect_delay_seconds = min(max_reconnect_delay_seconds, reconnect_delay_seconds * 2)
+                reconnect_delay_seconds = min(
+                    max_reconnect_delay_seconds, reconnect_delay_seconds * 2
+                )
 
         yield ": keepalive\n\n"
         last_keepalive = time.monotonic()
@@ -832,11 +884,16 @@ async def _sse_events(
             try:
                 frames, _ = await _open_activity(pubsub)
             except (RedisError, TimeoutError):
-                logger.info("Chat session activity subscribe failed; retrying with the pubsub", exc_info=True)
+                logger.info(
+                    "Chat session activity subscribe failed; retrying with the pubsub",
+                    exc_info=True,
+                )
                 await _close_session_pubsub(pubsub, channel)
                 pubsub = None
                 next_reconnect_at = time.monotonic() + reconnect_delay_seconds
-                reconnect_delay_seconds = min(max_reconnect_delay_seconds, reconnect_delay_seconds * 2)
+                reconnect_delay_seconds = min(
+                    max_reconnect_delay_seconds, reconnect_delay_seconds * 2
+                )
             else:
                 for frame in frames:
                     yield frame
@@ -859,7 +916,11 @@ async def _sse_events(
                 await register_waiting(redis, session_id_str, viewer_did)
                 last_refresh = now_mono
 
-            if redis is not None and pubsub is None and (next_reconnect_at is None or now_mono >= next_reconnect_at):
+            if (
+                redis is not None
+                and pubsub is None
+                and (next_reconnect_at is None or now_mono >= next_reconnect_at)
+            ):
                 try:
                     pubsub = await _connect_pubsub()
                     if activity is not None:
@@ -872,31 +933,49 @@ async def _sse_events(
                     next_reconnect_at = None
                     last_pubsub_ping = time.monotonic()
                 except (RedisError, TimeoutError):
-                    logger.info("Chat session pubsub reconnect failed; using DB fallback polling", exc_info=True)
+                    logger.info(
+                        "Chat session pubsub reconnect failed; using DB fallback polling",
+                        exc_info=True,
+                    )
                     await _close_session_pubsub(pubsub, channel)
                     pubsub = None
                     next_reconnect_at = now_mono + reconnect_delay_seconds
-                    reconnect_delay_seconds = min(max_reconnect_delay_seconds, reconnect_delay_seconds * 2)
+                    reconnect_delay_seconds = min(
+                        max_reconnect_delay_seconds, reconnect_delay_seconds * 2
+                    )
 
             should_poll = now_mono - last_db_poll >= CHAT_STREAM_FALLBACK_POLL_SECONDS
             if not should_poll:
-                wait_timeout = min(1.0, max(0.0, CHAT_STREAM_FALLBACK_POLL_SECONDS - (now_mono - last_db_poll)))
+                wait_timeout = min(
+                    1.0, max(0.0, CHAT_STREAM_FALLBACK_POLL_SECONDS - (now_mono - last_db_poll))
+                )
                 if pubsub is not None:
                     try:
-                        message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=wait_timeout)
+                        message = await pubsub.get_message(
+                            ignore_subscribe_messages=True, timeout=wait_timeout
+                        )
                     except RedisConnectionError:
-                        logger.info("Chat session pubsub connection dropped; using DB fallback polling", exc_info=True)
+                        logger.info(
+                            "Chat session pubsub connection dropped; using DB fallback polling",
+                            exc_info=True,
+                        )
                         await _close_session_pubsub(pubsub, channel)
                         pubsub = None
                         next_reconnect_at = time.monotonic() + reconnect_delay_seconds
-                        reconnect_delay_seconds = min(max_reconnect_delay_seconds, reconnect_delay_seconds * 2)
+                        reconnect_delay_seconds = min(
+                            max_reconnect_delay_seconds, reconnect_delay_seconds * 2
+                        )
                         message = None
                     except RedisError:
-                        logger.warning("Chat session pubsub error; using DB fallback polling", exc_info=True)
+                        logger.warning(
+                            "Chat session pubsub error; using DB fallback polling", exc_info=True
+                        )
                         await _close_session_pubsub(pubsub, channel)
                         pubsub = None
                         next_reconnect_at = time.monotonic() + reconnect_delay_seconds
-                        reconnect_delay_seconds = min(max_reconnect_delay_seconds, reconnect_delay_seconds * 2)
+                        reconnect_delay_seconds = min(
+                            max_reconnect_delay_seconds, reconnect_delay_seconds * 2
+                        )
                         message = None
                     if message is not None and message["type"] == "message":
                         if activity is not None and activity.owns(message["channel"]):
@@ -922,7 +1001,8 @@ async def _sse_events(
                 # and the cursor moves to it: a number committed while the two
                 # queries run is above the bound and waits for the next poll.
                 bound = await aweb_db.fetch_value(
-                    "SELECT last_seq FROM {{tables.chat_sessions}} WHERE session_id = $1", session_id,
+                    "SELECT last_seq FROM {{tables.chat_sessions}} WHERE session_id = $1",
+                    session_id,
                 )
                 page_full = False
                 if bound is not None and bound > cursor:
@@ -962,14 +1042,22 @@ async def _sse_events(
                         max(cursor, receipts_after),
                         bound,
                     )
-                    sender_dids = list({str(row["from_did"]) for row in new_msgs if row.get("from_did")})
-                    sender_waiting = set(await get_waiting_agents(redis, session_id_str, sender_dids)) if sender_dids else set()
+                    sender_dids = list(
+                        {str(row["from_did"]) for row in new_msgs if row.get("from_did")}
+                    )
+                    sender_waiting = (
+                        set(await get_waiting_agents(redis, session_id_str, sender_dids))
+                        if sender_dids
+                        else set()
+                    )
                     identity_map = await lookup_identity_metadata_by_did(db, sender_dids)
                     reason = await _stream_grant_reason()
                     if reason:
                         yield grant_terminal_sse(reason)
                         return
-                    memberships = await sender_memberships(request, db, [dict(r, team_id=delivery_team_id) for r in new_msgs])
+                    memberships = await sender_memberships(
+                        request, db, [dict(r, team_id=delivery_team_id) for r in new_msgs]
+                    )
                     numbered_frames: list[tuple[int, str]] = []
                     for row in new_msgs:
                         is_hang_on = bool(row["hang_on"])
@@ -980,7 +1068,9 @@ async def _sse_events(
                             row["from_alias"],
                         )
                         payload = {
-                            "sender_membership": memberships[(str(delivery_team_id or ""), str(row.get("from_agent_id") or ""))].model_dump(),
+                            "sender_membership": memberships[
+                                (str(delivery_team_id or ""), str(row.get("from_agent_id") or ""))
+                            ].model_dump(),
                             "type": "message",
                             "session_id": session_id_str,
                             "conversation_id": session_id_str,
@@ -988,7 +1078,8 @@ async def _sse_events(
                             "seq": row["seq"],
                             "from_agent": row["from_alias"],
                             "from_address": from_address,
-                            "from_stable_id": identity_map.get(from_did, {}).get("stable_id") or None,
+                            "from_stable_id": identity_map.get(from_did, {}).get("stable_id")
+                            or None,
                             "body": row["body"],
                             "content_mode": row.get("content_mode") or "legacy_plaintext_v1",
                             "message_version": row.get("message_version") or 1,
@@ -997,17 +1088,23 @@ async def _sse_events(
                             "sender_waiting": from_did in sender_waiting,
                             "hang_on": is_hang_on,
                             "extends_wait_seconds": HANG_ON_EXTENSION_SECONDS if is_hang_on else 0,
-                            "reply_to": str(row["reply_to"]) if row.get("reply_to") is not None else None,
+                            "reply_to": str(row["reply_to"])
+                            if row.get("reply_to") is not None
+                            else None,
                             "timestamp": _utc_iso(row["created_at"]),
                             "to_address": _chat_to_address(participant_rows, from_did=from_did),
                             "from_did": row.get("from_did"),
                             "signature": row.get("signature"),
                             "signed_payload": row.get("signed_payload"),
                             "id_chain": stored_id_chain(row.get("id_chain")),
-                            **verified_signed_recipient_fields({**row, "conversation_id": session_id_str}),
+                            **verified_signed_recipient_fields(
+                                {**row, "conversation_id": session_id_str}
+                            ),
                             "is_contact": is_address_in_contacts(from_address, contact_addrs),
                         }
-                        numbered_frames.append((row["seq"], f"event: message\ndata: {json.dumps(payload)}\n\n"))
+                        numbered_frames.append(
+                            (row["seq"], f"event: message\ndata: {json.dumps(payload)}\n\n")
+                        )
                     for row in receipts:
                         payload = {
                             "type": "read_receipt",
@@ -1015,11 +1112,15 @@ async def _sse_events(
                             "conversation_id": session_id_str,
                             "seq": row["seq"],
                             "reader_alias": row["alias"],
-                            "up_to_message_id": str(row["last_read_message_id"]) if row["last_read_message_id"] else "",
+                            "up_to_message_id": str(row["last_read_message_id"])
+                            if row["last_read_message_id"]
+                            else "",
                             "extends_wait_seconds": HANG_ON_EXTENSION_SECONDS,
                             "timestamp": _utc_iso(row["last_read_at"]),
                         }
-                        numbered_frames.append((row["seq"], f"event: read_receipt\ndata: {json.dumps(payload)}\n\n"))
+                        numbered_frames.append(
+                            (row["seq"], f"event: read_receipt\ndata: {json.dumps(payload)}\n\n")
+                        )
                     for _, frame in sorted(numbered_frames):
                         yield frame
                     cursor = bound
@@ -1029,16 +1130,24 @@ async def _sse_events(
 
             current_time = time.monotonic()
             if current_time - last_keepalive >= CHAT_STREAM_KEEPALIVE_SECONDS:
-                if pubsub is not None and current_time - last_pubsub_ping >= CHAT_STREAM_KEEPALIVE_SECONDS:
+                if (
+                    pubsub is not None
+                    and current_time - last_pubsub_ping >= CHAT_STREAM_KEEPALIVE_SECONDS
+                ):
                     try:
                         await pubsub.ping()
                         last_pubsub_ping = current_time
                     except RedisError:
-                        logger.info("Chat session pubsub ping failed; using DB fallback polling", exc_info=True)
+                        logger.info(
+                            "Chat session pubsub ping failed; using DB fallback polling",
+                            exc_info=True,
+                        )
                         await _close_session_pubsub(pubsub, channel)
                         pubsub = None
                         next_reconnect_at = current_time + reconnect_delay_seconds
-                        reconnect_delay_seconds = min(max_reconnect_delay_seconds, reconnect_delay_seconds * 2)
+                        reconnect_delay_seconds = min(
+                            max_reconnect_delay_seconds, reconnect_delay_seconds * 2
+                        )
                 yield ": keepalive\n\n"
                 last_keepalive = current_time
         reason = grant_expiry_reason(auth)
@@ -1070,7 +1179,9 @@ async def stream(
     actor_dids = _actor_dids(auth)
     owner_dids = _actor_dids(auth)
     if not owner_dids:
-        raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
+        raise HTTPException(
+            status_code=401, detail="Authenticated identity is missing a routing DID"
+        )
 
     try:
         session_uuid = UUID(session_id.strip())
@@ -1078,7 +1189,9 @@ async def stream(
         raise HTTPException(status_code=422, detail="Invalid id format")
 
     aweb_db = db.get_manager("aweb")
-    sess = await aweb_db.fetch_one("SELECT team_id FROM {{tables.chat_sessions}} WHERE session_id = $1", session_uuid)
+    sess = await aweb_db.fetch_one(
+        "SELECT team_id FROM {{tables.chat_sessions}} WHERE session_id = $1", session_uuid
+    )
     if not sess:
         raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
 
@@ -1108,7 +1221,8 @@ async def stream(
     # The live cursor is taken before the stream announces itself: a peer that
     # answers the waiting registration or the wake commits after this read.
     live_cursor = await aweb_db.fetch_value(
-        "SELECT last_seq FROM {{tables.chat_sessions}} WHERE session_id = $1", session_uuid,
+        "SELECT last_seq FROM {{tables.chat_sessions}} WHERE session_id = $1",
+        session_uuid,
     )
     if live_cursor is None:
         raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
@@ -1134,7 +1248,8 @@ async def stream(
             # A timestamp replays messages only; read receipts start live.
             receipts_after=live_cursor if after_dt is not None else cursor,
             delivery_team_id=sess.get("team_id"),
-            include_activity="agent_activity" in {value.strip() for value in (include or "").split(",")},
+            include_activity="agent_activity"
+            in {value.strip() for value in (include or "").split(",")},
         ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
@@ -1205,7 +1320,9 @@ async def send_message(
     auth: MessagingAuth = Depends(get_messaging_auth),
 ) -> SendMessageResponse:
     attachment_context = prepare_attachment_send(
-        getattr(request.app.state, "attachment_backend", None), payload, auth,
+        getattr(request.app.state, "attachment_backend", None),
+        payload,
+        auth,
     )
     if attachment_context is not None:
         with attachment_context:
@@ -1214,12 +1331,19 @@ async def send_message(
                 binding, row = existing
                 if binding.conversation_id != session_id:
                     raise HTTPException(409, detail={"code": "attachment_conflict"})
-                return SendMessageResponse(message_id=binding.message_id, conversation_id=binding.conversation_id, delivered=True)
+                return SendMessageResponse(
+                    message_id=binding.message_id,
+                    conversation_id=binding.conversation_id,
+                    delivered=True,
+                )
             return await send_message(request, session_id, payload, db=db, auth=auth)
     runtime = messaging_runtime(request.app.state)
     sender = replace(auth, id_chain=getattr(getattr(request, "state", None), "id_chain", None))
     target = await resolve_chat_targets(
-        db, sender, session_id, runtime,
+        db,
+        sender,
+        session_id,
+        runtime,
         source=str(request.client.host if request.client else "unknown"),
     )
     sent = await send_chat(db, sender, target, payload, runtime)
@@ -1263,7 +1387,9 @@ async def list_sessions(
     actor_dids = _actor_dids(auth)
     actor_did = actor_dids[0] if actor_dids else ""
     if not actor_did:
-        raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
+        raise HTTPException(
+            status_code=401, detail="Authenticated identity is missing a routing DID"
+        )
 
     aweb_db = db.get_manager("aweb")
     rows_by_session: dict[str, Any] = {}
@@ -1315,12 +1441,18 @@ async def list_sessions(
     left_dids_by_session = await _left_dids_by_session(db, session_ids)
     identity_map = await lookup_identity_metadata_by_did(
         db,
-        [(row.get("did") or "").strip() for row in participant_rows if (row.get("did") or "").strip()],
+        [
+            (row.get("did") or "").strip()
+            for row in participant_rows
+            if (row.get("did") or "").strip()
+        ],
     )
     waiting_by_session = await get_waiting_agents_by_session(
         redis,
         {
-            str(row["session_id"]): [did for did in (row["participant_dids"] or []) if did not in set(actor_dids)]
+            str(row["session_id"]): [
+                did for did in (row["participant_dids"] or []) if did not in set(actor_dids)
+            ]
             for row in rows
         },
     )
@@ -1346,7 +1478,8 @@ async def list_sessions(
                     if (participant.get("did") or "").strip() not in hidden_dids
                 ],
                 participant_addresses=[
-                    (participant.get("address") or "").strip() or routable_chat_address(
+                    (participant.get("address") or "").strip()
+                    or routable_chat_address(
                         identity_map.get((participant.get("did") or "").strip(), {}),
                         auth.team_id,
                         participant["alias"],

@@ -100,9 +100,7 @@ def answer_comment_projection(*, body_md: str, answer_sha256: str) -> str:
     raise ValidationError("schema_invalid")
 
 
-def _answer_receipt(
-    row, *, current_question_rev: int, cancelled: bool = False
-) -> dict[str, Any]:
+def _answer_receipt(row, *, current_question_rev: int, cancelled: bool = False) -> dict[str, Any]:
     return {
         "task_answer_ref": str(row["receipt_id"]),
         "task_id": str(row["task_id"]),
@@ -117,9 +115,7 @@ def _answer_receipt(
             "principal_did": row["answered_by_did"],
             "certificate_id": row["certificate_id"],
         },
-        "answered_at": row["answered_at"]
-        .astimezone(timezone.utc)
-        .strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "answered_at": row["answered_at"].astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "current": row["question_rev"] == current_question_rev and not cancelled,
     }
 
@@ -147,9 +143,7 @@ def _task_list_contract(row):
     }
 
 
-async def get_task_answer_on(
-    tx, *, team_id: str, task_id: UUID, answer_key: str
-) -> dict[str, Any]:
+async def get_task_answer_on(tx, *, team_id: str, task_id: UUID, answer_key: str) -> dict[str, Any]:
     """Read an immutable receipt inside the caller's authorization transaction.
 
     The caller enforces member or installation receipt-read authority first.
@@ -242,9 +236,7 @@ async def answer_task_on(
         )
     ):
         raise ValidationError("schema_invalid")
-    comment_body = answer_comment_projection(
-        body_md=body_md, answer_sha256=answer_sha256
-    )
+    comment_body = answer_comment_projection(body_md=body_md, answer_sha256=answer_sha256)
     # Installation -> task is F6 retirement's lock order. Keep it identical
     # here, including when the member API (rather than app transport) answers.
     source = await tx.fetch_one(
@@ -342,9 +334,7 @@ async def answer_task_on(
     ):
         raise ConflictError("approval_changed")
     choices = metadata.get("choices")
-    choice_values = (
-        [entry["value"] for entry in choices] if choices is not None else None
-    )
+    choice_values = [entry["value"] for entry in choices] if choices is not None else None
     if (choice_values is not None and choice not in choice_values) or (
         choices is None and choice is not None
     ):
@@ -660,9 +650,7 @@ async def create_task(
                 child_ref_prefix,
             )
             root_task_seq = parent_row["root_task_seq"]
-            task_ref_suffix = (
-                f"{parent_row['task_ref_suffix']}.{int(max_sibling_index) + 1}"
-            )
+            task_ref_suffix = f"{parent_row['task_ref_suffix']}.{int(max_sibling_index) + 1}"
         else:
             root_task_seq = await _allocate_root_task_seq_on(tx, team_id=team_id)
             task_ref_suffix = _encode_alpha_component(root_task_seq)
@@ -704,9 +692,7 @@ async def create_task(
         "priority": priority,
         "task_type": task_type,
         "labels": labels or [],
-        "parent_task_id": str(resolved_parent_task_id)
-        if resolved_parent_task_id
-        else None,
+        "parent_task_id": str(resolved_parent_task_id) if resolved_parent_task_id else None,
         "assignee_alias": assignee_alias,
         "created_by_alias": created_by_alias,
         "closed_by_alias": None,
@@ -737,9 +723,7 @@ async def create_task(
     return result
 
 
-async def _resolve_assignee_on(
-    manager, *, team_id: str, assignee_ref: str
-) -> tuple[str, str]:
+async def _resolve_assignee_on(manager, *, team_id: str, assignee_ref: str) -> tuple[str, str]:
     """Resolve display alias and immutable principal together, on the write tx."""
     try:
         agent_id = UUID(assignee_ref)
@@ -1188,9 +1172,7 @@ async def list_active_work(db, *, team_id: str) -> list[dict[str, Any]]:
         workspace_meta_by_id = {
             str(row["workspace_id"]): {
                 "alias": row["alias"],
-                "last_seen_at": row["last_seen_at"].isoformat()
-                if row["last_seen_at"]
-                else None,
+                "last_seen_at": row["last_seen_at"].isoformat() if row["last_seen_at"] else None,
                 "canonical_origin": row["canonical_origin"],
             }
             for row in workspace_rows
@@ -1212,9 +1194,7 @@ async def list_active_work(db, *, team_id: str) -> list[dict[str, Any]]:
             owner_alias = row["assignee_alias"]
 
         workspace_meta = (
-            workspace_meta_by_id.get(owner_workspace_id or "")
-            if owner_workspace_id
-            else None
+            workspace_meta_by_id.get(owner_workspace_id or "") if owner_workspace_id else None
         ) or {}
         if owner_alias is None:
             owner_alias = workspace_meta.get("alias")
@@ -1230,14 +1210,10 @@ async def list_active_work(db, *, team_id: str) -> list[dict[str, Any]]:
                 "task_type": row["task_type"],
                 "assignee_alias": row["assignee_alias"],
                 "created_by_alias": row["created_by_alias"],
-                "parent_task_id": str(row["parent_task_id"])
-                if row["parent_task_id"]
-                else None,
+                "parent_task_id": str(row["parent_task_id"]) if row["parent_task_id"] else None,
                 "labels": list(row["labels"]) if row["labels"] else [],
                 "created_at": row["created_at"].isoformat(),
-                "updated_at": row["updated_at"].isoformat()
-                if row.get("updated_at")
-                else None,
+                "updated_at": row["updated_at"].isoformat() if row.get("updated_at") else None,
                 "workspace_id": owner_workspace_id,
                 "owner_alias": owner_alias,
                 "claimed_at": claimed_at,
@@ -1257,9 +1233,7 @@ async def list_active_work(db, *, team_id: str) -> list[dict[str, Any]]:
     return items
 
 
-async def list_ready_tasks(
-    db, *, team_id: str, unclaimed: bool = False
-) -> list[dict[str, Any]]:
+async def list_ready_tasks(db, *, team_id: str, unclaimed: bool = False) -> list[dict[str, Any]]:
     slug = _get_team_slug(team_id)
     aweb_db = db.get_manager("aweb")
     unclaimed_filter = "AND t.assignee_alias IS NULL" if unclaimed else ""
@@ -1477,9 +1451,7 @@ async def update_task(
 
         if assignee_alias is not _UNSET:
             resolved_assignee_alias, resolved_assignee_did = (
-                await _resolve_assignee_on(
-                    tx, team_id=team_id, assignee_ref=str(assignee_alias)
-                )
+                await _resolve_assignee_on(tx, team_id=team_id, assignee_ref=str(assignee_alias))
                 if assignee_alias
                 else (None, None)
             )
@@ -1523,9 +1495,7 @@ async def update_task(
                         workspace["workspace_id"],
                     )
                     if conflicting_claim:
-                        raise ConflictError(
-                            "Task is already in progress by another agent"
-                        )
+                        raise ConflictError("Task is already in progress by another agent")
 
                     await tx.execute(
                         """
@@ -1629,9 +1599,7 @@ async def update_task(
                         auto_closed.append(
                             {
                                 "task_id": str(cr["task_id"]),
-                                "task_ref": format_task_ref(
-                                    slug, cr["task_ref_suffix"]
-                                ),
+                                "task_ref": format_task_ref(slug, cr["task_ref_suffix"]),
                                 "title": cr["title"],
                             }
                         )
@@ -1644,11 +1612,7 @@ async def update_task(
         # A status change to anything but in_progress ends every claim on the
         # task, in this transaction. The release follows the status write
         # because a released workspace keeps its focus only on an open task.
-        if (
-            status is not None
-            and status != current["status"]
-            and status != "in_progress"
-        ):
+        if status is not None and status != current["status"] and status != "in_progress":
             released_claim_workspace_ids = await release_task_claims_on(
                 tx,
                 team_id=team_id,

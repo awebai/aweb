@@ -46,9 +46,7 @@ async def sender_memberships(
     ``member_rows`` are the senders' agent rows when the caller read them with
     its messages; otherwise they are read here.
     """
-    keys = {
-        (str(r.get("team_id") or ""), str(r.get("from_agent_id") or "")) for r in rows
-    }
+    keys = {(str(r.get("team_id") or ""), str(r.get("from_agent_id") or "")) for r in rows}
     result = {key: SenderMembership(team_id=key[0]) for key in keys}
     if request is None:
         return result
@@ -91,18 +89,14 @@ async def sender_memberships(
             try:
                 parse_team_id(team)
             except ValueError:
-                logger.warning(
-                    "Sender membership has invalid team scope", exc_info=True
-                )
+                logger.warning("Sender membership has invalid team scope", exc_info=True)
                 continue
             try:
                 revocations[team] = await _get_revoked_certificates(
                     request, team, certificate_ids=team_certificates[team]
                 )
             except HTTPException:
-                logger.warning(
-                    "Sender certificate revocations unavailable", exc_info=True
-                )
+                logger.warning("Sender certificate revocations unavailable", exc_info=True)
                 revocations[team] = None
         revoked = revocations[team]
         if revoked is None:

@@ -44,9 +44,7 @@ async def _supersede_resident_membership(fixture, receiver) -> None:
         "new_team_did_key": next_did,
     }
     timestamp = datetime.now(timezone.utc).isoformat()
-    signature = sign_message(
-        env.team_sk, canonical_json_bytes({**payload, "timestamp": timestamp})
-    )
+    signature = sign_message(env.team_sk, canonical_json_bytes({**payload, "timestamp": timestamp}))
     # Preserve the real clock's precision: admission is a first-sight floor,
     # and the later controller act must actually be newer than that floor.
     async with httpx.AsyncClient(
@@ -122,9 +120,7 @@ async def test_federation_first_contact_and_new_continuation_keep_identity_resid
     assert second.message_id != first.message_id
     table = "messages" if kind == "mail" else "chat_messages"
     rows = await foreign_receiver.db.fetch_all(
-        "SELECT message_id,from_did FROM {{tables."
-        + table
-        + "}} WHERE message_id=ANY($1::uuid[])",
+        "SELECT message_id,from_did FROM {{tables." + table + "}} WHERE message_id=ANY($1::uuid[])",
         [first.message_id, second.message_id],
     )
     assert {row["message_id"] for row in rows} == {first.message_id, second.message_id}
@@ -291,16 +287,12 @@ async def test_encrypted_federation_uses_identity_assertion_after_member_superse
     assert response.status_code == 200, response.text
     table = "messages" if kind == "mail" else "chat_messages"
     stored = await foreign_receiver.db.fetch_one(
-        "SELECT content_mode,from_did FROM {{tables."
-        + table
-        + "}} WHERE message_id=$1::uuid",
+        "SELECT content_mode,from_did FROM {{tables." + table + "}} WHERE message_id=$1::uuid",
         response.json()["message_id"],
     )
     assert stored["content_mode"] == "encrypted_v2"
     assert stored["from_did"] == first.signed["from_stable_id"]
-    assert (
-        envelope["recipients"][0]["encryption_key_id"] == assertion["encryption_key_id"]
-    )
+    assert envelope["recipients"][0]["encryption_key_id"] == assertion["encryption_key_id"]
     # Explicit storage tampering is a negative boundary, not normal setup.
     original = await foreign_receiver.db.fetch_value(
         "SELECT assertion_canonical FROM {{tables.agent_encryption_keys}} "

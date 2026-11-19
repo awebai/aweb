@@ -49,14 +49,10 @@ class _WorkspaceIDsCacheEntry:
     limit: int
 
 
-_WORKSPACE_IDS_CACHE: OrderedDict[tuple[int, str], _WorkspaceIDsCacheEntry] = (
-    OrderedDict()
-)
+_WORKSPACE_IDS_CACHE: OrderedDict[tuple[int, str], _WorkspaceIDsCacheEntry] = OrderedDict()
 
 
-def _get_workspace_ids_cache_key(
-    db_infra: DatabaseInfra, team_id: str
-) -> tuple[int, str]:
+def _get_workspace_ids_cache_key(db_infra: DatabaseInfra, team_id: str) -> tuple[int, str]:
     # Scope cache to the DatabaseInfra instance to avoid cross-DB bleed.
     return (id(db_infra), team_id)
 
@@ -104,9 +100,7 @@ def _title_join(
     Matches task_ref (e.g. 'myteam-42') against team_id and task_ref_suffix
     by reconstructing the full ref from the team slug and suffix.
     """
-    select_expr = (
-        "t.title, t.task_type AS issue_type" if include_type else "t.title AS title"
-    )
+    select_expr = "t.title, t.task_type AS issue_type" if include_type else "t.title AS title"
 
     guard = f"\n                  AND {guard_col} IS NOT NULL" if guard_col else ""
 
@@ -354,9 +348,7 @@ async def status(
     # Agent presences from Redis (filtered by workspace_ids from database).
     all_presences: List[Dict[str, str]] = []
     if redis and workspace_ids:
-        all_presences = await list_agent_presences_by_workspace_ids(
-            redis, workspace_ids
-        )
+        all_presences = await list_agent_presences_by_workspace_ids(redis, workspace_ids)
     presence_by_workspace = {
         p.get("workspace_id", ""): p for p in all_presences if p.get("workspace_id")
     }
@@ -395,14 +387,12 @@ async def status(
         workspace_ids,
     )
     workspace_rows_by_id = {str(row["workspace_id"]): row for row in workspace_rows}
-    ordered_workspace_ids = [
-        ws_id for ws_id in workspace_ids if ws_id in workspace_rows_by_id
-    ] or [str(row["workspace_id"]) for row in workspace_rows]
+    ordered_workspace_ids = [ws_id for ws_id in workspace_ids if ws_id in workspace_rows_by_id] or [
+        str(row["workspace_id"]) for row in workspace_rows
+    ]
     workspace_ids_by_agent: Dict[str, List[str]] = {}
     for row in workspace_rows:
-        workspace_ids_by_agent.setdefault(str(row["agent_id"]), []).append(
-            str(row["workspace_id"])
-        )
+        workspace_ids_by_agent.setdefault(str(row["agent_id"]), []).append(str(row["workspace_id"]))
     agent_ids = list(workspace_ids_by_agent)
 
     claim_rows = await aweb_db.fetch_all(
@@ -494,9 +484,7 @@ async def status(
             "holder_alias": row["holder_alias"],
             "acquired_at": row["acquired_at"].isoformat(),
             "expires_at": row["expires_at"].isoformat(),
-            "ttl_remaining_seconds": max(
-                int((row["expires_at"] - now).total_seconds()), 0
-            ),
+            "ttl_remaining_seconds": max(int((row["expires_at"] - now).total_seconds()), 0),
             "reason": reason,
             "metadata": metadata,
         }
@@ -518,8 +506,7 @@ async def status(
             "human_name": presence.get("human_name") or row["human_name"] or None,
             "role": agent_role,
             "role_name": agent_role,
-            "status": presence.get("status")
-            or ("active" if grant_liveness else "offline"),
+            "status": presence.get("status") or ("active" if grant_liveness else "offline"),
             "canonical_origin": presence.get("canonical_origin") or row["repo"] or None,
             "hostname": row["hostname"] or None,
             "workspace_path": row["workspace_path"] or None,
@@ -577,16 +564,12 @@ async def status(
     }
 
 
-async def _messaging_workspace_ids(
-    request: Request, db_infra, identity: TeamIdentity
-) -> set[str]:
+async def _messaging_workspace_ids(request: Request, db_infra, identity: TeamIdentity) -> set[str]:
     # An embedding host may authorize a public coordination reader. Its signed
     # internal principal must never acquire messaging visibility, even if an
     # attribution UUID happens to have workspace rows. This is deny-only: the
     # header cannot establish identity or grant access in standalone aweb.
-    if request.headers.get(INTERNAL_AUTH_HEADER, "").startswith(
-        f"v2:{identity.team_id}:p:"
-    ):
+    if request.headers.get(INTERNAL_AUTH_HEADER, "").startswith(f"v2:{identity.team_id}:p:"):
         return set()
     try:
         actor_id = UUID(identity.agent_id)
@@ -708,9 +691,7 @@ async def status_stream(
         )
     else:
         # No filter - stream registered workspaces from database (limited)
-        workspace_ids = await get_all_workspace_ids_from_db(
-            db_infra, limit, team_id=team_id
-        )
+        workspace_ids = await get_all_workspace_ids_from_db(db_infra, limit, team_id=team_id)
 
     # Handle empty workspace lists:
     # - If user provided specific filters (repo/human_name) that matched nothing,
@@ -736,9 +717,7 @@ async def status_stream(
                 detail=f"Invalid event types: {invalid}. Valid types: {sorted(VALID_SSE_EVENT_TYPES)}",
             )
 
-    messaging_workspace_ids = await _messaging_workspace_ids(
-        request, db_infra, identity
-    )
+    messaging_workspace_ids = await _messaging_workspace_ids(request, db_infra, identity)
 
     def event_visible(event: dict[str, Any]) -> bool:
         category = str(event.get("type", "")).split(".", 1)[0]
@@ -765,9 +744,7 @@ async def status_stream(
 
     allowed_grant_categories = allowed_status_categories(identity)
     if allowed_grant_categories is not None:
-        event_type_set = (
-            event_type_set or set(VALID_SSE_EVENT_TYPES)
-        ) & allowed_grant_categories
+        event_type_set = (event_type_set or set(VALID_SSE_EVENT_TYPES)) & allowed_grant_categories
 
     await require_valid_stream_grant(request, db_infra, identity)
     deadline = clamp_deadline_to_grant(
@@ -800,9 +777,7 @@ async def status_stream(
                 keepalive_seconds=30 if workspace_ids else 1,
                 check_disconnected=_disconnected_or_deadline,
                 event_filter=(
-                    lambda event: (
-                        event_visible(event) and status_event_allowed(identity, event)
-                    )
+                    lambda event: event_visible(event) and status_event_allowed(identity, event)
                 ),
             )
         ) as items:

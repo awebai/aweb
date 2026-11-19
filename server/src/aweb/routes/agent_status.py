@@ -85,7 +85,9 @@ async def _host_is_active_member(db, *, team_id: str, host_did: str) -> bool:
 async def _require_active_member_host(db, *, team_id: str, host_did: str) -> str:
     host_did = _require_did_key(host_did)
     if not await _host_is_active_member(db, team_id=team_id, host_did=host_did):
-        raise HTTPException(status_code=422, detail="host_not_member: host_did is not an active member of this team")
+        raise HTTPException(
+            status_code=422, detail="host_not_member: host_did is not an active member of this team"
+        )
     return host_did
 
 
@@ -161,7 +163,10 @@ async def get_my_status_host(
     """Return the calling agent's designated status host, if any."""
     aweb_db = db.get_manager("aweb")
     return await _status_host_view(
-        aweb_db, agent_id=identity.agent_id, team_id=identity.team_id, alias=identity.alias,
+        aweb_db,
+        agent_id=identity.agent_id,
+        team_id=identity.team_id,
+        alias=identity.alias,
     )
 
 
@@ -173,7 +178,9 @@ async def set_my_status_host(
 ) -> StatusHostResponse:
     """Designate the team member whose signed status reports speak for the caller."""
     aweb_db = db.get_manager("aweb")
-    host_did = await _require_active_member_host(aweb_db, team_id=identity.team_id, host_did=payload.host_did)
+    host_did = await _require_active_member_host(
+        aweb_db, team_id=identity.team_id, host_did=payload.host_did
+    )
     async with aweb_db.transaction() as tx:
         await _lock_agent(tx, identity.agent_id)
         await _designate(
@@ -184,7 +191,10 @@ async def set_my_status_host(
             designated_by_did=identity.did_key,
         )
     return await _status_host_view(
-        aweb_db, agent_id=identity.agent_id, team_id=identity.team_id, alias=identity.alias,
+        aweb_db,
+        agent_id=identity.agent_id,
+        team_id=identity.team_id,
+        alias=identity.alias,
     )
 
 
@@ -199,7 +209,10 @@ async def clear_my_status_host(
         await _lock_agent(tx, identity.agent_id)
         await _clear(tx, agent_id=identity.agent_id)
     return await _status_host_view(
-        aweb_db, agent_id=identity.agent_id, team_id=identity.team_id, alias=identity.alias,
+        aweb_db,
+        agent_id=identity.agent_id,
+        team_id=identity.team_id,
+        alias=identity.alias,
     )
 
 
@@ -270,7 +283,10 @@ async def controller_set_status_host(
         )
         current_host_did = current["host_did"] if current else ""
         if current_host_did != payload.previous_host_did.strip():
-            raise HTTPException(status_code=409, detail="status_host_changed: Status host changed since previous_host_did")
+            raise HTTPException(
+                status_code=409,
+                detail="status_host_changed: Status host changed since previous_host_did",
+            )
         if host_did:
             await _designate(
                 tx,
@@ -282,7 +298,9 @@ async def controller_set_status_host(
         else:
             await _clear(tx, agent_id=agent["agent_id"])
 
-    return await _status_host_view(aweb_db, agent_id=agent["agent_id"], team_id=team_id, alias=alias)
+    return await _status_host_view(
+        aweb_db, agent_id=agent["agent_id"], team_id=team_id, alias=alias
+    )
 
 
 def _may_publish(identity: TeamIdentity, *, agent_id, host_did: str | None) -> bool:
@@ -346,11 +364,17 @@ async def publish_agent_status(
     if agent is None:
         raise HTTPException(status_code=404, detail="agent_not_found: Agent not found")
     agent_id = agent["agent_id"]
-    not_host = HTTPException(status_code=403, detail=f"not_status_host: not the status host for {alias}")
-    if not _may_publish(identity, agent_id=agent_id, host_did=await _current_host_did(aweb_db, agent_id)):
+    not_host = HTTPException(
+        status_code=403, detail=f"not_status_host: not the status host for {alias}"
+    )
+    if not _may_publish(
+        identity, agent_id=agent_id, host_did=await _current_host_did(aweb_db, agent_id)
+    ):
         raise not_host
     if redis is None:
-        raise HTTPException(status_code=503, detail="publishing_unavailable: Status publishing is unavailable")
+        raise HTTPException(
+            status_code=503, detail="publishing_unavailable: Status publishing is unavailable"
+        )
     await _enforce_publish_rate(redis, agent_id)
 
     try:
@@ -364,7 +388,9 @@ async def publish_agent_status(
         logger.info("Refused status for %s from %s: %s", alias, identity.did_key, exc)
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if document["team_id"] != identity.team_id:
-        raise HTTPException(status_code=422, detail="team_mismatch: team_id is not the authenticated team")
+        raise HTTPException(
+            status_code=422, detail="team_mismatch: team_id is not the authenticated team"
+        )
     expected_agent = str(agent["did_aw"] or "").strip() or agent["did_key"]
     if document["agent"] != expected_agent:
         raise HTTPException(status_code=422, detail=f"agent_mismatch: agent does not name {alias}")
@@ -373,14 +399,18 @@ async def publish_agent_status(
     fixing = document.get("fixing") or {}
     async with aweb_db.transaction() as tx:
         await _lock_agent(tx, agent_id)
-        if not _may_publish(identity, agent_id=agent_id, host_did=await _current_host_did(tx, agent_id)):
+        if not _may_publish(
+            identity, agent_id=agent_id, host_did=await _current_host_did(tx, agent_id)
+        ):
             raise not_host
         previous = await tx.fetch_one(
             "SELECT seq, reachable, reason_code, fixing_by FROM {{tables.agent_status}} WHERE agent_id = $1",
             agent_id,
         )
         if previous is not None and document["seq"] <= previous["seq"]:
-            raise HTTPException(status_code=409, detail="stale_seq: seq is not greater than the stored seq")
+            raise HTTPException(
+                status_code=409, detail="stale_seq: seq is not greater than the stored seq"
+            )
         stored = await tx.fetch_one(
             """
             INSERT INTO {{tables.agent_status}} (
@@ -416,7 +446,9 @@ async def publish_agent_status(
             payload.signature,
         )
         if stored is None:
-            raise HTTPException(status_code=409, detail="stale_seq: seq is not greater than the stored seq")
+            raise HTTPException(
+                status_code=409, detail="stale_seq: seq is not greater than the stored seq"
+            )
 
     if _verdict(stored) != _verdict(previous):
         await fire_mutation_hook(

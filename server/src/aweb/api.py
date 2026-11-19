@@ -108,9 +108,7 @@ def _max_request_body_bytes() -> int:
     except ValueError:
         value = 0
     if value < 1:
-        raise ValueError(
-            "AWEB_MAX_REQUEST_BODY_BYTES must be a positive whole number of bytes"
-        )
+        raise ValueError("AWEB_MAX_REQUEST_BODY_BYTES must be a positive whole number of bytes")
     return value
 
 
@@ -127,9 +125,7 @@ class RequestBodyCacheMiddleware:
     streaming response.
     """
 
-    def __init__(
-        self, app, *, max_body_bytes: int = DEFAULT_MAX_REQUEST_BODY_BYTES
-    ) -> None:
+    def __init__(self, app, *, max_body_bytes: int = DEFAULT_MAX_REQUEST_BODY_BYTES) -> None:
         if max_body_bytes < 1:
             raise ValueError("max_body_bytes must be positive")
         self.app = app
@@ -158,11 +154,7 @@ class RequestBodyCacheMiddleware:
             ),
             None,
         )
-        if (
-            declared is not None
-            and declared.isdigit()
-            and int(declared) > self.max_body_bytes
-        ):
+        if declared is not None and declared.isdigit() and int(declared) > self.max_body_bytes:
             await self._refuse(scope, receive, send)
             return
         chunks, received = [], 0
@@ -320,9 +312,7 @@ def _make_standalone_lifespan():
 
         try:
             # Phase 1: Initialize all resources (don't set app.state yet)
-            redis = await async_redis_from_url(
-                settings.redis_url, decode_responses=True
-            )
+            redis = await async_redis_from_url(settings.redis_url, decode_responses=True)
             await redis.ping()
             redis_connected = True
             logger.info("Connected to Redis")
@@ -331,9 +321,7 @@ def _make_standalone_lifespan():
             db_initialized = True
             logger.info("Database initialized")
             if getattr(app.state, "install_admin_policy", None) is None:
-                setup_message = await install_admin_setup_message(
-                    default_db_infra.get_manager()
-                )
+                setup_message = await install_admin_setup_message(default_db_infra.get_manager())
                 if setup_message:
                     logger.info(setup_message)
 
@@ -515,9 +503,7 @@ def create_app(
                 "Call 'await db_infra.initialize()' before creating the app."
             )
         assert redis is not None  # Required when db_infra is provided
-        lifespan = _make_library_lifespan(
-            db_infra, redis, awid_transport, domain_verifier
-        )
+        lifespan = _make_library_lifespan(db_infra, redis, awid_transport, domain_verifier)
     else:
         lifespan = _make_standalone_lifespan()
 
@@ -531,21 +517,15 @@ def create_app(
     # (aweb.team_key_pins); an embedding host may replace the resolver.
     app.state.awid_txt_resolver = SystemTXTOutcomeResolver()
     app.state.public_origin = (
-        canonical_server_origin(public_origin)
-        if public_origin is not None
-        else get_public_origin()
+        canonical_server_origin(public_origin) if public_origin is not None else get_public_origin()
     )
     app.include_router(attachment_router)
     app.add_middleware(NormalizeMountedMCPPathMiddleware, mount_path="/mcp")
 
-    app.add_middleware(
-        RequestBodyCacheMiddleware, max_body_bytes=_max_request_body_bytes()
-    )
+    app.add_middleware(RequestBodyCacheMiddleware, max_body_bytes=_max_request_body_bytes())
 
     @app.exception_handler(RequestValidationError)
-    async def _request_validation_error_handler(
-        request: Request, exc: RequestValidationError
-    ):
+    async def _request_validation_error_handler(request: Request, exc: RequestValidationError):
         matched_route_path = getattr(request.scope.get("route"), "path", "")
         if (
             matched_route_path
@@ -557,12 +537,8 @@ def create_app(
             and isinstance(exc.body, dict)
             and ({"attachments", "attachment_refs"} & exc.body.keys())
         ):
-            return JSONResponse(
-                status_code=422, content={"detail": {"code": "request_invalid"}}
-            )
-        if isinstance(matched_route_path, str) and matched_route_path.startswith(
-            "/v1/federation/"
-        ):
+            return JSONResponse(status_code=422, content={"detail": {"code": "request_invalid"}})
+        if isinstance(matched_route_path, str) and matched_route_path.startswith("/v1/federation/"):
             from uuid import uuid4
 
             reason = (
@@ -575,16 +551,13 @@ def create_app(
                 status_code=error.http_status,
                 content=authority_error_body(
                     error,
-                    correlation_id=request.headers.get("X-Correlation-ID")
-                    or str(uuid4()),
+                    correlation_id=request.headers.get("X-Correlation-ID") or str(uuid4()),
                 ),
             )
         return await request_validation_exception_handler(request, exc)
 
     @app.exception_handler(FederationAuthorityError)
-    async def _federation_authority_error_handler(
-        request: Request, exc: FederationAuthorityError
-    ):
+    async def _federation_authority_error_handler(request: Request, exc: FederationAuthorityError):
         from uuid import uuid4
 
         correlation_id = request.headers.get("X-Correlation-ID") or str(uuid4())
@@ -610,9 +583,7 @@ def create_app(
     async def _service_error_handler(request: Request, exc: ServiceError):
         if exc.status_code >= 500:
             logger.exception("Unhandled ServiceError", exc_info=exc)
-            return JSONResponse(
-                status_code=500, content={"detail": "Internal server error"}
-            )
+            return JSONResponse(status_code=500, content={"detail": "Internal server error"})
         return JSONResponse(
             status_code=exc.status_code,
             content={"detail": exc.detail},

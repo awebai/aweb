@@ -162,9 +162,7 @@ async def _ensure_agent(
 
     inbound_mode = "open"
     if str(did_aw or "").startswith("did:aw:"):
-        inbound_mode = await effective_inbound_mode(
-            db, did_aw, for_share=True, default="open"
-        )
+        inbound_mode = await effective_inbound_mode(db, did_aw, for_share=True, default="open")
     agent_id = uuid.uuid4()
     try:
         async with db.transaction() as insert_tx:
@@ -381,9 +379,7 @@ async def _ensure_repo(
     try:
         return await ensure_repo(db, team_id, repo_origin)
     except ValueError as exc:
-        raise HTTPException(
-            status_code=422, detail=f"invalid repo_origin: {exc}"
-        ) from exc
+        raise HTTPException(status_code=422, detail=f"invalid repo_origin: {exc}") from exc
 
 
 # ---------------------------------------------------------------------------
@@ -455,13 +451,9 @@ async def connect_agent(
         or identity_kind.did_aw != did_aw
     ):
         raise ValueError("identity_kind_mismatch")
-    human_verified_key = (
-        did_key if identity_kind is not None and identity_kind.is_human else None
-    )
+    human_verified_key = did_key if identity_kind is not None and identity_kind.is_human else None
     agent_type = (
-        "human"
-        if human_verified_key
-        else ("agent" if agent_type == "human" else agent_type)
+        "human" if human_verified_key else ("agent" if agent_type == "human" else agent_type)
     )
 
     async with db.transaction() as tx:

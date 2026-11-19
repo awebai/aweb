@@ -61,9 +61,7 @@ class CertificateRegistrationObservation:
         if (known is None) == (cause is None):
             raise ValueError("Provide known registrations or an unavailability cause")
         if cause is not None and not isinstance(cause, Exception):
-            raise TypeError(
-                "Registration unavailability must retain its exception cause"
-            )
+            raise TypeError("Registration unavailability must retain its exception cause")
         if known is not None:
             if isinstance(known, (str, bytes)) or not isinstance(known, Collection):
                 raise TypeError("Registered certificate IDs must be a collection")
@@ -83,8 +81,7 @@ class RegistrationDecision:
     @property
     def allows_registration(self) -> bool:
         return (
-            self.mode is RegistrationMode.NOT_REQUIRED
-            or self.state is RegistrationState.REGISTERED
+            self.mode is RegistrationMode.NOT_REQUIRED or self.state is RegistrationState.REGISTERED
         )
 
 
@@ -134,13 +131,9 @@ def record_certificate_registration(
     )
     counted = None
     if request is not None:
-        counted = getattr(
-            request.state, "certificate_registration_observations_counted", None
-        )
+        counted = getattr(request.state, "certificate_registration_observations_counted", None)
         if counted is None:
-            counted = request.state.certificate_registration_observations_counted = (
-                set()
-            )
+            counted = request.state.certificate_registration_observations_counted = set()
     key = (observation.team_id, certificate_id, mode, decision.state)
     if counted is None or key not in counted:
         if counted is not None:
@@ -150,9 +143,7 @@ def record_certificate_registration(
             RegistrationState.UNREGISTERED: _MetricOutcome.WOULD_REFUSE,
             RegistrationState.UNAVAILABLE: _MetricOutcome.UNAVAILABLE,
         }[decision.state]
-        _REGISTRATION_OBSERVATIONS.labels(
-            enforcement=mode.value, outcome=outcome.value
-        ).inc()
+        _REGISTRATION_OBSERVATIONS.labels(enforcement=mode.value, outcome=outcome.value).inc()
     return decision
 
 

@@ -65,9 +65,7 @@ async def test_revoked_certificate_strips_team_context():
         "certificate_id": "cert-9",
         **CURRENT_KEY,
     }
-    out = await current_membership(
-        request.app.state.awid_registry_client, row, request=request
-    )
+    out = await current_membership(request.app.state.awid_registry_client, row, request=request)
     assert out["team_id"] is None
     assert out["alias"] is None
     assert out["agent_id"] is None
@@ -86,9 +84,7 @@ async def test_live_certificate_keeps_team_context():
         "certificate_id": "cert-9",
         **CURRENT_KEY,
     }
-    out = await current_membership(
-        request.app.state.awid_registry_client, row, request=request
-    )
+    out = await current_membership(request.app.state.awid_registry_client, row, request=request)
     assert out["team_id"] == TEAM_ID and out["alias"] == "alice"
 
 
@@ -102,9 +98,7 @@ async def test_row_without_recorded_certificate_passes_without_registry_call():
         "certificate_id": None,
         **CURRENT_KEY,
     }
-    out = await current_membership(
-        request.app.state.awid_registry_client, row, request=request
-    )
+    out = await current_membership(request.app.state.awid_registry_client, row, request=request)
     assert out is row
     registry.get_team_revocations.assert_not_awaited()
 
@@ -113,9 +107,7 @@ async def test_row_without_recorded_certificate_passes_without_registry_call():
 async def test_row_without_team_context_passes_without_registry_call():
     request, registry = _request_with_revocations(set())
     row = {"team_id": None, "alias": None, "agent_id": None, "certificate_id": "cert-9"}
-    out = await current_membership(
-        request.app.state.awid_registry_client, row, request=request
-    )
+    out = await current_membership(request.app.state.awid_registry_client, row, request=request)
     assert out is row
     registry.get_team_revocations.assert_not_awaited()
 
@@ -131,9 +123,7 @@ async def test_registry_unavailable_fails_closed():
         **CURRENT_KEY,
     }
     with pytest.raises(HTTPException) as excinfo:
-        await current_membership(
-            request.app.state.awid_registry_client, row, request=request
-        )
+        await current_membership(request.app.state.awid_registry_client, row, request=request)
     assert excinfo.value.status_code == 503
 
 
@@ -206,7 +196,5 @@ async def test_certificate_authenticated_request_refreshes_recorded_certificate(
     # updates the projection, so identity-only enforcement checks the current
     # certificate rather than the one from the original connect.
     await resolve_team_identity(db, {**cert_info, "certificate_id": "cert-new"})
-    row = await read_member_projection(
-        db, team_id=TEAM_ID, did_key="did:key:z6MkRefresher"
-    )
+    row = await read_member_projection(db, team_id=TEAM_ID, did_key="did:key:z6MkRefresher")
     assert row["certificate_id"] == "cert-new"

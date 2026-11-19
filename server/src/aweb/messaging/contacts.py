@@ -18,7 +18,9 @@ CONTACT_STATUSES = {"pending", "active"}
 logger = logging.getLogger(__name__)
 
 
-def normalize_owner_dids(*, owner_did: str | None = None, owner_dids: list[str] | None = None) -> list[str]:
+def normalize_owner_dids(
+    *, owner_did: str | None = None, owner_dids: list[str] | None = None
+) -> list[str]:
     values: list[str] = []
     if owner_did is not None:
         values.append(owner_did)
@@ -126,7 +128,9 @@ async def add_handle_contact(
     return _contact_row_to_dict(row)
 
 
-async def list_contacts(db, *, owner_did: str | None = None, owner_dids: list[str] | None = None) -> list[dict]:
+async def list_contacts(
+    db, *, owner_did: str | None = None, owner_dids: list[str] | None = None
+) -> list[dict]:
     """List all contacts for an identity."""
     aweb_db = db.get_manager("aweb")
     owner_keys = normalize_owner_dids(owner_did=owner_did, owner_dids=owner_dids)
@@ -151,7 +155,9 @@ async def list_contacts(db, *, owner_did: str | None = None, owner_dids: list[st
     return [_contact_row_to_dict(r) for r in rows]
 
 
-async def get_contact_addresses(db, *, owner_did: str | None = None, owner_dids: list[str] | None = None) -> set[str]:
+async def get_contact_addresses(
+    db, *, owner_did: str | None = None, owner_dids: list[str] | None = None
+) -> set[str]:
     """Return all contact_address values for an identity."""
     aweb_db = db.get_manager("aweb")
     owner_keys = normalize_owner_dids(owner_did=owner_did, owner_dids=owner_dids)
@@ -240,8 +246,7 @@ async def resolve_local_namespace_controller_did(
         return None
     if (
         resolved is None
-        or str(getattr(resolved, "did_aw", "") or "").strip()
-        != str(contact_did_aw or "").strip()
+        or str(getattr(resolved, "did_aw", "") or "").strip() != str(contact_did_aw or "").strip()
         or str(getattr(resolved, "current_did_key", "") or "").strip()
         != str(contact_current_did_key or "").strip()
         or namespace is None
@@ -462,7 +467,9 @@ def is_address_in_contacts(address: str, contact_addresses: set[str]) -> bool:
     return False
 
 
-async def remove_contact(db, *, owner_did: str | None = None, owner_dids: list[str] | None = None, contact_id: str) -> None:
+async def remove_contact(
+    db, *, owner_did: str | None = None, owner_dids: list[str] | None = None, contact_id: str
+) -> None:
     """Remove a contact by ID. Idempotent (no error if not found).
 
     Raises ValidationError on invalid contact_id format.
@@ -517,9 +524,7 @@ def _contact_row_to_dict(row) -> dict:
         "contact_did_aw": row.get("contact_did_aw"),
         "binding_controller_did": row.get("binding_controller_did"),
         "binding_accepted_at": (
-            row["binding_accepted_at"].isoformat()
-            if row.get("binding_accepted_at")
-            else None
+            row["binding_accepted_at"].isoformat() if row.get("binding_accepted_at") else None
         ),
         "label": row["label"],
         "created_at": row["created_at"].isoformat(),
