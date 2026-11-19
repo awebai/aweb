@@ -31,6 +31,8 @@ async def approval_kind(
         not isinstance(kind, ApprovalKind) for kind in enabled_kinds
     ):
         raise ValueError("approval routing requires named, migrated association kinds")
+    if ApprovalKind.USE not in enabled_kinds:
+        raise ValueError("configure the required use association before optional approval kinds")
     matches: list[ApprovalKind] = []
     row = await tx.fetch_one(
         "SELECT a.request_ref,a.request_sha256,c.tool,i.installation_id,i.team_id,i.grant_id,i.policy_digest"
