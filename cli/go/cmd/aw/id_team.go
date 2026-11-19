@@ -2275,7 +2275,9 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 			if keyErr != nil && !errors.Is(keyErr, os.ErrNotExist) {
 				return nil, keyErr
 			}
-			mintedKey = errors.Is(keyErr, os.ErrNotExist)
+			// A definitive refusal may release the old invite but retain this
+			// acceptance-minted key for a corrected name or replacement invite.
+			mintedKey = errors.Is(keyErr, os.ErrNotExist) || statHostedAcceptPendingMarker(hostedAcceptPendingMarkerPath(workingDir, home.Root), filepath.Join(home.Root, "signing.key")) == nil
 			pub, signingKey, err = hostedAcceptSigningKeyAt(workingDir, opts.IdentityHome)
 		}
 		if err != nil {
