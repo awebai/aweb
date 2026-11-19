@@ -8,8 +8,8 @@ import asyncpg
 import pytest
 from pgdbm.errors import QueryError
 
-from awid.did import did_from_public_key
-from awid.signing import canonical_json_bytes, generate_keypair, sign_message
+from awid.did import did_from_public_key, generate_keypair
+from awid.signing import canonical_json_bytes, sign_message
 from aweb.identity_auth_deps import MessagingAuth
 from aweb.messaging.chat_models import CreateSessionRequest, SendMessageRequest
 from aweb.messaging.chat_send import _stored_exact_chat_send

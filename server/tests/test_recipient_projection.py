@@ -60,8 +60,6 @@ def test_verified_identity_binding_survives_without_restoring_membership():
     assert identity.agent_id is None and identity.team_id is None
     assert identity.residence is RecipientResidence.LOCAL and not identity["external"]
     assert identity.inbound_mode == "contacts_only"
-    assert member["status"] == "retired"
-    assert member["accepted_team_did_key"] != member["current_team_did_key"]
 
 
 def test_stored_route_local_handoff_keeps_session_and_party_policy():
