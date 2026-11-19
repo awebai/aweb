@@ -335,13 +335,37 @@ async def prepared_runtime_database(database_url: str):
         await admin.close()
 
 
+@pytest.mark.parametrize("schema", ["public", "prepared_content", "MixedCase"])
+def test_prepared_runtime_startup_path_matches_its_checked_pin(tmp_path: Path, schema: str):
+    configured = ExampleSettings(
+        _env_file=None, database_url="postgresql://unconnected/fixture", db_schema=schema
+    )
+
+    async def require_marker(db: AsyncDatabaseManager) -> None:
+        assert await db.fetch_value("SELECT id FROM {{tables.prepared_marker}}") == 1
+
+    database = NaappDatabase(
+        configured,
+        module_name="must_not_prepare",
+        migrations_path=tmp_path / "absent-migrations",
+        schema_preparation=VerifyPreparedSchema(check=require_marker),
+    )
+    config = database.db.config
+    assert config is not None
+    intended = f'"{schema}", pg_catalog'
+    assert config.get_server_settings()["search_path"] == intended
+    assert config.shared_pool_search_path == intended
+
+
 async def test_prepared_runtime_connects_without_create_and_closes_its_owned_pool(
     prepared_runtime_database, tmp_path: Path
 ):
     configured, admin, role = prepared_runtime_database
 
     async def check_prepared(db: AsyncDatabaseManager) -> None:
+        assert db.schema == configured.db_schema
         assert await db.fetch_value("SELECT id FROM {{tables.prepared_marker}}") == 1
+        assert await db.fetch_value("SELECT current_schemas(false)") == ["public", "pg_catalog"]
         assert not await db.fetch_value(
             "SELECT has_schema_privilege(current_user, 'public', 'CREATE')"
         )

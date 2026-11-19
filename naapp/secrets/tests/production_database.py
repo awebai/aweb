@@ -9,6 +9,7 @@ from urllib.parse import quote, urlsplit
 from uuid import uuid4
 
 import pytest
+from aweb_naapp.runtime.db import prepared_pool_config
 from aweb_naapp_testing.databases import SchemaDatabases
 from pgdbm import AsyncDatabaseManager
 
@@ -17,7 +18,8 @@ from aweb_secrets.erasure import initialize_erasure_store
 
 @asynccontextmanager
 async def _prepared_database(factory, *, suffix: str) -> AsyncIterator["PreparedDatabase"]:
-    operator = await factory.create_db(suffix=suffix, schema="public")
+    content_schema = "public"
+    operator = await factory.create_db(suffix=suffix, schema=content_schema)
     role = "secrets_runtime_" + uuid4().hex
     password = secrets.token_urlsafe(32)
     async with operator.transaction() as tx:
@@ -37,18 +39,21 @@ async def _prepared_database(factory, *, suffix: str) -> AsyncIterator["Prepared
                 + parsed.netloc.rsplit("@", 1)[-1]
             )
         ).geturl()
-        configured = operator.config.model_copy(
-            update={
-                "connection_string": runtime_dsn,
-                "min_connections": 1,
-                "max_connections": 2,
-                "server_settings": None,
-            }
+        configured = prepared_pool_config(
+            operator.config.model_copy(
+                update={
+                    "connection_string": runtime_dsn,
+                    "min_connections": 1,
+                    "max_connections": 2,
+                    "server_settings": None,
+                }
+            ),
+            content_schema=content_schema,
         )
         pool = await AsyncDatabaseManager.create_shared_pool(configured)
         try:
             yield PreparedDatabase(
-                runtime=AsyncDatabaseManager(pool=pool, schema=operator.schema), operator=operator
+                runtime=AsyncDatabaseManager(pool=pool, schema=content_schema), operator=operator
             )
         finally:
             await pool.close()

@@ -37,6 +37,26 @@ class VerifyPreparedSchema:
 SchemaPreparation = ApplyMigrations | VerifyPreparedSchema
 
 
+def prepared_pool_config(config: DatabaseConfig, *, content_schema: str) -> DatabaseConfig:
+    """Pin prepared content without selecting pgdbm's schema-creating initializer.
+
+    Erasure rule390577b1 forbids runtime DDL. An explicit, identical startup
+    value and verifier pin also retain pgdbm's fail-closed pool check.
+    """
+    search_path = '"' + content_schema.replace('"', '""') + '", pg_catalog'
+    startup = config.model_copy(
+        update={"server_settings": dict(config.server_settings or {})}
+    ).get_server_settings()
+    startup["search_path"] = search_path
+    return config.model_copy(
+        update={
+            "schema_name": None,
+            "shared_pool_search_path": search_path,
+            "server_settings": startup,
+        }
+    )
+
+
 async def require_separate_database(
     content: AsyncDatabaseManager, ledger: AsyncDatabaseManager, *, ledger_name: str
 ) -> None:
@@ -106,6 +126,8 @@ class NaappDatabase:
             max_connections=settings.db_pool_max_connections,
             statement_cache_size=settings.db_statement_cache_size,
         )
+        if isinstance(schema_preparation, VerifyPreparedSchema):
+            self._config = prepared_pool_config(self._config, content_schema=settings.db_schema)
         self.db = AsyncDatabaseManager(self._config)
 
     async def connect(self) -> None:
