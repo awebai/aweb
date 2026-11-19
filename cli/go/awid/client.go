@@ -1009,20 +1009,15 @@ func (c *Client) NormalizeSenderTrust(ctx context.Context, status VerificationSt
 	if strings.TrimSpace(fromStableID) == "" || (meta.Resolved && meta.IdentityScope == IdentityModeLocal) {
 		isContact = nil
 	}
-	var registryConfirmedCurrentKey bool
-	var verifiedHead *VerifiedLogHead
-	status, registryConfirmedCurrentKey, verifiedHead = c.checkStableIdentityRegistry(ctx, status, trustAddress, fromDID, fromStableID)
-	status = c.checkTOFUPinWithMeta(ctx, status, strings.TrimSpace(rawAddress), trustAddress, fromDID, fromStableID, ra, repl, meta, registryConfirmedCurrentKey)
-	// Persist after the pin exists: on first contact the pin is created by the
-	// check above, so recording the checkpoint earlier would be dropped.
-	// An advanced anti-rollback checkpoint that is not durable would let the next
-	// process accept a log head we have already moved past (default-aajc.8), so a
-	// failure to commit it must not be reported as verified.
-	if err := c.persistVerifiedHeadCheckpoint(fromStableID, verifiedHead); err != nil {
-		if c.pinStore != nil {
-			c.pinStore.undurable.Store(true)
-		}
-		if status == Verified || status == VerifiedCustodial {
+	evidence := c.checkStableIdentityRegistry(ctx, status, trustAddress, fromDID, fromStableID)
+	status = c.checkTOFUPinWithMeta(ctx, evidence.status, strings.TrimSpace(rawAddress), trustAddress, fromDID, fromStableID, ra, repl, meta, evidence)
+	// Record the checkpoint only for a message that verified: it is the
+	// registry's head this client has now seen. An advanced anti-rollback
+	// checkpoint that is not durable would let the next process accept a log
+	// head we have already moved past (default-aajc.8), so a failure to commit
+	// it must not be reported as verified.
+	if (status == Verified || status == VerifiedCustodial) && evidence.head != nil && evidence.registryURL != "" {
+		if err := c.saveIdentityCheckpoint(identityCheckpointWrite{RegistryURL: evidence.registryURL, StableID: fromStableID, Head: evidence.head, CarriesPinAnchor: evidence.pinAnchorSeed}); err != nil {
 			status = VerificationStale
 		}
 	}
@@ -1102,45 +1097,71 @@ func (c *Client) NormalizeRecipientBinding(status VerificationStatus, toDID stri
 	return c.checkRecipientBinding(status, toDID, toStableID)
 }
 
-func (c *Client) checkStableIdentityRegistry(ctx context.Context, status VerificationStatus, trustAddress, fromDID, fromStableID string) (VerificationStatus, bool, *VerifiedLogHead) {
+// registryEvidence is what the registry pass established for one message.
+type registryEvidence struct {
+	status VerificationStatus
+	// currentKeyConfirmed: the registry's verified current key is the
+	// signing key.
+	currentKeyConfirmed bool
+	// movedRegistry: the answering registry had no checkpoint for this
+	// identity while another registry has one. Across a move only the pin's
+	// key binding protects, so the pin does not follow a key change.
+	movedRegistry bool
+	head          *VerifiedLogHead
+	registryURL   string
+	// pinAnchorSeed: the verification was seeded from the pin's legacy
+	// anchor, which the new checkpoint then carries.
+	pinAnchorSeed bool
+}
+
+func (c *Client) checkStableIdentityRegistry(ctx context.Context, status VerificationStatus, trustAddress, fromDID, fromStableID string) registryEvidence {
+	evidence := registryEvidence{status: status}
 	if status != Verified || strings.TrimSpace(fromStableID) == "" || strings.TrimSpace(fromDID) == "" {
-		return status, false, nil
+		return evidence
 	}
 	if !strings.HasPrefix(strings.TrimSpace(fromStableID), "did:aw:") {
-		return status, false, nil
+		return evidence
 	}
 	verifier, ok := c.resolver.(StableIdentityVerifier)
 	if !ok {
-		return status, false, nil
+		return evidence
 	}
-	// Restore the anti-rollback anchor from the checkpoint persisted with the
-	// pin. The resolver's in-memory head cache is what refuses a sequence
-	// regression or a split view, but it is forgotten on restart — so without
-	// this a registry can serve a valid truncated prefix and roll a rotated
-	// identity back to a retired key (default-aajc.8).
-	c.seedVerifiedHeadFromPin(fromStableID)
+	// The resolver's in-memory head cache refuses a sequence regression or a
+	// split view, but is forgotten on restart; the persisted checkpoint for
+	// the answering registry seeds it, so a registry cannot serve a valid
+	// truncated prefix and roll a rotated identity back (default-aajc.8).
 	var result *StableIdentityVerification
-	if currentVerifier, ok := c.resolver.(CurrentStableIdentityVerifier); ok {
+	if checkpointed, ok := c.resolver.(CheckpointedStableIdentityVerifier); ok {
+		result = checkpointed.VerifyStableIdentityCheckpointed(ctx, trustAddress, fromStableID, fromDID, func(registryURL string) *VerifiedLogHead {
+			head, fromPin := c.identityCheckpointOrPinAnchor(registryURL, fromStableID)
+			evidence.pinAnchorSeed = fromPin
+			return head
+		})
+	} else if currentVerifier, ok := c.resolver.(CurrentStableIdentityVerifier); ok {
 		result = currentVerifier.VerifyStableIdentityCurrent(ctx, trustAddress, fromStableID, fromDID)
 	} else {
 		result = verifier.VerifyStableIdentity(ctx, trustAddress, fromStableID)
 	}
 	if result == nil {
-		return status, false, nil
+		return evidence
 	}
 	switch result.Outcome {
 	case StableIdentityStaleCache:
-		return VerificationStale, false, nil
+		evidence.status = VerificationStale
 	case StableIdentityVerified:
 		currentDIDKey := strings.TrimSpace(result.CurrentDIDKey)
 		if currentDIDKey != "" && currentDIDKey != fromDID {
-			return IdentityMismatch, false, nil
+			evidence.status = IdentityMismatch
+			return evidence
 		}
-		return status, currentDIDKey == fromDID, result.VerifiedHead
+		evidence.currentKeyConfirmed = currentDIDKey == fromDID
+		evidence.head = result.VerifiedHead
+		evidence.registryURL = result.RegistryURL
+		evidence.movedRegistry = result.NewCheckpoint && c.identityCheckpointedElsewhere(result.RegistryURL, fromStableID)
 	case StableIdentityHardError:
-		return IdentityMismatch, false, nil
+		evidence.status = IdentityMismatch
 	}
-	return status, false, nil
+	return evidence
 }
 
 // CheckTOFUPin checks a verified message against the TOFU pin store.
@@ -1167,10 +1188,11 @@ func (c *Client) CheckTOFUPin(ctx context.Context, status VerificationStatus, fr
 
 	trustAddress := c.canonicalTrustAddress(fromAddress)
 	meta := c.resolveAgentMeta(ctx, trustAddress)
-	return c.checkTOFUPinWithMeta(ctx, status, strings.TrimSpace(fromAddress), trustAddress, fromDID, fromStableID, ra, repl, meta, false)
+	return c.checkTOFUPinWithMeta(ctx, status, strings.TrimSpace(fromAddress), trustAddress, fromDID, fromStableID, ra, repl, meta, registryEvidence{status: status})
 }
 
-func (c *Client) checkTOFUPinWithMeta(ctx context.Context, status VerificationStatus, rawAddress, trustAddress, fromDID, fromStableID string, ra *RotationAnnouncement, repl *ReplacementAnnouncement, meta *agentMeta, registryConfirmedCurrentKey bool) VerificationStatus {
+func (c *Client) checkTOFUPinWithMeta(ctx context.Context, status VerificationStatus, rawAddress, trustAddress, fromDID, fromStableID string, ra *RotationAnnouncement, repl *ReplacementAnnouncement, meta *agentMeta, evidence registryEvidence) VerificationStatus {
+	registryConfirmedCurrentKey := evidence.currentKeyConfirmed
 	if (status != Verified && status != VerifiedCustodial) || fromDID == "" || trustAddress == "" || meta == nil {
 		return status
 	}
@@ -1268,7 +1290,10 @@ func (c *Client) checkTOFUPinWithMeta(ctx context.Context, status VerificationSt
 				// which the DID log DOES prove (did:aw -> did:key), so a verified
 				// registry chain is sufficient here. It says nothing about address
 				// ownership — that is enforced in the mismatch branch below.
-				if registryConfirmedCurrentKey {
+				// Across a registry move the new registry's chain has no
+				// checkpoint behind it: the pin's key binding decides, and a key
+				// other than the pinned one is a mismatch (docs/trust-model.md).
+				if registryConfirmedCurrentKey && !evidence.movedRegistry {
 					c.pinStore.StorePin(pinKey, trustAddress, "", "")
 					c.pinStore.Pins[pinKey].StableID = fromStableID
 					c.pinStore.Pins[pinKey].DIDKey = fromDID
@@ -2082,54 +2107,3 @@ func (c *Client) signRequest(req *http.Request, body []byte) error {
 
 // verifiedHeadSeeder is implemented by resolvers that keep an anti-rollback
 // anchor, so the client can restore it from the persisted pin checkpoint.
-type verifiedHeadSeeder interface {
-	SeedVerifiedHead(stableID string, head *VerifiedLogHead)
-}
-
-func (c *Client) seedVerifiedHeadFromPin(stableID string) {
-	seeder, ok := c.resolver.(verifiedHeadSeeder)
-	if !ok || c.pinStore == nil {
-		return
-	}
-	c.pinStore.mu.Lock()
-	pin, hasPin := c.pinStore.Pins[stableID]
-	var seq int
-	var entryHash, didKey string
-	if hasPin && pin != nil {
-		seq, entryHash, didKey = pin.LogSeq, pin.LogEntryHash, pin.DIDKey
-	}
-	c.pinStore.mu.Unlock()
-	if seq < 1 || entryHash == "" {
-		return
-	}
-	seeder.SeedVerifiedHead(stableID, &VerifiedLogHead{
-		Seq:           seq,
-		EntryHash:     entryHash,
-		CurrentDIDKey: didKey,
-	})
-}
-
-// persistVerifiedHeadCheckpoint records the verified head with the pin so the
-// anchor survives a restart. It only ever advances: a lower sequence is ignored,
-// so a stale response cannot weaken the checkpoint.
-func (c *Client) persistVerifiedHeadCheckpoint(stableID string, head *VerifiedLogHead) error {
-	if c.pinStore == nil {
-		return nil
-	}
-	if head == nil || head.Seq < 1 || strings.TrimSpace(head.EntryHash) == "" {
-		return nil
-	}
-	c.pinStore.mu.Lock()
-	pin, ok := c.pinStore.Pins[stableID]
-	changed := false
-	if ok && pin != nil && head.Seq > pin.LogSeq {
-		pin.LogSeq = head.Seq
-		pin.LogEntryHash = head.EntryHash
-		changed = true
-	}
-	c.pinStore.mu.Unlock()
-	if changed {
-		return c.savePinStore()
-	}
-	return nil
-}

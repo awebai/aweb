@@ -22,7 +22,7 @@ func TestReceivedCheckpointMalformedFile(t *testing.T) {
 			}
 			c := &Client{}
 			c.SetPinStore(ps, path)
-			if _, err := c.receivedCheckpoint("https://registry.test", "did:aw:sender"); err == nil {
+			if _, err := c.identityCheckpoint("https://registry.test", "did:aw:sender"); err == nil {
 				t.Fatal("malformed persisted checkpoint accepted")
 			}
 		})

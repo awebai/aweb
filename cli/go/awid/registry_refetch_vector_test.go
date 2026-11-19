@@ -240,7 +240,7 @@ func TestRegistryRefetchConformance(t *testing.T) {
 
 			for i, step := range tc.Steps {
 				now = now.Add(time.Duration(step.AdvanceSeconds) * time.Second)
-				status, _, _ := client.checkStableIdentityRegistry(context.Background(), Verified, tc.Address, step.FromDID, tc.FromStableID)
+				status := client.checkStableIdentityRegistry(context.Background(), Verified, tc.Address, step.FromDID, tc.FromStableID).status
 				if string(status) != step.ExpectedStatus {
 					t.Fatalf("step %d: status=%q, want %q", i, status, step.ExpectedStatus)
 				}

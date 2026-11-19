@@ -49,6 +49,12 @@ type CurrentStableIdentityVerifier interface {
 	VerifyStableIdentityCurrent(ctx context.Context, address, stableID, expectedCurrentDIDKey string) *StableIdentityVerification
 }
 
+// CheckpointedStableIdentityVerifier verifies a stable identity against the
+// caller's anti-rollback checkpoint for whichever registry answers.
+type CheckpointedStableIdentityVerifier interface {
+	VerifyStableIdentityCheckpointed(ctx context.Context, address, stableID, expectedCurrentDIDKey string, checkpoint func(registryURL string) *VerifiedLogHead) *StableIdentityVerification
+}
+
 // HandleFromAddress extracts the handle/name portion from a public address.
 func HandleFromAddress(address string) string {
 	address = strings.TrimSpace(address)
@@ -251,4 +257,11 @@ func (r *ChainResolver) VerifyStableIdentityCurrent(ctx context.Context, address
 		return &StableIdentityVerification{Outcome: StableIdentityDegraded}
 	}
 	return r.Registry.VerifyStableIdentityCurrent(ctx, address, stableID, expectedCurrentDIDKey)
+}
+
+func (r *ChainResolver) VerifyStableIdentityCheckpointed(ctx context.Context, address, stableID, expectedCurrentDIDKey string, checkpoint func(registryURL string) *VerifiedLogHead) *StableIdentityVerification {
+	if r.Registry == nil || !strings.Contains(strings.TrimSpace(address), "/") {
+		return &StableIdentityVerification{Outcome: StableIdentityDegraded}
+	}
+	return r.Registry.VerifyStableIdentityCheckpointed(ctx, address, stableID, expectedCurrentDIDKey, checkpoint)
 }

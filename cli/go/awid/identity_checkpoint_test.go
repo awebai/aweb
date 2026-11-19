@@ -225,3 +225,16 @@ func TestNewRegistryPresentingAnOlderKeyThanThePinIsAMismatch(t *testing.T) {
 		t.Fatalf("the pin moved back to the older key: %+v", pins.Pins[id.stableID])
 	}
 }
+
+// checkpointSeq is the sequence an identity's checkpoint holds at whichever
+// registry has one (0 when none does).
+func checkpointSeq(t *testing.T, pins *PinStore, stableID string) int {
+	t.Helper()
+	seq := 0
+	for _, identities := range checkpointsOf(t, pins) {
+		if head := identities[stableID]; head != nil && head.Seq > seq {
+			seq = head.Seq
+		}
+	}
+	return seq
+}

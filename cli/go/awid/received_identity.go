@@ -2,7 +2,6 @@ package awid
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -85,11 +84,11 @@ func (c *Client) NormalizeReceivedSenderTrust(ctx context.Context, status Verifi
 	if err != nil {
 		return VerificationStale, nil
 	}
-	checkpoint, err := c.receivedCheckpoint(registryURL, stableID)
+	checkpoint, err := c.identityCheckpoint(registryURL, stableID)
 	if err != nil {
 		return VerificationStale, nil
 	}
-	registry.SeedVerifiedHead(stableID, checkpoint)
+	registry.SeedVerifiedHead(registryURL, stableID, checkpoint)
 	result := registry.verifyStableIdentityAtRegistry(ctx, registryURL, stableID, did, true)
 	if result == nil {
 		return VerificationStale, nil
@@ -104,114 +103,13 @@ func (c *Client) NormalizeReceivedSenderTrust(ctx context.Context, status Verifi
 		if result.VerifiedHead == nil {
 			return VerificationStale, nil
 		}
-		if err := c.saveReceivedCheckpoint(registryURL, stableID, result.VerifiedHead); err != nil {
+		if err := c.saveIdentityCheckpoint(identityCheckpointWrite{RegistryURL: registryURL, StableID: stableID, Head: result.VerifiedHead}); err != nil {
 			return VerificationStale, nil
 		}
 		return Verified, nil
 	default:
 		return VerificationStale, nil
 	}
-}
-
-// Stored in the pin store's forward-compatible root metadata, never as an
-// address pin. Older clients preserve these checkpoints without inventing an
-// address for this identity. Both levels are authority-scoped.
-const receivedHeadsField = "received_identity_heads"
-
-func (c *Client) receivedCheckpoint(registryURL, stableID string) (*VerifiedLogHead, error) {
-	if c.pinStore == nil {
-		return nil, nil
-	}
-	c.pinStore.mu.Lock()
-	defer c.pinStore.mu.Unlock()
-	if c.pinStore.undurable.Load() {
-		return nil, fmt.Errorf("trust store is not durable")
-	}
-	raw, ok := c.pinStore.unknown[receivedHeadsField]
-	if !ok {
-		return nil, nil
-	}
-	data, err := json.Marshal(raw)
-	if err != nil {
-		return nil, err
-	}
-	var heads map[string]map[string]*VerifiedLogHead
-	if err := json.Unmarshal(data, &heads); err != nil {
-		return nil, err
-	}
-	if heads == nil {
-		return nil, fmt.Errorf("invalid received identity checkpoints")
-	}
-	head, ok := heads[registryURL][stableID]
-	if !ok {
-		return nil, nil
-	}
-	if head == nil || head.Seq < 1 || len(head.EntryHash) != 64 || !isLowerHex(head.EntryHash) || head.CurrentDIDKey == "" {
-		return nil, fmt.Errorf("invalid received identity checkpoint")
-	}
-	if _, err := ExtractPublicKey(head.CurrentDIDKey); err != nil {
-		return nil, err
-	}
-	return head, nil
-}
-
-func (c *Client) saveReceivedCheckpoint(registryURL, stableID string, head *VerifiedLogHead) error {
-	if c.pinStore == nil {
-		return nil
-	}
-	c.pinStore.mu.Lock()
-	if c.pinStore.unknown == nil {
-		c.pinStore.unknown = make(map[string]any)
-	}
-	heads := map[string]map[string]*VerifiedLogHead{}
-	if raw, ok := c.pinStore.unknown[receivedHeadsField]; ok {
-		data, err := json.Marshal(raw)
-		if err != nil {
-			c.pinStore.mu.Unlock()
-			return err
-		}
-		if err := json.Unmarshal(data, &heads); err != nil {
-			c.pinStore.mu.Unlock()
-			return err
-		}
-	}
-	if heads == nil {
-		c.pinStore.mu.Unlock()
-		return fmt.Errorf("invalid received identity checkpoints")
-	}
-	if heads[registryURL] == nil {
-		heads[registryURL] = map[string]*VerifiedLogHead{}
-	}
-	old := heads[registryURL][stableID]
-	if old != nil && old.Seq > head.Seq {
-		c.pinStore.mu.Unlock()
-		return fmt.Errorf("received identity checkpoint rollback")
-	}
-	if old != nil && old.Seq == head.Seq && old.EntryHash != head.EntryHash {
-		c.pinStore.mu.Unlock()
-		return fmt.Errorf("received identity checkpoint fork")
-	}
-	heads[registryURL][stableID] = head
-	// Plain values are required by the pin store's unknown-field serializer.
-	data, err := json.Marshal(heads)
-	if err != nil {
-		c.pinStore.mu.Unlock()
-		return err
-	}
-	var plain map[string]any
-	err = json.Unmarshal(data, &plain)
-	if err == nil {
-		c.pinStore.unknown[receivedHeadsField] = plain
-	}
-	c.pinStore.mu.Unlock()
-	if err != nil {
-		return err
-	}
-	err = c.savePinStore()
-	if err != nil {
-		c.pinStore.undurable.Store(true)
-	}
-	return err
 }
 
 // ReceivedSenderBinding keeps the participant-authorized projection separate

@@ -215,13 +215,14 @@ func TestRegistryConformanceVectors(t *testing.T) {
 			client := &Client{}
 			client.SetResolver(&conformanceRegistryResolver{state: vector.RegistryState})
 
-			gotStatus, gotConfirmed, _ := client.checkStableIdentityRegistry(
+			evidence := client.checkStableIdentityRegistry(
 				context.Background(),
 				VerificationStatus(vector.InitialStatus),
 				vector.TrustAddress,
 				vector.FromDID,
 				vector.FromStableID,
 			)
+			gotStatus, gotConfirmed := evidence.status, evidence.currentKeyConfirmed
 			if gotStatus != VerificationStatus(vector.ExpectedStatus) {
 				t.Fatalf("status=%q, want %q", gotStatus, vector.ExpectedStatus)
 			}
@@ -275,7 +276,7 @@ func TestTOFUConformanceVectors(t *testing.T) {
 				rotation,
 				replacement,
 				meta,
-				vector.RegistryConfirmedCurrentKey,
+				registryEvidence{status: VerificationStatus(vector.InitialStatus), currentKeyConfirmed: vector.RegistryConfirmedCurrentKey},
 			)
 			if got != VerificationStatus(vector.ExpectedStatus) {
 				t.Fatalf("status=%q, want %q", got, vector.ExpectedStatus)

@@ -547,9 +547,17 @@ by `did:key`). Until then it is `verification_stale` (could not check) or
 `identity_mismatch` (the registry disagrees, or has no such address). A client
 built with no registry to ask reports `unverified`: nothing was checked, and a
 retry would not help. A pin written this way records `confirmed_by: registry`;
-pins written before this rule carry no such field. A stable-identity pin also
-keeps the last verified current key and the highest verified DID-log
-sequence/hash so rollback detection survives process restarts.
+pins written before this rule carry no such field. A stable-identity pin keeps
+the identity's key binding: its last verified current key. The anti-rollback
+checkpoint (the highest verified DID-log sequence and entry hash) is kept once
+per registry and stable ID, so rollback detection survives process restarts. A
+move to another registry starts a new checkpoint there and leaves the old one
+alone; across the move the pin's key binding is what protects: a registry with
+no checkpoint for a pinned identity, while another registry has one, that
+presents a current key other than the pinned key is an `identity_mismatch`,
+whatever its sequence. A checkpoint an earlier client kept on the pin is carried
+into the map under the registry where it next verifies, and kept on the pin
+until then; it is never dropped.
 
 A sender already pinned stays verified by its pin while the registry cannot be
 reached. A later registry answer that names another key for a pinned address is
