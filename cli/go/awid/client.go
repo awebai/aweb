@@ -827,10 +827,10 @@ func (c *Client) canonicalTrustAddress(address string) string {
 	return address
 }
 
-// legacyMemberNameTrustKey is the namespace/name key a bare member name was
-// pinned under before team/name; "" when address is not a bare name or the
+// namespaceMemberNameKey is the namespace/name key a bare member name is
+// pinned under by clients that predate team/name; "" when address is not a bare name or the
 // client has no team.
-func (c *Client) legacyMemberNameTrustKey(address string) string {
+func (c *Client) namespaceMemberNameKey(address string) string {
 	address = strings.TrimSpace(address)
 	if address == "" || strings.Contains(address, "/") || strings.Contains(address, "~") {
 		return ""
@@ -850,11 +850,11 @@ func (c *Client) legacyMemberNameTrustKey(address string) string {
 // pin's identity for the name. Otherwise the pin is kept where it is and
 // reported: it is never dropped. The caller holds the pin store lock.
 func (c *Client) migrateMemberNamePin(rawAddress, trustAddress string, meta *agentMeta) {
-	legacy := c.legacyMemberNameTrustKey(rawAddress)
-	if legacy == "" || legacy == trustAddress {
+	namespaceKey := c.namespaceMemberNameKey(rawAddress)
+	if namespaceKey == "" || namespaceKey == trustAddress {
 		return
 	}
-	pinKey, pinned := c.pinStore.Addresses[legacy]
+	pinKey, pinned := c.pinStore.Addresses[namespaceKey]
 	if !pinned {
 		return
 	}
@@ -863,7 +863,7 @@ func (c *Client) migrateMemberNamePin(rawAddress, trustAddress string, meta *age
 	}
 	pin := c.pinStore.Pins[pinKey]
 	if pin != nil && meta != nil && meta.Resolved && meta.Authoritative && meta.namesPin(pinKey, pin) {
-		delete(c.pinStore.Addresses, legacy)
+		delete(c.pinStore.Addresses, namespaceKey)
 		c.pinStore.Addresses[trustAddress] = pinKey
 		pin.Address = trustAddress
 		return
@@ -882,7 +882,7 @@ func (c *Client) migrateMemberNamePin(rawAddress, trustAddress string, meta *age
 	c.pinMigrationObserver(PinMigrationDecline{
 		Outcome:     PinMigrationTeamUnconfirmed,
 		StableID:    pinKey,
-		Address:     legacy,
+		Address:     namespaceKey,
 		OccupantDID: occupantDID,
 		IncomingDID: incomingDID,
 	})

@@ -147,7 +147,7 @@ func TestVerifiedHeadIsCheckpointedUnderItsRegistry(t *testing.T) {
 	}
 }
 
-func TestLegacyPinAnchorIsCarriedToTheRegistryItVerifiesAt(t *testing.T) {
+func TestPinAnchorIsCarriedToTheRegistryItVerifiesAt(t *testing.T) {
 	id := newCheckpointIdentity(t)
 	registry := identityRegistry(t, id, id.newDID, id.create, id.rotate)
 	pins := NewPinStore()
@@ -168,7 +168,7 @@ func TestLegacyPinAnchorIsCarriedToTheRegistryItVerifiesAt(t *testing.T) {
 	}
 }
 
-func TestLegacyPinAnchorRefusesARollbackAndIsKept(t *testing.T) {
+func TestPinAnchorRefusesARollbackAndIsKept(t *testing.T) {
 	id := newCheckpointIdentity(t)
 	registry := identityRegistry(t, id, id.oldDID, id.create)
 	pins := NewPinStore()

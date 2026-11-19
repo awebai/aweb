@@ -747,7 +747,7 @@ export class SenderTrustManager {
   /**
    * Record a verified head as the checkpoint for (registry, stable ID). Only
    * ever advances; a rollback or fork is refused, and the message is then
-   * stale. A head carried from the pin's legacy anchor clears the pin's copy.
+   * stale. A head carried from the anchor kept on the pin clears the pin's copy.
    */
   private persistIdentityCheckpoint(store: PinStore, write: {
     registryURL?: string;

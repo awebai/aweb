@@ -18,7 +18,7 @@ type identityCheckpointWrite struct {
 	RegistryURL string
 	StableID    string
 	Head        *VerifiedLogHead
-	// CarriesPinAnchor: the head was verified from the pin's legacy anchor,
+	// CarriesPinAnchor: the head was verified from the anchor kept on the pin,
 	// which this checkpoint now holds; the pin's copy is cleared.
 	CarriesPinAnchor bool
 }
