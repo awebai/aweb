@@ -211,3 +211,21 @@ def test_a_component_directory_others_can_reach_is_refused_before_any_write(tmp_
     with pytest.raises(SystemExit, match="must be private"):
         J.main()
     assert not (tmp_path / "run").exists() and list((secrets / "postgres").iterdir()) == []
+
+
+def test_the_agents_state_directory_is_private_under_a_permissive_umask(tmp_path, monkeypatch):
+    # OPERATIONS.md documents the state directory as 0700; an operator's
+    # umask (commonly 022) must not widen it.
+    w = world(tmp_path)
+    w.world.mkdir(parents=True)
+    (w.world / "tls").mkdir()
+    (w.world / "tls" / "ca.pem").write_text("ca")
+    w.secrets.mkdir()
+    monkeypatch.setattr(J, "run", lambda *args, **kwargs: "")
+    monkeypatch.setattr(J.World, "deployment", lambda self: None)
+    previous = os.umask(0o022)
+    try:
+        w.configure_agents()
+    finally:
+        os.umask(previous)
+    assert (w.world / "agent-state").stat().st_mode & 0o777 == 0o700

@@ -571,7 +571,7 @@ class World:
         """The team container's state, SSH keys and login directory: state
         owned by the agents' uid, the login directory readable only by their
         group, and no harness login in it for this run."""
-        (self.world / "agent-state").mkdir()
+        (self.world / "agent-state").mkdir(mode=0o700)
         (self.world / "agent-authorized-keys").write_text("")
         (self.run_dir / "operator").mkdir(mode=0o700)
         shutil.copyfile(self.world / "tls" / "ca.pem", self.run_dir / "agent-ca.pem")
