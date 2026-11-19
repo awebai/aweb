@@ -359,3 +359,69 @@ async def test_narrow_heartbeat_refreshes_only_current_metadata_indices(privacy_
     assert await env.redis.ttl(current_key) > 30
     assert await env.redis.ttl(branch_key) > 30
     assert await env.redis.ttl(old_key) <= 1
+
+
+@pytest.mark.asyncio
+async def test_claim_waits_for_workspace_before_locking_the_agent(privacy_app):
+    import asyncio
+
+    env = privacy_app
+    task = await request_as(
+        env,
+        alias="alice",
+        method="POST",
+        path="/v1/tasks",
+        payload={"title": "Claim lock order"},
+    )
+    assert task.status_code == 200, task.text
+    pending = None
+    try:
+        async with env.db.transaction() as held:
+            await held.fetch_one(
+                "SELECT workspace_id FROM {{tables.workspaces}} WHERE workspace_id=$1 FOR UPDATE",
+                env.actors["alice"].workspace,
+            )
+            pending = asyncio.create_task(
+                request_as(
+                    env,
+                    alias="alice",
+                    method="PATCH",
+                    path=f"/v1/tasks/{task.json()['task_ref']}",
+                    payload={"status": "in_progress"},
+                )
+            )
+            async with asyncio.timeout(4):
+                while True:
+                    await held.fetch_value("SELECT pg_stat_clear_snapshot()")
+                    blocked = await held.fetch_value("""
+                        SELECT EXISTS (SELECT 1 FROM pg_stat_activity
+                          WHERE datname=current_database() AND pid<>pg_backend_pid()
+                            AND wait_event_type='Lock' AND query LIKE '%workspaces%'
+                            AND query LIKE '%FOR UPDATE%')
+                    """)
+                    if blocked:
+                        break
+                    assert not pending.done(), (await pending).text
+                    await asyncio.sleep(0.01)
+            # The waiting request must not hold a member lock. This real second
+            # connection can lock the agent without waiting, matching lifecycle.
+            agent = await held.fetch_value(
+                "SELECT agent_id FROM {{tables.agents}} WHERE agent_id=$1 FOR UPDATE NOWAIT",
+                env.actors["alice"].id,
+            )
+            assert agent == env.actors["alice"].id
+        response = await pending
+        assert response.status_code == 200, response.text
+        holders = await env.db.fetch_all(
+            "SELECT workspace_id FROM {{tables.task_claims}} WHERE team_id=$1 AND task_ref=$2",
+            TEAM,
+            task.json()["task_ref"],
+        )
+        assert [row["workspace_id"] for row in holders] == [
+            env.actors["alice"].workspace
+        ]
+    finally:
+        if pending is not None:
+            if not pending.done():
+                pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
