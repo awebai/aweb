@@ -3903,20 +3903,19 @@ func buildTeamImportRequestOutput(
 	dryRun bool,
 	timestamp string,
 ) (teamImportRequestOutput, error) {
-	payload := map[string]any{
-		"operation":       "byoidt_import",
-		"awid_team_id":    strings.TrimSpace(awidTeamID),
-		"organization_id": strings.TrimSpace(organizationID),
-		"team_id":         strings.TrimSpace(cloudTeamID),
-		"dry_run":         dryRun,
-		"timestamp":       strings.TrimSpace(timestamp),
+	request := awid.TeamImportRequest{
+		AWIDTeamID: awidTeamID, OrganizationID: organizationID,
+		TeamID: cloudTeamID, DryRun: dryRun, Timestamp: timestamp,
 	}
-	canonical, err := awid.CanonicalJSONValue(payload)
+	canonical, err := request.SigningBytes()
+	if err != nil {
+		return teamImportRequestOutput{}, err
+	}
+	signature, err := request.Sign(teamKey)
 	if err != nil {
 		return teamImportRequestOutput{}, err
 	}
 	controllerDID := awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey))
-	signature := signaturewire.SignStd(teamKey, []byte(canonical))
 	body := map[string]any{
 		"awid_team_id":         strings.TrimSpace(awidTeamID),
 		"organization_id":      nullableString(strings.TrimSpace(organizationID)),
@@ -3932,7 +3931,7 @@ func buildTeamImportRequestOutput(
 		Timestamp:           strings.TrimSpace(timestamp),
 		ControllerDID:       controllerDID,
 		ControllerSignature: signature,
-		CanonicalPayload:    canonical,
+		CanonicalPayload:    string(canonical),
 		RequestBody:         body,
 	}, nil
 }
