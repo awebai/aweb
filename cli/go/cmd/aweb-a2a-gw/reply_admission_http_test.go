@@ -129,6 +129,10 @@ func TestHTTPMailBridgeLegacyFencedReplyKeepsAcceptance(t *testing.T) {
 	if got.Status.State != a2agw.TaskStateCompleted || got.Metadata["reply_verification"] != string(awid.VerifiedLegacy) {
 		t.Fatalf("signed task-body neighbor refused: %#v", got)
 	}
+	if len(got.Artifacts) != 1 || got.Artifacts[0].Name != "answer" {
+		t.Fatalf("completed answer label changed: %#v", got.Artifacts)
+	}
+
 }
 
 func TestHTTPMailBridgeExplicitUnverifiedLegacyQuestionIsLabeled(t *testing.T) {
@@ -161,6 +165,7 @@ const (
 )
 
 type managedHTTPReplyOptions struct {
+	UnverifiedReplies  bool
 	Receipt            managedReceiptIdentity
 	ReusedConversation string
 }
@@ -170,7 +175,7 @@ type managedHTTPReplyOptions struct {
 // transport, MailBridge and RPC owners, with no replaced bridge methods.
 func newManagedHTTPReplyFixture(t *testing.T, options managedHTTPReplyOptions) *mailHTTPFixture {
 	t.Helper()
-	f := newMailHTTPFixture(t, mailHTTPOptions{PollTimeout: 3 * time.Second})
+	f := newMailHTTPFixture(t, mailHTTPOptions{PollTimeout: 3 * time.Second, UnverifiedReplies: options.UnverifiedReplies})
 	f.server.Close()
 	pub, gatewayKey, err := awid.GenerateKeypair()
 	if err != nil {
@@ -443,5 +448,69 @@ func assertQuestionText(t *testing.T, task a2agw.Task) {
 	t.Helper()
 	if task.Status.Message == nil || len(task.Status.Message.Parts) == 0 || task.Status.Message.Parts[0].Text != "Which order?" {
 		t.Fatalf("fenced input_required did not carry the question text: %#v", task.Status)
+	}
+}
+
+func TestHTTPManagedUnverifiedQuestionRefusesAmbiguousTask(t *testing.T) {
+	f := newManagedHTTPReplyFixture(t, managedHTTPReplyOptions{ReusedConversation: "unverified-shared", UnverifiedReplies: true})
+	first := sentHTTPTask(t, f.callOK(t, sendHTTPInput("first-unverified-task")))
+	second := sentHTTPTask(t, f.callOK(t, sendHTTPInput("second-unverified-task")))
+	f.injectSignedReply(t, signedHTTPReply{Task: first, Body: "QUESTION: Which order?", Binding: conversationUnsigned})
+	deadline := time.Now().Add(2 * time.Second)
+	var notice awid.SendMessageRequest
+	for {
+		for _, task := range []a2agw.Task{first, second} {
+			if got := f.readTask(t, task); got.Status.State != a2agw.TaskStateWorking {
+				t.Fatalf("ambiguous unverified question changed task: %#v", got)
+			}
+		}
+		f.mu.Lock()
+		if len(f.corrections) > 0 {
+			notice = f.corrections[0]
+		}
+		f.mu.Unlock()
+		if notice.Body != "" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("ambiguous question had no target correction")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !strings.Contains(notice.Body, first.ID) || !strings.Contains(notice.Body, second.ID) || !strings.Contains(notice.Body, "a2a-reply") || notice.ToAddress != "a2a.aweb.ai/personal" || notice.ConversationID != "unverified-shared" {
+		t.Fatalf("correction did not preserve both task forms and configured route/conversation: %#v", notice)
+	}
+	if event, found := f.auditEvent(t, "reply_task_ambiguous"); !found || event.Outcome != string(a2agw.AuditDenied) {
+		t.Fatalf("ambiguity refusal not audited: %#v", event)
+	}
+	f.injectSignedReply(t, signedHTTPReply{Task: second, Body: f.questionForm(t, second), Binding: conversationUnsigned})
+	got := f.waitForTaskReply(t, second)
+	if got.Status.State != a2agw.TaskStateInputRequired || got.Metadata["reply_verification"] != string(awid.Unverified) {
+		t.Fatalf("task-bearing unverified neighbor failed: %#v", got)
+	}
+	if got := f.readTask(t, first); got.Status.State != a2agw.TaskStateWorking {
+		t.Fatalf("task-named question changed its neighbor: %#v", got)
+	}
+	f.callOK(t, httpRPCInput{Method: "CancelTask", Params: map[string]string{"id": first.ID}, Headers: tokenHeaders(t, first)})
+}
+
+func TestHTTPMailBridgeQuestionsHaveQuestionArtifacts(t *testing.T) {
+	for _, form := range []string{"fenced-text", "fenced-artifact", "unverified-plain"} {
+		t.Run(form, func(t *testing.T) {
+			f := newMailHTTPFixture(t, mailHTTPOptions{QuestionReplies: true, UnverifiedReplies: form == "unverified-plain", PollTimeout: 3 * time.Second})
+			task := sentHTTPTask(t, f.callOK(t, sendHTTPInput("artifact-question")))
+			body := "QUESTION: Which order?"
+			switch form {
+			case "fenced-text":
+				body = fmt.Sprintf("```a2a-reply\n{\"task_id\":%q,\"context_id\":%q,\"state\":\"input_required\",\"text\":\"Which order?\"}\n```", task.ID, task.ContextID)
+			case "fenced-artifact":
+				body = f.questionForm(t, task)
+			}
+			f.injectSignedReply(t, signedHTTPReply{Task: task, Body: body, Binding: conversationSigned})
+			got := f.waitForTaskReply(t, task)
+			if got.Status.State != a2agw.TaskStateInputRequired || len(got.Artifacts) != 1 || got.Artifacts[0].Name != "question" || len(got.Artifacts[0].Parts) != 1 || got.Artifacts[0].Parts[0].Text != "Which order?" {
+				t.Fatalf("question mislabelled as answer: %#v", got)
+			}
+		})
 	}
 }

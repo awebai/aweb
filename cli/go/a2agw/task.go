@@ -133,6 +133,22 @@ type Artifact struct {
 	Parts      []A2APart `json:"parts"`
 }
 
+type replyArtifactRole string
+
+const (
+	answerArtifact   replyArtifactRole = "answer"
+	questionArtifact replyArtifactRole = "question"
+)
+
+// replyArtifactName distinguishes an input question from an answer while
+// retaining the completed reply's artifact name (docs/a2a.md:1036-1038).
+func replyArtifactName(state taskState) string {
+	if state == taskInputRequired {
+		return string(questionArtifact)
+	}
+	return string(answerArtifact)
+}
+
 type taskRecord struct {
 	Task
 	RouteID     string
@@ -339,12 +355,17 @@ func (s *taskStore) applyReply(reply BridgeReply) (*taskRecord, bool, error) {
 		return nil, false, err
 	}
 	artifacts := cloneArtifacts(reply.Artifacts)
+	for i := range artifacts {
+		if artifacts[i].Name == "" || artifacts[i].Name == string(answerArtifact) {
+			artifacts[i].Name = replyArtifactName(state)
+		}
+	}
 	if len(artifacts) == 0 && messageText != "" {
 		id, err := newUUIDv4()
 		if err != nil {
 			return nil, false, err
 		}
-		artifacts = []Artifact{{ArtifactID: id, Name: "answer", Parts: []A2APart{{Text: messageText, MediaType: "text/plain"}}}}
+		artifacts = []Artifact{{ArtifactID: id, Name: replyArtifactName(state), Parts: []A2APart{{Text: messageText, MediaType: "text/plain"}}}}
 	}
 	record.Status = TaskStatus{State: string(state), Timestamp: formatTime(now), Message: msg}
 	record.Terminal = isTerminalState(state)
@@ -445,7 +466,7 @@ func normalizeReplyState(state string) (taskState, error) {
 	case "rejected", TaskStateRejected:
 		return taskRejected, nil
 	default:
-		return "", fmt.Errorf("unsupported a2a reply state %q", state)
+		return "", fmt.Errorf("unsupported a2a reply state %q. Set state to completed, input_required, failed, or rejected and retry.", state)
 	}
 }
 

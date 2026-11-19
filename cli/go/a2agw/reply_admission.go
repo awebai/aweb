@@ -71,7 +71,10 @@ func (b *MailBridge) threadsByConversation(conversationID string) []*mailBridgeT
 
 type replyRefusalCode string
 
-const taskBindingRequired replyRefusalCode = "reply_task_binding_required"
+const (
+	taskBindingRequired   replyRefusalCode = "reply_task_binding_required"
+	ambiguousQuestionTask replyRefusalCode = "reply_task_ambiguous"
+)
 
 type replyBindingRefusal struct {
 	Code    replyRefusalCode
@@ -80,11 +83,15 @@ type replyBindingRefusal struct {
 
 func (e *replyBindingRefusal) Error() string { return e.Message }
 
-// conversationReplyRefusal implements the one verified-task rule: the signed
-// reply body must name the task, including a question (docs/a2a.md:978-994).
+// conversationReplyRefusal requires a signed task body for verified replies;
+// unverified plain questions also need one when the conversation has several
+// eligible tasks (docs/a2a.md:978-994,1032-1035).
 func (b *MailBridge) conversationReplyRefusal(attachment replyAttachment) *replyBindingRefusal {
 	if attachment.Binding == conversationOnly && b.requireVerifiedReplies {
 		return &replyBindingRefusal{Code: taskBindingRequired, Message: "The plain QUESTION was not applied because it does not name the A2A task in its signed body. Use aw 1.19.0 or later to reply in the original conversation with the fenced input_required form below."}
+	}
+	if attachment.Binding == conversationOnly && len(attachment.Candidates) > 1 {
+		return &replyBindingRefusal{Code: ambiguousQuestionTask, Message: "The plain QUESTION was not applied because several live A2A tasks share this conversation. Use aw 1.19.0 or later to reply in the original conversation with the fenced input_required form for the intended task below."}
 	}
 	return nil
 }
@@ -133,9 +140,9 @@ func (b *MailBridge) refuseConversationReply(ctx context.Context, input replyCor
 	}
 	refusal := fmt.Errorf("%s%s\n\nNo task was changed. Choose the form for the intended task, replace the question text, and send it in the original conversation.", input.Refusal.Error(), strings.Join(forms, ""))
 	request := &awid.SendMessageRequest{ConversationID: thread.ConversationID, ToAddress: thread.TargetAddress, ToDID: thread.TargetDID, ToStableID: thread.TargetStableID, Subject: "A2A reply needs binding", Body: refusal.Error(), ContentMode: awid.ContentModeLegacyPlaintextV1, Priority: awid.PriorityNormal}
-	// The shared reader already verified this sender against the bound stable
-	// target. Reply to that signing key and let the send owner revalidate it.
-	if msg.FromDID != "" {
+	// A verified sender may use its current signing key under the bound stable
+	// identity. Unverified input cannot select the correction's recipient key.
+	if b.requireVerifiedReplies && msg.FromDID != "" {
 		request.ToDID = msg.FromDID
 	}
 	response, err := b.sendForRoute(ctx, thread.RouteID, thread.TargetAddress, request)

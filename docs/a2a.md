@@ -1027,3 +1027,11 @@ identity home. Task-token writes are atomic and serialized within that instance.
 An unreadable or malformed credential file is an error, not an empty file. If
 persistence fails after delivery, `aw a2a send` still returns the delivered task
 and its token, and warns on stderr how to retain access and repair the file.
+
+On an explicitly unverified route, a plain question may select a task only when
+exactly one eligible tracked task is in the conversation. If several tasks are
+eligible, the gateway refuses it without changing any task and sends the target
+the fenced forms naming those tasks, as it does on a verified route.
+An input-required reply carries its text artifacts with the name `question`,
+including a plain question accepted by an unverified route. Completed replies
+keep the name `answer`.

@@ -669,6 +669,16 @@ func ParseA2AReplyWithOptions(input ReplyParseInput) (BridgeReply, bool, error) 
 		return BridgeReply{}, true, err
 	}
 	reply := BridgeReply{TaskID: strings.TrimSpace(env.TaskID), ContextID: strings.TrimSpace(env.ContextID), State: strings.TrimSpace(env.State), Text: strings.TrimSpace(env.Text)}
+	if reply.TaskID == "" {
+		return BridgeReply{}, true, errors.New("a2a-reply task_id is required. Copy the task_id from the gateway task message and retry with one fenced reply.")
+	}
+	if reply.State == "" {
+		return BridgeReply{}, true, errors.New("a2a-reply state is required. Set state to completed, input_required, failed, or rejected and retry.")
+	}
+	state, err := normalizeReplyState(reply.State)
+	if err != nil {
+		return BridgeReply{}, true, err
+	}
 	for _, artifact := range env.Artifacts {
 		if strings.TrimSpace(artifact.Type) != "" && strings.TrimSpace(artifact.Type) != "text" {
 			continue
@@ -677,19 +687,10 @@ func ParseA2AReplyWithOptions(input ReplyParseInput) (BridgeReply, bool, error) 
 		if text == "" {
 			continue
 		}
-		reply.Artifacts = append(reply.Artifacts, Artifact{Name: "answer", Parts: []A2APart{{Text: text, MediaType: "text/plain"}}})
+		reply.Artifacts = append(reply.Artifacts, Artifact{Name: replyArtifactName(state), Parts: []A2APart{{Text: text, MediaType: "text/plain"}}})
 		if reply.Text == "" {
 			reply.Text = text
 		}
-	}
-	if strings.TrimSpace(reply.TaskID) == "" {
-		return BridgeReply{}, true, errors.New("a2a-reply task_id is required")
-	}
-	if strings.TrimSpace(reply.State) == "" {
-		return BridgeReply{}, true, errors.New("a2a-reply state is required")
-	}
-	if _, err := normalizeReplyState(reply.State); err != nil {
-		return BridgeReply{}, true, err
 	}
 	return reply, true, nil
 }

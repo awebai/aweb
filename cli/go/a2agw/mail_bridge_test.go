@@ -446,3 +446,18 @@ func TestFormatA2ATaskMessageTeachesReplyProtocol(t *testing.T) {
 		t.Fatalf("customer text must be the final content:\n%s", body)
 	}
 }
+
+func TestReplyStateValidationGivesRecoveryForMovedRefusals(t *testing.T) {
+	for _, input := range []struct{ Body, Want string }{
+		{`{"state":"completed"}`, "a2a-reply task_id is required. Copy the task_id from the gateway task message and retry with one fenced reply."},
+		{`{"task_id":"task"}`, "a2a-reply state is required. Set state to completed, input_required, failed, or rejected and retry."},
+		{`{"task_id":"task","state":"unknown"}`, `unsupported a2a reply state "unknown". Set state to completed, input_required, failed, or rejected and retry.`},
+	} {
+		t.Run(input.Body, func(t *testing.T) {
+			reply, found, err := ParseA2AReplyWithOptions(ReplyParseInput{Body: "```a2a-reply\n" + input.Body + "\n```"})
+			if !found || err == nil || err.Error() != input.Want || reply.TaskID != "" {
+				t.Fatalf("reply=%#v found=%v err=%v", reply, found, err)
+			}
+		})
+	}
+}

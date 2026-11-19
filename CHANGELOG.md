@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- On unverified A2A routes, a plain question shared by several live tasks is
+  refused with task-specific reply forms. Questions use artifact name `question`;
+  completed answers retain `answer`.
+
 - Concurrent `aw a2a send` calls retain each task token. Credential-file failures
   are reported without overwriting unreadable YAML; a task already delivered is
   still returned with its token when saving fails.
