@@ -11,22 +11,30 @@ supported route (OATS docs/container.md, "Making a seat"). Root reads the
 state directory itself; nothing is read inside the container but over the
 operator's SSH, whose host key is pinned in --ssh-config.
 
-Before anything changes, it records the container, a probe file the seat
-writes in its state, a snapshot of the state, and a verified mail from the
-peer, an identity outside the container. Then two cases, each judged on
-its own:
+docker and docker compose go to the local daemon's socket alone, with no
+inherited context or configuration.
 
-1. restart: docker restart of the same container (same id);
-2. replace: only the agent's container is removed and created again by the
-   given Compose command (a new id), with the same image and the same
-   /state source.
+Before anything changes, it records the container, the seat's and the
+peer's did:key (the peer is an identity outside the container), a probe the
+seat writes over SSH, and a snapshot of the state. The bound state must then
+hold that very probe, byte for byte (so SSH reached this state), the seat's
+member key, a certificate and sshd's private host key; a walk that cannot
+read an entry stops. Then two cases, each judged on its own:
 
-After each: the container is healthy, SSH still accepts the pinned host
-key, the seat answers with the same did:key, the snapshot shows no drift
-(the same keys, certificate and probe, the same modes, every entry the
-agents' own), and a fresh mail from the peer arrives verified. The probe and
-the snapshot show no key or file content: digests of secrets stay in memory
-and only their equality is written.
+1. restart: docker restart of the inspected container (same id);
+2. replace: the Compose project must name exactly one agent container, the
+   one inspected; that id alone is stopped and removed, its absence is
+   observed in a clean listing, and only then does the given Compose command
+   create the agent again (a new id), with the same image and /state source.
+
+After each, and once before: the container is healthy, SSH still accepts
+the pinned host key, the seat answers with the same did:key, the snapshot
+shows no drift (the same keys, certificate and probe, the same modes, every
+entry the agents' own), and a signed round trip passes: the peer sends, the
+seat finds that message by the send receipt's id, from the peer, verified;
+the seat replies with its own key, and the peer finds that reply, from the
+seat, verified. The probe and the snapshot show no key or file content:
+digests of secrets stay in memory and only their equality is written.
 
 Exit 0 only when every check of both cases passed; the evidence directory
 holds one JSON file per step and result.json.
@@ -71,8 +79,11 @@ def snapshot(root: Path, uid: int, gid: int, seat: str) -> dict:
     """Every entry of the state, never following a link: the entries whose
     owner is not the agents' uid and gid, every entry's mode, and the
     SHA-256 of the files a restart must keep (regular files only)."""
+    def unreadable(error: OSError) -> None:
+        raise Failed(f"{error.filename}: cannot be read ({error.strerror}); the snapshot is not whole")
+
     foreign, modes, digests = [], {}, {}
-    for directory, dirs, files in os.walk(root, followlinks=False):
+    for directory, dirs, files in os.walk(root, onerror=unreadable, followlinks=False):
         here = Path(directory)
         names = ["."] if here == root else []
         names += [str((here / name).relative_to(root)) for name in (*dirs, *files)]
@@ -110,6 +121,27 @@ def state_drift(before: dict, after: dict) -> list[str]:
     return drift
 
 
+def missing(taken: dict, seat: str, probe: str) -> list[str]:
+    """What the bound state must hold before any case, so that the cases
+    compare something: the probe the seat wrote over SSH, byte for byte (so
+    SSH reached this very state), the seat's member key, a certificate, and
+    sshd's private host key."""
+    absent = []
+    key = f"seats/{seat}/.aw/signing.key"
+    if key not in taken["digests"]:
+        absent.append(f"{key}: missing")
+    if not [path for path in taken["digests"] if path.startswith(f"seats/{seat}/.aw/team-certs/")]:
+        absent.append(f"seats/{seat}/.aw/team-certs/: no certificate")
+    written = f"seats/{seat}/{RESTART_PROBE}"
+    if written not in taken["digests"]:
+        absent.append(f"{written}: missing")
+    elif taken["digests"][written] != probe:
+        absent.append(f"{written}: not the probe written over SSH")
+    if not [path for path in taken["digests"] if path.startswith("ssh/ssh_host_") and not path.endswith(".pub")]:
+        absent.append("ssh/: no private host key")
+    return absent
+
+
 def summary(taken: dict) -> dict:
     """A snapshot as evidence: counts and the kept files' names, no digest."""
     return {"entries": len(taken["modes"]), "kept": sorted(taken["digests"]), "foreign": taken["foreign"]}
@@ -119,8 +151,16 @@ class Failed(Exception):
     pass
 
 
+# docker and docker compose ask the local daemon's socket alone, with no
+# inherited context or configuration, so every observation and every change
+# goes to one daemon.
+DOCKER_ENV = {"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+              "DOCKER_HOST": "unix:///var/run/docker.sock"}
+
+
 def run(*args: str, timeout: int = 120) -> subprocess.CompletedProcess:
-    return subprocess.run(list(args), capture_output=True, text=True, timeout=timeout, check=False)
+    env = DOCKER_ENV if args and args[0] == "docker" else None
+    return subprocess.run(list(args), capture_output=True, text=True, timeout=timeout, check=False, env=env)
 
 
 def required(result: subprocess.CompletedProcess, what: str) -> str:
@@ -179,21 +219,47 @@ class Agent:
             raise Failed(f"the seat answered no did:key: {sorted(answer)}")
         return did
 
-    def mail(self) -> dict:
-        """A fresh mail from the peer, found once in the seat's inbox with
-        verification_status verified. The subject is new for each check, so
-        no earlier mail can answer it."""
+    def mail(self, seat_did: str, peer_did: str) -> dict:
+        """A signed round trip after each transition: the peer, outside the
+        container, sends; the seat finds that very message (by the send
+        receipt's message_id) from the peer, verified; the seat replies,
+        which it can only do with its own key; the peer finds that reply
+        from the seat, verified."""
         subject = f"acwd25-restart-{secrets.token_hex(6)}"
-        required(run(*self.peer, "mail", "send", "--to", self.seat, "--subject", subject, "--body", "restart check",
-                     timeout=300), "the peer's mail")
+        sent = json.loads(required(run(*self.peer, "mail", "send", "--to", self.seat, "--subject", subject,
+                                       "--body", "restart check", timeout=300), "the peer's mail"))
+        sent_id = sent.get("message_id") or ""
+        if not sent_id:
+            raise Failed(f"the peer's send answered no message_id: {sorted(sent)}")
         inbox = json.loads(self.ssh(f"aw --identity-home {self.home} --json mail inbox --show-all"))
-        found = [message for message in inbox.get("messages", []) if message.get("subject") == subject]
+        found = [message for message in inbox.get("messages", []) if message.get("message_id") == sent_id]
         if len(found) != 1:
-            raise Failed(f"the peer's mail {subject}: {len(found)} in the seat's inbox")
-        status = found[0].get("verification_status")
-        if status != "verified":
-            raise Failed(f"the peer's mail {subject}: verification_status {status}")
-        return {"subject": subject, "from": found[0].get("from_alias"), "verification_status": status}
+            raise Failed(f"the peer's mail {sent_id}: {len(found)} in the seat's inbox")
+        received = found[0]
+        if received.get("from_did") != peer_did or received.get("verification_status") != "verified":
+            raise Failed(f"the peer's mail {sent_id}: from {received.get('from_did')},"
+                         f" {received.get('verification_status')}; expected {peer_did}, verified")
+        reply = json.loads(self.ssh(f"aw --identity-home {self.home} --json mail reply {sent_id} --body restart-reply"))
+        reply_id = reply.get("message_id") or ""
+        if not reply_id:
+            raise Failed(f"the seat's reply answered no message_id: {sorted(reply)}")
+        inbox = json.loads(required(run(*self.peer, "mail", "inbox", "--show-all", timeout=300), "the peer's inbox"))
+        found = [message for message in inbox.get("messages", []) if message.get("message_id") == reply_id]
+        if len(found) != 1:
+            raise Failed(f"the seat's reply {reply_id}: {len(found)} in the peer's inbox")
+        answered = found[0]
+        if answered.get("from_did") != seat_did or answered.get("verification_status") != "verified":
+            raise Failed(f"the seat's reply {reply_id}: from {answered.get('from_did')},"
+                         f" {answered.get('verification_status')}; expected {seat_did}, verified")
+        return {"sent": sent_id, "received_from": peer_did, "reply": reply_id, "reply_from": seat_did,
+                "verification_status": "verified"}
+
+    def peer_did(self) -> str:
+        answer = json.loads(required(run(*self.peer, "whoami", timeout=120), "the peer's whoami"))
+        did = answer.get("did", "")
+        if not did.startswith("did:key:"):
+            raise Failed(f"the peer answered no did:key: {sorted(answer)}")
+        return did
 
     def write_probe(self) -> str:
         token = secrets.token_hex(16)
@@ -204,35 +270,71 @@ class Agent:
         return snapshot(self.state_dir, self.uid, self.gid, self.seat)
 
 
-def check(agent: Agent, before: dict, container: dict, did: str) -> dict:
+def check(agent: Agent, before: dict, container: dict, dids: dict) -> dict:
     """One case's after-checks against the record taken before the cases."""
     after = agent.snapshot()
     drift = state_drift(before, after)
     if drift:
         raise Failed("state drift: " + "; ".join(drift))
     answered = agent.did()
-    if answered != did:
-        raise Failed(f"the seat answers {answered}, not {did}")
-    return {"container": container, "did_key": answered, "state": summary(after), "drift": [], "mail": agent.mail()}
+    if answered != dids["seat"]:
+        raise Failed(f"the seat answers {answered}, not {dids['seat']}")
+    return {"container": container, "did_key": answered, "state": summary(after), "drift": [],
+            "mail": agent.mail(dids["seat"], dids["peer"])}
 
 
-def restart(agent: Agent, before: dict, did: str, original: dict) -> dict:
-    required(run("docker", "restart", "--time", "50", agent.container, timeout=120), "docker restart")
+def restart(agent: Agent, before: dict, dids: dict, original: dict) -> dict:
+    required(run("docker", "restart", "--time", "50", original["id"], timeout=120), "docker restart")
     seen = agent.healthy()
     if seen["id"] != original["id"]:
         raise Failed(f"docker restart gave another container: {seen['id']}")
-    return check(agent, before, seen, did)
+    return check(agent, before, seen, dids)
 
 
-def replace(agent: Agent, before: dict, did: str, original: dict) -> dict:
-    required(run(*agent.compose, "rm", "--stop", "--force", "agent", timeout=120), "compose rm agent")
-    if run("docker", "inspect", original["id"]).returncode == 0:
-        raise Failed(f"the agent's container {original['id']} still exists after compose rm")
+def containers() -> list[dict]:
+    """Every container this daemon lists, from a clean answer only."""
+    answer = run("docker", "container", "ls", "--all", "--no-trunc", "--format", "{{json .}}")
+    if answer.returncode != 0 or answer.stderr.strip():
+        raise Failed(f"docker container ls failed (rc={answer.returncode}): {answer.stderr.strip()[-300:]}")
+    listed = []
+    for line in answer.stdout.splitlines():
+        try:
+            entry = json.loads(line)
+            listed.append({"id": entry["ID"], "names": entry["Names"].split(",")})
+        except (ValueError, KeyError, AttributeError):
+            raise Failed(f"docker container ls answered an unreadable line: {line[:200]!r}") from None
+    return listed
+
+
+def remove_verified(agent: Agent, identity: str) -> None:
+    """Removes the agent's container, and only it: the Compose project must
+    name exactly one agent container, the one inspected (identity), before
+    anything changes; that id, not the service, is stopped and removed; and
+    its absence must be observed, not inferred from a failed look."""
+    answer = run(*agent.compose, "ps", "--all", "--quiet", "agent")
+    ids = answer.stdout.split()
+    if answer.returncode != 0 or answer.stderr.strip() or len(ids) != 1:
+        raise Failed(f"the Compose project's agent container is not known: rc={answer.returncode},"
+                     f" {len(ids)} ids, {answer.stderr.strip()[-300:]!r}")
+    if ids[0] != identity:
+        raise Failed(f"the Compose project's agent {ids[0][:12]} is not the container inspected {identity[:12]}")
+    required(run("docker", "stop", "--time", "50", identity, timeout=120), f"docker stop {identity[:12]}")
+    required(run("docker", "rm", identity, timeout=120), f"docker rm {identity[:12]}")
+    try:
+        left = containers()
+    except Failed as error:
+        raise Failed(f"after docker rm, the container's absence is not known: {error}") from None
+    if [entry for entry in left if entry["id"] == identity or agent.container in entry["names"]]:
+        raise Failed(f"the agent's container still exists after docker rm {identity[:12]}")
+
+
+def replace(agent: Agent, before: dict, dids: dict, original: dict) -> dict:
+    remove_verified(agent, original["id"])
     required(run(*agent.compose, "up", "-d", "--no-deps", "agent", timeout=300), "compose up agent")
     seen = agent.healthy()
     if seen["id"] == original["id"]:
         raise Failed("compose up kept the removed container's id")
-    return check(agent, before, seen, did)
+    return check(agent, before, seen, dids)
 
 
 def main() -> int:
@@ -262,21 +364,22 @@ def main() -> int:
     results: dict[str, str] = {}
     try:
         original = agent.healthy()
-        did = agent.did()
+        dids = {"seat": agent.did(), "peer": agent.peer_did()}
         probe = agent.write_probe()
         before = agent.snapshot()
         if before["foreign"]:
             raise Failed("before the cases, entries not the agents' own: " + ", ".join(before["foreign"]))
-        if state_drift(before, before):
-            raise Failed("before the cases: " + "; ".join(state_drift(before, before)))
-        record("before", {"container": original, "did_key": did, "probe_sha256": probe, "state": summary(before),
-                          "mail": agent.mail()})
+        absent = missing(before, agent.seat, probe)
+        if absent:
+            raise Failed("before the cases, the bound state lacks: " + "; ".join(absent))
+        record("before", {"container": original, "dids": dids, "probe_sha256": probe, "state": summary(before),
+                          "mail": agent.mail(dids["seat"], dids["peer"])})
     except (Failed, subprocess.TimeoutExpired, json.JSONDecodeError) as error:
         record("result", {"before": f"FAILED: {error}", "restart": "NOT RUN", "replace": "NOT RUN"})
         return 1
     for name, case in (("restart", restart), ("replace", replace)):
         try:
-            record(name, case(agent, before, did, original))
+            record(name, case(agent, before, dids, original))
             results[name] = "PASS"
             original = agent.inspect()
         except (Failed, subprocess.TimeoutExpired, json.JSONDecodeError) as error:
