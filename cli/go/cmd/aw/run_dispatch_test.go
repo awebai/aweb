@@ -1603,6 +1603,9 @@ func TestResolveChatWakePropagatesLocalDeliveryMarkFailure(t *testing.T) {
 	if err := os.MkdirAll(deliveredPath, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(deliveredPath+".lock", 0o700); err != nil {
+		t.Fatal(err)
+	}
 	var markedRead bool
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1627,11 +1630,11 @@ func TestResolveChatWakePropagatesLocalDeliveryMarkFailure(t *testing.T) {
 		MessageID: "persist-failure-1",
 		FromAlias: "alice",
 	})
-	if err == nil || !strings.Contains(err.Error(), "Repair or remove") {
-		t.Fatalf("unreadable store did not fail before presentation: %+v %v", resolved, err)
+	if err == nil || !strings.Contains(err.Error(), "Repair the cache directory before retrying") {
+		t.Fatalf("unrecoverable receipt store did not fail before presentation: %+v %v", resolved, err)
 	}
 	if markedRead || resolved.CycleContext != "" {
-		t.Fatal("corrupt receipts allowed delivery or acknowledgement")
+		t.Fatal("failed receipt recovery allowed delivery or acknowledgement")
 	}
 }
 

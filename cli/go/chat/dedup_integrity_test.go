@@ -3,12 +3,14 @@ package chat
 import (
 	"bytes"
 	"encoding/json"
-	"github.com/awebai/aw/awid"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/awebai/aw/awid"
 )
 
 func TestDeliveryReceiptMarkerReadFailureDoesNotSelectAnotherStore(t *testing.T) {
@@ -55,42 +57,212 @@ func TestDeliveryReceiptMarkerReadFailureDoesNotSelectAnotherStore(t *testing.T)
 	}
 }
 
-func TestMalformedDeliveryReceiptEntryRefusesFiltering(t *testing.T) {
+func TestCorruptDeliveryReceiptCacheDoesNotBlockFiltering(t *testing.T) {
 	cases := []struct {
-		name    string
-		entries map[string]string
+		name string
+		data []byte
 	}{
-		{name: "invalid timestamp", entries: map[string]string{"accepted-message": "not-a-time"}},
-		{name: "empty identifier", entries: map[string]string{"": time.Now().UTC().Format(time.RFC3339Nano)}},
-		{name: "null object", entries: nil},
+		{name: "invalid timestamp", data: []byte(`{"accepted-message":"not-a-time"}`)},
+		{name: "empty identifier", data: []byte(`{"":"2026-11-19T00:00:00Z"}`)},
+		{name: "null object", data: []byte(`null`)},
+		{name: "malformed JSON", data: []byte(`{"accepted-message":`)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "receipts.json")
 			t.Setenv(DeliveredIDsPathEnv, path)
-			data, err := json.Marshal(tc.entries)
+			if err := os.WriteFile(path, tc.data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			warnings := recordDeliveryReceiptDiagnostics(t, func() {
+				messages, err := FilterDeliveredMessagesForDir(t.TempDir(), []awid.ChatMessage{{MessageID: "accepted-message"}})
+				if err != nil || len(messages) != 1 || messages[0].MessageID != "accepted-message" {
+					t.Fatalf("corrupt cache blocked filtering: messages=%v err=%v", messages, err)
+				}
+				ids, err := LoadDeliveredIDsForDir(t.TempDir())
+				if err != nil || len(ids) != 0 {
+					t.Fatalf("reset cache not empty: %v, %v", ids, err)
+				}
+				if err := SaveDeliveredIDsForDir(t.TempDir(), []string{"next-message"}); err != nil {
+					t.Fatal(err)
+				}
+			})
+			quarantines, err := filepath.Glob(path + ".quarantine-*")
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(path, data, 0600); err != nil {
-				t.Fatal(err)
+			if len(quarantines) != 1 {
+				t.Fatalf("quarantines=%v", quarantines)
 			}
-			messages, err := FilterDeliveredMessagesForDir(t.TempDir(), []awid.ChatMessage{{MessageID: "accepted-message"}})
-			if err == nil || len(messages) != 0 || !strings.Contains(err.Error(), "Repair or remove") {
-				t.Fatalf("malformed receipt became empty state: messages=%v err=%v", messages, err)
-			}
-			if err := SaveDeliveredIDsForDir(t.TempDir(), []string{"next-message"}); err == nil || !strings.Contains(err.Error(), "Repair or remove") {
-				t.Fatalf("writer replaced unreadable receipt state: %v", err)
-			}
-			stored, err := os.ReadFile(path)
+			preserved := filepath.Join(quarantines[0], filepath.Base(path))
+			stored, err := os.ReadFile(preserved)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !bytes.Equal(stored, data) {
-				t.Fatal("failed receipt read changed stored deliveries")
+			if !bytes.Equal(stored, tc.data) {
+				t.Fatal("quarantine lost corrupt receipt bytes")
+			}
+			if strings.Count(warnings, "WARNING:") != 1 || !strings.Contains(warnings, path) || !strings.Contains(warnings, preserved) || !strings.Contains(warnings, "Messages may be shown again") {
+				t.Fatalf("missing single actionable quarantine warning: %q", warnings)
+			}
+			ids, err := LoadDeliveredIDsForDir(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(ids) != 1 {
+				t.Fatalf("reset store lost next delivery: %v", ids)
+			}
+			if _, ok := ids["next-message"]; !ok {
+				t.Fatalf("reset store missing new receipt: %v", ids)
 			}
 		})
 	}
+}
+
+func TestCorruptDeliveryReceiptCacheRecoversBeforeWriterMerge(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "receipts.json")
+	t.Setenv(DeliveredIDsPathEnv, path)
+	corrupt := []byte(`not a receipt object`)
+	if err := os.WriteFile(path, corrupt, 0600); err != nil {
+		t.Fatal(err)
+	}
+	warnings := recordDeliveryReceiptDiagnostics(t, func() {
+		if err := SaveDeliveredIDsForDir(t.TempDir(), []string{"accepted-message"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	ids, err := LoadDeliveredIDsForDir(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 1 {
+		t.Fatalf("writer did not merge into reset cache: %v", ids)
+	}
+	if _, ok := ids["accepted-message"]; !ok {
+		t.Fatalf("missing accepted receipt: %v", ids)
+	}
+	quarantines, err := filepath.Glob(path + ".quarantine-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(quarantines) != 1 {
+		t.Fatalf("quarantines=%v", quarantines)
+	}
+	data, err := os.ReadFile(filepath.Join(quarantines[0], filepath.Base(path)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(data, corrupt) || strings.Count(warnings, "WARNING:") != 1 {
+		t.Fatalf("lost quarantine or diagnostic: data=%q warnings=%q", data, warnings)
+	}
+}
+
+func TestUnreadableDeliveryReceiptCacheIsQuarantined(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "receipts.json")
+	t.Setenv(DeliveredIDsPathEnv, path)
+	if err := os.Mkdir(path, 0700); err != nil {
+		t.Fatal(err)
+	}
+	evidence := []byte("unreadable cache directory retained")
+	if err := os.WriteFile(filepath.Join(path, "evidence"), evidence, 0600); err != nil {
+		t.Fatal(err)
+	}
+	warnings := recordDeliveryReceiptDiagnostics(t, func() {
+		messages, err := FilterDeliveredMessagesForDir(t.TempDir(), []awid.ChatMessage{{MessageID: "new"}})
+		if err != nil || len(messages) != 1 || messages[0].MessageID != "new" {
+			t.Fatalf("unreadable cache blocked filtering: %v %v", messages, err)
+		}
+	})
+	quarantines, err := filepath.Glob(path + ".quarantine-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(quarantines) != 1 {
+		t.Fatalf("quarantines=%v", quarantines)
+	}
+	data, err := os.ReadFile(filepath.Join(quarantines[0], filepath.Base(path), "evidence"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(data, evidence) || strings.Count(warnings, "WARNING:") != 1 {
+		t.Fatalf("cache evidence or warning missing: %q %q", data, warnings)
+	}
+	ids, err := LoadDeliveredIDsForDir(t.TempDir())
+	if err != nil || len(ids) != 0 {
+		t.Fatalf("replacement cache not empty: %v %v", ids, err)
+	}
+}
+
+func TestConcurrentReceiptRecoveryPreservesAcceptedDeliveries(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "receipts.json")
+	workspace := t.TempDir()
+	t.Setenv(DeliveredIDsPathEnv, path)
+	if err := os.WriteFile(path, []byte("null"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	const writers = 12
+	warnings := recordDeliveryReceiptDiagnostics(t, func() {
+		start := make(chan struct{})
+		results := make(chan error, writers)
+		for index := 0; index < writers; index++ {
+			go func(index int) {
+				<-start
+				_, err := FilterDeliveredMessagesForDir(workspace, []awid.ChatMessage{{MessageID: "unseen"}})
+				if err == nil {
+					err = SaveDeliveredIDsForDir(workspace, []string{fmt.Sprintf("accepted-%d", index)})
+				}
+				results <- err
+			}(index)
+		}
+		close(start)
+		for index := 0; index < writers; index++ {
+			if err := <-results; err != nil {
+				t.Error(err)
+			}
+		}
+	})
+	ids, err := LoadDeliveredIDsForDir(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != writers {
+		t.Fatalf("recovery lost accepted deliveries: %v", ids)
+	}
+	for index := 0; index < writers; index++ {
+		if _, ok := ids[fmt.Sprintf("accepted-%d", index)]; !ok {
+			t.Fatalf("missing writer %d", index)
+		}
+	}
+	quarantines, err := filepath.Glob(path + ".quarantine-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(quarantines) != 1 || strings.Count(warnings, "WARNING:") != 1 {
+		t.Fatalf("recovery was not serialized: quarantines=%v warnings=%q", quarantines, warnings)
+	}
+}
+
+// A regular file records diagnostics without a pipe-capacity dependency.
+func recordDeliveryReceiptDiagnostics(t *testing.T, operation func()) string {
+	t.Helper()
+	output, err := os.CreateTemp(t.TempDir(), "receipt-diagnostics-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := os.Stderr
+	os.Stderr = output
+	defer func() {
+		os.Stderr = original
+		if err := output.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	operation()
+	data, err := os.ReadFile(output.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
 }
 
 func TestDanglingWorkspaceMarkerDoesNotSelectParentReceipts(t *testing.T) {

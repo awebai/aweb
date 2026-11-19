@@ -57,7 +57,7 @@ func deliveredIDsPath(startDir string) (string, error) {
 }
 
 // LoadDeliveredIDs reads unexpired receipt IDs for the current process directory.
-// A missing store is empty; unreadable or malformed state returns an error.
+// A missing store is empty; a corrupt cache is quarantined and reset with a warning.
 func LoadDeliveredIDs() (map[string]struct{}, error) {
 	wd, err := os.Getwd()
 	if err != nil {
@@ -73,7 +73,7 @@ func LoadDeliveredIDsForDir(startDir string) (map[string]struct{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	entries, err := loadDeliveredIDTimes(path, time.Now())
+	entries, err := loadDeliveredIDTimesWithRecovery(path, time.Now())
 	if err != nil {
 		return nil, err
 	}
@@ -96,7 +96,7 @@ func SaveDeliveredIDs(ids []string) error {
 
 // SaveDeliveredIDsForDir atomically merges accepted IDs into startDir's receipt
 // store, honoring DeliveredIDsPathEnv and preserving concurrent writers.
-func SaveDeliveredIDsForDir(startDir string, ids []string) (err error) {
+func SaveDeliveredIDsForDir(startDir string, ids []string) error {
 	if len(ids) == 0 {
 		return nil
 	}
@@ -106,31 +106,35 @@ func SaveDeliveredIDsForDir(startDir string, ids []string) (err error) {
 		return err
 	}
 
-	// Serialize receipt updates so concurrent writers retain each other's
-	// accepted deliveries (docs/receiving-events.md:174). Kernel-released
-	// locks keep a crashed writer from wedging later receipt updates.
-	unlock, err := awconfig.LockExclusive(path + ".lock")
+	return withDeliveryReceiptLock(path, func() error {
+		existing, err := loadOrQuarantineDeliveredIDTimes(path, now)
+		if err != nil {
+			return err
+		}
+		for _, id := range ids {
+			id = strings.TrimSpace(id)
+			if id != "" {
+				existing[id] = now
+			}
+		}
+		return writeDeliveredIDs(path, existing)
+	})
+}
+
+// withDeliveryReceiptLock serializes merges and cache recovery so recovering a
+// corrupt cache cannot discard a concurrent accepted delivery
+// (docs/receiving-events.md:174). Kernel locks are released on process exit.
+func withDeliveryReceiptLock(path string, operation func() error) (err error) {
+	lock, err := awconfig.LockExclusive(path + ".lock")
 	if err != nil {
-		return err
+		return fmt.Errorf("lock chat delivery receipt cache %q: %w. Repair the cache directory before retrying", path, err)
 	}
 	defer func() {
-		if closeErr := unlock.Close(); closeErr != nil {
-			err = errors.Join(err, fmt.Errorf("release chat delivery receipt lock: %w. Retry the receipt update", closeErr))
+		if closeErr := lock.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("release chat delivery receipt lock: %w. Retry the receipt operation", closeErr))
 		}
 	}()
-
-	existing, err := loadDeliveredIDTimes(path, now)
-	if err != nil {
-		return err
-	}
-	for _, id := range ids {
-		id = strings.TrimSpace(id)
-		if id == "" {
-			continue
-		}
-		existing[id] = now
-	}
-	return writeDeliveredIDs(path, existing)
+	return operation()
 }
 
 // DeliveredMessageIDs returns unique, nonempty, trimmed message IDs in the
@@ -171,7 +175,8 @@ func FilterDeliveredMessages(messages []awid.ChatMessage) []awid.ChatMessage {
 }
 
 // FilterDeliveredMessagesForDir binds suppression to the selected workspace and
-// reports unreadable state rather than treating it as an empty receipt store.
+// reports workspace lookup failures. Corrupt caches are quarantined and reset,
+// with a warning that messages may be shown again.
 // docs/receiving-events.md:174 defines per-workspace suppression.
 func FilterDeliveredMessagesForDir(startDir string, messages []awid.ChatMessage) ([]awid.ChatMessage, error) {
 	delivered, err := LoadDeliveredIDsForDir(startDir)
@@ -188,15 +193,62 @@ func FilterDeliveredMessagesForDir(startDir string, messages []awid.ChatMessage)
 	return filtered, nil
 }
 
-// loadDeliveredIDTimes distinguishes expired receipts from unreadable entries.
-// A failed receipt read must not admit delivered messages as new
-// (docs/receiving-events.md:174).
-func loadDeliveredIDTimes(path string, now time.Time) (entries map[string]time.Time, err error) {
-	defer func() {
-		if err != nil {
-			err = fmt.Errorf("read chat delivery receipts at %q: %w. Repair or remove that store before retrying", path, err)
+// loadDeliveredIDTimesWithRecovery leaves missing and expired receipts empty.
+// This is a ten-minute suppression cache, not proof of delivery authority: a
+// corrupt cache degrades to possible duplicate presentation instead of blocking
+// chat. Workspace lookup failures still refuse (docs/receiving-events.md:174).
+func loadDeliveredIDTimesWithRecovery(path string, now time.Time) (map[string]time.Time, error) {
+	entries, err := loadDeliveredIDTimes(path, now)
+	if err == nil {
+		return entries, nil
+	}
+	err = withDeliveryReceiptLock(path, func() error {
+		var readErr error
+		entries, readErr = loadOrQuarantineDeliveredIDTimes(path, now)
+		return readErr
+	})
+	return entries, err
+}
+
+// loadOrQuarantineDeliveredIDTimes runs under the receipt lock. It re-reads
+// before recovery so another writer's completed repair is preserved.
+func loadOrQuarantineDeliveredIDTimes(path string, now time.Time) (map[string]time.Time, error) {
+	entries, readErr := loadDeliveredIDTimes(path, now)
+	if readErr == nil {
+		return entries, nil
+	}
+	quarantined, err := quarantineDeliveryReceiptStore(path, now)
+	if err != nil {
+		return nil, errors.Join(readErr, err)
+	}
+	entries = make(map[string]time.Time)
+	if err := writeDeliveredIDs(path, entries); err != nil {
+		return nil, fmt.Errorf("receipt cache quarantined at %q but reset failed: %w. Repair the cache directory before retrying", quarantined, err)
+	}
+	if _, err := fmt.Fprintf(os.Stderr, "WARNING: chat delivery receipt cache %q could not be read (%q); quarantined at %q and reset. Messages may be shown again; inspect the quarantined cache if needed.\n", path, readErr.Error(), quarantined); err != nil {
+		return nil, fmt.Errorf("receipt cache reset with quarantine at %q, but its warning could not be written: %w. Use a writable diagnostic output before retrying", quarantined, err)
+	}
+	return entries, nil
+}
+
+func quarantineDeliveryReceiptStore(path string, now time.Time) (string, error) {
+	directory, err := os.MkdirTemp(filepath.Dir(path), filepath.Base(path)+".quarantine-"+now.UTC().Format("20060102T150405.000000000Z")+"-")
+	if err != nil {
+		return "", fmt.Errorf("create receipt cache quarantine: %w. Repair the cache directory before retrying", err)
+	}
+	quarantined := filepath.Join(directory, filepath.Base(path))
+	if err := os.Rename(path, quarantined); err != nil {
+		if removeErr := os.Remove(directory); removeErr != nil {
+			err = errors.Join(err, fmt.Errorf("remove empty receipt quarantine %q: %w", directory, removeErr))
 		}
-	}()
+		return "", fmt.Errorf("quarantine receipt cache %q: %w. Repair the cache directory before retrying", path, err)
+	}
+	return quarantined, nil
+}
+
+// loadDeliveredIDTimes parses the cache without changing it. Its callers own
+// locked recovery; expiry alone never requires quarantine.
+func loadDeliveredIDTimes(path string, now time.Time) (map[string]time.Time, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
