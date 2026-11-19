@@ -897,13 +897,13 @@ func (s *custodyService) signPlainMessage(ctx context.Context, req *awid.PlainMe
 	if _, err := s.admitCustodyRequest(ctx, custodyAdmission{grantID: req.GrantID, sessionDIDKey: req.SessionDIDKey, teamID: req.TeamID, subjectDIDAW: req.SubjectDIDAW, subjectDIDKey: req.SubjectDIDKey, audience: req.Audience, timestamp: req.Timestamp, scope: custodySendScope(kind)}); err != nil {
 		return nil, err
 	}
-	key, cached, err := s.reserveCustodyReplay(custodyReplayRequest{grantID: req.GrantID, sessionDIDKey: req.SessionDIDKey, nonce: req.Nonce, digest: req.RequestDigest}, &awid.PlainMessageSignResponse{})
+	key, cached, err := reserveCustodyReplay[awid.PlainMessageSignResponse](s, custodyReplayRequest{grantID: req.GrantID, sessionDIDKey: req.SessionDIDKey, nonce: req.Nonce, digest: req.RequestDigest})
 	if err != nil {
 		return nil, err
 	}
 	defer s.releaseFailedCustodyReplay(key)
-	if res, _ := cached.(*awid.PlainMessageSignResponse); res != nil {
-		return res, nil
+	if cached != nil {
+		return cached, nil
 	}
 	env := req.Envelope
 	env.FromDID = s.identity.DID
@@ -1156,13 +1156,13 @@ func (s *custodyService) createE2EEEnvelope(ctx context.Context, req *awid.E2EEE
 			return nil, fmt.Errorf("grant_scope_denied")
 		}
 	}
-	key, cached, err := s.reserveCustodyReplay(custodyReplayRequest{grantID: req.GrantID, sessionDIDKey: req.SessionDIDKey, nonce: req.Nonce, digest: req.RequestDigest}, &awid.E2EEEnvelopeCreateResponse{})
+	key, cached, err := reserveCustodyReplay[awid.E2EEEnvelopeCreateResponse](s, custodyReplayRequest{grantID: req.GrantID, sessionDIDKey: req.SessionDIDKey, nonce: req.Nonce, digest: req.RequestDigest})
 	if err != nil {
 		return nil, err
 	}
 	defer s.releaseFailedCustodyReplay(key)
-	if out, _ := cached.(*awid.E2EEEnvelopeCreateResponse); out != nil {
-		return out, nil
+	if cached != nil {
+		return cached, nil
 	}
 	if s.residentHome != "" {
 		maybeRenewIdentityEncryptionAssertion(ctx, "", explicitEncryptionKeyIdentityHome(s.residentHome), os.Stderr)
@@ -1493,13 +1493,13 @@ func (s *custodyService) unwrapE2EEMessage(ctx context.Context, req *awid.E2EEUn
 	if _, err := s.admitCustodyRequest(ctx, custodyAdmission{grantID: req.GrantID, sessionDIDKey: req.SessionDIDKey, teamID: req.TeamID, subjectDIDAW: req.SubjectDIDAW, subjectDIDKey: req.SubjectDIDKey, audience: req.Audience, timestamp: req.Timestamp, scope: custodyReadScope(kind)}); err != nil {
 		return nil, err
 	}
-	key, cached, err := s.reserveCustodyReplay(custodyReplayRequest{grantID: req.GrantID, sessionDIDKey: req.SessionDIDKey, nonce: req.Nonce, digest: req.RequestDigest}, &awid.E2EEUnwrapResponse{})
+	key, cached, err := reserveCustodyReplay[awid.E2EEUnwrapResponse](s, custodyReplayRequest{grantID: req.GrantID, sessionDIDKey: req.SessionDIDKey, nonce: req.Nonce, digest: req.RequestDigest})
 	if err != nil {
 		return nil, err
 	}
 	defer s.releaseFailedCustodyReplay(key)
-	if out, _ := cached.(*awid.E2EEUnwrapResponse); out != nil {
-		return out, nil
+	if cached != nil {
+		return cached, nil
 	}
 	readStoredEnvelope := s.clientDeps(ctx).readStoredEnvelope
 	if readStoredEnvelope == nil {

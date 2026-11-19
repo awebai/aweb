@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"github.com/awebai/aw/awid"
 	"strings"
 	"time"
 )
@@ -29,7 +28,7 @@ type custodyReplayReservation struct {
 	startedAt   time.Time
 }
 
-func (s *custodyService) reserveCustodyReplay(request custodyReplayRequest, resultType any) (custodyReplayReservation, any, error) {
+func reserveCustodyReplay[T any](s *custodyService, request custodyReplayRequest) (custodyReplayReservation, *T, error) {
 	key := strings.TrimSpace(request.grantID) + "|" + strings.TrimSpace(request.sessionDIDKey) + "|" + strings.TrimSpace(request.nonce)
 	digest := strings.TrimSpace(request.digest)
 	s.mu.Lock()
@@ -48,25 +47,8 @@ func (s *custodyService) reserveCustodyReplay(request custodyReplayRequest, resu
 		if old != strings.TrimSpace(digest) {
 			return custodyReplayReservation{}, nil, fmt.Errorf("replay_detected")
 		}
-		if res := s.results[key]; res != nil {
-			switch resultType.(type) {
-			case *awid.E2EEEnvelopeCreateResponse:
-				if _, ok := res.(*awid.E2EEEnvelopeCreateResponse); ok {
-					return custodyReplayReservation{}, res, nil
-				}
-			case *awid.E2EEUnwrapResponse:
-				if _, ok := res.(*awid.E2EEUnwrapResponse); ok {
-					return custodyReplayReservation{}, res, nil
-				}
-			case *awid.PlainMessageSignResponse:
-				if _, ok := res.(*awid.PlainMessageSignResponse); ok {
-					return custodyReplayReservation{}, res, nil
-				}
-			case *awid.AppRequestSignResponse:
-				if _, ok := res.(*awid.AppRequestSignResponse); ok {
-					return custodyReplayReservation{}, res, nil
-				}
-			}
+		if result, ok := s.results[key].(*T); ok && result != nil {
+			return custodyReplayReservation{}, result, nil
 		}
 		return custodyReplayReservation{}, nil, fmt.Errorf("replay_detected")
 	}
