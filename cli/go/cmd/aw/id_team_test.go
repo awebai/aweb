@@ -2120,6 +2120,18 @@ func TestTeamAcceptHostedInviteWithAddressCreatesGlobalIdentity(t *testing.T) {
 	var server *httptest.Server
 	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/namespaces/globalhosted.aweb.ai/teams/default/certificates/") && strings.HasSuffix(r.URL.Path, "/status"):
+			// Unit transport models a supported pending private membership.
+			// Missing registration is not independent key confirmation.
+			w.WriteHeader(http.StatusNotFound)
+			if err := json.NewEncoder(w).Encode(map[string]string{"detail": "Certificate not found"}); err != nil {
+				t.Error(err)
+			}
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/globalhosted.aweb.ai/teams/default":
+			w.WriteHeader(http.StatusForbidden)
+			if err := json.NewEncoder(w).Encode(map[string]any{"detail": map[string]string{"code": "team_private", "message": "Team is private"}}); err != nil {
+				t.Error(err)
+			}
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/encryption-key"):
 			// aweb-abfd: accepting a membership for a global identity now publishes
 			// the E2E encryption-key assertion to the registry.
@@ -2269,6 +2281,14 @@ func TestTeamAcceptHostedInviteWithAddressCreatesGlobalIdentity(t *testing.T) {
 	}
 	if cert.MemberDIDAW != acceptedStableID {
 		t.Fatalf("cert member_did_aw=%q want %q", cert.MemberDIDAW, acceptedStableID)
+	}
+	teamState, err := awconfig.LoadTeamStateFromIdentityHome(filepath.Join(acceptDir, ".aw"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	membership := teamState.ActiveMembership()
+	if membership == nil || membership.TeamKey == nil || membership.TeamKey.State != awid.TeamKeyUnconfirmed {
+		t.Fatalf("pending private membership must retain unconfirmed key evidence: %+v", membership)
 	}
 	if cert.MemberAddress != "globalhosted.aweb.ai/durable-child" {
 		t.Fatalf("cert member_address=%q", cert.MemberAddress)
