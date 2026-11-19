@@ -19,17 +19,17 @@ import (
 
 // connectOutput is the JSON output for `aw init` when using certificate auth.
 type connectOutput struct {
-	IDRegistration string              `json:"id_registration,omitempty"`
-	Responsibility *awid.IDChainResult `json:"responsibility,omitempty"`
-	Status         string              `json:"status"`
-	TeamID         string              `json:"team_id"`
-	Alias          string              `json:"alias"`
-	AwebURL        string              `json:"aweb_url"`
-	AgentID        string              `json:"-"`
-	WorkspaceID    string              `json:"workspace_id,omitempty"`
-	StableID       string              `json:"stable_id,omitempty"`
-	Address        string              `json:"address,omitempty"`
-	IdentityScope  string              `json:"identity_scope,omitempty"`
+	IDRegistration identityRegistration `json:"id_registration,omitempty"`
+	Responsibility *awid.IDChainResult  `json:"responsibility,omitempty"`
+	Status         string               `json:"status"`
+	TeamID         string               `json:"team_id"`
+	Alias          string               `json:"alias"`
+	AwebURL        string               `json:"aweb_url"`
+	AgentID        string               `json:"-"`
+	WorkspaceID    string               `json:"workspace_id,omitempty"`
+	StableID       string               `json:"stable_id,omitempty"`
+	Address        string               `json:"address,omitempty"`
+	IdentityScope  string               `json:"identity_scope,omitempty"`
 	// NextSteps are aw init's next steps for the path it took; Guide is the
 	// page that walks through them.
 	NextSteps []initNextStep `json:"next_steps,omitempty"`

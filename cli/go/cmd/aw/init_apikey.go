@@ -343,12 +343,12 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (out connectOutput, resultErr
 	if err := removeAPIKeyPartialInit(awconfig.IdentityHome{Root: req.IdentityHome}); err != nil {
 		return connectOutput{}, fmt.Errorf("remove partial API-key init state: %w", err)
 	}
-	out.IDRegistration = "unknown"
-	out.Responsibility = &awid.IDChainResult{Outcome: "unknown", Reason: "legacy_no_chain"}
+	out.IDRegistration = identityRegistrationUnknown
+	out.Responsibility = responsibilityWithoutInstalledChain()
 	if responsibility != nil {
-		out.IDRegistration = "registered"
+		out.IDRegistration = identityRegistrationRegistered
 		if !global {
-			out.IDRegistration = "not_required"
+			out.IDRegistration = identityRegistrationNotRequired
 		}
 		out.Responsibility = responsibility
 	}

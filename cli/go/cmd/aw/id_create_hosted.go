@@ -320,10 +320,10 @@ func runHostedIdentityCreate(cmd *cobra.Command) error {
 		status = "created"
 	}
 	out := map[string]any{"status": status, "team_id": response.CanonicalTeamID, "service_team_id": response.TeamID, "identity_home": home.Root, "identity_scope": "global", "custody": "self", "did_key": material.DIDKey, "did_aw": material.StableID, "address": response.Address, "inbound_mode": mode}
-	out["id_registration"] = "unknown"
-	out["responsibility"] = awid.IDChainResult{Outcome: "unknown", Reason: "legacy_no_chain"}
+	out["id_registration"] = identityRegistrationUnknown
+	out["responsibility"] = *responsibilityWithoutInstalledChain()
 	if responsibility != nil {
-		out["id_registration"] = "registered"
+		out["id_registration"] = identityRegistrationRegistered
 		out["responsibility"] = responsibility
 	}
 	if human != nil {
