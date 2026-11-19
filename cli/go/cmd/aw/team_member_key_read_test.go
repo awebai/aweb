@@ -54,3 +54,36 @@ func TestLocalMemberEnrollmentKeepsAKeyReadFailureDistinctFromAbsence(t *testing
 		t.Fatalf("planning unexpectedly installed membership: %v", err)
 	}
 }
+
+func TestInviteAliasReadFailureRetainsItsRepairAction(t *testing.T) {
+	dir := t.TempDir()
+	home := filepath.Join(dir, "selected-home")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(home, "identity.yaml")
+	invalid := []byte("did: [unterminated\n")
+	if err := os.WriteFile(path, invalid, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	request := teamInviteAcceptanceRequest{WorkingDir: dir, Options: teamAcceptInviteOptions{IdentityHome: home, Scope: awid.IdentityModeGlobal}}
+	_, err := resolveHostedInviteRecipient(request)
+	if err == nil || !strings.HasSuffix(err.Error(), "repair its identity.yaml and retry") {
+		t.Fatalf("identity read failure became a missing alias: %v", err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(after, invalid) {
+		t.Fatalf("alias inspection changed identity: %v", err)
+	}
+	public, _, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveWorktreeIdentityTo(path, &awconfig.WorktreeIdentity{DID: awid.ComputeDIDKey(public), StableID: awid.ComputeStableID(public), Address: "example.test/recipient", Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeGlobal}); err != nil {
+		t.Fatal(err)
+	}
+	selected, err := resolveHostedInviteRecipient(request)
+	if err != nil || selected.Alias != "recipient" {
+		t.Fatalf("valid selected identity alias is unavailable: %v", err)
+	}
+}

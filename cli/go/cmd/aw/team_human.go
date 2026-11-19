@@ -1117,15 +1117,15 @@ func foundTeamWithNamespaceControllerAuthority(wd, teamName, alias, explicitDoma
 	// The creator self-enrolls as the team's first member and produces a
 	// ready-to-run identity, so the worktree binding is written now.
 	if err := recordAcceptedTeamMembership(acceptedTeamMembershipRequest{
-WorkingDir:   wd,
-Output:       accepted,
-Certificate:  bootstrap.Certificate,
-RegistryURL:  strings.TrimSpace(registry.DefaultRegistryURL),
-AwebURL:      awebURL,
-IdentityHome: currentEncryptionKeyIdentityHome(),
-Activation:   membershipMakeActive,
-Binding:      membershipWriteWorkspaceBinding,
-}); err != nil {
+		WorkingDir:   wd,
+		Output:       accepted,
+		Certificate:  bootstrap.Certificate,
+		RegistryURL:  strings.TrimSpace(registry.DefaultRegistryURL),
+		AwebURL:      awebURL,
+		IdentityHome: currentEncryptionKeyIdentityHome(),
+		Activation:   membershipMakeActive,
+		Binding:      membershipWriteWorkspaceBinding,
+	}); err != nil {
 		return nil, err
 	}
 	return &teamCreateOutput{Status: "created", TeamID: bootstrap.TeamID, TeamDIDKey: bootstrap.TeamDIDKey, TeamKeyPath: bootstrap.TeamKeyPath, RegistryURL: strings.TrimSpace(registry.DefaultRegistryURL)}, nil
@@ -2373,7 +2373,7 @@ func createAndAcceptTeamInviteForEmptyAgent(anchorDir, homeDir, alias string, gl
 		return nil, err
 	}
 	token := created.Token
-	acceptOpts := teamAcceptInviteOptions{IdentityHome: awconfig.WorktreeIdentityHome(homeDir), Name: alias, Scope: teamAcceptScopeFromGlobal(global), Address: memberAddress}
+	acceptOpts := teamAcceptInviteOptions{IdentityHome: awconfig.WorktreeIdentityHome(homeDir), Name: alias, Scope: string(inviteMemberScopeFromFlags(inviteMemberScopeFlags{Global: global})), Address: memberAddress}
 	accepted, err := acceptProvisionedTeamInvite(anchorDir, actorHome.Root, homeDir, token, acceptOpts)
 	if err != nil {
 		return nil, err
@@ -2381,15 +2381,15 @@ func createAndAcceptTeamInviteForEmptyAgent(anchorDir, homeDir, alias string, gl
 	// Agent provisioning writes the worktree binding immediately: the produced
 	// agent is ready to run with no separate `aw init`.
 	if err := recordAcceptedTeamMembership(acceptedTeamMembershipRequest{
-WorkingDir:   homeDir,
-Output:       accepted.Output,
-Certificate:  accepted.Certificate,
-RegistryURL:  accepted.RegistryURL,
-AwebURL:      accepted.AwebURL,
-IdentityHome: explicitEncryptionKeyIdentityHome(awconfig.WorktreeIdentityHome(homeDir)),
-Activation:   membershipMakeActive,
-Binding:      membershipWriteWorkspaceBinding,
-}); err != nil {
+		WorkingDir:   homeDir,
+		Output:       accepted.Output,
+		Certificate:  accepted.Certificate,
+		RegistryURL:  accepted.RegistryURL,
+		AwebURL:      accepted.AwebURL,
+		IdentityHome: explicitEncryptionKeyIdentityHome(awconfig.WorktreeIdentityHome(homeDir)),
+		Activation:   membershipMakeActive,
+		Binding:      membershipWriteWorkspaceBinding,
+	}); err != nil {
 		return nil, err
 	}
 	return accepted, nil

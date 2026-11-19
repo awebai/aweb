@@ -602,7 +602,11 @@ func resolveHostedInviteRecipient(request teamInviteAcceptanceRequest) (hostedIn
 		addressName = name
 	}
 	if alias == "" {
-		alias = resolveAliasFromIdentityAt(workingDir, opts.IdentityHome)
+		recordedAlias, readErr := resolveAliasFromIdentityAt(teamMembershipLocation{WorkingDir: workingDir, IdentityHome: opts.IdentityHome})
+		if readErr != nil {
+			return hostedInviteRecipient{}, readErr
+		}
+		alias = recordedAlias
 	}
 	if alias == "" && addressName != "" {
 		alias = addressName

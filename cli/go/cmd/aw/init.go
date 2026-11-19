@@ -499,7 +499,7 @@ func ensureTeamAdmissionAuthForInit(cmd *cobra.Command) error {
 }
 
 func initInviteIdentityScope() string {
-	return teamAcceptScopeFromGlobal(initGlobal)
+	return string(inviteMemberScopeFromFlags(inviteMemberScopeFlags{Global: initGlobal}))
 }
 
 type initInviteConnection struct {

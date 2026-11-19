@@ -25,6 +25,17 @@ const (
 	inviteOutputJoin
 )
 
+type inviteMemberScopeFlags struct{ Global bool }
+
+// The public --global/member-global flags opt into global membership; the
+// released default remains local (docs/invite-inspection.md:52-54).
+func inviteMemberScopeFromFlags(flags inviteMemberScopeFlags) teamInviteMemberScope {
+	if flags.Global {
+		return inviteMemberGlobal
+	}
+	return inviteMemberLocal
+}
+
 type teamInviteSource struct {
 	WorkingDir  string
 	Home        awconfig.IdentityHome

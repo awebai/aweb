@@ -802,10 +802,7 @@ func runTeamInviteWithOutput(cmd *cobra.Command, args []string, style teamInvite
 	if err != nil {
 		return err
 	}
-	scope := inviteMemberLocal
-	if global {
-		scope = inviteMemberGlobal
-	}
+	scope := inviteMemberScopeFromFlags(inviteMemberScopeFlags{Global: global})
 	request := teamInviteMintRequest{Plan: plan, Scope: scope, ForHuman: humanCondition, ExpiresAfter: teamInviteExpiresAfter}
 	if plan.Kind == inviteAuthorityHosted && cmd.Flags().Changed("expires") {
 		return usageError("--expires selects a local controller invite lifetime; the hosted service sets its own expiry")
@@ -1286,17 +1283,7 @@ func resolveTeamAcceptInviteScope(cmd *cobra.Command) (string, error) {
 	if local && global {
 		return "", usageError("--local and --global cannot be used together")
 	}
-	if global {
-		return awid.IdentityModeGlobal, nil
-	}
-	return awid.IdentityModeLocal, nil
-}
-
-func teamAcceptScopeFromGlobal(global bool) string {
-	if global {
-		return awid.IdentityModeGlobal
-	}
-	return awid.IdentityModeLocal
+	return string(inviteMemberScopeFromFlags(inviteMemberScopeFlags{Global: global})), nil
 }
 
 type teamInviteStoreRequest struct {
@@ -1428,7 +1415,13 @@ func runTeamAdd(cmd *cobra.Command, args []string) error {
 	}
 	teamAddMemberAddress := strings.TrimSpace(teamAddAddress)
 	if teamAddMemberAddress == "" && !teamAcceptNoAddress {
-		_, teamAddMemberAddress = resolveIdentityFieldsForCert(workingDir)
+		identity, readErr := loadOptionalInviteIdentity(teamMembershipLocation{WorkingDir: workingDir, IdentityHome: home.Root})
+		if readErr != nil {
+			return readErr
+		}
+		if identity != nil {
+			teamAddMemberAddress = strings.TrimSpace(identity.Address)
+		}
 	}
 	accepted, err := acceptAndStoreTeamInvite(teamInviteStoreRequest{
 		Acceptance: teamInviteAcceptanceRequest{
@@ -4074,7 +4067,11 @@ func resolveTeamMemberEnrollment(ctx context.Context, opts teamMemberEnrollmentR
 	}
 	alias := strings.TrimSpace(opts.Name)
 	if alias == "" {
-		alias = resolveAliasFromIdentityAt(opts.WorkingDir, opts.IdentityHome)
+		recordedAlias, readErr := resolveAliasFromIdentityAt(teamMembershipLocation{WorkingDir: opts.WorkingDir, IdentityHome: opts.IdentityHome})
+		if readErr != nil {
+			return teamMemberEnrollmentPlan{}, readErr
+		}
+		alias = recordedAlias
 	}
 	if alias == "" {
 		return teamMemberEnrollmentPlan{}, usageError("--name is required (no identity found to derive name from)")
@@ -4351,43 +4348,40 @@ func resolveOrGenerateMemberDIDKeyAt(request memberKeySelection) (string, error)
 	return awid.ComputeDIDKey(public), nil
 }
 
-// resolveIdentityFieldsForCert reads stable identity fields from .aw/identity.yaml.
-// Returns empty strings for local agents that have no identity.yaml.
-func resolveIdentityFieldsForCert(workingDir string) (didAW, address string) {
-	home, err := identityHomeForDir(workingDir)
-	if err != nil {
-		return "", ""
+// loadOptionalInviteIdentity reads only the caller-selected credential store.
+// Corrupt or unreadable state is not absence (docs/cli-identity-selection.md:9-14).
+func loadOptionalInviteIdentity(location teamMembershipLocation) (*awconfig.WorktreeIdentity, error) {
+	path := awconfig.WorktreeIdentityPath(location.WorkingDir)
+	if strings.TrimSpace(location.IdentityHome) != "" {
+		selected, err := awconfig.IdentityHomePath(awconfig.IdentityHome{Root: location.IdentityHome}, "identity.yaml")
+		if err != nil {
+			return nil, err
+		}
+		path = selected
 	}
-	identityPath, err := awconfig.IdentityHomePath(home, "identity.yaml")
-	if err != nil {
-		return "", ""
+	identity, err := awconfig.LoadWorktreeIdentityFrom(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
 	}
-	identity, err := awconfig.LoadWorktreeIdentityFrom(identityPath)
 	if err != nil {
-		return "", ""
+		return nil, fmt.Errorf("read selected invite identity: %w; repair its identity.yaml and retry", err)
 	}
-	return strings.TrimSpace(identity.StableID), strings.TrimSpace(identity.Address)
+	return identity, nil
 }
 
-func resolveAliasFromIdentityAt(workingDir, identityHome string) string {
-	identityPath := awconfig.WorktreeIdentityPath(workingDir)
-	if strings.TrimSpace(identityHome) != "" {
-		path, err := awconfig.IdentityHomePath(awconfig.IdentityHome{Root: identityHome}, "identity.yaml")
-		if err != nil {
-			return ""
-		}
-		identityPath = path
+func resolveAliasFromIdentityAt(location teamMembershipLocation) (string, error) {
+	identity, err := loadOptionalInviteIdentity(location)
+	if err != nil {
+		return "", err
 	}
-	identity, err := awconfig.LoadWorktreeIdentityFrom(identityPath)
-	if err != nil || strings.TrimSpace(identity.Address) == "" {
-		return ""
+	if identity == nil || strings.TrimSpace(identity.Address) == "" {
+		return "", nil
 	}
-	// Address is domain/name — extract name
 	parts := strings.SplitN(identity.Address, "/", 2)
 	if len(parts) == 2 {
-		return parts[1]
+		return parts[1], nil
 	}
-	return ""
+	return "", nil
 }
 
 func parseAddress(address string) (domain, name string, err error) {
