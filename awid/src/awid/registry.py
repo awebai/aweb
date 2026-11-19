@@ -371,6 +371,40 @@ class AddressAlreadyBoundError(RegistryError):
         )
 
 
+def _raise_registry_response_error(*, status_code: int, content: bytes) -> None:
+    detail = None
+    code = None
+    parsed_error = None
+    body_is_json = False
+    try:
+        parsed_error = json_loads(content)
+        body_is_json = True
+        if isinstance(parsed_error, dict):
+            raw_detail = parsed_error.get("detail")
+            if raw_detail is not None:
+                detail = _safe_error_text(str(raw_detail).encode("utf-8"))
+            if isinstance(raw_detail, dict) and isinstance(raw_detail.get("code"), str):
+                code = _safe_error_text(raw_detail["code"].encode("utf-8"))
+    except Exception:
+        detail = None
+    response_text = _safe_error_text(content)
+    if status_code == 409:
+        if detail == "did_aw must be registered before address assignment":
+            raise DIDRegistrationRequiredError()
+        if detail == "did_aw current key does not match":
+            raise DIDCurrentKeyMismatchError()
+        if detail == "address already bound to a different did_aw":
+            raise AddressAlreadyBoundError()
+    raise RegistryError(
+        detail or response_text,
+        status_code=status_code,
+        detail=detail or response_text,
+        code=code,
+        body=parsed_error,
+        body_is_json=body_is_json,
+    )
+
+
 @dataclass(frozen=True)
 class RegistryClient:
     """One registry client with a bounded original budget for each request.
@@ -723,38 +757,8 @@ class RegistryClient:
                 unavailable, status_code=503, code="unavailable"
             ) from exc
         if not 200 <= response.status_code < 300:
-            detail = None
-            code = None
-            parsed_error = None
-            body_is_json = False
-            try:
-                parsed_error = json_loads(response_content)
-                body_is_json = True
-                if isinstance(parsed_error, dict):
-                    raw_detail = parsed_error.get("detail")
-                    if raw_detail is not None:
-                        detail = _safe_error_text(str(raw_detail).encode("utf-8"))
-                    if isinstance(raw_detail, dict) and isinstance(
-                        raw_detail.get("code"), str
-                    ):
-                        code = _safe_error_text(raw_detail["code"].encode("utf-8"))
-            except Exception:
-                detail = None
-            response_text = _safe_error_text(response_content)
-            if response.status_code == 409:
-                if detail == "did_aw must be registered before address assignment":
-                    raise DIDRegistrationRequiredError()
-                if detail == "did_aw current key does not match":
-                    raise DIDCurrentKeyMismatchError()
-                if detail == "address already bound to a different did_aw":
-                    raise AddressAlreadyBoundError()
-            raise RegistryError(
-                detail or response_text,
-                status_code=response.status_code,
-                detail=detail or response_text,
-                code=code,
-                body=parsed_error,
-                body_is_json=body_is_json,
+            _raise_registry_response_error(
+                status_code=response.status_code, content=response_content
             )
         parsed = json_loads(response_content) if response_content else {}
         # Cancellation is delivered at awaits. Also enforce the same original
