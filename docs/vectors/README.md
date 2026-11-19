@@ -156,6 +156,13 @@ same bytes for the same call.
 
 These fixtures govern shipped non-A2A protocol behavior.
 
+### `cli-integration-codes-v1.json`
+
+Additive CLI error codes, invite cancellation and inspection states, and wake
+readiness codes consumed by OATS. The native invite issuance test reads this
+root file to check the pending-issuance refusal and operator recovery contract.
+See [the CLI integration contract](../cli-integration-contract.md).
+
 ### `team-certificate-status-v1.json`
 
 Anonymous status response for one published certificate, public or private team:
@@ -959,6 +966,7 @@ reference duplication are mutation-tested failures.
 | `a2a-bridge-envelope-v0.json` | Go gateway `envelope_vector_test.go` |
 | `a2a-v1.json` | Go A2A `card_test.go`; Go gateway `gateway_rpc_test.go`; Go shared `conformance_test.go` |
 | `canonical-json-v1.json` | Python AWID `test_canonical_json_vectors.py`; Go AWID `canonical_json_vector_test.go`; Go A2A `card_test.go`; TypeScript channel-core `canonical_json_vector.test.ts` |
+| `cli-integration-codes-v1.json` | Go CLI `team_invite_issuance_test.go` |
 | `atomic-address-claim-conflict-codes-v1.json` | Python AWID `test_atomic_claim_route.py`; Go AWID `atomic_address_claim_test.go` |
 | `atomic-address-claim-v1.json` | Python AWID `test_atomic_claim.py`; Go AWID `atomic_address_claim_test.go` |
 | `dns-txt-v1.json` | Python AWID `test_conformance_vectors.py`; Python aweb `test_identity_conformance_vectors.py`; TypeScript channel-core `registry.test.ts` |
