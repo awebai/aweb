@@ -644,6 +644,13 @@ func runInit(cmd *cobra.Command, args []string) error {
 		if err := checkAPIKeyInitRecoveryAuthority(apiKeyInitAuthorityPreflight{WorkingDir: creationDir, APIKey: apiKey}); err != nil {
 			return err
 		}
+		retained, err := retainedAPIKeyCreationTeam(apiKeyPartialInitPath(creationDir))
+		if err != nil {
+			return err
+		}
+		if retained != nil {
+			return runInitFromAPIKey(cmd, initAPIKeySelection{WorkingDir: creationDir, APIKey: apiKey, SelectedTeam: retained})
+		}
 	}
 	var apiSelected *apiKeyCreationTeam
 	// Existing certificates still reconnect normally. An explicitly selected

@@ -15,7 +15,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"time"
 
@@ -429,9 +428,31 @@ func pruneEmptyAwDir(workingDir string, identityHomes ...string) {
 	}
 }
 
+// retainedAPIKeyCreationTeam reads the original team selection from the same
+// private journal as the child key and invitation. Released 1.36.58 writes both
+// team fields, so resumption does not need another teams/current read.
+func retainedAPIKeyCreationTeam(path string) (*apiKeyCreationTeam, error) {
+	state, err := loadAPIKeyPartialInit(path)
+	if err != nil || state == nil {
+		return nil, err
+	}
+	if strings.TrimSpace(state.TeamIDHint) == "" || strings.TrimSpace(state.CanonicalTeamID) == "" {
+		return nil, usageError("partial API-key creation at %s is missing its original team selection; retain the file for reconciliation", path)
+	}
+	if _, _, err := awid.ParseTeamID(state.CanonicalTeamID); err != nil {
+		return nil, fmt.Errorf("retained API-key creation team: %w", err)
+	}
+	return &apiKeyCreationTeam{TeamID: state.TeamIDHint, CanonicalTeamID: state.CanonicalTeamID}, nil
+}
+
 func selectAPIKeyInitTeam(req apiKeyInitRequest) (apiKeyInitRequest, error) {
-	var err error
-	selectedTeam := req.SelectedTeam
+	selectedTeam, err := retainedAPIKeyCreationTeam(apiKeyPartialInitPath(req.WorkingDir, req.IdentityHome))
+	if err != nil {
+		return apiKeyInitRequest{}, err
+	}
+	if selectedTeam == nil {
+		selectedTeam = req.SelectedTeam
+	}
 	if selectedTeam == nil {
 		readContext, readCancel := commandAPIContext(nil)
 		selectedTeam, err = readAPIKeyCreationTeam(readContext, req.AwebURL, req.APIKey)
@@ -442,7 +463,6 @@ func selectAPIKeyInitTeam(req apiKeyInitRequest) (apiKeyInitRequest, error) {
 	}
 	req.SelectedTeamID, req.CanonicalTeamID = selectedTeam.TeamID, selectedTeam.CanonicalTeamID
 	req.CreationInvitation = selectedTeam.CreationInvitation
-
 	return req, nil
 }
 
@@ -502,27 +522,18 @@ func prepareAPIKeyBootstrapIdentity(
 	return material, nil
 }
 
+// reconcileAPIKeyCreationRecovery keeps the first invitation and request ID.
+// A renewed preview is not authority to replace a possibly submitted child.
 func reconcileAPIKeyCreationRecovery(state *apiKeyPartialInitState, req apiKeyInitRequest) error {
-	var err error
 	if state.IDTree != nil {
-		selected, err := newAPIKeyCreationRecovery(req)
-		if err != nil {
-			return err
-		}
-		if state.IDTree.InvitationID != selected.InvitationID || state.IDTree.Domain != selected.Domain || !reflect.DeepEqual(state.IDTree.Parent, selected.Parent) {
-			return errors.New("creation invitation changed since partial API-key init; retry the original invitation")
-		}
+		return nil
 	}
-	if state.IDTree == nil {
-		state.IDTree, err = newAPIKeyCreationRecovery(req)
-		if err != nil {
-			return err
-		}
-		if err := saveAPIKeyPartialInit(req.WorkingDir, state, req.IdentityHome); err != nil {
-			return err
-		}
+	tree, err := newAPIKeyCreationRecovery(req)
+	if err != nil {
+		return err
 	}
-	return nil
+	state.IDTree = tree
+	return saveAPIKeyPartialInit(req.WorkingDir, state, req.IdentityHome)
 }
 
 func generateAPIKeyBootstrapIdentity() (apiKeyBootstrapIdentityMaterial, error) {

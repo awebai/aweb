@@ -332,10 +332,13 @@ func TestAPIKeyGlobalRecoveryCommand(t *testing.T) {
 					t.Fatal("success left partial")
 				}
 				mu.Lock()
-				finalCalls, finalIssued := calls, issued
+				finalCalls, finalIssued, finalTeamReads := calls, issued, teamReads
 				mu.Unlock()
 				if finalCalls != 2 || finalIssued != 2 {
 					t.Fatalf("repeat effects not accounted: %d/%d", finalCalls, finalIssued)
+				}
+				if finalTeamReads != 1 {
+					t.Fatalf("creation retry re-probed the original selection %d times", finalTeamReads)
 				}
 			}
 		})
