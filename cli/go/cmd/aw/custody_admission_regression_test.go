@@ -70,3 +70,40 @@ func TestCustodyFailedEnvelopeAttemptAllowsExactRetry(t *testing.T) {
 		t.Fatalf("changed reuse accepted: %v", err)
 	}
 }
+
+func TestCustodySnapshotRefusesUnreadableSecondaryCertificate(t *testing.T) {
+	resetCustodyClientGlobals(t)
+	home := custodyFixtureHome(t)
+	custodyConstructorIdentityFixture(t, home, "http://127.0.0.1:1", true)
+	service, err := newCustodyService(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.UpdateCredentials(home.Root,
+		awconfig.CredentialOperation{Command: "test-writer", Intent: "add-team"},
+		func(begin func() error) error {
+			if err := begin(); err != nil {
+				return err
+			}
+			teams, err := awconfig.LoadTeamStateFromIdentityHome(home.Root)
+			if err != nil {
+				return err
+			}
+			teams.Memberships = append(teams.Memberships, awconfig.TeamMembership{
+				TeamID: "secondary:example.com", Alias: "alice", CertPath: "team-certs/secondary.pem",
+			})
+			if err := os.WriteFile(filepath.Join(home.Root, "team-certs", "secondary.pem"), []byte("unreadable certificate"), 0o600); err != nil {
+				return err
+			}
+			return awconfig.SaveTeamStateToIdentityHome(home.Root, teams)
+		}); err != nil {
+		t.Fatal(err)
+	}
+	capture, err := awconfig.CaptureCredentials(home.Root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.buildSnapshot(context.Background(), capture); err == nil || !strings.Contains(err.Error(), "load captured team certificates") {
+		t.Fatalf("secondary certificate read was not the admission refusal: %v", err)
+	}
+}
