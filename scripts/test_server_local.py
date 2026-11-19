@@ -182,8 +182,10 @@ def invoke(
         return subprocess.CompletedProcess(command, child.returncode, output or "", "")
 
 
-def checked(command: list[str], *, timeout: int = 120) -> str:
-    result = invoke(command, timeout=timeout)
+def checked(
+    command: list[str], *, timeout: int = 120, env: dict[str, str] | None = None
+) -> str:
+    result = invoke(command, timeout=timeout, env=env)
     if result.returncode:
         raise Refused(
             f"Local service command failed (exit {result.returncode}): {result.stdout.strip()}\nInspect Docker and rerun the local target."
@@ -191,22 +193,88 @@ def checked(command: list[str], *, timeout: int = 120) -> str:
     return result.stdout.strip()
 
 
-def check_docker() -> None:
-    endpoint = os.environ.get("DOCKER_HOST") or checked(
-        ["docker", "context", "inspect", "--format", "{{.Endpoints.docker.Host}}"]
-    )
-    if not endpoint.startswith("unix://"):
+DOCKER_SELECTION_KEYS = (
+    "DOCKER_CONTEXT",
+    "DOCKER_HOST",
+    "DOCKER_CONFIG",
+    "DOCKER_TLS",
+    "DOCKER_TLS_VERIFY",
+    "DOCKER_CERT_PATH",
+)
+
+
+def docker_environment(*, environ: dict[str, str]) -> dict[str, str]:
+    """Resolve CLI precedence, then pin its Unix endpoint (Docker CLI env reference)."""
+    # https://docs.docker.com/reference/cli/docker/#environment-variables
+    context = environ.get("DOCKER_CONTEXT")
+    host = environ.get("DOCKER_HOST")
+    if context or not host:
+        endpoint = checked(
+            [
+                "docker",
+                "context",
+                "inspect",
+                *([context] if context else []),
+                "--format",
+                "{{.Endpoints.docker.Host}}",
+            ],
+            env=environ,
+        )
+    else:
+        endpoint = host
+    address = urlsplit(endpoint)
+    if (
+        address.scheme != "unix"
+        or address.netloc
+        or not Path(address.path).is_absolute()
+    ):
         raise Refused(
             "Local suites require a local Docker socket. Select your local Docker context and rerun."
         )
+    selected = dict(environ, DOCKER_HOST=endpoint)
+    for key in (
+        "DOCKER_CONTEXT",
+        "DOCKER_TLS",
+        "DOCKER_TLS_VERIFY",
+        "DOCKER_CERT_PATH",
+    ):
+        selected.pop(key, None)
+    return selected
+
+
+@contextmanager
+def pinned_docker_environment(*, environ: dict[str, str]) -> Iterator[dict[str, str]]:
+    """Keep delegated helpers and their subprocesses on the admitted endpoint."""
+    previous = {key: os.environ.get(key) for key in DOCKER_SELECTION_KEYS}
+    try:
+        for key in DOCKER_SELECTION_KEYS:
+            if key in environ:
+                os.environ[key] = environ[key]
+            else:
+                os.environ.pop(key, None)
+        yield environ
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
+def check_docker(*, environ: dict[str, str] | None = None) -> dict[str, str]:
+    selected = docker_environment(
+        environ=dict(os.environ) if environ is None else environ
+    )
     result = invoke(
-        ["bash", str(ROOT / "scripts/candidate-docker-gate.sh"), "--check-disk"]
+        ["bash", str(ROOT / "scripts/candidate-docker-gate.sh"), "--check-disk"],
+        env=selected,
     )
     if result.returncode:
         raise Refused(
             result.stdout.strip()
             + "\nReclaim unused Docker data with docker system prune, then reclaim the Docker VM disk with fstrim; rerun after the disk guard passes. Review what prune will remove first."
         )
+    return selected
 
 
 def published_port(value: str) -> int:
@@ -356,8 +424,11 @@ def local_services(
 ) -> Iterator[dict[str, str]]:
     validate_workers(workers)
     check_inherited_database(environ)
-    check_docker()
-    with tempfile.TemporaryDirectory(prefix="aw-local-services-") as directory:
+    selected = check_docker(environ=environ)
+    with (
+        pinned_docker_environment(environ=selected),
+        tempfile.TemporaryDirectory(prefix="aw-local-services-") as directory,
+    ):
         config = Path(directory) / "compose.json"
         config.write_text(json.dumps(compose_configuration(workers=workers)))
         compose = ["docker", "compose", "-p", project, "-f", str(config)]
@@ -380,7 +451,7 @@ def local_services(
                         ),
                     }
                 )
-            yield service_environment(plan=plan, environ=environ)
+            yield service_environment(plan=plan, environ=selected)
         finally:
             # Ignore repeat signals while removing only this invocation's project.
             previous = {

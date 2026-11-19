@@ -4,6 +4,8 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
+from unittest.mock import patch
 import unittest
 
 import test_server_local as local
@@ -103,6 +105,149 @@ class LocalControls(unittest.TestCase):
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         self.assertIn("Unset inherited database settings", result.stderr)
         self.assertNotIn("Local test project:", result.stdout)
+
+    def test_remote_context_overrides_local_host_before_daemon_access(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = dict(
+                os.environ,
+                DOCKER_CONFIG=directory,
+                DOCKER_CONTEXT="remote-proof",
+                DOCKER_HOST="unix:///var/run/docker.sock",
+            )
+            created = subprocess.run(
+                [
+                    "docker",
+                    "--config",
+                    directory,
+                    "context",
+                    "create",
+                    "remote-proof",
+                    "--docker",
+                    "host=ssh://unused.invalid",
+                ],
+                env={
+                    k: v
+                    for k, v in env.items()
+                    if k not in ("DOCKER_CONTEXT", "DOCKER_HOST")
+                },
+                text=True,
+                capture_output=True,
+                timeout=10,
+            )
+            self.assertEqual(created.returncode, 0, created.stderr)
+            native = local.invoke
+
+            def metadata_only(command, **kwargs):
+                if command[:3] != ["docker", "context", "inspect"]:
+                    self.fail(
+                        "daemon/project operation occurred before remote-context refusal: "
+                        + repr(command)
+                    )
+                return native(command, **kwargs)
+
+            with (
+                patch.dict(os.environ, env, clear=True),
+                patch.object(local, "invoke", side_effect=metadata_only),
+            ):
+                with self.assertRaisesRegex(
+                    local.Refused,
+                    "Local suites require a local Docker socket. Select your local Docker context and rerun.",
+                ):
+                    local.check_docker()
+
+    def test_local_context_and_explicit_host_follow_cli_precedence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = {
+                key: value
+                for key, value in os.environ.items()
+                if key not in local.DOCKER_SELECTION_KEYS
+            }
+            env["DOCKER_CONFIG"] = directory
+            for name, endpoint in (
+                ("local-proof", "unix:///tmp/local-proof.sock"),
+                ("remote-proof", "tcp://unused.invalid:2375"),
+            ):
+                created = subprocess.run(
+                    [
+                        "docker",
+                        "context",
+                        "create",
+                        name,
+                        "--docker",
+                        "host=" + endpoint,
+                    ],
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                self.assertEqual(created.returncode, 0, created.stderr)
+            selected = local.docker_environment(
+                environ={
+                    **env,
+                    "DOCKER_CONTEXT": "local-proof",
+                    "DOCKER_HOST": "tcp://unused.invalid:2375",
+                }
+            )
+            self.assertEqual(selected["DOCKER_HOST"], "unix:///tmp/local-proof.sock")
+            self.assertNotIn("DOCKER_CONTEXT", selected)
+            switched = subprocess.run(
+                ["docker", "context", "use", "remote-proof"],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            self.assertEqual(switched.returncode, 0, switched.stderr)
+            selected_host = local.docker_environment(
+                environ={**env, "DOCKER_HOST": "unix:///tmp/explicit.sock"}
+            )
+            self.assertEqual(selected_host["DOCKER_HOST"], "unix:///tmp/explicit.sock")
+            with self.assertRaisesRegex(local.Refused, "local Docker socket"):
+                local.docker_environment(environ=env)
+            subprocess.run(
+                ["docker", "context", "use", "local-proof"],
+                env=env,
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=10,
+            )
+            self.assertEqual(
+                local.docker_environment(environ=env)["DOCKER_HOST"],
+                "unix:///tmp/local-proof.sock",
+            )
+
+    def test_admitted_endpoint_is_inherited_and_restored_after_failure(self):
+        before = {key: os.environ.get(key) for key in local.DOCKER_SELECTION_KEYS}
+        selected = {**os.environ, "DOCKER_HOST": "unix:///tmp/admitted.sock"}
+        selected.pop("DOCKER_CONTEXT", None)
+        with self.assertRaisesRegex(RuntimeError, "fixture exit"):
+            with local.pinned_docker_environment(environ=selected):
+                result = local.invoke(
+                    [
+                        sys.executable,
+                        "-c",
+                        "import os,json; print(json.dumps({k:os.environ.get(k) for k in ('DOCKER_HOST','DOCKER_CONTEXT')}))",
+                    ]
+                )
+                self.assertEqual(
+                    json.loads(result.stdout),
+                    {
+                        "DOCKER_HOST": "unix:///tmp/admitted.sock",
+                        "DOCKER_CONTEXT": None,
+                    },
+                )
+                suite = local.service_environment(
+                    plan=[{"postgres_port": 15000, "redis_port": 16000}],
+                    environ=selected,
+                )
+                self.assertEqual(suite["DOCKER_HOST"], selected["DOCKER_HOST"])
+                self.assertNotIn("DOCKER_CONTEXT", suite)
+                raise RuntimeError("fixture exit")
+        self.assertEqual(
+            {key: os.environ.get(key) for key in local.DOCKER_SELECTION_KEYS}, before
+        )
 
 
 if __name__ == "__main__":
