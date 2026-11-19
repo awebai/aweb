@@ -40,7 +40,11 @@ from aweb.federation.envelope import (
     FederationEnvelope,
     FederationEnvelopeError,
     enforce_message_timestamp_skew,
-    verify_federation_envelope,
+    verify_federation_envelope_integrity,
+)
+from aweb.federation.replay import (
+    PlaintextProjectionClaim,
+    read_plaintext_projection,
 )
 from aweb.federation.mail import FederatedMailDeliveryError, deliver_federated_message
 from aweb.hooks import fire_mutation_callback, HeldMutationEvents
@@ -385,7 +389,7 @@ async def deliver_federated_chat(
             sender_leaving=_chat_payload_leaving(payload),
             hang_on=_chat_payload_hang_on(payload),
         )
-        verify_federation_envelope(
+        verify_federation_envelope_integrity(
             envelope,
             federation_signature,
             expected={
@@ -397,6 +401,16 @@ async def deliver_federated_chat(
                 "conversation_id": session_id,
             },
         )
+        if not _payload_is_encrypted(payload):
+            projection = await read_plaintext_projection(
+                db,
+                claim=PlaintextProjectionClaim.from_envelope(
+                    envelope, signature=federation_signature
+                ),
+            )
+            if projection.message is None:
+                _parse_signed_timestamp(str(payload.timestamp))
+                projection.refuse_conflicting_message_id()
     except FederationEnvelopeError as exc:
         raise DeliveryRefusal(
             status_code=HTTPStatus.UNPROCESSABLE_ENTITY, detail=str(exc)
@@ -465,7 +479,9 @@ def _parse_signed_timestamp(value: str) -> datetime:
         enforce_message_timestamp_skew(dt)
     except FederationEnvelopeError as exc:
         raise DeliveryRefusal(
-            status_code=HTTPStatus.UNPROCESSABLE_ENTITY, detail=str(exc)
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+            detail=str(exc)
+            + ". Sign the message again with the current UTC time and retry.",
         ) from exc
     return dt
 
@@ -2222,7 +2238,6 @@ async def _validate_continued_chat_attestation(
         # payload.timestamp is sender attestation retained in signed_payload;
         # send_in_session assigns independent server receipt time for ordering,
         # so the two values may disagree.
-        _parse_signed_timestamp(payload.timestamp)
         pre_message_id = uuid_mod.UUID(payload.message_id)
 
     return pre_message_id, encrypted_metadata
@@ -2258,6 +2273,12 @@ async def _send_in_continued_session(
     )
 
     remote_recipients = [row for row in recipient_rows if _target_delivery_origin(row)]
+    if (
+        not remote_recipients
+        and payload.signature is not None
+        and not _payload_is_encrypted(payload)
+    ):
+        _parse_signed_timestamp(str(payload.timestamp))
     if remote_recipients:
         if len(recipient_rows) != 1 or len(remote_recipients) != 1:
             raise DeliveryRefusal(
@@ -2320,6 +2341,21 @@ async def _send_in_continued_session(
                 status_code=HTTPStatus.BAD_GATEWAY,
                 detail="Federated chat response message_id mismatch",
             )
+
+    if remote_recipients and not _payload_is_encrypted(payload):
+        projection = await read_plaintext_projection(
+            db,
+            claim=PlaintextProjectionClaim(
+                kind=MessageKind.CHAT,
+                message_id=pre_message_id,
+                conversation_id=session_uuid,
+                sender_did=actor_did,
+                signature=str(payload.signature),
+                signed_payload=payload.signed_payload or "",
+            ),
+        )
+        if projection.message is not None:
+            return SentChat(session_id=session_uuid, message=projection.message)
 
     try:
         with agent_wake_scope(runtime.agent_wake_publisher):

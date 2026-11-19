@@ -352,6 +352,17 @@ and additive `X-AWEB-Error-Code: message_timestamp_outside_skew` header. Shape
 errors do not carry that age code. A client may re-sign a new submission after
 that specific age refusal; it must retain the original payload for exact retry.
 
+The same plaintext age exemption applies to an exact stored outbound mail or
+chat projection and to an established federation ingress receipt. The outbound
+projection must match the sender, conversation, message ID, signature and signed
+payload; the receiver requires its identical canonical envelope receipt. The
+signature, recipient binding and current authority checks still run. An outbound
+retry retains the remote call to recover the original established response,
+then returns the existing local projection without another send event. A changed
+artifact or missing proof is a new attestation and takes the age check, including
+a changed artifact reusing an accepted UUID. The encrypted ingestion window is
+unchanged. This is Antares ruling69b3a50a (relay a491ccc8).
+
 
 Migration backfill marks historical rows whose exact original envelope cannot
 be reconstructed as `legacy_unreplayable`; any attempt that reaches a new

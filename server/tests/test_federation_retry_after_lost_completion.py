@@ -238,6 +238,35 @@ async def test_plaintext_outbound_and_ingress_retries_after_301_second_lost_comp
                 await table_counts(foreign_receiver.db),
                 list(env.dispatched),
             )
+            for item in prepared:
+                changed = dict(item.signed, body="fresh conflicting signed content")
+                payload = json.loads(item.content)
+                encoded = canonical_json_bytes(changed)
+                payload.update(
+                    body=changed["body"],
+                    signed_payload=encoded.decode(),
+                    signature=sign_message(actor.sk, encoded),
+                )
+                raw = json.dumps(payload).encode()
+                conflict = await env.client.post(
+                    item.path,
+                    content=raw,
+                    headers={
+                        **_signed_team_headers(
+                            actor.sk, actor.did, TEAM, certificate, raw
+                        ),
+                        "Content-Type": "application/json",
+                    },
+                )
+                assert conflict.status_code == 409, conflict.text
+                assert conflict.json()["detail"] == (
+                    "message_id already exists for a different signed message. Choose a new message_id and retry."
+                )
+            assert (
+                await table_counts(env.db),
+                await table_counts(foreign_receiver.db),
+                env.dispatched,
+            ) == before
             started = time.monotonic()
             await asyncio.sleep(HOLD_COMPLETION_SECONDS)
             proxy.release.set()
@@ -284,6 +313,24 @@ async def test_plaintext_outbound_and_ingress_retries_after_301_second_lost_comp
                 },
             )
             assert refused.status_code == 422, refused.text
+            assert refused.json()["detail"].endswith(
+                "Sign the message again with the current UTC time and retry."
+            )
+            changed_envelope = envelope.model_copy(
+                update={
+                    "body": changed["body"],
+                    "signed_payload": encoded.decode(),
+                }
+            )
+            async with httpx.AsyncClient(base_url=foreign_receiver.origin) as remote:
+                collision = await remote.post(
+                    "/v1/federation/messages",
+                    json=FederatedDeliveryRequest(
+                        envelope=changed_envelope, signature=payload["signature"]
+                    ).model_dump(mode="json", exclude_none=True),
+                )
+            assert collision.status_code == 422, collision.text
+            assert collision.json()["reason"] == "federation_timestamp_invalid"
             # No receipt/projection for another ID can supply a replay exemption.
             changed["message_id"] = str(uuid4())
             encoded = canonical_json_bytes(changed)
@@ -301,6 +348,24 @@ async def test_plaintext_outbound_and_ingress_retries_after_301_second_lost_comp
                 },
             )
             assert missing.status_code == 422, missing.text
+            assert missing.json()["detail"].endswith(
+                "Sign the message again with the current UTC time and retry."
+            )
+            missing_envelope = changed_envelope.model_copy(
+                update={
+                    "message_id": changed["message_id"],
+                    "signed_payload": encoded.decode(),
+                }
+            )
+            async with httpx.AsyncClient(base_url=foreign_receiver.origin) as remote:
+                unstored = await remote.post(
+                    "/v1/federation/messages",
+                    json=FederatedDeliveryRequest(
+                        envelope=missing_envelope, signature=payload["signature"]
+                    ).model_dump(mode="json", exclude_none=True),
+                )
+            assert unstored.status_code == 422, unstored.text
+            assert unstored.json()["reason"] == "federation_timestamp_invalid"
         assert (
             await table_counts(env.db),
             await table_counts(foreign_receiver.db),

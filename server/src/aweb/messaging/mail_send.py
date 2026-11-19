@@ -46,9 +46,13 @@ from aweb.federation.envelope import (
     FederationEnvelope,
     FederationEnvelopeError,
     enforce_message_timestamp_skew,
-    verify_federation_envelope,
+    verify_federation_envelope_integrity,
 )
 from aweb.federation.mail import FederatedMailDeliveryError, deliver_federated_message
+from aweb.federation.replay import (
+    PlaintextProjectionClaim,
+    read_plaintext_projection,
+)
 from aweb.hooks import fire_mutation_callback
 from aweb.event_types import MutationEventType
 from aweb.message_events import MailSentContext
@@ -552,7 +556,7 @@ def _prepare_remote_mail_envelope(
             message_version=payload.message_version,
             encrypted_envelope=payload.encrypted_envelope,
         )
-        verify_federation_envelope(
+        verify_federation_envelope_integrity(
             envelope,
             federation_signature,
             expected={
@@ -647,6 +651,16 @@ async def deliver_remote_mail_and_project_locally(
     target_current_did = prepared.target_current_did
     target_address = prepared.target_address
     is_encrypted = payload.content_mode == ContentMode.ENCRYPTED
+    if not is_encrypted:
+        projection = await read_plaintext_projection(
+            db,
+            claim=PlaintextProjectionClaim.from_envelope(
+                envelope, signature=federation_signature
+            ),
+        )
+        if projection.message is None:
+            _require_fresh_mail_attestation(payload)
+            projection.refuse_conflicting_message_id()
 
     try:
         remote = await deliver_federated_message(
@@ -677,18 +691,29 @@ async def deliver_remote_mail_and_project_locally(
         )
 
     aweb_db = db.get_manager("aweb")
-    existing_projection = (
-        await aweb_db.fetch_one(
-            """
-        SELECT message_id, conversation_id, created_at
-        FROM {{tables.messages}}
-        WHERE message_id = $1
-        """,
-            msg_uuid,
+    if not is_encrypted:
+        if projection.message is None:
+            projection = await read_plaintext_projection(
+                db,
+                claim=PlaintextProjectionClaim.from_envelope(
+                    envelope, signature=federation_signature
+                ),
+            )
+            projection.refuse_conflicting_message_id()
+        existing_projection = projection.message
+    else:
+        existing_projection = (
+            await aweb_db.fetch_one(
+                """
+            SELECT message_id, conversation_id, created_at
+            FROM {{tables.messages}}
+            WHERE message_id = $1
+            """,
+                msg_uuid,
+            )
+            if msg_uuid is not None
+            else None
         )
-        if msg_uuid is not None
-        else None
-    )
     if existing_projection:
         return SentMail(
             message_id=str(existing_projection["message_id"]),
@@ -1935,7 +1960,6 @@ async def _send_mail_to_resolved_target(
         )
 
     if (recipient or {}).get("external"):
-        _require_fresh_mail_attestation(payload)
         return await deliver_remote_mail_and_project_locally(
             runtime,
             payload,
