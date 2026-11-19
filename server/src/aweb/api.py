@@ -1,7 +1,7 @@
 import hashlib
 import logging
 import os
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Optional
 
 import httpx
@@ -17,18 +17,16 @@ from awid.dns_verify import DomainVerifier
 from awid.external_authority import SystemTXTOutcomeResolver
 from awid.registry import CachedRegistryClient, RegistryClient, RegistryError
 from awid.federation_errors import FederationAuthorityError
+from .application_state import RegistryClientUnavailable
 from .config import get_public_origin, get_settings
 from awid.log import canonical_server_origin
 from .connection_scope import ConnectionScopeMiddleware
 from .db import DatabaseInfra
 from .db import db_infra as default_db_infra
 from awid.log_config import configure_logging
-from .federation.activation import build_federation_authority_activation
 from .federation.errors import authority_error_body
 from .agent_wake import AgentWakeHub, AgentWakePublisher
-from .mutation_hooks import create_mutation_handler
-from .outbox_recovery import OutboxRecoveryStarter, start_outbox_recovery, stop_outbox_recovery
-from awid.ratelimit import build_rate_limiter
+from .outbox_recovery import OutboxRecoveryStarter
 from .routing_utils import move_mount_before_spa_fallback
 from .service_errors import ServiceError
 from .messaging.chat_policy import HumanChatRefused
@@ -164,45 +162,26 @@ class RequestBodyCacheMiddleware:
 
 async def _mount_mcp_app(
     app: FastAPI,
-    db_infra: DatabaseInfra,
-    redis: Redis,
-    registry_client: RegistryClient,
-    federation_authority=None,
+    mcp_app,
 ) -> None:
+    previous = getattr(app.state, "native_mcp_mount", None)
+    if previous in app.router.routes:
+        app.router.routes.remove(previous)
     if any(isinstance(r, Mount) and r.path == "/mcp" for r in app.router.routes):
         return
-
-    from .mcp import create_mcp_app
-
-    mcp_app = create_mcp_app(
-        db_infra=db_infra,
-        redis=redis,
-        registry_client=registry_client,
-        federation_authority=federation_authority,
-        streamable_http_path="/",
-    )
-    await mcp_app.startup()
-    app.state.mcp_app = mcp_app
     app.mount("/mcp", mcp_app)
+    app.state.native_mcp_mount = next(r for r in app.router.routes if isinstance(r, Mount) and r.path == "/mcp")
     move_mount_before_spa_fallback(app, "/mcp")
     logger.info("MCP endpoint mounted at /mcp/")
-
-
-async def _shutdown_mcp_app(app: FastAPI) -> None:
-    mcp_app = getattr(app.state, "mcp_app", None)
-    if mcp_app is None:
-        return
-    await mcp_app.shutdown()
-    app.state.mcp_app = None
 
 
 async def start_agent_wakes(app: FastAPI, redis: Redis) -> None:
     """Start the process's agent wake publisher and subscriber on ``app.state``.
 
-    Both lifespans call this. A host that mounts the app as a sub-application,
-    whose lifespan never runs, must call it at mount (and ``stop_agent_wakes``
-    at shutdown); without it, writes publish no wakes and streams fall back to
-    their 15 s reconcile from Postgres.
+    The shared native resource owner calls this for both lifespans and the
+    public embedded context. Legacy hosts managing a mounted app manually
+    must pair this with ``stop_agent_wakes`` at shutdown; without it, writes
+    publish no wakes and streams fall back to their 15 s reconcile.
     """
     app.state.agent_wake_publisher = AgentWakePublisher(redis)
     app.state.agent_wake_hub = AgentWakeHub(redis)
@@ -216,22 +195,6 @@ async def stop_agent_wakes(app: FastAPI) -> None:
     publisher = getattr(app.state, "agent_wake_publisher", None)
     if publisher is not None:
         await publisher.close()
-
-
-async def _shutdown_federation_authority(app: FastAPI) -> None:
-    authority = getattr(app.state, "federation_authority", None)
-    if authority is None:
-        return
-    await authority.aclose()
-    app.state.federation_authority = None
-
-
-async def _shutdown_awid_registry_client(app: FastAPI) -> None:
-    registry_client = getattr(app.state, "awid_registry_client", None)
-    if registry_client is None:
-        return
-    await registry_client.aclose()
-    app.state.awid_registry_client = None
 
 
 def _build_awid_registry_client(
@@ -281,81 +244,34 @@ def _is_unhealthy_report(exc: Exception) -> bool:
     )
 
 
-def _make_standalone_lifespan():
-    """Create lifespan for standalone mode (creates own DB and Redis connections)."""
+def _make_standalone_lifespan(*, host_runs_outbox_recovery: bool = False):
+    """Own standalone connections; share the native serving-resource owner."""
+    from .embedding import OutboxRecoveryOwnership, default_mcp_factory, start_native_resources
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        json_format = os.getenv("AWEB_LOG_JSON", "true").lower() == "true"
         settings = get_settings()
-        configure_logging(log_level=settings.log_level, json_format=json_format)
+        configure_logging(log_level=settings.log_level, json_format=os.getenv("AWEB_LOG_JSON", "true").lower() == "true")
         logger.info("Starting aweb coordination server (standalone mode)")
-
-        redis: Redis | None = None
-        redis_connected = False
-        db_initialized = False
-
-        try:
-            # Phase 1: Initialize all resources (don't set app.state yet)
+        async with AsyncExitStack() as cleanup:
             redis = await async_redis_from_url(settings.redis_url, decode_responses=True)
+            cleanup.push_async_callback(redis.aclose)
             await redis.ping()
-            redis_connected = True
-            logger.info("Connected to Redis")
-
+            cleanup.push_async_callback(default_db_infra.close)
             await default_db_infra.initialize()
-            db_initialized = True
-            logger.info("Database initialized")
             if getattr(app.state, "install_admin_policy", None) is None:
                 setup_message = await install_admin_setup_message(default_db_infra.get_manager())
                 if setup_message:
                     logger.info(setup_message)
-
-            # Phase 2: Only assign to app.state after ALL initialization succeeds
-            app.state.redis = redis
-            app.state.db = default_db_infra
-            app.state.rate_limiter = build_rate_limiter(redis=redis)
-            app.state.on_mutation = create_mutation_handler(redis, default_db_infra)
-            app.state.awid_registry_client = _build_awid_registry_client(app, redis)
-            app.state.federation_authority = build_federation_authority_activation(
-                default_db_infra,
-                public_origin=app.state.public_origin,
-            )
-            await _validate_awid_registry_client(app.state.awid_registry_client)
-            await _mount_mcp_app(
-                app,
-                default_db_infra,
-                redis,
-                app.state.awid_registry_client,
-                app.state.federation_authority,
-            )
-            await start_agent_wakes(app, redis)
-            start_outbox_recovery(app)
-
-        except Exception:
-            # Log which phase failed
-            if not redis_connected:
-                logger.exception("Failed to connect to Redis")
-            elif not db_initialized:
-                logger.exception("Failed to initialize database")
-
-            # Clean up any initialized resources on failure
-            if db_initialized:
-                await default_db_infra.close()
-            if redis is not None:
-                await redis.aclose()
-            raise
-
-        try:
-            yield
-        finally:
-            logger.info("Shutting down aweb coordination server")
-            await _shutdown_mcp_app(app)
-            await stop_outbox_recovery(app)
-            await _shutdown_federation_authority(app)
-            await _shutdown_awid_registry_client(app)
-            await stop_agent_wakes(app)
-            await redis.aclose()
-            await default_db_infra.close()
+            registry = _build_awid_registry_client(app, redis)
+            cleanup.push_async_callback(registry.aclose)
+            async with start_native_resources(
+                api_app=app, db_infra=default_db_infra, redis=redis, registry_client=registry,
+                mcp_factory=default_mcp_factory,
+                outbox_recovery=OutboxRecoveryOwnership.HOST if host_runs_outbox_recovery else OutboxRecoveryOwnership.NATIVE,
+            ) as resources:
+                await _mount_mcp_app(app, resources.mcp_app)
+                yield
 
     return lifespan
 
@@ -365,48 +281,24 @@ def _make_library_lifespan(
     redis: Redis,
     awid_transport: httpx.AsyncBaseTransport | None,
     domain_verifier: DomainVerifier | None,
+    *, host_runs_outbox_recovery: bool = False,
 ):
-    """Use the embedding host's connections and logging configuration."""
+    """Borrow host connections; close only this lifespan's registry client."""
+    from .embedding import OutboxRecoveryOwnership, default_mcp_factory, start_native_resources
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        # An embedded app must not replace the host's handlers or root level.
-        # Standalone startup configures process logging in its own lifespan.
         logger.info("Starting aweb coordination server (library mode)")
-
-        # Use externally provided connections - no initialization needed
-        app.state.redis = redis
-        app.state.db = db_infra
-        app.state.rate_limiter = build_rate_limiter(redis=redis)
-        app.state.on_mutation = create_mutation_handler(redis, db_infra)
-        app.state.awid_registry_client = _build_awid_registry_client(
-            app, redis, awid_transport, domain_verifier
-        )
-        app.state.federation_authority = build_federation_authority_activation(
-            db_infra,
-            public_origin=app.state.public_origin,
-        )
-        await _validate_awid_registry_client(app.state.awid_registry_client)
-        await _mount_mcp_app(
-            app,
-            db_infra,
-            redis,
-            app.state.awid_registry_client,
-            app.state.federation_authority,
-        )
-        await start_agent_wakes(app, redis)
-        start_outbox_recovery(app)
-
-        try:
-            yield
-        finally:
-            # Don't close connections in library mode - caller manages them
-            await _shutdown_mcp_app(app)
-            await stop_outbox_recovery(app)
-            await _shutdown_federation_authority(app)
-            await _shutdown_awid_registry_client(app)
-            await stop_agent_wakes(app)
-            logger.info("Aweb coordination server stopping (library mode)")
+        async with AsyncExitStack() as cleanup:
+            registry = _build_awid_registry_client(app, redis, awid_transport, domain_verifier)
+            cleanup.push_async_callback(registry.aclose)
+            async with start_native_resources(
+                api_app=app, db_infra=db_infra, redis=redis, registry_client=registry,
+                mcp_factory=default_mcp_factory,
+                outbox_recovery=OutboxRecoveryOwnership.HOST if host_runs_outbox_recovery else OutboxRecoveryOwnership.NATIVE,
+            ) as resources:
+                await _mount_mcp_app(app, resources.mcp_app)
+                yield
 
     return lifespan
 
@@ -443,6 +335,9 @@ def create_app(
 
     Library mode requires both db_infra and redis to be provided.
     Standalone mode requires neither (will create its own).
+    A mounted child must have its lifespan run explicitly, or use the public
+    aweb.embedding.embedded_aweb context. Mounting alone does not start native
+    resources or its MCP session manager.
 
     Examples:
         Standalone mode (simple deployment)::
@@ -465,7 +360,10 @@ def create_app(
             coordination_app = create_app(db_infra=db_infra, redis=redis)
 
             # Mount under your main app
-            main_app.mount("/coordination", coordination_app)
+            # Keep this context open for the host's serving lifetime.
+            async with coordination_app.router.lifespan_context(coordination_app):
+                main_app.mount("/coordination", coordination_app)
+                # Serve main_app while this context remains open.
     """
     # Validate mode consistency
     if (db_infra is None) != (redis is None):
@@ -488,9 +386,9 @@ def create_app(
                 "Call 'await db_infra.initialize()' before creating the app."
             )
         assert redis is not None  # Required when db_infra is provided
-        lifespan = _make_library_lifespan(db_infra, redis, awid_transport, domain_verifier)
+        lifespan = _make_library_lifespan(db_infra, redis, awid_transport, domain_verifier, host_runs_outbox_recovery=host_runs_outbox_recovery)
     else:
-        lifespan = _make_standalone_lifespan()
+        lifespan = _make_standalone_lifespan(host_runs_outbox_recovery=host_runs_outbox_recovery)
 
     from aweb.attachment_service import router as attachment_router
 
@@ -555,6 +453,10 @@ def create_app(
             correlation_id=request.headers.get("X-Correlation-ID"),
         ))
 
+    @app.exception_handler(RegistryClientUnavailable)
+    async def _registry_client_unavailable_handler(request: Request, exc: RegistryClientUnavailable):
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
     @app.exception_handler(ServiceError)
     async def _service_error_handler(request: Request, exc: ServiceError):
         if exc.status_code >= 500:
@@ -576,6 +478,11 @@ def create_app(
     async def health(request: Request) -> JSONResponse:
         checks = {}
         healthy = True
+        resources = getattr(request.app.state, "native_resources", None)
+        resource_readiness = resources.readiness if resources is not None else None
+        if resource_readiness is not None:
+            checks["native_resources"] = "ok" if resource_readiness.ready else "unavailable"
+            healthy = resource_readiness.ready
 
         # Check Redis
         try:
@@ -598,9 +505,12 @@ def create_app(
             checks["database"] = "error"
             healthy = False
 
+        content = {"status": "ok" if healthy else "unhealthy", "checks": checks}
+        if resource_readiness is not None and not resource_readiness.ready:
+            content["message"] = resource_readiness.message
         return JSONResponse(
             status_code=200 if healthy else 503,
-            content={"status": "ok" if healthy else "unhealthy", "checks": checks},
+            content=content,
         )
 
     app.include_router(agents_router)

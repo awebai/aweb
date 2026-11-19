@@ -134,6 +134,9 @@ def agent_wake_scope(publisher: AgentWakePublisher | None) -> Generator[None]:
 
 def agent_wake_publisher(state) -> AgentWakePublisher | None:
     """The process's publisher on an application state, if it runs one."""
+    from aweb.application_state import native_application_state
+
+    state = native_application_state(state)
     return getattr(state, "agent_wake_publisher", None)
 
 
@@ -286,6 +289,10 @@ class AgentWakeHub:
         self._waiters: dict[str, list[asyncio.Future]] = {}
         self._requests: asyncio.Queue[tuple[str, list[str]]] = asyncio.Queue()
         self._task: asyncio.Task | None = None
+
+    @property
+    def is_running(self) -> bool:
+        return self._task is not None and not self._task.done()
 
     async def start(self) -> None:
         if self._task is None:

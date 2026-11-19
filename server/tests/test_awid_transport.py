@@ -14,6 +14,8 @@ from uuid import uuid4
 
 import httpx
 import pytest
+
+from aweb.embedding import EmbeddingStartupError, ResourceStartupStage
 import pytest_asyncio
 from awid.ratelimit import NoOpRateLimiter
 from awid_service.db import AwidDatabaseInfra
@@ -73,9 +75,12 @@ async def test_a_library_mode_server_reaches_awid_through_the_given_transport(aw
 async def test_a_library_mode_server_does_not_start_when_its_awid_is_down(awid, db_infra) -> None:
     awid.transport.down = True
     app = create_app(db_infra=db_infra, redis=awid.redis, awid_transport=awid.transport)
-    with pytest.raises(RuntimeError, match="Failed to reach AWID registry"):
+    with pytest.raises(EmbeddingStartupError) as refused:
         async with app.router.lifespan_context(app):
             pass
+    assert refused.value.stage is ResourceStartupStage.REGISTRY
+    assert str(refused.value).endswith("Check this resource and restart native startup before serving traffic.")
+    assert "Failed to reach AWID registry" in str(refused.value.__cause__)
     assert [request.url.path for request in awid.transport.calls] == ["/health"]
 
 
@@ -104,9 +109,12 @@ async def test_a_library_mode_server_does_not_start_on_a_503_that_is_not_a_healt
 ) -> None:
     awid.transport.fault = lambda request, response: httpx.Response(503, json={"detail": "no backend"})
     app = create_app(db_infra=db_infra, redis=awid.redis, awid_transport=awid.transport)
-    with pytest.raises(RuntimeError, match="Failed to reach AWID registry"):
+    with pytest.raises(EmbeddingStartupError) as refused:
         async with app.router.lifespan_context(app):
             pass
+    assert refused.value.stage is ResourceStartupStage.REGISTRY
+    assert str(refused.value).endswith("Check this resource and restart native startup before serving traffic.")
+    assert "Failed to reach AWID registry" in str(refused.value.__cause__)
 
 
 def test_a_standalone_server_refuses_a_transport(awid) -> None:

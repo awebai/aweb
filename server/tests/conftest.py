@@ -18,10 +18,10 @@ runpy.run_path(str(Path(__file__).with_name("worker_services.py")))[
 
 import pytest  # noqa: E402
 import pytest_asyncio  # noqa: E402
-from pgdbm import AsyncDatabaseManager, AsyncMigrationManager  # noqa: E402
+from pgdbm import AsyncDatabaseManager  # noqa: E402
 
 from awid.db_config import build_database_config  # noqa: E402
-from aweb_naapp.hooks.owner_act_nonces import apply_owner_act_migrations  # noqa: E402
+from aweb.migrations import apply_native_migrations  # noqa: E402
 
 pytest_plugins = ("pgdbm.fixtures.conftest", "tests.real_stack")
 
@@ -78,17 +78,7 @@ async def aweb_cloud_db(shared_test_pool):
 
     aweb_db = AsyncDatabaseManager(pool=shared_test_pool, schema="aweb")
 
-    import aweb
-
-    aweb_path = Path(aweb.__file__).parent
-    aweb_migrations = AsyncMigrationManager(
-        aweb_db,
-        migrations_path=str(aweb_path / "migrations" / "aweb"),
-        module_name="aweb-aweb",
-        migrations_table="schema_migrations",
-    )
-    await aweb_migrations.apply_pending_migrations()
-    await apply_owner_act_migrations(aweb_db)
+    await apply_native_migrations(aweb_db)
 
     class DatabaseManagers:
         def __init__(self, aweb_db):
