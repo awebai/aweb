@@ -5,6 +5,7 @@ import json
 from dataclasses import replace
 
 import httpx
+from aweb_naapp.runtime.db import ApplyMigrations
 from aweb_naapp.runtime.installation import InstallationFence
 from aweb_naapp_testing import Member
 from awid_service.testing import REGISTRY_URL
@@ -70,6 +71,7 @@ async def test_actual_guard_binds_submission_and_status_never_sends(
         kms=kms_check(True),
         awid_transport=registry.transport,
         tool_routers=(routes,),
+        schema_preparation=ApplyMigrations(),
     )
     discovery_domains = []
 

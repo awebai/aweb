@@ -13,6 +13,7 @@ from aweb_naapp.runtime import team_auth
 from aweb_naapp.runtime.app import NaappRuntime
 from aweb_naapp.runtime.app_credentials import APP_GRANT_READ, HOOK_RESOLVE, AppCredentialSigner
 from aweb_naapp.runtime.app_keys import AppKeyError, load_app_key
+from aweb_naapp.runtime.db import ApplyMigrations
 from aweb_naapp.runtime.team_grants import AppIdentity, TeamGrantSource
 from tests.runtime.conftest import relying_app
 from tests.runtime.test_naapp_runtime import allow_all
@@ -41,6 +42,7 @@ def _runtime(tmp_path, *, keys=(), registry=None, team_server_transport=None, **
         manifest_path=manifest,
         awid_transport=registry.transport if registry else None,
         team_server_transport=team_server_transport,
+        schema_preparation=ApplyMigrations(),
     )
 
 
@@ -179,6 +181,7 @@ def test_a_declared_hook_key_cannot_be_replaced_by_another_configured_kid(tmp_pa
             module_name="example",
             migrations_path=tmp_path / "migrations",
             manifest_path=manifest,
+            schema_preparation=ApplyMigrations(),
         )
 
 

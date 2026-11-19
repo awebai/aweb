@@ -5,6 +5,7 @@ import json
 
 import httpx
 from aweb_naapp.runtime.approvals import ApprovalState, Assurance, Decision
+from aweb_naapp.runtime.db import ApplyMigrations
 from aweb_naapp_testing import Member
 from awid_service.testing import REGISTRY_URL
 from nacl.signing import SigningKey
@@ -65,6 +66,7 @@ async def test_mounted_revoke_commits_before_final_fence_and_prevents_any_send(
             kms=kms_check(True),
             awid_transport=registry.transport,
             tool_routers=(broker_routes, containment_routes),
+            schema_preparation=ApplyMigrations(),
         )
         discovery_domains = []
 

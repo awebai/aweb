@@ -27,6 +27,7 @@ from aweb_naapp.manifest import Manifest
 from aweb_naapp.runtime.app import NaappRuntime, mount_manifest_routes
 from aweb_naapp.runtime.app_keys import AppKeyError, load_app_key
 from aweb_naapp.runtime.authorization import DeclaredTool
+from aweb_naapp.runtime.db import ApplyMigrations
 from aweb_naapp.runtime.health import mount_health
 from aweb_naapp.runtime.hook_egress import HookEgress
 from aweb_naapp.runtime.origins import OriginApps
@@ -127,6 +128,7 @@ def create_runtime(
         hook_egress=hooks.egress,
         hook_internal_cidr=hooks.internal_cidr,
         hook_internal_origins=hooks.internal_origins,
+        schema_preparation=ApplyMigrations(),
     )
 
 

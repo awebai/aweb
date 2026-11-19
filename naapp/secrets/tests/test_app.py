@@ -20,6 +20,7 @@ from aweb_naapp.ratelimit import apply_ratelimit_migrations
 from aweb_naapp.runtime.app_keys import AppKeyError
 from aweb_naapp.runtime.authorization import DeclaredTool, Grant
 from aweb_naapp.runtime.clock import seconds_to_ns
+from aweb_naapp.runtime.db import ApplyMigrations
 from aweb_naapp.runtime.health import CheckResult, HealthCheck
 from aweb_naapp.runtime.team_auth import Principal
 from aweb_naapp_testing import Member, attested
@@ -143,6 +144,7 @@ async def running(
             kms=kms_check(kms_ok),
             awid_transport=registry.transport,
             tool_routers=tool_routers,
+            schema_preparation=ApplyMigrations(),
         )
         async with service.api_app.router.lifespan_context(service.api_app):
             async with (
@@ -399,6 +401,7 @@ async def test_a_failing_check_serves_no_error_detail(registry, database_url, tm
         policy=allow_all,
         kms=failing_kms,
         awid_transport=registry.transport,
+        schema_preparation=ApplyMigrations(),
     )
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=service), base_url=API) as api:
         # Outside the lifespan the database is down too.
@@ -499,7 +502,13 @@ def test_an_undeclared_configured_key_is_refused_before_startup(tmp_path) -> Non
     settings = _settings("postgresql://localhost/unused", tmp_path)
     settings.app_key_files["secrets:undeclared"] = next(iter(settings.app_key_files.values()))
     with pytest.raises(AppKeyError):
-        create_app(settings, grants=InstalledTeams({}), policy=allow_all, kms=kms_check(True))
+        create_app(
+            settings,
+            grants=InstalledTeams({}),
+            policy=allow_all,
+            kms=kms_check(True),
+            schema_preparation=ApplyMigrations(),
+        )
 
 
 @pytest.mark.parametrize("kid", KEY_PURPOSES)
@@ -507,14 +516,26 @@ def test_every_declared_key_must_be_configured(tmp_path, kid: str) -> None:
     settings = _settings("postgresql://localhost/unused", tmp_path)
     settings.app_key_files.pop(kid)
     with pytest.raises(AppKeyError):
-        create_app(settings, grants=InstalledTeams({}), policy=allow_all, kms=kms_check(True))
+        create_app(
+            settings,
+            grants=InstalledTeams({}),
+            policy=allow_all,
+            kms=kms_check(True),
+            schema_preparation=ApplyMigrations(),
+        )
 
 
 def test_the_hosted_identity_is_refused_at_another_reachable_origin(tmp_path) -> None:
     settings = _settings("postgresql://localhost/unused", tmp_path)
     settings.app_id = "secrets"
     with pytest.raises(ValueError):
-        create_app(settings, grants=InstalledTeams({}), policy=allow_all, kms=kms_check(True))
+        create_app(
+            settings,
+            grants=InstalledTeams({}),
+            policy=allow_all,
+            kms=kms_check(True),
+            schema_preparation=ApplyMigrations(),
+        )
 
 
 async def test_composed_tool_router_keeps_the_exact_runtime_guard_and_other_tools_unavailable(

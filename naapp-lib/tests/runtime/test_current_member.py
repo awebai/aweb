@@ -18,6 +18,7 @@ from nacl.signing import SigningKey
 from aweb_naapp.manifest import write_manifest_file
 from aweb_naapp.runtime.app import NaappRuntime
 from aweb_naapp.runtime.clock import seconds_to_ns
+from aweb_naapp.runtime.db import ApplyMigrations
 from aweb_naapp.runtime.settings import NaappSettings
 from aweb_naapp.runtime.team_auth import AWIDTeamCache
 
@@ -191,6 +192,7 @@ async def test_runtime_uses_the_request_verifiers_bounded_cache(
         migrations_path=migrations,
         manifest_path=manifest,
         awid_transport=registry.transport,
+        schema_preparation=ApplyMigrations(),
     )
     app = FastAPI()
 

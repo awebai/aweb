@@ -12,6 +12,7 @@ from nacl.signing import SigningKey
 from aweb_naapp.hooks.owner_act import HUMAN_ROLE_ACTS
 from aweb_naapp.manifest import CATALOG_PATH, ManifestError, canonical_bytes, load_manifest
 from aweb_naapp.runtime.app import NaappRuntime, mount_manifest_routes
+from aweb_naapp.runtime.db import ApplyMigrations
 from tests.runtime.test_served_manifest import ExampleSettings, _v2_template
 
 ORIGIN = "https://console.example.test"
@@ -39,6 +40,7 @@ def runtime(tmp_path, *, declaration=DECLARATION, origin=ORIGIN):
         manifest_path=manifest,
         owner_acts=declaration,
         owner_acts_origin=origin,
+        schema_preparation=ApplyMigrations(),
     )
 
 

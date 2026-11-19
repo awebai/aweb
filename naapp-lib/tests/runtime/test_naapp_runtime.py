@@ -25,6 +25,7 @@ from aweb_naapp.manifest import ManifestError, write_manifest_file
 from aweb_naapp.runtime.app import NaappRuntime
 from aweb_naapp.runtime.authorization import Authorization, DeclaredTool, Grant
 from aweb_naapp.runtime.clock import seconds_to_ns
+from aweb_naapp.runtime.db import ApplyMigrations
 from aweb_naapp.runtime.settings import NaappSettings
 from aweb_naapp.runtime.team_auth import Principal
 
@@ -161,6 +162,7 @@ async def _running(
         migrations_path=_migrations(tmp_path),
         manifest_path=_manifest(tmp_path, CREATE),
         awid_transport=registry.transport,
+        schema_preparation=ApplyMigrations(),
     )
     app = _app(runtime, grants)
     async with app.router.lifespan_context(app):
@@ -265,6 +267,7 @@ async def test_the_database_is_unavailable_outside_the_lifespan(tmp_path: Path) 
         module_name="example",
         migrations_path=_migrations(tmp_path),
         manifest_path=_manifest(tmp_path),
+        schema_preparation=ApplyMigrations(),
     )
     assert runtime.connected_db() is None
     with pytest.raises(RuntimeError):
@@ -285,6 +288,7 @@ def _guarded_app(
         migrations_path=_migrations(tmp_path),
         manifest_path=_manifest(tmp_path, *tools),
         root_path=root_path,
+        schema_preparation=ApplyMigrations(),
     )
     app = FastAPI(lifespan=runtime.lifespan)
     register(app, runtime.authorized(grants=InstalledTeams({}), policy=allow_all))
@@ -474,6 +478,7 @@ def test_authorization_follows_the_served_manifest_for_a_self_hosted_origin(tmp_
         module_name="example",
         migrations_path=_migrations(tmp_path),
         manifest_path=_manifest(tmp_path, GET_THING),
+        schema_preparation=ApplyMigrations(),
     )
     assert json.loads(runtime.manifest_bytes)["app"]["origin"] == "http://self.test"
     assert runtime.manifest.document == json.loads(runtime.manifest_bytes)
@@ -487,6 +492,7 @@ def _constructed(tmp_path: Path, manifest_path: Path) -> NaappRuntime:
         module_name="example",
         migrations_path=_migrations(tmp_path),
         manifest_path=manifest_path,
+        schema_preparation=ApplyMigrations(),
     )
 
 
@@ -569,6 +575,7 @@ async def _running_contexts(
         migrations_path=_migrations(tmp_path),
         manifest_path=_manifest(tmp_path, *CONTEXT_TOOLS, version=2),
         awid_transport=registry.transport,
+        schema_preparation=ApplyMigrations(),
     )
     app = FastAPI(lifespan=runtime.lifespan)
     authorized = runtime.authorized(

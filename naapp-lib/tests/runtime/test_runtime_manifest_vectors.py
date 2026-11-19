@@ -16,6 +16,7 @@ from pydantic_settings import SettingsConfigDict
 
 from aweb_naapp.manifest import ManifestError, canonical_bytes, load_manifest, template_key_entries
 from aweb_naapp.runtime.app import NaappRuntime
+from aweb_naapp.runtime.db import ApplyMigrations
 from aweb_naapp.runtime.settings import NaappSettings
 
 from ..test_manifest_v2_vectors import RESERVED, V2, _manifest_bytes
@@ -96,6 +97,7 @@ def _runtime(tmp_path: Path, document: dict[str, Any], files: dict[str, Path]) -
         module_name="fixture",
         migrations_path=migrations,
         manifest_path=manifest_path,
+        schema_preparation=ApplyMigrations(),
     )
     # The vector supplies the installing consumer's root namespace; the runtime
     # itself owns no CLI root commands. Apply that same input to the filled bytes.

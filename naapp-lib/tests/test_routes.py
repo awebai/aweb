@@ -19,6 +19,7 @@ from aweb_naapp.manifest import (
     write_manifest_file,
 )
 from aweb_naapp.runtime.app import NaappRuntime, mount_manifest_routes, mount_naapp_routes
+from aweb_naapp.runtime.db import ApplyMigrations
 from aweb_naapp.runtime.health import CheckResult
 from aweb_naapp.runtime.settings import NaappSettings
 from aweb_naapp.skills import Skills
@@ -72,7 +73,11 @@ def _client(
 
     settings = overrides.pop("settings", None) or ExampleSettings(_env_file=None)
     runtime = NaappRuntime(
-        settings, module_name="example", migrations_path=tmp_path, manifest_path=manifest_path
+        settings,
+        module_name="example",
+        migrations_path=tmp_path,
+        manifest_path=manifest_path,
+        schema_preparation=ApplyMigrations(),
     )
     app = FastAPI(lifespan=runtime.lifespan)
     app.state.runtime = runtime
@@ -292,6 +297,7 @@ def test_an_app_without_the_docs_surface_serves_its_manifest_alone(tmp_path: Pat
         module_name="example",
         migrations_path=tmp_path,
         manifest_path=manifest_path,
+        schema_preparation=ApplyMigrations(),
     )
     app = FastAPI()
     mount_manifest_routes(app, runtime=runtime)
@@ -316,6 +322,7 @@ def test_an_app_without_the_docs_surface_serves_its_v2_manifest_through_its_cata
         module_name="example",
         migrations_path=tmp_path,
         manifest_path=manifest_path,
+        schema_preparation=ApplyMigrations(),
     )
     app = FastAPI()
     mount_manifest_routes(app, runtime=runtime)

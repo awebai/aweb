@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
+from asyncpg import Pool
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager, DatabaseConfig
 
 from aweb_naapp.outbox import apply_outbox_migrations
@@ -17,6 +19,22 @@ _SHARED_MODULE = "aweb_naapp"
 # create a table with a store's table name: stores apply first, so an app's
 # CREATE TABLE IF NOT EXISTS of that name would silently get the store's table.
 Store = Callable[[AsyncDatabaseManager], Awaitable[None]]
+SchemaCheck = Callable[[AsyncDatabaseManager], Awaitable[None]]
+
+
+@dataclass(frozen=True, kw_only=True)
+class ApplyMigrations:
+    """Prepare the schema with the service's configured migration authority."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class VerifyPreparedSchema:
+    """Check an operator-prepared schema without runtime DDL (Antares390577b1)."""
+
+    check: SchemaCheck
+
+
+SchemaPreparation = ApplyMigrations | VerifyPreparedSchema
 
 
 async def require_separate_database(
@@ -24,10 +42,9 @@ async def require_separate_database(
 ) -> None:
     """Refuse a ``ledger`` that is not a database of its own beside ``content``.
 
-    A deletion ledger records what was erased so that a restored content
-    database can be purged again before it is served. It works only while a
-    content backup can never restore it, so it must be another database, not
-    another schema or another manager of the same one."""
+    Enforce the separate-database contract used by Logs' purge ledger. A
+    same-transaction ledger in an excluded protected schema has a different
+    restore contract and does not call this check."""
     if content is ledger:
         raise ValueError(f"the {ledger_name} must be outside the content restore database")
     content_id = await content.fetch_value("SELECT current_database()")
@@ -60,11 +77,10 @@ async def prepare_naapp_schema(
 class NaappDatabase:
     """Owns the pgdbm manager for a standalone naapp deployment.
 
-    On connect it applies the shared naapp migrations (module ``aweb_naapp``)
-    and the outbox's, then each store the app names, in order, then the app's
-    own, tracked under the app's module name, so an app's migrations can rely
-    on the shared tables and on its stores'. An app names exactly the stores
-    it uses; there are none by default."""
+    ApplyMigrations prepares shared, outbox, declared stores and app migrations
+    in that order. VerifyPreparedSchema connects without DDL and invokes the
+    required checker before the manager is published to runtime consumers.
+    Each policy owns and closes the connections it creates."""
 
     def __init__(
         self,
@@ -73,29 +89,55 @@ class NaappDatabase:
         module_name: str,
         migrations_path: Path,
         stores: Sequence[Store] = (),
+        schema_preparation: SchemaPreparation,
     ) -> None:
+        if not isinstance(schema_preparation, (ApplyMigrations, VerifyPreparedSchema)):
+            raise ValueError("Choose ApplyMigrations or VerifyPreparedSchema for this database.")
         self.settings = settings
         self.module_name = module_name
         self.migrations_path = migrations_path
         self.stores = tuple(stores)
-        self.db = AsyncDatabaseManager(
-            DatabaseConfig(
-                connection_string=settings.database_url,
-                schema=settings.db_schema,
-                min_connections=settings.db_pool_min_connections,
-                max_connections=settings.db_pool_max_connections,
-                statement_cache_size=settings.db_statement_cache_size,
-            )
+        self.schema_preparation = schema_preparation
+        self._pool: Pool | None = None
+        self._config = DatabaseConfig(
+            connection_string=settings.database_url,
+            schema=settings.db_schema,
+            min_connections=settings.db_pool_min_connections,
+            max_connections=settings.db_pool_max_connections,
+            statement_cache_size=settings.db_statement_cache_size,
         )
+        self.db = AsyncDatabaseManager(self._config)
 
     async def connect(self) -> None:
-        await self.db.connect()
-        await prepare_naapp_schema(
-            self.db,
-            module_name=self.module_name,
-            migrations_path=self.migrations_path,
-            stores=self.stores,
-        )
+        if self._pool is not None:
+            raise RuntimeError("The runtime database is already connected.")
+        if isinstance(self.schema_preparation, VerifyPreparedSchema):
+            # The public external-pool path pins search_path without the
+            # manager's CREATE SCHEMA connection initializer.
+            pool = await AsyncDatabaseManager.create_shared_pool(self._config)
+            try:
+                self.db = AsyncDatabaseManager(pool=pool, schema=self.settings.db_schema)
+                await self.schema_preparation.check(self.db)
+            except BaseException:
+                await pool.close()
+                raise
+            self._pool = pool
+            return
+        try:
+            await self.db.connect()
+            await prepare_naapp_schema(
+                self.db,
+                module_name=self.module_name,
+                migrations_path=self.migrations_path,
+                stores=self.stores,
+            )
+        except BaseException:
+            await self.db.disconnect()
+            raise
 
     async def disconnect(self) -> None:
-        await self.db.disconnect()
+        if self._pool is not None:
+            await self._pool.close()
+            self._pool = None
+        else:
+            await self.db.disconnect()

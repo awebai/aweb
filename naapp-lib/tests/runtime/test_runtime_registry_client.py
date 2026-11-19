@@ -9,6 +9,7 @@ from fastapi import FastAPI
 
 from aweb_naapp.manifest import canonical_bytes
 from aweb_naapp.runtime.app import NaappRuntime
+from aweb_naapp.runtime.db import ApplyMigrations
 from tests.runtime.test_awid_member_credentials import TEAM_ID, aw_files, private_team
 from tests.runtime.test_served_manifest import ExampleSettings, _v2_template
 
@@ -38,6 +39,7 @@ async def make_runtime(
         manifest_path=manifest,
         awid_transport=registry.transport,
         awid_domain_verifier=verifier,
+        schema_preparation=ApplyMigrations(),
     )
 
 

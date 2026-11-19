@@ -6,6 +6,7 @@ from dataclasses import replace
 import httpx
 import pytest
 from aweb_naapp.roles import PrincipalKey, assign, unassign
+from aweb_naapp.runtime.db import ApplyMigrations
 from aweb_naapp.runtime.installation import InstallationFence
 from aweb_naapp_testing import Member
 
@@ -49,11 +50,14 @@ async def serving(registry, database_url, tmp_path):
         kms=kms_check(True),
         awid_transport=registry.transport,
         tool_routers=(routes,),
+        schema_preparation=ApplyMigrations(),
     )
     runtime = service.runtime
     async with service.api_app.router.lifespan_context(service.api_app):
         await apply_job_migrations(runtime.db())
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(service), base_url=API) as client:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(service), base_url=API
+        ) as client:
             yield runtime, client
 
 

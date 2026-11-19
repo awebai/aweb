@@ -22,6 +22,7 @@ from pydantic_settings import SettingsConfigDict
 from aweb_naapp.manifest import ManifestError, canonical_bytes, fill_manifest, load_manifest
 from aweb_naapp.runtime.app import NaappRuntime
 from aweb_naapp.runtime.app_keys import AppKeyError
+from aweb_naapp.runtime.db import ApplyMigrations
 from aweb_naapp.runtime.settings import NaappSettings
 
 HOSTED_ORIGIN = "https://example.aweb.ai"
@@ -70,6 +71,7 @@ def _runtime(tmp_path: Path, template: dict[str, Any], **settings: Any) -> Naapp
         module_name="example",
         migrations_path=migrations,
         manifest_path=path,
+        schema_preparation=ApplyMigrations(),
     )
 
 

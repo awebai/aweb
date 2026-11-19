@@ -10,6 +10,7 @@ from pathlib import Path
 import aweb_naapp as naapp
 import httpx
 from aweb_naapp.runtime.app import NaappRuntime
+from aweb_naapp.runtime.db import ApplyMigrations
 from aweb_naapp.runtime.health import CheckResult
 from fastapi import FastAPI
 from nacl.signing import SigningKey
@@ -123,6 +124,7 @@ def _runtime(tmp_path: Path) -> NaappRuntime:
         module_name=MODULE_NAME,
         migrations_path=MIGRATIONS_PATH,
         manifest_path=MANIFEST_PATH,
+        schema_preparation=ApplyMigrations(),
     )
 
 

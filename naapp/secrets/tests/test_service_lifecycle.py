@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 
 import httpx
 import pytest
+from aweb_naapp.runtime.db import ApplyMigrations
 from fastapi import APIRouter
 
 from aweb_secrets.app import create_app
@@ -46,6 +47,7 @@ async def test_services_start_before_router_factories_and_cleanup_between_lifesp
         awid_transport=registry.transport,
         prepare=prepare,
         console_routers=(human,),
+        schema_preparation=ApplyMigrations(),
     )
     for _ in range(2):
         async with service.api_app.router.lifespan_context(service.api_app):
@@ -87,6 +89,7 @@ async def test_failed_service_startup_disconnects_runtime_and_leaves_no_console_
         kms=kms_check(True),
         awid_transport=registry.transport,
         prepare=prepare,
+        schema_preparation=ApplyMigrations(),
     )
     with pytest.raises(RuntimeError, match="required_audit_branch_unavailable"):
         async with service.api_app.router.lifespan_context(service.api_app):

@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 
 import httpx
 import pytest
+from aweb_naapp.runtime.db import ApplyMigrations
 from fastapi import APIRouter
 from nacl.signing import SigningKey
 
@@ -51,6 +52,7 @@ async def test_runner_code_exchange_is_api_only_and_lives_with_prepared_services
         awid_transport=registry.transport,
         prepare=prepare,
         runner_routers=(runner_factory,),
+        schema_preparation=ApplyMigrations(),
     )
     for _ in range(2):
         async with service.api_app.router.lifespan_context(service.api_app):
@@ -126,6 +128,7 @@ async def test_runner_factory_misconfiguration_refuses_before_serving(
         kms=kms_check(True),
         awid_transport=registry.transport,
         runner_routers=(factory, factory) if kind == "duplicate" else (factory,),
+        schema_preparation=ApplyMigrations(),
     )
     with pytest.raises(ValueError):
         async with service.api_app.router.lifespan_context(service.api_app):

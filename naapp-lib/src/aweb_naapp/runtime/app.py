@@ -91,7 +91,7 @@ from aweb_naapp.runtime.authorization import (
     is_placeholder,
 )
 from aweb_naapp.runtime.awid_member_credentials import read_member_credentials
-from aweb_naapp.runtime.db import NaappDatabase, Store
+from aweb_naapp.runtime.db import NaappDatabase, SchemaPreparation, Store
 from aweb_naapp.runtime.event_emit import AppEvents, is_loopback_host
 from aweb_naapp.runtime.health import CheckResult, HealthCheck, mount_health
 from aweb_naapp.runtime.hook_resolver import HookResolver
@@ -172,6 +172,7 @@ class NaappRuntime:
         awid_domain_verifier: DomainVerifier | None = None,
         team_server_transport: httpx.AsyncBaseTransport | None = None,
         stores: Sequence[Store] = (),
+        schema_preparation: SchemaPreparation,
         hook_egress: Egress | None = None,
         hook_internal_cidr: IPv4Network | IPv6Network | None = None,
         hook_internal_origins: frozenset[str] = frozenset(),
@@ -182,6 +183,7 @@ class NaappRuntime:
         self.module_name = module_name
         self.migrations_path = migrations_path
         self.stores = tuple(stores)
+        self.schema_preparation = schema_preparation
         self._awid_transport = awid_transport
         self._awid_domain_verifier = awid_domain_verifier
         self._registry_client: RegistryClient | None = None
@@ -338,6 +340,7 @@ class NaappRuntime:
             module_name=self.module_name,
             migrations_path=self.migrations_path,
             stores=self.stores,
+            schema_preparation=self.schema_preparation,
         )
         await database.connect()
         self._database = database

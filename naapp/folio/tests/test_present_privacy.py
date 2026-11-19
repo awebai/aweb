@@ -13,7 +13,7 @@ import httpx
 import pytest
 from aweb_naapp.runtime.app import NaappRuntime
 from aweb_naapp.runtime.clock import seconds_to_ns
-from aweb_naapp.runtime.db import NaappDatabase
+from aweb_naapp.runtime.db import ApplyMigrations, NaappDatabase
 from aweb_naapp.runtime.installation import apply_installation_migrations
 from aweb_naapp.runtime.team_auth import MembershipProof, Principal
 
@@ -71,6 +71,7 @@ async def present_world(test_db_factory, monkeypatch):
         module_name="folio",
         migrations_path=Path(__file__).resolve().parents[1] / "src/folio/migrations",
         stores=(apply_installation_migrations,),
+        schema_preparation=ApplyMigrations(),
     )
     await storage.connect()
     try:

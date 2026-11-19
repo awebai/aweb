@@ -39,6 +39,7 @@ from aweb_naapp.runtime.approvals import (
     PgApprovalStore,
 )
 from aweb_naapp.runtime.credential_audit import CredentialAudit, GovernanceUnavailable
+from aweb_naapp.runtime.db import ApplyMigrations
 from aweb_naapp.runtime.health import CheckResult
 from aweb_naapp.runtime.human_role_acts import HumanRoleActs
 from aweb_naapp.runtime.installation import AdmittedInstallation
@@ -368,7 +369,10 @@ async def _compose(
     # Configure the shared fence; never create another G1 source or fence.
     fence.on_retire = partial(retire_team, app_id=settings.app_id)
     registrations = runtime.hook_registrations()
-    store = await prepare_business_schema(db)
+    if isinstance(runtime.schema_preparation, ApplyMigrations):
+        store = await prepare_business_schema(db)
+    else:
+        store = PgApprovalStore(db)
 
     approval_services = await _compose_approvals(
         runtime=runtime, settings=settings, store=store, mailer=mailer
@@ -769,5 +773,6 @@ def create_service(
             ),
             lambda rt: runner_dispatch_router(service=lambda: current().runs),
         ),
+        schema_preparation=ApplyMigrations(),
     )
     return service

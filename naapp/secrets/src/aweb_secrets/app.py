@@ -30,6 +30,7 @@ from aweb_naapp.ratelimit import apply_ratelimit_migrations
 from aweb_naapp.roles import apply_roles_migrations
 from aweb_naapp.runtime.app import NaappRuntime
 from aweb_naapp.runtime.authorization import ActionPolicy, Authorization, GrantSource
+from aweb_naapp.runtime.db import SchemaPreparation
 from aweb_naapp.runtime.health import HealthCheck, mount_health
 from aweb_naapp.runtime.installation import (
     InstallationFence,
@@ -165,6 +166,7 @@ def create_app(
     hook_internal_origins: frozenset[str] = frozenset(),
     tool_routers: Sequence[ToolRouter] = (),
     prepare: Prepare | None = None,
+    schema_preparation: SchemaPreparation,
     console_routers: Sequence[ConsoleRouter] = (),
     runner_routers: Sequence[RunnerRouter] = (),
     handoff_router: ConsoleRouter | None = None,
@@ -197,6 +199,7 @@ def create_app(
         hook_internal_cidr=hook_internal_cidr,
         hook_internal_origins=hook_internal_origins,
         stores=STORES,
+        schema_preparation=schema_preparation,
     )
     checks = {**runtime.health_checks(), "kms": kms}
 

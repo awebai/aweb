@@ -17,6 +17,7 @@ from aweb_naapp.manifest import canonical_bytes
 from aweb_naapp.runtime.app import NaappRuntime
 from aweb_naapp.runtime.app_keys import AppKeyError
 from aweb_naapp.runtime.clock import seconds_to_ns
+from aweb_naapp.runtime.db import ApplyMigrations
 from aweb_naapp.runtime.hook_resolver import HookBinding, Resolution
 from tests.hooks.test_producer import SYSTEM, TEAM
 from tests.hooks.test_transport import SECRET_USE
@@ -95,6 +96,7 @@ def runtime(
         hook_internal_origins=internal_origins,
         awid_transport=registry.transport if registry is not None else None,
         root_path=root_path,
+        schema_preparation=ApplyMigrations(),
     )
 
 

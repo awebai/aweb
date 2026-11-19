@@ -13,6 +13,7 @@ from pydantic_settings import SettingsConfigDict
 from aweb_naapp.manifest import write_manifest_file
 from aweb_naapp.outbox import OutboxEvent, enqueue, mint_event_id
 from aweb_naapp.runtime.app import NaappRuntime
+from aweb_naapp.runtime.db import ApplyMigrations
 from aweb_naapp.runtime.settings import NaappSettings
 
 ORIGIN = "https://app.example"
@@ -38,6 +39,7 @@ def _runtime(tmp_path: Path, database_url: str) -> NaappRuntime:
         module_name="example",
         migrations_path=migrations,
         manifest_path=manifest_path,
+        schema_preparation=ApplyMigrations(),
     )
 
 

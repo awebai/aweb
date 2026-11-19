@@ -11,6 +11,7 @@ from datetime import timedelta
 
 import httpx
 from aweb_naapp.hooks.strictjson import encode_base64url
+from aweb_naapp.runtime.db import ApplyMigrations
 from aweb_naapp_testing.databases import TEST_SCHEMA
 from awid.did import did_from_public_key
 from awid_service.testing import REGISTRY_URL
@@ -63,6 +64,7 @@ async def mounted(uses, registry, tmp_path):
         awid_transport=registry.transport,
         prepare=prepare,
         runner_routers=(runner_factory,),
+        schema_preparation=ApplyMigrations(),
     )
     discovery_domains = []
 

@@ -16,6 +16,7 @@ from aweb_naapp.page_store import Access, PageStore, Scope, StoreError, apply_pa
 from aweb_naapp.runtime.app import NaappRuntime
 from aweb_naapp.runtime.authorization import Authorization, Grant
 from aweb_naapp.runtime.clock import seconds_to_ns
+from aweb_naapp.runtime.db import ApplyMigrations
 from aweb_naapp.runtime.settings import NaappSettings
 from tests.page_store.test_store import POLICY, page
 
@@ -101,6 +102,7 @@ async def test_signed_member_operations_and_revoked_install_cannot_bypass_acl(
         migrations_path=migrations,
         manifest_path=manifest_path,
         awid_transport=registry.transport,
+        schema_preparation=ApplyMigrations(),
     )
     grants = InstalledGrant(owner.team_id)
     authorized = runtime.authorized(grants=grants, policy=page_policy)

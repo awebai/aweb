@@ -6,6 +6,7 @@ from uuid import UUID
 from aweb_naapp.identity_assets import identity_asset
 from aweb_naapp.runtime.app import NOINDEX_ROBOTS_HEADER, NaappRuntime, mount_naapp_routes
 from aweb_naapp.runtime.authorization import Authorization
+from aweb_naapp.runtime.db import ApplyMigrations
 from aweb_naapp.runtime.installation import InstallationRefused, apply_installation_migrations
 from aweb_naapp.runtime.team_auth import Principal
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
@@ -95,6 +96,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         migrations_path=_MIGRATIONS_DIR,
         manifest_path=MANIFEST_PATH,
         stores=(apply_installation_migrations,),
+        schema_preparation=ApplyMigrations(),
     )
     app = FastAPI(title="folio", version="0.1.0", lifespan=runtime.lifespan)
     app.add_middleware(PresentationPrivacy)

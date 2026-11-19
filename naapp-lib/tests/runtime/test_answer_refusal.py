@@ -25,6 +25,7 @@ from aweb_naapp.manifest import canonical_bytes, write_manifest_file
 from aweb_naapp.runtime.app import NaappRuntime
 from aweb_naapp.runtime.authorization import ActionKind, Authorization, DeclaredTool, Grant
 from aweb_naapp.runtime.clock import seconds_to_ns
+from aweb_naapp.runtime.db import ApplyMigrations
 from aweb_naapp.runtime.settings import NaappSettings
 from aweb_naapp.runtime.team_auth import Principal
 
@@ -114,6 +115,7 @@ async def _running(
         migrations_path=migrations,
         manifest_path=manifest_path,
         awid_transport=registry.transport,
+        schema_preparation=ApplyMigrations(),
     )
     app = FastAPI(lifespan=runtime.lifespan)
     authorized = runtime.authorized(grants=AllGranted(), policy=allow_all, action_kind=action_kind)

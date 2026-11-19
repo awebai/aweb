@@ -33,6 +33,7 @@ from aweb_naapp.hooks.owner_act_nonces import OwnerActVerifier, apply_owner_act_
 from aweb_naapp.manifest import canonical_bytes, load_manifest
 from aweb_naapp.ratelimit import apply_ratelimit_migrations
 from aweb_naapp.runtime.app import NaappRuntime
+from aweb_naapp.runtime.db import ApplyMigrations
 from aweb_naapp.runtime.installation import apply_installation_migrations
 from aweb_naapp.runtime.owner_act_delivery import (
     OwnerActDeliveryRefused,
@@ -277,6 +278,7 @@ async def world(tmp_path, human, coordination, test_db_factory):
         ),
         awid_transport=coordination.registry.transport,
         team_server_transport=coordination.server.transport,
+        schema_preparation=ApplyMigrations(),
     )
 
     # Explicitly select this test's real registry instead of external DNS discovery.

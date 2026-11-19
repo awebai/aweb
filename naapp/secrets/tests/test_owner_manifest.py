@@ -6,6 +6,7 @@ import json
 import httpx
 import pytest
 from aweb_naapp.manifest import load_manifest
+from aweb_naapp.runtime.db import ApplyMigrations
 
 from aweb_secrets.app import create_app
 from tests.test_app import API, CONSOLE, TOOLS, InstalledTeams, _settings, allow_all, kms_check
@@ -25,7 +26,11 @@ async def test_both_exact_variants_are_discoverable_only_on_the_api_origin(
         update={"public_origin": api_origin, "console_origin": human_origin, "app_id": app_id}
     )
     service = create_app(
-        configured, grants=InstalledTeams({}), policy=allow_all, kms=kms_check(True)
+        configured,
+        grants=InstalledTeams({}),
+        policy=allow_all,
+        kms=kms_check(True),
+        schema_preparation=ApplyMigrations(),
     )
     async with httpx.AsyncClient(transport=httpx.ASGITransport(service)) as client:
         catalog = await client.get(api_origin + "/.well-known/aweb-app-versions.json")
@@ -70,6 +75,7 @@ async def test_owner_session_actions_are_human_routes_and_protect_the_vault_toke
         grants=InstalledTeams({}),
         policy=allow_all,
         kms=kms_check(True),
+        schema_preparation=ApplyMigrations(),
     )
     async with httpx.AsyncClient(transport=httpx.ASGITransport(service)) as client:
         response = await client.get(API + "/manifests/v3.json")

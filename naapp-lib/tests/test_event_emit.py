@@ -44,6 +44,7 @@ from aweb_naapp.outbox import (
 )
 from aweb_naapp.runtime.app import NaappRuntime
 from aweb_naapp.runtime.app_keys import AppKeyError
+from aweb_naapp.runtime.db import ApplyMigrations
 from aweb_naapp.runtime.event_emit import (
     APP_EVENTS_CHANNEL,
     AppEvents,
@@ -458,7 +459,11 @@ async def test_the_runtime_drains_app_events_while_the_app_runs(
     migrations.mkdir()
     settings = _settings(seed, receiver.origin, database_url=app_database_url)
     runtime = NaappRuntime(
-        settings, module_name="example", migrations_path=migrations, manifest_path=manifest_path
+        settings,
+        module_name="example",
+        migrations_path=migrations,
+        manifest_path=manifest_path,
+        schema_preparation=ApplyMigrations(),
     )
     app = FastAPI(lifespan=runtime.lifespan)
 

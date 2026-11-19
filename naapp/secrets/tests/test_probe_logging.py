@@ -7,6 +7,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from aweb_naapp.runtime.db import ApplyMigrations
 
 from aweb_secrets.app import create_app
 from tests.test_app import API, CONSOLE, _settings, allow_all, kms_check
@@ -19,6 +20,7 @@ def service(tmp_path):
         _settings("postgresql://unused@localhost/unused", tmp_path),
         policy=allow_all,
         kms=kms_check(True),
+        schema_preparation=ApplyMigrations(),
     )
 
 

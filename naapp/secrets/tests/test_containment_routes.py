@@ -9,6 +9,7 @@ from tempfile import TemporaryDirectory
 
 import httpx
 from aweb_naapp.runtime.app import NaappRuntime
+from aweb_naapp.runtime.db import ApplyMigrations
 from aweb_naapp.runtime.origins import split_origins
 from awid_service.testing import REGISTRY_URL
 from fastapi import FastAPI
@@ -46,6 +47,7 @@ async def running(uses, registry):
             manifest_path=MANIFEST_PATH,
             awid_transport=registry.transport,
             stores=STORES,
+            schema_preparation=ApplyMigrations(),
         )
         discovery_domains = []
 

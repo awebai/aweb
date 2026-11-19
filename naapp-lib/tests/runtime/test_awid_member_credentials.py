@@ -17,6 +17,7 @@ import pytest
 from aweb_naapp_testing import REGISTRY_URL, Member
 
 from aweb_naapp.runtime.app import NaappRuntime
+from aweb_naapp.runtime.db import ApplyMigrations
 from tests.runtime.test_naapp_runtime import (
     CREATE,
     ORIGIN,
@@ -79,6 +80,7 @@ def runtime_for(registry, settings: ExampleSettings, tmp_path: Path) -> NaappRun
         migrations_path=_migrations(tmp_path),
         manifest_path=_manifest(tmp_path, CREATE),
         awid_transport=registry.transport,
+        schema_preparation=ApplyMigrations(),
     )
 
 

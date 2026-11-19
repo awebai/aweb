@@ -5,6 +5,7 @@ from dataclasses import replace
 
 import httpx
 from aweb_naapp.roles import principal_key
+from aweb_naapp.runtime.db import ApplyMigrations
 from aweb_naapp_testing import Member
 from awid_service.testing import REGISTRY_URL
 from nacl.signing import SigningKey
@@ -155,6 +156,7 @@ async def test_disable_worker_a_stops_worker_b_while_its_actual_token_remains_ca
             kms=kms_check(True),
             awid_transport=registry.transport,
             tool_routers=(broker_routes, containment_routes),
+            schema_preparation=ApplyMigrations(),
         )
         discovery_domains = []
 
