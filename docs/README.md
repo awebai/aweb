@@ -80,6 +80,8 @@ authority.
   operations around encrypted messages.
 - [E2E legacy plaintext and no-downgrade policy](e2e-legacy-plaintext-policy.md)
   — mixed-version compatibility rules.
+- [Security model](security-model.md) — who can do what on whose signature, and what
+  a server or registry operator holds.
 - [Trust model](trust-model.md) — key authority, custody, verification, and
   recovery boundaries.
 - [Team-auth request envelope v2](team-auth-envelope-v2.md) — signed relying-party

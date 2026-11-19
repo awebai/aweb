@@ -48,6 +48,11 @@ async def registry_listener(env, *, listener_socket: socket.socket | None = None
             await asyncio.sleep(.02)
         assert server.started
         origin = f"http://127.0.0.1:{sock.getsockname()[1]}"
+        # Served there, the registry has that public origin too, which covering
+        # controller signatures name.
+        env.registry_app.state.awid_public_origins = (
+            *getattr(env.registry_app.state, "awid_public_origins", ()), origin,
+        )
         client = RegistryClient(origin, service_token=existing.service_token)
         env.app.state.awid_registry_client = client
         yield client, origin
@@ -86,6 +91,8 @@ async def test_cli_never_grants_real_stack(privacy_app, tmp_path):
     team_sk, _, team_did = _make_keypair()
     await env.db.execute("UPDATE {{tables.teams}} SET team_did_key=$1 WHERE team_id=$2", team_did, TEAM)
     await env.registry_db.execute("UPDATE {{tables.teams}} SET team_did_key=$1 WHERE name=$2", team_did, TEAM.split(":", 1)[0])
+    # The team has always had this key: its members were accepted under it.
+    await env.db.execute("UPDATE {{tables.agents}} SET accepted_team_did_key=$1 WHERE team_id=$2", team_did, TEAM)
     cert = _make_certificate(team_sk, team_did, actor.did, team_id=TEAM, alias="bob", identity_scope="local")
     for field in ("signature", "member_did_aw", "member_address"):
         cert.pop(field)

@@ -10,7 +10,7 @@ task_skills="$(node -e 'console.log(require(process.argv[1]).skills.join("\n"))'
 for path in $task_skills; do
   name="${path##*/}"
   source_skill="$ROOT/skills/$name"
-  target_skill="$ROOT/oats/.agents/capabilities/owned/aweb-tasks/skills/$name"
+  target_skill="${OATS_TASK_SKILL_COPY_DIR:-$ROOT/oats/.agents/capabilities/owned/aweb-tasks/skills}/$name"
   test -f "$source_skill/SKILL.md"
   mkdir -p "$(dirname "$target_skill")"
   rm -rf "$target_skill"

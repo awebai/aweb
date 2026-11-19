@@ -14,7 +14,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Protocol
 from weakref import ReferenceType, ref
 
-from aweb_naapp.roles import PrincipalKey, hold_role
+from aweb_naapp.roles import PrincipalKey
 from aweb_naapp.runtime.installation import (
     AdmittedInstallation,
     InstallationDispatchFence,
@@ -24,7 +24,7 @@ from aweb_naapp.runtime.passkeys import PreparedCurrentApprovers
 from fastapi import HTTPException
 from pgdbm.core import TransactionManager
 
-from aweb_secrets.owners import OWNER_ROLE, owner_scope
+from aweb_secrets.owners import OWNER_ROLE, hold_owner, owner_holding, owner_scope
 from aweb_secrets.principal import is_principal
 
 if TYPE_CHECKING:
@@ -181,20 +181,10 @@ class OwnerHoldingAuthority:
         owner = await self._console.directory.owner_of(tx, target.b3_scope)
         if owner != PrincipalKey(admitted.team_id, scope.principal):
             raise _refused()
-        row = await tx.fetch_one(
-            "SELECT r.assigned_at FROM {{tables.owner_principals}} p"
-            " JOIN {{tables.role_assignments}} r"
-            " ON r.team_id=p.team_id AND r.principal_did=p.principal_did AND r.role=$5"
-            " WHERE p.scope=$1 AND p.installation_id=$2 AND p.team_id=$3 AND p.principal_did=$4",
-            target.b3_scope,
-            admitted.installation_id,
-            admitted.team_id,
-            scope.principal,
-            OWNER_ROLE,
-        )
-        if row is None:
+        held = await owner_holding(tx, target.b3_scope)
+        if held is None:
             raise _refused()
-        return row["assigned_at"]
+        return held.held_since
 
     async def hold_session_target(
         self,
@@ -228,7 +218,9 @@ class OwnerHoldingAuthority:
         await fence.prepare(tx)
         await fence.check(tx, target)
         owner = await self._console.directory.owner_of(tx, target.b3_scope)
-        if owner is None or not await hold_role(tx, owner, OWNER_ROLE):
+        if owner is None or not await hold_owner(
+            tx, owner, installation_id=target.admitted.installation_id
+        ):
             raise _refused()
         if await self._role_stamp(tx, target) != target._role_assigned_at:
             raise _refused()

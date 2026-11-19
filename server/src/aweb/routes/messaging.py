@@ -17,6 +17,7 @@ from aweb.deps import get_db
 from aweb.identity_auth_deps import MessagingAuth, auth_dids, get_messaging_auth
 from aweb.messaging.messages import authorize_message_delivery
 from aweb.messaging.participants import messaging_participant_by_alias
+from aweb.messaging.sender_address import sender_address
 from aweb.service_errors import ServiceError
 
 logger = logging.getLogger(__name__)
@@ -52,7 +53,7 @@ async def participant(
             db,
             recipient_agent=row,
             sender_did=auth.did_aw or auth.did_key,
-            sender_address=auth.address,
+            sender_address=sender_address(auth),
             sender_team_id=auth.team_id,
             sender_verified_team_id=auth.verified_team_id,
             sender_verified_dids=auth_dids(auth),

@@ -9,6 +9,7 @@ these with py_webauthn exactly as it checks a browser's.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -19,6 +20,7 @@ from dataclasses import dataclass
 import cbor2
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat
 
 UP, UV, AT = 0x01, 0x04, 0x40
 ES256 = -7
@@ -70,6 +72,19 @@ class SoftAuthenticator:
 
     def _sign(self, key: ec.EllipticCurvePrivateKey, auth_data: bytes, client_data: bytes) -> bytes:
         return key.sign(auth_data + hashlib.sha256(client_data).digest(), ec.ECDSA(hashes.SHA256()))
+
+    def bind(self, rp_id: str) -> dict[str, str]:
+        """A new credential for ``rp_id``, held by this authenticator, as the
+        human credential an owner act binds: its id, public key and RP ID."""
+        credential = SoftCredential(
+            os.urandom(32), ec.generate_private_key(ec.SECP256R1()), rp_id, os.urandom(16)
+        )
+        self.credentials[credential.credential_id] = credential
+        return {
+            "credential_id": b64url(credential.credential_id),
+            "public_key": b64url(credential.cose_public_key()),
+            "rp_id": rp_id,
+        }
 
     def create(
         self, options: dict, *, origin: str | None = None, user_verified: bool = True
@@ -164,3 +179,30 @@ class SoftAuthenticator:
             for cid, c in self.credentials.items()
         }
         return twin
+
+
+def without_user_verification(assertion: dict, key) -> dict:
+    """The same assertion with only its authenticator data's user-verification
+    flag cleared, signed again by its credential's key over the same client
+    data: RP id hash, other flags, counter and client data are unchanged. The
+    key is the credential's own, ES256 or EdDSA, as the browser enrolled it."""
+    response = assertion["response"]
+    auth_data = bytearray(from_b64url(response["authenticatorData"]))
+    if not auth_data[32] & UV:
+        raise ValueError("the assertion carries no user verification to clear")
+    auth_data[32] &= ~UV & 0xFF
+    client_data = from_b64url(response["clientDataJSON"])
+    signed = bytes(auth_data) + hashlib.sha256(client_data).digest()
+    if isinstance(key, ec.EllipticCurvePrivateKey):
+        signature = key.sign(signed, ec.ECDSA(hashes.SHA256()))
+    else:
+        # EdDSA, through AWID's shared Ed25519 signer, from the key's raw seed.
+        from awid.signing import sign_message
+
+        seed = key.private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption())
+        encoded = sign_message(seed, signed)
+        signature = base64.b64decode(encoded + "=" * (-len(encoded) % 4))
+    return {
+        **assertion,
+        "response": {**response, "authenticatorData": b64url(bytes(auth_data)), "signature": b64url(signature)},
+    }

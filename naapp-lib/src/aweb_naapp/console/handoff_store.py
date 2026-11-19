@@ -38,10 +38,14 @@ class HandoffStart:
     verifier_sha256: bytes
     scope: PublicScope
     client_hostname: str
+    # "loopback", or "user_code" for a session start that only the holder may
+    # ask for; the router decides it once the signer is known.
+    return_mode: str = "loopback"
 
 
 def parse_start(body: Any) -> HandoffStart:
-    """The loopback profile; unsupported fallback cannot start a session."""
+    """A start body. A session user_code start parses, and the router refuses it:
+    400 for a start the holder did not sign, 409 fallback_unavailable otherwise."""
     try:
         if (
             not isinstance(body, dict)
@@ -82,9 +86,17 @@ def parse_start(body: Any) -> HandoffStart:
     except (ValueError, TypeError, KeyError) as exc:
         raise HandoffWireRefused("handoff_invalid") from exc
     if body["return"] == "user_code":
-        if body["purpose"] == "session":
-            raise HandoffWireRefused("fallback_unavailable")
-        raise HandoffWireRefused("handoff_invalid")
+        if body["purpose"] != "session":
+            raise HandoffWireRefused("handoff_invalid")
+        return HandoffStart(
+            body["purpose"],
+            key,
+            "",
+            bytes.fromhex(digest),
+            PublicScope(scope["installation_id"], scope["role"], scope["principal"]),
+            hostname,
+            return_mode="user_code",
+        )
     # Preserve the distinct fixed redirect refusal, without reflecting its URI.
     redirect = loopback_redirect(body["redirect_uri"])
     return HandoffStart(
@@ -147,7 +159,9 @@ def handoff_start_router(
     store: HandoffStore,
     limiter: LoginLimiter,
     principal: Callable[[Request], Awaitable[Principal]],
-    session_start: Callable[[HandoffStart, Principal, Request], Awaitable[dict[str, str]]]
+    session_start: Callable[..., Awaitable[dict[str, str]]] | None = None,
+    requester_parent: Callable[[Request, Principal], Awaitable[Any]] | None = None,
+    credential_start: Callable[[HandoffStart, Principal, Request], Awaitable[dict[str, str]]]
     | None = None,
 ) -> APIRouter:
     """Mount on the API origin, with the runtime's verified principal dependency.
@@ -178,12 +192,32 @@ def handoff_start_router(
             raise HTTPException(
                 status_code=409 if code == "fallback_unavailable" else 400, detail=code
             ) from None
-        if not signer.did_aw_registry_verified or parsed.scope.principal != signer.did_aw:
+        if not signer.did_aw_registry_verified:
             raise HTTPException(403, "scope_not_signer")
+        if parsed.return_mode == "user_code":
+            # A start the holder's child signs is loopback only, whatever the
+            # fallback's availability (contract 584d76c9c :413-415).
+            if parsed.scope.principal != signer.did_aw:
+                raise HTTPException(400, "handoff_invalid")
+            raise HTTPException(409, "fallback_unavailable")
+        if parsed.scope.principal != signer.did_aw:
+            # Only a session start, and only by an agent whose verified chain
+            # has the holder as its direct parent (handoff-wire 1a). It
+            # prepares this handoff; the holder's own login decides it.
+            if parsed.purpose != "session" or session_start is None or requester_parent is None:
+                raise HTTPException(403, "scope_not_signer")
+            evidence = await requester_parent(request, signer)
+            if evidence is None or evidence.parent != parsed.scope.principal:
+                raise HTTPException(403, "scope_not_signer")
+            return await session_start(parsed, signer, request, requester=evidence)
         if parsed.purpose == "session":
             if session_start is None:
                 raise HTTPException(403, "role_not_held")
             return await session_start(parsed, signer, request)
+        if credential_start is not None:
+            # The holder's own credential start refreshes its holding's
+            # retained certificate at acceptance (contract 584d76c9c :459).
+            return await credential_start(parsed, signer, request)
         return await store.create(parsed, team_id=signer.team_id)
 
     return router

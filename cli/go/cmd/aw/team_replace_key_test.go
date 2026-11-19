@@ -62,6 +62,7 @@ func seedReplaceKeyWorkspace(t *testing.T, serverURL string) (root, agentHome, o
 	root = t.TempDir()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("AWID_REGISTRY_URL", serverURL)
 	t.Chdir(root)
 
 	_, teamKey, _ = awid.GenerateKeypair()

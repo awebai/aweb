@@ -2,7 +2,7 @@
 """Native test guard: deny public HTTP(S), fail even when callers ignore errors.
 
 This is deliberately a soft guard; the Docker runner supplies kernel isolation.
-Only the existing exact nip.io loopback fixture is forwarded, without DNS.
+Only the exact nip.io and governance loopback fixtures are forwarded, without DNS.
 """
 import argparse
 from datetime import datetime, timezone
@@ -34,7 +34,7 @@ class Proxy(http.server.BaseHTTPRequestHandler):
 
     def handle_request(self):
         target = urlsplit(('https://' if self.command == 'CONNECT' else '') + self.path)
-        if target.hostname != '127.0.0.1.nip.io':
+        if target.hostname not in ('127.0.0.1.nip.io', 'signer.example.com'):
             # Never record credentials, queries or bodies.
             # CONNECT is refused before TLS: HTTPS method attribution is impossible.
             benign = (reserved(target.hostname) or denied_read(target.hostname, self.command)

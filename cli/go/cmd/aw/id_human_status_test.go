@@ -132,6 +132,7 @@ func TestHumanEnrollmentStatusCommandHelper(t *testing.T) {
 	t.Setenv("AWID_FIXTURE_DNS_DOMAIN", "example.com")
 	t.Setenv("AWID_FIXTURE_DNS_CONTROLLER", controller)
 	registryURL := realAWIDFixture(t)
+	t.Setenv("AWID_REGISTRY_URL", registryURL)
 	child.opts.RegistryURL = registryURL
 	var args []string
 	if status == "pending" {
@@ -157,7 +158,7 @@ func TestHumanEnrollmentStatusCommandHelper(t *testing.T) {
 		if err := os.WriteFile(path, response, 0600); err != nil {
 			t.Fatal(err)
 		}
-		args = []string{"id", "parent", "import", path, "--human", p.human.ID, "--domain", "example.com", "--registry", registryURL, "--no-register"}
+		args = []string{"id", "parent", "import", path, "--human", p.human.ID, "--human-domain", "example.com", "--registry", registryURL, "--no-register"}
 	} else {
 		args = []string{"id", "human", "init", "--domain", "example.com", "--registry", registryURL}
 		if status == "registered" {

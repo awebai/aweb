@@ -1,0 +1,16 @@
+aweb mail event received.
+
+Metadata:
+- type: mail
+- from: alice
+- message_id: 0192b7e4-1c2d-7a3b-9e4f-5a6b7c8d9e0f
+- responsibility: {"outcome":"unknown","human_id":null,"identity_valid":null,"kind":null,"reason":"unregistered_identity"}
+- trust_status: verified
+- verified: true
+- conversation_id: 0192b7e4-1c2d-7a3b-9e4f-000000000001
+- subject: wake check 3f9c2a1e
+
+Message:
+Automated delivery check 3f9c2a1e. No action is needed; do not reply or run any tool.
+
+Answer in the conversation: aw mail reply <message_id>. Start a new thread only for a new topic: aw mail send --to <recipient> --subject <subject>.

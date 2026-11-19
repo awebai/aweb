@@ -11,13 +11,14 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from aweb_naapp.dispatch import Dispatch, State
+from aweb_naapp.roles import PrincipalKey
 from aweb_naapp.runtime.approvals import ApprovalRefused, Approvals, ApprovalState
 from aweb_naapp.runtime.installation import AdmittedInstallation
 from pgdbm.core import TransactionManager
 
 from aweb_secrets import records, tool_results
 from aweb_secrets.member_types import ToolReply
-from aweb_secrets.owners import OWNER_ROLE
+from aweb_secrets.owners import OWNER_ROLE, has_owner
 from aweb_secrets.run_context import OriginalRun, original_run
 from aweb_secrets.use_audit import UseApprovalAudit, UseAuditUnavailable
 
@@ -35,6 +36,10 @@ class RunStatus:
         principal_did: str,
         roles: Sequence[str],
     ) -> ToolReply:
+        if OWNER_ROLE in roles and not await has_owner(
+            tx, PrincipalKey(scope.team_id, principal_did), installation_id=scope.installation_id
+        ):
+            roles = [r for r in roles if r != OWNER_ROLE]
         row = await tx.fetch_one(
             "SELECT c.dispatch_id,d.state,d.result,c.principal_did,c.install_generation"
             " FROM {{tables.run_contexts}} c JOIN {{tables.dispatches}} d USING(dispatch_id)"

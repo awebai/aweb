@@ -1,7 +1,8 @@
 package main
 
 import (
-	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -58,7 +59,7 @@ func interactionLogPath(startDir string) string {
 	return filepath.Join(root, ".aw", interactionLogFileName)
 }
 
-func appendInteractionLogForDir(startDir string, entry *InteractionEntry) {
+func appendInteractionLogForDir(startDir string, policy localLogPolicy, entry *InteractionEntry) {
 	if entry == nil {
 		return
 	}
@@ -73,75 +74,85 @@ func appendInteractionLogForDir(startDir string, entry *InteractionEntry) {
 	if interactionEntryExists(path, entry.Kind, entry.MessageID) {
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		debugLog("interaction-log: mkdir %s: %v", filepath.Dir(path), err)
-		return
-	}
 	line, err := json.Marshal(entry)
 	if err != nil {
 		debugLog("interaction-log: marshal: %v", err)
 		return
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
-	if err != nil {
-		debugLog("interaction-log: open %s: %v", path, err)
-		return
-	}
-	defer f.Close()
-	if _, err := f.Write(append(line, '\n')); err != nil {
-		debugLog("interaction-log: write: %v", err)
+	if err := appendLocalLogLine(path, policy, line, interactionLogLineTag); err != nil {
+		debugLog("interaction-log: %v", err)
 	}
 }
 
-func appendInteractionLogForCWD(entry *InteractionEntry) {
+func appendInteractionLogForCWD(policy localLogPolicy, entry *InteractionEntry) {
 	wd, err := os.Getwd()
 	if err != nil {
 		debugLog("interaction-log: getwd: %v", err)
 		return
 	}
-	appendInteractionLogForDir(wd, entry)
+	appendInteractionLogForDir(wd, policy, entry)
+}
+
+// interactionLogTag is the visible tag of a sealed interaction-log line: it
+// lets the agent skip a message it already logged without reading the log,
+// and reveals only whether a given message id was logged.
+func interactionLogTag(kind, messageID string) string {
+	messageID = strings.TrimSpace(messageID)
+	if messageID == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte("aweb.interaction-log/1\n" + kind + "\n" + messageID))
+	return hex.EncodeToString(sum[:])
+}
+
+func interactionLogLineTag(line []byte) string {
+	var entry InteractionEntry
+	if err := json.Unmarshal(line, &entry); err != nil {
+		return ""
+	}
+	return interactionLogTag(entry.Kind, entry.MessageID)
 }
 
 func interactionEntryExists(path, kind, messageID string) bool {
-	messageID = strings.TrimSpace(messageID)
-	if messageID == "" {
+	tag := interactionLogTag(kind, messageID)
+	if tag == "" {
 		return false
 	}
-	entries, err := readInteractionLog(path, 200)
+	lines, err := readLocalLogLines(path, 200)
 	if err != nil {
 		return false
 	}
-	for _, entry := range entries {
-		if entry.Kind == kind && entry.MessageID == messageID {
+	for _, line := range lines {
+		if sealed := sealedLogLineOf(line); sealed != nil {
+			if sealed.Tag == tag {
+				return true
+			}
+			continue
+		}
+		if interactionLogLineTag(line) == tag {
 			return true
 		}
 	}
 	return false
 }
 
+// readInteractionLog returns the plaintext entries of the log; sealed lines
+// are for the owner and are skipped.
 func readInteractionLog(path string, limit int) ([]InteractionEntry, error) {
-	f, err := os.Open(path)
+	lines, err := readLocalLogLines(path, 0)
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
-
 	var entries []InteractionEntry
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
+	for _, line := range lines {
+		if isSealedLogLine(line) {
 			continue
 		}
 		var entry InteractionEntry
-		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+		if err := json.Unmarshal(line, &entry); err != nil {
 			continue
 		}
 		entries = append(entries, entry)
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, err
 	}
 	if limit > 0 && len(entries) > limit {
 		entries = entries[len(entries)-limit:]

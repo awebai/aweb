@@ -50,3 +50,16 @@ access.
 Installed plugins expose working verbs, but nested plugin `--help` remains a
 known discoverability gap in the current release. Use the app's published guide
 and manifest-backed command contract until that CLI help path is fixed.
+
+## Team revocation history
+
+A complete CRL read is limited to **500 pages of 200 entries**: at most
+**100,000 revocations** at the current page size. If more pages remain, the
+SDK refuses with HTTP-equivalent 502; it never truncates the list and accepts
+members against a partial answer. Public read quotas can refuse a cold scan
+before that page ceiling. Cached evidence keeps its existing freshness and
+failure-only 15-minute original-age limit, then fails closed.
+
+A registry export or larger-page option is deferred until after release.
+The complete pull-and-cache CRL remains the evidence; per-member registry
+queries are not the replacement for this limit.

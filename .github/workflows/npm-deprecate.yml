@@ -1,0 +1,39 @@
+name: Deprecate an npm version
+
+on:
+  workflow_dispatch:
+    inputs:
+      package:
+        description: "Package name, e.g. @awebai/aw"
+        required: true
+      version:
+        description: "Exact version to deprecate, e.g. 1.36.59-rc.2"
+        required: true
+      message:
+        description: "Deprecation message shown on install"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  deprecate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: https://registry.npmjs.org
+      - name: Deprecate the exact version
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          PACKAGE: ${{ inputs.package }}
+          VERSION: ${{ inputs.version }}
+          MESSAGE: ${{ inputs.message }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'
+          npm view "$PACKAGE@$VERSION" version
+          npm deprecate "$PACKAGE@$VERSION" "$MESSAGE"
+          npm view "$PACKAGE@$VERSION" deprecated

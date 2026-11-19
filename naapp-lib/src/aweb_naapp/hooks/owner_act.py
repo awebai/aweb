@@ -448,13 +448,7 @@ def _check_owner_act(
         raise Refused("audience_mismatch", f"act for {act.audience}")
     if act.act not in acts:
         raise Refused("act_not_allowed", f"{act.act} is not in this verifier's vocabulary")
-    if act.expires_at - act.issued_at > MAX_LIFETIME:
-        raise Refused("lifetime_too_long", "an owner act lives at most ten minutes")
-    moment = _utc(now)
-    if act.issued_at > moment + CLOCK_SKEW:
-        raise Refused("not_yet_valid", f"issued at {act.fields['issued_at']}")
-    if moment >= act.expires_at:
-        raise Refused("expired", f"expired at {act.fields['expires_at']}")
+    _require_valid_time(act, now)
     if act.fields["team_key_did"] != current_team_key_did:
         raise Refused("owner_required", "not signed for the team's current controller key")
     try:
@@ -467,6 +461,17 @@ def _check_owner_act(
     except BadSignatureError:
         raise Refused("bad_signature", "signature does not verify under the team key") from None
     return act
+
+
+def _require_valid_time(act: _CheckedAct, now: datetime) -> None:
+    """The same stateless lifetime check for delivery and signature verification."""
+    if act.expires_at - act.issued_at > MAX_LIFETIME:
+        raise Refused("lifetime_too_long", "an owner act lives at most ten minutes")
+    moment = _utc(now)
+    if act.issued_at > moment + CLOCK_SKEW:
+        raise Refused("not_yet_valid", f"issued at {act.fields['issued_at']}")
+    if moment >= act.expires_at:
+        raise Refused("expired", f"expired at {act.fields['expires_at']}")
 
 
 def _verify_owner_act(

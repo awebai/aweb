@@ -184,7 +184,7 @@ async def heartbeat(
         if payload.role is not None or payload.hostname is not None or payload.workspace_path is not None or payload.human_name:
             raise HTTPException(status_code=403, detail="grant workspace metadata is not shared presence")
         await cleanup_expired_grant_liveness(aweb_db)
-        row = await aweb_db.fetch_one(
+        await aweb_db.fetch_one(
             """
             INSERT INTO {{tables.identity_grant_liveness}} (
                 grant_id, team_id, subject_agent_id, workspace_id, alias,

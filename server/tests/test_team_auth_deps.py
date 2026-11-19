@@ -331,6 +331,9 @@ async def test_get_messaging_auth_accepts_raw_manager(aweb_cloud_db, monkeypatch
 
 @pytest.mark.asyncio
 async def test_get_messaging_auth_enriches_identity_auth_from_agent_row(aweb_cloud_db, monkeypatch):
+    from unittest.mock import AsyncMock
+    from team_facts_fixtures import legacy_team
+
     db = aweb_cloud_db.aweb_db
     agent_id = uuid.uuid4()
 
@@ -355,8 +358,10 @@ async def test_get_messaging_auth_enriches_identity_auth_from_agent_row(aweb_clo
 
     monkeypatch.setattr(_identity_auth_mod, "resolve_identity_auth", _fake_resolve_identity_auth)
 
+    request = _request_with_headers({"Authorization": "DIDKey did:key:z6MkGsk signature"})
+    request.app.state.awid_registry_client = SimpleNamespace(get_team_fresh=AsyncMock(side_effect=legacy_team))
     auth = await get_messaging_auth(
-        _request_with_headers({"Authorization": "DIDKey did:key:z6MkGsk signature"}),
+        request,
         db,
     )
 
@@ -477,7 +482,7 @@ async def test_verify_request_certificate_refuses_a_hostile_certificate_with_401
     with pytest.raises(HTTPException) as refused:
         await verify_request_certificate(request, db=object())
     assert refused.value.status_code == 401
-    assert refused.value.detail == "Malformed certificate"
+    assert refused.value.detail == "malformed"
 
 
 @pytest.mark.parametrize("certificate", HOSTILE_CERTIFICATES.values(), ids=HOSTILE_CERTIFICATES.keys())
@@ -488,7 +493,8 @@ def test_parse_and_verify_certificate_refuses_a_hostile_certificate(certificate)
         parse_and_verify_certificate(
             certificate,
             request_did_key="did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
-            team_public_key_resolver=lambda _team_id: "",
-            revocation_checker=lambda _team_id, _certificate_id: False,
+            team_did_key="",
+            revoked_certificate_ids=(),
+            registered_certificate_ids=None,
         )
-    assert str(refused.value) == "Malformed certificate: invalid base64 or JSON"
+    assert str(refused.value) == "malformed"

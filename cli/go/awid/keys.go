@@ -97,15 +97,24 @@ func LoadSigningKey(path string) (ed25519.PrivateKey, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
+	key, err := ParseSigningKey(data)
+	if err != nil {
+		return nil, fmt.Errorf("%w in %s", err, path)
+	}
+	return key, nil
+}
+
+// ParseSigningKey reads an Ed25519 private key from its PEM bytes.
+func ParseSigningKey(data []byte) (ed25519.PrivateKey, error) {
 	block, _ := pem.Decode(data)
 	if block == nil {
-		return nil, fmt.Errorf("no PEM block in %s", path)
+		return nil, fmt.Errorf("no PEM block")
 	}
 	if block.Type != "ED25519 PRIVATE KEY" {
-		return nil, fmt.Errorf("unexpected PEM type %q in %s", block.Type, path)
+		return nil, fmt.Errorf("unexpected PEM type %q", block.Type)
 	}
 	if len(block.Bytes) != ed25519.SeedSize {
-		return nil, fmt.Errorf("invalid seed size %d in %s", len(block.Bytes), path)
+		return nil, fmt.Errorf("invalid seed size %d", len(block.Bytes))
 	}
 	return ed25519.NewKeyFromSeed(block.Bytes), nil
 }
@@ -179,11 +188,6 @@ func writePublicKey(path string, pub ed25519.PublicKey) error {
 	return nil
 }
 
-// SigningKeyPath returns the path to an agent's signing key file.
-func SigningKeyPath(keysDir, address string) string {
-	return filepath.Join(keysDir, addressToKeyFileBase(address)+".signing.key")
-}
-
 // PublicKeyPath returns the sibling public-key PEM path for a signing key path.
 func PublicKeyPath(signingKeyPath string) string {
 	return strings.TrimSuffix(signingKeyPath, ".key") + ".pub"
@@ -207,4 +211,9 @@ func KeySigner(key ed25519.PrivateKey) IDCertificateSigner {
 	return func(payload []byte) (string, []byte, error) {
 		return ComputeDIDKey(key.Public().(ed25519.PublicKey)), ed25519.Sign(key, payload), nil
 	}
+}
+
+// SigningKeyPath returns the path to an agent's signing key file.
+func SigningKeyPath(keysDir, address string) string {
+	return filepath.Join(keysDir, addressToKeyFileBase(address)+".signing.key")
 }

@@ -5,9 +5,6 @@ from types import SimpleNamespace
 from uuid import UUID, uuid4
 from datetime import datetime, timezone
 
-from aweb.human_channels.http import _target
-from aweb.human_channels.contract import ContractError
-from aweb.identity_auth_deps import MessagingAuth
 from aweb.messaging.conversations import create_conversation
 
 import pytest
@@ -115,35 +112,6 @@ async def test_cli_new_and_continued_message_keep_identity_and_address(addressed
     messages = await env.db.fetch_all('SELECT signed_payload FROM {{tables.' + message_table + '}} WHERE ' + id_column + '=$1 ORDER BY created_at', UUID(cid))
     assert len(messages) == 2
     assert json.loads(messages[0]['signed_payload'])['to'] == address
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize('kind', ['mail', 'chat'])
-async def test_native_continuation_uses_did_and_ignores_stored_actor(addressed_human, kind):
-    env = addressed_human.env
-    alice, bob = env.actors['alice'], env.actors['bob']
-    cid = uuid4()
-    if kind == 'mail':
-        await create_conversation(env.infra, conversation_type='mail', conversation_id=str(cid),
-            team_id=TEAM, created_by_did=env.stable['bob'],
-            initiator={'did': env.stable['bob'], 'agent_id': bob.id, 'alias': 'bob', 'transport_hint': 'local'},
-            recipients=[{'did': env.stable['alice'], 'agent_id': alice.id, 'alias': 'alice', 'address': 'example.test/alice', 'transport_hint': 'local'}])
-    else:
-        await env.db.execute("INSERT INTO {{tables.chat_sessions}} (session_id,team_id,created_by) VALUES ($1,$2,$3)", cid, TEAM, env.stable['bob'])
-        for name in ('alice', 'bob'):
-            await env.db.execute("INSERT INTO {{tables.chat_participants}} (session_id,did,agent_id,alias,address) VALUES ($1,$2,$3,$4,$5)", cid, env.stable[name], env.actors[name].id, name, f'example.test/{name}')
-    table, column = ('conversation_participants', 'conversation_id') if kind == 'mail' else ('chat_participants', 'session_id')
-    await env.db.execute('UPDATE {{tables.' + table + '}} SET agent_id=$1 WHERE ' + column + '=$2 AND did=$3', env.actors['carol'].id, cid, env.stable['alice'])
-    auth = MessagingAuth(did_key=bob.did, did_aw=env.stable['bob'], address='example.test/bob', team_id=TEAM, agent_id=str(bob.id), alias='bob')
-    payload = SimpleNamespace(conversation_id=str(cid))
-    selected = await _target(None, payload, auth, env.infra, kind, str(cid) if kind == 'chat' else None)
-    assert selected['did_aw'] == env.stable['alice']
-    assert selected['agent_id'] is None
-    assert selected['address'] == 'example.test/alice'
-    # Native ingress has no new address selector authority; it continues a stored route.
-    with pytest.raises(ContractError) as refused:
-        await _target(None, SimpleNamespace(to_address='example.test/alice'), auth, env.infra, kind, None)
-    assert refused.value.code == 'unsupported'
 
 
 @pytest.mark.asyncio

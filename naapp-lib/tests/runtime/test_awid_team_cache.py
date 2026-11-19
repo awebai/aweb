@@ -32,7 +32,7 @@ def history_cache(registry, token=SERVICE_TOKEN) -> AWIDTeamCache:
 
 
 def status_cache(registry) -> AWIDTeamCache:
-    return AWIDTeamCache(registry_url=REGISTRY_URL, ttl_seconds=600, transport=registry.transport)
+    return AWIDTeamCache(registry_url=REGISTRY_URL, ttl_seconds=60, transport=registry.transport)
 
 
 def certificate_pages(registry) -> list[httpx.Request]:
@@ -90,7 +90,7 @@ async def test_history_refuses_a_certificate_awid_never_published(registry, team
 
 
 async def test_history_facts_are_reused_for_at_most_a_minute(registry, team):
-    cache = AWIDTeamCache(registry_url=REGISTRY_URL, ttl_seconds=600, service_token=SERVICE_TOKEN,
+    cache = AWIDTeamCache(registry_url=REGISTRY_URL, ttl_seconds=60, service_token=SERVICE_TOKEN,
                           transport=registry.transport)
     await cache.get(TEAM_ID, "target")
     assert 0 < cache._cache[TEAM_ID].expires_at - time.monotonic_ns() <= seconds_to_ns(60)
@@ -209,7 +209,7 @@ async def test_history_private_denial_is_classified(registry, team):
 
 
 async def test_history_with_a_wrong_token_reads_public_but_not_private_teams(registry, team):
-    cache = history_cache(registry, token="not-the-registry-service-token")
+    cache = history_cache(registry, token="not-the-registry-service-token-32-bytes")
     visibility = (await registry.db.fetch_one("SELECT visibility FROM {{tables.teams}}"))["visibility"]
     if visibility == "public":
         assert (await cache.get(TEAM_ID, "target")).team_did_key == team.team_did_key
@@ -225,7 +225,7 @@ async def test_history_with_a_wrong_token_reads_public_but_not_private_teams(reg
     (403, {"detail": "team_private"}, 503),
     (403, None, 503),
     (500, {"detail": {"code": "team_private"}}, 503),
-    (404, {"detail": "not found"}, 401),
+    (404, {"detail": "Team not found"}, 401),
 ])
 async def test_history_team_lookup_refusals_map_to_distinct_outcomes(registry, team, status, body, expected):
     def fault(request, response):
@@ -408,6 +408,7 @@ async def test_status_path_verifies_without_a_token_and_reuses_for_at_most_a_min
         assert [r.url.path for r in registry.transport.calls] == [
             "/v1/namespaces/example.com/teams/backend/certificates/target/status"
         ]
+
         assert "X-AWID-Service-Token" not in registry.transport.calls[0].headers
         cached = cache._certificate_cache[(TEAM_ID, "target")]
         assert 0 < cached.expires_at - time.monotonic_ns() <= seconds_to_ns(60)
@@ -432,7 +433,8 @@ async def test_status_cache_is_per_certificate(registry, team):
     with pytest.raises(HTTPException) as caught:
         await cache.get(TEAM_ID, "unpublished")
     assert caught.value.status_code == 401
-    assert len(registry.transport.calls) == 2
+    assert [r.url.path.rsplit("/", 2)[-2] for r in registry.transport.calls] == [
+        "target", "unpublished"]
 
 
 async def test_without_a_certificate_id_the_team_key_is_a_plain_read(registry, team):

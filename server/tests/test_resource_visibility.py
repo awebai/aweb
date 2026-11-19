@@ -296,3 +296,37 @@ async def test_mcp_chat_hides_missing_and_nonparticipant_on_both_guards(privacy_
         assert "error" not in json.loads(neighbor.json()["result"]["content"][0]["text"]), neighbor.text
     finally:
         await mcp.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_chat_http_sender_removed_between_resolution_and_send_is_hidden(privacy_app, monkeypatch):  # noqa: F811
+    from aweb.routes import chat as chat_route
+
+    env = privacy_app
+    session = await _chat(env)
+    original = chat_route.resolve_chat_targets
+    removed = False
+
+    async def resolve_then_remove(*args, **kwargs):
+        nonlocal removed
+        target = await original(*args, **kwargs)
+        if not removed:
+            await env.db.execute(
+                "DELETE FROM {{tables.chat_participants}} WHERE session_id=$1 AND did=$2",
+                UUID(session["session_id"]), env.actors["alice"].did,
+            )
+            removed = True
+        return target
+
+    monkeypatch.setattr(chat_route, "resolve_chat_targets", resolve_then_remove)
+    before = await env.db.fetch_value("SELECT count(*) FROM {{tables.chat_messages}}")
+
+    async def send(actor, sid):
+        return await _request(env, actor, "POST", f"/v1/chat/sessions/{sid}/messages", {"body": "reply"})
+
+    hidden = await send("alice", session["session_id"])
+    missing = await send("alice", str(uuid4()))
+    _same_not_found(hidden, missing)
+    assert removed
+    assert await env.db.fetch_value("SELECT count(*) FROM {{tables.chat_messages}}") == before
+    assert (await send("bob", session["session_id"])).status_code == 200

@@ -7,14 +7,14 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from aweb_naapp.console import ConsoleSession
-from aweb_naapp.roles import hold_role, principal_key
 
 from aweb_secrets.containment import ContainmentRefused
-from aweb_secrets.owners import OWNER_ROLE, approver_scope
-from tests.test_change_sets import TEAM, world  # noqa: F401
+from aweb_secrets.owners import approver_scope, hold_owner
+from tests.human_owner import canonical_actor
+from tests.test_change_sets import ALICE, TEAM, world  # noqa: F401
 from tests.test_containment_service import service
 from tests.test_use_approval_lineage import child, seed
-from tests.test_use_approvals import REQUESTER, SECRET_ID
+from tests.test_use_approvals import SECRET_ID
 from tests.test_use_approvals import uses as _uses
 
 uses = _uses
@@ -183,7 +183,7 @@ async def test_action_checks_exact_login_key_while_another_key_remains(uses, own
     assert await authorize(svc, uses, session, action, target) is owner
     await svc.by_member(
         grant=uses.grant,
-        principal=REQUESTER,
+        principal=canonical_actor(uses.world, ALICE),
         request_id="withdraw-login-key",
         action="revoke-approver",
         target=session.scope if owner else "finance",
@@ -243,9 +243,9 @@ async def test_action_retains_login_liveness_locks_until_its_transaction_commits
         async with w.db.transaction() as tx:
             started.set_result(await tx.fetch_value("SELECT pg_backend_pid()"))
             admitted = await w.fence.admit(tx, uses.grant)
-            assert await hold_role(tx, principal_key(REQUESTER), OWNER_ROLE)
+            assert await hold_owner(tx, ALICE, installation_id=w.admitted.installation_id)
             prepared = await w.credential_audit.prepare_containment(
-                tx, admitted=admitted, principal=REQUESTER
+                tx, admitted=admitted, principal=canonical_actor(uses.world, ALICE)
             )
             with w.credential_audit.prepared(prepared):
                 await w.passkeys.revoke_passkey_in(
@@ -253,7 +253,7 @@ async def test_action_retains_login_liveness_locks_until_its_transaction_commits
                     scope=session.scope,
                     subject=session.subject,
                     credential_id=next(iter(w.devices["finance@acme.com"].credentials)),
-                    authorized_by=principal_key(REQUESTER).principal_did,
+                    authorized_by=ALICE.principal_did,
                 )
             await w.fence.check(tx, admitted)
 

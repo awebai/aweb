@@ -20,8 +20,6 @@ from aweb_naapp.egress import (
     Egress,
     EgressRefused,
     HeaderRules,
-    InternalDestinations,
-    canonical_url,
     parse_destination,
 )
 from aweb_naapp.manifest import (
@@ -32,8 +30,10 @@ from aweb_naapp.manifest import (
     load_manifest,
     select_variant,
 )
+from aweb_naapp.manifest_keys import check_manifest_keys
 
-from aweb.app_registry import normalize_digest, normalize_origin, reserved_app_ids
+from aweb.app_registry import canonical_app_origin, normalize_digest, normalize_origin, reserved_app_ids
+from aweb.config import AppInternalOrigins, get_app_internal_origins
 from aweb.service_errors import ServiceError
 
 
@@ -61,6 +61,7 @@ class ManifestFetcher:
         *,
         egress: Egress | None = None,
         destination: Destination | None = None,
+        internal: AppInternalOrigins | None = None,
         timeout: float = 30.0,
         max_bytes: int = MAX_MANIFEST_BYTES,
     ) -> None:
@@ -68,8 +69,10 @@ class ManifestFetcher:
             raise ValueError("manifest bound must be positive and at most 10 MiB")
         # Validate all bounds even if the supplied egress has its own defaults.
         Bounds(total_timeout=timeout, max_response_bytes=max_bytes)
+        # The operator's exact internal app origins, from startup settings only.
+        self.internal = internal if internal is not None else get_app_internal_origins()
         self.egress = egress or Egress(
-            addresses=AddressPolicy(internal_destinations=InternalDestinations.DISABLED),
+            addresses=AddressPolicy(internal_destinations=self.internal.destinations),
             resolver=DnsResolver(), user_agent=f"aweb-server/{version('aweb')}",
         )
         # Hosts may inject the real guard and an exact destination for a test
@@ -82,9 +85,7 @@ class ManifestFetcher:
         self, origin: str, *, expected_digest: str | None = None, manifest_version: int | None = None,
     ) -> FetchedManifest:
         try:
-            origin = normalize_origin(origin)
-            canonical = canonical_url(origin + "/")
-            origin = "https://" + canonical.authority
+            origin = canonical_app_origin(origin)
         except (ServiceError, EgressRefused, ValueError) as exc:
             raise ManifestFetchError("origin_invalid", "A valid HTTPS app origin is required") from exc
         if manifest_version is not None and manifest_version not in SUPPORTED_MANIFEST_VERSIONS:
@@ -95,11 +96,19 @@ class ManifestFetcher:
         loop = asyncio.get_running_loop()
         rules = HeaderRules(injected=[], amz_allowed=[], is_credential=lambda _value: False)
 
+        # Only an operator-listed origin is an internal destination, and then
+        # every address it resolves to must lie in the operator's network.
+        # Any other origin stays public, whatever the guard's policy allows.
+        network = (
+            {"network": "internal", "cidr": str(self.internal.cidr)}
+            if origin in self.internal.origins else {}
+        )
+
         async def send(path: str, limit: int) -> tuple[int, bytes]:
             destination = self.destination or parse_destination({
                 "host": parsed.hostname, "port": parsed.port or 443,
-                "path": path, "methods": ["GET"],
-            }, internal_destinations=InternalDestinations.DISABLED)
+                "path": path, "methods": ["GET"], **network,
+            }, internal_destinations=self.internal.destinations)
             response = await self.egress.send(
                 "GET", origin + path, destination, header_rules=rules,
                 bounds=Bounds(
@@ -119,6 +128,7 @@ class ManifestFetcher:
         try:
             selected = await asyncio.to_thread(select_variant, origin, supported, fetch)
             manifest = load_manifest(selected.data, reserved_names=reserved_app_ids())
+            check_manifest_keys(manifest)
         except ManifestError as exc:
             status = 502 if exc.code.endswith("_unavailable") else 422
             raise ManifestFetchError(exc.code, "The app manifest could not be fetched or validated", status) from exc

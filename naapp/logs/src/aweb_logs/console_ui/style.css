@@ -57,6 +57,8 @@ a:focus-visible, button:focus-visible { outline: 3px solid var(--accent); outlin
 .integrity-chain { border: 1px solid var(--line-strong); background: var(--surface); }
 .integrity-observed { border: 1px dashed var(--line-strong); }
 .integrity li { overflow-wrap: anywhere; }
+.take-away { margin: var(--s4) 0; }
+.take-away h2 { font-size: var(--step-2); margin: 0 0 var(--s2); }
 .verdict { font-weight: 700; }
 .verdict-ok { color: var(--ink); }
 .verdict-bad { color: var(--stop); }

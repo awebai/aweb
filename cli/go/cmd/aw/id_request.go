@@ -43,6 +43,9 @@ type localSigningIdentity struct {
 	IdentityHome      string
 	TeamID            string
 	Custody           string
+	// TeamCertificate, when set, is the team certificate to sign with, in
+	// place of the one stored in the home.
+	TeamCertificate *awid.TeamCertificate
 }
 
 var (
@@ -139,7 +142,37 @@ func runIDRequest(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	result, err := executeSignedIDRequest(method, parsedURL, identity, bodyBytes, headers, signPayload, idRequestTeamAuth)
+	approvalTarget := method + " " + parsedURL.String()
+	approvals, err := configuredApprovalClient(identity, approvalTarget)
+	if err != nil {
+		return err
+	}
+	if approvals != nil {
+		approvals.Notify = cmd.ErrOrStderr()
+	}
+	var result *idRequestExecutionResult
+	if approvals != nil && approvalResume {
+		original, receipt, readErr := readApprovalRecord(approvalRecord, approvalOrigin, approvalTarget)
+		if readErr != nil {
+			return readErr
+		}
+		headers.Set("Content-Type", "application/json")
+		bodyBytes, err = approvals.Resume(cmd.Context(), original, receipt)
+		if err != nil {
+			return err
+		}
+		result, err = executeSignedIDRequest(method, parsedURL, identity, bodyBytes, headers, signPayload, idRequestTeamAuth)
+	} else {
+		result, err = executeSignedIDRequest(method, parsedURL, identity, bodyBytes, headers, signPayload, idRequestTeamAuth)
+		if err == nil && result.Status == http.StatusPreconditionRequired && approvals != nil {
+			presentation, approvalErr := approvals.Complete428(cmd.Context(), result.Body, result.Status)
+			if approvalErr != nil {
+				return approvalErr
+			}
+			headers.Set("Content-Type", "application/json")
+			result, err = executeSignedIDRequest(method, parsedURL, identity, presentation, headers, signPayload, idRequestTeamAuth)
+		}
+	}
 	if err != nil {
 		return err
 	}
@@ -328,7 +361,9 @@ func teamRequestCertificate(identity *localSigningIdentity) (*awid.TeamCertifica
 	}
 	var cert *awid.TeamCertificate
 	var err error
-	if strings.TrimSpace(identity.IdentityHome) != "" {
+	if identity.TeamCertificate != nil {
+		cert = identity.TeamCertificate
+	} else if strings.TrimSpace(identity.IdentityHome) != "" {
 		certPath, pathErr := awconfig.IdentityHomeStoredPath(awconfig.IdentityHome{Root: identity.IdentityHome}, awconfig.TeamCertificateRelativePath(identity.TeamID))
 		if pathErr != nil {
 			return nil, pathErr

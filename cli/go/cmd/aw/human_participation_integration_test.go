@@ -80,6 +80,7 @@ func humanParticipationFixture(t *testing.T) (*humanParticipation, *[]string, *a
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(h.close)
 	age := 0.0
 	evidence := &awid.IDChainEvidence{Status: v["status_fixtures"].(map[string]any)["normal"].(map[string]any), NamespaceAuthority: map[string]any{"domain": "example.com", "dns_name": "_awid.example.com", "inherited": false, "controller_key": awid.ComputeDIDKey(root.Public().(ed25519.PublicKey))}, AgeSeconds: &age}
 	result := awid.VerifyIDChain(h.chain, awid.IDChainSubject{ID: id, DIDKey: did}, evidence, rec.Domain)
@@ -110,6 +111,14 @@ func TestHumanParticipationFetchConnectMailAndManifest(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
+		if strings.HasSuffix(r.URL.Path, "/status") {
+			// fetch-cert checks the fetched certificate against the team's current key.
+			json.NewEncoder(w).Encode(map[string]any{
+				"team_id": cert.Team, "team_did_key": awid.ComputeDIDKey(controller.Public().(ed25519.PublicKey)),
+				"status": "active", "revoked_at": nil,
+			})
+			return
+		}
 		auth := strings.Fields(r.Header.Get("Authorization"))
 		if len(auth) != 3 || auth[1] != h.record.DIDKey {
 			t.Errorf("wrong identity on %s", r.URL.Path)
@@ -134,7 +143,7 @@ func TestHumanParticipationFetchConnectMailAndManifest(t *testing.T) {
 			t.Errorf("invalid v2 request %s: %s", r.URL.Path, payload)
 		}
 		got, err := awid.DecodeTeamCertificateHeader(r.Header.Get("X-AWID-Team-Certificate"))
-		if err != nil || awid.VerifyTeamCertificate(got, controller.Public().(ed25519.PublicKey)) != nil {
+		if err != nil || awid.CheckDecodedTeamCertificate(got, awid.ComputeDIDKey(controller.Public().(ed25519.PublicKey))) != nil {
 			t.Error("bad team cert")
 		}
 		bundle, err := awid.DecodeIDChainHeader(r.Header.Get("X-AWID-ID-Chain"))
@@ -186,6 +195,22 @@ func TestHumanParticipationFetchConnectMailAndManifest(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("AWID_REGISTRY_URL", srv.URL)
 	h.record.RegistryURL = srv.URL
+	var signatureDescriptions bytes.Buffer
+	nextCommand := func(operation string) {
+		h.close()
+		next, err := loadHumanParticipation(h.record.StableID, h.record.Domain, awconfig.HumanKeychain{}, func(text string) ([]byte, error) {
+			*prompts = append(*prompts, text)
+			return []byte(humanPassphrase), nil
+		}, func() error { return nil })
+		if err != nil {
+			t.Fatal(err)
+		}
+		next.record.RegistryURL = srv.URL
+		next.operation = operation
+		next.output = &signatureDescriptions
+		h, activeHuman = next, next
+		t.Cleanup(next.close)
+	}
 	oldNamespace, oldTeam, oldCert, oldRegistry := teamFetchCertNamespace, teamFetchCertTeam, teamFetchCertID, teamFetchCertRegistry
 	oldURL, oldInitTeam, oldHumanName := initURL, initTeam, initHumanName
 	t.Cleanup(func() {
@@ -201,6 +226,7 @@ func TestHumanParticipationFetchConnectMailAndManifest(t *testing.T) {
 	teamFetchCertTeam = "demo"
 	teamFetchCertID = cert.CertificateID
 	teamFetchCertRegistry = srv.URL
+	nextCommand("aw id team fetch-cert")
 	if err := runHumanFetchCert(teamFetchCertCmd); err != nil {
 		t.Fatal(err)
 	}
@@ -215,6 +241,7 @@ func TestHumanParticipationFetchConnectMailAndManifest(t *testing.T) {
 		{"explicit name", "  Chosen Human  ", "Chosen Human"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			nextCommand("aw init")
 			initHumanName = tc.value
 			beforePrompts, beforeConnects := len(*prompts), len(connectNames)
 			if err := runHumanConnect(initCmd); err != nil {
@@ -231,6 +258,8 @@ func TestHumanParticipationFetchConnectMailAndManifest(t *testing.T) {
 			}
 		})
 	}
+	nextCommand("aw mail send")
+	setHumanMailOperation("bob", "Review", "Please review")
 	c, _, err := h.client(cert.Team, "")
 	if err != nil {
 		t.Fatal(err)
@@ -240,11 +269,11 @@ func TestHumanParticipationFetchConnectMailAndManifest(t *testing.T) {
 	if _, err := c.SendMessage(context.Background(), &awid.SendMessageRequest{ToAlias: "bob", Subject: "Review", Body: "Please review"}); err != nil {
 		t.Fatal(err)
 	}
-	if messages != 1 || len(*prompts)-before != 2 {
+	if messages != 1 || len(*prompts)-before != 1 {
 		t.Fatalf("send messages=%d prompts=%d", messages, len(*prompts)-before)
 	}
 	for _, p := range (*prompts)[before:] {
-		if !strings.Contains(p, "bob") || !strings.Contains(p, "Review") || !strings.Contains(p, "sha256") || !strings.Contains(p, "signature ") {
+		if !strings.Contains(p, "bob") || !strings.Contains(p, "Review") || !strings.Contains(p, "sha256") {
 			t.Fatalf("unrecognizable mail prompt %s", p)
 		}
 	}
@@ -260,6 +289,7 @@ func TestHumanParticipationFetchConnectMailAndManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 	before = len(*prompts)
+	nextCommand("aw secrets request")
 	result, handled, err := executeInstalledManifestTool("secrets", []string{"request"})
 	if err != nil || !handled || result.Status != 200 {
 		t.Fatalf("manifest: %v %v %+v", err, handled, result)
@@ -284,13 +314,15 @@ func TestHumanParticipationFetchConnectMailAndManifest(t *testing.T) {
 	mailSendTo = "bob"
 	mailSendSubject = "Review"
 	mailSendBody = "Please review"
+	nextCommand("aw mail send")
 	before = len(*prompts)
 	if err := mailSendCmd.RunE(mailSendCmd, nil); err != nil {
 		t.Fatal(err)
 	}
-	if len(*prompts)-before != 3 {
-		t.Fatalf("CLI send prompt count=%d, want lookup+envelope+request", len(*prompts)-before)
+	if len(*prompts)-before != 1 {
+		t.Fatalf("CLI send prompt count=%d, want one unlock for lookup+envelope+request", len(*prompts)-before)
 	}
+	nextCommand("aw mail inbox")
 	before = len(*prompts)
 	if err := mailInboxCmd.RunE(mailInboxCmd, nil); err != nil {
 		t.Fatal(err)
@@ -299,6 +331,7 @@ func TestHumanParticipationFetchConnectMailAndManifest(t *testing.T) {
 		t.Fatalf("CLI inbox prompts=%d", len(*prompts)-before)
 	}
 	mailShowMessageID = "incoming"
+	nextCommand("aw mail show")
 	before = len(*prompts)
 	if err := mailShowCmd.RunE(mailShowCmd, nil); err != nil {
 		t.Fatal(err)
@@ -307,23 +340,26 @@ func TestHumanParticipationFetchConnectMailAndManifest(t *testing.T) {
 		t.Fatalf("CLI show prompts=%d", len(*prompts)-before)
 	}
 	mailReplyBody = "Reply body"
+	nextCommand("aw mail reply")
 	before = len(*prompts)
+	beforeDescriptions := signatureDescriptions.Len()
 	if err := mailReplyCmd.RunE(mailReplyCmd, []string{"incoming"}); err != nil {
 		t.Fatal(err)
 	}
-	if len(*prompts)-before != 5 {
-		t.Fatalf("CLI reply prompts=%d, want source+participants+envelope+request+ack", len(*prompts)-before)
+	if len(*prompts)-before != 1 {
+		t.Fatalf("CLI reply prompts=%d, want one unlock for source+participants+envelope+request+ack", len(*prompts)-before)
 	}
-	for _, prompt := range (*prompts)[len(*prompts)-2:] {
-		if !strings.Contains(prompt, "bob") || !strings.Contains(prompt, "Review") || !strings.Contains(prompt, "sha256") {
-			t.Fatalf("reply prompt=%s", prompt)
+	for _, text := range []string{"bob", "Review", "sha256", "signature 5:"} {
+		if !strings.Contains(signatureDescriptions.String()[beforeDescriptions:], text) {
+			t.Fatalf("reply description missing %s", text)
 		}
 	}
 
 	if !reflect.DeepEqual(beforeWorkspace, snapshotJoinFiles(t, cwd)) {
 		t.Fatal("human operation changed adjacent agent workspace")
 	}
-	_, sel, err := h.client(cert.Team, "")
+	nextCommand("aw mail inbox")
+	c, sel, err := h.client(cert.Team, "")
 	if err != nil {
 		t.Fatal(err)
 	}

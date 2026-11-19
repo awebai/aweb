@@ -13,7 +13,7 @@ from aweb_naapp.manifest import (
     load_manifest,
     select_variant,
 )
-from tests.test_manifest_v2_vectors import RESERVED, V2, _manifest_bytes
+from tests.test_manifest_v2_vectors import RESERVED, V2, _manifest_bytes, _read
 
 AWEB_ROOT = Path(__file__).resolve().parents[2]
 VECTOR_PATH = AWEB_ROOT / "docs" / "vectors" / "owner-act-delivery-v1.json"
@@ -158,10 +158,10 @@ def test_v3_keeps_v2_load_verdicts(case):
     expected = case["expected"]
     if expected["accepted"]:
         resolved = {**expected["resolved"], "manifest_version": 3}
-        assert load_manifest(canonical_bytes(value), reserved_names=RESERVED).view() == resolved
+        assert _read(canonical_bytes(value)).view() == resolved
     else:
         with pytest.raises(ManifestError) as caught:
-            load_manifest(canonical_bytes(value), reserved_names=RESERVED)
+            _read(canonical_bytes(value))
         assert caught.value.code == expected["error"]
 
 

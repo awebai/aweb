@@ -38,9 +38,10 @@
 #       trailing newlines, and no here-string, which appends one.
 #   verify-published  --archive <oci.tar> --version <X.Y.Z>
 #                     --source-sha <sha> --repository <ghcr.io/owner/name>
-#                     [--observed-digest <tag>=sha256:<hex> ...]
+#                     [--version-only] [--observed-digest <tag>=sha256:<hex> ...]
 #       Refuses unless the version tag AND latest resolve to exactly the
 #       staged index digest (observations via skopeo inspect, or supplied).
+#       --version-only verifies just the immutable RC tag, never latest.
 
 set -euo pipefail
 
@@ -61,8 +62,10 @@ MODE="${1:-}"; shift || true
 ARCHIVE='' VERSION='' REPOSITORY='' SOURCE_SHA='' OUT=''
 TAG_KIND='' STAGED='' LISTING_STATUS='' PRESENT='' REMOTE_DIGEST='' TAG_NAME=''
 OBSERVED=()
+VERSION_ONLY=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --version-only) VERSION_ONLY=true; shift ;;
     --archive) ARCHIVE="$2"; shift 2 ;;
     --version) VERSION="$2"; shift 2 ;;
     --repository) REPOSITORY="$2"; shift 2 ;;
@@ -230,7 +233,9 @@ print("yes" if sys.argv[1] in tags else "no")
     for pair in "${OBSERVED[@]+"${OBSERVED[@]}"}"; do
       observed_map["${pair%%=*}"]="${pair#*=}"
     done
-    for tag in "$VERSION" latest; do
+    tags=("$VERSION")
+    if [[ "$VERSION_ONLY" == false ]]; then tags+=(latest); fi
+    for tag in "${tags[@]}"; do
       if [[ -n "${observed_map[$tag]:-}" ]]; then
         remote="${observed_map[$tag]}"
       else

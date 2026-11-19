@@ -25,6 +25,7 @@ func newTeamServerFixture(t *testing.T, domain string) teamServerFixture {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("AWID_SKIP_DNS_VERIFY", "1")
 	registryURL := realAWIDFixture(t)
+	t.Setenv("AWID_REGISTRY_URL", registryURL)
 	registry := awid.NewAWIDRegistryClient(nil, nil)
 	ctx := context.Background()
 

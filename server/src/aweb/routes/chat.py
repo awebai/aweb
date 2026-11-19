@@ -352,19 +352,6 @@ async def create_or_send(
     redis=Depends(get_redis),
     auth: MessagingAuth = Depends(get_messaging_auth),
 ):
-    from aweb.human_channels.http import ingress_requested, accept_native_http
-
-    if ingress_requested(request):
-        accepted = await accept_native_http(
-            request, payload, auth=auth, db=db, kind="chat"
-        )
-        return await _create_session_response(
-            db,
-            redis,
-            session_id=UUID(accepted["conversation_id"]),
-            message_id=accepted["message_id"],
-            target_dids=[],
-        )
     attachment_context = prepare_attachment_send(
         getattr(request.app.state, "attachment_backend", None), payload, auth,
     )
@@ -1215,13 +1202,6 @@ async def send_message(
     db=Depends(get_db),
     auth: MessagingAuth = Depends(get_messaging_auth),
 ) -> SendMessageResponse:
-    from aweb.human_channels.http import ingress_requested, accept_native_http
-
-    if ingress_requested(request):
-        accepted = await accept_native_http(
-            request, payload, auth=auth, db=db, kind="chat", session_id=session_id
-        )
-        return SendMessageResponse(message_id=accepted['message_id'],conversation_id=accepted['conversation_id'],delivered=True)
     attachment_context = prepare_attachment_send(
         getattr(request.app.state, "attachment_backend", None), payload, auth,
     )

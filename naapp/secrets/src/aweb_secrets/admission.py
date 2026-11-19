@@ -301,7 +301,9 @@ async def _ancestor_charges(
     for node in nodes:
         if node.policy_digest is None:
             continue
-        policy = await records.policy(tx, installation.installation_id, node.policy_digest)
+        policy = await records.policy(
+            tx, installation.installation_id, node.policy_digest, team_id=installation.team_id
+        )
         if policy is None:
             raise AdmissionRefused("operation_not_allowed")
         assert node.parent_secret_id is not None and node.issuing_principal is not None
@@ -397,7 +399,9 @@ async def _admit_once(
 
     policies: list[Policy] = []
     for candidate in candidates:
-        policy = await records.policy(tx, installation.installation_id, candidate.policy_digest)
+        policy = await records.policy(
+            tx, installation.installation_id, candidate.policy_digest, team_id=installation.team_id
+        )
         if policy is None:
             raise RuntimeError("a grant references a policy that cannot be read")
         policies.append(policy)

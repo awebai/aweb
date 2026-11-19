@@ -12,7 +12,7 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 
 from awid.attestation_records import (
     MEMBER_CUSTODY,
@@ -31,7 +31,7 @@ from awid_service.deps import get_db
 from awid_service.routes.teams import (
     _presents_trusted_service_token,
     _require_team_controller,
-    _verify_path_signature,
+    _signed_reader,
 )
 
 router = APIRouter(prefix="/v1/namespaces/{domain}/teams", tags=["attestation-records"], route_class=ControllerAuthRoute)
@@ -361,18 +361,16 @@ _SIGNED_RECORD_KINDS = (
 _TEAM_NOT_FOUND = "Team not found"
 
 
-def _team_key_reader(request: Request, team, authorization: str | None) -> bool:
-    """The team key's path signature, or the trusted service token.
+async def _team_key_reader(request: Request, team, *, domain: str, name: str) -> bool:
+    """The team key's signed read (teams._signed_reader), or the trusted service token.
 
     Members are not readers: the list would show them custodian records that
     are otherwise readable only by exact key, and rotation needs the team key.
     """
     if _presents_trusted_service_token(request):
         return True
-    if not authorization:
-        return False
     try:
-        return _verify_path_signature(request, authorization) == team["team_did_key"]
+        return await _signed_reader(request, domain=domain, name=name) == team["team_did_key"]
     except HTTPException:
         return False
 
@@ -387,7 +385,6 @@ async def list_signed_records(
     name: str,
     limit: int | None = Query(default=None),
     cursor: str | None = Query(default=None),
-    authorization: str | None = Header(default=None),
     db_infra=Depends(get_db),
 ) -> dict:
     """Every record the team key has signed and AWID stores, in stable pages.
@@ -401,7 +398,7 @@ async def list_signed_records(
         "SELECT team_uuid, team_did_key FROM {{tables.teams}} WHERE domain = $1 AND name = $2 AND deleted_at IS NULL",
         domain, name,
     )
-    if team is None or not _team_key_reader(request, team, authorization):
+    if team is None or not await _team_key_reader(request, team, domain=domain, name=name):
         raise HTTPException(status_code=404, detail=_TEAM_NOT_FOUND)
     try:
         page_size, after = validate_pagination_params(limit, cursor)

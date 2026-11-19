@@ -7532,12 +7532,24 @@ function lstatIfExists(path) {
   }
 }
 async function readYAML(path) {
+  let content;
   try {
-    const content = await readFile3(path, "utf-8");
-    return yaml.load(content) || null;
-  } catch {
-    return null;
+    content = await readFile3(path, "utf-8");
+  } catch (error) {
+    if (error.code === "ENOENT") return null;
+    throw new Error(`cannot read YAML configuration ${path}`, { cause: error });
   }
+  let value;
+  try {
+    value = yaml.load(content);
+  } catch (error) {
+    throw new Error(`invalid YAML configuration ${path}`, { cause: error });
+  }
+  if (value === void 0 || value === null) return {};
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`YAML configuration must contain a mapping: ${path}`);
+  }
+  return value;
 }
 
 // channel-core/src/identity/strict_json.ts

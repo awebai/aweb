@@ -12,7 +12,7 @@ import logging
 from uuid import UUID
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Request
 from starlette.responses import Response
 from awid.signing import canonical_json_bytes
 from aweb.db import TransactionInfra

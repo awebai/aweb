@@ -3,6 +3,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from uuid import uuid4
+from team_facts_fixtures import legacy_team
 
 import httpx
 import pytest
@@ -46,6 +47,9 @@ def harness(monkeypatch):
         def __init__(self):
             self.calls = []
 
+        async def get_team_fresh(self, domain, name):
+            return legacy_team(domain, name)
+
         async def get_team_revocations(self, *_):
             self.calls.append(clock.seconds)
             if self.fail_at is not None and clock.seconds >= self.fail_at:
@@ -66,7 +70,9 @@ def harness(monkeypatch):
                 self.grant_reads += 1
                 return dict(team_id=identity.team_id, grant_did_key=identity.grant.session_did_key,
                             expires_at=identity.grant.expires_at, revoked_at=None,
-                            issued_by_certificate_id="cert", agent_id=identity.agent_id, status="active", deleted_at=None)
+                            issued_by_certificate_id="cert", agent_id=identity.agent_id, status="active", deleted_at=None,
+                            # The subject is a member under its team's current key.
+                            certificate_id="cert", accepted_team_did_key="did:key:zTeam", current_team_did_key="did:key:zTeam")
             if "chat_participants" in sql:
                 return {"did": identity.did_key}
             return {"did_key": identity.did_key, "did_aw": ""}

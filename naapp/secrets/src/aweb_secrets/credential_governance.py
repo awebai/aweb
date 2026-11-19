@@ -9,7 +9,7 @@ from aweb_naapp.runtime.installation import AdmittedInstallation
 from pgdbm.core import TransactionManager
 
 from aweb_secrets.change_sets import POLICY_PREFIX
-from aweb_secrets.owners import OWNER_ROLE
+from aweb_secrets.owners import OWNER_ROLE, owner_binding
 
 # The module ID secrets has always applied the shared credential migrations under.
 CREDENTIAL_AUDIT_MIGRATIONS = "aweb_secrets_credential_audit"
@@ -54,11 +54,9 @@ class ChangeApprovals:
 async def _is_owner_scope(
     tx: TransactionManager, scope: str, admitted: AdmittedInstallation
 ) -> bool:
-    return bool(
-        await tx.fetch_value(
-            "SELECT 1 FROM {{tables.owner_principals}} WHERE scope=$1 AND installation_id=$2 AND team_id=$3",
-            scope,
-            admitted.installation_id,
-            admitted.team_id,
+    return (
+        await owner_binding(
+            tx, scope, installation_id=admitted.installation_id, team_id=admitted.team_id
         )
+        is not None
     )

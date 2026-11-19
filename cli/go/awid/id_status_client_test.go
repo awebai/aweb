@@ -105,8 +105,11 @@ func openEpochKey(status map[string]any) string {
 }
 
 func (env *statusEnv) makeClient(timeout time.Duration) *IDStatusClient {
+	httpClient := &http.Client{Transport: env}
+	registry := &RegistryClient{DefaultRegistryURL: statusTestRegistry, HTTPClient: httpClient, Resolver: NewRegistryResolver(httpClient, nil)}
+	routeUntrustedRegistriesToInjectedClient(registry)
 	return &IDStatusClient{
-		Registry:  &RegistryClient{DefaultRegistryURL: statusTestRegistry, HTTPClient: &http.Client{Transport: env}},
+		Registry:  registry,
 		Authority: env.verifyDomain,
 		Route:     func(context.Context, string) (string, error) { return statusTestRegistry, nil },
 		Timeout:   timeout,

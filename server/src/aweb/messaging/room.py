@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+from aweb.identity_address import require_address_evidence
 from datetime import datetime, timezone
 from typing import Literal
 from uuid import UUID
@@ -254,6 +255,7 @@ async def exact_room_message(db, actor, message_id):
 
 
 async def post_room_message(db, actor, post: RoomPost, *, id_chain=None):
+    require_address_evidence(actor)
     if post.e2ee:
         raise ValidationError("room_e2ee_unsupported")
     # Authenticate the preserved bytes before trusting any claims in them.

@@ -27,7 +27,7 @@ async def apply_revision_migrations(db: AsyncDatabaseManager) -> None:
 
 
 async def config_revision(
-    db: AsyncDatabaseManager | TransactionManager, installation_id: str
+    db: AsyncDatabaseManager | TransactionManager, installation_id: str, *, team_id: str
 ) -> int:
     """The installation's current revision; 0 before anything has changed.
 
@@ -35,30 +35,36 @@ async def config_revision(
     set is confirmed with :func:`claim_config_revision`, never by comparing
     against this."""
     revision = await db.fetch_value(
-        "SELECT revision FROM {{tables.config_revisions}} WHERE installation_id = $1",
+        "SELECT revision FROM {{tables.config_revisions}} WHERE installation_id = $1 AND team_id = $2",
         installation_id,
+        team_id,
     )
     return int(revision or 0)
 
 
-async def bump_config_revision(tx: TransactionManager, installation_id: str) -> int:
+async def bump_config_revision(
+    tx: TransactionManager, installation_id: str, *, team_id: str
+) -> int:
     """Move the installation to its next revision in the caller's transaction.
 
     Returns the new revision. The row stays locked until the transaction
     ends, so concurrent changes take turns."""
     revision = await tx.fetch_value(
         """
-        INSERT INTO {{tables.config_revisions}} (installation_id, revision) VALUES ($1, 1)
-        ON CONFLICT (installation_id) DO UPDATE
+        INSERT INTO {{tables.config_revisions}} (installation_id, team_id, revision) VALUES ($1, $2, 1)
+        ON CONFLICT (installation_id, team_id) DO UPDATE
             SET revision = {{tables.config_revisions}}.revision + 1
         RETURNING revision
         """,
         installation_id,
+        team_id,
     )
     return int(revision)
 
 
-async def claim_config_revision(tx: TransactionManager, installation_id: str, base: int) -> int:
+async def claim_config_revision(
+    tx: TransactionManager, installation_id: str, base: int, *, team_id: str
+) -> int:
     """Claim the next revision for a change set drafted at revision ``base``.
 
     The bump comes first and takes the installation's row lock (or, at
@@ -70,7 +76,7 @@ async def claim_config_revision(tx: TransactionManager, installation_id: str, ba
     Call it at the start of the confirming transaction's write phase, after
     the installation fence, the role hold and the approval admit, so the
     revision row is the last lock the transaction takes."""
-    revision = await bump_config_revision(tx, installation_id)
+    revision = await bump_config_revision(tx, installation_id, team_id=team_id)
     if revision != base + 1:
         raise ChangeRefused(
             "the configuration changed after this change set was drafted",

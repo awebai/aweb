@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from team_facts_fixtures import legacy_registry
+
 from identity_binding_support import seed_verified_bindings
 
 import asyncio
@@ -171,7 +173,7 @@ def _build_test_app(aweb_db, team_did_key):
     registry = AsyncMock()
     registry.get_team_public_key = AsyncMock(return_value=team_did_key)
     registry.get_team_revocations = AsyncMock(return_value=set())
-    app.state.awid_registry_client = registry
+    app.state.awid_registry_client = legacy_registry(registry)
 
     return app
 

@@ -97,6 +97,19 @@ func runDoctorCLI(t *testing.T, bin, dir string, args ...string) ([]byte, error)
 	return run.CombinedOutput()
 }
 
+// runDoctorCLIWithRegistry is runDoctorCLI with registryURL named by
+// AWID_REGISTRY_URL, the operator's explicit registry choice.
+func runDoctorCLIWithRegistry(t *testing.T, bin, dir, registryURL string, args ...string) ([]byte, error) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	run := exec.CommandContext(ctx, bin, args...)
+	run.Dir = dir
+	run.Env = append(testCommandEnv(dir), "AWID_REGISTRY_URL="+registryURL)
+	return run.CombinedOutput()
+}
+
 func decodeDoctorOutput(t *testing.T, out []byte) doctorOutput {
 	t.Helper()
 	var got doctorOutput

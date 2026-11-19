@@ -7,9 +7,11 @@ from aweb_naapp.runtime.approvals import ApprovalState, Assurance, Decision, PgA
 from aweb_naapp.runtime.audit import AuditEvent, AuditKind
 
 from aweb_secrets.audit_sink import SecretsAudit
+from aweb_secrets.owners import approver_scope
 from aweb_secrets.use_audit import UseApprovalAudit, UseAuditUnavailable
 from tests.test_change_sets import ALICE, by_member, change_set, enrol_owner
 from tests.test_credential_audit import audit_for, designate
+from tests.test_credential_audit import world as _audit_world
 from tests.test_use_approvals import designate_approver
 from tests.test_use_approvals import uses as _uses
 from tests.test_use_approvals import world as _world
@@ -17,6 +19,7 @@ from tests.test_use_audit import composition
 
 world = _world
 uses = _uses
+audit_world = _audit_world
 
 
 async def composite(world):
@@ -43,12 +46,17 @@ async def test_both_production_branches_are_required(world, missing):
         )
 
 
-async def test_designation_reaches_the_credential_branch_and_sole_signed_outbox(world):
+async def test_designation_reaches_the_credential_branch_and_sole_signed_outbox(audit_world):
+    world = audit_world
     _, credentials, _ = await composite(world)
+    before = await world.db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}")
     await designate(world, credentials)
-    assert await world.db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}") == 1
+    assert await world.db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}") == before + 1
     assert (
-        await world.db.fetch_value("SELECT kind FROM {{tables.credential_audit_events}}")
+        await world.db.fetch_value(
+            "SELECT kind FROM {{tables.credential_audit_events}} WHERE details->>'scope'=$1",
+            approver_scope(world.admitted.installation_id, world.admitted.team_id, "audit-contact"),
+        )
         == AuditKind.APPROVER_DESIGNATED.value
     )
 

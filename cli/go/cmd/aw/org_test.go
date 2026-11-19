@@ -98,6 +98,8 @@ func TestOrgCommandsUseOnlyHostHumanAuth(t *testing.T) {
 		{"not-owner", []string{"org", "create", "machine"}, "/api/v1/cli/organizations", 404, map[string]any{"detail": "Not found"}, "http_status", float64(404), true},
 		{"old-scope", []string{"org", "list"}, "/api/v1/cli/organizations", 200, map[string]any{}, "code", "cli_auth_relogin_required", true},
 		{"chosen-team", []string{"team", "create", "analytics", "--org", "machine"}, "/api/v1/cli/teams", 201, map[string]any{"team_id": "service-team", "canonical_team_id": "analytics:machine.aweb.ai", "namespace": "machine.aweb.ai", "org_handle": "machine", "reused": false, "token": "test-invitation", "invite_id": "invite-1", "max_uses": 1, "server_url": "https://service.example/api"}, "team_id", "analytics:machine.aweb.ai", false},
+		{"named-local-team", []string{"team", "create", "analytics", "--org", "machine", "--first-agent-name", "terminal", "--first-agent-local"}, "/api/v1/cli/teams", 201, map[string]any{"team_id": "service-team", "canonical_team_id": "analytics:machine.aweb.ai", "namespace": "machine.aweb.ai", "org_handle": "machine", "reused": false, "token": "test-invitation", "invite_id": "invite-1", "max_uses": 1, "server_url": "https://service.example/api"}, "team_id", "analytics:machine.aweb.ai", false},
+		{"named-global-team", []string{"team", "create", "analytics", "--org", "machine", "--first-agent-name", "terminal", "--first-agent-global"}, "/api/v1/cli/teams", 201, map[string]any{"team_id": "service-team", "canonical_team_id": "analytics:machine.aweb.ai", "namespace": "machine.aweb.ai", "org_handle": "machine", "reused": false, "token": "test-invitation", "invite_id": "invite-1", "max_uses": 1, "server_url": "https://service.example/api"}, "team_id", "analytics:machine.aweb.ai", false},
 		{"consumed-team", []string{"team", "create", "analytics", "--org", "machine"}, "/api/v1/cli/teams", 200, map[string]any{"team_id": "service-team", "canonical_team_id": "analytics:machine.aweb.ai", "namespace": "machine.aweb.ai", "org_handle": "machine", "reused": true, "server_url": "https://service.example/api"}, "reused", true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -135,6 +137,18 @@ func TestOrgCommandsUseOnlyHostHumanAuth(t *testing.T) {
 						t.Error(err)
 					}
 					if tc.path == "/api/v1/cli/teams" {
+						if strings.HasPrefix(tc.name, "named-") {
+							creation, _ := request["creation"].(map[string]any)
+							scope := "local"
+							if tc.name == "named-global-team" {
+								scope = "global"
+							}
+							if creation["name"] != "terminal" || creation["identity_scope"] != scope {
+								t.Errorf("missing named creation intent: %v", request)
+							}
+						} else if _, ok := request["creation"]; ok {
+							t.Error("unnamed team create gained child intent")
+						}
 						requestID, _ := request["request_id"].(string)
 						if request["org"] != "machine" || request["name"] != "analytics" || len(requestID) != 36 {
 							t.Error("chosen-org team request lost its binding")

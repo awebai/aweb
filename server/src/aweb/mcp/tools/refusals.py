@@ -77,6 +77,8 @@ def send_refusal(exc: Exception, *, address: str = "", hosted_envelope: bool = F
             return json.dumps({"error": next_action, "reason": exc.reason})
         return json.dumps({"error": exc.reason})
     detail = getattr(exc, "detail", None)
+    if isinstance(exc, HTTPException) and isinstance(detail, dict) and detail.get("code") == "address_evidence_unavailable":
+        return json.dumps({"error": detail["message"], "reason": detail["code"], "retryable": True})
     # Mail refuses an unknown address without naming it; chat names it.
     if address and detail in ("Recipient address not found", f"Recipient address not found: {address}"):
         return json.dumps({"error": unreachable_address_refusal(address)})

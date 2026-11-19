@@ -68,9 +68,18 @@ def _encode_certificate(cert: dict) -> str:
 
 
 class TestCertificateSignature:
-    def test_valid_certificate(self):
-        from aweb.team_auth import _verify_certificate_signature
+    def _check(self, cert, team_did_key, agent_did_key):
+        from aweb.team_auth import parse_and_verify_certificate
 
+        return parse_and_verify_certificate(
+            _encode_certificate(cert),
+            request_did_key=agent_did_key,
+            team_did_key=team_did_key,
+            revoked_certificate_ids=(),
+            registered_certificate_ids=None,
+        )
+
+    def test_valid_certificate(self):
         team_sk, _, team_did_key = _make_keypair()
         _, _, agent_did_key = _make_keypair()
 
@@ -80,29 +89,27 @@ class TestCertificateSignature:
             alias="alice",
         )
 
-        assert _verify_certificate_signature(cert, team_did_key) is True
+        assert self._check(cert, team_did_key, agent_did_key)["certificate_id"] == "cert-001"
 
     def test_invalid_signature_rejected(self):
-        from aweb.team_auth import _verify_certificate_signature
-
         _, _, team_did_key = _make_keypair()
         _, _, agent_did_key = _make_keypair()
         other_sk, _, _ = _make_keypair()
 
         cert = _make_certificate(other_sk, team_did_key, agent_did_key)
 
-        assert _verify_certificate_signature(cert, team_did_key) is False
+        with pytest.raises(ValueError, match="bad_signature"):
+            self._check(cert, team_did_key, agent_did_key)
 
     def test_tampered_certificate_rejected(self):
-        from aweb.team_auth import _verify_certificate_signature
-
         team_sk, _, team_did_key = _make_keypair()
         _, _, agent_did_key = _make_keypair()
 
         cert = _make_certificate(team_sk, team_did_key, agent_did_key)
         cert["alias"] = "mallory"
 
-        assert _verify_certificate_signature(cert, team_did_key) is False
+        with pytest.raises(ValueError, match="bad_signature"):
+            self._check(cert, team_did_key, agent_did_key)
 
 
 class TestParseAndVerifyCertificate:
@@ -116,12 +123,13 @@ class TestParseAndVerifyCertificate:
         cert = _make_certificate(team_sk, team_did_key, agent_did_key)
         encoded = _encode_certificate(cert)
 
-        with pytest.raises(ValueError, match="did_key mismatch"):
+        with pytest.raises(ValueError, match="member_key_mismatch"):
             parse_and_verify_certificate(
                 encoded,
                 request_did_key=other_did_key,
-                team_public_key_resolver=lambda _ta: team_did_key,
-                revocation_checker=lambda _ta, _cid: False,
+                team_did_key=team_did_key,
+                revoked_certificate_ids=(),
+                registered_certificate_ids=None,
             )
 
     def test_revoked_certificate_rejected(self):
@@ -140,8 +148,9 @@ class TestParseAndVerifyCertificate:
             parse_and_verify_certificate(
                 encoded,
                 request_did_key=agent_did_key,
-                team_public_key_resolver=lambda _ta: team_did_key,
-                revocation_checker=lambda _ta, _cid: True,
+                team_did_key=team_did_key,
+                revoked_certificate_ids={"revoked-cert"},
+                registered_certificate_ids=None,
             )
 
     def test_valid_full_flow(self):
@@ -161,8 +170,9 @@ class TestParseAndVerifyCertificate:
         result = parse_and_verify_certificate(
             encoded,
             request_did_key=agent_did_key,
-            team_public_key_resolver=lambda _ta: team_did_key,
-            revocation_checker=lambda _ta, _cid: False,
+            team_did_key=team_did_key,
+            revoked_certificate_ids=(),
+            registered_certificate_ids=None,
         )
 
         assert result["team_id"] == "backend:acme.com"
@@ -174,12 +184,13 @@ class TestParseAndVerifyCertificate:
     def test_malformed_base64_rejected(self):
         from aweb.team_auth import parse_and_verify_certificate
 
-        with pytest.raises(ValueError, match="Malformed certificate"):
+        with pytest.raises(ValueError, match="malformed"):
             parse_and_verify_certificate(
                 "not-valid-base64!!!",
                 request_did_key="did:key:z6Mkfake",
-                team_public_key_resolver=lambda _ta: "",
-                revocation_checker=lambda _ta, _cid: False,
+                team_did_key="",
+                revoked_certificate_ids=(),
+                registered_certificate_ids=None,
             )
 
     def test_malformed_json_rejected(self):
@@ -187,12 +198,13 @@ class TestParseAndVerifyCertificate:
 
         encoded = base64.b64encode(b"this is not json").decode()
 
-        with pytest.raises(ValueError, match="Malformed certificate"):
+        with pytest.raises(ValueError, match="malformed"):
             parse_and_verify_certificate(
                 encoded,
                 request_did_key="did:key:z6Mkfake",
-                team_public_key_resolver=lambda _ta: "",
-                revocation_checker=lambda _ta, _cid: False,
+                team_did_key="",
+                revoked_certificate_ids=(),
+                registered_certificate_ids=None,
             )
 
     def test_unsupported_version_rejected(self):
@@ -205,12 +217,13 @@ class TestParseAndVerifyCertificate:
         cert["version"] = 99
         encoded = _encode_certificate(cert)
 
-        with pytest.raises(ValueError, match="Unsupported certificate version"):
+        with pytest.raises(ValueError, match="unsupported_version"):
             parse_and_verify_certificate(
                 encoded,
                 request_did_key=agent_did_key,
-                team_public_key_resolver=lambda _ta: team_did_key,
-                revocation_checker=lambda _ta, _cid: False,
+                team_did_key=team_did_key,
+                revoked_certificate_ids=(),
+                registered_certificate_ids=None,
             )
 
     def test_persistent_cert_returns_member_did_aw_and_address(self):
@@ -230,8 +243,9 @@ class TestParseAndVerifyCertificate:
         result = parse_and_verify_certificate(
             encoded,
             request_did_key=agent_did_key,
-            team_public_key_resolver=lambda _ta: team_did_key,
-            revocation_checker=lambda _ta, _cid: False,
+            team_did_key=team_did_key,
+            revoked_certificate_ids=(),
+            registered_certificate_ids=None,
         )
 
         assert result["member_did_aw"] == "did:aw:z6Mkstable"
@@ -254,8 +268,9 @@ class TestParseAndVerifyCertificate:
         result = parse_and_verify_certificate(
             encoded,
             request_did_key=agent_did_key,
-            team_public_key_resolver=lambda _ta: team_did_key,
-            revocation_checker=lambda _ta, _cid: False,
+            team_did_key=team_did_key,
+            revoked_certificate_ids=(),
+            registered_certificate_ids=None,
         )
 
         assert result["member_did_aw"] == ""
@@ -359,19 +374,18 @@ class TestCertificateWithALoneSurrogate:
     canonicalised. It is a failed signature, never an encoding error."""
 
     def test_is_a_failed_signature(self):
-        from aweb.team_auth import _verify_certificate_signature, parse_and_verify_certificate
+        from aweb.team_auth import parse_and_verify_certificate
 
         team_sk, _, team_did_key = _make_keypair()
         _, _, agent_did_key = _make_keypair()
         cert = _make_certificate(team_sk, team_did_key, agent_did_key)
         text = json.dumps(cert).replace('"version": 1', '"note": "\\ud800", "version": 1')
-        poisoned = json.loads(text)
-        assert _verify_certificate_signature(poisoned, team_did_key) is False
         with pytest.raises(ValueError) as refused:
             parse_and_verify_certificate(
                 base64.b64encode(text.encode()).decode(),
                 request_did_key=agent_did_key,
-                team_public_key_resolver=lambda _team_id: team_did_key,
-                revocation_checker=lambda _team_id, _cert_id: False,
+                team_did_key=team_did_key,
+                revoked_certificate_ids=(),
+                registered_certificate_ids=None,
             )
-        assert str(refused.value) == "Certificate signature verification failed"
+        assert str(refused.value) == "bad_signature"

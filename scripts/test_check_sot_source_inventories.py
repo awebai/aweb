@@ -68,6 +68,25 @@ class SourceInventoryTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "unsupported table declaration.*001.sql"):
                 inventories.extract_sql_tables(migrations)
 
+    def test_retired_schema_cleanup_does_not_change_component_inventory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            migrations = Path(tmp)
+            (migrations / "001.sql").write_text("CREATE TABLE {{tables.live}} ();\n")
+            (migrations / "002.sql").write_text(
+                "EXECUTE format('DROP TABLE IF EXISTS %I.%I', legacy_schema, 'retired');\n"
+            )
+            self.assertEqual(inventories.extract_sql_tables(migrations), ["live"])
+
+    def test_dynamic_cleanup_cannot_hide_a_live_component_table(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            migrations = Path(tmp)
+            (migrations / "001.sql").write_text("CREATE TABLE {{tables.live}} ();\n")
+            (migrations / "002.sql").write_text(
+                "EXECUTE format('DROP TABLE IF EXISTS %I.%I', legacy_schema, 'live');\n"
+            )
+            with self.assertRaisesRegex(ValueError, "dynamic cleanup targets component table"):
+                inventories.extract_sql_tables(migrations)
+
     def test_router_extraction_follows_application_mount_order(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "api.py"

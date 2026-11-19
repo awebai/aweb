@@ -39,6 +39,7 @@ func TestConfigureResolvedClientSignsPrivateTeamReads(t *testing.T) {
 		})
 	}))
 	defer server.Close()
+	t.Setenv("AWID_REGISTRY_URL", server.URL)
 	raw, err := awid.NewWithIdentity(server.URL, key, caller)
 	if err != nil {
 		t.Fatal(err)

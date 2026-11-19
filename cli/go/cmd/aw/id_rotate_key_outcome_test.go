@@ -42,6 +42,7 @@ func newCLIRotationRegistryFixture(
 	fixture := &cliRotationRegistryFixture{t: t, stableID: stableID, oldDID: oldDID, currentDID: oldDID, responseDIDAW: &responseDIDAW, onPut: onPut}
 	fixture.server = httptest.NewServer(http.HandlerFunc(fixture.handle))
 	t.Cleanup(fixture.server.Close)
+	t.Setenv("AWID_REGISTRY_URL", fixture.server.URL)
 	return fixture
 }
 

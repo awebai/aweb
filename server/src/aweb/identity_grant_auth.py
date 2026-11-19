@@ -21,6 +21,7 @@ from fastapi import HTTPException, Request
 from aweb.auth_context import GRANT_SCOPE_ANY, GrantContext
 from aweb.auth_context import GRANT_SCOPES as GRANT_SCOPES
 from aweb.config import get_settings, require_registered_certificates
+from aweb.member_team_key import grant_issuer_current, member_key_columns_sql
 from aweb.grant_expiry import never_expires
 from aweb.identity_auth_deps import MessagingAuth
 from aweb.identity_binding import refresh_projection_binding, verify_identity_binding
@@ -165,7 +166,8 @@ async def _verify_identity_grant_row(request: Request, db, *, required_scope=_US
         SELECT g.team_id, g.grant_did_key, g.scopes, g.issued_at, g.expires_at, g.revoked_at,
                g.issued_by_certificate_id,
                a.did_key AS subject_did_key, a.did_aw, a.address, a.alias,
-               a.agent_id, a.identity_scope, a.status, a.deleted_at
+               a.agent_id, a.identity_scope, a.status, a.deleted_at,
+               a.certificate_id, """ + member_key_columns_sql("a") + """
         FROM {{tables.identity_session_grants}} AS g
         JOIN {{tables.agents}} AS a ON a.agent_id = g.subject_agent_id
         WHERE g.grant_id = $1::UUID
@@ -180,6 +182,8 @@ async def _verify_identity_grant_row(request: Request, db, *, required_scope=_US
         raise HTTPException(status_code=403, detail="grant expired")
     if row["status"] != "active" or row["deleted_at"] is not None:
         raise HTTPException(status_code=403, detail=_GENERIC_DETAIL)
+    if not grant_issuer_current(row):
+        raise HTTPException(status_code=403, detail="grant issuing certificate revoked")
     # A grant is a delegation from a membership; revoking the issuing
     # certificate must end the delegation with it (aweb-abfn). Grants minted
     # before issued_by_certificate_id was recorded cannot be checked and are
@@ -187,7 +191,7 @@ async def _verify_identity_grant_row(request: Request, db, *, required_scope=_US
     # the same 503 the certificate-presenting path raises.
     issuing_certificate_id = (row.get("issued_by_certificate_id") or "").strip()
     if issuing_certificate_id:
-        revoked_certs = await _get_revoked_certificates(request, row["team_id"])
+        revoked_certs = await _get_revoked_certificates(request, row["team_id"], certificate_ids=[issuing_certificate_id])
         if issuing_certificate_id in revoked_certs:
             raise HTTPException(status_code=403, detail="grant issuing certificate revoked")
         # Staged existence requirement (default OFF): an unregistered issuing

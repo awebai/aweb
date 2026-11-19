@@ -97,9 +97,14 @@ available files and report an uncertain outcome; never infer remote rollback.
 
 The native HTTP diagnostic prints `category=hosted_http_failure`,
 numeric `status`, a fixed known `error_code` or `unknown`, and a syntactically
-validated UUID `request_id` or `unknown`. It omits arbitrary bodies for generic
-HTTP failures and 401/404; recognized 409 identity-mismatch guidance retains its
-existing message contract. Do not forward whole stderr on that basis. Extract
+validated UUID `request_id` or `unknown`. The known codes are the hosted
+service's coded refusals of `POST /api/v1/workspaces/init`
+(`workspaceInitRefusalRemedies` in `cli/go/cmd/aw/init_apikey_diagnostic.go`),
+read from `detail.code`, `error.code` or `detail.error`. A known code is printed
+with aw's own remedy for it and is the `--json` error `code`. An unknown code,
+or codes that disagree within one body, stay `unknown`. It omits arbitrary bodies
+and server messages for every HTTP failure; recognized 409 identity-mismatch
+guidance retains its existing message contract. Do not forward whole stderr on that basis. Extract
 only the diagnostic fields for handoff; raw native output still stays private.
 Request IDs are service-provided correlation values, not authenticated transaction
 receipts. Invalid, contradictory or unavailable IDs stay unknown. This summary
@@ -174,6 +179,20 @@ still refuses and does not delete the original partial.
 
 For resumable failures with the original partial retained, the diagnostic says
 "rerun the same command in this directory; do not delete .aw/partial-init.yaml".
+
+A known hosted refusal whose remedy needs a different bootstrap context (another
+name, key, scope or setup command; `changesContext` in
+`workspaceInitRefusalRemedies`) says instead "this attempt's state stays in
+.aw/partial-init.yaml (do not delete it); run the changed command in a new
+directory." The directory left behind keeps the first attempt's signing key and
+context; under `--global` that key's `did:aw` was registered at the registry
+before the hosted call. Rerunning the original command unchanged there still
+resumes the first attempt, and succeeds only if what refused it has changed.
+The directory cannot be used for the changed command: the partial refuses any
+other name, alias, scope, inbound mode, team, service or registry URL, role,
+human name, agent type or API key. Its partial is the only
+copy of that key, so it is not safe to delete.
+
 This guidance does not apply to a quarantined identity mismatch and does not
 remove the remote-state reconciliation requirement above. Successful completion
 removes the temporary partial only after the identity has been persisted and

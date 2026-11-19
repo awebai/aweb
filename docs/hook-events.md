@@ -12,7 +12,7 @@ five vectors:
 - `docs/vectors/hook-binding-cases-v1.json`: binding states, activation, the
   `active_from` pad and revocation, as replayable cases;
 - `docs/vectors/hook-event-envelope-v1.json`: the signed event envelope;
-- `docs/vectors/hook-delivery-credential-v1.json`: the request credential that
+- `docs/vectors/hook-delivery-credential-v2.json`: the request credential that
   carries an event to a target.
 - `docs/vectors/passkey-evidence-v1.json`: the passkey evidence commitment
   bytes of [the decision 84 proof contract](#passkey-evidence-commitments-and-console-actors).
@@ -1297,9 +1297,10 @@ self-consistency, not authority. Authority comes from elsewhere:
   active production for the hook, and records the key it verified against at
   ingest.
 - A client signs with its member key, and its delivery carries the member's
-  team certificate (see below), signed by the team's current key and naming
-  that key and certificate id. The target checks the certificate's revocation
-  status with the shared team-auth verifier.
+  team certificate (see below). The target checks it with the one check of a
+  team certificate ([its vectors](vectors/README.md#team-certificate-verification-v1json)): signed by the team's
+  current key, not revoked, and registered. The `team_did_key` a certificate
+  carries is not authority; the registry's key is.
 
 ## The delivery credential
 
@@ -1345,10 +1346,11 @@ The signed payload is:
   can be replayed as another.
 
 The target holds facts of its own: its public origin, the binding the delivery
-must name, the team's current controller key (read fresh from the team's
-registry, for a client's certificate) and its clock. Without an origin or a
-binding it refuses (`verifier_misconfigured`), as it does for a client delivery
-without the team key. It checks, in this order:
+must name, its clock and, for a client's certificate, what the team's registry
+says, read fresh: the team's current controller key, its revoked certificate
+ids and its registered certificate ids. Without an origin or a binding it
+refuses (`verifier_misconfigured`), as it does for a client delivery without
+the team key or the registered certificate ids. It checks, in this order:
 
 1. the body is at most 524,288 bytes (512 KiB), read no further than that
    (`request_too_large`, answered 413). An event of the largest size an
@@ -1374,8 +1376,11 @@ without the team key. It checks, in this order:
     `did_key`, are the credential's (`producer_mismatch`);
 13. for a client producer, the team certificate is present
     (`certificate_missing`), names the event's team, producer key and
-    certificate id (`certificate_mismatch`), and is signed by the team's current
-    key (`certificate_invalid`).
+    certificate id (`certificate_mismatch`), and passes the one check of a team
+    certificate under the team's current key, revoked ids and registered ids
+    (`certificate_invalid`, with the check's reason as the detail: `malformed`,
+    `unsupported_version`, `invalid_field`, `bad_signature`, `revoked` or
+    `unregistered`).
 
 The ordinary target then checks that the binding is its own active registration,
 and that an app producer holds an active production for the hook (aweb-acgh.7).

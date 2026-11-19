@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import secrets
 from pathlib import Path
@@ -236,3 +237,26 @@ def test_the_released_seed_value_signs_only_app_events_whatever_its_kid_declares
     assert load_app_key(settings, manifest, APP_EVENT).did_key == _did_key(seed)
     with pytest.raises(AppKeyError, match="app-request"):
         load_app_key(settings, manifest, "app-request")
+
+
+_VECTOR = json.loads(
+    (Path(__file__).resolve().parents[2] / "test-vectors" / "app-manifests" / "app-manifest-v2-v1.json")
+    .read_text(encoding="utf-8")
+)
+_BAD_DID = next(c for c in _VECTOR["cases"] if c["name"] == "app_key_bad_did")["mutations"][0]["value"]
+
+
+# The shared vector's app_key_bad_did value, and the identity point: well-shaped
+# did:keys that no configured Ed25519 key encodes to.
+@pytest.mark.parametrize(
+    "declared",
+    [_BAD_DID, did_from_public_key(b"\x01" + b"\x00" * 31)],
+    ids=["app_key_bad_did", "small-order"],
+)
+@pytest.mark.parametrize("build", [_manifest, lambda **keys: _v2_manifest(
+    *((kid, did, [APP_EVENT]) for kid, did in keys.items())
+)], ids=["v1", "v2"])
+def test_a_declared_key_that_is_no_ed25519_key_never_loads(tmp_path: Path, declared, build) -> None:
+    settings = _settings(app_key_files={_KID: _key_file(tmp_path, secrets.token_hex(32))})
+    with pytest.raises(AppKeyError, match="not the public key the manifest declares"):
+        load_app_key(settings, build(**{_KID: declared}), APP_EVENT)

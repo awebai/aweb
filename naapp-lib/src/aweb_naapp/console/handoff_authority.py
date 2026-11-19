@@ -105,6 +105,11 @@ class HandoffAuthority[Target: SessionTarget, Held: PreparedSessionTarget]:
     union. Check uses the issued handle in that same transaction, without any
     network, row lock or rearm; callers retain their phase/transaction control.
 
+    InstallationRefused from a projection or hold propagates to ConsoleRoute,
+    which retains the provider's HTTP status and stable code after transaction
+    rollback. In particular, unavailable authority is not a false admission or
+    a permanent lost-holding refusal. Callbacks do not refresh inside effects.
+
     Holding identity is a stable app-owned public digest, not a serialization
     of holding_ref, a certificate, or permission to issue a session.
     """

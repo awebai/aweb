@@ -7,52 +7,48 @@ acts and enrol with a real software passkey.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from tests.test_change_sets import World
+
+
 import json
-from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import timedelta
 
 import pytest
-from aweb_naapp.hooks.owner_act_nonces import apply_owner_act_migrations
-from aweb_naapp.roles import PrincipalKey, apply_roles_migrations, assign, unassign
+from aweb_naapp.roles import (
+    PrincipalKey,
+    assign,
+    unassign,
+)
 from aweb_naapp.runtime.approvals import (
     ActionPolicy,
-    ApprovalRevocation,
     Approver,
     Assurance,
     DeliveryStatus,
-    PgApprovalStore,
 )
 from aweb_naapp.runtime.audit import AuditEvent
-from aweb_naapp.runtime.installation import InstallationFence, apply_installation_migrations
-from aweb_naapp.runtime.passkeys import Notice, Passkeys, RelyingParty
+from aweb_naapp.runtime.passkeys import Notice
 from aweb_naapp_testing.owner_acts import (
     INSTALLATION_ID,
-    TeamOwner,
-    designation_subject,
-    team_owner,
 )
 from aweb_naapp_testing.webauthn import SoftAuthenticator
-from awid_service.testing import running_registry
 from pgdbm import AsyncDatabaseManager
 from pgdbm.core import TransactionManager
 
-from aweb_secrets.change_sets import apply_change_set_migrations
 from aweb_secrets.owners import (
     OWNER_ROLE,
-    OwnerDirectory,
-    apply_owner_migrations,
     approver_scope,
-    is_owner_scope,
     owner_scope,
-    record_owner,
 )
-from aweb_secrets.passkey_context import PasskeyContexts
+from tests.human_owner import fixture_principal
 
 ORIGIN = "https://secrets.example.com"
 TEAM = "backend:acme.com"
-ALICE = PrincipalKey(team_id=TEAM, principal_did="did:aw:jPUMBAvNeJo8USHNtJ81Wm7cqnk")
-BOB = PrincipalKey(team_id=TEAM, principal_did="did:aw:2Uq51iFVLnqmgbVY3vLZtMD5PR87")
+ALICE = fixture_principal(TEAM, "alice")
+BOB = fixture_principal(TEAM, "bob")
 OTHER_INSTALLATION = "6f9619ff-8b86-4011-b42d-00c04fc964ff"
 
 
@@ -87,57 +83,13 @@ class Audit:
         )
 
 
-@dataclass
-class World:
-    db: AsyncDatabaseManager
-    passkeys: Passkeys
-    directory: OwnerDirectory
-    owner: TeamOwner
-    contacts: Contacts
-
-
 @pytest.fixture
-async def world(test_db_factory) -> AsyncIterator[World]:
-    db = await test_db_factory.create_db(suffix="secrets_owners")
-    registry_db = await test_db_factory.create_db(suffix="secrets_owners_awid")
-    await db.execute(
-        "CREATE TABLE {{tables.audit_outbox}} (id SERIAL PRIMARY KEY, kind TEXT, details TEXT)"
-    )
-    store = PgApprovalStore(db)
-    await store.migrate()
-    audit = Audit(db)
-    contacts = Contacts()
-    passkeys = Passkeys(
-        db,
-        rp=RelyingParty(origin=ORIGIN, name="secrets"),
-        delivery=contacts,
-        audit=audit,
-        retirement=ApprovalRevocation(store, audit),
-        enrolment_ttl=timedelta(hours=1),
-        challenge_ttl=timedelta(minutes=5),
-        owner_scopes=is_owner_scope,
-        proof_context=PasskeyContexts(app_id="secrets"),
-    )
-    await passkeys.migrate()
-    await apply_roles_migrations(db)
-    await apply_owner_act_migrations(db)
-    await apply_owner_migrations(db)
-    await apply_change_set_migrations(db)
-    await apply_installation_migrations(db)
-    # Reuse the real F6 external-authority fixture after module initialization.
-    from tests.test_change_sets import Installations
+async def world(test_db_factory, tmp_path):
+    # One real app composition, shared with the change-set consumer tests.
+    from tests.test_change_sets import build_world
 
-    installations = Installations()
-    fence = InstallationFence(db, app_id=installations.app_id, grants=installations)
-    await fence.refresh(TEAM)
-    async with running_registry(registry_db.config.get_dsn()) as registry:
-        yield World(
-            db=db,
-            passkeys=passkeys,
-            directory=OwnerDirectory(passkeys, db),
-            owner=await team_owner(registry),
-            contacts=contacts,
-        )
+    async with build_world(test_db_factory, tmp_path) as built:
+        yield built
 
 
 def _policy(scope: str, *, allow_requester_approval: bool = True) -> ActionPolicy:
@@ -163,22 +115,70 @@ async def _approver(world: World, scope: str) -> Approver | None:
 async def designate_owner(
     world: World, principal: PrincipalKey, contact: str, installation_id: str = INSTALLATION_ID
 ) -> str:
-    """The team owner designates ``principal`` an owner; it enrols a passkey."""
-    scope = owner_scope(installation_id, principal.team_id, principal.principal_did)
-    subject = designation_subject(scope, contact)
-    prepared = await world.owner.prepare("app-role.designate", subject)
-    async with world.db.transaction() as tx:
-        act = await world.owner.consume(tx, prepared, subject)
-        designation = await world.passkeys.designate(tx, scope=scope, contact=contact, evidence=act)
-        await record_owner(tx, installation_id=installation_id, principal=principal)
-        await assign(tx, principal, OWNER_ROLE)
-    await world.passkeys.deliver(designation)
-    token = world.contacts.inbox[contact][-1]
-    device = SoftAuthenticator(ORIGIN)
-    await world.passkeys.complete_enrolment(
-        token, device.create(await world.passkeys.enrolment_options(token))
+    """Bind the component fixture through the canonical human-role writer."""
+    from tests.human_owner import apply_holder
+
+    assert installation_id == world.admitted.installation_id
+    designation = await apply_holder(world, "human-role.designate", principal, contact)
+    return designation.approver.scope
+
+
+async def designate_contact(world, ref, contact, *, enrol=True):
+    """The real owner-approved app path for an ordinary contact approver."""
+    from aweb_secrets.revisions import config_revision
+    from tests.governance import view
+    from tests.test_change_sets import (
+        ALICE,
+        by_member,
+        change_set,
+        decide,
+        designate_approver,
+        draft,
+        enrol_owner,
     )
-    return scope
+
+    if (
+        await world.directory.owner_of(
+            world.db, owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did)
+        )
+        is None
+    ):
+        await enrol_owner(world, ALICE, "alice@acme.com")
+    from aweb_secrets import records
+    from aweb_secrets.secret import SecretRecord
+    from tests.test_use_approvals import SECRET, SECRET_ID
+
+    async with world.db.transaction() as tx:
+        record = SecretRecord.from_after(SECRET)
+        if await records.secret_by_ref(tx, INSTALLATION_ID, TEAM, record.ref) is None:
+            await records.create_secret(tx, INSTALLATION_ID, TEAM, record)
+    change = change_set(
+        drafter=by_member(ALICE),
+        changes=[designate_approver(ref, contact, [SECRET_ID])],
+        base_revision=await config_revision(world.db, INSTALLATION_ID, team_id=TEAM),
+    )
+    await decide(world, await draft(world, change), "alice@acme.com")
+    async with world.db.transaction() as tx:
+        confirmation = await world.change_sets.confirm(
+            tx,
+            change["change_id"],
+            operation_id="apply-" + change["change_id"],
+            fence=world.fence,
+            admitted=world.admitted,
+            governance_view=view(),
+        )
+    await world.change_sets.deliver(confirmation)
+    if not enrol:
+        return approver_scope(INSTALLATION_ID, TEAM, ref)
+    token = world.inbox.enrolments[contact][-1]
+    device = SoftAuthenticator(world.passkeys.rp.origin)
+    prepared = await world.credential_audit.prepare_enrolment(token)
+    with world.credential_audit.prepared(prepared):
+        await world.passkeys.complete_enrolment(
+            token, device.create(await world.passkeys.enrolment_options(token)), fence=prepared
+        )
+    world.devices[contact] = device
+    return approver_scope(INSTALLATION_ID, TEAM, ref)
 
 
 async def test_an_enrolled_owner_holding_the_role_decides(world: World) -> None:
@@ -192,8 +192,9 @@ async def test_an_owner_whose_role_is_revoked_no_longer_decides(world: World) ->
     scope = await designate_owner(world, ALICE, "alice@acme.com")
     approver = await _approver(world, scope)
     assert approver is not None
-    async with world.db.transaction() as tx:
-        await unassign(tx, ALICE, OWNER_ROLE)
+    from tests.human_owner import apply_holder
+
+    await apply_holder(world, "human-role.revoke", ALICE, None)
     assert await _approver(world, scope) is None
     assert not await world.directory.is_current(scope, approver.subject)
 
@@ -216,42 +217,26 @@ async def test_the_role_on_another_team_does_not_count(world: World) -> None:
 
 
 async def test_an_owner_scope_without_a_recorded_owner_has_no_approver(world: World) -> None:
-    scope = owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did)
-    subject = designation_subject(scope, "alice@acme.com")
-    prepared = await world.owner.prepare("app-role.designate", subject)
-    async with world.db.transaction() as tx:
-        act = await world.owner.consume(tx, prepared, subject)
-        await world.passkeys.designate(tx, scope=scope, contact="alice@acme.com", evidence=act)
-        await assign(tx, ALICE, OWNER_ROLE)
+    scope = await designate_owner(world, ALICE, "alice@acme.com")
+    await world.db.execute("DELETE FROM {{tables.role_holdings}} WHERE b3_scope=$1", scope)
     assert await _approver(world, scope) is None
 
 
-async def test_one_principal_owns_independently_in_two_installations(world: World) -> None:
+async def test_an_owner_holding_is_bound_to_its_admitted_installation(world: World) -> None:
     here = await designate_owner(world, ALICE, "alice@acme.com")
-    there = await designate_owner(world, ALICE, "alice@acme.com", OTHER_INSTALLATION)
-    assert here != there
-    first = await _approver(world, here)
-    second = await _approver(world, there)
-    assert first is not None and second is not None
-    assert first.subject != second.subject
-    assert not await world.directory.is_current(there, first.subject)
+    assert await _approver(world, here) is not None
+    there = owner_scope(OTHER_INSTALLATION, TEAM, ALICE.principal_did)
+    assert await _approver(world, there) is None
+    assert (
+        await world.directory.enrolled_owners(
+            world.db, installation_id=OTHER_INSTALLATION, team_id=TEAM
+        )
+        == []
+    )
 
 
 async def test_an_approver_scope_needs_no_owner_role(world: World) -> None:
-    scope = approver_scope(INSTALLATION_ID, TEAM, "finance")
-    subject = designation_subject(scope, "finance@acme.com")
-    prepared = await world.owner.prepare("app-role.designate", subject)
-    async with world.db.transaction() as tx:
-        act = await world.owner.consume(tx, prepared, subject)
-        designation = await world.passkeys.designate(
-            tx, scope=scope, contact="finance@acme.com", evidence=act
-        )
-    await world.passkeys.deliver(designation)
-    token = world.contacts.inbox["finance@acme.com"][-1]
-    device = SoftAuthenticator(ORIGIN)
-    await world.passkeys.complete_enrolment(
-        token, device.create(await world.passkeys.enrolment_options(token))
-    )
+    scope = await designate_contact(world, "finance", "finance@acme.com")
     approver = await _approver(world, scope)
     assert approver is not None
     assert await world.directory.is_current(scope, approver.subject)
@@ -315,20 +300,7 @@ async def test_under_four_eyes_a_console_drafter_is_left_out(world: World) -> No
 
 async def test_under_four_eyes_an_approver_scope_drafter_is_left_out(world: World) -> None:
     owner = await designate_owner(world, ALICE, "alice@acme.com")
-    finance = approver_scope(INSTALLATION_ID, TEAM, "finance")
-    subject = designation_subject(finance, "finance@acme.com")
-    prepared = await world.owner.prepare("app-role.designate", subject)
-    async with world.db.transaction() as tx:
-        act = await world.owner.consume(tx, prepared, subject)
-        designation = await world.passkeys.designate(
-            tx, scope=finance, contact="finance@acme.com", evidence=act
-        )
-    await world.passkeys.deliver(designation)
-    token = world.contacts.inbox["finance@acme.com"][-1]
-    device = SoftAuthenticator(ORIGIN)
-    await world.passkeys.complete_enrolment(
-        token, device.create(await world.passkeys.enrolment_options(token))
-    )
+    finance = await designate_contact(world, "finance", "finance@acme.com")
     policy = ActionPolicy(
         policy_ref="secrets.change",
         version=1,
@@ -340,3 +312,35 @@ async def test_under_four_eyes_an_approver_scope_drafter_is_left_out(world: Worl
     console_draft = {"type": "aweb.secrets.change", "drafter": {"via": "console", "scope": finance}}
     found = await world.directory.candidates(policy, console_draft)
     assert [a.scope for a in found] == [owner]
+
+
+@pytest.mark.parametrize("withdrawal", ["assignment", "record"])
+async def test_transaction_aware_providers_observe_shared_holding_withdrawal_and_rollback(
+    world: World, withdrawal
+):
+    from aweb_secrets.change_sets import ChangeSetPolicies, change_policy_ref
+
+    scope = await designate_owner(world, ALICE, "alice@acme.com")
+    policy_ref = change_policy_ref(world.admitted.installation_id, TEAM)
+    policies = ChangeSetPolicies(world.db, world.directory)
+    policy = await policies.current(policy_ref)
+    assert policy is not None
+    approver = await world.passkeys.designated_approver(scope)
+    assert approver is not None
+
+    class RollBack(Exception):
+        pass
+
+    with pytest.raises(RollBack):
+        async with world.db.transaction() as tx:
+            await world.fence.check(tx, world.admitted)
+            if withdrawal == "assignment":
+                await unassign(tx, ALICE, OWNER_ROLE)
+            else:
+                await tx.execute("DELETE FROM {{tables.role_holdings}} WHERE b3_scope=$1", scope)
+            assert await policies.current(policy_ref, tx=tx) is None
+            assert await world.directory.candidates(policy, {}, tx=tx) == []
+            assert not await world.directory.is_current(scope, approver.subject, tx=tx)
+            raise RollBack()
+    assert await policies.current(policy_ref) == policy
+    assert await world.directory.is_current(scope, approver.subject)

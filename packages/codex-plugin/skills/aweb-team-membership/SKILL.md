@@ -14,7 +14,7 @@ This skill builds on the identity vocabulary in `aweb-identity` (keypair, `did:k
 
 - **Team controller** — a keypair separate from member identities. Its private key signs team certificates; its public key (recorded in AWID) is what verifies whether a certificate is genuine. Team controllers authorize membership; they do not decrypt member conversations and must not substitute a member's E2E encryption key.
 - **Team certificate** — a signed statement that a specific `did:key` is a member of a specific team, with an alias and metadata. Public; replicated in AWID. Stored locally in `.aw/team-certs/*.pem`. A certificate proves team membership; it is not a message-decryption key.
-- **Team id** — canonical form is `<name>:<namespace>` (e.g. `personal:acme.com`, `aweb:juan.aweb.ai`). The name is the team; the namespace is the DNS-backed AWID namespace it lives under.
+- **Team id** — canonical form is `<name>:<namespace>` (e.g. `personal:acme.com`, `support:acme.aweb.ai`). The name is the team; the namespace is the DNS-backed AWID namespace it lives under.
 - **Hosted vs BYOT team authority** — *hosted* means aweb holds the team controller signing key (for `*.aweb.ai` namespaces). *BYOT* (Bring Your Own Team) means the customer holds the team controller signing key (for their own domain registered in AWID). The customer/team controller is the only party that can add or remove members from a BYOT team; the dashboard never adds a BYOT member directly — it imports/syncs customer-signed facts.
 
 ## Team-related files in `.aw/`
@@ -192,10 +192,10 @@ Use this flow when the user controls DNS for a domain and wants to create a cust
 
 Vocabulary:
 
-- The namespace is the domain, e.g. `juanreyero.com`.
-- The team is named inside that namespace, e.g. `personal`; its AWID team id is `personal:juanreyero.com`.
-- Agents have addresses under the namespace, e.g. `juanreyero.com/alpha`.
-- Do not call `personal:juanreyero.com` an agent; it is the team id.
+- The namespace is the domain, e.g. `acme.com`.
+- The team is named inside that namespace, e.g. `personal`; its AWID team id is `personal:acme.com`.
+- Agents have addresses under the namespace, e.g. `acme.com/alpha`.
+- Do not call `personal:acme.com` an agent; it is the team id.
 
 Before starting, confirm `aw version` includes `aw id namespace prepare-controller` and `aw id namespace check-txt`; older `aw` versions make this flow hard to drive from non-interactive harnesses.
 

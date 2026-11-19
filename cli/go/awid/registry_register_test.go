@@ -106,6 +106,7 @@ func TestRegisterIdentityMatchesRegisterVector(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := NewAWIDRegistryClient(server.Client(), nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	// Pin the clock per-client; mutating a package global races every parallel
 	// test that reads it through production code (default-aajc.15).
 	client.Now = func() time.Time { return timestamp.UTC() }
@@ -178,7 +179,6 @@ func TestVerifyDidKeyResolutionAcceptsRegisterVector(t *testing.T) {
 }
 
 func TestRegisterIdentityPostsCreateEntry(t *testing.T) {
-	t.Parallel()
 
 	pub, priv, err := ed25519.GenerateKey(nil)
 	if err != nil {
@@ -208,6 +208,8 @@ func TestRegisterIdentityPostsCreateEntry(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
+	// The test server is the operator's explicit registry choice.
+	t.Setenv("AWID_REGISTRY_URL", server.URL)
 	if err := RegisterIdentity(
 		context.Background(),
 		server.URL,
@@ -245,7 +247,6 @@ func TestRegisterIdentityPostsCreateEntry(t *testing.T) {
 }
 
 func TestRegisterIdentityTreatsSameKeyConflictAsSuccess(t *testing.T) {
-	t.Parallel()
 
 	pub, priv, err := ed25519.GenerateKey(nil)
 	if err != nil {
@@ -272,6 +273,8 @@ func TestRegisterIdentityTreatsSameKeyConflictAsSuccess(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
+	// The test server is the operator's explicit registry choice.
+	t.Setenv("AWID_REGISTRY_URL", server.URL)
 	if err := RegisterIdentity(
 		context.Background(),
 		server.URL,
@@ -318,6 +321,7 @@ func TestRegisterIdentityReturnsAlreadyRegisteredForDifferentKeyConflict(t *test
 	t.Cleanup(server.Close)
 
 	client := NewAWIDRegistryClient(server.Client(), nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	_, err = client.RegisterIdentity(context.Background(), server.URL, did, stableID, priv)
 
 	var already *AlreadyRegisteredError

@@ -10,7 +10,8 @@ and, at the same version, its test support aweb-naapp-testing. For each:
   requires exactly the aweb-naapp version it is released with.
 - With every extra it installs from the built wheel into a fresh environment,
   awid-service, aweb and aweb-naapp resolved from their in-repo built wheels and
-  everything else from the package index, and every module imports.
+  everything else from the package index, and every module imports. Local siblings
+  are explicit exact-version inputs; their declared dependency floors still apply.
 """
 
 from __future__ import annotations
@@ -124,6 +125,16 @@ def _check_install(project: Path, wheel: Path, metadata: Message, find_links: li
     requirement = f"{wheel}[{extras}]" if extras else str(wheel)
     probe = "import importlib\nfor name in %r:\n    importlib.import_module(name)\n" % (_modules(project),)
     links = [argument for path in find_links for argument in ("--find-links", str(path))]
+    siblings = []
+    for directory in find_links:
+        for sibling in sorted(directory.glob("*.whl")):
+            sibling_metadata = _metadata(sibling)
+            if sibling_metadata["Name"] == metadata["Name"]:
+                continue
+            # Explicit pins admit only this matched RC set, while wheel paths
+            # bind the inputs to local bytes. uv still enforces every floor.
+            siblings.extend(("--with", f'{sibling_metadata["Name"]}=={sibling_metadata["Version"]}',
+                             "--with", str(sibling)))
     # Local wheels can be newer than the declared minimum. Test each in-repo
     # dependency at its declared floor too, so a fresh local AWID cannot hide a
     # module absent from the release that downstream resolvers may select.
@@ -132,9 +143,7 @@ def _check_install(project: Path, wheel: Path, metadata: Message, find_links: li
         match = re.match(r"(awid-service|aweb-naapp)(?:\[[^]]+\])?\s*>=\s*([^,;\s]+)", dependency)
         if match:
             floors.extend(("--with", f"{match[1]}=={match[2]}"))
-    local = [path for directory in find_links for path in directory.glob("*.whl") if path != wheel]
-    candidate = [argument for path in local for argument in ("--with", str(path))]
-    modes = [("candidate wheels", candidate)]
+    modes = [("candidate wheels", siblings)]
     if floors:
         modes.append(("declared floors", floors))
     for mode, dependencies in modes:

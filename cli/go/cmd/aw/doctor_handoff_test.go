@@ -181,7 +181,7 @@ func TestAwDoctorHandoffDIDNotFoundUsesCallerRepairAuthority(t *testing.T) {
 	identity.RegistryURL = server.URL
 	writeIdentityForTest(t, fixture.Dir, *identity)
 
-	out, err := runDoctorCLI(t, fixture.Bin, fixture.Dir, "doctor", "registry", "--online", "--json")
+	out, err := runDoctorCLIWithRegistry(t, fixture.Bin, fixture.Dir, server.URL, "doctor", "registry", "--online", "--json")
 	if err != nil {
 		t.Fatalf("doctor registry failed: %v\n%s", err, string(out))
 	}
@@ -269,7 +269,7 @@ func TestAwDoctorHandoffAddressMismatchPrefersAddressRepair(t *testing.T) {
 	identity.RegistryURL = server.URL
 	writeIdentityForTest(t, fixture.Dir, *identity)
 
-	out, err := runDoctorCLI(t, fixture.Bin, fixture.Dir, "doctor", "registry", "--online", "--json")
+	out, err := runDoctorCLIWithRegistry(t, fixture.Bin, fixture.Dir, server.URL, "doctor", "registry", "--online", "--json")
 	if err != nil {
 		t.Fatalf("doctor registry failed: %v\n%s", err, string(out))
 	}
@@ -305,7 +305,7 @@ func TestAwDoctorHandoffNamespaceRecoveryUsesConditionalDashboardText(t *testing
 	identity.RegistryURL = server.URL
 	writeIdentityForTest(t, fixture.Dir, *identity)
 
-	out, err := runDoctorCLI(t, fixture.Bin, fixture.Dir, "doctor", "registry", "--online", "--json")
+	out, err := runDoctorCLIWithRegistry(t, fixture.Bin, fixture.Dir, server.URL, "doctor", "registry", "--online", "--json")
 	if err != nil {
 		t.Fatalf("doctor registry failed: %v\n%s", err, string(out))
 	}

@@ -217,10 +217,12 @@ Each step fails closed. Nothing is written before step 8.
    `actor_did_key` over the signing bytes. The signature is the one accepted
    base64url encoding of 64 bytes. Failure: 401 `signature_invalid`.
 4. **Certificate.** The certificate verifies against AWID team authority, is
-   not revoked, and its `team_id`, `certificate_id` and `member_did_key` equal
-   the payload's `team_id`, `certificate_id` and `actor_did_key`. Revoked:
-   401 `certificate_revoked`. Registry failure: 503 `authority_unavailable`,
-   with no stale fallback.
+   not revoked, is registered, and its `team_id`, `certificate_id` and
+   `member_did_key` equal the payload's `team_id`, `certificate_id` and
+   `actor_did_key`. A certificate that fails the check is 401 with the
+   check's own reason (see Errors); one that names another team or
+   certificate than the payload is 401 `signature_invalid`. Registry
+   failure: 503 `authority_unavailable`, with no stale fallback.
 5. **Binding.** `aud` is this service's public origin. `team_id`, `app_id`,
    `installation_id` and `installation_generation` equal the transport's.
    `app_origin` equals the installed app's origin. `task_body_sha256` equals
@@ -542,7 +544,7 @@ request and on a schedule, so a missed wake cannot strand a request.
 | Status | Code | When |
 | --- | --- | --- |
 | 401 | `signature_invalid` | The authorization's signature, shape or canonical bytes fail. |
-| 401 | `certificate_revoked` | The member's certificate is revoked. |
+| 401 | `malformed`, `unsupported_version`, `invalid_field: <field>`, `member_key_mismatch`, `bad_signature`, `revoked`, `unregistered` | The member's certificate fails the team-certificate check, for that reason. The answer names a field of the certificate's schema and never anything the certificate carries. |
 | 401 | `authorization_expired` | The authorization is outside its time window, and no matching task exists. |
 | 403 | `target_mismatch` | A bound field disagrees with the body, transport or task, or the answerer is not the assignee. |
 | 403 | `scope_denied` | The installation is retired, its generation moved, or it lacks `requests.create` / `requests.read`. |

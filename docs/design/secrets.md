@@ -1682,10 +1682,11 @@ same outcome vocabulary.
   `did:aw` and commits by hash to the credential and to the notice contact,
   without carrying either. secrets accepts no contact act
   (`app-role.designate`, `app-credential.recover`) for that role.
-  - Hosted and BYOT operators hold the controller in the
-    [protected signer](../human-assurance-contract.md). `aw` starts the shared
-    ceremony; a live exact-act passkey approval by the current owner authorizes
-    signing. It receives no controller key or reusable governance approval.
+  - The controller key is held by the owner, who signs directly, or by the
+    organization's [key holder](../human-approval-architecture.md). `aw` starts
+    the request. When the key holder holds the key, it signs only on the
+    current owner's approval receipt for exactly this act. `aw` receives no
+    controller key or reusable governance approval.
   - A member or admin signature is refused with `owner_required`.
 
   This act is the installation's root of trust (boundary T11). The act binds

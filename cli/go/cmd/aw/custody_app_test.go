@@ -65,7 +65,7 @@ func (a *appVerifyingServer) handle(w http.ResponseWriter, r *http.Request) {
 	}
 	didKey, sigB64 := parts[1], parts[2]
 	cert, err := awid.DecodeTeamCertificateHeader(r.Header.Get("X-AWID-Team-Certificate"))
-	if err != nil || awid.VerifyTeamCertificate(cert, a.teamPub) != nil {
+	if err != nil || awid.CheckDecodedTeamCertificate(cert, awid.ComputeDIDKey(a.teamPub)) != nil {
 		fail("bad certificate")
 		return
 	}

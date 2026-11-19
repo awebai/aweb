@@ -15,6 +15,7 @@ from redis.exceptions import RedisError
 import awid.registry as registry_module
 from awid.ratelimit import AWID_SERVICE_TOKEN_HEADER
 from awid.did import generate_keypair
+from awid.external_authority import OriginContext
 from awid.registry import (
     MAX_REGISTRY_ERROR_BYTES,
     MAX_REGISTRY_RESPONSE_BYTES,
@@ -376,9 +377,12 @@ class FakeRedis:
     async def get(self, key: str) -> str | None:
         return self.values.get(key)
 
-    async def set(self, key: str, value: str, ex: int | None = None) -> None:
+    async def set(self, key: str, value: str, ex: int | None = None, nx: bool = False) -> bool | None:
+        if nx and key in self.values:
+            return None
         self.values[key] = value
         self.expirations[key] = ex
+        return True
 
     async def delete(self, *keys: str) -> None:
         for key in keys:
@@ -758,6 +762,11 @@ async def test_cached_registry_client_can_invalidate_team_certificate_reads():
         "backend",
         active_only=False,
     )
+    generation_key = registry._team_certificates_generation_key("example.com", "backend")
+    active_key, all_key, signed_key, anonymous_key = [
+        await registry._generation_cache_key(key, generation_key)
+        for key in (active_key, all_key, signed_key, anonymous_key)
+    ]
     revocations_key = registry._team_revocations_cache_key("example.com", "backend")
     redis.values.update(
         {
@@ -775,10 +784,12 @@ async def test_cached_registry_client_can_invalidate_team_certificate_reads():
         await registry.aclose()
         await anonymous_registry.aclose()
 
-    assert active_key not in redis.values
-    assert all_key not in redis.values
-    assert signed_key not in redis.values
-    assert anonymous_key not in redis.values
+    # Retained bytes expire normally, but no reader can select them.
+    for old_key in (active_key, all_key, signed_key, anonymous_key):
+        base = old_key.rsplit(":generation:", 1)[0]
+        current_key = await registry._generation_cache_key(base, generation_key)
+        assert current_key != old_key
+        assert current_key not in redis.values
     assert revocations_key not in redis.values
     assert redis.values["unrelated"] == "keep"
 
@@ -813,7 +824,7 @@ async def test_cached_registry_client_scan_outage_does_not_block_certificate_reg
     finally:
         await registry.aclose()
 
-    assert redis.scan_calls == 2
+    assert redis.scan_calls == 0
     assert [request.url.path for request in requests] == [
         "/v1/namespaces/example.com/teams/backend/certificates"
     ]
@@ -844,7 +855,7 @@ async def test_cached_registry_client_scan_outage_does_not_block_certificate_rev
     finally:
         await registry.aclose()
 
-    assert redis.scan_calls == 2
+    assert redis.scan_calls == 0
     assert [request.url.path for request in requests] == [
         "/v1/namespaces/example.com/teams/backend/certificates/revoke"
     ]
@@ -852,7 +863,11 @@ async def test_cached_registry_client_scan_outage_does_not_block_certificate_rev
 
 @pytest.mark.asyncio
 async def test_cached_registry_client_reports_incomplete_explicit_invalidation_after_known_key_cleanup():
-    redis = ScanUnavailableRedis()
+    class UnavailableGeneration(FakeRedis):
+        async def set(self, *args, **kwargs):
+            raise OSError("Redis generation unavailable")
+
+    redis = UnavailableGeneration()
     registry = CachedRegistryClient(
         registry_url="http://registry.test",
         redis_client=redis,  # type: ignore[arg-type]
@@ -861,12 +876,11 @@ async def test_cached_registry_client_reports_incomplete_explicit_invalidation_a
     revocations_key = registry._team_revocations_cache_key("example.com", "backend")
     redis.values[revocations_key] = "stale"
     try:
-        with pytest.raises(OSError, match="Redis scan unavailable"):
+        with pytest.raises(OSError, match="Redis generation unavailable"):
             await registry.invalidate_team_certificate_cache("example.com", "backend")
     finally:
         await registry.aclose()
 
-    assert redis.scan_calls == 1
     assert revocations_key not in redis.values
 
 
@@ -920,6 +934,7 @@ DISTINGUISHABLE_REGISTRY_CLIENT_FIELDS = {
     "transport": MockTransport(lambda _request: Response(500)),
     "base_url": "http://named-base.test",
     "domain_registry_resolver": _unused_domain_registry_resolver,
+    "registry_origin_context": OriginContext("development", True, "http://named-listener.test"),
     "service_token": "distinguishable-service-token-of-sufficient-length",
     "member_signing_keys": {"engineering:example.com": bytes(range(32))},
 }
@@ -1024,18 +1039,6 @@ async def test_get_team_revocations_legacy_server_full_page_pages_by_since():
     assert len(revoked) == 1001
     assert "new-1" in revoked
 
-
-@pytest.mark.asyncio
-async def test_get_team_revocations_missing_team_is_empty():
-    def handler(request):
-        return Response(404, json={"detail": "Team not found"})
-
-    registry = RegistryClient(registry_url="http://registry.test", transport=MockTransport(handler))
-    try:
-        revoked = await registry.get_team_revocations("acme.com", "ops")
-    finally:
-        await registry.aclose()
-    assert revoked == set()
 
 
 def _revocations_cache_payload(*, fetched_at: int, certificate_ids: list[str]) -> str:
@@ -1408,7 +1411,10 @@ async def test_cached_certificates_stale_refresh_failure_is_loud(monkeypatch, ca
     monkeypatch.setattr(registry_module, "_cache_now", lambda: now)
     redis = FakeRedis()
     registry = _failing_registry(redis)
-    cache_key = registry._team_certificates_cache_key("acme.com", "ops", active_only=True)
+    cache_key = await registry._generation_cache_key(
+        registry._team_certificates_cache_key("acme.com", "ops", active_only=True),
+        registry._team_certificates_generation_key("acme.com", "ops"),
+    )
     redis.values[cache_key] = _certificates_cache_payload(
         fetched_at=now - 900, certificate_ids=["cert-1"]
     )
@@ -1482,7 +1488,10 @@ async def test_certificate_cache_retention_is_unchanged_by_refresh_logging():
     finally:
         await registry.aclose()
 
-    cache_key = registry._team_certificates_cache_key("acme.com", "ops", active_only=True)
+    cache_key = await registry._generation_cache_key(
+        registry._team_certificates_cache_key("acme.com", "ops", active_only=True),
+        registry._team_certificates_generation_key("acme.com", "ops"),
+    )
     assert redis.expirations[cache_key] == (
         _TEAM_CERTIFICATES_CACHE_TTL_SECONDS * _STALE_MULTIPLIER
     )

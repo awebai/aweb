@@ -36,7 +36,7 @@ from aweb_naapp.runtime.passkeys import (
 from pgdbm.core import TransactionManager
 
 from aweb_secrets.broker_service import BrokerRequests
-from aweb_secrets.owners import owner_scope
+from aweb_secrets.owners import owner_binding, owner_scope
 from aweb_secrets.reconciliation_control_audit import ReconciliationAudit
 from aweb_secrets.reconciliation_policy import (
     CONTROL_TTL,
@@ -182,12 +182,13 @@ class ReconciliationControls:
         self._backend(view.original)
         if view.state is not State.OUTCOME_UNKNOWN:
             raise ReconciliationRefused("reconciliation_conflict")
-        owner = await tx.fetch_value(
-            "SELECT principal_did FROM {{tables.owner_principals}} WHERE scope=$1 AND installation_id=$2 AND team_id=$3",
+        _owner_binding = await owner_binding(
+            tx,
             fence.owner_scope,
-            fence.scope.installation_id,
-            fence.scope.team_id,
+            installation_id=fence.scope.installation_id,
+            team_id=fence.scope.team_id,
         )
+        owner = None if _owner_binding is None else _owner_binding["principal_did"]
         if (
             owner is None
             or owner_scope(fence.scope.installation_id, fence.scope.team_id, owner)

@@ -111,6 +111,8 @@ def _assert_team_private(resp):
 async def service_client(awid_db_infra, fake_redis, fake_domain_verifier, monkeypatch):
     """Client against an app configured with AWID_SERVICE_TOKEN."""
     monkeypatch.setenv("AWID_SERVICE_TOKEN", SERVICE_TOKEN)
+    # The registry's own public origin, which covering controller signatures name.
+    monkeypatch.setenv("AWID_PUBLIC_ORIGINS", "http://testserver")
     app = create_app(db_infra=awid_db_infra, redis=fake_redis)
     app.dependency_overrides[get_domain_verifier] = lambda: fake_domain_verifier
     async with app.router.lifespan_context(app):

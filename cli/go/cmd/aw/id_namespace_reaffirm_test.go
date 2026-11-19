@@ -120,6 +120,7 @@ func TestIDNamespaceReaffirm(t *testing.T) {
 			}
 			server := httptest.NewServer(fixture.handler(t, domain))
 			defer server.Close()
+			t.Setenv("AWID_REGISTRY_URL", server.URL)
 			dnsKey := did
 			if tc.dnsOther {
 				dnsKey = other

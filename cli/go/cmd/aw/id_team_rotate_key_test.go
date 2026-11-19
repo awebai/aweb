@@ -40,6 +40,7 @@ func newRotateKeyFixture(t *testing.T, domain string) rotateKeyFixture {
 // already running AWID.
 func newRotateKeyFixtureAt(t *testing.T, domain, registryURL string, storage realAWIDStorage) rotateKeyFixture {
 	t.Helper()
+	t.Setenv("AWID_REGISTRY_URL", registryURL)
 	registry := awid.NewAWIDRegistryClient(nil, nil)
 	ctx := context.Background()
 
@@ -209,8 +210,8 @@ func TestRotateKeyReSignsEveryRecord(t *testing.T) {
 	if pending, _ := awconfig.LoadPendingTeamKey(f.domain, f.team); pending != nil {
 		t.Fatal("the pending team key remains after a completed rotation")
 	}
-	if !strings.Contains(out.Notice, "aw id team reissue-cert") {
-		t.Fatalf("notice does not name the certificate re-issue command: %q", out.Notice)
+	if !strings.Contains(out.Notice, "aw id team install-cert") {
+		t.Fatalf("notice does not name the certificate install command: %q", out.Notice)
 	}
 
 	server, err := f.registry.GetTeamServerRecord(ctx, f.registryURL, f.domain, f.team)
@@ -494,6 +495,12 @@ func TestRateLimitedFixturesCountIndependently(t *testing.T) {
 	first, _ := realAWIDFixtureRateLimited(t)
 	second, _ := realAWIDFixtureRateLimited(t)
 	registry := awid.NewAWIDRegistryClient(nil, nil)
+	// Each fixture is a registry the operator named, as a --registry flag would.
+	for _, registryURL := range []string{first, second} {
+		if err := registry.TrustRegistryOrigin(registryURL); err != nil {
+			t.Fatal(err)
+		}
+	}
 	read := func(registryURL string) int {
 		_, err := registry.GetTeamCustodianRecord(context.Background(), registryURL, "independent.example", "ops", "none")
 		code, _ := registryStatusCode(err)

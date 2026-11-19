@@ -53,7 +53,7 @@ func TestRegisterAddressAtSignsWithControllerKey(t *testing.T) {
 		if timestamp == "" {
 			t.Fatal("missing X-AWEB-Timestamp")
 		}
-		payload := canonicalRegistryJSON(map[string]string{
+		payload := coveringPayloadFor(t, r, map[string]string{
 			"domain":    "acme.com",
 			"name":      "alice",
 			"operation": "register_address",
@@ -91,6 +91,7 @@ func TestRegisterAddressAtSignsWithControllerKey(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := NewAWIDRegistryClient(server.Client(), nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	client.DefaultRegistryURL = server.URL
 
 	address, err := client.RegisterAddressAt(
@@ -212,6 +213,7 @@ func TestClaimIdentityAddressAtPostsAtomicSignedPayload(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := NewAWIDRegistryClient(server.Client(), nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	// Pin the clock per-client; mutating a package global races every parallel
 	// test that reads it through production code (default-aajc.15).
 	client.Now = func() time.Time { return now }
@@ -254,6 +256,7 @@ func TestClaimIdentityAddressAtDecodesKnownAtomicConflictCode(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := NewAWIDRegistryClient(server.Client(), nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	_, err := client.ClaimIdentityAddressAt(context.Background(), server.URL, params)
 	if err == nil {
 		t.Fatal("expected conflict error")
@@ -289,6 +292,7 @@ func TestClaimIdentityAddressAtLeavesUnknownAtomicConflictGeneric(t *testing.T) 
 	t.Cleanup(server.Close)
 
 	client := NewAWIDRegistryClient(server.Client(), nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	_, err := client.ClaimIdentityAddressAt(context.Background(), server.URL, params)
 	if err == nil {
 		t.Fatal("expected conflict error")
@@ -354,6 +358,7 @@ func TestListDIDAddressesAtReadsReverseAddressList(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := NewAWIDRegistryClient(server.Client(), nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	addresses, err := client.ListDIDAddressesAt(context.Background(), server.URL, stableID)
 	if err != nil {
 		t.Fatal(err)
@@ -411,6 +416,7 @@ func TestRegistryNamespaceAndAddressDecodeDeliveryOrigin(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := NewAWIDRegistryClient(server.Client(), nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	namespace, _, err := client.GetNamespaceAt(context.Background(), server.URL, "acme.com")
 	if err != nil {
 		t.Fatal(err)
@@ -450,15 +456,12 @@ func TestUpdateNamespaceDeliveryOriginAtSignsCanonicalPayload(t *testing.T) {
 		if len(parts) != 3 || parts[0] != "DIDKey" || parts[1] != controllerDID {
 			t.Fatalf("unexpected Authorization header %q", auth)
 		}
-		payload, err := CanonicalJSONValue(map[string]string{
+		payload := coveringPayloadFor(t, r, map[string]string{
 			"domain":                  "acme.com",
 			"operation":               "update_namespace",
 			"default_delivery_origin": "https://aweb.acme.com",
 			"timestamp":               timestamp,
 		})
-		if err != nil {
-			t.Fatal(err)
-		}
 		signature, err := base64.RawStdEncoding.DecodeString(parts[2])
 		if err != nil {
 			t.Fatal(err)
@@ -486,6 +489,7 @@ func TestUpdateNamespaceDeliveryOriginAtSignsCanonicalPayload(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := NewAWIDRegistryClient(server.Client(), nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	namespace, err := client.UpdateNamespaceDeliveryOriginAt(
 		context.Background(),
 		server.URL,
@@ -548,7 +552,7 @@ func TestDeleteNamespaceAtSignsWithControllerKey(t *testing.T) {
 		}
 
 		timestamp := strings.TrimSpace(r.Header.Get("X-AWEB-Timestamp"))
-		payload := canonicalRegistryJSON(map[string]string{
+		payload := coveringPayloadFor(t, r, map[string]string{
 			"domain":    "acme.com",
 			"operation": "delete_namespace",
 			"timestamp": timestamp,
@@ -570,6 +574,7 @@ func TestDeleteNamespaceAtSignsWithControllerKey(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := NewAWIDRegistryClient(server.Client(), nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	if err := client.DeleteNamespaceAt(
 		context.Background(),
 		server.URL,
@@ -637,6 +642,7 @@ func TestReverifyNamespaceAtPostsWithoutAuth(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := NewAWIDRegistryClient(server.Client(), nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	result, err := client.ReverifyNamespaceAt(
 		context.Background(),
 		server.URL,
@@ -698,7 +704,7 @@ func TestDeleteAddressAtSignsWithControllerKey(t *testing.T) {
 		}
 
 		timestamp := strings.TrimSpace(r.Header.Get("X-AWEB-Timestamp"))
-		payload := canonicalRegistryJSON(map[string]string{
+		payload := coveringPayloadFor(t, r, map[string]string{
 			"domain":    "acme.com",
 			"name":      "alice",
 			"operation": "delete_address",
@@ -721,6 +727,7 @@ func TestDeleteAddressAtSignsWithControllerKey(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := NewAWIDRegistryClient(server.Client(), nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	if err := client.DeleteAddressAt(
 		context.Background(),
 		server.URL,
@@ -749,15 +756,12 @@ func TestDeleteAddressIfMatchesAtSignsRollbackPreconditions(t *testing.T) {
 		if r.Method != http.MethodDelete || r.URL.Path != "/v1/namespaces/acme.com/addresses/alice" {
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
-		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
-			t.Fatal(err)
-		}
 		auth := strings.Fields(r.Header.Get("Authorization"))
 		if len(auth) != 3 || auth[0] != "DIDKey" || auth[1] != controllerDID {
 			t.Fatalf("authorization=%q", r.Header.Get("Authorization"))
 		}
 		timestamp := strings.TrimSpace(r.Header.Get("X-AWEB-Timestamp"))
-		payload := canonicalRegistryJSON(map[string]string{
+		payload := coveringPayloadFor(t, r, map[string]string{
 			"domain":                   "acme.com",
 			"name":                     "alice",
 			"operation":                "delete_address",
@@ -766,6 +770,9 @@ func TestDeleteAddressIfMatchesAtSignsRollbackPreconditions(t *testing.T) {
 			"expected_did_aw":          "did:aw:owner",
 			"expected_current_did_key": "did:key:owner",
 		})
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatal(err)
+		}
 		signature, err := base64.RawStdEncoding.DecodeString(auth[2])
 		if err != nil || !ed25519.Verify(controllerPub, []byte(payload), signature) {
 			t.Fatalf("conditional delete signature invalid: %v", err)
@@ -775,6 +782,7 @@ func TestDeleteAddressIfMatchesAtSignsRollbackPreconditions(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := NewAWIDRegistryClient(server.Client(), nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	if err := client.DeleteAddressIfMatchesAt(
 		context.Background(),
 		server.URL,

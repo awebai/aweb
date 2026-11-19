@@ -962,7 +962,7 @@ func verifyTeamAuthRequestFixtureForTest(req *http.Request, body []byte, now tim
 	if teamPub == nil {
 		return fmt.Errorf("unknown team %q", teamID)
 	}
-	if err := awid.VerifyTeamCertificate(cert, teamPub); err != nil {
+	if err := awid.CheckDecodedTeamCertificate(cert, awid.ComputeDIDKey(teamPub)); err != nil {
 		return fmt.Errorf("verify team certificate: %w", err)
 	}
 	if revoked != nil && revoked[cert.CertificateID] {

@@ -112,9 +112,9 @@ async def test_live_and_cached_acquisition_have_identical_evidence_and_start_age
             transport=httpx.ASGITransport(app=app),
             domain_verifier=timed_authority,
         )
-        key = cached._id_status_cache_key(
+        key = await cached._generation_cache_key(cached._id_status_cache_key(
             {"v": 1, "domain": DOMAIN, "ids": [did_aw("alice"), did_aw("global_agent")]}
-        )
+        ), cached._id_status_generation_key(DOMAIN))
         try:
             await redis.delete(key)
             first = await live.id_chain_evidence(BUNDLE, SUBJECT, domain=DOMAIN)

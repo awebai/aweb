@@ -107,7 +107,7 @@ manifest or manufacture a receipt to clear a backlog.
 
 | Logs ingest status | Public codes / meaning | Operator disposition to exercise |
 | --- | --- | --- |
-| 401 | `transport_certificate_invalid`, `transport_invalid_value`, `transport_<code>` (for example `transport_wrong_scheme`), `provenance_client_certificate` | Check the actual sender identity/certificate contract and whether the producer certificate is active; do not bypass verification. |
+| 401 | `transport_certificate_invalid`, `transport_invalid_value`, `transport_<code>` (for example `transport_wrong_scheme`) | Check the actual sender identity/certificate contract and whether the producer certificate is active; do not bypass verification. |
 | 403 | `binding_required`, `provenance_app_production`, `provenance_core_key` | Check installation, activated binding and provenance; this is not a transient successful delivery. |
 | 409 | `event_conflict` | Preserve both event identity and existing receiver evidence; escalate the conflict. |
 | 422 | `occurred_after_receipt`, `unknown_catalog`, `schema_<code>` | Check envelope schema, version/catalog/time compatibility using metadata only. |
@@ -215,6 +215,18 @@ material until a reviewed migration/re-wrap and recovery policy accounts for
 every dependent record and retained backup. Replacing the configured local
 key file, changing provider mode or changing a KMS identifier is not a data
 migration. Do not recommend those actions as rotation commands.
+
+For local custody, `/ready` and `/health` also check that every retained sealed
+version names the key loaded by the process. A restart with a different valid
+key therefore reports the `kms` check as an error even when a fresh canary
+round-trips. Inert candidates and private backend credentials count too.
+Restore the original key and restart; do not delete or reseal stored rows to
+make the check pass. Replacing the mounted file alone does not change the key
+already held by a running process. An empty live ciphertext store can pass
+with a new local key; this does not prove that retained backups can be opened.
+Switching to KMS also refuses readiness while retained local-key ciphertext
+exists. A local provider still refuses retained KMS rows. This check does not
+compare KMS identifiers to each other or implement provider migration.
 
 Qualify KMS and local-key operations separately with actual pre-rotation
 ciphertext, fresh writes, restart and backup compatibility. Record the provider

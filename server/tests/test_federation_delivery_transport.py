@@ -495,9 +495,10 @@ def test_every_server_caller_passes_the_delivery_transport():
     assert sorted(callers) == ["messaging/chat_send.py", "messaging/mail_send.py"]
 
 
-def test_one_module_makes_destination_named_requests():
-    """Outside the operator's own CLI and the test harness, the server builds an
-    HTTP client in the delivery function alone and dials in the transport module alone."""
+def test_outbound_client_factories_match_reviewed_inventory():
+    """Inventory every client factory; peer-controlled federation uses its one
+    delivery adapter/transport. No additional client factory is exempt.
+    """
     clients, dialers = [], []
     for path in SOURCE.rglob("*.py"):
         relative = path.relative_to(SOURCE).as_posix()
@@ -506,7 +507,10 @@ def test_one_module_makes_destination_named_requests():
         tree = ast.parse(path.read_text())
         clients += [relative for _ in _calls(tree, "AsyncClient") + _calls(tree, "Client")]
         dialers += [relative for _ in _calls(tree, "AsyncHTTPTransport") + _calls(tree, "HTTPTransport")]
-    assert clients == ["federation/mail.py"]
+    reviewed_clients = {
+        "federation/mail.py": "peer delivery through the admitted federation transport",
+    }
+    assert sorted(clients) == sorted(reviewed_clients)
     assert dialers == ["federation/transport.py"]
 
 

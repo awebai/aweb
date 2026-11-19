@@ -34,6 +34,7 @@ from urllib.parse import quote, urlsplit
 
 import httpx
 from awid.did import did_key_from_signing_key, public_key_from_did, validate_stable_id
+from awid.external_authority import SystemTXTOutcomeResolver, TXTOutcomeResolver
 from awid.log import canonical_server_origin
 from awid.registry_auth import RegistryRequestAuth
 from awid.signing import (
@@ -42,10 +43,18 @@ from awid.signing import (
 )
 from awid.team_certificate import (
     TeamCertificateError,
+    check_team_certificate,
     decode_team_certificate,
-    verify_team_certificate_signature,
+    refusal_answer,
 )
 from awid.team_ids import parse_team_id
+from awid.team_key_acts import (
+    MemoryTeamKeyPins,
+    TeamKeyMemo,
+    TeamKeyPinStore,
+    TeamKeyUnverified,
+    pinned_team_key,
+)
 from fastapi import HTTPException, Request
 from pgdbm import AsyncDatabaseManager
 
@@ -208,13 +217,28 @@ class AWIDTeamCache:
         service_token: str | None = None,
         member_credentials: Mapping[str, AWIDMemberCredential] | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
+        team_key_pins: TeamKeyPinStore | None = None,
+        txt_resolver: TXTOutcomeResolver | None = None,
+        enforce_team_key_pins: bool = False,
     ) -> None:
         """Gated reads of a private team use the service token when there is
         one (a hosted deployment), else that team's member credential; any
-        other read is a plain one."""
+        other read is a plain one.
+
+        A team's key is held to its pin (``team_key_pins``; pins held for the
+        process when none is given): the registry alone cannot change it, only
+        the namespace controller's act, checked against the controller
+        ``txt_resolver`` (system DNS by default) names. Enforcement is
+        staged: until ``enforce_team_key_pins``, a mismatch is logged as
+        ``team_key_pin_mismatch`` and the registry's key is served."""
         self.registry_url = registry_url.rstrip("/")
         self.registry_origin = canonical_server_origin(self.registry_url)
-        self.ttl_seconds = min(ttl_seconds, MAX_TEAM_FACTS_TTL_SECONDS)
+        if ttl_seconds > MAX_TEAM_FACTS_TTL_SECONDS:
+            raise ValueError(
+                f"ttl_seconds is {ttl_seconds}: AWID team facts are cached for at most "
+                f"{MAX_TEAM_FACTS_TTL_SECONDS} seconds"
+            )
+        self.ttl_seconds = ttl_seconds
         self._member_credentials = dict(member_credentials or {})
         for team_id, credential in self._member_credentials.items():
             if credential.team_id != team_id:
@@ -233,6 +257,47 @@ class AWIDTeamCache:
         self._certificate_cache: dict[tuple[str, str], CachedTeamFacts] = {}
         self._did_keys: dict[tuple[str, str], CachedDidKey] = {}
         self._transport = transport
+        self._team_key_pins = team_key_pins if team_key_pins is not None else MemoryTeamKeyPins()
+        self._team_key_memo = TeamKeyMemo()
+        self._txt_resolver = txt_resolver if txt_resolver is not None else SystemTXTOutcomeResolver()
+        self._enforce_team_key_pins = enforce_team_key_pins
+
+    async def _pinned_team_key(self, team_id: str, served_key: str) -> str:
+        """``served_key`` held to the team's pin (awid.team_key_acts); while
+        enforcing, 401 team_key_unverified when no namespace-controller act
+        establishes it. A served key answered within the memo window
+        (awid TeamKeyMemo) reads nothing."""
+        remembered = self._team_key_memo.get(team_id, served_key)
+        if remembered is not None:
+            return remembered
+        domain, team_name = parse_team_id(team_id)
+
+        async def fetch_act() -> Any:
+            url = f"{self.registry_url}/v1/namespaces/{domain}/teams/{team_name}/key-act"
+            try:
+                async with self._client() as client:
+                    response = await client.get(url, headers=self._read_headers(url))
+            except httpx.HTTPError as exc:
+                raise HTTPException(status_code=503, detail="AWID registry unavailable") from exc
+            if response.status_code == 404:
+                return None
+            if response.status_code >= 400:
+                logger.warning("AWID team key act read for %s answered %s", team_id, response.status_code)
+                raise HTTPException(status_code=503, detail="AWID registry unavailable")
+            try:
+                return response.json()
+            except ValueError:
+                return None
+
+        try:
+            key = await pinned_team_key(
+                team_id, served_key, pins=self._team_key_pins, fetch_act=fetch_act, resolver=self._txt_resolver,
+                enforce=self._enforce_team_key_pins,
+            )
+        except TeamKeyUnverified:
+            raise HTTPException(status_code=401, detail="team_key_unverified") from None
+        self._team_key_memo.put(team_id, served_key, key)
+        return key
 
     def _read_headers(self, url: str) -> dict[str, str]:
         """The authentication of one AWID read."""
@@ -376,7 +441,7 @@ class AWIDTeamCache:
             raise HTTPException(status_code=503, detail="AWID registry unavailable") from exc
         if not team_did_key:
             raise HTTPException(status_code=503, detail="AWID team response missing team_did_key")
-        return team_did_key
+        return await self._pinned_team_key(team_id, team_did_key)
 
     async def check_member_credentials(self) -> None:
         """Read each configured member credential's team with that credential,
@@ -388,8 +453,13 @@ class AWIDTeamCache:
             try:
                 # A check, not a load: requests read their own facts.
                 facts = await self._refresh_team_facts(team_id, time.monotonic_ns(), store=False)
-                _require_active_certificate(facts, certificate_id)
-                verify_team_certificate_signature(dict(credential.certificate), facts.team_did_key)
+                check_team_certificate(
+                    base64.b64encode(json.dumps(dict(credential.certificate)).encode()).decode("ascii"),
+                    subject_did_key=did_key_from_signing_key(credential.signing_key),
+                    team_did_key=facts.team_did_key,
+                    revoked_certificate_ids=facts.revoked_certificate_ids,
+                    registered_certificate_ids=facts.published_certificate_ids,
+                )
             except (HTTPException, TeamCertificateError) as exc:
                 detail = exc.detail if isinstance(exc, HTTPException) else str(exc)
                 raise RuntimeError(
@@ -467,6 +537,9 @@ class AWIDTeamCache:
             logger.exception("AWID team facts refresh failed")
             raise HTTPException(status_code=503, detail="AWID registry unavailable") from exc
 
+        if store:
+            # A check (store=False) reads without changing pins.
+            team_did_key = await self._pinned_team_key(team_id, team_did_key)
         facts = CachedTeamFacts(
             team_did_key=team_did_key,
             published_certificate_ids=frozenset(published),
@@ -494,7 +567,9 @@ class AWIDTeamCache:
                     f"{quote(team_name, safe='')}/certificates/{quote(certificate_id, safe='')}/status"
                 )
                 if response.status_code == 404:
-                    raise HTTPException(status_code=401, detail="Unknown AWID certificate")
+                    # The registry answers one 404 for an unknown team and for a
+                    # certificate it never published.
+                    raise HTTPException(status_code=401, detail="unregistered")
                 response.raise_for_status()
                 payload = response.json()
             if (
@@ -526,7 +601,7 @@ class AWIDTeamCache:
                 status_code=503, detail="AWID certificate status unavailable"
             ) from exc
         facts = CachedTeamFacts(
-            team_did_key=payload["team_did_key"],
+            team_did_key=await self._pinned_team_key(team_id, payload["team_did_key"]),
             published_certificate_ids=frozenset({certificate_id}),
             revoked_certificate_ids=revoked,
             fetched_at=now,
@@ -628,11 +703,24 @@ def _parse_rfc3339_utc(value: str) -> datetime:
     return parsed.astimezone(UTC)
 
 
-def _decode_certificate(header: str) -> dict[str, Any]:
+def _certificate_refusal(error: TeamCertificateError) -> HTTPException:
+    """The answer for a certificate the shared check refuses (awid's one table)."""
+    status_code, detail = refusal_answer(error)
+    return HTTPException(status_code=status_code, detail=detail)
+
+
+def _certificate_locator(header: str) -> tuple[str, str]:
+    """The team and certificate ids a certificate names, to read that team's
+    facts at the registry before the certificate is checked against them."""
     try:
-        return decode_team_certificate(header)
+        certificate = decode_team_certificate(header)
+        for name in ("team_id", "certificate_id"):
+            value = certificate.get(name)
+            if not isinstance(value, str) or not value.strip():
+                raise TeamCertificateError("invalid_field", name)
     except TeamCertificateError as exc:
-        raise HTTPException(status_code=401, detail="Malformed team certificate") from exc
+        raise _certificate_refusal(exc) from exc
+    return certificate["team_id"], certificate["certificate_id"]
 
 
 def _decode_signed_payload_header(value: str) -> bytes:
@@ -738,22 +826,6 @@ def _verified_signed_payload(
     return payload
 
 
-_CERTIFICATE_REFUSALS = {
-    "malformed": (401, "Malformed team certificate"),
-    "missing_signature": (401, "Team certificate missing signature"),
-    "invalid_team_key": (503, "Invalid AWID team public key"),
-    "bad_signature": (401, "Team certificate signature verification failed"),
-}
-
-
-def _verify_certificate_signature(cert: dict[str, Any], team_did_key: str) -> None:
-    try:
-        verify_team_certificate_signature(cert, team_did_key)
-    except TeamCertificateError as exc:
-        status_code, detail = _CERTIFICATE_REFUSALS[exc.reason]
-        raise HTTPException(status_code=status_code, detail=detail) from exc
-
-
 async def require_active_certificate(
     team_cache: AWIDTeamCache, *, team_id: str, certificate_id: str,
 ) -> CachedTeamFacts:
@@ -767,7 +839,7 @@ async def require_active_certificate(
     try:
         facts = await team_cache.get(team_id, certificate_id)
     except ValueError as exc:
-        raise HTTPException(status_code=401, detail="Invalid AWID team id") from exc
+        raise _certificate_refusal(TeamCertificateError("invalid_field", "team_id")) from exc
     _require_active_certificate(facts, certificate_id)
     return facts
 
@@ -795,16 +867,7 @@ async def authenticate_request(
     cert_header = request.headers.get("X-AWID-Team-Certificate") or request.headers.get("x-awid-team-certificate") or ""
     if not cert_header:
         raise HTTPException(status_code=401, detail="Missing X-AWID-Team-Certificate")
-    cert = _decode_certificate(cert_header)
-
-    team_id = str(cert.get("team_id") or "").strip()
-    certificate_id = str(cert.get("certificate_id") or "").strip()
-    member_did_key = str(cert.get("member_did_key") or "").strip()
-    alias = str(cert.get("alias") or "").strip()
-    if not team_id or not certificate_id or not member_did_key or not alias:
-        raise HTTPException(status_code=401, detail="Team certificate missing required fields")
-    if member_did_key != did_key:
-        raise HTTPException(status_code=401, detail="Team certificate member_did_key mismatch")
+    team_id, certificate_id = _certificate_locator(cert_header)
 
     body = await request.body()
     request.state.cached_body = body
@@ -819,10 +882,22 @@ async def authenticate_request(
         body=body,
     )
 
-    facts = await require_active_certificate(
-        team_cache, team_id=team_id, certificate_id=certificate_id,
-    )
-    _verify_certificate_signature(cert, facts.team_did_key)
+    try:
+        facts = await team_cache.get(team_id, certificate_id)
+    except ValueError as exc:
+        raise _certificate_refusal(TeamCertificateError("invalid_field", "team_id")) from exc
+    try:
+        # The team's key and certificates were read for the certificate's own team_id.
+        cert = check_team_certificate(
+            cert_header,
+            subject_did_key=did_key,
+            team_did_key=facts.team_did_key,
+            revoked_certificate_ids=facts.revoked_certificate_ids,
+            registered_certificate_ids=facts.published_certificate_ids,
+        )
+    except TeamCertificateError as exc:
+        raise _certificate_refusal(exc) from exc
+    alias = cert["alias"]
 
     did_aw = str(cert.get("member_did_aw") or "").strip() or None
     did_aw_registry_verified = did_aw is not None and await _did_aw_registry_verified(

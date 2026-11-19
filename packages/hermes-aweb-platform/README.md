@@ -4,81 +4,140 @@ Hermes gateway platform for Aweb agent mail/chat. It runs real `aw` commands
 for identity/trust, events, body fetches, exact-session replies and read receipts.
 It creates no identities and changes no server protocol.
 
-Validated Hermes release: **v0.22.2**, upstream commit
-`d923a5eb487a17c0a68801bba9ef0f56c81040a8`. Support is limited to this tested
-release; a broader version range is not established. The earlier investigation
-used `38d55b90dab7b37d7f26f0450b61851463fb1329` on upstream main.
-See [build evidence](../../docs/evidence/hermes-plugin-build-2026-10-18.md) and
-[model/install evidence](../../docs/evidence/hermes-model-acceptance-2026-10-19.md)
+Hermes requirement: **v0.22.2 or newer (checked on v0.23.1)**. The checked
+upstream commits are `d923a5eb487a17c0a68801bba9ef0f56c81040a8` (v0.22.2)
+and `3b421578588243f920886e6fe79a6faa87ea026e` (v0.23.1). The earlier
+investigation used `38d55b90dab7b37d7f26f0450b61851463fb1329` on upstream main.
+See [build evidence](https://github.com/awebai/aweb/blob/main/docs/evidence/hermes-plugin-build-2026-10-18.md) and
+[model/install evidence](https://github.com/awebai/aweb/blob/main/docs/evidence/hermes-model-acceptance-2026-10-19.md)
 for the separate transport, release and model checks. Telegram is untested.
-The code pin below has a non-author code-review ACK; this documentation/evidence
-delta still requires its own ACK before merging.
+Install from the standalone release channel; development remains in the aweb
+monorepo package.
 
 ## Install
 
-Start with Git, Node/npm, and
-[uv](https://docs.astral.sh/uv/getting-started/installation/) on PATH.
-Choose an empty directory for this agent. The following uses a private npm
-prefix to select an isolated public aw installation. The public package used for acceptance is aw 1.36.43.
+If you already use Hermes, keep that installation, executable and `HERMES_HOME`
+(or its default `~/.hermes`). Install the plugin into that same Hermes home.
+If you do not have Hermes, follow
+[Hermes's installation guide](https://hermes-agent.nousresearch.com/docs/getting-started/installation).
+Use v0.22.2 or newer; the upgrade comparison checked v0.23.1.
+
+Git, Node/npm and the public aw CLI must be on PATH. If aw is not installed:
 
 ```bash
-export HERMES_AWEB_WORKSPACE=/absolute/path/to/empty/hermes-workspace
-mkdir -p "$HERMES_AWEB_WORKSPACE"
-cd "$HERMES_AWEB_WORKSPACE"
-export npm_config_prefix="$PWD/.tools"
-export PATH="$npm_config_prefix/bin:$PATH"
 npm install -g @awebai/aw
 command -v aw
 aw version
-
-git clone --depth 1 --branch v0.22.2 \
-  https://github.com/NousResearch/hermes-agent.git .hermes-agent
-cd .hermes-agent
-test "$(git rev-parse HEAD)" = d923a5eb487a17c0a68801bba9ef0f56c81040a8
-uv sync --frozen --python 3.14 --extra anthropic
-export PATH="$PWD/.venv/bin:$PATH"
-export HERMES_HOME="$HERMES_AWEB_WORKSPACE/.hermes"
 command -v hermes
 hermes --version
-python -c 'import hermes_cli, sys; print(sys.executable); print(hermes_cli.__file__)'
 ```
 
-`aw` must resolve into the selected `.tools/bin`, with the public package version
-shown by `aw version`. `hermes --version` must report `v0.22.2` and
-`local d923a5eb487a`; its executable, Python and module paths must point into
-`.hermes-agent` and its `.venv`. Keep these PATH and `HERMES_HOME` selections
-in the shell that starts the gateway. No prior Hermes install is needed.
-
-Obtain an invite for this agent from your team's dashboard or an authorized
-member using `aw team invite`. Do not create a second account/team to join an
-existing team. The invite selects its service and team. Choose the new agent's
-name in that team; hosted invites require `--name`. With your invite:
+The public-aw acceptance run used aw 1.36.43. Obtain an invite for this agent
+from your team's dashboard or an authorized member using `aw team invite`.
+Do not create another account/team to join an existing team. Replace the
+folder, invite and agent name below; hosted invites require `--name`:
 
 ```bash
-cd "$HERMES_AWEB_WORKSPACE"
-unset AWEB_IDENTITY_HOME
-aw team join <invite-token> --name <agent-name>
-aw workspace status
-export AWEB_PLATFORM_ENABLED=true
-hermes plugins install awebai/aweb/packages/hermes-aweb-platform \
-  --ref df0b38022f1a27d22542776f4b93e8456c9e1ba9 --enable
-hermes plugins list
+mkdir -p /absolute/path/to/hermes-agent
+cd /absolute/path/to/hermes-agent
+aw --identity-home "$PWD/.aw" team join <invite-token> --name <agent-name>
+aw --identity-home "$PWD/.aw" workspace status
+```
 
-export AWEB_PLATFORM_WORKDIR="$PWD"
-export AWEB_ALLOWED_USERS=example.aweb.ai/alice
-export AWEB_ALLOW_ALL_USERS=false
-export AWEB_HOME_CHANNEL=example.aweb.ai/alice
-hermes model
+If this agent already owns a connected native aw workspace, use that folder
+and omit the join command; never copy another agent's `.aw` state. For the full
+team flow, see [add a Hermes agent](https://github.com/awebai/aweb/blob/main/docs/add-ai-tool.md#hermes).
+
+In that same agent folder, with your existing Hermes and selected `HERMES_HOME`:
+
+```bash
+export AWEB_PLATFORM_ENABLED=true
+hermes plugins install awebai/hermes-aweb-platform --enable
+hermes plugins list
+hermes config set AWEB_PLATFORM_ENABLED true
+hermes config set AWEB_PLATFORM_WORKDIR "$PWD"
+hermes config set AWEB_IDENTITY_HOME "$PWD/.aw"
+```
+
+Keep the export before installation: it suppresses the required-environment
+prompt. To update an existing plugin:
+
+```bash
+hermes plugins update aweb-platform
+```
+
+`hermes config set` writes these environment settings to `$HERMES_HOME/.env`.
+The plugin runs aw with its inherited environment: bind `AWEB_IDENTITY_HOME`
+to this agent's `.aw` explicitly. An existing Hermes `.env` overrides shell
+exports and can otherwise restore a stale selector despite a correct workdir.
+The export before installation also enables platform discovery for that command.
+
+For a **team-only (local) agent**, the standard setup allows its reachable senders:
+
+```bash
+hermes config set AWEB_ALLOWED_USERS ""
+hermes config set AWEB_ALLOW_TEAM false
+hermes config set AWEB_ALLOW_ALL_USERS true
+```
+
+A team-only agent has no public address: it can be reached by its own team, by
+people it has added as contacts or has written to, and through any channel you
+connect to it. Others can also reply in conversations the agent started. A fresh
+agent with no contacts or connected channels is reachable only by its own team.
+Use allow-all only for a team-only agent. For an agent with a **public address**,
+allowlist the full sender addresses and keep allow-all false:
+
+```bash
+hermes config set AWEB_ALLOW_TEAM false
+hermes config set AWEB_ALLOW_ALL_USERS false
+hermes config set AWEB_ALLOWED_USERS example.aweb.ai/alice
+```
+
+Replace the example with authorized full addresses, separated by commas when
+there is more than one.
+
+For **strict team access**, choose this alternative locally and restart the gateway:
+
+```bash
+hermes config set AWEB_ALLOW_ALL_USERS false
+hermes config set AWEB_ALLOWED_USERS ""
+hermes config set AWEB_ALLOW_TEAM true
+```
+
+Strict mode accepts only senders whose delivery server reports active membership
+in the selected team of this agent. Contacts, other teams in the same namespace and
+connected channels cannot bypass this check. Missing or inactive membership is
+refused and the message stays unread; the gateway logs the reason locally without
+message content. Dashboard messages sent from the agent page and replies in its
+conversations use that team context.
+
+`AWEB_ALLOW_TEAM=true` is exclusive: a true `AWEB_ALLOW_ALL_USERS` or nonempty
+`AWEB_ALLOWED_USERS` makes startup fail clearly. False or unset keeps the usual
+allow-all/allowlist behavior. If an old setting persists, use the duplicate-key
+recovery described below before restarting. Strict team access does not grant
+remote command or tool-approval authority. Strict mode also refuses overlapping
+Hermes global allow-all/allowlists, configured adapter allowlists, or existing
+aweb pairing approvals, including grants in other served profiles. Clear those
+grants locally before starting, or use a separate Hermes home. The plugin never
+changes grants or approval policy for you.
+
+Optionally select an authorized recipient for cron
+sends and owner notices:
+
+```bash
+hermes config set AWEB_HOME_CHANNEL example.aweb.ai/alice
+```
+
+Keep your existing model configuration, or choose a model and credentials with
+`hermes model`. Start the gateway with:
+
+```bash
 hermes gateway run
 ```
 
-If this agent already owns a connected native aw workspace, use that directory
-and omit `aw team join`; never copy another agent's `.aw` state. For the full
-team flow, see [add a Hermes agent](../../docs/add-ai-tool.md#hermes).
-`hermes model` is interactive. The `anthropic` extra prepares the acceptance
-provider. If `ANTHROPIC_API_KEY` is already supplied securely in the runtime
-environment, this noninteractive alternative selects the tested model instead
-of running `hermes model`:
+If `ANTHROPIC_API_KEY` is already supplied securely in the runtime environment
+and your Hermes installation has the Anthropic provider dependencies, this
+noninteractive alternative selects the model used for acceptance:
 
 ```bash
 hermes config set model.provider anthropic
@@ -87,46 +146,76 @@ hermes config set model.api_mode anthropic_messages
 hermes gateway run
 ```
 
-Keep credential values out of shell history, logs and repository files.
-
-Replace the example addresses with an authorized sender/home-channel recipient.
-Use a separate `HERMES_HOME` for each gateway. This exact remote subdirectory
-install was run in fresh homes on both the investigation pin and v0.22.2,
-with byte-identical installed adapter code. The complete public-aw/team-join
-flow also passed against app.aweb.ai with aw 1.36.43.
+Keep credential values out of shell history, logs and repository files. Each
+gateway needs a separate `HERMES_HOME`. The remote subdirectory install was run
+in fresh homes on both the investigation pin and v0.22.2, with byte-identical
+installed adapter code. The complete public-aw/team-join flow also passed
+against app.aweb.ai with aw 1.36.43.
 
 The remote manifest key is `aweb-platform`; the gateway platform name is `aweb`.
 For development, a symlink at `~/.hermes/plugins/platforms/aweb` uses the discovery
 key `platforms/aweb` and can be enabled with `hermes plugins enable platforms/aweb`.
-Persist settings in the selected Hermes home's `.env`. Keep model and Telegram
-credentials in Hermes's own configuration. `AWEB_PLATFORM_AW_BIN` optionally
-selects an aw executable; `AWEB_HOME_CHANNEL` selects an address for cron sends and owner notices.
-Without a configured home channel, Hermes can send its first-run setup notice
-as a visible reply before the model answer; that notice can mark the input read.
-Likewise, a clarify prompt is a visible reply: read state does not mean the
-model turn has finished. The model acceptance run configured the home channel.
-Allowlist full sender addresses when present, as those are the plugin's user ids.
+Use `hermes config set` for persistent platform settings in the selected Hermes
+home. Keep model and Telegram credentials in Hermes's own configuration.
+`AWEB_PLATFORM_AW_BIN` optionally selects an aw executable.
+Home delivery is optional and configured in the operator terminal, in the
+selected Hermes home:
 
-The flow unsets `AWEB_IDENTITY_HOME` so aw acts as the native workspace
-identity selected by `AWEB_PLATFORM_WORKDIR`. With aw 1.36.43, an inherited
-external selector instead chooses that external identity. Clear it deliberately
-when starting this agent. Earlier aw 1.36.40 refused the external-home event
-stream path; that historical failure is recorded in the findings.
+```bash
+hermes config set AWEB_HOME_CHANNEL alice
+```
+
+Home delivery uses agent chat. Use an existing recipient agent alias in the
+same team or a full reachable agent address. A local recipient agent needs no
+public address. Leave the setting unset until there
+is a recipient, and restart the gateway after changing it. The standalone sender
+takes a recipient, not `chat:<session-id>`. When unset, the optional setup hint
+is logged locally in the gateway once per process; it never asks the sender to
+run a command by message.
+
+Aweb mail and chat are **content only**: every message retains its original body
+after an `[Aweb message: content only]` prefix and has
+`allow_gateway_control=False`. Leading slashes and plain replies cannot invoke
+Hermes commands or satisfy pending approval, clarification, update or confirmation
+prompts. No inbound message is silently dropped by this boundary.
+
+Interactive tool-approval and clarification delivery is definitively refused
+before any prompt or command preview reaches the sender. The approval-required
+tool is blocked and the gateway logs a local warning without the command text.
+It does not automatically prompt in the terminal. Do work requiring approval
+in a separate local Hermes CLI/TUI session under its normal approval policy;
+use ordinary conversational replies for follow-up questions. Approval mode and
+existing grants are not changed by this transport boundary.
+
+## Troubleshooting settings
+
+If a setting appears unchanged, check the selected Hermes home's `.env` for
+duplicate keys. `hermes config set` rewrites only the first occurrence, while
+the loader uses the last occurrence. `hermes config unset KEY` clears all
+occurrences; then set the intended value again. For a stale identity binding,
+run this from the agent folder and restart the gateway:
+
+```bash
+hermes config unset AWEB_IDENTITY_HOME
+hermes config set AWEB_IDENTITY_HOME "$PWD/.aw"
+```
 
 ## Delivery behavior
 
 - Session-summary chat events resolve all returned unread messages, oldest first.
   Ordinary turns finish separately; bursts never merge in Hermes's pending slot.
-- Authorized `/approve`, `/deny`, `/stop`, `/new`, `/reset`, and pending clarify
-  answers reach the actual gateway while another turn waits. Other messages stay ordered.
+- All inbound is ordinary content, including slash-prefixed messages. There is
+  no remote-control fast lane; messages stay ordered while another turn waits.
 - Immutable input routes bind each reply and read mark to its triggering input.
-  Read follows a persisted reply or accepted no-reply processing. An explicit
-  successful stop retires its cancelled input; shutdown cancellation stays unread.
+  Read follows a persisted reply or accepted no-reply processing. Shutdown
+  cancellation leaves an unfinished input unread.
 - Failed mail fetches stay retryable. A completed response with a failed read
   mark retries that receipt in this process. A gateway crash can still duplicate
   a committed reply between send and read; no crash-level exactly-once claim is made.
-- Runtime health starts retrying until a parsed real stream frame, degrades on
-  stream failure, and recovers only after another real frame.
+- Each connect waits up to five seconds for a parsed `connected` or `heartbeat`
+  frame. Healthy startup therefore reports connected immediately. On timeout it
+  returns degraded and keeps reconnecting in the background; stream failure
+  degrades health until another connected/heartbeat frame arrives.
 - A full 2000-row unread history window is refused: today's newest-window API
   cannot prove the oldest prefix is present. Server pagination/receipts remain separate work.
 
@@ -137,18 +226,29 @@ is separate from this adapter's reply routing.
 
 ## Compatibility checks
 
-Run with the supported release checkout's dependency environment. The public
+For development, run these checks from the root of the
+[aweb source monorepo](https://github.com/awebai/aweb), using the supported
+Hermes checkout's dependency environment. The public
 surfaces used are platform registration, `handle_message`, processing-completion
-hooks, command/clarify helpers and `send_path_degraded`. These pinned private
-boundaries remain because a public final-turn/guard-release receipt is absent:
+hooks, content-only events, prompt-delivery dispositions and `send_path_degraded`.
+The following pinned upstream boundaries require inspection on upgrades:
 
 | Boundary (v0.22.2 source locations) | Why it remains | Upgrade check |
 | --- | --- | --- |
 | `BasePlatformAdapter._session_tasks`, `_event_session_key` (`base.py:1993,2554,4768`) | The public completion hook runs before guard cleanup; ordinary admission waits for actual task completion. | Ordered burst/restart and blocked-turn probes. |
 | Runner `_startup_restore_in_progress` (`run_inbound.py:219`) | A volatile startup replay queue is not completed no-reply processing. | Burst queued before real gateway boot. |
-| Runner `_is_user_authorized_for_source` (`run.py:4020`) | Distinguish ignored unauthorized `None` from accepted no-reply `None`; refuse unauthorized control bypass. | Real unauthorized sender remains unread; do not remove this gate on upgrade. |
-| `_dispatch_inline_reply` (`base.py:3599`) | Preserve a failed inline handler disposition when Hermes contains its exception. | Approval/clarify/stop probes through actual gateway dispatch. |
+| Runner `_is_user_authorized_for_source` (`run.py:4020`) | Distinguish ignored unauthorized `None` from accepted no-reply `None`. | Real unauthorized sender remains unread; do not remove this gate on upgrade. |
+| `MessageEvent.allow_gateway_control` and pending-reply guards (`event.py:97-135`, `run_inbound.py:1224`, `run_busy.py:553`) | Every aweb input must stay conversational, including plain-word and slash approval replies. | Content preservation and pending-approval refusal tests at both releases. |
+| Definitive `egress_declined` prompt disposition (`run.py:763-813`, `run_turn_runner.py:1501-1531`, `run_turn_runner_clarify_delivery.py:47-58`) | Approval/clarify refusal must clear the waiter without a text fallback or a command preview. | Real notifier/registry tests and sender-visible output checks. |
+| Exact localized missing-home notice (`run_turn.py:1453-1457`; v0.23.1 `run_turn_prepare.py:691-695`) | Upstream provides no typed notice kind. Only the exact Aweb render is suppressed successfully, with optional setup advice logged locally once per process. | Real first-contact turns, successful suppression without retry, and unchanged quoted text, at both releases. |
 | aw reconnect diagnostic (`cli/go/cmd/aw/events.go:93`) | aw may reconnect HTTP streams inside one child process; degrade health before the next frame. | Check this CLI diagnostic and JSON event shape when upgrading aw. |
+
+The earlier comparison of plugin `df0b38022` on v0.22.2/v0.23.1 passed lifecycle,
+live chat and seven of eight delivery probes on each release. Its mail-route
+probe expected a remote slash command and failed on both releases because mail
+subjects prevented command parsing. Remote command dispatch is now forbidden;
+current probes check content-only delivery and local prompt refusal instead.
+The earlier comparison did not exercise model inference.
 
 For a Hermes upgrade, inspect those boundaries at the new commit and run the
 following targeted checks before advancing the supported version:
@@ -157,6 +257,8 @@ following targeted checks before advancing the supported version:
 export HERMES_AGENT_SOURCE=/path/to/supported/hermes-agent
 python -m unittest discover -s packages/hermes-aweb-platform/tests \
   -p test_hermes_lifecycle.py -v
+python -m unittest discover -s packages/hermes-aweb-platform/tests \
+  -p test_content_boundary.py -v
 
 export HERMES_LIVE_RECEIVER_HOME=/path/to/local-hermes-workspace
 export HERMES_LIVE_SENDER_HOME=/path/to/local-alice-workspace
@@ -171,6 +273,18 @@ python -m unittest discover -s packages/hermes-aweb-platform/tests \
 The opt-in tests require disposable loopback aweb/AWID/PostgreSQL fixtures,
 receiver alias `hermes`, sender alias `alice`, address `hermes-acft1.test/alice`,
 and exclusive receiver ownership. They run the actual gateway, aw and server.
-Fixture commands use Hermes's real clarify/approval primitives without a model;
-timing/fault probes hold or drop completed real CLI results, never fabricate
-messages or server events. These checks establish transport behavior only.
+Prompt probes use Hermes's real approval notifier, clarify and pending registries
+without executing a tool or using model credentials. Timing/fault probes hold
+real processing boundaries or drop completed real CLI results; they never
+fabricate messages or server events. These checks establish transport and
+control-boundary behavior, not model inference.
+
+## Releases
+
+The package in [the aweb monorepo](https://github.com/awebai/aweb/tree/main/packages/hermes-aweb-platform)
+is the source. After a plugin change lands there with review and a real-gateway
+probe, integrations mirrors that package and the repository LICENSE as one
+commit onto [the release channel](https://github.com/awebai/hermes-aweb-platform)
+main. A reviewer verifies tree identity at the exact source and mirror SHAs
+before the push. The mirror commit is tagged `vX.Y.Z` using the version in
+`plugin.yaml`. Nothing else lands in the release repository.

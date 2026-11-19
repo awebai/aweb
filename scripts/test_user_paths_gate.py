@@ -105,6 +105,8 @@ class UserPathsAdmission(unittest.TestCase):
             docker = root / 'docker'
             docker.write_text('#!/bin/sh\nexit 0\n')
             docker.chmod(0o755)
+            # This isolated stage test models a completed host preflight.
+            (root / 'host-published-port.log').write_text('fixture host publication PASS\n')
             result = run_fixture(['bash', str(ROOT / 'scripts/candidate-suite.sh'), 'checks user-paths unit'],
                                     env=dict(os.environ, PATH=f'{root}:{os.environ["PATH"]}',
                                              CALLS=str(root / 'calls'), CANDIDATE_LOG_DIR=str(root), BUILDX_BUILDER="fixture"),
@@ -163,9 +165,14 @@ class FrozenGateInput(unittest.TestCase):
                 repo, commands = root / 'repo', root / 'bin'
                 (repo / 'scripts').mkdir(parents=True)
                 commands.mkdir()
-                for name in ['candidate-docker-gate.sh', 'candidate-suite.sh', 'candidate-cleanup.sh', 'candidate-ports.py', 'fetch_released_aw.py', 'release_artifacts.py', 'release_stamp.py', 'release-build-constraints.txt', 'publish_release.py', 'release_versions.py']:
+                for name in ['candidate-docker-gate.sh', 'candidate-suite.sh', 'candidate-cleanup.sh', 'candidate-network.py', 'fetch_released_aw.py', 'release_artifacts.py', 'release_stamp.py', 'release-build-constraints.txt', 'publish_release.py', 'release_versions.py']:
                     shutil.copy2(ROOT / 'scripts' / name, repo / 'scripts' / name)
                 write_artifact_fixture(repo)
+                # Docker itself is fake in this input/ledger test. Keep the
+                # wrapper's real host-preflight call, with an explicit stand-in.
+                (repo / 'scripts/e2e').mkdir()
+                (repo / 'scripts/e2e/test_candidate_gate_docker_boundaries.py').write_text(
+                    'print("fixture host publication PASS")\n')
                 shutil.copy2(ROOT / 'scripts/e2e/user_paths_result.py', repo / 'scripts/user_paths_result.py')
                 (repo / 'scripts/coverage_fixture.py').write_text('from user_paths_result import qualification\nr=qualification({},0,[])\nfor h in r["required_humans"]: print(h["case"]+": "+h["status"])\nprint(r["coverage_summary"])\n')
                 (repo / 'scripts/candidate-host-pressure.py').write_text('import pathlib,sys\nif sys.argv[1]=="capture": pathlib.Path(sys.argv[2]).write_text("{}")\n')
@@ -326,7 +333,8 @@ if args[:2] in [['network','create'],['volume','create']]: print('owned');sys.ex
                     self.assertEqual(ledger_rows(), changed)
 
                 finally:
-                    shutil.rmtree('/tmp/aweb-candidate-gate-' + git('rev-parse', 'HEAD'), ignore_errors=True)
+                    for logs in Path('/tmp').glob('aweb-candidate-gate-' + git('rev-parse', 'HEAD') + '-*'):
+                        shutil.rmtree(logs, ignore_errors=True)
         finally:
             server.shutdown()
             thread.join()

@@ -44,6 +44,7 @@ func TestRegistryClientRetriesServiceUnavailableRead(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := NewAWIDRegistryClient(server.Client(), nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	resolution, err := client.ResolveKeyAt(context.Background(), server.URL, "did:aw:test")
 	if err != nil {
 		t.Fatalf("ResolveKeyAt: %v", err)
@@ -85,7 +86,9 @@ func TestRegistryClientResolveKeyAtReturnsEncryptionKey(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	resolution, err := NewAWIDRegistryClient(server.Client(), nil).ResolveKeyAt(context.Background(), server.URL, stableID)
+	client := NewAWIDRegistryClient(server.Client(), nil)
+	routeUntrustedRegistriesToInjectedClient(client)
+	resolution, err := client.ResolveKeyAt(context.Background(), server.URL, stableID)
 	if err != nil {
 		t.Fatalf("ResolveKeyAt: %v", err)
 	}
@@ -124,6 +127,7 @@ func TestRegistryClientRetriesTransientTransportFailures(t *testing.T) {
 					Body:       io.NopCloser(strings.NewReader(registryKeyResponse())),
 				}, nil
 			})}, nil)
+			routeUntrustedRegistriesToInjectedClient(client)
 
 			if _, err := client.ResolveKeyAt(context.Background(), "https://registry.example", "did:aw:test"); err != nil {
 				t.Fatalf("ResolveKeyAt: %v", err)
@@ -153,6 +157,7 @@ func TestRegistryClientRetriesInterruptedResponseBody(t *testing.T) {
 			},
 		}, nil
 	})}, nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 
 	resolution, err := client.ResolveKeyAt(context.Background(), "https://registry.example", "did:aw:test")
 	if err != nil {
@@ -195,6 +200,7 @@ func TestRegistryClientDoesNotRetryNonTransientResponses(t *testing.T) {
 			t.Cleanup(server.Close)
 
 			client := NewAWIDRegistryClient(server.Client(), nil)
+			routeUntrustedRegistriesToInjectedClient(client)
 			_, err := client.ResolveKeyAt(context.Background(), server.URL, "did:aw:test")
 			var registryErr *RegistryError
 			if !errors.As(err, &registryErr) || registryErr.StatusCode != status {
@@ -228,6 +234,7 @@ func TestRegistryClientBoundsServiceUnavailableRetries(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := NewAWIDRegistryClient(server.Client(), nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	_, err := client.ResolveKeyAt(context.Background(), server.URL, "did:aw:test")
 	var registryErr *RegistryError
 	if !errors.As(err, &registryErr) || registryErr.StatusCode != http.StatusServiceUnavailable {
@@ -298,6 +305,7 @@ func TestRegistryClientDoesNotRetryUnknownPost(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := NewAWIDRegistryClient(server.Client(), nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	err := client.requestJSON(context.Background(), http.MethodPost, server.URL, "/v1/future/non-idempotent-action", nil, map[string]string{"value": "one"}, nil)
 	var registryErr *RegistryError
 	if !errors.As(err, &registryErr) || registryErr.StatusCode != http.StatusServiceUnavailable {
@@ -312,6 +320,7 @@ func TestRegistryClientDoesNotRetryUnknownPost(t *testing.T) {
 		transportCalls.Add(1)
 		return nil, syscall.ECONNRESET
 	})}, nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	err = client.requestJSON(context.Background(), http.MethodPost, "https://registry.example", "/v1/future/non-idempotent-action", nil, map[string]string{"value": "one"}, nil)
 	if !errors.Is(err, syscall.ECONNRESET) {
 		t.Fatalf("transport error=%v, want connection reset", err)
@@ -353,6 +362,7 @@ func TestRegistryClientRetriesExactIdempotentRegisterIdentity(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := NewAWIDRegistryClient(server.Client(), nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	if _, err := client.RegisterIdentity(context.Background(), server.URL, didKey, didAW, signingKey); err != nil {
 		t.Fatalf("RegisterIdentity: %v", err)
 	}
@@ -396,6 +406,7 @@ func TestRegistryClientDoesNotGenericallyRetryRegisterCertificate(t *testing.T) 
 	t.Cleanup(server.Close)
 
 	client := NewAWIDRegistryClient(server.Client(), nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	err = client.RegisterCertificate(context.Background(), server.URL, "acme.com", "backend", certificate, teamKey)
 	var registryErr *RegistryError
 	if !errors.As(err, &registryErr) || registryErr.StatusCode != http.StatusServiceUnavailable {

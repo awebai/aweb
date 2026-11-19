@@ -19,6 +19,23 @@ _SHARED_MODULE = "aweb_naapp"
 Store = Callable[[AsyncDatabaseManager], Awaitable[None]]
 
 
+async def require_separate_database(
+    content: AsyncDatabaseManager, ledger: AsyncDatabaseManager, *, ledger_name: str
+) -> None:
+    """Refuse a ``ledger`` that is not a database of its own beside ``content``.
+
+    A deletion ledger records what was erased so that a restored content
+    database can be purged again before it is served. It works only while a
+    content backup can never restore it, so it must be another database, not
+    another schema or another manager of the same one."""
+    if content is ledger:
+        raise ValueError(f"the {ledger_name} must be outside the content restore database")
+    content_id = await content.fetch_value("SELECT current_database()")
+    ledger_id = await ledger.fetch_value("SELECT current_database()")
+    if content_id == ledger_id:
+        raise ValueError(f"the {ledger_name} must use a separate database")
+
+
 class NaappDatabase:
     """Owns the pgdbm manager for a standalone naapp deployment.
 

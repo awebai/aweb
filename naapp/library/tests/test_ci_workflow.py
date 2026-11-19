@@ -257,6 +257,35 @@ def test_ci_also_covers_naapp_lib() -> None:
             assert step.get("working-directory") == "naapp-lib", step
 
 
+@pytest.mark.parametrize(
+    ("filename", "job"), [("folio-ci.yml", "quality"), ("library-ci.yml", "naapp-lib")]
+)
+def test_ci_runs_naapp_lib_tests_the_way_the_release_gate_does(filename: str, job: str) -> None:
+    """naapp-lib's suite runs behind the test egress guard, with Redis.
+
+    The guard forwards the governance browser's RP host to loopback for both
+    Chromium and Playwright's driver; the cached-registry tests read REDIS_URL.
+    A bare run fails both at setup, so CI would be red for its own reasons
+    rather than the code's.
+    """
+    workflow = yaml.load(
+        (_AWEB_ROOT / ".github" / "workflows" / filename).read_text(encoding="utf-8"),
+        Loader=yaml.BaseLoader,
+    )
+    definition = workflow["jobs"][job]
+    runs = [
+        step
+        for step in definition["steps"]
+        if step.get("working-directory") == "naapp-lib"
+        and any(command in step.get("run", "") for command in ("make test", "pytest"))
+    ]
+    assert len(runs) == 1, runs
+    assert runs[0]["run"].startswith("python3 ../scripts/test-egress/native.py -- "), runs[0]
+    assert "redis" in definition.get("services", {}), definition.get("services")
+    environment = {**definition.get("env", {}), **runs[0].get("env", {})}
+    assert environment.get("REDIS_URL") == "redis://localhost:6379/0"
+
+
 def test_ci_runs_library_targets_from_the_subtree_path() -> None:
     """make runs in naapp/library, not at the aweb root, or it runs aweb's Makefile.
 

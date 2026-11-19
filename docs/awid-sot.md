@@ -110,15 +110,43 @@ Public identity and namespace read endpoints (`GET /v1/namespaces/{domain}`,
 `GET /v1/did/{did_aw}/key`, etc.) are rate-limited and do not require
 signatures. Team reads follow team visibility: public teams are anonymous;
 private-team metadata, enumeration, certificate history, member lookup, and
-revocations require a controller or unrevoked-member path signature, or the
-trusted same-operator service credential described below. The per-certificate
+revocations require a signed read (below) by the team key or an unrevoked
+member key, or the trusted same-operator service credential described below. The per-certificate
 `/certificates/{certificate_id}/status` read is the narrow anonymous exception,
 including for private teams; it exposes only the four facts documented below.
-The team-server record and the principal-attestation record reads (custodians,
-custody, person) are likewise anonymous, each by exact key with one identical
-404, as documented below. Identity-private
-reads and certificate-blob fetch have their separately documented
-authentication requirements.
+The team-server record, the team-key act and the principal-attestation record
+reads (custodians, custody, person) are likewise anonymous, each by exact key
+with one identical 404, as documented below. Identity-private
+reads have their separately documented authentication requirements.
+
+### Signed team reads
+
+A signed team read takes one of two forms. Both identify the reader's
+did:key; the route then applies its own rule, the same for both forms: a
+private team's metadata, enumeration, certificate list, member lookup and
+revocations admit the team key or an unrevoked member key; the certificate-blob
+fetch (`GET .../certificates/{certificate_id}`) admits only that certificate's
+member key; the signed-records list admits only the team key.
+
+- **Covering read.** The covering-v2 envelope of
+  [awid-controller-requests.md](awid-controller-requests.md) with operation
+  `read_team` and claims `domain` and, for a route under one team, `name`
+  (the team list, `GET /v1/namespaces/{domain}/teams`, carries `domain`
+  only). It binds this registry's origin (`aud`), `GET`, the raw path with its
+  query, and the empty body's `body_sha256`, so a captured read cannot be
+  replayed at another route, with another query, or at another registry. It is
+  sent with `X-AWEB-Signed-Payload`, `X-AWEB-Timestamp` and
+  `Authorization: DIDKey <did:key> <signature>`.
+- **Path signature.** The signature over `{timestamp}\n{method}\n{path}`, where
+  `path` excludes the query string, with `X-AWEB-Timestamp` and the same
+  `Authorization` header. It binds neither the query nor the registry. It is
+  accepted while clients move to the covering read, counted as
+  `awid_path_signed_read_accepted`, and removed once measured unused.
+
+A request carrying `X-AWEB-Signed-Payload` is verified only as a covering
+read. A supplied proof that does not verify is refused (401; 404 on the
+signed-records list, whose every refusal is the same 404), never treated as an
+anonymous read.
 
 An AWID service used by aweb must configure the same high-entropy
 `AWID_SERVICE_TOKEN` as the aweb server (standalone AWID deployments that do not
@@ -178,7 +206,8 @@ The same credential also exempts the IP limit on these operations:
 | POST | `/v1/id-certificates/status` | `id_certificate_status` (IP only) |
 
 Their existing proofs, controller authorization, validation and responses are
-unchanged. A signed ID-status caller still spends its caller-key budget.
+unchanged. ID-status reads are public and spend only the source-IP budget;
+there is no signed caller-key budget.
 Every registry route with an IP limiter accepts this rate-only exemption.
 Missing, wrong or unconfigured service credentials retain the public budgets.
 Public callers keep the existing 10/hour DID, namespace and team creation
@@ -262,15 +291,18 @@ can bootstrap a first namespace registration; it never substitutes for either
 recovery proof when replacing an existing controller.
 
 AWID keeps each domain's root-key history in `id_namespace_epochs`. Every
-epoch was proven by exact `_awid.<domain>` DNS on an explicit act. The first
+epoch was proven by exact `_awid.<domain>` DNS or verified parent authorization
+on an explicit act. The first
 registration, re-registration after deletion, and an exact-DNS PUT to a key
 other than the open epoch's each open a `replaced` epoch; an exact-DNS PUT of
 the open epoch's key changes no epoch. A namespace registered before this
 history existed gets epoch 1 when its stored controller repeats its
-authenticated POST with exact DNS for that same key, rechecked under the
-namespace row lock while the domain has no epoch at all. Inherited, failed
-or skipped DNS, parent authorization and reverify never open, replace or
-retire an epoch; reverify still updates the stored controller from exact DNS.
+authenticated POST with exact DNS for that same key or verified parent
+authorization for that child, rechecked under the namespace row lock while the
+domain has no epoch at all. Verified parent authorization also establishes a
+replaced child epoch on PUT recovery. Inherited DNS alone, failed or skipped
+DNS and reverify never open, replace or retire an epoch; reverify still updates
+the stored controller from exact DNS.
 Deletion retires the open epoch, and sequences never reset. A controller key
 outside the prime-order Ed25519 subgroup (small- or mixed-order) never opens an
 epoch, even with exact DNS: the namespace write itself keeps its released
@@ -293,6 +325,13 @@ a missing, wrong-role or legacy proof or a stale timestamp; 409
 key); 503 `evidence_unavailable` when exact DNS does not prove the new key.
 It shares the `namespace_rotate` rate-limit bucket with the PUT.
 
+Two-key rotation carries only direct delegations bound to the previous key.
+New-key-only recovery and deletion withdraw outgoing delegation witnesses,
+retaining child data. Each approved child is explicitly restored by
+registration signed by the child and the new parent; see
+[id-certificates.md](id-certificates.md#namespace-continuity-and-replacement).
+This does not revoke team credentials or every stored-controller registry write.
+
 ## Addresses
 
 Identity handles within namespaces. `acme.com/alice`.
@@ -304,6 +343,27 @@ GET    /v1/namespaces/{domain}/addresses/{name}    Read global address handle (p
 PUT    /v1/namespaces/{domain}/addresses/{name}    Compatibility no-op for legacy metadata fields (controller auth)
 DELETE /v1/namespaces/{domain}/addresses/{name}    Delete (controller auth)
 ```
+
+**Address-read absence compatibility.** A missing address answers HTTP 404
+with `{"detail":{"code":"address_not_found","message":"Address not found"}}`.
+SDK readers also accept the exact released bodies `{"detail":"Address not found"}`
+and `{"detail":"Namespace not found"}`, only on the address endpoint. Generic/proxy
+404s and failed key/log reads do not prove SDK address absence. Each legacy acceptance emits
+`awid_legacy_address_not_found` with a cumulative per-process `count`.
+Removal requires a supported registry-version floor that guarantees the coded
+answer and measured zero legacy use across supported deployments, including
+foreign registries; it is a separate reviewed compatibility change. No date or
+local registry upgrade alone removes support.
+
+**Missing-team revocation compatibility.** On the first revocations page
+only, the exact released HTTP 404 body `{"detail":"Team not found"}` means
+no such team; the SDK returns an empty set and the caller must independently
+read the team key before authenticating. A generic/proxy 404, any other body,
+or any later-page 404 is a failure, never an empty or partial revocation list.
+Each accepted legacy answer emits `awid_legacy_team_not_found` with a cumulative
+per-process `count`. Removal has the same supported-version, zero-observed-use
+and separate-review requirements as the address compatibility above; a local
+upgrade alone does not remove support.
 
 **Creation precondition.** `POST /v1/namespaces/{domain}/addresses`
 requires that the target `did_aw` is already registered at awid
@@ -607,9 +667,9 @@ POST   /v1/namespaces/{domain}/teams
 
 GET    /v1/namespaces/{domain}/teams
        List teams in namespace.
-       Auth: none returns public teams only. A controller or unrevoked-member
-             path signature, or the trusted same-operator service credential,
-             also returns private teams visible to that authority.
+       Auth: none returns public teams only. A signed team read by a team
+             key or unrevoked member key, or the trusted same-operator service
+             credential, also returns private teams visible to that authority.
        Response: { "teams": [{ "name": "backend",
                    "display_name": "Backend Team",
                    "team_did_key": "did:key:z6Mk...",
@@ -617,9 +677,9 @@ GET    /v1/namespaces/{domain}/teams
 
 GET    /v1/namespaces/{domain}/teams/{name}
        Get team details.
-       Auth: none for a public team. A private team requires its controller or
-             unrevoked-member path signature, or the trusted same-operator
-             service credential. Services call this to get the team public key
+       Auth: none for a public team. A private team requires a signed team
+             read by its team key or an unrevoked member key, or the trusted
+             same-operator service credential. Services call this to get the team public key
              and visibility metadata for certificate verification.
        Response: { "team_id": "backend:acme.com", "domain": "acme.com",
                    "name": "backend", "display_name": "Backend Team",
@@ -639,9 +699,25 @@ POST   /v1/namespaces/{domain}/teams/{name}/rotate
                  "team_server":     { "record", "signature" },
                  "team_custodians": [{ "record", "signature" }],
                  "member_custody":  [{ "record", "signature" }],
-                 "member_person":   [{ "record", "signature" }] } }
+                 "member_person":   [{ "record", "signature" }] },
+               "member_certificates": [{                  (optional)
+                 "old_certificate_id": "uuid",
+                 "certificate": "<base64 certificate under the NEW key>",
+                 "custody": { "record", "signature" },   (optional)
+                 "person":  { "record", "signature" } }] } (optional)
        Note: invalidates ALL existing certificates (they were
        signed by the old key). Members need new certificates.
+       member_certificates replaces, in the same transaction, each named
+       active certificate: AWID revokes it and registers the given
+       certificate, which must be signed by the new key for the same
+       member, alias, did:aw, address and identity scope; custody and
+       person are that member's records for the new certificate, signed by
+       the new key (a custody record's custodian must be registered). An
+       old certificate that is not active: 409
+       member_certificate_not_active; a certificate or record that does
+       not hold: 422; either way nothing changes. A registry that predates
+       the field refuses it with 422. Certificates not named are left as
+       they are.
        resigned_records carries every team-key-signed record of the team
        re-signed with the NEW key: unchanged apart from team_did_key and a
        newer issued_at, exactly one per stored record of each kind, and
@@ -655,6 +731,28 @@ POST   /v1/namespaces/{domain}/teams/{name}/rotate
        413 above it. Without resigned_records the rotation still succeeds,
        and verifiers refuse the old-key records until they are re-published.
        Contract: [principal-attestation.md](principal-attestation.md) §5.
+       AWID keeps the request's signed bytes, signer and signature as the
+       team-key act, in the same transaction, also when the key is
+       unchanged (a re-attestation by the current namespace controller).
+
+GET    /v1/namespaces/{domain}/teams/{name}/key-act
+       The namespace controller's latest act naming the team's CURRENT key.
+       Auth: none, for public and private teams, like certificate status and
+       the team-server record: relying servers without a read credential must
+       verify rotations too. It shows only the current team key (which
+       certificate status already shows) and a namespace controller key.
+       Rate limit: the team_get bucket.
+       Response: { "team_id": "backend:acme.com",
+                   "team_did_key": "did:key:z6Mk...",
+                   "signer_did_key": "did:key:z6Mk...",
+                   "signed_payload": "<unpadded base64url of the signed bytes>",
+                   "signature": "<base64 Ed25519>" }
+       signed_payload is the covering-v2 envelope or the legacy
+       {domain, operation, name, new_team_did_key, timestamp} JSON, exactly as
+       signed. One identical 404 when the team is unknown or no stored act
+       names its current key. Relying servers verify it with awid.team_key_acts against
+       the controller DNS names, never against the registry's controller_did
+       ([trust-model.md](trust-model.md#team-key-pins-approved-2026-11-12)).
 
 POST   /v1/namespaces/{domain}/teams/{name}/visibility
        Set team visibility.
@@ -698,11 +796,15 @@ POST   /v1/namespaces/{domain}/teams/{name}/certificates
        member. If member_address is present, awid validates that it
        resolves to member_did_aw before recording the certificate.
        Response: { "registered": true, "certificate_id": "uuid" }
+       The certificate is verified under, and inserted while holding, the
+       team row's current key (the lock rotate takes); a key change that
+       commits meanwhile refuses it 409 team_key_not_current.
 
 GET    /v1/namespaces/{domain}/teams/{name}/certificates
        List issued certificates (active and revoked).
        Auth: none for a public team; private-team read authority as above.
-       Query params: active_only (boolean), since (timestamp)
+       Query params: active_only (boolean), since (timestamp), limit, cursor.
+       A covering read binds them; a path signature does not.
        Response: { "certificates": [{
                    "team_id": "backend:acme.com",
                    "certificate_id": "uuid",
@@ -854,9 +956,8 @@ GET    /v1/namespaces/{domain}/teams/{name}/signed-records?limit=&cursor=
        rotation that must re-sign all of them: the aweb.team-server/1 record
        and the custodian, member-custody and member-person records, including
        those of revoked certificates.
-       Auth: whatever the team's visibility, a path signature (the
-       certificate-blob fetch scheme) by the team controller key, or the
-       trusted service token. Members are not readers: the list would show
+       Auth: whatever the team's visibility, a signed team read by the team
+       key, or the trusted service token. Members are not readers: the list would show
        them custodian records otherwise readable only by exact key. Anything
        else, an unknown or deleted team included, is the identical 404
        { "detail": "Team not found" }.
@@ -1142,8 +1243,9 @@ A success returns exactly `{certificate_id, registered_at}`. Refusals use
 the tree's refusals (`domain_mismatch`, `human_issuer_is_agent`, `cycle`,
 `duplicate_id`, `missing_parent`, `identity_kind_immutable`, `subject_revoked`,
 `unregistered_parent`, `parent_revoked`, `issuer_key_not_current`,
-`superseded_certificate`, `root_replaced`), and 503 `evidence_unavailable` when the domain has
-no current root authority.
+`superseded_certificate`, `root_replaced`), and 503 `dns_unavailable` when
+the root DNS lookup cannot be completed, or `evidence_unavailable` when the
+domain has no current root authority.
 
 Registration is rate limited in the `id_certificate_register` bucket: 300
 requests per hour per client IP. Every request does signature and database
@@ -1199,8 +1301,9 @@ A success returns exactly `{revoked_at, effective_from}`. Refusals use
 `detail.code`: 400 `invalid_shape` and `invalid_json`, 401 for the envelope,
 403 `revocation_forbidden` and `backdate_forbidden`, 404 `unknown_id` (no
 registered ID by that id), 409 `head_conflict`, 422 `domain_mismatch` and
-`invalid_cutoff`, and 503 `evidence_unavailable`. Revocation is rate limited
-in the `id_certificate_revoke` bucket, 300 requests per hour per client IP,
+`invalid_cutoff`, and 503 `dns_unavailable` when the root DNS lookup cannot
+be completed, or `evidence_unavailable` when root authority is unavailable.
+Revocation is rate limited in the `id_certificate_revoke` bucket, 300 requests per hour per client IP,
 with the same `AWID_SERVICE_TOKEN`-only exemption and rationale as
 registration.
 
@@ -1209,15 +1312,12 @@ POST /v1/id-certificates/status     Snapshot of exact registered IDs and namespa
 ```
 
 The body is exactly `{v: 1, domain, ids}` with 0–8 distinct canonical did:aw
-strings; any other field (a prefix, a search) is `invalid_shape`. An
-authenticated caller signs the covering-v2 request
-(`operation="read_id_certificate_status"`) with a strict-profile key. Supplied
-but invalid proof, or the legacy form, is 401, never anonymous. Public requests
-are charged to their source IP's `id_certificate_status` bucket, and a verified
-caller also to its key's. Each allows 60 requests per minute. The configured
-service token skips only the IP budget; the verified caller-key budget remains.
-Limits are checked before the DNS lookup and any database read. The domain is
-canonicalized (lowercase, no trailing dot) and must be a valid name.
+strings; any other field (a prefix, a search) is `invalid_shape`. This is a
+public, unsigned read. Requests are charged to their source IP's
+`id_certificate_status` bucket, which allows 60 requests per minute. The
+configured service token skips that budget. Limits are checked before the DNS
+lookup and any database read. The domain is canonicalized (lowercase, no
+trailing dot) and must be a valid name.
 
 The response is one coherent snapshot, read in a single read-only REPEATABLE
 READ transaction: the domain's complete epoch history with `continuity`, then
@@ -1229,7 +1329,8 @@ not registered in this domain. `observed_at` never precedes the snapshot's
 latest event. No invitation, membership, email or account data appears. While
 the stored controller, the open epoch and exact DNS disagree, or as soon as
 the response being built would exceed 131072 bytes, the endpoint answers 503
-`evidence_unavailable` with no partial evidence.
+`evidence_unavailable` with no partial evidence. A root DNS lookup that cannot
+be completed answers 503 `dns_unavailable`.
 
 ### Cached status client
 
@@ -1275,13 +1376,39 @@ which raises.
   no outage grace, and nothing older than 60 seconds is presented. The next
   request makes its own attempt. Each domain's entries are independent of
   every other domain's.
-- The same client reads its own identity-tree writes. Its
-  `register_id_certificate` and `revoke_id_certificate` remove every entry for
-  the written domain before the write is sent and again after it succeeds, so
-  the next read in that domain fetches. One entry covers a whole list of IDs,
-  so a write to one ID may change any entry in its domain. Removing the entry
-  before the write also covers a write whose answer is lost after AWID
-  committed it. Other domains' entries are kept.
+- The same client reads its own identity-tree writes. Registration and
+  revocation replace a domain/registry-scoped random cache-generation token
+  before sending the write and again when the attempt ends, including a lost
+  reply. The next acquisition uses the new token and fetches. An in-flight
+  refresh keeps its original token, so it cannot repopulate the current
+  generation. Other domains and configured registry origins are independent.
+  Missing generation metadata produces a miss, never a return to an old
+  generation. Tokens expire after one hour; evidence keeps its original
+  60-second age and expiry. No Redis keyspace scan is needed.
+- Address and certificate-list cache invalidation uses the same token scheme:
+  addresses are scoped by domain/registry, certificate lists by team/registry,
+  across their existing reader partitions. Retained old entries expire under
+  their original bounds. A cache acquisition adds one generation GET; a
+  generation replacement is one SET, independent of unrelated Redis keys.
+  Existing read authority, freshness, outage policy and endpoint shapes remain
+  unchanged.
+
+### Registry client outbound bounds
+
+When `RegistryClient` follows a domain-selected registry override without an
+injected transport, each request resolves the registry host once, refuses the
+whole answer if any address is nonpublic, and connects only to an admitted IP.
+The original hostname and port remain in `Host`, and TLS verification and SNI
+name the original hostname. These requests ignore environment proxies and do
+not follow redirects. The configured home registry and explicitly injected
+transports retain their operator-selected policy; the home service credential
+is never sent to an override. Lookup, connection and response reading share the
+request timeout.
+
+Certificate, team, address and revocation scans read at most 500 pages, including
+legacy timestamp-paged revocations. A final page at that limit succeeds. A
+registry that still has more data raises `RegistryError(status_code=502)` with
+`pagination exceeded 500 pages`; a partial scan is never returned as complete.
 
 ### Public identity-tree write client
 
@@ -1386,6 +1513,10 @@ Current ordered effects are:
 10. `010_id_certificates.sql` adds the identity tree's registered identities
     with their revocation, every registered ID-certificate revision, and the
     namespace controller epochs ([identity certificates](id-certificates.md)).
+11. `011_namespace_delegation.sql` adds a namespace's parent domain and parent
+    controller key for ancestor delegation.
+17. `017_team_key_acts.sql` adds the namespace controller's `rotate_team_key`
+    acts, kept exactly as signed.
 
 The following inventory is exhaustive for current **AWID application tables
 declared by** that ordered component chain. It intentionally excludes pgdbm's
@@ -1413,6 +1544,7 @@ full ordered SQL, not a copied `001` snapshot.
 - `id_identities`
 - `id_certificates`
 - `id_namespace_epochs`
+- `team_key_acts`
 <!-- END SOURCE INVENTORY: awid-tables -->
 
 ---

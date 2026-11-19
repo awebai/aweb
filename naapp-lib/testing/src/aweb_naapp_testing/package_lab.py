@@ -160,6 +160,7 @@ def run_package_lab(image: str, service: PackagedService, *, expected_commit: st
         )
         (lab / "registry.env").write_text(
             f"AWID_DATABASE_URL={database_url}\nAWID_REDIS_URL=redis://redis:6379/0\nAWID_DB_SCHEMA=awid\n"
+            f"AWID_PUBLIC_ORIGINS={REGISTRY_URL}\n"
         )
         for filename in ("service.env", "postgres.env", "registry.env"):
             (lab / filename).chmod(0o600)

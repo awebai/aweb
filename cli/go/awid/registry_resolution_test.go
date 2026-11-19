@@ -247,6 +247,7 @@ func TestRegistryResolverUsesDifferentRegistriesForOwnAndForeignAddresses(t *tes
 		"foreign.registry.test": foreignServer.URL,
 	})
 	resolver := NewRegistryResolver(client, dns)
+	routeUntrustedResolverRegistriesToInjectedClient(resolver)
 	if err := resolver.SetIdentityRegistryURL(homeOrigin, "home.example"); err != nil {
 		t.Fatal(err)
 	}

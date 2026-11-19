@@ -224,7 +224,8 @@ func TestLocalTeamBootstrapNameTakenIsAPlainSentence(t *testing.T) {
 		}
 	}))
 	t.Setenv("HOME", t.TempDir())
-	registry, err := newConfiguredRegistryClient(nil, "")
+	t.Setenv("AWID_REGISTRY_URL", server.URL)
+	registry, err := newConfiguredRegistryClient(nil)
 	if err != nil {
 		t.Fatal(err)
 	}

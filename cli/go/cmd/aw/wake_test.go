@@ -501,7 +501,8 @@ func TestWakeRunIsIdempotentAndServesItsSocket(t *testing.T) {
 
 	// A unix socket path is bounded by sun_path, and t.TempDir() embeds the
 	// test name; the daemon says so itself, but the test needs a short one.
-	stateRoot, err := os.MkdirTemp("", "awwk")
+	// /tmp keeps it short whatever TMPDIR is.
+	stateRoot, err := os.MkdirTemp("/tmp", "awwk")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -796,5 +797,15 @@ func TestIdentityHomePreScanStopsAtABuiltinCommand(t *testing.T) {
 				t.Errorf("identityHomeForPluginDispatch(%v)=%q want %q", tc.args, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestWakeStatusTextNamesUnreadableRegistrations(t *testing.T) {
+	text := formatWakeStatus(wake.Status{
+		RegistrationFaults: []wake.RegistrationFault{{Path: "/state/wake/registry.d/bad.json", Error: "registration home is empty"}},
+	})
+	want := "\nUnreadable registrations (skipped):\n  /state/wake/registry.d/bad.json  error=registration home is empty\n"
+	if !strings.Contains(text, want) {
+		t.Fatalf("status text does not name the unreadable registration as %q:\n%s", want, text)
 	}
 }
