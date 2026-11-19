@@ -318,6 +318,10 @@ func TestExtendWait(t *testing.T) {
 				},
 			})
 		},
+		"GET /v1/chat/sessions/s1/messages": func(w http.ResponseWriter, _ *http.Request) {
+			// An existing session's history: no encrypted message to inherit.
+			jsonResponse(w, awid.ChatHistoryResponse{})
+		},
 		"POST /v1/chat/sessions/s1/messages": func(w http.ResponseWriter, r *http.Request) {
 			var req awid.ChatSendMessageRequest
 			_ = json.NewDecoder(r.Body).Decode(&req)
@@ -333,7 +337,7 @@ func TestExtendWait(t *testing.T) {
 	})
 	t.Cleanup(server.Close)
 
-	result, err := ExtendWait(context.Background(), mustClient(t, server.URL), "bob", "thinking...")
+	result, err := ExtendWaitWithOptions(context.Background(), mustClient(t, server.URL), "bob", "thinking...", ExtendWaitOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1460,6 +1464,10 @@ func TestSendWithLeavingReusesExistingSession(t *testing.T) {
 				},
 			})
 		},
+		"GET /v1/chat/sessions/s1/messages": func(w http.ResponseWriter, _ *http.Request) {
+			// An existing session's history: no encrypted message to inherit.
+			jsonResponse(w, awid.ChatHistoryResponse{})
+		},
 		"POST /v1/chat/sessions/s1/messages": func(w http.ResponseWriter, r *http.Request) {
 			if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
 				t.Fatal(err)
@@ -1536,6 +1544,10 @@ func TestSendProbesExistingSessionEvenWhenWaiting(t *testing.T) {
 					},
 				},
 			})
+		},
+		"GET /v1/chat/sessions/s1/messages": func(w http.ResponseWriter, _ *http.Request) {
+			// An existing session's history: no encrypted message to inherit.
+			jsonResponse(w, awid.ChatHistoryResponse{})
 		},
 		"POST /v1/chat/sessions/s1/messages": func(w http.ResponseWriter, r *http.Request) {
 			if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {

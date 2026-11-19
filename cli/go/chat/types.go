@@ -114,12 +114,25 @@ type ExtendWaitResult struct {
 }
 
 // SendOptions configures message sending behavior.
+// E2EEChoice is how a chat send chooses end-to-end encryption.
+type E2EEChoice int
+
+const (
+	// E2EEInherit continues an encrypted conversation encrypted and starts
+	// a new one in plaintext.
+	E2EEInherit E2EEChoice = iota
+	// E2EERequired encrypts, failing closed when keys are missing (--e2ee).
+	E2EERequired
+	// E2EEPlaintext sends server-readable plaintext (--plaintext).
+	E2EEPlaintext
+)
+
 type SendOptions struct {
-	Wait              int  // Seconds to wait for reply (0 = no wait)
-	WaitExplicit      bool // true if caller explicitly set Wait
-	Leaving           bool // Sender is leaving the conversation
-	StartConversation bool // Ignore targets_left, use 5min default wait
-	EncryptE2EE       bool // Send encrypted_v2 chat; fail closed if keys are missing
+	Wait              int        // Seconds to wait for reply (0 = no wait)
+	WaitExplicit      bool       // true if caller explicitly set Wait
+	Leaving           bool       // Sender is leaving the conversation
+	StartConversation bool       // Ignore targets_left, use 5min default wait
+	E2EE              E2EEChoice // How the message chooses end-to-end encryption
 	// RecipientDID is the DID the caller confirmed for its one target. An
 	// existing session is then selected by this strong identity only.
 	RecipientDID string

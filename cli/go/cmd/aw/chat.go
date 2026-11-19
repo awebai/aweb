@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -38,20 +39,51 @@ func writeChatStatus(w io.Writer, kind, message string) {
 	termtext.Fprintln(w, "[chat:%s] %s", kind, message)
 }
 
+// chatE2EEChoice is the encryption a chat command's flags ask for: --e2ee or
+// --plaintext decide, and with neither a continuation inherits its
+// conversation's encryption.
+func chatE2EEChoice(cmd *cobra.Command, e2ee, plaintext bool) chat.E2EEChoice {
+	switch {
+	case cmd.Flags().Changed("e2ee") && e2ee:
+		return chat.E2EERequired
+	case plaintext || cmd.Flags().Changed("e2ee"):
+		return chat.E2EEPlaintext
+	default:
+		return chat.E2EEInherit
+	}
+}
+
+// configureChatE2EE loads the keys a chat send may need: --e2ee requires
+// them, and an inherited continuation uses them when this workspace has them
+// (an encrypted conversation then fails closed at encryption without them).
+func configureChatE2EE(ctx context.Context, c *aweb.Client, sel *awconfig.Selection, choice chat.E2EEChoice) error {
+	switch choice {
+	case chat.E2EERequired:
+		return configureClientE2EE(ctx, c, sel, true)
+	case chat.E2EEInherit:
+		err := configureClientE2EE(ctx, c, sel, false)
+		var unavailable *e2eeDecryptionUnavailableError
+		if errors.As(err, &unavailable) {
+			return nil
+		}
+		return err
+	default:
+		return nil
+	}
+}
+
 func chatSend(ctx context.Context, toAlias, message string, opts chat.SendOptions) (*chat.SendResult, *awconfig.Selection, error) {
 	c, sel, err := resolveClientSelectionForAliasTarget(ctx, toAlias)
 	if err != nil {
 		return nil, nil, err
 	}
-	if opts.EncryptE2EE {
-		if err := configureClientE2EE(ctx, c, sel, true); err != nil {
-			return nil, nil, err
-		}
+	if err := configureChatE2EE(ctx, c, sel, opts.E2EE); err != nil {
+		return nil, nil, err
 	}
 	target := strings.TrimSpace(toAlias)
 	// Encrypted human aliases use selected-team key discovery; preserve the
 	// released plaintext live-roster route.
-	confirmed, err := confirmChatAlias(ctx, c, sel, target, !opts.EncryptE2EE)
+	confirmed, err := confirmChatAlias(ctx, c, sel, target, opts.E2EE != chat.E2EERequired)
 	if err != nil {
 		return nil, sel, err
 	}
@@ -287,7 +319,7 @@ var chatSendAndWaitCmd = &cobra.Command{
 			Wait:              chatSendAndWaitWait,
 			WaitExplicit:      cmd.Flags().Changed("wait"),
 			StartConversation: chatSendAndWaitStartConversation,
-			EncryptE2EE:       chatSendAndWaitE2EE,
+			E2EE:              chatE2EEChoice(cmd, chatSendAndWaitE2EE, chatSendAndWaitPlaintext),
 		})
 		if err != nil {
 			return networkError(err, args[0])
@@ -343,7 +375,7 @@ var chatSendAndLeaveCmd = &cobra.Command{
 			Wait:              0,
 			Leaving:           true,
 			StartConversation: chatSendAndLeaveStartConversation,
-			EncryptE2EE:       chatSendAndLeaveE2EE,
+			E2EE:              chatE2EEChoice(cmd, chatSendAndLeaveE2EE, chatSendAndLeavePlaintext),
 		})
 		if err != nil {
 			return networkError(err, args[0])
@@ -520,15 +552,18 @@ var chatSendCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		if chatSendE2EE {
-			if err := configureClientE2EE(ctx, c, sel, true); err != nil {
-				return err
-			}
+		choice := chatE2EEChoice(cmd, chatSendE2EE, chatSendPlaintext)
+		if err := configureChatE2EE(ctx, c, sel, choice); err != nil {
+			return err
+		}
+		encrypt, err := chat.ContinuationEncrypted(ctx, c.Client, sessionID, choice, chatStderrCallback)
+		if err != nil {
+			return err
 		}
 		resp, err := c.Client.ChatSendMessage(ctx, sessionID, &awid.ChatSendMessageRequest{
 			Body:        body,
 			Leaving:     chatSendLeave,
-			EncryptE2EE: chatSendE2EE,
+			EncryptE2EE: encrypt,
 		})
 		if err != nil {
 			return humanMailOnlyRefusal(err)
@@ -610,17 +645,15 @@ var chatExtendWaitCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		encryptE2EE := chatExtendWaitE2EE
-		if encryptE2EE {
-			if err := configureClientE2EE(ctx, c, sel, true); err != nil {
-				return err
-			}
+		choice := chatE2EEChoice(cmd, chatExtendWaitE2EE, chatExtendWaitPlaintext)
+		if err := configureChatE2EE(ctx, c, sel, choice); err != nil {
+			return err
 		}
 		confirmedDID, err := chatSessionDID(ctx, c, sel, args[0])
 		if err != nil {
 			return err
 		}
-		opts := chat.ExtendWaitOptions{EncryptE2EE: encryptE2EE, RecipientDID: confirmedDID}
+		opts := chat.ExtendWaitOptions{E2EE: choice, RecipientDID: confirmedDID, Status: chatStderrCallback}
 		result, err := chat.ExtendWaitWithOptions(ctx, c.Client, args[0], message, opts)
 		if err != nil {
 			return humanMailOnlyRefusal(err)
