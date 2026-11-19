@@ -216,7 +216,7 @@ packaging seam.
 | Runner protocol, runner binary, job definitions | app-local | Only secrets releases credentials to user-run executors, and no second consumer is in view. They are built on the shared signing helpers, and would be extracted when a second naapp needs remote execution. |
 | HPKE sealing (RFC 9180) and the scoped nonce store | `aweb_naapp.crypto` and `aweb_naapp.nonces` | Shared under decision 81; the runner credential delivery (§9.3) uses it. |
 | Console page content: value ingress, change confirmation, rendering of secrets' approval payloads | app-local, on the shared console session and chrome | The content is secrets-specific; the mechanism is shared. |
-| `post-secret-use-hook` payload fields and enqueue points; the `aweb.secrets.use-approval/1` and `aweb.secrets.change/1` payload types | app-local | These are secrets' contracts carried by shared mechanisms. |
+| `post-secret-use-hook` payload fields and enqueue points; the `aweb.secrets.use-approval/2` and `aweb.secrets.change/1` payload types | app-local | These are secrets' contracts carried by shared mechanisms. |
 
 ## 4. Identity, roles, grants and policy
 
@@ -1041,7 +1041,7 @@ regenerated together under deliberate review, not hand-merged.
   all fields, `v` and the template ID. At issuance admission, secrets snapshots
   the complete terms and verifies that hash against the issuer operation's pin.
   The approval thus covers the terms through `operation_digest` (§10.4), without
-  changing use-approval/1's field set. The dispatch fence re-reads and locks the
+  changing use-approval/2's field set. The dispatch fence re-reads and locks the
   template, rejects a mismatch (`operation_not_allowed`), and uses only the
   persisted snapshot to construct the child grant. Editing template terms
   requires a newly confirmed issuer-operation digest before issuance can resume.
@@ -1561,7 +1561,7 @@ top-level `secret` object describes the **actual child**, and `grant_id` and
 `policy_digest` are that child's; `run_job.credential_delivery` is `durable`.
 The approved CURRENT job digest and frozen plan bind its unique ordinal. The
 approval view shows the fixed slot label, actual child ref and lineage. This
-adds no field to use-approval/1 or to the signed runner assignment.
+adds no field to use-approval/2 or to the signed runner assignment.
 
 **Manifest and conformance update.** The run tool in
 `naapp/secrets/src/aweb_secrets/manifest.py` and its committed `aweb-app.json`
@@ -1571,7 +1571,7 @@ and refuses any selected child with `job_not_allowed` before admission.
 **After the first release (aweb-acgh.41.1):** run-preparation cases cover the
 refusal matrix above, exact-child plus ancestor ambiguity, a unique ancestor
 match, fixed other slots, and changed/removed selectors on replay;
-`naapp/secrets/vectors/use-approval-v1.json` gains, through B2, a durable
+`naapp/secrets/vectors/use-approval-v2.json` gains, through B2, a durable
 ordinary child case and a changed-child binding failure, preserving existing
 cases and the field set. `docs/vectors/secrets-runner-protocol-v1.json` keeps
 its existing wire shape.
@@ -1623,7 +1623,7 @@ secrets supplies these:
 
 | B2 record field | secrets' value |
 | --- | --- |
-| immutable request ref | the stored frozen `aweb.secrets.use-approval/1` bytes (§10.4), or `aweb.secrets.change/1` for a widening change (§6.3) |
+| immutable request ref | the stored frozen `aweb.secrets.use-approval/2` bytes (§10.4), or `aweb.secrets.change/1` for a widening change (§6.3) |
 | `policy_ref`/version | for a use, `secrets.use\|<installation_id>\|<team_id>\|<grant_id>\|<policy_digest>`, version 1 (§4.4; decision 63). For a run slot, `secrets.run\|<installation_id>\|<team_id>\|<grant_id>\|<policy_digest>\|<template_id>\|<template_digest>\|<child_policy_digest>`, with `-` in the last three places when the slot has no mint |
 | `requested_by` | the verified principal (§4.1) |
 | approver set (`approver_scopes`, frozen `candidates`, `decided_by`) | decision 53: the policy names the eligible approvers' B3 scopes. B2 freezes the candidate set at mint, re-checks each candidate at decide time and records one compare-and-set decision in `decided_by`. Any one candidate decides (quorum 1), and any reject is final. An empty set refuses with `no_eligible_approver`. Every secrets action policy declares passkey as its minimum assurance |
@@ -2873,7 +2873,7 @@ each where one exists.
 
 **Change sets and policy**
 
-- **Decision 30.** `use-approval/1` carries no `approval_id`; the binding is
+- **Decision 30.** `aweb.secrets.use-approval` carries no `approval_id`; the binding is
   the B2 record.
 - **Decision 38.** A change set lives at most 7 days and is confirmed only for
   the same installation, generation and team (`change_wrong_installation`).
