@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+- On unverified A2A routes, a plain question shared by several live tasks is
+  refused with task-specific reply forms. Questions use artifact name `question`;
+  completed answers retain `answer`.
+
+- Concurrent `aw a2a send` calls retain each task token. Credential-file failures
+  are reported without overwriting unreadable YAML; a task already delivered is
+  still returned with its token when saving fails.
+
+- On verified A2A routes, a plain `QUESTION:` from the target is no longer
+  accepted as a verified task reply. Use the task-bearing fenced `a2a-reply`
+  form with `state: input_required` to ask a question (aw 1.19.0 or later).
+  Initial task instructions and refusal feedback show the exact form. Signed
+  task-bearing legacy fences remain accepted; explicitly unverified routes
+  keep their policy and label.
+- A managed provider that advertises recipient identity but omits it from a
+  send receipt now returns an actionable provider fault and a failed task,
+  rather than leaving the task waiting for replies it cannot bind.
+
+- A2A routes require an agent with a public address. Native gateway startup
+  refuses local identities, including team aliases that resolve to one, before
+  opening its listener. The same check runs before each native bridge send;
+  `-check` continues to validate configuration offline.
+
+- The A2A gateway no longer returns a public route's task when given only its
+  task ID. Callers must send the task token returned by `SendMessage` in
+  `X-A2A-Task-Token`; task IDs are identifiers rather than authorization.
+- A2A credentials and managed-provider tokens require HTTPS, with HTTP allowed
+  on literal loopback IP addresses for local development. Use
+  `http://127.0.0.1` instead of `http://localhost` for those local endpoints.
+
 - `aw` reports JSON error code `alias_conflict` for HTTP 409 `alias_taken`, preserving the server's `reason` and `detail`.
 - AWID cache invalidation for identity-tree, address and team-certificate
   writes no longer scans unrelated Redis keys. Random cache generations keep
