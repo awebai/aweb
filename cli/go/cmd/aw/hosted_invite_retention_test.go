@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/awebai/aw/awconfig"
+	"github.com/awebai/aw/awid"
 )
 
 func TestHostedInvitePreviewConnectionFailureRetainsItsAcceptanceMintedKey(t *testing.T) {
@@ -25,7 +26,7 @@ func TestHostedInvitePreviewConnectionFailureRetainsItsAcceptanceMintedKey(t *te
 	}
 	dir := t.TempDir()
 	home := filepath.Join(dir, ".aw")
-	_, err = acceptHostedTeamInviteWithDetails(teamInviteAcceptanceRequest{WorkingDir: dir, Token: "aw_inv_transport", Options: teamAcceptInviteOptions{IdentityHome: home, Name: "recipient", Scope: "local", AwebURL: origin}})
+	_, err = acceptHostedTeamInviteWithDetails(teamInviteAcceptanceRequest{WorkingDir: dir, Token: "aw_inv_transport", Options: teamAcceptInviteOptions{IdentityHome: home, Name: "recipient", Scope: awid.IdentityModeLocal, AwebURL: origin}})
 	if err == nil {
 		t.Fatal("closed preview endpoint unexpectedly accepted the invitation")
 	}
@@ -44,7 +45,7 @@ func TestHostedInvitePreviewConnectionFailureRetainsItsAcceptanceMintedKey(t *te
 	if !errors.As(err, &preview) || errorCodeOf(err) != preview.Code || err.Error() != preview.Error() {
 		t.Fatalf("retention changed the original preview refusal: %v", err)
 	}
-	_, retryErr := acceptHostedTeamInviteWithDetails(teamInviteAcceptanceRequest{WorkingDir: dir, Token: "aw_inv_transport", Options: teamAcceptInviteOptions{IdentityHome: home, Name: "recipient", Scope: "local", AwebURL: origin}})
+	_, retryErr := acceptHostedTeamInviteWithDetails(teamInviteAcceptanceRequest{WorkingDir: dir, Token: "aw_inv_transport", Options: teamAcceptInviteOptions{IdentityHome: home, Name: "recipient", Scope: awid.IdentityModeLocal, AwebURL: origin}})
 	if retryErr == nil || !retainUnfinishedProvisioningIdentity(retryErr) {
 		t.Fatalf("retry lost the retained-key boundary: %v", retryErr)
 	}
@@ -66,6 +67,7 @@ func TestHostedInviteUnreadableRecoveryKeepsItsOriginalRecipientAndFailure(t *te
 		{Name: "unreadable marker", File: acceptanceKeyMarkerName, Directory: true},
 	} {
 		t.Run(fixture.Name, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
 			t.Setenv("AWEB_IDENTITY_HOME", "")
 			dir := t.TempDir()
 			home := filepath.Join(dir, ".aw")
@@ -87,7 +89,7 @@ func TestHostedInviteUnreadableRecoveryKeepsItsOriginalRecipientAndFailure(t *te
 			} else if err := os.WriteFile(path, []byte("malformed recovery\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			_, err = acceptHostedTeamInviteWithDetails(teamInviteAcceptanceRequest{WorkingDir: dir, Token: "aw_inv_recovery", Options: teamAcceptInviteOptions{IdentityHome: home, Name: "recipient", Scope: "local"}})
+			_, err = acceptHostedTeamInviteWithDetails(teamInviteAcceptanceRequest{WorkingDir: dir, Token: "aw_inv_recovery", Options: teamAcceptInviteOptions{IdentityHome: home, Name: "recipient", Scope: awid.IdentityModeLocal}})
 			if err == nil || !retainUnfinishedProvisioningIdentity(fmt.Errorf("outer creation: %w", err)) {
 				t.Fatalf("unreadable hosted recovery authorized outer key removal: %v", err)
 			}
@@ -96,5 +98,18 @@ func TestHostedInviteUnreadableRecoveryKeepsItsOriginalRecipientAndFailure(t *te
 				t.Fatal("recovery failure replaced its recipient key")
 			}
 		})
+	}
+}
+
+func TestHostedInvitePreKeyRefusalDoesNotInventRetainedRecovery(t *testing.T) {
+	t.Setenv("AWEB_IDENTITY_HOME", "")
+	dir := t.TempDir()
+	home := filepath.Join(dir, ".aw")
+	_, err := acceptHostedTeamInviteWithDetails(teamInviteAcceptanceRequest{WorkingDir: dir, Token: "aw_inv_unused", Options: teamAcceptInviteOptions{IdentityHome: home, Name: "recipient", Scope: awid.IdentityModeLocal, NoAddress: true}})
+	if err == nil || retainUnfinishedProvisioningIdentity(err) || err.Error() != "--no-address requires --global" {
+		t.Fatalf("pre-key refusal changed or invented recovery state: %v", err)
+	}
+	if _, err := os.Stat(home); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("pre-key refusal created its recipient home: %v", err)
 	}
 }

@@ -2074,8 +2074,20 @@ func rollbackDefaultAddressClaimAfterCertificateFailure(
 	return fmt.Errorf("%w; newly claimed default address %s was rolled back", cause, address)
 }
 
-func acceptHostedTeamInviteWithDetails(input teamInviteAcceptanceRequest) (*acceptedTeamInvite, error) {
+func acceptHostedTeamInviteWithDetails(input teamInviteAcceptanceRequest) (result *acceptedTeamInvite, resultErr error) {
 	workingDir, token, opts := input.WorkingDir, input.Token, input.Options
+	home, err := identityHomeForTarget(workingDir, opts.IdentityHome)
+	if err != nil {
+		return nil, err
+	}
+	var creation *hostedInviteCreation
+	var recoveryLock io.Closer
+	defer func() {
+		resultErr = retainHostedInviteRecoveryFailure(hostedInviteRecoveryFailure{Home: home, Creation: creation, Cause: resultErr})
+		if recoveryLock != nil {
+			closeTeamInviteLock(recoveryLock)
+		}
+	}()
 	scope, err := validateTeamInviteAcceptance(teamInviteAcceptanceRequest{
 		WorkingDir: workingDir,
 		Options:    opts,
@@ -2105,10 +2117,6 @@ func acceptHostedTeamInviteWithDetails(input teamInviteAcceptanceRequest) (*acce
 		}
 	}
 
-	home, err := identityHomeForTarget(workingDir, opts.IdentityHome)
-	if err != nil {
-		return nil, err
-	}
 	recoveryPath, err := awconfig.IdentityHomePath(home, hostedInviteRecoveryFile)
 	if err != nil {
 		return nil, err
@@ -2120,7 +2128,7 @@ func acceptHostedTeamInviteWithDetails(input teamInviteAcceptanceRequest) (*acce
 	if err != nil {
 		return nil, fmt.Errorf("hosted invite acceptance already in progress: %w", err)
 	}
-	defer closeTeamInviteLock(lock)
+	recoveryLock = lock
 	prior, err := loadHostedInviteCreation(recoveryPath)
 	if err != nil {
 		return nil, err
@@ -2162,7 +2170,7 @@ func acceptHostedTeamInviteWithDetails(input teamInviteAcceptanceRequest) (*acce
 			prior = nil
 		}
 	}
-	creation, err := prepareHostedInviteCreation(ctx, prior, strings.TrimSpace(token), awebURL, alias, memberAddress, opts.NoAddress, material)
+	creation, err = prepareHostedInviteCreation(ctx, prior, strings.TrimSpace(token), awebURL, alias, memberAddress, opts.NoAddress, material)
 	if err != nil {
 		return nil, err
 	}
