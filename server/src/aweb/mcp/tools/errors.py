@@ -9,7 +9,8 @@ from typing import ParamSpec
 from fastapi import HTTPException
 from awid.federation_errors import FederationAuthorityError
 from aweb.messaging.refusals import DeliveryRefusal
-from aweb.service_errors import ServiceError
+from aweb.service_errors import ServiceError, IdentityBindingError
+from aweb.application_state import RegistryClientUnavailable
 
 logger = logging.getLogger(__name__)
 P = ParamSpec("P")
@@ -33,13 +34,24 @@ def messaging_tool(fn: Callable[P, Awaitable[str]]) -> Callable[P, Awaitable[str
             if (
                 isinstance(exc, ServiceError)
                 and exc.status_code >= 500
-                and not isinstance(exc, DeliveryRefusal)
+                and not isinstance(
+                    exc,
+                    (DeliveryRefusal, IdentityBindingError, RegistryClientUnavailable),
+                )
             ):
-                logger.exception("messaging_tool_internal_error tool=%s", fn.__name__)
+                logger.error(
+                    "messaging_tool_internal_error tool=%s failure_type=%s",
+                    fn.__name__,
+                    type(exc).__name__,
+                )
                 return json.dumps({"error": INTERNAL_DELIVERY_ERROR})
             return send_refusal(exc)
-        except Exception:
-            logger.exception("messaging_tool_internal_error tool=%s", fn.__name__)
+        except Exception as exc:
+            logger.error(
+                "messaging_tool_internal_error tool=%s failure_type=%s",
+                fn.__name__,
+                type(exc).__name__,
+            )
             return json.dumps({"error": INTERNAL_DELIVERY_ERROR})
 
     return guarded

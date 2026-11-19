@@ -1147,6 +1147,17 @@ async def _resolve_named_recipients(
         )
         resolved[str(row.get("did_aw") or row.get("did_key") or "").strip()] = row
 
+    if not resolved:
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+            detail="Must provide to_aliases, to_dids, or to_addresses. Choose a recipient and retry.",
+        )
+    if any(_target_did_refs(row) & set(actor_dids) for row in resolved.values()):
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.BAD_REQUEST,
+            detail="Self-chat is not supported. Choose another recipient and retry.",
+        )
+
     await require_agent_chat(db, list(resolved.values()))
     for row in resolved.values():
         if row.get("external"):

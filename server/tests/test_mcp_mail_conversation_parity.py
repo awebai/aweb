@@ -12,6 +12,7 @@ from uuid import UUID, uuid4
 import asyncpg
 import httpx
 import pytest
+from aweb.messaging.refusals import RecipientAddressNotFound
 import pytest_asyncio
 from pgdbm.errors import QueryError
 
@@ -773,7 +774,7 @@ async def test_mcp_mail_reaches_another_team_of_the_senders_organization_by_alia
 async def test_mcp_refusals_of_an_unknown_recipient_read_as_the_routes_do(mail_server):
     server = mail_server
     assert await server.mcp_mail(to="nobody", plaintext=True) == {
-        "error": "Recipient agent not found"
+        "error": "Recipient agent not found. Check the recipient or ask them to reconnect, then retry."
     }
     assert await server.mcp_mail(to="did:aw:nobody", plaintext=True) == {
         "error": "Bare did:aw first-contact is unsupported; use to_address=domain/name "
@@ -1036,25 +1037,27 @@ def test_the_route_answers_a_federation_refusal_with_its_code_alone(reason):
     assert set(body) == {"detail", "reason", "retryable", "correlation_id"}
 
 
-def test_mcp_mail_codes_without_a_next_action_are_answered_as_the_code():
+def test_mcp_mail_codes_keep_their_code_and_add_a_recovery_action():
     from aweb.mcp.tools.refusals import send_refusal
 
-    # Outside a hosted envelope the custody refusal says nothing about the sender's key.
+    # Without custody context, keep the code and give a general recovery action.
     assert json.loads(
         send_refusal(_authority_refusal("recipient_custodial_no_e2ee"))
     ) == {
         "error": "recipient_custodial_no_e2ee",
+        "message": "The federation service refused this send. Check the recipient and signed message with the server operator, then retry.",
     }
     assert json.loads(
         send_refusal(_authority_refusal("federation_rate_limited"), address="a.test/b")
     ) == {
         "error": "federation_rate_limited",
+        "message": "The federation service cannot complete this send now. Wait briefly and retry.",
     }
     # An address the registry does not bind is refused in the words for a name nobody holds.
     for refusal in (
         _authority_refusal("recipient_identity_not_found"),
         _authority_refusal("local_recipient_route_missing"),
-        _binding_refusal(404, "Recipient address not found"),
+        RecipientAddressNotFound(address="a.test/b"),
     ):
         assert json.loads(send_refusal(refusal, address="a.test/b")) == {
             "error": unreachable_address_refusal("a.test/b"),
@@ -1062,11 +1065,10 @@ def test_mcp_mail_codes_without_a_next_action_are_answered_as_the_code():
 
 
 def test_an_envelope_for_a_key_this_server_does_not_record_is_refused_as_a_changed_key():
-    from fastapi import HTTPException
-
     from aweb.identity_auth_deps import MessagingAuth
     from aweb.mcp.tools.refusals import send_refusal
     from aweb.messaging.mail_send import _validate_encrypted_payload
+    from aweb.messaging.refusals import DeliveryRefusal
     from aweb.routes.messages import SendMessageRequest
 
     pilot_key, _, pilot_did = _make_keypair()
@@ -1090,7 +1092,7 @@ def test_an_envelope_for_a_key_this_server_does_not_record_is_refused_as_a_chang
         encrypted_envelope=envelope,
     )
 
-    with pytest.raises(HTTPException) as refused:
+    with pytest.raises(DeliveryRefusal) as refused:
         _validate_encrypted_payload(
             payload,
             auth=MessagingAuth(
