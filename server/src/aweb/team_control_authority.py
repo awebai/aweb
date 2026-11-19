@@ -19,6 +19,10 @@ from aweb.team_key_reader import read_team_key
 class TeamControlRequestReason(StrEnum):
     TEAM_SCOPE_INVALID = "team_control_scope_invalid"
     TIMESTAMP_INVALID = "team_control_timestamp_invalid"
+    ARTIFACT_INVALID = "team_control_artifact_invalid"
+    TARGET_MISMATCH = "team_control_target_mismatch"
+    SIGNATURE_INVALID = "team_control_signature_invalid"
+    CONTROLLER_MISMATCH = "team_control_controller_mismatch"
 
 
 class TeamControlError(ServiceError):
@@ -40,6 +44,22 @@ class TeamControlRequestInvalid(TeamControlError):
             TeamControlRequestReason.TIMESTAMP_INVALID: (
                 "The signed team-control request is invalid or expired. "
                 "Regenerate the controller-signed command and retry."
+            ),
+            TeamControlRequestReason.ARTIFACT_INVALID: (
+                "The controller claim file is malformed. "
+                "Regenerate it with aw id team claim-human-request and retry."
+            ),
+            TeamControlRequestReason.TARGET_MISMATCH: (
+                "The controller claim names a different team or account. "
+                "Regenerate it for the exact team, email and username being claimed."
+            ),
+            TeamControlRequestReason.SIGNATURE_INVALID: (
+                "The controller signature is invalid. "
+                "Regenerate the signed request with the controller key and retry."
+            ),
+            TeamControlRequestReason.CONTROLLER_MISMATCH: (
+                "The claim signer is not the team's current controller. "
+                "Regenerate the claim with the current controller key and retry."
             ),
         }[reason]
         super().__init__({"code": reason.value, "message": self.message})
