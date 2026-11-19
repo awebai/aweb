@@ -93,3 +93,95 @@ async def test_inbound_policy_uses_all_current_active_memberships(
             "Ask the recipient to add your exact address as a contact or check their inbound policy."
         )
     assert allowed == active_sender
+
+
+@pytest.mark.asyncio
+async def test_federation_shared_team_membership_stays_locked_until_delivery_commits(
+    aweb_cloud_db,
+):
+    """A retirement must wait for the policy decision's enclosing delivery TX."""
+    import asyncio
+    import asyncpg
+
+    manager = aweb_cloud_db.aweb_db
+    keys = [
+        did_from_public_key(bytes(SigningKey.generate().verify_key)) for _ in range(3)
+    ]
+    team_key, sender_key, recipient_key = keys
+    team = f"policy-lock-{uuid4().hex[:10]}:example.test"
+    await manager.execute(
+        "INSERT INTO {{tables.teams}} (team_id,namespace,team_name,team_did_key) VALUES ($1,'example.test',$2,$3)",
+        team,
+        team.split(":")[0],
+        team_key,
+    )
+    members = []
+    for alias, key in (("sender", sender_key), ("recipient", recipient_key)):
+        members.append(
+            await manager.fetch_one(
+                """INSERT INTO {{tables.agents}}
+            (team_id,alias,did_key,did_aw,did_aw_verified_key,identity_scope,inbound_mode,accepted_team_did_key)
+            VALUES ($1,$2,$3,$4,$3,'global','team_and_contacts',$5) RETURNING *""",
+                team,
+                alias,
+                key,
+                stable_id_from_did_key(key),
+                team_key,
+            )
+        )
+    sender, recipient = members
+    envelope = _envelope().model_copy(
+        update={
+            "sender_did_aw": sender["did_aw"],
+            "sender_current_did_key": sender_key,
+        }
+    )
+    authorized, finish = asyncio.Event(), asyncio.Event()
+
+    async def hold_delivery():
+        async with manager.transaction() as tx:
+            await _authorize_policy(
+                tx,
+                envelope=envelope,
+                recipient=dict(recipient),
+                stored_route_continuation=False,
+            )
+            authorized.set()
+            await finish.wait()
+
+    # Start outside either transaction so the tasks hold independent leases.
+    delivery = asyncio.create_task(hold_delivery())
+    try:
+        await asyncio.wait_for(authorized.wait(), timeout=5)
+        async with manager.transaction() as retiring:
+            await retiring.execute("SET LOCAL lock_timeout = '200ms'")
+            with pytest.raises(asyncpg.LockNotAvailableError):
+                await retiring.execute(
+                    "UPDATE {{tables.agents}} SET status='retired' WHERE agent_id=$1",
+                    sender["agent_id"],
+                )
+    finally:
+        finish.set()
+        await delivery
+    assert (
+        await manager.fetch_value(
+            "SELECT status FROM {{tables.agents}} WHERE agent_id=$1",
+            sender["agent_id"],
+        )
+        == "active"
+    )
+    await manager.execute(
+        "UPDATE {{tables.agents}} SET status='retired' WHERE agent_id=$1",
+        sender["agent_id"],
+    )
+    with pytest.raises(FederationAuthorityError) as refused:
+        async with manager.transaction() as tx:
+            await _authorize_policy(
+                tx,
+                envelope=envelope,
+                recipient=dict(recipient),
+                stored_route_continuation=False,
+            )
+    assert refused.value.detail.endswith(
+        "Ask the recipient to add your exact address as a contact or check their inbound policy."
+    )
