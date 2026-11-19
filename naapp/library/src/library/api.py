@@ -5,8 +5,8 @@ from pathlib import Path
 from typing import Annotated
 
 from aweb_naapp.identity_assets import identity_asset
-from aweb_naapp.runtime.app import NaappRuntime, mount_naapp_routes
-from aweb_naapp.runtime.authorization import Authorization, DeclaredTool
+from aweb_naapp.runtime.app import InstalledMember, NaappRuntime, mount_naapp_routes
+from aweb_naapp.runtime.authorization import DeclaredTool
 from aweb_naapp.runtime.installation import (
     InstallationDatabase,
     InstallationRefused,
@@ -118,48 +118,26 @@ def create_app(
     )
     _mount_browse_routes(app, db=runtime.db, public_origin=resolved.public_origin)
     _mount_catalog_routes(app, db=runtime.db)
-    member = _installation_member(runtime)
+    installed_member = runtime.installed_member(policy=_member_policy)
+
+    async def member(
+        installed: Annotated[InstalledMember, Depends(installed_member)],
+    ) -> Principal:
+        return installed.principal
 
     async def member_db(
-        request: Request, _member: Annotated[Principal, Depends(member)]
+        installed: Annotated[InstalledMember, Depends(installed_member)],
     ) -> InstallationDatabase:
-        return request.state.library_installation.database()
+        return installed.permit.database()
 
     _mount_member_routes(app, principal=member, db=member_db)
     return app
 
 
-def _installation_member(runtime: NaappRuntime) -> Callable[..., Awaitable[Principal]]:
-    """The member dependency: authorized against the manifest tool and the
-    team's installation grant, then admitted by the installation fence at the
-    same installation and generation the grant named."""
-
-    # Library's domain rules (ownership, team keys) live in the repository; the
-    # runtime guard enforces the declared tools, invocation contexts and scopes.
-    async def member_policy(request: Request, principal: Principal, tool: DeclaredTool) -> bool:
-        return True
-
-    member_authorized = runtime.authorized(
-        grants=runtime.installation_grants(), policy=member_policy
-    )
-
-    async def installation_member(
-        request: Request, authorization: Annotated[Authorization, Depends(member_authorized)]
-    ) -> Principal:
-        permit = await runtime.installation_fence().permit(authorization.principal.team_id)
-        granted = (authorization.grant.installation_id, authorization.grant.generation)
-        admitted = (permit.admitted.installation_id, permit.admitted.generation)
-        if granted != admitted:
-            raise InstallationRefused(
-                "generation_superseded",
-                409,
-                "The team's Library installation changed while this request was "
-                "admitted; retry the request",
-            )
-        request.state.library_installation = permit
-        return authorization.principal
-
-    return installation_member
+async def _member_policy(request: Request, principal: Principal, tool: DeclaredTool) -> bool:
+    """Library's domain rules (ownership, team keys) live in the repository; the
+    runtime admits the declared tools, invocation contexts and installed scopes."""
+    return True
 
 
 def _mount_browse_routes(
