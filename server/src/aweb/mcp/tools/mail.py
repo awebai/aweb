@@ -1,6 +1,8 @@
 """MCP tools for async mail messaging."""
 
 from __future__ import annotations
+
+from aweb.messaging.kinds import MessagePriority
 from aweb.mcp.tools.errors import messaging_tool
 from aweb.messaging.sender_membership import SenderMembership, sender_memberships
 from aweb.messaging.recipients import RecipientIdentityBinding
@@ -14,7 +16,7 @@ from aweb.attachments import readable_attachments
 import json
 import uuid as uuid_mod
 from datetime import datetime, timezone
-from typing import cast
+
 
 from fastapi import HTTPException
 
@@ -44,7 +46,6 @@ from aweb.messaging.sender_address import sender_address as _sender_address
 from aweb.messaging.address_auth import local_recipient_for_own_route
 from aweb.messaging.handle_addresses import normalize_hosted_handle_reference
 from aweb.messaging.messages import (
-    MessagePriority,
     utc_iso as _utc_iso,
 )
 from aweb.messaging.verification import (
@@ -85,7 +86,7 @@ async def list_threads(
     return response.model_dump_json()
 
 
-VALID_PRIORITIES: set[str] = set(MessagePriority.__args__)  # type: ignore[attr-defined]
+VALID_PRIORITIES: set[str] = {priority.value for priority in MessagePriority}
 
 
 def mcp_mail_message_from_row(
@@ -298,7 +299,7 @@ async def send_mail(
         selector = SendMessageRequest.model_construct(to_alias=recipient_ref)
 
     message_id = uuid_mod.uuid4()
-    # sender_attested_at is signed sender intent; deliver_message returns
+    # sender_attested_at is signed sender intent; store_mail returns
     # independent server receipt time for ordering, so they may disagree.
     sender_attested_at = datetime.now(timezone.utc).replace(microsecond=0)
     try:
@@ -412,7 +413,7 @@ async def send_mail(
             encrypted_envelope=encrypted.encrypted_envelope
             if encrypted is not None
             else None,
-            priority=cast(MessagePriority, priority),
+            priority=MessagePriority(priority),
             message_id=str(message_id),
             timestamp=_utc_iso(sender_attested_at),
             from_did=auth.did_key,

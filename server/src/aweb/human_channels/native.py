@@ -7,6 +7,14 @@ Managed membership/export/federation remain separately negotiated capabilities.
 
 from __future__ import annotations
 
+from aweb.messaging.mail_storage import (
+    MailStorageInput,
+    MailSender,
+    MailRecipient,
+    MailAttestation,
+    mail_content_for_storage,
+    store_mail,
+)
 from aweb.message_vocabulary import MessageInputSource, observe_message_vocabulary
 from aweb.human_kind import is_verified_human
 
@@ -37,7 +45,7 @@ from aweb.messaging.chat_policy import (
     require_agent_chat,
 )
 from aweb.messaging.conversations import create_conversation, get_conversation
-from aweb.messaging.messages import authorize_message_delivery, deliver_message
+from aweb.messaging.messages import authorize_message_delivery
 
 from .authority import NativeMessagingAuthority, NativeMessagingSubject
 from .contract import ContractError, ContractRecord, canonical_record, decode_record
@@ -903,22 +911,39 @@ class NativeMessagingUnitOfWork:
                         raise ContractError(
                             "forbidden", "exact conversation participant"
                         )
-                await deliver_message(
+                await store_mail(
                     db,
-                    **common,
-                    from_did=_principal(self.auth),
-                    to_did=recipient["did"],
-                    from_alias=self.auth.alias,
-                    to_alias=recipient["alias"],
-                    subject=payload.subject,
-                    body=payload.body,
-                    priority=payload.priority,
-                    sender_address=self.auth.address,
-                    team_id=self.auth.team_id,
-                    from_agent_id=self.auth.agent_id,
-                    to_agent_id=str(recipient["agent_id"]),
-                    conversation_id=cid,
-                    skip_policy_check=True,
+                    message=MailStorageInput(
+                        sender=MailSender(
+                            did=_principal(self.auth),
+                            alias=self.auth.alias,
+                            address=self.auth.address,
+                            agent_id=self.auth.agent_id,
+                            team_id=self.auth.team_id,
+                        ),
+                        recipient=MailRecipient(
+                            did=recipient["did"],
+                            alias=recipient["alias"],
+                            address=recipient.get("address"),
+                            agent_id=str(recipient["agent_id"]),
+                            signed_did=None,
+                            wake_dids=(
+                                recipient.get("did_aw"),
+                                recipient.get("did_key"),
+                            ),
+                        ),
+                        content=mail_content_for_storage(
+                            payload, encrypted_metadata=payload.encrypted_metadata
+                        ),
+                        attestation=MailAttestation(
+                            signature=common["signature"],
+                            signed_payload=common["signed_payload"],
+                            id_chain=common["id_chain"],
+                        ),
+                        priority=payload.priority,
+                        message_id=common["message_id"],
+                        conversation_id=cid,
+                    ),
                 )
             else:
                 cid = await ensure_session(

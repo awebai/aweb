@@ -12,12 +12,78 @@ from nacl.signing import SigningKey
 from awid.did import did_from_public_key
 from aweb.messaging.contacts import has_exact_active_identity_contact
 from aweb.messaging.messages import (
-    deliver_message,
+    admit_message_delivery,
     get_agent_by_alias,
     get_agent_by_id,
     resolve_agent_by_did,
 )
 from aweb.service_errors import ConflictError, ForbiddenError, NotFoundError
+from aweb.messaging.mail_storage import (
+    MailStorageInput,
+    MailSender,
+    MailRecipient,
+    MailAttestation,
+    PlaintextMailContent,
+    EncryptedMailContent,
+    store_mail,
+)
+
+
+async def _deliver_fixture_mail(db, **fields):
+    """Exercise admission and storage with the same native database transaction."""
+    recipient = fields.get("recipient_agent") or await resolve_agent_by_did(
+        db, fields["to_did"]
+    )
+    if recipient is None:
+        raise NotFoundError("Recipient agent not found")
+    await admit_message_delivery(
+        db,
+        recipient=recipient,
+        recipient_did=fields["to_did"],
+        to_agent_id=fields.get("to_agent_id"),
+        sender_did=fields["from_did"],
+        sender_address=fields.get("sender_address"),
+        team_id=fields.get("team_id"),
+        sender_verified_team_id=fields.get("sender_verified_team_id"),
+        sender_verified_dids=fields.get("sender_verified_dids"),
+        stored_route_continuation=fields.get("stored_route_continuation", False),
+    )
+    content = (
+        EncryptedMailContent(
+            envelope=fields["encrypted_envelope"],
+            metadata=fields.get("encrypted_metadata") or {},
+        )
+        if fields.get("content_mode") == "encrypted_v2"
+        else PlaintextMailContent(subject=fields["subject"], body=fields["body"])
+    )
+    return await store_mail(
+        db,
+        message=MailStorageInput(
+            sender=MailSender(
+                did=fields["from_did"],
+                alias=fields["from_alias"],
+                address=fields.get("sender_address"),
+                agent_id=fields.get("from_agent_id"),
+                team_id=fields.get("team_id"),
+            ),
+            recipient=MailRecipient(
+                did=fields["to_did"],
+                alias=fields["to_alias"] or recipient.get("alias"),
+                address=recipient.get("address"),
+                agent_id=fields.get("to_agent_id") or recipient.get("agent_id"),
+                wake_dids=(recipient.get("did_aw"), recipient.get("did_key")),
+            ),
+            content=content,
+            attestation=MailAttestation(
+                signature=fields.get("signature"),
+                signed_payload=fields.get("signed_payload"),
+                id_chain=fields.get("id_chain"),
+            ),
+            priority=fields["priority"],
+            message_id=fields.get("message_id"),
+            conversation_id=fields.get("conversation_id"),
+        ),
+    )
 
 
 def _make_did_key():
@@ -100,7 +166,7 @@ async def test_plaintext_message_id_collision_is_a_conflict(aweb_cloud_db, colli
         message_id=uuid4(),
         signed_payload='{"body":"original"}' if collision != "unsigned" else None,
     )
-    await deliver_message(db, **original)
+    await _deliver_fixture_mail(db, **original)
     before = dict(
         await manager.fetch_one(
             "SELECT * FROM {{tables.messages}} WHERE message_id = $1",
@@ -121,7 +187,7 @@ async def test_plaintext_message_id_collision_is_a_conflict(aweb_cloud_db, colli
             encrypted_metadata={"signed_envelope_hash": "sha256:other"},
         )
     with pytest.raises(ConflictError):
-        await deliver_message(db, **retry)
+        await _deliver_fixture_mail(db, **retry)
     assert (
         dict(
             await manager.fetch_one(
@@ -219,7 +285,7 @@ async def test_deliver_message_cross_identity_to_contact(aweb_cloud_db):
         alice_did_aw,
     )
 
-    msg_id, created_at = await deliver_message(
+    msg_id, created_at = await _deliver_fixture_mail(
         db_shim,
         from_did=alice_did_aw,
         to_did=bob_did_aw,
@@ -270,7 +336,7 @@ async def test_deliver_message_rejects_non_contact_sender(aweb_cloud_db):
     )
 
     with pytest.raises(ForbiddenError, match="contacts"):
-        await deliver_message(
+        await _deliver_fixture_mail(
             db_shim,
             from_did=alice_did_aw,
             to_did=bob_did_aw,
@@ -342,7 +408,7 @@ async def test_deliver_message_inbound_mode_open_allows_unconnected_sender(
         address="otherco.com/bob",
     )
 
-    msg_id, _ = await deliver_message(
+    msg_id, _ = await _deliver_fixture_mail(
         db_shim,
         from_did="did:aw:alice",
         to_did=bob_did_aw,
@@ -392,7 +458,7 @@ async def test_deliver_message_team_and_contacts_allows_exact_active_contact(
         bob_did_aw,
     )
 
-    msg_id, _ = await deliver_message(
+    msg_id, _ = await _deliver_fixture_mail(
         db_shim,
         from_did="did:aw:alice-team-contact",
         to_did=bob_did_aw,
@@ -444,7 +510,7 @@ async def test_deliver_message_team_and_contacts_allows_verified_same_team_non_c
         inbound_mode="team_and_contacts",
     )
 
-    msg_id, _ = await deliver_message(
+    msg_id, _ = await _deliver_fixture_mail(
         db_shim,
         from_did="did:aw:alice-team-and-contacts",
         to_did=bob_did_aw,
@@ -477,7 +543,7 @@ async def test_deliver_message_team_and_contacts_rejects_declared_team_without_p
     )
 
     with pytest.raises(ForbiddenError, match="verified team members"):
-        await deliver_message(
+        await _deliver_fixture_mail(
             db_shim,
             from_did="did:aw:alice-unverified-claim",
             to_did=bob_did_aw,
@@ -531,7 +597,7 @@ async def test_deliver_message_team_and_contacts_checks_multi_team_identity_memb
         inbound_mode="team_and_contacts",
     )
 
-    msg_id, _ = await deliver_message(
+    msg_id, _ = await _deliver_fixture_mail(
         db_shim,
         from_did=alice_did_aw,
         to_did=bob_did_aw,
@@ -563,7 +629,7 @@ async def test_deliver_message_local_recipient_same_team_behavior_unchanged(
         bob_did_key,
     )
 
-    msg_id, _ = await deliver_message(
+    msg_id, _ = await _deliver_fixture_mail(
         db_shim,
         from_did=alice_did_key,
         to_did=bob_did_key,
@@ -600,7 +666,7 @@ async def test_deliver_message_null_inbound_mode_fails_migration_required(
     )
 
     with pytest.raises(ForbiddenError, match="inbound_mode migration required"):
-        await deliver_message(
+        await _deliver_fixture_mail(
             db_shim,
             from_did="did:aw:alice",
             to_did=bob_did_aw,
@@ -651,7 +717,7 @@ async def test_resolve_agent_helpers(aweb_cloud_db):
 async def test_deliver_message_recipient_not_found(aweb_cloud_db):
     db_shim = _DbShim(aweb_cloud_db.aweb_db)
     with pytest.raises(NotFoundError, match="Recipient"):
-        await deliver_message(
+        await _deliver_fixture_mail(
             db_shim,
             from_did="did:aw:alice",
             to_did="did:aw:missing",

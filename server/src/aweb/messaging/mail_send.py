@@ -4,6 +4,15 @@ from __future__ import annotations
 
 import json
 import logging
+from aweb.messaging.mail_storage import (
+    MailIdAvailability,
+    MailStorageInput,
+    MailSender,
+    MailRecipient,
+    MailAttestation,
+    mail_content_for_storage,
+    store_mail,
+)
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
@@ -66,10 +75,8 @@ from aweb.messaging.mail_routing import (
     remote_recipient_from_participant,
 )
 from aweb.messaging.messages import (
-    MessagePriority,
     admit_message_delivery,
     authorize_message_delivery,
-    deliver_message,
     get_agent_by_id,
     resolve_agent_by_did,
     utc_iso as _utc_iso,
@@ -77,7 +84,12 @@ from aweb.messaging.messages import (
 from aweb.messaging.participant_succession import predecessor_target_for_mail
 from aweb.messaging.participants import messaging_participant_by_alias
 from aweb.messaging.recipient_bindings import signed_recipient_matches
-from aweb.messaging.kinds import MessageKind, MessageTransport
+from aweb.messaging.kinds import (
+    MessageKind,
+    MessagePriorityValue,
+    ContentMode,
+    MessageTransport,
+)
 from aweb.messaging.recipients import (
     RecipientIdentityBinding,
     resolve_address_recipient,
@@ -173,7 +185,7 @@ def _validate_signed_mail_payload(
     from_alias: str | None,
     from_address: str | None,
     from_stable_id: str | None,
-    priority: MessagePriority,
+    priority: MessagePriorityValue,
     subject: str,
     body: str,
     from_did: str,
@@ -486,7 +498,7 @@ async def deliver_remote_mail_and_project_locally(
             [recipient] if recipient else [],
             sender=auth,
         )
-    is_encrypted = payload.content_mode == "encrypted_v2"
+    is_encrypted = payload.content_mode == ContentMode.ENCRYPTED
     if not is_encrypted:
         _require_remote_mail_signature(payload)
     federation_signature = (
@@ -655,31 +667,36 @@ async def deliver_remote_mail_and_project_locally(
             team_id=auth.team_id,
         )
     with agent_wake_scope(runtime.agent_wake_publisher):
-        local_message_id, local_created_at = await deliver_message(
+        local_message_id, local_created_at = await store_mail(
             db,
-            id_chain=id_chain,
-            registry_client=registry_client,
-            recipient_agent=recipient,
-            team_id=auth.team_id,
-            from_agent_id=auth.agent_id,
-            from_alias=auth.alias,
-            to_agent_id=to_agent_id,
-            to_alias=to_alias,
-            from_did=sender_did,
-            to_did=recipient_did,
-            sender_address=sender_address,
-            subject="" if is_encrypted else payload.subject,
-            body="" if is_encrypted else payload.body,
-            priority=payload.priority,
-            signature=None if is_encrypted else payload.signature,
-            signed_payload=None if is_encrypted else payload.signed_payload,
-            content_mode=payload.content_mode or "legacy_plaintext_v1",
-            message_version=payload.message_version or 1,
-            encrypted_envelope=payload.encrypted_envelope,
-            encrypted_metadata=encrypted_metadata,
-            message_id=msg_uuid,
-            conversation_id=conversation["conversation_id"],
-            skip_policy_check=True,
+            message=MailStorageInput(
+                sender=MailSender(
+                    did=sender_did,
+                    alias=auth.alias,
+                    address=sender_address,
+                    agent_id=auth.agent_id,
+                    team_id=auth.team_id,
+                ),
+                recipient=MailRecipient(
+                    did=recipient_did,
+                    alias=to_alias or recipient.get("alias"),
+                    address=recipient.get("address"),
+                    agent_id=to_agent_id or recipient.get("agent_id"),
+                    signed_did=None,
+                    wake_dids=(recipient.get("did_aw"), recipient.get("did_key")),
+                ),
+                content=mail_content_for_storage(
+                    payload, encrypted_metadata=encrypted_metadata
+                ),
+                attestation=MailAttestation(
+                    signature=None if is_encrypted else payload.signature,
+                    signed_payload=None if is_encrypted else payload.signed_payload,
+                    id_chain=id_chain,
+                ),
+                priority=payload.priority,
+                message_id=msg_uuid,
+                conversation_id=conversation["conversation_id"],
+            ),
         )
 
     await record_successful_contact_side_effect(
@@ -728,22 +745,29 @@ def _lost_send_race(exc: BaseException) -> bool:
     return isinstance(cause, asyncpg.exceptions.UniqueViolationError)
 
 
-async def _stored_exact_send(
-    db, *, payload, sender_did: str
-) -> tuple[SentMail | None, bool]:
+@dataclass(frozen=True, kw_only=True)
+class MailReplayLookup:
+    stored: SentMail | None
+    availability: MailIdAvailability
+
+
+async def _stored_exact_send(db, *, payload, sender_did: str) -> MailReplayLookup:
     """What an exact retry of this send already stored, before any new effect.
 
     Returns the stored send when payload.message_id names a message this
-    sender sent with the identical signed payload (or encrypted envelope), and
-    whether no message with that id exists. A message_id stored with other
-    content is left to the ordinary path, which refuses it as a conflict.
+    sender sent with identical signed bytes. A conflicting stored message ID
+    follows ordinary admission and refuses before any new effect.
     """
     if not payload.message_id:
-        return None, False
+        return MailReplayLookup(
+            stored=None, availability=MailIdAvailability.UNDETERMINED
+        )
     try:
         message_uuid = UUID(payload.message_id)
     except ValueError:
-        return None, False
+        return MailReplayLookup(
+            stored=None, availability=MailIdAvailability.UNDETERMINED
+        )
     row = await db.get_manager("aweb").fetch_one(
         """
         SELECT message_id, conversation_id, created_at, content_mode, from_did,
@@ -754,32 +778,43 @@ async def _stored_exact_send(
         message_uuid,
     )
     if row is None:
-        return None, True
+        return MailReplayLookup(
+            stored=None, availability=MailIdAvailability.CONFIRMED_UNUSED
+        )
     if row["from_did"] != sender_did:
-        return None, False
-    if (payload.content_mode or "legacy_plaintext_v1") == "encrypted_v2":
+        return MailReplayLookup(
+            stored=None, availability=MailIdAvailability.UNDETERMINED
+        )
+    if (payload.content_mode or ContentMode.PLAINTEXT) == ContentMode.ENCRYPTED:
         stored_envelope = row["encrypted_envelope"]
         if isinstance(stored_envelope, str):
             stored_envelope = json.loads(stored_envelope)
         same = (
-            row["content_mode"] == "encrypted_v2"
+            row["content_mode"] == ContentMode.ENCRYPTED
             and payload.encrypted_envelope is not None
             and stored_envelope == payload.encrypted_envelope
         )
     else:
         same = (
-            row["content_mode"] == "legacy_plaintext_v1"
+            row["content_mode"] == ContentMode.PLAINTEXT
             and bool(payload.signed_payload)
             and row["signed_payload"] == payload.signed_payload
         )
     if not same:
-        return None, False
-    return SentMail(
-        message_id=str(row["message_id"]),
-        conversation_id=str(row["conversation_id"]) if row["conversation_id"] else None,
-        status="delivered",
-        delivered_at=_utc_iso(row["created_at"]),
-    ), False
+        return MailReplayLookup(
+            stored=None, availability=MailIdAvailability.UNDETERMINED
+        )
+    return MailReplayLookup(
+        stored=SentMail(
+            message_id=str(row["message_id"]),
+            conversation_id=str(row["conversation_id"])
+            if row["conversation_id"]
+            else None,
+            status="delivered",
+            delivered_at=_utc_iso(row["created_at"]),
+        ),
+        availability=MailIdAvailability.UNDETERMINED,
+    )
 
 
 async def _create_mail_conversation(db, **kwargs):
@@ -1032,54 +1067,57 @@ async def send_mail_conversation_continuation(
         sender_verified_dids=auth_dids(auth),
         stored_route_continuation=True,
     )
-    stored, message_is_new = await _stored_exact_send(
-        db, payload=payload, sender_did=sender_did
-    )
-    if stored is not None:
-        return stored
+    replay_lookup = await _stored_exact_send(db, payload=payload, sender_did=sender_did)
+    if replay_lookup.stored is not None:
+        return replay_lookup.stored
     _require_fresh_mail_attestation(payload)
     try:
         with agent_wake_scope(runtime.agent_wake_publisher):
-            message_id, server_received_at = await deliver_message(
+            message_id, server_received_at = await store_mail(
                 db,
-                id_chain=id_chain,
-                registry_client=registry_client,
-                recipient_agent=recipient,
-                team_id=continuation.conversation.get("team_id") or auth.team_id,
-                from_agent_id=auth.agent_id,
-                from_alias=auth.alias,
-                to_agent_id=recipient.get("agent_id"),
-                to_alias=recipient_participant.get("alias"),
-                from_did=sender_did,
-                to_did=recipient_participant["did"],
-                sender_address=sender_address,
-                subject=payload.subject,
-                body=payload.body,
-                priority=payload.priority,
-                signature=payload.signature,
-                signed_payload=payload.signed_payload,
-                content_mode=payload.content_mode or "legacy_plaintext_v1",
-                message_version=payload.message_version or 1,
-                encrypted_envelope=payload.encrypted_envelope,
-                encrypted_metadata=encrypted_metadata,
-                message_id=msg_uuid,
-                conversation_id=conversation_id,
-                sender_verified_team_id=auth.verified_team_id,
-                sender_verified_dids=auth_dids(auth),
-                stored_route_continuation=True,
-                signed_recipient_did=historical_target["signed_did"]
-                if historical_target is not None
-                else None,
-                known_new=message_is_new,
-                skip_policy_check=True,
+                message=MailStorageInput(
+                    sender=MailSender(
+                        did=sender_did,
+                        alias=auth.alias,
+                        address=sender_address,
+                        agent_id=auth.agent_id,
+                        team_id=continuation.conversation.get("team_id")
+                        or auth.team_id,
+                    ),
+                    recipient=MailRecipient(
+                        did=recipient_participant["did"],
+                        alias=recipient_participant.get("alias")
+                        or recipient.get("alias"),
+                        address=recipient.get("address"),
+                        agent_id=recipient.get("agent_id"),
+                        signed_did=historical_target["signed_did"]
+                        if historical_target is not None
+                        else None,
+                        wake_dids=(recipient.get("did_aw"), recipient.get("did_key")),
+                    ),
+                    content=mail_content_for_storage(
+                        payload, encrypted_metadata=encrypted_metadata
+                    ),
+                    attestation=MailAttestation(
+                        signature=payload.signature,
+                        signed_payload=payload.signed_payload,
+                        id_chain=id_chain,
+                    ),
+                    priority=payload.priority,
+                    message_id=msg_uuid,
+                    conversation_id=conversation_id,
+                    id_availability=replay_lookup.availability,
+                ),
             )
     except Exception as exc:
         if not _lost_send_race(exc):
             raise
-        stored, _ = await _stored_exact_send(db, payload=payload, sender_did=sender_did)
-        if stored is None:
+        replay_lookup = await _stored_exact_send(
+            db, payload=payload, sender_did=sender_did
+        )
+        if replay_lookup.stored is None:
             raise
-        return stored
+        return replay_lookup.stored
     await touch_conversation_activity(db, conversation_id=conversation_id)
 
     await fire_mutation_callback(
@@ -1647,11 +1685,11 @@ async def _send_mail_to_resolved_target(
                 [recipient] if recipient else [],
                 sender=auth,
             )
-        stored, message_is_new = await _stored_exact_send(
+        replay_lookup = await _stored_exact_send(
             db, payload=payload, sender_did=sender_did
         )
-        if stored is not None:
-            return stored
+        if replay_lookup.stored is not None:
+            return replay_lookup.stored
         _require_fresh_mail_attestation(payload)
         try:
             with agent_wake_scope(runtime.agent_wake_publisher):
@@ -1691,44 +1729,52 @@ async def _send_mail_to_resolved_target(
                         ],
                         team_id=auth.team_id,
                     )
-                    message_id, server_received_at = await deliver_message(
+                    message_id, server_received_at = await store_mail(
                         send_db,
-                        id_chain=id_chain,
-                        registry_client=registry_client,
-                        recipient_agent=recipient,
-                        team_id=auth.team_id,
-                        from_agent_id=auth.agent_id,
-                        from_alias=auth.alias,
-                        to_agent_id=to_agent_id,
-                        to_alias=to_alias,
-                        from_did=sender_did,
-                        to_did=recipient_did or "",
-                        sender_address=sender_address,
-                        subject=payload.subject,
-                        body=payload.body,
-                        priority=payload.priority,
-                        signature=payload.signature,
-                        signed_payload=payload.signed_payload,
-                        content_mode=payload.content_mode or "legacy_plaintext_v1",
-                        message_version=payload.message_version or 1,
-                        encrypted_envelope=payload.encrypted_envelope,
-                        encrypted_metadata=encrypted_metadata,
-                        message_id=msg_uuid,
-                        conversation_id=conversation["conversation_id"],
-                        skip_policy_check=True,
-                        known_new=message_is_new,
+                        message=MailStorageInput(
+                            sender=MailSender(
+                                did=sender_did,
+                                alias=auth.alias,
+                                address=sender_address,
+                                agent_id=auth.agent_id,
+                                team_id=auth.team_id,
+                            ),
+                            recipient=MailRecipient(
+                                did=recipient_did or "",
+                                alias=to_alias or recipient.get("alias"),
+                                address=recipient.get("address"),
+                                agent_id=to_agent_id or recipient.get("agent_id"),
+                                signed_did=None,
+                                wake_dids=(
+                                    recipient.get("did_aw"),
+                                    recipient.get("did_key"),
+                                ),
+                            ),
+                            content=mail_content_for_storage(
+                                payload, encrypted_metadata=encrypted_metadata
+                            ),
+                            attestation=MailAttestation(
+                                signature=payload.signature,
+                                signed_payload=payload.signed_payload,
+                                id_chain=id_chain,
+                            ),
+                            priority=payload.priority,
+                            message_id=msg_uuid,
+                            conversation_id=conversation["conversation_id"],
+                            id_availability=replay_lookup.availability,
+                        ),
                     )
         except Exception as exc:
             # An identical send that ran concurrently committed first; its
             # rollback here leaves nothing of this attempt behind.
             if not _lost_send_race(exc):
                 raise
-            stored, _ = await _stored_exact_send(
+            replay_lookup = await _stored_exact_send(
                 db, payload=payload, sender_did=sender_did
             )
-            if stored is None:
+            if replay_lookup.stored is None:
                 raise
-            return stored
+            return replay_lookup.stored
     except (ValidationError, NotFoundError, ForbiddenError, ConflictError) as exc:
         if (
             isinstance(exc, ForbiddenError)

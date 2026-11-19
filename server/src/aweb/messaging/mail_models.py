@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from aweb.messaging.alias_targets import validate_alias_selector
 from aweb.messaging.handle_addresses import normalize_hosted_handle_reference
 
-from aweb.messaging.messages import MessagePriority
+from aweb.messaging.kinds import MessagePriority
 
 
 class SendMessageRequest(BaseModel):
@@ -31,7 +31,7 @@ class SendMessageRequest(BaseModel):
     content_mode: Optional[str] = None
     message_version: Optional[int] = None
     encrypted_envelope: Optional[dict] = None
-    priority: MessagePriority = "normal"
+    priority: MessagePriority = MessagePriority.NORMAL
     message_id: Optional[str] = None
     timestamp: Optional[str] = None
     from_did: Optional[str] = Field(default=None, max_length=256)

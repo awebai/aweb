@@ -35,7 +35,7 @@ from aweb.identity_auth_deps import MessagingAuth, get_messaging_auth
 from aweb.messaging.mail_ack import acknowledge_mail
 from aweb.messaging.mail_send import SentMail, resolve_mail_target, send_mail
 from aweb.messaging.runtime import messaging_runtime
-from aweb.messaging.messages import MessagePriority
+from aweb.messaging.kinds import MessagePriority
 from aweb.messaging.verification import (
     message_verification_status,
 )
