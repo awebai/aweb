@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-18
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-naapp-library-auth.
+* **Creation**: lessons [on macOS, naapp e2e needs an aw built with Go 1.27 or later](/aweb-expert/lessons/darwin-e2e-needs-an-aw-built-with-go-1-27.md) and [prove a stack change under the gate's project name](/aweb-expert/lessons/prove-a-stack-change-under-the-gates-project-name.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
