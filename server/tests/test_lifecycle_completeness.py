@@ -8,6 +8,7 @@ from enum import StrEnum
 from uuid import uuid4
 
 import pytest
+import aweb.lifecycle as lifecycle
 from aweb.lifecycle import (
     AgentDisposition,
     LifecycleActor,
@@ -30,6 +31,43 @@ class WorkspaceState(StrEnum):
     ACTIVE = "active"
     DELETED = "deleted"
     ABSENT = "absent"
+
+
+@pytest.mark.asyncio
+async def test_outer_transaction_removed_workspace_retry_completes_without_replay(aweb_cloud_db):
+    db = aweb_cloud_db.aweb_db
+    team, agent, workspace = await _seed_workspace_with_claim(db)
+    await db.execute("DELETE FROM {{tables.task_claims}} WHERE workspace_id=$1", workspace)
+    await db.execute(
+        "UPDATE {{tables.workspaces}} SET deleted_at=NOW() WHERE workspace_id=$1", workspace
+    )
+    request = LifecycleCascadeRequest(
+        operation="delete_local_workspace",
+        actor=LifecycleActor(actor_id="owner", actor_type="system", authority="embedding"),
+        team_id=team,
+        target_workspace_ids=(str(workspace),),
+        workspace_scope="explicit",
+    )
+    replay_tasks_before = set(lifecycle._outbox_replay_tasks)
+    async with db.transaction() as outer:
+        for _attempt in range(2):
+            result = await apply_lifecycle_cascade(outer, None, request)
+            assert not result.errors
+            assert result.post_commit_status == "completed"
+            assert result.outbox_operation_id is None
+            assert result.workspace_changes == ()
+            assert result.task_unclaim_count == 0
+            assert not (lifecycle._outbox_replay_tasks - replay_tasks_before)
+        assert (
+            await outer.fetch_value(
+                "SELECT count(*) FROM {{tables.lifecycle_side_effect_outbox}} WHERE team_id=$1",
+                team,
+            )
+            == 0
+        )
+    assert await db.fetch_value(
+        "SELECT deleted_at IS NULL FROM {{tables.agents}} WHERE agent_id=$1", agent
+    )
 
 
 @pytest.mark.asyncio

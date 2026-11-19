@@ -1283,7 +1283,9 @@ commit and attempt replay before returning. A transaction-handle cascade
 returns its `LifecycleCascadeResult.outbox_operation_id`; an outer caller that
 requires synchronous post-commit effects invokes the canonical
 `replay_lifecycle_side_effects(..., operation_id=...)` only after its own
-transaction exits.
+transaction exits. A cascade with no side effects reports post-commit completion
+with no outbox operation and schedules no replay, including an idempotent
+workspace-removal retry inside an outer transaction.
 
 Replay locks pending rows and records each delivered effect so an ordinary
 retry does not publish it twice. Chat-waiting delivery uses a strict Redis path;
