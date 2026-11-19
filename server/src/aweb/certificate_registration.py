@@ -11,6 +11,7 @@ from collections.abc import Collection
 from dataclasses import dataclass, field
 from enum import StrEnum
 
+from fastapi import HTTPException
 from prometheus_client import Counter
 from starlette.requests import Request
 
@@ -116,7 +117,7 @@ def evaluate_certificate_registration(
 
 
 def record_certificate_registration(
-    request: Request,
+    request: Request | None,
     *,
     observation: CertificateRegistrationObservation,
     certificate_id: str,
@@ -131,14 +132,19 @@ def record_certificate_registration(
     decision = evaluate_certificate_registration(
         observation=observation, certificate_id=certificate_id, mode=mode
     )
-    counted = getattr(
-        request.state, "certificate_registration_observations_counted", None
-    )
-    if counted is None:
-        counted = request.state.certificate_registration_observations_counted = set()
+    counted = None
+    if request is not None:
+        counted = getattr(
+            request.state, "certificate_registration_observations_counted", None
+        )
+        if counted is None:
+            counted = request.state.certificate_registration_observations_counted = (
+                set()
+            )
     key = (observation.team_id, certificate_id, mode, decision.state)
-    if key not in counted:
-        counted.add(key)
+    if counted is None or key not in counted:
+        if counted is not None:
+            counted.add(key)
         outcome = {
             RegistrationState.REGISTERED: _MetricOutcome.REGISTERED,
             RegistrationState.UNREGISTERED: _MetricOutcome.WOULD_REFUSE,
@@ -148,3 +154,56 @@ def record_certificate_registration(
             enforcement=mode.value, outcome=outcome.value
         ).inc()
     return decision
+
+
+def configured_registration_mode() -> RegistrationMode:
+    """Translate the existing enforcement flag into the shared named policy."""
+    from aweb.config import require_registered_certificates
+
+    return (
+        RegistrationMode.REQUIRED
+        if require_registered_certificates()
+        else RegistrationMode.NOT_REQUIRED
+    )
+
+
+async def read_certificate_registration(
+    *,
+    registry_client,
+    team_id: str,
+    certificate_id: str,
+    mode: RegistrationMode,
+    request: Request | None = None,
+) -> RegistrationDecision:
+    """Observe the staged requirement through the existing registry reader.
+
+    hosted-certificate-anchoring.md:286-294 requires useful off-mode counts
+    without making measurement unavailability a new refusal. SDK cache/read
+    freshness remains with registered_certificates; this adds no other cache.
+    Invalid authority scope is rejected before acquisition, never counted as
+    an unavailable observation. Adapters retain their existing wire outcomes.
+    """
+    from aweb.team_auth_deps import registered_certificates
+
+    member_team_scope(team_id)
+    try:
+        registered = await registered_certificates(registry_client, team_id)
+    except HTTPException as exc:
+        if exc.status_code < 500:
+            raise
+        observation = CertificateRegistrationObservation(
+            team_id=team_id,
+            registered_certificate_ids=None,
+            unavailable_cause=exc,
+        )
+    else:
+        observation = CertificateRegistrationObservation(
+            team_id=team_id,
+            registered_certificate_ids=registered,
+        )
+    return record_certificate_registration(
+        request,
+        observation=observation,
+        certificate_id=certificate_id,
+        mode=mode,
+    )
