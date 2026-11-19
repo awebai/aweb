@@ -85,7 +85,8 @@ the caller to retry from current contacts.
 
 ## Encryption-key publication
 
-`aweb.routes.agents.publish_encryption_key(*, db, identity, payload)` accepts a
+`aweb.routes.agents.publish_encryption_key(*, db, payload, identity=None,
+generation=None, agent_id=None)` accepts a
 native manager/transaction, an authenticated `TeamIdentity`, and the native
 `EncryptionKeyAssertion` model. It returns `PublishEncryptionKeyResponse`.
 The HTTP `PUT /v1/agents/me/encryption-key` route calls this same owner.

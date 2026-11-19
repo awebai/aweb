@@ -11,7 +11,7 @@ from awid.dns_auth import validate_did_key, verify_signed_json_request
 from awid.e2ee_keys import validate_encryption_key_assertion
 from awid.team_ids import parse_team_id
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
-from pgdbm import TransactionManager
+from pgdbm import AsyncDatabaseManager, TransactionManager
 from pgdbm.errors import QueryError
 from pydantic import (
     BaseModel,
@@ -756,7 +756,7 @@ async def publish_my_encryption_key(
 
 async def publish_encryption_key(
     *,
-    db,
+    db: AsyncDatabaseManager | TransactionManager,
     payload: EncryptionKeyAssertion,
     identity: TeamIdentity | None = None,
     generation: VerifiedCertificateGeneration | None = None,
