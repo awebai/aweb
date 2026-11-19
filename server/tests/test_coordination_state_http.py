@@ -13,6 +13,7 @@ from aweb.lifecycle import (
     apply_lifecycle_cascade,
 )
 from aweb.mcp import create_mcp_app
+from aweb.internal_auth import application_proxy_verification
 from test_dashboard_privacy import TEAM
 from test_dashboard_privacy import privacy_app as privacy_app
 from test_messages_http import _signed_team_headers
@@ -46,6 +47,7 @@ async def coordination_mcp(privacy_app):
         redis=env.redis,
         registry_client=env.app.state.awid_registry_client,
         public_origin=str(env.client.base_url).rstrip("/"),
+        proxy_verification=application_proxy_verification(env.app.state),
     )
     env.app.mount("/coordination-mcp", mcp)
     await mcp.startup()

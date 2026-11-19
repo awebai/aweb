@@ -5,26 +5,46 @@ from uuid import uuid4
 
 import pytest
 
-from aweb.internal_auth import build_internal_auth_header_value
+from aweb.internal_auth import (
+    ProxyHeaderTrust,
+    ProxyVerificationConfig,
+    build_internal_auth_header_value,
+)
 from test_coordination_state_http import call_mcp, request_as
 from test_coordination_state_http import coordination_mcp as coordination_mcp
 from test_dashboard_privacy import TEAM
 from test_dashboard_privacy import privacy_app as privacy_app
 
+PROXY_SECRET = "r15-disposable-proxy-test-secret"
+
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("transport", ["certificate", "proxy"])
+@pytest.mark.parametrize(
+    ("privacy_app", "transport"),
+    [
+        pytest.param(
+            ProxyVerificationConfig(trust=ProxyHeaderTrust.DISABLED),
+            "certificate",
+            id="certificate",
+        ),
+        pytest.param(
+            ProxyVerificationConfig(
+                trust=ProxyHeaderTrust.SHARED_SECRET, shared_secret=PROXY_SECRET
+            ),
+            "proxy",
+            id="proxy",
+        ),
+    ],
+    indirect=["privacy_app"],
+)
 async def test_mcp_heartbeat_and_agent_list_use_the_workspace_and_team(
-    coordination_mcp, monkeypatch, transport
+    coordination_mcp, transport
 ):
     env = coordination_mcp
     alice = env.actors["alice"]
     if transport == "certificate":
         result = await call_mcp(env, name="heartbeat")
     else:
-        secret = "r15-disposable-proxy-test-secret"
-        monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
-        monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", secret)
         user_id = str(uuid4())
         response = await env.client.post(
             "/coordination-mcp/",
@@ -39,7 +59,7 @@ async def test_mcp_heartbeat_and_agent_list_use_the_workspace_and_team(
                 "X-User-ID": user_id,
                 "X-AWEB-Actor-ID": str(alice.id),
                 "X-AWEB-Auth": build_internal_auth_header_value(
-                    secret=secret,
+                    secret=PROXY_SECRET,
                     team_id=TEAM,
                     principal_type="u",
                     principal_id=user_id,
