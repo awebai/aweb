@@ -166,10 +166,6 @@ def _provision_team(
     return team
 
 
-def _provision_real_team_certificate(workspace: AWWorkspace) -> str:
-    return _provision_team(workspace).team_id
-
-
 def _create_document(
     folio: RunningFolio, team: E2ETeam, *, slug: str, title: str, body: str
 ) -> dict[str, Any]:
