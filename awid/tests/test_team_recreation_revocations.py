@@ -8,6 +8,7 @@ created with again. Revocation is one-way.
 """
 from __future__ import annotations
 
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -120,3 +121,55 @@ async def test_recreated_team_lists_its_own_revocations_and_no_other_teams(clien
 
     assert await _revoked_ids(client, domain, "ops") == {earlier, current}
     assert await _revoked_ids(client, domain, "web") == {other_team}
+
+
+async def _read_only_census(pool) -> dict:
+    """Run exactly the statement in awid/ops/team-recreation-census.sql, in its
+    own read-only transaction, as it runs in production."""
+    script = (Path(__file__).resolve().parents[1] / "ops" / "team-recreation-census.sql").read_text()
+    _before, begin, tail = script.partition("BEGIN READ ONLY;")
+    query, rollback, after = tail.rpartition("ROLLBACK;")
+    assert begin and rollback and not after.strip()
+    async with pool.acquire() as conn:
+        await conn.execute(begin)
+        try:
+            assert await conn.fetchval("SHOW transaction_read_only") == "on"
+            return dict(await conn.fetchrow(query))
+        finally:
+            await conn.execute(rollback)
+
+
+@pytest.mark.asyncio
+async def test_recreation_census_counts_teams_recreated_with_the_same_key(
+    client, controller_identity, awid_db_infra, shared_test_pool,
+):
+    ns_key, ns_did = controller_identity
+    domain = "census.example"
+    await _register_namespace(client, ns_key, ns_did, domain)
+    _, same_did, _ = await _team_with_revoked_certificate(client, ns_key, ns_did, domain, "same")
+    await _team_with_revoked_certificate(client, ns_key, ns_did, domain, "fresh")
+    await _team_with_revoked_certificate(client, ns_key, ns_did, domain, "gone")
+    await _team_with_revoked_certificate(client, ns_key, ns_did, domain, "live")
+    for name in ("same", "fresh", "gone"):
+        await _delete_team(client, ns_key, ns_did, domain, name)
+    await _create_team_with_key(client, ns_key, ns_did, domain, "same", same_did)
+    _, new_pub = generate_keypair()
+    await _create_team_with_key(client, ns_key, ns_did, domain, "fresh", did_from_public_key(new_pub))
+
+    assert await _read_only_census(shared_test_pool) == {
+        "deleted_teams": 3,
+        "deleted_teams_with_certificate_rows": 3,
+        "deleted_teams_recreated": 2,
+        "deleted_teams_recreated_with_same_key": 1,
+        "live_teams_recreated_with_same_key": 1,
+    }
+
+    # The shape a deletion left before this fix: the deleted team's certificate
+    # rows are gone. This changes only the private test database.
+    await awid_db_infra.get_manager("aweb").execute(
+        "DELETE FROM {{tables.team_certificates}} WHERE team_uuid IN"
+        " (SELECT team_uuid FROM {{tables.teams}} WHERE domain = $1 AND name = $2 AND deleted_at IS NOT NULL)",
+        domain,
+        "gone",
+    )
+    assert (await _read_only_census(shared_test_pool))["deleted_teams_with_certificate_rows"] == 2
