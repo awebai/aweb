@@ -98,6 +98,7 @@ from aweb_naapp.runtime.hook_resolver import HookResolver
 from aweb_naapp.runtime.hooks import RuntimeHooks
 from aweb_naapp.runtime.human_member import (
     HumanMemberProof,
+    HumanMemberRefused,
 )
 from aweb_naapp.runtime.human_member import (
     check_human_member as observe_human_member,
@@ -586,7 +587,6 @@ class NaappRuntime:
 
         from aweb_naapp.runtime.owner_act_delivery import (
             CheckedHumanRoleMember,
-            OwnerActDeliveryCode,
             OwnerActDeliveryRefused,
         )
 
@@ -607,15 +607,8 @@ class NaappRuntime:
                 certificate=decoded,
                 identity_client=identity_client,
             )
-        except HTTPException as exc:
-            code: OwnerActDeliveryCode
-            if exc.status_code == 403 and exc.detail == "principal_not_member":
-                code = "principal_not_member"
-            elif exc.status_code == 403 and exc.detail == "principal_not_human":
-                code = "principal_not_human"
-            else:
-                code = "principal_status_unavailable"
-            raise OwnerActDeliveryRefused(code) from None
+        except HumanMemberRefused as refused:
+            raise OwnerActDeliveryRefused(refused.code) from None
         except Exception:
             # The delivery boundary cannot turn an unclassified dependency
             # failure into a definitive non-member result or expose its detail.
