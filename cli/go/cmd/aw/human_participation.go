@@ -263,7 +263,7 @@ func (h *humanParticipation) client(team, url string) (*aweb.Client, *awconfig.S
 	if err != nil {
 		return nil, nil, err
 	}
-	url = humanParticipationServiceURL(humanServiceSelection{URL: url, MembershipURL: m.AwebURL})
+	url = selectedAwebServiceURL(serviceURLSelection{URL: url, StoredURL: m.AwebURL})
 	if url == "" {
 		return nil, nil, usageError("human team is not connected; run aw init --human with --url")
 	}
@@ -306,7 +306,7 @@ func runHumanConnect(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	url := humanParticipationServiceURL(humanServiceSelection{AwebURL: initAwebURL, URL: initURL, MembershipURL: m.AwebURL})
+	url := selectedAwebServiceURL(serviceURLSelection{AwebURL: initAwebURL, URL: initURL, StoredURL: m.AwebURL})
 	if url == "" {
 		return usageError("human connect requires --url")
 	}

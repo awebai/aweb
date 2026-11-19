@@ -1088,14 +1088,7 @@ func resolveDefaultCertificateInitAwebURL(workingDir string) (string, bool, erro
 }
 
 func resolveInitAwebURLOverride() string {
-	value := strings.TrimSpace(initAwebURL)
-	if value == "" {
-		value = strings.TrimSpace(initURL)
-	}
-	if value == "" {
-		value = strings.TrimSpace(os.Getenv("AWEB_URL"))
-	}
-	return value
+	return selectedAwebServiceURL(serviceURLSelection{AwebURL: initAwebURL, URL: initURL})
 }
 
 func awebURLOrDefault(raw string) string {
