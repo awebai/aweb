@@ -2,14 +2,14 @@
 
 import json
 from collections import OrderedDict
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, fields, is_dataclass, replace
 from pathlib import Path
 from uuid import UUID
 
 import pytest
-
 from aweb import events as existing_transport
 from aweb.event_types import MutationEventType, TransportEventType
+from aweb.hooks import fire_mutation_callback
 from aweb.identity_auth_deps import MessagingAuth
 from aweb.message_events import (
     ChatMessageEvent,
@@ -166,6 +166,11 @@ def test_inbound_federation_preserves_its_distinct_documented_context(kind, mode
     )
     assert dto.event_type is expected_type
     assert "to_aliases" not in context and "preview" not in context
+    with pytest.raises(TypeError, match="Pass a MessageKind value for kind"):
+        replace(dto, kind=kind.value)
+    with pytest.raises(ValueError) as unsupported:
+        replace(dto, kind=MessageKind.ROOM)
+    assert str(unsupported.value) == "Use mail or chat for a federation message event."
 
 
 @pytest.mark.parametrize("mode", list(ContentMode))
@@ -213,3 +218,30 @@ def test_transport_exports_reuse_existing_public_dtos_instead_of_a_second_set():
     )
     assert json.loads(event.to_json())["content_mode"] == "encrypted_v2"
     assert event.type == TransportEventType.MAIL_DELIVERED
+
+
+def test_transport_vocabulary_names_every_existing_standard_dto():
+    names = set()
+    for definition in vars(existing_transport).values():
+        if not isinstance(definition, type) or not is_dataclass(definition):
+            continue
+        for field in fields(definition):
+            if (
+                field.name == "type"
+                and isinstance(field.default, str)
+                and field.default
+            ):
+                names.add(field.default)
+    assert names == {event.value for event in TransportEventType}
+
+
+@pytest.mark.asyncio
+async def test_known_event_constants_do_not_close_the_host_callback_vocabulary():
+    seen = []
+
+    async def receive(name, context):
+        seen.append((name, context))
+
+    context = {"host_projection": None, "additive_metadata": {"value": 1}}
+    await fire_mutation_callback(receive, "host.custom_event", context)
+    assert seen == [("host.custom_event", context)]

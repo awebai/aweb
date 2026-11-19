@@ -89,6 +89,42 @@ see the same event more than once.
 Event names and context keys are experimental Python integration data, not a
 versioned network protocol.
 
+### Typed producer contexts
+
+`aweb.event_types.MutationEventType` names standard mutation events;
+`TransportEventType` names the stream events produced by translation. These
+are separate vocabularies: `message.sent` is a mutation, while
+`message.delivered` is its delivery signal. The enums are string-compatible
+constants, not an admission gate for host-defined callback names. A known
+handler branch does not establish that a producer emits that event.
+
+`aweb.message_events` provides frozen, keyword-only producer contexts:
+
+- `MailSentContext` for local and outbound mail;
+- `ChatMessageSentContext` for native chat sends;
+- `FederatedMessageSentContext` for the shared inbound outbox shape;
+- `MessageAcknowledgedContext` for incoming mail acknowledgements.
+
+Each supplies `event_type` and `to_context() -> dict[str, object]`. Construct
+them from validated producer data, using `ContentMode`, `MessagePriority`
+and `MessageTransport` from `aweb.messaging.kinds`. Native chat recipients
+are an immutable tuple in the context object and a fresh list in the callback
+dictionary. Nullable identity projections remain null. Local sends omit the
+optional `federated` key; federation sends retain it. Inbound chat retains its
+existing shared shape, which may have `to_alias` and no `to_aliases` or preview.
+
+The same module reexports the existing workspace/team mail and chat transport
+DTOs from `aweb.events`; these are the same classes, not another set of stream
+payloads. Their existing imports and constructors remain supported.
+
+This is an additive producer interface. The callback remains `(str, dict)`;
+it is not replaced by a closed DTO parser. Readers still tolerate additive
+keys, host-defined names and missing optional projections. Context objects do
+not verify an identity, sanitize content or alter commit, best-effort failure
+or durable replay semantics. Producer/translator conversion must keep the
+source call-site inventory and its rejection of unresolvable dynamic names
+effective when it adopts named event constants.
+
 ## Default handler and composition warning
 
 Both standalone and library-mode `create_app` lifespans install
