@@ -270,7 +270,7 @@ git -C "$checkout" diff --quiet && git -C "$checkout" diff --cached --quiet \
   || refuse "cloned checkout contains untracked input"
 
 record_input() {
-  local name="$1" path="$2" repo sha tree
+  local name="$1" path="$2" repo sha tree archive
   repo="$(git -C "$path" rev-parse --show-toplevel 2>/dev/null)" \
     || refuse "$name input is not a git checkout"
   [[ -z "$(git -C "$repo" status --porcelain --untracked-files=all)" ]] \
@@ -284,7 +284,12 @@ record_input() {
   tree="$sha"
   [[ "$path" == "$repo" ]] || tree="$sha:${path#"$repo"/}"
   mkdir -p "$work/inputs/$name"
-  git -C "$repo" archive "$tree" | tar -xf - -C "$work/inputs/$name"
+  # bsdtar can close a pipe at the EOF marker before Git writes its padding.
+  # Complete the exact input snapshot before extraction (docs/release.md).
+  archive="$work/inputs/$name.tar"
+  git -C "$repo" archive --format=tar --output="$archive" "$tree"
+  tar -xf "$archive" -C "$work/inputs/$name"
+  rm -- "$archive"
 }
 record_input blueprints "$LIBRARY_E2E_BLUEPRINT_SRC"
 LIBRARY_E2E_BLUEPRINT_SRC="$work/inputs/blueprints"
