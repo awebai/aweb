@@ -42,13 +42,14 @@ func runWakeStatus(cmd *cobra.Command, args []string) error {
 	switch {
 	case controlErr == nil && response.Status != nil:
 		status = *response.Status
-	case controlErr != nil && errors.Is(controlErr, wake.ErrDaemonDown):
+	case controlErr != nil:
+		// A stored snapshot is diagnostic evidence, never permission for a
+		// mutation fallback. Preserve every transport failure in the readiness
+		// refusal, including an accepted exchange (docs/cli-integration-contract.md:111).
 		status, err = wake.StatusFromStore(store, wakeMaxStreams)
 		if err != nil {
-			return err
+			return fmt.Errorf("read wake snapshot after control failure: %w; restore wake control or repair its stored status before retrying", errors.Join(controlErr, err))
 		}
-	case controlErr != nil:
-		return controlErr
 	default:
 		return withErrorCode("wake_status_invalid", fmt.Errorf("wake control returned no status; restart the wake service and retry"))
 	}
