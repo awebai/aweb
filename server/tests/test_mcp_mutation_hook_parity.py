@@ -27,7 +27,6 @@ from aweb.mcp.server import create_mcp_app
 from aweb.mcp.signing import HostedMessageSigningResult, canonical_signed_payload
 from aweb.mutation_hooks import create_mutation_handler
 from aweb.routes.chat import router as chat_router
-from aweb.service_errors import ValidationError
 from aweb.team_auth_deps import TeamIdentity, get_team_identity
 from test_messages_http import (
     _build_test_app,
@@ -860,15 +859,14 @@ async def test_a_refused_close_keeps_the_claim_and_fires_nothing(server, via):
         )
         assert refused == {"error": "Assignee agent not found in this team"}
     else:
-        with pytest.raises(
-            ValidationError, match="Assignee agent not found in this team"
-        ):
-            await server.rest_task(
-                "pilot",
-                "PATCH",
-                f"/v1/tasks/{ref}",
-                {"status": "closed", "assignee_alias": "nobody"},
-            )
+        refused = await server.rest_task_response(
+            "pilot",
+            "PATCH",
+            f"/v1/tasks/{ref}",
+            {"status": "closed", "assignee_alias": "nobody"},
+        )
+        assert refused.status_code == 422, refused.text
+        assert refused.json() == {"detail": "Assignee agent not found in this team"}
 
     assert server.mutations[start:] == []
     assert await _claims(server, ref) == [server.workspaces["pilot"]]

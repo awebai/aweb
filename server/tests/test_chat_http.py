@@ -5511,6 +5511,11 @@ async def test_chat_send_message_rejects_legacy_bound_session_continuation(
         signed_payload.decode(),
     )
 
+    # Historical fixtures inserted after setup must cross the shipped migration.
+    from chat_coverage_support import migrate_chat_conversation_coverage
+
+    await migrate_chat_conversation_coverage(aweb_cloud_db.aweb_db)
+
     app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
 
     async def _bob_auth_override():

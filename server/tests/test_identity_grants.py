@@ -1035,6 +1035,9 @@ async def test_legacy_grant_without_issuing_certificate_still_works(aweb_cloud_d
 
 def _build_real_messaging_app(aweb_db) -> FastAPI:
     app = FastAPI()
+    from aweb.error_responses import install_service_error_handlers
+
+    install_service_error_handlers(app)
     app.include_router(identity_grants_router)
     app.include_router(messages_router)
     app.include_router(chat_router)

@@ -274,7 +274,7 @@ async def test_address_binding_mismatch_still_refuses_without_writes(
     assert response.status_code == 422, response.text
     assert (
         response.json()["detail"]
-        == "signed_payload recipient must match the mail recipient"
+        == "signed_payload recipient must match the mail recipient. Check the recipient and sign the message again."
     )
     assert await env.db.fetch_value("SELECT count(*) FROM {{tables.messages}}") == 0
     assert (

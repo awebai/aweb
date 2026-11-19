@@ -289,6 +289,11 @@ async def test_legacy_reuse_projects_only_stored_participants(privacy_app):
             actor.id,
             alias,
         )
+    # Historical fixtures inserted after setup must cross the shipped migration.
+    from chat_coverage_support import migrate_chat_conversation_coverage
+
+    await migrate_chat_conversation_coverage(env.db)
+
     response = await _chat(env, "alice", ["carol"], session_id=str(thread))
     assert response.status_code == 200, response.text
     participants = await env.db.fetch_all(
