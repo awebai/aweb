@@ -216,6 +216,39 @@ def require_memory_postgres(container, port=5432):
     return storage
 
 
+def run_isolated_suites(
+    *, evidence: Path, runner: str, dns: str, command: list[str]
+) -> int:
+    with (evidence / "suite.log").open("w") as log:
+        result = subprocess.run(
+            ["docker", "exec", runner, *command],
+            stdout=log,
+            stderr=subprocess.STDOUT,
+        )
+    print(
+        f"Test child exit status: {result.returncode}; evidence: {evidence}",
+        flush=True,
+    )
+    if result.returncode:
+        print(
+            "\n".join((evidence / "suite.log").read_text().splitlines()[-100:]),
+            flush=True,
+        )
+    if docker("inspect", "--format", "{{.State.Running}}", dns) != "true":
+        raise RuntimeError("DNS sink exited during tests")
+    report = evidence / "dns-denied.log.reported"
+    if report.exists():
+        print(
+            "TEST DNS REFUSED (reserved/allowlisted, no upstream):\n"
+            + report.read_text()
+        )
+    denied = (evidence / "dns-denied.log").read_text()
+    if denied:
+        print("TEST DNS EGRESS DENIED:\n" + denied)
+        return 1
+    return result.returncode
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--evidence", type=Path, required=True)
@@ -446,39 +479,12 @@ def main():
         # Retain inspect evidence proving that the runner has only the internal network.
         (evidence / "network.json").write_text(docker("network", "inspect", token))
         (evidence / "runner.json").write_text(docker("inspect", runner))
-        with (evidence / "suite.log").open("w") as log:
-            result = subprocess.run(
-                [
-                    "docker",
-                    "exec",
-                    runner,
-                    *(args.command or ["make", "TEST_EGRESS_RUNNER=", *args.targets]),
-                ],
-                stdout=log,
-                stderr=subprocess.STDOUT,
-            )
-        print(
-            f"Test child exit status: {result.returncode}; evidence: {evidence}",
-            flush=True,
+        return run_isolated_suites(
+            evidence=evidence,
+            runner=runner,
+            dns=dns,
+            command=args.command or ["make", "TEST_EGRESS_RUNNER=", *args.targets],
         )
-        if result.returncode:
-            print(
-                "\n".join((evidence / "suite.log").read_text().splitlines()[-100:]),
-                flush=True,
-            )
-        if docker("inspect", "--format", "{{.State.Running}}", dns) != "true":
-            raise RuntimeError("DNS sink exited during tests")
-        report = evidence / "dns-denied.log.reported"
-        if report.exists():
-            print(
-                "TEST DNS REFUSED (reserved/allowlisted, no upstream):\n"
-                + report.read_text()
-            )
-        denied = (evidence / "dns-denied.log").read_text()
-        if denied:
-            print("TEST DNS EGRESS DENIED:\n" + denied)
-            return 1
-        return result.returncode
     finally:
         for container in reversed(containers):
             subprocess.run(
