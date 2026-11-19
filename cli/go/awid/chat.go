@@ -847,7 +847,13 @@ func (c *Client) ChatHistory(ctx context.Context, p ChatHistoryParams) (*ChatHis
 		m.Attachments = nil
 		m.AttachmentsAvailable = true
 		binding := ReceivedSenderBinding{ProjectedDID: m.FromDID}
-		if m.ContentMode != ContentModeEncryptedV2 && m.MessageVersion != E2EEMessageVersion && m.Encrypted == nil && m.SignedPayload != "" && !SignedChatDisplayMatches(m.SignedPayload, m.Body, m.MessageID, m.ConversationID, m.FromDID, m.ToDID) {
+		if m.ContentMode != ContentModeEncryptedV2 && m.MessageVersion != E2EEMessageVersion && m.Encrypted == nil && m.SignedPayload != "" && !SignedChatDisplayMatches(m.SignedPayload, ChatDisplay{
+			Body:           m.Body,
+			MessageID:      m.MessageID,
+			ConversationID: m.ConversationID,
+			FromDID:        m.FromDID,
+			ToDID:          m.ToDID,
+		}) {
 			// Preserve the observed response so a mismatch cannot be hidden by
 			// metadata overlay or subsequently promoted by trust normalization.
 			m.VerificationStatus = Failed

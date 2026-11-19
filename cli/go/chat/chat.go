@@ -277,7 +277,13 @@ func parseSSEEvent(sseEvent *awid.SSEEvent) Event {
 	}
 
 	if ev.ContentMode != awid.ContentModeEncryptedV2 && ev.MessageVersion != awid.E2EEMessageVersion && ev.Encrypted == nil && ev.SignedPayload != "" &&
-		!awid.SignedChatDisplayMatches(ev.SignedPayload, ev.Body, ev.MessageID, ev.SessionID, ev.FromDID, ev.ToDID) {
+		!awid.SignedChatDisplayMatches(ev.SignedPayload, awid.ChatDisplay{
+			Body:           ev.Body,
+			MessageID:      ev.MessageID,
+			ConversationID: ev.SessionID,
+			FromDID:        ev.FromDID,
+			ToDID:          ev.ToDID,
+		}) {
 		// Keep the observed row: a mismatch must not be hidden by projecting
 		// signed metadata over it.
 		ev.VerificationStatus = awid.Failed

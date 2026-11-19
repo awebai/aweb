@@ -88,14 +88,23 @@ func signedDisplayMatches(payload string, fields map[string]string) bool {
 	return true
 }
 
-// SignedChatDisplayMatches reports whether a plaintext chat message shows what
-// its signed payload says. It takes the fields as received, before signed
-// metadata is projected over them.
-func SignedChatDisplayMatches(payload, body, messageID, conversationID, fromDID, toDID string) bool {
+// ChatDisplay is what a reader shows of a plaintext chat message, taken from
+// the message as received, before signed metadata is projected over it.
+type ChatDisplay struct {
+	Body           string
+	MessageID      string
+	ConversationID string
+	FromDID        string
+	ToDID          string
+}
+
+// SignedChatDisplayMatches reports whether a plaintext chat message shows
+// what its signed payload says.
+func SignedChatDisplayMatches(payload string, display ChatDisplay) bool {
 	return signedDisplayMatches(payload, map[string]string{
-		"type": "chat", "body": body,
-		"message_id": messageID, "conversation_id": conversationID,
-		"from_did": fromDID, "to_did": toDID,
+		"type": "chat", "body": display.Body,
+		"message_id": display.MessageID, "conversation_id": display.ConversationID,
+		"from_did": display.FromDID, "to_did": display.ToDID,
 	})
 }
 

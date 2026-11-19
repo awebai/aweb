@@ -4304,6 +4304,7 @@ func TestSendUsesSignedPayloadRecipientBindingForSSEIdentityMismatch(t *testing.
 				"from_address":   "myteam/architect",
 				"body":           "hi back!",
 				"from_did":       senderDID,
+				"to_did":         wrongRecipientDID,
 				"signature":      replySig,
 				"signing_key_id": senderDID,
 				"signed_payload": replySignedPayload,
@@ -4418,6 +4419,8 @@ func TestSendUsesStableRecipientBindingForSSEAfterLocalKeyRotation(t *testing.T)
 				"from_address":   "myteam/architect",
 				"body":           "hi after rotation!",
 				"from_did":       senderDID,
+				"to_did":         receiverOldDID,
+				"to_stable_id":   receiverStableID,
 				"signature":      replySig,
 				"signing_key_id": senderDID,
 				"signed_payload": replySignedPayload,
@@ -6076,7 +6079,9 @@ func TestParseSSEEventSignedPayloadOverridesStableDIDForVerification(t *testing.
 	// Live stream rows can carry the participant stable DID in from_did while
 	// the signed payload carries the signing did:key. The parser must verify
 	// against the signed-payload did:key, matching ChatHistory normalization.
-	data := fmt.Sprintf(`{"from_agent":"alice","from_address":"myco/alice","to_address":"myco/bob","body":"signed hello","from_did":%q,"from_stable_id":%q,"signature":%q,"signed_payload":%q,"timestamp":"2026-01-01T00:00:00Z"}`, stableID, stableID, sig, signedPayload)
+	// The row carries the identifiers and the signed recipient as the server
+	// streams them.
+	data := fmt.Sprintf(`{"session_id":%q,"conversation_id":%q,"message_id":%q,"from_agent":"alice","from_address":"myco/alice","to_address":"myco/bob","body":"signed hello","from_did":%q,"from_stable_id":%q,"to_did":%q,"signature":%q,"signed_payload":%q,"timestamp":"2026-01-01T00:00:00Z"}`, env.ConversationID, env.ConversationID, env.MessageID, stableID, stableID, toDID, sig, signedPayload)
 
 	ev := parseSSEEvent(&awid.SSEEvent{
 		Event: "message",
