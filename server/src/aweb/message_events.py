@@ -1,6 +1,6 @@
 """Typed message mutation contexts and the existing public transport DTOs.
 
-docs/aw-hooks-sot.md:188-228 distinguishes native chat from inbound federation
+docs/aw-hooks-sot.md:223-264 distinguishes native chat from inbound federation
 contexts. Their serializers preserve that distinction and nullable identity
 projections. They neither authenticate a participant nor change callback,
 transaction, failure or replay semantics.

@@ -10,7 +10,7 @@ class MessageKind(StrEnum):
 
 
 class ContentMode(StrEnum):
-    """Stored/wire modes from docs/aw-hooks-sot.md:194-228."""
+    """Stored/wire modes from docs/aw-hooks-sot.md:230-264."""
 
     PLAINTEXT = "legacy_plaintext_v1"
     ENCRYPTED = "encrypted_v2"
