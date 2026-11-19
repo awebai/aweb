@@ -4,8 +4,7 @@ The owner migration hands existing scope history to role_holdings without
 changing assignments or B3 credentials. Reads of authority require that shared
 holding; context-only reads can use its retained record after containment or
 revocation. The old owner_principals map is migration history, never authority.
-Owner bindings and credential replacement use the shared human-role writers;
-the legacy contact-model entry refuses every scope.
+Owner bindings and credential replacement use the shared human-role writers.
 """
 
 from __future__ import annotations
@@ -52,23 +51,10 @@ def is_owner_scope(scope: str) -> bool:
     return _OWNER_SCOPE.fullmatch(scope) is not None
 
 
-class OwnerRequired(Exception):
-    """The act is not the team owner's act naming this principal, contact and installation."""
-
-    code = "owner_required"
-
-
 async def apply_owner_migrations(db: AsyncDatabaseManager) -> None:
     await AsyncMigrationManager(
         db, migrations_path=str(MIGRATIONS_PATH), module_name=MIGRATIONS_MODULE
     ).apply_pending_migrations()
-
-
-async def record_owner(
-    tx: TransactionManager, *, installation_id: str, principal: PrincipalKey
-) -> str:
-    """The legacy owner writer is retired for every scope."""
-    raise OwnerRequired("owner_required")
 
 
 async def owner_record(

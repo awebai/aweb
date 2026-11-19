@@ -1,17 +1,17 @@
 """Human console ceremonies and scoped owner/approver sessions, using S4 and B3.
 
 The app composes one OwnerConsole with the same database, passkeys and fence
-used by its broker. Its installation lookup reads authoritative F6 records;
-the owner-act team field is only a G1 lookup hint, never team authority. Routes belong only
-on split_origins' human app. S4 rechecks the current owner role or approver
+used by its broker. Its installation lookup reads authoritative F6 records
+for the session's enrolled team. Routes belong only on split_origins' human
+app. S4 rechecks the current owner role or approver
 record on every session request; owner-only actions separately require the
 owner role.
 
-No request body is echoed in validation errors. Bootstrap consumes a K2 act in
-the fenced transaction; registration and login use B3's distinct ceremonies.
+No request body is echoed in validation errors. Registration and login use
+B3's distinct ceremonies; controller acts enter through the shared owner-act
+delivery route (docs/design/secrets.md:1677–1687).
 """
 
-import base64
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import timedelta
 from typing import TYPE_CHECKING, Annotated, Any, Protocol
@@ -32,17 +32,11 @@ from aweb_naapp.console import exact_body as _body
 from aweb_naapp.console import require_json as _require_json
 from aweb_naapp.console import text_field as _text
 from aweb_naapp.console.handoff_authority import PreparedSessionTarget
-from aweb_naapp.hooks.owner_act_nonces import OwnerActVerifier
-from aweb_naapp.hooks.strictjson import Refused
-from aweb_naapp.roles import PrincipalKey
-from aweb_naapp.runtime.credential_audit import GovernanceUnavailable
 from aweb_naapp.runtime.installation import (
     AdmittedInstallation,
     InstallationFence,
-    InstallationRefused,
 )
 from aweb_naapp.runtime.passkeys import (
-    Designation,
     Passkeys,
     PreparedCurrentApprovers,
 )
@@ -50,23 +44,30 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pgdbm import AsyncDatabaseManager
 from pgdbm.core import TransactionManager
 
-from aweb_secrets.change import ChangeRefused
 from aweb_secrets.owners import (
     OwnerDirectory,
-    OwnerRequired,
     owner_binding,
-    owner_scope,
 )
-from aweb_secrets.principal import is_principal
 
 if TYPE_CHECKING:
     from aweb_naapp.runtime.credential_audit import CredentialAudit
 
 
+__all__ = [
+    "InstallationLookup",
+    "KeyBoundPreparation",
+    "OwnerConsole",
+    "owner_console_router",
+    "_body",
+    "_require_json",
+    "_text",
+]
+
+
 class InstallationLookup(Protocol):
     async def __call__(self, installation_id: str, *, team_id: str) -> AdmittedInstallation:
         """Refresh authoritative G1/F6 for team_id: the team a console session's
-        scope was enrolled under, or an untrusted hint before any session exists.
+        scope was enrolled under.
         An id that team does not hold raises LookupError."""
         ...
 
@@ -87,9 +88,8 @@ class OwnerConsole:
     Mount with owner_console_router. Apply S4 console migrations before serving.
     The installation lookup refreshes F6 outside any write transaction and must
     return its authoritative installation identity, or refuse an unavailable one.
-    The retired owner binding route receives only an untrusted lookup hint and
-    refuses its effect. Other calls name the team of the session or record they
-    act for, so another team's installation id is never resolved.
+    Calls name the team of the session or record they act for, so another
+    team's installation id is never resolved.
     """
 
     def __init__(
@@ -99,7 +99,6 @@ class OwnerConsole:
         passkeys: Passkeys,
         directory: OwnerDirectory,
         fence: InstallationFence,
-        verifier: OwnerActVerifier,
         installation: InstallationLookup,
         credential_audit: "CredentialAudit",
         client_address_header: str | None = None,
@@ -111,7 +110,6 @@ class OwnerConsole:
         self.passkeys = passkeys
         self.directory = directory
         self.fence = fence
-        self.verifier = verifier
         self.installation = installation
         self.credential_audit = credential_audit
         self._prepare_key_bound = prepare_key_bound
@@ -186,18 +184,6 @@ class OwnerConsole:
             raise LookupError("installation not found")
         return await self.installation(installation_id, team_id=team_id)
 
-    async def apply_owner_act(
-        self,
-        *,
-        admitted: AdmittedInstallation,
-        signing: bytes,
-        signature: str,
-        principal: PrincipalKey,
-        contact: str,
-    ) -> Designation:
-        """Legacy owner bindings and recovery are retired for every scope."""
-        raise OwnerRequired("owner_required")
-
 
 def owner_console_router(services: OwnerConsole, *, prefix: str = "") -> APIRouter:
     """Mount only on the human-origin application. Never mount on the agent API."""
@@ -215,54 +201,5 @@ def owner_console_router(services: OwnerConsole, *, prefix: str = "") -> APIRout
         current: Annotated[ConsoleSession, Depends(services.sessions.current)],
     ) -> dict[str, Any]:
         return {"scope": current.scope, "expires_at": current.expires_at.isoformat()}
-
-    router.include_router(_owner_act_transport_router(services))
-    return router
-
-
-def _owner_act_transport_router(services: OwnerConsole) -> APIRouter:
-    """Keep owner-act transport separate from session and credential routes."""
-    router = APIRouter(route_class=ConsoleRoute)
-
-    @router.post(
-        "/installations/{installation_id}/owner-acts", dependencies=[Depends(_require_json)]
-    )
-    async def owner_act(installation_id: str, request: Request) -> dict[str, str]:
-        body = await _body(request, {"signing", "signature", "team_id", "principal", "contact"})
-        team_id = _text(body, "team_id")
-        principal_did = _text(body, "principal")
-        if not is_principal(principal_did):
-            raise HTTPException(status_code=403, detail="owner_required")
-        try:
-            admitted = await services.installation(installation_id, team_id=team_id)
-        except InstallationRefused as refused:
-            raise HTTPException(status_code=refused.status, detail=refused.code) from None
-        except LookupError:
-            raise HTTPException(status_code=403, detail="owner_required") from None
-        if admitted.installation_id != installation_id or team_id != admitted.team_id:
-            raise HTTPException(status_code=403, detail="owner_required")
-        principal = PrincipalKey(team_id=admitted.team_id, principal_did=principal_did)
-        contact = _text(body, "contact")
-        scope = owner_scope(installation_id, admitted.team_id, principal_did)
-        try:
-            designation = await services.apply_owner_act(
-                admitted=admitted,
-                signing=base64.b64decode(_text(body, "signing"), validate=True),
-                signature=_text(body, "signature"),
-                principal=principal,
-                contact=contact,
-            )
-        except InstallationRefused as refused:
-            raise HTTPException(status_code=refused.status, detail=refused.code) from None
-        except ChangeRefused as refused:
-            raise HTTPException(status_code=403, detail=refused.code) from None
-        except GovernanceUnavailable as refused:
-            raise HTTPException(503, refused.code) from None
-        except Refused as refused:
-            raise HTTPException(503, refused.code) from None
-        except (ValueError, OwnerRequired):
-            raise HTTPException(status_code=403, detail="owner_required") from None
-        await services.passkeys.deliver(designation)
-        return {"scope": scope, "effective_at": designation.effective_at.isoformat()}
 
     return router

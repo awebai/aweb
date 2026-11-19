@@ -39,7 +39,6 @@ def authority(w):
             passkeys=w.passkeys,
             directory=w.directory,
             fence=w.console.fence,
-            verifier=w.owner.verifier,
             installation=InstallationLookup(w.console.fence),
             credential_audit=w.credential_audit,
         )

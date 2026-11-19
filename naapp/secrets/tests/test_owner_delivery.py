@@ -8,11 +8,14 @@ bootstrap creates the first owner before the request under test.
 import base64
 import json
 from datetime import UTC, datetime, timedelta
+from enum import StrEnum
 from types import SimpleNamespace
 
 import pytest
 from asyncpg import PostgresError
 from aweb_naapp import roles
+from aweb_naapp.hooks.owner_act import PREFIX
+from aweb_naapp.hooks.strictjson import canonical, parse_canonical_object
 from aweb_naapp_testing import did_key
 from aweb_naapp_testing.owner_acts import TeamOwner
 from awid.dns_verify import awid_txt_value
@@ -169,6 +172,49 @@ async def test_refused_delivery_changes_no_owner_revision_nonce_or_audit(root, r
     if fault == "missing-certificate":
         assert response.json()["detail"] == "principal_not_member"
     assert await effects(service, installed["installation_id"], member.team_id) == before
+
+
+class WrongOwnerScope(StrEnum):
+    APP = "app_id"
+    INSTALLATION = "installation_id"
+    ROLE = "role"
+    PRINCIPAL = "principal"
+    AUDIENCE = "aud"
+
+
+@pytest.mark.parametrize("scope", list(WrongOwnerScope))
+async def test_controller_signature_cannot_authorize_another_scope(root, registry, scope):
+    service, client, settings, member, installed, *_ = root
+    valid, _, _ = await delivery(root, registry)
+    world = client.owner_delivery_fixture
+    signing = base64.b64decode(valid["signing"])
+    fields = parse_canonical_object(signing[len(PREFIX) :])
+    replacements = {
+        WrongOwnerScope.APP: "another-app",
+        WrongOwnerScope.INSTALLATION: "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633c",
+        WrongOwnerScope.ROLE: "another.owner",
+        WrongOwnerScope.PRINCIPAL: fixture_principal(member.team_id, "bob").principal_did,
+        WrongOwnerScope.AUDIENCE: settings.public_origin,
+    }
+    target = fields if scope is WrongOwnerScope.AUDIENCE else fields["subject"]
+    target[scope] = replacements[scope]
+    signing = PREFIX + canonical(fields)
+    wrong = {
+        **valid,
+        "signing": base64.b64encode(signing).decode(),
+        "signature": base64.b64encode(world.owner.team_key.sign(signing).signature)
+        .decode()
+        .rstrip("="),
+    }
+    before = await effects(service, installed["installation_id"], member.team_id)
+    refused = await client.post(settings.console_origin + PATH, json=wrong)
+    assert refused.status_code == 403, refused.text
+    expected = "principal_not_member" if scope is WrongOwnerScope.PRINCIPAL else "owner_required"
+    assert refused.json() == {"detail": expected}
+    assert await effects(service, installed["installation_id"], member.team_id) == before
+    # The exact original nonce remains usable after the refused scope mutation.
+    accepted = await client.post(settings.console_origin + PATH, json=valid)
+    assert accepted.status_code == 200, accepted.text
 
 
 async def test_replay_does_not_repeat_the_revision_or_governance_effect(root, registry):

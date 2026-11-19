@@ -86,7 +86,6 @@ async def entry_service(world, tmp_path, request, script_delivery, console_tls, 
         credential_audit=w.credential_audit,
         directory=w.directory,
         fence=w.fence,
-        verifier=w.owner.verifier,
         installation=installation,
     )
     changes = ConsoleChanges(

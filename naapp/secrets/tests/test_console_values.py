@@ -46,7 +46,6 @@ async def clients(w, *, lookup_ready=None, resume=None):
         credential_audit=w.credential_audit,
         directory=w.directory,
         fence=w.fence,
-        verifier=w.owner.verifier,
         installation=installation,
     )
     w.console = console

@@ -26,7 +26,7 @@ from aweb_naapp.console.handoff_sessions import ConsoleHandoffs
 from aweb_naapp.dispatch import apply_dispatch_migrations
 from aweb_naapp.egress import AddressPolicy, DnsResolver, Egress
 from aweb_naapp.email import EmailSettings, Mailer
-from aweb_naapp.hooks.owner_act import APP_ACTS, HUMAN_ROLE_ACTS
+from aweb_naapp.hooks.owner_act import HUMAN_ROLE_ACTS
 from aweb_naapp.hooks.owner_act_nonces import OwnerActVerifier, apply_owner_act_migrations
 from aweb_naapp.key_file import read_key_file
 from aweb_naapp.nonces import apply_nonce_migrations
@@ -372,12 +372,6 @@ async def _compose(
         passkeys=passkeys,
         directory=owners,
         fence=fence,
-        verifier=OwnerActVerifier(
-            scope=settings.app_id,
-            audience=settings.public_origin,
-            acts=APP_ACTS,
-            team_key_for=current_team_controller_key,
-        ),
         installation=InstallationLookup(fence),
         credential_audit=credentials,
         client_address_header=settings.client_address_header,

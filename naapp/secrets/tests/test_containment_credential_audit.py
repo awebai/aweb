@@ -121,7 +121,6 @@ async def human_client(world, service, audit):
         passkeys=world.passkeys,
         directory=world.directory,
         fence=world.fence,
-        verifier=world.owner.verifier,
         installation=installation,
         credential_audit=audit,
     )

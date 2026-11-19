@@ -5,8 +5,6 @@ Legacy state is checked-in data captured through the genuine pre-cutover path.
 No test inserts a new generic holding or treats a login as a holding writer.
 """
 
-from copy import deepcopy
-
 import asyncpg
 import pytest
 from aweb_naapp.roles import PrincipalKey
@@ -19,14 +17,12 @@ from pgdbm.errors import MigrationError
 
 from aweb_secrets.owners import (
     OWNER_ROLE,
-    OwnerRequired,
     apply_owner_migrations,
     hold_owner,
-    record_owner,
 )
 from tests.owner_history import load_owner_history
 from tests.test_change_sets import Installations
-from tests.test_owner_bootstrap import TEAM, _subject
+from tests.test_owner_bootstrap import TEAM
 from tests.test_owner_bootstrap import world as bootstrap_world  # noqa: F401
 from tests.test_owner_directory import _policy
 
@@ -166,31 +162,6 @@ async def test_directory_uses_the_generic_holding_for_exclusion_and_withdrawal(b
     assert not await w.directory.candidates(_policy(alice), {})
 
 
-@pytest.mark.parametrize("existing", [False, True], ids=["new-owner", "recovery"])
-async def test_legacy_entry_refuses_before_any_binding_nonce_or_delivery(bootstrap_world, existing):
-    w = bootstrap_world
-    await load_owner_history(w)
-    principal = ALICE if existing else PrincipalKey(TEAM, "did:aw:3Uq51iFVLnqmgbVY3vLZtMD5PR87")
-    await apply_owner_migrations(w.db)
-    before = await authority_snapshot(w.db)
-    delivered = deepcopy((w.contacts.inbox, w.contacts.notices))
-    contact = "new-contact@example.com"
-    signing, signature = w.owner.sign(
-        "app-credential.recover" if existing else "app-role.designate",
-        _subject(principal, contact),
-    )
-    with pytest.raises(OwnerRequired):
-        await w.console.apply_owner_act(
-            signing=signing,
-            signature=signature,
-            admitted=w.admitted,
-            principal=principal,
-            contact=contact,
-        )
-    assert await authority_snapshot(w.db) == before
-    assert (w.contacts.inbox, w.contacts.notices) == delivered
-
-
 async def test_login_never_recreates_a_removed_holding(bootstrap_world):
     w = bootstrap_world
     history = await load_owner_history(w)
@@ -207,17 +178,6 @@ async def test_login_never_recreates_a_removed_holding(bootstrap_world):
     assert await w.db.fetch_all("SELECT * FROM {{tables.owner_principals}}")
     # The B3 assertion spends its own challenge/counter but writes no holding.
     assert before["role_holdings"] == (await authority_snapshot(w.db))["role_holdings"]
-
-
-async def test_the_legacy_mapping_writer_is_retired_for_every_scope(bootstrap_world):
-    w = bootstrap_world
-    await load_owner_history(w)
-    await apply_owner_migrations(w.db)
-    before = await authority_snapshot(w.db)
-    async with w.db.transaction() as tx:
-        with pytest.raises(OwnerRequired):
-            await record_owner(tx, installation_id=INSTALLATION_ID, principal=ALICE)
-    assert await authority_snapshot(w.db) == before
 
 
 async def test_owner_hold_retains_both_shared_rows(bootstrap_world):

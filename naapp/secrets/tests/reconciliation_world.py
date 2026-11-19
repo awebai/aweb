@@ -93,7 +93,6 @@ async def service_world(uses, *, approval_required=False):
         passkeys=w.passkeys,
         directory=w.directory,
         fence=context.arguments["fence"],
-        verifier=w.owner.verifier,
         installation=installation,
         credential_audit=w.credential_audit,
     )

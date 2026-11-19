@@ -44,7 +44,6 @@ async def clients(context, *, lookup=None):
         passkeys=w.passkeys,
         directory=w.directory,
         fence=w.fence,
-        verifier=w.owner.verifier,
         installation=installation,
         credential_audit=w.credential_audit,
     )

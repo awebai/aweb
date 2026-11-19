@@ -51,7 +51,6 @@ async def console_clients(w):
         credential_audit=w.credential_audit,
         directory=w.directory,
         fence=w.fence,
-        verifier=w.owner.verifier,
         installation=installation,
     )
     values = ConsoleValues(console=console, custody=w.custody)

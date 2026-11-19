@@ -46,7 +46,6 @@ async def application(w, *, origin=ORIGIN, agent_origin=API):
         credential_audit=w.credential_audit,
         directory=w.directory,
         fence=w.fence,
-        verifier=w.owner.verifier,
         installation=installation,
     )
     changes = ConsoleChanges(

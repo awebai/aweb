@@ -18,7 +18,6 @@ import pytest
 from aweb_naapp.egress import DnsResolver, InternalDestinations
 from aweb_naapp.hooks.envelope import KID_PATTERN, verify
 from aweb_naapp.roles import PrincipalKey, unassign
-from aweb_naapp.runtime.passkeys import contact_sha256
 from aweb_naapp.runtime.settings import AWIDMemberCredentialFiles
 from aweb_naapp_testing import Member
 from aweb_naapp_testing.network import DnsServer
@@ -38,7 +37,7 @@ from aweb_secrets.custody import Custody, LocalKeyFileProvider, encode_value
 from aweb_secrets.destination import DestinationRecord
 from aweb_secrets.grant import GrantRecord
 from aweb_secrets.manifest import MANIFEST_PATH
-from aweb_secrets.owners import OWNER_ROLE, owner_scope
+from aweb_secrets.owners import OWNER_ROLE
 from aweb_secrets.policy import Policy
 from aweb_secrets.secret import SecretRecord
 from tests.human_owner import apply_holder, fixture_principal, member_key
@@ -168,30 +167,6 @@ async def root(test_db_factory, registry, tmp_path, request, monkeypatch, produc
                 dns.close()
 
 
-def owner_body(configured, member, installation_id):
-    principal, contact = member.did_key, "owner@example.com"
-    scope = owner_scope(installation_id, member.team_id, principal)
-    # Only signing is used from the shared throwaway team-owner helper; the
-    # production root builds and runs its own K2 verifier against actual AWID.
-    owner = TeamOwner(member.team_key, verifier=None, team_id=member.team_id)
-    signing, signature = owner.sign(
-        "app-role.designate",
-        {
-            "app_id": configured.app_id,
-            "installation_id": installation_id,
-            "role": scope,
-            "contact_sha256": contact_sha256(contact),
-        },
-    )
-    return scope, {
-        "signing": base64.b64encode(signing).decode(),
-        "signature": signature,
-        "team_id": member.team_id,
-        "principal": principal,
-        "contact": contact,
-    }
-
-
 @dataclass(frozen=True, repr=False)
 class EnrolledOwner:
     scope: str
@@ -220,8 +195,8 @@ def mounted_owner_verifier(service):
 async def enrolled_owner(root):
     """Existing-holder component setup, followed by real production LOGIN.
 
-    This does not claim a supported bootstrap journey between16.43a and b.
-    The retired owner-acts HTTP route is tested independently for refusal.
+    Supported controller designation is exercised through the production
+    owner-act delivery route in test_owner_delivery.
     """
     from types import SimpleNamespace
 
@@ -374,38 +349,6 @@ async def test_the_production_console_serves_audit_delivery_only_to_its_current_
     withdrawn = await client.get(human + "/audit-delivery")
     assert withdrawn.status_code in (303, 401, 403)
     assert "data-hook=" not in withdrawn.text
-
-
-@pytest.mark.parametrize("fault", ["wrong_team", "wrong_installation", "unavailable"])
-async def test_bootstrap_authority_controls_leave_no_owner_nonce_or_audit(root, fault):
-    service, client, configured, member, installed, smtp, transport, _ = root
-    installation_id = installed["installation_id"]
-    _, body = owner_body(configured, member, installation_id)
-    if fault == "wrong_team":
-        body["team_id"] = "other:example.com"
-    elif fault == "wrong_installation":
-        installation_id = str(uuid4())
-    else:
-        transport.down = True
-    response = await client.post(
-        configured.console_origin + f"/installations/{installation_id}/owner-acts", json=body
-    )
-    expected = {
-        "wrong_team": (503, "authority_unavailable"),
-        "wrong_installation": (403, "owner_required"),
-        "unavailable": (503, "authority_unavailable"),
-    }[fault]
-    assert (response.status_code, response.json()) == (expected[0], {"detail": expected[1]})
-    db = service.runtime.db()
-    for table in (
-        "owner_principals",
-        "owner_act_nonces",
-        "credential_authorizations",
-        "passkey_approvers",
-    ):
-        assert await db.fetch_value("SELECT count(*) FROM " + table) == 0, table
-    assert await envelopes(db, member.team_id) == []
-    assert smtp.received == []
 
 
 @dataclass(repr=False)

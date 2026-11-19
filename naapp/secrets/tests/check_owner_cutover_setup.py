@@ -500,6 +500,7 @@ def main():
     from nacl.signing import SigningKey
     from pgdbm import AsyncDatabaseManager, DatabaseConfig
 
+    from aweb_secrets.app import OwnerApplicationServices
     from aweb_secrets.console import OwnerConsole, owner_console_router
     from aweb_secrets.credential_governance import CREDENTIAL_AUDIT_MIGRATIONS, credential_role
     from aweb_secrets.installation_lookup import InstallationLookup
@@ -508,7 +509,7 @@ def main():
     from tests.governance import view
     from tests.test_change_sets import Installations
     from tests.test_owner_directory import Audit, Contacts
-    from tests.test_production_bootstrap import mounted_owner_console
+    from tests.test_production_bootstrap import mounted_owner_console, mounted_owner_verifier
 
     # Real constructors only: no connection, registry, transport or verifier calls.
     db = AsyncDatabaseManager(
@@ -578,7 +579,6 @@ def main():
         passkeys=passkeys,
         directory=OwnerDirectory(passkeys, db),
         fence=fence,
-        verifier=verifier,
         installation=InstallationLookup(fence),
         credential_audit=recorder,
     )
@@ -586,22 +586,14 @@ def main():
     router = APIRouter()
     router.include_router(owner_console_router(console))
     app.include_router(router)
-    service = SimpleNamespace(console_app=app)
+    service = SimpleNamespace(
+        console_app=app, owner_services=OwnerApplicationServices(console=console, verifier=verifier)
+    )
     mounted = mounted_owner_console(service)
     assert mounted is console
     assert mounted.passkeys is passkeys and mounted.credential_audit is recorder
-    assert mounted.verifier is verifier and mounted.installation is console.installation
-    # The former exact flat lookup must reproduce its StopIteration on this mount.
-    try:
-        next(
-            r
-            for r in service.console_app.routes
-            if getattr(r, "path", "") == "/installations/{installation_id}/owner-acts"
-        )
-    except StopIteration:
-        pass
-    else:
-        raise AssertionError("old flat lookup unexpectedly found the lazy included route")
+    assert mounted_owner_verifier(service) is verifier
+    assert mounted.installation is console.installation
 
     # Exact helper cache call (not a copied keyword list) must construct successfully.
     call = next(
@@ -627,7 +619,6 @@ def main():
         "constructor_bindings": len(checks),
         "expanded_calls_pending": len(unknown),
         "executed": "real cache, PG manager (unconnected), store, passkeys, fence, verifier, recorder, console, lazy routers; original console identity retained",
-        "old_flat_lookup": "StopIteration reproduced",
         "socket_io": False,
         "result": "PASS",
     }

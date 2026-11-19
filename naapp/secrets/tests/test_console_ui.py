@@ -57,7 +57,6 @@ async def application(world: World, *, human_origin: str = ORIGIN, agent_origin:
         credential_audit=world.credential_audit,
         directory=world.directory,
         fence=world.fence,
-        verifier=world.owner.verifier,
         installation=installation,
     )
     human = FastAPI()

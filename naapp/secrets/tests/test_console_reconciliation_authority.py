@@ -31,7 +31,6 @@ async def caller(w):
         credential_audit=w.credential_audit,
         directory=w.directory,
         fence=w.fence,
-        verifier=w.owner.verifier,
         installation=installation,
     )
     options = await w.passkeys.login_options(scope)

@@ -196,7 +196,6 @@ async def application(
         credential_audit=w.credential_audit,
         directory=w.directory,
         fence=w.fence,
-        verifier=w.owner.verifier,
         installation=installation,
     )
     app = FastAPI()

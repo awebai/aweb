@@ -194,7 +194,6 @@ async def confirmation_journey(journey, tmp_path):  # noqa: F811
         passkeys=w.passkeys,
         directory=w.directory,
         fence=w.console.fence,
-        verifier=w.owner.verifier,
         installation=w.console.installation,
         credential_audit=w.credential_audit,
         key_bound=current,

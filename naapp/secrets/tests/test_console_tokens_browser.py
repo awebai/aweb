@@ -59,7 +59,6 @@ async def token_service(world, console_tls, console_listener):
         credential_audit=world.credential_audit,
         directory=world.directory,
         fence=world.fence,
-        verifier=world.owner.verifier,
         installation=installation,
     )
     changes = ConsoleChanges(
