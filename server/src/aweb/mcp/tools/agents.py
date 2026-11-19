@@ -18,7 +18,9 @@ async def list_agents(db_infra, redis) -> str:
     """List all agents in the authenticated team."""
     auth, error = require_team_context()
     if auth is None:
-        return error or json.dumps({"error": "This tool requires team context. Use a team certificate."})
+        return error or json.dumps(
+            {"error": "This tool requires team context. Use a team certificate."}
+        )
     aweb_db = db_infra.get_manager("aweb")
 
     rows = await aweb_db.fetch_all(
@@ -41,7 +43,9 @@ async def list_agents(db_infra, redis) -> str:
     presences = await list_agent_presences_by_workspace_ids(redis, workspace_ids)
     presence_map = {}
     for presence in presences:
-        presence_id = (presence.get("workspace_id") or presence.get("agent_id") or "").strip()
+        presence_id = (
+            presence.get("workspace_id") or presence.get("agent_id") or ""
+        ).strip()
         if presence_id:
             presence_map[presence_id] = presence
 

@@ -53,7 +53,9 @@ async def record_stream_listening(redis, agent_id, *, now: datetime) -> None:
         raw = await redis.get(key)
         if raw:
             record = json.loads(raw)
-            if now - _parse(record["last"]) <= timedelta(seconds=LISTENING_WINDOW_SECONDS):
+            if now - _parse(record["last"]) <= timedelta(
+                seconds=LISTENING_WINDOW_SECONDS
+            ):
                 since = _parse(record["since"])
         await redis.set(
             key,
@@ -61,7 +63,9 @@ async def record_stream_listening(redis, agent_id, *, now: datetime) -> None:
             ex=LISTENING_RECORD_TTL_SECONDS,
         )
     except Exception:
-        logger.warning("Failed to record the event stream for agent %s", agent_id, exc_info=True)
+        logger.warning(
+            "Failed to record the event stream for agent %s", agent_id, exc_info=True
+        )
 
 
 def _not_reported() -> dict[str, Any]:
@@ -124,7 +128,9 @@ async def _presence_last_seen(redis, workspace_ids: list) -> dict[str, datetime]
     if redis is None or not workspace_ids:
         return {}
     try:
-        records = await list_agent_presences_by_workspace_ids(redis, [str(w) for w in workspace_ids])
+        records = await list_agent_presences_by_workspace_ids(
+            redis, [str(w) for w in workspace_ids]
+        )
     except Exception:
         logger.warning("Failed to read heartbeat presence", exc_info=True)
         return {}
@@ -135,7 +141,9 @@ async def _presence_last_seen(redis, workspace_ids: list) -> dict[str, datetime]
     }
 
 
-async def _connections(db, request, *, team_id: str, agent_ids: list, now: datetime) -> dict[str, str]:
+async def _connections(
+    db, request, *, team_id: str, agent_ids: list, now: datetime
+) -> dict[str, str]:
     """The grant connection enum per grant seat (identity-grant-status.v1).
 
     A seat is active if any of its non-revoked grants is active; otherwise it
@@ -146,7 +154,9 @@ async def _connections(db, request, *, team_id: str, agent_ids: list, now: datet
         SELECT g.subject_agent_id, g.team_id, g.issued_at, g.expires_at, g.revoked_at,
                g.issued_by_certificate_id,
                a.status AS subject_status, a.deleted_at AS subject_deleted_at,
-               a.certificate_id, """ + member_key_columns_sql("a") + """
+               a.certificate_id, """
+        + member_key_columns_sql("a")
+        + """
         FROM {{tables.identity_session_grants}} g
         JOIN {{tables.agents}} a ON a.agent_id = g.subject_agent_id
         WHERE g.team_id = $1 AND g.subject_agent_id = ANY($2::uuid[])
@@ -175,7 +185,9 @@ def _observed_by_aweb(row) -> bool:
     return not row["host_active"]
 
 
-def _observed(row, *, listening_raw, presence, connection, now: datetime) -> dict[str, Any]:
+def _observed(
+    row, *, listening_raw, presence, connection, now: datetime
+) -> dict[str, Any]:
     listening, listening_since = _listening(listening_raw, now=now)
     seen = [row["workspace_last_seen_at"], row["grant_last_seen_at"]]
     seen += [presence[str(w)] for w in row["workspace_ids"] or [] if str(w) in presence]
@@ -231,13 +243,22 @@ async def agent_health(
     )
     observed_rows = [row for row in rows if _observed_by_aweb(row)]
     observed_ids = [row["agent_id"] for row in observed_rows]
-    listening_raw = dict(zip([str(i) for i in observed_ids], await _listening_records(redis, observed_ids)))
+    listening_raw = dict(
+        zip(
+            [str(i) for i in observed_ids],
+            await _listening_records(redis, observed_ids),
+        )
+    )
     presence = await _presence_last_seen(
-        redis, [w for row in observed_rows for w in row["workspace_ids"] or []],
+        redis,
+        [w for row in observed_rows for w in row["workspace_ids"] or []],
     )
     connections = (
-        await _connections(db, request, team_id=team_id, agent_ids=observed_ids, now=now)
-        if show_connection and observed_ids else {}
+        await _connections(
+            db, request, team_id=team_id, agent_ids=observed_ids, now=now
+        )
+        if show_connection and observed_ids
+        else {}
     )
 
     health = {}
@@ -252,7 +273,9 @@ async def agent_health(
                 now=now,
             )
         elif row["signed_payload"] is not None:
-            health[agent_id] = _reported(row["signed_payload"], row["signature"], now=now)
+            health[agent_id] = _reported(
+                row["signed_payload"], row["signature"], now=now
+            )
         else:
             health[agent_id] = _not_reported()
     return health
