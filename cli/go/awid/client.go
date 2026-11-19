@@ -270,6 +270,15 @@ func (m *agentMeta) names(did, stableID string) bool {
 		(stableID == "" || m.StableID == stableID)
 }
 
+// namesPin reports whether the identity this metadata names is the one pin
+// holds under pinKey: its stable ID, or its did:key.
+func (m *agentMeta) namesPin(pinKey string, pin *Pin) bool {
+	if m.StableID != "" {
+		return m.StableID == pinKey || m.StableID == strings.TrimSpace(pin.StableID)
+	}
+	return m.DID != "" && (m.DID == pinKey || m.DID == strings.TrimSpace(pin.DIDKey))
+}
+
 // Client is an aweb HTTP client.
 //
 // It is designed to be easy to extract into a standalone repo and to be used by:
@@ -713,6 +722,10 @@ const (
 	PinMigrationSameIdentity   PinMigrationOutcome = "same_identity"
 	PinMigrationConflict       PinMigrationOutcome = "conflict"
 	PinMigrationUnclassifiable PinMigrationOutcome = "unclassifiable"
+	// PinMigrationTeamUnconfirmed: a pin under a member name's earlier
+	// namespace/name key was kept, because the team roster does not name its
+	// identity for that name.
+	PinMigrationTeamUnconfirmed PinMigrationOutcome = "team_unconfirmed"
 )
 
 // PinMigrationDecline reports a migration that did not happen.
@@ -790,15 +803,79 @@ func (c *Client) canonicalTrustAddress(address string) string {
 	if strings.Contains(address, "/") || strings.Contains(address, "~") {
 		return address
 	}
+	// A member name is team-scoped (docs/identity.md:93-107): a sender known
+	// only by name is looked up and pinned as team/name in the authenticated
+	// team, never as an address.
+	if team := strings.TrimSpace(c.teamID); team != "" {
+		if _, _, err := ParseTeamID(team); err == nil {
+			return team + "/" + address
+		}
+	}
 	if namespace := c.namespaceSlug(); namespace != "" {
 		return namespace + "/" + address
 	}
-	// An addressless client (a local-resident grant) still has an
-	// authenticated team; bare aliases are members of that team's roster.
-	if domain, _, err := ParseTeamID(strings.TrimSpace(c.teamID)); err == nil {
-		return domain + "/" + address
-	}
 	return address
+}
+
+// legacyMemberNameTrustKey is the namespace/name key a bare member name was
+// pinned under before team/name; "" when address is not a bare name or the
+// client has no team.
+func (c *Client) legacyMemberNameTrustKey(address string) string {
+	address = strings.TrimSpace(address)
+	if address == "" || strings.Contains(address, "/") || strings.Contains(address, "~") {
+		return ""
+	}
+	if _, _, err := ParseTeamID(strings.TrimSpace(c.teamID)); err != nil {
+		return ""
+	}
+	if namespace := c.namespaceSlug(); namespace != "" {
+		return namespace + "/" + address
+	}
+	domain, _, _ := ParseTeamID(strings.TrimSpace(c.teamID))
+	return domain + "/" + address
+}
+
+// migrateMemberNamePin moves a pin from a member name's earlier
+// namespace/name key to its team/name key when the team roster names that
+// pin's identity for the name. Otherwise the pin is kept where it is and
+// reported: it is never dropped. The caller holds the pin store lock.
+func (c *Client) migrateMemberNamePin(rawAddress, trustAddress string, meta *agentMeta) {
+	legacy := c.legacyMemberNameTrustKey(rawAddress)
+	if legacy == "" || legacy == trustAddress {
+		return
+	}
+	pinKey, pinned := c.pinStore.Addresses[legacy]
+	if !pinned {
+		return
+	}
+	if _, taken := c.pinStore.Addresses[trustAddress]; taken {
+		return
+	}
+	pin := c.pinStore.Pins[pinKey]
+	if pin != nil && meta != nil && meta.Resolved && meta.Authoritative && meta.namesPin(pinKey, pin) {
+		delete(c.pinStore.Addresses, legacy)
+		c.pinStore.Addresses[trustAddress] = pinKey
+		pin.Address = trustAddress
+		return
+	}
+	if c.pinMigrationObserver == nil {
+		return
+	}
+	occupantDID := ""
+	if pin != nil {
+		occupantDID = pin.DIDKey
+	}
+	incomingDID := ""
+	if meta != nil {
+		incomingDID = meta.DID
+	}
+	c.pinMigrationObserver(PinMigrationDecline{
+		Outcome:     PinMigrationTeamUnconfirmed,
+		StableID:    pinKey,
+		Address:     legacy,
+		OccupantDID: occupantDID,
+		IncomingDID: incomingDID,
+	})
 }
 
 func (c *Client) isCurrentTeamRosterReference(address string) bool {
@@ -1099,6 +1176,8 @@ func (c *Client) checkTOFUPinWithMeta(ctx context.Context, status VerificationSt
 
 	c.pinStore.mu.Lock()
 	defer c.pinStore.mu.Unlock()
+
+	c.migrateMemberNamePin(rawAddress, trustAddress, meta)
 
 	pinKey := fromDID
 	if fromStableID != "" {
