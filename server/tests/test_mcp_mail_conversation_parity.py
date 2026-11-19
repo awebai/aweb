@@ -1066,10 +1066,13 @@ def test_an_envelope_for_a_key_this_server_does_not_record_is_refused_as_a_chang
             recipient_did="did:aw:bob",
         )
 
-    # The route's answer is unchanged.
+    # The same key mismatch retains 422 and the encrypted retry recovery action.
     assert (refused.value.status_code, refused.value.detail) == (
         422,
-        "encrypted envelope recipient did mismatch",
+        (
+            "encrypted envelope recipient did mismatch. "
+            "Check whether the original message was delivered before preparing a new encrypted message."
+        ),
     )
     assert json.loads(send_refusal(refused.value, mode=SendRefusalMode.HOSTED_ENVELOPE)) == {
         "error": "this recipient's key changed; resend the message",
