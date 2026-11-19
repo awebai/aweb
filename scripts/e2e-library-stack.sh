@@ -64,7 +64,7 @@ export LIBRARY_E2E_AWID_HOST="$(journey_hostname "$PROJECT" awid)"
 export LIBRARY_E2E_AWEB_HOST="$(journey_hostname "$PROJECT" aweb)"
 export LIBRARY_E2E_LIBRARY_HOST="$(journey_hostname "$PROJECT" library)"
 AWID_URL="http://$LIBRARY_E2E_AWID_HOST:8010"
-AWEB_URL="http://$LIBRARY_E2E_AWEB_HOST:8000"
+AWEB_URL="https://$LIBRARY_E2E_AWEB_HOST:8000"
 LIBRARY_URL="https://$LIBRARY_E2E_LIBRARY_HOST:8765"
 # Container ports; the stack publishes none.
 AWID_PORT=8010
@@ -114,14 +114,14 @@ stack_up() {
   echo "  stack healthy: awid=$AWID_URL aweb=$AWEB_URL library=$LIBRARY_URL"
 }
 
-# The stack CA and Library's certificate for its in-network name, the stack
+# The stack CA and the certificate for Library's and aweb's in-network names, the stack
 # scripts the services run, and Library's template and grant-read key. Named
 # volumes and Docker API copies also work when this runs inside a container.
 prepare_fixture() {
   local seed="$PROJECT-prepare-$$"
   docker create --name "$seed" --user 0 --entrypoint /app/.venv/bin/python \
     -v "$PROJECT-fixture:/fixture" -e PYTHONPATH=/fixture/test-support \
-    "$PROJECT-aweb" /fixture/e2e/stack_tls_prepare.py "$LIBRARY_E2E_LIBRARY_HOST" >/dev/null
+    "$PROJECT-aweb" /fixture/e2e/stack_tls_prepare.py "$LIBRARY_E2E_LIBRARY_HOST" "$LIBRARY_E2E_AWEB_HOST" >/dev/null
   docker cp "$REPO_ROOT/scripts/e2e/." "$seed:/fixture/e2e"
   docker cp "$REPO_ROOT/naapp-lib/testing/src/." "$seed:/fixture/test-support"
   docker start -a "$seed"

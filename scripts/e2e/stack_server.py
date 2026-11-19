@@ -5,7 +5,10 @@ to the stack's one app origin, whose certificates the stack's own CA signs. The
 server runs from the source it is given (an image or the locked server project).
 
 Usage: stack_server.py --app-origin URL --ca-file PATH --user-agent NAME
-                       (--port N | --fd N)
+                       (--port N | --fd N) [--tls-certfile PATH --tls-keyfile PATH]
+
+With a certificate the server itself serves HTTPS, for a stack whose teams
+publish it as their team server at a non-loopback name.
 """
 
 from __future__ import annotations
@@ -34,7 +37,12 @@ def _arguments() -> argparse.Namespace:
     listen = parser.add_mutually_exclusive_group(required=True)
     listen.add_argument("--port", type=int)
     listen.add_argument("--fd", type=int)
-    return parser.parse_args()
+    parser.add_argument("--tls-certfile")
+    parser.add_argument("--tls-keyfile")
+    arguments = parser.parse_args()
+    if (arguments.tls_certfile is None) != (arguments.tls_keyfile is None):
+        parser.error("--tls-certfile and --tls-keyfile go together")
+    return arguments
 
 
 def main() -> None:
@@ -65,10 +73,11 @@ def main() -> None:
         ),
         destination=destination,
     )
+    tls = {"ssl_certfile": arguments.tls_certfile, "ssl_keyfile": arguments.tls_keyfile}
     if arguments.fd is not None:
-        uvicorn.run(app, fd=arguments.fd)
+        uvicorn.run(app, fd=arguments.fd, **tls)
     else:
-        uvicorn.run(app, host="0.0.0.0", port=arguments.port)
+        uvicorn.run(app, host="0.0.0.0", port=arguments.port, **tls)
 
 
 if __name__ == "__main__":

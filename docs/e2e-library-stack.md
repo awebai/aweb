@@ -13,7 +13,7 @@ brings up, from source, on one Docker network:
 | postgres | `postgres:16`     | `postgres:5432`     |
 | redis    | `redis:7`         | `redis:6379`        |
 | awid     | `awid/Dockerfile` | `http://<awid name>:8010` |
-| aweb     | `server/Dockerfile` | `http://<aweb name>:8000` |
+| aweb     | `server/Dockerfile` | `https://<aweb name>:8000` |
 | library  | `naapp/library/Dockerfile` | `https://<library name>:8765` |
 
 Each `<name>` is the stack's project-scoped name for that service
@@ -34,6 +34,9 @@ host:
   pinned destination, so Library serves TLS at its in-network name with a
   certificate from a disposable stack CA, and aweb runs
   `scripts/e2e/stack_server.py` pinned to that origin;
+- teams publish the stack's server as their team server, and `aw` accepts only
+  an HTTPS team server outside loopback, so aweb serves TLS from the same CA
+  and Library trusts that CA when it reads a team's grant;
 - Library admits a member request only for a team that installed it and
   granted the operation's scopes, so every journey team publishes the stack's
   server as its team server, is made an install admin there, and runs the real

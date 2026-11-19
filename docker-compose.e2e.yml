@@ -60,9 +60,6 @@ services:
       AWID_SERVICE_TOKEN: library-e2e-service-token-with-at-least-32-bytes
       AWID_SKIP_DNS_VERIFY: "1"
       AWID_PUBLIC_ORIGINS: http://awid:8010,http://${LIBRARY_E2E_AWID_HOST:-awid}:8010
-      # Teams publish this stack's plain-http server as their team server.
-      APP_ENV: test
-      AWID_ALLOW_INSECURE_DELIVERY_ORIGIN: "true"
     networks:
       default:
         aliases: ["${LIBRARY_E2E_AWID_HOST:-awid}"]
@@ -83,7 +80,8 @@ services:
       context: .
       dockerfile: server/Dockerfile
     # The real HTTPS manifest fetcher, pinned to this stack's Library origin.
-    command: ["/app/.venv/bin/python", "/fixture/e2e/stack_server.py", "--app-origin", "https://${LIBRARY_E2E_LIBRARY_HOST:-library-stack.test}:8765", "--ca-file", "/fixture/tls/ca.pem", "--user-agent", "library-stack-test/1", "--port", "8000"]
+    # The server serves HTTPS itself: teams publish it as their team server.
+    command: ["/app/.venv/bin/python", "/fixture/e2e/stack_server.py", "--app-origin", "https://${LIBRARY_E2E_LIBRARY_HOST:-library-stack.test}:8765", "--ca-file", "/fixture/tls/ca.pem", "--user-agent", "library-stack-test/1", "--port", "8000", "--tls-certfile", "/fixture/tls/server.pem", "--tls-keyfile", "/fixture/tls/server.key"]
     volumes:
       - fixture:/fixture:ro
     networks:
@@ -94,7 +92,7 @@ services:
       AWEB_REDIS_URL: redis://redis:6379/0
       AWEB_HOST: 0.0.0.0
       AWEB_PORT: 8000
-      AWEB_PUBLIC_ORIGIN: http://${LIBRARY_E2E_AWEB_HOST:-aweb}:8000
+      AWEB_PUBLIC_ORIGIN: https://${LIBRARY_E2E_AWEB_HOST:-aweb}:8000
       APP_ENV: development
       AWEB_LOG_JSON: "false"
       AWID_REGISTRY_URL: http://awid:8010
@@ -108,7 +106,8 @@ services:
       awid:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/ready"]
+      # Its own public origin, https here; an overlay may serve it over loopback http.
+      test: ["CMD-SHELL", "curl -fsS --cacert /fixture/tls/ca.pem \"$$AWEB_PUBLIC_ORIGIN/ready\""]
       interval: 2s
       timeout: 5s
       start_period: 5s
@@ -127,6 +126,8 @@ services:
       LIBRARY_PUBLIC_ORIGIN: https://${LIBRARY_E2E_LIBRARY_HOST:-library-stack.test}:8765
       LIBRARY_AUTH_CACHE_TTL_SECONDS: "2"
       LIBRARY_APP_KEY_FILES: '{"library:grant-read-1": "/fixture/library/grant-read.hex"}'
+      # The stack CA signs the team server Library reads grants from.
+      SSL_CERT_FILE: /fixture/tls/ca.pem
       PORT: "8765"
     command: ["/app/.venv/bin/uvicorn", "library.api:app", "--host", "0.0.0.0", "--port", "8765", "--ssl-keyfile", "/fixture/tls/server.key", "--ssl-certfile", "/fixture/tls/server.pem"]
     volumes:
