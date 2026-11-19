@@ -5,12 +5,11 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from aweb.certificate_evidence import EvidenceMode
+from aweb.team_key_reader import read_team_key
 from awid.external_authority import SystemTXTOutcomeResolver
 from awid.registry import CachedRegistryClient
 from awid.team_key_acts import TeamKeyMemo
-
-from aweb.certificate_evidence import EvidenceMode
-from aweb.team_key_reader import read_team_key
 from test_team_key_rotation_cache import _Redis
 
 
@@ -58,19 +57,10 @@ async def test_explicit_team_key_reader_uses_borrowed_sdk_strength_and_one_pin_o
             team_id="team:example.test",
             pin_memo=memo,
         )
-        assert (
-            await read_team_key(**arguments, evidence=EvidenceMode.CACHED)
-            == "cached-controller"
-        )
+        assert await read_team_key(**arguments, evidence=EvidenceMode.CACHED) == "cached-controller"
         key[0] = "fresh-controller"
-        assert (
-            await read_team_key(**arguments, evidence=EvidenceMode.CACHED)
-            == "cached-controller"
-        )
-        assert (
-            await read_team_key(**arguments, evidence=EvidenceMode.FRESH)
-            == "fresh-controller"
-        )
+        assert await read_team_key(**arguments, evidence=EvidenceMode.CACHED) == "cached-controller"
+        assert await read_team_key(**arguments, evidence=EvidenceMode.FRESH) == "fresh-controller"
         assert len(reads) == 2
         for admission in admissions:
             assert admission["db"] is db
@@ -79,3 +69,28 @@ async def test_explicit_team_key_reader_uses_borrowed_sdk_strength_and_one_pin_o
             assert admission["pin_memo"] is memo
         with pytest.raises(TypeError, match="named EvidenceMode"):
             await read_team_key(**arguments, evidence="fresh")
+
+
+@pytest.mark.asyncio
+async def test_request_registration_uses_the_resource_client_over_the_outer_slot():
+    """Unit wiring only: an empty transport response proves no admission rule."""
+    from aweb.team_registry import request_registered_certificates
+    from awid.registry import RegistryClient
+    from fastapi import FastAPI
+    from starlette.requests import Request
+
+    reads = []
+
+    def reply(request):
+        reads.append(request.url.host)
+        return httpx.Response(200, json={"certificates": [], "has_more": False})
+
+    app = FastAPI()
+    async with aclosing(
+        RegistryClient(registry_url="https://serving.example", transport=httpx.MockTransport(reply))
+    ) as client:
+        app.state.native_resources = SimpleNamespace(registry_client=client)
+        app.state.awid_registry_client = object()
+        request = Request({"type": "http", "app": app})
+        assert await request_registered_certificates(request, "team:example.test") == set()
+    assert reads == ["serving.example"]

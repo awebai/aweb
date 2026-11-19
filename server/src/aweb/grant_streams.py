@@ -8,13 +8,14 @@ from typing import Any
 
 from fastapi import HTTPException, Request
 
-from aweb.identity_grant_status import GrantValidityState, grant_validity
+from aweb.application_state import application_registry_client
+from aweb.auth_context import TeamIdentity
 from aweb.certificate_registration import configured_registration_mode
+from aweb.identity_grant_status import GrantValidityState, grant_validity
 from aweb.member_team_key import (
     GRANT_ISSUER_RECOVERY_DETAIL,
     member_key_columns_sql,
 )
-from aweb.auth_context import TeamIdentity
 from aweb.team_registry import native_database_manager
 
 GRANT_STREAM_RECHECK_SECONDS = 30
@@ -88,7 +89,7 @@ async def grant_terminal_reason(request: Request, db, identity: TeamIdentity) ->
     observation = await grant_validity(
         row=row,
         now=now,
-        registry_client=getattr(request.app.state, "awid_registry_client", None),
+        registry_client=application_registry_client(request.app.state),
         registration_mode=configured_registration_mode(),
         request=request,
     )

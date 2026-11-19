@@ -7,18 +7,17 @@ from awid.dns_auth import enforce_timestamp_skew, parse_didkey_auth, require_tim
 from awid.signing import verify_did_key_signature
 from fastapi import Depends, HTTPException, Request
 
-from aweb.request_body import request_body_sha256
-from aweb.auth_context import IdentityAuth, MessagingAuth
+from aweb.application_state import application_registry_client
 from aweb.auth_context import GrantContext as GrantContext
+from aweb.auth_context import IdentityAuth, MessagingAuth, TeamIdentity
 from aweb.auth_metrics import count_legacy_request_auth
 from aweb.certificate_registration import (
+    RegistrationState,
     configured_registration_mode,
     read_certificate_registration,
-    RegistrationState,
 )
 from aweb.deps import get_db
 from aweb.id_chain_auth import authenticate_id_chain
-from aweb.service_errors import IdentityBindingError
 from aweb.identity_address import AddressResolution, AddressResolutionState
 from aweb.identity_binding import (
     IdentityBinding,
@@ -30,14 +29,15 @@ from aweb.member_team_key import (
     current_member,
     member_projection_columns_sql,
 )
+from aweb.request_body import request_body_sha256
+from aweb.service_errors import IdentityBindingError
 from aweb.team_auth_deps import get_team_identity
-from aweb.auth_context import TeamIdentity
+from aweb.team_auth_envelope import identity_auth_signature_payload
 from aweb.team_registry import (
     native_database_manager,
     request_auth_audiences,
     revoked_certificates,
 )
-from aweb.team_auth_envelope import identity_auth_signature_payload
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +102,6 @@ async def resolve_identity_auth(request: Request, *, db=None) -> IdentityAuth:
             count_legacy_request_auth(request, "identity")
         return IdentityAuth(did_key=did_key, did_aw=None, address=None)
 
-    registry_client = getattr(request.app.state, "awid_registry_client", None)
     try:
         binding = await verify_identity_binding(request, did_key=did_key, did_aw=did_aw)
     except IdentityBindingError as exc:
@@ -112,6 +111,7 @@ async def resolve_identity_auth(request: Request, *, db=None) -> IdentityAuth:
             ) from exc
         raise
 
+    registry_client = application_registry_client(request.app.state)
     key_binding = binding
     address = None
     try:
@@ -201,7 +201,7 @@ async def lookup_identity_agent_context(
             )
         rows = [{**dict(row), "did_aw_verified_key": did_key} for row in rows]
     rows = [verified_projection(row) for row in rows]
-    registry = getattr(request.app.state, "awid_registry_client", None)
+    registry = application_registry_client(request.app.state)
     eligible = []
     for row in rows:
         member = await current_membership(registry, row, request=request)
