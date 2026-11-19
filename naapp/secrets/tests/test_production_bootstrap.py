@@ -428,6 +428,20 @@ class ProductionRequest:
     credential: str
 
 
+async def _activate_request_value(
+    tx, *, custody, installation_id: str, team_id: str, credential: str
+):
+    await records.create_secret(tx, installation_id, team_id, SecretRecord.from_after(SECRET))
+    version = await custody.sealer.ingest(
+        tx,
+        installation_id=installation_id,
+        team_id=team_id,
+        secret_id=SECRET["secret_id"],
+        value=encode_value("bearer", {"value": credential}),
+    )
+    await records.set_active_version(tx, installation_id, team_id, SECRET["secret_id"], version)
+
+
 async def approval_request(root, kind):
     """Seed confirmed metadata, then mint through the actual signed root tool.
 
@@ -453,18 +467,12 @@ async def approval_request(root, kind):
     credential = uuid4().hex
     async with db.transaction() as tx:
         await records.create_policy(tx, installation_id, policy, team_id=member.team_id)
-        await records.create_secret(
-            tx, installation_id, member.team_id, SecretRecord.from_after(SECRET)
-        )
-        version = await custody.sealer.ingest(
+        await _activate_request_value(
             tx,
+            custody=custody,
             installation_id=installation_id,
             team_id=member.team_id,
-            secret_id=SECRET["secret_id"],
-            value=encode_value("bearer", {"value": credential}),
-        )
-        await records.set_active_version(
-            tx, installation_id, member.team_id, SECRET["secret_id"], version
+            credential=credential,
         )
         await records.create_grant(
             tx,
