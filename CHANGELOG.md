@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Old chat history was migrated to canonical conversations, preserving stored
+  participants, routes and readable single-participant sessions. Empty sessions
+  remain inaccessible through participant routes. Sends no longer repair these
+  records at runtime.
+
+
 - `aw` reports JSON error code `alias_conflict` for HTTP 409 `alias_taken`, preserving the server's `reason` and `detail`.
 - AWID cache invalidation for identity-tree, address and team-certificate
   writes no longer scans unrelated Redis keys. Random cache generations keep

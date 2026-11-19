@@ -9,6 +9,7 @@ from uuid import UUID
 
 from awid.did import did_from_public_key
 from aweb.service_errors import NotFoundError
+from chat_coverage_support import migrate_chat_conversation_coverage
 from aweb.messaging.chat import (
     ensure_session,
     get_pending_conversations,
@@ -260,6 +261,7 @@ async def test_legacy_session_does_not_adopt_a_new_local_key(aweb_cloud_db):
             participant["agent_id"],
             participant["did_key"],
         )
+    await migrate_chat_conversation_coverage(aweb_db)
     new_session = await ensure_session(
         _DbShim(aweb_db),
         team_id="backend:acme.com",
@@ -276,7 +278,7 @@ async def test_legacy_session_does_not_adopt_a_new_local_key(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
-async def test_ensure_session_backfills_conversation_for_existing_chat_session(
+async def test_ensure_session_reuses_the_migrated_chat_conversation(
     aweb_cloud_db,
 ):
     db_shim = _DbShim(aweb_cloud_db.aweb_db)
@@ -301,6 +303,7 @@ async def test_ensure_session_backfills_conversation_for_existing_chat_session(
         bob["agent_id"],
     )
 
+    await migrate_chat_conversation_coverage(aweb_cloud_db.aweb_db)
     reused = await ensure_session(
         db_shim,
         team_id="backend:acme.com",

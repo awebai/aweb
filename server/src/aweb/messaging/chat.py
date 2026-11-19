@@ -193,43 +193,7 @@ async def find_session_between(
         did_a=did_a,
         did_b=did_b,
     )
-    if conversation is None:
-        # Legacy sessions use the same DID participant identity as canonical threads.
-        aweb_db = db.get_manager("aweb")
-        rows = await aweb_db.fetch_all(
-            """
-            SELECT s.session_id
-            FROM {{tables.chat_sessions}} s
-            JOIN {{tables.chat_participants}} pa
-              ON pa.session_id = s.session_id
-            JOIN {{tables.chat_participants}} pb
-              ON pb.session_id = s.session_id
-            WHERE pa.did = $1
-              AND pb.did = $2
-              AND pa.did <> pb.did
-              AND NOT EXISTS (
-                    SELECT 1 FROM {{tables.conversations}} c
-                    WHERE c.conversation_id = s.session_id
-                  )
-              AND (
-                    SELECT COUNT(*)::int
-                    FROM {{tables.chat_participants}} cp
-                    WHERE cp.session_id = s.session_id
-                  ) = 2
-            ORDER BY s.created_at DESC, s.session_id DESC
-            LIMIT 2
-            """,
-            did_a,
-            did_b,
-        )
-        if not rows:
-            return None
-        # Legacy chat_sessions has no active/closed status. If more than one
-        # pre-conversations session exists for the same 1:1 participants, route
-        # to the newest row so chat remains usable; ensure_session will create
-        # the canonical conversations row for that session before sending.
-        return rows[0]["session_id"]
-    return UUID(conversation["conversation_id"])
+    return UUID(conversation["conversation_id"]) if conversation is not None else None
 
 
 async def _ensure_chat_conversation(
@@ -278,16 +242,12 @@ async def validate_session_id(
     actor_dids: list[str],
 ) -> bool:
     """Allow a fresh UUID or an existing chat's active caller; never grant membership."""
-    exists, _ = await _chat_session_state(
-        db, session_id=session_id, actor_dids=actor_dids
-    )
+    exists = await _chat_session_state(db, session_id=session_id, actor_dids=actor_dids)
     return exists
 
 
-async def _chat_session_state(
-    db, *, session_id: UUID, actor_dids: list[str]
-) -> tuple[bool, bool]:
-    """validate_session_id's answer, and whether the session has its conversation row."""
+async def _chat_session_state(db, *, session_id: UUID, actor_dids: list[str]) -> bool:
+    """Read a fresh UUID or the caller's existing canonical chat."""
     row = await db.get_manager("aweb").fetch_one(
         """
         SELECT s.session_id, c.conversation_type,
@@ -304,58 +264,14 @@ async def _chat_session_state(
         actor_dids,
     )
     if row is None:
-        return False, False
+        return False
     if (
-        row["conversation_type"] not in (None, "chat")
+        row["conversation_type"] != "chat"
         or row["session_id"] is None
         or not row["caller_participant"]
     ):
         raise ConflictError("session_id is not an existing chat session of the caller")
-    return True, row["conversation_type"] is not None
-
-
-async def _backfill_legacy_chat_conversation(db, *, session_id: UUID) -> None:
-    # Serialize legacy projection, and copy only stored membership and routes.
-    # A create request must never modify an existing session's participants.
-    async with db.get_manager("aweb").transaction() as tx:
-        session = await tx.fetch_one(
-            "SELECT team_id, created_by FROM {{tables.chat_sessions}} WHERE session_id = $1 FOR UPDATE",
-            session_id,
-        )
-        conversation = await tx.fetch_one(
-            "SELECT conversation_type FROM {{tables.conversations}} WHERE conversation_id = $1",
-            session_id,
-        )
-        if conversation is not None:
-            if conversation["conversation_type"] != "chat":
-                raise ConflictError(
-                    "session_id is not an existing chat session of the caller"
-                )
-            return
-        participants = await tx.fetch_all(
-            """
-            SELECT did, agent_id, alias, address, delivery_origin, current_did_key,
-                   CASE WHEN delivery_origin IS NULL THEN 'local'
-                        ELSE 'federation:' || delivery_origin END AS transport_hint
-            FROM {{tables.chat_participants}} WHERE session_id = $1
-            """,
-            session_id,
-        )
-        creator = next(
-            (
-                p["did"]
-                for p in participants
-                if session["created_by"] in (p["did"], p["alias"])
-            ),
-            participants[0]["did"],
-        )
-        await _ensure_chat_conversation(
-            tx,
-            session_id=session_id,
-            team_id=session["team_id"],
-            created_by_did=creator,
-            participants=participants,
-        )
+    return True
 
 
 async def ensure_session(
@@ -400,12 +316,10 @@ async def ensure_session(
     ]  # Supplied by the authenticated adapter, never by target resolution.
     actor_dids = [actor["did"]]
     if session_id is not None:
-        exists, has_conversation = await _chat_session_state(
+        exists = await _chat_session_state(
             db, session_id=session_id, actor_dids=actor_dids
         )
         if exists:
-            if not has_conversation:
-                await _backfill_legacy_chat_conversation(db, session_id=session_id)
             return UUID(str(session_id))
 
     if session_id is None and len(normalized_participants) == 2:
@@ -415,11 +329,6 @@ async def ensure_session(
             did_b=normalized_participants[1]["did"],
         )
         if existing is not None:
-            _, has_conversation = await _chat_session_state(
-                db, session_id=existing, actor_dids=actor_dids
-            )
-            if not has_conversation:
-                await _backfill_legacy_chat_conversation(db, session_id=existing)
             return existing
 
     try:

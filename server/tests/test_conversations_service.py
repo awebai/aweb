@@ -7,6 +7,7 @@ import asyncpg
 import pytest
 
 from aweb.messaging.chat import find_session_between
+from chat_coverage_support import migrate_chat_conversation_coverage
 from aweb.messaging.conversations import (
     add_conversation_participant,
     close_conversation,
@@ -534,7 +535,7 @@ async def test_find_active_conversation_matches_identity_despite_other_membershi
 ):
     db = _DbShim(aweb_cloud_db.aweb_db)
     await _insert_team(aweb_cloud_db.aweb_db)
-    real_alice_agent_id = await _insert_agent(
+    await _insert_agent(
         aweb_cloud_db.aweb_db,
         team_id="backend:acme.com",
         alias="alice",
@@ -590,16 +591,14 @@ async def test_find_active_conversation_matches_identity_despite_other_membershi
 
 
 @pytest.mark.asyncio
-async def test_find_session_between_matches_multi_team_agent_via_did_fallback(
+async def test_migrated_chat_pair_matches_the_exact_identity_across_memberships(
     aweb_cloud_db,
 ):
     db = _DbShim(aweb_cloud_db.aweb_db)
     alice_a, alice_b, bob_b = await _multi_team_alice_setup(aweb_cloud_db)
     aweb_db = aweb_cloud_db.aweb_db
 
-    # Seed a chat_sessions row + chat_participants directly (no conversations
-    # row) so that find_session_between's conversations-table lookup returns
-    # None and the chat_participants-direct fallback at chat.py:145 fires.
+    # Reproduce historical storage, then apply the shipped coverage migration.
     session = await aweb_db.fetch_one(
         """
         INSERT INTO {{tables.chat_sessions}} (team_id, created_by)
@@ -621,8 +620,7 @@ async def test_find_session_between_matches_multi_team_agent_via_did_fallback(
         bob_b,
     )
 
-    # Same multi-team scenario as the conversation test above, on the chat
-    # fallback path. Address omitted to isolate the did-fallback branch.
+    await migrate_chat_conversation_coverage(aweb_db)
     found_session_id = await find_session_between(
         db,
         did_a="did:aw:alice",
@@ -721,7 +719,7 @@ async def test_find_active_one_to_one_conversation_between_picks_newest_duplicat
 
 
 @pytest.mark.asyncio
-async def test_find_session_between_picks_newest_duplicate_legacy_session(
+async def test_find_session_between_picks_newest_migrated_pair(
     aweb_cloud_db,
 ):
     db = _DbShim(aweb_cloud_db.aweb_db)
@@ -768,6 +766,7 @@ async def test_find_session_between_picks_newest_duplicate_legacy_session(
             bob_agent_id,
         )
 
+    await migrate_chat_conversation_coverage(aweb_cloud_db.aweb_db)
     found_session_id = await find_session_between(
         db,
         did_a="did:aw:alice",
@@ -778,8 +777,7 @@ async def test_find_session_between_picks_newest_duplicate_legacy_session(
 
 
 @pytest.mark.asyncio
-async def test_a_chat_send_backfills_a_legacy_session_once(aweb_cloud_db, monkeypatch):
-    import asyncpg.connection
+async def test_migration_is_idempotent_before_chat_session_reuse(aweb_cloud_db):
 
     from aweb.messaging.chat import ensure_session
 
@@ -828,15 +826,23 @@ async def test_a_chat_send_backfills_a_legacy_session_once(aweb_cloud_db, monkey
             "address": "acme.com/bob",
         },
     ]
-    backfill_statements: list[str] = []
-    execute = asyncpg.connection.Connection._execute
-
-    async def observed(connection, query, *args, **kwargs):
-        if "FOR UPDATE" in query and "chat_sessions" in query:
-            backfill_statements.append(query)
-        return await execute(connection, query, *args, **kwargs)
-
-    monkeypatch.setattr(asyncpg.connection.Connection, "_execute", observed)
+    await migrate_chat_conversation_coverage(aweb_cloud_db.aweb_db)
+    before = [
+        dict(row)
+        for row in await aweb_cloud_db.aweb_db.fetch_all(
+            "SELECT * FROM {{tables.conversation_participants}} WHERE conversation_id=$1 ORDER BY did",
+            session_id,
+        )
+    ]
+    await migrate_chat_conversation_coverage(aweb_cloud_db.aweb_db)
+    after = [
+        dict(row)
+        for row in await aweb_cloud_db.aweb_db.fetch_all(
+            "SELECT * FROM {{tables.conversation_participants}} WHERE conversation_id=$1 ORDER BY did",
+            session_id,
+        )
+    ]
+    assert after == before
 
     async def send():
         return await ensure_session(
@@ -848,13 +854,10 @@ async def test_a_chat_send_backfills_a_legacy_session_once(aweb_cloud_db, monkey
         )
 
     assert await send() == session_id
-    backfilled = len(backfill_statements)
     conversation = await aweb_cloud_db.aweb_db.fetch_one(
         "SELECT conversation_type FROM {{tables.conversations}} WHERE conversation_id = $1",
         session_id,
     )
     assert await send() == session_id
 
-    assert backfilled == 1
     assert conversation is not None and conversation["conversation_type"] == "chat"
-    assert len(backfill_statements) == 1
