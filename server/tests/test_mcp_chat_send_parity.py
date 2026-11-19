@@ -713,7 +713,8 @@ async def test_mcp_refusals_of_an_unknown_chat_recipient_read_as_the_routes_do(
     server = chat_server
 
     assert await server.mcp_chat("pilot", to="nobody", message="hello", plaintext=True) == {
-        "error": "Unknown aliases: nobody",
+        "error": "Recipient name does not identify a current member of the team: nobody. "
+        "Check the name; if the agent exists, ask it to reconnect with a current team certificate.",
     }
     assert await server.mcp_chat("pilot", to="did:aw:nobody", message="hello", plaintext=True) == {
         "error": "Bare did:aw first-contact is unsupported; use to_addresses=domain/name "
@@ -725,7 +726,10 @@ async def test_mcp_refusals_of_an_unknown_chat_recipient_read_as_the_routes_do(
     assert await server.mcp_chat(
         "pilot", to="acme.com/nobody", message="hello", plaintext=True
     ) == {
-        "error": unreachable_address_refusal("acme.com/nobody"),
+        "error": "Recipient not found. Check the address acme.com/nobody. "
+        "Check the name; if the agent exists, ask it to reconnect with a current team certificate.",
+        "reason": "recipient_identity_not_found",
+        "retryable": False,
     }
     assert await server.mcp_chat(
         "pilot", conversation_id=str(uuid4()), message="hello", plaintext=True

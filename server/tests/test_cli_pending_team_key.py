@@ -56,7 +56,7 @@ async def test_private_pending_key_confirms_only_when_the_existing_registry_read
     # identity.md, Pending private-team key confirmation (Antares245fb075):
     # neither private403 nor unregistered404 is agreement with a supplied key.
     env = privacy_app
-    namespace_key, _, namespace_did = _make_keypair()
+    namespace_key, namespace_did = env.namespace_sk, env.namespace_did
     _, _, member_did = _make_keypair()
     name = "pending-" + uuid4().hex[:12]
     team_id = name + ":example.test"
@@ -67,7 +67,6 @@ async def test_private_pending_key_confirms_only_when_the_existing_registry_read
             return DomainAuthority(namespace_did, origin, "_awid.example.test")
 
         env.registry_app.dependency_overrides[get_domain_verifier] = lambda: authority
-        await writer.register_namespace("example.test", namespace_did, namespace_key)
         await writer.register_team(
             domain="example.test",
             name=name,
