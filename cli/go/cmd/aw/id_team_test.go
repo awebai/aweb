@@ -2965,7 +2965,7 @@ func TestHostedTeamAcceptInviteRetryAllowsPendingKeyWithSavedCertificateNoIdenti
 	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(tmp), signingKey); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(hostedAcceptPendingMarkerPath(tmp), []byte("pending hosted accept\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(tmp, ".aw", acceptanceKeyMarkerName), []byte("pending hosted accept\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	_, teamKey, err := awid.GenerateKeypair()

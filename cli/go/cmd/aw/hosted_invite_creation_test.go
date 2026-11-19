@@ -357,7 +357,7 @@ func TestHostedInviteLocalChainVerifiesAndResumesWithoutSecondAccept(t *testing.
 				t.Fatalf("accepted=%+v installed=%+v err=%v", accepted, installed, err)
 			}
 			if releasedKey != nil {
-				if _, err := os.Stat(hostedAcceptPendingMarkerPath(dir)); !os.IsNotExist(err) {
+				if _, err := os.Stat(filepath.Join(dir, ".aw", acceptanceKeyMarkerName)); !os.IsNotExist(err) {
 					t.Fatalf("successful replacement invite retained fresh-key marker: %v", err)
 				}
 			}
@@ -386,7 +386,7 @@ func refuseFirstHostedInviteForFreshKey(t *testing.T, dir string, opts teamAccep
 		t.Fatalf("definitive refusal retained the operation: %v", err)
 	}
 	keyPath := awconfig.WorktreeSigningKeyPath(dir)
-	if err := statHostedAcceptPendingMarker(hostedAcceptPendingMarkerPath(dir), keyPath); err != nil {
+	if err := (acceptanceMintedKey{Home: awconfig.IdentityHome{Root: filepath.Join(dir, ".aw")}}).require(); err != nil {
 		t.Fatalf("definitive refusal discarded fresh-key provenance: %v", err)
 	}
 	key, err := awid.LoadSigningKey(keyPath)

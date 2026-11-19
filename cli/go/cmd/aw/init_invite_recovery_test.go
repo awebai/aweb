@@ -107,8 +107,8 @@ func TestInitJoinFromExpiredRecovery(t *testing.T) {
 				if !os.IsNotExist(statErr) {
 					t.Fatalf("expired unsubmitted record retained: %v", statErr)
 				}
-				if !releasedInitTarget(wd, home) {
-					t.Fatal("released init cannot try a correct invite with its retained key")
+				if released, err := releasedInitTarget(wd, awconfig.IdentityHome{Root: home}); err != nil || !released {
+					t.Fatalf("released init cannot try a correct invite with its retained key: %v", err)
 				}
 			}
 			after, _ := awid.LoadSigningKey(filepath.Join(home, "signing.key"))

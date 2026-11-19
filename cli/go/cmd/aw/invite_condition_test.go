@@ -71,7 +71,7 @@ func TestHostedAcceptReusesAnUnjoinedKeyAndChain(t *testing.T) {
 	if !got.Equal(key) {
 		t.Fatal("replaced prepared identity key")
 	}
-	if _, err := os.Stat(hostedAcceptPendingMarkerPath(wd, home)); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(home, acceptanceKeyMarkerName)); !os.IsNotExist(err) {
 		t.Fatalf("membership-only join manufactured pending creation: %v", err)
 	}
 }

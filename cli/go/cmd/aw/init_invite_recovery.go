@@ -117,7 +117,11 @@ func runRecoverableJoinFrom(cmd *cobra.Command, wd, source, sourceHome, team str
 		}
 	} else {
 		// The lock/record alone grant no right to reuse another identity.
-		if scope == awid.IdentityModeGlobal || !releasedInitTarget(wd, home.Root) {
+		released, releaseErr := releasedInitTarget(wd, home)
+		if releaseErr != nil {
+			return releaseErr
+		}
+		if scope == awid.IdentityModeGlobal || !released {
 			if err := ensureInitInviteTarget(wd); err != nil {
 				return err
 			}
@@ -247,29 +251,39 @@ func releaseInitInviteRecovery(path, wd, home string) error {
 	}
 	if state != nil && state.MintedKey {
 		if _, err := os.Stat(filepath.Join(home, "signing.key")); err == nil {
-			if err := writeHostedAcceptPendingMarker(hostedAcceptPendingMarkerPath(wd, home)); err != nil {
+			if err := (acceptanceMintedKey{Home: awconfig.IdentityHome{Root: home}}).save(); err != nil {
 				return err
 			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
 		}
 	}
 	return removeInitInviteRecovery(path)
 }
 
-func releasedInitTarget(wd, home string) bool {
-	if _, err := os.Stat(filepath.Join(home, hostedInviteRecoveryFile)); !errors.Is(err, os.ErrNotExist) {
-		return false
+func releasedInitTarget(wd string, home awconfig.IdentityHome) (bool, error) {
+	if strings.TrimSpace(home.Root) == "" {
+		return false, errors.New("released init requires an explicit identity home")
 	}
-	if _, err := os.Stat(filepath.Join(home, "signing.key")); err != nil {
-		return false
-	}
-	if statHostedAcceptPendingMarker(hostedAcceptPendingMarkerPath(wd, home), filepath.Join(home, "signing.key")) != nil {
-		return false
-	}
-	for _, name := range []string{"grant.yaml", "teams.yaml", "workspace.yaml"} {
-		if _, err := os.Stat(filepath.Join(home, name)); !errors.Is(err, os.ErrNotExist) {
-			return false
+	for _, name := range []string{hostedInviteRecoveryFile, "grant.yaml", "teams.yaml", "workspace.yaml"} {
+		if _, err := os.Stat(filepath.Join(home.Root, name)); err == nil {
+			return false, nil
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return false, err
 		}
 	}
-	_, _, err := hostedAcceptSigningKeyAt(wd, home)
-	return err == nil
+	if _, err := os.Stat(filepath.Join(home.Root, "signing.key")); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
+	}
+	present, err := (acceptanceMintedKey{Home: home}).present()
+	if err != nil || !present {
+		return false, err
+	}
+	if _, _, err := hostedAcceptSigningKeyAt(wd, home.Root); err != nil {
+		return false, err
+	}
+	return true, nil
 }

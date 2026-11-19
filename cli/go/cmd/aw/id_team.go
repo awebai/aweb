@@ -2119,7 +2119,11 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 			}
 			// A definitive refusal may release the old invite but retain this
 			// acceptance-minted key for a corrected name or replacement invite.
-			mintedKey = errors.Is(keyErr, os.ErrNotExist) || statHostedAcceptPendingMarker(hostedAcceptPendingMarkerPath(workingDir, home.Root), filepath.Join(home.Root, "signing.key")) == nil
+			markerPresent, markerErr := (acceptanceMintedKey{Home: home}).present()
+			if markerErr != nil {
+				return nil, markerErr
+			}
+			mintedKey = errors.Is(keyErr, os.ErrNotExist) || markerPresent
 			pub, signingKey, err = hostedAcceptSigningKeyAt(workingDir, opts.IdentityHome)
 		}
 		if err != nil {
@@ -2395,7 +2399,7 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 	}
 	// Accept completed: clear the pending marker so the home is no longer in
 	// pending-accept state. (The completed-identity guard already protects it.)
-	if err := removeHostedAcceptPendingMarker(hostedAcceptPendingMarkerPath(workingDir, home.Root)); err != nil {
+	if err := (acceptanceMintedKey{Home: home}).remove(); err != nil {
 		return nil, err
 	}
 
@@ -2453,8 +2457,12 @@ func hostedAcceptSigningKeyAt(workingDir, identityHome string) (ed25519.PublicKe
 	if err != nil {
 		return nil, nil, err
 	}
-	markerPath := hostedAcceptPendingMarkerPath(workingDir, home.Root)
+	marker := acceptanceMintedKey{Home: home}
 	if _, err := os.Stat(keyPath); err == nil {
+		markerPresent, markerErr := marker.present()
+		if markerErr != nil {
+			return nil, nil, markerErr
+		}
 		identityPath, pathErr := awconfig.IdentityHomePath(home, "identity.yaml")
 		if pathErr != nil {
 			return nil, nil, pathErr
@@ -2466,10 +2474,16 @@ func hostedAcceptSigningKeyAt(workingDir, identityHome string) (ed25519.PublicKe
 		completedPaths := []string{identityPath, workspacePath}
 		for _, path := range completedPaths {
 			if _, err := os.Stat(path); err == nil {
-				if path == identityPath && statHostedAcceptPendingMarker(markerPath, keyPath) == nil {
+				if path == identityPath && markerPresent {
 					metadata, loadErr := awconfig.LoadWorktreeIdentityFrom(identityPath)
 					key, keyErr := awid.LoadSigningKey(keyPath)
-					if loadErr == nil && keyErr == nil && metadata.IdentityScope == awid.IdentityModeLocal && metadata.Custody == awid.CustodySelf && metadata.DID == awid.ComputeDIDKey(key.Public().(ed25519.PublicKey)) {
+					if loadErr != nil {
+						return nil, nil, loadErr
+					}
+					if keyErr != nil {
+						return nil, nil, keyErr
+					}
+					if metadata.IdentityScope == awid.IdentityModeLocal && metadata.Custody == awid.CustodySelf && metadata.DID == awid.ComputeDIDKey(key.Public().(ed25519.PublicKey)) {
 						continue
 					}
 				}
@@ -2478,9 +2492,8 @@ func hostedAcceptSigningKeyAt(workingDir, identityHome string) (ed25519.PublicKe
 				return nil, nil, err
 			}
 		}
-		markerErr := statHostedAcceptPendingMarker(markerPath, keyPath)
-		if markerErr != nil {
-			return nil, nil, markerErr
+		if err := marker.require(); err != nil {
+			return nil, nil, err
 		}
 		certsPath := filepath.Join(home.Root, "team-certs")
 		if err := pathpreflight.PreflightDir(certsPath, "team certificate directory", pathpreflight.AllowTempAmbientSymlinkPrefix()); err != nil {
@@ -2516,7 +2529,7 @@ func hostedAcceptSigningKeyAt(workingDir, identityHome string) (ed25519.PublicKe
 	if err := awid.SaveSigningKey(keyPath, signingKey); err != nil {
 		return nil, nil, fmt.Errorf("save pending hosted accept signing key: %w", err)
 	}
-	if err := writeHostedAcceptPendingMarker(markerPath); err != nil {
+	if err := marker.save(); err != nil {
 		return nil, nil, err
 	}
 	return pub, signingKey, nil

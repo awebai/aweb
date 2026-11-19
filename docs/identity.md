@@ -334,6 +334,16 @@ remains a hidden, warning compatibility alias for `--name`. New requests,
 registry storage, and product language use `name` as the concept and
 `identity_scope=local|global` for scope.
 
+### Acceptance-minted key recovery
+
+An unfinished local acceptance keeps `pending-hosted-accept` in its selected
+identity home. It records only that acceptance minted this key and the identity
+has never joined. A definitive refusal releases the invitation selection while
+keeping this fact, so another valid conditioned invitation can use the same key
+and creator exchange. A successful acceptance removes the marker. It establishes
+neither parentage nor registry authority. A malformed or unreadable marker is a
+recovery error; it is never treated as a fresh identity or absent state.
+
 ### CLI signup recovery
 
 CLI signup keeps `.aw/signup-recovery.json` before submitting anything. The
