@@ -13,6 +13,7 @@ from aweb.messaging.refusals import (
 from aweb.messaging.refusals import DeliveryRefusal
 from http import HTTPStatus
 from awid.federation_errors import FederationAuthorityError
+from aweb.federation.errors import LocalRecipientNotFoundError
 
 from aweb.awid_error_handling import (
     AWID_DEPENDENCY_ERRORS,
@@ -156,9 +157,7 @@ async def _resolve_address_identity(
             and bool(signed.get("to_did") or signed.get("to_stable_id"))
             and not bound
         )
-        if bound or (
-            local_recipient_visible_to_auth(local, auth) and not needs_current
-        ):
+        if bound or (local_recipient_visible_to_auth(local, auth) and not needs_current):
             recipient = identity_recipient(local, address)
             return replace(recipient, requires_local_address_authority=True)
 
@@ -167,9 +166,7 @@ async def _resolve_address_identity(
     resolution = None
     if home_namespace:
         try:
-            resolution = await registry.resolve_address(
-                domain, name, did_key=auth.did_key
-            )
+            resolution = await registry.resolve_address(domain, name, did_key=auth.did_key)
         except AWID_DEPENDENCY_ERRORS as exc:
             logger.warning(
                 "Messaging home address lookup unavailable failure_type=%s",
@@ -219,7 +216,7 @@ async def _resolve_address_identity(
     local = await _local_recipient_at_address(db, domain=domain, name=name)
     if local is None:
         if await namespace_exists(db, domain):
-            raise FederationAuthorityError("recipient_identity_not_found")
+            raise LocalRecipientNotFoundError()
         if registry is None:
             raise registry_configuration_refusal(
                 operation="AWID messaging recipient address lookup"

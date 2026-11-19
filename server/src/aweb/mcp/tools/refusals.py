@@ -21,7 +21,7 @@ from aweb.messaging.refusals import (
     RecipientAddressNotFound,
 )
 from aweb.e2ee_messages import E2EERecipientKeyMismatch
-from aweb.federation.errors import RecipientNotResidentError
+from aweb.federation.errors import LocalRecipientNotFoundError, RecipientNotResidentError
 from aweb.messaging.address_auth import unreachable_address_refusal
 from aweb.messaging.chat_send import LOCAL_DID_KEY_RECIPIENT_UNREACHABLE
 
@@ -97,7 +97,7 @@ def send_refusal(
         return json.dumps({"error": exc.recovery_action, "reason": exc.code.value})
     if isinstance(exc, ContactIdentityBindingRequired):
         return json.dumps({"error": exc.detail, "reason": exc.code.value})
-    if isinstance(exc, RecipientNotResidentError):
+    if isinstance(exc, (RecipientNotResidentError, LocalRecipientNotFoundError)):
         return json.dumps({"error": exc.detail, "reason": exc.reason, "retryable": exc.retryable})
     if isinstance(exc, FederationAuthorityError):
         if address and exc.reason in (
