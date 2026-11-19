@@ -34,13 +34,53 @@ from awid.signing import canonical_json_bytes, sign_message
 from aweb.e2ee_messages import encrypt_e2ee_mail, generate_x25519_keypair
 from test_addressless_sender_cli import _registry_http
 from test_cli_human_reply import _cli, _pem, _reply_context
-from test_dashboard_privacy import TEAM, _request, privacy_app  # noqa: F401
+import test_dashboard_privacy
+from test_dashboard_privacy import TEAM, _request
 from test_messages_http import (
     _make_keypair,
     _make_certificate,
     _signed_team_headers,
     _encode_certificate,
 )
+
+
+def _signed_plaintext_mail_request(
+    *, sender, agent, sender_team, message_id, conversation_id, now
+):
+    """Build the signed plaintext request sent through the real mail route."""
+    payload = canonical_json_bytes(
+        dict(
+            type="mail",
+            from_did=sender["did"],
+            to_did=agent["did"],
+            to_stable_id=agent["stable_id"],
+            subject="Local encrypted",
+            body="local sender private text",
+            message_id=message_id,
+            conversation_id=conversation_id,
+            timestamp=now.isoformat(),
+            **{
+                "from": sender_team.split(":", 1)[1] + "/alice",
+                "to": agent["address"],
+            },
+        )
+    )
+    return dict(
+        to_did=agent["did"],
+        to_address=agent["address"],
+        subject="Local encrypted",
+        body="local sender private text",
+        message_id=message_id,
+        conversation_id=conversation_id,
+        timestamp=now.isoformat(),
+        from_did=sender["did"],
+        to_stable_id=agent["stable_id"],
+        signature=sign_message(sender["signing_key"], payload),
+        signed_payload=payload.decode(),
+    )
+
+
+privacy_app = test_dashboard_privacy.privacy_app
 
 
 @asynccontextmanager
@@ -142,35 +182,13 @@ async def _local_sender_mail(
     assert not source["from"].get("address")
     assert bool(source["from"].get("stable_id")) == human
     if plaintext:
-        payload = canonical_json_bytes(
-            dict(
-                type="mail",
-                from_did=sender["did"],
-                to_did=agent["did"],
-                to_stable_id=agent["stable_id"],
-                subject="Local encrypted",
-                body="local sender private text",
-                message_id=message_id,
-                conversation_id=conversation_id,
-                timestamp=now.isoformat(),
-                **{
-                    "from": sender_team.split(":", 1)[1] + "/alice",
-                    "to": agent["address"],
-                },
-            )
-        )
-        body = dict(
-            to_did=agent["did"],
-            to_address=agent["address"],
-            subject="Local encrypted",
-            body="local sender private text",
+        body = _signed_plaintext_mail_request(
+            sender=sender,
+            agent=agent,
+            sender_team=sender_team,
             message_id=message_id,
             conversation_id=conversation_id,
-            timestamp=now.isoformat(),
-            from_did=sender["did"],
-            to_stable_id=agent["stable_id"],
-            signature=sign_message(sender["signing_key"], payload),
-            signed_payload=payload.decode(),
+            now=now,
         )
     else:
         body = dict(
