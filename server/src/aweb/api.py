@@ -60,6 +60,7 @@ from .routes.session_leases import router as session_leases_router
 from .routes.status import router as status_router
 from .routing_utils import move_mount_before_spa_fallback
 from .service_errors import ServiceError
+from .team_control_error_transport import install_team_control_error_handlers
 
 logger = logging.getLogger(__name__)
 
@@ -355,6 +356,7 @@ def _make_library_lifespan(
 def _install_expected_error_handlers(app: FastAPI) -> None:
     install_auth_error_handlers(app)
     install_certificate_error_handlers(app)
+    install_team_control_error_handlers(app)
 
 
 def create_app(
