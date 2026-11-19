@@ -1064,3 +1064,12 @@ derivation; they are never message/provenance fields. Author projections test
 exact session/subject/signer binding and external/untrusted guest assurance.
 They assume independently verified signer facts and do not authorize membership
 or activate managed chat. See [P3 readiness](../human-channels-participants.md).
+
+## Team-control request signatures
+
+`team-control-requests-v1.json` is the Go/Python authority for the released
+ordinary-import preimage and the distinct fully-unowned controller-claim
+artifact. It includes the existing CLI import signature, null/blank selector
+neighbors, exact Unicode bytes, both dry-run values, and prospective/existing
+account targets. These are pure signature/codec cases, not fresh-controller or
+ownership-effect evidence. See [the request contract](../team-control-requests.md).
