@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from enum import StrEnum
 
 from awid.dns_auth import enforce_timestamp_skew, parse_didkey_auth, require_timestamp
 from awid.signing import verify_did_key_signature
@@ -10,10 +11,14 @@ from fastapi import Depends, HTTPException, Request
 
 from aweb.auth_context import GrantContext
 from aweb.auth_metrics import count_legacy_request_auth
-from aweb.config import require_registered_certificates
+from aweb.certificate_registration import (
+    configured_registration_mode,
+    read_certificate_registration,
+    RegistrationState,
+)
 from aweb.deps import get_db
 from aweb.id_chain_auth import authenticate_id_chain
-from aweb.identity_address import AddressResolution
+from aweb.identity_address import AddressResolution, AddressResolutionState
 from aweb.identity_binding import (
     IdentityBinding,
     refresh_projection_binding,
@@ -29,7 +34,6 @@ from aweb.team_auth_deps import (
     _aweb_db,
     _team_auth_allowed_audiences,
     get_team_identity,
-    registered_certificates,
     revoked_certificates,
 )
 from aweb.team_auth_envelope import identity_auth_signature_payload
@@ -148,7 +152,7 @@ async def resolve_identity_auth(request: Request, *, db=None) -> IdentityAuth:
         logger.warning("Identity address evidence unavailable: %s", type(exc).__name__)
     else:
         outcome = AddressResolution("empty")
-        if addresses:
+        if len(addresses) == 1:
             first = addresses[0]
             address = f"{first.domain}/{first.name}"
             binding = await verify_identity_binding(
@@ -173,12 +177,17 @@ async def resolve_identity_auth(request: Request, *, db=None) -> IdentityAuth:
     )
 
 
+class IdentityContextSelection(StrEnum):
+    REQUIRE_UNIQUE = "require_unique"
+    IDENTITY_ONLY = "identity_only"
+
+
 async def lookup_identity_agent_context(
     db,
     *,
     did_key: str,
     did_aw: str | None = None,
-    allow_ambiguous_global_identity: bool = False,
+    selection: IdentityContextSelection = IdentityContextSelection.REQUIRE_UNIQUE,
     request: Request | None = None,
 ) -> dict | None:
     did_aw_value = (did_aw or "").strip()
@@ -224,8 +233,25 @@ async def lookup_identity_agent_context(
             )
         rows = [{**dict(row), "did_aw_verified_key": did_key} for row in rows]
     rows = [verified_projection(row) for row in rows]
+    if request is not None and selection is IdentityContextSelection.IDENTITY_ONLY:
+        registry = getattr(request.app.state, "awid_registry_client", None)
+        eligible = []
+        for row in rows:
+            member = await current_membership(registry, row, request=request)
+            if member and member.get("team_id"):
+                eligible.append(member)
+        rows = eligible
+        if len(rows) > 1:
+            outcome = getattr(
+                request.state, "identity_address_resolution", AddressResolution()
+            )
+            request.state.identity_address_resolution = replace(
+                outcome, state=AddressResolutionState.CONTEXT_REQUIRED
+            )
+        if not rows:
+            return None
     if len(rows) > 1:
-        if allow_ambiguous_global_identity and did_aw_value:
+        if selection is IdentityContextSelection.IDENTITY_ONLY and did_aw_value:
             return None
         raise HTTPException(
             status_code=409,
@@ -237,33 +263,19 @@ async def lookup_identity_agent_context(
 async def _enforce_current_membership(
     request: Request, row: dict | None
 ) -> dict | None:
-    """Refuse team context derived from a projection whose admitting
-    certificate is revoked (aweb-abfn).
+    """Keep identity access while rechecking membership under identity.md:569-585.
 
-    Identity-only auth proves key possession; the team_id/alias it inherits
-    from the agents projection is only as current as that row. A revoked
-    member whose projection survived — the split-state family recorded on
-    aweb-aaum.9 — would otherwise keep sending under its team alias forever by
-    omitting the certificate header. This applies the same registry revocation
-    check the certificate-presenting path performs, with the same fail-closed
-    503 on registry unavailability.
-
-    Revocation ends membership, not the identity: the row's team_id, alias,
-    and agent_id are stripped, while the DID-scoped facts stand, so the
-    identity keeps reading its own mailbox and loses only team attribution
-    and team-gated behavior. A row with no recorded certificate predates the
-    recording (migration 017) and has no certificate to check for
-    revocation; it heals at the next certificate-authenticated connect or
-    request. Every row, with or without one, keeps its team context only
-    while it was accepted under the team's current key
-    (aweb.member_team_key).
+    Registry revocation or an enforced missing registration removes team
+    attribution; identity-only inbox and history remain scoped to the DID.
     """
     return await current_membership(
-        getattr(request.app.state, "awid_registry_client", None), row
+        getattr(request.app.state, "awid_registry_client", None), row, request=request
     )
 
 
-async def current_membership(registry_client, row: dict | None) -> dict | None:
+async def current_membership(
+    registry_client, row: dict | None, *, request: Request | None = None
+) -> dict | None:
     """The row with its team context, or stripped of it when the admitting
     certificate is revoked or unregistered, as this registry client reports it."""
     if not row:
@@ -286,18 +298,20 @@ async def current_membership(registry_client, row: dict | None) -> dict | None:
         registry_client, team_id, certificate_ids=[certificate_id]
     )
     if certificate_id not in revoked:
-        # Staged existence requirement (default OFF): an unregistered
-        # certificate can never appear in the revocation set, so once
-        # AWEB_REQUIRE_REGISTERED_CERTIFICATES is on the recorded
-        # certificate must also exist at the registry or team context is
-        # stripped — otherwise omitting the certificate header would
-        # bypass the existence check the presenting path enforces. Same
-        # remedy as revocation here: strip membership, keep the identity.
-        if not require_registered_certificates():
+        decision = await read_certificate_registration(
+            registry_client=registry_client,
+            team_id=team_id,
+            certificate_id=certificate_id,
+            mode=configured_registration_mode(),
+            request=request,
+        )
+        if decision.allows_registration:
             return row
-        registered = await registered_certificates(registry_client, team_id)
-        if certificate_id in registered:
-            return row
+        if decision.state is RegistrationState.UNAVAILABLE:
+            raise HTTPException(
+                status_code=503,
+                detail="Certificate registration is unavailable. Retry in a moment.",
+            ) from decision.unavailable_cause
         logger.warning(
             "identity-auth team context stripped: certificate %s for alias %r in %s "
             "is not registered at the AWID registry",
@@ -354,21 +368,22 @@ async def get_messaging_auth(request: Request, db=Depends(get_db)) -> MessagingA
         db,
         did_key=identity.did_key,
         did_aw=identity.did_aw,
-        allow_ambiguous_global_identity=True,
+        selection=IdentityContextSelection.IDENTITY_ONLY,
         request=request,
     )
-    row = await _enforce_current_membership(request, row)
     outcome = getattr(
         request.state, "identity_address_resolution", identity.address_resolution
     )
+    if outcome.state is AddressResolutionState.UNKNOWN:
+        address = outcome.stored_address
+    elif row:
+        address = row.get("address") or None
+    else:
+        address = identity.address
     return MessagingAuth(
         did_key=identity.did_key,
         did_aw=identity.did_aw or ((row or {}).get("did_aw") or None),
-        address=(
-            outcome.stored_address
-            if outcome.state == "unknown"
-            else identity.address or ((row or {}).get("address") or None)
-        ),
+        address=address,
         team_id=(row or {}).get("team_id") or None,
         alias=(row or {}).get("alias") or None,
         agent_id=(

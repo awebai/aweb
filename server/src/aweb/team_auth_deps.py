@@ -30,6 +30,12 @@ from aweb.awid_error_handling import (
     team_not_served_exception,
 )
 from aweb.config import require_registered_certificates
+from aweb.certificate_registration import (
+    CertificateRegistrationObservation,
+    configured_registration_mode,
+    read_certificate_registration,
+    record_certificate_registration,
+)
 from aweb.deps import get_db
 from aweb.id_chain_auth import authenticate_id_chain
 from aweb.identity_binding import (
@@ -170,13 +176,8 @@ async def resolve_team_identity(
         db, agent_id=row["agent_id"], did_key=did_key, binding=binding
     )
 
-    # Keep the admitting certificate recorded on the projection current
-    # (aweb-abfn): identity-only auth checks THIS value against the registry's
-    # revocations, so a row still naming a replaced certificate would either
-    # miss a revocation or strip a live member. The certificate presented here
-    # was verified against the registry (signature and revocation) above.
-    # The team key it was verified under is recorded with it
-    # (aweb.member_team_key): a certificate under a new key may keep its id.
+    # identity.md:569-585: identity-only membership checks the certificate and
+    # team key actually admitted by this verified certificate request.
     presented_certificate_id = (cert_info.get("certificate_id") or "").strip()
     verified_team_did_key = (cert_info.get("verified_team_did_key") or "").strip()
     if presented_certificate_id and (
@@ -351,14 +352,8 @@ async def _verify_admitting_certificate(
     revoked_certs = await _get_revoked_certificates(
         request, cert_team_id, certificate_ids=selected_certificate_ids
     )
-    # Staged, default OFF: require registry existence (aweb-acya.9). An
-    # unregistered certificate is unrevocable — the revocation set can never
-    # name it — so once hosted anchoring backfill completes, "not registered"
-    # becomes a verification failure. The check keeps its order: signature and
-    # revocation come first, so a revoked certificate keeps its revocation
-    # verdict. See aweb.config.require_registered_certificates for the
-    # activation contract; when OFF this adds zero registry reads, and None
-    # says so to the check.
+    # hosted-certificate-anchoring.md:286-294: enforcement and measurement
+    # share a registration decision. OFF measurement follows artifact checks.
     registered_certs = (
         await _get_registered_certificates(request, cert_team_id)
         if require_registered_certificates()
@@ -465,6 +460,24 @@ async def _verify_admitting_certificate(
             )
         raise certificate_refusal(e) from None
 
+    if registered_certs is None:
+        cert_info["registration_decision"] = await read_certificate_registration(
+            registry_client=getattr(request.app.state, "awid_registry_client", None),
+            team_id=cert_team_id,
+            certificate_id=cert_info["certificate_id"],
+            mode=configured_registration_mode(),
+            request=request,
+        )
+    else:
+        cert_info["registration_decision"] = record_certificate_registration(
+            request,
+            observation=CertificateRegistrationObservation(
+                team_id=cert_team_id,
+                registered_certificate_ids=registered_certs,
+            ),
+            certificate_id=cert_info["certificate_id"],
+            mode=configured_registration_mode(),
+        )
     return cert_info, team_did_key
 
 

@@ -16,7 +16,10 @@ from aweb.identity_auth_deps import MessagingAuth, get_messaging_auth
 from aweb.agent_wake import agent_wake_publisher
 from aweb.identity_binding import refresh_projection_binding, verify_identity_binding
 from aweb.identity_address import AddressResolution
-from aweb.internal_auth import parse_internal_auth_context, resolve_internal_actor
+from aweb.internal_auth import (
+    parse_internal_auth_context,
+    read_internal_actor_projection,
+)
 from aweb.mcp.mutations import (
     mutation_callback_from_scope,
     reset_mutation_callback,
@@ -190,7 +193,7 @@ class MCPAuthMiddleware:
     ) -> AuthContext:
         aweb_db = _aweb_db(self.db_infra)
         team_id = internal["team_id"]
-        row = await resolve_internal_actor(aweb_db, internal)
+        row = await read_internal_actor_projection(aweb_db, internal)
         if not row:
             raise HTTPException(status_code=403, detail="Agent not connected")
 

@@ -38,7 +38,10 @@ def verified_key_sql(agent: str = "") -> str:
     if agent and not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", agent):
         raise ValueError("Invalid identity projection SQL alias")
     prefix = agent + "." if agent else ""
-    return f"{prefix}did_aw_verified_key = {prefix}did_key"
+    return (
+        f"NULLIF({prefix}did_key, '') IS NOT NULL AND "
+        f"{prefix}did_aw_verified_key = {prefix}did_key"
+    )
 
 
 def verified_identity_field_sql(
