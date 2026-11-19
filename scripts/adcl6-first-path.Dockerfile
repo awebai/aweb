@@ -10,9 +10,10 @@ COPY approval /source/approval
 COPY holder /source/holder
 COPY runner-requirements.txt /runner-requirements.txt
 RUN umask 022 && uv build --no-sources --wheel --out-dir /wheels /source/holder/awid \
+ && uv build --no-sources --wheel --out-dir /wheels /source/holder/naapp-lib \
  && uv build --no-sources --wheel --out-dir /wheels /source/approval \
  && uv build --no-sources --wheel --out-dir /wheels /source/holder/key-holder \
- && uv export --project /source/holder/key-holder --frozen --no-dev --no-emit-project --no-emit-package awid-service --no-emit-package aweb-approval-service -o /wheels/runtime-requirements.txt \
+ && uv export --project /source/holder/key-holder --frozen --no-dev --no-emit-project --no-emit-package awid-service --no-emit-package aweb-approval-service --no-emit-package aweb-naapp -o /wheels/runtime-requirements.txt \
  && uv venv --python /usr/local/bin/python3.13 /opt/venv \
  && uv pip install --python /opt/venv/bin/python --require-hashes -r /wheels/runtime-requirements.txt \
  && uv pip install --python /opt/venv/bin/python --no-deps /wheels/*.whl \

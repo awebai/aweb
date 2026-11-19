@@ -3,11 +3,8 @@
 import httpx
 import pytest
 from approval_service.statements import verify_enrollment_evidence
-from aweb_key_holder.auth import Caller
-from policy_inputs import policy_file
-from aweb_key_holder.http import create_app
-from aweb_key_holder.keys import Refused
 from awid.controller_signing import parse_controller_request
+from policy_inputs import policy_file
 from test_native_holder import (
     call,
     commit_identity,
@@ -15,6 +12,10 @@ from test_native_holder import (
     material_for,
     register_identity,
 )
+
+from aweb_key_holder.auth import Caller
+from aweb_key_holder.http import create_app
+from aweb_key_holder.keys import Refused
 
 
 @pytest.mark.asyncio

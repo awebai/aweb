@@ -5,6 +5,7 @@ import subprocess
 import sys
 
 import pytest
+
 from aweb_key_holder.enrollment import Holder
 
 
@@ -66,6 +67,7 @@ def test_hardware_manifest_flag_keeps_unattested_enrollment_available(tmp_path):
     import time
 
     import httpx
+
     from aweb_key_holder.keys import KeyStore
 
     state = tmp_path / "private"
@@ -100,15 +102,14 @@ def test_hardware_manifest_flag_keeps_unattested_enrollment_available(tmp_path):
     ]
     log_path = tmp_path / "holder.log"
     with log_path.open("w") as log:
-        child = subprocess.Popen(
-            command, stdout=subprocess.PIPE, stderr=log, text=True
-        )
+        child = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=log, text=True)
         try:
             deadline = time.monotonic() + 5
             with httpx.Client(timeout=0.2, trust_env=False) as client:
                 while time.monotonic() < deadline and child.poll() is None:
                     listening = re.search(
-                        r"Uvicorn running on http://127\.0\.0\.1:(\d+)", log_path.read_text()
+                        r"Uvicorn running on http://127\.0\.0\.1:(\d+)",
+                        log_path.read_text(),
                     )
                     if listening is None:
                         time.sleep(0.02)
@@ -121,7 +122,9 @@ def test_hardware_manifest_flag_keeps_unattested_enrollment_available(tmp_path):
                     except httpx.TransportError:
                         time.sleep(0.02)
                 else:
-                    raise AssertionError("holder did not start with unavailable metadata")
+                    raise AssertionError(
+                        "holder did not start with unavailable metadata"
+                    )
         finally:
             child.terminate()
             child.communicate(timeout=10)

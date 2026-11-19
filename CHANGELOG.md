@@ -36,6 +36,19 @@
   `logschain.VerifyChain`, `chat.LoadDeliveredIDs` and
   `chat.FilterDeliveredMessages` in this release. They are removal candidates
   for a future release, pending measurement of downstream usage.
+- The optional key holder reports invalid input, ineligible callers, stale
+  enrollment and unavailable storage with distinct HTTP statuses. Unknown
+  shared-library failures are logged as server errors. Refusals carry one
+  controlled next step across the operator command and HTTP boundary.
+
+- `aw id human refresh-binding` carries an own-person binding refresh after an
+  issuer or controller change. The checked live binding is saved separately;
+  original enrollment and historical evidence are preserved. The refresh profile
+  is provisional and unfrozen (canonical SHA256
+  `7431cf776be61e7691c390af2ec04c18dce3fe0d4453bec7445ac315f421d64e`).
+  No holder-key-rotation or controller-rotation result is claimed for this
+  release's optional approval path.
+
 - `aw` reports JSON error code `alias_conflict` for HTTP 409 `alias_taken`, preserving the server's `reason` and `detail`.
 - AWID cache invalidation for identity-tree, address and team-certificate
   writes no longer scans unrelated Redis keys. Random cache generations keep
