@@ -1223,6 +1223,7 @@ const (
 )
 
 type teamHumanAddedAgent struct {
+	ResumeMembership  *acceptedTeamInvite     `json:"-"`
 	Name              string                  `json:"name"`
 	HomeDir           string                  `json:"home_dir"`
 	ProfileMode       string                  `json:"profile_mode"`
@@ -1357,7 +1358,15 @@ func suggestTeamHumanAgentName(client *aweb.Client, scope string, used map[strin
 	return "", fmt.Errorf("server returned no available names for %s agent", scope)
 }
 
-func preflightTeamHumanAddRosterAliases(wd, agentsRoot string, specs []teamAgentSpec) error {
+type rosterNamePreflight struct {
+	WorkingDir   string
+	AgentsRoot   string
+	ExplicitHome string
+	Specs        []teamAgentSpec
+}
+
+func preflightTeamHumanAddRosterAliases(input rosterNamePreflight) error {
+	wd, agentsRoot, specs := input.WorkingDir, input.AgentsRoot, input.Specs
 	client, selection, err := resolveClientSelectionForDir(wd)
 	if err != nil || client == nil || client.Client == nil || selection == nil {
 		if err != nil {
@@ -1375,6 +1384,9 @@ func preflightTeamHumanAddRosterAliases(wd, agentsRoot string, specs []teamAgent
 	freshSpecs := make([]teamAgentSpec, 0, len(specs))
 	for _, spec := range specs {
 		targetDir := filepath.Join(agentsRoot, strings.TrimSpace(spec.Name))
+		if input.ExplicitHome != "" {
+			targetDir = input.ExplicitHome
+		}
 		homeSelection, homeErr := resolveSelectionAtIdentityHome(targetDir, "", awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(targetDir), Source: awconfig.IdentityHomeDefault})
 		if homeErr == nil && strings.EqualFold(strings.TrimSpace(homeSelection.TeamID), strings.TrimSpace(selection.TeamID)) && strings.EqualFold(strings.TrimSpace(homeSelection.Alias), strings.TrimSpace(spec.Name)) {
 			continue
@@ -1467,12 +1479,12 @@ func teamHumanAddRoleForPlan(plan teamHumanAddedAgent) string {
 	return strings.TrimSpace(plan.Profile.ProfileRef)
 }
 
-func resolveOrCreateTeamMemberIdentity(inviteAnchorDir string, plan teamHumanAddedAgent, apiKeyBootstrapMode bool, apiKey string) (*acceptedTeamInvite, error) {
-	if apiKeyBootstrapMode {
-		return bootstrapTeamHumanAddAgentWithAPIKey(plan.HomeDir, plan, apiKey)
+func resolveOrCreateTeamMemberIdentity(input teamAgentMembershipPreparation) (*acceptedTeamInvite, error) {
+	plan := *input.Plan
+	if input.Authority.Mode == creationAuthorityAPI {
+		return bootstrapTeamHumanAddAgentWithAPIKey(plan.HomeDir, plan, input.APIKey)
 	}
-	globalAgent := strings.TrimSpace(plan.Scope) == awid.IdentityModeGlobal
-	return createAndAcceptTeamInviteForEmptyAgent(inviteAnchorDir, plan.HomeDir, plan.Name, globalAgent)
+	return createAndAcceptTeamInviteForEmptyAgent(input.SourceDir, plan.HomeDir, plan.Name, plan.Scope == awid.IdentityModeGlobal)
 }
 
 type teamIDAssertionSource string
@@ -1549,7 +1561,7 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 	if err != nil {
 		return err
 	}
-	if err := preflightTeamHumanAddRosterAliases(wd, agentsRoot, resolvedSpecs); err != nil {
+	if err := preflightTeamHumanAddRosterAliases(rosterNamePreflight{WorkingDir: wd, AgentsRoot: agentsRoot, ExplicitHome: explicitHome, Specs: resolvedSpecs}); err != nil {
 		return err
 	}
 	apiKey := strings.TrimSpace(opts.APIKey)
@@ -1568,6 +1580,10 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 		if err != nil {
 			return err
 		}
+	}
+	creatorHome, err := identityHomeForDir(inviteAnchorDir)
+	if err != nil {
+		return err
 	}
 	printCreationAuthority(creation)
 	apiKeyBootstrapMode := creation.Mode == creationAuthorityAPI
@@ -1590,7 +1606,23 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 	if teamHumanAddStart && len(plans) != 1 {
 		return usageError("aw team admin add --start requires exactly one agent")
 	}
-	for _, plan := range plans {
+	expectedTeam := creation.SourceTeam
+	if creation.SelectedTeam != nil {
+		expectedTeam = creation.SelectedTeam.CanonicalTeamID
+	}
+	if expectedTeam == "" {
+		expectedTeam = opts.AuthorityTeamID
+	}
+	for index := range plans {
+		plan := &plans[index]
+		existing, err := existingProvisionedMember(provisionedMemberSelection{Home: awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(plan.HomeDir)}, TeamID: expectedTeam, Name: plan.Name, Scope: awid.IdentityScope(plan.Scope)})
+		if err != nil {
+			return err
+		}
+		plan.ResumeMembership = existing
+		if existing != nil {
+			continue
+		}
 		if plan.Profile != nil {
 			if err := preflightProfileAgentHome(plan.HomeDir); err != nil {
 				return err
@@ -1637,46 +1669,38 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 		}
 		if err := os.MkdirAll(plans[i].HomeDir, 0o755); err != nil {
 			homeRollbackErr := rollback.Rollback()
-			return reportRosterFailure(i, addPostJoinRollbackError(err, nil, nil, homeRollbackErr))
+			return reportRosterFailure(i, withLocalProvisioningRollback(localProvisioningRollback{Cause: err, Rollback: homeRollbackErr}))
 		}
 		if teamHumanAddLayoutOnly {
 			continue
 		}
-		prepared, err := prepareTeamAgentMembership(teamAgentMembershipPreparation{SourceDir: inviteAnchorDir, Plan: &plans[i], Authority: creation, APIKey: opts.APIKey})
+		err = prepareTeamAgentMembership(teamAgentMembershipPreparation{SourceDir: inviteAnchorDir, Plan: &plans[i], Authority: creation, APIKey: opts.APIKey})
 		if err != nil {
 			if retainUnfinishedProvisioningIdentity(err) {
 				return reportRosterFailure(i, err)
 			}
 			homeRollbackErr := rollback.Rollback()
-			return reportRosterFailure(i, addPostJoinRollbackError(err, nil, nil, homeRollbackErr))
+			return reportRosterFailure(i, withLocalProvisioningRollback(localProvisioningRollback{Cause: err, Rollback: homeRollbackErr}))
 		}
-		createdIdentity := prepared.State == teamAgentMembershipCreated
-		acceptedIdentity := prepared.Accepted
-		rollbackOnErr := func(err error) error {
-			var memberRollbackErr error
-			if createdIdentity {
-				memberRollbackErr = rollbackJustCreatedTeamMemberWithExplicitHostedAuth(inviteAnchorDir, acceptedIdentity, opts.APIKey)
-			}
-			homeRollbackErr := rollback.Rollback()
-			return addPostJoinRollbackError(err, acceptedIdentity, memberRollbackErr, homeRollbackErr)
+		setupFailure := func(cause error) error {
+			return retainProvisionedSetupFailure(provisionedSetupFailure{Cause: cause, Plan: plans[i], CreatorDir: inviteAnchorDir, CreatorHome: creatorHome, Authority: creation.Mode, WorkDir: teamHumanAddWorkDir})
+		}
+		if expected := strings.TrimSpace(opts.ExpectedTeamID); expected != "" && !strings.EqualFold(strings.TrimSpace(plans[i].TeamID), expected) {
+			mismatchErr := teamIDAssertionMismatchError(expected, strings.TrimSpace(plans[i].TeamID), opts.TeamIDAssertionSource)
+			return reportRosterFailure(i, setupFailure(mismatchErr))
 		}
 		if err := completePlannedTeamAgentProfile(teamAgentProfileSetup{
 			Plan: &plans[i], Home: awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(plans[i].HomeDir), Source: awconfig.IdentityHomeDefault},
 		}); err != nil {
-			return reportRosterFailure(i, rollbackOnErr(err))
+			return reportRosterFailure(i, setupFailure(err))
 		}
 
 		if createdTeamID == "" {
 			createdTeamID = strings.TrimSpace(plans[i].TeamID)
 		}
-		if expected := strings.TrimSpace(opts.ExpectedTeamID); expected != "" && !strings.EqualFold(strings.TrimSpace(plans[i].TeamID), expected) {
-			mismatchErr := teamIDAssertionMismatchError(expected, strings.TrimSpace(plans[i].TeamID), opts.TeamIDAssertionSource)
-			memberRollbackErr := rollbackJustCreatedTeamMemberWithExplicitHostedAuth(plans[i].HomeDir, acceptedIdentity, opts.APIKey)
-			homeRollbackErr := rollback.Rollback()
-			return reportRosterFailure(i, addPostJoinRollbackError(mismatchErr, acceptedIdentity, memberRollbackErr, homeRollbackErr))
-		}
+
 		if err := setupTeamAddedAgentWorktree(worktreeAnchorDir, plans[i], teamHumanAddWorkDir); err != nil {
-			return reportRosterFailure(i, rollbackOnErr(err))
+			return reportRosterFailure(i, setupFailure(err))
 		}
 	}
 	if teamHumanAddStart && len(plans) == 1 {
@@ -2076,131 +2100,16 @@ func ensureTeamAddWorkMainLink(homeDir, repoRoot string) error {
 	return os.Symlink(repoRoot, link)
 }
 
-type justCreatedTeamMemberRollbackTarget struct {
-	TeamID        string
-	Domain        string
-	TeamName      string
-	RegistryURL   string
-	AwebURL       string
-	CertificateID string
-	MemberAddress string
+type localProvisioningRollback struct {
+	Cause    error
+	Rollback error
 }
 
-func rollbackJustCreatedTeamMemberWithExplicitHostedAuth(anchorDir string, accepted *acceptedTeamInvite, explicitAPIKey string) error {
-	target, err := justCreatedTeamMemberRollbackTargetFromAccepted(accepted)
-	if err != nil {
-		return err
+func withLocalProvisioningRollback(input localProvisioningRollback) error {
+	if input.Rollback == nil {
+		return input.Cause
 	}
-	ctx, cancel := commandAPIContext(nil)
-	defer cancel()
-	if isAwebHostedNamespace(target.Domain) || strings.TrimSpace(explicitAPIKey) != "" {
-		awebURL, apiKey, authErr := resolveHostedTeamRemoveAuthWithAwebURL(anchorDir, target.TeamID, target.AwebURL, explicitAPIKey)
-		if authErr != nil {
-			return authErr
-		}
-		_, err = postHostedTeamRemoveMember(ctx, awebURL, apiKey, target.TeamID, hostedTeamRemoveMemberRequest{CertificateID: target.CertificateID})
-		if err != nil {
-			return err
-		}
-		return nil
-	}
-
-	registry, err := newConfiguredRegistryClient(nil)
-	if err != nil {
-		return err
-	}
-	registryURL := strings.TrimSpace(target.RegistryURL)
-	if registryURL != "" {
-		if err := registry.SetFallbackRegistryURL(registryURL); err != nil {
-			return fmt.Errorf("invalid registry url %q: %w", registryURL, err)
-		}
-	} else {
-		registryURL = strings.TrimSpace(registry.DefaultRegistryURL)
-	}
-	teamKey, err := awconfig.LoadTeamKey(target.Domain, target.TeamName)
-	if err != nil {
-		return fmt.Errorf("load team key for %s/%s: %w", target.Domain, target.TeamName, err)
-	}
-	if err := registry.RevokeCertificate(ctx, registryURL, target.Domain, target.TeamName, target.CertificateID, teamKey); err != nil {
-		return fmt.Errorf("revoke certificate %s: %w", target.CertificateID, err)
-	}
-	return nil
-}
-
-func justCreatedTeamMemberRollbackTargetFromAccepted(accepted *acceptedTeamInvite) (justCreatedTeamMemberRollbackTarget, error) {
-	if accepted == nil || accepted.Certificate == nil {
-		return justCreatedTeamMemberRollbackTarget{}, fmt.Errorf("cannot roll back server-side team member: accepted certificate is missing")
-	}
-	target := justCreatedTeamMemberRollbackTarget{
-		CertificateID: strings.TrimSpace(accepted.Certificate.CertificateID),
-		MemberAddress: strings.TrimSpace(accepted.Certificate.MemberAddress),
-		RegistryURL:   strings.TrimSpace(accepted.RegistryURL),
-		AwebURL:       strings.TrimSpace(accepted.AwebURL),
-	}
-	if accepted.Output != nil {
-		target.TeamID = strings.TrimSpace(accepted.Output.TeamID)
-	}
-	if target.TeamID == "" {
-		target.TeamID = strings.TrimSpace(accepted.Certificate.Team)
-	}
-	target.Domain = awconfig.NormalizeDomain(accepted.Domain)
-	target.TeamName = strings.TrimSpace(accepted.TeamName)
-	if target.Domain == "" || target.TeamName == "" {
-		if domain, teamName, err := awid.ParseTeamID(target.TeamID); err == nil {
-			if target.Domain == "" {
-				target.Domain = domain
-			}
-			if target.TeamName == "" {
-				target.TeamName = teamName
-			}
-		}
-	}
-	if target.TeamID == "" && target.Domain != "" && target.TeamName != "" {
-		target.TeamID = awid.BuildTeamID(target.Domain, target.TeamName)
-	}
-	if target.TeamID == "" {
-		return justCreatedTeamMemberRollbackTarget{}, fmt.Errorf("cannot roll back server-side team member: team id is missing")
-	}
-	if target.Domain == "" || target.TeamName == "" {
-		return justCreatedTeamMemberRollbackTarget{}, fmt.Errorf("cannot roll back server-side team member for %s: team domain/name is missing", target.TeamID)
-	}
-	if target.CertificateID == "" {
-		return justCreatedTeamMemberRollbackTarget{}, fmt.Errorf("cannot roll back server-side team member for %s: certificate_id is missing", target.TeamID)
-	}
-	return target, nil
-}
-
-func addPostJoinRollbackError(cause error, accepted *acceptedTeamInvite, memberRollbackErr, homeRollbackErr error) error {
-	if memberRollbackErr == nil && homeRollbackErr == nil {
-		return cause
-	}
-	target, targetErr := justCreatedTeamMemberRollbackTargetFromAccepted(accepted)
-	var b strings.Builder
-	if memberRollbackErr != nil {
-		b.WriteString("server-side member rollback failed")
-		if targetErr == nil {
-			fmt.Fprintf(&b, " for team_id %s certificate_id %s", target.TeamID, target.CertificateID)
-			if target.MemberAddress != "" {
-				fmt.Fprintf(&b, " member_address %s", target.MemberAddress)
-			}
-		}
-		fmt.Fprintf(&b, ": %v", memberRollbackErr)
-		if targetErr == nil {
-			fmt.Fprintf(&b, "; dirty server-side member may remain; clean it from an owner/admin workspace with `aw id team remove-member --team %s --namespace %s --cert-id %s`", target.TeamName, target.Domain, target.CertificateID)
-			if target.MemberAddress != "" {
-				fmt.Fprintf(&b, " or `aw team admin remove-agent %s --team-id %s`", target.MemberAddress, target.TeamID)
-			}
-		} else {
-			fmt.Fprintf(&b, "; rollback target details unavailable: %v", targetErr)
-		}
-	}
-	if homeRollbackErr != nil {
-		if b.Len() > 0 {
-			b.WriteString("; ")
-		}
-		fmt.Fprintf(&b, "local home rollback failed: %v", homeRollbackErr)
-	}
-	return fmt.Errorf("%w; %s", cause, b.String())
+	return errors.Join(input.Cause, fmt.Errorf("local home rollback failed: %w", input.Rollback))
 }
 
 type agentHomeRollback struct {

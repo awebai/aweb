@@ -621,6 +621,13 @@ and reports that this attempt did not publish the key. Run the exact
 the refusal. If connection completed but publication is unconfirmed, run the
 reported `aw --identity-home <member-home> id encryption-key setup` command.
 Neither recovery requires a replacement identity or another invitation.
+After admission, a profile, requested-team check or worktree setup failure also
+keeps the member's home and credentials. It never tries registry-only revocation
+as a substitute for coordination cleanup. The refusal names a concrete
+`aw team admin add --home <home> <selected-spec>` retry using the same creation
+authority. Reuse requires the same installed member key, team, name and scope;
+normal admission still checks current authority. To abandon the member, use the
+ordered `aw team admin remove-agent` operation from its controller workspace.
 Membership-only joins continue to install their membership before their separate
 connection step.
 
