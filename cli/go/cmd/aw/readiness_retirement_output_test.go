@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/awebai/aw/awconfig"
@@ -46,7 +47,7 @@ func TestWakeReadinessReturnsClosedOutputAndKeepsItsDiagnosticJSON(t *testing.T)
 				wakeStatusHome, wakeStatusMinVersion, wakeStateDirFlag, jsonFlag = previousHome, previousMinimum, previousState, previousJSON
 			})
 			run := func() error { return runWakeStatus(wakeStatusCmd, nil) }
-			if err := invokeWithCommandStdout(t, closedCommandStdout(t), run); !errors.Is(err, os.ErrClosed) {
+			if err := invokeWithCommandStdout(t, closedCommandStdout(t), run); !errors.Is(err, os.ErrClosed) || !strings.HasSuffix(err.Error(), "Check the output destination, then rerun aw wake status.") {
 				t.Fatalf("readiness reported success with a closed output: %v", err)
 			}
 			path := filepath.Join(t.TempDir(), "status.json")
@@ -150,11 +151,14 @@ func TestLocalRetirementReturnsClosedOutputAndKeepsItsReceiptOutcome(t *testing.
 			}
 			run := func() error { return runWorkspaceDelete(workspaceDeleteCmd, []string{workspaceID}) }
 			closedErr := invokeWithCommandStdout(t, closedCommandStdout(t), run)
-			if !errors.Is(closedErr, os.ErrClosed) {
+			if !errors.Is(closedErr, os.ErrClosed) || !strings.HasSuffix(closedErr.Error(), "Check the output destination and retain this identity home; follow any retirement recovery instructions before retrying.") {
 				t.Fatalf("retirement lost the output failure: %v", closedErr)
 			}
-			if !revoked && errorCodeOf(closedErr) != string(retiredRevocationPending) {
-				t.Fatalf("output failure replaced pending revocation: %v", closedErr)
+			if !revoked {
+				var transport *net.OpError
+				if errorCodeOf(closedErr) != string(retiredRevocationPending) || !errors.As(closedErr, &transport) || !strings.Contains(closedErr.Error(), "receipt retained at "+path+"; retry aw workspace delete "+workspaceID) {
+					t.Fatalf("output failure replaced pending revocation or its recovery: %v", closedErr)
+				}
 			}
 			pathOut := filepath.Join(t.TempDir(), "retirement.json")
 			file, err := os.Create(pathOut)
