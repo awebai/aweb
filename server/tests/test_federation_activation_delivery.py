@@ -1184,9 +1184,10 @@ async def test_identity_policy_share_locks_allow_opposite_team_deliveries(
 
     async def check(envelope, recipient, index):
         async with manager.transaction() as tx:
-            current = await _lock_current_recipient(
+            locked = await _lock_current_recipient(
                 tx, envelope=envelope, recipient=recipient
             )
+            current = locked.recipient
             ready[index].set()
             await ready[1 - index].wait()
             await _authorize_policy(
@@ -1234,9 +1235,10 @@ async def test_recipient_lock_reads_identity_from_current_storage(
         update={"target_did_aw": envelope.target_current_did_key}
     )
     async with manager.transaction() as tx:
-        current = await _lock_current_recipient(
+        locked = await _lock_current_recipient(
             tx, envelope=keyed, recipient={"agent_id": recipient["agent_id"]}
         )
+        current = locked.recipient
     assert current["inbound_mode"] == "contacts_only"
 
 
@@ -1265,7 +1267,8 @@ async def test_global_recipient_without_stable_did_uses_own_federation_policy(
         update={"target_did_aw": envelope.target_current_did_key}
     )
     async with manager.transaction() as tx:
-        current = await _lock_current_recipient(tx, envelope=keyed, recipient=recipient)
+        locked = await _lock_current_recipient(tx, envelope=keyed, recipient=recipient)
+        current = locked.recipient
         if mode == "open":
             await _authorize_policy(
                 tx, envelope=keyed, recipient=current, stored_route_continuation=False
@@ -1289,7 +1292,8 @@ async def test_global_recipient_without_stable_did_uses_own_federation_policy(
         envelope.sender_did_aw,
     )
     async with manager.transaction() as tx:
-        current = await _lock_current_recipient(tx, envelope=keyed, recipient=recipient)
+        locked = await _lock_current_recipient(tx, envelope=keyed, recipient=recipient)
+        current = locked.recipient
         await _authorize_policy(
             tx, envelope=keyed, recipient=current, stored_route_continuation=False
         )
