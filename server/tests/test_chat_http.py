@@ -207,9 +207,7 @@ def _encrypted_chat_envelope(
     return envelope
 
 
-def _signed_team_headers(
-    agent_sk, agent_did_key, team_id: str, cert_header: str, body_bytes=b""
-):
+def _signed_team_headers(agent_sk, agent_did_key, team_id: str, cert_header: str, body_bytes=b""):
     timestamp = datetime.now(timezone.utc).isoformat()
     payload = canonical_json_bytes(
         {
@@ -258,9 +256,7 @@ def _build_test_app(aweb_db, registry, *, verified_bindings=()):
                 message = await original_receive()
                 if message["type"] == "http.disconnect":
                     return message
-                if message["type"] == "http.request" and not message.get(
-                    "more_body", False
-                ):
+                if message["type"] == "http.request" and not message.get("more_body", False):
                     continue
                 return message
 
@@ -405,12 +401,7 @@ async def test_chat_to_external_address_posts_federated_chat_and_projects_locall
     app.dependency_overrides[get_messaging_auth] = _auth
     session_id = str(uuid4())
     message_id = str(uuid4())
-    timestamp = (
-        datetime.now(timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     signed_payload = canonical_json_bytes(
         {
             "body": "hello remote chat",
@@ -428,9 +419,7 @@ async def test_chat_to_external_address_posts_federated_chat_and_projects_locall
         }
     ).decode()
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post(
             "/v1/chat/sessions",
             json={
@@ -452,9 +441,7 @@ async def test_chat_to_external_address_posts_federated_chat_and_projects_locall
     assert resp.json()["message_id"] == message_id
     assert len(remote_requests) == 1
     remote_body = json.loads(remote_requests[0].content)
-    assert (
-        str(remote_requests[0].url) == "https://remote.example/v1/federation/messages"
-    )
+    assert str(remote_requests[0].url) == "https://remote.example/v1/federation/messages"
     assert remote_body["envelope"]["type"] == "chat"
     assert remote_body["envelope"]["sender_delivery_origin"] == "https://local.example"
     assert remote_body["envelope"]["target_delivery_origin"] == "https://remote.example"
@@ -491,13 +478,10 @@ async def test_chat_to_external_address_posts_federated_chat_and_projects_locall
     assert conversation_by_did["did:aw:alice"]["delivery_origin"] is None
     assert conversation_by_did["did:aw:alice"]["current_did_key"] == alice_did_key
     assert conversation_by_did["did:aw:alice"]["transport_hint"] == "local"
-    assert (
-        conversation_by_did["did:aw:bob"]["delivery_origin"] == "https://remote.example"
-    )
+    assert conversation_by_did["did:aw:bob"]["delivery_origin"] == "https://remote.example"
     assert conversation_by_did["did:aw:bob"]["current_did_key"] == bob_did_key
     assert (
-        conversation_by_did["did:aw:bob"]["transport_hint"]
-        == "federation:https://remote.example"
+        conversation_by_did["did:aw:bob"]["transport_hint"] == "federation:https://remote.example"
     )
     contact = await aweb_cloud_db.aweb_db.fetch_one(
         """
@@ -527,9 +511,7 @@ async def test_chat_to_external_address_posts_federated_chat_and_projects_locall
         body="reply through the projected chat route",
         conversation_id=session_id,
     )
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         reply = await client.post("/v1/federation/messages", json=reply_payload)
 
     assert reply.status_code == 200, reply.text
@@ -564,9 +546,7 @@ async def test_chat_first_contact_to_external_address_requires_signed_payload(
     )
     registry = AsyncMock()
     registry.resolve_key = AsyncMock(
-        return_value=KeyResolution(
-            did_aw="did:aw:bob", current_did_key=named_did_key("bob")
-        )
+        return_value=KeyResolution(did_aw="did:aw:bob", current_did_key=named_did_key("bob"))
     )
     registry.resolve_address = AsyncMock(
         return_value=Address(
@@ -586,9 +566,7 @@ async def test_chat_first_contact_to_external_address_requires_signed_payload(
 
     async def _remote_handler(request: httpx.Request) -> httpx.Response:
         remote_requests.append(request)
-        return httpx.Response(
-            500, json={"detail": "unsigned chat must never reach the wire"}
-        )
+        return httpx.Response(500, json={"detail": "unsigned chat must never reach the wire"})
 
     app.state.federation_chat_transport = httpx.MockTransport(_remote_handler)
 
@@ -605,16 +583,9 @@ async def test_chat_first_contact_to_external_address_requires_signed_payload(
     app.dependency_overrides[get_messaging_auth] = _auth
     session_id = str(uuid4())
     message_id = str(uuid4())
-    timestamp = (
-        datetime.now(timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post(
             "/v1/chat/sessions",
             json={
@@ -629,10 +600,7 @@ async def test_chat_first_contact_to_external_address_requires_signed_payload(
         )
 
     assert resp.status_code == 422, resp.text
-    assert (
-        resp.json()["detail"]
-        == "Federated chat delivery requires a sender-signed payload"
-    )
+    assert resp.json()["detail"] == "Federated chat delivery requires a sender-signed payload"
     assert remote_requests == []
     session_count = await aweb_cloud_db.aweb_db.fetch_value(
         "SELECT COUNT(*) FROM {{tables.chat_sessions}} WHERE session_id = $1",
@@ -682,9 +650,7 @@ async def test_chat_first_contact_to_external_address_requires_sender_attestatio
     )
     registry = AsyncMock()
     registry.resolve_key = AsyncMock(
-        return_value=KeyResolution(
-            did_aw="did:aw:bob", current_did_key=named_did_key("bob")
-        )
+        return_value=KeyResolution(did_aw="did:aw:bob", current_did_key=named_did_key("bob"))
     )
     registry.resolve_address = AsyncMock(
         return_value=Address(
@@ -704,9 +670,7 @@ async def test_chat_first_contact_to_external_address_requires_sender_attestatio
 
     async def _remote_handler(request: httpx.Request) -> httpx.Response:
         remote_requests.append(request)
-        return httpx.Response(
-            500, json={"detail": "incomplete chat must never reach the wire"}
-        )
+        return httpx.Response(500, json={"detail": "incomplete chat must never reach the wire"})
 
     app.state.federation_chat_transport = httpx.MockTransport(_remote_handler)
 
@@ -723,12 +687,7 @@ async def test_chat_first_contact_to_external_address_requires_sender_attestatio
     app.dependency_overrides[get_messaging_auth] = _auth
     session_id = str(uuid4())
     message_id = str(uuid4())
-    timestamp = (
-        datetime.now(timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     signed_payload = canonical_json_bytes(
         {
             "body": "hello remote chat",
@@ -758,9 +717,7 @@ async def test_chat_first_contact_to_external_address_requires_sender_attestatio
     }
     del body[omitted]
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/chat/sessions", json=body)
 
     assert resp.status_code == 422, resp.text
@@ -794,9 +751,7 @@ async def test_chat_to_external_address_remote_failure_does_not_create_contact(
     )
     registry = AsyncMock()
     registry.resolve_key = AsyncMock(
-        return_value=KeyResolution(
-            did_aw="did:aw:bob", current_did_key=named_did_key("bob")
-        )
+        return_value=KeyResolution(did_aw="did:aw:bob", current_did_key=named_did_key("bob"))
     )
     registry.resolve_address = AsyncMock(
         return_value=Address(
@@ -829,12 +784,7 @@ async def test_chat_to_external_address_remote_failure_does_not_create_contact(
     app.dependency_overrides[get_messaging_auth] = _auth
     session_id = str(uuid4())
     message_id = str(uuid4())
-    timestamp = (
-        datetime.now(timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     signed_payload = canonical_json_bytes(
         {
             "body": "remote failure chat",
@@ -851,9 +801,7 @@ async def test_chat_to_external_address_remote_failure_does_not_create_contact(
         }
     ).decode()
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post(
             "/v1/chat/sessions",
             json={
@@ -986,12 +934,7 @@ async def test_chat_continuation_to_remote_participant_uses_stored_delivery_orig
 
     app.dependency_overrides[get_messaging_auth] = _auth
     message_id = str(uuid4())
-    timestamp = (
-        datetime.now(timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     signed_payload = canonical_json_bytes(
         {
             "body": "continuing remote chat",
@@ -1008,9 +951,7 @@ async def test_chat_continuation_to_remote_participant_uses_stored_delivery_orig
         }
     ).decode()
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post(
             f"/v1/chat/sessions/{session_id}/messages",
             json={
@@ -1043,10 +984,7 @@ async def test_chat_continuation_to_remote_participant_uses_stored_delivery_orig
     )
     second_message_id = str(uuid4())
     second_timestamp = (
-        datetime.now(timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
+        datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     )
     second_signed_payload = canonical_json_bytes(
         {
@@ -1064,9 +1002,7 @@ async def test_chat_continuation_to_remote_participant_uses_stored_delivery_orig
         }
     ).decode()
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         missing_key = await client.post(
             f"/v1/chat/sessions/{session_id}/messages",
             json={
@@ -1160,9 +1096,7 @@ async def test_chat_continuation_to_remote_participant_requires_signed_payload(
 
     async def _remote_handler(request: httpx.Request) -> httpx.Response:
         remote_requests.append(request)
-        return httpx.Response(
-            500, json={"detail": "unsigned chat must never reach the wire"}
-        )
+        return httpx.Response(500, json={"detail": "unsigned chat must never reach the wire"})
 
     app.state.federation_chat_transport = httpx.MockTransport(_remote_handler)
 
@@ -1178,16 +1112,9 @@ async def test_chat_continuation_to_remote_participant_requires_signed_payload(
 
     app.dependency_overrides[get_messaging_auth] = _auth
     message_id = str(uuid4())
-    timestamp = (
-        datetime.now(timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post(
             f"/v1/chat/sessions/{session_id}/messages",
             json={
@@ -1199,10 +1126,7 @@ async def test_chat_continuation_to_remote_participant_requires_signed_payload(
         )
 
     assert resp.status_code == 422, resp.text
-    assert (
-        resp.json()["detail"]
-        == "Federated chat delivery requires a sender-signed payload"
-    )
+    assert resp.json()["detail"] == "Federated chat delivery requires a sender-signed payload"
     assert remote_requests == []
     message_count = await aweb_cloud_db.aweb_db.fetch_value(
         "SELECT COUNT(*) FROM {{tables.chat_messages}} WHERE session_id = $1",
@@ -1214,9 +1138,7 @@ async def test_chat_continuation_to_remote_participant_requires_signed_payload(
 @pytest.mark.asyncio
 async def test_remote_chat_route_refresh_preserves_stable_authority_error():
     authority = SimpleNamespace(
-        resolve_contact=AsyncMock(
-            side_effect=FederationAuthorityError("federation_rate_limited")
-        )
+        resolve_contact=AsyncMock(side_effect=FederationAuthorityError("federation_rate_limited"))
     )
     with pytest.raises(FederationAuthorityError) as error:
         await _resolve_remote_chat_route(
@@ -1346,12 +1268,7 @@ async def test_chat_continuation_refreshes_stale_delivery_origin_once(aweb_cloud
 
     app.dependency_overrides[get_messaging_auth] = _auth
     message_id = str(uuid4())
-    timestamp = (
-        datetime.now(timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     signed_payload = canonical_json_bytes(
         {
             "body": "continuing after move",
@@ -1368,9 +1285,7 @@ async def test_chat_continuation_refreshes_stale_delivery_origin_once(aweb_cloud
         }
     ).decode()
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post(
             f"/v1/chat/sessions/{session_id}/messages",
             json={
@@ -1428,9 +1343,7 @@ async def test_chat_continuation_refreshes_stale_delivery_origin_once(aweb_cloud
         body="reply after origin rotation",
         conversation_id=str(session_id),
     )
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         reply = await client.post("/v1/federation/messages", json=reply_payload)
 
     assert reply.status_code == 200, reply.text
@@ -1496,9 +1409,7 @@ async def test_chat_continuation_does_not_retry_when_refresh_keeps_same_origin(
     )
     registry = AsyncMock()
     registry.resolve_key = AsyncMock(
-        return_value=KeyResolution(
-            did_aw="did:aw:bob", current_did_key=named_did_key("bob")
-        )
+        return_value=KeyResolution(did_aw="did:aw:bob", current_did_key=named_did_key("bob"))
     )
     registry.resolve_address = AsyncMock(
         return_value=Address(
@@ -1534,12 +1445,7 @@ async def test_chat_continuation_does_not_retry_when_refresh_keeps_same_origin(
 
     app.dependency_overrides[get_messaging_auth] = _auth
     message_id = str(uuid4())
-    timestamp = (
-        datetime.now(timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     signed_payload = canonical_json_bytes(
         {
             "body": "same origin failure",
@@ -1556,9 +1462,7 @@ async def test_chat_continuation_does_not_retry_when_refresh_keeps_same_origin(
         }
     ).decode()
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post(
             f"/v1/chat/sessions/{session_id}/messages",
             json={
@@ -1615,12 +1519,7 @@ def _federated_chat_payload(
 ):
     message_id = message_id or str(uuid4())
     conversation_id = conversation_id or str(uuid4())
-    timestamp = (
-        datetime.now(timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     signed_payload = canonical_json_bytes(
         {
             "body": body,
@@ -1704,9 +1603,7 @@ async def test_receive_old_v1_federated_chat_ignores_deprecated_fields_and_deliv
     )
     payload["envelope"].update(_deprecated_federation_v1_fields())
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/federation/messages", json=payload)
 
     assert resp.status_code == 200, resp.text
@@ -1776,10 +1673,7 @@ async def test_receive_old_v1_federated_chat_ignores_deprecated_fields_and_deliv
     app.dependency_overrides[get_messaging_auth] = _bob_auth
     reply_message_id = str(uuid4())
     reply_timestamp = (
-        datetime.now(timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
+        datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     )
     reply_signed_payload = canonical_json_bytes(
         {
@@ -1797,9 +1691,7 @@ async def test_receive_old_v1_federated_chat_ignores_deprecated_fields_and_deliv
         }
     ).decode()
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         reply = await client.post(
             f"/v1/chat/sessions/{session_id}/messages",
             json={
@@ -1815,9 +1707,7 @@ async def test_receive_old_v1_federated_chat_ignores_deprecated_fields_and_deliv
     assert reply.status_code == 200, reply.text
     assert len(remote_requests) == 1
     remote_envelope = json.loads(remote_requests[0].content)["envelope"]
-    assert (
-        str(remote_requests[0].url) == "https://sender.example/v1/federation/messages"
-    )
+    assert str(remote_requests[0].url) == "https://sender.example/v1/federation/messages"
     assert remote_envelope["target_address"] == "alpha.example/alice"
     assert remote_envelope["target_delivery_origin"] == "https://sender.example"
     registry.resolve_key.assert_not_awaited()
@@ -1910,15 +1800,11 @@ async def test_receive_federated_chat_local_sender_omission_preserves_both_store
     signed["from"] = local_did_key
     signed["from_stable_id"] = local_did_key
     payload["envelope"]["signed_payload"] = canonical_json_bytes(signed).decode()
-    payload["signature"] = sign_message(
-        local_sk, payload["envelope"]["signed_payload"].encode()
-    )
+    payload["signature"] = sign_message(local_sk, payload["envelope"]["signed_payload"].encode())
     del payload["envelope"]["sender_address"]
     del payload["envelope"]["sender_delivery_origin"]
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.post("/v1/federation/messages", json=payload)
 
     assert response.status_code == 200, response.text
@@ -1976,15 +1862,9 @@ async def test_receive_federated_chat_local_sender_omission_preserves_both_store
     injected["envelope"]["target_address"] = "evil.example/injected"
     injected_signed = json.loads(injected["envelope"]["signed_payload"])
     injected_signed["message_id"] = injected["envelope"]["message_id"]
-    injected["envelope"]["signed_payload"] = canonical_json_bytes(
-        injected_signed
-    ).decode()
-    injected["signature"] = sign_message(
-        local_sk, injected["envelope"]["signed_payload"].encode()
-    )
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    injected["envelope"]["signed_payload"] = canonical_json_bytes(injected_signed).decode()
+    injected["signature"] = sign_message(local_sk, injected["envelope"]["signed_payload"].encode())
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         rejected = await client.post("/v1/federation/messages", json=injected)
 
     assert rejected.status_code == 422, rejected.text
@@ -2009,12 +1889,8 @@ async def test_receive_federated_chat_local_sender_omission_preserves_both_store
         """,
         session_id,
     )
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        changed_route_replay = await client.post(
-            "/v1/federation/messages", json=payload
-        )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        changed_route_replay = await client.post("/v1/federation/messages", json=payload)
     assert changed_route_replay.status_code == 200, changed_route_replay.text
 
     await aweb_cloud_db.aweb_db.execute(
@@ -2025,9 +1901,7 @@ async def test_receive_federated_chat_local_sender_omission_preserves_both_store
         "DELETE FROM {{tables.conversation_participants}} WHERE conversation_id = $1",
         session_id,
     )
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         replay = await client.post("/v1/federation/messages", json=payload)
     assert replay.status_code == 200, replay.text
     assert replay.json()["message_id"] == payload["envelope"]["message_id"]
@@ -2069,17 +1943,13 @@ async def test_receive_federated_chat_existing_local_didkey_first_contact_fails_
         body="first contact local chat",
     )
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/federation/messages", json=payload)
 
     assert resp.status_code == 422, resp.text
     assert resp.json()["reason"] == "federation_envelope_invalid"
     assert (
-        await aweb_cloud_db.aweb_db.fetch_value(
-            "SELECT COUNT(*) FROM {{tables.chat_messages}}"
-        )
+        await aweb_cloud_db.aweb_db.fetch_value("SELECT COUNT(*) FROM {{tables.chat_messages}}")
         == 0
     )
 
@@ -2172,9 +2042,7 @@ async def test_receive_federated_chat_existing_local_didkey_reply_succeeds(
         conversation_id=str(session_id),
     )
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/federation/messages", json=payload)
 
     assert resp.status_code == 200, resp.text
@@ -2204,9 +2072,7 @@ async def test_receive_federated_chat_existing_local_didkey_reply_succeeds(
     assert conversation_participant["current_did_key"] == bob_did_key
 
     registry.resolve_key = AsyncMock(
-        side_effect=AssertionError(
-            "chat continuation must use backfilled current did:key"
-        )
+        side_effect=AssertionError("chat continuation must use backfilled current did:key")
     )
     registry.resolve_address = AsyncMock(
         side_effect=AssertionError("chat continuation must not rediscover address")
@@ -2244,10 +2110,7 @@ async def test_receive_federated_chat_existing_local_didkey_reply_succeeds(
     app.dependency_overrides[get_messaging_auth] = _local_auth
     reply_message_id = str(uuid4())
     reply_timestamp = (
-        datetime.now(timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
+        datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     )
     reply_signed_payload = canonical_json_bytes(
         {
@@ -2264,9 +2127,7 @@ async def test_receive_federated_chat_existing_local_didkey_reply_succeeds(
         }
     ).decode()
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         reply = await client.post(
             f"/v1/chat/sessions/{session_id}/messages",
             json={
@@ -2351,9 +2212,7 @@ async def test_receive_federated_chat_stored_route_rejects_wrong_target_current_
         return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key)
     )
     registry.resolve_address = AsyncMock(
-        side_effect=AssertionError(
-            "stored-route rejection must not rediscover target address"
-        )
+        side_effect=AssertionError("stored-route rejection must not rediscover target address")
     )
     app = _build_test_app(aweb_cloud_db.aweb_db, registry)
     app.state.public_origin = "https://recipient.example"
@@ -2369,9 +2228,7 @@ async def test_receive_federated_chat_stored_route_rejects_wrong_target_current_
         conversation_id=str(session_id),
     )
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/federation/messages", json=payload)
 
     assert resp.status_code == 422, resp.text
@@ -2469,17 +2326,13 @@ async def test_receive_federated_chat_local_didkey_missing_session_target_fails_
         conversation_id=str(session_id),
     )
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/federation/messages", json=payload)
 
     assert resp.status_code == 409, resp.text
     assert resp.json()["reason"] == "federation_conversation_invalid"
     assert (
-        await aweb_cloud_db.aweb_db.fetch_value(
-            "SELECT COUNT(*) FROM {{tables.chat_messages}}"
-        )
+        await aweb_cloud_db.aweb_db.fetch_value("SELECT COUNT(*) FROM {{tables.chat_messages}}")
         == 0
     )
 
@@ -2525,9 +2378,7 @@ async def test_receive_federated_chat_duplicate_message_id_is_idempotent(aweb_cl
         target_did_key=bob_did_key,
     )
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         first = await client.post("/v1/federation/messages", json=payload)
         assert first.status_code == 200, first.text
         # Model a duplicate arriving after the first authority observation has
@@ -2552,9 +2403,7 @@ async def test_receive_federated_chat_duplicate_message_id_is_idempotent(aweb_cl
         "WHERE canonical_address = 'alpha.example/alice'"
     )
     assert cohort["authoritative_read_completed_at"] > prior_read
-    assert cohort["expires_at"] - cohort[
-        "authoritative_read_completed_at"
-    ] == timedelta(seconds=59)
+    assert cohort["expires_at"] - cohort["authoritative_read_completed_at"] == timedelta(seconds=59)
     assert second.json()["message_id"] == payload["envelope"]["message_id"]
     message_count = await aweb_cloud_db.aweb_db.fetch_value(
         "SELECT COUNT(*) FROM {{tables.chat_messages}} WHERE message_id = $1",
@@ -2624,9 +2473,7 @@ async def test_receive_federated_chat_rejects_closed_or_mismatched_conversation(
         conversation_id=str(closed_conversation_id),
     )
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         closed = await client.post("/v1/federation/messages", json=payload)
 
     assert closed.status_code == 409, closed.text
@@ -2666,12 +2513,8 @@ async def test_receive_federated_chat_rejects_closed_or_mismatched_conversation(
         conversation_id=str(mismatched_conversation_id),
     )
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        mismatched = await client.post(
-            "/v1/federation/messages", json=mismatched_payload
-        )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        mismatched = await client.post("/v1/federation/messages", json=mismatched_payload)
 
     assert mismatched.status_code == 409, mismatched.text
     assert mismatched.json()["reason"] == "federation_conversation_invalid"
@@ -2741,9 +2584,7 @@ async def test_create_chat_session_accepts_identity_auth_and_to_did(aweb_cloud_d
         **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body),
         "Content-Type": "application/json",
     }
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/chat/sessions", content=body, headers=headers)
 
     assert resp.status_code == 200, resp.text
@@ -2838,12 +2679,8 @@ async def test_create_encrypted_group_chat_stores_opaque_metadata_only(aweb_clou
         **_signed_identity_headers(alice_sk, alice_did, "did:aw:alice", body_bytes),
         "Content-Type": "application/json",
     }
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        resp = await client.post(
-            "/v1/chat/sessions", content=body_bytes, headers=headers
-        )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post("/v1/chat/sessions", content=body_bytes, headers=headers)
     assert resp.status_code == 200, resp.text
 
     row = await aweb_cloud_db.aweb_db.fetch_one(
@@ -2881,9 +2718,7 @@ async def test_create_encrypted_group_chat_stores_opaque_metadata_only(aweb_clou
         )
 
     app.dependency_overrides[get_messaging_auth] = _bob_auth
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         history_resp = await client.get(f"/v1/chat/sessions/{session_id}/messages")
         pending_resp = await client.get("/v1/chat/pending")
     assert history_resp.status_code == 200, history_resp.text
@@ -2975,9 +2810,7 @@ async def test_encrypted_group_chat_excludes_left_participant_from_future_wraps(
         "encrypted_envelope": first_envelope,
     }
     app.dependency_overrides[get_messaging_auth] = _alice_auth
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         created = await client.post("/v1/chat/sessions", json=create_payload)
     assert created.status_code == 200, created.text
 
@@ -2991,9 +2824,7 @@ async def test_encrypted_group_chat_excludes_left_participant_from_future_wraps(
         )
 
     app.dependency_overrides[get_messaging_auth] = _carol_auth
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         left = await client.post(
             f"/v1/chat/sessions/{session_id}/messages",
             json={"body": "leaving", "leaving": True},
@@ -3025,12 +2856,8 @@ async def test_encrypted_group_chat_excludes_left_participant_from_future_wraps(
         "encrypted_envelope": turn_envelope,
     }
     app.dependency_overrides[get_messaging_auth] = _alice_auth
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        turn = await client.post(
-            f"/v1/chat/sessions/{session_id}/messages", json=turn_payload
-        )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        turn = await client.post(f"/v1/chat/sessions/{session_id}/messages", json=turn_payload)
     assert turn.status_code == 200, turn.text
 
     await aweb_cloud_db.aweb_db.execute(
@@ -3067,12 +2894,8 @@ async def test_encrypted_group_chat_excludes_left_participant_from_future_wraps(
         "encrypted_envelope": stale_envelope,
     }
     app.dependency_overrides[get_messaging_auth] = _alice_auth
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        stale = await client.post(
-            f"/v1/chat/sessions/{session_id}/messages", json=stale_payload
-        )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        stale = await client.post(f"/v1/chat/sessions/{session_id}/messages", json=stale_payload)
     assert stale.status_code == 422, stale.text
     assert "recipient" in stale.text
 
@@ -3096,13 +2919,9 @@ async def test_encrypted_group_chat_excludes_left_participant_from_future_wraps(
         "encrypted_envelope": future_envelope,
     }
     app.dependency_overrides[get_messaging_auth] = _alice_auth
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         sessions = await client.get("/v1/chat/sessions")
-        sent = await client.post(
-            f"/v1/chat/sessions/{session_id}/messages", json=future_payload
-        )
+        sent = await client.post(f"/v1/chat/sessions/{session_id}/messages", json=future_payload)
     assert sessions.status_code == 200, sessions.text
     listed = sessions.json()["sessions"][0]
     assert listed["participant_dids"] == ["did:aw:bob"]
@@ -3114,19 +2933,13 @@ async def test_encrypted_group_chat_excludes_left_participant_from_future_wraps(
         UUID(future_message_id),
     )
     stored = json.loads(stored)
-    delivery_wraps = [
-        wrap for wrap in stored["key_wraps"] if wrap["wrap_purpose"] == "delivery"
-    ]
+    delivery_wraps = [wrap for wrap in stored["key_wraps"] if wrap["wrap_purpose"] == "delivery"]
     sender_copy_wraps = [
         wrap for wrap in stored["key_wraps"] if wrap["wrap_purpose"] == "sender_copy"
     ]
-    assert [recipient["stable_id"] for recipient in stored["recipients"]] == [
-        "did:aw:bob"
-    ]
+    assert [recipient["stable_id"] for recipient in stored["recipients"]] == ["did:aw:bob"]
     assert [wrap["recipient_stable_id"] for wrap in delivery_wraps] == ["did:aw:bob"]
-    assert [wrap["recipient_stable_id"] for wrap in sender_copy_wraps] == [
-        "did:aw:alice"
-    ]
+    assert [wrap["recipient_stable_id"] for wrap in sender_copy_wraps] == ["did:aw:alice"]
     assert "did:aw:carol" not in json.dumps(stored)
 
 
@@ -3196,9 +3009,7 @@ async def test_create_chat_session_accepts_cross_team_to_address(aweb_cloud_db):
         **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body),
         "Content-Type": "application/json",
     }
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/chat/sessions", content=body, headers=headers)
 
     assert resp.status_code == 200, resp.text
@@ -3288,12 +3099,7 @@ async def test_cross_team_same_registry_chat_creates_bound_contact_without_looku
     app.dependency_overrides[get_messaging_auth] = auth_override
     session_id = str(uuid4())
     message_id = str(uuid4())
-    timestamp = (
-        datetime.now(timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     signed_payload = canonical_json_bytes(
         {
             "body": "same registry chat",
@@ -3322,9 +3128,7 @@ async def test_cross_team_same_registry_chat_creates_bound_contact_without_looku
         "signed_payload": signed_payload,
     }
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.post("/v1/chat/sessions", json=payload)
 
     assert response.status_code == 200, response.text
@@ -3409,9 +3213,7 @@ async def test_create_chat_session_external_address_without_delivery_origin_fail
         **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body),
         "Content-Type": "application/json",
     }
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/chat/sessions", content=body, headers=headers)
 
     assert resp.status_code == 424, resp.text
@@ -3478,9 +3280,7 @@ async def test_create_chat_session_hosted_handle_without_delivery_origin_fails_c
         **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body),
         "Content-Type": "application/json",
     }
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/chat/sessions", content=body, headers=headers)
 
     assert resp.status_code == 424, resp.text
@@ -3531,9 +3331,7 @@ async def test_create_chat_session_rejects_signed_existing_session_without_bindi
         )
 
     app.dependency_overrides[get_messaging_auth] = _alice_auth
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         first = await client.post(
             "/v1/chat/sessions",
             json={"to_addresses": ["acme.com/bob"], "message": "first"},
@@ -3555,9 +3353,7 @@ async def test_create_chat_session_rejects_signed_existing_session_without_bindi
         }
     )
     app.dependency_overrides[get_messaging_auth] = _bob_auth
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         reply = await client.post(
             "/v1/chat/sessions",
             json={
@@ -3572,10 +3368,7 @@ async def test_create_chat_session_rejects_signed_existing_session_without_bindi
         )
 
     assert reply.status_code == 409, reply.text
-    assert (
-        reply.json()["detail"]
-        == "Signed chat message must bind the existing session_id"
-    )
+    assert reply.json()["detail"] == "Signed chat message must bind the existing session_id"
     row = await aweb_cloud_db.aweb_db.fetch_one(
         """
         SELECT COUNT(*)::int AS count
@@ -3633,9 +3426,7 @@ async def test_create_chat_session_rejects_to_address_self_chat(aweb_cloud_db):
         **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body),
         "Content-Type": "application/json",
     }
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/chat/sessions", content=body, headers=headers)
 
     assert resp.status_code == 400, resp.text
@@ -3682,9 +3473,7 @@ async def test_create_chat_session_to_external_did_first_contact_fails_closed(
         **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body),
         "Content-Type": "application/json",
     }
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/chat/sessions", content=body, headers=headers)
 
     assert resp.status_code == 422, resp.text
@@ -3734,12 +3523,7 @@ async def test_create_chat_session_resolves_tilde_alias_cross_team(aweb_cloud_db
     app.dependency_overrides[get_messaging_auth] = _auth_override
 
     message_id = str(uuid4())
-    timestamp = (
-        datetime.now(timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     signed_payload = json.dumps(
         {
             "type": "chat",
@@ -3760,9 +3544,7 @@ async def test_create_chat_session_resolves_tilde_alias_cross_team(aweb_cloud_db
         "timestamp": timestamp,
         "signed_payload": signed_payload,
     }
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/chat/sessions", json=payload)
 
     assert resp.status_code == 200, resp.text
@@ -3825,9 +3607,7 @@ async def test_create_chat_session_rejects_invalid_tilde_alias_targets(
 
     app.dependency_overrides[get_messaging_auth] = _auth_override
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post(
             "/v1/chat/sessions", json={"to_aliases": [target], "message": "hello"}
         )
@@ -3897,9 +3677,7 @@ async def test_create_chat_session_mutation_context_includes_from_did_aw(aweb_cl
         **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body),
         "Content-Type": "application/json",
     }
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/chat/sessions", content=body, headers=headers)
 
     assert resp.status_code == 200, resp.text
@@ -3943,9 +3721,7 @@ async def test_create_chat_session_to_did_does_not_create_unresolved_identity_co
         **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body),
         "Content-Type": "application/json",
     }
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/chat/sessions", content=body, headers=headers)
 
     assert resp.status_code == 200, resp.text
@@ -4017,14 +3793,10 @@ async def test_create_chat_session_team_and_contacts_accepts_verified_same_team_
     payload = {"to_aliases": ["bob"], "message": "team delivery"}
     body = json.dumps(payload).encode()
     headers = {
-        **_signed_team_headers(
-            alice_sk, alice_did_key, "backend:acme.com", cert_header, body
-        ),
+        **_signed_team_headers(alice_sk, alice_did_key, "backend:acme.com", cert_header, body),
         "Content-Type": "application/json",
     }
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/chat/sessions", content=body, headers=headers)
 
     assert resp.status_code == 200, resp.text
@@ -4077,9 +3849,7 @@ async def test_create_chat_session_to_global_address_allows_explicit_inbound_mod
         **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body),
         "Content-Type": "application/json",
     }
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/chat/sessions", content=body, headers=headers)
 
     assert resp.status_code == 200, resp.text
@@ -4121,9 +3891,7 @@ async def test_create_chat_session_global_recipient_null_inbound_mode_fails_migr
         **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body),
         "Content-Type": "application/json",
     }
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/chat/sessions", content=body, headers=headers)
 
     assert resp.status_code == 403, resp.text
@@ -4175,9 +3943,7 @@ async def test_create_chat_session_to_address_local_ephemeral_without_route_is_n
         **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body),
         "Content-Type": "application/json",
     }
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         # This router-only app omits the production exception renderer.
         with pytest.raises(FederationAuthorityError) as refused:
             await client.post("/v1/chat/sessions", content=body, headers=headers)
@@ -4187,15 +3953,11 @@ async def test_create_chat_session_to_address_local_ephemeral_without_route_is_n
     assert refused.value.retryable is False
     assert "Local recipient only accepts" in str(refused.value.__cause__)
     assert (
-        await aweb_cloud_db.aweb_db.fetch_value(
-            "SELECT COUNT(*) FROM {{tables.chat_messages}}"
-        )
+        await aweb_cloud_db.aweb_db.fetch_value("SELECT COUNT(*) FROM {{tables.chat_messages}}")
         == 0
     )
     assert (
-        await aweb_cloud_db.aweb_db.fetch_value(
-            "SELECT COUNT(*) FROM {{tables.chat_sessions}}"
-        )
+        await aweb_cloud_db.aweb_db.fetch_value("SELECT COUNT(*) FROM {{tables.chat_sessions}}")
         == 0
     )
 
@@ -4237,9 +3999,7 @@ async def test_create_chat_session_to_address_does_not_fall_back_to_local_persis
         **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body),
         "Content-Type": "application/json",
     }
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/chat/sessions", content=body, headers=headers)
 
     assert resp.status_code == 404, resp.text
@@ -4290,9 +4050,7 @@ async def test_create_chat_session_to_address_uses_same_team_local_recipient_whe
         "to_addresses": ["otherco.com/bob"],
         "message": f"same team hidden {recipient_identity_scope}",
     }
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/chat/sessions", json=payload)
 
     assert resp.status_code == 200, resp.text
@@ -4340,9 +4098,7 @@ async def test_create_chat_session_to_address_rejects_cross_team_local_persisten
     app.dependency_overrides[get_messaging_auth] = _auth_override
 
     payload = {"to_addresses": ["otherco.com/bob"], "message": "cross team hidden"}
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/chat/sessions", json=payload)
 
     assert resp.status_code == 404, resp.text
@@ -4384,9 +4140,7 @@ async def test_create_chat_session_to_did_and_address_uses_local_persistent_when
         "to_addresses": ["otherco.com/bob"],
         "message": "local bound",
     }
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/chat/sessions", json=payload)
 
     assert resp.status_code == 200, resp.text
@@ -4461,9 +4215,7 @@ async def test_create_chat_session_to_private_address_uses_client_recipient_bind
         **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body),
         "Content-Type": "application/json",
     }
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/chat/sessions", content=body, headers=headers)
 
     assert resp.status_code == 200, resp.text
@@ -4540,9 +4292,7 @@ async def test_create_chat_session_to_private_address_rejects_unverified_client_
         **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body),
         "Content-Type": "application/json",
     }
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/chat/sessions", content=body, headers=headers)
 
     assert resp.status_code == 404, resp.text
@@ -4581,9 +4331,7 @@ async def _signed_local_chat_app(aweb_cloud_db):
     return app, alice_sk, alice_did_key
 
 
-def _signed_local_chat_payload(
-    alice_sk, alice_did_key, *, timestamp, include_signed_payload=True
-):
+def _signed_local_chat_payload(alice_sk, alice_did_key, *, timestamp, include_signed_payload=True):
     session_id = str(uuid4())
     message_id = str(uuid4())
     signed_payload = canonical_json_bytes(
@@ -4619,12 +4367,7 @@ async def test_signed_plaintext_chat_rejects_non_base64_signature_before_storage
     aweb_cloud_db,
 ):
     app, alice_sk, alice_did_key = await _signed_local_chat_app(aweb_cloud_db)
-    timestamp = (
-        datetime.now(timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     message_id, payload = _signed_local_chat_payload(
         alice_sk,
         alice_did_key,
@@ -4632,9 +4375,7 @@ async def test_signed_plaintext_chat_rejects_non_base64_signature_before_storage
     )
     payload["signature"] += "!!!!"
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.post("/v1/chat/sessions", json=payload)
 
     assert response.status_code == 422, response.text
@@ -4656,10 +4397,7 @@ async def test_signed_plaintext_chat_rejects_timestamp_outside_federation_window
 ):
     app, alice_sk, alice_did_key = await _signed_local_chat_app(aweb_cloud_db)
     timestamp = (
-        (
-            datetime.now(timezone.utc).replace(microsecond=0)
-            + timedelta(seconds=offset_seconds)
-        )
+        (datetime.now(timezone.utc).replace(microsecond=0) + timedelta(seconds=offset_seconds))
         .isoformat()
         .replace("+00:00", "Z")
     )
@@ -4669,9 +4407,7 @@ async def test_signed_plaintext_chat_rejects_timestamp_outside_federation_window
         timestamp=timestamp,
     )
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.post("/v1/chat/sessions", json=payload)
 
     assert response.status_code == 422, response.text
@@ -4685,9 +4421,7 @@ async def test_signed_plaintext_chat_stores_server_time_and_preserves_attestatio
     aweb_cloud_db,
 ):
     app, alice_sk, alice_did_key = await _signed_local_chat_app(aweb_cloud_db)
-    attested_at = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(
-        minutes=4
-    )
+    attested_at = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(minutes=4)
     message_id, payload = _signed_local_chat_payload(
         alice_sk,
         alice_did_key,
@@ -4695,9 +4429,7 @@ async def test_signed_plaintext_chat_stores_server_time_and_preserves_attestatio
     )
 
     before = datetime.now(timezone.utc)
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.post("/v1/chat/sessions", json=payload)
     after = datetime.now(timezone.utc)
 
@@ -4714,12 +4446,7 @@ async def test_signed_plaintext_chat_stores_server_time_and_preserves_attestatio
 @pytest.mark.asyncio
 async def test_signed_plaintext_chat_requires_signed_payload(aweb_cloud_db):
     app, alice_sk, alice_did_key = await _signed_local_chat_app(aweb_cloud_db)
-    timestamp = (
-        datetime.now(timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     _, payload = _signed_local_chat_payload(
         alice_sk,
         alice_did_key,
@@ -4727,9 +4454,7 @@ async def test_signed_plaintext_chat_requires_signed_payload(aweb_cloud_db):
         include_signed_payload=False,
     )
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.post("/v1/chat/sessions", json=payload)
 
     assert response.status_code == 422, response.text
@@ -4775,12 +4500,7 @@ async def test_create_chat_session_accepts_signed_from_did_key_for_team_context(
     app.dependency_overrides[get_messaging_auth] = _team_auth_override
 
     message_id = "11111111-1111-4111-8111-111111111111"
-    timestamp = (
-        datetime.now(timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     signed_payload = canonical_json_bytes(
         {
             "body": "hello bob",
@@ -4803,9 +4523,7 @@ async def test_create_chat_session_accepts_signed_from_did_key_for_team_context(
         "message_id": message_id,
         "timestamp": timestamp,
     }
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/chat/sessions", json=payload)
 
     assert resp.status_code == 200, resp.text
@@ -4850,12 +4568,7 @@ async def test_create_chat_session_rejects_signed_payload_body_mismatch(aweb_clo
 
     app.dependency_overrides[get_messaging_auth] = _team_auth_override
 
-    timestamp = (
-        datetime.now(timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     session_id = "11111111-aaaa-4aaa-8aaa-111111111111"
     message_id = "11111111-1111-4111-8111-111111111111"
     signed_payload = canonical_json_bytes(
@@ -4882,9 +4595,7 @@ async def test_create_chat_session_rejects_signed_payload_body_mismatch(aweb_clo
         "message_id": message_id,
         "timestamp": timestamp,
     }
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/chat/sessions", json=payload)
 
     assert resp.status_code == 422, resp.text
@@ -4929,12 +4640,7 @@ async def test_create_chat_session_rejects_signed_payload_leaving_mismatch(
 
     app.dependency_overrides[get_messaging_auth] = _team_auth_override
 
-    timestamp = (
-        datetime.now(timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     message_id = "12111111-1111-4111-8111-111111111111"
     signed_payload = canonical_json_bytes(
         {
@@ -4959,9 +4665,7 @@ async def test_create_chat_session_rejects_signed_payload_leaving_mismatch(
         "message_id": message_id,
         "timestamp": timestamp,
     }
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/chat/sessions", json=payload)
 
     assert resp.status_code == 422, resp.text
@@ -5006,12 +4710,7 @@ async def test_create_chat_session_rejects_signed_payload_wait_seconds_mismatch(
 
     app.dependency_overrides[get_messaging_auth] = _team_auth_override
 
-    timestamp = (
-        datetime.now(timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     message_id = "13111111-1111-4111-8111-111111111111"
     signed_payload = canonical_json_bytes(
         {
@@ -5036,9 +4735,7 @@ async def test_create_chat_session_rejects_signed_payload_wait_seconds_mismatch(
         "message_id": message_id,
         "timestamp": timestamp,
     }
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/chat/sessions", json=payload)
 
     assert resp.status_code == 422, resp.text
@@ -5083,12 +4780,7 @@ async def test_create_chat_session_rejects_signed_payload_recipient_mismatch(
 
     app.dependency_overrides[get_messaging_auth] = _team_auth_override
 
-    timestamp = (
-        datetime.now(timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     message_id = "14111111-1111-4111-8111-111111111111"
     signed_payload = canonical_json_bytes(
         {
@@ -5112,9 +4804,7 @@ async def test_create_chat_session_rejects_signed_payload_recipient_mismatch(
         "message_id": message_id,
         "timestamp": timestamp,
     }
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/chat/sessions", json=payload)
 
     assert resp.status_code == 422, resp.text
@@ -5160,12 +4850,7 @@ async def test_create_chat_session_rejects_partial_signed_recipient_binding_for_
 
     app.dependency_overrides[get_messaging_auth] = _team_auth_override
 
-    timestamp = (
-        datetime.now(timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     message_id = "17111111-1111-4111-8111-111111111111"
     signed_payload = canonical_json_bytes(
         {
@@ -5189,9 +4874,7 @@ async def test_create_chat_session_rejects_partial_signed_recipient_binding_for_
         "message_id": message_id,
         "timestamp": timestamp,
     }
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/chat/sessions", json=payload)
 
     assert resp.status_code == 422, resp.text
@@ -5236,12 +4919,7 @@ async def test_create_chat_session_rejects_signed_payload_from_stable_id_mismatc
 
     app.dependency_overrides[get_messaging_auth] = _team_auth_override
 
-    timestamp = (
-        datetime.now(timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     message_id = "15111111-1111-4111-8111-111111111111"
     signed_payload = canonical_json_bytes(
         {
@@ -5265,9 +4943,7 @@ async def test_create_chat_session_rejects_signed_payload_from_stable_id_mismatc
         "message_id": message_id,
         "timestamp": timestamp,
     }
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/chat/sessions", json=payload)
 
     assert resp.status_code == 422, resp.text
@@ -5310,12 +4986,7 @@ async def test_create_chat_session_rejects_signed_payload_from_mismatch(aweb_clo
 
     app.dependency_overrides[get_messaging_auth] = _team_auth_override
 
-    timestamp = (
-        datetime.now(timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     message_id = "16111111-1111-4111-8111-111111111111"
     signed_payload = canonical_json_bytes(
         {
@@ -5338,9 +5009,7 @@ async def test_create_chat_session_rejects_signed_payload_from_mismatch(aweb_clo
         "message_id": message_id,
         "timestamp": timestamp,
     }
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/chat/sessions", json=payload)
 
     assert resp.status_code == 422, resp.text
@@ -5392,12 +5061,7 @@ async def test_chat_send_message_accepts_signed_from_did_key_for_team_context(
     app.dependency_overrides[get_messaging_auth] = _team_auth_override
 
     message_id = "22222222-2222-4222-8222-222222222222"
-    timestamp = (
-        datetime.now(timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     signed_payload = canonical_json_bytes(
         {
             "body": "follow-up",
@@ -5420,12 +5084,8 @@ async def test_chat_send_message_accepts_signed_from_did_key_for_team_context(
         "message_id": message_id,
         "timestamp": timestamp,
     }
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        resp = await client.post(
-            f"/v1/chat/sessions/{session_id}/messages", json=payload
-        )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(f"/v1/chat/sessions/{session_id}/messages", json=payload)
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
@@ -5480,12 +5140,7 @@ async def test_chat_send_message_rejects_legacy_bound_session_continuation(
         alice_agent_id,
         bob_agent_id,
     )
-    timestamp = (
-        datetime.now(timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     signed_payload = canonical_json_bytes(
         {
             "body": "legacy chat",
@@ -5529,9 +5184,7 @@ async def test_chat_send_message_rejects_legacy_bound_session_continuation(
 
     app.dependency_overrides[get_messaging_auth] = _bob_auth_override
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post(
             f"/v1/chat/sessions/{session_id}/messages", json={"body": "blocked"}
         )
@@ -5614,10 +5267,7 @@ async def test_chat_create_with_signed_fresh_session_bypasses_legacy_bound_sessi
         bob_agent_id,
     )
     legacy_timestamp = (
-        datetime.now(timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
+        datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     )
     legacy_signed_payload = canonical_json_bytes(
         {
@@ -5659,10 +5309,7 @@ async def test_chat_create_with_signed_fresh_session_bypasses_legacy_bound_sessi
     fresh_session_id = uuid4()
     fresh_message_id = uuid4()
     fresh_timestamp = (
-        datetime.now(timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
+        datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     )
     fresh_signed_payload = canonical_json_bytes(
         {
@@ -5678,9 +5325,7 @@ async def test_chat_create_with_signed_fresh_session_bypasses_legacy_bound_sessi
         }
     )
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post(
             "/v1/chat/sessions",
             json={
@@ -5745,12 +5390,7 @@ async def test_chat_send_message_rejects_signed_payload_body_mismatch(aweb_cloud
 
     app.dependency_overrides[get_messaging_auth] = _team_auth_override
 
-    timestamp = (
-        datetime.now(timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     message_id = "22222222-2222-4222-8222-222222222222"
     signed_payload = canonical_json_bytes(
         {
@@ -5774,12 +5414,8 @@ async def test_chat_send_message_rejects_signed_payload_body_mismatch(aweb_cloud
         "message_id": message_id,
         "timestamp": timestamp,
     }
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        resp = await client.post(
-            f"/v1/chat/sessions/{session_id}/messages", json=payload
-        )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(f"/v1/chat/sessions/{session_id}/messages", json=payload)
 
     assert resp.status_code == 422, resp.text
     assert (
@@ -5865,18 +5501,11 @@ async def test_chat_send_message_rejects_signed_payload_replayed_into_another_se
             "timestamp": timestamp,
         }
 
-    timestamp = (
-        datetime.now(timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     accepted_message_id = str(uuid4())
     replayed_message_id = str(uuid4())
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         accepted = await client.post(
             f"/v1/chat/sessions/{signed_session_id}/messages",
             json=_signed_for_signed_session(accepted_message_id, timestamp),
@@ -5939,12 +5568,7 @@ async def test_chat_send_message_rejects_signed_payload_hang_on_mismatch(aweb_cl
 
     app.dependency_overrides[get_messaging_auth] = _team_auth_override
 
-    timestamp = (
-        datetime.now(timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     message_id = "23222222-2222-4222-8222-222222222222"
     signed_payload = canonical_json_bytes(
         {
@@ -5969,12 +5593,8 @@ async def test_chat_send_message_rejects_signed_payload_hang_on_mismatch(aweb_cl
         "message_id": message_id,
         "timestamp": timestamp,
     }
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        resp = await client.post(
-            f"/v1/chat/sessions/{session_id}/messages", json=payload
-        )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(f"/v1/chat/sessions/{session_id}/messages", json=payload)
 
     assert resp.status_code == 422, resp.text
     assert (
@@ -6022,12 +5642,7 @@ async def test_chat_send_message_rejects_signed_payload_leaving_mismatch(aweb_cl
 
     app.dependency_overrides[get_messaging_auth] = _team_auth_override
 
-    timestamp = (
-        datetime.now(timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     message_id = "24222222-2222-4222-8222-222222222222"
     signed_payload = canonical_json_bytes(
         {
@@ -6052,12 +5667,8 @@ async def test_chat_send_message_rejects_signed_payload_leaving_mismatch(aweb_cl
         "message_id": message_id,
         "timestamp": timestamp,
     }
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        resp = await client.post(
-            f"/v1/chat/sessions/{session_id}/messages", json=payload
-        )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(f"/v1/chat/sessions/{session_id}/messages", json=payload)
 
     assert resp.status_code == 422, resp.text
     assert (
@@ -6107,12 +5718,7 @@ async def test_chat_send_message_rejects_signed_payload_recipient_mismatch(
 
     app.dependency_overrides[get_messaging_auth] = _team_auth_override
 
-    timestamp = (
-        datetime.now(timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     message_id = "24222222-2222-4222-8222-222222222222"
     signed_payload = canonical_json_bytes(
         {
@@ -6135,12 +5741,8 @@ async def test_chat_send_message_rejects_signed_payload_recipient_mismatch(
         "message_id": message_id,
         "timestamp": timestamp,
     }
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        resp = await client.post(
-            f"/v1/chat/sessions/{session_id}/messages", json=payload
-        )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(f"/v1/chat/sessions/{session_id}/messages", json=payload)
 
     assert resp.status_code == 422, resp.text
     assert (
@@ -6201,12 +5803,7 @@ async def test_chat_send_message_rejects_partial_signed_recipient_binding_for_gr
 
     app.dependency_overrides[get_messaging_auth] = _team_auth_override
 
-    timestamp = (
-        datetime.now(timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     message_id = "25222222-2222-4222-8222-222222222222"
     signed_payload = canonical_json_bytes(
         {
@@ -6229,12 +5826,8 @@ async def test_chat_send_message_rejects_partial_signed_recipient_binding_for_gr
         "message_id": message_id,
         "timestamp": timestamp,
     }
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        resp = await client.post(
-            f"/v1/chat/sessions/{session_id}/messages", json=payload
-        )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(f"/v1/chat/sessions/{session_id}/messages", json=payload)
 
     assert resp.status_code == 422, resp.text
     assert (
@@ -6312,9 +5905,7 @@ async def test_chat_pending_counts_mail_and_sessions_for_global_participant(
 
     app.dependency_overrides[get_messaging_auth] = _auth_override
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get("/v1/chat/pending")
 
     assert resp.status_code == 200, resp.text
@@ -6391,9 +5982,7 @@ async def test_chat_routes_use_team_alias_for_same_namespace_sender_without_publ
 
     app.dependency_overrides[get_messaging_auth] = _auth_override
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         history = await client.get(f"/v1/chat/sessions/{session_id}/messages")
         pending = await client.get("/v1/chat/pending")
         sessions = await client.get("/v1/chat/sessions")
@@ -6438,9 +6027,7 @@ async def test_cross_org_chat_create_persists_sender_address_without_local_metad
         )
 
     app.dependency_overrides[get_messaging_auth] = _sender_auth
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         created = await client.post(
             "/v1/chat/sessions", json={"to_dids": ["did:aw:amy"], "message": "hello"}
         )
@@ -6493,12 +6080,8 @@ async def test_cross_org_chat_create_persists_sender_address_without_local_metad
         stream = await client.get(
             f"/v1/chat/sessions/{session_id}/stream",
             params={
-                "deadline": (
-                    datetime.now(timezone.utc) + timedelta(seconds=1)
-                ).isoformat(),
-                "after": (
-                    datetime.now(timezone.utc) - timedelta(minutes=1)
-                ).isoformat(),
+                "deadline": (datetime.now(timezone.utc) + timedelta(seconds=1)).isoformat(),
+                "after": (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat(),
             },
         )
 
@@ -6541,9 +6124,7 @@ async def test_chat_create_derives_ephemeral_sender_address_from_team_namespace(
         )
 
     app.dependency_overrides[get_messaging_auth] = _alice_auth
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         created = await client.post(
             "/v1/chat/sessions", json={"to_aliases": ["bob"], "message": "hello"}
         )
@@ -6607,12 +6188,8 @@ async def test_cross_org_chat_reply_persists_sender_address_without_local_metada
         )
 
     app.dependency_overrides[get_messaging_auth] = _amy_auth
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        sent = await client.post(
-            f"/v1/chat/sessions/{session_id}/messages", json={"body": "reply"}
-        )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        sent = await client.post(f"/v1/chat/sessions/{session_id}/messages", json={"body": "reply"})
 
     assert sent.status_code == 200, sent.text
     stored = await aweb_cloud_db.aweb_db.fetch_value(
@@ -6631,9 +6208,7 @@ async def test_cross_org_chat_reply_persists_sender_address_without_local_metada
         )
 
     app.dependency_overrides[get_messaging_auth] = _gsk_auth
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         history = await client.get(f"/v1/chat/sessions/{session_id}/messages")
 
     assert history.status_code == 200, history.text
@@ -6689,13 +6264,9 @@ async def test_chat_pending_excludes_global_participant_from_waiting_lookup(
         return {key: [] for key in wanted}
 
     app.dependency_overrides[get_messaging_auth] = _auth_override
-    monkeypatch.setattr(
-        chat_routes, "get_waiting_agents_by_session", _fake_waiting_by_session
-    )
+    monkeypatch.setattr(chat_routes, "get_waiting_agents_by_session", _fake_waiting_by_session)
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get("/v1/chat/pending")
 
     assert resp.status_code == 200, resp.text
@@ -6746,9 +6317,7 @@ async def test_chat_pending_preserves_last_from_did_without_address_mapping(
 
     app.dependency_overrides[get_messaging_auth] = _auth_override
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get("/v1/chat/pending")
 
     assert resp.status_code == 200, resp.text
@@ -6816,9 +6385,7 @@ async def test_chat_pending_includes_last_from_stable_id_for_current_sender_key(
 
     app.dependency_overrides[get_messaging_auth] = _auth_override
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get("/v1/chat/pending")
 
     assert resp.status_code == 200, resp.text
@@ -6876,12 +6443,8 @@ async def test_chat_send_message_accepts_global_session_participant(aweb_cloud_d
     app.dependency_overrides[get_messaging_auth] = _auth_override
 
     payload = {"body": "follow-up"}
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        resp = await client.post(
-            f"/v1/chat/sessions/{session_id}/messages", json=payload
-        )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(f"/v1/chat/sessions/{session_id}/messages", json=payload)
 
     assert resp.status_code == 200, resp.text
     assert resp.json()["delivered"] is True
@@ -6946,9 +6509,7 @@ async def test_chat_history_and_dual_read_contract_for_global_participant(
 
     app.dependency_overrides[get_messaging_auth] = _auth_override
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         history = await client.get(f"/v1/chat/sessions/{session_id}/messages")
         published_client_read = await client.post(
             f"/v1/chat/sessions/{session_id}/read",
@@ -6973,9 +6534,7 @@ async def test_chat_history_and_dual_read_contract_for_global_participant(
             f"/v1/chat/sessions/{session_id}/messages",
             params={"unread_only": "true"},
         )
-        neither_shape = await client.post(
-            f"/v1/chat/sessions/{session_id}/read", json={}
-        )
+        neither_shape = await client.post(f"/v1/chat/sessions/{session_id}/read", json={})
 
     assert history.status_code == 200, history.text
     assert history.json()["messages"][0]["conversation_id"] == str(session_id)
@@ -6989,9 +6548,7 @@ async def test_chat_history_and_dual_read_contract_for_global_participant(
     assert unread_after_published_client_read.status_code == 200, (
         unread_after_published_client_read.text
     )
-    assert [
-        item["body"] for item in unread_after_published_client_read.json()["messages"]
-    ] == [
+    assert [item["body"] for item in unread_after_published_client_read.json()["messages"]] == [
         "exact only",
         "watermark only",
     ]
@@ -7066,9 +6623,7 @@ async def test_chat_history_includes_sender_stable_identity_for_current_key(
 
     app.dependency_overrides[get_messaging_auth] = _auth_override
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         history = await client.get(f"/v1/chat/sessions/{session_id}/messages")
 
     assert history.status_code == 200, history.text
@@ -7128,9 +6683,7 @@ async def test_chat_history_filters_by_message_id(aweb_cloud_db):
 
     app.dependency_overrides[get_messaging_auth] = _auth_override
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         history = await client.get(
             f"/v1/chat/sessions/{session_id}/messages?unread_only=true&message_id={second_message_id}"
         )
@@ -7143,9 +6696,7 @@ async def test_chat_history_filters_by_message_id(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
-async def test_chat_stream_accepts_global_session_participant(
-    aweb_cloud_db, monkeypatch
-):
+async def test_chat_stream_accepts_global_session_participant(aweb_cloud_db, monkeypatch):
     session_id = uuid4()
     created_at = datetime.now(timezone.utc) - timedelta(minutes=2)
     await aweb_cloud_db.aweb_db.execute(
@@ -7179,9 +6730,7 @@ async def test_chat_stream_accepts_global_session_participant(
     deadline = (datetime.now(timezone.utc) + timedelta(seconds=1)).isoformat()
     seen: dict[str, str] = {}
 
-    async def _fake_sse_events(
-        *, viewer_did: str, contact_owner_dids: list[str], **kwargs
-    ):
+    async def _fake_sse_events(*, viewer_did: str, contact_owner_dids: list[str], **kwargs):
         seen["viewer_did"] = viewer_did
         seen["contact_owner_dids"] = contact_owner_dids
         yield ": keepalive\n\n"
@@ -7346,9 +6895,7 @@ async def test_chat_session_list_accepts_global_session_participant(aweb_cloud_d
 
     app.dependency_overrides[get_messaging_auth] = _auth_override
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get("/v1/chat/sessions")
 
     assert resp.status_code == 200, resp.text
@@ -7432,9 +6979,7 @@ async def test_list_sessions_reads_page_sized_rows_not_every_session(aweb_cloud_
 
     app.dependency_overrides[get_messaging_auth] = _auth_override
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get(f"/v1/chat/sessions?limit={limit}")
 
     assert resp.status_code == 200, resp.text
@@ -7488,9 +7033,7 @@ async def test_list_sessions_reports_whether_the_limit_left_sessions_out(aweb_cl
 
     app.dependency_overrides[get_messaging_auth] = _auth_override
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         truncated = await client.get("/v1/chat/sessions?limit=2")
         exact = await client.get(f"/v1/chat/sessions?limit={session_count}")
         roomy = await client.get("/v1/chat/sessions?limit=50")

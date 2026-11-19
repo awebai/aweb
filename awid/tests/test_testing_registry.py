@@ -146,7 +146,10 @@ async def test_the_registry_without_redis_is_live_and_not_ready(database_url) ->
             live = await http.get("/live")
     assert unhealthy.value.status_code == 503
     assert unhealthy.value.body["checks"] == {
-        "redis": "error", "database": "ok", "schema": "awid", "rate_limiter": "NoOpRateLimiter",
+        "redis": "error",
+        "database": "ok",
+        "schema": "awid",
+        "rate_limiter": "NoOpRateLimiter",
     }
     assert (live.status_code, live.json()) == (200, {"status": "ok"})
 
@@ -168,7 +171,6 @@ async def test_fixture_namespace_custody_cannot_silently_change(database_url):
         assert namespace.controller_did == _did_key(original)
 
 
-
 @pytest.mark.asyncio
 async def test_fixture_dns_requires_a_published_namespace_authority(database_url):
     from awid.dns_verify import DnsVerificationError
@@ -178,4 +180,3 @@ async def test_fixture_dns_requires_a_published_namespace_authority(database_url
             await registry.namespace_authority("missing.example")
         assert str(refused.value).endswith("Register the namespace through ensure_namespace first.")
         assert not registry.transport.calls
-
