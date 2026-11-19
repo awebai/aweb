@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from aweb.messaging.mail_attribution import incoming_mail_snapshot_predicate
 from aweb.messaging.participant_succession import (
     MailSuccessionScope,
     load_mail_succession_scope,
@@ -198,22 +199,8 @@ async def _current_actionable_mail(
     aweb_db, *, inbox_dids: list[str], mail_scope: MailSuccessionScope
 ) -> list[dict[str, Any]]:
     """Return unread incoming mail using preloaded, exact thread evidence."""
-    args: list[Any] = [inbox_dids]
-    targets = ["m.to_did = ANY($1::text[])"]
-    senders = ["m.from_did = ANY($1::text[])"]
-    for dids, conversations in mail_scope.identity_threads:
-        did_param, conversation_param = len(args) + 1, len(args) + 2
-        args.extend((list(dids), list(conversations)))
-        for field, clauses in (("to_did", targets), ("from_did", senders)):
-            clauses.append(
-                f"(m.{field} = ANY(${did_param}::text[]) "
-                f"AND m.conversation_id = ANY(${conversation_param}::uuid[]))"
-            )
-    # Exact current targets retain legacy/no-conversation wake delivery. Extra
-    # identities require their recorded thread, on BOTH sides of attribution.
-    # A merged predecessor's outgoing mail is not incoming even if sent to H.
-    predicate = (
-        f"({' OR '.join(targets)}) AND NOT COALESCE(({' OR '.join(senders)}), FALSE)"
+    predicate = incoming_mail_snapshot_predicate(
+        inbox_dids=inbox_dids, scope=mail_scope
     )
     rows = await aweb_db.fetch_all(
         f"""
@@ -221,7 +208,7 @@ async def _current_actionable_mail(
             SELECT message_id, conversation_id, from_did, from_alias, from_address, subject, priority,
                    created_at, content_mode, message_version
             FROM {{{{tables.messages}}}} m
-            WHERE {predicate}
+            WHERE {predicate.sql}
               AND read_at IS NULL
         ),
         windowed AS (
@@ -246,7 +233,7 @@ async def _current_actionable_mail(
         FROM windowed
         ORDER BY created_at ASC, message_id ASC
         """,
-        *args,
+        *predicate.arguments,
     )
     sender_map = await lookup_identity_metadata_by_did(
         aweb_db,

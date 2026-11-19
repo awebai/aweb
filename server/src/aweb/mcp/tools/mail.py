@@ -1,6 +1,7 @@
 """MCP tools for async mail messaging."""
 
 from __future__ import annotations
+from aweb.messaging.sender_membership import SenderMembership, sender_memberships
 from aweb.messaging.recipients import RecipientIdentityBinding
 from aweb.client_address import request_client_address
 from aweb.messaging.mail_attribution import incoming_mail_sql
@@ -90,6 +91,7 @@ def mcp_mail_message_from_row(
     *,
     include_bodies: bool = True,
     hosted_plaintext=None,
+    sender_membership: SenderMembership | None = None,
 ) -> dict:
     content_mode = str(row.get("content_mode") or "legacy_plaintext_v1")
     encrypted = content_mode == "encrypted_v2"
@@ -123,6 +125,8 @@ def mcp_mail_message_from_row(
         "encrypted": encrypted,
         "decryptable": decryptable,
     }
+    if sender_membership is not None:
+        msg["sender_membership"] = sender_membership.model_dump()
     if encrypted and decryptable and include_bodies:
         msg.update(readable_attachments(getattr(hosted_plaintext, "attachments", None)))
         if not getattr(hosted_plaintext, "attachments_available", True):
@@ -453,7 +457,7 @@ async def check_inbox(
 
     rows = await aweb_db.fetch_all(
         f"""
-        SELECT message_id, conversation_id, from_agent_id, from_alias, from_address, to_alias,
+        SELECT team_id, message_id, conversation_id, from_agent_id, from_alias, from_address, to_alias,
                subject, body, priority, read_at, created_at,
                from_did, to_did, signature, signed_payload, content_mode, message_version,
                encrypted_envelope
@@ -467,6 +471,8 @@ async def check_inbox(
         bool(unread_only),
         limit_value,
     )
+
+    memberships = await sender_memberships(auth.request, db_infra, rows)
 
     # Auto-acknowledge unread messages
     unread_message_ids = [r["message_id"] for r in rows if r["read_at"] is None]
@@ -499,6 +505,9 @@ async def check_inbox(
             dict(r),
             include_bodies=include_bodies,
             hosted_plaintext=hosted_plaintext,
+            sender_membership=memberships[
+                (str(r.get("team_id") or ""), str(r.get("from_agent_id") or ""))
+            ],
         )
         if r["message_id"] in unread_message_ids:
             msg["read"] = True

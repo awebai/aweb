@@ -477,6 +477,13 @@ requires an active, nondeleted member with a certificate that is not revoked
 under the existing revocation check. A revoked or inactive member is
 `inactive`; missing provenance or unavailable revocation authority is `unknown`.
 The projection includes humans without publishing them in the agent roster.
+HTTP and MCP inbox and contact-mail reads use this same projection owner after
+participant authorization; MCP carries the stored delivery team and sender ID
+rather than selecting a different membership row. Incoming attribution lives
+in `aweb.messaging.mail_attribution`. Event wakes consume its preloaded
+thread-evidence form, retaining the establishment/reconcile snapshot rather
+than querying succession tables on every tick.
+
 Encrypted-envelope normalization never overwrites this server-attested field.
 
 For an addressless global sender, the client reports `verified` only when the

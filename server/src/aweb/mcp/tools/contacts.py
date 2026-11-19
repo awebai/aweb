@@ -6,6 +6,7 @@ import json
 from uuid import UUID
 
 from awid.federation_errors import FederationAuthorityError
+from aweb.messaging.sender_membership import sender_memberships
 from aweb.messaging.recipients import RecipientIdentityBinding
 from aweb.messaging.kinds import MessageKind
 from aweb.messaging.refusals import ContactIdentityBindingRequired
@@ -370,7 +371,7 @@ async def _read_mail_messages_from_target(
               )
               AND ca.did <> cb.did
         )
-        SELECT m.message_id, m.conversation_id, m.from_agent_id, m.from_did, m.to_did,
+        SELECT m.team_id, m.message_id, m.conversation_id, m.from_agent_id, m.from_did, m.to_did,
                m.from_alias, m.from_address, m.to_alias, m.subject, m.body, m.priority,
                m.read_at, m.created_at, m.signature, m.signed_payload, m.content_mode,
                m.message_version, m.encrypted_envelope
@@ -384,7 +385,17 @@ async def _read_mail_messages_from_target(
         target_addresses,
         limit,
     )
-    return [mcp_mail_message_from_row(dict(row), include_bodies=True) for row in rows]
+    memberships = await sender_memberships(auth.request, db_infra, rows)
+    return [
+        mcp_mail_message_from_row(
+            dict(row),
+            include_bodies=True,
+            sender_membership=memberships[
+                (str(row.get("team_id") or ""), str(row.get("from_agent_id") or ""))
+            ],
+        )
+        for row in rows
+    ]
 
 
 async def _read_chat_messages_from_target(
