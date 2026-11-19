@@ -164,8 +164,17 @@ async def _bind(tx, kind, message_id, context):
     if isinstance(envelope, str):
         envelope = json.loads(envelope)
     supplied = context.message.get("encrypted_envelope")
-    if row.get("content_mode") != "encrypted_v2" or envelope != supplied:
-        raise AttachmentError("attachment_conflict")
+    if not isinstance(supplied, dict) or not stored_message_matches(
+        row,
+        claim=StoredMessageClaim(
+            kind=MessageKind(kind),
+            message_id=UUID(message_id),
+            sender_did=binding.sender_did,
+            conversation_id=UUID(binding.conversation_id),
+            artifact=EncryptedReplayArtifact(envelope=supplied),
+        ),
+    ):
+        raise _attachment_retry_conflict()
     if binding.sender_did not in auth_dids(context.auth):
         raise AttachmentError("attachment_conflict")
     digest = sha256(canonical_json_bytes(envelope)).hexdigest()
