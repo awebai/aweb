@@ -19,7 +19,11 @@ class SenderMembership(BaseModel):
 
 
 async def sender_memberships(
-    request: Request | None, db, rows, *, member_rows: list[dict] | None = None,
+    request: Request | None,
+    db,
+    rows,
+    *,
+    member_rows: list[dict] | None = None,
 ) -> dict[tuple[str, str], SenderMembership]:
     """Project only stored sender IDs in their stored delivery teams.
 
@@ -28,7 +32,9 @@ async def sender_memberships(
     ``member_rows`` are the senders' agent rows when the caller read them with
     its messages; otherwise they are read here.
     """
-    keys = {(str(r.get("team_id") or ""), str(r.get("from_agent_id") or "")) for r in rows}
+    keys = {
+        (str(r.get("team_id") or ""), str(r.get("from_agent_id") or "")) for r in rows
+    }
     result = {key: SenderMembership(team_id=key[0]) for key in keys}
     if request is None:
         return result
@@ -60,7 +66,11 @@ async def sender_memberships(
             continue
         projection = result[key]
         projection.member_did_aw = str(member.get("did_aw") or "").strip() or None
-        if member["status"] != "active" or member.get("deleted_at") is not None or not member_key_current(member):
+        if (
+            member["status"] != "active"
+            or member.get("deleted_at") is not None
+            or not member_key_current(member)
+        ):
             projection.state = "inactive"
             continue
         certificate_id = str(member.get("certificate_id") or "").strip()
@@ -73,7 +83,9 @@ async def sender_memberships(
             except ValueError:
                 continue
             try:
-                revocations[team] = await _get_revoked_certificates(request, team, certificate_ids=team_certificates[team])
+                revocations[team] = await _get_revoked_certificates(
+                    request, team, certificate_ids=team_certificates[team]
+                )
             except HTTPException:
                 # The existing revocation helper logs dependency failures.
                 revocations[team] = None
