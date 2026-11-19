@@ -50,7 +50,9 @@ def _json_object(value: Any) -> Any:
     return value
 
 
-async def resolve_session_actor_did(db_infra, *, session_id: UUID, actor_dids: list[str]) -> str:
+async def resolve_session_actor_did(
+    db_infra, *, session_id: UUID, actor_dids: list[str]
+) -> str:
     """Return the caller's participant DID in a chat session, or "" when it is not a participant."""
     if not actor_dids:
         return ""
@@ -89,7 +91,9 @@ async def record_chat_session_wakes(aweb_db, *, session_id: UUID) -> None:
     record_did_wakes((row["did"] for row in rows), "chat")
 
 
-async def wake_chat_session_participants(aweb_db, publisher, *, session_id: UUID) -> None:
+async def wake_chat_session_participants(
+    aweb_db, publisher, *, session_id: UUID
+) -> None:
     """Wake every participant after a change only Redis records: waiting
     presence changes sender_waiting and lifts a viewer's own suppression."""
     if publisher is None:
@@ -101,7 +105,9 @@ async def wake_chat_session_participants(aweb_db, publisher, *, session_id: UUID
         logger.warning("Chat session wake failed for %s", session_id, exc_info=True)
 
 
-async def get_agent_by_id(db, *, agent_id: str, team_id: str | None = None) -> dict[str, Any] | None:
+async def get_agent_by_id(
+    db, *, agent_id: str, team_id: str | None = None
+) -> dict[str, Any] | None:
     aweb_db = db.get_manager("aweb")
     if team_id is None:
         row = await aweb_db.fetch_one(
@@ -140,7 +146,9 @@ async def get_agent_by_alias(db, *, team_id: str, alias: str) -> dict[str, Any] 
     return None if not row else dict(row)
 
 
-async def get_agents_by_aliases(db, *, team_id: str, aliases: list[str]) -> list[dict[str, Any]]:
+async def get_agents_by_aliases(
+    db, *, team_id: str, aliases: list[str]
+) -> list[dict[str, Any]]:
     if not aliases:
         return []
     aweb_db = db.get_manager("aweb")
@@ -270,11 +278,15 @@ async def validate_session_id(
     actor_dids: list[str],
 ) -> bool:
     """Allow a fresh UUID or an existing chat's active caller; never grant membership."""
-    exists, _ = await _chat_session_state(db, session_id=session_id, actor_dids=actor_dids)
+    exists, _ = await _chat_session_state(
+        db, session_id=session_id, actor_dids=actor_dids
+    )
     return exists
 
 
-async def _chat_session_state(db, *, session_id: UUID, actor_dids: list[str]) -> tuple[bool, bool]:
+async def _chat_session_state(
+    db, *, session_id: UUID, actor_dids: list[str]
+) -> tuple[bool, bool]:
     """validate_session_id's answer, and whether the session has its conversation row."""
     row = await db.get_manager("aweb").fetch_one(
         """
@@ -288,12 +300,16 @@ async def _chat_session_state(db, *, session_id: UUID, actor_dids: list[str]) ->
         FULL OUTER JOIN {{tables.chat_sessions}} s ON s.session_id = c.conversation_id
         WHERE COALESCE(c.conversation_id, s.session_id) = $1
         """,
-        session_id, actor_dids,
+        session_id,
+        actor_dids,
     )
     if row is None:
         return False, False
-    if (row["conversation_type"] not in (None, "chat")
-            or row["session_id"] is None or not row["caller_participant"]):
+    if (
+        row["conversation_type"] not in (None, "chat")
+        or row["session_id"] is None
+        or not row["caller_participant"]
+    ):
         raise ConflictError("session_id is not an existing chat session of the caller")
     return True, row["conversation_type"] is not None
 
@@ -307,11 +323,14 @@ async def _backfill_legacy_chat_conversation(db, *, session_id: UUID) -> None:
             session_id,
         )
         conversation = await tx.fetch_one(
-            "SELECT conversation_type FROM {{tables.conversations}} WHERE conversation_id = $1", session_id,
+            "SELECT conversation_type FROM {{tables.conversations}} WHERE conversation_id = $1",
+            session_id,
         )
         if conversation is not None:
             if conversation["conversation_type"] != "chat":
-                raise ConflictError("session_id is not an existing chat session of the caller")
+                raise ConflictError(
+                    "session_id is not an existing chat session of the caller"
+                )
             return
         participants = await tx.fetch_all(
             """
@@ -322,11 +341,20 @@ async def _backfill_legacy_chat_conversation(db, *, session_id: UUID) -> None:
             """,
             session_id,
         )
-        creator = next((p["did"] for p in participants
-                        if session["created_by"] in (p["did"], p["alias"])), participants[0]["did"])
+        creator = next(
+            (
+                p["did"]
+                for p in participants
+                if session["created_by"] in (p["did"], p["alias"])
+            ),
+            participants[0]["did"],
+        )
         await _ensure_chat_conversation(
-            tx, session_id=session_id, team_id=session["team_id"],
-            created_by_did=creator, participants=participants,
+            tx,
+            session_id=session_id,
+            team_id=session["team_id"],
+            created_by_did=creator,
+            participants=participants,
         )
 
 
@@ -356,19 +384,25 @@ async def ensure_session(
                 "alias": (row.get("alias") or did).strip(),
                 "address": (row.get("address") or "").strip() or None,
                 "delivery_origin": delivery_origin,
-                "current_did_key": (row.get("current_did_key") or row.get("did_key") or "").strip() or None,
-                "transport_hint": transport_hint or (
-                    "federation:" + delivery_origin if delivery_origin else "local"
-                ),
+                "current_did_key": (
+                    row.get("current_did_key") or row.get("did_key") or ""
+                ).strip()
+                or None,
+                "transport_hint": transport_hint
+                or ("federation:" + delivery_origin if delivery_origin else "local"),
             }
         )
     if len(normalized_participants) < 2:
         raise ServiceError("Chat session requires at least two participants")
 
-    actor = normalized_participants[0]  # Supplied by the authenticated adapter, never by target resolution.
+    actor = normalized_participants[
+        0
+    ]  # Supplied by the authenticated adapter, never by target resolution.
     actor_dids = [actor["did"]]
     if session_id is not None:
-        exists, has_conversation = await _chat_session_state(db, session_id=session_id, actor_dids=actor_dids)
+        exists, has_conversation = await _chat_session_state(
+            db, session_id=session_id, actor_dids=actor_dids
+        )
         if exists:
             if not has_conversation:
                 await _backfill_legacy_chat_conversation(db, session_id=session_id)
@@ -381,7 +415,9 @@ async def ensure_session(
             did_b=normalized_participants[1]["did"],
         )
         if existing is not None:
-            _, has_conversation = await _chat_session_state(db, session_id=existing, actor_dids=actor_dids)
+            _, has_conversation = await _chat_session_state(
+                db, session_id=existing, actor_dids=actor_dids
+            )
             if not has_conversation:
                 await _backfill_legacy_chat_conversation(db, session_id=existing)
             return existing
@@ -401,7 +437,11 @@ async def ensure_session(
             if not row:
                 raise ServiceError("Failed to create chat session")
             session_id = row["session_id"]
-            created_by_did = created_by if created_by.startswith("did:") else normalized_participants[0]["did"]
+            created_by_did = (
+                created_by
+                if created_by.startswith("did:")
+                else normalized_participants[0]["did"]
+            )
 
             for participant in normalized_participants:
                 await tx.execute(
@@ -523,9 +563,17 @@ async def send_in_session(
         signed_payload,
         content_mode,
         int(message_version or 1),
-        json.dumps(encrypted_envelope, sort_keys=True, separators=(",", ":")) if encrypted_envelope is not None else None,
+        json.dumps(encrypted_envelope, sort_keys=True, separators=(",", ":"))
+        if encrypted_envelope is not None
+        else None,
         encrypted_metadata.get("encrypted_ciphertext"),
-        json.dumps(encrypted_metadata.get("encrypted_key_wraps"), sort_keys=True, separators=(",", ":")) if encrypted_metadata.get("encrypted_key_wraps") is not None else None,
+        json.dumps(
+            encrypted_metadata.get("encrypted_key_wraps"),
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        if encrypted_metadata.get("encrypted_key_wraps") is not None
+        else None,
         encrypted_metadata.get("encrypted_ciphertext_hash"),
         encrypted_metadata.get("encrypted_ciphertext_size"),
         encrypted_metadata.get("encrypted_key_wraps_hash"),
@@ -536,7 +584,11 @@ async def send_in_session(
         effective_created_at,
         json.dumps(id_chain) if id_chain is not None else None,
     )
-    msg_row = {"message_id": inserted["message_id"], "created_at": inserted["created_at"], "seq": inserted["seq"]}
+    msg_row = {
+        "message_id": inserted["message_id"],
+        "created_at": inserted["created_at"],
+        "seq": inserted["seq"],
+    }
 
     # Departed participants are woken too: leaving does not end their pending state.
     record_did_wakes(inserted["wake_dids"] or (), "chat")
@@ -657,21 +709,28 @@ async def get_pending_conversations(
             "participant_dids": list(row["participant_dids"] or []),
             "participant_addresses": list(row["participant_addresses"] or []),
             "last_message": row["last_message"] or "",
-            "last_message_content_mode": row.get("last_message_content_mode") or "legacy_plaintext_v1",
+            "last_message_content_mode": row.get("last_message_content_mode")
+            or "legacy_plaintext_v1",
             "last_message_version": int(row.get("last_message_version") or 1),
             "last_encrypted_envelope": _json_object(row.get("last_encrypted_envelope")),
             "last_from": row["last_from"] or "",
             "last_from_address": row["last_from_address"] or "",
             "last_from_did": row.get("last_from_did"),
             "last_from_agent_id": (
-                str(row["last_from_agent_id"]) if row.get("last_from_agent_id") else None
+                str(row["last_from_agent_id"])
+                if row.get("last_from_agent_id")
+                else None
             ),
             "unread_count": int(row["unread_count"] or 0),
             "last_activity": row["last_activity"],
-            "wait_seconds": int(row["wait_seconds"]) if row.get("wait_seconds") is not None else None,
+            "wait_seconds": int(row["wait_seconds"])
+            if row.get("wait_seconds") is not None
+            else None,
             "wait_started_at": row.get("wait_started_at"),
             "wait_started_by": (
-                str(row["wait_started_by"]) if row.get("wait_started_by") is not None else None
+                str(row["wait_started_by"])
+                if row.get("wait_started_by") is not None
+                else None
             ),
             "extended_wait_seconds": int(row["extended_wait_seconds"] or 0),
         }
@@ -762,7 +821,9 @@ async def get_message_history(
             "message_id": str(row["message_id"]),
             "seq": row["seq"],
             "from_agent_id": (
-                str(row["from_agent_id"]) if row.get("from_agent_id") is not None else None
+                str(row["from_agent_id"])
+                if row.get("from_agent_id") is not None
+                else None
             ),
             "from_did": row.get("from_did"),
             "from_alias": row["from_alias"],
@@ -770,7 +831,9 @@ async def get_message_history(
             "body": row["body"],
             "created_at": row["created_at"],
             "sender_leaving": bool(row["sender_leaving"]),
-            "reply_to": str(row["reply_to"]) if row.get("reply_to") is not None else None,
+            "reply_to": str(row["reply_to"])
+            if row.get("reply_to") is not None
+            else None,
             "signature": row.get("signature"),
             "signed_payload": row.get("signed_payload"),
             "id_chain": _json_object(row.get("id_chain")),
@@ -795,7 +858,9 @@ async def mark_messages_read(
     if not message_ids:
         raise ValidationError("message_ids is required")
     if len(message_ids) > MAX_CHAT_MARK_READ_IDS:
-        raise ValidationError(f"message_ids cannot exceed {MAX_CHAT_MARK_READ_IDS} items")
+        raise ValidationError(
+            f"message_ids cannot exceed {MAX_CHAT_MARK_READ_IDS} items"
+        )
     requested_ids = list(dict.fromkeys(UUID(message_id) for message_id in message_ids))
 
     is_participant = await aweb_db.fetch_one(
