@@ -564,11 +564,14 @@ func verifyHostedInviteAcceptedAttribution(ctx context.Context, responseRequest 
 		if resp.IDChain != nil {
 			expected, err := awid.EncodeIDChainHeader(creation.MembershipChain)
 			if err != nil {
-				return nil, fmt.Errorf("encode selected membership chain: %w", err)
+				return nil, fmt.Errorf("encode selected membership chain: %w; restore the selected identity's original chain and retry the same invite", err)
 			}
 			actual, err := awid.EncodeIDChainHeader(map[string]any(resp.IDChain))
-			if err != nil || expected != actual {
-				return nil, errors.New("membership-only acceptance changed the original chain")
+			if err != nil {
+				return nil, fmt.Errorf("encode accepted membership chain: %w; retain the original home and invite and ask the service operator to repair its chain response before retrying", err)
+			}
+			if expected != actual {
+				return nil, errors.New("membership-only acceptance changed the original chain; retain the original home and invite and ask the service operator to return the selected chain before retrying")
 			}
 		}
 	} else {
