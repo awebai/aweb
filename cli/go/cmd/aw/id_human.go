@@ -103,24 +103,10 @@ func runIDHumanInit(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// agentRuntimeMarkers are environment variables an agent runtime sets for
-// the processes it runs. Finding one refuses a human-only command; their
-// absence proves nothing, and a terminal is still required.
-var agentRuntimeMarkers = []string{"OATS_INSTANCE_HOME", "OATS_INSTANCE", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CODEX_THREAD_ID"}
-
-// humanAtTerminal refuses a human-only command that no human can answer:
-// one without a controlling terminal, or one run inside an agent runtime.
-// Both refuse human_approval_required. It is a barrier against accidents,
-// not proof that a human is present.
+// humanAtTerminal preserves the identity command's public refusal code.
 func humanAtTerminal() error {
-	required := &awid.IDCertificateError{Code: "human_approval_required"}
-	for _, name := range agentRuntimeMarkers {
-		if strings.TrimSpace(os.Getenv(name)) != "" {
-			return fmt.Errorf("this command needs a human at a terminal; it refuses inside an agent runtime (%s is set): %w", name, required)
-		}
-	}
-	if !awid.ControllingTerminalAttached() {
-		return fmt.Errorf("this command needs a human at an interactive terminal: %w", required)
+	if err := requireHumanTerminal(awid.ControllingTerminalAttached); err != nil {
+		return fmt.Errorf("%w: %w", err, &awid.IDCertificateError{Code: "human_approval_required"})
 	}
 	return nil
 }

@@ -131,12 +131,12 @@ func runAppHuman(cmd *cobra.Command, args []string) error {
 		}
 	}
 	if len(protected) > 0 {
-		if err := protectedTerminal("protected_input_unavailable", terminalAttached); err != nil {
+		if err := protectedTerminal(protectedInputUnavailable, terminalAttached); err != nil {
 			return err
 		}
 	}
 	if len(action.TerminalOutput) > 0 {
-		if err := protectedTerminal("protected_output_unavailable", terminalAttached); err != nil {
+		if err := protectedTerminal(protectedOutputUnavailable, terminalAttached); err != nil {
 			return err
 		}
 	}
