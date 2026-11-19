@@ -397,7 +397,7 @@ async def deliver_federated_chat(
             raise DeliveryRefusal(
                 status_code=HTTPStatus.FORBIDDEN, detail="identity_binding_mismatch"
             )
-        await require_agent_chat(db, [local], registry_client=runtime.registry_client)
+        await require_agent_chat(db, [local])
         await authorize_message_delivery(
             db,
             recipient_agent=local,
@@ -1063,7 +1063,6 @@ async def _resolve_named_recipients(
     *,
     runtime: MessagingRuntime,
     source: str,
-    registry_client,
     auth: MessagingAuth,
     to_aliases: list[str],
     to_dids: list[str],
@@ -1155,9 +1154,7 @@ async def _resolve_named_recipients(
         )
         resolved[str(row.get("did_aw") or row.get("did_key") or "").strip()] = row
 
-    await require_agent_chat(
-        db, list(resolved.values()), registry_client=registry_client
-    )
+    await require_agent_chat(db, list(resolved.values()))
     for row in resolved.values():
         if row.get("external"):
             continue
@@ -1342,7 +1339,6 @@ async def resolve_chat_targets(
         db,
         runtime=runtime,
         source=source,
-        registry_client=runtime.registry_client,
         auth=auth,
         to_aliases=selector.to_aliases,
         to_dids=selector.to_dids,
@@ -1417,9 +1413,7 @@ async def _resolve_session_target(
             row.update(
                 local, delivery_origin=None, current_did_key=local.get("did_key")
             )
-    await require_agent_chat(
-        db, recipient_rows, registry_client=runtime.registry_client
-    )
+    await require_agent_chat(db, recipient_rows)
     for row in recipient_rows:
         if (
             str(row.get("did") or "").startswith("did:key:")

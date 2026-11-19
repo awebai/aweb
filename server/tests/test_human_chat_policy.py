@@ -172,10 +172,10 @@ async def test_chat_preflight_uses_projections_without_any_registry_io(
     try:
         if projection == "verified-human":
             with pytest.raises(HumanChatRefused) as refused:
-                await require_agent_chat(env.infra, [recipient], registry_client=client)
+                await require_agent_chat(env.infra, [recipient])
             assert refused.value.reason == "recipient_human_mail_only"
         else:
-            await require_agent_chat(env.infra, [recipient], registry_client=client)
+            await require_agent_chat(env.infra, [recipient])
         assert recording.calls == []
     finally:
         await client.aclose()
@@ -383,7 +383,6 @@ async def test_agent_with_verified_human_ancestor_is_allowed_without_registry_io
         await require_agent_chat(
             env.infra,
             [dict(did_aw=subject["id"], did_key=subject["did_key"], alias="bob")],
-            registry_client=client,
         )
         assert recording.calls == []
     finally:

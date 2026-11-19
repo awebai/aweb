@@ -47,13 +47,10 @@ def recipient_label(row: dict) -> str:
     )
 
 
-async def require_agent_chat(
-    db, recipients: list[dict], *, registry_client=None
-) -> None:
+async def require_agent_chat(db, recipients: list[dict]) -> None:
     """Refuse verified-human projections; unknown kind remains allowed.
 
-    This policy preflight deliberately performs no registry I/O. The retained
-    registry_client keyword is source compatibility only. Strict federation
+    This policy preflight deliberately performs no registry I/O. Strict federation
     resolution remains the sole outbound authority path; receivers apply their
     own verified-human refusal. Local projections come from verified connect
     and the required cutover revalidation, never a fresh per-send ancestry claim.
