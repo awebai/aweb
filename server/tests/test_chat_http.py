@@ -4638,7 +4638,10 @@ async def test_signed_plaintext_chat_rejects_non_base64_signature_before_storage
         response = await client.post("/v1/chat/sessions", json=payload)
 
     assert response.status_code == 422, response.text
-    assert response.json()["detail"] == "signature must be valid base64"
+    assert (
+        response.json()["detail"]
+        == "signature must be valid base64. Check the chat fields and sign the message again."
+    )
     stored = await aweb_cloud_db.aweb_db.fetch_one(
         "SELECT 1 FROM {{tables.chat_messages}} WHERE message_id = $1",
         UUID(message_id),
@@ -4732,7 +4735,7 @@ async def test_signed_plaintext_chat_requires_signed_payload(aweb_cloud_db):
     assert response.status_code == 422, response.text
     assert (
         response.json()["detail"]
-        == "signed_payload is required when signature is provided"
+        == "signed_payload is required when signature is provided. Check the chat fields and sign the message again."
     )
 
 
@@ -4885,7 +4888,10 @@ async def test_create_chat_session_rejects_signed_payload_body_mismatch(aweb_clo
         resp = await client.post("/v1/chat/sessions", json=payload)
 
     assert resp.status_code == 422, resp.text
-    assert resp.json()["detail"] == "signed_payload body must match the chat message"
+    assert (
+        resp.json()["detail"]
+        == "signed_payload body must match the chat message. Check the chat fields and sign the message again."
+    )
 
 
 @pytest.mark.asyncio
@@ -4961,7 +4967,7 @@ async def test_create_chat_session_rejects_signed_payload_leaving_mismatch(
     assert resp.status_code == 422, resp.text
     assert (
         resp.json()["detail"]
-        == "signed_payload sender_leaving must match the chat message"
+        == "signed_payload sender_leaving must match the chat message. Check the chat fields and sign the message again."
     )
 
 
@@ -5038,7 +5044,7 @@ async def test_create_chat_session_rejects_signed_payload_wait_seconds_mismatch(
     assert resp.status_code == 422, resp.text
     assert (
         resp.json()["detail"]
-        == "signed_payload wait_seconds must match the chat message"
+        == "signed_payload wait_seconds must match the chat message. Check the chat fields and sign the message again."
     )
 
 
@@ -5113,7 +5119,8 @@ async def test_create_chat_session_rejects_signed_payload_recipient_mismatch(
 
     assert resp.status_code == 422, resp.text
     assert (
-        resp.json()["detail"] == "signed_payload recipient must match the chat target"
+        resp.json()["detail"]
+        == "signed_payload recipient must match the chat target. Check the recipient and sign the message again."
     )
 
 
@@ -5189,7 +5196,8 @@ async def test_create_chat_session_rejects_partial_signed_recipient_binding_for_
 
     assert resp.status_code == 422, resp.text
     assert (
-        resp.json()["detail"] == "signed_payload recipient must match the chat target"
+        resp.json()["detail"]
+        == "signed_payload recipient must match the chat target. Check the recipient and sign the message again."
     )
 
 
@@ -5265,7 +5273,7 @@ async def test_create_chat_session_rejects_signed_payload_from_stable_id_mismatc
     assert resp.status_code == 422, resp.text
     assert (
         resp.json()["detail"]
-        == "signed_payload from_stable_id must match the authenticated sender"
+        == "signed_payload from_stable_id must match the authenticated sender. Check the chat fields and sign the message again."
     )
 
 
@@ -5338,7 +5346,7 @@ async def test_create_chat_session_rejects_signed_payload_from_mismatch(aweb_clo
     assert resp.status_code == 422, resp.text
     assert (
         resp.json()["detail"]
-        == "signed_payload from must match the authenticated sender"
+        == "signed_payload from must match the authenticated sender. Check the chat fields and sign the message again."
     )
 
 
@@ -5769,7 +5777,10 @@ async def test_chat_send_message_rejects_signed_payload_body_mismatch(aweb_cloud
         )
 
     assert resp.status_code == 422, resp.text
-    assert resp.json()["detail"] == "signed_payload body must match the chat message"
+    assert (
+        resp.json()["detail"]
+        == "signed_payload body must match the chat message. Check the chat fields and sign the message again."
+    )
 
 
 @pytest.mark.asyncio
@@ -5873,7 +5884,10 @@ async def test_chat_send_message_rejects_signed_payload_replayed_into_another_se
     assert accepted.status_code == 200, accepted.text
     assert accepted.json()["delivered"] is True
     assert replayed.status_code == 422, replayed.text
-    assert replayed.json()["detail"] == "signed_payload conversation_id must match"
+    assert (
+        replayed.json()["detail"]
+        == "signed_payload conversation_id must match. Check the chat fields and sign the message again."
+    )
     replayed_count = await aweb_cloud_db.aweb_db.fetch_value(
         "SELECT COUNT(*) FROM {{tables.chat_messages}} WHERE message_id = $1",
         UUID(replayed_message_id),
@@ -5958,7 +5972,10 @@ async def test_chat_send_message_rejects_signed_payload_hang_on_mismatch(aweb_cl
         )
 
     assert resp.status_code == 422, resp.text
-    assert resp.json()["detail"] == "signed_payload hang_on must match the chat message"
+    assert (
+        resp.json()["detail"]
+        == "signed_payload hang_on must match the chat message. Check the chat fields and sign the message again."
+    )
 
 
 @pytest.mark.asyncio
@@ -6040,7 +6057,7 @@ async def test_chat_send_message_rejects_signed_payload_leaving_mismatch(aweb_cl
     assert resp.status_code == 422, resp.text
     assert (
         resp.json()["detail"]
-        == "signed_payload sender_leaving must match the chat message"
+        == "signed_payload sender_leaving must match the chat message. Check the chat fields and sign the message again."
     )
 
 
@@ -6122,7 +6139,8 @@ async def test_chat_send_message_rejects_signed_payload_recipient_mismatch(
 
     assert resp.status_code == 422, resp.text
     assert (
-        resp.json()["detail"] == "signed_payload recipient must match the chat target"
+        resp.json()["detail"]
+        == "signed_payload recipient must match the chat target. Check the recipient and sign the message again."
     )
 
 
@@ -6215,7 +6233,8 @@ async def test_chat_send_message_rejects_partial_signed_recipient_binding_for_gr
 
     assert resp.status_code == 422, resp.text
     assert (
-        resp.json()["detail"] == "signed_payload recipient must match the chat target"
+        resp.json()["detail"]
+        == "signed_payload recipient must match the chat target. Check the recipient and sign the message again."
     )
 
 
