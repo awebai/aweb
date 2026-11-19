@@ -61,9 +61,7 @@ def grant_status(row: Mapping[str, Any], now: datetime) -> GrantLifetimeState:
     )
 
 
-def _stored_grant_validity(
-    row: Mapping[str, Any], *, now: datetime
-) -> GrantValidityState:
+def _stored_grant_validity(row: Mapping[str, Any], *, now: datetime) -> GrantValidityState:
     """Apply lifetime, subject and retained issuer rules before registry reads.
 
     docs/identity.md:755-779: no default lifetime cap; delegation ends with its
@@ -74,10 +72,7 @@ def _stored_grant_validity(
         return GrantValidityState.REVOKED
     if lifetime is GrantLifetimeState.EXPIRED:
         return GrantValidityState.EXPIRED
-    if (
-        row["subject_status"] != MemberStatus.ACTIVE.value
-        or row["subject_deleted_at"] is not None
-    ):
+    if row["subject_status"] != MemberStatus.ACTIVE.value or row["subject_deleted_at"] is not None:
         return GrantValidityState.SUBJECT_INACTIVE
     if not grant_issuer_current(row):
         return GrantValidityState.ISSUER_SUPERSEDED

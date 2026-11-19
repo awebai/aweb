@@ -40,14 +40,11 @@ def verified_key_sql(agent: str = "") -> str:
         raise ValueError("Invalid identity projection SQL alias")
     prefix = agent + "." if agent else ""
     return (
-        f"NULLIF({prefix}did_key, '') IS NOT NULL AND "
-        f"{prefix}did_aw_verified_key = {prefix}did_key"
+        f"NULLIF({prefix}did_key, '') IS NOT NULL AND {prefix}did_aw_verified_key = {prefix}did_key"
     )
 
 
-def verified_identity_field_sql(
-    field: IdentityProjectionField, *, agent: str = ""
-) -> str:
+def verified_identity_field_sql(field: IdentityProjectionField, *, agent: str = "") -> str:
     """Attribute a stable DID/address through the same verified-key guard."""
     if not isinstance(field, IdentityProjectionField):
         raise ValueError("Invalid identity projection field")
@@ -61,9 +58,7 @@ def verified_principal_did_sql(*, agent: str = "") -> str:
     docs/identity.md:569-585 requires registry-verified marker evidence for
     stable identity. A local principal remains its literal signing did:key.
     """
-    stable = verified_identity_field_sql(
-        IdentityProjectionField.STABLE_DID, agent=agent
-    )
+    stable = verified_identity_field_sql(IdentityProjectionField.STABLE_DID, agent=agent)
     prefix = agent + "." if agent else ""
     return f"COALESCE(NULLIF(({stable}), ''), {prefix}did_key)"
 
@@ -73,10 +68,7 @@ def verified_projection(row):
     if row is None:
         return None
     result = dict(row)
-    if (
-        not result.get("did_key")
-        or result.get("did_aw_verified_key") != result["did_key"]
-    ):
+    if not result.get("did_key") or result.get("did_aw_verified_key") != result["did_key"]:
         result["did_aw"] = None
         result["address"] = None
     return result
@@ -116,12 +108,7 @@ async def verify_identity_binding(
     started = monotonic()
     cached = cache.get(key)
     # Unknown enrollment is refetched rather than pinned by this positive cache.
-    if (
-        not fresh
-        and cached is not None
-        and cached[0] > started
-        and cached[1].id_tree is not None
-    ):
+    if not fresh and cached is not None and cached[0] > started and cached[1].id_tree is not None:
         return replace(cached[1], fresh_observation=False)
     binding = await _observe_into_cache(client, cache, key, started)
     observations[key] = binding
@@ -206,9 +193,7 @@ async def observe_identity_binding(
         raise IdentityBindingError(code, headers=headers) from exc
 
 
-async def refresh_projection_binding(
-    db, *, agent_id, did_key: str, binding: IdentityBinding
-):
+async def refresh_projection_binding(db, *, agent_id, did_key: str, binding: IdentityBinding):
     """A verified request refreshes only its own key's projection."""
     if not binding.fresh_observation:
         return None
@@ -274,10 +259,7 @@ async def verify_pending_identity_bindings(
                 )
                 if current is None:
                     continue
-                if any(
-                    current[field] != row[field]
-                    for field in ("did_key", "did_aw", "address")
-                ):
+                if any(current[field] != row[field] for field in ("did_key", "did_aw", "address")):
                     counts["unbound"] += 1
                     continue
                 await tx.execute(
