@@ -19,7 +19,7 @@ func TestSharedPointEncodingComponents(t *testing.T) {
 		Cases []struct {
 			Name       string `json:"name"`
 			EncodedHex string `json:"encoded_hex"`
-			Canonical  bool   `json:"canonical"`
+			Canonical  *bool  `json:"canonical"`
 		} `json:"cases"`
 	}
 	if err := json.Unmarshal(raw, &vector); err != nil {
@@ -34,8 +34,11 @@ func TestSharedPointEncodingComponents(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := signaturewire.CanonicalPointEncoding(encoded); got != c.Canonical {
-				t.Fatalf("canonical encoding=%t, want %t", got, c.Canonical)
+			if c.Canonical == nil {
+				t.Fatal("component case has no expected canonical value")
+			}
+			if got := signaturewire.CanonicalPointEncoding(encoded); got != *c.Canonical {
+				t.Fatalf("canonical encoding=%t, want %t", got, *c.Canonical)
 			}
 		})
 	}

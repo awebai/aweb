@@ -75,6 +75,7 @@ func DecodeCanonicalURL(value string) ([]byte, error) {
 	return raw, nil
 }
 
+// PrimePoint admits only canonical, nonidentity points in the prime subgroup.
 func PrimePoint(raw []byte) bool {
 	if !CanonicalPointEncoding(raw) {
 		return false

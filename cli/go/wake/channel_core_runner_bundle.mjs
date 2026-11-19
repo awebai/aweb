@@ -3269,7 +3269,7 @@ function littleEndian(bytes) {
   return value;
 }
 function canonicalPoint(encoded) {
-  if (encoded.length !== 32) return void 0;
+  if (!canonicalPointEncoding(encoded)) return void 0;
   let point;
   try {
     point = Point.fromHex(encoded, false);
@@ -3277,8 +3277,7 @@ function canonicalPoint(encoded) {
     return void 0;
   }
   if (point.is0()) return void 0;
-  const canonical = Buffer.from(point.toRawBytes());
-  return canonical.equals(Buffer.from(encoded)) ? point : void 0;
+  return point;
 }
 function primeSubgroupPoint(encoded) {
   const point = canonicalPoint(encoded);
@@ -3298,6 +3297,14 @@ function verifyBytes(proof) {
   const left = scalarS === 0n ? Point.ZERO : Point.BASE.multiply(scalarS);
   const challengePoint = challenge === 0n ? Point.ZERO : publicPoint.multiply(challenge);
   return left.equals(pointR.add(challengePoint));
+}
+function canonicalPointEncoding(encoded) {
+  if (encoded.length !== 32) return false;
+  const coordinate = littleEndian(encoded);
+  const sign2 = coordinate >> 255n;
+  const y = coordinate & (1n << 255n) - 1n;
+  const fieldPrime = (1n << 255n) - 19n;
+  return y < fieldPrime && !(sign2 === 1n && (y === 1n || y === fieldPrime - 1n));
 }
 
 // channel-core/node_modules/base-x/src/esm/index.js
@@ -3754,7 +3761,11 @@ async function verifyMessage(env) {
   try {
     const sigBytes = b64Decode(env.signature);
     const payload = canonicalJSON(env);
-    const valid = verifyBytes({ signature: sigBytes, message: new TextEncoder().encode(payload), publicKey });
+    const valid = verifyBytes({
+      signature: sigBytes,
+      message: new TextEncoder().encode(payload),
+      publicKey
+    });
     return valid ? "verified" : "failed";
   } catch {
     return "failed";
@@ -3778,7 +3789,11 @@ async function verifySignedPayload(signedPayload, signatureB64, fromDID, signing
   }
   try {
     const sigBytes = b64Decode(signatureB64);
-    const valid = verifyBytes({ signature: sigBytes, message: new TextEncoder().encode(signedPayload), publicKey });
+    const valid = verifyBytes({
+      signature: sigBytes,
+      message: new TextEncoder().encode(signedPayload),
+      publicKey
+    });
     return valid ? "verified" : "failed";
   } catch {
     return "failed";
@@ -3789,8 +3804,10 @@ function signedPayloadConversationStatus(signedPayload, conversationID) {
   if (!expected) return "verified";
   try {
     const payload = JSON.parse(signedPayload);
-    if (payload.conversation_id === expected) return "verified";
-    if (payload.conversation_id === void 0 || payload.conversation_id === "") {
+    if (payload === null) return "failed";
+    const conversationID2 = typeof payload === "object" && "conversation_id" in payload ? payload.conversation_id : void 0;
+    if (conversationID2 === expected) return "verified";
+    if (conversationID2 === void 0 || conversationID2 === "") {
       return "verified_legacy";
     }
     return "failed";

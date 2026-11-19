@@ -76,11 +76,29 @@ const (
 	hostedNativeOwner
 )
 
+type hostedInboundMode string
+
+const hostedTeamAndContacts hostedInboundMode = "team_and_contacts"
+
+type hostedCreationStatus string
+
+const (
+	hostedIdentityCreated hostedCreationStatus = "created"
+	hostedIdentityReused  hostedCreationStatus = "reused"
+)
+
+type hostedRegistrationStatus string
+
+const (
+	hostedRegistrationUnknown   hostedRegistrationStatus = "unknown"
+	hostedRegistrationConfirmed hostedRegistrationStatus = "registered"
+)
+
 type hostedIdentityOptions struct {
 	Org               string
 	TeamID            string
 	Name              string
-	InboundMode       string
+	InboundMode       hostedInboundMode
 	RegistryURL       string
 	HumanParent       string
 	RootParent        bool
@@ -90,13 +108,14 @@ type hostedIdentityOptions struct {
 }
 
 func hostedIdentityOptionsFromCommand(cmd *cobra.Command) (hostedIdentityOptions, error) {
-	options := hostedIdentityOptions{ServerName: strings.TrimSpace(serverFlag)}
+	options := hostedIdentityOptions{Authority: hostedHumanCLIAccount, ServerName: strings.TrimSpace(serverFlag)}
+	var rawMode string
 	fields := []struct {
 		name  string
 		value *string
 	}{
 		{"org", &options.Org}, {"team-id", &options.TeamID}, {"name", &options.Name},
-		{"inbound-mode", &options.InboundMode}, {"registry", &options.RegistryURL},
+		{"inbound-mode", &rawMode}, {"registry", &options.RegistryURL},
 		{"human-parent", &options.HumanParent}, {"owner-identity-home", &options.OwnerIdentityHome},
 	}
 	for _, field := range fields {
@@ -125,12 +144,13 @@ func hostedIdentityOptionsFromCommand(cmd *cobra.Command) (hostedIdentityOptions
 		return hostedIdentityOptions{}, usageError("--domain and --skip-dns-verify cannot be combined with --org")
 	}
 	if cmd.Flags().Changed("inbound-mode") {
-		options.InboundMode, err = normalizeInboundModeCLIValue(options.InboundMode)
-		if err != nil {
-			return hostedIdentityOptions{}, err
+		normalized, modeErr := normalizeInboundModeCLIValue(rawMode)
+		if modeErr != nil {
+			return hostedIdentityOptions{}, modeErr
 		}
+		options.InboundMode = hostedInboundMode(normalized)
 	} else {
-		options.InboundMode = "team_and_contacts"
+		options.InboundMode = hostedTeamAndContacts
 	}
 	return options, nil
 }
@@ -212,7 +232,7 @@ func prepareHostedIdentityCreation(cmd *cobra.Command, options hostedIdentityOpt
 			return err
 		}
 	}
-	association := hostedIdentityContext{Issuer: cfg.Issuer, AccountID: account.ID, Org: options.Org, TeamID: options.TeamID, Name: options.Name, InboundMode: options.InboundMode, RegistryURL: registry.DefaultRegistryURL}
+	association := hostedIdentityContext{Issuer: cfg.Issuer, AccountID: account.ID, Org: options.Org, TeamID: options.TeamID, Name: options.Name, InboundMode: string(options.InboundMode), RegistryURL: registry.DefaultRegistryURL}
 	if owner != nil {
 		association.OwnerDIDKey = owner.did
 	}
@@ -404,15 +424,15 @@ func createHostedIdentity(operation hostedIdentityCreation) (resultErr error) {
 	}
 	// Retain the empty lock: unlinking an open lock fails on Windows, and on
 	// Unix it can split concurrent callers across different lock-file inodes.
-	status := "reused"
+	status := hostedIdentityReused
 	if response.Created {
-		status = "created"
+		status = hostedIdentityCreated
 	}
 	out := map[string]any{"status": status, "team_id": response.CanonicalTeamID, "service_team_id": response.TeamID, "identity_home": home.Root, "identity_scope": "global", "custody": "self", "did_key": material.DIDKey, "did_aw": material.StableID, "address": response.Address, "inbound_mode": mode}
-	out["id_registration"] = "unknown"
+	out["id_registration"] = hostedRegistrationUnknown
 	out["responsibility"] = awid.IDChainResult{Outcome: "unknown", Reason: "legacy_no_chain"}
 	if responsibility != nil {
-		out["id_registration"] = "registered"
+		out["id_registration"] = hostedRegistrationConfirmed
 		out["responsibility"] = responsibility
 	}
 	if human != nil {
