@@ -17,7 +17,12 @@ import awid.registry as registry_module
 from awid.registry import CachedRegistryClient
 from awid.signing import canonical_json_bytes, sign_message
 from test_dashboard_privacy import TEAM, TEAM_NAME, privacy_app  # noqa: F401
-from test_messages_http import _make_keypair
+from test_messages_http import (
+    _encode_certificate,
+    _make_certificate,
+    _make_keypair,
+    _signed_team_headers,
+)
 from awid_service.testing import TXTAnswers
 
 
@@ -164,6 +169,31 @@ async def test_awid_rotation_replaces_oss_controller_authority(
     old, old_stored, old_expected = await _controller_action(
         env, operation, env.team_sk, env.team_did
     )
+    if age >= 60 and operation == "status_host":
+        # A rotated controller cannot designate a host whose membership still
+        # belongs to the former key. Admit the intended host under the new key
+        # before exercising the independent controller-authorization boundary.
+        host = env.actors["carol"]
+        certificate = _encode_certificate(
+            _make_certificate(
+                next_sk,
+                next_did,
+                host.did,
+                team_id=TEAM,
+                alias="carol",
+                identity_scope="local",
+                certificate_id="rotation-current-host",
+            )
+        )
+        connected = await env.client.post(
+            "/v1/connect",
+            content=b"{}",
+            headers={
+                **_signed_team_headers(host.sk, host.did, TEAM, certificate, b"{}"),
+                "Content-Type": "application/json",
+            },
+        )
+        assert connected.status_code == 200, connected.text
     new, stored, expected = await _controller_action(env, operation, next_sk, next_did)
     expected_statuses = (200, 403) if age < 60 else (403, 200)
     assert (old.status_code, new.status_code) == expected_statuses, {

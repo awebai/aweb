@@ -58,7 +58,7 @@ async def test_address_replacement_does_not_transfer_contact_trust(privacy_app, 
             assert registered.did_aw == identity["did_aw"]
         await env.registry.ensure_namespace(domain=domain, controller=SigningKey(root_seed))
         await registry.update_namespace_delivery_origin(
-            domain, root_seed, str(env.client.base_url).rstrip("/")
+            domain, root_seed, "https://recipient.example.test"
         )
         await registry.register_address(
             domain, name, old["did_aw"], root_seed, current_did_key=old["did_key"]
