@@ -1,6 +1,9 @@
 """Owner actions share real team roles, PostgreSQL, custody and hook outbox."""
 
+import base64
+import json
 import os
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from functools import partial
 
@@ -10,13 +13,18 @@ from aweb_naapp.hooks.producer import HookProducer, ServerProducer
 from aweb_naapp.outbox import apply_outbox_migrations
 from aweb_naapp.roles import principal_key
 from aweb_naapp.runtime.clock import seconds_to_ns
+from aweb_naapp_testing import Member
 from aweb_naapp_testing.owner_acts import INSTALLATION_ID
+from aweb_naapp_testing.webauthn import SoftAuthenticator
 
 from aweb_secrets.containment import Containment, ContainmentRefused
 from aweb_secrets.owners import OWNER_ROLE
 from aweb_secrets.tokens import ProcessTokenCache, TokenKey
 from tests.human_owner import canonical_actor
+from tests.production_database import prepared_service_databases as prepared_service_databases
 from tests.test_change_sets import ALICE, TEAM, world  # noqa: F401
+from tests.test_production_bootstrap import envelopes
+from tests.test_production_bootstrap import root as root
 from tests.test_use_approval_lineage import child, seed
 from tests.test_use_approvals import SECRET_ID
 from tests.test_use_approvals import uses as _uses
@@ -219,61 +227,96 @@ async def test_confirmed_reenable_restores_only_named_root(uses):  # noqa: F811
     )
 
 
-@pytest.mark.parametrize("passkey", [False, True])
-async def test_team_auth_refuses_last_enrolled_owner_contact_or_key(uses, passkey):  # noqa: F811
+@dataclass(frozen=True, kw_only=True, repr=False)
+class ProductionOwner:
+    scope: str
+    device: SoftAuthenticator
+    member: Member
+
+
+async def designate_production_owner(root, registry, *, alias):
     from aweb_secrets.owners import owner_scope
-    from tests.test_change_sets import ALICE
+    from tests.test_owner_delivery import PATH, delivery
 
-    await seed(uses)
-    svc = await service(uses)
-    before = await uses.world.db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}")
-    scope = owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did)
-    credential_id = (
-        next(iter(uses.world.devices["alice@acme.com"].credentials)) if passkey else None
+    _, client, configured, member, installed, *_ = root
+    body, principal, device = await delivery(root, registry, alias=alias)
+    response = await client.post(configured.console_origin + PATH, json=body)
+    assert response.status_code == 200, response.text
+    assert device is not None
+    holder = ProductionOwner(
+        scope=owner_scope(installed["installation_id"], member.team_id, principal.principal_did),
+        device=device,
+        member=client.owner_delivery_fixture.human_members[principal],
     )
-    with pytest.raises(ContainmentRefused) as refused:
-        await svc.by_member(
-            grant=uses.grant,
-            principal=canonical_actor(uses.world, ALICE),
-            request_id="last-owner",
-            action="revoke-approver",
-            target=scope,
-            credential_id=credential_id,
-        )
-    assert refused.value.code == "last_owner_protected"
-    assert await uses.world.passkeys.designated_approver(scope) is not None
-    assert (
-        await uses.world.db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}") == before
+    await login_production_owner(root, scope=holder.scope, device=holder.device)
+    return holder
+
+
+async def contain_production_owner(root, holder, *, passkey, request_id):
+    _, client, configured, *_ = root
+    body = {"request_id": request_id, "action": "revoke-approver", "target": holder.scope}
+    if passkey:
+        credential_id = next(iter(holder.device.credentials))
+        body["credential_id"] = base64.urlsafe_b64encode(credential_id).decode().rstrip("=")
+    raw = json.dumps(body).encode()
+    path = "/v1/containment"
+    return await client.post(
+        configured.public_origin + path,
+        content=raw,
+        headers={
+            **holder.member.headers(
+                aud=configured.public_origin, method="POST", path=path, body=raw
+            ),
+            "Content-Type": "application/json",
+        },
     )
 
 
+async def login_production_owner(root, *, scope, device):
+    _, client, configured, *_ = root
+    options = await client.post(configured.console_origin + "/login/options", json={"scope": scope})
+    assert options.status_code == 200, options.text
+    logged = await client.post(
+        configured.console_origin + "/login",
+        json={"scope": scope, "assertion": device.get(options.json())},
+    )
+    assert logged.status_code == 200, logged.text
+
+
+@pytest.mark.parametrize("root", [{"manifest_version": 3}], indirect=True)
 @pytest.mark.parametrize("passkey", [False, True])
-async def test_another_enrolled_owner_allows_team_auth_credential_containment(uses, passkey):  # noqa: F811
-    from aweb_secrets.owners import owner_scope
-    from tests.test_change_sets import ALICE, BOB, enrol_owner
+async def test_team_auth_refuses_last_enrolled_owner_contact_or_key(root, registry, passkey):
+    app, _, _, member, *_ = root
+    holder = await designate_production_owner(root, registry, alias="alice")
+    db = app.runtime.db()
+    before = await envelopes(db, member.team_id)
+    response = await contain_production_owner(
+        root, holder, passkey=passkey, request_id="last-owner"
+    )
+    assert response.status_code == 403, response.text
+    assert response.json() == {"detail": "last_owner_protected"}
+    assert app.services is not None
+    assert await app.services.console.passkeys.designated_approver(holder.scope) is not None
+    assert await envelopes(db, member.team_id) == before
+    await login_production_owner(root, scope=holder.scope, device=holder.device)
 
-    await seed(uses)
-    await enrol_owner(uses.world, BOB, "bob@acme.com")
-    svc = await service(uses)
-    scope = owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did)
-    credential_id = (
-        next(iter(uses.world.devices["alice@acme.com"].credentials)) if passkey else None
+
+@pytest.mark.parametrize("root", [{"manifest_version": 3}], indirect=True)
+@pytest.mark.parametrize("passkey", [False, True])
+async def test_another_enrolled_owner_allows_team_auth_credential_containment(
+    root, registry, passkey
+):
+    app, *_ = root
+    holder = await designate_production_owner(root, registry, alias="alice")
+    other = await designate_production_owner(root, registry, alias="bob")
+    response = await contain_production_owner(
+        root, holder, passkey=passkey, request_id="contain-owner"
     )
-    await svc.by_member(
-        grant=uses.grant,
-        principal=canonical_actor(uses.world, ALICE),
-        request_id="contain-owner",
-        action="revoke-approver",
-        target=scope,
-        credential_id=credential_id,
-    )
-    assert await uses.world.passkeys.designated_approver(scope) is None
-    assert (
-        await uses.world.passkeys.designated_approver(
-            owner_scope(INSTALLATION_ID, TEAM, BOB.principal_did)
-        )
-        is not None
-    )
+    assert response.status_code == 200, response.text
+    assert app.services is not None
+    assert await app.services.console.passkeys.designated_approver(holder.scope) is None
+    assert await app.services.console.passkeys.designated_approver(other.scope) is not None
+    await login_production_owner(root, scope=other.scope, device=other.device)
 
 
 async def test_approver_retirement_voids_their_decisions_in_same_transaction(uses):  # noqa: F811
