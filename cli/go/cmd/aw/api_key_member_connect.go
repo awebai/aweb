@@ -16,18 +16,23 @@ type apiKeyMemberConnection struct {
 }
 
 // connectAPIKeyInitializedMember completes the installed membership while
-// preserving the prepared recovery files if local connection setup fails
-// (docs/hosted-global-bootstrap.md, partial API-key initialization).
+// preserving the prepared recovery files before connection and the installed
+// credentials after it (docs/identity.md#provisioned-members-and-encryption-discovery).
 func connectAPIKeyInitializedMember(input apiKeyMemberConnection) (connectOutput, error) {
 	req := input.Request
 	out, err := initCertificateConnectWithOptions(req.WorkingDir, input.ServerURL, certificateConnectOptions{
-		ContextFile: req.ContextFile, Role: strings.TrimSpace(req.Role),
+		ContextFile: req.ContextFile, EncryptionPublication: req.EncryptionPublication, Role: strings.TrimSpace(req.Role),
 		HumanName:    strings.TrimSpace(req.HumanName),
 		AgentType:    strings.TrimSpace(req.AgentType),
 		APIKey:       strings.TrimSpace(input.WorkspaceAPIKey),
 		IdentityHome: strings.TrimSpace(req.IdentityHome),
 	})
 	if err != nil {
+		var connected *connectedMemberSetupError
+		if errors.As(err, &connected) {
+			cleanupErr := removeAPIKeyPartialInit(awconfig.IdentityHome{Root: req.IdentityHome})
+			return connectOutput{}, errors.Join(err, cleanupErr)
+		}
 		// Roll back everything this run created. The partial-init state (when
 		// present) survives via the snapshot, so a retry resumes with the same
 		// signing key the server already has on record.

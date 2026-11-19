@@ -610,8 +610,8 @@ messages unrecoverable.
 
 ### Provisioned members and encryption discovery
 
-Provisioning through a creator's invitation and creator self-enrollment connect
-the accepted member to its aweb service before publishing its E2E key assertion.
+Provisioning through a creator's invitation, a person's setup key, worktree
+creation and creator self-enrollment connect the accepted member to its aweb service before publishing its E2E key assertion.
 A local workspace binding alone does not establish server admission. Provisioning
 reports success only after the service confirms publication for that member.
 
@@ -641,6 +641,10 @@ API-key creation keeps its original partial-init journal after preparation,
 including when submission loses its response. Outer roster and worktree cleanup
 must retain that directory. The refusal identifies the child directory and its
 `aw init` command; keep the original service, API-key and registry selections.
+Once connection credentials are saved, a later context-file or required-key
+publication failure keeps those credentials and encryption keys; it completes
+through the printed connection or key-publication command, not identity-creation
+replay. The completed partial-init record is removed.
 Quarantined material remains for operator reconciliation and is never restored
 automatically. These recoveries keep the original key and request; they do not
 create a replacement identity.

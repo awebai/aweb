@@ -1430,13 +1430,14 @@ func bootstrapTeamHumanAddAgentWithAPIKey(homeDir string, plan teamHumanAddedAge
 	}
 	global := strings.TrimSpace(plan.Scope) == awid.IdentityModeGlobal
 	request := apiKeyInitRequest{
-		WorkingDir:   homeDir,
-		IdentityHome: filepath.Join(filepath.Clean(homeDir), ".aw"),
-		AwebURL:      awebURL,
-		RegistryURL:  registryURL,
-		APIKey:       apiKey,
-		Role:         teamHumanAddRoleForPlan(plan),
-		Global:       global,
+		EncryptionPublication: encryptionPublicationRequiredService,
+		WorkingDir:            homeDir,
+		IdentityHome:          filepath.Join(filepath.Clean(homeDir), ".aw"),
+		AwebURL:               awebURL,
+		RegistryURL:           registryURL,
+		APIKey:                apiKey,
+		Role:                  teamHumanAddRoleForPlan(plan),
+		Global:                global,
 	}
 	if global {
 		request.Name = strings.TrimSpace(plan.Name)

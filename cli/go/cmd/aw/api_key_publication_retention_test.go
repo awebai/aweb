@@ -3,7 +3,9 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/awebai/aw/awconfig"
@@ -66,9 +68,9 @@ func TestAPIKeyProvisioningPublicationFailureKeepsConnectedCredential(t *testing
 	defer server.Close()
 	teamHumanExtendAPIKey = "aw_sk_setup_fixture"
 	initAwebURL = server.URL
-	err = runTeamHumanExtend(nil, []string{"retained"})
-	if err == nil || connectCalls != 1 || publicationCalls == 0 {
-		t.Fatalf("did not reach admitted publication failure: connect=%d publish=%d err=%v", connectCalls, publicationCalls, err)
+	failure := runTeamHumanExtend(nil, []string{"retained"})
+	if failure == nil || connectCalls != 1 || publicationCalls == 0 {
+		t.Fatalf("did not reach admitted publication failure: connect=%d publish=%d err=%v", connectCalls, publicationCalls, failure)
 	}
 	directory := filepath.Join(root, "agents", "instances", "retained")
 	if _, err := awid.LoadSigningKey(awconfig.WorktreeSigningKeyPath(directory)); err != nil {
@@ -77,5 +79,22 @@ func TestAPIKeyProvisioningPublicationFailureKeepsConnectedCredential(t *testing
 	state, err := awconfig.LoadEncryptionKeyStateFrom(awconfig.WorktreeEncryptionStatePath(directory))
 	if err != nil || state.ActiveRecord() == nil {
 		t.Fatalf("publication failure discarded its encryption-key recovery: %v", err)
+	}
+	keyPath, pathErr := resolveIdentityStoredPath(directory, awconfig.WorktreeIdentityHome(directory), state.ActiveRecord().PrivateKeyPath)
+	if pathErr != nil {
+		t.Fatal(pathErr)
+	}
+	if info, err := os.Stat(keyPath); err != nil || info.Size() == 0 {
+		t.Fatalf("publication failure discarded the retained encryption private key: %v", err)
+	}
+	binding, err := awconfig.LoadWorktreeWorkspaceFrom(awconfig.WorktreeWorkspacePath(directory))
+	if err != nil || binding.APIKey != "aw_sk_member_fixture" {
+		t.Fatalf("publication failure discarded the received workspace credential: binding=%v err=%v", binding != nil, err)
+	}
+	if _, err := os.Stat(apiKeyPartialInitPath(awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(directory)})); !os.IsNotExist(err) {
+		t.Fatalf("connected member still offers identity-creation replay: %v", err)
+	}
+	if !strings.Contains(failure.Error(), "id encryption-key setup") || strings.Contains(failure.Error(), "rerun the same command") || !retainUnfinishedProvisioningIdentity(failure) {
+		t.Fatalf("connected publication failure lost its precise recovery: %v", failure)
 	}
 }

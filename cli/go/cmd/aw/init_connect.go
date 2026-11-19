@@ -205,10 +205,10 @@ func initCertificateConnectWithOptions(workingDir, awebURL string, opts certific
 
 	// Ensure .aw/context exists
 	if err := opts.ContextFile.apply(identityHome); err != nil {
-		return connectOutput{}, err
+		return connectOutput{}, &connectedMemberSetupError{cause: err}
 	}
 	if err := completeConnectedEncryption(ctx, connectedEncryptionSetup{WorkingDir: workingDir, Home: awconfig.IdentityHome{Root: identityHome}, Warnings: os.Stderr, Policy: opts.EncryptionPublication}); err != nil {
-		return connectOutput{}, err
+		return connectOutput{}, &connectedMemberSetupError{cause: err}
 	}
 
 	identityScope := awid.NormalizeIdentityScope(cert.IdentityScope)

@@ -4,9 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/awebai/aw/awconfig"
-	"strings"
 )
 
 // apiKeyCreationRecoveryAdvice names the child operation's directory when its
@@ -14,6 +14,16 @@ import (
 func apiKeyCreationRecoveryAdvice(request apiKeyInitRequest, cause error) error {
 	if !retainUnfinishedProvisioningIdentity(cause) {
 		return cause
+	}
+	var connected *connectedMemberSetupError
+	if errors.As(cause, &connected) {
+		var publication *requiredEncryptionPublicationError
+		if errors.As(cause, &publication) {
+			setup := formatShellCommand([]string{"aw", "--identity-home", request.IdentityHome, "id", "encryption-key", "setup"})
+			return fmt.Errorf("%w\nThe member is connected and its credentials are retained at %s. Run `%s` to confirm E2E key publication; do not repeat identity creation.", cause, request.IdentityHome, setup)
+		}
+		connect := formatShellCommand([]string{"aw", "--identity-home", request.IdentityHome, "workspace", "connect", "--service", "<original-service-url>"})
+		return fmt.Errorf("%w\nThe connected member is retained at %s. Repair the reported local setup error, then run `%s` with its original service URL; do not repeat identity creation.", cause, request.IdentityHome, connect)
 	}
 	if remedy, known := workspaceInitRefusalRemedies[errorCodeOf(cause)]; known && remedy.changesContext {
 		return fmt.Errorf("%w\nThe original identity material remains at %s; keep it for reconciliation.", cause, request.IdentityHome)
@@ -37,7 +47,12 @@ func apiKeyCreationRecoveryAdvice(request apiKeyInitRequest, cause error) error 
 	if request.ContextFile == workspaceContextPreserve {
 		args = append(args, "--write-context=false")
 	}
-	return fmt.Errorf("%w\nThe retained creation directory is %s. From there, with the original service URL, API key and registry selection (AWEB_URL, AWEB_API_KEY and AWID_REGISTRY_URL), run `%s` to finish this same identity before resuming roster/worktree setup.", cause, request.WorkingDir, formatShellCommand(args))
+	advice := fmt.Errorf("%w\nThe retained creation directory is %s. From there, with the original service URL, API key and registry selection (AWEB_URL, AWEB_API_KEY and AWID_REGISTRY_URL), run `%s` to finish this same identity before resuming roster/worktree setup.", cause, request.WorkingDir, formatShellCommand(args))
+	if request.EncryptionPublication == encryptionPublicationRequiredService {
+		setup := formatShellCommand([]string{"aw", "--identity-home", request.IdentityHome, "id", "encryption-key", "setup"})
+		return fmt.Errorf("%w After connecting, run `%s` to confirm E2E key publication.", advice, setup)
+	}
+	return advice
 }
 
 type apiKeyInitRecoveryState uint8

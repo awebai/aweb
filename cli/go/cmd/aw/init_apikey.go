@@ -27,22 +27,23 @@ const maxWorkspaceAPIKeyLength = 4096
 const apiKeyPartialInitVersion = 1
 
 type apiKeyInitRequest struct {
-	ContextFile        workspaceContextPolicy
-	SelectedTeam       *apiKeyCreationTeam
-	CreationInvitation *awid.IDCreationInvitation
-	WorkingDir         string
-	IdentityHome       string
-	AwebURL            string
-	RegistryURL        string
-	APIKey             string
-	Name               string
-	Alias              string
-	Role               string
-	HumanName          string
-	AgentType          string
-	Global             bool
-	SelectedTeamID     string
-	CanonicalTeamID    string
+	EncryptionPublication encryptionPublicationPolicy
+	ContextFile           workspaceContextPolicy
+	SelectedTeam          *apiKeyCreationTeam
+	CreationInvitation    *awid.IDCreationInvitation
+	WorkingDir            string
+	IdentityHome          string
+	AwebURL               string
+	RegistryURL           string
+	APIKey                string
+	Name                  string
+	Alias                 string
+	Role                  string
+	HumanName             string
+	AgentType             string
+	Global                bool
+	SelectedTeamID        string
+	CanonicalTeamID       string
 	// InboundMode is "open", "team_and_contacts" or "contacts_only" when --inbound-mode is
 	// set on a global init, "" otherwise. The runner forwards it to
 	// /api/v1/workspaces/init only when non-empty; the server defaults
@@ -144,6 +145,9 @@ func resolveAPIKeyInitAwebURL() (string, error) {
 
 func runAPIKeyBootstrapInit(req apiKeyInitRequest) (out connectOutput, resultErr error) {
 	if err := req.ContextFile.validate(); err != nil {
+		return out, err
+	}
+	if err := req.EncryptionPublication.validate(); err != nil {
 		return out, err
 	}
 	if strings.TrimSpace(req.WorkingDir) == "" {
@@ -324,6 +328,10 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (out connectOutput, resultErr
 		Request: req, ServerURL: serverURL, WorkspaceAPIKey: resp.APIKey, Snapshot: snapshot,
 	})
 	if err != nil {
+		var connected *connectedMemberSetupError
+		if errors.As(err, &connected) {
+			recoveryState = apiKeyInitReconciliationOnly
+		}
 		return connectOutput{}, err
 	}
 	recoveryState = apiKeyInitReconciliationOnly // Connected state must not be retried as an incomplete init.
