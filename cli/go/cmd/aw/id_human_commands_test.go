@@ -30,6 +30,7 @@ func TestHumanEnrollmentRegistrationAndProofRequireHumanCustody(t *testing.T) {
 		"create human parent": {"id", "create", "--name", "child", "--domain", "example.com", "--human-parent", "did:aw:2e2SPDJNyxg5Dt6EFJX3Tcn8Tauj"},
 		"add":                 {"id", "human", "add", "--issuer", "https://issuer.example.invalid", "--person", "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w", "--identity-key", "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"},
 		"enroll":              {"id", "human", "enroll", "--issuer", "https://issuer.example.invalid"},
+		"refresh-binding":     {"id", "human", "refresh-binding"},
 		"register":            {"id", "human", "register", "issued.json"},
 		"proof":               {"id", "proof", "--message-file", "message.txt"},
 	}

@@ -207,7 +207,7 @@ func requireErrorCode(t *testing.T, run auditVerifyRun, code string) map[string]
 	if run.code != 2 {
 		t.Fatalf("exit %d; want 2\nstdout: %s\nstderr: %s", run.code, run.stdout, run.stderr)
 	}
-	envelope, ok := jsonValue(t, run.stdout).(map[string]any)
+	envelope, ok := auditStructuralJSON(t, run.stdout).(map[string]any)
 	if !ok || len(envelope) != 1 || envelope["error"] == nil {
 		t.Fatalf("stdout is not only an error envelope: %s", run.stdout)
 	}
@@ -235,7 +235,7 @@ func TestAuditVerifyReportsEachExportVectorCase(t *testing.T) {
 			if run.code != exitFor(c.Report) {
 				t.Fatalf("exit %d; want %d\nstderr: %s", run.code, exitFor(c.Report), run.stderr)
 			}
-			if got := jsonValue(t, run.stdout); !reflect.DeepEqual(got, asJSONValue(t, c.Report)) {
+			if got := auditStructuralJSON(t, run.stdout); !reflect.DeepEqual(got, asJSONValue(t, c.Report)) {
 				t.Fatalf("report:\n got %v\nwant %v", got, c.Report)
 			}
 		})
@@ -276,7 +276,7 @@ func TestAuditVerifyReadsTheBundleFromStdin(t *testing.T) {
 	if run.code != 0 {
 		t.Fatalf("exit %d\nstderr: %s", run.code, run.stderr)
 	}
-	if got := jsonValue(t, run.stdout); !reflect.DeepEqual(got, asJSONValue(t, c.Report)) {
+	if got := auditStructuralJSON(t, run.stdout); !reflect.DeepEqual(got, asJSONValue(t, c.Report)) {
 		t.Fatalf("report:\n got %v\nwant %v", got, c.Report)
 	}
 }
@@ -306,7 +306,7 @@ func TestAuditVerifyIndexesWitnessesPerKindInFlagThenLineOrder(t *testing.T) {
 		if run.code != 1 {
 			t.Fatalf("exit %d; want 1\nstderr: %s", run.code, run.stderr)
 		}
-		report := jsonValue(t, run.stdout).(map[string]any)
+		report := auditStructuralJSON(t, run.stdout).(map[string]any)
 		want := []any{map[string]any{"artefact": "checkpoint", "index": float64(order.index), "reason": "signature_invalid"}}
 		if got := report["witnesses"].(map[string]any)["contradicted"]; !reflect.DeepEqual(got, want) {
 			t.Fatalf("contradicted %v; want %v", got, want)
@@ -371,6 +371,20 @@ func TestAuditVerifyRequiresAValidKeyOfEachKind(t *testing.T) {
 	}
 }
 
+func TestAuditFlagRefusalDoesNotMutateOutputMode(t *testing.T) {
+	savedArgs, savedJSON := os.Args, jsonFlag
+	t.Cleanup(func() { os.Args, jsonFlag = savedArgs, savedJSON })
+	os.Args = []string{"aw", "audit", "verify", "--unknown", "--json"}
+	jsonFlag = false
+	err := auditVerifyCmd.FlagErrorFunc()(auditVerifyCmd, errors.New("unknown flag"))
+	if jsonFlag {
+		t.Fatal("audit flag refusal mutated the shared JSON output mode")
+	}
+	if exitCode(err) != 2 || errorCodeOf(err) != "usage" {
+		t.Fatalf("flag refusal lost its usage status/code: %v", err)
+	}
+}
+
 func TestAuditVerifyGivesEveryOtherFailureExitTwo(t *testing.T) {
 	w := newAuditVerifyWorld(t)
 	c := loadLogsExportVector(t).named(t, "whole_log_of_two_epochs")
@@ -405,7 +419,7 @@ func TestAuditVerifyWritesOnlyTheReportToStdout(t *testing.T) {
 	if run.code != 1 {
 		t.Fatalf("exit %d; want 1", run.code)
 	}
-	if got := jsonValue(t, run.stdout); !reflect.DeepEqual(got, asJSONValue(t, c.Report)) {
+	if got := auditStructuralJSON(t, run.stdout); !reflect.DeepEqual(got, asJSONValue(t, c.Report)) {
 		t.Fatalf("stdout holds more than the report:\n%s", run.stdout)
 	}
 	if strings.TrimSpace(run.stderr) == "" {
@@ -432,7 +446,7 @@ func TestAuditVerifyIgnoresEveryIdentityHomeSelector(t *testing.T) {
 			if run.code != 0 {
 				t.Fatalf("exit %d; want 0\nstderr: %s", run.code, run.stderr)
 			}
-			if got := jsonValue(t, run.stdout); !reflect.DeepEqual(got, asJSONValue(t, c.Report)) {
+			if got := auditStructuralJSON(t, run.stdout); !reflect.DeepEqual(got, asJSONValue(t, c.Report)) {
 				t.Fatalf("report:\n got %v\nwant %v", got, c.Report)
 			}
 		})
@@ -508,4 +522,34 @@ func TestAuditVerifyRefusesTerminalControlsInExporterText(t *testing.T) {
 			requireErrorCode(t, w.run(nil, append([]string{"--bundle", bundle, "--json"}, keyArgs(c)...)...), "bundle_malformed")
 		})
 	}
+}
+
+func TestAuditVerifyNamesAbsenceOfAcceptedAttestation(t *testing.T) {
+	world := newAuditVerifyWorld(t)
+	c := loadLogsExportVector(t).named(t, "whole_log_of_two_epochs")
+	bundle := world.file("header-only.jsonl", c.BundleLines[:1])
+	args := append([]string{"--bundle", bundle}, keyArgs(c)...)
+	text := world.run(nil, args...)
+	if text.code != 0 || !strings.Contains(text.stdout, "attested: none") {
+		t.Fatalf("structural success lacks attestation distinction: %+v", text)
+	}
+	machine := world.run(nil, append(args, "--json")...)
+	report, ok := jsonValue(t, machine.stdout).(map[string]any)
+	if !ok {
+		t.Fatalf("report is not an object: %s", machine.stdout)
+	}
+	epochs, ok := report["attested_epochs"].([]any)
+	if machine.code != 0 || !ok || len(epochs) != 0 || report["intact"] != true {
+		t.Fatalf("missing separate attestation result: %+v", machine)
+	}
+}
+
+// Frozen export vectors pin structural integrity; attestation is a separate,
+// additive result tested on the real CLI above.
+func auditStructuralJSON(t *testing.T, text string) any {
+	value := jsonValue(t, text)
+	if object, ok := value.(map[string]any); ok {
+		delete(object, "attested_epochs")
+	}
+	return value
 }

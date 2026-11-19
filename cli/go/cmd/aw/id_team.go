@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,6 +20,7 @@ import (
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/internal/pathpreflight"
+	"github.com/awebai/aw/signaturewire"
 	"github.com/spf13/cobra"
 )
 
@@ -3306,7 +3306,7 @@ func executeTeamRegisterWithTarget(
 	if err != nil {
 		return teamRegisterOutput{}, err
 	}
-	signature := base64.RawStdEncoding.EncodeToString(ed25519.Sign(teamKey, []byte(canonical)))
+	signature := signaturewire.SignStd(teamKey, []byte(canonical))
 	body := map[string]any{
 		"awid_team_id":         strings.TrimSpace(awidTeamID),
 		"service_url":          strings.TrimSpace(target.ServiceURL),
@@ -3516,7 +3516,7 @@ func buildTeamImportRequestOutput(
 		return teamImportRequestOutput{}, err
 	}
 	controllerDID := awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey))
-	signature := base64.RawStdEncoding.EncodeToString(ed25519.Sign(teamKey, []byte(canonical)))
+	signature := signaturewire.SignStd(teamKey, []byte(canonical))
 	body := map[string]any{
 		"awid_team_id":         strings.TrimSpace(awidTeamID),
 		"organization_id":      nullableString(strings.TrimSpace(organizationID)),
@@ -3606,7 +3606,7 @@ func executeTeamCleanupCloud(
 	if err != nil {
 		return teamCleanupCloudOutput{}, err
 	}
-	signature := base64.RawStdEncoding.EncodeToString(ed25519.Sign(controllerKey, []byte(canonical)))
+	signature := signaturewire.SignStd(controllerKey, []byte(canonical))
 	body := map[string]any{
 		"awid_team_id":         strings.TrimSpace(awidTeamID),
 		"dry_run":              dryRun,

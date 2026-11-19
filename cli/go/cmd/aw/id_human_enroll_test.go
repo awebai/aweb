@@ -92,7 +92,10 @@ func TestHumanEnrollmentClientUsesFrozenAuthorizations(t *testing.T) {
 			human := &humanParticipation{record: &awconfig.HumanRecord{StableID: requester["id"].(string), DIDKey: requester["key"].(string)}, sign: func(payload []byte, _ string) (string, []byte, error) {
 				return requester["key"].(string), ed25519.Sign(private, payload), nil
 			}}
-			client := humanEnrollmentClient(human, c["origin"].(string))
+			client, err := humanEnrollmentClient(human, c["origin"].(string))
+			if err != nil {
+				t.Fatal(err)
+			}
 			issued, err := c["signed_at"].(json.Number).Int64()
 			if err != nil {
 				t.Fatal(err)

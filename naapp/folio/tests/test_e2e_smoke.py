@@ -36,7 +36,9 @@ class E2EStack:
 
 def candidate_hostname(project: str, service: str) -> str:
     helper = Path(__file__).resolve().parents[3] / "scripts/candidate-network.py"
-    return subprocess.check_output([sys.executable, str(helper), "hostname", project, service], text=True).strip()
+    return subprocess.check_output(
+        [sys.executable, str(helper), "hostname", project, service], text=True
+    ).strip()
 
 
 def e2e_stack(env: Mapping[str, str]) -> E2EStack:
@@ -52,12 +54,20 @@ def e2e_stack(env: Mapping[str, str]) -> E2EStack:
     container_network = env.get("NAAPP_E2E_CONTAINER_NETWORK") == "1"
     return E2EStack(
         host=host,
-        awid_url=(f"http://{candidate_hostname(project, 'awid')}:8010" if container_network
-                  else f"http://{host}:{awid_port}"),
-        postgres_url=(f"postgresql://folio:folio@{candidate_hostname(project, 'postgres')}:5432/folio" if container_network
-                      else f"postgresql://folio:folio@{host}:{postgres_port}/folio"),
+        awid_url=(
+            f"http://{candidate_hostname(project, 'awid')}:8010"
+            if container_network
+            else f"http://{host}:{awid_port}"
+        ),
+        postgres_url=(
+            f"postgresql://folio:folio@{candidate_hostname(project, 'postgres')}:5432/folio"
+            if container_network
+            else f"postgresql://folio:folio@{host}:{postgres_port}/folio"
+        ),
         compose=["docker", "compose", "-p", project, "-f", "docker-compose.e2e.yml"],
-        redis_url=f"redis://{candidate_hostname(project, 'redis')}:6379/0" if container_network else None,
+        redis_url=f"redis://{candidate_hostname(project, 'redis')}:6379/0"
+        if container_network
+        else None,
     )
 
 
@@ -144,7 +154,12 @@ class _RecordingProxyHandler(BaseHTTPRequestHandler):
 
         self.send_response(upstream.status_code)
         for key, value in upstream.headers.items():
-            if key.lower() in {"content-length", "connection", "transfer-encoding", "content-encoding"}:
+            if key.lower() in {
+                "content-length",
+                "connection",
+                "transfer-encoding",
+                "content-encoding",
+            }:
                 continue
             self.send_header(key, value)
         self.send_header("Content-Length", str(len(upstream.content)))
@@ -194,7 +209,10 @@ def _require_e2e_enabled() -> None:
 
 
 def _wait_http_ok(
-    url: str, *, timeout_seconds: float = 30.0, ca_file: Path | None = None,
+    url: str,
+    *,
+    timeout_seconds: float = 30.0,
+    ca_file: Path | None = None,
 ) -> None:
     deadline = time.monotonic() + timeout_seconds
     last_error: Exception | None = None
@@ -202,7 +220,8 @@ def _wait_http_ok(
     while time.monotonic() < deadline:
         try:
             response = httpx.get(
-                url, timeout=2.0,
+                url,
+                timeout=2.0,
                 verify=ssl.create_default_context(cafile=str(ca_file)) if ca_file else True,
             )
             if response.status_code < 500:
@@ -259,7 +278,9 @@ def _run_aw_json(workspace: AWWorkspace, *args: str) -> dict[str, Any]:
     try:
         payload = json.loads(result.stdout)
     except json.JSONDecodeError as exc:
-        raise AssertionError(f"aw command did not emit JSON: {result.stdout}\n{result.stderr}") from exc
+        raise AssertionError(
+            f"aw command did not emit JSON: {result.stdout}\n{result.stderr}"
+        ) from exc
     assert isinstance(payload, dict)
     return payload
 
@@ -290,15 +311,17 @@ def _aw_request(
 
 def _assert_aw_success(result: subprocess.CompletedProcess[str], *, context: str) -> str:
     assert result.returncode == 0, (
-        f"aw id request failed: {context}\n"
-        f"stdout:\n{result.stdout}\n"
-        f"stderr:\n{result.stderr}\n"
+        f"aw id request failed: {context}\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}\n"
     )
     return result.stdout
 
 
-def _assert_aw_status(result: subprocess.CompletedProcess[str], status: int, *, context: str) -> None:
-    assert result.returncode != 0, f"expected HTTP {status} failure for {context}, got success: {result.stdout}"
+def _assert_aw_status(
+    result: subprocess.CompletedProcess[str], status: int, *, context: str
+) -> None:
+    assert result.returncode != 0, (
+        f"expected HTTP {status} failure for {context}, got success: {result.stdout}"
+    )
     assert f"HTTP {status}" in result.stderr, (
         f"expected HTTP {status} for {context}\n"
         f"stdout:\n{result.stdout}\n"
@@ -316,8 +339,14 @@ def _aw_json(result: subprocess.CompletedProcess[str], *, context: str) -> Any:
 
 @contextmanager
 def _running_folio(
-    *, awid_service_token: str | None, tls_dir: Path | None = None, app_id: str = "folio",
+    *,
+    awid_service_token: str | None,
+    team_server_origin: str,
+    tls_dir: Path | None = None,
+    app_id: str = "folio",
 ) -> Iterator[RunningFolio]:
+    """Folio, with ``team_server_origin`` (this test's own coordination server)
+    as the one team server it reaches outside the egress guard."""
     _require_e2e_enabled()
     _wait_http_ok(f"{AWID_URL}/health")
 
@@ -340,7 +369,9 @@ def _running_folio(
             tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
             tls.load_cert_chain(certificates.cert_file, certificates.key_file)
             proxy.socket = tls.wrap_socket(proxy.socket, server_side=True)
-        proxy_origin = f"{'https' if certificates else 'http'}://{address}:{proxy.server_address[1]}"
+        proxy_origin = (
+            f"{'https' if certificates else 'http'}://{address}:{proxy.server_address[1]}"
+        )
         env = os.environ.copy()
         env.update(
             {
@@ -349,6 +380,7 @@ def _running_folio(
                 "FOLIO_AUTH_CACHE_TTL_SECONDS": "2",
                 "FOLIO_PUBLIC_ORIGIN": proxy_origin,
                 "FOLIO_APP_ID": app_id,
+                "FOLIO_TEAM_SERVER_INTERNAL_ORIGINS": json.dumps([team_server_origin]),
             }
         )
         env.pop("FOLIO_AWID_SERVICE_TOKEN", None)
@@ -385,7 +417,9 @@ def _running_folio(
                     # Keep earlier session deployments trusted when another starts.
                     previous = os.environ.get("SSL_CERT_FILE")
                     bundle = ca_file.with_name("client-ca-bundle.pem")
-                    bundle.write_bytes((Path(previous).read_bytes() if previous else b"") + ca_file.read_bytes())
+                    bundle.write_bytes(
+                        (Path(previous).read_bytes() if previous else b"") + ca_file.read_bytes()
+                    )
                     patch.setenv("SSL_CERT_FILE", str(bundle))
                     patch.setenv("GODEBUG", "x509sslcertoverrideplatform=1")
                 try:
@@ -393,7 +427,13 @@ def _running_folio(
                 except Exception as exc:
                     setup_error = exc
                     raise
-                yield RunningFolio(origin=proxy_origin, backend_origin=backend_origin, proxy=proxy, ca_file=ca_file, app_id=app_id)
+                yield RunningFolio(
+                    origin=proxy_origin,
+                    backend_origin=backend_origin,
+                    proxy=proxy,
+                    ca_file=ca_file,
+                    app_id=app_id,
+                )
         finally:
             proxy.shutdown()
             proxy.server_close()
@@ -426,17 +466,32 @@ def folio(tmp_path_factory: pytest.TempPathFactory) -> Iterator[RunningFolio]:
 
 
 @pytest.fixture(scope="module")
-def folio_without_awid_service_token(tmp_path_factory: pytest.TempPathFactory) -> Iterator[RunningFolio]:
+def folio_without_awid_service_token(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Iterator[RunningFolio]:
     with _installed_deployment(tmp_path_factory.mktemp("folio-private-e2e"), None) as running:
         yield running
 
 
 @contextmanager
 def _installed_deployment(tmp_path: Path, service_token: str | None) -> Iterator[RunningFolio]:
-    with _running_folio(awid_service_token=service_token, tls_dir=tmp_path / "tls", app_id="folio-e2e") as running:
+    with (
+        _coordination_listener() as (listener, server_origin),
+        _running_folio(
+            awid_service_token=service_token,
+            team_server_origin=server_origin,
+            tls_dir=tmp_path / "tls",
+            app_id="folio-e2e",
+        ) as running,
+    ):
         assert running.ca_file is not None
-        with _running_coordination_server(tmp_path, app_origin=running.origin, ca_file=running.ca_file) as (origin, env):
-            yield replace(running, server_origin=origin, server_env=env)
+        with _running_coordination_server(
+            tmp_path,
+            listener=listener,
+            app_origin=running.origin,
+            ca_file=running.ca_file,
+        ) as env:
+            yield replace(running, server_origin=server_origin, server_env=env)
 
 
 @pytest.fixture(scope="module")
@@ -478,7 +533,9 @@ def aw_workspace(aw_workspace_factory: Callable[[str], AWWorkspace]) -> AWWorksp
     return aw_workspace_factory("primary")
 
 
-def _write_workspace_binding(workspace: AWWorkspace, *, team_id: str, alias: str, cert_path: str) -> None:
+def _write_workspace_binding(
+    workspace: AWWorkspace, *, team_id: str, alias: str, cert_path: str
+) -> None:
     now = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     workspace_id = str(uuid.uuid4())
     (workspace.path / ".aw" / "workspace.yaml").write_text(
@@ -499,7 +556,10 @@ updated_at: \"{now}\"
 
 
 def _provision_team(
-    workspace: AWWorkspace, *, alias: str = "alice", folio: RunningFolio | None = None,
+    workspace: AWWorkspace,
+    *,
+    alias: str = "alice",
+    folio: RunningFolio | None = None,
 ) -> E2ETeam:
     unique = uuid.uuid4().hex[:12]
     namespace = f"folio-{unique}.test"
@@ -580,14 +640,26 @@ def _provision_team(
         assert folio.server_origin is not None and folio.server_env is not None
         workspace.env["AWEB_URL"] = folio.server_origin
         _configure_folio_client(workspace, folio)
-        _run_aw(workspace, "workspace", "connect", "--service", folio.server_origin, "--team", team_id)
+        _run_aw(
+            workspace, "workspace", "connect", "--service", folio.server_origin, "--team", team_id
+        )
         _publish_team_server(result, folio.server_origin)
         _grant_install_admin(result, folio.server_env)
         installed = _run_aw_json(workspace, "plugin", "install", folio.origin)
         assert installed["approved"]
-        apps = _aw_json(_aw_request(result, "GET", folio.server_origin + "/v1/apps/installed?team_id=" + team_id), context="installed Folio")
-        assert any(app["app_id"] == folio.app_id and app["state"] == "active" and app["origin"] == folio.origin
-                   and app["installation_id"] for app in apps["apps"])
+        apps = _aw_json(
+            _aw_request(
+                result, "GET", folio.server_origin + "/v1/apps/installed?team_id=" + team_id
+            ),
+            context="installed Folio",
+        )
+        assert any(
+            app["app_id"] == folio.app_id
+            and app["state"] == "active"
+            and app["origin"] == folio.origin
+            and app["installation_id"]
+            for app in apps["apps"]
+        )
     return result
 
 
@@ -600,8 +672,20 @@ def _configure_folio_client(workspace: AWWorkspace, folio: RunningFolio) -> None
 
 
 def _publish_team_server(team: E2ETeam, origin: str) -> None:
-    published = _run_aw_json(team.workspace, "id", "team", "set-server", "--team", team.team,
-                             "--namespace", team.namespace, "--url", origin, "--registry", AWID_URL)
+    published = _run_aw_json(
+        team.workspace,
+        "id",
+        "team",
+        "set-server",
+        "--team",
+        team.team,
+        "--namespace",
+        team.namespace,
+        "--url",
+        origin,
+        "--registry",
+        AWID_URL,
+    )
     assert published["status"] == "published" and published["server_url"] == origin
 
 
@@ -610,10 +694,27 @@ def _grant_install_admin(team: E2ETeam, env: dict[str, str]) -> None:
     started = time.monotonic()
     try:
         operator = subprocess.run(
-            ["uv", "run", "--offline", "--frozen", "--project", str(project),
-             "aweb", "install-admin", "grant", "--team-id", team.team_id,
-             "--principal-did", team.did_key, "--role", "owner"],
-            env=env, text=True, capture_output=True, timeout=30,
+            [
+                "uv",
+                "run",
+                "--offline",
+                "--frozen",
+                "--project",
+                str(project),
+                "aweb",
+                "install-admin",
+                "grant",
+                "--team-id",
+                team.team_id,
+                "--principal-did",
+                team.did_key,
+                "--role",
+                "owner",
+            ],
+            env=env,
+            text=True,
+            capture_output=True,
+            timeout=30,
         )
     except subprocess.TimeoutExpired as exc:
         elapsed = time.monotonic() - started
@@ -631,7 +732,9 @@ def _provision_real_team_certificate(workspace: AWWorkspace) -> str:
     return _provision_team(workspace).team_id
 
 
-def _create_document(folio: RunningFolio, team: E2ETeam, *, slug: str, title: str, body: str) -> dict[str, Any]:
+def _create_document(
+    folio: RunningFolio, team: E2ETeam, *, slug: str, title: str, body: str
+) -> dict[str, Any]:
     payload = json.dumps({"slug": slug, "title": title, "body": body}, separators=(",", ":"))
     result = _aw_request(team, "POST", f"{folio.origin}/v1/documents", body=payload)
     data = _aw_json(result, context=f"create document {slug}")
@@ -653,10 +756,14 @@ def _list_documents(folio: RunningFolio, team: E2ETeam) -> list[dict[str, Any]]:
     return data
 
 
-def _append_version(folio: RunningFolio, team: E2ETeam, *, slug: str, body: str, tmp_path: Path) -> dict[str, Any]:
+def _append_version(
+    folio: RunningFolio, team: E2ETeam, *, slug: str, body: str, tmp_path: Path
+) -> dict[str, Any]:
     body_file = tmp_path / f"{slug}-{uuid.uuid4().hex}.txt"
     body_file.write_text(body, encoding="utf-8")
-    result = _aw_request(team, "POST", f"{folio.origin}/v1/documents/{slug}/versions", body_file=body_file)
+    result = _aw_request(
+        team, "POST", f"{folio.origin}/v1/documents/{slug}/versions", body_file=body_file
+    )
     data = _aw_json(result, context=f"append version {slug}")
     assert isinstance(data, dict)
     return data
@@ -726,14 +833,23 @@ def test_real_aw_team_auth_smoke(folio: RunningFolio, aw_workspace: AWWorkspace)
 
 
 def test_local_member_installs_folio_without_global_identity_metadata(
-    folio: RunningFolio, aw_workspace: AWWorkspace, tmp_path: Path,
+    folio: RunningFolio,
+    aw_workspace: AWWorkspace,
+    tmp_path: Path,
 ) -> None:
     controller = _provision_team(aw_workspace)
     assert folio.server_origin is not None and folio.server_env is not None
     aw_workspace.env["AWEB_URL"] = folio.server_origin
     invite = _run_aw_json(
-        aw_workspace, "id", "team", "invite", "--namespace", controller.namespace,
-        "--team", controller.team, "--member-local",
+        aw_workspace,
+        "id",
+        "team",
+        "invite",
+        "--namespace",
+        controller.namespace,
+        "--team",
+        controller.team,
+        "--member-local",
     )
     member_path = tmp_path / "local-member"
     member_path.mkdir()
@@ -744,18 +860,42 @@ def test_local_member_installs_folio_without_global_identity_metadata(
     _run_aw(workspace, "id", "team", "accept-invite", invite["token"], "--local", "--name", "bob")
     assert not (member_path / ".aw" / "identity.yaml").exists()
     assert (member_path / ".aw" / "signing.key").is_file()
-    _run_aw(workspace, "workspace", "connect", "--service", folio.server_origin, "--team", controller.team_id)
+    _run_aw(
+        workspace,
+        "workspace",
+        "connect",
+        "--service",
+        folio.server_origin,
+        "--team",
+        controller.team_id,
+    )
     cert = _run_aw_json(workspace, "id", "cert", "show")
-    member = replace(controller, workspace=workspace, alias="bob", address="",
-                     did_key=str(cert["member_did_key"]), certificate_id=str(cert["certificate_id"]))
+    member = replace(
+        controller,
+        workspace=workspace,
+        alias="bob",
+        address="",
+        did_key=str(cert["member_did_key"]),
+        certificate_id=str(cert["certificate_id"]),
+    )
     _publish_team_server(controller, folio.server_origin)
     _grant_install_admin(member, folio.server_env)
     installed = _run_aw_json(workspace, "plugin", "install", folio.origin)
     assert installed["approved"], installed
-    receipt = _aw_json(_aw_request(member, "GET", folio.server_origin + "/v1/apps/installed?team_id=" + member.team_id), context="local member installation")
-    assert any(app["app_id"] == folio.app_id and app["state"] == "active"
-               and app["installation_id"] and app["digest"] and app["origin_verified"]
-               for app in receipt["apps"]), receipt
+    receipt = _aw_json(
+        _aw_request(
+            member, "GET", folio.server_origin + "/v1/apps/installed?team_id=" + member.team_id
+        ),
+        context="local member installation",
+    )
+    assert any(
+        app["app_id"] == folio.app_id
+        and app["state"] == "active"
+        and app["installation_id"]
+        and app["digest"]
+        and app["origin_verified"]
+        for app in receipt["apps"]
+    ), receipt
     result = _aw_request(member, "GET", folio.origin + "/v1/documents")
     assert _assert_aw_success(result, context="local member Folio tools").strip() == "[]"
 
@@ -771,73 +911,97 @@ def test_private_team_member_authenticates_without_the_awid_service_token(
 
 
 @contextmanager
-def _running_coordination_server(
-    tmp_path: Path, *, app_origin: str, ca_file: Path,
-) -> Iterator[tuple[str, dict[str, str]]]:
-    """Real aweb, with the real HTTPS fetcher pinned to this test origin."""
-    with ExitStack() as setup:
-        listener = setup.enter_context(socket.socket())
+def _coordination_listener() -> Iterator[tuple[socket.socket, str]]:
+    """The coordination server's listening socket and its loopback origin, bound
+    before Folio starts so Folio can be configured with that origin."""
+    with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
         listener.listen()
-        port = listener.getsockname()[1]
-        origin = f"http://127.0.0.1:{port}"
-        redis_url = STACK.redis_url
-        if redis_url is None:
-            redis_port = _compose("port", "redis", "6379").stdout.strip().rsplit(":", 1)[1]
-            redis_url = f"redis://{STACK.host}:{redis_port}/0"
-        env = {k: v for k, v in os.environ.items() if not k.startswith(("AWEB_", "AW_", "AWID_"))}
-        env.update(
-            AWEB_DATABASE_URL=POSTGRES_URL,
-            AWEB_REDIS_URL=redis_url,
-            AWEB_PUBLIC_ORIGIN=origin,
-            AWID_REGISTRY_URL=AWID_URL,
-            AWID_SERVICE_TOKEN=AWID_SERVICE_TOKEN,
+        yield listener, f"http://127.0.0.1:{listener.getsockname()[1]}"
+
+
+@contextmanager
+def _running_coordination_server(
+    tmp_path: Path,
+    *,
+    listener: socket.socket,
+    app_origin: str,
+    ca_file: Path,
+) -> Iterator[dict[str, str]]:
+    """Real aweb on ``listener``, with the real HTTPS fetcher pinned to this test origin."""
+    origin = f"http://127.0.0.1:{listener.getsockname()[1]}"
+    redis_url = STACK.redis_url
+    if redis_url is None:
+        redis_port = _compose("port", "redis", "6379").stdout.strip().rsplit(":", 1)[1]
+        redis_url = f"redis://{STACK.host}:{redis_port}/0"
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("AWEB_", "AW_", "AWID_"))}
+    env.update(
+        AWEB_DATABASE_URL=POSTGRES_URL,
+        AWEB_REDIS_URL=redis_url,
+        AWEB_PUBLIC_ORIGIN=origin,
+        AWID_REGISTRY_URL=AWID_URL,
+        AWID_SERVICE_TOKEN=AWID_SERVICE_TOKEN,
+    )
+    # Use the locked server source environment, not an installed aweb artifact.
+    project = Path(__file__).resolve().parents[3] / "server"
+    runner = tmp_path / "installation-server.py"
+    runner.write_text(
+        "import sys\n"
+        "from urllib.parse import urlsplit\n"
+        "import uvicorn\n"
+        "from aweb.api import create_app\n"
+        "from aweb.app_manifests import ManifestFetcher\n"
+        "from aweb_naapp.egress import AddressPolicy, DnsResolver, Egress, InternalDestinations, parse_destination\n"
+        "origin = urlsplit(sys.argv[1])\n"
+        "destination = parse_destination({'host': origin.hostname, 'port': origin.port, 'path': '/**', "
+        "'methods': ['GET'], 'network': 'internal', 'cidr': origin.hostname + '/32'}, "
+        "internal_destinations=InternalDestinations.ALLOWED)\n"
+        "app = create_app()\n"
+        "app.state.manifest_fetcher = ManifestFetcher(destination=destination, egress=Egress("
+        "addresses=AddressPolicy(internal_destinations=InternalDestinations.ALLOWED), "
+        "resolver=DnsResolver(), user_agent='folio-install-test/1', ca_file=sys.argv[2]))\n"
+        "uvicorn.run(app, fd=int(sys.argv[3]))\n"
+    )
+    with (tmp_path / "coordination.log").open("w+") as log:
+        proc = subprocess.Popen(
+            [
+                "uv",
+                "run",
+                "--offline",
+                "--frozen",
+                "--project",
+                str(project),
+                "python",
+                str(runner),
+                app_origin,
+                str(ca_file),
+                str(listener.fileno()),
+            ],
+            env=env,
+            stdout=log,
+            stderr=log,
+            pass_fds=(listener.fileno(),),
         )
-        # Use the locked server source environment, not an installed aweb artifact.
-        project = Path(__file__).resolve().parents[3] / "server"
-        runner = tmp_path / "installation-server.py"
-        runner.write_text(
-            "import sys\n"
-            "from urllib.parse import urlsplit\n"
-            "import uvicorn\n"
-            "from aweb.api import create_app\n"
-            "from aweb.app_manifests import ManifestFetcher\n"
-            "from aweb_naapp.egress import AddressPolicy, DnsResolver, Egress, InternalDestinations, parse_destination\n"
-            "origin = urlsplit(sys.argv[1])\n"
-            "destination = parse_destination({'host': origin.hostname, 'port': origin.port, 'path': '/**', "
-            "'methods': ['GET'], 'network': 'internal', 'cidr': origin.hostname + '/32'}, "
-            "internal_destinations=InternalDestinations.ALLOWED)\n"
-            "app = create_app()\n"
-            "app.state.manifest_fetcher = ManifestFetcher(destination=destination, egress=Egress("
-            "addresses=AddressPolicy(internal_destinations=InternalDestinations.ALLOWED), "
-            "resolver=DnsResolver(), user_agent='folio-install-test/1', ca_file=sys.argv[2]))\n"
-            "uvicorn.run(app, fd=int(sys.argv[3]))\n"
-        )
-        with (tmp_path / "coordination.log").open("w+") as log:
-            proc = subprocess.Popen(
-                ["uv", "run", "--offline", "--frozen", "--project", str(project),
-                 "python", str(runner), app_origin, str(ca_file), str(listener.fileno())],
-                env=env, stdout=log, stderr=log, pass_fds=(listener.fileno(),),
-            )
-            listener.close()
+        listener.close()
+        try:
+            _wait_http_ok(f"{origin}/health")
+            yield env
+        finally:
+            proc.terminate()
             try:
-                _wait_http_ok(f"{origin}/health")
-                yield origin, env
-            finally:
-                proc.terminate()
-                try:
-                    proc.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-                    proc.wait(timeout=10)
-                # uv may report forwarded SIGTERM as 128 + SIGTERM.
-                if proc.returncode not in (0, -15, 143, None):
-                    log.seek(0)
-                    raise AssertionError(f"coordination server exit {proc.returncode}: {log.read()}")
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=10)
+            # uv may report forwarded SIGTERM as 128 + SIGTERM.
+            if proc.returncode not in (0, -15, 143, None):
+                log.seek(0)
+                raise AssertionError(f"coordination server exit {proc.returncode}: {log.read()}")
 
 
 def test_install_after_mint_uses_replacement_grant(
-    aw_workspace: AWWorkspace, tmp_path: Path,
+    aw_workspace: AWWorkspace,
+    tmp_path: Path,
 ) -> None:
     team = _provision_team(aw_workspace)
     resident_home = aw_workspace.path / ".aw"
@@ -847,69 +1011,136 @@ def test_install_after_mint_uses_replacement_grant(
     instance.mkdir()
     # A reachable TLS deployment has its own identity, never the hosted id.
     app_id = "folio-install"
-    with _running_folio(
-        awid_service_token=AWID_SERVICE_TOKEN, tls_dir=tmp_path / "tls", app_id=app_id,
-    ) as folio:
+    with (
+        _coordination_listener() as (listener, origin),
+        _running_folio(
+            awid_service_token=AWID_SERVICE_TOKEN,
+            team_server_origin=origin,
+            tls_dir=tmp_path / "tls",
+            app_id=app_id,
+        ) as folio,
+    ):
         assert folio.ca_file is not None
-        with _running_coordination_server(tmp_path, app_origin=folio.origin, ca_file=folio.ca_file) as (origin, server_env):
+        with _running_coordination_server(
+            tmp_path,
+            listener=listener,
+            app_origin=folio.origin,
+            ca_file=folio.ca_file,
+        ) as server_env:
             aw_workspace.env["AWEB_URL"] = origin
             _configure_folio_client(aw_workspace, folio)
-            _run_aw(aw_workspace, "workspace", "connect", "--service", origin, "--team", team.team_id)
+            _run_aw(
+                aw_workspace, "workspace", "connect", "--service", origin, "--team", team.team_id
+            )
             _publish_team_server(team, origin)
             _grant_install_admin(team, server_env)
             with (tmp_path / "custody.log").open("w+") as log:
                 custody = subprocess.Popen(
                     ["aw", "--identity-home", str(resident_home), "custody", "serve"],
-                    cwd=aw_workspace.path, env=aw_workspace.env, stdout=log, stderr=log,
+                    cwd=aw_workspace.path,
+                    env=aw_workspace.env,
+                    stdout=log,
+                    stderr=log,
                 )
                 try:
                     deadline = time.monotonic() + 30
                     while True:
                         status = subprocess.run(
-                            ["aw", "--identity-home", str(resident_home), "--json", "custody", "status"],
-                            cwd=instance, env=aw_workspace.env, text=True, capture_output=True, timeout=5,
+                            [
+                                "aw",
+                                "--identity-home",
+                                str(resident_home),
+                                "--json",
+                                "custody",
+                                "status",
+                            ],
+                            cwd=instance,
+                            env=aw_workspace.env,
+                            text=True,
+                            capture_output=True,
+                            timeout=5,
                         )
                         if status.returncode == 0:
                             break
                         assert time.monotonic() < deadline, status.stderr
                         assert custody.poll() is None, "custody exited before readiness"
-                        time.sleep(.05)
-                    minted = _run_aw_json(aw_workspace, "id", "grant", "mint", "--bundle", "normal-agent", "--ttl", "30m", "--custody-socket", "auto", "--out", str(before_home))
+                        time.sleep(0.05)
+                    minted = _run_aw_json(
+                        aw_workspace,
+                        "id",
+                        "grant",
+                        "mint",
+                        "--bundle",
+                        "normal-agent",
+                        "--ttl",
+                        "30m",
+                        "--custody-socket",
+                        "auto",
+                        "--out",
+                        str(before_home),
+                    )
                     assert minted["apps"] == []
                     assert minted["custody_socket_path"] == json.loads(status.stdout)["socket_path"]
                     before_material = {
                         p.name: hashlib.sha256(p.read_bytes()).digest()
-                        for p in before_home.iterdir() if p.is_file()
+                        for p in before_home.iterdir()
+                        if p.is_file()
                     }
                     grant_env = dict(aw_workspace.env, AWEB_IDENTITY_HOME=str(before_home))
                     grant = AWWorkspace(path=instance, env=grant_env)
                     manifest = folio.origin
                     refused = subprocess.run(
-                        ["aw", "plugin", "install", manifest], cwd=instance, env=grant_env,
-                        text=True, capture_output=True, timeout=30,
+                        ["aw", "plugin", "install", manifest],
+                        cwd=instance,
+                        env=grant_env,
+                        text=True,
+                        capture_output=True,
+                        timeout=30,
                     )
                     assert refused.returncode != 0 and "app_management_denied" in refused.stderr
-                    installed = _run_aw_json(aw_workspace, "--identity-home", str(resident_home), "plugin", "install", manifest)
+                    installed = _run_aw_json(
+                        aw_workspace,
+                        "--identity-home",
+                        str(resident_home),
+                        "plugin",
+                        "install",
+                        manifest,
+                    )
                     assert installed["approved"] and installed["existing_grants_unchanged"]
                     assert installed["identity_home"] == str(resident_home)
                     assert installed["active_grants"] == 1
                     assert installed["grant_restart_command"] == [
-                        "env", "AWEB_IDENTITY_HOME=<new-grant-home>", "<agent-command>",
+                        "env",
+                        "AWEB_IDENTITY_HOME=<new-grant-home>",
+                        "<agent-command>",
                     ]
                     assert installed["oats_renew_restart_command"] == [
-                        "oats", "session", "restart", "--home", "<instance-home>",
+                        "oats",
+                        "session",
+                        "restart",
+                        "--home",
+                        "<instance-home>",
                     ]
                     updated = _run_aw(aw_workspace, "--json=false", "plugin", "update", app_id)
-                    commands = [shlex.split(line.strip()) for line in updated.stdout.splitlines()
-                                if line.startswith("  ")]
+                    commands = [
+                        shlex.split(line.strip())
+                        for line in updated.stdout.splitlines()
+                        if line.startswith("  ")
+                    ]
                     assert installed["grant_refresh_command"] in commands
                     assert installed["grant_restart_command"] in commands
                     assert installed["oats_renew_restart_command"] in commands
                     payload = tmp_path / "document with space.json"
-                    payload.write_text(json.dumps(dict(slug="grant-install", title="Grant install", body="first")))
+                    payload.write_text(
+                        json.dumps(dict(slug="grant-install", title="Grant install", body="first"))
+                    )
                     denied = subprocess.run(
-                        ["aw", app_id, "create", "--body-file", str(payload)], cwd=instance,
-                        env=grant_env, text=True, capture_output=True, timeout=30,
+                        ["aw", app_id, "create", "--body-file", str(payload)],
+                        cwd=instance,
+                        env=grant_env,
+                        text=True,
+                        capture_output=True,
+                        timeout=30,
                     )
                     assert denied.returncode != 0 and "app_tool_denied" in denied.stderr
                     # Follow the machine-readable action; never modify the old grant.
@@ -922,15 +1153,21 @@ def test_install_after_mint_uses_replacement_grant(
                     replacement = _run_aw_json(aw_workspace, *action[1:])
                     assert replacement["grant_id"] != minted["grant_id"]
                     assert replacement["custody_socket_path"] == minted["custody_socket_path"]
-                    expires = datetime.fromisoformat(replacement["expires_at"].replace("Z", "+00:00"))
+                    expires = datetime.fromisoformat(
+                        replacement["expires_at"].replace("Z", "+00:00")
+                    )
                     assert timedelta(0) < expires - datetime.now(UTC) <= timedelta(minutes=15)
                     assert app_id in {app["app_id"] for app in replacement["apps"]}
-                    grant = AWWorkspace(path=instance, env=dict(grant.env, AWEB_IDENTITY_HOME=str(replacement_home)))
+                    grant = AWWorkspace(
+                        path=instance, env=dict(grant.env, AWEB_IDENTITY_HOME=str(replacement_home))
+                    )
                     # Follow the printed shell instructions, replacing the WHOLE
                     # quoted placeholder and preserving the spaced path argument.
                     restart_template = next(
-                        line.strip() for line in updated.stdout.splitlines()
-                        if line.startswith("  ") and shlex.split(line.strip()) == installed["grant_restart_command"]
+                        line.strip()
+                        for line in updated.stdout.splitlines()
+                        if line.startswith("  ")
+                        and shlex.split(line.strip()) == installed["grant_restart_command"]
                     )
                     restart_shell = restart_template.replace(
                         shlex.quote("AWEB_IDENTITY_HOME=<new-grant-home>"),
@@ -940,28 +1177,57 @@ def test_install_after_mint_uses_replacement_grant(
                         shlex.join(["aw", "--json", app_id, "create", "--body-file", str(payload)]),
                     )
                     launched = subprocess.run(
-                        ["sh", "-c", restart_shell], cwd=instance, env=grant_env,
-                        text=True, capture_output=True, timeout=30,
+                        ["sh", "-c", restart_shell],
+                        cwd=instance,
+                        env=grant_env,
+                        text=True,
+                        capture_output=True,
+                        timeout=30,
                     )
                     assert launched.returncode == 0, launched.stderr
                     created = json.loads(launched.stdout)
                     # JSON uses argument elements, never a joined command string.
-                    restart_argv = [installed["grant_restart_command"][0],
-                                    f"AWEB_IDENTITY_HOME={replacement_home}",
-                                    "aw", "--json", app_id, "show", "--slug", "grant-install"]
+                    restart_argv = [
+                        installed["grant_restart_command"][0],
+                        f"AWEB_IDENTITY_HOME={replacement_home}",
+                        "aw",
+                        "--json",
+                        app_id,
+                        "show",
+                        "--slug",
+                        "grant-install",
+                    ]
                     resumed = subprocess.run(
-                        restart_argv, cwd=instance, env=grant_env,
-                        text=True, capture_output=True, timeout=30,
+                        restart_argv,
+                        cwd=instance,
+                        env=grant_env,
+                        text=True,
+                        capture_output=True,
+                        timeout=30,
                     )
                     assert resumed.returncode == 0, resumed.stderr
                     assert json.loads(resumed.stdout)["body"] == "first"
                     assert created["slug"] == "grant-install" and created["body"] == "first"
                     body = tmp_path / "append.md"
                     body.write_text("second\n")
-                    appended = _run_aw_json(grant, app_id, "append", "--slug", "grant-install", "--body-file", str(body), "--json=true")
+                    appended = _run_aw_json(
+                        grant,
+                        app_id,
+                        "append",
+                        "--slug",
+                        "grant-install",
+                        "--body-file",
+                        str(body),
+                        "--json=true",
+                    )
                     assert appended["current_version"] == 2
-                    shown = _run_aw_json(grant, app_id, "show", "--slug", "grant-install", "--json=false")
-                    assert shown["body"] == "second\n" and shown["latest"]["created_by_did_key"] == team.did_key
+                    shown = _run_aw_json(
+                        grant, app_id, "show", "--slug", "grant-install", "--json=false"
+                    )
+                    assert (
+                        shown["body"] == "second\n"
+                        and shown["latest"]["created_by_did_key"] == team.did_key
+                    )
                     _run_aw(aw_workspace, "id", "grant", "revoke", minted["grant_id"])
                     active = _run_aw_json(aw_workspace, "plugin", "update", app_id)
                     assert active["active_grants"] == 1  # revoked grants are excluded
@@ -972,7 +1238,8 @@ def test_install_after_mint_uses_replacement_grant(
                     assert not (replacement_home / "signing.key").exists()
                     assert before_material == {
                         p.name: hashlib.sha256(p.read_bytes()).digest()
-                        for p in before_home.iterdir() if p.is_file()
+                        for p in before_home.iterdir()
+                        if p.is_file()
                     }
                 finally:
                     custody.terminate()
@@ -1004,7 +1271,9 @@ def test_document_endpoints_versions_raw_utf8_and_attribution(
     fetched = _get_document(folio, team, "handoff")
     assert fetched["body"] == "first"
 
-    appended = _append_version(folio, team, slug="handoff", body="second plain text\nnot json", tmp_path=tmp_path)
+    appended = _append_version(
+        folio, team, slug="handoff", body="second plain text\nnot json", tmp_path=tmp_path
+    )
     assert appended["body"] == "second plain text\nnot json"
     assert appended["current_version"] == 2
     assert appended["latest"]["created_by_did_key"] == team.did_key
@@ -1025,7 +1294,9 @@ def test_document_endpoints_versions_raw_utf8_and_attribution(
 
     bad_body = tmp_path / "invalid-utf8.bin"
     bad_body.write_bytes(b"\xff")
-    bad = _aw_request(team, "POST", f"{folio.origin}/v1/documents/handoff/versions", body_file=bad_body)
+    bad = _aw_request(
+        team, "POST", f"{folio.origin}/v1/documents/handoff/versions", body_file=bad_body
+    )
     _assert_aw_status(bad, 400, context="append invalid UTF-8")
 
 
@@ -1040,11 +1311,18 @@ def test_team_scoping_and_body_named_team_cannot_bypass_certificate_scope(
     assert _list_documents(folio, second) == []
     second_read = _aw_request(second, "GET", f"{folio.origin}/v1/documents/secret")
     _assert_aw_status(second_read, 404, context="second team reads first team document")
-    second_append = _aw_request(second, "POST", f"{folio.origin}/v1/documents/secret/versions", body="oops")
+    second_append = _aw_request(
+        second, "POST", f"{folio.origin}/v1/documents/secret/versions", body="oops"
+    )
     _assert_aw_status(second_append, 404, context="second team appends first team document")
 
     payload = json.dumps(
-        {"team_id": first.team_id, "slug": "intruder", "title": "Intruder", "body": "body-named team"},
+        {
+            "team_id": first.team_id,
+            "slug": "intruder",
+            "title": "Intruder",
+            "body": "body-named team",
+        },
         separators=(",", ":"),
     )
     created_by_second = _aw_json(
@@ -1095,7 +1373,9 @@ def test_awid_unavailable_honors_cache_then_fails_closed(
     _compose("kill", "awid")
     try:
         cached = _aw_request(team, "GET", f"{folio.origin}/v1/documents")
-        assert _assert_aw_success(cached, context="cached request while awid stopped").strip() == "[]"
+        assert (
+            _assert_aw_success(cached, context="cached request while awid stopped").strip() == "[]"
+        )
 
         time.sleep(2.2)
         expired = _aw_request(team, "GET", f"{folio.origin}/v1/documents")
@@ -1160,7 +1440,9 @@ def test_real_aw_usage_is_measured_not_capped(
         )
         assert created["slug"] == f"note-{index}"
     for version in range(2, 52):
-        appended = _append_version(folio, team, slug="note-0", body=f"v{version}", tmp_path=tmp_path)
+        appended = _append_version(
+            folio, team, slug="note-0", body=f"v{version}", tmp_path=tmp_path
+        )
         assert appended["current_version"] == version
 
     assert _get_billing(folio, team) == {

@@ -311,3 +311,37 @@ func TestRequesterPollRetriesKeepOriginalSelectionAndDeadline(t *testing.T) {
 		})
 	}
 }
+
+// A caller's data view cannot extend the checked request window or replace its
+// requester. These facts are admitted once from the shared 428 reader.
+func TestCheckedSessionDoesNotTakeAuthorityFromTheMutableRequestView(t *testing.T) {
+	vector := find(t, cases(t, "enforcer-requester"), func(value map[string]any) bool {
+		return value["id"] == "needs-human-exact-R"
+	})
+	now := fixtureInteger(t, vector["now"])
+	client := &Client{Origin: fixtureText(t, vector["origin"]), Requester: fixtureObject(t, vector["presenter"]), Now: func() time.Time { return time.Unix(now, 0) }}
+	raw, err := proof.Canonical(vector["needs_human"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := client.From428(raw, int(fixtureInteger(t, vector["http_status"])))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := session.live(); err != nil {
+		t.Fatalf("checked live neighbor: %v", err)
+	}
+	deadline := fixtureInteger(t, session.Request["deadline"])
+	session.Request["deadline"] = json.Number(strconv.FormatInt(deadline+3600, 10))
+	now = deadline
+	if err := session.live(); err == nil || err.Error() != "request_expired" {
+		t.Fatalf("mutable view extended the checked deadline: %v", err)
+	}
+	now = fixtureInteger(t, vector["now"])
+	requester := fixtureObject(t, session.Request["requester"])
+	requester["id"] = "did:aw:other"
+	client.Requester = requester
+	if err := session.live(); err == nil || err.Error() != "requester_mismatch" {
+		t.Fatalf("mutable view supplied another requester: %v", err)
+	}
+}

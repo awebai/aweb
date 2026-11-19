@@ -13,6 +13,7 @@ import time
 import uuid
 from user_paths_result import qualification
 from user_paths_kernel_result import add_kernel_wake_result
+from container_fixture_modes import make_public_tree_readable
 
 REPO = Path(__file__).resolve().parents[2]
 BASELINE_WHEEL = os.environ.get("USER_PATHS_BASELINE_WHEEL")
@@ -173,7 +174,9 @@ def configuration(dns=None):
     }
     if BASELINE_READY:
         services["server"]["environment"]["PYTHONPATH"] = "/work/baseline-package"
-        services["server"]["volumes"] = [f"{WORK}:/work"]
+        services["server"]["volumes"] = [
+            f"{WORK}/baseline-package:/work/baseline-package:ro"
+        ]
     for service in services.values():
         service.update(cpus=1, mem_limit="1g", pids_limit=256)
     for name in ("awid", "server", "peer", "cli"):
@@ -241,6 +244,34 @@ def run_released_kernel_wake_probe(*, lane, binary, lane_failures):
             lane_failures.append("released-kernel-wake")
 
 
+def prepare_container_inputs() -> None:
+    (WORK / "dns").mkdir()
+    (WORK / "dns").chmod(0o755)
+    (WORK / "dns/Corefile").write_text(
+        "test:53 {\n file /zones/test.zone { reload 1s }\n}\n.:53 {\n forward . 127.0.0.11\n}\n"
+    )
+    (WORK / "dns/test.zone").write_text(
+        "$ORIGIN test.\n$TTL 1\n@ IN SOA ns.test. hostmaster.test. (1 1 1 1 1)\n@ IN NS ns.test.\nns IN A 127.0.0.1\n"
+    )
+    (WORK / "init.sql").write_text(
+        "CREATE EXTENSION pgcrypto WITH SCHEMA public;\nCREATE DATABASE peer;\n\\connect peer\nCREATE EXTENSION pgcrypto WITH SCHEMA public;\n"
+    )
+    # These public fixtures are read by Postgres/CoreDNS, not CLIENT_USER.
+    for relative in ("init.sql", "dns/Corefile", "dns/test.zone"):
+        (WORK / relative).chmod(0o644)
+    for source in (
+        "scripts/fetch_released_aw.py",
+        "scripts/e2e/user_paths.py",
+        "scripts/e2e/user_paths_receive.mjs",
+        "scripts/e2e/user_paths_oats.mjs",
+        "scripts/e2e/user_paths_result.py",
+    ):
+        shutil.copy2(REPO / source, WORK / Path(source).name)
+        (WORK / Path(source).name).chmod(0o644)
+        (EVIDENCE / "harness").mkdir(exist_ok=True)
+        shutil.copy2(REPO / source, EVIDENCE / "harness" / Path(source).name)
+
+
 def main():
     global BASELINE_READY
     kernel_wake_required = True
@@ -297,26 +328,7 @@ def main():
             "user-paths infrastructure prerequisite failed; no pull or retry attempted: "
             + str(error)
         ) from error
-    (WORK / "dns").mkdir()
-    (WORK / "dns/Corefile").write_text(
-        "test:53 {\n file /zones/test.zone { reload 1s }\n}\n.:53 {\n forward . 127.0.0.11\n}\n"
-    )
-    (WORK / "dns/test.zone").write_text(
-        "$ORIGIN test.\n$TTL 1\n@ IN SOA ns.test. hostmaster.test. (1 1 1 1 1)\n@ IN NS ns.test.\nns IN A 127.0.0.1\n"
-    )
-    (WORK / "init.sql").write_text(
-        "CREATE EXTENSION pgcrypto WITH SCHEMA public;\nCREATE DATABASE peer;\n\\connect peer\nCREATE EXTENSION pgcrypto WITH SCHEMA public;\n"
-    )
-    for source in (
-        "scripts/fetch_released_aw.py",
-        "scripts/e2e/user_paths.py",
-        "scripts/e2e/user_paths_receive.mjs",
-        "scripts/e2e/user_paths_oats.mjs",
-        "scripts/e2e/user_paths_result.py",
-    ):
-        shutil.copy2(REPO / source, WORK / Path(source).name)
-        (EVIDENCE / "harness").mkdir(exist_ok=True)
-        shutil.copy2(REPO / source, EVIDENCE / "harness" / Path(source).name)
+    prepare_container_inputs()
     (EVIDENCE / "source-sha.txt").write_text(
         run("git", "rev-parse", "HEAD", capture=True).stdout
     )
@@ -347,6 +359,7 @@ def main():
 
             wheel = Path(BASELINE_WHEEL)
             shutil.copy2(wheel, WORK / wheel.name)
+            (WORK / wheel.name).chmod(0o644)
             (EVIDENCE / "baseline-artifact.json").write_text(
                 json.dumps(
                     dict(
@@ -380,6 +393,7 @@ def main():
                 "--target=/work/baseline-package",
                 "/work/" + wheel.name,
             )
+            make_public_tree_readable(root=WORK / "baseline-package")
             BASELINE_READY = True
         with phase("fetch-released"):
             metadata_args = []
@@ -387,6 +401,7 @@ def main():
                 shutil.copy2(
                     os.environ["USER_PATHS_LATEST_METADATA"], WORK / "latest.json"
                 )
+                (WORK / "latest.json").chmod(0o644)
                 import hashlib
 
                 snapshot = (WORK / "latest.json").read_bytes()
@@ -441,6 +456,7 @@ def main():
                     os.environ["USER_PATHS_COMPARISON_METADATA"],
                     WORK / "comparison.json",
                 )
+                (WORK / "comparison.json").chmod(0o644)
                 run(
                     "docker",
                     "run",

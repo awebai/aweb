@@ -3,6 +3,7 @@ package blueprint
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
@@ -20,7 +21,7 @@ func TestMaterializeLocalProfileMatchesEngineeringFixture(t *testing.T) {
 	if result.ProfileRef != "developer" || result.ProfileVersion != "0.1.0" || !strings.HasPrefix(result.ProfileDigest, "sha256:") {
 		t.Fatalf("unexpected result: %+v", result)
 	}
-	assertDirsEqual(t, filepath.Join(fixture, "expected/materialized-home/developer"), target)
+	assertMaterializedTreesEqual(t, materializedTreeRoots{Expected: filepath.Join(fixture, "expected/materialized-home/developer"), Actual: target})
 }
 
 func TestMaterializeLocalProfileRecordsRuntimeKind(t *testing.T) {
@@ -71,7 +72,7 @@ func TestMaterializeManagedSetUsesDeclarationAndPerSkillPathOrder(t *testing.T) 
 
 	_, err := MaterializeLibraryProfilePayload(MaterializeLibraryProfilePayloadOptions{
 		TargetDir: target, ProfileRef: "builder", ProfileVersion: "0.1.0",
-		RuntimeKind: "claude-code", Files: files,
+		RuntimeKind: "claude-code", Files: files, ProfileDigest: mustPayloadDigest(t, files),
 	})
 	if err != nil {
 		t.Fatalf("MaterializeLibraryProfilePayload: %v", err)
@@ -111,7 +112,7 @@ func TestMaterializeLibraryProfilePayloadWarnsForShelfAssetsOutsideDeclaration(t
 	})
 
 	result, err := MaterializeLibraryProfilePayload(MaterializeLibraryProfilePayloadOptions{
-		TargetDir: target, ProfileRef: "reviewer", ProfileVersion: "0.1.5", RuntimeKind: "pi", Files: files,
+		TargetDir: target, ProfileRef: "reviewer", ProfileVersion: "0.1.5", RuntimeKind: "pi", Files: files, ProfileDigest: mustPayloadDigest(t, files),
 	})
 	if err != nil {
 		t.Fatalf("MaterializeLibraryProfilePayload: %v", err)
@@ -134,7 +135,7 @@ func TestMaterializeLibraryProfilePayloadWarnsForShelfAssetsOutsideDeclaration(t
 
 func TestMaterializeLibraryProfilePayloadAllowsFoldedBlockMission(t *testing.T) {
 	target := t.TempDir()
-	_, err := MaterializeLibraryProfilePayload(MaterializeLibraryProfilePayloadOptions{
+	opts := MaterializeLibraryProfilePayloadOptions{
 		TargetDir:      target,
 		ProfileRef:     "reviewer",
 		ProfileVersion: "0.2.0",
@@ -143,7 +144,9 @@ func TestMaterializeLibraryProfilePayloadAllowsFoldedBlockMission(t *testing.T) 
 			{Path: "profile.yaml", ContentUTF8: "id: reviewer\nname: Reviewer\nversion: 0.2.0\nmission: >\n  Give independent, fresh-eyes review before merge,\n  with blocking and non-blocking findings.\naccepted_work:\n  - >\n    reviewing a developer diff\n    against acceptance criteria\ninstructions: instructions.md\nruntime_assumptions: [local shell]\nmemory_policy:\n  mode: reviewed-learning\n  proposal_target: library\n"},
 			{Path: "instructions.md", ContentUTF8: "Review changes carefully.\n"},
 		}),
-	})
+	}
+	opts.ProfileDigest = mustPayloadDigest(t, opts.Files)
+	_, err := MaterializeLibraryProfilePayload(opts)
 	if err != nil {
 		t.Fatalf("MaterializeLibraryProfilePayload: %v", err)
 	}
@@ -152,14 +155,14 @@ func TestMaterializeLibraryProfilePayloadAllowsFoldedBlockMission(t *testing.T) 
 	}
 }
 
-func TestMaterializeLocalProfileForceMigratesLegacyClaudeSkillFileLink(t *testing.T) {
+func TestMaterializeLocalProfileForceMigratesSkillFileProjection(t *testing.T) {
 	fixture := engineeringFixtureRoot(t)
 	target := t.TempDir()
-	legacyDir := filepath.Join(target, ".claude", "skills", "implement")
-	if err := os.MkdirAll(legacyDir, 0o755); err != nil {
+	projectionDir := filepath.Join(target, ".claude", "skills", "implement")
+	if err := os.MkdirAll(projectionDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink("../../../skills/implement/SKILL.md", filepath.Join(legacyDir, "SKILL.md")); err != nil {
+	if err := os.Symlink("../../../skills/implement/SKILL.md", filepath.Join(projectionDir, "SKILL.md")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -269,7 +272,13 @@ func TestMaterializeLocalProfileRequiresBoundProfileAndRefusesOverwrite(t *testi
 	}
 }
 
-func assertDirsEqual(t *testing.T, wantDir, gotDir string) {
+type materializedTreeRoots struct {
+	Expected string
+	Actual   string
+}
+
+func assertMaterializedTreesEqual(t *testing.T, trees materializedTreeRoots) {
+	wantDir, gotDir := trees.Expected, trees.Actual
 	t.Helper()
 	wantFiles := listFiles(t, wantDir)
 	gotFiles := listFiles(t, gotDir)
@@ -291,8 +300,14 @@ func assertDirsEqual(t *testing.T, wantDir, gotDir string) {
 			if gotInfo.Mode()&os.ModeSymlink == 0 {
 				t.Fatalf("%s: got non-symlink", rel)
 			}
-			wantLink, _ := os.Readlink(wantPath)
-			gotLink, _ := os.Readlink(gotPath)
+			wantLink, err := os.Readlink(wantPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			gotLink, err := os.Readlink(gotPath)
+			if err != nil {
+				t.Fatal(err)
+			}
 			if wantLink != gotLink {
 				t.Fatalf("%s: symlink target %q, want %q", rel, gotLink, wantLink)
 			}
@@ -325,7 +340,10 @@ func listFiles(t *testing.T, root string) []string {
 		if d.IsDir() {
 			return nil
 		}
-		rel, _ := filepath.Rel(root, path)
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
 		files = append(files, filepath.ToSlash(rel))
 		return nil
 	}); err != nil {
@@ -351,5 +369,79 @@ func TestLibraryProfilePayloadDigestOfPathWithLineSeparatorsIsStable(t *testing.
 	}
 	if want := "sha256:ac56d1908616e5e0e350e9d927f9106537fafaf5dde16a6269c14b91119a21d6"; digest != want {
 		t.Fatalf("digest = %s, want %s", digest, want)
+	}
+}
+
+func mustPayloadDigest(t *testing.T, files []LibraryProfilePayloadFile) string {
+	t.Helper()
+	digest, err := libraryProfilePayloadDigest(files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return digest
+}
+
+func TestMaterializePublicationDoesNotOverwriteAConcurrentDestination(t *testing.T) {
+	for _, operation := range []materializeWriteOp{
+		{Kind: opFile, Rel: "AGENTS.md", Data: []byte("profile content")},
+		{Kind: opSymlink, Rel: "CLAUDE.md", LinkTarget: "AGENTS.md"},
+	} {
+		t.Run(string(operation.Kind), func(t *testing.T) {
+			root := t.TempDir()
+			plan := materializeWritePlan{TargetRoot: root, Operations: []materializeWriteOp{operation}, CollisionPolicy: preserveExistingProfileFiles}
+			if err := plan.preflight(); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(root, operation.Rel)
+			if err := os.WriteFile(path, []byte("operator content"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			_, err := plan.write()
+			if !errors.Is(err, os.ErrExist) {
+				t.Fatalf("publication replaced a concurrent destination: %v", err)
+			}
+			if !strings.Contains(err.Error(), "Use another home or resolve the conflicting destination") {
+				t.Fatalf("collision has no recovery action: %v", err)
+			}
+			got, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != "operator content" {
+				t.Fatalf("publication changed operator file: %q", got)
+			}
+		})
+	}
+}
+
+func TestRuntimeProjectionPublicationPreservesUnmanagedConcurrentContent(t *testing.T) {
+	for _, conflict := range []struct{ name, child string }{
+		{name: "file"}, {name: "directory", child: "operator.txt"},
+	} {
+		t.Run(conflict.name, func(t *testing.T) {
+			root := t.TempDir()
+			operation := materializeWriteOp{Kind: opSymlink, Rel: ".claude/skills/reviewer", LinkTarget: "../../skills/reviewer"}
+			plan := materializeWritePlan{TargetRoot: root, Operations: []materializeWriteOp{operation}, CollisionPolicy: replaceExistingProfileFiles}
+			if err := plan.preflight(); err != nil {
+				t.Fatal(err)
+			}
+			operatorPath := filepath.Join(root, operation.Rel, conflict.child)
+			if err := os.MkdirAll(filepath.Dir(operatorPath), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(operatorPath, []byte("operator content"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := plan.write(); err == nil || !strings.Contains(err.Error(), "Repair the destination before retrying") {
+				t.Fatalf("unmanaged projection conflict was not refused actionably: %v", err)
+			}
+			data, err := os.ReadFile(operatorPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(data) != "operator content" {
+				t.Fatalf("projection replaced operator content: %q", data)
+			}
+		})
 	}
 }

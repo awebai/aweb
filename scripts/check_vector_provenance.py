@@ -49,6 +49,44 @@ ROOT_CONSUMERS = {
         "cli-integration-codes-v1.json",
         'filepath.Join("..", "..", "..", "..", "docs", "vectors", "cli-integration-codes-v1.json")',
     ),
+    PurePosixPath("awid/tests/test_point_encoding_components.py"): _consumer(
+        "signature-point-encoding-v2.json",
+        'Path(__file__).resolve().parents[2] / "docs" / "vectors"',
+    ),
+    PurePosixPath("cli/go/signaturewire/point_encoding_test.go"): _consumer(
+        "signature-point-encoding-v2.json",
+        '"docs", "vectors", "signature-point-encoding-v2.json"',
+    ),
+    PurePosixPath("channel-core/test/point_encoding_components.test.ts"): _consumer(
+        "signature-point-encoding-v2.json",
+        '"../../docs/vectors/signature-point-encoding-v2.json"',
+    ),
+    PurePosixPath("awid/tests/test_signature_primitive_vectors.py"): _consumer(
+        {
+            "signature-primitives-v1.json",
+            "message-signing-v1.json",
+            "canonical-json-v1.json",
+        },
+        'Path(__file__).resolve().parents[2] / "docs" / "vectors"',
+    ),
+    PurePosixPath("cli/go/awid/signature_primitive_vectors_test.go"): _consumer(
+        "signature-primitives-v1.json",
+        '"docs", "vectors", "signature-primitives-v1.json"',
+    ),
+    PurePosixPath("channel-core/test/signature_primitive_vectors.test.ts"): _consumer(
+        {"signature-primitives-v1.json", "message-signing-v1.json"},
+        '"../../docs/vectors/signature-primitives-v1.json"',
+    ),
+    PurePosixPath(
+        "naapp/secrets/runner/tests/test_shared_wire_primitives.py"
+    ): _consumer(
+        {
+            "signature-primitives-v1.json",
+            "canonical-json-v1.json",
+            "message-signing-v1.json",
+        },
+        'Path(__file__).resolve().parents[4] / "docs" / "vectors"',
+    ),
     PurePosixPath("cli/go/cmd/aw/id_human_add_test.go"): _consumer(
         "id-certificates-v1.json",
         '"../../../../docs/vectors/id-certificates-v1.json"',
@@ -897,6 +935,9 @@ PACKAGE_GUARDS = {
     ),
 }
 NON_CONSUMING_CODE_REFERENCES = {
+    PurePosixPath("awid/src/awid/external_authority.py"): (
+        "federation-origin-ip-v1.json",
+    ),
     PurePosixPath("scripts/generate_owner_act_delivery_vector.py"): (
         "docs/vectors/owner-act-delivery-v1.json",
     ),

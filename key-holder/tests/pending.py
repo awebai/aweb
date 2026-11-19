@@ -7,7 +7,7 @@ from approval_service.canonical import canonical
 
 
 def expire_pending(holder, person):
-    with holder.store._connection() as db, db:
+    with holder.store.connection() as db, db:
         db.execute("BEGIN IMMEDIATE")
         row = holder._row(db, person)
         old = json.loads(row["intent"])
@@ -20,7 +20,7 @@ def expire_pending(holder, person):
             "intent": body,
             "signature": holder._protocol(
                 db,
-                holder.store._descriptor(db),
+                holder.store.descriptor_in_transaction(db),
                 "enrollment_intent",
                 body,
                 actor=body["requester"]["key"],
