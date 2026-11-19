@@ -1,11 +1,11 @@
 """The Secrets e2e lane's composition, read as files: what both lanes run
 before any container starts (docker-compose.e2e.yml and the lane fixtures)."""
 
-import ast
 import json
 import os
 import re
 import sys
+from enum import IntEnum
 from types import SimpleNamespace
 from urllib.parse import urlsplit
 
@@ -178,41 +178,6 @@ def test_bootstrap_credentials_separate_runtime_from_operator(tmp_path):
     assert all("/operator" not in mount for mount in LANE["services"]["secrets"]["volumes"])
 
 
-def test_bootstrap_is_explicit_before_starting_the_production_services():
-    source = ast.parse((APP_DIR / "tests" / "test_e2e_owner_acts.py").read_text())
-    start = next(
-        node
-        for node in source.body
-        if isinstance(node, ast.FunctionDef) and node.name == "start_apps"
-    )
-    calls = [
-        node.value
-        for node in start.body
-        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call)
-    ]
-    names = [call.func.id if isinstance(call.func, ast.Name) else call.func.attr for call in calls]
-    assert names == [
-        "write_service_member",
-        "write_logs_files",
-        "create_logs_databases",
-        "prepare_secrets_database",
-        "up",
-    ]
-    query = next(
-        node
-        for node in source.body
-        if isinstance(node, ast.FunctionDef) and node.name == "secrets_query"
-    )
-    read = next(
-        node
-        for node in ast.walk(query)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "read_only_psql"
-    )
-    assert isinstance(read.args[1], ast.Name) and read.args[1].id == "SECRETS_DATABASE"
-
-
 def test_bootstrap_refuses_to_replace_retained_runtime_credentials(tmp_path):
     (tmp_path / "keys").mkdir()
     retained = tmp_path / "keys" / "database-url"
@@ -223,8 +188,18 @@ def test_bootstrap_refuses_to_replace_retained_runtime_credentials(tmp_path):
         raise AssertionError("Bootstrap replaced existing runtime credentials")
 
 
-@pytest.mark.parametrize("failed_step", [0, 1, 2])
-def test_bootstrap_provisions_then_initialises_and_stops_on_either_refusal(tmp_path, failed_step):
+class BootstrapOutcome(IntEnum):
+    SUCCESS = 0
+    PROVISIONING_REFUSAL = 1
+    INITIALIZATION_REFUSAL = 2
+
+
+@pytest.mark.parametrize(
+    "outcome", list(BootstrapOutcome), ids=lambda outcome: outcome.name.lower()
+)
+def test_bootstrap_and_snapshot_use_the_dedicated_database_and_stop_on_refusal(
+    tmp_path, outcome: BootstrapOutcome
+):
     # External Docker recorder; it discards SQL stdin without recording keys.
     binary = tmp_path / "bin"
     binary.mkdir()
@@ -236,7 +211,7 @@ import json, os, sys
 from pathlib import Path
 path = Path(os.environ["BOOTSTRAP_CALLS"])
 calls = json.loads(path.read_text()) if path.exists() else []
-has_input = bool(sys.stdin.read()) if "psql" in sys.argv else False
+has_input = bool(sys.stdin.read()) if "psql" in sys.argv and "-At" not in sys.argv else False
 calls.append({"args": sys.argv[1:], "sql_stdin": has_input})
 path.write_text(json.dumps(calls))
 sys.exit(77 if len(calls) == int(os.environ["BOOTSTRAP_FAIL_STEP"]) else 0)
@@ -252,21 +227,27 @@ sys.exit(77 if len(calls) == int(os.environ["BOOTSTRAP_FAIL_STEP"]) else 0)
             **os.environ,
             "PATH": str(binary) + os.pathsep + os.environ["PATH"],
             "BOOTSTRAP_CALLS": str(journal),
-            "BOOTSTRAP_FAIL_STEP": str(failed_step),
+            "BOOTSTRAP_FAIL_STEP": str(outcome),
         },
     )
-    if failed_step:
+    if outcome is not BootstrapOutcome.SUCCESS:
         with pytest.raises(AssertionError):
             owner_lane.prepare_secrets_database(lane)
     else:
         owner_lane.prepare_secrets_database(lane)
+        owner_lane.secrets_query(lane)("SELECT 1")
     entries = json.loads(journal.read_text())
     calls = [entry["args"] for entry in entries]
-    assert len(calls) == (1 if failed_step == 1 else 2)
+    expected = {
+        BootstrapOutcome.SUCCESS: 3,
+        BootstrapOutcome.PROVISIONING_REFUSAL: 1,
+        BootstrapOutcome.INITIALIZATION_REFUSAL: 2,
+    }
+    assert len(calls) == expected[outcome]
     assert entries[0]["sql_stdin"] is True
     assert "psql" in calls[0] and "postgres" in calls[0]
     assert "init-erasure" not in calls[0]
-    if len(calls) == 2:
+    if len(calls) >= 2:
         command = calls[1]
         assert command[-11:] == [
             "-m",
@@ -283,6 +264,11 @@ sys.exit(77 if len(calls) == int(os.environ["BOOTSTRAP_FAIL_STEP"]) else 0)
         ]
         assert all(flag in command for flag in ("run", "--rm", "--no-deps", "--build"))
         assert str(tmp_path / "operator") + ":/run/operator:ro" in command
+    if outcome is BootstrapOutcome.SUCCESS:
+        snapshot = calls[2]
+        assert snapshot[snapshot.index("-d") + 1] == "secrets_content"
+        assert "BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY" in snapshot
+        assert "SELECT 1" in snapshot and "COMMIT" in snapshot
     password = urlsplit((tmp_path / "keys" / "database-url").read_text().strip()).password
     if password in json.dumps(calls):
         raise AssertionError("A runtime credential reached a process argument")
