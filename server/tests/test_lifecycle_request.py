@@ -11,6 +11,7 @@ from aweb.lifecycle import (
     _agent_precondition_errors,
     _requested_disposition,
     _validate_request,
+    plan_lifecycle_cascade,
 )
 
 ACTOR = LifecycleActor(actor_id="owner", actor_type="system", authority="embedding")
@@ -105,3 +106,12 @@ async def test_native_lifecycle_writers_reject_missing_team_before_sql(team_id):
             disposition=AgentDisposition.DELETED,
             deleted_at=datetime.now(timezone.utc),
         )
+
+
+@pytest.mark.asyncio
+async def test_planner_refusal_is_always_reported_as_a_dry_run():
+    request = LifecycleCascadeRequest(operation="cleanup_agent_coordination_state", actor=ACTOR)
+    result = await plan_lifecycle_cascade(None, request)
+    assert [error.code for error in result.errors] == ["missing_workspace_scope_target"]
+    assert result.dry_run is True
+    assert request.dry_run is False

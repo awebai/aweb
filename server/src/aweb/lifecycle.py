@@ -853,6 +853,7 @@ async def plan_lifecycle_cascade(
     planner even if the request itself was not marked dry-run. An empty target
     workspace set still permits target-agent coordination cleanup.
     """
+    request = replace(request, dry_run=True)
     errors = _validate_request(request)
     if errors:
         return _error_result(request, errors)
