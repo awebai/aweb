@@ -12,6 +12,9 @@
   identity takes precedence over a teammate's label. An unreachable registry
   refuses that unsigned explicit-address send. Other teams' aliases do not make
   an address ambiguous.
+- First contact by explicit address without a signed recipient binding now
+  requires a reachable registry, including for hosted teammates: there is no
+  cached outage grace; retry a `503 sender_registry_unavailable` response.
 
 - `aw` reports JSON error code `alias_conflict` for HTTP 409 `alias_taken`, preserving the server's `reason` and `detail`.
 - AWID cache invalidation for identity-tree, address and team-certificate

@@ -7,6 +7,15 @@ from typing import Any
 from awid.federation_errors import FederationAuthorityError
 
 
+class RecipientRegistryUnavailableError(FederationAuthorityError):
+    """Outbound address lookup could not reach its selected registry."""
+
+    detail = "The registry could not be reached to resolve the recipient address. Please retry."
+
+    def __init__(self) -> None:
+        super().__init__("sender_registry_unavailable")
+
+
 class RecipientNotResidentError(FederationAuthorityError):
     """An admitted address routes here but its exact identity is not resident."""
 
@@ -26,7 +35,7 @@ def authority_error_body(
     correlation_id: str,
 ) -> dict[str, Any]:
     body: dict[str, Any] = {
-        "detail": error.detail if isinstance(error, RecipientNotResidentError) else error.reason,
+        "detail": error.detail if isinstance(error, (RecipientNotResidentError, RecipientRegistryUnavailableError)) else error.reason,
         "reason": error.reason,
         "retryable": error.retryable,
         "correlation_id": correlation_id,

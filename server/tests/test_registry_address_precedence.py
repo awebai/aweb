@@ -258,10 +258,13 @@ async def test_derived_local_address_refuses_registry_outage(address_collision, 
         assert response.status_code == 200, response.text
         result = json.loads(response.json()["result"]["content"][0]["text"])
         assert result.get("reason") == "sender_registry_unavailable", result
+        assert result["error"] == "The registry could not be reached to resolve the recipient address. Please retry."
+        assert result["retryable"] is True
         assert "message_id" not in result
     else:
         assert response.status_code == 503, response.text
         assert "sender_registry_unavailable" in response.text
+        assert response.json()["detail"] == "The registry could not be reached to resolve the recipient address. Please retry."
     assert lookups, "The explicit address must be asked of the registry"
     for table in ("messages", "chat_sessions"):
         row = await env.db.fetch_one("SELECT count(*) AS n FROM {{tables." + table + "}}")

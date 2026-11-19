@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import json
 
+from awid.federation_errors import FederationAuthorityError
 from fastapi import HTTPException
 
-from awid.federation_errors import FederationAuthorityError
 from aweb.e2ee_messages import E2EERecipientKeyMismatch
-from aweb.federation.errors import RecipientNotResidentError
+from aweb.federation.errors import (
+    RecipientNotResidentError,
+    RecipientRegistryUnavailableError,
+)
 from aweb.messaging.address_auth import unreachable_address_refusal
 from aweb.messaging.chat_send import LOCAL_DID_KEY_RECIPIENT_UNREACHABLE
 
@@ -63,7 +66,7 @@ def send_refusal(exc: Exception, *, address: str = "", hosted_envelope: bool = F
     in one set of words, which do not say whether a local identity holds that
     name.
     """
-    if isinstance(exc, RecipientNotResidentError):
+    if isinstance(exc, (RecipientNotResidentError, RecipientRegistryUnavailableError)):
         return json.dumps({"error": exc.detail, "reason": exc.reason, "retryable": exc.retryable})
     if isinstance(exc, FederationAuthorityError):
         if address and exc.reason in ("recipient_identity_not_found", "local_recipient_route_missing"):

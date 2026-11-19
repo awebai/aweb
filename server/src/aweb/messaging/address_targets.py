@@ -8,18 +8,18 @@ from awid.federation_errors import FederationAuthorityError
 from awid.team_ids import parse_team_id
 from fastapi import HTTPException
 
-from aweb.messaging.alias_targets import namespace_exists
-
 from aweb.awid_error_handling import (
     AWID_DEPENDENCY_ERRORS,
     awid_registry_not_configured_exception,
 )
+from aweb.federation.errors import RecipientRegistryUnavailableError
 from aweb.messaging.address_auth import (
     identity_recipient,
     local_recipient_for_address_binding,
     refuse_same_origin_nonresident,
     verified_signed_payload_json,
 )
+from aweb.messaging.alias_targets import namespace_exists
 from aweb.messaging.runtime import MessagingRuntime
 
 
@@ -91,7 +91,7 @@ async def resolve_address_target(
         resolution = await registry.resolve_outbound_address(domain, name, own_domain=own_domain)
     except AWID_DEPENDENCY_ERRORS as exc:
         logging.getLogger(__name__).warning("Recipient address lookup unavailable", exc_info=True)
-        raise FederationAuthorityError("sender_registry_unavailable") from exc
+        raise RecipientRegistryUnavailableError() from exc
 
     if resolution is not None:
         recipient = await local_recipient_for_address_binding(db, resolution, address)
