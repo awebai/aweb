@@ -294,7 +294,7 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (out connectOutput, resultErr
 		return connectOutput{}, fmt.Errorf("workspace init response is missing api_key")
 	}
 
-	if cert.Team != selectedTeam.CanonicalTeamID {
+	if cert.Team != req.CanonicalTeamID {
 		return connectOutput{}, errors.New("workspace creation returned a different team than the API key selected")
 	}
 	if err := state.IDTree.retainResponse(resp.IDTreeCreationResponse); err != nil {
