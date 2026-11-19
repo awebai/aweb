@@ -76,7 +76,7 @@ class OwnedContainerRemovalFailures(unittest.TestCase):
     """Without a daemon: a docker on PATH that cannot remove one container."""
 
     def test_one_failed_removal_does_not_skip_the_others(self):
-        directory = Path(tempfile.mkdtemp())
+        directory = Path(self.enterContext(tempfile.TemporaryDirectory()))
         calls = directory / 'calls'
         docker = directory / 'docker'
         docker.write_text('#!/bin/sh\necho "$@" >> "$DOCKER_CALLS"\n'
@@ -103,7 +103,7 @@ class OrphanedContainerReaping(unittest.TestCase):
     def test_only_containers_whose_launcher_is_gone_are_removed(self):
         finished = subprocess.Popen(['true'])
         finished.wait()
-        directory = Path(tempfile.mkdtemp())
+        directory = Path(self.enterContext(tempfile.TemporaryDirectory()))
         calls = directory / 'calls'
         docker = directory / 'docker'
         listing = '\n'.join([

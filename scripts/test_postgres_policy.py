@@ -27,7 +27,7 @@ DATA = "/var/lib/postgresql/data/pgdata"
 
 def docker_stand_in(test, script):
     """Put a docker running script first on PATH for the rest of test."""
-    directory = Path(tempfile.mkdtemp())
+    directory = Path(test.enterContext(tempfile.TemporaryDirectory()))
     docker = directory / "docker"
     docker.write_text("#!/bin/sh\n" + script)
     docker.chmod(0o755)
