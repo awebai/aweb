@@ -2603,8 +2603,12 @@ class CachedRegistryClient(RegistryClient):
         # cannot safely order commits: PostgreSQL NOW() is transaction-start
         # time, so a revocation that waited on a row lock can commit after our
         # read with an older timestamp and be missed by an incremental `since`.
-        fetcher = lambda: super(CachedRegistryClient, self).get_team_revocations(domain, name)
-        encode = lambda value: sorted(value)
+        async def fetch_revocations() -> set[str]:
+            return await super(CachedRegistryClient, self).get_team_revocations(domain, name)
+
+        def encode_revocations(value: set[str]) -> list[str]:
+            return sorted(value)
+
         cached_age: int | None = None
         if cached is not None:
             fetched_at = _cache_entry_fetched_at(cached, ttl_seconds)
@@ -2612,8 +2616,8 @@ class CachedRegistryClient(RegistryClient):
             if cached["fresh"]:
                 return project(cached["value"])
             if cached_age <= ttl_seconds * _STALE_MULTIPLIER:
-                # Stale-while-revalidate, as before — but a failed background
-                # refresh is now loud instead of a swallowed debug line.
+                # Serve bounded stale evidence while refreshing; record an
+                # unsuccessful background refresh with the retained evidence age.
                 def _on_refresh_failure(exc: BaseException) -> None:
                     logger.warning(
                         "AWID revocation refresh failed for team %s/%s; "
@@ -2629,15 +2633,15 @@ class CachedRegistryClient(RegistryClient):
                 if self._schedule_refresh(
                     cache_key=cache_key,
                     ttl_seconds=ttl_seconds,
-                    fetcher=fetcher,
-                    encode=encode,
+                    fetcher=fetch_revocations,
+                    encode=encode_revocations,
                     retention_seconds=retention_seconds,
                     on_failure=_on_refresh_failure,
                 ):
                     return project(cached["value"])
 
         try:
-            fresh_value = await fetcher()
+            fresh_value = await fetch_revocations()
         except Exception as exc:
             if isinstance(exc, RegistryError) and exc.status_code in (401, 403):
                 await self._invalidate_keys(cache_key)
@@ -2669,7 +2673,7 @@ class CachedRegistryClient(RegistryClient):
             cache_key,
             value=fresh_value,
             ttl_seconds=ttl_seconds,
-            encode=encode,
+            encode=encode_revocations,
             retention_seconds=retention_seconds,
         )
         return project(set(fresh_value))

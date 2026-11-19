@@ -11,7 +11,8 @@ from aweb.coordination.tasks_service import answer_task_on, update_task
 from aweb.team_auth_deps import get_team_identity
 from starlette.requests import Request
 from test_cli_never_grants import registry_listener
-from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
+from test_dashboard_privacy import TEAM
+from test_dashboard_privacy import privacy_app as privacy_app
 from test_member_team_key import _connect
 from test_messages_http import (
     _encode_certificate,
