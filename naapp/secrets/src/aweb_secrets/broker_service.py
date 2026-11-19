@@ -112,6 +112,13 @@ class _PreparedUse:
     call: PreparedBrokerCall
 
 
+@dataclass(frozen=True, kw_only=True)
+class _BrokerSendOutcome:
+    state: State
+    reply: ToolReply
+    audit: dict[str, Any] | None
+
+
 class _PublicationFence:
     """One transaction's complete preparation, including the B2 final handle."""
 
@@ -817,7 +824,40 @@ class BrokerRequests:
                 )
                 await self._fence.check(tx, scope)
                 return reply
-        request_id, request_ref = use.inputs.request.request_id, use.admission.intent_id
+        outcome = await self._send_outcome(
+            call=call,
+            request_id=use.inputs.request.request_id,
+            request_ref=use.admission.intent_id,
+            send_until=send_until,
+        )
+        async with self._db.transaction() as tx:
+            approval = await self._lock_outcome(tx, use.dispatch_id)
+            committed = await self._settle_locked(
+                tx,
+                use.dispatch_id,
+                outcome.state,
+                outcome.reply,
+                outcome.audit,
+                approval,
+                expected_attempt=current.attempts,
+            )
+            if not committed:
+                return await self._receipt(tx, use.admission, use.dispatch_id)
+        return outcome.reply
+
+    async def _send_outcome(
+        self,
+        *,
+        call: PreparedBrokerCall,
+        request_id: str,
+        request_ref: str,
+        send_until: float,
+    ) -> _BrokerSendOutcome:
+        """Classify the committed attempt's external work before settlement (§7.6).
+
+        This performs custody and egress I/O, retaining no database transaction.
+        The caller settles this result against the original dispatch attempt.
+        """
         audit = None
         sending = False
         try:
@@ -861,20 +901,7 @@ class BrokerRequests:
                     "next": "resubmit",
                 },
             )
-        async with self._db.transaction() as tx:
-            approval = await self._lock_outcome(tx, use.dispatch_id)
-            committed = await self._settle_locked(
-                tx,
-                use.dispatch_id,
-                state,
-                reply,
-                audit,
-                approval,
-                expected_attempt=current.attempts,
-            )
-            if not committed:
-                return await self._receipt(tx, use.admission, use.dispatch_id)
-        return reply
+        return _BrokerSendOutcome(state=state, reply=reply, audit=audit)
 
     async def _lock_outcome(self, tx: TransactionManager, dispatch_id: UUID) -> Approval | None:
         row = await tx.fetch_one(
