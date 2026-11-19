@@ -89,6 +89,57 @@ see the same event more than once.
 Event names and context keys are experimental Python integration data, not a
 versioned network protocol.
 
+### Typed producer contexts
+
+`aweb.event_types.MutationEventType` names standard mutation events;
+`TransportEventType` names the stream events produced by translation. These
+are separate vocabularies: `message.sent` is a mutation, while
+`message.delivered` is its delivery signal. The enums are string-compatible
+constants, not an admission gate for host-defined callback names. A known
+handler branch does not establish that a producer emits that event.
+
+`aweb.message_events` provides frozen, keyword-only producer contexts:
+
+- `MailSentContext` for local and outbound mail;
+- `ChatMessageSentContext` for native chat sends;
+- `FederatedMessageSentContext` for the shared inbound outbox shape;
+- `MessageAcknowledgedContext` for incoming mail acknowledgements.
+
+Each supplies `event_type` and `to_context() -> dict[str, object]`. Construct
+them from validated producer data. Event names, message kind and transport use
+the server's named enums. Received `content_mode` and priority instead use
+`ContentModeValue` and `MessagePriorityValue` from `aweb.messaging.kinds`: a
+named standard value or the original string, optionally absent. Exact named
+values become `ContentMode`/`MessagePriority` constants; other accepted strings
+retain every character, including case and whitespace. No context performs
+validator narrowing or changes a signed priority. Constructors cannot newly
+fail on accepted metadata, so callback timing remains unchanged.
+
+Mail send, chat send, mail acknowledgement and inbound federation producers
+use these contexts before passing dictionaries to the existing callback or
+durable outbox. They pass the accepted mode and priority to the context without
+adding defaults; absent and empty metadata remain distinct. The inbound
+context keeps its shared mail/chat shape rather than acquiring native chat's
+preview or recipient-alias list.
+
+Native chat recipients accept the existing list or a tuple; the context takes
+an immutable snapshot and returns a fresh list in the callback dictionary.
+Nullable identity projections remain null. Local sends omit the
+optional `federated` key; federation sends retain it. Inbound chat retains its
+existing shared shape, which may have `to_alias` and no `to_aliases` or preview.
+
+The same module reexports the existing workspace/team mail and chat transport
+DTOs from `aweb.events`; these are the same classes, not another set of stream
+payloads. Their existing imports and constructors remain supported.
+
+This is an additive producer interface. The callback remains `(str, dict)`;
+it is not replaced by a closed DTO parser. Readers still tolerate additive
+keys, host-defined names and missing optional projections. Context objects do
+not verify an identity, sanitize content or alter commit, best-effort failure
+or durable replay semantics. Producer/translator conversion must keep the
+source call-site inventory and its rejection of unresolvable dynamic names
+effective when it adopts named event constants.
+
 ## Default handler and composition warning
 
 Both standalone and library-mode `create_app` lifespans install
@@ -297,3 +348,37 @@ HTTP/SSE protocols such as [`receiving-events.md`](receiving-events.md) or the
 experimental installed-app event contract in [`app-events.md`](app-events.md).
 Do not build against a private named-hook specification or describe it as
 shipped aweb authority.
+
+### Coordination contexts and stream translation
+
+Native task, reservation and status producers use frozen keyword-only contexts
+from `aweb.hook_contexts`. `to_context()` preserves an omitted projection key
+separately from an explicit `None`; constructors add no validation of accepted
+producer values. These types are producer conveniences. Received host callbacks
+remain the open `(str, dict)` interface, including custom names and extra keys.
+
+The native translator uses `MutationEventType` and explicit workspace/team
+builder maps. `INTENTIONALLY_UNPUBLISHED_EVENTS` names mutations that have no
+native SSE representation; hosts still receive those callbacks. Agent/task
+deletions retain their separate coordination cascades. Room mutation production
+and the canonical message contexts belong to the shared message event owner.
+MCP registers the same public tools by operation family through a single set of
+serving dependencies; the generated tool reference remains the surface inventory.
+
+### Callback outcomes
+
+`fire_mutation_callback` and `fire_mutation_hook` return the frozen
+`MutationDeliveryOutcome` from `aweb.hooks`. `MutationDeliveryStatus` distinguishes
+`DELIVERED`, `NOT_CONFIGURED` and `FAILED`. An existing host callback returning
+`None` remains a completed callback; a callback exception is logged and becomes
+a failed outcome, without raising from these best-effort helpers. A composed
+host callback forwards the native outcome if its caller needs cleanup evidence.
+
+The native translator reports `MutationDeliveryStage` values. In particular,
+`TASK_CLAIM_RELEASE` differs from subsequent `PUBLICATION` failure, so a deletion
+consumer can report and retry post-commit cleanup without pretending that the
+deletion rolled back. Existing sends may ignore the result. A durable federation
+outbox consumer calls `require_delivery()` on a returned native outcome and
+keeps an incomplete row pending; callbacks returning `None` retain their
+existing successful-delivery meaning. No second queue or callback parser is
+introduced.

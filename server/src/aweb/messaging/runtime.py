@@ -4,14 +4,22 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING
+
+import httpx
+from awid.registry import RegistryClient
+from starlette.datastructures import State
 
 from aweb.agent_wake import AgentWakePublisher, agent_wake_publisher
+from aweb.application_state import native_application_state
 from aweb.config import get_public_origin
 from aweb.federation.origins import application_public_origins
 from aweb.federation.transport import delivery_transport
 from aweb.hooks import MutationCallback
 from aweb.identity_binding import identity_binding_cache
+
+if TYPE_CHECKING:
+    from aweb.federation.activation import FederationAuthorityActivation
 
 
 @dataclass(frozen=True)
@@ -22,10 +30,10 @@ class MessagingRuntime:
     same application services.
     """
 
-    registry_client: Any
-    federation_authority: Any
-    mail_transport: Any
-    chat_transport: Any
+    registry_client: RegistryClient | None
+    federation_authority: FederationAuthorityActivation | None
+    mail_transport: httpx.AsyncBaseTransport | None
+    chat_transport: httpx.AsyncBaseTransport | None
     public_origin: str
     public_origins: frozenset[str]
     on_mutation: MutationCallback | None
@@ -33,8 +41,9 @@ class MessagingRuntime:
     identity_binding_cache: OrderedDict
 
 
-def messaging_runtime(app_state) -> MessagingRuntime:
+def messaging_runtime(app_state: State) -> MessagingRuntime:
     """The messaging runtime of the application that owns ``app_state``."""
+    app_state = native_application_state(app_state)
     federation_authority = getattr(app_state, "federation_authority", None)
     return MessagingRuntime(
         registry_client=getattr(app_state, "awid_registry_client", None),
@@ -57,8 +66,9 @@ def messaging_runtime(app_state) -> MessagingRuntime:
     )
 
 
-def application_public_origin(app_state) -> str:
+def application_public_origin(app_state: State) -> str:
     """The origin an application names as its own when it sends to another server."""
+    app_state = native_application_state(app_state)
     configured = str(getattr(app_state, "public_origin", "") or "").strip()
     if configured:
         return configured

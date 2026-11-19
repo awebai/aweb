@@ -1,13 +1,5 @@
 from __future__ import annotations
 
-from aweb.agent_wake import agent_wake_publisher
-
-from aweb.attachment_service import prepare_attachment_send, attachment_retry, attachment_references_by_message
-
-from aweb.messaging.sender_membership import sender_memberships
-from aweb.identity_metadata import native_participant_reference
-
-import anyio
 import asyncio
 import json
 import logging
@@ -18,30 +10,45 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, AsyncIterator
 from uuid import UUID
 
+import anyio
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 from redis.asyncio.client import PubSub
 from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import RedisError
 
+from aweb.agent_wake import agent_wake_publisher
+from aweb.attachment_service import (
+    attachment_references_by_message,
+    attachment_retry,
+    prepare_attachment_send,
+)
 from aweb.deps import get_db, get_redis
 from aweb.events import chat_session_channel_name
-from aweb.redis_subscriptions import open_subscription, release_subscription
-from aweb.identity_metadata import lookup_identity_metadata_by_did, routable_chat_address
-from aweb.id_chain_auth import stored_id_chain
-from aweb.messaging.chat_send import (
-    _address_from_alias,
-    _left_dids_by_session,
-    _parse_timestamp,
-    _target_did,
-    resolve_actor_agent,
-    resolve_chat_targets,
-    send_chat,
+from aweb.grant_streams import (
+    GRANT_STREAM_RECHECK_SECONDS,
+    clamp_deadline_to_grant,
+    grant_expiry_reason,
+    grant_terminal_reason,
+    grant_terminal_sse,
+    require_valid_stream_grant,
 )
-from aweb.messaging.runtime import messaging_runtime
-from aweb.identity_auth_deps import participant_dids
-from aweb.identity_auth_deps import MessagingAuth, get_messaging_auth
+from aweb.id_chain_auth import stored_id_chain
+from aweb.identity_auth_deps import MessagingAuth, get_messaging_auth, participant_dids
+from aweb.identity_metadata import (
+    lookup_identity_metadata_by_did,
+    native_participant_reference,
+    routable_chat_address,
+)
+from aweb.messaging.activity_stream import SessionActivity
 from aweb.messaging.alias_targets import (
     validate_alias_selector,
 )
@@ -54,13 +61,23 @@ from aweb.messaging.chat import (
     wake_chat_session_participants,
 )
 from aweb.messaging.chat_read import mark_chat_read
-from aweb.messaging.activity_stream import SessionActivity
+from aweb.messaging.chat_send import (
+    _address_from_alias,
+    _left_dids_by_session,
+    _parse_timestamp,
+    _target_did,
+    resolve_actor_agent,
+    resolve_chat_targets,
+    send_chat,
+)
 from aweb.messaging.contacts import (
     get_contact_addresses,
     is_address_in_contacts,
 )
 from aweb.messaging.handle_addresses import normalize_hosted_handle_reference
 from aweb.messaging.messages import utc_iso as _utc_iso
+from aweb.messaging.runtime import messaging_runtime
+from aweb.messaging.sender_membership import sender_memberships
 from aweb.messaging.verification import verified_signed_recipient_fields
 from aweb.messaging.waiting import (
     get_waiting_agents,
@@ -68,14 +85,8 @@ from aweb.messaging.waiting import (
     register_waiting,
     unregister_waiting,
 )
-from aweb.grant_streams import (
-    GRANT_STREAM_RECHECK_SECONDS,
-    clamp_deadline_to_grant,
-    grant_expiry_reason,
-    grant_terminal_reason,
-    grant_terminal_sse,
-    require_valid_stream_grant,
-)
+from aweb.reconnect import ReconnectBackoff
+from aweb.redis_subscriptions import open_subscription, release_subscription
 from aweb.service_errors import RESOURCE_NOT_FOUND_DETAIL
 
 logger = logging.getLogger(__name__)
@@ -352,6 +363,7 @@ async def create_or_send(
     redis=Depends(get_redis),
     auth: MessagingAuth = Depends(get_messaging_auth),
 ):
+    """Create or continue a chat through the shared native send service."""
     attachment_context = prepare_attachment_send(
         getattr(request.app.state, "attachment_backend", None), payload, auth,
     )
@@ -402,6 +414,7 @@ async def pending(
     redis=Depends(get_redis),
     auth: MessagingAuth = Depends(get_messaging_auth),
 ) -> PendingResponse:
+    """Read pending chat notifications for the authenticated participant."""
     del request
     actor_dids = _actor_dids(auth)
     actor_did = actor_dids[0] if actor_dids else ""
@@ -548,6 +561,7 @@ async def history(
     db=Depends(get_db),
     auth: MessagingAuth = Depends(get_messaging_auth),
 ) -> HistoryResponse:
+    """Read chat history within the authenticated participant visibility scope."""
     actor_dids = _actor_dids(auth)
     owner_dids = _actor_dids(auth)
     if not owner_dids:
@@ -665,6 +679,7 @@ async def mark_read(
     redis=Depends(get_redis),
     auth: MessagingAuth = Depends(get_messaging_auth),
 ) -> dict[str, Any]:
+    """Advance the authenticated participant read position for a chat session."""
     actor_dids = _actor_dids(auth)
     if not actor_dids:
         raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
@@ -737,9 +752,7 @@ async def _sse_events(
 
     channel = chat_session_channel_name(session_id_str)
     pubsub: PubSub | None = None
-    reconnect_delay_seconds = 0.1
-    max_reconnect_delay_seconds = 5.0
-    next_reconnect_at: float | None = None
+    backoff = ReconnectBackoff(initial_delay=0.1, maximum_delay=5.0)
 
     try:
         # DID participation was already authorized. Activity channels are only
@@ -815,8 +828,7 @@ async def _sse_events(
                 last_pubsub_ping = time.monotonic()
             except RedisError:
                 logger.info("Chat session pubsub subscribe failed; using DB fallback polling", exc_info=True)
-                next_reconnect_at = time.monotonic() + reconnect_delay_seconds
-                reconnect_delay_seconds = min(max_reconnect_delay_seconds, reconnect_delay_seconds * 2)
+                backoff.schedule(time.monotonic())
 
         yield ": keepalive\n\n"
         last_keepalive = time.monotonic()
@@ -833,8 +845,7 @@ async def _sse_events(
                 logger.info("Chat session activity subscribe failed; retrying with the pubsub", exc_info=True)
                 await _close_session_pubsub(pubsub, channel)
                 pubsub = None
-                next_reconnect_at = time.monotonic() + reconnect_delay_seconds
-                reconnect_delay_seconds = min(max_reconnect_delay_seconds, reconnect_delay_seconds * 2)
+                backoff.schedule(time.monotonic())
             else:
                 for frame in frames:
                     yield frame
@@ -857,7 +868,7 @@ async def _sse_events(
                 await register_waiting(redis, session_id_str, viewer_did)
                 last_refresh = now_mono
 
-            if redis is not None and pubsub is None and (next_reconnect_at is None or now_mono >= next_reconnect_at):
+            if redis is not None and pubsub is None and (backoff.due(now_mono)):
                 try:
                     pubsub = await _connect_pubsub()
                     if activity is not None:
@@ -866,15 +877,13 @@ async def _sse_events(
                             yield frame
                         if woken:
                             last_db_poll = 0.0
-                    reconnect_delay_seconds = 0.1
-                    next_reconnect_at = None
+                    backoff.reset()
                     last_pubsub_ping = time.monotonic()
                 except (RedisError, TimeoutError):
                     logger.info("Chat session pubsub reconnect failed; using DB fallback polling", exc_info=True)
                     await _close_session_pubsub(pubsub, channel)
                     pubsub = None
-                    next_reconnect_at = now_mono + reconnect_delay_seconds
-                    reconnect_delay_seconds = min(max_reconnect_delay_seconds, reconnect_delay_seconds * 2)
+                    backoff.schedule(now_mono)
 
             should_poll = now_mono - last_db_poll >= CHAT_STREAM_FALLBACK_POLL_SECONDS
             if not should_poll:
@@ -886,15 +895,13 @@ async def _sse_events(
                         logger.info("Chat session pubsub connection dropped; using DB fallback polling", exc_info=True)
                         await _close_session_pubsub(pubsub, channel)
                         pubsub = None
-                        next_reconnect_at = time.monotonic() + reconnect_delay_seconds
-                        reconnect_delay_seconds = min(max_reconnect_delay_seconds, reconnect_delay_seconds * 2)
+                        backoff.schedule(time.monotonic())
                         message = None
                     except RedisError:
                         logger.warning("Chat session pubsub error; using DB fallback polling", exc_info=True)
                         await _close_session_pubsub(pubsub, channel)
                         pubsub = None
-                        next_reconnect_at = time.monotonic() + reconnect_delay_seconds
-                        reconnect_delay_seconds = min(max_reconnect_delay_seconds, reconnect_delay_seconds * 2)
+                        backoff.schedule(time.monotonic())
                         message = None
                     if message is not None and message["type"] == "message":
                         if activity is not None and activity.owns(message["channel"]):
@@ -1035,8 +1042,7 @@ async def _sse_events(
                         logger.info("Chat session pubsub ping failed; using DB fallback polling", exc_info=True)
                         await _close_session_pubsub(pubsub, channel)
                         pubsub = None
-                        next_reconnect_at = current_time + reconnect_delay_seconds
-                        reconnect_delay_seconds = min(max_reconnect_delay_seconds, reconnect_delay_seconds * 2)
+                        backoff.schedule(current_time)
                 yield ": keepalive\n\n"
                 last_keepalive = current_time
         reason = grant_expiry_reason(auth)
@@ -1065,6 +1071,7 @@ async def stream(
     redis=Depends(get_redis),
     auth: MessagingAuth = Depends(get_messaging_auth),
 ):
+    """Stream participant chat updates with persisted-state reconciliation and reconnects."""
     actor_dids = _actor_dids(auth)
     owner_dids = _actor_dids(auth)
     if not owner_dids:
@@ -1202,6 +1209,7 @@ async def send_message(
     db=Depends(get_db),
     auth: MessagingAuth = Depends(get_messaging_auth),
 ) -> SendMessageResponse:
+    """Send a message to an authorized existing chat session."""
     attachment_context = prepare_attachment_send(
         getattr(request.app.state, "attachment_backend", None), payload, auth,
     )
@@ -1257,6 +1265,7 @@ async def list_sessions(
     redis=Depends(get_redis),
     auth: MessagingAuth = Depends(get_messaging_auth),
 ) -> SessionListResponse:
+    """List chat sessions visible to the authenticated participant."""
     del request
     actor_dids = _actor_dids(auth)
     actor_did = actor_dids[0] if actor_dids else ""

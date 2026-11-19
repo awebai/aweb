@@ -32,6 +32,9 @@ from aweb.federation.envelope import (
 )
 from aweb.federation.mail import FederatedMailDeliveryError, deliver_federated_message
 from aweb.hooks import fire_mutation_callback
+from aweb.event_types import MutationEventType
+from aweb.message_events import MailSentContext
+from aweb.messaging.kinds import MessageTransport
 from aweb.identity_auth_deps import MessagingAuth, auth_dids, participant_dids
 from aweb.identity_binding import observe_current_identity_binding
 from aweb.messaging.address_auth import (
@@ -306,6 +309,7 @@ async def record_successful_contact_side_effect(
     recipient: dict | None,
     registry_client=None,
 ) -> bool:
+    """Record contact effects only after successful native message delivery."""
     recipient_address = _concrete_contact_address(recipient)
     if not recipient_address:
         return False
@@ -356,6 +360,7 @@ async def deliver_remote_mail_and_project_locally(
     to_alias: str | None,
     msg_uuid: UUID | None,
 ) -> SentMail:
+    """Deliver remote mail and retain the corresponding native local projection."""
     refuse_remote_attachments()
     delivery_origin = _remote_delivery_origin(recipient)
     if not delivery_origin:
@@ -564,22 +569,22 @@ async def deliver_remote_mail_and_project_locally(
 
     await fire_mutation_callback(
         runtime.on_mutation,
-        "message.sent",
-        {
-            "team_id": auth.team_id,
-            "from_agent_id": auth.agent_id,
-            "from_did": sender_did,
-            "from_did_aw": sender_routing_did if sender_routing_did.startswith("did:aw:") else None,
-            "to_agent_id": to_agent_id,
-            "from_alias": auth.alias or sender_did,
-            "message_id": message_id or str(local_message_id),
-            "conversation_id": conversation_id or conversation["conversation_id"],
-            "to_alias": to_alias,
-            "subject": payload.subject,
-            "priority": payload.priority,
-            "content_mode": payload.content_mode or "legacy_plaintext_v1",
-            "federated": True,
-        },
+        MutationEventType.MAIL_SENT.value,
+        MailSentContext(
+            team_id=auth.team_id,
+            from_agent_id=auth.agent_id,
+            from_did=sender_did,
+            from_did_aw=sender_routing_did if sender_routing_did.startswith("did:aw:") else None,
+            to_agent_id=to_agent_id,
+            from_alias=auth.alias or sender_did,
+            message_id=message_id or str(local_message_id),
+            conversation_id=conversation_id or conversation["conversation_id"],
+            to_alias=to_alias,
+            subject=payload.subject,
+            priority=payload.priority,
+            content_mode=payload.content_mode,
+            transport=MessageTransport.FEDERATED,
+        ).to_context(),
     )
 
     return SentMail(
@@ -733,6 +738,7 @@ async def send_mail_conversation_continuation(
     local_recipient: dict | None = None,
     continuation: MailContinuationContext | None = None,
 ) -> SentMail:
+    """Continue a readable native mail conversation under its existing participants."""
     msg_uuid = UUID(payload.message_id) if payload.message_id else None
 
     try:
@@ -897,21 +903,21 @@ async def send_mail_conversation_continuation(
 
     await fire_mutation_callback(
         runtime.on_mutation,
-        "message.sent",
-        {
-            "team_id": auth.team_id,
-            "from_agent_id": auth.agent_id,
-            "from_did": sender_did,
-            "from_did_aw": (auth.did_aw or "").strip() or None,
-            "to_agent_id": recipient_participant.get("agent_id"),
-            "from_alias": auth.alias or sender_did,
-            "message_id": str(message_id),
-            "conversation_id": conversation_id,
-            "to_alias": recipient_participant.get("alias"),
-            "subject": payload.subject,
-            "priority": payload.priority,
-            "content_mode": payload.content_mode or "legacy_plaintext_v1",
-        },
+        MutationEventType.MAIL_SENT.value,
+        MailSentContext(
+            team_id=auth.team_id,
+            from_agent_id=auth.agent_id,
+            from_did=sender_did,
+            from_did_aw=(auth.did_aw or "").strip() or None,
+            to_agent_id=recipient_participant.get("agent_id"),
+            from_alias=auth.alias or sender_did,
+            message_id=str(message_id),
+            conversation_id=conversation_id,
+            to_alias=recipient_participant.get("alias"),
+            subject=payload.subject,
+            priority=payload.priority,
+            content_mode=payload.content_mode,
+        ).to_context(),
     )
 
     return SentMail(
@@ -934,6 +940,7 @@ async def send_federated_mail_conversation_continuation(
     id_chain: dict | None,
     continuation: MailContinuationContext,
 ) -> SentMail:
+    """Continue a federated conversation through the verified native remote route."""
     refuse_remote_attachments()
     recipient_participant = continuation.recipient_participant
     try:
@@ -1610,21 +1617,21 @@ async def send_mail(
 
     await fire_mutation_callback(
         runtime.on_mutation,
-        "message.sent",
-        {
-            "team_id": auth.team_id,
-            "from_agent_id": auth.agent_id,
-            "from_did": sender_did,
-            "from_did_aw": (auth.did_aw or "").strip() or None,
-            "to_agent_id": to_agent_id,
-            "from_alias": auth.alias or sender_did,
-            "message_id": str(message_id),
-            "conversation_id": conversation["conversation_id"],
-            "to_alias": to_alias,
-            "subject": payload.subject,
-            "priority": payload.priority,
-            "content_mode": payload.content_mode or "legacy_plaintext_v1",
-        },
+        MutationEventType.MAIL_SENT.value,
+        MailSentContext(
+            team_id=auth.team_id,
+            from_agent_id=auth.agent_id,
+            from_did=sender_did,
+            from_did_aw=(auth.did_aw or "").strip() or None,
+            to_agent_id=to_agent_id,
+            from_alias=auth.alias or sender_did,
+            message_id=str(message_id),
+            conversation_id=conversation["conversation_id"],
+            to_alias=to_alias,
+            subject=payload.subject,
+            priority=payload.priority,
+            content_mode=payload.content_mode,
+        ).to_context(),
     )
 
     return SentMail(

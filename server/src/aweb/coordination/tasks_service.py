@@ -1,5 +1,17 @@
 from __future__ import annotations
 
+from aweb.event_types import MutationEventType
+from aweb.hook_contexts import (
+    TaskAssigneeChangedContext,
+    TaskCommentAddedContext,
+    TaskCreatedContext,
+    TaskDeletedContext,
+    TaskDependencyAddedContext,
+    TaskDependencyRemovedContext,
+    TaskStatusChangedContext,
+    TaskUpdatedContext,
+)
+
 import logging
 import re
 import hashlib
@@ -511,6 +523,7 @@ async def _log_resolution_miss(
 
 
 async def resolve_task_ref(db, *, team_id: str, ref: str) -> UUID:
+    """Resolve an ID or task reference within the explicit native team scope."""
     aweb_db = db.get_manager("aweb")
 
     try:
@@ -573,6 +586,7 @@ async def create_task(
     parent_task_id: str | None = None,
     assignee_alias: str | None = None,
 ) -> dict[str, Any]:
+    """Create a task for the acting member and publish its committed mutation."""
     team_id = actor.team_id
     created_by_alias = actor.alias
     created_by_did = actor.did_aw or actor.did_key
@@ -694,18 +708,18 @@ async def create_task(
     }
     await fire_mutation_callback(
         on_mutation,
-        "task.created",
-        {
-            "task_id": result["task_id"],
-            "team_id": team_id,
-            "task_ref": result["task_ref"],
-            "title": result["title"],
-            "parent_task_id": result["parent_task_id"],
-            "assignee_alias": result["assignee_alias"],
-            "actor_agent_id": actor.agent_id,
-            "actor_alias": actor.alias,
-            "actor_did_aw": actor.did_aw,
-        },
+        MutationEventType.TASK_CREATED.value,
+        TaskCreatedContext(
+            task_id=result["task_id"],
+            team_id=team_id,
+            task_ref=result["task_ref"],
+            title=result["title"],
+            parent_task_id=result["parent_task_id"],
+            assignee_alias=result["assignee_alias"],
+            actor_agent_id=actor.agent_id,
+            actor_alias=actor.alias,
+            actor_did_aw=actor.did_aw,
+        ).to_context(),
     )
     return result
 
@@ -769,6 +783,7 @@ async def _resolve_assignee_alias(
 
 
 async def get_task(db, *, team_id: str, ref: str) -> dict[str, Any]:
+    """Read a task projection within the explicit native team scope."""
     task_id = await resolve_task_ref(db, team_id=team_id, ref=ref)
     slug = _get_team_slug(team_id)
     aweb_db = db.get_manager("aweb")
@@ -826,6 +841,7 @@ async def get_task(db, *, team_id: str, ref: str) -> dict[str, Any]:
     )
 
     def json_value(value):
+        """Decode a stored JSON projection while retaining already decoded values."""
         return json.loads(value) if isinstance(value, str) else value
 
     return {
@@ -882,6 +898,7 @@ async def list_tasks(
     q: str | None = None,
     parent_task_id: str | None = None,
 ) -> list[dict[str, Any]]:
+    """Read task projections using the explicit team and requested filters."""
     slug = _get_team_slug(team_id)
     aweb_db = db.get_manager("aweb")
 
@@ -991,6 +1008,7 @@ async def list_tasks_paginated(
     created_before: datetime | None = None,
     task_id_before: UUID | None = None,
 ) -> list[dict[str, Any]]:
+    """Read a bounded task page and its continuation within the explicit team."""
     slug = _get_team_slug(team_id)
     aweb_db = db.get_manager("aweb")
 
@@ -1095,6 +1113,7 @@ async def list_tasks_paginated(
 
 
 async def list_active_work(db, *, team_id: str) -> list[dict[str, Any]]:
+    """Read active claims and associated tasks within the explicit team."""
     slug = _get_team_slug(team_id)
     aweb_db = db.get_manager("aweb")
 
@@ -1248,6 +1267,7 @@ async def list_active_work(db, *, team_id: str) -> list[dict[str, Any]]:
 async def list_ready_tasks(
     db, *, team_id: str, unclaimed: bool = False
 ) -> list[dict[str, Any]]:
+    """Read unblocked task candidates within the explicit team."""
     slug = _get_team_slug(team_id)
     aweb_db = db.get_manager("aweb")
     unclaimed_filter = "AND t.assignee_alias IS NULL" if unclaimed else ""
@@ -1296,6 +1316,7 @@ async def list_ready_tasks(
 
 
 async def list_blocked_tasks(db, *, team_id: str) -> list[dict[str, Any]]:
+    """Read tasks blocked by dependencies within the explicit team."""
     slug = _get_team_slug(team_id)
     aweb_db = db.get_manager("aweb")
 
@@ -1357,6 +1378,7 @@ async def update_task(
     assignee_alias: str | None | object = _UNSET,
     parent_task_id: str | None | object = _UNSET,
 ) -> dict[str, Any]:
+    """Apply an authorized task update and publish the resulting committed transitions."""
     team_id = actor.team_id
     actor_alias = actor.alias
     task_id = await resolve_task_ref(db, team_id=team_id, ref=ref)
@@ -1615,52 +1637,52 @@ async def update_task(
     if status is not None and status != old_status:
         await fire_mutation_callback(
             on_mutation,
-            "task.status_changed",
-            {
-                "task_id": result["task_id"],
-                "team_id": team_id,
-                "task_ref": result["task_ref"],
-                "title": result["title"],
-                "old_status": old_status,
-                "new_status": result["status"],
-                "assignee_alias": result["assignee_alias"],
-                "parent_task_id": result["parent_task_id"],
-                "actor_agent_id": actor.agent_id,
-                "actor_alias": actor.alias,
-                "actor_did_aw": actor.did_aw,
-                "claim_preacquired": claim_workspace_id is not None,
-                "actor_workspace_id": str(claim_workspace_id)
+            MutationEventType.TASK_STATUS_CHANGED.value,
+            TaskStatusChangedContext(
+                task_id=result["task_id"],
+                team_id=team_id,
+                task_ref=result["task_ref"],
+                title=result["title"],
+                old_status=old_status,
+                new_status=result["status"],
+                assignee_alias=result["assignee_alias"],
+                parent_task_id=result["parent_task_id"],
+                actor_agent_id=actor.agent_id,
+                actor_alias=actor.alias,
+                actor_did_aw=actor.did_aw,
+                claim_preacquired=claim_workspace_id is not None,
+                actor_workspace_id=str(claim_workspace_id)
                 if claim_workspace_id is not None
                 else "",
-                "released_claim_workspace_ids": released_claim_workspace_ids,
-            },
+                released_claim_workspace_ids=released_claim_workspace_ids,
+            ).to_context(),
         )
     else:
         await fire_mutation_callback(
             on_mutation,
-            "task.updated",
-            {
-                "task_id": result["task_id"],
-                "task_ref": result["task_ref"],
-                "actor_agent_id": actor.agent_id,
-                "actor_did_aw": actor.did_aw,
-            },
+            MutationEventType.TASK_UPDATED.value,
+            TaskUpdatedContext(
+                task_id=result["task_id"],
+                task_ref=result["task_ref"],
+                actor_agent_id=actor.agent_id,
+                actor_did_aw=actor.did_aw,
+            ).to_context(),
         )
     if new_assignee != current["assignee_alias"]:
         await fire_mutation_callback(
             on_mutation,
-            "task.assignee_changed",
-            {
-                "task_id": result["task_id"],
-                "team_id": team_id,
-                "task_ref": result["task_ref"],
-                "title": result["title"],
-                "actor_agent_id": actor.agent_id,
-                "actor_alias": actor.alias,
-                "actor_did_aw": actor.did_aw,
-                "old_assignee_alias": current["assignee_alias"],
-                "assignee_alias": new_assignee,
-            },
+            MutationEventType.TASK_ASSIGNEE_CHANGED.value,
+            TaskAssigneeChangedContext(
+                task_id=result["task_id"],
+                team_id=team_id,
+                task_ref=result["task_ref"],
+                title=result["title"],
+                actor_agent_id=actor.agent_id,
+                actor_alias=actor.alias,
+                actor_did_aw=actor.did_aw,
+                old_assignee_alias=current["assignee_alias"],
+                assignee_alias=new_assignee,
+            ).to_context(),
         )
     return result
 
@@ -1672,6 +1694,7 @@ async def soft_delete_task(
     on_mutation: MutationCallback | None,
     ref: str,
 ) -> dict[str, Any]:
+    """Soft-delete an authorized task and publish its deletion mutation."""
     team_id = actor.team_id
     task_id = await resolve_task_ref(db, team_id=team_id, ref=ref)
     slug = _get_team_slug(team_id)
@@ -1700,13 +1723,13 @@ async def soft_delete_task(
     }
     await fire_mutation_callback(
         on_mutation,
-        "task.deleted",
-        {
-            "task_id": result["task_id"],
-            "task_ref": result["task_ref"],
-            "actor_agent_id": actor.agent_id,
-            "actor_did_aw": actor.did_aw,
-        },
+        MutationEventType.TASK_DELETED.value,
+        TaskDeletedContext(
+            task_id=result["task_id"],
+            task_ref=result["task_ref"],
+            actor_agent_id=actor.agent_id,
+            actor_did_aw=actor.did_aw,
+        ).to_context(),
     )
     return result
 
@@ -1719,6 +1742,7 @@ async def add_dependency(
     task_ref: str,
     depends_on_ref: str,
 ) -> dict[str, Any]:
+    """Add a team-local dependency after checking that it introduces no cycle."""
     team_id = actor.team_id
     task_id = await resolve_task_ref(db, team_id=team_id, ref=task_ref)
     depends_on_id = await resolve_task_ref(db, team_id=team_id, ref=depends_on_ref)
@@ -1761,13 +1785,13 @@ async def add_dependency(
 
     await fire_mutation_callback(
         on_mutation,
-        "task.dependency_added",
-        {
-            "task_id": str(task_id),
-            "depends_on_task_id": str(depends_on_id),
-            "actor_agent_id": actor.agent_id,
-            "actor_did_aw": actor.did_aw,
-        },
+        MutationEventType.TASK_DEPENDENCY_ADDED.value,
+        TaskDependencyAddedContext(
+            task_id=str(task_id),
+            depends_on_task_id=str(depends_on_id),
+            actor_agent_id=actor.agent_id,
+            actor_did_aw=actor.did_aw,
+        ).to_context(),
     )
     return {"task_id": str(task_id), "depends_on_id": str(depends_on_id)}
 
@@ -1780,6 +1804,7 @@ async def remove_dependency(
     task_ref: str,
     dep_ref: str,
 ) -> dict[str, Any]:
+    """Remove a team-local dependency and publish the resulting mutation."""
     team_id = actor.team_id
     task_id = await resolve_task_ref(db, team_id=team_id, ref=task_ref)
     dep_id = await resolve_task_ref(db, team_id=team_id, ref=dep_ref)
@@ -1791,13 +1816,13 @@ async def remove_dependency(
     )
     await fire_mutation_callback(
         on_mutation,
-        "task.dependency_removed",
-        {
-            "task_id": str(task_id),
-            "removed_depends_on_task_id": str(dep_id),
-            "actor_agent_id": actor.agent_id,
-            "actor_did_aw": actor.did_aw,
-        },
+        MutationEventType.TASK_DEPENDENCY_REMOVED.value,
+        TaskDependencyRemovedContext(
+            task_id=str(task_id),
+            removed_depends_on_task_id=str(dep_id),
+            actor_agent_id=actor.agent_id,
+            actor_did_aw=actor.did_aw,
+        ).to_context(),
     )
     return {"task_id": str(task_id), "removed_depends_on_id": str(dep_id)}
 
@@ -1810,6 +1835,7 @@ async def add_comment(
     ref: str,
     body: str,
 ) -> dict[str, Any]:
+    """Append an attributed task comment and publish its committed mutation."""
     team_id = actor.team_id
     author_alias = actor.alias
     task_id = await resolve_task_ref(db, team_id=team_id, ref=ref)
@@ -1834,18 +1860,19 @@ async def add_comment(
     }
     await fire_mutation_callback(
         on_mutation,
-        "task.comment_added",
-        {
-            "task_id": result["task_id"],
-            "comment_id": result["comment_id"],
-            "actor_agent_id": actor.agent_id,
-            "actor_did_aw": actor.did_aw,
-        },
+        MutationEventType.TASK_COMMENT_ADDED.value,
+        TaskCommentAddedContext(
+            task_id=result["task_id"],
+            comment_id=result["comment_id"],
+            actor_agent_id=actor.agent_id,
+            actor_did_aw=actor.did_aw,
+        ).to_context(),
     )
     return result
 
 
 async def list_comments(db, *, team_id: str, ref: str) -> list[dict[str, Any]]:
+    """Read the attributed comments of a task in the explicit team scope."""
     task_id = await resolve_task_ref(db, team_id=team_id, ref=ref)
     aweb_db = db.get_manager("aweb")
     rows = await aweb_db.fetch_all(

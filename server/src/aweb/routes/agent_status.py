@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from aweb.event_types import MutationEventType
+from aweb.hook_contexts import AgentStatusContext
+
 from datetime import datetime, timezone
 import logging
 from typing import Any, Optional
@@ -419,19 +422,7 @@ async def publish_agent_status(
     if _verdict(stored) != _verdict(previous):
         await fire_mutation_hook(
             request,
-            "agent.status",
-            {
-                "team_id": identity.team_id,
-                "agent_id": str(agent_id),
-                "alias": alias,
-                "publisher_did": identity.did_key,
-                "reachable": document["reachable"],
-                "reason_code": reason.get("code"),
-                "reason_text": reason.get("text"),
-                "fixing_by": fixing.get("by"),
-                "fixing_text": fixing.get("text"),
-                "observed_at": document["observed_at"],
-                "valid_until": document["valid_until"],
-            },
+            MutationEventType.AGENT_STATUS.value,
+            AgentStatusContext(team_id=identity.team_id, agent_id=str(agent_id), alias=alias, publisher_did=identity.did_key, reachable=document['reachable'], reason_code=reason.get('code'), reason_text=reason.get('text'), fixing_by=fixing.get('by'), fixing_text=fixing.get('text'), observed_at=document['observed_at'], valid_until=document['valid_until']).to_context(),
         )
     return PublishStatusResponse(agent_id=str(agent_id), alias=alias, seq=document["seq"])

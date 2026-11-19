@@ -4,6 +4,11 @@ The key is evidence about messages inside this thread, never an additional
 participant authority. No cross-thread or registry key equivalence is used.
 """
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from aweb.identity_auth_deps import MessagingAuth
+
 
 def mail_identity_sql(field: str, dids_parameter: str) -> str:
     """SQL over messages alias m; arguments are internal query fragments."""
@@ -40,6 +45,7 @@ def incoming_mail_sql(dids_parameter: str) -> str:
 
 
 def readable_mail_sql(dids_parameter: str) -> str:
+    """Build the canonical current-participant mail visibility predicate."""
     return f"""(
         (m.conversation_id IS NULL AND
             (m.from_did = ANY({dids_parameter}::text[]) OR m.to_did = ANY({dids_parameter}::text[])))
@@ -49,3 +55,23 @@ def readable_mail_sql(dids_parameter: str) -> str:
               AND own.did = ANY({dids_parameter}::text[])
         )
     )"""
+
+
+async def has_authored_mail(*, db, auth: "MessagingAuth") -> bool:
+    """Existence of authored mail within this authenticated reader's authority.
+
+    The host supplies its already authorized scoped native manager/transaction.
+    History comes only from the same canonical participant and thread-local
+    attribution predicates as native mail reads, never a caller's predecessor
+    list. This reads no content or keys and propagates database failures.
+    """
+    from aweb.identity_auth_deps import participant_dids
+
+    return bool(await db.fetch_value(
+        f"""SELECT EXISTS (
+            SELECT 1 FROM {{{{tables.messages}}}} m
+            WHERE {readable_mail_sql(dids_parameter='$1')}
+              AND {mail_identity_sql(field='from_did', dids_parameter='$1')}
+        )""",
+        participant_dids(auth),
+    ))

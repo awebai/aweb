@@ -38,6 +38,9 @@ from aweb.federation.envelope import (
 )
 from aweb.federation.mail import FederatedMailDeliveryError, deliver_federated_message
 from aweb.hooks import fire_mutation_callback
+from aweb.event_types import MutationEventType
+from aweb.message_events import ChatMessageSentContext
+from aweb.messaging.kinds import ContentModeValue, MessageTransport
 from aweb.identity_auth_deps import MessagingAuth, auth_dids, participant_dids
 from aweb.messaging.address_auth import (
     identity_recipient,
@@ -163,6 +166,7 @@ def validate_encrypted_chat_payload(
     session_id: str,
     recipient_rows: list[dict[str, Any]],
 ) -> dict[str, Any] | None:
+    """Validate encrypted chat metadata and signatures before delivery preparation."""
     if not _payload_is_encrypted(payload):
         return None
     if payload.content_mode != "encrypted_v2":
@@ -206,6 +210,7 @@ async def resolve_stored_remote_chat_route(
     registry_client,
     recipient: dict[str, Any],
 ) -> dict[str, str | bool]:
+    """Resolve a stored remote chat route through the native federation authority."""
     address = str(recipient.get("address") or "").strip()
     did_aw = str(recipient.get("did_aw") or "").strip()
     participant_did = str(recipient.get("did") or "").strip()
@@ -262,6 +267,7 @@ async def deliver_federated_chat(
     route: dict[str, Any],
     session_id: str,
 ) -> dict[str, Any]:
+    """Deliver a prepared signed chat envelope to the remote authority."""
     refuse_remote_attachments()
     if not _payload_is_encrypted(payload):
         _require_remote_chat_signature(payload, session_id=session_id)
@@ -856,6 +862,7 @@ def _row_matches_signed_address_binding(row: dict[str, Any], binding: dict[str, 
 
 
 async def resolve_actor_agent(db, actor_dids: list[str]) -> dict[str, Any] | None:
+    """Resolve the authenticated sender projection within the native team."""
     for did in actor_dids:
         if not did:
             continue
@@ -1959,22 +1966,20 @@ async def _fire_chat_message_sent(
     from_did: str,
     to_aliases: list[str],
     preview: str,
-    content_mode: str,
+    content_mode: ContentModeValue | None,
     federated: bool = False,
 ) -> None:
-    context = {
-        "team_id": auth.team_id,
-        "session_id": str(session_id),
-        "conversation_id": str(session_id),
-        "message_id": str(message_id),
-        "from_agent_id": from_agent_id,
-        "from_alias": auth.alias or "",
-        "from_did": from_did,
-        "from_did_aw": (auth.did_aw or "").strip() or None,
-        "to_aliases": to_aliases,
-        "preview": preview,
-        "content_mode": content_mode,
-    }
-    if federated:
-        context["federated"] = True
-    await fire_mutation_callback(runtime.on_mutation, "chat.message_sent", context)
+    context = ChatMessageSentContext(
+        team_id=auth.team_id,
+        session_id=str(session_id),
+        message_id=str(message_id),
+        from_agent_id=from_agent_id,
+        from_alias=auth.alias or "",
+        from_did=from_did,
+        from_did_aw=(auth.did_aw or "").strip() or None,
+        to_aliases=tuple(to_aliases),
+        preview=preview,
+        content_mode=content_mode,
+        transport=MessageTransport.FEDERATED if federated else MessageTransport.LOCAL,
+    )
+    await fire_mutation_callback(runtime.on_mutation, MutationEventType.CHAT_MESSAGE_SENT.value, context.to_context())

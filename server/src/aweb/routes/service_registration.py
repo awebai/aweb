@@ -16,6 +16,7 @@ from awid.signing import canonical_json_bytes, verify_did_key_signature
 from awid.team_ids import parse_team_id
 from aweb.config import get_settings
 from aweb.deps import get_db
+from aweb.team_admission import admit_team
 from aweb.team_key_pins import pinned_team_key_for_request
 
 router = APIRouter(prefix="/api/v1", tags=["service-registration"])
@@ -124,51 +125,34 @@ async def _ensure_service_registered_team(
     team_did_key: str,
     dry_run: bool,
 ) -> bool:
-    namespace, team_name = parse_team_id(canonical_team_id)
-    existing = await db.fetch_one(
-        """
-        SELECT team_id, team_did_key
-        FROM {{tables.teams}}
-        WHERE team_id = $1
-        """,
-        canonical_team_id,
-    )
-    if existing is not None:
-        stored_key = str(existing.get("team_did_key") or "").strip()
-        if stored_key and stored_key != team_did_key:
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "code": "awid_team_controller_mismatch",
-                    "message": "Existing service projection is bound to a different AWID team controller.",
-                },
-            )
-        if not dry_run and not stored_key:
-            await db.execute(
-                """
-                UPDATE {{tables.teams}}
-                SET team_did_key = $2
-                WHERE team_id = $1
-                """,
-                canonical_team_id,
-                team_did_key,
-            )
-        return False
+    parse_team_id(canonical_team_id)
+    while True:
+        existing = await db.fetch_one(
+            """
+            SELECT team_id, team_did_key
+            FROM {{tables.teams}}
+            WHERE team_id = $1
+            """,
+            canonical_team_id,
+        )
+        if existing is not None:
+            stored_key = str(existing.get("team_did_key") or "").strip()
+            if stored_key and stored_key != team_did_key:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "awid_team_controller_mismatch",
+                        "message": "Existing service projection is bound to a different AWID team controller.",
+                    },
+                )
+            return False
 
-    if dry_run:
-        return True
-
-    await db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ($1, $2, $3, $4)
-        """,
-        canonical_team_id,
-        namespace,
-        team_name,
-        team_did_key,
-    )
-    return True
+        if dry_run:
+            return True
+        if await admit_team(db=db, team_id=canonical_team_id, team_did_key=team_did_key):
+            return True
+        # A concurrent admission won. Recheck its controller with the same
+        # existing-team rule before returning the synced result.
 
 
 @router.post("/teams/service-register", response_model=TeamServiceRegisterResponse)
@@ -177,6 +161,7 @@ async def register_team_with_service(
     request: Request,
     db=Depends(get_db),
 ) -> TeamServiceRegisterResponse:
+    """Verify the controller request and admit or synchronize the native team."""
     canonical_team_id = body.awid_team_id.strip()
     try:
         domain, team_name = parse_team_id(canonical_team_id)
