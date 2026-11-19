@@ -936,6 +936,9 @@ PACKAGE_GUARDS = {
     ),
 }
 NON_CONSUMING_CODE_REFERENCES = {
+    PurePosixPath("awid/src/awid/external_authority.py"): (
+        "federation-origin-ip-v1.json",
+    ),
     PurePosixPath("cli/go/awid/registry_origin.go"): (
         "vectors/atomic-address-claim-v1.json",
     ),
