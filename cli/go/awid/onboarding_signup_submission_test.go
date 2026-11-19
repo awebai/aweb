@@ -18,6 +18,10 @@ func TestSignupSubmissionKeepsFrozenRequestBytes(t *testing.T) {
 	body := []byte("{\n  \"username\":\"person\", \"did_key\":\"" + ComputeDIDKey(pub) + "\",\"did_aw\":\"\",\"alias\":\"terminal\",\"future_hint\":\"preserved\"\n}")
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/onboarding/cli-signup" {
+			http.NotFound(w, r)
+			return
+		}
 		calls++
 		got, err := io.ReadAll(r.Body)
 		if err != nil {
