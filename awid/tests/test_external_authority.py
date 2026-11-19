@@ -475,3 +475,33 @@ def test_documentation_3fff_prefix_keeps_its_exact_contract_boundaries(
         with pytest.raises(FederationAuthorityError) as refused:
             validate_resolved_addresses([address])
         assert refused.value.reason == "sender_registry_origin_forbidden"
+
+
+@pytest.mark.parametrize(
+    "address,allowed",
+    [
+        ("3fff::1", False),
+        ("2001:db8::1", False),
+        ("192.0.2.1", False),
+        ("100.64.0.1", False),
+        ("127.0.0.1", True),
+        ("10.0.0.1", True),
+        ("172.20.0.2", True),
+        ("192.168.0.1", True),
+        ("169.254.1.1", True),
+        ("::1", True),
+        ("fd00::1", True),
+        ("fe80::1", True),
+        ("::ffff:127.0.0.1", True),
+    ],
+)
+def test_isolated_network_exception_is_not_a_documentation_address_opt_in(
+    address, allowed
+):
+    if allowed:
+        (result,) = validate_resolved_addresses([address], allow_nonpublic_test=True)
+        assert result == str(ipaddress.ip_address(address))
+    else:
+        with pytest.raises(FederationAuthorityError) as refused:
+            validate_resolved_addresses([address], allow_nonpublic_test=True)
+        assert refused.value.reason == "sender_registry_origin_forbidden"
