@@ -116,12 +116,24 @@ def test_explicit_operator_init_calls_the_same_one_shot_service(tmp_path):
 
 def test_operator_init_requires_secrets_to_be_known_stopped(tmp_path):
     path = deployment(tmp_path, configuration())
-    result = run(tmp_path, "init-erasure", path, command=TEAMCTL, docker_ok=True,
-                 answers={"--status running --services secrets": "secrets\n"})
+    result = run(
+        tmp_path,
+        "init-erasure",
+        path,
+        command=TEAMCTL,
+        docker_ok=True,
+        answers={"--status running --services secrets": "secrets\n"},
+    )
     assert result.returncode != 0 and "stop Secrets" in result.stderr
     assert not any(" up " in f" {call} " for call in calls(tmp_path))
-    result = run(tmp_path, "init-erasure", path, command=TEAMCTL, docker_ok=True,
-                 fails={"--status running --services secrets": 78})
+    result = run(
+        tmp_path,
+        "init-erasure",
+        path,
+        command=TEAMCTL,
+        docker_ok=True,
+        fails={"--status running --services secrets": 78},
+    )
     assert result.returncode != 0 and "could not check" in result.stderr
     assert not any(" up " in f" {call} " for call in calls(tmp_path))
 

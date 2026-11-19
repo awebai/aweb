@@ -125,7 +125,8 @@ async def _discard(tx: TransactionManager, predicate: str, *args: Any) -> int:
     await _read_committed(tx)
     removed = await tx.fetch_all(
         # erasure/schema.sql records the tombstone in this transaction.
-        "DELETE FROM {{tables.run_redaction_pins}} WHERE " + predicate + " RETURNING 1", *args
+        "DELETE FROM {{tables.run_redaction_pins}} WHERE " + predicate + " RETURNING 1",
+        *args,
     )
     return len(removed)
 
