@@ -301,6 +301,11 @@ class Child:
         if self.process.poll() is None:
             self.process.kill()
         self.process.wait()
+        if self.process.stdin is not None and not self.process.stdin.closed:
+            try:
+                self.process.stdin.close()
+            except OSError:  # a killed reader: what was buffered for it goes nowhere
+                pass
         return self.outcome()
 
 

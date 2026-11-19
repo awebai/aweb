@@ -414,13 +414,14 @@ def test_a_terminated_cli_ends_its_age_child_and_leaves_no_partial(tmp_path):
     bin_dir.mkdir()
     (bin_dir / "docker").write_text("#!/bin/sh\ncase \"$1\" in info) echo daemon-1 ;; *) ;; esac\n")
     (bin_dir / "docker").chmod(0o755)
+    err = open(tmp_path / "cli.err", "w")
     cli = subprocess.Popen(
         [sys.executable, "-c",
          "import sys; sys.path.insert(0, sys.argv[1]); import agent_state; "
          "agent_state.DOCKER_ENV['PATH'] = sys.argv[2]; sys.exit(agent_state.main(sys.argv[3:]))",
          str(TEAM), str(bin_dir), "capture", "--state", str(root), "--container", "agent", "--age", str(fake_age),
          "--age-sha256", pin, "--recipients", str(recipients), "--out", str(out), "--deadline", "600"],
-        stderr=open(tmp_path / "cli.err", "w"), start_new_session=True)
+        stderr=err, start_new_session=True)
     try:
         # The age stand-in marks that it has started writing; the signal comes after.
         deadline = time.monotonic() + 30
@@ -440,6 +441,7 @@ def test_a_terminated_cli_ends_its_age_child_and_leaves_no_partial(tmp_path):
         except ProcessLookupError:
             group_gone = True
     finally:
+        err.close()
         # Only a failed test reaches here with work left; it is ended so as
         # not to outlive the test.
         try:

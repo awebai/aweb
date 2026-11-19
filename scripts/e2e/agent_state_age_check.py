@@ -158,6 +158,13 @@ class Call:
             pass
         return group_gone(self.process.pid)
 
+    def release(self) -> None:
+        """Closes the call's pipes once it is ended, and lets it go."""
+        for stream in (self.process.stdout, self.process.stderr):
+            if stream is not None and not stream.closed:
+                stream.close()
+        Call.current = None
+
     def result(self) -> subprocess.CompletedProcess:
         """Waits for the call within what is left of its deadline; past it,
         ends the group."""
@@ -220,11 +227,11 @@ def terminated_in_progress(call: Call, started) -> dict:
         answer = call.result()
     except Exception as error:
         seen.update(error=f"{type(error).__name__}: {error}", group_gone=call.end())
-        call.process.communicate()
-        Call.current = None
+        call.release()
         return seen
     except BaseException:
         call.end()
+        call.release()
         raise
     seen.update(rc=answer.returncode, stderr=answer.stderr.strip()[-400:], group_gone=group_gone(call.process.pid))
     return seen
@@ -249,7 +256,10 @@ def main() -> int:
     except BaseException as stopped:
         # Every exit that is not the check's own verdict ends the call in
         # flight first, and says whether its group is gone.
-        gone = Call.current.end() if Call.current is not None else True
+        gone = True
+        if Call.current is not None:
+            gone = Call.current.end()
+            Call.current.release()
         reason = "the check was terminated" if isinstance(stopped, Terminated) else (
             f"the check stopped on {type(stopped).__name__}: {stopped}")
         print(json.dumps({"result": "INCOMPLETE", "reason": reason, "call_in_flight_group_gone": gone},

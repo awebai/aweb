@@ -65,6 +65,8 @@ class CallTests(unittest.TestCase):
         with self.assertRaises(KeyboardInterrupt):
             check.terminated_in_progress(call, started)
         self.assertTrue(check.group_gone(call.process.pid))
+        self.assertTrue(call.process.stdout.closed and call.process.stderr.closed)
+        self.assertIsNone(check.Call.current)
 
     def test_a_call_past_its_deadline_is_ended_by_result(self):
         call = check.Call(SLEEPER, budget=1)
