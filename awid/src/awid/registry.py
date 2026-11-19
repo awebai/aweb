@@ -16,7 +16,7 @@ from dataclasses import InitVar, asdict, dataclass, field
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from types import MappingProxyType
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, TypedDict
 from urllib.parse import quote, urlparse
 from uuid import UUID, uuid4
 
@@ -96,6 +96,16 @@ _read_retry_sleep = asyncio.sleep
 _READ_ATTEMPTS = 3
 
 
+class _ControllerWriteInputs(TypedDict):
+    """One exact request target/body reused by child and parent signatures."""
+
+    registry_url: str
+    method: str
+    path: str
+    body: bytes
+    domain: str
+
+
 def _retry_after_seconds(value: str | None, *, now: datetime | None = None) -> float | None:
     """HTTP Retry-After seconds/date, finite and nonnegative, or no hint."""
     if value is None:
@@ -135,12 +145,12 @@ async def _read_bounded_response(response: httpx.Response, max_bytes: int) -> by
             raise ValueError(f"HTTP response exceeds maximum size of {max_bytes} bytes")
         return content
 
-    content = bytearray()
+    buffered_content = bytearray()
     async for chunk in response.aiter_raw(chunk_size=64 * 1024):
-        if len(content) + len(chunk) > max_bytes:
+        if len(buffered_content) + len(chunk) > max_bytes:
             raise ValueError(f"HTTP response exceeds maximum size of {max_bytes} bytes")
-        content.extend(chunk)
-    return bytes(content)
+        buffered_content.extend(chunk)
+    return bytes(buffered_content)
 
 
 _ADDRESS_CACHE_TTL_SECONDS = 5 * 60
@@ -1841,6 +1851,8 @@ class RegistryClient:
         if not isinstance(fields, dict):
             raise ValueError("invalid prepared certificate revocation")
         timestamp = fields.get("timestamp")
+        if not isinstance(timestamp, str):
+            raise ValueError("invalid prepared certificate revocation")
         parse_utc_seconds(timestamp)
         registry_url = await self._registry_url_for_domain(domain)
         path = f"/v1/namespaces/{domain}/teams/{name}/certificates/revoke"
@@ -2002,13 +2014,13 @@ class RegistryClient:
         once, and those bytes are both the ones signed and the ones sent.
         ``parent`` is the parent's (signing key, operation, claims)."""
         content = canonical_json_bytes(body) if body is not None else b""
-        signed = dict(
-            registry_url=registry_url,
-            method=method,
-            path=path,
-            body=content,
-            domain=domain,
-        )
+        signed: _ControllerWriteInputs = {
+            "registry_url": registry_url,
+            "method": method,
+            "path": path,
+            "body": content,
+            "domain": domain,
+        }
         headers = self._controller_headers(
             signing_key, operation=operation, claims=claims, **signed
         )
@@ -2159,9 +2171,11 @@ class CachedRegistryClient(RegistryClient):
         if task is None:
             task = asyncio.create_task(self._refresh_id_status(cache_key, request))
             self._id_status_refreshes[cache_key] = task
-            task.add_done_callback(
-                lambda _task, key=cache_key: self._id_status_refreshes.pop(key, None)
-            )
+
+            def discard_completed_refresh(_task: asyncio.Task[_IDStatusRefresh]) -> None:
+                self._id_status_refreshes.pop(cache_key, None)
+
+            task.add_done_callback(discard_completed_refresh)
         # A cancelled caller leaves the shared attempt running for the others.
         return await asyncio.shield(task)
 
@@ -3343,7 +3357,11 @@ class CachedRegistryClient(RegistryClient):
         except RuntimeError:
             return False
         self._refresh_tasks[cache_key] = task
-        task.add_done_callback(lambda _task, key=cache_key: self._refresh_tasks.pop(key, None))
+
+        def discard_completed_refresh(_task: asyncio.Task[None]) -> None:
+            self._refresh_tasks.pop(cache_key, None)
+
+        task.add_done_callback(discard_completed_refresh)
         return True
 
     async def _refresh_cache_entry(
@@ -3642,7 +3660,7 @@ async def _payload_signature(
     return did_key, signature
 
 
-def _id_status_evidence(entry: dict[str, Any], *, age: int) -> IDChainEvidence:
+def _id_status_evidence(entry: dict[str, Any], *, age: int | None) -> IDChainEvidence:
     # The age is never clamped: a negative one is unavailable evidence to the verifier.
     return IDChainEvidence(
         status=entry["status"],
