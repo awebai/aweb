@@ -20,7 +20,9 @@ import sys
 # primitive catalog itself. Tests are excluded separately by path/name.
 EXCLUDED_SCRIPTS = frozenset({"scripts/check_identity_python_inventory.py"})
 PRIMITIVE_MODULES = (
-    "nacl.signing.", "nacl.bindings.", "cryptography.hazmat.primitives.asymmetric.ed25519.",
+    "nacl.signing.",
+    "nacl.bindings.",
+    "cryptography.hazmat.primitives.asymmetric.ed25519.",
 )
 SHARED_SITES = {
     ("awid/src/awid/id_certificates.py", "verify_ed25519"),
@@ -35,45 +37,60 @@ def excluded(file: str) -> bool:
     if "src" in path.parts:
         # A production module called test_foo.py is still production source.
         # Only an explicit tests directory below src exempts its contents.
-        return "tests" in path.parts[path.parts.index("src") + 1:-1]
-    return (file in EXCLUDED_SCRIPTS or path.name.startswith("test_")
-            or path.name == "conftest.py" or any(p in {"test", "tests"} for p in path.parts[:-1]))
+        return "tests" in path.parts[path.parts.index("src") + 1 : -1]
+    return (
+        file in EXCLUDED_SCRIPTS
+        or path.name.startswith("test_")
+        or path.name == "conftest.py"
+        or any(p in {"test", "tests"} for p in path.parts[:-1])
+    )
 
 
 def source_files(root: Path) -> list[Path]:
     result = subprocess.run(
         ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", "*.py"],
-        cwd=root, check=True, capture_output=True,
+        cwd=root,
+        check=True,
+        capture_output=True,
     )
-    return [root / file for file in sorted(set(result.stdout.decode().split("\0")))
-            if file and not excluded(file) and (root / file).is_file()]
+    return [
+        root / file
+        for file in sorted(set(result.stdout.decode().split("\0")))
+        if file and not excluded(file) and (root / file).is_file()
+    ]
 
 
 def module_name(file: str) -> str:
     parts = list(PurePosixPath(file).with_suffix("").parts)
     if "src" in parts:
-        parts = parts[len(parts) - 1 - parts[::-1].index("src") + 1:]
+        parts = parts[len(parts) - 1 - parts[::-1].index("src") + 1 :]
     if parts[-1] == "__init__":
         parts.pop()
     return ".".join(parts)
 
 
-def scan_python_source(source: str, *, module: str = "fixture", package: bool = False) -> dict[str, set[str]]:
+def scan_python_source(
+    source: str, *, module: str = "fixture", package: bool = False
+) -> dict[str, set[str]]:
     tree = ast.parse(source)
     aliases = {}
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for name in node.names:
-                aliases[name.asname or name.name.split(".")[0]] = name.name if name.asname else name.name.split(".")[0]
+                aliases[name.asname or name.name.split(".")[0]] = (
+                    name.name if name.asname else name.name.split(".")[0]
+                )
         elif isinstance(node, ast.ImportFrom):
             base = node.module or ""
             if node.level:
                 parent = module.split(".") if package else module.split(".")[:-1]
                 if node.level > len(parent):
                     raise ValueError("relative import escapes its package")
-                base = ".".join(parent[:len(parent) - node.level + 1] + ([base] if base else []))
+                base = ".".join(parent[: len(parent) - node.level + 1] + ([base] if base else []))
             for name in node.names:
-                if name.name == "*" and any((base + ".").startswith(prefix) for prefix in PRIMITIVE_MODULES):
+                if name.name == "*" and any(
+                    (base + ".").startswith(prefix) for prefix in PRIMITIVE_MODULES
+                ):
                     raise ValueError("wildcard import hides an identity primitive: " + base)
                 aliases[name.asname or name.name] = base + "." + name.name
 
@@ -86,8 +103,35 @@ def scan_python_source(source: str, *, module: str = "fixture", package: bool = 
             return called_name(node.func) + "()"
         return "<expression>"
 
+    postponed = any(
+        isinstance(node, ast.ImportFrom)
+        and node.module == "__future__"
+        and any(name.name == "annotations" for name in node.names)
+        for node in tree.body
+    )
+    deferred_nodes = set()
+    # A visible evaluator can recover a constructor from a passive type name.
+    # Keep those references, and always inventory explicit annotation calls.
+    evaluated = any(
+        isinstance(node, ast.Call)
+        and called_name(node.func) in {"typing.get_type_hints", "inspect.get_annotations"}
+        for node in ast.walk(tree)
+    )
+    if postponed and not evaluated:
+        for node in ast.walk(tree):
+            annotation = None
+            if isinstance(node, (ast.arg, ast.AnnAssign)):
+                annotation = node.annotation
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                annotation = node.returns
+            if annotation is not None:
+                deferred_nodes.update(id(child) for child in ast.walk(annotation))
+
     calls = defaultdict(set)
-    parents = {id(child): parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+    parents = {
+        id(child): parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)
+    }
+
     def primitive(name):
         return name.startswith(PRIMITIVE_MODULES)
 
@@ -114,6 +158,9 @@ def scan_python_source(source: str, *, module: str = "fixture", package: bool = 
             self.generic_visit(node)
 
         def reference(self, node):
+            if id(node) in deferred_nodes:
+                self.generic_visit(node)
+                return
             parent = parents.get(id(node))
             is_callee = isinstance(parent, ast.Call) and parent.func is node
             is_receiver = isinstance(parent, ast.Attribute) and parent.value is node
@@ -134,14 +181,22 @@ def check_inventory(root: Path, inventory: dict) -> list[str]:
     errors = []
     legacy = {}
     for entry in inventory["primitive_guard"]["legacy_files"]:
-        if not entry.get("file") or not isinstance(entry.get("reason"), str) or not entry["reason"].strip():
+        if (
+            not entry.get("file")
+            or not isinstance(entry.get("reason"), str)
+            or not entry["reason"].strip()
+        ):
             errors.append("legacy primitive file requires a reason")
         else:
             legacy[entry["file"]] = entry["reason"]
     for path in source_files(root):
         file = path.relative_to(root).as_posix()
         try:
-            uses = scan_python_source(path.read_text(encoding="utf-8"), module=module_name(file), package=path.name == "__init__.py")
+            uses = scan_python_source(
+                path.read_text(encoding="utf-8"),
+                module=module_name(file),
+                package=path.name == "__init__.py",
+            )
         except (SyntaxError, UnicodeError, ValueError) as exc:
             errors.append(f"cannot scan {file}: {exc}")
             continue

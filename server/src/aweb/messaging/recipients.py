@@ -216,7 +216,7 @@ async def _resolve_address_identity(
     local = await _local_recipient_at_address(db, domain=domain, name=name)
     if local is None:
         if await namespace_exists(db, domain):
-            raise LocalRecipientNotFoundError()
+            raise LocalRecipientNotFoundError(address=address)
         if registry is None:
             raise registry_configuration_refusal(
                 operation="AWID messaging recipient address lookup"
