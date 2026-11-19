@@ -22,7 +22,6 @@ from aweb.auth_error_transport import mcp_auth_error_response
 from aweb.internal_auth import (
     InternalAuthContext,
     ProxyVerificationConfig,
-    InternalAuthContext,
     parse_internal_auth_context,
     read_internal_actor_projection,
 )
