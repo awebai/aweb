@@ -202,7 +202,7 @@ def create_mutation_handler(redis: Redis, db_infra: DatabaseInfra) -> MutationCa
             context = await _enrich_identity_context(db_infra, context)
             context = await _enrich_workspace_context(db_infra, context)
         except Exception:
-            logger.warning("Mutation context enrichment failed", exc_info=True)
+            logger.exception("Mutation context enrichment failed")
             failures.append(MutationDeliveryStage.CONTEXT_ENRICHMENT)
 
         # Side-effect hooks (cascades that modify state).
