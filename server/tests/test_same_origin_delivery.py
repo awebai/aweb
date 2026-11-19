@@ -1492,7 +1492,10 @@ async def test_stored_own_route_rotation_requires_current_target(
         expected = (
             "this recipient's key changed; resend the message"
             if encrypted and api == "mcp"
-            else "encrypted envelope recipient did mismatch"
+            else (
+                "encrypted envelope recipient did mismatch. "
+                "Check whether the original message was delivered before preparing a new encrypted message."
+            )
             if encrypted
             else "hosted custodial signer returned signed_payload for different fields"
             if api == "mcp"
