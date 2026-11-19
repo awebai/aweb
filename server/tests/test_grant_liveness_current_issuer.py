@@ -20,6 +20,7 @@ class IssuerReacceptance(StrEnum):
     SUPERSEDED = "superseded"
     REACCEPTED = "reaccepted"
     REGISTRY_REVOKED = "registry-revoked"
+    CURRENT_CERTIFICATE_MISSING = "current-certificate-missing"
 
 
 @dataclass(frozen=True)
@@ -41,10 +42,8 @@ class PresenceGrant:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("issuer", list(IssuerReacceptance))
-async def test_grant_liveness_and_request_auth_share_current_issuer_eligibility(
-    pinning, issuer
-):
-    # docs/identity.md:741-744: delegation ends with its issuing certificate;
+async def test_grant_liveness_and_request_auth_share_current_issuer_eligibility(pinning, issuer):
+    # docs/identity.md:807-811: delegation ends with its issuing certificate;
     # reconnecting the same identity does not resurrect an older delegation.
     env = pinning
     member = _new_member("presentworker")
@@ -110,6 +109,13 @@ async def test_grant_liveness_and_request_auth_share_current_issuer_eligibility(
             TEAM.split(":", 1)[0],
             team_controller_signing_key=env.team_sk,
             certificate_id=claims["certificate_id"],
+        )
+    elif issuer is IssuerReacceptance.CURRENT_CERTIFICATE_MISSING:
+        # Historical/corrupt missing-current evidence after actual issuance and
+        # authenticated heartbeat. It cannot revive an issuer-bound grant.
+        await env.db.execute(
+            "UPDATE {{tables.agents}} SET certificate_id=NULL WHERE agent_id=$1",
+            member_row["agent_id"],
         )
     else:
         next_sk, next_did = await _change_key(env)

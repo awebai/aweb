@@ -148,7 +148,7 @@ async def resolve_team_identity(
         )
     await refresh_projection_binding(db, agent_id=row["agent_id"], did_key=did_key, binding=binding)
 
-    # identity.md:804-808: later grants must retain the exact certificate that
+    # identity.md:807-811: later grants must retain the exact certificate that
     # this verified request makes current for its subject.
     presented_certificate_id = (cert_info.get("certificate_id") or "").strip()
     # The request verifier supplies its checked key. Direct parser consumers
