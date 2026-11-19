@@ -126,6 +126,26 @@ func confirmChatAlias(ctx context.Context, c *aweb.Client, sel *awconfig.Selecti
 	return confirmedChatAlias{}, nil
 }
 
+// confirmMailAliasRecipient confirms a bare alias in the selected team's
+// agent list for a mail send: when the list names it, the message signs that
+// member as its recipient. A failed lookup refuses; it reports whether the
+// list named the alias, leaving an alias it lacks to the caller.
+func confirmMailAliasRecipient(ctx context.Context, c *aweb.Client, req *awid.SendMessageRequest, alias string) (bool, error) {
+	agent, found, err := clientAgentForAlias(ctx, c, alias)
+	if err != nil {
+		return false, recipientLookupError(alias, "agent list", err)
+	}
+	if !found {
+		return false, nil
+	}
+	recipient, err := agentListRecipient(alias, agent)
+	if err != nil {
+		return false, err
+	}
+	req.ConfirmedRecipient = recipient
+	return true, nil
+}
+
 // agentListRecipient is the identity the selected team's agent list names
 // for alias: the binding a message to that alias signs. A row that names no
 // identity cannot be confirmed and refuses.
