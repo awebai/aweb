@@ -216,6 +216,14 @@ def owner_console_router(services: OwnerConsole, *, prefix: str = "") -> APIRout
     ) -> dict[str, Any]:
         return {"scope": current.scope, "expires_at": current.expires_at.isoformat()}
 
+    router.include_router(_owner_act_transport_router(services))
+    return router
+
+
+def _owner_act_transport_router(services: OwnerConsole) -> APIRouter:
+    """Keep owner-act transport separate from session and credential routes."""
+    router = APIRouter(route_class=ConsoleRoute)
+
     @router.post(
         "/installations/{installation_id}/owner-acts", dependencies=[Depends(_require_json)]
     )
