@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Awaitable, Callable
+from typing import Awaitable, Protocol
 
 from fastapi import Request
 
@@ -53,7 +53,14 @@ class MutationDeliveryFailed(RuntimeError):
         super().__init__("Mutation delivery is incomplete. Retry the pending delivery or cleanup operation.")
 
 
-MutationCallback = Callable[[str, dict], Awaitable[MutationDeliveryOutcome | None]]
+class MutationCallback(Protocol):
+    """An embedding callback accepting positional event/context and an awaitable result."""
+
+    def __call__(
+        self, event_type: str, context: dict, /,
+    ) -> Awaitable[MutationDeliveryOutcome | None]:
+        """Complete native work or retain the compatible None-returning host result."""
+        ...
 
 
 def mutation_callback(request: Request) -> MutationCallback | None:

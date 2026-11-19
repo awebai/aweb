@@ -324,3 +324,14 @@ references in `deps.py:19`, `db.py:130`,
 `attachment_service.py:206`, and `awid/ratelimit.py:227`. Slot retirement must
 convert those readers or preserve the released initialized-application path;
 removing a host-only slot does not authorize removing native request state.
+
+
+The optional extension inputs have structural contracts: `on_mutation` is
+`aweb.hooks.MutationCallback`, whose positional call returns an awaitable of
+`MutationDeliveryOutcome | None`; `rate_limiter` is
+`aweb.embedding.ServingRateLimiter`, whose `hit` returns the existing SDK
+`RateLimitDecision`; `attachment_backend` is the existing
+`aweb.attachments.AttachmentBackend` protocol. These annotations create no
+runtime admission or new validation. Ordinary None-returning host callbacks,
+SDK limiter implementations and existing attachment providers retain their
+current behavior.

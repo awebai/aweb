@@ -21,6 +21,7 @@ from redis.asyncio import from_url as async_redis_from_url
 from starlette.routing import Mount
 
 from .application_state import RegistryClientUnavailable
+from .attachments import AttachmentBackend
 from .config import get_public_origin, get_settings
 from .connection_scope import ConnectionScopeMiddleware
 from .coordination.routes.repos import router as repos_router
@@ -284,7 +285,7 @@ def create_app(
     *,
     db_infra: Optional[DatabaseInfra] = None,
     redis: Optional[Redis] = None,
-    attachment_backend=None,
+    attachment_backend: AttachmentBackend | None = None,
     public_origin: str | None = None,
     awid_transport: httpx.AsyncBaseTransport | None = None,
     domain_verifier: DomainVerifier | None = None,
