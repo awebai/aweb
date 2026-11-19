@@ -97,7 +97,7 @@ from aweb.service_errors import (
 )
 
 if TYPE_CHECKING:
-    from aweb.routes.chat import CreateSessionRequest, SendMessageRequest
+    from aweb.messaging.chat_models import CreateSessionRequest, SendMessageRequest
 
 logger = logging.getLogger(__name__)
 

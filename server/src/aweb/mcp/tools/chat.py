@@ -57,7 +57,7 @@ from aweb.messaging.chat_send import (
     resolve_chat_targets,
     send_chat,
 )
-from aweb.routes.chat import (
+from aweb.messaging.chat_models import (
     CreateSessionRequest,
     SendMessageRequest as ChatSendMessageRequest,
 )

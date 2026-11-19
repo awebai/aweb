@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from aweb.messaging.mail_models import SendMessageRequest as SendMessageRequest
 from aweb.message_vocabulary import MessageInputSource, observe_message_vocabulary
 from aweb.client_address import request_client_address
 from aweb.agent_wake import agent_wake_publisher
@@ -21,11 +22,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import (
     BaseModel,
-    ConfigDict,
     Field,
-    field_validator,
     model_serializer,
-    model_validator,
 )
 
 from awid.pagination import decode_cursor, encode_cursor, validate_pagination_params
@@ -34,8 +32,6 @@ from aweb.hooks import mutation_callback
 from aweb.id_chain_auth import stored_id_chain
 from aweb.identity_metadata import lookup_identity_metadata_by_did
 from aweb.identity_auth_deps import MessagingAuth, get_messaging_auth
-from aweb.messaging.alias_targets import validate_alias_selector
-from aweb.messaging.handle_addresses import normalize_hosted_handle_reference
 from aweb.messaging.mail_ack import acknowledge_mail
 from aweb.messaging.mail_send import SentMail, resolve_mail_target, send_mail
 from aweb.messaging.runtime import messaging_runtime
@@ -49,129 +45,6 @@ from aweb.member_team_key import current_team_key_sql
 from aweb.messaging.sender_membership import SenderMembership, sender_memberships
 
 router = APIRouter(prefix="/v1/messages", tags=["aweb-mail"])
-
-
-class SendMessageRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    to_agent_id: Optional[str] = Field(default=None, min_length=1)
-    to_alias: Optional[str] = Field(default=None, min_length=1)
-    to_did: Optional[str] = Field(default=None, min_length=1, max_length=256)
-    to_stable_id: Optional[str] = Field(default=None, min_length=1, max_length=256)
-    to_address: Optional[str] = Field(default=None, min_length=1, max_length=256)
-    conversation_id: Optional[str] = None
-    new_conversation: bool = (
-        False  # Accepted no-op; conversation_id alone selects continuation.
-    )
-    subject: str = ""
-    body: str = ""
-    content_mode: Optional[str] = None
-    message_version: Optional[int] = None
-    encrypted_envelope: Optional[dict] = None
-    priority: MessagePriority = "normal"
-    message_id: Optional[str] = None
-    timestamp: Optional[str] = None
-    from_did: Optional[str] = Field(default=None, max_length=256)
-    signature: Optional[str] = Field(default=None, max_length=512)
-    signed_payload: Optional[str] = None
-    attachments: object = None
-    attachment_refs: object = None
-
-    @model_validator(mode="after")
-    def _validate_content_mode(self):
-        is_encrypted = (
-            self.content_mode == "encrypted_v2"
-            or self.message_version == 2
-            or self.encrypted_envelope is not None
-        )
-        if is_encrypted:
-            if self.content_mode != "encrypted_v2":
-                raise ValueError(
-                    "content_mode must be encrypted_v2 for encrypted messages"
-                )
-            if self.message_version != 2:
-                raise ValueError("message_version must be 2 for encrypted messages")
-            if self.encrypted_envelope is None:
-                raise ValueError(
-                    "encrypted_envelope is required for encrypted messages"
-                )
-            if self.subject or self.body:
-                raise ValueError(
-                    "encrypted messages must not include plaintext subject or body"
-                )
-        elif self.body == "":
-            raise ValueError("body is required for legacy plaintext mail")
-        return self
-
-    @model_validator(mode="before")
-    @classmethod
-    def _normalize_hosted_handle_targets(cls, data):
-        if not isinstance(data, dict):
-            return data
-        normalized = dict(data)
-        to_alias = str(normalized.get("to_alias") or "").strip()
-        if to_alias.startswith("@"):
-            address = normalize_hosted_handle_reference(to_alias, require_agent=True)
-            if (
-                address != to_alias
-                and "/" in address
-                and not normalized.get("to_address")
-            ):
-                normalized["to_address"] = address
-                normalized.pop("to_alias", None)
-        if normalized.get("to_address") is not None:
-            normalized["to_address"] = normalize_hosted_handle_reference(
-                str(normalized["to_address"]),
-                require_agent=True,
-            )
-        return normalized
-
-    @field_validator("to_agent_id")
-    @classmethod
-    def _validate_agent_id(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return v
-        try:
-            return str(UUID(str(v).strip()))
-        except Exception:
-            raise ValueError("Invalid agent_id format")
-
-    @field_validator("to_alias")
-    @classmethod
-    def _validate_to_alias(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return None
-        return validate_alias_selector(v, field="to_alias")
-
-    @field_validator("to_address")
-    @classmethod
-    def _validate_to_address(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return None
-        value = v.strip()
-        if value.startswith("@"):
-            raise ValueError("Invalid to_address format")
-        return value
-
-    @field_validator("message_id")
-    @classmethod
-    def _validate_message_id(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return None
-        try:
-            return str(UUID(str(v).strip()))
-        except Exception:
-            raise ValueError("Invalid message_id format")
-
-    @field_validator("conversation_id")
-    @classmethod
-    def _validate_conversation_id(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return None
-        try:
-            return str(UUID(str(v).strip()))
-        except Exception:
-            raise ValueError("Invalid conversation_id format")
 
 
 class SendMessageResponse(BaseModel):

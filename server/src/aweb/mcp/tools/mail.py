@@ -54,7 +54,7 @@ from aweb.messaging.mail_routing import (
     recipient_for_conversation_participant,
     remote_recipient_from_participant,
 )
-from aweb.routes.messages import SendMessageRequest
+from aweb.messaging.mail_models import SendMessageRequest
 from aweb.service_errors import ServiceError
 
 

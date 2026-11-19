@@ -409,8 +409,8 @@ class NativeMessagingService:
             _validate_encrypted_payload,
             _validate_signed_mail_payload,
         )
-        from aweb.routes.chat import CreateSessionRequest
-        from aweb.routes.messages import SendMessageRequest
+        from aweb.messaging.chat_models import CreateSessionRequest
+        from aweb.messaging.mail_models import SendMessageRequest
 
         try:
             if value["format"] == "native_plaintext":

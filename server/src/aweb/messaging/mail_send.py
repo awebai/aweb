@@ -98,7 +98,7 @@ from aweb.service_errors import (
 )
 
 if TYPE_CHECKING:
-    from aweb.routes.messages import SendMessageRequest
+    from aweb.messaging.mail_models import SendMessageRequest
 
 
 logger = logging.getLogger(__name__)
