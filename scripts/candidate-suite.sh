@@ -8,6 +8,7 @@ if [[ "${1:-}" == "--isolated-suites" ]]; then
   export TEST_EGRESS_RUNNER=
   run test-server
   run test-awid
+  run test-key-holder
   run test-naapp
   run test-cli
   run test-cli-auth-v2
