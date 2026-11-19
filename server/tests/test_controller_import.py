@@ -17,8 +17,11 @@ from tests.test_team_control_authority import unreachable_context
 @pytest.mark.asyncio
 async def test_import_cannot_accept_signed_metadata_when_current_controller_is_unknown():
     request = TeamImportRequest(
-        awid_team_id="import:local", organization_id="organization-1", team_id=None,
-        dry_run=False, timestamp=datetime.now(timezone.utc).isoformat(),
+        awid_team_id="import:local",
+        organization_id="organization-1",
+        team_id=None,
+        dry_run=False,
+        timestamp=datetime.now(timezone.utc).isoformat(),
     )
     signature = request.sign(signing_key=bytes([81]) * 32)
     async with unreachable_context() as context:
@@ -31,12 +34,15 @@ async def test_import_cannot_accept_signed_metadata_when_current_controller_is_u
 @pytest.mark.asyncio
 async def test_import_rejects_stale_signed_request_before_acquisition():
     request = TeamImportRequest(
-        awid_team_id="import:local", dry_run=True, timestamp="1990-01-01T00:00:00Z",
+        awid_team_id="import:local",
+        dry_run=True,
+        timestamp="1990-01-01T00:00:00Z",
     )
     async with unreachable_context() as context:
         with pytest.raises(TeamControlRequestInvalid) as error:
             await verify_controller_import(
-                context=context, request=request,
+                context=context,
+                request=request,
                 controller_signature=request.sign(signing_key=bytes([81]) * 32),
             )
     assert error.value.reason is TeamControlRequestReason.TIMESTAMP_INVALID
@@ -45,13 +51,15 @@ async def test_import_rejects_stale_signed_request_before_acquisition():
 @pytest.mark.asyncio
 async def test_import_rejects_noncanonical_team_before_acquisition():
     request = TeamImportRequest(
-        awid_team_id="Import:local", dry_run=True,
+        awid_team_id="Import:local",
+        dry_run=True,
         timestamp=datetime.now(timezone.utc).isoformat(),
     )
     async with unreachable_context() as context:
         with pytest.raises(TeamControlRequestInvalid) as error:
             await verify_controller_import(
-                context=context, request=request,
+                context=context,
+                request=request,
                 controller_signature=request.sign(signing_key=bytes([81]) * 32),
             )
     assert error.value.reason is TeamControlRequestReason.TEAM_SCOPE_INVALID

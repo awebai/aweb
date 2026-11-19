@@ -23,6 +23,7 @@ class TeamControlRequestReason(StrEnum):
     TARGET_MISMATCH = "team_control_target_mismatch"
     SIGNATURE_INVALID = "team_control_signature_invalid"
     CONTROLLER_MISMATCH = "team_control_controller_mismatch"
+    CONTROLLER_CHANGED = "team_control_controller_changed"
 
 
 class TeamControlError(ServiceError):
@@ -60,6 +61,10 @@ class TeamControlRequestInvalid(TeamControlError):
             TeamControlRequestReason.CONTROLLER_MISMATCH: (
                 "The claim signer is not the team's current controller. "
                 "Regenerate the claim with the current controller key and retry."
+            ),
+            TeamControlRequestReason.CONTROLLER_CHANGED: (
+                "The team's controller changed while its registry facts were read. "
+                "Regenerate the import request with the current controller and retry."
             ),
         }[reason]
         super().__init__({"code": reason.value, "message": self.message})
