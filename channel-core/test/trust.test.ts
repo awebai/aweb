@@ -1428,33 +1428,30 @@ describe("SenderTrustManager", () => {
       "backend:acme.com",
       "",
     ) as SenderTrustManager & {
-      persistVerifiedHeadCheckpoint(
+      persistIdentityCheckpoint(
         target: PinStore,
-        id: string,
-        head: {
-          seq: number;
-          entryHash: string;
-          stateHash: string;
-          currentDidKey: string;
-          fetchedAt: number;
+        write: {
+          registryURL?: string;
+          stableID?: string;
+          head?: { seq: number; entryHash: string; stateHash: string; currentDidKey: string; fetchedAt: number };
+          carriesPinAnchor: boolean;
         },
-      ): boolean;
+      ): boolean | "refused";
     };
 
     for (const seq of [1.5, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1]) {
-      expect(trust.persistVerifiedHeadCheckpoint(store, stableID, {
-        seq,
-        entryHash: "a".repeat(64),
-        stateHash: "b".repeat(64),
-        currentDidKey: "did:key:zcheckpoint",
-        fetchedAt: 0,
+      expect(trust.persistIdentityCheckpoint(store, {
+        registryURL: "https://registry.example",
+        stableID,
+        head: { seq, entryHash: "a".repeat(64), stateHash: "b".repeat(64), currentDidKey: "did:key:zcheckpoint", fetchedAt: 0 },
+        carriesPinAnchor: false,
       })).toBe(false);
     }
 
-    expect(store.pins.get(stableID)?.log_seq).toBeUndefined();
+    expect(store.identityCheckpointRegistries(stableID)).toEqual([]);
   });
 
-  test("rejects prepared registry evidence when its pin checkpoint changed in flight", async () => {
+  test("rejects prepared registry evidence when its checkpoint changed in flight", async () => {
     const identity = await didFromSeed(64);
     const stableID = "did:aw:checkpointRace";
     const address = "acme.com/alice";
@@ -1465,30 +1462,18 @@ describe("SenderTrustManager", () => {
     pin.did_key = identity.did;
     pin.log_seq = 1;
     pin.log_entry_hash = "a".repeat(64);
-    const verifyStableIdentity = vi.fn()
-      .mockResolvedValueOnce({
-        outcome: "OK_VERIFIED",
-        currentDidKey: identity.did,
-        verifiedHead: {
-          seq: 2,
-          entryHash: "b".repeat(64),
-          stateHash: "c".repeat(64),
-          currentDidKey: identity.did,
-          fetchedAt: 1,
-        },
-      })
-      .mockResolvedValueOnce({
-        outcome: "OK_VERIFIED",
-        currentDidKey: identity.did,
-        verifiedHead: {
-          seq: 3,
-          entryHash: "d".repeat(64),
-          stateHash: "e".repeat(64),
-          currentDidKey: identity.did,
-          fetchedAt: 2,
-        },
-      });
-    const seedVerifiedHead = vi.fn();
+    const registryURL = "https://registry.example";
+    const answers = [
+      { seq: 2, entryHash: "b".repeat(64), stateHash: "c".repeat(64), currentDidKey: identity.did, fetchedAt: 1 },
+      { seq: 3, entryHash: "d".repeat(64), stateHash: "e".repeat(64), currentDidKey: identity.did, fetchedAt: 2 },
+    ];
+    const seeds: unknown[] = [];
+    const verifyStableIdentity = vi.fn(async (_address: string, _stableID: string, _did: string,
+      checkpointFor?: (registry: string) => unknown) => {
+      seeds.push(checkpointFor?.(registryURL));
+      return { outcome: "OK_VERIFIED", currentDidKey: identity.did, verifiedHead: answers[seeds.length - 1],
+        registryURL, newCheckpoint: false };
+    });
     const trust = new SenderTrustManager(
       { get: vi.fn() } as never,
       {
@@ -1500,7 +1485,6 @@ describe("SenderTrustManager", () => {
           custody: "self",
           identityScope: "global",
         })),
-        seedVerifiedHead,
         verifyStableIdentity,
       } as never,
       "backend:acme.com",
@@ -1528,7 +1512,8 @@ describe("SenderTrustManager", () => {
     const secondPrepared = await trust.resolveTrustMetadata(
       "verified", address, stableID, undefined, undefined, context,
     );
-    expect(seedVerifiedHead).toHaveBeenCalledTimes(2);
+    // Both verifications were seeded from the legacy pin anchor.
+    expect(seeds).toEqual([expect.objectContaining({ seq: 1 }), expect.objectContaining({ seq: 1 })]);
     expect(store.pins.get(stableID)?.log_seq).toBe(1);
 
     const first = await trust.normalizeResolvedTrust(
@@ -1536,16 +1521,17 @@ describe("SenderTrustManager", () => {
       undefined, undefined, address, firstPrepared,
     );
     expect(first).toEqual({ status: "verified", stored: true });
-    expect(store.pins.get(stableID)?.log_seq).toBe(2);
-    expect(store.pins.get(stableID)?.log_entry_hash).toBe("b".repeat(64));
+    // The first evidence carries the anchor into the registry's checkpoint.
+    expect(store.receivedIdentityCheckpoint(registryURL, stableID)).toMatchObject({ seq: 2, entryHash: "b".repeat(64) });
+    expect(store.pins.get(stableID)?.log_seq).toBeUndefined();
 
     const stale = await trust.normalizeResolvedTrust(
       store, "verified", address, identity.did, stableID, undefined, undefined,
       undefined, undefined, address, secondPrepared,
     );
+    // The second was seeded from the anchor the first replaced: stale.
     expect(stale).toEqual({ status: "verification_stale", stored: false });
-    expect(store.pins.get(stableID)?.log_seq).toBe(2);
-    expect(store.pins.get(stableID)?.log_entry_hash).toBe("b".repeat(64));
+    expect(store.receivedIdentityCheckpoint(registryURL, stableID)).toMatchObject({ seq: 2, entryHash: "b".repeat(64) });
   });
 
   test("surfaces stale verifier cache honestly instead of claiming identity mismatch", async () => {

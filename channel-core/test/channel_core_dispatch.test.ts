@@ -2545,6 +2545,8 @@ describe("channel-core dispatchAgentEvent", () => {
       {
         verifyStableIdentity: async () => ({
           outcome: "OK_VERIFIED",
+          registryURL: "https://registry.example",
+          newCheckpoint: true,
           currentDidKey: vectors.did,
           verifiedHead: {
             seq: 2,
@@ -2604,9 +2606,9 @@ describe("channel-core dispatchAgentEvent", () => {
       meta: expect.objectContaining({ trust_status: "identity_mismatch" }),
     }));
     const reloaded = PinStore.fromYAML(await readFile(pinStorePath, "utf-8"));
-    expect(reloaded.pins.get(vectors.stableID)).toMatchObject({
-      log_seq: 2,
-      log_entry_hash: entryHash,
+    expect(reloaded.receivedIdentityCheckpoint("https://registry.example", vectors.stableID)).toMatchObject({
+      seq: 2,
+      entryHash,
     });
     expect(reloaded.addresses.get(env.from)).toBe(addressOwner);
   });

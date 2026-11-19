@@ -1011,14 +1011,16 @@ func (c *Client) NormalizeSenderTrust(ctx context.Context, status VerificationSt
 	}
 	evidence := c.checkStableIdentityRegistry(ctx, status, trustAddress, fromDID, fromStableID)
 	status = c.checkTOFUPinWithMeta(ctx, evidence.status, strings.TrimSpace(rawAddress), trustAddress, fromDID, fromStableID, ra, repl, meta, evidence)
-	// Record the checkpoint only for a message that verified: it is the
-	// registry's head this client has now seen. An advanced anti-rollback
-	// checkpoint that is not durable would let the next process accept a log
-	// head we have already moved past (default-aajc.8), so a failure to commit
-	// it must not be reported as verified.
-	if (status == Verified || status == VerifiedCustodial) && evidence.head != nil && evidence.registryURL != "" {
+	// The registry's verified head is recorded whatever the message's own
+	// status: it is what this client has now seen of that registry's log. An
+	// advanced anti-rollback checkpoint that is not durable would let the next
+	// process accept a log head we have already moved past (default-aajc.8),
+	// so a failure to commit it must not be reported as verified.
+	if evidence.head != nil && evidence.registryURL != "" {
 		if err := c.saveIdentityCheckpoint(identityCheckpointWrite{RegistryURL: evidence.registryURL, StableID: fromStableID, Head: evidence.head, CarriesPinAnchor: evidence.pinAnchorSeed}); err != nil {
-			status = VerificationStale
+			if status == Verified || status == VerifiedCustodial {
+				status = VerificationStale
+			}
 		}
 	}
 	if status == IdentityMismatch && !recipientBindingMismatch && localTeamReference && strings.TrimSpace(fromDID) != "" && !strings.HasPrefix(strings.TrimSpace(fromStableID), "did:aw:") {

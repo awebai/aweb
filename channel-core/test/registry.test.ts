@@ -231,7 +231,7 @@ describe("registry verification", () => {
     ["unsafe integer", Number.MAX_SAFE_INTEGER + 1],
   ])("refuses %s verified-head checkpoint seeds", (_name, seq) => {
     const resolver = new RegistryResolver();
-    resolver.seedVerifiedHead(identityLogVectors.mapping.did_aw, {
+    resolver.seedVerifiedHead("https://registry.example.com", identityLogVectors.mapping.did_aw, {
       seq,
       entryHash: "a".repeat(64),
       stateHash: "b".repeat(64),
@@ -240,7 +240,7 @@ describe("registry verification", () => {
     });
 
     const cache = (resolver as unknown as { headCache: Map<string, unknown> }).headCache;
-    expect(cache.has(identityLogVectors.mapping.did_aw)).toBe(false);
+    expect(cache.size).toBe(0);
   });
 
   test("fails hard when log_head current key disagrees with body", () => {

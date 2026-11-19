@@ -317,12 +317,26 @@ export class PinStore {
     return removed || recorded;
   }
 
-  advanceLogCheckpoint(stableID: string, seq: number, entryHash: string): boolean {
+  /**
+   * Clears the anchor an earlier client kept on the pin, once a checkpoint in
+   * the per-registry map carries it. Returns whether the pin changed.
+   */
+  clearPinLogAnchor(stableID: string): boolean {
     const pin = this.mutablePins.get(stableID);
-    if (!pin || seq <= (pin.log_seq ?? 0)) return false;
-    pin.log_seq = seq;
-    pin.log_entry_hash = entryHash;
+    if (!pin || (pin.log_seq === undefined && pin.log_entry_hash === undefined)) return false;
+    delete pin.log_seq;
+    delete pin.log_entry_hash;
     return true;
+  }
+
+  /** The registries holding a checkpoint for stableID. */
+  identityCheckpointRegistries(stableID: string): string[] {
+    const heads = this.unknownRootFields.get("received_identity_heads");
+    if (!heads || typeof heads !== "object" || Array.isArray(heads)) return [];
+    return Object.entries(heads as Record<string, unknown>)
+      .filter(([, identities]) => !!identities && typeof identities === "object"
+        && (identities as Record<string, unknown>)[stableID] !== undefined)
+      .map(([registryURL]) => registryURL);
   }
 
   // Keep a trust decision and its commit in one per-process critical section.

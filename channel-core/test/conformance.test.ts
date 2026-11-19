@@ -258,7 +258,7 @@ describe("trust conformance vectors", () => {
           rotationAnnouncement: RotationAnnouncement | undefined,
           replacementAnnouncement: ReplacementAnnouncement | undefined,
           meta: { did?: string; identityScope: "global" | "local"; custody: string; controllerDid?: string; resolved: boolean },
-          registryConfirmedCurrentKey: boolean,
+          registry: { confirmedCurrentKey: boolean; movedRegistry: boolean },
         ): { status: VerificationStatus | undefined; stored: boolean };
       };
 
@@ -278,7 +278,7 @@ describe("trust conformance vectors", () => {
           resolved: true,
           did: vector.registry_names_key ? vector.from_did : undefined,
         },
-        vector.registry_confirmed_current_key,
+        { confirmedCurrentKey: vector.registry_confirmed_current_key, movedRegistry: false },
       );
 
       expect(result.status, vector.name).toBe(vector.expected_status);

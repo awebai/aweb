@@ -78,9 +78,31 @@ interface PinCheckpoint {
   entryHash: string;
 }
 
-interface PreparedStableIdentityCheck {
+/** The checkpoint a registry verification was seeded from, if any. */
+interface CheckpointSeed {
+  registryURL: string;
   checkpoint: PinCheckpoint | undefined;
+  /** The seed was the anchor an earlier client kept on the pin. */
+  fromPin: boolean;
+}
+
+interface PreparedStableIdentityCheck {
+  seed: CheckpointSeed | undefined;
   result: StableIdentityVerification;
+}
+
+/** What the registry pass established for one message. */
+interface RegistryEvidence {
+  status: VerificationStatus | undefined;
+  confirmedCurrentKey: boolean;
+  /**
+   * The answering registry held no checkpoint for this identity while another
+   * does: across the move only the pin's key binding protects.
+   */
+  movedRegistry: boolean;
+  verifiedHead?: VerifiedLogHead;
+  registryURL?: string;
+  carriesPinAnchor: boolean;
 }
 
 export interface SenderMembership {
@@ -453,16 +475,24 @@ export class SenderTrustManager {
       rotationAnnouncement,
       replacementAnnouncement,
       meta,
-      registryCheck.confirmedCurrentKey,
+      registryCheck,
     );
     // Advancing the checkpoint is itself a reason to persist the store. Relying
     // on the pin-write path to have set stored would be coincidental coupling:
     // a refactor of any return path would silently drop rollback protection.
-    const checkpointAdvanced = this.persistVerifiedHeadCheckpoint(
-      store,
-      fromStableID,
-      registryCheck.verifiedHead,
-    );
+    // The registry's verified head is recorded whatever the message's own
+    // status: it is what this client has now seen of that registry's log.
+    const persisted = this.persistIdentityCheckpoint(store, {
+      registryURL: registryCheck.registryURL,
+      stableID: fromStableID,
+      head: registryCheck.verifiedHead,
+      carriesPinAnchor: registryCheck.carriesPinAnchor,
+    });
+    if (persisted === "refused") {
+      const verified = pinResult.status === "verified" || pinResult.status === "verified_custodial";
+      return { status: verified ? "verification_stale" : pinResult.status, stored: pinResult.stored };
+    }
+    const checkpointAdvanced = persisted;
     if (
       pinResult.status === "identity_mismatch"
       && fromDID
@@ -621,14 +651,40 @@ export class SenderTrustManager {
   ): Promise<PreparedStableIdentityCheck | undefined> {
     if (!this.requiresStableIdentityCheck(status, fromDID, fromStableID)) return undefined;
 
-    // Registry verification can await DNS and HTTP. Seed it from one synchronous
-    // checkpoint snapshot before that work, then revalidate the same values in
-    // the trust critical section before applying the result.
-    const checkpoint = this.pinCheckpoint(store, fromStableID!);
-    this.seedVerifiedHeadFromPin(store, fromStableID!);
+    // Registry verification can await DNS and HTTP. It is seeded from the
+    // checkpoint held for whichever registry answers, recorded here, and the
+    // same values are revalidated in the trust critical section before the
+    // result applies.
+    let seed: CheckpointSeed | undefined;
+    const result = await this.registry.verifyStableIdentity(trustAddress, fromStableID!, fromDID, (registryURL) => {
+      const held = this.heldCheckpoint(store, registryURL, fromStableID!);
+      seed = { registryURL, checkpoint: held?.checkpoint, fromPin: held?.fromPin ?? false };
+      return held?.head;
+    });
+    return { seed, result };
+  }
+
+  /**
+   * The checkpoint held for stableID at registryURL; without one, the anchor an
+   * earlier client kept on the pin, offered as the seed it is carried from. An
+   * unreadable checkpoint seeds nothing: verification then runs from the log.
+   */
+  private heldCheckpoint(store: PinStore, registryURL: string, stableID: string)
+    : { head: VerifiedLogHead; checkpoint: PinCheckpoint; fromPin: boolean } | undefined {
+    let mapped: VerifiedLogHead | undefined;
+    try {
+      mapped = store.receivedIdentityCheckpoint(registryURL, stableID);
+    } catch {
+      mapped = undefined;
+    }
+    if (mapped) return { head: mapped, checkpoint: { seq: mapped.seq, entryHash: mapped.entryHash }, fromPin: false };
+    const anchor = this.pinCheckpoint(store, stableID);
+    if (!anchor) return undefined;
     return {
-      checkpoint,
-      result: await this.registry.verifyStableIdentity(trustAddress, fromStableID!, fromDID),
+      head: { seq: anchor.seq, entryHash: anchor.entryHash, stateHash: "",
+        currentDidKey: store.pins.get(stableID)?.did_key ?? "", fetchedAt: 0 },
+      checkpoint: anchor,
+      fromPin: true,
     };
   }
 
@@ -638,42 +694,39 @@ export class SenderTrustManager {
     fromDID: string | undefined,
     fromStableID: string | undefined,
     prepared: PreparedStableIdentityCheck | undefined,
-  ): {
-    status: VerificationStatus | undefined;
-    confirmedCurrentKey: boolean;
-    verifiedHead?: VerifiedLogHead;
-  } {
-    if (!this.requiresStableIdentityCheck(status, fromDID, fromStableID)) {
-      return { status, confirmedCurrentKey: false };
-    }
-    if (!prepared) return { status: "verification_stale", confirmedCurrentKey: false };
+  ): RegistryEvidence {
+    const none = (result: VerificationStatus | undefined): RegistryEvidence =>
+      ({ status: result, confirmedCurrentKey: false, movedRegistry: false, carriesPinAnchor: false });
+    if (!this.requiresStableIdentityCheck(status, fromDID, fromStableID)) return none(status);
+    if (!prepared) return none("verification_stale");
 
     // Evidence verified against an older anti-rollback anchor cannot be applied
     // after another decision advances or replaces that anchor. Degrade this
     // message rather than resolving again while holding the pin lock.
-    const currentCheckpoint = this.pinCheckpoint(store, fromStableID!);
-    if (!this.sameCheckpoint(currentCheckpoint, prepared.checkpoint)) {
-      return { status: "verification_stale", confirmedCurrentKey: false };
+    if (prepared.seed) {
+      const held = this.heldCheckpoint(store, prepared.seed.registryURL, fromStableID!);
+      if (!this.sameCheckpoint(held?.checkpoint, prepared.seed.checkpoint)) return none("verification_stale");
     }
 
     const registryResult = prepared.result;
-    if (registryResult.outcome === "STALE_CACHE") {
-      return { status: "verification_stale", confirmedCurrentKey: false };
-    }
-    if (registryResult.outcome === "HARD_ERROR") {
-      return { status: "identity_mismatch", confirmedCurrentKey: false };
-    }
+    if (registryResult.outcome === "STALE_CACHE") return none("verification_stale");
+    if (registryResult.outcome === "HARD_ERROR") return none("identity_mismatch");
     if (
       registryResult.outcome === "OK_VERIFIED"
       && registryResult.currentDidKey
       && registryResult.currentDidKey !== fromDID
     ) {
-      return { status: "identity_mismatch", confirmedCurrentKey: false };
+      return none("identity_mismatch");
     }
+    const registryURL = registryResult.registryURL;
     return {
       status,
       confirmedCurrentKey: registryResult.outcome === "OK_VERIFIED" && registryResult.currentDidKey === fromDID,
+      movedRegistry: !!registryResult.newCheckpoint && !!registryURL
+        && store.identityCheckpointRegistries(fromStableID!).some((registry) => registry !== registryURL),
       verifiedHead: registryResult.verifiedHead,
+      registryURL,
+      carriesPinAnchor: prepared.seed?.fromPin ?? false,
     };
   }
 
@@ -691,35 +744,27 @@ export class SenderTrustManager {
     return left.seq === right.seq && left.entryHash === right.entryHash;
   }
 
-  private seedVerifiedHeadFromPin(store: PinStore, stableID: string): void {
-    const seed = (this.registry as { seedVerifiedHead?: (id: string, head: VerifiedLogHead) => void })
-      .seedVerifiedHead;
-    if (typeof seed !== "function") return;
-    const checkpoint = this.pinCheckpoint(store, stableID);
-    if (!checkpoint) return;
-    const pin = store.pins.get(stableID)!;
-    seed.call(this.registry, stableID, {
-      seq: checkpoint.seq,
-      entryHash: checkpoint.entryHash,
-      stateHash: "",
-      currentDidKey: pin.did_key ?? "",
-      fetchedAt: 0,
-    });
-  }
-
   /**
-   * Record the verified head with the pin so the anchor survives a restart. Only
-   * ever advances, so a stale response cannot weaken the checkpoint. Called
-   * after the pin check because on first contact the pin does not exist until
-   * that check runs.
+   * Record a verified head as the checkpoint for (registry, stable ID). Only
+   * ever advances; a rollback or fork is refused, and the message is then
+   * stale. A head carried from the pin's legacy anchor clears the pin's copy.
    */
-  private persistVerifiedHeadCheckpoint(
-    store: PinStore,
-    stableID: string | undefined,
-    head: VerifiedLogHead | undefined,
-  ): boolean {
-    if (!stableID || !head || !isValidDidLogSequence(head.seq) || !head.entryHash.trim()) return false;
-    return store.advanceLogCheckpoint(stableID, head.seq, head.entryHash);
+  private persistIdentityCheckpoint(store: PinStore, write: {
+    registryURL?: string;
+    stableID?: string;
+    head?: VerifiedLogHead;
+    carriesPinAnchor: boolean;
+  }): boolean | "refused" {
+    const { registryURL, stableID, head } = write;
+    if (!registryURL || !stableID || !head || !isValidDidLogSequence(head.seq) || !head.entryHash.trim()) return false;
+    let advanced: boolean;
+    try {
+      advanced = store.advanceReceivedIdentityCheckpoint(registryURL, stableID, head);
+    } catch {
+      return "refused";
+    }
+    const cleared = write.carriesPinAnchor ? store.clearPinLogAnchor(stableID) : false;
+    return advanced || cleared;
   }
 
   private checkTOFUPinWithMeta(
@@ -732,8 +777,9 @@ export class SenderTrustManager {
     rotationAnnouncement: RotationAnnouncement | undefined,
     replacementAnnouncement: ReplacementAnnouncement | undefined,
     meta: AgentMeta,
-    registryConfirmedCurrentKey: boolean,
+    registry: Pick<RegistryEvidence, "confirmedCurrentKey" | "movedRegistry">,
   ): TrustResult {
+    const registryConfirmedCurrentKey = registry.confirmedCurrentKey;
     if (
       !status
       || (status !== "verified" && status !== "verified_custodial")
@@ -807,7 +853,10 @@ export class SenderTrustManager {
             // which the DID log DOES prove (did:aw -> did:key), so a verified
             // registry chain is sufficient here. It says nothing about address
             // ownership — that is enforced in the mismatch branch below.
-            if (registryConfirmedCurrentKey) {
+            // Across a registry move the new registry's chain has no checkpoint
+            // behind it: the pin's key binding decides, and a key other than
+            // the pinned one is a mismatch (docs/trust-model.md).
+            if (registryConfirmedCurrentKey && !registry.movedRegistry) {
               store.recordVerifiedIdentity(pinKey, trustAddress, fromStableID, fromDID);
               return { status, stored: true };
             }

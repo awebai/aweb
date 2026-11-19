@@ -63,6 +63,21 @@ export interface StableIdentityVerification {
    * (default-aajc.8). Set only when outcome is OK_VERIFIED.
    */
   verifiedHead?: VerifiedLogHead;
+  /** The registry that answered; a checkpoint belongs to it. */
+  registryURL?: string;
+  /**
+   * The caller held no checkpoint for this identity at that registry: across
+   * it only the pin's key binding protects (docs/trust-model.md).
+   */
+  newCheckpoint?: boolean;
+}
+
+/** The caller's persisted checkpoint for an identity at one registry. */
+export type CheckpointLookup = (registryURL: string) => VerifiedLogHead | undefined;
+
+/** A verified log head is one registry's view of an identity. */
+function headCacheKey(registryURL: string, stableID: string): string {
+  return `${registryURL.trim().replace(/\/+$/, "")}|${stableID.trim()}`;
 }
 
 export interface ResolvedRegistryIdentity {
@@ -145,6 +160,7 @@ export class RegistryResolver {
     address: string,
     stableID: string,
     expectedCurrentDidKey: string = "",
+    checkpointFor?: CheckpointLookup,
   ): Promise<StableIdentityVerification> {
     const split = splitRegistryAddress(address);
     if (!split || !stableID.trim()) {
@@ -178,7 +194,12 @@ export class RegistryResolver {
       }
     }
 
-    return this.verifyStableIdentityAtRegistry(resolvedAddress.registryURL, stableID, expectedCurrentDidKey);
+    // The caller's persisted checkpoint for the answering registry seeds the
+    // anchor (seeding only advances); without one, this is a new checkpoint.
+    const checkpoint = checkpointFor?.(resolvedAddress.registryURL);
+    if (checkpoint) this.seedVerifiedHead(resolvedAddress.registryURL, stableID, checkpoint);
+    const result = await this.verifyStableIdentityAtRegistry(resolvedAddress.registryURL, stableID, expectedCurrentDidKey);
+    return { ...result, registryURL: resolvedAddress.registryURL, newCheckpoint: !checkpoint };
   }
 
   /**
@@ -217,7 +238,7 @@ export class RegistryResolver {
         this.receivedRegistries.set(registryURL, scoped);
       }
       const checkpoint = checkpointFor?.(registryURL);
-      if (checkpoint) scoped.seedVerifiedHead(stableID, checkpoint);
+      if (checkpoint) scoped.seedVerifiedHead(registryURL, stableID, checkpoint);
       return { registryURL, result: await scoped.verifyStableIdentityAtRegistry(registryURL, stableID, did, true) };
     } catch (error) {
       return { registryURL: "", result: { outcome: "OK_DEGRADED", error: String(error) } };
@@ -281,10 +302,10 @@ export class RegistryResolver {
       return { outcome: "HARD_ERROR", error: "registry key did:aw mismatch" };
     }
 
-    const cached = this.headCache.get(stableID);
+    const cached = this.headCache.get(headCacheKey(registryURL, stableID));
     const verification = verifyDidKeyResolution(resolution, cached, this.now());
     if (verification.outcome === "OK_VERIFIED" && verification.nextHead) {
-      this.headCache.set(stableID, verification.nextHead);
+      this.headCache.set(headCacheKey(registryURL, stableID), verification.nextHead);
     }
     // An unanchored seq>1 head (first contact or a seq gap) degrades; recover by
     // anchoring the full log to genesis, matching the Go resolver.
@@ -305,17 +326,19 @@ export class RegistryResolver {
 
   /**
    * Install a previously verified log head as the anti-rollback anchor for
-   * stableID. Callers restore it from the checkpoint persisted with the pin so a
-   * restart does not forget which sequence was already verified — without it a
-   * registry can serve a valid truncated prefix and roll a rotated identity back
-   * to a retired key (default-aajc.8). Seeding never moves the anchor backwards.
+   * stableID at registryURL. Callers restore it from the persisted checkpoint
+   * so a restart does not forget which sequence was already verified — without
+   * it a registry can serve a valid truncated prefix and roll a rotated identity
+   * back to a retired key (default-aajc.8). Seeding never moves the anchor
+   * backwards.
    */
-  seedVerifiedHead(stableID: string, head: VerifiedLogHead): void {
+  seedVerifiedHead(registryURL: string, stableID: string, head: VerifiedLogHead): void {
     const id = stableID.trim();
     if (!id || !head || !isValidDidLogSequence(head.seq) || !isLowerHex(head.entryHash.trim())) return;
-    const existing = this.headCache.get(id);
+    const key = headCacheKey(registryURL, id);
+    const existing = this.headCache.get(key);
     if (existing && existing.seq >= head.seq) return;
-    this.headCache.set(id, head);
+    this.headCache.set(key, head);
   }
 
   private async verifyStableIdentityViaFullLog(
@@ -344,7 +367,7 @@ export class RegistryResolver {
     // it. Otherwise a registry can serve a valid truncated prefix (rollback to a
     // retired key) or a valid fork that never included our entry
     // (default-aajc.8).
-    const checkpoint = this.headCache.get(stableID);
+    const checkpoint = this.headCache.get(headCacheKey(registryURL, stableID));
     if (checkpoint) {
       if (head.seq < checkpoint.seq) {
         return { outcome: "HARD_ERROR", currentDidKey, error: "audit log behind verified checkpoint" };
@@ -357,7 +380,7 @@ export class RegistryResolver {
         };
       }
     }
-    this.headCache.set(stableID, head);
+    this.headCache.set(headCacheKey(registryURL, stableID), head);
     return { outcome: "OK_VERIFIED", currentDidKey, verifiedHead: head };
   }
 
@@ -393,14 +416,14 @@ export class RegistryResolver {
     }
     const verification = verifyDidKeyResolution(
       resolution,
-      this.headCache.get(resolvedAddress.response.did_aw),
+      this.headCache.get(headCacheKey(resolvedAddress.registryURL, resolvedAddress.response.did_aw)),
       this.now(),
     );
     if (verification.outcome === "HARD_ERROR") {
       throw new Error(verification.error || "invalid log head");
     }
     if (verification.outcome === "OK_VERIFIED" && verification.nextHead) {
-      this.headCache.set(resolvedAddress.response.did_aw, verification.nextHead);
+      this.headCache.set(headCacheKey(resolvedAddress.registryURL, resolvedAddress.response.did_aw), verification.nextHead);
     }
     return {
       did: resolution.current_did_key,
