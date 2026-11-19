@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from aweb.messaging.kinds import ContentMode
+
 from aweb.mcp.tools.errors import messaging_tool
 from aweb.messaging.recipients import RecipientIdentityBinding
 from aweb.client_address import request_client_address
@@ -205,7 +207,7 @@ async def _decrypt_chat_row_for_hosted(
     row: dict,
 ) -> dict[str, object]:
     body = str(row.get("body") or "")
-    if str(row.get("content_mode") or "legacy_plaintext_v1") != "encrypted_v2":
+    if str(row.get("content_mode") or ContentMode.PLAINTEXT) != ContentMode.ENCRYPTED:
         return {"body": body, "decryptable": True, "content_notice": None}
     try:
         decrypted = await decrypt_hosted_message_row(
@@ -531,7 +533,7 @@ async def chat_send(
             wait_seconds=wait_seconds if wait else None,
             content_mode=encrypted.content_mode
             if encrypted is not None
-            else "legacy_plaintext_v1",
+            else ContentMode.PLAINTEXT,
             message_version=encrypted.message_version if encrypted is not None else 1,
             encrypted_envelope=encrypted.encrypted_envelope
             if encrypted is not None
@@ -623,7 +625,7 @@ async def chat_pending(
             hosted_decryptor=hosted_decryptor,
             row={
                 "content_mode": row.get("last_message_content_mode")
-                or "legacy_plaintext_v1",
+                or ContentMode.PLAINTEXT,
                 "message_version": row.get("last_message_version") or 1,
                 "encrypted_envelope": row.get("last_encrypted_envelope"),
                 "body": row.get("last_message") or "",

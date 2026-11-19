@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from aweb.messaging.kinds import ContentMode
+
 import json
 import logging
 import uuid as uuid_mod
@@ -144,7 +146,7 @@ def _require_remote_chat_signature(
 
 def _payload_is_encrypted(payload: CreateSessionRequest | SendMessageRequest) -> bool:
     return (
-        getattr(payload, "content_mode", "legacy_plaintext_v1") == "encrypted_v2"
+        getattr(payload, "content_mode", ContentMode.PLAINTEXT) == ContentMode.ENCRYPTED
         or getattr(payload, "message_version", 1) == 2
         or getattr(payload, "encrypted_envelope", None) is not None
     )
@@ -189,7 +191,7 @@ def validate_encrypted_chat_payload(
 ) -> dict[str, Any] | None:
     if not _payload_is_encrypted(payload):
         return None
-    if payload.content_mode != "encrypted_v2":
+    if payload.content_mode != ContentMode.ENCRYPTED:
         raise DeliveryRefusal(
             status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
             detail="content_mode must be encrypted_v2 for encrypted chat",

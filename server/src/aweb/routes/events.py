@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from aweb.messaging.kinds import ContentMode
+
 from aweb.messaging.mail_attribution import incoming_mail_snapshot_predicate
 from aweb.messaging.participant_succession import (
     MailSuccessionScope,
@@ -256,12 +258,12 @@ async def _current_actionable_mail(
                 or ""
             ),
             "subject": ""
-            if r.get("content_mode") == "encrypted_v2"
+            if r.get("content_mode") == ContentMode.ENCRYPTED
             else (r["subject"] or ""),
             "priority": (r.get("priority") or "normal").strip().lower(),
-            "content_mode": r.get("content_mode") or "legacy_plaintext_v1",
+            "content_mode": r.get("content_mode") or ContentMode.PLAINTEXT,
             "message_version": int(r.get("message_version") or 1),
-            "encrypted": r.get("content_mode") == "encrypted_v2",
+            "encrypted": r.get("content_mode") == ContentMode.ENCRYPTED,
             "unread_count": int(r.get("unread_count") or 0),
             "wake_mode": _mail_wake_mode(r.get("priority")),
             "created_at": r["created_at"].astimezone(timezone.utc).isoformat(),

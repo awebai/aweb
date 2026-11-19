@@ -9,6 +9,8 @@ sender signature over a different federation wrapper.
 
 from __future__ import annotations
 
+from aweb.messaging.kinds import ContentMode
+
 import json
 from datetime import datetime, timezone
 from typing import Any, Literal, Mapping
@@ -178,7 +180,7 @@ def verify_federation_envelope(
 
 def _is_encrypted_v2(model: FederationEnvelope) -> bool:
     return (
-        model.content_mode == "encrypted_v2"
+        model.content_mode == ContentMode.ENCRYPTED
         or model.message_version == 2
         or model.encrypted_envelope is not None
     )
@@ -339,7 +341,7 @@ def _enforce_encrypted_payload_binding(
     *,
     now: datetime | None,
 ) -> str | None:
-    if model.content_mode != "encrypted_v2":
+    if model.content_mode != ContentMode.ENCRYPTED:
         raise FederationEnvelopeError(
             "Federation encrypted content_mode must be encrypted_v2"
         )

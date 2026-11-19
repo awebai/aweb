@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from aweb.messaging.kinds import ContentMode
+
 from aweb.messaging.mail_models import SendMessageRequest as SendMessageRequest
 from aweb.message_vocabulary import MessageInputSource, observe_message_vocabulary
 from aweb.client_address import request_client_address
@@ -65,7 +67,7 @@ class InboxMessage(BaseModel):
     to_alias: str
     subject: Optional[str] = None
     body: Optional[str] = None
-    content_mode: str = "legacy_plaintext_v1"
+    content_mode: str = ContentMode.PLAINTEXT
     message_version: int = 1
     encrypted_envelope: Optional[dict] = None
     priority: MessagePriority
@@ -84,7 +86,7 @@ class InboxMessage(BaseModel):
     @model_serializer(mode="wrap")
     def _serialize(self, handler):
         data = handler(self)
-        if self.content_mode != "legacy_plaintext_v1":
+        if self.content_mode != ContentMode.PLAINTEXT:
             data.pop("subject", None)
             data.pop("body", None)
         return data
@@ -133,14 +135,14 @@ async def _inbox_response_from_rows(
         [
             r["message_id"]
             for r in rows
-            if str(r.get("content_mode") or "") == "encrypted_v2"
+            if str(r.get("content_mode") or "") == ContentMode.ENCRYPTED
         ],
     )
     messages = []
     for r in rows:
         from_did = (r.get("from_did") or "").strip()
         to_did = (r.get("to_did") or "").strip()
-        content_mode = str(r.get("content_mode") or "legacy_plaintext_v1")
+        content_mode = str(r.get("content_mode") or ContentMode.PLAINTEXT)
         encrypted_envelope = r.get("encrypted_envelope")
         if isinstance(encrypted_envelope, str):
             encrypted_envelope = json.loads(encrypted_envelope)
@@ -159,8 +161,8 @@ async def _inbox_response_from_rows(
                 ),
                 from_alias=r["from_alias"],
                 to_alias=r["to_alias"],
-                subject=(r["subject"] if content_mode == "legacy_plaintext_v1" else ""),
-                body=(r["body"] if content_mode == "legacy_plaintext_v1" else ""),
+                subject=(r["subject"] if content_mode == ContentMode.PLAINTEXT else ""),
+                body=(r["body"] if content_mode == ContentMode.PLAINTEXT else ""),
                 content_mode=content_mode,
                 message_version=int(r.get("message_version") or 1),
                 encrypted_envelope=(

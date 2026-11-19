@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from aweb.messaging.kinds import ContentMode
+
 from aweb.db import TransactionInfra
 from aweb.federation.errors import FederationPolicyRefused
 from aweb.messaging.delivery_policy import (
@@ -69,7 +71,7 @@ def _metadata(envelope: FederationEnvelope) -> dict[str, object]:
         "target_address": envelope.target_address,
         "target_delivery_origin": envelope.target_delivery_origin,
         "conversation_id": envelope.conversation_id,
-        "content_mode": envelope.content_mode or "legacy_plaintext_v1",
+        "content_mode": envelope.content_mode or ContentMode.PLAINTEXT,
     }
 
 
@@ -308,7 +310,7 @@ async def _require_recipient_encryption_assertion(
     envelope: FederationEnvelope,
     recipient: dict,
 ) -> None:
-    if envelope.content_mode != "encrypted_v2":
+    if envelope.content_mode != ContentMode.ENCRYPTED:
         return
     encrypted = envelope.encrypted_envelope or {}
     expected_did = envelope.target_current_did_key
@@ -613,7 +615,7 @@ async def _store_mail(
 ):
     metadata = (
         encrypted_message_storage_metadata(envelope.encrypted_envelope or {})
-        if envelope.content_mode == "encrypted_v2"
+        if envelope.content_mode == ContentMode.ENCRYPTED
         else {}
     )
     row = await tx.fetch_one(
@@ -648,7 +650,7 @@ async def _store_mail(
         None if metadata else envelope.signed_payload,
         UUID(str(envelope.conversation_id)),
         2 if metadata else 1,
-        "encrypted_v2" if metadata else "legacy_plaintext_v1",
+        ContentMode.ENCRYPTED if metadata else ContentMode.PLAINTEXT,
         json.dumps(envelope.encrypted_envelope, sort_keys=True, separators=(",", ":"))
         if metadata
         else None,
@@ -677,7 +679,7 @@ async def _store_mail(
 async def _store_chat(tx, envelope: FederationEnvelope, signature: str, id_chain=None):
     metadata = (
         encrypted_message_storage_metadata(envelope.encrypted_envelope or {})
-        if envelope.content_mode == "encrypted_v2"
+        if envelope.content_mode == ContentMode.ENCRYPTED
         else {}
     )
     participant = await tx.fetch_one(
@@ -717,7 +719,7 @@ async def _store_chat(tx, envelope: FederationEnvelope, signature: str, id_chain
         UUID(envelope.reply_to) if envelope.reply_to else None,
         None if metadata else signature,
         None if metadata else envelope.signed_payload,
-        "encrypted_v2" if metadata else "legacy_plaintext_v1",
+        ContentMode.ENCRYPTED if metadata else ContentMode.PLAINTEXT,
         2 if metadata else 1,
         json.dumps(envelope.encrypted_envelope, sort_keys=True, separators=(",", ":"))
         if metadata

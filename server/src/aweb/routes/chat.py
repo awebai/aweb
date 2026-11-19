@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from aweb.messaging.kinds import ContentMode
+
 from aweb.messaging.chat_models import CreateSessionRequest as CreateSessionRequest
 from aweb.messaging.chat_models import SendMessageRequest as SendMessageRequest
 from aweb.message_vocabulary import MessageInputSource, observe_message_vocabulary
@@ -452,7 +454,7 @@ async def pending(
                 "participant_addresses": participant_addresses,
                 "last_message": item["last_message"],
                 "last_message_content_mode": item.get("last_message_content_mode")
-                or "legacy_plaintext_v1",
+                or ContentMode.PLAINTEXT,
                 "last_message_version": item.get("last_message_version") or 1,
                 "last_encrypted_envelope": item.get("last_encrypted_envelope"),
                 "last_from": item["last_from"],
@@ -570,7 +572,7 @@ async def history(
                 "from_agent": msg["from_alias"],
                 "from_address": from_address,
                 "body": msg["body"],
-                "content_mode": msg.get("content_mode") or "legacy_plaintext_v1",
+                "content_mode": msg.get("content_mode") or ContentMode.PLAINTEXT,
                 "message_version": msg.get("message_version") or 1,
                 "encrypted_envelope": msg.get("encrypted_envelope"),
                 "timestamp": _utc_iso(msg["created_at"]),
@@ -1039,7 +1041,7 @@ async def _sse_events(
                             or None,
                             "body": row["body"],
                             "content_mode": row.get("content_mode")
-                            or "legacy_plaintext_v1",
+                            or ContentMode.PLAINTEXT,
                             "message_version": row.get("message_version") or 1,
                             "encrypted_envelope": row.get("encrypted_envelope"),
                             "sender_leaving": bool(row["sender_leaving"]),

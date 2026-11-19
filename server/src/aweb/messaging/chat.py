@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from aweb.messaging.kinds import ContentMode
+
 from aweb.human_kind import human_predicate_sql
 
 from aweb.human_channels.contract import ContractError
@@ -397,7 +399,7 @@ async def send_in_session(
     signature: str | None = None,
     signed_payload: str | None = None,
     id_chain: dict[str, Any] | None = None,
-    content_mode: str = "legacy_plaintext_v1",
+    content_mode: str = ContentMode.PLAINTEXT,
     message_version: int = 1,
     encrypted_envelope: dict[str, Any] | None = None,
     encrypted_metadata: dict[str, Any] | None = None,
@@ -619,7 +621,7 @@ async def get_pending_conversations(
             "participant_addresses": list(row["participant_addresses"] or []),
             "last_message": row["last_message"] or "",
             "last_message_content_mode": row.get("last_message_content_mode")
-            or "legacy_plaintext_v1",
+            or ContentMode.PLAINTEXT,
             "last_message_version": int(row.get("last_message_version") or 1),
             "last_encrypted_envelope": _json_object(row.get("last_encrypted_envelope")),
             "last_from": row["last_from"] or "",
@@ -746,7 +748,7 @@ async def get_message_history(
             "signature": row.get("signature"),
             "signed_payload": row.get("signed_payload"),
             "id_chain": _json_object(row.get("id_chain")),
-            "content_mode": row.get("content_mode") or "legacy_plaintext_v1",
+            "content_mode": row.get("content_mode") or ContentMode.PLAINTEXT,
             "message_version": int(row.get("message_version") or 1),
             "encrypted_envelope": _json_object(row.get("encrypted_envelope")),
         }

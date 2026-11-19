@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from aweb.messaging.kinds import ContentMode
+
 import asyncio
 import json
 import logging
@@ -93,7 +95,7 @@ class MessageDeliveredEvent(Event):
     to_alias: str = ""
     subject: str = ""
     priority: str = "normal"
-    content_mode: str = "legacy_plaintext_v1"
+    content_mode: str = ContentMode.PLAINTEXT
     encrypted: bool = False
 
 
@@ -105,7 +107,7 @@ class MessageAcknowledgedEvent(Event):
     message_id: str = ""
     from_alias: str = ""
     subject: str = ""
-    content_mode: str = "legacy_plaintext_v1"
+    content_mode: str = ContentMode.PLAINTEXT
     encrypted: bool = False
 
 
@@ -253,7 +255,7 @@ class TeamMessageSentEvent(TeamEvent):
     to_alias: str = ""
     subject: str = ""
     priority: str = "normal"
-    content_mode: str = "legacy_plaintext_v1"
+    content_mode: str = ContentMode.PLAINTEXT
     encrypted: bool = False
 
 
@@ -263,7 +265,7 @@ class TeamMessageAcknowledgedEvent(TeamEvent):
     alias: str = ""
     from_alias: str = ""
     subject: str = ""
-    content_mode: str = "legacy_plaintext_v1"
+    content_mode: str = ContentMode.PLAINTEXT
     encrypted: bool = False
 
 

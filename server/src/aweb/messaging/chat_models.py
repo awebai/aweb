@@ -5,6 +5,8 @@ These are the existing route models, reexported there for Python callers.
 
 from __future__ import annotations
 
+from aweb.messaging.kinds import ContentMode
+
 from typing import Any
 from uuid import UUID
 from pydantic import (
@@ -34,7 +36,7 @@ class CreateSessionRequest(BaseModel):
     to_dids: list[str] = Field(default_factory=list)
     to_addresses: list[str] = Field(default_factory=list)
     message: str
-    content_mode: str = "legacy_plaintext_v1"
+    content_mode: str = ContentMode.PLAINTEXT
     message_version: int = 1
     encrypted_envelope: dict[str, Any] | None = None
     leaving: bool = False
@@ -114,18 +116,18 @@ class CreateSessionRequest(BaseModel):
     @model_validator(mode="after")
     def _validate_content_mode(self) -> "CreateSessionRequest":
         encrypted = (
-            self.content_mode == "encrypted_v2"
+            self.content_mode == ContentMode.ENCRYPTED
             or self.message_version == 2
             or self.encrypted_envelope is not None
         )
         if encrypted:
-            if self.content_mode != "encrypted_v2":
+            if self.content_mode != ContentMode.ENCRYPTED:
                 raise ValueError("content_mode must be encrypted_v2 for encrypted chat")
             if self.message_version != 2:
                 raise ValueError("message_version must be 2 for encrypted chat")
             if self.encrypted_envelope is None:
                 raise ValueError("encrypted_envelope is required for encrypted chat")
-        elif self.content_mode != "legacy_plaintext_v1" or self.message_version != 1:
+        elif self.content_mode != ContentMode.PLAINTEXT or self.message_version != 1:
             raise ValueError("unsupported chat content mode")
         return self
 
@@ -141,7 +143,7 @@ class SendMessageRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     body: str = ""
-    content_mode: str = "legacy_plaintext_v1"
+    content_mode: str = ContentMode.PLAINTEXT
     message_version: int = 1
     encrypted_envelope: dict[str, Any] | None = None
     leaving: bool = False
@@ -159,19 +161,19 @@ class SendMessageRequest(BaseModel):
     @model_validator(mode="after")
     def _validate_content_mode(self) -> "SendMessageRequest":
         encrypted = (
-            self.content_mode == "encrypted_v2"
+            self.content_mode == ContentMode.ENCRYPTED
             or self.message_version == 2
             or self.encrypted_envelope is not None
         )
         if encrypted:
-            if self.content_mode != "encrypted_v2":
+            if self.content_mode != ContentMode.ENCRYPTED:
                 raise ValueError("content_mode must be encrypted_v2 for encrypted chat")
             if self.message_version != 2:
                 raise ValueError("message_version must be 2 for encrypted chat")
             if self.encrypted_envelope is None:
                 raise ValueError("encrypted_envelope is required for encrypted chat")
             return self
-        if self.content_mode != "legacy_plaintext_v1" or self.message_version != 1:
+        if self.content_mode != ContentMode.PLAINTEXT or self.message_version != 1:
             raise ValueError("unsupported chat content mode")
         if not self.body:
             raise ValueError("body is required")

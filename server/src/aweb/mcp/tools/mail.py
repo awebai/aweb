@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from aweb.messaging.kinds import ContentMode
+
 from aweb.messaging.kinds import MessagePriority
 from aweb.mcp.tools.errors import messaging_tool
 from aweb.messaging.sender_membership import SenderMembership, sender_memberships
@@ -96,8 +98,8 @@ def mcp_mail_message_from_row(
     hosted_plaintext=None,
     sender_membership: SenderMembership | None = None,
 ) -> dict:
-    content_mode = str(row.get("content_mode") or "legacy_plaintext_v1")
-    encrypted = content_mode == "encrypted_v2"
+    content_mode = str(row.get("content_mode") or ContentMode.PLAINTEXT)
+    encrypted = content_mode == ContentMode.ENCRYPTED
     decryptable = (
         bool(getattr(hosted_plaintext, "decryptable", False)) if encrypted else True
     )

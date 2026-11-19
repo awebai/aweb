@@ -362,7 +362,7 @@ def _validate_encrypted_payload(
     recipient: dict | None,
     recipient_did: str,
 ) -> dict | None:
-    if payload.content_mode != "encrypted_v2":
+    if payload.content_mode != ContentMode.ENCRYPTED:
         return None
     if payload.message_id is None or payload.conversation_id is None:
         raise DeliveryRefusal(

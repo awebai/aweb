@@ -5,6 +5,8 @@ These are the existing route models, reexported there for Python callers.
 
 from __future__ import annotations
 
+from aweb.messaging.kinds import ContentMode
+
 from typing import Optional
 from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -43,12 +45,12 @@ class SendMessageRequest(BaseModel):
     @model_validator(mode="after")
     def _validate_content_mode(self):
         is_encrypted = (
-            self.content_mode == "encrypted_v2"
+            self.content_mode == ContentMode.ENCRYPTED
             or self.message_version == 2
             or self.encrypted_envelope is not None
         )
         if is_encrypted:
-            if self.content_mode != "encrypted_v2":
+            if self.content_mode != ContentMode.ENCRYPTED:
                 raise ValueError(
                     "content_mode must be encrypted_v2 for encrypted messages"
                 )
