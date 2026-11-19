@@ -222,7 +222,7 @@ func TestGatewayRPCRejectsUnsupportedMethodAndContent(t *testing.T) {
 	}
 }
 
-func TestGatewayRPCAuthModesAndAbuseControls(t *testing.T) {
+func TestGatewayRPCRateLimitAndDisabledRoute(t *testing.T) {
 	t.Run("rate limit", func(t *testing.T) {
 		route := supportRoute("r_support")
 		route.Limits.RateLimit = "1/m"
@@ -255,7 +255,7 @@ func TestGatewayRPCAuthModesAndAbuseControls(t *testing.T) {
 
 }
 
-func TestGatewayRPCTaskIDEntropyAndShape(t *testing.T) {
+func TestGatewayRPCTaskIDUniquenessAndShape(t *testing.T) {
 	gw := newTestGateway(t, Config{Host: "team.aweb.ai", Bridge: &fakeBridge{}, Routes: []Route{supportRoute("r_support")}})
 	seen := map[string]bool{}
 	uuidRE := regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)

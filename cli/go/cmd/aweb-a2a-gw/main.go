@@ -736,9 +736,9 @@ func applyManagedRuntimeConfig(cfg *fileConfig) error {
 	if url == "" {
 		return nil
 	}
-	token := managedBearerToken(cfg.ManagedConfig)
-	if token == "" {
-		return errManagedBearerRequired
+	token, err := requireManagedBearerToken(cfg.ManagedConfig)
+	if err != nil {
+		return err
 	}
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
@@ -1004,8 +1004,8 @@ func validateManagedConfig(cfg managedConfig) error {
 	if strings.TrimSpace(cfg.BearerToken) != "" && strings.TrimSpace(cfg.BearerTokenEnv) != "" {
 		return fmt.Errorf("managed_config.bearer_token and managed_config.bearer_token_env are mutually exclusive")
 	}
-	if managedBearerToken(cfg) == "" {
-		return fmt.Errorf("managed_config bearer token is required")
+	if _, err := requireManagedBearerToken(cfg); err != nil {
+		return err
 	}
 	if err := validateManagedURL(managedURL{Field: "config_url", Value: cfg.ConfigURL}); err != nil {
 		return err
@@ -1023,6 +1023,16 @@ func validateManagedURL(input managedURL) error {
 		return fmt.Errorf("managed_config.%s: %w", input.Field, err)
 	}
 	return nil
+}
+
+// requireManagedBearerToken owns the required-credential refusal for config
+// validation, config fetch and bridge construction (docs/a2a.md:506-511).
+func requireManagedBearerToken(cfg managedConfig) (string, error) {
+	token := managedBearerToken(cfg)
+	if token == "" {
+		return "", errManagedBearerRequired
+	}
+	return token, nil
 }
 
 func managedBearerToken(cfg managedConfig) string {
@@ -1437,9 +1447,9 @@ func managedBridgeTransportFromConfig(cfg fileConfig) (*managedBridgeTransport, 
 	if gatewayID == "" {
 		return nil, fmt.Errorf("managed_config.gateway_id is required")
 	}
-	token := managedBearerToken(cfg.ManagedConfig)
-	if token == "" {
-		return nil, fmt.Errorf("managed config bearer token is required")
+	token, err := requireManagedBearerToken(cfg.ManagedConfig)
+	if err != nil {
+		return nil, err
 	}
 	routeByAddress := make(map[string]string, len(cfg.Routes))
 	for _, route := range cfg.Routes {

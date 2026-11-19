@@ -22,6 +22,15 @@ func TestManagedInitialFailureUsesTypedBearerErrorThroughWrapping(t *testing.T) 
 	if isFatalInitialManagedRuntimeConfigError(errors.New("peer text says bearer token is required")) {
 		t.Fatal("peer error text selected fatal policy")
 	}
+	_, bridgeErr := managedBridgeTransportFromConfig(fileConfig{ManagedConfig: managedConfig{BridgeURL: "https://provider.example/bridge", GatewayID: "gateway"}})
+	if !errors.Is(bridgeErr, errManagedBearerRequired) || !strings.Contains(bridgeErr.Error(), "Configure managed_config.bearer_token or bearer_token_env and retry") {
+		t.Fatalf("bridge error=%v", bridgeErr)
+	}
+	validationErr := validateManagedConfig(managedConfig{ConfigURL: "https://provider.example/config", BridgeURL: "https://provider.example/bridge", GatewayID: "gateway"})
+	if !errors.Is(validationErr, errManagedBearerRequired) {
+		t.Fatalf("validation error=%v", validationErr)
+	}
+
 }
 
 func TestManagedConfigAndRegistryReadFailuresAreNotHealthyOrAbsent(t *testing.T) {

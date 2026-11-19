@@ -704,12 +704,12 @@ Allowed `state` values in the block:
 
 These are gateway-local bridge values, not the A2A wire object itself. The gateway accepts the lower-case aliases for zero-SDK agent ergonomics and the exact `TASK_STATE_*` names for future helpers/tooling.
 
-Reply binding rules:
+Reply binding rules on routes requiring verified replies (explicitly unverified routes follow Appendix C):
 
 - `a2a-reply.task_id` is required and must equal the current task id.
 - `a2a-reply.context_id` is required when the inbound task included a context id and must match it.
 - A missing or mismatched `task_id`/`context_id` is rejected or ignored; it never mutates the task.
-- Terminal task states are final. A later agent reply after `TASK_STATE_COMPLETED`, `TASK_STATE_INPUT_REQUIRED`, `TASK_STATE_AUTH_REQUIRED`, `TASK_STATE_FAILED`, `TASK_STATE_CANCELED`, or `TASK_STATE_REJECTED` is ignored/logged or starts a new task explicitly; it never revives or mutates the terminal task.
+- Terminal task states are final. A later agent reply after `TASK_STATE_COMPLETED`, `TASK_STATE_FAILED`, `TASK_STATE_CANCELED`, or `TASK_STATE_REJECTED` is ignored/logged or starts a new task explicitly; it never revives or mutates the terminal task.
 - `TASK_STATE_AUTH_REQUIRED` is a gateway-generated route/auth state in v1, not an agent reply alias. A route/auth flow that lets agents request auth must define that explicitly in a later contract amendment.
 - Unfenced prose, partial thoughts, or malformed fenced blocks may be logged as non-terminal status, but the task remains `TASK_STATE_WORKING` until a valid `a2a-reply`, cancellation, or timeout.
 
