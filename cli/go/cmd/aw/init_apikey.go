@@ -192,17 +192,10 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (out connectOutput, resultErr
 			return connectOutput{}, err
 		}
 	}
-	selectedTeam := req.SelectedTeam
-	if selectedTeam == nil {
-		readContext, readCancel := commandAPIContext(nil)
-		selectedTeam, err = readAPIKeyCreationTeam(readContext, req.AwebURL, req.APIKey)
-		readCancel()
-		if err != nil {
-			return connectOutput{}, err
-		}
+	req, err = selectAPIKeyInitTeam(req)
+	if err != nil {
+		return connectOutput{}, err
 	}
-	req.SelectedTeamID, req.CanonicalTeamID = selectedTeam.TeamID, selectedTeam.CanonicalTeamID
-	req.CreationInvitation = selectedTeam.CreationInvitation
 
 	material, err := prepareAPIKeyBootstrapIdentity(req, name, registry)
 	if err != nil {
@@ -436,6 +429,23 @@ func pruneEmptyAwDir(workingDir string, identityHomes ...string) {
 	}
 }
 
+func selectAPIKeyInitTeam(req apiKeyInitRequest) (apiKeyInitRequest, error) {
+	var err error
+	selectedTeam := req.SelectedTeam
+	if selectedTeam == nil {
+		readContext, readCancel := commandAPIContext(nil)
+		selectedTeam, err = readAPIKeyCreationTeam(readContext, req.AwebURL, req.APIKey)
+		readCancel()
+		if err != nil {
+			return apiKeyInitRequest{}, err
+		}
+	}
+	req.SelectedTeamID, req.CanonicalTeamID = selectedTeam.TeamID, selectedTeam.CanonicalTeamID
+	req.CreationInvitation = selectedTeam.CreationInvitation
+
+	return req, nil
+}
+
 func initIdentityScopeValue(global bool) string {
 	if global {
 		return awid.IdentityModeGlobal
@@ -467,24 +477,10 @@ func prepareAPIKeyBootstrapIdentity(
 		if err := validateAPIKeyPartialInitContext(path, state, req, name, registryURL); err != nil {
 			return apiKeyBootstrapIdentityMaterial{}, err
 		}
-		if state.IDTree != nil {
-			selected, err := newAPIKeyCreationRecovery(req)
-			if err != nil {
-				return apiKeyBootstrapIdentityMaterial{}, err
-			}
-			if state.IDTree.InvitationID != selected.InvitationID || state.IDTree.Domain != selected.Domain || !reflect.DeepEqual(state.IDTree.Parent, selected.Parent) {
-				return apiKeyBootstrapIdentityMaterial{}, errors.New("creation invitation changed since partial API-key init; retry the original invitation")
-			}
+		if err := reconcileAPIKeyCreationRecovery(state, req); err != nil {
+			return apiKeyBootstrapIdentityMaterial{}, err
 		}
-		if state.IDTree == nil {
-			state.IDTree, err = newAPIKeyCreationRecovery(req)
-			if err != nil {
-				return apiKeyBootstrapIdentityMaterial{}, err
-			}
-			if err := saveAPIKeyPartialInit(req.WorkingDir, state, req.IdentityHome); err != nil {
-				return apiKeyBootstrapIdentityMaterial{}, err
-			}
-		}
+
 		return materialFromAPIKeyPartialInit(path, state)
 	}
 
@@ -504,6 +500,29 @@ func prepareAPIKeyBootstrapIdentity(
 		return apiKeyBootstrapIdentityMaterial{}, fmt.Errorf("write partial API-key init state: %w", err)
 	}
 	return material, nil
+}
+
+func reconcileAPIKeyCreationRecovery(state *apiKeyPartialInitState, req apiKeyInitRequest) error {
+	var err error
+	if state.IDTree != nil {
+		selected, err := newAPIKeyCreationRecovery(req)
+		if err != nil {
+			return err
+		}
+		if state.IDTree.InvitationID != selected.InvitationID || state.IDTree.Domain != selected.Domain || !reflect.DeepEqual(state.IDTree.Parent, selected.Parent) {
+			return errors.New("creation invitation changed since partial API-key init; retry the original invitation")
+		}
+	}
+	if state.IDTree == nil {
+		state.IDTree, err = newAPIKeyCreationRecovery(req)
+		if err != nil {
+			return err
+		}
+		if err := saveAPIKeyPartialInit(req.WorkingDir, state, req.IdentityHome); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func generateAPIKeyBootstrapIdentity() (apiKeyBootstrapIdentityMaterial, error) {
