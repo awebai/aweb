@@ -9,6 +9,7 @@ from chat_pair_support import route_pair  # noqa: F401
 from test_attachments_http import managed_fixture
 from test_dashboard_privacy import _request
 from test_messages_http import _signed_team_headers
+from test_federated_chat_create_retry import connect_pair_actor
 
 
 @pytest.mark.asyncio
@@ -18,6 +19,8 @@ async def test_exact_attachment_retry_obeys_public_contacts_only_policy(
 ):
     node = route_pair.source
     sender, recipient = node.local, node.global_actor
+    for actor in (sender, recipient):
+        await connect_pair_actor(actor)
     env = SimpleNamespace(
         actors={"alice": sender, "bob": recipient},
         app=node.server.app,

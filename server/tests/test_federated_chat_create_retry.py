@@ -6,6 +6,24 @@ import pytest
 
 from chat_pair_support import route_pair, _submission  # noqa: F401
 from test_actl_fresh_chat import _post
+from test_messages_http import _signed_team_headers
+
+
+async def connect_pair_actor(actor):
+    """Establish this real certificate's current admission before testing delivery."""
+    raw = b"{}"
+    response = await actor.node.client.post(
+        "/v1/connect",
+        content=raw,
+        headers={
+            **_signed_team_headers(
+                actor.sk, actor.did, actor.node.team_id, actor.encoded_certificate, raw
+            ),
+            "Content-Type": "application/json",
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["agent_id"] == str(actor.id)
 
 
 @pytest.mark.asyncio
@@ -17,6 +35,8 @@ async def test_concurrent_federated_chat_create_returns_one_committed_projection
 
     pair = route_pair
     sender, recipient = pair.source.global_actor, pair.target.global_actor
+    for actor in (sender, recipient):
+        await connect_pair_actor(actor)
     request = _submission(sender, recipient, "chat", encrypted=encrypted)
     original = owner._stored_exact_chat_send
     arrivals = 0

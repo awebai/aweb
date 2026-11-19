@@ -60,6 +60,9 @@ async def test_exact_attachment_retry_keeps_the_encrypted_ingestion_deadline(
     from aweb.e2ee_messages import E2EE_INGESTION_WINDOW
 
     env = privacy_app
+    from test_native_mail_admission_commit import connect_policy_members
+
+    await connect_policy_members(env)
     created = datetime.now(timezone.utc) - E2EE_INGESTION_WINDOW + timedelta(seconds=10)
     _, _, wire, conversation_id = await managed_fixture(env, kind, created_at=created)
     path = (
