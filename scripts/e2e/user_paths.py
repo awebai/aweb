@@ -544,10 +544,33 @@ class Lane:
         result = self.command(sender, *args, check=False)
         text = result.stdout + result.stderr
         assert result.returncode != 0, ("expected refusal", args, result.stdout)
-        error = json.loads(result.stdout)["error"]
+        if self.legacy_released_diagnostics:
+            assert result.returncode == 1, ("unexpected refusal exit", result)
+        if result.stdout.strip():
+            error = json.loads(result.stdout)["error"]
+        else:
+            # Older CLIs print errors to stderr even with --json. Match their
+            # real HTTP carrier, or the exact preflight diagnostic with no
+            # invented HTTP status; other output remains a failed control.
+            assert self.legacy_released_diagnostics, result
+            prefix = "sending message: " if kind == "chat" else ""
+            match = re.fullmatch(
+                re.escape(prefix) + r"aweb: http (\d{3}): (\{[^\n]+\})\n",
+                result.stderr,
+            )
+            if match:
+                error = dict(json.loads(match[2]), http_status=int(match[1]))
+            else:
+                assert status is None and result.stderr == message_text + "\n", result
+                error = dict(message=message_text)
         (self.root / f"refusal-{receiver}-{kind}.json").write_text(
             json.dumps(
-                dict(exit=result.returncode, response=error, stderr=result.stderr),
+                dict(
+                    exit=result.returncode,
+                    response=error,
+                    stdout=result.stdout,
+                    stderr=result.stderr,
+                ),
                 indent=2,
             )
         )
@@ -581,14 +604,26 @@ class Lane:
             self.command("g1", "inbound-mode", "open")
 
     def contacts_only(self, kind):
-        self.command("g2", "inbound-mode", "contacts-only")
+        configured = self.command("g2", "inbound-mode", "contacts-only")
         try:
+            mode = configured["inbound_mode"]
+            assert mode == "contacts_only" or (
+                self.name == "released"
+                and self.version == "1.36.40"
+                and mode == "team_and_contacts"
+            ), configured
+            message = (
+                "Recipient only accepts messages from verified team members or exact active contacts"
+                if mode == "team_and_contacts"
+                else "Recipient only accepts messages from exact active contacts"
+            )
             self.refused(
                 "t1",
                 "g2",
                 kind,
                 403,
-                "Recipient only accepts messages from exact active contacts",
+                message,
+                "recipient_policy_rejected",
             )
         finally:
             self.command("g2", "inbound-mode", "open")
@@ -609,8 +644,12 @@ class Lane:
                         "nonresident",
                         kind,
                         None,
-                        self.actors["nonresident"]["address"]
-                        + " is not a member of your team or a registered address. Check the name with `aw workspace status`.",
+                        (
+                            "agent not found: " + self.actors["nonresident"]["address"]
+                            if self.version == "1.36.40"
+                            else self.actors["nonresident"]["address"]
+                            + " is not a member of your team or a registered address. Check the name with `aw workspace status`."
+                        ),
                     ),
                 )
             else:
