@@ -1667,10 +1667,13 @@ async def update_task(
                             }
                         )
 
-        await tx.execute(
-            f"UPDATE {{{{tables.tasks}}}} SET {', '.join(sets)} WHERE task_id = $1",
+        written = await tx.fetch_one(
+            f"""UPDATE {{{{tables.tasks}}}} SET {', '.join(sets)} WHERE task_id = $1
+                RETURNING task_id, task_ref_suffix, title, status, assignee_alias, parent_task_id""",
             *params,
         )
+        if written is None:
+            raise NotFoundError("Task not found")
 
         # A status change to anything but in_progress ends every claim on the
         # task, in this transaction. The release follows the status write
@@ -1688,33 +1691,28 @@ async def update_task(
                 ),
             )
 
-    # Capture the actual write, including implicit claim assignment, from the
-    # locked row and resolved input. A post-commit read may see a later writer.
-    # This metadata goes to the events only; the returned task does not carry it.
-    new_assignee = (
-        actor_alias
-        if status == "in_progress"
-        else resolved_assignee_alias
-        if resolved_assignee_alias is not _UNSET
-        else current["assignee_alias"]
-    )
+    # RETURNING freezes exactly what this transaction committed. A later writer
+    # may change or delete the response projection; it cannot replace these
+    # facts or suppress the callbacks for the completed mutation.
+    written_task_id = str(written["task_id"])
+    written_ref = format_task_ref(team_slug=slug, task_ref_suffix=written["task_ref_suffix"])
+    new_assignee = written["assignee_alias"]
     old_status = current["status"]
-    result = await get_task(db, team_id=team_id, ref=str(task_id))
-    if auto_closed:
-        result["auto_closed"] = auto_closed
     if status is not None and status != old_status:
         await fire_mutation_callback(
             on_mutation,
             MutationEventType.TASK_STATUS_CHANGED.value,
             TaskStatusChangedContext(
-                task_id=result["task_id"],
+                task_id=written_task_id,
                 team_id=team_id,
-                task_ref=result["task_ref"],
-                title=result["title"],
+                task_ref=written_ref,
+                title=written["title"],
                 old_status=old_status,
-                new_status=result["status"],
-                assignee_alias=result["assignee_alias"],
-                parent_task_id=result["parent_task_id"],
+                new_status=written["status"],
+                assignee_alias=new_assignee,
+                parent_task_id=str(written["parent_task_id"])
+                if written["parent_task_id"] is not None
+                else None,
                 actor_agent_id=actor.agent_id,
                 actor_alias=actor.alias,
                 actor_did_aw=actor.did_aw,
@@ -1730,8 +1728,8 @@ async def update_task(
             on_mutation,
             MutationEventType.TASK_UPDATED.value,
             TaskUpdatedContext(
-                task_id=result["task_id"],
-                task_ref=result["task_ref"],
+                task_id=written_task_id,
+                task_ref=written_ref,
                 actor_agent_id=actor.agent_id,
                 actor_did_aw=actor.did_aw,
             ).to_context(),
@@ -1741,10 +1739,10 @@ async def update_task(
             on_mutation,
             MutationEventType.TASK_ASSIGNEE_CHANGED.value,
             TaskAssigneeChangedContext(
-                task_id=result["task_id"],
+                task_id=written_task_id,
                 team_id=team_id,
-                task_ref=result["task_ref"],
-                title=result["title"],
+                task_ref=written_ref,
+                title=written["title"],
                 actor_agent_id=actor.agent_id,
                 actor_alias=actor.alias,
                 actor_did_aw=actor.did_aw,
@@ -1752,6 +1750,9 @@ async def update_task(
                 assignee_alias=new_assignee,
             ).to_context(),
         )
+    result = await get_task(db, team_id=team_id, ref=str(task_id))
+    if auto_closed:
+        result["auto_closed"] = auto_closed
     return result
 
 

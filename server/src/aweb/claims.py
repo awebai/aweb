@@ -197,7 +197,7 @@ async def lock_task_claim_workspaces_on(
     """Lock the complete claimant/actor workspace set before claim or agent locks."""
     return await tx.fetch_all(
         """
-        SELECT w.workspace_id, w.agent_id, w.alias, w.human_name, w.last_seen_at
+        SELECT w.workspace_id, w.agent_id, w.alias, w.human_name, w.last_seen_at, w.deleted_at
         FROM {{tables.workspaces}} w
         WHERE w.team_id=$1 AND (
           ($4::uuid IS NOT NULL AND w.agent_id=$4 AND w.deleted_at IS NULL)
@@ -230,7 +230,13 @@ async def acquire_task_claim_on(
         task_ref=task_ref,
         actor_agent_id=actor_agent_id,
     )
-    candidates = [row for row in locked if str(row["agent_id"]) == actor_agent_id]
+    # Retained deleted claimant rows must stay locked for cleanup, but cannot
+    # become an eligible workspace merely because they belong to this actor.
+    candidates = [
+        row
+        for row in locked
+        if str(row["agent_id"]) == actor_agent_id and row["deleted_at"] is None
+    ]
     # Stable UUID order breaks equal/null activity ties; do not select a newly
     # inserted workspace after acquiring this transaction's complete lock set.
     workspace = max(
