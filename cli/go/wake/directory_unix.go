@@ -41,6 +41,9 @@ func (directory wakeDirectoryPermissions) repairAdvice() string {
 	if directory.Mode.Perm()&0o022 != 0 {
 		commands = append(commands, "chmod go-w "+quotedPath)
 	}
+	if directory.Mode.Perm()&0o200 == 0 {
+		commands = append(commands, "chmod u+w "+quotedPath)
+	}
 	return strings.Join(commands, "; ")
 }
 

@@ -211,6 +211,7 @@ for origin in ['http://awid:8010','http://server:8000','http://peer:8000']:
 
 def main():
     global BASELINE_READY
+    kernel_wake_required = True
     # Every invocation exposes the human gap, even if infrastructure fails
     # before provisioning. Runnable agent cases alone control admission.
     initial = qualification({}, time.monotonic() - START, [])
@@ -528,33 +529,36 @@ def main():
                     )
                 except subprocess.CalledProcessError:
                     lane_failures.append(lane)
-        probe_lane, probe_binary = selected_lanes[0]
-        with phase("released-kernel-wake"):
-            try:
-                compose(
-                    "exec",
-                    "-T",
-                    "cli",
-                    "node",
-                    "/work/user_paths_oats.mjs",
-                    "--aw",
-                    probe_binary,
-                    "--root",
-                    "/identities/kernel-wake",
-                    "--seat",
-                    f"/identities/{probe_lane}/g1",
-                    "--sender",
-                    f"/identities/{probe_lane}/t1",
-                    "--team",
-                    f"members:{probe_lane}-g1.test",
-                    "--source-commit",
-                    os.environ.get("USER_PATHS_CANDIDATE_SHA")
-                    or run("git", "rev-parse", "HEAD", capture=True).stdout.strip(),
-                    "--output",
-                    "/work/released-kernel-wake.json",
-                )
-            except subprocess.CalledProcessError:
-                lane_failures.append("released-kernel-wake")
+        # Historical and directional component diagnostics keep their existing scope.
+        kernel_wake_required = not BASELINE_READY and not CANDIDATE_BIN
+        if kernel_wake_required:
+            probe_lane, probe_binary = selected_lanes[0]
+            with phase("released-kernel-wake"):
+                try:
+                    compose(
+                        "exec",
+                        "-T",
+                        "cli",
+                        "node",
+                        "/work/user_paths_oats.mjs",
+                        "--aw",
+                        probe_binary,
+                        "--root",
+                        "/identities/kernel-wake",
+                        "--seat",
+                        f"/identities/{probe_lane}/g1",
+                        "--sender",
+                        f"/identities/{probe_lane}/t1",
+                        "--team",
+                        f"members:{probe_lane}-g1.test",
+                        "--source-commit",
+                        os.environ.get("USER_PATHS_CANDIDATE_SHA")
+                        or run("git", "rev-parse", "HEAD", capture=True).stdout.strip(),
+                        "--output",
+                        "/work/released-kernel-wake.json",
+                    )
+                except subprocess.CalledProcessError:
+                    lane_failures.append("released-kernel-wake")
         status = 1 if lane_failures else 0
     finally:
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
@@ -640,13 +644,14 @@ def main():
             if (EVIDENCE / lane / "results.json").exists()
         }
         result = qualification(lanes, TIMINGS["total"], cleanup_errors)
-        kernel_path = EVIDENCE / "released-kernel-wake.json"
-        result = add_kernel_wake_result(
-            qualification=result,
-            kernel_receipt=json.loads(kernel_path.read_text())
-            if kernel_path.exists()
-            else None,
-        )
+        if kernel_wake_required:
+            kernel_path = EVIDENCE / "released-kernel-wake.json"
+            result = add_kernel_wake_result(
+                qualification=result,
+                kernel_receipt=json.loads(kernel_path.read_text())
+                if kernel_path.exists()
+                else None,
+            )
         (EVIDENCE / "qualification.json").write_text(
             json.dumps(result, indent=2) + "\n"
         )

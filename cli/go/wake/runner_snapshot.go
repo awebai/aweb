@@ -3,6 +3,7 @@ package wake
 import (
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 
@@ -28,7 +29,7 @@ func (snapshot runnerSnapshot) close() error {
 // Shared cache permissions cannot authorize code: Node opens this private copy.
 func (runner *ChannelCoreRunner) executableSnapshot() (snapshot runnerSnapshot, resultErr error) {
 	if _, err := runner.bundlePath(); err != nil {
-		return snapshot, err
+		log.Printf("Warning: cannot maintain wake runner cache %s: %v. The runner will use a private verified snapshot.", runner.store.Dir(), err)
 	}
 	root := runnerSnapshotRoot()
 	if err := checkRunnerSnapshotParent(root); err != nil {

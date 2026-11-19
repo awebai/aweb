@@ -8,6 +8,8 @@ Remove legacy success stamps before repair so an older aw cannot trust stale sta
 Existing wake state and cache directories remain supported when shared or owned
 by another UID. Warn once per affected path with the exact chmod/chown command to
 make it private; registration, inspection and runner startup remain available.
+A read-only or unavailable shared cache warns and uses the private snapshot;
+shared-cache repair never proceeds unless its legacy stamp was removed first.
 Node executes a fresh process-private snapshot of the embedded, verified bundle,
 created at 0700/0600 beneath the protected system temporary directory and removed
 after the child exits. Replacing or widening the shared state cache cannot change

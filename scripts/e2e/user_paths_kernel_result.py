@@ -9,7 +9,7 @@ class KernelWakeOutcome(str, Enum):
 
 
 def add_kernel_wake_result(*, qualification, kernel_receipt):
-    """Enforce docs/wake-runner-integrity.md:22-25: no kernel receipt, no pass."""
+    """Enforce docs/wake-runner-integrity.md:24-27: no kernel receipt, no pass."""
     receipt = (
         kernel_receipt
         if isinstance(kernel_receipt, dict)

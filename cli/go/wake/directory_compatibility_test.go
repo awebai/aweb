@@ -120,3 +120,64 @@ func TestRunnerTemporaryParentMustProtectPrivateEntries(t *testing.T) {
 		t.Fatalf("writable execution directory: %v", err)
 	}
 }
+
+func TestReadOnlyCacheDoesNotBlockPrivateExecution(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses read-only directory permissions")
+	}
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := NewChannelCoreRunner(store)
+	cache, err := runner.bundlePath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Dir(cache)
+	if err := os.WriteFile(cache, []byte("tampered read-only shared cache"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "runner.sha256"), []byte("legacy"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(root, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(root, 0o700); err != nil {
+			t.Error(err)
+		}
+	})
+	var warning bytes.Buffer
+	previous := log.Writer()
+	log.SetOutput(&warning)
+	t.Cleanup(func() { log.SetOutput(previous) })
+	snapshot, err := runner.executableSnapshot()
+	if err != nil {
+		t.Fatalf("read-only data cache blocked private execution: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := snapshot.close(); err != nil {
+			t.Error(err)
+		}
+	})
+	got, err := os.ReadFile(snapshot.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected, err := channelCoreRunnerFS.ReadFile("channel_core_runner_bundle.mjs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, expected) {
+		t.Fatal("private execution trusted corrupt read-only cache")
+	}
+	cached, err := os.ReadFile(cache)
+	if err != nil || string(cached) != "tampered read-only shared cache" {
+		t.Fatalf("read-only cache was changed: %v", err)
+	}
+	if !strings.Contains(warning.String(), "chmod u+w") || !strings.Contains(warning.String(), "private verified snapshot") {
+		t.Fatalf("missing cache recovery warning: %s", warning.String())
+	}
+}
