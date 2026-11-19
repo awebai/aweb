@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"log"
+	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -33,13 +36,58 @@ type doctorFixPlan struct {
 	NextStep         string                  `json:"next_step,omitempty"`
 }
 
+type doctorFixOperation string
+
+const (
+	doctorFixChmod                    doctorFixOperation = "chmod"
+	doctorFixRewriteTeamsMetadata     doctorFixOperation = "rewrite_teams_metadata"
+	doctorFixRewriteWorkspaceMetadata doctorFixOperation = "rewrite_workspace_metadata"
+	doctorFixRewriteIdentityMetadata  doctorFixOperation = "rewrite_identity_metadata"
+)
+
+type doctorFixSubject uint8
+
+const (
+	_ doctorFixSubject = iota
+	doctorFixPrivateKeySubject
+	doctorFixCoordinationSubject
+	doctorFixIdentitySubject
+)
+
+type doctorFixSafetyReason string
+
+const (
+	doctorFixUnsafe              doctorFixSafetyReason = "unsafe"
+	doctorFixAuthority           doctorFixSafetyReason = "authority"
+	doctorFixReasonPrecondition  doctorFixSafetyReason = "precondition"
+	doctorFixNotAdvertised       doctorFixSafetyReason = "fix_not_advertised"
+	doctorFixHighImpact          doctorFixSafetyReason = "high_impact"
+	doctorFixPrivateKeyMaterial                        = "private_key_material"
+	doctorFixCoordinationCleanup doctorFixSafetyReason = "coordination_cleanup"
+	doctorFixIdentityLifecycle   doctorFixSafetyReason = "global_identity_lifecycle"
+)
+
+type doctorFixMetadataField string
+
+const (
+	doctorFixActiveTeamField  doctorFixMetadataField = "active_team"
+	doctorFixAwebURLField     doctorFixMetadataField = "aweb_url"
+	doctorFixRegistryURLField doctorFixMetadataField = "registry_url"
+)
+
+const doctorFixSafetyNextStep = "Run aw doctor without --fix to inspect this check, then follow its next step."
+
 type doctorFixMutation struct {
-	Operation     string        `json:"operation"`
-	Description   string        `json:"description,omitempty"`
-	Target        *doctorTarget `json:"target,omitempty"`
-	Path          string        `json:"path,omitempty"`
-	Resource      string        `json:"resource,omitempty"`
-	SourceOfTruth string        `json:"source_of_truth,omitempty"`
+	// permissionMode is an internal constraint for mode-only repairs. Doctor
+	// exports a description; serialized plans are not an execution capability.
+	permissionMode os.FileMode
+	subject        doctorFixSubject
+	Operation      doctorFixOperation     `json:"operation"`
+	Description    string                 `json:"description,omitempty"`
+	Target         *doctorTarget          `json:"target,omitempty"`
+	Path           string                 `json:"path,omitempty"`
+	Resource       doctorFixMetadataField `json:"resource,omitempty"`
+	SourceOfTruth  string                 `json:"source_of_truth,omitempty"`
 }
 
 type doctorFixPrecondition struct {
@@ -127,8 +175,8 @@ func (r *doctorRunner) runFixForCheck(ctx doctorFixContext, check doctorCheck) {
 		r.addFixPlan(plan)
 		return
 	}
-	if detail := validateDoctorFixPlan(check, plan); detail != "" {
-		r.addFixPlan(refusedDoctorFixPlan(check.ID, &check, "safety_refused", detail, "Common doctor fix safety gates refused this plan."))
+	if detail := validateDoctorFixPlan(ctx, check, plan); detail != "" {
+		r.addFixPlan(refusedDoctorFixPlan(check.ID, &check, "safety_refused", string(detail), doctorFixSafetyNextStep))
 		return
 	}
 	if ctx.DryRun {
@@ -173,77 +221,71 @@ func normalizeDoctorFixPlan(plan doctorFixPlan, check doctorCheck, ctx doctorFix
 	return plan
 }
 
-func validateDoctorFixPlan(check doctorCheck, plan doctorFixPlan) string {
+func validateDoctorFixPlan(ctx doctorFixContext, check doctorCheck, plan doctorFixPlan) doctorFixSafetyReason {
 	switch {
 	case check.Fix == nil || !check.Fix.Available:
-		return "fix_not_advertised"
+		return doctorFixNotAdvertised
 	case !check.Fix.Safe:
-		return "unsafe"
+		return doctorFixUnsafe
 	case !plan.Safe:
-		return "unsafe"
+		return doctorFixUnsafe
 	case plan.HighImpact:
-		return "high_impact"
+		return doctorFixHighImpact
 	case plan.Authority != "" && plan.Authority != doctorAuthorityCaller:
-		return "authority"
+		return doctorFixAuthority
 	}
 	for _, precondition := range plan.Preconditions {
 		if !precondition.Passed {
-			return "precondition"
+			return doctorFixReasonPrecondition
 		}
 	}
+	handler, registered := doctorFixHandlers[check.ID]
+	if !registered || handler == nil || handler.CheckID() != check.ID || plan.CheckID != check.ID || plan.Source != check.Source {
+		return doctorFixAuthority
+	}
+	owner, owned := handler.(doctorFixMutationOwner)
+	if !owned {
+		for _, mutation := range plan.PlannedMutations {
+			if reason := prohibitedDoctorFixMutation(mutation); reason != "" {
+				return reason
+			}
+		}
+		if len(plan.PlannedMutations) != 0 {
+			return doctorFixAuthority
+		}
+		return ""
+	}
+	scope, err := owner.doctorMutationScope(ctx)
+	if err != nil {
+		log.Printf("aw doctor: cannot inspect the registered repair scope: %v. Inspect the selected local state and retry.", err)
+		return doctorFixReasonPrecondition
+	}
+	if scope.CheckID != check.ID || check.Source != doctorSourceLocal {
+		return doctorFixAuthority
+	}
 	for _, mutation := range plan.PlannedMutations {
-		if reason := prohibitedDoctorFixMutation(mutation); reason != "" {
-			return reason
+		if !scope.permits(mutation) {
+			return scope.Refusal
 		}
 	}
 	return ""
 }
 
-func prohibitedDoctorFixMutation(mutation doctorFixMutation) string {
-	text := strings.ToLower(strings.Join([]string{
-		mutation.Operation,
-		mutation.Description,
-		mutation.Path,
-		mutation.Resource,
-		targetText(mutation.Target),
-	}, " "))
-	normalized := strings.NewReplacer("_", " ", "-", " ", "\\", "/", ".", " ").Replace(text)
-	switch {
-	case hasDoctorFixTerm(text, ".aw/signing.key", "signing.key") || hasDoctorFixTerm(normalized, "signing key", "private key", "private key material"):
-		return "private_key_material"
-	case strings.Contains(normalized, "unclaim") || (strings.Contains(normalized, "presence") && hasDoctorFixTerm(normalized, "cleanup", "clear", "delete")):
-		return "coordination_cleanup"
-	case doctorFixLifecycleMutation(text, normalized):
-		return "global_identity_lifecycle"
+// Sensitive effects are identified by typed subject or actual path, never by
+// an operator-facing description. Unowned or unknown effects are refused.
+func prohibitedDoctorFixMutation(mutation doctorFixMutation) doctorFixSafetyReason {
+	extension := strings.ToLower(filepath.Ext(mutation.Path))
+	if mutation.subject == doctorFixPrivateKeySubject || extension == ".key" || extension == ".pem" {
+		return doctorFixPrivateKeyMaterial
+	}
+	switch mutation.subject {
+	case doctorFixCoordinationSubject:
+		return doctorFixCoordinationCleanup
+	case doctorFixIdentitySubject:
+		return doctorFixIdentityLifecycle
 	default:
 		return ""
 	}
-}
-
-func doctorFixLifecycleMutation(text, normalized string) bool {
-	if !hasDoctorFixTerm(normalized, "delete", "archive", "replace", "retire", "lifecycle", "reassign") {
-		return false
-	}
-	return strings.Contains(text, "did:aw:") ||
-		strings.Contains(normalized, "did aw") ||
-		strings.Contains(normalized, "identity") ||
-		strings.Contains(normalized, "address")
-}
-
-func hasDoctorFixTerm(text string, terms ...string) bool {
-	for _, term := range terms {
-		if strings.Contains(text, term) {
-			return true
-		}
-	}
-	return false
-}
-
-func targetText(target *doctorTarget) string {
-	if target == nil {
-		return ""
-	}
-	return strings.Join([]string{target.Type, target.ID, target.Display}, " ")
 }
 
 func refusedDoctorFixPlan(checkID string, check *doctorCheck, reason, detail, message string) doctorFixPlan {

@@ -12,7 +12,7 @@ func TestPrimitiveBoundary(t *testing.T) {
 		file, symbol string
 		allowed      bool
 	}{
-		{"pkg/consumer.go", "Check", false}, {strictModule, "idStrictVerify", true}, {strictModule, "idCertificatePrimePoint", true},
+		{"pkg/consumer.go", "Check", false}, {strictModule, "Verify", true}, {strictModule, "PrimePoint", true},
 		{strictModule, "VerifyIDCertificate", false}, {strictModule, "idSignatureBytes", false}, {strictModule, "bypass", false},
 	} {
 		var uses map[string]bool

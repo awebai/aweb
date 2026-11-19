@@ -34,6 +34,7 @@ from aweb_naapp.hooks.strictjson import (
     parse_canonical_object,
 )
 from awid.did import did_from_public_key
+from awid.signature_wire import sign_bytes
 from nacl.signing import SigningKey
 
 RECEIPT_PURPOSE = "logs-receipt"
@@ -266,7 +267,7 @@ def open_checkpoint(signing_bytes: bytes, signature: str) -> Checkpoint:
 def _sign(key: SigningKey, did_key: str, signing_bytes: bytes) -> tuple[bytes, str]:
     if did_from_public_key(bytes(key.verify_key)) != did_key:
         raise Refused("signer_mismatch", "the key is not the artefact's did_key")
-    return signing_bytes, encode_signature(key.sign(signing_bytes).signature)
+    return signing_bytes, encode_signature(sign_bytes(key=key, payload=signing_bytes))
 
 
 def _open(

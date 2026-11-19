@@ -16,8 +16,9 @@ from datetime import datetime
 from typing import Any
 
 from awid.did import did_from_public_key, public_key_from_did
+from awid.signature_wire import sign_bytes, verify_bytes
 from nacl.exceptions import BadSignatureError
-from nacl.signing import SigningKey, VerifyKey
+from nacl.signing import SigningKey
 
 from aweb_naapp.hooks.strictjson import (
     Refused,
@@ -108,7 +109,7 @@ def sign(seed: bytes, envelope: dict[str, Any]) -> tuple[bytes, str]:
     key = SigningKey(seed)
     if envelope["producer"]["did_key"] != did_from_public_key(bytes(key.verify_key)):
         raise Refused("signer_mismatch", "the key is not the producer's did_key")
-    return signing, encode_signature(key.sign(signing).signature)
+    return signing, encode_signature(sign_bytes(key=key, payload=signing))
 
 
 def verify(signing: bytes, signature: str, *, team_id: str) -> Envelope:
@@ -143,7 +144,7 @@ def verify_signature(did_key: str, message: bytes, signature: str) -> None:
         raise Refused("bad_signature", "did:key does not decode") from None
     raw = decode_signature(signature)
     try:
-        VerifyKey(public_key).verify(message, raw)
+        verify_bytes(key=public_key, payload=message, signature=raw)
     except BadSignatureError:
         raise Refused("bad_signature", "signature does not verify") from None
 
