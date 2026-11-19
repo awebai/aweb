@@ -33,6 +33,7 @@ from pgdbm import AsyncDatabaseManager
 from pgdbm.core import TransactionManager
 
 from aweb_logs import read_store
+from aweb_logs.chain import HOLD_RELEASED, HOLD_SET
 from aweb_logs.ledger import lock_head
 from aweb_logs.purge_ledger import PurgeLedger
 from aweb_logs.retention import (
@@ -45,15 +46,15 @@ from aweb_logs.retention import (
 )
 
 # Fixed in reviewed code, never configuration: adding an act is a reviewed change.
-SELF_RECORDED_ACTS = frozenset({"logs.legal_hold.set"})
+SELF_RECORDED_ACTS = frozenset({HOLD_SET})
 
 # The governance event acts each owner act may record, so no act is recorded
 # under a name (and so a gate) that its signed act does not permit.
 _EVENT_ACTS = {
     "logs.retention.set": frozenset({"logs.retention.shortened", "logs.retention.lengthened"}),
     "logs.erase": frozenset({"logs.erased"}),
-    "logs.legal-hold.set": frozenset({"logs.legal_hold.set"}),
-    "logs.legal-hold.release": frozenset({"logs.legal_hold.released"}),
+    "logs.legal-hold.set": frozenset({HOLD_SET}),
+    "logs.legal-hold.release": frozenset({HOLD_RELEASED}),
 }
 
 
@@ -240,7 +241,7 @@ class LogsGovernance:
             ):
                 raise GovernanceRefused("this hold id was already set")
             event_id = await self._record(
-                tx, act, {"act": "logs.legal_hold.set", "direction": "widening", **fields}
+                tx, act, {"act": HOLD_SET, "direction": "widening", **fields}
             )
             await tx.execute(
                 "INSERT INTO {{tables.legal_holds}}"
@@ -272,7 +273,7 @@ class LogsGovernance:
             ):
                 raise GovernanceRefused("no active hold has this id")
             event_id = await self._record(
-                tx, act, {"act": "logs.legal_hold.released", "direction": "narrowing", **fields}
+                tx, act, {"act": HOLD_RELEASED, "direction": "narrowing", **fields}
             )
             await tx.execute(
                 "UPDATE {{tables.legal_holds}} SET released_at = NOW(), released_event_id = $3"

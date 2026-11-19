@@ -20,6 +20,8 @@ from awid.log import canonical_server_origin
 
 from aweb_logs.chain import (
     GOVERNANCE_HOOK,
+    HOLD_RELEASED,
+    HOLD_SET,
     Checkpoint,
     Genesis,
     Link,
@@ -294,11 +296,11 @@ def disclosed_holds(
     for genesis, events in epochs:
         holds = {hold_id: hold for hold_id, hold in holds.items() if hold.released is None}
         for position, payload in _own_governance(genesis, events):
-            if payload["act"] == "logs.legal_hold.set" and payload["hold_id"] not in holds:
+            if payload["act"] == HOLD_SET and payload["hold_id"] not in holds:
                 holds[payload["hold_id"]] = Hold(
                     payload["hold_id"], payload["hold_scope"], payload.get("actor_ref"), position
                 )
-            elif payload["act"] == "logs.legal_hold.released":
+            elif payload["act"] == HOLD_RELEASED:
                 hold = holds.get(payload["hold_id"])
                 if hold is not None and hold.released is None:
                     holds[hold.hold_id] = replace(hold, released=position)

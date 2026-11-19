@@ -223,10 +223,10 @@ only from the chain, never from logs' other records. Only a retained
 verifies, counts. A hold act signed by any other producer is never a hold.
 Only an epoch that exists is verified, so the epochs before it are closed;
 their governance entries, which no purge reaches, are read through their own
-index before the head lock is taken. **In flight (aweb-acgh.16.24):** the Go
-verifier and `logs-chain-v1.json` do not report holds yet. An export bundle
-will carry the earlier epochs' logs governance entries this report needs, so
-that `aw audit verify --bundle` reports the same holds offline.
+index before the head lock is taken. **Open (aweb-acgh.16.24):** the Go
+verifier and `logs-chain-v1.json` do not report holds, and an export bundle
+does not carry the earlier epochs' governance entries this report needs, so
+`aw audit verify --bundle` reports no holds.
 
 `delivery.scope` is always `observed_internal_only`. Its `gaps` are inclusive
 missing sequence ranges between retained authenticated observations in the
