@@ -2,100 +2,98 @@
 
 from __future__ import annotations
 
-from typing import Any
 from uuid import UUID
 
-from aweb.human_kind import effective_agent_type, human_predicate_sql
+from aweb.human_kind import human_predicate_sql
+from aweb.identity_binding import verified_key_sql
+from aweb.member_team_key import MemberProjection, member_projection_columns_sql
+from aweb.messaging.recipient import Recipient
 from aweb.service_errors import ValidationError
 
 
-def _parse_uuid(v: str, *, field_name: str) -> UUID:
-    v = str(v).strip()
-    if not v:
-        raise ValidationError(f"Missing {field_name}")
+def _agent_uuid(agent_id: str) -> UUID:
     try:
-        return UUID(v)
-    except Exception:
-        raise ValidationError(f"Invalid {field_name} format")
+        return UUID(str(agent_id).strip())
+    except ValueError as exc:
+        raise ValidationError(
+            "Invalid agent_id format. Choose an agent_id from the team roster and retry."
+        ) from exc
 
 
 async def get_agent_by_id(
     db, *, agent_id: str, team_id: str | None = None
-) -> dict | None:
-    """Look up an agent by agent_id, optionally scoped to a team."""
-    aweb_db = db.get_manager("aweb")
-    if team_id is None:
-        row = await aweb_db.fetch_one(
-            """
-            SELECT agent_id, team_id, alias, did_key, agent_type, human_verified_key, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, CASE WHEN did_aw_verified_key = did_key THEN address END AS address, identity_scope, (NULLIF(did_aw, '') IS NOT NULL) AS has_global_claim, did_aw AS policy_did_aw, inbound_mode, status, deleted_at
-            FROM {{tables.agents}}
-            WHERE agent_id = $1 AND deleted_at IS NULL
-            """,
-            _parse_uuid(agent_id, field_name="agent_id"),
-        )
-    else:
-        row = await aweb_db.fetch_one(
-            """
-            SELECT agent_id, team_id, alias, did_key, agent_type, human_verified_key, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, CASE WHEN did_aw_verified_key = did_key THEN address END AS address, identity_scope, (NULLIF(did_aw, '') IS NOT NULL) AS has_global_claim, did_aw AS policy_did_aw, inbound_mode, status, deleted_at
-            FROM {{tables.agents}}
-            WHERE agent_id = $1 AND team_id = $2 AND deleted_at IS NULL
-            """,
-            _parse_uuid(agent_id, field_name="agent_id"),
-            team_id,
-        )
-    if not row:
-        return None
-    return {**dict(row), "agent_type": effective_agent_type(row)}
+) -> Recipient | None:
+    """Read an exact nondeleted row; optional team scope never chooses a team.
 
-
-async def get_agent_by_alias(db, *, team_id: str, alias: str) -> dict | None:
-    """Look up an agent by alias within a team."""
-    aweb_db = db.get_manager("aweb")
-    row = await aweb_db.fetch_one(
-        f"""
-        SELECT agent_id, team_id, alias, did_key, agent_type, human_verified_key, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, CASE WHEN did_aw_verified_key = did_key THEN address END AS address, identity_scope, (NULLIF(did_aw, '') IS NOT NULL) AS has_global_claim, did_aw AS policy_did_aw, inbound_mode, status, deleted_at
-        FROM {{{{tables.agents}}}}
-        WHERE team_id = $1 AND alias = $2 AND deleted_at IS NULL
-          AND NOT {human_predicate_sql()}
+    docs/identity-messaging-contract.md:96-116 keeps this projection distinct
+    from the current-member and delivery-policy decisions made by its caller.
+    """
+    row = await db.get_manager("aweb").fetch_one(
+        "SELECT "
+        + member_projection_columns_sql("a")
+        + """
+        FROM {{tables.agents}} a
+        WHERE a.agent_id=$1 AND ($2::text IS NULL OR a.team_id=$2)
+          AND a.deleted_at IS NULL
         """,
+        _agent_uuid(agent_id),
         team_id,
-        alias,
     )
-    if not row:
-        return None
-    return {**dict(row), "agent_type": effective_agent_type(row)}
+    return (
+        Recipient.from_member_projection(MemberProjection.from_row(row))
+        if row
+        else None
+    )
 
 
-async def resolve_agent_by_did(db, did: str) -> dict | None:
-    aweb_db = db.get_manager("aweb")
-    row = await aweb_db.fetch_one(
-        """
-        SELECT agent_id, team_id, alias, did_key, agent_type, human_verified_key, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, CASE WHEN did_aw_verified_key = did_key THEN address END AS address, identity_scope, (NULLIF(did_aw, '') IS NOT NULL) AS has_global_claim, did_aw AS policy_did_aw, inbound_mode, status, deleted_at
-        FROM {{tables.agents}}
-        WHERE deleted_at IS NULL
-          AND ((did_aw = $1 AND did_aw_verified_key = did_key) OR did_key = $1)
-        ORDER BY CASE WHEN did_aw = $1 THEN 0 ELSE 1 END, created_at DESC
-        LIMIT 1
-        """,
-        did,
-    )
-    return None if not row else {**dict(row), "agent_type": effective_agent_type(row)}
+async def get_agent_by_alias(db, *, team_id: str, alias: str) -> Recipient | None:
+    """Read an agent alias within the explicit team, excluding verified humans."""
+    rows = await get_agents_by_aliases(db, team_id=team_id, aliases=[alias])
+    return rows[0] if rows else None
 
 
 async def get_agents_by_aliases(
     db, *, team_id: str, aliases: list[str]
-) -> list[dict[str, Any]]:
+) -> list[Recipient]:
+    """Read team-scoped agent aliases through the same native projection owner."""
     if not aliases:
         return []
-    aweb_db = db.get_manager("aweb")
-    rows = await aweb_db.fetch_all(
-        f"""
-        SELECT agent_id, team_id, alias, did_key, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, CASE WHEN did_aw_verified_key = did_key THEN address END AS address, identity_scope, (NULLIF(did_aw, '') IS NOT NULL) AS has_global_claim, did_aw AS policy_did_aw, inbound_mode, deleted_at
-        FROM {{{{tables.agents}}}}
-        WHERE team_id = $1 AND alias = ANY($2::text[]) AND deleted_at IS NULL
-          AND NOT {human_predicate_sql()}
+    rows = await db.get_manager("aweb").fetch_all(
+        "SELECT "
+        + member_projection_columns_sql("a")
+        + f"""
+        FROM {{{{tables.agents}}}} a
+        WHERE a.team_id=$1 AND a.alias=ANY($2::text[]) AND a.deleted_at IS NULL
+          AND NOT {human_predicate_sql("a")}
         """,
         team_id,
         aliases,
     )
-    return [dict(row) for row in rows]
+    return [
+        Recipient.from_member_projection(MemberProjection.from_row(row)) for row in rows
+    ]
+
+
+async def resolve_agent_by_did(db, did: str) -> Recipient | None:
+    """Read a visible identity using R2's canonical verified-key projection.
+
+    This retains the existing native lookup ordering. It grants no current
+    membership; R2 owns the subsequent member-selector consumer migration.
+    """
+    row = await db.get_manager("aweb").fetch_one(
+        "SELECT "
+        + member_projection_columns_sql("a")
+        + f"""
+        FROM {{{{tables.agents}}}} a
+        WHERE a.deleted_at IS NULL
+          AND ((a.did_aw=$1 AND {verified_key_sql("a")}) OR a.did_key=$1)
+        ORDER BY CASE WHEN a.did_aw=$1 THEN 0 ELSE 1 END, a.created_at DESC
+        LIMIT 1
+        """,
+        did,
+    )
+    return (
+        Recipient.from_member_projection(MemberProjection.from_row(row))
+        if row
+        else None
+    )

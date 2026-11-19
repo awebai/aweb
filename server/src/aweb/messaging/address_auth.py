@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import replace
 from typing import Any, Mapping
 from types import SimpleNamespace
 
@@ -16,6 +17,7 @@ from aweb.federation.errors import RecipientNotResidentError
 from aweb.federation.origins import is_own_origin
 from aweb.messaging.alias_targets import namespace_exists
 from aweb.messaging.runtime import MessagingRuntime
+from aweb.messaging.recipient import Recipient
 
 
 def local_recipient_visible_to_auth(row: Mapping[str, Any] | None, auth: Any) -> bool:
@@ -24,20 +26,12 @@ def local_recipient_visible_to_auth(row: Mapping[str, Any] | None, auth: Any) ->
     return bool(row_team_id and auth_team_id and row_team_id == auth_team_id)
 
 
-def identity_recipient(row: Mapping[str, Any], address: str | None = None) -> dict:
+def identity_recipient(row: Mapping[str, Any], address: str | None = None) -> Recipient:
     """Project an admitted identity/route, never a team actor as a participant."""
-    recipient = dict(row)
-    recipient["agent_id"] = None
-    if recipient.get("did_aw"):
-        recipient["team_id"] = None
-    if address is not None:
-        recipient["address"] = address or None
-        recipient["alias"] = (
-            address.split("/", 1)[-1]
-            if address
-            else (recipient.get("did_aw") or recipient.get("did_key"))
-        )
-    return recipient
+    recipient = (
+        row if isinstance(row, Recipient) else Recipient.from_local_projection(row)
+    )
+    return recipient.as_identity(address=address)
 
 
 async def local_recipient_for_address_binding(
@@ -64,8 +58,7 @@ async def local_recipient_for_address_binding(
     if row is None:
         return None
     recipient = identity_recipient(row, address)
-    recipient["did_key"] = resolution.current_did_key
-    return recipient
+    return replace(recipient, did_key=resolution.current_did_key)
 
 
 def requires_registry_address_binding(row: Mapping[str, Any] | None) -> bool:
@@ -133,7 +126,7 @@ async def local_recipient_for_own_route(
             did_aw=did,
             address=address if "/" in address else "",
         )
-        recipient["did_key"] = binding.did_key
+        recipient = replace(recipient, did_key=binding.did_key)
     return recipient
 
 

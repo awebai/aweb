@@ -8,6 +8,8 @@ from aweb.messaging.recipient_lookup import (
 
 
 from datetime import datetime
+from aweb.member_team_key import MemberProjection, member_projection_columns_sql
+from aweb.messaging.recipient import Recipient
 
 from aweb.messaging.delivery_policy import (
     DeliveryAttempt,
@@ -24,26 +26,25 @@ def utc_iso(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-async def policy_rows_for_participant(db, participant: dict) -> list[dict]:
+async def policy_rows_for_participant(db, participant: dict) -> list[Recipient]:
     """Policy evidence for an existing participant, never new routing authority."""
     did = str(participant.get("did") or "").strip()
     if not did:
         return []
     rows = await db.get_manager("aweb").fetch_all(
-        """
-        SELECT agent_id, team_id, alias, did_key,
-               CASE WHEN did_aw_verified_key=did_key THEN did_aw END AS did_aw,
-               CASE WHEN did_aw_verified_key=did_key THEN address END AS address,
-               identity_scope, (NULLIF(did_aw,'') IS NOT NULL) AS has_global_claim,
-               did_aw AS policy_did_aw, inbound_mode
-        FROM {{tables.agents}} WHERE deleted_at IS NULL
-          AND (did_key=$1 OR did_aw=$1)
-        ORDER BY agent_id
+        "SELECT "
+        + member_projection_columns_sql("a")
+        + """
+        FROM {{tables.agents}} a WHERE a.deleted_at IS NULL
+          AND (a.did_key=$1 OR a.did_aw=$1)
+        ORDER BY a.agent_id
         """,
         did,
     )
     # All raw-claim matches must pass policy; none selects a recipient or route.
-    return [dict(row) for row in rows]
+    return [
+        Recipient.from_member_projection(MemberProjection.from_row(row)) for row in rows
+    ]
 
 
 async def authorize_message_delivery(

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from aweb.messaging.kinds import ContentMode
 
 from aweb.messaging.kinds import MessagePriority
@@ -326,7 +328,7 @@ async def send_mail(
                     db_infra, recipient, runtime
                 )
                 if local is not None:
-                    recipient["did_key"] = local["did_key"]
+                    recipient = replace(recipient, did_key=local.did_key)
                 signed_from = sender_address or ""
                 signed_to = (recipient.get("address") or "").strip()
                 signed_to_did = (recipient.get("did_key") or "").strip()

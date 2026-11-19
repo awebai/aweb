@@ -14,6 +14,7 @@ from aweb.messaging.mail_storage import (
     store_mail,
 )
 from dataclasses import dataclass
+from aweb.messaging.recipient import Recipient
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -1238,11 +1239,17 @@ def _recipient_identity_matches(left: dict | None, right: dict | None) -> bool:
 class MailTarget:
     """Where a mail send goes: the recipient of a first message, or the stored conversation it continues."""
 
-    recipient: dict | None = None
+    recipient: Recipient | None = None
     recipient_did: str = ""
     to_agent_id: str | None = None
     to_alias: str | None = None
     continuation: MailContinuationContext | None = None
+
+    def __post_init__(self) -> None:
+        if self.recipient is not None:
+            object.__setattr__(
+                self, "recipient", Recipient.from_delivery_projection(self.recipient)
+            )
 
 
 async def resolve_mail_target(

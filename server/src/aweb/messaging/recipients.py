@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from collections.abc import Mapping
 
 from aweb.messaging.refusals import (
@@ -12,6 +12,8 @@ from aweb.messaging.refusals import (
 from aweb.messaging.refusals import DeliveryRefusal
 from http import HTTPStatus
 from awid.federation_errors import FederationAuthorityError
+from awid.registry import Address
+from aweb.federation.activation import ResolvedContactIdentity
 
 from aweb.awid_error_handling import (
     AWID_DEPENDENCY_ERRORS,
@@ -31,6 +33,7 @@ from aweb.messaging.alias_targets import (
     namespace_exists,
 )
 from aweb.messaging.kinds import MessageKind
+from aweb.messaging.recipient import Recipient
 from aweb.messaging.recipient_bindings import (
     RecipientBindingUse,
     signed_recipient_matches,
@@ -50,6 +53,22 @@ class RecipientIdentityBinding:
 
 
 logger = logging.getLogger(__name__)
+
+
+def _delivery_origin(resolution: Address | ResolvedContactIdentity) -> str:
+    if isinstance(resolution, Address):
+        return (
+            resolution.delivery.origin if resolution.delivery is not None else ""
+        ).strip()
+    return resolution.delivery_origin.strip()
+
+
+def _controller_did(resolution: Address | ResolvedContactIdentity) -> str:
+    return (
+        resolution.controller_did.strip()
+        if isinstance(resolution, ResolvedContactIdentity)
+        else ""
+    )
 
 
 async def _local_recipient_at_address(db, *, domain: str, name: str) -> dict | None:
@@ -88,7 +107,7 @@ async def resolve_address_recipient(
     signed_payload: str | None = None,
     signature: str | None = None,
     binding: RecipientIdentityBinding | None = None,
-) -> dict:
+) -> Recipient:
     """Resolve once, keeping any saved identity constraint through the send.
 
     docs/identity-messaging-contract.md:122-145 requires an exact bound identity.
@@ -120,7 +139,7 @@ async def _resolve_address_identity(
     kind: MessageKind,
     signed_payload: str | None = None,
     signature: str | None = None,
-) -> dict:
+) -> Recipient:
     """Return the exact admitted identity and route for the sender's address.
 
     Implements docs/identity-messaging-contract.md:120-145,208-222.
@@ -155,8 +174,7 @@ async def _resolve_address_identity(
             local_recipient_visible_to_auth(local, auth) and not needs_current
         ):
             recipient = identity_recipient(local, address)
-            recipient["requires_local_address_authority"] = True
-            return recipient
+            return replace(recipient, requires_local_address_authority=True)
 
     authority = runtime.federation_authority
     home_namespace = await namespace_uses_home_registry(db, registry, domain)
@@ -181,30 +199,25 @@ async def _resolve_address_identity(
     if resolution is not None and resolution.did_aw:
         recipient = await local_recipient_for_address_binding(db, resolution, address)
         if recipient is None:
-            delivery = getattr(resolution, "delivery", None)
-            origin = str(
-                getattr(resolution, "delivery_origin", None)
-                or getattr(delivery, "origin", "")
-                or ""
-            ).strip()
+            origin = _delivery_origin(resolution)
             refuse_same_origin_nonresident(origin, origins=runtime.public_origins)
-            recipient = {
-                "agent_id": None,
-                "team_id": None,
-                "alias": name,
-                "address": address,
-                "did_aw": resolution.did_aw.strip(),
-                "did_key": str(
-                    getattr(resolution, "current_did_key", "") or ""
-                ).strip(),
-                "delivery_origin": origin,
-                "external": True,
-                "_authority_route_current": home_namespace or authority is not None,
-            }
-        recipient["authority_controller_did"] = str(
-            getattr(resolution, "controller_did", "") or ""
-        ).strip()
-        return recipient
+            recipient = Recipient.from_remote_projection(
+                {
+                    "agent_id": None,
+                    "team_id": None,
+                    "alias": name,
+                    "address": address,
+                    "did_aw": resolution.did_aw.strip(),
+                    "did_key": (resolution.current_did_key or "").strip(),
+                    "delivery_origin": origin,
+                    "external": True,
+                    "_authority_route_current": home_namespace or authority is not None,
+                }
+            )
+        return replace(
+            recipient,
+            authority_controller_did=_controller_did(resolution),
+        )
 
     # Local fallback requires the same visibility and signed-recipient rule as
     # the first local lookup. An absent registry grants no new key.

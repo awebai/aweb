@@ -8,7 +8,8 @@ import json
 import logging
 import uuid as uuid_mod
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from aweb.messaging.recipient import Recipient
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
@@ -984,16 +985,15 @@ async def _update_chat_participant_route(
 
 def _apply_remote_chat_route(
     participant_rows: list[dict[str, Any]],
-    recipient: dict[str, Any],
+    recipient: Recipient,
     route: dict[str, Any],
-) -> None:
-    recipient.update(
-        {
-            "did_aw": route["did_aw"],
-            "did_key": route["current_did_key"],
-            "current_did_key": route["current_did_key"],
-            "delivery_origin": route["delivery_origin"],
-        }
+) -> Recipient:
+    recipient = replace(
+        recipient,
+        did_aw=route["did_aw"],
+        did_key=route["current_did_key"],
+        current_did_key=route["current_did_key"],
+        delivery_origin=route["delivery_origin"],
     )
     target_refs = _target_did_refs(recipient)
     for participant in participant_rows:
@@ -1007,7 +1007,8 @@ def _apply_remote_chat_route(
                 "transport_hint": "federation:" + route["delivery_origin"],
             }
         )
-        return
+        break
+    return recipient
 
 
 def _is_stale_delivery_origin_status(status_code: int) -> bool:
@@ -1191,7 +1192,7 @@ async def _resolve_session_recipient_rows(
     *,
     session_id: UUID,
     actor_dids: list[str],
-) -> list[dict[str, Any]]:
+) -> list[Recipient]:
     aweb_db = db.get_manager("aweb")
     left_dids = (await _left_dids_by_session(db, [session_id])).get(
         str(session_id), set()
@@ -1251,7 +1252,12 @@ async def _resolve_session_recipient_rows(
                 "_policy_recipients": policy_rows,
             }
         )
-    return recipient_rows
+    return [
+        Recipient.from_remote_projection(row)
+        if row.get("delivery_origin")
+        else Recipient.from_local_projection(row)
+        for row in recipient_rows
+    ]
 
 
 @dataclass(frozen=True)
@@ -1268,12 +1274,19 @@ class ChatTarget:
     resolved. Such a send never closes a session.
     """
 
-    recipients: list[dict[str, Any]]
+    recipients: tuple[Recipient, ...]
     source: str
     session_id: UUID | None = None
     actor_did: str = ""
     reuse_or_create: bool = False
     shared_session_id: UUID | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "recipients",
+            tuple(Recipient.from_delivery_projection(row) for row in self.recipients),
+        )
 
 
 @dataclass(frozen=True)
@@ -1409,12 +1422,12 @@ async def _resolve_session_target(
     for row in recipient_rows:
         if not _target_delivery_origin(row):
             await _require_live_mail_participant(db, row, {}, human_only=True)
-    for row in recipient_rows:
+    for index, row in enumerate(recipient_rows):
         local = await local_recipient_for_own_route(db, row, runtime)
         if local is not None:
-            row.update(
-                local, delivery_origin=None, current_did_key=local.get("did_key")
-            )
+            recipient_rows[index] = Recipient.from_delivery_projection(
+                row
+            ).with_local_identity(local)
     await require_agent_chat(db, recipient_rows)
     for row in recipient_rows:
         if (
@@ -1433,13 +1446,13 @@ async def _resolve_session_target(
             registry_client=runtime.registry_client,
             recipient=row,
         )
-        recipient_rows[index] = {
-            **row,
-            "did_aw": route["did_aw"],
-            "did_key": route["current_did_key"],
-            "current_did_key": route["current_did_key"],
-            "delivery_origin": route["delivery_origin"],
-        }
+        recipient_rows[index] = replace(
+            row,
+            did_aw=route["did_aw"],
+            did_key=route["current_did_key"],
+            current_did_key=route["current_did_key"],
+            delivery_origin=route["delivery_origin"],
+        )
     await require_conversation_not_legacy_bound(
         db,
         conversation_id=str(session_uuid),
@@ -1514,7 +1527,7 @@ async def _send_to_named_recipients(
     requested_session_id = (
         UUID(payload.session_id) if payload.session_id is not None else None
     )
-    target_rows = target.recipients
+    target_rows = list(target.recipients)
     target_dids = sorted({_target_did(row) for row in target_rows if _target_did(row)})
     if _payload_is_encrypted(payload):
         await require_non_custodial_recipients(
@@ -1697,7 +1710,10 @@ async def _send_to_named_recipients(
             recipient=external_targets[0],
             requester_did_key=auth.did_key,
         )
-        _apply_remote_chat_route(participant_rows, external_targets[0], route)
+        original = external_targets[0]
+        routed = _apply_remote_chat_route(participant_rows, original, route)
+        target_rows = [routed if row is original else row for row in target_rows]
+        external_targets[0] = routed
 
         remote = await deliver_federated_chat(
             runtime,

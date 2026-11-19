@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from aweb.human_kind import is_verified_human
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Iterable
 
 from aweb.messaging.address_auth import identity_recipient
@@ -11,6 +11,7 @@ from aweb.messaging.conversations import (
     require_active_conversation_participant,
 )
 from aweb.messaging.messages import get_agent_by_id, resolve_agent_by_did
+from aweb.messaging.recipient import Recipient
 from aweb.messaging.verification import require_conversation_not_legacy_bound
 from aweb.service_errors import ValidationError
 
@@ -84,28 +85,29 @@ def participant_is_remote(participant: dict) -> bool:
     return bool(participant_delivery_origin(participant))
 
 
-def participant_recipient(participant: dict) -> dict:
+def participant_recipient(participant: dict) -> Recipient:
     did = str(participant.get("did") or "").strip()
-    return {
-        "agent_id": participant.get("agent_id"),
-        "team_id": None,
-        "alias": participant.get("alias") or did,
-        "address": participant.get("address"),
-        "did_aw": did if did.startswith("did:aw:") else None,
-        "did_key": did if did.startswith("did:key:") else None,
-        "external": True,
-    }
+    return Recipient.from_remote_projection(
+        {
+            "agent_id": participant.get("agent_id"),
+            "team_id": None,
+            "alias": participant.get("alias") or did,
+            "address": participant.get("address"),
+            "did_aw": did if did.startswith("did:aw:") else None,
+            "did_key": did if did.startswith("did:key:") else None,
+            "external": True,
+        }
+    )
 
 
-async def recipient_for_conversation_participant(db, participant: dict) -> dict:
+async def recipient_for_conversation_participant(db, participant: dict) -> Recipient:
     did = str(participant.get("did") or "").strip()
     local = await resolve_agent_by_did(db, did)
     if local is not None:
         recipient = identity_recipient(
             local, str(participant.get("address") or "").strip()
         )
-        recipient["alias"] = participant.get("alias") or did
-        return recipient
+        return replace(recipient, alias=participant.get("alias") or did)
     if did.startswith("did:key:") and not participant_delivery_origin(participant):
         alias = str(participant.get("alias") or did)
         raise ValidationError(
@@ -115,23 +117,27 @@ async def recipient_for_conversation_participant(db, participant: dict) -> dict:
     return participant_recipient({**participant, "agent_id": None})
 
 
-async def remote_recipient_from_participant(registry_client, participant: dict) -> dict:
+async def remote_recipient_from_participant(
+    registry_client, participant: dict
+) -> Recipient:
     address = str(participant.get("address") or "").strip()
     delivery_origin = participant_delivery_origin(participant)
     participant_did = str(participant.get("did") or "").strip()
     did_aw = participant_did if participant_did.startswith("did:aw:") else ""
     if not did_aw:
         if participant_did.startswith("did:key:") and delivery_origin:
-            return {
-                "agent_id": None,
-                "team_id": None,
-                "alias": participant.get("alias") or participant_did,
-                "address": None,
-                "did_aw": None,
-                "did_key": participant_did,
-                "delivery_origin": delivery_origin,
-                "external": True,
-            }
+            return Recipient.from_remote_projection(
+                {
+                    "agent_id": None,
+                    "team_id": None,
+                    "alias": participant.get("alias") or participant_did,
+                    "address": None,
+                    "did_aw": None,
+                    "did_key": participant_did,
+                    "delivery_origin": delivery_origin,
+                    "external": True,
+                }
+            )
         raise ValidationError("Remote mail recipient has no stored routable identity")
     current_did = str(
         participant.get("current_did_key") or participant.get("did_key") or ""
@@ -149,16 +155,18 @@ async def remote_recipient_from_participant(registry_client, participant: dict) 
     name = did_aw
     if "/" in address:
         _, name = address.split("/", 1)
-    return {
-        "agent_id": None,
-        "team_id": None,
-        "alias": participant.get("alias") or name,
-        "address": address or did_aw,
-        "did_aw": did_aw,
-        "did_key": current_did,
-        "delivery_origin": delivery_origin,
-        "external": True,
-    }
+    return Recipient.from_remote_projection(
+        {
+            "agent_id": None,
+            "team_id": None,
+            "alias": participant.get("alias") or name,
+            "address": address or did_aw,
+            "did_aw": did_aw,
+            "did_key": current_did,
+            "delivery_origin": delivery_origin,
+            "external": True,
+        }
+    )
 
 
 async def mail_continuation_context(
