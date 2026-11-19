@@ -914,12 +914,12 @@ class NativeMessagingUnitOfWork:
                 await store_mail(
                     db,
                     message=MailStorageInput(
+                        local_team_id=self.auth.team_id,
                         sender=MailSender(
                             did=_principal(self.auth),
                             alias=self.auth.alias,
                             address=self.auth.address,
                             agent_id=self.auth.agent_id,
-                            team_id=self.auth.team_id,
                         ),
                         recipient=MailRecipient(
                             did=recipient["did"],

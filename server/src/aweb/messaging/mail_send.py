@@ -765,12 +765,12 @@ async def deliver_remote_mail_and_project_locally(
         local_message_id, local_created_at = await store_mail(
             db,
             message=MailStorageInput(
+                local_team_id=auth.team_id,
                 sender=MailSender(
                     did=sender_did,
                     alias=auth.alias,
                     address=sender_address,
                     agent_id=auth.agent_id,
-                    team_id=auth.team_id,
                 ),
                 recipient=MailRecipient(
                     did=recipient_did,
@@ -1214,13 +1214,13 @@ async def send_mail_conversation_continuation(
                     verified_dids=tuple(auth_dids(auth)),
                 ),
                 message=MailStorageInput(
+                    local_team_id=continuation.conversation.get("team_id")
+                    or auth.team_id,
                     sender=MailSender(
                         did=sender_did,
                         alias=auth.alias,
                         address=sender_address,
                         agent_id=auth.agent_id,
-                        team_id=continuation.conversation.get("team_id")
-                        or auth.team_id,
                     ),
                     recipient=MailRecipient(
                         did=recipient_participant["did"],
@@ -1838,12 +1838,12 @@ async def _commit_new_local_mail(
         message_id, server_received_at = await store_mail(
             send_db,
             message=MailStorageInput(
+                local_team_id=auth.team_id,
                 sender=MailSender(
                     did=sender_did,
                     alias=auth.alias,
                     address=sender_address,
                     agent_id=auth.agent_id,
-                    team_id=auth.team_id,
                 ),
                 recipient=MailRecipient(
                     did=recipient_did or "",

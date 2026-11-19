@@ -58,12 +58,12 @@ async def _deliver_fixture_mail(db, **fields):
     return await store_mail(
         db,
         message=MailStorageInput(
+            local_team_id=fields.get("team_id"),
             sender=MailSender(
                 did=fields["from_did"],
                 alias=fields["from_alias"],
                 address=fields.get("sender_address"),
                 agent_id=fields.get("from_agent_id"),
-                team_id=fields.get("team_id"),
             ),
             recipient=MailRecipient(
                 did=fields["to_did"],
