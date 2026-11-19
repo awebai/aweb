@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import pytest
 from awid.id_certificates import IDChainEvidence, IDCertificateError, request_disposition, status_cache_mode, status_request, verify_id_chain
+from awid.identity_observation import IdentityKind, IdentityKindObservation
 
 V = json.loads((Path(__file__).resolve().parents[2] / 'docs/vectors/id-certificates-v1.json').read_text())
 
@@ -19,24 +20,47 @@ def inputs(case):
     evidence = None if case.get('status_source') == 'caller' else IDChainEvidence(status, authority, cache['age_seconds'])
     return bundle, subject, evidence, status['domain']
 
-@pytest.mark.parametrize('case', V['verification_cases'], ids=lambda c: c['name'])
+
+@pytest.mark.parametrize("case", V["verification_cases"], ids=lambda c: c["name"])
 def test_final_identity_tree_verification_and_request_decision(case):
     bundle, subject, evidence, domain = inputs(case)
     result = verify_id_chain(bundle, subject=subject, evidence=evidence, domain=domain)
-    assert result == case['expected']
-    for human_required, key in [(False, 'ordinary'), (True, 'human_required')]:
-        assert request_disposition(result, subject=subject, original_auth_passed=case['original_auth'] == 'passed', human_required=human_required) == case['expected_request'][key]
-    if 'tree_lookup' in case:
-        assert (status_request(bundle, subject, domain=domain) is not None) == case['tree_lookup']
-    if 'expected_cache_mode' in case:
-        c = case['cache']
-        assert status_cache_mode(c['age_seconds']) == case['expected_cache_mode']
+    assert result == case["expected"]
+    observation = IdentityKindObservation(
+        did_key=subject["did_key"],
+        did_aw=subject["id"] if subject["id"].startswith("did:aw:") else "",
+        result=result,
+    )
+    expected_kind = (
+        IdentityKind(case["expected"]["kind"])
+        if case["expected"]["identity_valid"] is True
+        else IdentityKind.UNKNOWN
+    )
+    assert observation.kind is expected_kind
+    for human_required, key in [(False, "ordinary"), (True, "human_required")]:
+        assert (
+            request_disposition(
+                result,
+                subject=subject,
+                original_auth_passed=case["original_auth"] == "passed",
+                human_required=human_required,
+            )
+            == case["expected_request"][key]
+        )
+    if "tree_lookup" in case:
+        assert (status_request(bundle, subject, domain=domain) is not None) == case["tree_lookup"]
+    if "expected_cache_mode" in case:
+        c = case["cache"]
+        assert status_cache_mode(c["age_seconds"]) == case["expected_cache_mode"]
+
 
 def test_omitted_global_domain_requires_private_resolution_input():
-    subject = V['verification_cases'][0]['subject'] | {'id': V['keys']['global_agent']['did_aw']}
-    with pytest.raises(IDCertificateError) as exc: status_request(None, subject)
-    assert exc.value.code == 'evidence_unavailable'
-    assert verify_id_chain(None, subject=subject, evidence=None)['reason'] == 'evidence_unavailable'
+    subject = V["verification_cases"][0]["subject"] | {"id": V["keys"]["global_agent"]["did_aw"]}
+    with pytest.raises(IDCertificateError) as exc:
+        status_request(None, subject)
+    assert exc.value.code == "evidence_unavailable"
+    assert verify_id_chain(None, subject=subject, evidence=None)["reason"] == "evidence_unavailable"
+
 
 def test_status_request_only_sends_global_ids_in_chain_order():
     bundle, subject, _, domain = inputs(V['verification_cases'][0])

@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+from aweb.identity_binding import (
+    IdentityProjectionField,
+    verified_identity_field_sql,
+    verified_key_sql,
+)
+
 from awid.team_ids import parse_team_id
 from awid.signing import canonical_json_bytes
 from aweb.human_channels.contract import ContractError, ContractRecord, canonical_record, decode_record
@@ -69,11 +75,11 @@ async def lookup_identity_metadata_by_did(db_or_manager, dids: list[str]) -> dic
 
     aweb_db = _aweb_db(db_or_manager)
     rows = await aweb_db.fetch_all(
-        """
-        SELECT CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, did_key, CASE WHEN did_aw_verified_key = did_key THEN address END AS address, team_id, alias, identity_scope
-        FROM {{tables.agents}}
+        f"""
+        SELECT {verified_identity_field_sql(IdentityProjectionField.STABLE_DID)} AS did_aw, did_key, {verified_identity_field_sql(IdentityProjectionField.ADDRESS)} AS address, team_id, alias, identity_scope
+        FROM {{{{tables.agents}}}}
         WHERE deleted_at IS NULL
-          AND ((did_aw = ANY($1::text[]) AND did_aw_verified_key = did_key) OR did_key = ANY($1::text[]))
+          AND ((did_aw = ANY($1::text[]) AND {verified_key_sql()}) OR did_key = ANY($1::text[]))
         """,
         unique_dids,
     )
@@ -113,9 +119,9 @@ async def lookup_identity_metadata_by_agent_id(
 
     aweb_db = _aweb_db(db_or_manager)
     rows = await aweb_db.fetch_all(
-        """
-        SELECT agent_id::text AS agent_id, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, did_key, CASE WHEN did_aw_verified_key = did_key THEN address END AS address
-        FROM {{tables.agents}}
+        f"""
+        SELECT agent_id::text AS agent_id, {verified_identity_field_sql(IdentityProjectionField.STABLE_DID)} AS did_aw, did_key, {verified_identity_field_sql(IdentityProjectionField.ADDRESS)} AS address
+        FROM {{{{tables.agents}}}}
         WHERE deleted_at IS NULL
           AND agent_id::text = ANY($1::text[])
         """,

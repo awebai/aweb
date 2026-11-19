@@ -120,7 +120,14 @@ def verify_dashboard_token(
         raise ValueError("Dashboard JWT secret not configured")
 
     try:
-        payload = pyjwt.decode(token, secret, algorithms=["HS256"])
+        # docs/aweb-sot.md:1260,1280-1286: dashboard authority is short-lived.
+        payload = pyjwt.decode(token, secret, algorithms=["HS256"], options={"require": ["exp"]})
+    except pyjwt.MissingRequiredClaimError as exc:
+        if exc.claim == "exp":
+            raise ValueError(
+                "Dashboard token is missing its expiry. Renew your dashboard session to obtain a new expiring token."
+            ) from exc
+        raise ValueError("Dashboard token invalid") from exc
     except pyjwt.ExpiredSignatureError:
         raise ValueError("Dashboard token expired")
     except pyjwt.InvalidTokenError:

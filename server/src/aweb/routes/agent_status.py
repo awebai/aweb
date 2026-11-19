@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from aweb.identity_binding import IdentityProjectionField, verified_identity_field_sql
+
 from datetime import datetime, timezone
 import logging
 from typing import Any, Optional
@@ -334,8 +336,8 @@ async def publish_agent_status(
     alias = alias.strip()
     aweb_db = db.get_manager("aweb")
     agent = await aweb_db.fetch_one(
-        """
-        SELECT agent_id, alias, did_key, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw FROM {{tables.agents}}
+        f"""
+        SELECT agent_id, alias, did_key, {verified_identity_field_sql(IdentityProjectionField.STABLE_DID)} AS did_aw FROM {{{{tables.agents}}}}
         WHERE team_id = $1 AND alias = $2 AND deleted_at IS NULL
         """,
         identity.team_id,

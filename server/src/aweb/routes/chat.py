@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from aweb.identity_binding import verified_key_sql
+
 from aweb.agent_wake import agent_wake_publisher
 
 from aweb.attachment_service import prepare_attachment_send, attachment_retry, attachment_references_by_message
@@ -745,15 +747,15 @@ async def _sse_events(
         # DID participation was already authorized. Activity channels are only
         # a display projection, resolved in the conversation's team when absent.
         participant_rows = await aweb_db.fetch_all(
-            """
+            f"""
             SELECT p.did, p.alias, p.address, p.agent_id,
                    activity_agent.agent_id AS activity_agent_id
-            FROM {{tables.chat_participants}} p
+            FROM {{{{tables.chat_participants}}}} p
             LEFT JOIN LATERAL (
                 SELECT a.agent_id
-                FROM {{tables.agents}} a
+                FROM {{{{tables.agents}}}} a
                 WHERE $3::boolean AND a.deleted_at IS NULL AND a.status = 'active'
-                  AND CASE WHEN a.did_aw_verified_key = a.did_key
+                  AND CASE WHEN {verified_key_sql("a")}
                            THEN COALESCE(NULLIF(a.did_aw, ''), a.did_key)
                            ELSE a.did_key END = p.did
                   AND ((p.agent_id IS NOT NULL AND a.agent_id = p.agent_id)

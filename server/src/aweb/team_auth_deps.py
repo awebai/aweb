@@ -39,6 +39,7 @@ from aweb.identity_binding import (
 )
 from aweb.identity_scope import legacy_lifetime_for_scope, normalize_identity_scope
 from aweb.identity_address import AddressResolution
+from aweb.member_team_key import MemberProjection, member_team_scope, read_member_projection
 from aweb.team_auth import certificate_refusal, parse_and_verify_certificate
 from aweb.team_key_pins import pinned_team_key_for_request
 from aweb.team_auth_envelope import team_auth_signature_payload
@@ -108,20 +109,27 @@ async def resolve_team_identity(
     # same request passes it as cert_info["agent_row"]; it is used only for the
     # exact (team_id, did_key) this certificate verified.
     row = cert_info.get("agent_row")
-    if not (isinstance(row, dict) and row.get("team_id") == team_id and row.get("did_key") == did_key):
-        row = await db.fetch_one(
-            """
-            SELECT agent_id, certificate_id, accepted_team_did_key, did_aw, address FROM {{tables.agents}}
-            WHERE team_id = $1 AND did_key = $2 AND deleted_at IS NULL
-            """,
-            team_id,
-            did_key,
-        )
+    if isinstance(row, dict):
+        try:
+            row = MemberProjection.from_row(row)
+        except ValueError:
+            # Compatibility for older host snapshots: query the native owner
+            # rather than treating missing authority columns as NULL facts.
+            logger.warning(
+                "Invalid host member snapshot; reading the canonical native projection",
+                exc_info=True,
+            )
+            row = None
+    if not (
+        isinstance(row, MemberProjection)
+        and row["team_id"] == team_id
+        and row["did_key"] == did_key
+    ):
+        row = await read_member_projection(db, team_id=team_id, did_key=did_key)
 
-    if not row:
+    if not row or row["deleted_at"] is not None:
         raise ValueError(
-            f"Agent not connected: no agent with did_key {did_key[:20]}... "
-            f"in team {team_id}"
+            f"Agent not connected: no agent with did_key {did_key[:20]}... in team {team_id}"
         )
 
     binding = cert_info.get("identity_binding")
@@ -370,12 +378,17 @@ async def verify_request_certificate(request: Request, db, *, fresh: bool = Fals
     return cert_info
 
 
-async def _get_team_identity_with_grant_scope(
+async def resolve_team_identity_with_grant_scope(
     request: Request,
     db,
     *,
     grant_scope: str | None,
 ) -> TeamIdentity:
+    """Resolve native certificate/grant authority under a declared grant scope.
+
+    docs/identity.md:716-729: delegation cannot widen the operation's scope.
+    Embedding hosts apply their own account fences to this same native result.
+    """
     if (request.headers.get("Authorization") or "").lstrip().startswith("AWEB-Grant "):
         from aweb.identity_grant_auth import verify_identity_grant_team_identity
 
@@ -383,13 +396,21 @@ async def _get_team_identity_with_grant_scope(
             if is_operator_audit_request(request):
                 # Verify solely to attribute the refusal, never to grant the
                 # operation. The subject, not the session key, is the actor.
-                identity = await verify_identity_grant_team_identity(request, db, required_scope=GRANT_SCOPE_ANY)
+                identity = await verify_identity_grant_team_identity(
+                    request, db, required_scope=GRANT_SCOPE_ANY
+                )
                 assert identity.grant is not None
-                set_verified_audit_actor(request, AuditActor(
-                    team_id=identity.team_id, principal_type="c", auth_mode="identity_grant",
-                    did_key=identity.did_key, did_aw=identity.did_aw or None,
-                    grant_id=identity.grant.grant_id,
-                ))
+                set_verified_audit_actor(
+                    request,
+                    AuditActor(
+                        team_id=identity.team_id,
+                        principal_type="c",
+                        auth_mode="identity_grant",
+                        did_key=identity.did_key,
+                        did_aw=identity.did_aw or None,
+                        grant_id=identity.grant.grant_id,
+                    ),
+                )
             raise HTTPException(status_code=403, detail="outside grant scope")
 
         return await verify_identity_grant_team_identity(request, db, required_scope=grant_scope)
@@ -403,6 +424,10 @@ async def _get_team_identity_with_grant_scope(
         raise HTTPException(status_code=403, detail=str(e))
 
 
+# Existing embedding callers and the public API share one implementation.
+_get_team_identity_with_grant_scope = resolve_team_identity_with_grant_scope
+
+
 async def get_team_identity(request: Request, db=Depends(get_db)) -> TeamIdentity:
     """FastAPI dependency: authenticate request via team certificate.
 
@@ -411,7 +436,7 @@ async def get_team_identity(request: Request, db=Depends(get_db)) -> TeamIdentit
     opts in through team_identity_with_grant_scope(...); undeclared routes fail
     closed for grants.
     """
-    return await _get_team_identity_with_grant_scope(request, db, grant_scope=None)
+    return await resolve_team_identity_with_grant_scope(request, db, grant_scope=None)
 
 
 def team_identity_with_grant_scope(scope: str):
@@ -420,7 +445,7 @@ def team_identity_with_grant_scope(scope: str):
         raise AssertionError(f"unknown grant scope declaration: {scope}")
 
     async def dependency(request: Request, db=Depends(get_db)) -> TeamIdentity:
-        return await _get_team_identity_with_grant_scope(request, db, grant_scope=scope)
+        return await resolve_team_identity_with_grant_scope(request, db, grant_scope=scope)
 
     dependency._aweb_grant_scope = scope  # type: ignore[attr-defined]
     return dependency
@@ -431,7 +456,9 @@ def team_identity_with_grant_scope(scope: str):
 # ---------------------------------------------------------------------------
 
 
-def _team_read_failure(exc: Exception, registry_client, team_id: str, *, operation: str, reading: str) -> HTTPException:
+def _team_read_failure(
+    exc: Exception, registry_client, team_id: str, *, operation: str, reading: str
+) -> HTTPException:
     """The answer to a failed registry read of one team's records.
 
     A private team this server holds no credential for is a team it does not
@@ -497,10 +524,7 @@ async def revoked_certificates(
 
     Raises HTTPException(503) if awid is unreachable.
     """
-    try:
-        domain, team_name = parse_team_id(team_id)
-    except ValueError:
-        return set()
+    domain, team_name = member_team_scope(team_id)
 
     if registry_client is None:
         raise awid_registry_not_configured_exception(operation="AWID team revocation check")
@@ -540,10 +564,7 @@ async def _get_registered_certificates(request: Request, team_id: str) -> set[st
 
 async def registered_certificates(registry_client, team_id: str, *, after_miss: bool = False) -> set[str]:
     """The certificate IDs the AWID registry knows for a team, read through this registry client."""
-    try:
-        domain, team_name = parse_team_id(team_id)
-    except ValueError:
-        return set()
+    domain, team_name = member_team_scope(team_id)
 
     if registry_client is None:
         raise awid_registry_not_configured_exception(operation="AWID certificate existence check")

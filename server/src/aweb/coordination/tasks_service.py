@@ -11,10 +11,20 @@ from uuid import UUID, uuid4
 from pydantic import BaseModel, ConfigDict, Field
 
 from awid.team_ids import team_slug
-from ..claims import claim_focus_task_ref, release_task_claims_on, resolve_task_claim_apex_on
+from ..claims import (
+    claim_focus_task_ref,
+    release_task_claims_on,
+    resolve_task_claim_apex_on,
+)
 from ..hooks import MutationCallback, fire_mutation_callback
-from ..service_errors import ConflictError, ForbiddenError, NotFoundError, ValidationError
+from ..service_errors import (
+    ConflictError,
+    ForbiddenError,
+    NotFoundError,
+    ValidationError,
+)
 from ..team_auth_deps import TeamIdentity
+from ..identity_binding import verified_principal_did_sql
 
 logger = logging.getLogger(__name__)
 
@@ -81,13 +91,18 @@ class AddCommentRequest(BaseModel):
 
 def answer_comment_projection(*, body_md: str, answer_sha256: str) -> str:
     """Juan's C2 ruling: every task answer preserves its exact text."""
-    if (isinstance(body_md, str) and 1 <= len(body_md) <= 20000
-            and hashlib.sha256(body_md.encode("utf-8")).hexdigest() == answer_sha256):
+    if (
+        isinstance(body_md, str)
+        and 1 <= len(body_md) <= 20000
+        and hashlib.sha256(body_md.encode("utf-8")).hexdigest() == answer_sha256
+    ):
         return body_md
     raise ValidationError("schema_invalid")
 
 
-def _answer_receipt(row, *, current_question_rev: int, cancelled: bool = False) -> dict[str, Any]:
+def _answer_receipt(
+    row, *, current_question_rev: int, cancelled: bool = False
+) -> dict[str, Any]:
     return {
         "task_answer_ref": str(row["receipt_id"]),
         "task_id": str(row["task_id"]),
@@ -98,8 +113,13 @@ def _answer_receipt(row, *, current_question_rev: int, cancelled: bool = False) 
         "choice": row["choice"],
         "proposal_rev": row["proposal_rev"],
         "proposal_sha256": row["proposal_sha256"],
-        "answered_by": {"principal_did": row["answered_by_did"], "certificate_id": row["certificate_id"]},
-        "answered_at": row["answered_at"].astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "answered_by": {
+            "principal_did": row["answered_by_did"],
+            "certificate_id": row["certificate_id"],
+        },
+        "answered_at": row["answered_at"]
+        .astimezone(timezone.utc)
+        .strftime("%Y-%m-%dT%H:%M:%SZ"),
         "current": row["question_rev"] == current_question_rev and not cancelled,
     }
 
@@ -111,17 +131,25 @@ def _task_request_metadata(value):
 def _eligible_task_condition(index: int) -> str:
     # Absence/null retains single-assignee authority for ordinary/intent tasks.
     # A present array is authoritative, including an empty array (fail closed).
-    return (f"((jsonb_typeof(app_request->'eligible_dids') = 'array' AND (app_request->'eligible_dids') ? ${index}) OR "
-            f"((app_request->'eligible_dids' IS NULL OR app_request->'eligible_dids' = 'null'::jsonb) "
-            f"AND assignee_did = ${index}))")
+    return (
+        f"((jsonb_typeof(app_request->'eligible_dids') = 'array' AND (app_request->'eligible_dids') ? ${index}) OR "
+        f"((app_request->'eligible_dids' IS NULL OR app_request->'eligible_dids' = 'null'::jsonb) "
+        f"AND assignee_did = ${index}))"
+    )
 
 
 def _task_list_contract(row):
-    return {"assignee_did": row["assignee_did"], "app_request": _task_request_metadata(row["app_request"]) or None,
-            "rev": row["rev"], "question_rev": row["question_rev"]}
+    return {
+        "assignee_did": row["assignee_did"],
+        "app_request": _task_request_metadata(row["app_request"]) or None,
+        "rev": row["rev"],
+        "question_rev": row["question_rev"],
+    }
 
 
-async def get_task_answer_on(tx, *, team_id: str, task_id: UUID, answer_key: str) -> dict[str, Any]:
+async def get_task_answer_on(
+    tx, *, team_id: str, task_id: UUID, answer_key: str
+) -> dict[str, Any]:
     """Read an immutable receipt inside the caller's authorization transaction.
 
     The caller enforces member or installation receipt-read authority first.
@@ -130,24 +158,63 @@ async def get_task_answer_on(tx, *, team_id: str, task_id: UUID, answer_key: str
     task = await tx.fetch_one(
         """SELECT question_rev, cancellation FROM {{tables.tasks}}
            WHERE task_id = $1 AND team_id = $2 AND deleted_at IS NULL FOR SHARE""",
-        task_id, team_id,
+        task_id,
+        team_id,
     )
     if not task:
         raise NotFoundError("Task not found")
     row = await tx.fetch_one(
         "SELECT * FROM {{tables.task_answers}} WHERE task_id = $1 AND answer_key = $2",
-        task_id, answer_key,
+        task_id,
+        answer_key,
     )
     if not row:
         raise NotFoundError("Answer not found")
-    return _answer_receipt(row, current_question_rev=task["question_rev"], cancelled=task["cancellation"] is not None)
+    return _answer_receipt(
+        row,
+        current_question_rev=task["question_rev"],
+        cancelled=task["cancellation"] is not None,
+    )
+
+
+async def _read_answer_member_principal_on(tx, *, agent_id: str, team_id: str):
+    """Read the answer actor under the existing shared member lock."""
+    return await tx.fetch_one(
+        f"""SELECT {verified_principal_did_sql()} AS principal_did, certificate_id
+           FROM {{{{tables.agents}}}} WHERE agent_id = $1 AND team_id = $2
+             AND deleted_at IS NULL AND status = 'active' FOR SHARE""",
+        UUID(agent_id),
+        team_id,
+    )
+
+
+async def _read_claimant_principal_on(tx, *, team_id: str, alias: str):
+    """Read a claim's principal under the existing shared member lock."""
+    return await tx.fetch_one(
+        f"""SELECT {verified_principal_did_sql()} AS principal_did
+           FROM {{{{tables.agents}}}}
+           WHERE team_id = $1 AND alias = $2 AND deleted_at IS NULL
+           FOR SHARE""",
+        team_id,
+        alias,
+    )
 
 
 async def answer_task_on(
-    tx, *, team_id: str, task_id: UUID, actor: TeamIdentity,
-    expected_task_rev: int, answer_key: str, answer_sha256: str,
-    body_md: str, choice: str | None = None, proposal_rev: int | None = None,
-    proposal_sha256: str | None = None, stage_receipt: dict | None = None, outcome: dict | None = None,
+    tx,
+    *,
+    team_id: str,
+    task_id: UUID,
+    actor: TeamIdentity,
+    expected_task_rev: int,
+    answer_key: str,
+    answer_sha256: str,
+    body_md: str,
+    choice: str | None = None,
+    proposal_rev: int | None = None,
+    proposal_sha256: str | None = None,
+    stage_receipt: dict | None = None,
+    outcome: dict | None = None,
 ) -> dict[str, Any]:
     """Commit an answer using the caller's transaction and verified identity.
 
@@ -155,57 +222,92 @@ async def answer_task_on(
     local member projection must still match that certificate and principal.
     This function never opens/commits a transaction or delivers external mail.
     """
-    if (not isinstance(answer_key, str) or not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", answer_key)
-            or not isinstance(answer_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", answer_sha256)
-            or type(expected_task_rev) is not int or not 1 <= expected_task_rev <= 2**53 - 1
-            or (proposal_rev is not None and (type(proposal_rev) is not int or not 0 <= proposal_rev <= 2**53 - 1))
-            or (proposal_sha256 is not None and (not isinstance(proposal_sha256, str)
-                or not re.fullmatch(r"sha256:[0-9a-f]{64}", proposal_sha256)))):
+    if (
+        not isinstance(answer_key, str)
+        or not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", answer_key)
+        or not isinstance(answer_sha256, str)
+        or not re.fullmatch(r"[0-9a-f]{64}", answer_sha256)
+        or type(expected_task_rev) is not int
+        or not 1 <= expected_task_rev <= 2**53 - 1
+        or (
+            proposal_rev is not None
+            and (type(proposal_rev) is not int or not 0 <= proposal_rev <= 2**53 - 1)
+        )
+        or (
+            proposal_sha256 is not None
+            and (
+                not isinstance(proposal_sha256, str)
+                or not re.fullmatch(r"sha256:[0-9a-f]{64}", proposal_sha256)
+            )
+        )
+    ):
         raise ValidationError("schema_invalid")
-    comment_body = answer_comment_projection(body_md=body_md, answer_sha256=answer_sha256)
+    comment_body = answer_comment_projection(
+        body_md=body_md, answer_sha256=answer_sha256
+    )
     # Installation -> task is F6 retirement's lock order. Keep it identical
     # here, including when the member API (rather than app transport) answers.
     source = await tx.fetch_one(
-        "SELECT * FROM {{tables.task_app_requests}} WHERE task_id=$1 AND team_id=$2", task_id, team_id,
+        "SELECT * FROM {{tables.task_app_requests}} WHERE task_id=$1 AND team_id=$2",
+        task_id,
+        team_id,
     )
     installation = None
     if source:
         from aweb.app_registry import get_installation_on
-        installation = await get_installation_on(tx, team_id=team_id, app_id=source["app_id"], for_update=True)
+
+        installation = await get_installation_on(
+            tx, team_id=team_id, app_id=source["app_id"], for_update=True
+        )
     principal = actor.did_aw or actor.did_key
-    member = await tx.fetch_one(
-        """SELECT COALESCE(NULLIF(did_aw, ''), did_key) AS principal_did, certificate_id
-           FROM {{tables.agents}} WHERE agent_id = $1 AND team_id = $2
-             AND deleted_at IS NULL AND status = 'active' FOR SHARE""",
-        UUID(actor.agent_id), team_id,
+    member = await _read_answer_member_principal_on(
+        tx,
+        agent_id=actor.agent_id,
+        team_id=team_id,
     )
-    if (actor.team_id != team_id or not member or member["principal_did"] != principal
-            or not actor.certificate_id or member["certificate_id"] != actor.certificate_id):
+    if (
+        actor.team_id != team_id
+        or not member
+        or member["principal_did"] != principal
+        or not actor.certificate_id
+        or member["certificate_id"] != actor.certificate_id
+    ):
         raise ForbiddenError("target_mismatch")
     task = await tx.fetch_one(
         """SELECT task_id, rev, question_rev, status, assignee_did, app_request, cancellation,
                   task_ref_suffix, title, assignee_alias
            FROM {{tables.tasks}} WHERE task_id = $1 AND team_id = $2
              AND deleted_at IS NULL FOR UPDATE""",
-        task_id, team_id,
+        task_id,
+        team_id,
     )
     if not task:
         raise NotFoundError("Task not found")
     existing = await tx.fetch_one(
         "SELECT * FROM {{tables.task_answers}} WHERE task_id = $1 AND answer_key = $2",
-        task_id, answer_key,
+        task_id,
+        answer_key,
     )
     if existing:
         if existing["answered_by_did"] != principal:
             raise ForbiddenError("target_mismatch")
-        if any(existing[k] != v for k, v in {
-            "answer_sha256": answer_sha256, "choice": choice,
-            "proposal_rev": proposal_rev, "proposal_sha256": proposal_sha256,
-        }.items()):
+        if any(
+            existing[k] != v
+            for k, v in {
+                "answer_sha256": answer_sha256,
+                "choice": choice,
+                "proposal_rev": proposal_rev,
+                "proposal_sha256": proposal_sha256,
+            }.items()
+        ):
             raise ConflictError("idempotency_conflict")
         if outcome is not None:
             outcome["created"] = False
-        return _answer_receipt(existing, current_question_rev=task["question_rev"], cancelled=task["cancellation"] is not None)
+        return _answer_receipt(
+            existing,
+            current_question_rev=task["question_rev"],
+            cancelled=task["cancellation"] is not None,
+        )
     metadata = _task_request_metadata(task["app_request"])
     eligible = metadata.get("eligible_dids")
     answerers = [task["assignee_did"]] if eligible is None else eligible
@@ -213,57 +315,104 @@ async def answer_task_on(
         raise ForbiddenError("target_mismatch")
     if metadata.get("proposal_rev") is not None:
         from .app_tasks import verify_answer_stage_on
-        await verify_answer_stage_on(tx, stage=stage_receipt, source=source, installation=installation,
-            task=task, principal=principal, answer_key=answer_key, answer_sha256=answer_sha256,
-            choice=choice, proposal_rev=proposal_rev, proposal_sha256=proposal_sha256)
+
+        await verify_answer_stage_on(
+            tx,
+            stage=stage_receipt,
+            source=source,
+            installation=installation,
+            task=task,
+            principal=principal,
+            answer_key=answer_key,
+            answer_sha256=answer_sha256,
+            choice=choice,
+            proposal_rev=proposal_rev,
+            proposal_sha256=proposal_sha256,
+        )
     elif stage_receipt is not None:
         raise ValidationError("schema_invalid")
-    if task["rev"] != expected_task_rev or task["status"] != "open" or task["cancellation"] is not None:
+    if (
+        task["rev"] != expected_task_rev
+        or task["status"] != "open"
+        or task["cancellation"] is not None
+    ):
         raise ConflictError("revision_conflict")
-    if proposal_rev != metadata.get("proposal_rev") or proposal_sha256 != metadata.get("proposal_sha256"):
+    if proposal_rev != metadata.get("proposal_rev") or proposal_sha256 != metadata.get(
+        "proposal_sha256"
+    ):
         raise ConflictError("approval_changed")
     choices = metadata.get("choices")
-    choice_values = [entry["value"] for entry in choices] if choices is not None else None
-    if (choice_values is not None and choice not in choice_values) or (choices is None and choice is not None):
+    choice_values = (
+        [entry["value"] for entry in choices] if choices is not None else None
+    )
+    if (choice_values is not None and choice not in choice_values) or (
+        choices is None and choice is not None
+    ):
         raise ValidationError("schema_invalid")
     receipt_id = uuid4()
     if await tx.fetch_value(
         "SELECT 1 FROM {{tables.task_answers}} WHERE task_id = $1 AND question_rev = $2",
-        task_id, task["question_rev"],
+        task_id,
+        task["question_rev"],
     ):
         raise ConflictError("revision_conflict")
     comment = await tx.fetch_one(
         """INSERT INTO {{tables.task_comments}} (task_id, team_id, author_alias, body)
            VALUES ($1, $2, $3, $4) RETURNING comment_id""",
-        task_id, team_id, actor.alias, comment_body,
+        task_id,
+        team_id,
+        actor.alias,
+        comment_body,
     )
     updated = await tx.fetch_one(
         """UPDATE {{tables.tasks}} SET status = 'closed', closed_by_alias = $2,
                closed_by_did = $3, closed_at = NOW(), updated_at = NOW()
            WHERE task_id = $1 RETURNING rev""",
-        task_id, actor.alias, principal,
+        task_id,
+        actor.alias,
+        principal,
     )
     task_ref = format_task_ref(_get_team_slug(team_id), task["task_ref_suffix"])
-    released_claim_workspace_ids = await release_task_claims_on(tx, team_id=team_id, task_ref=task_ref)
+    released_claim_workspace_ids = await release_task_claims_on(
+        tx, team_id=team_id, task_ref=task_ref
+    )
     row = await tx.fetch_one(
         """INSERT INTO {{tables.task_answers}}
                (task_id, question_rev, task_rev, answer_key, answer_sha256, answered_by_did, certificate_id,
                 receipt_id, choice, proposal_rev, proposal_sha256, stage_receipt)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb) RETURNING *""",
-        task_id, task["question_rev"], updated["rev"], answer_key, answer_sha256, principal, actor.certificate_id,
-        receipt_id, choice, proposal_rev, proposal_sha256, json.dumps(stage_receipt) if stage_receipt else None,
+        task_id,
+        task["question_rev"],
+        updated["rev"],
+        answer_key,
+        answer_sha256,
+        principal,
+        actor.certificate_id,
+        receipt_id,
+        choice,
+        proposal_rev,
+        proposal_sha256,
+        json.dumps(stage_receipt) if stage_receipt else None,
     )
     if stage_receipt is not None:
         await tx.execute(
             """INSERT INTO {{tables.task_answer_stage_nonces}} (team_id,app_id,installation_id,nonce,receipt_id)
                VALUES ($1,$2,$3,$4,$5)""",
-            team_id, source["app_id"], source["installation_id"], stage_receipt["payload"]["nonce"], receipt_id,
+            team_id,
+            source["app_id"],
+            source["installation_id"],
+            stage_receipt["payload"]["nonce"],
+            receipt_id,
         )
     if outcome is not None:
         outcome["created"] = True
         outcome["comment_id"] = str(comment["comment_id"])
-        outcome.update(task_ref=task_ref, title=task["title"], assignee_alias=task["assignee_alias"],
-                       released_claim_workspace_ids=released_claim_workspace_ids)
+        outcome.update(
+            task_ref=task_ref,
+            title=task["title"],
+            assignee_alias=task["assignee_alias"],
+            released_claim_workspace_ids=released_claim_workspace_ids,
+        )
     return _answer_receipt(row, current_question_rev=task["question_rev"])
 
 
@@ -401,7 +550,12 @@ async def resolve_task_ref(db, *, team_id: str, ref: str) -> UUID:
         )
         if not row:
             await _log_resolution_miss(
-                aweb_db, team_id=team_id, ref=ref, ref_suffix="", lookup="task_id", task_uuid=task_uuid
+                aweb_db,
+                team_id=team_id,
+                ref=ref,
+                ref_suffix="",
+                lookup="task_id",
+                task_uuid=task_uuid,
             )
             raise NotFoundError("Task not found")
         return row["task_id"]
@@ -422,7 +576,13 @@ async def resolve_task_ref(db, *, team_id: str, ref: str) -> UUID:
     if row:
         return row["task_id"]
 
-    await _log_resolution_miss(aweb_db, team_id=team_id, ref=ref, ref_suffix=ref_suffix, lookup="task_ref_suffix")
+    await _log_resolution_miss(
+        aweb_db,
+        team_id=team_id,
+        ref=ref,
+        ref_suffix=ref_suffix,
+        lookup="task_ref_suffix",
+    )
     raise NotFoundError("Task not found")
 
 
@@ -452,7 +612,9 @@ async def create_task(
         assignee_did = None
         if assignee_alias:
             assignee_alias, assignee_did = await _resolve_assignee_on(
-                tx, team_id=team_id, assignee_ref=assignee_alias,
+                tx,
+                team_id=team_id,
+                assignee_ref=assignee_alias,
             )
         task_number = await _allocate_task_number_on(tx, team_id=team_id)
         root_task_seq: int
@@ -498,7 +660,9 @@ async def create_task(
                 child_ref_prefix,
             )
             root_task_seq = parent_row["root_task_seq"]
-            task_ref_suffix = f"{parent_row['task_ref_suffix']}.{int(max_sibling_index) + 1}"
+            task_ref_suffix = (
+                f"{parent_row['task_ref_suffix']}.{int(max_sibling_index) + 1}"
+            )
         else:
             root_task_seq = await _allocate_root_task_seq_on(tx, team_id=team_id)
             task_ref_suffix = _encode_alpha_component(root_task_seq)
@@ -540,7 +704,9 @@ async def create_task(
         "priority": priority,
         "task_type": task_type,
         "labels": labels or [],
-        "parent_task_id": str(resolved_parent_task_id) if resolved_parent_task_id else None,
+        "parent_task_id": str(resolved_parent_task_id)
+        if resolved_parent_task_id
+        else None,
         "assignee_alias": assignee_alias,
         "created_by_alias": created_by_alias,
         "closed_by_alias": None,
@@ -571,22 +737,26 @@ async def create_task(
     return result
 
 
-async def _resolve_assignee_on(manager, *, team_id: str, assignee_ref: str) -> tuple[str, str]:
+async def _resolve_assignee_on(
+    manager, *, team_id: str, assignee_ref: str
+) -> tuple[str, str]:
     """Resolve display alias and immutable principal together, on the write tx."""
     try:
         agent_id = UUID(assignee_ref)
     except ValueError:
         agent_id = None
     row = await manager.fetch_one(
-        """
-        SELECT alias, COALESCE(NULLIF(did_aw, ''), did_key) AS principal_did
-        FROM {{tables.agents}}
+        f"""
+        SELECT alias, {verified_principal_did_sql()} AS principal_did
+        FROM {{{{tables.agents}}}}
         WHERE team_id = $1 AND deleted_at IS NULL
           AND (($2::uuid IS NOT NULL AND agent_id = $2)
                OR ($2::uuid IS NULL AND alias = $3))
         FOR SHARE
         """,
-        team_id, agent_id, assignee_ref.strip(),
+        team_id,
+        agent_id,
+        assignee_ref.strip(),
     )
     if not row:
         raise ValidationError("Assignee agent not found in this team")
@@ -676,8 +846,10 @@ async def get_task(db, *, team_id: str, ref: str) -> dict[str, Any]:
 
     answer = await aweb_db.fetch_one(
         "SELECT * FROM {{tables.task_answers}} WHERE task_id = $1 AND question_rev = $2",
-        task_id, row["question_rev"],
+        task_id,
+        row["question_rev"],
     )
+
     def json_value(value):
         return json.loads(value) if isinstance(value, str) else value
 
@@ -710,8 +882,13 @@ async def get_task(db, *, team_id: str, ref: str) -> dict[str, Any]:
         "app_request": json_value(row["app_request"]),
         "cancellation": json_value(row["cancellation"]),
         "picked_up": row["picked_up"],
-        "answer": _answer_receipt(answer, current_question_rev=row["question_rev"],
-                                  cancelled=row["cancellation"] is not None) if answer else None,
+        "answer": _answer_receipt(
+            answer,
+            current_question_rev=row["question_rev"],
+            cancelled=row["cancellation"] is not None,
+        )
+        if answer
+        else None,
     }
 
 
@@ -746,7 +923,9 @@ async def list_tasks(
         idx += 1
     if assignee_alias is not None:
         resolved_alias = await _resolve_assignee_alias(
-            db, team_id=team_id, assignee_ref=assignee_alias,
+            db,
+            team_id=team_id,
+            assignee_ref=assignee_alias,
         )
         conditions.append(f"assignee_alias = ${idx}")
         params.append(resolved_alias)
@@ -769,7 +948,9 @@ async def list_tasks(
         idx += 1
     if parent_task_id is not None:
         resolved_parent_task_id = await resolve_task_ref(
-            db, team_id=team_id, ref=parent_task_id,
+            db,
+            team_id=team_id,
+            ref=parent_task_id,
         )
         conditions.append(f"parent_task_id = ${idx}")
         params.append(resolved_parent_task_id)
@@ -790,7 +971,7 @@ async def list_tasks(
                assignee_alias, created_by_alias, parent_task_id, labels,
                created_at, updated_at, assignee_did, app_request, rev, question_rev
         FROM {{{{tables.tasks}}}}
-        WHERE {' AND '.join(conditions)}
+        WHERE {" AND ".join(conditions)}
         ORDER BY task_number ASC
         """,
         *params,
@@ -849,7 +1030,9 @@ async def list_tasks_paginated(
         idx += 1
     if assignee_alias is not None:
         resolved_alias = await _resolve_assignee_alias(
-            db, team_id=team_id, assignee_ref=assignee_alias,
+            db,
+            team_id=team_id,
+            assignee_ref=assignee_alias,
         )
         conditions.append(f"assignee_alias = ${idx}")
         params.append(resolved_alias)
@@ -901,7 +1084,7 @@ async def list_tasks_paginated(
                      AND blocker.deleted_at IS NULL
                ) AS blocker_count
         FROM {{{{tables.tasks}}}} t
-        WHERE {' AND '.join(conditions)}
+        WHERE {" AND ".join(conditions)}
         ORDER BY t.created_at DESC, t.task_id DESC
         LIMIT ${idx}
         """,
@@ -1005,7 +1188,9 @@ async def list_active_work(db, *, team_id: str) -> list[dict[str, Any]]:
         workspace_meta_by_id = {
             str(row["workspace_id"]): {
                 "alias": row["alias"],
-                "last_seen_at": row["last_seen_at"].isoformat() if row["last_seen_at"] else None,
+                "last_seen_at": row["last_seen_at"].isoformat()
+                if row["last_seen_at"]
+                else None,
                 "canonical_origin": row["canonical_origin"],
             }
             for row in workspace_rows
@@ -1045,10 +1230,14 @@ async def list_active_work(db, *, team_id: str) -> list[dict[str, Any]]:
                 "task_type": row["task_type"],
                 "assignee_alias": row["assignee_alias"],
                 "created_by_alias": row["created_by_alias"],
-                "parent_task_id": str(row["parent_task_id"]) if row["parent_task_id"] else None,
+                "parent_task_id": str(row["parent_task_id"])
+                if row["parent_task_id"]
+                else None,
                 "labels": list(row["labels"]) if row["labels"] else [],
                 "created_at": row["created_at"].isoformat(),
-                "updated_at": row["updated_at"].isoformat() if row.get("updated_at") else None,
+                "updated_at": row["updated_at"].isoformat()
+                if row.get("updated_at")
+                else None,
                 "workspace_id": owner_workspace_id,
                 "owner_alias": owner_alias,
                 "claimed_at": claimed_at,
@@ -1068,7 +1257,9 @@ async def list_active_work(db, *, team_id: str) -> list[dict[str, Any]]:
     return items
 
 
-async def list_ready_tasks(db, *, team_id: str, unclaimed: bool = False) -> list[dict[str, Any]]:
+async def list_ready_tasks(
+    db, *, team_id: str, unclaimed: bool = False
+) -> list[dict[str, Any]]:
     slug = _get_team_slug(team_id)
     aweb_db = db.get_manager("aweb")
     unclaimed_filter = "AND t.assignee_alias IS NULL" if unclaimed else ""
@@ -1189,7 +1380,9 @@ async def update_task(
         if parent_task_id:
             try:
                 resolved_parent_task_id = await resolve_task_ref(
-                    db, team_id=team_id, ref=str(parent_task_id),
+                    db,
+                    team_id=team_id,
+                    ref=str(parent_task_id),
                 )
             except NotFoundError as exc:
                 raise ValidationError("Parent task not found in this team") from exc
@@ -1284,11 +1477,17 @@ async def update_task(
 
         if assignee_alias is not _UNSET:
             resolved_assignee_alias, resolved_assignee_did = (
-                await _resolve_assignee_on(tx, team_id=team_id, assignee_ref=str(assignee_alias))
-                if assignee_alias else (None, None)
+                await _resolve_assignee_on(
+                    tx, team_id=team_id, assignee_ref=str(assignee_alias)
+                )
+                if assignee_alias
+                else (None, None)
             )
             if status != "in_progress":
-                if current["app_request"] is not None and resolved_assignee_did != current["assignee_did"]:
+                if (
+                    current["app_request"] is not None
+                    and resolved_assignee_did != current["assignee_did"]
+                ):
                     raise ForbiddenError("target_mismatch")
                 sets.append(f"assignee_alias = ${idx}")
                 params.append(resolved_assignee_alias)
@@ -1324,7 +1523,9 @@ async def update_task(
                         workspace["workspace_id"],
                     )
                     if conflicting_claim:
-                        raise ConflictError("Task is already in progress by another agent")
+                        raise ConflictError(
+                            "Task is already in progress by another agent"
+                        )
 
                     await tx.execute(
                         """
@@ -1367,14 +1568,14 @@ async def update_task(
                 sets.append(f"assignee_alias = ${idx}")
                 params.append(actor_alias)
                 idx += 1
-                claimant = await tx.fetch_one(
-                    """SELECT COALESCE(NULLIF(did_aw, ''), did_key) AS principal_did
-                       FROM {{tables.agents}}
-                       WHERE team_id = $1 AND alias = $2 AND deleted_at IS NULL
-                       FOR SHARE""",
-                    team_id, actor_alias,
+                claimant = await _read_claimant_principal_on(
+                    tx,
+                    team_id=team_id,
+                    alias=actor_alias,
                 )
-                if current["app_request"] is not None and (not claimant or claimant["principal_did"] != current["assignee_did"]):
+                if current["app_request"] is not None and (
+                    not claimant or claimant["principal_did"] != current["assignee_did"]
+                ):
                     raise ForbiddenError("target_mismatch")
                 sets.append(f"assignee_did = ${idx}")
                 params.append(claimant["principal_did"] if claimant else None)
@@ -1428,7 +1629,9 @@ async def update_task(
                         auto_closed.append(
                             {
                                 "task_id": str(cr["task_id"]),
-                                "task_ref": format_task_ref(slug, cr["task_ref_suffix"]),
+                                "task_ref": format_task_ref(
+                                    slug, cr["task_ref_suffix"]
+                                ),
                                 "title": cr["title"],
                             }
                         )
@@ -1441,7 +1644,11 @@ async def update_task(
         # A status change to anything but in_progress ends every claim on the
         # task, in this transaction. The release follows the status write
         # because a released workspace keeps its focus only on an open task.
-        if status is not None and status != current["status"] and status != "in_progress":
+        if (
+            status is not None
+            and status != current["status"]
+            and status != "in_progress"
+        ):
             released_claim_workspace_ids = await release_task_claims_on(
                 tx,
                 team_id=team_id,
@@ -1452,8 +1659,10 @@ async def update_task(
     # locked row and resolved input. A post-commit read may see a later writer.
     # This metadata goes to the events only; the returned task does not carry it.
     new_assignee = (
-        actor_alias if status == "in_progress"
-        else resolved_assignee_alias if resolved_assignee_alias is not _UNSET
+        actor_alias
+        if status == "in_progress"
+        else resolved_assignee_alias
+        if resolved_assignee_alias is not _UNSET
         else current["assignee_alias"]
     )
     old_status = current["status"]
@@ -1511,7 +1720,11 @@ async def update_task(
 
 
 async def soft_delete_task(
-    db, *, actor: TeamIdentity, on_mutation: MutationCallback | None, ref: str,
+    db,
+    *,
+    actor: TeamIdentity,
+    on_mutation: MutationCallback | None,
+    ref: str,
 ) -> dict[str, Any]:
     team_id = actor.team_id
     task_id = await resolve_task_ref(db, team_id=team_id, ref=ref)
@@ -1532,7 +1745,11 @@ async def soft_delete_task(
         if not row:
             raise NotFoundError("Task not found")
 
-    result = {"status": "deleted", "task_id": str(task_id), "task_ref": format_task_ref(slug, row["task_ref_suffix"])}
+    result = {
+        "status": "deleted",
+        "task_id": str(task_id),
+        "task_ref": format_task_ref(slug, row["task_ref_suffix"]),
+    }
     await fire_mutation_callback(
         on_mutation,
         "task.deleted",
@@ -1547,7 +1764,12 @@ async def soft_delete_task(
 
 
 async def add_dependency(
-    db, *, actor: TeamIdentity, on_mutation: MutationCallback | None, task_ref: str, depends_on_ref: str,
+    db,
+    *,
+    actor: TeamIdentity,
+    on_mutation: MutationCallback | None,
+    task_ref: str,
+    depends_on_ref: str,
 ) -> dict[str, Any]:
     team_id = actor.team_id
     task_id = await resolve_task_ref(db, team_id=team_id, ref=task_ref)
@@ -1603,7 +1825,12 @@ async def add_dependency(
 
 
 async def remove_dependency(
-    db, *, actor: TeamIdentity, on_mutation: MutationCallback | None, task_ref: str, dep_ref: str,
+    db,
+    *,
+    actor: TeamIdentity,
+    on_mutation: MutationCallback | None,
+    task_ref: str,
+    dep_ref: str,
 ) -> dict[str, Any]:
     team_id = actor.team_id
     task_id = await resolve_task_ref(db, team_id=team_id, ref=task_ref)
@@ -1628,7 +1855,12 @@ async def remove_dependency(
 
 
 async def add_comment(
-    db, *, actor: TeamIdentity, on_mutation: MutationCallback | None, ref: str, body: str,
+    db,
+    *,
+    actor: TeamIdentity,
+    on_mutation: MutationCallback | None,
+    ref: str,
+    body: str,
 ) -> dict[str, Any]:
     team_id = actor.team_id
     author_alias = actor.alias

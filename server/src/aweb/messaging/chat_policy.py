@@ -1,6 +1,8 @@
 """Chat is for agents; authoritative human recipients are reached by mail."""
 from __future__ import annotations
 
+from aweb.identity_binding import verified_key_sql
+
 from aweb.human_kind import human_predicate_sql
 
 from uuid import uuid4
@@ -36,6 +38,8 @@ def recipient_label(row: dict) -> str:
 async def require_agent_chat(db, recipients: list[dict], *, registry_client=None) -> None:
     """Refuse verified-human projections; unknown kind remains allowed.
 
+    docs/mail-and-chat.md:12-15: "Chat is between agents: aweb reaches people
+    by mail". Recipient kind is independent of current team membership.
     This policy preflight deliberately performs no registry I/O. The retained
     registry_client keyword is source compatibility only. Strict federation
     resolution remains the sole outbound authority path; receivers apply their
@@ -51,9 +55,10 @@ async def require_agent_chat(db, recipients: list[dict], *, registry_client=None
         human = await manager.fetch_one(
             f"""SELECT 1 FROM {{{{tables.agents}}}} WHERE deleted_at IS NULL
                  AND {human_predicate_sql()}
-                 AND ((did_aw=$1 AND did_aw_verified_key=did_key)
+                 AND ((did_aw=$1 AND {verified_key_sql()})
                       OR did_key=$1)
-               LIMIT 1""", did,
+               LIMIT 1""",
+            did,
         )
         if human:
             humans.append(recipient_label(row))

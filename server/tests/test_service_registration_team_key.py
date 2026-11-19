@@ -10,15 +10,16 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 import pytest
-
 from awid.signing import canonical_json_bytes, sign_message
 from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
 from test_messages_http import _make_keypair
 from test_team_key_pinning import (  # noqa: F401
     _substitute_registry_team_key,
-    pinning,
     register_namespace_controller,
     rotate_team_key,
+)
+from test_team_key_pinning import (
+    pinning as pinning,
 )
 
 SERVICE = "https://aweb.example.test"
@@ -29,16 +30,27 @@ async def _register(env, team_sk):
         "awid_team_id": TEAM,
         "service_url": SERVICE,
         "dry_run": False,
-        "timestamp": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "timestamp": datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z"),
     }
-    body["controller_signature"] = sign_message(team_sk, canonical_json_bytes({
-        "operation": "team_service_register", **{k: body[k] for k in ("awid_team_id", "service_url", "dry_run", "timestamp")},
-    }))
+    body["controller_signature"] = sign_message(
+        team_sk,
+        canonical_json_bytes(
+            {
+                "operation": "team_service_register",
+                **{k: body[k] for k in ("awid_team_id", "service_url", "dry_run", "timestamp")},
+            }
+        ),
+    )
     return await env.client.post("/api/v1/teams/service-register", json=body)
 
 
 async def _held_key(env):
-    return await env.db.fetch_value("SELECT team_did_key FROM {{tables.teams}} WHERE team_id = $1", TEAM)
+    return await env.db.fetch_value(
+        "SELECT team_did_key FROM {{tables.teams}} WHERE team_id = $1", TEAM
+    )
 
 
 @pytest.fixture
@@ -71,7 +83,10 @@ async def test_registration_under_a_key_with_no_controller_act_is_refused(regist
     response = await _register(env, substituted_sk)
 
     assert response.status_code == 401, response.text
-    assert response.json()["detail"] == "team_key_unverified"
+    assert (
+        response.json()["detail"]
+        == "team_key_unverified: The team key change could not be verified. Ask the team administrator to verify the namespace controller's current key-change record, then retry."
+    )
     assert await _held_key(env) == env.team_did
 
 

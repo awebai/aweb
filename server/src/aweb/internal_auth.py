@@ -4,13 +4,19 @@ import hashlib
 import hmac
 import logging
 import os
+import re
 import uuid
 from typing import Optional, TypedDict
 
-import re
-
 from fastapi import HTTPException
 from starlette.requests import Request
+
+from aweb.member_team_key import (
+    CURRENT_MEMBERSHIP_REQUIRED_DETAIL,
+    MemberStatus,
+    current_member,
+    read_member_projection,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +100,9 @@ def parse_internal_auth_context(request: Request) -> Optional[InternalAuthContex
             "AWEB_INTERNAL_AUTH_SECRET",
             path,
         )
-        raise HTTPException(status_code=500, detail="Internal proxy authentication is misconfigured")
+        raise HTTPException(
+            status_code=500, detail="Internal proxy authentication is misconfigured"
+        )
 
     internal_auth = request.headers.get(INTERNAL_AUTH_HEADER)
     if not internal_auth:
@@ -112,14 +120,18 @@ def parse_internal_auth_context(request: Request) -> Optional[InternalAuthContex
         try:
             user_id = str(uuid.UUID(user_id))
         except ValueError as exc:
-            raise HTTPException(status_code=401, detail="Authentication required") from exc
+            raise HTTPException(
+                status_code=401, detail="Authentication required"
+            ) from exc
         principal_type = "u"
         principal_id = user_id
     elif api_key_id:
         try:
             api_key_id = str(uuid.UUID(api_key_id))
         except ValueError as exc:
-            raise HTTPException(status_code=401, detail="Authentication required") from exc
+            raise HTTPException(
+                status_code=401, detail="Authentication required"
+            ) from exc
         principal_type = "k"
         principal_id = api_key_id
     else:
@@ -167,16 +179,21 @@ async def resolve_internal_actor(aweb_db, internal: InternalAuthContext):
     agent row that is not an active member of that team: one that is retired,
     archived, deleted, or another team's.
     """
-    row = await aweb_db.fetch_one(
-        """
-        SELECT agent_id, team_id, status, deleted_at, alias, did_key, did_aw, address, identity_scope
-        FROM {{tables.agents}}
-        WHERE agent_id = $1
-        """,
-        uuid.UUID(internal["actor_id"]),
-    )
+    row = await read_member_projection(aweb_db, agent_id=internal["actor_id"])
     if row is None:
         return None
-    if row["team_id"] != internal["team_id"] or row["status"] != "active" or row["deleted_at"] is not None:
+    if (
+        row["team_id"] != internal["team_id"]
+        or row["status"] != MemberStatus.ACTIVE.value
+        or row["deleted_at"] is not None
+    ):
         raise HTTPException(status_code=403, detail="Agent not connected")
-    return row
+    if not current_member(row):
+        logger.warning(
+            "Forwarded actor refused: membership not admitted under the current team key"
+        )
+        raise HTTPException(
+            status_code=403,
+            detail=CURRENT_MEMBERSHIP_REQUIRED_DETAIL,
+        )
+    return row.verified_identity()

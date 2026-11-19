@@ -9,6 +9,7 @@ import logging
 from collections.abc import Mapping
 
 from awid.identity_observation import (
+    IdentityKind as IdentityKind,
     IdentityKindObservation as IdentityKindObservation,
 )
 from awid.identity_observation import (
@@ -22,13 +23,20 @@ logger = logging.getLogger(__name__)
 
 
 def is_verified_human(row: Mapping) -> bool:
-    return (row.get('agent_type') == 'human' and bool(row.get('did_key'))
-            and row.get('human_verified_key') == row['did_key'])
+    return (
+        row.get("agent_type") == IdentityKind.HUMAN.value
+        and bool(row.get("did_key"))
+        and row.get("human_verified_key") == row["did_key"]
+    )
 
 
 def effective_agent_type(row: Mapping) -> str:
-    runtime = row.get('agent_type') or 'agent'
-    return 'unknown' if runtime == 'human' and not is_verified_human(row) else runtime
+    runtime = row.get("agent_type") or IdentityKind.AGENT.value
+    return (
+        IdentityKind.UNKNOWN.value
+        if runtime == IdentityKind.HUMAN.value and not is_verified_human(row)
+        else runtime
+    )
 
 
 def human_predicate_sql(alias: str = '') -> str:

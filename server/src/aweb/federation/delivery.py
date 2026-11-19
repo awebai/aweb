@@ -2,8 +2,16 @@
 
 from __future__ import annotations
 
-from aweb.human_kind import is_verified_human
-from aweb.member_team_key import member_key_current_sql
+from aweb.identity_binding import verified_key_sql
+
+from aweb.human_kind import IdentityKind, is_verified_human
+from aweb.member_team_key import (
+    MemberProjection,
+    current_member,
+    member_key_current_sql,
+    member_projection_columns_sql,
+    messaging_identity_projection,
+)
 
 from aweb.agent_wake import record_did_wakes
 from aweb.messaging.chat_policy import HumanChatRefused, recipient_label
@@ -14,6 +22,7 @@ import json
 import logging
 
 import asyncpg
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Awaitable, Callable
 from uuid import UUID
@@ -152,10 +161,9 @@ async def _require_current_stored_route(
     )
     participants = {row["did"]: dict(row) for row in rows}
     expected_conversation = expected.get("conversation") or {}
-    if (
-        set(participants) != {envelope.sender_did_aw, envelope.target_did_aw}
-        or set(expected_conversation) != set(participants)
-    ):
+    if set(participants) != {envelope.sender_did_aw, envelope.target_did_aw} or set(
+        expected_conversation
+    ) != set(participants):
         raise FederationAuthorityError("federation_conversation_invalid")
 
     def require_participants(
@@ -185,15 +193,13 @@ async def _require_current_stored_route(
             raise FederationAuthorityError("federation_conversation_invalid")
         sender_key = _route_value(sender.get("current_did_key"))
         target_key = _route_value(target.get("current_did_key"))
-        if (
-            envelope.sender_did_aw.startswith("did:aw:")
-            and not sender_key
-        ) or (sender_key and sender_key != envelope.sender_current_did_key):
+        if (envelope.sender_did_aw.startswith("did:aw:") and not sender_key) or (
+            sender_key and sender_key != envelope.sender_current_did_key
+        ):
             raise FederationAuthorityError("federation_conversation_invalid")
-        if (
-            envelope.target_did_aw.startswith("did:aw:")
-            and not target_key
-        ) or (target_key and target_key != envelope.target_current_did_key):
+        if (envelope.target_did_aw.startswith("did:aw:") and not target_key) or (
+            target_key and target_key != envelope.target_current_did_key
+        ):
             raise FederationAuthorityError("federation_conversation_invalid")
         if _route_value(target.get("delivery_origin")):
             raise FederationAuthorityError("federation_conversation_invalid")
@@ -230,10 +236,10 @@ async def _require_current_stored_route(
     )
     chat_participants = {row["did"]: dict(row) for row in chat_rows}
     expected_chat = expected.get("chat") or {}
-    if (
-        set(chat_participants) != {envelope.sender_did_aw, envelope.target_did_aw}
-        or set(expected_chat) != set(chat_participants)
-    ):
+    if set(chat_participants) != {
+        envelope.sender_did_aw,
+        envelope.target_did_aw,
+    } or set(expected_chat) != set(chat_participants):
         raise FederationAuthorityError("federation_conversation_invalid")
     require_participants(
         chat_participants,
@@ -242,53 +248,141 @@ async def _require_current_stored_route(
     )
 
 
+@dataclass(frozen=True, kw_only=True)
+class _LockedRecipientResidence:
+    """Transaction-local storage references, separate from participant authority."""
+
+    recipient: dict
+    storage_agent_ids: tuple[UUID, ...]
+
+
 async def _lock_current_recipient(
     tx,
     *,
     envelope: FederationEnvelope,
     recipient: dict,
-) -> dict:
-    agent_id = recipient.get("agent_id")
-    if agent_id is None:
-        raise FederationAuthorityError("recipient_identity_not_found")
-    # Lock the whole identity in stable order before touching the selected row.
-    # SHARE suffices for the selected row too; upgrading to UPDATE would deadlock
-    # concurrent deliveries that address different memberships of this identity.
-    identity_did = str(await tx.fetch_value(
-        "SELECT did_aw FROM {{tables.agents}} WHERE agent_id=$1 AND deleted_at IS NULL",
-        agent_id,
-    ) or "")
+) -> _LockedRecipientResidence:
+    """Lock exact-DID residence without selecting a membership as its authority.
+
+    docs/identity-messaging-contract.md:272-277 makes independently verified
+    address residence independent of current membership and binding markers.
+    Row IDs locate storage only; an identity-only ingress stays actor-free.
+    """
+    target_did = envelope.target_did_aw
+    target_key = envelope.target_current_did_key
+    global_did = target_did if target_did.startswith("did:aw:") else None
+    if global_did:
+        if recipient.get("did_aw") != global_did:
+            raise FederationAuthorityError("recipient_identity_not_found")
+        if recipient.get("did_key") != target_key:
+            raise FederationAuthorityError("recipient_current_key_mismatch")
+    elif target_did != target_key:
+        raise FederationAuthorityError("recipient_current_key_mismatch")
+    else:
+        # A key-addressed stored participant may still carry global policy.
+        # Discover that policy before taking row locks, then recheck the claim
+        # under the lock; raw claims supply no principal identity here.
+        claims = await tx.fetch_all(
+            "SELECT DISTINCT did_aw FROM {{tables.agents}} "
+            "WHERE did_key=$1 AND deleted_at IS NULL AND NULLIF(did_aw, '') IS NOT NULL",
+            target_key,
+        )
+        if len(claims) > 1:
+            raise FederationAuthorityError("recipient_policy_rejected")
+        global_did = claims[0]["did_aw"] if claims else None
+
     identity_mode = None
-    if identity_did.startswith("did:aw:"):
+    if global_did:
         try:
-            identity_mode = await effective_inbound_mode(tx, identity_did, for_share=True)
+            # Lock every policy-bearing row in the existing stable order.
+            # SHARE avoids upgrades between deliveries to the same identity.
+            identity_mode = await effective_inbound_mode(tx, global_did, for_share=True)
         except ForbiddenError as exc:
             raise FederationAuthorityError("recipient_policy_rejected") from exc
-    row = await tx.fetch_one(
-        """
-        SELECT agent_id, team_id, did_key, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, CASE WHEN did_aw_verified_key = did_key THEN address END AS address, alias,
-               inbound_mode, agent_type, human_verified_key, identity_scope, (NULLIF(did_aw, '') IS NOT NULL) AS has_global_claim, did_aw AS policy_did_aw
-        FROM {{tables.agents}}
-        WHERE agent_id = $1 AND deleted_at IS NULL
-        FOR SHARE
-        """,
-        agent_id,
+
+    selector = "a.did_aw" if target_did.startswith("did:aw:") else "a.did_key"
+    rows = await tx.fetch_all(
+        "SELECT " + member_projection_columns_sql("a") + " FROM {{tables.agents}} a "
+        f"WHERE {selector}=$1 AND a.deleted_at IS NULL ORDER BY a.agent_id FOR SHARE OF a",
+        target_did,
     )
-    if row is None:
+    residences = tuple(MemberProjection.from_row(row) for row in rows)
+    if not residences:
         raise FederationAuthorityError("recipient_identity_not_found")
-    current = dict(row)
-    if str(current.get("policy_did_aw") or "") != identity_did:
-        raise FederationAuthorityError("recipient_identity_not_found")
+    if not target_did.startswith("did:aw:"):
+        if {row["did_aw"] for row in residences if row["did_aw"]} != (
+            {global_did} if global_did else set()
+        ):
+            raise FederationAuthorityError("recipient_identity_not_found")
+
+    current = _resident_participant(
+        residences=residences,
+        envelope=envelope,
+        recipient=recipient,
+        policy_did=global_did,
+    )
     if identity_mode is not None:
         current["inbound_mode"] = identity_mode
-    target_did = str(envelope.target_did_aw or "").strip()
-    if target_did.startswith("did:aw:"):
-        if str(current.get("did_aw") or "").strip() != target_did:
-            raise FederationAuthorityError("recipient_identity_not_found")
-    elif str(current.get("did_key") or "").strip() != target_did:
-        raise FederationAuthorityError("recipient_identity_not_found")
-    if str(current.get("did_key") or "").strip() != envelope.target_current_did_key:
-        raise FederationAuthorityError("recipient_current_key_mismatch")
+    return _LockedRecipientResidence(
+        recipient=current,
+        storage_agent_ids=tuple(row["agent_id"] for row in residences),
+    )
+
+
+def _resident_participant(
+    *,
+    residences: tuple[MemberProjection, ...],
+    envelope: FederationEnvelope,
+    recipient: dict,
+    policy_did: str | None,
+) -> dict:
+    """Keep verified target identity and explicit references separate from rows.
+
+    docs/identity-messaging-contract.md:262-277 assigns current key authority
+    to the resolved address, never a newest membership. Existing explicit row
+    references may remain references; an absent reference is never invented.
+    """
+    current = dict(recipient)
+    current.update(agent_id=None, team_id=None, did_key=envelope.target_current_did_key)
+    if envelope.target_did_aw.startswith("did:aw:"):
+        current.update(
+            did_aw=envelope.target_did_aw,
+            policy_did_aw=envelope.target_did_aw,
+            has_global_claim=True,
+        )
+    else:
+        projections = [messaging_identity_projection(row) for row in residences]
+        identities = {row.get("did_aw") for row in projections}
+        current["did_aw"] = identities.pop() if len(identities) == 1 else None
+        current["policy_did_aw"] = policy_did
+        current["has_global_claim"] = policy_did is not None
+        modes = {row["inbound_mode"] for row in residences}
+        if len(modes) != 1 and not current["has_global_claim"]:
+            raise FederationAuthorityError("recipient_policy_rejected")
+        current["inbound_mode"] = modes.pop() if len(modes) == 1 else None
+        scopes = {row["identity_scope"] for row in residences}
+        current["identity_scope"] = scopes.pop() if len(scopes) == 1 else None
+
+    # A marker for an old signing key cannot classify the current identity.
+    humans = [
+        row
+        for row in residences
+        if row["did_key"] == envelope.target_current_did_key and is_verified_human(row)
+    ]
+    current["agent_type"] = (
+        IdentityKind.HUMAN.value if humans else IdentityKind.UNKNOWN.value
+    )
+    current["human_verified_key"] = envelope.target_current_did_key if humans else None
+    for row in residences:
+        if str(row["agent_id"]) == str(recipient.get("agent_id")):
+            current["agent_id"] = row["agent_id"]
+            if (
+                current_member(row)
+                and row["did_key"] == envelope.target_current_did_key
+                and row.verified_identity().get("did_aw") == current.get("did_aw")
+            ):
+                current["team_id"] = row["team_id"]
+            break
     return current
 
 
@@ -296,8 +390,13 @@ async def _require_recipient_encryption_assertion(
     tx,
     *,
     envelope: FederationEnvelope,
-    recipient: dict,
+    storage_agent_ids: tuple[UUID, ...],
 ) -> None:
+    """Validate identity-signed keys in locked residence storage.
+
+    docs/e2e-messaging-contract.md:103-110 binds encryption keys to the current
+    identity signing key. A storage row ID confers no participant authority.
+    """
     if envelope.content_mode != "encrypted_v2":
         return
     encrypted = envelope.encrypted_envelope or {}
@@ -313,38 +412,49 @@ async def _require_recipient_encryption_assertion(
     key_id = str((recipient_ref or {}).get("encryption_key_id") or "").strip()
     if not key_id:
         raise FederationAuthorityError("recipient_encryption_assertion_missing")
-    row = await tx.fetch_one(
+    rows = await tx.fetch_all(
         """
         SELECT assertion_canonical, assertion_signature
         FROM {{tables.agent_encryption_keys}}
-        WHERE agent_id = $1 AND encryption_key_id = $2
+        WHERE agent_id = ANY($1::uuid[]) AND encryption_key_id = $2
           AND revoked_at IS NULL
+        ORDER BY agent_id
         FOR UPDATE
         """,
-        recipient["agent_id"],
+        list(storage_agent_ids),
         key_id,
     )
-    if row is None:
+    if not rows:
         raise FederationAuthorityError("recipient_encryption_assertion_missing")
-    try:
-        assertion = json.loads(row["assertion_canonical"])
-        if not isinstance(assertion, dict):
-            raise ValueError("assertion must be an object")
-        assertion["signature"] = row["assertion_signature"]
-        validate_encryption_key_assertion(
-            assertion,
-            current_did_key=expected_did,
-            stable_id=(
-                envelope.target_did_aw
-                if envelope.target_did_aw.startswith("did:aw:")
-                else None
-            ),
-            now=datetime.now(timezone.utc),
-        )
-    except Exception as exc:
-        raise FederationAuthorityError(
-            "recipient_encryption_assertion_invalid_or_stale"
-        ) from exc
+    invalid_assertion = None
+    for row in rows:
+        try:
+            assertion = json.loads(row["assertion_canonical"])
+            if not isinstance(assertion, dict):
+                raise ValueError("assertion must be an object")
+            if assertion.get("encryption_key_id") != key_id:
+                raise ValueError("assertion must bind the addressed encryption key")
+            assertion["signature"] = row["assertion_signature"]
+            validate_encryption_key_assertion(
+                assertion,
+                current_did_key=expected_did,
+                stable_id=(
+                    envelope.target_did_aw
+                    if envelope.target_did_aw.startswith("did:aw:")
+                    else None
+                ),
+                now=datetime.now(timezone.utc),
+            )
+        except (TypeError, ValueError) as exc:
+            logger.warning(
+                "Resident encryption assertion is invalid or stale", exc_info=True
+            )
+            invalid_assertion = exc
+        else:
+            return
+    raise FederationAuthorityError(
+        "recipient_encryption_assertion_invalid_or_stale"
+    ) from invalid_assertion
 
 
 async def _authorize_policy(
@@ -366,11 +476,13 @@ async def _authorize_policy(
     recipient_team = str(recipient.get("team_id") or "").strip()
     if recipient_team and not (recipient_global and mode == "contacts_only"):
         same_team = await tx.fetch_one(
-            """
-            SELECT a.agent_id FROM {{tables.agents}} AS a
+            f"""
+            SELECT a.agent_id FROM {{{{tables.agents}}}} AS a
             WHERE a.team_id = $1 AND a.deleted_at IS NULL
-              AND ((a.did_aw = $2 AND a.did_aw_verified_key = a.did_key) OR a.did_key = $2)
-              AND """ + member_key_current_sql("a") + """
+              AND ((a.did_aw = $2 AND {verified_key_sql("a")}) OR a.did_key = $2)
+              AND """
+            + member_key_current_sql("a")
+            + """
             LIMIT 1
             FOR SHARE OF a
             """,
@@ -537,7 +649,9 @@ async def _ensure_chat_session(
         session_id,
         preserve_existing_route=preserve_existing_route,
     )
-    for did, agent_id, alias, address, origin, current_key in _participants(envelope, recipient):
+    for did, agent_id, alias, address, origin, current_key in _participants(
+        envelope, recipient
+    ):
         await tx.execute(
             """
             INSERT INTO {{tables.chat_participants}} (
@@ -563,7 +677,9 @@ async def _ensure_chat_session(
 
 def _participants(envelope: FederationEnvelope, recipient: dict):
     sender_alias = (envelope.sender_address or envelope.sender_did_aw).split("/", 1)[-1]
-    target_alias = str(recipient.get("alias") or envelope.target_address.split("/", 1)[-1])
+    target_alias = str(
+        recipient.get("alias") or envelope.target_address.split("/", 1)[-1]
+    )
     return (
         (
             envelope.sender_did_aw,
@@ -632,7 +748,9 @@ async def _upsert_conversation_participants(
         raise FederationAuthorityError("federation_conversation_invalid")
 
 
-async def _store_mail(tx, envelope: FederationEnvelope, signature: str, recipient: dict, id_chain=None):
+async def _store_mail(
+    tx, envelope: FederationEnvelope, signature: str, recipient: dict, id_chain=None
+):
     metadata = (
         encrypted_message_storage_metadata(envelope.encrypted_envelope or {})
         if envelope.content_mode == "encrypted_v2"
@@ -671,9 +789,15 @@ async def _store_mail(tx, envelope: FederationEnvelope, signature: str, recipien
         UUID(str(envelope.conversation_id)),
         2 if metadata else 1,
         "encrypted_v2" if metadata else "legacy_plaintext_v1",
-        json.dumps(envelope.encrypted_envelope, sort_keys=True, separators=(",", ":")) if metadata else None,
+        json.dumps(envelope.encrypted_envelope, sort_keys=True, separators=(",", ":"))
+        if metadata
+        else None,
         metadata.get("encrypted_ciphertext"),
-        json.dumps(metadata.get("encrypted_key_wraps"), sort_keys=True, separators=(",", ":")) if metadata.get("encrypted_key_wraps") is not None else None,
+        json.dumps(
+            metadata.get("encrypted_key_wraps"), sort_keys=True, separators=(",", ":")
+        )
+        if metadata.get("encrypted_key_wraps") is not None
+        else None,
         metadata.get("encrypted_ciphertext_hash"),
         metadata.get("encrypted_ciphertext_size"),
         metadata.get("encrypted_key_wraps_hash"),
@@ -735,9 +859,15 @@ async def _store_chat(tx, envelope: FederationEnvelope, signature: str, id_chain
         None if metadata else envelope.signed_payload,
         "encrypted_v2" if metadata else "legacy_plaintext_v1",
         2 if metadata else 1,
-        json.dumps(envelope.encrypted_envelope, sort_keys=True, separators=(",", ":")) if metadata else None,
+        json.dumps(envelope.encrypted_envelope, sort_keys=True, separators=(",", ":"))
+        if metadata
+        else None,
         metadata.get("encrypted_ciphertext"),
-        json.dumps(metadata.get("encrypted_key_wraps"), sort_keys=True, separators=(",", ":")) if metadata.get("encrypted_key_wraps") is not None else None,
+        json.dumps(
+            metadata.get("encrypted_key_wraps"), sort_keys=True, separators=(",", ":")
+        )
+        if metadata.get("encrypted_key_wraps") is not None
+        else None,
         metadata.get("encrypted_ciphertext_hash"),
         metadata.get("encrypted_ciphertext_size"),
         metadata.get("encrypted_key_wraps_hash"),
@@ -773,7 +903,9 @@ async def replay_federation_mutation_outbox(app, manager, *, limit: int = 100) -
     return await deliver_federation_mutation_outbox(manager, callback, limit=limit)
 
 
-async def deliver_federation_mutation_outbox(manager, callback, *, limit: int = 100) -> int:
+async def deliver_federation_mutation_outbox(
+    manager, callback, *, limit: int = 100
+) -> int:
     delivered = 0
     async with manager.transaction() as tx:
         rows = await tx.fetch_all(
@@ -872,11 +1004,12 @@ async def _deliver_federated_phase_b(
                 raise FederationAuthorityError("federation_message_replay_conflict")
             return dict(_decode_json(receipt["established_result"]))
 
-        recipient = await _lock_current_recipient(
+        locked_residence = await _lock_current_recipient(
             tx,
             envelope=envelope,
             recipient=recipient,
         )
+        recipient = locked_residence.recipient
         if envelope.type == "chat" and is_verified_human(recipient):
             raise HumanChatRefused(recipient_label(recipient))
         if stored_route_continuation:
@@ -890,7 +1023,7 @@ async def _deliver_federated_phase_b(
         await _require_recipient_encryption_assertion(
             tx,
             envelope=envelope,
-            recipient=recipient,
+            storage_agent_ids=locked_residence.storage_agent_ids,
         )
         await _authorize_policy(
             tx,
@@ -939,9 +1072,11 @@ async def _deliver_federated_phase_b(
                 preserve_existing_route=stored_route_continuation,
             )
             message = await _store_chat(tx, envelope, signature, id_chain)
-        # Wake the recipient row this delivery resolved and locked, never the
-        # envelope's target or the stored to_did.
-        record_did_wakes((recipient.get("did_aw"), recipient.get("did_key")), envelope.type)
+        # Wake the admitted identity whose residence is locked through commit.
+        # Storage row references never become wake or participant authority.
+        record_did_wakes(
+            (recipient.get("did_aw"), recipient.get("did_key")), envelope.type
+        )
 
         created_at: datetime = message["created_at"]
         result: dict[str, object] = {
@@ -967,7 +1102,9 @@ async def _deliver_federated_phase_b(
             "from_did": envelope.sender_current_did_key,
             "from_did_aw": envelope.sender_did_aw,
             "to_agent_id": str(recipient.get("agent_id") or "") or None,
-            "from_alias": (envelope.sender_address or envelope.sender_did_aw).split("/", 1)[-1],
+            "from_alias": (envelope.sender_address or envelope.sender_did_aw).split(
+                "/", 1
+            )[-1],
             "message_id": envelope.message_id,
             "conversation_id": envelope.conversation_id,
             "session_id": envelope.conversation_id if envelope.type == "chat" else None,

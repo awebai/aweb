@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from aweb.identity_binding import IdentityProjectionField, verified_identity_field_sql
+
 from aweb.messaging.participant_succession import MailSuccessionScope, load_mail_succession_scope
 
 import asyncio
@@ -561,9 +563,9 @@ async def _sse_agent_events(
     aweb_db = db.get_manager("aweb")
     aid = UUID(agent_id)
     viewer = await aweb_db.fetch_one(
-        """
-        SELECT CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, did_key
-        FROM {{tables.agents}}
+        f"""
+        SELECT {verified_identity_field_sql(IdentityProjectionField.STABLE_DID)} AS did_aw, did_key
+        FROM {{{{tables.agents}}}}
         WHERE agent_id = $1 AND deleted_at IS NULL
         """,
         aid,

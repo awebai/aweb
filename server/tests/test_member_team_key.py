@@ -21,17 +21,37 @@ from aweb.messaging.participants import messaging_participants_by_aliases
 from aweb.messaging.sender_membership import sender_memberships
 from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
 from test_identity_grants import _grant_headers, _session_keypair
-from test_messages_http import _encode_certificate, _make_certificate, _make_keypair, _signed_team_headers
-from test_team_key_pinning import _substitute_registry_team_key, pinning, register_namespace_controller, rotate_team_key  # noqa: F401
+from test_messages_http import (
+    _encode_certificate,
+    _make_certificate,
+    _make_keypair,
+    _signed_team_headers,
+)
+from test_team_key_pinning import (
+    _substitute_registry_team_key,
+    pinning as pinning,
+    register_namespace_controller,
+    rotate_team_key,
+)  # noqa: F401
 
-MIGRATIONS = Path(__file__).resolve().parents[1] / "src" / "aweb" / "migrations" / "aweb"
+MIGRATIONS = (
+    Path(__file__).resolve().parents[1] / "src" / "aweb" / "migrations" / "aweb"
+)
 
 
 def _certificate(team_sk, team_did, member, certificate_id):
     sk, did, alias = member
-    return _encode_certificate(_make_certificate(
-        team_sk, team_did, did, team_id=TEAM, alias=alias, identity_scope="local", certificate_id=certificate_id,
-    ))
+    return _encode_certificate(
+        _make_certificate(
+            team_sk,
+            team_did,
+            did,
+            team_id=TEAM,
+            alias=alias,
+            identity_scope="local",
+            certificate_id=certificate_id,
+        )
+    )
 
 
 def _new_member(alias):
@@ -41,10 +61,16 @@ def _new_member(alias):
 
 async def _connect(env, member, certificate):
     sk, did, _ = member
-    body = json.dumps({
-        "hostname": "host", "workspace_path": f"/work/{did[-8:]}", "repo_origin": "",
-        "role": "developer", "human_name": "member", "agent_type": "agent",
-    }).encode()
+    body = json.dumps(
+        {
+            "hostname": "host",
+            "workspace_path": f"/work/{did[-8:]}",
+            "repo_origin": "",
+            "role": "developer",
+            "human_name": "member",
+            "agent_type": "agent",
+        }
+    ).encode()
     headers = _signed_team_headers(sk, did, TEAM, certificate, body)
     headers["Content-Type"] = "application/json"
     response = await env.client.post("/v1/connect", content=body, headers=headers)
@@ -53,13 +79,17 @@ async def _connect(env, member, certificate):
 
 async def _roster(env, member, certificate):
     sk, did, _ = member
-    return await env.client.get("/v1/agents", headers=_signed_team_headers(sk, did, TEAM, certificate))
+    return await env.client.get(
+        "/v1/agents", headers=_signed_team_headers(sk, did, TEAM, certificate)
+    )
 
 
 async def _row(env, member):
     return await env.db.fetch_one(
         "SELECT agent_id, certificate_id, accepted_team_did_key FROM {{tables.agents}} "
-        "WHERE team_id = $1 AND did_key = $2 AND deleted_at IS NULL", TEAM, member[1],
+        "WHERE team_id = $1 AND did_key = $2 AND deleted_at IS NULL",
+        TEAM,
+        member[1],
     )
 
 
@@ -75,9 +105,13 @@ async def _change_key(env):
     next_sk, _, next_did = _make_keypair()
     await rotate_team_key(env, env.namespace_sk, env.namespace_did, next_did)
     reissued = _new_member("reissued")
-    connected = await _connect(env, reissued, _certificate(next_sk, next_did, reissued, "after-change"))
+    connected = await _connect(
+        env, reissued, _certificate(next_sk, next_did, reissued, "after-change")
+    )
     assert connected.status_code == 200, connected.text
-    pin = await env.db.fetch_value("SELECT team_did_key FROM {{tables.teams}} WHERE team_id = $1", TEAM)
+    pin = await env.db.fetch_value(
+        "SELECT team_did_key FROM {{tables.teams}} WHERE team_id = $1", TEAM
+    )
     assert pin == next_did
     return next_sk, next_did
 
@@ -85,7 +119,9 @@ async def _change_key(env):
 async def _mint_grant(env, member, certificate):
     sk, did, _ = member
     session_sk, session_did = _session_keypair()
-    body = json.dumps({"grant_did_key": session_did, "scopes": ["mail.read"], "ttl_seconds": 600}).encode()
+    body = json.dumps(
+        {"grant_did_key": session_did, "scopes": ["mail.read"], "ttl_seconds": 600}
+    ).encode()
     headers = _signed_team_headers(sk, did, TEAM, certificate, body)
     headers["Content-Type"] = "application/json"
     minted = await env.client.post("/v1/identity-grants", content=body, headers=headers)
@@ -95,10 +131,17 @@ async def _mint_grant(env, member, certificate):
 
 async def _use_grant(env, grant):
     session_sk, session_did, grant_id = grant
-    return await env.client.get("/v1/messages/inbox", headers=_grant_headers(
-        signing_key=session_sk, did_key=session_did, grant_id=grant_id,
-        method="GET", path="/v1/messages/inbox", aud=env.app.state.public_origin,
-    ))
+    return await env.client.get(
+        "/v1/messages/inbox",
+        headers=_grant_headers(
+            signing_key=session_sk,
+            did_key=session_did,
+            grant_id=grant_id,
+            method="GET",
+            path="/v1/messages/inbox",
+            aud=env.app.state.public_origin,
+        ),
+    )
 
 
 # --- Every writer records the key -------------------------------------------
@@ -109,32 +152,54 @@ async def test_connect_records_the_team_key_it_accepted_the_certificate_under(pi
     env = pinning
     member = _new_member("writer")
 
-    connected = await _connect(env, member, _certificate(env.team_sk, env.team_did, member, "writer-1"))
+    connected = await _connect(
+        env, member, _certificate(env.team_sk, env.team_did, member, "writer-1")
+    )
 
     assert connected.status_code == 200, connected.text
     row = await _row(env, member)
-    assert (row["certificate_id"], row["accepted_team_did_key"]) == ("writer-1", env.team_did)
+    assert (row["certificate_id"], row["accepted_team_did_key"]) == (
+        "writer-1",
+        env.team_did,
+    )
 
 
 @pytest.mark.asyncio
-async def test_a_request_under_a_new_key_records_it_even_with_the_same_certificate_id(pinning):
+async def test_a_request_under_a_new_key_records_it_even_with_the_same_certificate_id(
+    pinning,
+):
     env = pinning
     member = _new_member("sameid")
-    assert (await _connect(env, member, _certificate(env.team_sk, env.team_did, member, "same-id"))).status_code == 200
+    assert (
+        await _connect(
+            env, member, _certificate(env.team_sk, env.team_did, member, "same-id")
+        )
+    ).status_code == 200
     next_sk, next_did = await _change_key(env)
 
-    roster = await _roster(env, member, _certificate(next_sk, next_did, member, "same-id"))
+    roster = await _roster(
+        env, member, _certificate(next_sk, next_did, member, "same-id")
+    )
 
     assert roster.status_code == 200, roster.text
     row = await _row(env, member)
-    assert (row["certificate_id"], row["accepted_team_did_key"]) == ("same-id", next_did)
+    assert (row["certificate_id"], row["accepted_team_did_key"]) == (
+        "same-id",
+        next_did,
+    )
 
 
 @pytest.mark.asyncio
-async def test_the_fill_records_the_pin_for_every_existing_member_and_they_keep_passing(pinning):
+async def test_the_fill_records_the_pin_for_every_existing_member_and_they_keep_passing(
+    pinning,
+):
     env = pinning
     member = _new_member("existing")
-    assert (await _connect(env, member, _certificate(env.team_sk, env.team_did, member, "existing-1"))).status_code == 200
+    assert (
+        await _connect(
+            env, member, _certificate(env.team_sk, env.team_did, member, "existing-1")
+        )
+    ).status_code == 200
     alice = env.actors["alice"]
     without_certificate = (alice.sk, alice.did, "alice")
     # As every member row stood before the key was recorded, with or without a certificate.
@@ -152,18 +217,25 @@ async def test_the_fill_records_the_pin_for_every_existing_member_and_they_keep_
 
 
 @pytest.mark.asyncio
-async def test_a_member_row_written_without_the_key_takes_the_teams_key_of_that_moment(pinning):
+async def test_a_member_row_written_without_the_key_takes_the_teams_key_of_that_moment(
+    pinning,
+):
     env = pinning
     did = _make_keypair()[2]
 
     await env.db.execute(
         "INSERT INTO {{tables.agents}} (team_id, did_key, alias, identity_scope) VALUES ($1, $2, 'written', 'local')",
-        TEAM, did,
+        TEAM,
+        did,
     )
 
-    assert await env.db.fetch_value(
-        "SELECT accepted_team_did_key FROM {{tables.agents}} WHERE did_key = $1", did,
-    ) == env.team_did
+    assert (
+        await env.db.fetch_value(
+            "SELECT accepted_team_did_key FROM {{tables.agents}} WHERE did_key = $1",
+            did,
+        )
+        == env.team_did
+    )
 
 
 # --- A member under the current key passes; under a superseded key it is refused
@@ -184,16 +256,26 @@ async def test_a_superseded_certificate_is_refused_with_its_own_code(pinning):
 
 
 @pytest.mark.asyncio
-async def test_identity_only_membership_ends_with_the_key_and_returns_with_a_new_certificate(pinning):
+async def test_identity_only_membership_ends_with_the_key_and_returns_with_a_new_certificate(
+    pinning,
+):
     env = pinning
     member = _new_member("identity")
-    assert (await _connect(env, member, _certificate(env.team_sk, env.team_did, member, "identity-1"))).status_code == 200
+    assert (
+        await _connect(
+            env, member, _certificate(env.team_sk, env.team_did, member, "identity-1")
+        )
+    ).status_code == 200
     assert (await _identity_membership(env, member))["team_id"] == TEAM
 
     next_sk, next_did = await _change_key(env)
     assert (await _identity_membership(env, member))["team_id"] is None
 
-    assert (await _connect(env, member, _certificate(next_sk, next_did, member, "identity-2"))).status_code == 200
+    assert (
+        await _connect(
+            env, member, _certificate(next_sk, next_did, member, "identity-2")
+        )
+    ).status_code == 200
     assert (await _identity_membership(env, member))["team_id"] == TEAM
 
 
@@ -209,12 +291,26 @@ async def test_a_grant_ends_with_its_issuing_certificate_and_does_not_return(pin
     next_sk, next_did = await _change_key(env)
     refused = await _use_grant(env, grant)
     assert refused.status_code == 403, refused.text
+    assert refused.json()["detail"].endswith(
+        "Ask the issuer for a new grant, or enable renewal on launch and restart the seat if you use OATS."
+    )
 
-    assert (await _connect(env, member, _certificate(next_sk, next_did, member, "granter-2"))).status_code == 200
+    assert (
+        await _connect(
+            env, member, _certificate(next_sk, next_did, member, "granter-2")
+        )
+    ).status_code == 200
     assert (await _use_grant(env, grant)).status_code == 403
-    assert (await _use_grant(env, await _mint_grant(
-        env, member, _certificate(next_sk, next_did, member, "granter-2"),
-    ))).status_code == 200
+    assert (
+        await _use_grant(
+            env,
+            await _mint_grant(
+                env,
+                member,
+                _certificate(next_sk, next_did, member, "granter-2"),
+            ),
+        )
+    ).status_code == 200
 
 
 @pytest.mark.asyncio
@@ -229,7 +325,8 @@ async def test_a_grant_status_reports_the_superseded_issuer(pinning):
     assert (await _connect(env, member, current)).status_code == 200
 
     shown = await env.client.get(
-        f"/v1/identity-grants/{grant_id}/status", headers=_signed_team_headers(member[0], member[1], TEAM, current),
+        f"/v1/identity-grants/{grant_id}/status",
+        headers=_signed_team_headers(member[0], member[1], TEAM, current),
     )
 
     assert shown.status_code == 200, shown.text
@@ -240,26 +337,43 @@ async def test_a_grant_status_reports_the_superseded_issuer(pinning):
 async def test_sender_membership_is_inactive_under_a_superseded_key(pinning):
     env = pinning
     member = _new_member("sender")
-    assert (await _connect(env, member, _certificate(env.team_sk, env.team_did, member, "sender-1"))).status_code == 200
+    assert (
+        await _connect(
+            env, member, _certificate(env.team_sk, env.team_did, member, "sender-1")
+        )
+    ).status_code == 200
     agent_id = str((await _row(env, member))["agent_id"])
     rows = [{"team_id": TEAM, "from_agent_id": agent_id}]
     request = SimpleNamespace(app=env.app)
-    assert (await sender_memberships(request, env.infra, rows))[(TEAM, agent_id)].state == "active"
+    assert (await sender_memberships(request, env.infra, rows))[
+        (TEAM, agent_id)
+    ].state == "active"
 
     await _change_key(env)
 
-    assert (await sender_memberships(request, env.infra, rows))[(TEAM, agent_id)].state == "inactive"
+    assert (await sender_memberships(request, env.infra, rows))[
+        (TEAM, agent_id)
+    ].state == "inactive"
 
 
 @pytest.mark.asyncio
 async def test_participants_resolve_only_members_under_the_current_key(pinning):
     env = pinning
     member = _new_member("participant")
-    assert (await _connect(env, member, _certificate(env.team_sk, env.team_did, member, "participant-1"))).status_code == 200
+    assert (
+        await _connect(
+            env,
+            member,
+            _certificate(env.team_sk, env.team_did, member, "participant-1"),
+        )
+    ).status_code == 200
 
     async def resolved():
         rows = await messaging_participants_by_aliases(
-            env.infra, team_id=TEAM, aliases=["participant"], selected_team_id=TEAM,
+            env.infra,
+            team_id=TEAM,
+            aliases=["participant"],
+            selected_team_id=TEAM,
             registry_client=env.app.state.awid_registry_client,
         )
         return [row["alias"] for row in rows]
@@ -275,22 +389,36 @@ async def test_same_team_delivery_needs_the_sender_under_the_current_key(pinning
     sender = _new_member("teamsender")
     recipient = _new_member("teamrecipient")
     for member, cert_id in ((sender, "teamsender-1"), (recipient, "teamrecipient-1")):
-        assert (await _connect(env, member, _certificate(env.team_sk, env.team_did, member, cert_id))).status_code == 200
+        assert (
+            await _connect(
+                env, member, _certificate(env.team_sk, env.team_did, member, cert_id)
+            )
+        ).status_code == 200
 
     async def same_team():
         return await _has_verified_same_team_membership(
-            env.infra, recipient_agent={"did_key": recipient[1]},
-            sender_verified_team_id=None, sender_verified_dids=[sender[1]],
+            env.infra,
+            recipient_agent={"did_key": recipient[1]},
+            sender_verified_team_id=None,
+            sender_verified_dids=[sender[1]],
         )
 
     assert await same_team()
     next_sk, next_did = await _change_key(env)
-    assert (await _connect(env, recipient, _certificate(next_sk, next_did, recipient, "teamrecipient-2"))).status_code == 200
+    assert (
+        await _connect(
+            env,
+            recipient,
+            _certificate(next_sk, next_did, recipient, "teamrecipient-2"),
+        )
+    ).status_code == 200
     assert not await same_team()
 
 
 @pytest.mark.asyncio
-async def test_a_member_row_written_with_a_certificate_but_no_key_is_not_a_member(pinning):
+async def test_a_member_row_written_with_a_certificate_but_no_key_is_not_a_member(
+    pinning,
+):
     env = pinning
     sk, _, did = _make_keypair()
     member = (sk, did, "unverified")
@@ -299,7 +427,8 @@ async def test_a_member_row_written_with_a_certificate_but_no_key_is_not_a_membe
     await env.db.execute(
         "INSERT INTO {{tables.agents}} (team_id, did_key, alias, identity_scope, certificate_id) "
         "VALUES ($1, $2, 'unverified', 'local', 'unverified-1')",
-        TEAM, did,
+        TEAM,
+        did,
     )
 
     assert (await _row(env, member))["accepted_team_did_key"] is None
@@ -307,7 +436,9 @@ async def test_a_member_row_written_with_a_certificate_but_no_key_is_not_a_membe
 
 
 @pytest.mark.asyncio
-async def test_a_member_without_a_certificate_on_file_is_a_member_until_the_key_changes(pinning):
+async def test_a_member_without_a_certificate_on_file_is_a_member_until_the_key_changes(
+    pinning,
+):
     env = pinning
     alice = env.actors["alice"]
     member = (alice.sk, alice.did, "alice")
@@ -317,13 +448,18 @@ async def test_a_member_without_a_certificate_on_file_is_a_member_until_the_key_
     next_sk, next_did = await _change_key(env)
     assert (await _identity_membership(env, member))["team_id"] is None
 
-    assert (await _connect(env, member, _certificate(next_sk, next_did, member, "alice-after"))).status_code == 200
+    assert (
+        await _connect(
+            env, member, _certificate(next_sk, next_did, member, "alice-after")
+        )
+    ).status_code == 200
     assert (await _identity_membership(env, member))["team_id"] == TEAM
 
 
-
 @pytest.mark.asyncio
-async def test_before_enforcement_a_member_under_the_registrys_key_keeps_its_grant_and_team_context(pinning, monkeypatch):
+async def test_before_enforcement_a_member_under_the_registrys_key_keeps_its_grant_and_team_context(
+    pinning, monkeypatch
+):
     env = pinning
     monkeypatch.setenv("AWEB_ENFORCE_TEAM_KEY_PINS", "false")
     await register_namespace_controller(env, env.namespace_did)
@@ -338,4 +474,9 @@ async def test_before_enforcement_a_member_under_the_registrys_key_keeps_its_gra
 
     assert (await _use_grant(env, grant)).status_code == 200
     assert (await _identity_membership(env, member))["team_id"] == TEAM
-    assert await env.db.fetch_value("SELECT team_did_key FROM {{tables.teams}} WHERE team_id = $1", TEAM) == served_did
+    assert (
+        await env.db.fetch_value(
+            "SELECT team_did_key FROM {{tables.teams}} WHERE team_id = $1", TEAM
+        )
+        == served_did
+    )
