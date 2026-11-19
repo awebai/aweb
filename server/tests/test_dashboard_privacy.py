@@ -42,6 +42,7 @@ from awid.ratelimit import MemoryFixedWindowRateLimiter
 from awid.registry import RegistryClient
 from awid_service.db import AwidDatabaseInfra
 from awid_service.main import create_app as create_registry_app
+from awid_service.testing import Registry, ServiceTransport
 from test_dashboard import _JWT_SECRET, _make_jwt
 from test_messages_http import (
     _encode_certificate,
@@ -95,6 +96,13 @@ async def privacy_stack(shared_test_pool, monkeypatch, tls=None):
         # The registry's public origin, which covering controller signatures name.
         registry_app.state.awid_public_origins = ("http://registry.test",)
         async with registry_app.router.lifespan_context(registry_app):
+            fixture_registry = Registry(
+                app=registry_app,
+                db=registry_db.get_manager(),
+                transport=ServiceTransport(registry_app),
+                registry_url="http://registry.test",
+            )
+            namespace_key = await fixture_registry.ensure_namespace(domain="example.test")
             registry = RegistryClient(
                 registry_url="http://registry.test",
                 transport=httpx.ASGITransport(app=registry_app),
@@ -124,11 +132,13 @@ async def privacy_stack(shared_test_pool, monkeypatch, tls=None):
                 TEAM_NAME,
                 team_did,
             )
-            await registry_db.get_manager().execute(
-                "INSERT INTO {{tables.teams}} (domain, name, team_did_key, visibility) "
-                "VALUES ('example.test', $1, $2, 'public')",
-                TEAM_NAME,
-                team_did,
+            await registry.register_team(
+                domain="example.test",
+                name=TEAM_NAME,
+                display_name=TEAM_NAME,
+                team_did_key=team_did,
+                visibility="public",
+                namespace_controller_signing_key=bytes(namespace_key),
             )
             actors = {}
             for alias in ("alice", "bob", "carol"):
@@ -207,6 +217,7 @@ async def privacy_stack(shared_test_pool, monkeypatch, tls=None):
                         actors=actors,
                         registry_db=registry_db.get_manager(),
                         registry_app=registry_app,
+                        registry=fixture_registry,
                         dispatched=dispatched,
                         app=app,
                         infra=db,
@@ -219,6 +230,7 @@ async def privacy_stack(shared_test_pool, monkeypatch, tls=None):
                 sock.close()
                 await stop_outbox_recovery(app)
                 await registry.aclose()
+                await fixture_registry.aclose()
         await registry_db.close()
         await db.close()
 

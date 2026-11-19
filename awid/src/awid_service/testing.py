@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
@@ -29,12 +29,14 @@ from redis.asyncio import Redis
 from awid.attestation_records import sign_record
 from awid.did import did_from_public_key
 from awid.external_authority import DNSLookup
+from awid.dns_verify import DomainAuthority, DnsVerificationError
 from awid.ratelimit import NoOpRateLimiter
 from awid.registry import RegistryClient
 from awid.signing import canonical_json_bytes, sign_message
 from awid.team_server_record import record_signing_bytes
 
 from .db import AwidDatabaseInfra
+from .deps import get_domain_verifier
 from .main import mount_registry
 
 REGISTRY_URL = "https://registry.example"
@@ -99,6 +101,57 @@ class Registry:
     app: FastAPI
     db: AsyncDatabaseManager
     transport: ServiceTransport
+    registry_url: str = REGISTRY_URL
+    _namespace_keys: dict[str, SigningKey] = field(default_factory=dict, repr=False)
+    _registry_client: RegistryClient | None = field(default=None, init=False, repr=False)
+
+    async def ensure_namespace(
+        self,
+        *,
+        domain: str,
+        controller: SigningKey | None = None,
+    ) -> SigningKey:
+        """Register namespace authority through AWID; retain only fixture-owned custody.
+
+        docs/identity.md:95-100 separates namespace authority from the team key.
+        The fixture's DNS answer is outside the registry under test, as TXTAnswers is.
+        """
+        key = controller if controller is not None else self._namespace_keys.get(domain)
+        client = self._client()
+        known = await client.get_namespace(domain)
+        if known is not None:
+            if key is None or known.controller_did != _did_key(key):
+                raise ValueError(
+                    f"Namespace {domain} has a different controller. "
+                    "Pass its current signing key as controller=."
+                )
+            self._namespace_keys[domain] = key
+            return key
+        if key is None:
+            key = SigningKey.generate()
+        self._namespace_keys[domain] = key
+        if get_domain_verifier not in self.app.dependency_overrides:
+            self.app.dependency_overrides[get_domain_verifier] = lambda: self.namespace_authority
+        try:
+            await client.register_namespace(domain, _did_key(key), bytes(key))
+        except Exception:
+            del self._namespace_keys[domain]
+            raise
+        return key
+
+    async def namespace_authority(self, domain: str) -> DomainAuthority:
+        """The DNS authority published by this fixture's explicit namespace controller."""
+        key = self._namespace_keys.get(domain)
+        if key is None:
+            raise DnsVerificationError(
+                f"No fixture DNS authority exists for {domain}. "
+                "Register the namespace through ensure_namespace first."
+            )
+        return DomainAuthority(
+            controller_did=_did_key(key),
+            registry_url=self.registry_url,
+            dns_name=f"_awid.{domain}",
+        )
 
     async def add_team(
         self, team_id: str, team_did_key: str, *, visibility: str = "public"
@@ -219,7 +272,17 @@ class Registry:
             )
 
     def _client(self) -> RegistryClient:
-        return RegistryClient(registry_url=REGISTRY_URL, transport=self.transport)
+        if self._registry_client is None:
+            self._registry_client = RegistryClient(
+                registry_url=self.registry_url, transport=self.transport
+            )
+        return self._registry_client
+
+    async def aclose(self) -> None:
+        """Release the client owned by this registry fixture."""
+        if self._registry_client is not None:
+            await self._registry_client.aclose()
+            self._registry_client = None
 
     async def register_did(self, key: SigningKey) -> str:
         """Registers ``key`` as a new did:aw through AWID's own route; returns the did:aw."""
@@ -276,6 +339,7 @@ async def running_registry(
         DatabaseConfig(connection_string=database_url, schema=None)
     )
     infra = AwidDatabaseInfra(schema="awid")
+    registry = None
     try:
         await infra.initialize(shared_pool=pool, run_migrations=True)
         app = FastAPI()
@@ -288,7 +352,14 @@ async def running_registry(
         # Its public origin, which covering controller signatures name. After
         # mount_registry, which reads AWID_PUBLIC_ORIGINS from the environment.
         app.state.awid_public_origins = (REGISTRY_URL,)
-        yield Registry(app=app, db=infra.get_manager("aweb"), transport=ServiceTransport(app))
+        registry = Registry(app=app, db=infra.get_manager("aweb"), transport=ServiceTransport(app))
+        yield registry
     finally:
-        await infra.close()
-        await pool.close()
+        try:
+            if registry is not None:
+                await registry.aclose()
+        finally:
+            try:
+                await infra.close()
+            finally:
+                await pool.close()
