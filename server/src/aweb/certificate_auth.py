@@ -24,7 +24,7 @@ from aweb.awid_error_handling import AWID_DEPENDENCY_ERRORS
 from aweb.certificate_evidence import EvidenceMode
 from aweb.service_errors import ServiceError
 from aweb.team_key_pins import pinned_team_key
-from aweb.team_registry import read_team_key
+from aweb.team_key_reader import read_team_key
 
 
 class CertificateVerificationReason(StrEnum):

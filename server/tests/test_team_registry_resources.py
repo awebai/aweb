@@ -5,12 +5,11 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from aweb.certificate_evidence import EvidenceMode
+from aweb.team_key_reader import read_team_key
 from awid.external_authority import SystemTXTOutcomeResolver
 from awid.registry import CachedRegistryClient
 from awid.team_key_acts import TeamKeyMemo
-
-from aweb.certificate_evidence import EvidenceMode
-from aweb.team_registry import read_team_key
 from test_team_key_rotation_cache import _Redis
 
 
@@ -19,7 +18,7 @@ async def test_explicit_team_key_reader_uses_borrowed_sdk_strength_and_one_pin_o
     monkeypatch,
 ):
     # Stand-in pin admission records the interface, not controller authority.
-    import aweb.team_registry as owner
+    import aweb.team_key_reader as owner
 
     key = ["cached-controller"]
     reads, admissions = [], []
