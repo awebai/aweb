@@ -1219,14 +1219,14 @@ type teamHumanAddedAgent struct {
 	Source *teamProfileSource `json:"-"`
 	// ProfileSource states where this agent's profile came from, built from
 	// Source.Describe so the reported line and the resolution cannot drift apart.
-	ProfileSource string `json:"profile_source,omitempty"`
-	Scope         string `json:"scope,omitempty"`
-	Alias         string `json:"alias,omitempty"`
-	TeamID        string `json:"team_id,omitempty"`
-	CertPath      string `json:"cert_path,omitempty"`
-	Outcome       string `json:"outcome,omitempty"`
-	Reason        string `json:"reason,omitempty"`
-	Connected     bool   `json:"-"`
+	ProfileSource        string `json:"profile_source,omitempty"`
+	Scope                string `json:"scope,omitempty"`
+	Alias                string `json:"alias,omitempty"`
+	TeamID               string `json:"team_id,omitempty"`
+	CertPath             string `json:"cert_path,omitempty"`
+	Outcome              string `json:"outcome,omitempty"`
+	Reason               string `json:"reason,omitempty"`
+	ProfileRoleConnected bool   `json:"-"`
 }
 
 func resolveTeamHumanAddAgentSpecs(wd string, args []string, specs []teamAgentSpec) ([]teamAgentSpec, error) {
@@ -1646,7 +1646,7 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 				plans[i].Alias = accepted.Output.Alias
 				plans[i].TeamID = accepted.Output.TeamID
 				plans[i].CertPath = accepted.Output.CertPath
-				plans[i].Connected = apiKeyBootstrapMode
+				plans[i].ProfileRoleConnected = apiKeyBootstrapMode
 			}
 		} else {
 			accepted, err := resolveOrCreateTeamMemberIdentity(inviteAnchorDir, plans[i], apiKeyBootstrapMode, opts.APIKey)
@@ -1662,7 +1662,7 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 			plans[i].Alias = accepted.Output.Alias
 			plans[i].TeamID = accepted.Output.TeamID
 			plans[i].CertPath = accepted.Output.CertPath
-			plans[i].Connected = apiKeyBootstrapMode
+			plans[i].ProfileRoleConnected = apiKeyBootstrapMode
 		}
 		rollbackOnErr := func(err error) error {
 			var memberRollbackErr error
@@ -2366,30 +2366,6 @@ func createAndAcceptTeamInviteForEmptyAgent(anchorDir, homeDir, alias string, gl
 		return nil, err
 	}
 	return accepted, nil
-}
-
-func ensureAcceptedTeamWorkspaceBinding(homeDir string, output *teamAcceptInviteOutput, cert *awid.TeamCertificate, awebURL string) error {
-	if output == nil || cert == nil {
-		return fmt.Errorf("accepted team membership is required")
-	}
-	workspacePath := filepath.Join(homeDir, awconfig.DefaultWorktreeWorkspaceRelativePath())
-	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(workspacePath)
-	if err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	if workspace == nil {
-		workspace = &awconfig.WorktreeWorkspace{}
-	}
-	workspace.AwebURL = strings.TrimSpace(awebURL)
-	workspace.WorkspacePath = homeDir
-	workspace.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-	upsertWorkspaceMembershipCache(workspace, awconfig.WorktreeMembership{
-		TeamID:   strings.TrimSpace(output.TeamID),
-		Alias:    strings.TrimSpace(output.Alias),
-		CertPath: filepath.ToSlash(strings.TrimSpace(output.CertPath)),
-		JoinedAt: strings.TrimSpace(cert.IssuedAt),
-	})
-	return awconfig.SaveWorktreeWorkspaceTo(workspacePath, workspace)
 }
 
 func formatTeamHumanAdd(v any) string {

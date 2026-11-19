@@ -12,7 +12,7 @@ import (
 )
 
 func TestProvisionedMembershipConnectsBeforePublishingItsKey(t *testing.T) {
-	for _, scenario := range []string{"ready", "connect unavailable", "publish unavailable"} {
+	for _, scenario := range []string{"ready", "connect unavailable", "publish unavailable", "normal connect publish unavailable"} {
 		t.Run(scenario, func(t *testing.T) {
 			t.Setenv("HOME", t.TempDir())
 			t.Setenv("APP_ENV", "development")
@@ -43,7 +43,7 @@ func TestProvisionedMembershipConnectsBeforePublishingItsKey(t *testing.T) {
 							http.Error(w, "Agent not connected", 403)
 							return
 						}
-						if scenario == "publish unavailable" {
+						if strings.HasSuffix(scenario, "publish unavailable") {
 							http.Error(w, "publication unavailable", 503)
 							return
 						}
@@ -55,7 +55,16 @@ func TestProvisionedMembershipConnectsBeforePublishingItsKey(t *testing.T) {
 			})
 			defer server.Close()
 			t.Setenv("AWID_REGISTRY_URL", server.URL)
-			err := recordAcceptedTeamMembership(acceptedTeamMembershipRequest{WorkingDir: target, Output: output, Certificate: cert, RegistryURL: server.URL, AwebURL: server.URL, IdentityHome: explicitEncryptionKeyIdentityHome(awconfig.WorktreeIdentityHome(target)), Activation: membershipMakeActive, Binding: membershipWriteWorkspaceBinding})
+			var err error
+			if scenario == "normal connect publish unavailable" {
+				result, connectErr := initCertificateConnectWithOptions(target, server.URL, certificateConnectOptions{IdentityHome: awconfig.WorktreeIdentityHome(target)})
+				err = connectErr
+				if err == nil && result.Status != "connected" {
+					t.Fatalf("normal connect status=%s", result.Status)
+				}
+			} else {
+				err = recordAcceptedTeamMembership(acceptedTeamMembershipRequest{WorkingDir: target, Output: output, Certificate: cert, RegistryURL: server.URL, AwebURL: server.URL, IdentityHome: explicitEncryptionKeyIdentityHome(awconfig.WorktreeIdentityHome(target)), Activation: membershipMakeActive, Binding: membershipWriteWorkspaceBinding})
+			}
 			switch scenario {
 			case "ready":
 				if err != nil || connectCalls != 1 || publishCalls == 0 {
@@ -70,17 +79,31 @@ func TestProvisionedMembershipConnectsBeforePublishingItsKey(t *testing.T) {
 				if err == nil || !strings.Contains(err.Error(), "NOT published") || !strings.Contains(err.Error(), expected) || publishCalls != 0 {
 					t.Fatalf("connect failure reported success or lost recovery: connect=%d publish=%d err=%v", connectCalls, publishCalls, err)
 				}
+			case "normal connect publish unavailable":
+				if err != nil || connectCalls != 1 || publishCalls == 0 {
+					t.Fatalf("released best-effort behavior changed: %v", err)
+				}
 			case "publish unavailable":
 				if err == nil || !strings.Contains(err.Error(), "not confirmed") || !strings.Contains(err.Error(), "encryption-key setup") || !connected {
 					t.Fatalf("publication uncertainty reported success: connect=%d publish=%d err=%v", connectCalls, publishCalls, err)
 				}
 			}
+			if err != nil && !retainUnfinishedProvisioningIdentity(err) {
+				t.Fatal("roster cleanup would discard the admitted member's home", err)
+			}
 			if _, err := os.Stat(filepath.Join(target, ".aw", "signing.key")); err != nil {
 				t.Fatal("failure discarded admitted identity", err)
 			}
-			if _, err := os.Stat(output.CertPath); err != nil {
+			if _, err := os.Stat(awconfig.TeamCertificatePath(target, cert.Team)); err != nil {
 				t.Fatal("failure discarded accepted certificate", err)
 			}
 		})
+	}
+}
+
+func TestConnectRejectsUnknownPublicationPolicyBeforeTransport(t *testing.T) {
+	_, err := initCertificateConnectWithOptions(t.TempDir(), "http://127.0.0.1:1", certificateConnectOptions{EncryptionPublication: encryptionPublicationPolicy(255)})
+	if err == nil || !strings.Contains(err.Error(), "publication policy is unknown") {
+		t.Fatalf("unknown policy reached admission: %v", err)
 	}
 }

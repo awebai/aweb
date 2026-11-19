@@ -59,17 +59,22 @@ type connectRequest struct {
 }
 
 type certificateConnectOptions struct {
-	Role                 string
-	HumanName            string
-	AgentType            string
-	APIKey               string
-	IdentityHome         string
-	BindingWorkspacePath string
+	EncryptionPublication encryptionPublicationPolicy
+	Role                  string
+	HumanName             string
+	AgentType             string
+	APIKey                string
+	IdentityHome          string
+	BindingWorkspacePath  string
 }
 
 // initCertificateConnectWithOptions implements the certificate-based init flow.
 // Reads team cert + signing key, calls POST /v1/connect, writes workspace.yaml.
 func initCertificateConnectWithOptions(workingDir, awebURL string, opts certificateConnectOptions) (connectOutput, error) {
+	if err := opts.EncryptionPublication.validate(); err != nil {
+		return connectOutput{}, err
+	}
+
 	identityHome := strings.TrimSpace(opts.IdentityHome)
 	if identityHome == "" {
 		identityHome = filepath.Join(filepath.Clean(workingDir), ".aw")
@@ -205,7 +210,7 @@ func initCertificateConnectWithOptions(workingDir, awebURL string, opts certific
 	if err := ensureWorktreeContextAtIdentityHome(identityHome); err != nil {
 		return connectOutput{}, err
 	}
-	if err := completeConnectedEncryption(ctx, connectedEncryptionSetup{WorkingDir: workingDir, Home: awconfig.IdentityHome{Root: identityHome}, Warnings: os.Stderr}); err != nil {
+	if err := completeConnectedEncryption(ctx, connectedEncryptionSetup{WorkingDir: workingDir, Home: awconfig.IdentityHome{Root: identityHome}, Warnings: os.Stderr, Policy: opts.EncryptionPublication}); err != nil {
 		return connectOutput{}, err
 	}
 
