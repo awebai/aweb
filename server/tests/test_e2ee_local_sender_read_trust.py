@@ -65,19 +65,26 @@ def _signed_plaintext_mail_request(
             },
         )
     )
-    return dict(
+    request = dict(
         to_did=agent["did"],
-        to_address=agent["address"],
         subject="Local encrypted",
         body="local sender private text",
         message_id=message_id,
         conversation_id=conversation_id,
         timestamp=now.isoformat(),
         from_did=sender["did"],
-        to_stable_id=agent["stable_id"],
         signature=sign_message(sender["signing_key"], payload),
         signed_payload=payload.decode(),
     )
+    # Optional selectors use absence, not empty strings: SendMessageRequest
+    # requires at least one character when either selector is supplied.
+    for field, value in (
+        ("to_address", agent["address"]),
+        ("to_stable_id", agent["stable_id"]),
+    ):
+        if value:
+            request[field] = value
+    return request
 
 
 privacy_app = test_dashboard_privacy.privacy_app

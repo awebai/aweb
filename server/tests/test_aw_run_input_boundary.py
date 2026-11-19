@@ -43,9 +43,9 @@ class RunnerIdentity:
     "identity",
     [
         RunnerIdentity(global_resident=False, grant=False),
-        RunnerIdentity(global_resident=True, grant=True),
+        RunnerIdentity(global_resident=True, grant=False),
     ],
-    ids=["local-member", "global-grant"],
+    ids=["local-member", "global-resident"],
 )
 async def test_aw_run_mail_verification_boundary(
     privacy_app, tmp_path, sender_verification, identity
