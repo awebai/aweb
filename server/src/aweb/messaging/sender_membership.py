@@ -14,7 +14,8 @@ from aweb.certificate_registration import (
     configured_registration_mode,
     read_certificate_registration,
 )
-from aweb.team_auth_deps import _get_revoked_certificates
+from aweb.application_state import application_registry_client
+from aweb.team_registry import request_revoked_certificates
 
 
 logger = logging.getLogger(__name__)
@@ -92,7 +93,7 @@ async def sender_memberships(
                 logger.warning("Sender membership has invalid team scope", exc_info=True)
                 continue
             try:
-                revocations[team] = await _get_revoked_certificates(
+                revocations[team] = await request_revoked_certificates(
                     request, team, certificate_ids=team_certificates[team]
                 )
             except HTTPException:
@@ -105,7 +106,7 @@ async def sender_memberships(
             projection.state = SenderMembershipState.INACTIVE
             continue
         registration = await read_certificate_registration(
-            registry_client=getattr(request.app.state, "awid_registry_client", None),
+            registry_client=application_registry_client(request.app.state),
             team_id=team,
             certificate_id=certificate_id,
             mode=configured_registration_mode(),

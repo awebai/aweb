@@ -50,10 +50,11 @@ from aweb.role_name_compat import (
     normalize_optional_role_name,
     resolve_role_name_aliases,
 )
+from aweb.application_state import application_registry_client
+from aweb.team_registry import resolve_team_key
 from aweb.auth_context import GRANT_SCOPE_ANY
 from aweb.team_auth_deps import (
     TeamIdentity,
-    _resolve_team_key,
     get_team_identity,
     team_identity_with_grant_scope,
 )
@@ -493,7 +494,7 @@ async def list_agents(
     grant_liveness_by_id = await valid_grant_liveness_by_workspace(
         aweb_db,
         workspace_ids,
-        registry_client=getattr(request.app.state, "awid_registry_client", None),
+        registry_client=application_registry_client(request.app.state),
         request=request,
     )
 
@@ -972,7 +973,7 @@ async def replace_local_identity_key(
             "new_certificate_id": payload.new_certificate_id,
         },
     )
-    if authorizer_did != await _resolve_team_key(request, team_id):
+    if authorizer_did != await resolve_team_key(request, team_id):
         raise HTTPException(
             status_code=403,
             detail="Team controller authorization is required for local identity key replacement",

@@ -13,7 +13,8 @@ import json
 import pytest
 
 from awid.signing import canonical_json_bytes, sign_message
-from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
+from test_dashboard_privacy import TEAM
+from test_dashboard_privacy import privacy_app as privacy_app
 from test_messages_http import _make_keypair, _signed_team_headers
 
 
@@ -111,7 +112,10 @@ async def test_designation_is_replaced_and_cleared(privacy_app):
 @pytest.mark.parametrize(
     "host_did,detail",
     [
-        ("outsider", "host_not_member: host_did is not an active member of this team"),
+        (
+            "outsider",
+            "host_not_member: host_did is not a current member of this team. Check the host name; if it exists, ask it to reconnect with a current team certificate.",
+        ),
         ("did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2", "host_not_did_key: host_did must be a did:key"),
         ("", "host_not_did_key: host_did must be a did:key"),
     ],
@@ -151,7 +155,7 @@ async def test_designation_refuses_a_deleted_member_as_host(privacy_app):
     assert response.status_code == 422, response.text
     assert (
         response.json()["detail"]
-        == "host_not_member: host_did is not an active member of this team"
+        == "host_not_member: host_did is not a current member of this team. Check the host name; if it exists, ask it to reconnect with a current team certificate."
     )
 
 
@@ -241,7 +245,7 @@ async def test_controller_path_refuses_a_non_member_host(privacy_app):
     assert response.status_code == 422, response.text
     assert (
         response.json()["detail"]
-        == "host_not_member: host_did is not an active member of this team"
+        == "host_not_member: host_did is not a current member of this team. Check the host name; if it exists, ask it to reconnect with a current team certificate."
     )
 
 

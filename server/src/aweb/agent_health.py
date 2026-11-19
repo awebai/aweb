@@ -8,6 +8,8 @@ host report gets aweb's own observations, worded as observations.
 
 from __future__ import annotations
 
+from aweb.member_team_key import current_member_sql
+
 from datetime import datetime, timedelta
 import json
 import logging
@@ -218,7 +220,10 @@ async def agent_health(
         SELECT a.agent_id, h.host_did,
                EXISTS (
                    SELECT 1 FROM {{tables.agents}} m
-                   WHERE m.team_id = a.team_id AND m.did_key = h.host_did AND m.deleted_at IS NULL
+                   WHERE m.team_id = a.team_id AND m.did_key = h.host_did
+                     AND """
+        + current_member_sql("m")
+        + """
                ) AS host_active,
                s.signed_payload, s.signature,
                (SELECT max(w.last_seen_at) FROM {{tables.workspaces}} w
