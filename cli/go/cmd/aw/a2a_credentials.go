@@ -1,147 +1,174 @@
 package main
 
 import (
+	"errors"
 	"fmt"
-	"github.com/awebai/aw/a2a"
-	"github.com/awebai/aw/awconfig"
-	"gopkg.in/yaml.v3"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/awebai/aw/a2a"
+	"github.com/awebai/aw/awconfig"
+	"github.com/awebai/aw/internal/atomicfile"
+	"gopkg.in/yaml.v3"
 )
 
 const maxStoredA2ATaskTokens = 50
 
-// saveA2ATaskTokenBestEffort persists the task bearer token issued by the
-// gateway so later `aw a2a status`/`aw a2a cancel` calls can present it.
-// Without it, scoped routes correctly answer task_not_found to the async
-// caller the contract tells to poll. Saving requires an existing .aw
-// directory; otherwise the token is only printed.
-func saveA2ATaskTokenBestEffort(rpcURL string, task a2a.Task) {
-	taskID := strings.TrimSpace(task.ID)
-	token, _ := task.Metadata["task_bearer_token"].(string)
-	token = strings.TrimSpace(token)
-	if taskID == "" || token == "" {
-		return
-	}
-	if info, err := os.Stat(".aw"); err != nil || !info.IsDir() {
-		return
-	}
-	path := filepath.Join(".aw", "a2a-credentials.yaml")
+type a2aCredentialQuery struct {
+	CardURL string
+	RPCURL  string
+	TaskID  string
+}
+
+// readA2ACredentials distinguishes a missing optional file from an unreadable or
+// malformed file. Refusing the latter also prevents a save from erasing it.
+func readA2ACredentials(path string) (a2aCredentialsFile, error) {
 	var file a2aCredentialsFile
-	if data, err := os.ReadFile(path); err == nil {
-		_ = yaml.Unmarshal(data, &file)
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return file, nil
 	}
-	kept := file.Credentials[:0]
-	var taskEntries []a2aCredentialEntry
+	if err != nil {
+		return file, fmt.Errorf("read A2A credentials: %w; repair the credential file and retry", err)
+	}
+	if err := yaml.Unmarshal(data, &file); err != nil {
+		// YAML diagnostics may include credential values.
+		return file, fmt.Errorf("A2A credential file %s is malformed. Repair its YAML and retry", path)
+	}
+	return file, nil
+}
+
+// saveA2ATaskToken keeps task access in the invoking instance's .aw directory;
+// static credentials may belong to an independently selected identity home.
+// Callers must still return the delivered task if local persistence fails.
+func saveA2ATaskToken(rpcURL string, task a2a.Task) error {
+	rawToken, exists := task.Metadata["task_bearer_token"]
+	if !exists {
+		return nil
+	}
+	token, ok := rawToken.(string)
+	if !ok {
+		return fmt.Errorf("gateway returned a task token with an invalid type. Repair the gateway before sending again")
+	}
+	token = strings.TrimSpace(token)
+	taskID := strings.TrimSpace(task.ID)
+	if taskID == "" || token == "" {
+		return nil
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("locate task-token directory: %w", err)
+	}
+	return saveA2ATaskTokenInDirectory(a2aTokenSave{Directory: filepath.Join(wd, ".aw"), RPCURL: rpcURL, TaskID: taskID, Token: token})
+}
+
+type a2aTokenSave struct {
+	Directory string
+	RPCURL    string
+	TaskID    string
+	Token     string
+}
+
+func saveA2ATaskTokenInDirectory(input a2aTokenSave) (resultErr error) {
+	info, err := os.Stat(input.Directory)
+	if err != nil {
+		return fmt.Errorf("open instance task-token directory: %w", err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("instance task-token path is not a directory")
+	}
+	// All task-token writers lock the same instance file before reading it.
+	lock, err := awconfig.LockExclusive(filepath.Join(input.Directory, "a2a-credentials.lock"))
+	if err != nil {
+		return fmt.Errorf("lock A2A task tokens: %w", err)
+	}
+	defer func() { resultErr = errors.Join(resultErr, lock.Close()) }()
+	path := filepath.Join(input.Directory, "a2a-credentials.yaml")
+	file, err := readA2ACredentials(path)
+	if err != nil {
+		return err
+	}
+	kept := make([]a2aCredentialEntry, 0, len(file.Credentials)+1)
+	var tasks []a2aCredentialEntry
 	for _, entry := range file.Credentials {
 		if strings.TrimSpace(entry.TaskID) == "" {
 			kept = append(kept, entry)
 			continue
 		}
-		if strings.TrimSpace(entry.TaskID) == taskID {
-			continue
+		if strings.TrimSpace(entry.TaskID) != input.TaskID {
+			tasks = append(tasks, entry)
 		}
-		taskEntries = append(taskEntries, entry)
 	}
-	taskEntries = append(taskEntries, a2aCredentialEntry{
-		URL:       strings.TrimSpace(rpcURL),
-		Host:      urlHost(rpcURL),
-		TaskID:    taskID,
-		TaskToken: token,
-		CreatedAt: time.Now().UTC().Format(time.RFC3339),
-	})
-	if len(taskEntries) > maxStoredA2ATaskTokens {
-		taskEntries = taskEntries[len(taskEntries)-maxStoredA2ATaskTokens:]
+	tasks = append(tasks, a2aCredentialEntry{URL: strings.TrimSpace(input.RPCURL), Host: urlHost(input.RPCURL), TaskID: input.TaskID, TaskToken: input.Token, CreatedAt: time.Now().UTC().Format(time.RFC3339)})
+	if len(tasks) > maxStoredA2ATaskTokens {
+		tasks = tasks[len(tasks)-maxStoredA2ATaskTokens:]
 	}
-	file.Credentials = append(kept, taskEntries...)
+	file.Credentials = append(kept, tasks...)
 	data, err := yaml.Marshal(file)
 	if err != nil {
-		return
+		return fmt.Errorf("encode A2A task-token file: %w", err)
 	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not persist task token: %v\n", err)
-		return
-	}
-	// WriteFile only applies the mode on create; tighten pre-existing files.
-	_ = os.Chmod(path, 0o600)
+	return atomicfile.Write(path, data, 0o600)
 }
 
-// loadA2ATaskTokenBestEffort returns the stored token for a specific task.
-func loadA2ATaskTokenBestEffort(cardURL, rpcURL, taskID string) string {
-	wd, _ := os.Getwd()
-	return loadA2ATaskTokenBestEffortForDir(wd, cardURL, rpcURL, taskID)
-}
-
-func loadA2ATaskTokenBestEffortForDir(workingDir, cardURL, rpcURL, taskID string) string {
-	data, err := os.ReadFile(filepath.Join(workingDir, ".aw", "a2a-credentials.yaml"))
+func loadA2ATaskToken(query a2aCredentialQuery) (string, error) {
+	wd, err := os.Getwd()
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("locate task-token directory: %w; run from an accessible directory and retry", err)
 	}
-	var file a2aCredentialsFile
-	if err := yaml.Unmarshal(data, &file); err != nil {
-		return ""
+	return loadA2ATaskTokenForDir(wd, query)
+}
+
+func loadA2ATaskTokenForDir(workingDir string, query a2aCredentialQuery) (string, error) {
+	file, err := readA2ACredentials(filepath.Join(workingDir, ".aw", "a2a-credentials.yaml"))
+	if err != nil {
+		return "", err
 	}
-	cardHost := urlHost(cardURL)
-	rpcHost := urlHost(rpcURL)
 	for _, entry := range file.Credentials {
-		if strings.TrimSpace(entry.TaskID) != strings.TrimSpace(taskID) {
-			continue
-		}
-		host := strings.TrimSpace(entry.Host)
-		url := strings.TrimSpace(entry.URL)
-		if url == strings.TrimSpace(rpcURL) || url == strings.TrimSpace(cardURL) || host == cardHost || host == rpcHost {
-			return strings.TrimSpace(entry.TaskToken)
+		if strings.TrimSpace(entry.TaskID) == strings.TrimSpace(query.TaskID) && matchesA2ACredential(entry, query) {
+			return strings.TrimSpace(entry.TaskToken), nil
 		}
 	}
-	return ""
+	return "", nil
 }
 
-func loadA2ACredentialBestEffort(cardURL, rpcURL string) a2a.Credential {
-	wd, _ := os.Getwd()
-	return loadA2ACredentialBestEffortForDir(wd, cardURL, rpcURL)
+func loadA2ACredential(query a2aCredentialQuery) (a2a.Credential, error) {
+	wd, err := os.Getwd()
+	if err != nil {
+		return a2a.Credential{}, fmt.Errorf("locate A2A credentials: %w; run from an accessible directory and retry", err)
+	}
+	return loadA2ACredentialForDir(wd, query)
 }
 
-func loadA2ACredentialBestEffortForDir(workingDir, cardURL, rpcURL string) a2a.Credential {
+func loadA2ACredentialForDir(workingDir string, query a2aCredentialQuery) (a2a.Credential, error) {
 	home, err := identityHomeForDir(workingDir)
 	if err != nil {
-		return a2a.Credential{}
+		return a2a.Credential{}, fmt.Errorf("select A2A credential home: %w; select an accessible identity home and retry", err)
 	}
 	path, err := awconfig.IdentityHomePath(home, "a2a-credentials.yaml")
 	if err != nil {
-		return a2a.Credential{}
+		return a2a.Credential{}, fmt.Errorf("locate A2A credential file: %w; select an accessible identity home and retry", err)
 	}
-	data, err := os.ReadFile(path)
+	file, err := readA2ACredentials(path)
 	if err != nil {
-		return a2a.Credential{}
+		return a2a.Credential{}, err
 	}
-	var file a2aCredentialsFile
-	if err := yaml.Unmarshal(data, &file); err != nil {
-		return a2a.Credential{}
-	}
-	cardHost := urlHost(cardURL)
-	rpcHost := urlHost(rpcURL)
 	for _, entry := range file.Credentials {
-		if strings.TrimSpace(entry.TaskID) != "" {
-			continue
-		}
-		if strings.TrimSpace(entry.URL) != "" && (strings.TrimSpace(entry.URL) == strings.TrimSpace(cardURL) || strings.TrimSpace(entry.URL) == strings.TrimSpace(rpcURL)) {
-			return credentialFromEntry(entry)
-		}
-		if host := strings.TrimSpace(entry.Host); host != "" && (host == cardHost || host == rpcHost) {
-			return credentialFromEntry(entry)
+		if strings.TrimSpace(entry.TaskID) == "" && matchesA2ACredential(entry, query) {
+			return credentialFromEntry(entry), nil
 		}
 	}
-	return a2a.Credential{}
+	return a2a.Credential{}, nil
+}
+
+func matchesA2ACredential(entry a2aCredentialEntry, query a2aCredentialQuery) bool {
+	endpoint := strings.TrimSpace(entry.URL)
+	host := strings.TrimSpace(entry.Host)
+	return endpoint != "" && (endpoint == strings.TrimSpace(query.CardURL) || endpoint == strings.TrimSpace(query.RPCURL)) || host != "" && (host == urlHost(query.CardURL) || host == urlHost(query.RPCURL))
 }
 
 func credentialFromEntry(entry a2aCredentialEntry) a2a.Credential {
-	return a2a.Credential{
-		APIKey:      strings.TrimSpace(entry.APIKey),
-		BearerToken: strings.TrimSpace(entry.BearerToken),
-		CallerID:    strings.TrimSpace(entry.CallerID),
-		TaskToken:   strings.TrimSpace(entry.TaskToken),
-	}
+	return a2a.Credential{APIKey: strings.TrimSpace(entry.APIKey), BearerToken: strings.TrimSpace(entry.BearerToken), CallerID: strings.TrimSpace(entry.CallerID), TaskToken: strings.TrimSpace(entry.TaskToken)}
 }

@@ -491,8 +491,15 @@ func TestManagedBridgePreservesRouteAddressBinding(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			t.Fatal(err)
 		}
-		gotRouteID, _ = payload["route_id"].(string)
-		_ = json.NewEncoder(w).Encode(awid.SendMessageResponse{MessageID: "m-1", ConversationID: "c-1", Status: "sent", RecipientDID: "did:key:target", RecipientStableID: "did:aw:target"})
+		routeID, ok := payload["route_id"].(string)
+		if !ok {
+			t.Error("route_id is not a string")
+			return
+		}
+		gotRouteID = routeID
+		if err := json.NewEncoder(w).Encode(awid.SendMessageResponse{MessageID: "m-1", ConversationID: "c-1", Status: "sent", RecipientDID: "did:key:target", RecipientStableID: "did:aw:target"}); err != nil {
+			t.Error(err)
+		}
 	}))
 	defer server.Close()
 	cfg := fileConfig{
@@ -521,10 +528,17 @@ func TestManagedBridgeCapturedOldGenerationFailsClosedAfterRouteRevision(t *test
 				if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 					t.Fatal(err)
 				}
+				routeID, ok := payload["route_id"].(string)
+				if !ok {
+					t.Error("route_id is not a string")
+					return
+				}
 				mu.Lock()
-				emittedRoutes = append(emittedRoutes, payload["route_id"].(string))
+				emittedRoutes = append(emittedRoutes, routeID)
 				mu.Unlock()
-				_ = json.NewEncoder(w).Encode(awid.SendMessageResponse{MessageID: "m-1", ConversationID: "c-1", Status: "sent", RecipientDID: "did:key:target", RecipientStableID: "did:aw:target"})
+				if err := json.NewEncoder(w).Encode(awid.SendMessageResponse{MessageID: "m-1", ConversationID: "c-1", Status: "sent", RecipientDID: "did:key:target", RecipientStableID: "did:aw:target"}); err != nil {
+					t.Error(err)
+				}
 			}))
 			defer server.Close()
 
@@ -577,10 +591,17 @@ func TestManagedGatewayCapturedGenerationFailsClosedAcrossRefresh(t *testing.T) 
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			t.Fatal(err)
 		}
+		routeID, ok := payload["route_id"].(string)
+		if !ok {
+			t.Error("route_id is not a string")
+			return
+		}
 		mu.Lock()
-		emittedRoutes = append(emittedRoutes, payload["route_id"].(string))
+		emittedRoutes = append(emittedRoutes, routeID)
 		mu.Unlock()
-		_ = json.NewEncoder(w).Encode(awid.SendMessageResponse{MessageID: "m-1", ConversationID: "c-1", Status: "sent", RecipientDID: "did:key:target", RecipientStableID: "did:aw:target"})
+		if err := json.NewEncoder(w).Encode(awid.SendMessageResponse{MessageID: "m-1", ConversationID: "c-1", Status: "sent", RecipientDID: "did:key:target", RecipientStableID: "did:aw:target"}); err != nil {
+			t.Error(err)
+		}
 	}))
 	defer server.Close()
 
@@ -812,7 +833,7 @@ func TestA2AGatewayManagedStartsPendingWhenIdentityMissing(t *testing.T) {
 		RegistryURL:   registry.URL,
 		ManagedConfig: managedConfigForTest(managedServer.URL, "a2a-gateway", "test-token"),
 	}
-	snapshot, err := buildManagedSnapshot(cfg, true)
+	snapshot, err := buildManagedSnapshot(cfg, managedStartDegraded)
 	if err != nil {
 		t.Fatalf("buildManagedSnapshot: %v", err)
 	}
@@ -857,7 +878,7 @@ func TestA2AGatewayManagedRejectsBadTokenAtStartup(t *testing.T) {
 		RegistryURL:   "http://registry.invalid",
 		ManagedConfig: managedConfigForTest(managedServer.URL, "a2a-gateway", "wrong-token"),
 	}
-	if _, err := buildManagedSnapshot(cfg, true); err == nil || !strings.Contains(err.Error(), "HTTP 401") {
+	if _, err := buildManagedSnapshot(cfg, managedStartDegraded); err == nil || !strings.Contains(err.Error(), "HTTP 401") {
 		t.Fatalf("buildManagedSnapshot err=%v, want HTTP 401", err)
 	}
 }

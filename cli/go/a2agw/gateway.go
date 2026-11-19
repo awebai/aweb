@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"sort"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"github.com/awebai/aw/a2a"
 )
 
+// RootCardMode selects the well-known root Agent Card representation.
 type RootCardMode string
 
 const (
@@ -21,6 +23,7 @@ const (
 	RootCardRouter       RootCardMode = "router"
 )
 
+// Config supplies the route policies, cards, bridge and audit sink to New.
 type Config struct {
 	Host                string
 	RootCardMode        RootCardMode
@@ -33,6 +36,7 @@ type Config struct {
 	OperatorToken       string
 }
 
+// Route configures one address, its public card and its admission limits.
 type Route struct {
 	RouteID         string
 	Address         string
@@ -45,6 +49,7 @@ type Route struct {
 	AWIDPublication *AWIDPublicationExpectation
 }
 
+// RouteCard describes a target agent without granting address authority.
 type RouteCard struct {
 	Name               string
 	Description        string
@@ -57,6 +62,7 @@ type RouteCard struct {
 	Skills             []a2a.Skill
 }
 
+// RouterCard describes a host that publishes several address routes.
 type RouterCard struct {
 	Name               string
 	Description        string
@@ -69,6 +75,7 @@ type RouterCard struct {
 	Skills             []a2a.Skill
 }
 
+// AuthMode names a parsed route authentication policy.
 type AuthMode string
 
 const (
@@ -86,6 +93,7 @@ type AuthConfig struct {
 	BearerToken  string
 }
 
+// Limits bounds accepted message size, concurrent work and task lifetime.
 type Limits struct {
 	MaxMessageBytes    int
 	RateLimit          string
@@ -93,12 +101,14 @@ type Limits struct {
 	TaskTTL            time.Duration
 }
 
+// AWIDPublicationExpectation pins the expected published card digest.
 type AWIDPublicationExpectation struct {
 	Address    string
 	CardDigest string
 	Required   bool
 }
 
+// Gateway serves Agent Cards and JSON-RPC tasks under configured route policies.
 type Gateway struct {
 	config        Config
 	rootCard      a2a.Card
@@ -112,6 +122,7 @@ type Gateway struct {
 	auditSink     AuditSink
 }
 
+// Health reports local gateway readiness; it does not verify registry reachability.
 type Health struct {
 	Status        string       `json:"status"`
 	Host          string       `json:"host"`
@@ -120,6 +131,7 @@ type Health struct {
 	TaskExecution bool         `json:"task_execution"`
 }
 
+// Diagnostics describes operator configuration and excludes secret values.
 type Diagnostics struct {
 	Host           string            `json:"host"`
 	RootCardMode   RootCardMode      `json:"root_card_mode"`
@@ -128,6 +140,7 @@ type Diagnostics struct {
 	Routes         []RouteDiagnostic `json:"routes"`
 }
 
+// RouteDiagnostic is the non-secret operator projection of one route.
 type RouteDiagnostic struct {
 	RouteID          string `json:"route_id"`
 	Address          string `json:"address"`
@@ -163,10 +176,14 @@ func (g *Gateway) ValidateTargets(ctx context.Context) error {
 	return nil
 }
 
+// New validates configuration and constructs a gateway with a fresh task store.
+// A native operator must call ValidateTargets before opening its listener.
 func New(config Config) (*Gateway, error) {
 	return newGateway(config, nil)
 }
 
+// NewPreservingRuntime rebuilds route policies while preserving the previous
+// task store and rate limiter so configuration refresh does not lose task access.
 func NewPreservingRuntime(config Config, previous *Gateway) (*Gateway, error) {
 	return newGateway(config, previous)
 }
@@ -303,6 +320,7 @@ func newGateway(config Config, previous *Gateway) (*Gateway, error) {
 	return gateway, nil
 }
 
+// SetAcceptNewTasksUntil sets the managed configuration admission deadline.
 func (g *Gateway) SetAcceptNewTasksUntil(until time.Time) {
 	var nanos int64
 	if !until.IsZero() {
@@ -311,6 +329,7 @@ func (g *Gateway) SetAcceptNewTasksUntil(until time.Time) {
 	g.acceptUntil.Store(nanos)
 }
 
+// AcceptNewTasksUntil returns the admission deadline, or zero when unbounded.
 func (g *Gateway) AcceptNewTasksUntil() time.Time {
 	nanos := g.acceptUntil.Load()
 	if nanos == 0 {
@@ -328,6 +347,7 @@ func validateRouteLimits(route Route) error {
 	return nil
 }
 
+// ServeHTTP serves cards, diagnostics and task RPC under their route policies.
 func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.URL.Path == "/health":
@@ -374,10 +394,12 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// Health reports local route availability and bridge configuration.
 func (g *Gateway) Health() Health {
 	return Health{Status: "ok", Host: g.config.Host, RootCardMode: g.config.RootCardMode, Routes: len(g.routeCards), TaskExecution: g.taskExecution}
 }
 
+// Diagnostics returns the full non-secret operator configuration.
 func (g *Gateway) Diagnostics() Diagnostics {
 	routeIDs := make([]string, 0, len(g.routeConfigs))
 	for routeID := range g.routeConfigs {
@@ -404,6 +426,8 @@ func (g *Gateway) Diagnostics() Diagnostics {
 	return Diagnostics{Host: g.config.Host, RootCardMode: g.config.RootCardMode, DefaultRouteID: g.config.DefaultRouteID, TaskExecution: g.taskExecution, Routes: routes}
 }
 
+// ApplyBridgeReply applies a reply to a live task with matching context.
+// The bridge must already have verified sender identity and signed task binding.
 func (g *Gateway) ApplyBridgeReply(reply BridgeReply) (Task, bool, error) {
 	record, ok, err := g.tasks.applyReply(reply)
 	if err != nil || !ok {
@@ -415,5 +439,7 @@ func (g *Gateway) ApplyBridgeReply(reply BridgeReply) (Task, bool, error) {
 func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(value)
+	if err := json.NewEncoder(w).Encode(value); err != nil {
+		log.Printf("aweb-a2a-gw: JSON response write failed: %v", err)
+	}
 }

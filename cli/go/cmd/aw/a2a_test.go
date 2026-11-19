@@ -418,7 +418,6 @@ func TestA2ACardRejectsInvalidCardAndDoesNotFetchJWKULink(t *testing.T) {
 func TestA2APublishPostsDelegationThenPublicationAndVerifies(t *testing.T) {
 	tmp := t.TempDir()
 	t.Chdir(tmp)
-	resetA2APublishFlagsForTest(t)
 	oldHTTPClient := a2aHTTPClient
 	t.Cleanup(func() { a2aHTTPClient = oldHTTPClient })
 
@@ -562,10 +561,8 @@ func TestA2APublishPostsDelegationThenPublicationAndVerifies(t *testing.T) {
 	defer server.Close()
 	a2aHTTPClient = server.Client
 	cardURL = server.URL + "/a2a/agents/r_research/agent-card.json"
-	a2aPublishRegistry = server.URL
-	a2aPublishGatewayIdentity = gatewayIdentity
 
-	out, err := runA2APublish(context.Background(), cardURL)
+	out, err := runA2APublish(context.Background(), a2aPublishInput{CardURL: cardURL, RegistryURL: server.URL, GatewayIdentity: gatewayIdentity, ExpiresDays: 30})
 	if err != nil {
 		t.Fatalf("runA2APublish: %v", err)
 	}
@@ -650,42 +647,6 @@ func TestA2ASendNoWaitUsesCredentialFileAndReturnImmediately(t *testing.T) {
 	if task.ID != "task-1" || task.Status.State != "TASK_STATE_WORKING" {
 		t.Fatalf("task=%#v", task)
 	}
-}
-
-func resetA2APublishFlagsForTest(t *testing.T) {
-	t.Helper()
-	oldAddress := a2aPublishAddress
-	oldRegistry := a2aPublishRegistry
-	oldGateway := a2aPublishGatewayIdentity
-	oldRouteID := a2aPublishRouteID
-	oldRPCURL := a2aPublishRPCURL
-	oldRevision := a2aPublishCardRevision
-	oldAssertionID := a2aPublishAssertionID
-	oldDelegationID := a2aPublishDelegationID
-	oldExpiresDays := a2aPublishExpiresDays
-	oldDefault := a2aPublishDefaultForHost
-	a2aPublishAddress = ""
-	a2aPublishRegistry = ""
-	a2aPublishGatewayIdentity = ""
-	a2aPublishRouteID = ""
-	a2aPublishRPCURL = ""
-	a2aPublishCardRevision = ""
-	a2aPublishAssertionID = ""
-	a2aPublishDelegationID = ""
-	a2aPublishExpiresDays = 30
-	a2aPublishDefaultForHost = false
-	t.Cleanup(func() {
-		a2aPublishAddress = oldAddress
-		a2aPublishRegistry = oldRegistry
-		a2aPublishGatewayIdentity = oldGateway
-		a2aPublishRouteID = oldRouteID
-		a2aPublishRPCURL = oldRPCURL
-		a2aPublishCardRevision = oldRevision
-		a2aPublishAssertionID = oldAssertionID
-		a2aPublishDelegationID = oldDelegationID
-		a2aPublishExpiresDays = oldExpiresDays
-		a2aPublishDefaultForHost = oldDefault
-	})
 }
 
 func stringFieldForA2ATest(value map[string]any, key string) string {

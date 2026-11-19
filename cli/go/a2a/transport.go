@@ -28,6 +28,7 @@ func ValidateCredentialURL(raw string) error {
 	return fmt.Errorf("A2A credentials require HTTPS. Configure an HTTPS endpoint, or use http://127.0.0.1 for local development instead of http://localhost.")
 }
 
+// OriginPair identifies the fetched card origin and its advertised RPC destination.
 type OriginPair struct {
 	Source      string
 	Destination string

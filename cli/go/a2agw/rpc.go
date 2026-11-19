@@ -67,7 +67,12 @@ type cancelTaskParams struct {
 
 func (g *Gateway) serveRPC(w http.ResponseWriter, r *http.Request, routeID string) {
 	start := time.Now()
-	requestID := requestIDFromHeader(r)
+	requestID, err := requestIDFromHeader(r)
+	if err != nil {
+		log.Printf("aweb-a2a-gw: request id generation failed: %v", err)
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "request_id_unavailable", "message": "The gateway could not create a request identifier. Restore the host random source and retry."})
+		return
+	}
 	w.Header().Set("X-Request-ID", requestID)
 	if r.Method != http.MethodPost {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed", "request_id": requestID})
@@ -95,7 +100,7 @@ func (g *Gateway) serveRPC(w http.ResponseWriter, r *http.Request, routeID strin
 		RouteID:           route.RouteID,
 		CallerScopeClass:  callerScopeClass(caller.Value),
 		TargetAddressHash: auditHash(route.Address),
-		Outcome:           "accepted",
+		Outcome:           string(AuditAccepted),
 		VerificationTier:  "unsigned",
 	})
 	maxBytes := effectiveMaxMessageBytes(route)
@@ -109,28 +114,28 @@ func (g *Gateway) serveRPC(w http.ResponseWriter, r *http.Request, routeID strin
 			status, code, message = http.StatusRequestEntityTooLarge, "request_too_large", "Request body is too large. Reduce the message size to the route's advertised limit and retry."
 		}
 		log.Printf("aweb-a2a-gw: request body failed request=%s: %v", requestID, err)
-		g.audit(AuditEvent{Stage: "gateway_response", RequestID: requestID, RouteID: route.RouteID, CallerScopeClass: callerScopeClass(caller.Value), TargetAddressHash: auditHash(route.Address), Outcome: "error", Code: code, LatencyMS: latencyMS(start), VerificationTier: "unsigned"})
+		g.audit(AuditEvent{Stage: "gateway_response", RequestID: requestID, RouteID: route.RouteID, CallerScopeClass: callerScopeClass(caller.Value), TargetAddressHash: auditHash(route.Address), Outcome: string(AuditError), Code: code, LatencyMS: latencyMS(start), VerificationTier: "unsigned"})
 		writeJSON(w, status, map[string]string{"error": code, "message": message, "request_id": requestID})
 		return
 	}
 	var req rpcRequest
 	if err := json.Unmarshal(body, &req); err != nil {
-		g.audit(AuditEvent{Stage: "gateway_response", RequestID: requestID, RouteID: route.RouteID, CallerScopeClass: callerScopeClass(caller.Value), TargetAddressHash: auditHash(route.Address), Outcome: "error", Code: "parse_error", LatencyMS: latencyMS(start), VerificationTier: "unsigned"})
+		g.audit(AuditEvent{Stage: "gateway_response", RequestID: requestID, RouteID: route.RouteID, CallerScopeClass: callerScopeClass(caller.Value), TargetAddressHash: auditHash(route.Address), Outcome: string(AuditError), Code: "parse_error", LatencyMS: latencyMS(start), VerificationTier: "unsigned"})
 		writeRPC(w, http.StatusOK, rpcResponse{JSONRPC: jsonRPCVersion, ID: rawNullID(), Error: jsonRPCError(-32700, "parse error", requestID, nil)})
 		return
 	}
 	if req.JSONRPC != jsonRPCVersion || req.Method == "" {
-		g.audit(AuditEvent{Stage: "gateway_response", RequestID: requestID, RouteID: route.RouteID, CallerScopeClass: callerScopeClass(caller.Value), TargetAddressHash: auditHash(route.Address), Outcome: "error", Code: "invalid_request", LatencyMS: latencyMS(start), VerificationTier: "unsigned"})
+		g.audit(AuditEvent{Stage: "gateway_response", RequestID: requestID, RouteID: route.RouteID, CallerScopeClass: callerScopeClass(caller.Value), TargetAddressHash: auditHash(route.Address), Outcome: string(AuditError), Code: "invalid_request", LatencyMS: latencyMS(start), VerificationTier: "unsigned"})
 		writeRPC(w, http.StatusOK, rpcResponse{JSONRPC: jsonRPCVersion, ID: normalizedID(req.ID), Error: jsonRPCError(-32600, "invalid request", requestID, nil)})
 		return
 	}
 	if route.Disabled {
-		g.audit(AuditEvent{Stage: "gateway_response", RequestID: requestID, RouteID: route.RouteID, CallerScopeClass: callerScopeClass(caller.Value), TargetAddressHash: auditHash(route.Address), Outcome: "error", Code: "route_disabled", LatencyMS: latencyMS(start), VerificationTier: "unsigned"})
+		g.audit(AuditEvent{Stage: "gateway_response", RequestID: requestID, RouteID: route.RouteID, CallerScopeClass: callerScopeClass(caller.Value), TargetAddressHash: auditHash(route.Address), Outcome: string(AuditError), Code: "route_disabled", LatencyMS: latencyMS(start), VerificationTier: "unsigned"})
 		writeRPC(w, http.StatusOK, rpcResponse{JSONRPC: jsonRPCVersion, ID: normalizedID(req.ID), Error: jsonRPCError(-32003, "route disabled", requestID, map[string]any{"code": "route_disabled"})})
 		return
 	}
 	if !g.rateLimitAllows(route, caller) {
-		g.audit(AuditEvent{Stage: "gateway_response", RequestID: requestID, RouteID: route.RouteID, CallerScopeClass: callerScopeClass(caller.Value), TargetAddressHash: auditHash(route.Address), Outcome: "error", Code: "rate_limited", LatencyMS: latencyMS(start), VerificationTier: "unsigned"})
+		g.audit(AuditEvent{Stage: "gateway_response", RequestID: requestID, RouteID: route.RouteID, CallerScopeClass: callerScopeClass(caller.Value), TargetAddressHash: auditHash(route.Address), Outcome: string(AuditError), Code: "rate_limited", LatencyMS: latencyMS(start), VerificationTier: "unsigned"})
 		writeRPC(w, http.StatusOK, rpcResponse{JSONRPC: jsonRPCVersion, ID: normalizedID(req.ID), Error: jsonRPCError(-32029, "rate limited", requestID, map[string]any{"code": "rate_limited"})})
 		return
 	}
@@ -138,7 +143,7 @@ func (g *Gateway) serveRPC(w http.ResponseWriter, r *http.Request, routeID strin
 	resp := rpcResponse{JSONRPC: jsonRPCVersion, ID: normalizedID(req.ID)}
 	if rpcErr != nil {
 		resp.Error = rpcErr
-		g.audit(AuditEvent{Stage: "gateway_response", RequestID: requestID, RouteID: route.RouteID, CallerScopeClass: callerScopeClass(caller.Value), TargetAddressHash: auditHash(route.Address), Outcome: "error", Code: rpcErrCode(rpcErr), LatencyMS: latencyMS(start), VerificationTier: "unsigned"})
+		g.audit(AuditEvent{Stage: "gateway_response", RequestID: requestID, RouteID: route.RouteID, CallerScopeClass: callerScopeClass(caller.Value), TargetAddressHash: auditHash(route.Address), Outcome: string(AuditError), Code: rpcErrCode(rpcErr), LatencyMS: latencyMS(start), VerificationTier: "unsigned"})
 	} else {
 		resp.Result = result
 		outcome, code := AuditOK, ""
@@ -155,9 +160,15 @@ func (g *Gateway) handleRPCMethod(ctx context.Context, route runtimeRoute, req r
 		text := "Authentication is required. Send the route API key in X-A2A-API-Key or the route bearer in Authorization, as advertised by its card."
 		if req.Method == "SendMessage" {
 			// Auth refusal is an ephemeral result, with no retained state or bearer token.
-			id := mustNewUUIDv4()
-			message := statusMessage(id, "", TaskStateAuthRequired, text)
-			return map[string]any{"task": Task{ID: id, Status: TaskStatus{State: TaskStateAuthRequired, Timestamp: formatTime(time.Now()), Message: &message}}}, nil
+			id, err := newUUIDv4()
+			if err != nil {
+				return nil, taskIdentifierFailure(requestID, err)
+			}
+			message, err := statusMessage(statusMessageInput{TaskID: id, State: taskAuthRequired, Text: text})
+			if err != nil {
+				return nil, taskIdentifierFailure(requestID, err)
+			}
+			return map[string]any{"task": Task{ID: id, Status: TaskStatus{State: TaskStateAuthRequired, Timestamp: formatTime(time.Now()), Message: message}}}, nil
 		}
 		return nil, jsonRPCError(-32003, text, requestID, map[string]any{"code": "authentication_required"})
 	}
@@ -194,7 +205,7 @@ func (g *Gateway) rpcSendMessage(ctx context.Context, route runtimeRoute, raw js
 		if errors.Is(err, errTaskLimit) {
 			return nil, jsonRPCError(-32003, "Too many active tasks. Wait for an existing task to finish or cancel it, then retry.", requestID, map[string]any{"code": "max_concurrent_tasks"})
 		}
-		return nil, jsonRPCError(-32000, "task id generation failed", requestID, nil)
+		return nil, taskIdentifierFailure(requestID, err)
 	}
 	text := textFromMessage(params.Message)
 	if err := g.bridge.SendTask(ctx, BridgeTask{
@@ -218,7 +229,10 @@ func (g *Gateway) rpcSendMessage(ctx context.Context, route runtimeRoute, raw js
 		if providerFault {
 			failureText = fault.Error()
 		}
-		failed, retained := g.tasks.failTask(record.ID, failureText)
+		failed, retained, statusErr := g.tasks.failTask(taskFailure{TaskID: record.ID, Text: failureText})
+		if statusErr != nil {
+			log.Printf("aweb-a2a-gw: task failed but its status message id could not be generated request=%s task=%s: %v", requestID, record.ID, statusErr)
+		}
 		details := map[string]any{"detail": err.Error()}
 		if providerFault {
 			details["code"] = string(fault.Fault)
@@ -287,7 +301,7 @@ func (g *Gateway) rpcCancelTask(ctx context.Context, route runtimeRoute, raw jso
 	if err := parseRawObject(raw, &params); err != nil {
 		return nil, jsonRPCError(-32602, "invalid params", requestID, map[string]any{"detail": err.Error()})
 	}
-	record, ok := g.tasks.cancelTask(route.RouteID, caller.Value, caller.TaskToken, strings.TrimSpace(params.ID))
+	record, ok := g.tasks.cancelTask(taskAccess{RouteID: route.RouteID, CallerScope: caller.Value, Token: caller.TaskToken, TaskID: strings.TrimSpace(params.ID)})
 	if !ok {
 		return nil, jsonRPCError(-32004, "task not found", requestID, map[string]any{"code": "task_not_found"})
 	}
@@ -387,11 +401,16 @@ func isJSONContentType(value string) bool {
 	return value == "application/json"
 }
 
-func requestIDFromHeader(r *http.Request) string {
+func requestIDFromHeader(r *http.Request) (string, error) {
 	if value := strings.TrimSpace(r.Header.Get("X-Request-ID")); value != "" {
-		return value
+		return value, nil
 	}
-	return mustNewUUIDv4()
+	return newUUIDv4()
+}
+
+func taskIdentifierFailure(requestID string, err error) *rpcError {
+	log.Printf("aweb-a2a-gw: task identifier generation failed request=%s: %v", requestID, err)
+	return jsonRPCError(-32000, "The gateway could not create a task identifier. Restore the host random source and retry.", requestID, map[string]any{"code": "task_identifier_unavailable"})
 }
 
 var errRequestBodyTooLarge = errors.New("request body too large")
@@ -466,7 +485,7 @@ func rpcErrCode(err *rpcError) string {
 	if err == nil || err.Data == nil {
 		return ""
 	}
-	if code, _ := err.Data["code"].(string); code != "" {
+	if code, ok := err.Data["code"].(string); ok && code != "" {
 		return code
 	}
 	return err.Message

@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -89,14 +90,14 @@ func run(args []string, stdout, _ *os.File) error {
 }
 
 type runtimeHealth struct {
-	Status             string                     `json:"status"`
+	Status             runtimeHealthStatus        `json:"status"`
 	Build              runtimeBuild               `json:"build"`
 	AwebVersion        string                     `json:"aweb_version"`
 	AWIDServiceVersion string                     `json:"awid_service_version"`
 	AWIDRegistry       runtimeRegistryHealth      `json:"awid_registry"`
 	ManagedConfig      runtimeManagedConfigHealth `json:"managed_config"`
 	GatewayIdentity    runtimeIdentityHealth      `json:"gateway_identity"`
-	Gateway            map[string]interface{}     `json:"gateway"`
+	Gateway            a2agw.Health               `json:"gateway"`
 }
 
 type runtimeBuild struct {
@@ -111,30 +112,30 @@ type runtimeBuild struct {
 }
 
 type runtimeRegistryHealth struct {
-	URL            string `json:"url,omitempty"`
-	Reachable      bool   `json:"reachable"`
-	Compatible     bool   `json:"compatible"`
-	Status         string `json:"status"`
-	Version        string `json:"version,omitempty"`
-	MinimumVersion string `json:"minimum_version,omitempty"`
-	Error          string `json:"error,omitempty"`
+	URL            string               `json:"url,omitempty"`
+	Reachable      bool                 `json:"reachable"`
+	Compatible     bool                 `json:"compatible"`
+	Status         registryHealthStatus `json:"status"`
+	Version        string               `json:"version,omitempty"`
+	MinimumVersion string               `json:"minimum_version,omitempty"`
+	Error          string               `json:"error,omitempty"`
 }
 
 type runtimeManagedConfigHealth struct {
-	Enabled        bool   `json:"enabled"`
-	GatewayID      string `json:"gateway_id,omitempty"`
-	ConfigRevision string `json:"config_revision,omitempty"`
-	ExpiresAt      string `json:"expires_at,omitempty"`
-	Expired        bool   `json:"expired"`
-	Routes         int    `json:"routes"`
-	Status         string `json:"status,omitempty"`
-	Error          string `json:"error,omitempty"`
+	Enabled        bool               `json:"enabled"`
+	GatewayID      string             `json:"gateway_id,omitempty"`
+	ConfigRevision string             `json:"config_revision,omitempty"`
+	ExpiresAt      string             `json:"expires_at,omitempty"`
+	Expired        bool               `json:"expired"`
+	Routes         int                `json:"routes"`
+	Status         managedFetchStatus `json:"status,omitempty"`
+	Error          string             `json:"error,omitempty"`
 }
 
 type runtimeIdentityHealth struct {
-	Identity string `json:"identity,omitempty"`
-	Status   string `json:"status"`
-	Usable   bool   `json:"usable"`
+	Identity string                `json:"identity,omitempty"`
+	Status   gatewayIdentityStatus `json:"status"`
+	Usable   bool                  `json:"usable"`
 }
 
 func runtimeHandler(gateway *a2agw.Gateway, cfg fileConfig) http.Handler {
@@ -153,7 +154,9 @@ func serveProbe(w http.ResponseWriter, r *http.Request, gateway *a2agw.Gateway, 
 	switch r.URL.Path {
 	case "/live":
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"status":"ok"}` + "\n"))
+		if _, err := io.WriteString(w, `{"status":"ok"}`+"\n"); err != nil {
+			log.Printf("aweb-a2a-gw: liveness response write failed: %v", err)
+		}
 	case "/health":
 		writeRuntimeHealth(w, gateway, cfg)
 	default:
@@ -170,7 +173,7 @@ type managedGateway struct {
 }
 
 func runManagedGateway(base fileConfig, listen string) error {
-	initial, err := buildManagedSnapshot(base, true)
+	initial, err := buildManagedSnapshot(base, managedStartDegraded)
 	if err != nil {
 		return err
 	}
@@ -191,8 +194,8 @@ type managedSnapshot struct {
 	runtime *gatewayRuntime
 }
 
-func buildManagedSnapshot(base fileConfig, allowDegraded bool) (managedSnapshot, error) {
-	cfg, err := loadManagedConfig(base, allowDegraded)
+func buildManagedSnapshot(base fileConfig, policy managedFetchFailurePolicy) (managedSnapshot, error) {
+	cfg, err := loadManagedConfig(base, policy)
 	if err != nil {
 		return managedSnapshot{}, err
 	}
@@ -203,13 +206,13 @@ func buildManagedSnapshot(base fileConfig, allowDegraded bool) (managedSnapshot,
 	return managedSnapshot{cfg: cfg, gateway: gateway, runtime: runtime}, nil
 }
 
-func loadManagedConfig(base fileConfig, allowDegraded bool) (fileConfig, error) {
+func loadManagedConfig(base fileConfig, policy managedFetchFailurePolicy) (fileConfig, error) {
 	cfg := base
 	if err := applyManagedRuntimeConfig(&cfg); err != nil {
 		if isFatalInitialManagedRuntimeConfigError(err) {
 			return fileConfig{}, err
 		}
-		if !allowDegraded {
+		if policy == managedKeepCurrentSnapshot {
 			return fileConfig{}, err
 		}
 		return degradedManagedConfig(base, err), nil
@@ -222,7 +225,7 @@ func (m *managedGateway) refreshLoop(base fileConfig) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for range ticker.C {
-		cfg, err := loadManagedConfig(base, false)
+		cfg, err := loadManagedConfig(base, managedKeepCurrentSnapshot)
 		if err != nil {
 			m.markRefreshError(err)
 			continue
@@ -270,7 +273,7 @@ func (m *managedGateway) applyRefreshSnapshot(cfg fileConfig) error {
 func (m *managedGateway) markRefreshError(err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.cfg.ManagedRuntime.FetchStatus = "stale"
+	m.cfg.ManagedRuntime.FetchStatus = managedFetchStale
 	m.cfg.ManagedRuntime.FetchError = err.Error()
 }
 
@@ -298,35 +301,33 @@ func managedConfigPollInterval() time.Duration {
 
 func writeRuntimeHealth(w http.ResponseWriter, gateway *a2agw.Gateway, cfg fileConfig) {
 	health := runtimeHealth{
-		Status:             "healthy",
+		Status:             runtimeHealthy,
 		Build:              runtimeBuild{ReleaseTag: releaseTag, GitSHA: commit, GitSHARepo: commitRepo, Date: date},
 		AwebVersion:        version,
 		AWIDServiceVersion: ">=" + minimumAWIDServiceVersion,
 		AWIDRegistry:       checkRegistryHealth(cfg.RegistryURL),
 		ManagedConfig:      managedConfigHealth(cfg),
 		GatewayIdentity:    gatewayIdentityHealth(cfg),
-		Gateway:            map[string]interface{}{},
+		Gateway:            gateway.Health(),
 	}
-	gatewayHealthBytes, err := json.Marshal(gateway.Health())
-	if err == nil {
-		_ = json.Unmarshal(gatewayHealthBytes, &health.Gateway)
+	if health.ManagedConfig.Status == managedFetchPending {
+		health.Status = runtimePending
 	}
-	if health.ManagedConfig.Status == "pending" {
-		health.Status = "pending"
-	}
-	if health.ManagedConfig.Status == "stale" && health.ManagedConfig.ConfigRevision == "" {
-		health.Status = "unhealthy"
+	if health.ManagedConfig.Status == managedFetchStale && health.ManagedConfig.ConfigRevision == "" {
+		health.Status = runtimeUnhealthy
 	}
 	if !health.AWIDRegistry.Reachable || !health.AWIDRegistry.Compatible || health.ManagedConfig.Expired || (health.ManagedConfig.Routes > 0 && !health.GatewayIdentity.Usable) {
-		health.Status = "unhealthy"
+		health.Status = runtimeUnhealthy
 	}
 	status := http.StatusOK
-	if health.Status != "healthy" {
+	if health.Status != runtimeHealthy {
 		status = http.StatusServiceUnavailable
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(health)
+	if err := json.NewEncoder(w).Encode(health); err != nil {
+		log.Printf("aweb-a2a-gw: health response write failed: %v", err)
+	}
 }
 
 func managedConfigHealth(cfg fileConfig) runtimeManagedConfigHealth {
@@ -336,11 +337,11 @@ func managedConfigHealth(cfg fileConfig) runtimeManagedConfigHealth {
 		ConfigRevision: strings.TrimSpace(cfg.ManagedRuntime.ConfigRevision),
 		ExpiresAt:      strings.TrimSpace(cfg.ManagedRuntime.ExpiresAt),
 		Routes:         len(cfg.Routes),
-		Status:         strings.TrimSpace(cfg.ManagedRuntime.FetchStatus),
+		Status:         cfg.ManagedRuntime.FetchStatus,
 		Error:          strings.TrimSpace(cfg.ManagedRuntime.FetchError),
 	}
 	if out.Status == "" && out.Enabled {
-		out.Status = "ok"
+		out.Status = managedFetchOK
 	}
 	if out.ExpiresAt != "" {
 		if parsed, err := time.Parse(time.RFC3339, out.ExpiresAt); err == nil {
@@ -352,16 +353,16 @@ func managedConfigHealth(cfg fileConfig) runtimeManagedConfigHealth {
 
 func gatewayIdentityHealth(cfg fileConfig) runtimeIdentityHealth {
 	identity := strings.TrimSpace(cfg.GatewayIdentity)
-	status := strings.TrimSpace(cfg.ManagedRuntime.GatewayIdentityStatus)
+	status := cfg.ManagedRuntime.GatewayIdentityStatus
 	if !managedConfigEnabled(cfg.ManagedConfig) && identity == "" {
-		return runtimeIdentityHealth{Status: "workspace", Usable: true}
+		return runtimeIdentityHealth{Status: gatewayIdentityWorkspace, Usable: true}
 	}
 	if status == "" && identity != "" {
-		status = "active"
+		status = gatewayIdentityActive
 	}
-	usable := identity != "" && (status == "" || status == "active")
+	usable := identity != "" && (status == "" || status == gatewayIdentityActive)
 	if status == "" {
-		status = "missing"
+		status = gatewayIdentityMissing
 	}
 	return runtimeIdentityHealth{Identity: identity, Status: status, Usable: usable}
 }
@@ -369,19 +370,26 @@ func gatewayIdentityHealth(cfg fileConfig) runtimeIdentityHealth {
 func checkRegistryHealth(registryURL string) runtimeRegistryHealth {
 	registryURL = strings.TrimRight(strings.TrimSpace(registryURL), "/")
 	if registryURL == "" {
-		return runtimeRegistryHealth{Reachable: false, Compatible: false, MinimumVersion: minimumAWIDServiceVersion, Status: "missing_registry_url", Error: "registry_url is required for runtime health"}
+		return runtimeRegistryHealth{Reachable: false, Compatible: false, MinimumVersion: minimumAWIDServiceVersion, Status: registryMissingURL, Error: "registry_url is required for runtime health"}
 	}
 	client := &http.Client{Timeout: 3 * time.Second}
 	resp, err := client.Get(registryURL + "/health")
 	if err != nil {
-		return runtimeRegistryHealth{URL: registryURL, Reachable: false, Compatible: false, MinimumVersion: minimumAWIDServiceVersion, Status: "unreachable", Error: err.Error()}
+		return runtimeRegistryHealth{URL: registryURL, Reachable: false, Compatible: false, MinimumVersion: minimumAWIDServiceVersion, Status: registryUnreachable, Error: err.Error()}
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	out := runtimeRegistryHealth{URL: registryURL, Reachable: resp.StatusCode >= 200 && resp.StatusCode < 300, Compatible: false, MinimumVersion: minimumAWIDServiceVersion, Status: http.StatusText(resp.StatusCode)}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return runtimeRegistryHealth{URL: registryURL, Reachable: true, Status: registryResponseUnreadable, MinimumVersion: minimumAWIDServiceVersion, Error: "Registry health response could not be read. Check the registry connection and retry."}
+	}
+	out := runtimeRegistryHealth{URL: registryURL, Reachable: resp.StatusCode >= 200 && resp.StatusCode < 300, Compatible: false, MinimumVersion: minimumAWIDServiceVersion, Status: registryHealthStatus(http.StatusText(resp.StatusCode))}
 	if len(body) > 0 {
 		var payload map[string]interface{}
-		if err := json.Unmarshal(body, &payload); err == nil {
+		if err := json.Unmarshal(body, &payload); err != nil {
+			out.Status = registryResponseMalformed
+			out.Error = "Registry health returned invalid JSON. Repair the registry health endpoint and retry."
+			return out
+		} else {
 			if value := stringField(payload, "version"); value != "" {
 				out.Version = value
 			} else if value := stringField(payload, "service_version"); value != "" {
@@ -389,11 +397,11 @@ func checkRegistryHealth(registryURL string) runtimeRegistryHealth {
 			}
 			// The registry answers 503 with its health report when one of its
 			// own dependencies fails. It answered, so it is reached.
-			if resp.StatusCode == http.StatusServiceUnavailable && stringField(payload, "status") == "unhealthy" {
+			if resp.StatusCode == http.StatusServiceUnavailable && registryHealthStatus(stringField(payload, "status")) == registryUnhealthy {
 				out.Reachable = true
 			}
 			if value := stringField(payload, "status"); value != "" && out.Reachable {
-				out.Status = value
+				out.Status = registryHealthStatus(value)
 			}
 		}
 	}
@@ -403,10 +411,10 @@ func checkRegistryHealth(registryURL string) runtimeRegistryHealth {
 	if out.Reachable {
 		switch {
 		case out.Version == "":
-			out.Status = "missing_version"
+			out.Status = registryMissingVersion
 			out.Error = "registry health did not report version or service_version"
 		case !versionAtLeast(out.Version, minimumAWIDServiceVersion):
-			out.Status = "version_below_minimum"
+			out.Status = registryVersionBelowMinimum
 			out.Error = fmt.Sprintf("registry version %s is below required %s", out.Version, minimumAWIDServiceVersion)
 		default:
 			out.Compatible = true
@@ -468,10 +476,10 @@ type managedConfig struct {
 
 type managedRuntimeMeta struct {
 	RecipientIdentityAvailable bool
-	GatewayIdentityStatus      string
+	GatewayIdentityStatus      gatewayIdentityStatus
 	ConfigRevision             string
 	ExpiresAt                  string
-	FetchStatus                string
+	FetchStatus                managedFetchStatus
 	FetchError                 string
 }
 
@@ -697,6 +705,8 @@ type managedRuntimeCard struct {
 	Skills             []skillYAML  `json:"skills"`
 }
 
+var errManagedBearerRequired = errors.New("managed config bearer token is required. Configure managed_config.bearer_token or bearer_token_env and retry")
+
 type managedRuntimeConfigFetchError struct {
 	StatusCode int
 	Message    string
@@ -716,7 +726,7 @@ func applyManagedRuntimeConfig(cfg *fileConfig) error {
 	}
 	token := managedBearerToken(cfg.ManagedConfig)
 	if token == "" {
-		return fmt.Errorf("managed config bearer token is required")
+		return errManagedBearerRequired
 	}
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
@@ -729,7 +739,10 @@ func applyManagedRuntimeConfig(cfg *fileConfig) error {
 		return &managedRuntimeConfigFetchError{Message: fmt.Sprintf("fetch managed runtime config: %v", err)}
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return &managedRuntimeConfigFetchError{StatusCode: resp.StatusCode, Message: fmt.Sprintf("read managed runtime config: %v. Check the provider connection and retry", err)}
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return &managedRuntimeConfigFetchError{StatusCode: resp.StatusCode, Message: fmt.Sprintf("fetch managed runtime config: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))}
 	}
@@ -742,7 +755,7 @@ func applyManagedRuntimeConfig(cfg *fileConfig) error {
 
 func isFatalInitialManagedRuntimeConfigError(err error) bool {
 	var fetchErr *managedRuntimeConfigFetchError
-	if err != nil && strings.Contains(err.Error(), "bearer token is required") {
+	if errors.Is(err, errManagedBearerRequired) {
 		return true
 	}
 	if err != nil && errors.As(err, &fetchErr) {
@@ -764,8 +777,8 @@ func degradedManagedConfig(base fileConfig, err error) fileConfig {
 	}
 	cfg.GatewayIdentity = ""
 	cfg.ManagedRuntime = managedRuntimeMeta{
-		GatewayIdentityStatus: "missing",
-		FetchStatus:           "pending",
+		GatewayIdentityStatus: gatewayIdentityMissing,
+		FetchStatus:           managedFetchPending,
 		FetchError:            err.Error(),
 	}
 	return cfg
@@ -793,7 +806,7 @@ func mergeManagedRuntimeConfig(cfg *fileConfig, payload managedRuntimeConfigPayl
 	if configuredID := strings.TrimSpace(cfg.ManagedConfig.GatewayID); configuredID != "" && configuredID != strings.TrimSpace(payload.GatewayID) {
 		return fmt.Errorf("managed runtime config gateway_id %q does not match configured gateway_id %q", payload.GatewayID, configuredID)
 	}
-	if strings.TrimSpace(payload.GatewayIdentityStatus) != "active" {
+	if gatewayIdentityStatus(strings.TrimSpace(payload.GatewayIdentityStatus)) != gatewayIdentityActive {
 		return fmt.Errorf("managed runtime config gateway identity is not active: %s", payload.GatewayIdentityStatus)
 	}
 	if expiresAt := strings.TrimSpace(payload.ExpiresAt); expiresAt != "" {
@@ -812,10 +825,10 @@ func mergeManagedRuntimeConfig(cfg *fileConfig, payload managedRuntimeConfigPayl
 		cfg.ManagedConfig.GatewayID = strings.TrimSpace(payload.GatewayID)
 	}
 	cfg.ManagedRuntime = managedRuntimeMeta{
-		GatewayIdentityStatus: strings.TrimSpace(payload.GatewayIdentityStatus),
+		GatewayIdentityStatus: gatewayIdentityStatus(strings.TrimSpace(payload.GatewayIdentityStatus)),
 		ConfigRevision:        strings.TrimSpace(payload.ConfigRevision),
 		ExpiresAt:             strings.TrimSpace(payload.ExpiresAt),
-		FetchStatus:           "ok",
+		FetchStatus:           managedFetchOK,
 	}
 	cfg.Routes = make([]routeConfig, 0, len(payload.Routes))
 	defaultRouteID := ""
@@ -1211,7 +1224,7 @@ func managedAcceptNewTasksUntil(cfg fileConfig) (time.Time, error) {
 	}
 	expiresAt := strings.TrimSpace(cfg.ManagedRuntime.ExpiresAt)
 	if expiresAt == "" {
-		if strings.TrimSpace(cfg.ManagedRuntime.FetchStatus) == "pending" {
+		if cfg.ManagedRuntime.FetchStatus == managedFetchPending {
 			return time.Time{}, nil
 		}
 		return time.Time{}, fmt.Errorf("managed runtime config expires_at is required in managed mode")
@@ -1619,7 +1632,10 @@ func (t *managedBridgeTransport) doJSONWithSnapshot(ctx context.Context, input m
 		return err
 	}
 	defer resp.Body.Close()
-	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return fmt.Errorf("read managed bridge response: %w. Check the provider connection and retry", err)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("managed bridge %s %s: HTTP %d: %s", method, path, resp.StatusCode, strings.TrimSpace(string(data)))
 	}

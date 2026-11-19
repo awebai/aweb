@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Concurrent `aw a2a send` calls retain each task token. Credential-file failures
+  are reported without overwriting unreadable YAML; a task already delivered is
+  still returned with its token when saving fails.
+
 - On verified A2A routes, a plain `QUESTION:` from the target is no longer
   accepted as a verified task reply. Use the task-bearing fenced `a2a-reply`
   form with `state: input_required` to ask a question (aw 1.19.0 or later).

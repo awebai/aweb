@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -45,6 +46,57 @@ var (
 		return &http.Client{Timeout: 30 * time.Second, Transport: awid.NewAPITransport()}
 	}
 )
+
+type a2aSendInput struct {
+	CardURL    string
+	Text       string
+	ContextID  string
+	DataJSON   string
+	Completion a2aCompletionPolicy
+}
+
+type a2aCompletionPolicy uint8
+
+const (
+	a2aReturnImmediately a2aCompletionPolicy = iota
+	a2aWaitForReply
+)
+
+type a2aSendResult struct {
+	Task           a2a.Task
+	TokenSaveError error
+}
+
+type a2aTaskQuery struct {
+	CardURL       string
+	TaskID        string
+	HistoryLength int
+}
+
+type a2aPublishInput struct {
+	CardURL         string
+	Address         string
+	RegistryURL     string
+	GatewayIdentity string
+	RouteID         string
+	RPCURL          string
+	CardRevision    string
+	AssertionID     string
+	DelegationID    string
+	ExpiresDays     int
+	DefaultForHost  bool
+}
+
+// writeA2AOutput gives every A2A command the same JSON shape and checked output.
+func writeA2AOutput[T any](cmd *cobra.Command, value T, formatter func(T) string) error {
+	if jsonFlag {
+		encoder := json.NewEncoder(cmd.OutOrStdout())
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(value)
+	}
+	_, err := io.WriteString(cmd.OutOrStdout(), termtext.Body(formatter(value)))
+	return err
+}
 
 type a2aCredentialsFile struct {
 	Credentials []a2aCredentialEntry `yaml:"credentials"`
@@ -106,11 +158,7 @@ var a2aCardCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		if jsonFlag {
-			return json.NewEncoder(cmd.OutOrStdout()).Encode(out)
-		}
-		fmt.Fprint(cmd.OutOrStdout(), formatA2ACardOutput(out))
-		return nil
+		return writeA2AOutput(cmd, out, formatA2ACardOutput)
 	},
 }
 
@@ -130,18 +178,23 @@ var a2aSendCmd = &cobra.Command{
 		// Agent task completion can involve a wait; keep the explicit ninety-second task budget.
 		ctx, cancel := context.WithTimeout(cmd.Context(), 90*time.Second)
 		defer cancel()
-		task, err := runA2ASend(ctx, args[0], message)
+		completion := a2aReturnImmediately
+		if a2aWait && !a2aNoWait {
+			completion = a2aWaitForReply
+		}
+		result, err := runA2ASend(ctx, a2aSendInput{CardURL: args[0], Text: message, ContextID: a2aContextID, DataJSON: a2aDataJSON, Completion: completion})
 		if err != nil {
 			return err
 		}
-		if jsonFlag {
-			if err := json.NewEncoder(cmd.OutOrStdout()).Encode(task); err != nil {
+		if err := writeA2AOutput(cmd, result.Task, formatA2ATask); err != nil {
+			return err
+		}
+		if result.TokenSaveError != nil {
+			if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "Warning: task was delivered, but its token was not saved: %v. Keep task_bearer_token from this result for status or cancel; repair .aw/a2a-credentials.yaml before sending again.\n", result.TokenSaveError); err != nil {
 				return err
 			}
-			return a2aTaskExitError(task)
 		}
-		fmt.Fprint(cmd.OutOrStdout(), formatA2ATask(task))
-		return a2aTaskExitError(task)
+		return a2aTaskExitError(result.Task)
 	},
 }
 
@@ -152,17 +205,13 @@ var a2aStatusCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx, cancel := commandAPIContext(cmd)
 		defer cancel()
-		task, err := runA2AStatus(ctx, args[0], args[1])
+		task, err := runA2AStatus(ctx, a2aTaskQuery{CardURL: args[0], TaskID: args[1], HistoryLength: a2aHistoryLength})
 		if err != nil {
 			return err
 		}
-		if jsonFlag {
-			if err := json.NewEncoder(cmd.OutOrStdout()).Encode(task); err != nil {
-				return err
-			}
-			return a2aTaskExitError(task)
+		if err := writeA2AOutput(cmd, task, formatA2ATask); err != nil {
+			return err
 		}
-		fmt.Fprint(cmd.OutOrStdout(), formatA2ATask(task))
 		return a2aTaskExitError(task)
 	},
 }
@@ -174,18 +223,11 @@ var a2aCancelCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx, cancel := commandAPIContext(cmd)
 		defer cancel()
-		task, err := runA2ACancel(ctx, args[0], args[1])
+		task, err := runA2ACancel(ctx, a2aTaskQuery{CardURL: args[0], TaskID: args[1]})
 		if err != nil {
 			return err
 		}
-		if jsonFlag {
-			if err := json.NewEncoder(cmd.OutOrStdout()).Encode(task); err != nil {
-				return err
-			}
-			return nil
-		}
-		fmt.Fprint(cmd.OutOrStdout(), formatA2ATask(task))
-		return nil
+		return writeA2AOutput(cmd, task, formatA2ATask)
 	},
 }
 
@@ -197,12 +239,11 @@ var a2aPublishCmd = &cobra.Command{
 		// Card publication fetches, verifies and registers a route; keep its explicit forty-five-second workflow budget.
 		ctx, cancel := context.WithTimeout(cmd.Context(), 45*time.Second)
 		defer cancel()
-		out, err := runA2APublish(ctx, args[0])
+		out, err := runA2APublish(ctx, a2aPublishInput{CardURL: args[0], Address: a2aPublishAddress, RegistryURL: a2aPublishRegistry, GatewayIdentity: a2aPublishGatewayIdentity, RouteID: a2aPublishRouteID, RPCURL: a2aPublishRPCURL, CardRevision: a2aPublishCardRevision, AssertionID: a2aPublishAssertionID, DelegationID: a2aPublishDelegationID, ExpiresDays: a2aPublishExpiresDays, DefaultForHost: a2aPublishDefaultForHost})
 		if err != nil {
 			return err
 		}
-		printOutput(out, formatA2APublishOutput)
-		return nil
+		return writeA2AOutput(cmd, out, formatA2APublishOutput)
 	},
 }
 
@@ -305,50 +346,54 @@ func verifyA2ACardWithAWID(ctx context.Context, input a2aCardVerification) a2a.V
 	return a2a.VerificationResult{Tier: a2a.VerificationTier2, Status: a2a.VerificationAWIDVerified, Code: "awid_publication_verified", Message: "AWID publication active; served card digest matches.", Digest: digestValue}
 }
 
-func runA2ASend(ctx context.Context, cardURL, text string) (a2a.Task, error) {
+func runA2ASend(ctx context.Context, input a2aSendInput) (a2aSendResult, error) {
+	cardURL, text := input.CardURL, input.Text
 	text = strings.TrimSpace(text)
 	if text == "" {
-		return a2a.Task{}, usageError("message must not be empty")
+		return a2aSendResult{}, usageError("message must not be empty")
 	}
-	card, rpcURL, credential, err := resolveA2ACallTarget(ctx, cardURL)
+	_, rpcURL, credential, err := resolveA2ACallTarget(ctx, cardURL)
 	if err != nil {
-		return a2a.Task{}, err
+		return a2aSendResult{}, err
 	}
-	_ = card
-	message := a2a.NewUserTextMessage(a2aContextID, text)
+	message := a2a.NewUserTextMessage(input.ContextID, text)
 	params := a2a.SendMessageParams{
 		Message: message,
 		Configuration: a2a.SendConfiguration{
-			ReturnImmediately:   !a2aWait || a2aNoWait,
+			ReturnImmediately:   input.Completion == a2aReturnImmediately,
 			AcceptedOutputModes: []string{"text/plain", "application/json"},
 		},
 	}
-	if strings.TrimSpace(a2aDataJSON) != "" {
+	if strings.TrimSpace(input.DataJSON) != "" {
 		var metadata map[string]any
-		if err := json.Unmarshal([]byte(a2aDataJSON), &metadata); err != nil {
-			return a2a.Task{}, usageError("--data must be a JSON object: %v", err)
+		if err := json.Unmarshal([]byte(input.DataJSON), &metadata); err != nil {
+			return a2aSendResult{}, usageError("--data must be a JSON object: %v", err)
 		}
 		params.Metadata = metadata
 	}
 	var resp a2aTaskEnvelope
 	if err := (&a2a.Client{HTTPClient: a2aHTTPClient(), UserAgent: "aw/" + version}).Call(ctx, rpcURL, a2a.MethodSendMessage, params, credential, &resp); err != nil {
-		return a2a.Task{}, err
+		return a2aSendResult{}, err
 	}
-	saveA2ATaskTokenBestEffort(rpcURL, resp.Task)
-	return resp.Task, nil
+	return a2aSendResult{Task: resp.Task, TokenSaveError: saveA2ATaskToken(rpcURL, resp.Task)}, nil
 }
 
-func runA2AStatus(ctx context.Context, cardURL, taskID string) (a2a.Task, error) {
+func runA2AStatus(ctx context.Context, input a2aTaskQuery) (a2a.Task, error) {
+	cardURL, taskID := input.CardURL, input.TaskID
 	_, rpcURL, credential, err := resolveA2ACallTarget(ctx, cardURL)
 	if err != nil {
 		return a2a.Task{}, err
 	}
-	if token := loadA2ATaskTokenBestEffort(cardURL, rpcURL, taskID); token != "" {
+	token, err := loadA2ATaskToken(a2aCredentialQuery{CardURL: cardURL, RPCURL: rpcURL, TaskID: taskID})
+	if err != nil {
+		return a2a.Task{}, err
+	}
+	if token != "" {
 		credential.TaskToken = token
 	}
 	params := map[string]any{"id": strings.TrimSpace(taskID)}
-	if a2aHistoryLength >= 0 {
-		params["historyLength"] = a2aHistoryLength
+	if input.HistoryLength >= 0 {
+		params["historyLength"] = input.HistoryLength
 	}
 	var task a2a.Task
 	if err := (&a2a.Client{HTTPClient: a2aHTTPClient(), UserAgent: "aw/" + version}).Call(ctx, rpcURL, a2a.MethodGetTask, params, credential, &task); err != nil {
@@ -357,12 +402,17 @@ func runA2AStatus(ctx context.Context, cardURL, taskID string) (a2a.Task, error)
 	return task, nil
 }
 
-func runA2ACancel(ctx context.Context, cardURL, taskID string) (a2a.Task, error) {
+func runA2ACancel(ctx context.Context, input a2aTaskQuery) (a2a.Task, error) {
+	cardURL, taskID := input.CardURL, input.TaskID
 	_, rpcURL, credential, err := resolveA2ACallTarget(ctx, cardURL)
 	if err != nil {
 		return a2a.Task{}, err
 	}
-	if token := loadA2ATaskTokenBestEffort(cardURL, rpcURL, taskID); token != "" {
+	token, err := loadA2ATaskToken(a2aCredentialQuery{CardURL: cardURL, RPCURL: rpcURL, TaskID: taskID})
+	if err != nil {
+		return a2a.Task{}, err
+	}
+	if token != "" {
 		credential.TaskToken = token
 	}
 	var task a2a.Task
@@ -372,7 +422,8 @@ func runA2ACancel(ctx context.Context, cardURL, taskID string) (a2a.Task, error)
 	return task, nil
 }
 
-func runA2APublish(ctx context.Context, cardURL string) (a2aPublishOutput, error) {
+func runA2APublish(ctx context.Context, input a2aPublishInput) (a2aPublishOutput, error) {
+	cardURL := input.CardURL
 	card, _, err := a2a.FetchCard(ctx, a2aHTTPClient(), cardURL)
 	if err != nil {
 		return a2aPublishOutput{}, err
@@ -406,7 +457,7 @@ func runA2APublish(ctx context.Context, cardURL string) (a2aPublishOutput, error
 	pub := signingKey.Public().(ed25519.PublicKey)
 	currentDIDKey := awid.ComputeDIDKey(pub)
 	didAW := awid.ComputeStableID(pub)
-	address := strings.TrimSpace(a2aPublishAddress)
+	address := strings.TrimSpace(input.Address)
 	if address == "" {
 		address = strings.TrimSpace(selection.Address)
 	}
@@ -424,7 +475,7 @@ func runA2APublish(ctx context.Context, cardURL string) (a2aPublishOutput, error
 	}
 	registry := newAWIDRegistryClient(a2aHTTPClient(), nil)
 	registry.RequestID = "aw-a2a-publish-" + time.Now().UTC().Format("20060102T150405.000000000")
-	registryURL := strings.TrimSpace(a2aPublishRegistry)
+	registryURL := strings.TrimSpace(input.RegistryURL)
 	if registryURL == "" {
 		registryURL = strings.TrimSpace(selection.RegistryURL)
 	}
@@ -442,38 +493,38 @@ func runA2APublish(ctx context.Context, cardURL string) (a2aPublishOutput, error
 			return a2aPublishOutput{}, fmt.Errorf("discover AWID registry for %s: %w", domain, err)
 		}
 	}
-	routeID := strings.TrimSpace(a2aPublishRouteID)
+	routeID := strings.TrimSpace(input.RouteID)
 	if routeID == "" {
 		routeID, err = routeIDFromA2ACardURL(cardURL)
 		if err != nil {
 			return a2aPublishOutput{}, err
 		}
 	}
-	rpcURL := strings.TrimSpace(a2aPublishRPCURL)
+	rpcURL := strings.TrimSpace(input.RPCURL)
 	if rpcURL == "" {
 		rpcURL = strings.TrimSpace(iface.URL)
 	}
-	cardRevision := strings.TrimSpace(a2aPublishCardRevision)
+	cardRevision := strings.TrimSpace(input.CardRevision)
 	if cardRevision == "" {
 		cardRevision = strings.TrimSpace(card.Version)
 	}
 	if cardRevision == "" {
 		cardRevision = time.Now().UTC().Format("2006-01-02T150405Z")
 	}
-	if a2aPublishExpiresDays <= 0 {
+	if input.ExpiresDays <= 0 {
 		return a2aPublishOutput{}, usageError("--expires-days must be positive")
 	}
 	now := time.Now().UTC().Truncate(time.Second)
-	expiresAt := now.Add(time.Duration(a2aPublishExpiresDays) * 24 * time.Hour).Format(time.RFC3339)
-	gatewayIdentity := strings.TrimSpace(a2aPublishGatewayIdentity)
+	expiresAt := now.Add(time.Duration(input.ExpiresDays) * 24 * time.Hour).Format(time.RFC3339)
+	gatewayIdentity := strings.TrimSpace(input.GatewayIdentity)
 	if gatewayIdentity == "" {
 		gatewayIdentity = didAW
 	}
-	delegationID := strings.TrimSpace(a2aPublishDelegationID)
+	delegationID := strings.TrimSpace(input.DelegationID)
 	if delegationID == "" {
 		delegationID = a2AAssertionID("del", now, address, routeID, gatewayIdentity, digest.Value)
 	}
-	assertionID := strings.TrimSpace(a2aPublishAssertionID)
+	assertionID := strings.TrimSpace(input.AssertionID)
 	if assertionID == "" {
 		assertionID = a2AAssertionID("pub", now, address, routeID, gatewayIdentity, digest.Value)
 	}
@@ -530,7 +581,7 @@ func runA2APublish(ctx context.Context, cardURL string) (a2aPublishOutput, error
 			CardDigestAlg:    awid.A2ACardDigestAlgSHA256,
 			CardDigest:       digest.Value,
 			CardRevision:     cardRevision,
-			DefaultForHost:   a2aPublishDefaultForHost,
+			DefaultForHost:   input.DefaultForHost,
 			Status:           awid.A2AStatusActive,
 			PublishedAt:      now.Format(time.RFC3339),
 			ExpiresAt:        expiresAt,
@@ -647,7 +698,10 @@ func resolveA2ACallTarget(ctx context.Context, cardURL string) (a2a.Card, string
 	if err := a2a.ValidateRPCOrigin(a2a.OriginPair{Source: cardURL, Destination: iface.URL}); err != nil {
 		return a2a.Card{}, "", a2a.Credential{}, err
 	}
-	credential := loadA2ACredentialBestEffort(cardURL, iface.URL)
+	credential, err := loadA2ACredential(a2aCredentialQuery{CardURL: cardURL, RPCURL: iface.URL})
+	if err != nil {
+		return a2a.Card{}, "", a2a.Credential{}, err
+	}
 	if strings.TrimSpace(iface.Tenant) != "" {
 		return a2a.Card{}, "", a2a.Credential{}, usageError("A2A tenant-routed interfaces are not supported by aw a2a yet; use a path-routed per-address card")
 	}
@@ -676,8 +730,7 @@ func formatA2ACardOutput(out a2aCardOutput) string {
 	return sb.String()
 }
 
-func formatA2APublishOutput(v any) string {
-	out := v.(a2aPublishOutput)
+func formatA2APublishOutput(out a2aPublishOutput) string {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("Published A2A route for %s\n", out.Address))
 	sb.WriteString(fmt.Sprintf("Card:      %s\n", out.CardURL))
@@ -715,7 +768,7 @@ func formatA2ATask(task a2a.Task) string {
 	if text := a2aTaskText(task); text != "" {
 		sb.WriteString(fmt.Sprintf("Text:    %s\n", termtext.Block(text)))
 	}
-	if token, _ := task.Metadata["task_bearer_token"].(string); token != "" {
+	if token, ok := task.Metadata["task_bearer_token"].(string); ok && token != "" {
 		sb.WriteString(fmt.Sprintf("Token:   %s\n", termtext.Line(token)))
 	}
 	return sb.String()

@@ -1020,3 +1020,10 @@ times; an A2A wait extends its write deadline to its configured response budget.
 The plaintext bridge, per-request registry readiness check, and best-effort
 audit observer retain their existing contracts. Authentication refusals are
 recorded as refusals rather than successful task sends.
+
+The CLI keeps task bearer tokens in the invoking instance's
+`.aw/a2a-credentials.yaml`, separately from static route credentials in a selected
+identity home. Task-token writes are atomic and serialized within that instance.
+An unreadable or malformed credential file is an error, not an empty file. If
+persistence fails after delivery, `aw a2a send` still returns the delivered task
+and its token, and warns on stderr how to retain access and repair the file.

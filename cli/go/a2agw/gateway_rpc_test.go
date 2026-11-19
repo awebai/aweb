@@ -229,7 +229,7 @@ func TestGatewayRPCAuthModesAndAbuseControls(t *testing.T) {
 		gw := newTestGateway(t, Config{Host: "team.aweb.ai", Bridge: &fakeBridge{}, Routes: []Route{route}})
 		for i := 0; i < 2; i++ {
 			resp := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req", "SendMessage", map[string]any{
-				"message":       testUserMessage(mustNewUUIDv4(), "ctx-1", "hello"),
+				"message":       testUserMessage(testUUID(t), "ctx-1", "hello"),
 				"configuration": map[string]any{"returnImmediately": true},
 			}), nil, http.StatusOK)
 			if i == 0 && resp["error"] != nil {
@@ -261,7 +261,7 @@ func TestGatewayRPCTaskIDEntropyAndShape(t *testing.T) {
 	uuidRE := regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 	for i := 0; i < 64; i++ {
 		resp := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req", "SendMessage", map[string]any{
-			"message":       testUserMessage(mustNewUUIDv4(), "ctx", "entropy"),
+			"message":       testUserMessage(testUUID(t), "ctx", "entropy"),
 			"configuration": map[string]any{"returnImmediately": true},
 		}), map[string]string{"X-A2A-Caller-ID": "alice"}, http.StatusOK)
 		taskID := rpcTaskResult(t, resp, "task")["id"].(string)
@@ -403,4 +403,13 @@ func (b *fakeBridge) CancelTask(_ context.Context, cancel BridgeCancel) error {
 	defer b.mu.Unlock()
 	b.canceled = append(b.canceled, cancel)
 	return nil
+}
+
+func testUUID(t *testing.T) string {
+	t.Helper()
+	id, err := newUUIDv4()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
 }

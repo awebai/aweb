@@ -30,12 +30,15 @@ const (
 	RoleUser = "ROLE_USER"
 )
 
+// Client calls a path-routed A2A JSON-RPC endpoint with bounded HTTP requests.
 type Client struct {
 	HTTPClient *http.Client
 	UserAgent  string
 	RequestID  string
 }
 
+// Credential carries route authentication and an optional task bearer token.
+// CallerID identifies a caller scope; it does not authenticate that caller.
 type Credential struct {
 	APIKey      string
 	BearerToken string
@@ -43,6 +46,8 @@ type Credential struct {
 	TaskToken   string
 }
 
+// RPCEnvelope is an A2A JSON-RPC request or response. Result remains raw
+// JSON until the caller selects the method-specific result type.
 type RPCEnvelope struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      string          `json:"id"`
@@ -52,6 +57,8 @@ type RPCEnvelope struct {
 	Error   *RPCError       `json:"error,omitempty"`
 }
 
+// RPCError is the remote JSON-RPC refusal, including its structured code
+// and any task retained after a provider fault in Data.
 type RPCError struct {
 	Code    int            `json:"code"`
 	Message string         `json:"message"`
@@ -62,12 +69,14 @@ func (e *RPCError) Error() string {
 	if e == nil {
 		return ""
 	}
-	if code, _ := e.Data["code"].(string); code != "" {
+	if code, ok := e.Data["code"].(string); ok && code != "" {
 		return fmt.Sprintf("a2a rpc error %d %s: %s", e.Code, code, e.Message)
 	}
 	return fmt.Sprintf("a2a rpc error %d: %s", e.Code, e.Message)
 }
 
+// Message is a task conversation message. ContextID is correlation,
+// while access to a task requires its credential or issued task token.
 type Message struct {
 	MessageID string `json:"messageId"`
 	ContextID string `json:"contextId,omitempty"`
@@ -76,22 +85,26 @@ type Message struct {
 	Parts     []Part `json:"parts"`
 }
 
+// Part carries one text or structured-media segment of a message.
 type Part struct {
 	Text      string `json:"text"`
 	MediaType string `json:"mediaType,omitempty"`
 }
 
+// SendMessageParams carries the caller message and response preferences.
 type SendMessageParams struct {
 	Message       Message           `json:"message"`
 	Configuration SendConfiguration `json:"configuration,omitempty"`
 	Metadata      map[string]any    `json:"metadata,omitempty"`
 }
 
+// SendConfiguration controls waiting and acceptable response media types.
 type SendConfiguration struct {
 	ReturnImmediately   bool     `json:"returnImmediately,omitempty"`
 	AcceptedOutputModes []string `json:"acceptedOutputModes,omitempty"`
 }
 
+// Task is a gateway task projection. Its ID alone does not authorize access.
 type Task struct {
 	ID        string         `json:"id"`
 	ContextID string         `json:"contextId,omitempty"`
@@ -101,18 +114,22 @@ type Task struct {
 	Metadata  map[string]any `json:"metadata,omitempty"`
 }
 
+// TaskStatus reports the gateway state and optional status message.
 type TaskStatus struct {
 	State     string   `json:"state"`
 	Timestamp string   `json:"timestamp,omitempty"`
 	Message   *Message `json:"message,omitempty"`
 }
 
+// Artifact carries an output produced by a task.
 type Artifact struct {
 	ArtifactID string `json:"artifactId,omitempty"`
 	Name       string `json:"name,omitempty"`
 	Parts      []Part `json:"parts,omitempty"`
 }
 
+// FetchCard returns the decoded Agent Card and its original JSON bytes.
+// It does not establish address ownership; verify the card publication separately.
 func FetchCard(ctx context.Context, httpClient *http.Client, rawURL string) (Card, []byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSpace(rawURL), nil)
 	if err != nil {
@@ -138,6 +155,8 @@ func FetchCard(ctx context.Context, httpClient *http.Client, rawURL string) (Car
 	return card, body, nil
 }
 
+// Call sends an authenticated JSON-RPC request and decodes its method result.
+// Before selecting credentials from a card, callers must check ValidateRPCOrigin.
 func (c *Client) Call(ctx context.Context, rpcURL, method string, params any, credential Credential, out any) error {
 	return c.call(ctx, rpcCall{URL: rpcURL, Method: method, Params: params, Credential: credential, Out: out})
 }
@@ -218,6 +237,8 @@ func (c *Client) call(ctx context.Context, input rpcCall) error {
 	return json.Unmarshal(envelope.Result, out)
 }
 
+// SelectJSONRPCInterface selects the supported JSON-RPC interface.
+// Callers must validate its origin before sending stored credentials.
 func SelectJSONRPCInterface(card Card) (Interface, error) {
 	for _, iface := range card.SupportedInterfaces {
 		if iface.ProtocolBinding == ProtocolBindingJSONRPC && iface.ProtocolVersion == ProtocolVersion10 && strings.TrimSpace(iface.URL) != "" {
@@ -227,6 +248,7 @@ func SelectJSONRPCInterface(card Card) (Interface, error) {
 	return Interface{}, fmt.Errorf("agent card has no JSONRPC 1.0 interface")
 }
 
+// NewUserTextMessage creates a user message with a fresh message ID.
 func NewUserTextMessage(contextID, text string) Message {
 	return Message{
 		MessageID: "msg-" + randomHexString(16),
@@ -254,6 +276,7 @@ func randomHexString(n int) string {
 	return hex.EncodeToString(buf)
 }
 
+// IsTerminalState reports whether a task state ends further execution.
 func IsTerminalState(state string) bool {
 	switch state {
 	case TaskStateCompleted, TaskStateFailed, TaskStateCanceled, TaskStateRejected:
