@@ -344,6 +344,11 @@ PRODUCTION_AWID_PROJECT := scripts/test-egress/production-awid
 production-awid-sync:
 	uv sync --frozen --project $(PRODUCTION_AWID_PROJECT)
 
+# Unique loopback Compose services; this does not use an existing host database.
+.PHONY: test-server-local
+test-server-local:
+	python3 scripts/test_server_local.py
+
 test-server: production-awid-sync
 	cd server && uv sync --frozen
 	set -eu; cd server; build_dir=$$(mktemp -d); trap 'rm -rf "$$build_dir"' EXIT; \
