@@ -1,6 +1,7 @@
-"""Public lifecycle request choices and compatibility, without service doubles."""
+"""Lifecycle request choices and empty-effect completion without services."""
 
 from datetime import datetime, timezone
+from uuid import uuid4
 
 import pytest
 from aweb.lifecycle_agent import apply_agent_disposition_on, clear_agent_coordination_on
@@ -8,7 +9,10 @@ from aweb.lifecycle import (
     AgentDisposition,
     LifecycleActor,
     LifecycleCascadeRequest,
+    LifecycleCascadeResult,
+    _CommittedLifecycleEffects,
     _agent_precondition_errors,
+    _complete_lifecycle_effects,
     _requested_disposition,
     _validate_request,
     plan_lifecycle_cascade,
@@ -115,3 +119,21 @@ async def test_planner_refusal_is_always_reported_as_a_dry_run():
     assert [error.code for error in result.errors] == ["missing_workspace_scope_target"]
     assert result.dry_run is True
     assert request.dry_run is False
+
+
+@pytest.mark.asyncio
+async def test_zero_effect_completion_requires_no_replay_handle():
+    result = await _complete_lifecycle_effects(
+        None,
+        None,
+        base=LifecycleCascadeResult(
+            operation="delete_local_workspace", dry_run=False, target_agent_id=None
+        ),
+        effects=_CommittedLifecycleEffects(
+            operation_id=uuid4(), effect_count=0, chat_participants=(), presence_ids=()
+        ),
+    )
+    assert result.post_commit_status == "completed"
+    assert result.outbox_operation_id is None
+    assert result.chat_waiting_cleared_count == 0
+    assert result.presence_cleared_count == 0
