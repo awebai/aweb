@@ -292,7 +292,8 @@ func (c *Client) prepareE2EEMail(ctx context.Context, payload *SendMessageReques
 		}
 		out, err := custody.CreateE2EEEnvelope(ctx, req)
 		if err != nil {
-			if payload.ReplyToMessageID != "" && recipient.Address == "" && strings.Contains(err.Error(), "recipient_binding_unavailable") {
+			var refusal *CustodyError
+			if payload.ReplyToMessageID != "" && recipient.Address == "" && errors.As(err, &refusal) && refusal.Code == CustodyRecipientBindingUnavailable {
 				return fmt.Errorf("%w; custody host must be aw >= 1.36.30 for replies to addressless senders", err)
 			}
 			return err
