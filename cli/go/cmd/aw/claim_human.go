@@ -11,6 +11,7 @@ import (
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/termtext"
 	"github.com/spf13/cobra"
 )
 
@@ -66,14 +67,20 @@ func runClaimHuman(cmd *cobra.Command, args []string) error {
 	}
 
 	if jsonFlag {
-		return json.NewEncoder(cmd.OutOrStdout()).Encode(map[string]any{
-			"status":   resp.Status,
-			"email":    resp.Email,
-			"username": username,
+		return json.NewEncoder(cmd.OutOrStdout()).Encode(claimHumanCommandOutput{
+			Status: resp.Status, Email: resp.Email, Username: username, EmailSent: resp.EmailSent, EmailMessage: resp.EmailMessage,
 		})
 	}
 
 	return printClaimHumanSuccess(cmd.OutOrStdout(), email, resp)
+}
+
+type claimHumanCommandOutput struct {
+	Status       string `json:"status"`
+	Email        string `json:"email"`
+	Username     string `json:"username"`
+	EmailSent    *bool  `json:"email_sent,omitempty"`
+	EmailMessage string `json:"email_message,omitempty"`
 }
 
 type claimHumanOptions struct {
@@ -205,19 +212,34 @@ func printClaimHumanSuccess(out io.Writer, requestedEmail string, resp *awid.Cla
 	if resp != nil && strings.TrimSpace(resp.Email) != "" {
 		finalEmail = strings.TrimSpace(resp.Email)
 	}
-	status := ""
+	status := awid.ClaimHumanStatus("")
 	if resp != nil {
-		status = strings.TrimSpace(resp.Status)
+		status = awid.ClaimHumanStatus(strings.TrimSpace(resp.Status))
+	}
+	finalEmail = termtext.Line(finalEmail)
+	if resp != nil && (status == awid.ClaimHumanVerificationSent || status == awid.ClaimHumanApprovalSent) && resp.EmailSent != nil && !*resp.EmailSent {
+		message := strings.TrimSpace(resp.EmailMessage)
+		if message == "" {
+			message = "The verification email could not be sent. Run the command again to request a new one."
+			if status == awid.ClaimHumanApprovalSent {
+				message = "The approval email could not be sent. Run the command again to request a new one."
+			}
+		}
+		_, err := fmt.Fprintln(out, termtext.Line(message))
+		return err
 	}
 	switch status {
-	case "already_attached":
+	case awid.ClaimHumanAlreadyAttached:
 		_, err := fmt.Fprintf(out, "Human account %s is already attached. No verification email was sent.\n", finalEmail)
 		return err
-	case "attached":
+	case awid.ClaimHumanAttached:
 		_, err := fmt.Fprintf(out, "Human account %s is attached. No verification email was sent because the email is already verified.\n", finalEmail)
 		return err
-	case "verification_sent":
+	case awid.ClaimHumanVerificationSent:
 		_, err := fmt.Fprintf(out, "Verification email requested for %s. Click the link in the email to activate your dashboard login.\n", finalEmail)
+		return err
+	case awid.ClaimHumanApprovalSent:
+		_, err := fmt.Fprintln(out, "Approval email requested. Follow the instructions in that email to approve this claim.")
 		return err
 	default:
 		_, err := fmt.Fprintf(out, "Claim-human completed for %s with status %q.\n", finalEmail, status)

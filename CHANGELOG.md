@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `aw claim-human` reports an observed email delivery failure with retry guidance; JSON output retains the optional delivery fields.
+
 - Addressed `aw id create` saves its private key before registry writes and
   resumes an uncertain claim with that same key and selection. Human certificate
   registration checks the current issuing authority before asking the person
