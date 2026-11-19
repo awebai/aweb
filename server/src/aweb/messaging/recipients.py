@@ -156,9 +156,7 @@ async def _resolve_address_identity(
             and bool(signed.get("to_did") or signed.get("to_stable_id"))
             and not bound
         )
-        if bound or (
-            local_recipient_visible_to_auth(local, auth) and not needs_current
-        ):
+        if bound or (local_recipient_visible_to_auth(local, auth) and not needs_current):
             recipient = identity_recipient(local, address)
             return replace(recipient, requires_local_address_authority=True)
 
@@ -167,9 +165,7 @@ async def _resolve_address_identity(
     resolution = None
     if home_namespace:
         try:
-            resolution = await registry.resolve_address(
-                domain, name, did_key=auth.did_key
-            )
+            resolution = await registry.resolve_address(domain, name, did_key=auth.did_key)
         except AWID_DEPENDENCY_ERRORS as exc:
             logger.warning(
                 "Messaging home address lookup unavailable failure_type=%s",
