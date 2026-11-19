@@ -434,6 +434,8 @@ func TestFormatChatHistoryPrefersFromAddress(t *testing.T) {
 				FromAgent:   "carol",
 				FromAddress: "otherco/carol",
 				Body:        "hello",
+				// History always carries a verdict; these tests are about the label.
+				VerificationStatus: awid.Verified,
 			},
 		},
 	}
@@ -456,6 +458,8 @@ func TestFormatChatHistoryFallsBackToStableID(t *testing.T) {
 				FromAddress:  "",
 				FromStableID: "did:aw:carol",
 				Body:         "hello",
+				// History always carries a verdict; these tests are about the label.
+				VerificationStatus: awid.Verified,
 			},
 		},
 	}
@@ -587,5 +591,24 @@ func TestFormatMailListingsShowMessageIDsForReply(t *testing.T) {
 	noID := formatMailInbox(&awid.InboxResponse{Messages: []awid.InboxMessage{{FromAlias: "dave", Body: "Hello"}}})
 	if strings.Contains(noID, "Message ID") || strings.Contains(noID, "To reply") {
 		t.Fatalf("a message without an id shows id or reply lines:\n%s", noID)
+	}
+}
+
+// Every status the client can hold has a tag rule; a message whose status was
+// never set is not shown as verified.
+func TestFormatVerificationTagShowsAnUnsetStatus(t *testing.T) {
+	for status, want := range map[awid.VerificationStatus]string{
+		awid.Verified:          "",
+		awid.VerifiedLegacy:    "",
+		awid.VerifiedCustodial: "",
+		awid.Unverified:        " [unverified]",
+		awid.Failed:            " [VERIFICATION FAILED]",
+		awid.VerificationStale: " [verification stale]",
+		awid.IdentityMismatch:  " [IDENTITY MISMATCH]",
+		"":                     " [no verification]",
+	} {
+		if got := formatVerificationTag(status); got != want {
+			t.Errorf("formatVerificationTag(%q)=%q, want %q", status, got, want)
+		}
 	}
 }
