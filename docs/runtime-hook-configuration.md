@@ -14,3 +14,7 @@ Failure to write a cooldown does not suppress a working notification.
 installs, preserving other handlers and user fields. `aw init --remove-notify-hook`
 removes exact fallback notification handlers under aw's default matcher, including
 legacy unscoped entries, preserving custom matchers and making a backup.
+
+JSON refusals name the settings file and the specific syntax, duplicate-key or
+object-shape repair. Init continues its other actions and reports the hook as
+not installed. Install/remove round trips preserve user bytes, including whitespace.

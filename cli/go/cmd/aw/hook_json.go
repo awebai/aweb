@@ -12,7 +12,7 @@ import (
 // pass through a decoder/encoder round trip (including numbers and escapes).
 func parseHookJSON(data []byte) (*hookJSONNode, error) {
 	if !json.Valid(data) {
-		return nil, fmt.Errorf("invalid JSON; settings left unchanged")
+		return nil, &hookJSONError{Problem: invalidHookJSON, Detail: "invalid JSON; settings left unchanged"}
 	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.UseNumber()
@@ -21,7 +21,7 @@ func parseHookJSON(data []byte) (*hookJSONNode, error) {
 		return nil, err
 	}
 	if root.object == nil {
-		return nil, fmt.Errorf("settings must be a JSON object")
+		return nil, &hookJSONError{Problem: nonObjectHookSettings, Detail: "settings must be a JSON object"}
 	}
 	return root, nil
 }
@@ -70,7 +70,7 @@ func notifyHandlers(root *hookJSONNode) ([]*hookJSONNode, error) {
 		return nil, nil
 	}
 	if hooks.object == nil {
-		return nil, fmt.Errorf("hooks must be a JSON object")
+		return nil, &hookJSONError{Problem: nonObjectHooks, Detail: "hooks must be a JSON object"}
 	}
 	post := hooks.member("PostToolUse")
 	if post == nil {
@@ -193,7 +193,7 @@ func readHookJSONNode(dec *json.Decoder, data []byte) (*hookJSONNode, error) {
 					return nil, fmt.Errorf("JSON object key must be a string")
 				}
 				if _, exists := n.object[key]; exists {
-					return nil, fmt.Errorf("duplicate JSON key %q", key)
+					return nil, &hookJSONError{Problem: duplicateHookJSONKey, Detail: fmt.Sprintf("duplicate JSON key %q", key)}
 				}
 				child, err := readHookJSONNode(dec, data)
 				if err != nil {
@@ -220,7 +220,13 @@ func readHookJSONNode(dec *json.Decoder, data []byte) (*hookJSONNode, error) {
 
 type hookByteSpan struct{ start, end int }
 
-func hookArrayRemovalSpans(nodes []*hookJSONNode, remove []bool) []hookByteSpan {
+// hookArrayRemovalSpans implements docs/runtime-hook-configuration.md:3-8.
+// Remove owned values and separator commas separately; surrounding whitespace is
+// user data, including whitespace that precedes an appended handler's comma.
+func hookArrayRemovalSpans(data []byte, nodes []*hookJSONNode, remove []bool) ([]hookByteSpan, error) {
+	if len(nodes) != len(remove) {
+		return nil, fmt.Errorf("hook removal plan does not match the array")
+	}
 	var spans []hookByteSpan
 	for i := 0; i < len(nodes); {
 		if !remove[i] {
@@ -229,17 +235,26 @@ func hookArrayRemovalSpans(nodes []*hookJSONNode, remove []bool) []hookByteSpan 
 		}
 		first := i
 		for i < len(nodes) && remove[i] {
+			spans = append(spans, hookByteSpan{start: nodes[i].start, end: nodes[i].end})
 			i++
 		}
-		start, end := nodes[first].start, nodes[i-1].end
-		if i < len(nodes) {
-			end = nodes[i].start
-		} else if first > 0 {
-			start = nodes[first-1].end
+		separatorFirst, separatorEnd := first, i
+		if i == len(nodes) {
+			separatorFirst, separatorEnd = first-1, i-1
 		}
-		spans = append(spans, hookByteSpan{start, end})
+		if separatorFirst < 0 {
+			separatorFirst = 0
+		}
+		for j := separatorFirst; j < separatorEnd; j++ {
+			gap := nodes[j].end
+			comma := bytes.IndexByte(data[gap:nodes[j+1].start], ',')
+			if comma < 0 {
+				return nil, fmt.Errorf("missing hook array separator; settings left unchanged")
+			}
+			spans = append(spans, hookByteSpan{start: gap + comma, end: gap + comma + 1})
+		}
 	}
-	return spans
+	return spans, nil
 }
 
 type runtimeHookKind string

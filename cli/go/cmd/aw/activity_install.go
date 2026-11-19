@@ -131,8 +131,11 @@ func changeCodexActivityHooks(dir string, operation activityHookOperation) (bool
 		mode = info.Mode().Perm()
 	}
 	updated, changed, err := editCodexActivityHooks(data, operation)
-	if err != nil || !changed {
-		return changed, err
+	if err != nil {
+		return false, hookSettingsParseError(path, err)
+	}
+	if !changed {
+		return false, nil
 	}
 
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -150,7 +153,7 @@ func editCodexActivityHooks(data []byte, operation activityHookOperation) ([]byt
 	}
 	hooks := root.member("hooks")
 	if hooks != nil && hooks.object == nil {
-		return nil, false, fmt.Errorf("hooks must be an object")
+		return nil, false, &hookJSONError{Problem: nonObjectHooks, Detail: "hooks must be an object"}
 	}
 	if err := validateCodexHookEvents(hooks); err != nil {
 		return nil, false, err
@@ -163,13 +166,20 @@ func editCodexActivityHooks(data []byte, operation activityHookOperation) ([]byt
 		if groups != nil {
 			removeGroups := make([]bool, len(groups.array))
 			for i, group := range groups.array {
-				groupEdit := planCodexActivityGroup(group, operation)
+				groupEdit, err := planCodexActivityGroup(data, group, operation)
+				if err != nil {
+					return nil, false, err
+				}
 				found = found || groupEdit.Found
 				removeGroups[i] = groupEdit.RemoveGroup
 				edits = append(edits, groupEdit.Edits...)
 			}
 			if operation == removeActivityHook {
-				for _, span := range hookArrayRemovalSpans(groups.array, removeGroups) {
+				spans, err := hookArrayRemovalSpans(data, groups.array, removeGroups)
+				if err != nil {
+					return nil, false, err
+				}
+				for _, span := range spans {
 					edits = append(edits, hookJSONEdit{start: span.start, end: span.end})
 				}
 			}
@@ -244,15 +254,15 @@ type codexActivityGroupEdit struct {
 	Edits       []hookJSONEdit
 }
 
-func planCodexActivityGroup(group *hookJSONNode, operation activityHookOperation) codexActivityGroupEdit {
+func planCodexActivityGroup(data []byte, group *hookJSONNode, operation activityHookOperation) (codexActivityGroupEdit, error) {
 	result := codexActivityGroupEdit{}
 	// aw installs unscoped groups; a custom matcher belongs to its user.
 	if group.member("matcher") != nil {
-		return result
+		return result, nil
 	}
 	inner := group.member("hooks")
 	if inner == nil {
-		return result
+		return result, nil
 	}
 	remove := make([]bool, len(inner.array))
 	count := 0
@@ -264,16 +274,20 @@ func planCodexActivityGroup(group *hookJSONNode, operation activityHookOperation
 	}
 	result.Found = count > 0
 	if operation == installActivityHook || !result.Found {
-		return result
+		return result, nil
 	}
 	if count == len(inner.array) && len(group.object) == 1 {
 		result.RemoveGroup = true
-		return result
+		return result, nil
 	}
-	for _, span := range hookArrayRemovalSpans(inner.array, remove) {
+	spans, err := hookArrayRemovalSpans(data, inner.array, remove)
+	if err != nil {
+		return result, err
+	}
+	for _, span := range spans {
 		result.Edits = append(result.Edits, hookJSONEdit{start: span.start, end: span.end})
 	}
-	return result
+	return result, nil
 }
 
 func codexHookDirectory() (string, error) {

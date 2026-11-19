@@ -109,8 +109,8 @@ func TestHookJSONRefusalsNameFileAndSpecificRepair(t *testing.T) {
 		t.Run(tc.Name, func(t *testing.T) {
 			root := t.TempDir()
 			path := writeNotifySettings(t, root, tc.JSON)
-			assertHookRepair(t, SetupClaudeHooks(root, skipHookConfirmation).Error, path, tc.Repair)
-			assertHookRepair(t, CleanupClaudeNotifyHook(root).Error, path, tc.Repair)
+			assertHookRepair(t, SetupClaudeHooks(root, skipHookConfirmation).Error, hookRepairExpectation{Path: path, Repair: tc.Repair})
+			assertHookRepair(t, CleanupClaudeNotifyHook(root).Error, hookRepairExpectation{Path: path, Repair: tc.Repair})
 			if got := readInstallFile(t, path); string(got) != tc.JSON {
 				t.Fatal("changed refused Claude settings")
 			}
@@ -121,7 +121,7 @@ func TestHookJSONRefusalsNameFileAndSpecificRepair(t *testing.T) {
 			}
 			for _, operation := range []activityHookOperation{installActivityHook, removeActivityHook} {
 				_, err := changeCodexActivityHooks(codex, operation)
-				assertHookRepair(t, err, path, tc.Repair)
+				assertHookRepair(t, err, hookRepairExpectation{Path: path, Repair: tc.Repair})
 			}
 			if got := readInstallFile(t, path); string(got) != tc.JSON {
 				t.Fatal("changed refused Codex settings")
@@ -129,12 +129,18 @@ func TestHookJSONRefusalsNameFileAndSpecificRepair(t *testing.T) {
 		})
 	}
 }
-func assertHookRepair(t *testing.T, err error, path, repair string) {
+
+type hookRepairExpectation struct {
+	Path   string
+	Repair string
+}
+
+func assertHookRepair(t *testing.T, err error, expected hookRepairExpectation) {
 	t.Helper()
 	if err == nil {
 		t.Fatal("expected refusal")
 	}
-	for _, part := range []string{path, repair, "Save the file and retry the command."} {
+	for _, part := range []string{expected.Path, expected.Repair, "Save the file and retry the command."} {
 		if !strings.Contains(err.Error(), part) {
 			t.Fatalf("missing %q: %v", part, err)
 		}

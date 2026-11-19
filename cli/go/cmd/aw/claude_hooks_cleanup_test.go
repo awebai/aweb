@@ -91,12 +91,11 @@ func TestCleanupClaudeNotifyHookPreservesSurvivingBytes(t *testing.T) {
 }`, `{
  "large":123456789012345678901234567890, "escaped":"\u0061",
  "hooks": { "PostToolUse": [
- {"matcher":".*", "hooks":[{"type":"command","command":"before"}, {"type":"command","command":"after"}], "extra":true},
- {"command":"echo aw notify"}, {"command":"aw notify --json"}, {"command":"aw notify && other"}, {"command":"bdh :notify"}
+ {"matcher":".*", "hooks":[{"type":"command","command":"before"},  {"type":"command","command":"after"}], "extra":true},` + "\n \n \n " + `{"command":"echo aw notify"}, {"command":"aw notify --json"}, {"command":"aw notify && other"}, {"command":"bdh :notify"}
  ], "PreToolUse":[{"command":"aw notify"}] }, "other" : [1, 2]
 }`, 3},
-		{"first", `{"hooks":{"PostToolUse":[{"command":"aw notify"},  {"command":"keep"}]}}`, `{"hooks":{"PostToolUse":[{"command":"keep"}]}}`, 1},
-		{"tail", `{"hooks":{"PostToolUse":[{"command":"keep"},  {"command":"aw notify"}, {"command":"aw notify"}]}}`, `{"hooks":{"PostToolUse":[{"command":"keep"}]}}`, 2},
+		{"first", `{"hooks":{"PostToolUse":[{"command":"aw notify"},  {"command":"keep"}]}}`, `{"hooks":{"PostToolUse":[  {"command":"keep"}]}}`, 1},
+		{"tail", `{"hooks":{"PostToolUse":[{"command":"keep"},  {"command":"aw notify"}, {"command":"aw notify"}]}}`, `{"hooks":{"PostToolUse":[{"command":"keep"}   ]}}`, 2},
 		{"all", `{"hooks":{"PostToolUse":[ {"command":"aw notify"} ]}}`, `{"hooks":{"PostToolUse":[  ]}}`, 1},
 		{"metadata", `{"hooks":{"PostToolUse":[{"extra":42,"hooks":[{"type":"command","command":"aw notify"}]}]}}`, `{"hooks":{"PostToolUse":[{"extra":42,"hooks":[]}]}}`, 1},
 		{"other-type", `{"hooks":{"PostToolUse":[{"hooks":[{"type":"prompt","command":"aw notify"}]}]}}`, `{"hooks":{"PostToolUse":[{"hooks":[{"type":"prompt","command":"aw notify"}]}]}}`, 0},
@@ -108,7 +107,7 @@ func TestCleanupClaudeNotifyHookPreservesSurvivingBytes(t *testing.T) {
 			if result.Error != nil || result.Removed != tc.removed {
 				t.Fatalf("result=%+v", result)
 			}
-			after, _ := os.ReadFile(path)
+			after := readInstallFile(t, path)
 			if string(after) != tc.after {
 				t.Fatalf("bytes differ\ngot: %s\nwant: %s", after, tc.after)
 			}

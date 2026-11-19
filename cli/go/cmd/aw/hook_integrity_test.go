@@ -74,7 +74,7 @@ func TestClaudeInstallRefusesAmbiguousAndPreservesCustomHooks(t *testing.T) {
 		root := t.TempDir()
 		path := writeNotifySettings(t, root, original)
 		result := SetupClaudeHooks(root, skipHookConfirmation)
-		if result.Error == nil || !strings.Contains(result.Error.Error(), "Repair the JSON and retry aw init --setup-hooks.") {
+		if result.Error == nil || !strings.Contains(result.Error.Error(), "Save the file and retry the command.") {
 			t.Fatalf("missing actionable refusal: %+v", result)
 		}
 		got := readInstallFile(t, path)

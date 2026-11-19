@@ -60,7 +60,7 @@ func cleanupClaudeNotifyFile(result *claudeNotifyCleanupResult) error {
 	}
 	updated, removed, err := removeNotifyHookBytes(original)
 	if err != nil {
-		return fmt.Errorf("parsing %s: %w", path, err)
+		return hookSettingsParseError(path, err)
 	}
 	if removed == 0 {
 		return nil
@@ -164,10 +164,18 @@ func removeNotifyHookBytes(data []byte) ([]byte, int, error) {
 		if count == len(inner.array) && standard {
 			removeGroups[i] = true
 		} else {
-			spans = append(spans, hookArrayRemovalSpans(inner.array, removeInner)...)
+			innerSpans, err := hookArrayRemovalSpans(data, inner.array, removeInner)
+			if err != nil {
+				return nil, 0, err
+			}
+			spans = append(spans, innerSpans...)
 		}
 	}
-	spans = append(spans, hookArrayRemovalSpans(groups, removeGroups)...)
+	groupSpans, err := hookArrayRemovalSpans(data, groups, removeGroups)
+	if err != nil {
+		return nil, 0, err
+	}
+	spans = append(spans, groupSpans...)
 
 	edits := make([]hookJSONEdit, 0, len(spans))
 	for _, span := range spans {

@@ -62,7 +62,7 @@ func SetupClaudeHooks(repoRoot string, confirmation hookConfirmation) *claudeHoo
 	}
 	data, exists, err := installNotifyHookBytes(input)
 	if err != nil {
-		result.Error = fmt.Errorf("parsing %s: %w. Repair the JSON and retry aw init --setup-hooks.", result.FilePath, err)
+		result.Error = hookSettingsParseError(result.FilePath, err)
 		result.Skipped = true
 		return result
 	}
@@ -135,7 +135,7 @@ func printClaudeHooksResult(result *claudeHooksResult) {
 	}
 	fmt.Fprintln(os.Stderr, "Claude Code polling fallback: chat only, after tool calls; no mail or idle wake-ups. Prefer the aweb channel plugin or host wake broker.")
 	if result.Error != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not set up Claude Code hooks: %v\n", result.Error)
+		fmt.Fprintf(os.Stderr, "Warning: Claude Code hook: not installed. %v\n", result.Error)
 		return
 	}
 	if result.AlreadyExists {
