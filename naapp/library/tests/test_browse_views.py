@@ -4,7 +4,6 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-import library.api as library_api
 from library import browse_views
 
 _PROFILE = {
@@ -196,85 +195,32 @@ def test_blueprint_roster_joins_recommendations_to_profiles() -> None:
     assert roster[1]["mission"] == "Ship code."
 
 
-def test_browse_routes_call_view_builders_and_renderers(
-    monkeypatch: pytest.MonkeyPatch, library_client: TestClient
+def test_the_browse_pages_render_a_published_blueprint(
+    published_engineering: TestClient,
 ) -> None:
-    calls: list[tuple[str, object]] = []
+    client = published_engineering
+    catalog = client.get("/blueprints")
+    blueprint = client.get("/blueprints/aweb.engineering")
+    profile = client.get("/blueprints/aweb.engineering/profiles/developer")
+    skill = client.get("/blueprints/aweb.engineering/profiles/developer/skills/implement")
 
-    async def catalog_view(db):
-        calls.append(("catalog_view", db))
-        return [{"blueprint_ref": "aweb.team", "profile_count": 1}]
-
-    async def blueprint_view(db, *, blueprint_ref):
-        calls.append(("blueprint_view", blueprint_ref))
-        return {"blueprint_ref": blueprint_ref}
-
-    async def profile_view(db, *, blueprint_ref, profile_ref):
-        calls.append(("profile_view", (blueprint_ref, profile_ref)))
-        return {"blueprint_ref": blueprint_ref, "profile_ref": profile_ref}
-
-    async def skill_view(db, *, blueprint_ref, profile_ref, skill_name):
-        calls.append(("skill_view", (blueprint_ref, profile_ref, skill_name)))
-        return {
-            "blueprint_ref": blueprint_ref,
-            "profile_ref": profile_ref,
-            "skill_name": skill_name,
-        }
-
-    monkeypatch.setattr(library_api.browse_views, "catalog_view", catalog_view)
-    monkeypatch.setattr(library_api.browse_views, "blueprint_view", blueprint_view)
-    monkeypatch.setattr(library_api.browse_views, "profile_view", profile_view)
-    monkeypatch.setattr(library_api.browse_views, "skill_view", skill_view)
-    monkeypatch.setattr(
-        library_api.browse,
-        "render_catalog_page",
-        lambda *, public_origin, blueprints: (
-            f"catalog:{public_origin}:{blueprints[0]['blueprint_ref']}"
-        ),
-    )
-    monkeypatch.setattr(
-        library_api.browse,
-        "render_blueprint_page",
-        lambda *, public_origin, blueprint: f"blueprint:{blueprint['blueprint_ref']}",
-    )
-    monkeypatch.setattr(
-        library_api.browse,
-        "render_profile_page",
-        lambda *, public_origin, profile: f"profile:{profile['profile_ref']}",
-    )
-    monkeypatch.setattr(
-        library_api.browse,
-        "render_skill_page",
-        lambda *, public_origin, skill: f"skill:{skill['skill_name']}",
-    )
-
-    client = library_client
-    responses = [
-        client.get("/blueprints"),
-        client.get("/blueprints/aweb.team"),
-        client.get("/blueprints/aweb.team/profiles/developer"),
-        client.get("/blueprints/aweb.team/profiles/developer/skills/implement"),
-    ]
-
-    assert [response.status_code for response in responses] == [200, 200, 200, 200]
-    assert all(response.headers["content-type"].startswith("text/html") for response in responses)
-    assert responses[0].text == "catalog:https://library.aweb.ai:aweb.team"
-    assert responses[1].text == "blueprint:aweb.team"
-    assert responses[2].text == "profile:developer"
-    assert responses[3].text == "skill:implement"
-    assert calls[1:] == [
-        ("blueprint_view", "aweb.team"),
-        ("profile_view", ("aweb.team", "developer")),
-        ("skill_view", ("aweb.team", "developer", "implement")),
-    ]
+    for response in (catalog, blueprint, profile, skill):
+        assert response.status_code == 200, response.text
+        assert response.headers["content-type"].startswith("text/html")
+    assert 'href="/blueprints/aweb.engineering"' in catalog.text
+    assert 'href="/blueprints/aweb.engineering/profiles/developer"' in blueprint.text
+    assert "Implement scoped changes with tests and concise evidence." in profile.text
+    assert 'href="/blueprints/aweb.engineering/profiles/developer/skills/implement"' in profile.text
+    assert "prefer targeted edits" in skill.text
 
 
-def test_browse_unknown_ref_returns_404(
-    monkeypatch: pytest.MonkeyPatch, library_client: TestClient
+def test_browse_pages_for_an_unpublished_ref_are_404(
+    published_engineering: TestClient,
 ) -> None:
-    async def missing_blueprint(db, *, blueprint_ref):
-        raise HTTPException(status_code=404, detail="Blueprint not found")
-
-    monkeypatch.setattr(library_api.browse_views, "blueprint_view", missing_blueprint)
-    response = library_client.get("/blueprints/missing")
-    assert response.status_code == 404
+    client = published_engineering
+    for path in (
+        "/blueprints/aweb.missing",
+        "/blueprints/aweb.engineering/profiles/missing",
+        "/blueprints/aweb.engineering/profiles/developer/skills/missing",
+    ):
+        assert client.get(path).status_code == 404, path
