@@ -259,3 +259,38 @@ cache. Hosts carrying the reference need no copied fields for those helpers.
 States without a native reference retain their existing direct-field behavior.
 Request verification remains with its common verification owner; a serving
 resource reference never substitutes for a verified identity or request proof.
+
+## Retained creation and verified generation
+
+`aweb.routes.connect.PlannedIdentityIds(*, agent_id: UUID, workspace_id: UUID)`
+is a frozen input to the existing keyword-only `connect_agent(...,
+planned_ids=..., generation=...)`. The IDs constrain allocation and reuse;
+they confer no authority. An exact retry returns those same resources. A
+conflicting actor/workspace ID or cross-identity UUID collision raises
+`PlannedIdentityConflict` (`planned_identity_conflict`, 409) and rolls back the
+projection. Omitting `planned_ids` retains the constructor's existing
+allocation/reuse behavior. No new HTTP request field or constructor is added.
+
+`generation` is the actual `aweb.certificate_auth.VerifiedCertificateGeneration`
+returned by `verify_certificate_generation`. Acquire it before opening the
+projection transaction, using `CertificateAuthorityContext` with the serving
+registry client, native database manager and configured TXT resolver. The
+constructor reads its checked immutable claims and independently verified team
+key directly; it neither reparses the artifact nor performs registry I/O.
+Accompanying `cert_info` or `team_did_key` cannot contradict that proof. Global
+identity/address and human-kind observations remain separate exact-subject
+inputs; generation does not replace them.
+
+Inside the projection transaction, generation admission locks and compares the
+current admitted native team key before writing the member or workspace. A
+controller move after verification refuses with `certificate_generation_stale`
+and tells the caller to verify the retained certificate under the current key
+before retrying. Existing request-certificate callers remain supported.
+
+Mint bytes alone are pending material. With no current-controller proof, R27
+retains the intended IDs/key/certificate and reports admission pending, without
+calling the constructor or creating a native actor. With actual generation
+proof, the one constructor can connect a working agent while its certificate's
+registration remains pending. Registration completion is a separate outcome;
+replay retains the exact signed artifact rather than minting another one.
+These are the two outcomes ruled by Antares `0ffc3028` and `5cb50151`.

@@ -52,10 +52,12 @@ class PendingNativeMigrations:
 
     @property
     def ready(self) -> bool:
+        """Whether every module in the native migration inventory is applied."""
         return not self.pending
 
     @property
     def message(self) -> str:
+        """Describe the migration readiness result with an actionable missing-module list."""
         if self.ready:
             return "Native migrations are current."
         names = ", ".join(f"{item.module_name}/{item.filename}" for item in self.pending)

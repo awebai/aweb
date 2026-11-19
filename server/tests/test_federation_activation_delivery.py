@@ -827,7 +827,8 @@ async def test_phase_b_forced_failure_rolls_back_every_effect(aweb_cloud_db) -> 
 
 
 @pytest.mark.asyncio
-async def test_committed_outbox_retries_after_hook_failure(aweb_cloud_db) -> None:
+@pytest.mark.parametrize("failure", ["exception", "typed_outcome"])
+async def test_committed_outbox_retries_after_hook_failure(aweb_cloud_db, failure) -> None:
     manager = aweb_cloud_db.aweb_db
     envelope = _envelope()
     recipient, token = await _seed_recipient_and_authority(manager, envelope)
@@ -837,7 +838,13 @@ async def test_committed_outbox_retries_after_hook_failure(aweb_cloud_db) -> Non
     )
 
     async def fail(_event_type, _payload):
-        raise RuntimeError("offline")
+        if failure == "exception":
+            raise RuntimeError("offline")
+        from aweb.hooks import MutationDeliveryOutcome, MutationDeliveryStage, MutationDeliveryStatus
+        return MutationDeliveryOutcome(
+            status=MutationDeliveryStatus.FAILED,
+            failed_stages=(MutationDeliveryStage.PUBLICATION,),
+        )
 
     app = SimpleNamespace(state=SimpleNamespace(on_mutation=fail))
     assert await replay_federation_mutation_outbox(app, manager) == 0

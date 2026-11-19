@@ -32,6 +32,7 @@ class DatabaseInfra:
         shared_pool: Optional[Any] = None,
         run_migrations: bool = True,
     ) -> None:
+        """Initialize native managers and apply the complete native migration inventory."""
         if self._initialized:
             return
 
@@ -75,6 +76,7 @@ class DatabaseInfra:
             self._initialized = True
 
     async def close(self) -> None:
+        """Stop this native resource and release only the resources it owns."""
         if self._shared_pool is not None and self._owns_pool:
             await self._shared_pool.close()
 
@@ -89,6 +91,7 @@ class DatabaseInfra:
         return self._initialized
 
     def get_manager(self, name: str = "aweb") -> AsyncDatabaseManager:
+        """Return the initialized native manager for the requested module."""
         if not self._initialized:
             raise RuntimeError(
                 "DatabaseInfra is not initialized. Call 'await db_infra.initialize()' first."
@@ -109,6 +112,7 @@ class TransactionInfra:
         self.original, self.transaction = original, transaction
 
     def get_manager(self, name: str = "aweb") -> Any:
+        """Return the initialized native manager for the requested module."""
         return self.transaction if name == "aweb" else self.original.get_manager(name)
 
     def __getattr__(self, name: str) -> Any:

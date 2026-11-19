@@ -17,6 +17,8 @@ from awid.identity_observation import (
 )
 from fastapi import HTTPException, Request
 
+from aweb.application_state import native_application_state
+
 logger = logging.getLogger(__name__)
 _BINDING_TTL = 60
 _CACHE_LIMIT = 4096
@@ -45,6 +47,7 @@ async def verify_identity_binding(
     fresh: bool = False,
     registry_client=None,
 ) -> IdentityBinding:
+    """Verify the claimed stable identity and address against the supplied registry evidence."""
     did_aw, address = (did_aw or "").strip(), (address or "").strip()
     if not did_aw and not address:
         return IdentityBinding(did_key=did_key)
@@ -76,7 +79,6 @@ async def verify_identity_binding(
 
 def identity_binding_cache(app_state) -> OrderedDict:
     """The application's cache of observed identity bindings, kept on its state."""
-    from aweb.application_state import native_application_state
 
     app_state = native_application_state(app_state)
     cache = getattr(app_state, "identity_binding_cache", None)

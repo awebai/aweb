@@ -145,16 +145,6 @@ async def _ensure_service_registered_team(
                         "message": "Existing service projection is bound to a different AWID team controller.",
                     },
                 )
-            if not dry_run and not stored_key:
-                await db.execute(
-                    """
-                    UPDATE {{tables.teams}}
-                    SET team_did_key = $2
-                    WHERE team_id = $1
-                    """,
-                    canonical_team_id,
-                    team_did_key,
-                )
             return False
 
         if dry_run:
@@ -171,6 +161,7 @@ async def register_team_with_service(
     request: Request,
     db=Depends(get_db),
 ) -> TeamServiceRegisterResponse:
+    """Verify the controller request and admit or synchronize the native team."""
     canonical_team_id = body.awid_team_id.strip()
     try:
         domain, team_name = parse_team_id(canonical_team_id)

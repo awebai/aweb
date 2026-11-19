@@ -90,6 +90,7 @@ class _State:
 
     @property
     def unknown(self) -> bool:
+        """Construct unclassified party coverage, which blocks message deletion."""
         return (
             not self.coverage_complete or not self.parties or None in self.parties
             or any(

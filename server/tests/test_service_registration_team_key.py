@@ -18,7 +18,7 @@ from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
 from test_messages_http import _make_keypair
 from test_team_key_pinning import (  # noqa: F401
     _substitute_registry_team_key,
-    pinning,
+    pinning as pinning,
     register_namespace_controller,
     rotate_team_key,
 )

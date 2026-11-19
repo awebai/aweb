@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from aweb.human_kind import agent_listing_predicate_sql, effective_agent_type
-
 import json
 import logging
 from datetime import datetime, timezone
@@ -9,25 +7,55 @@ from typing import Literal, Optional
 from uuid import UUID
 
 import asyncpg
-from fastapi import APIRouter, Body, Depends, HTTPException, Request
-from pgdbm.errors import QueryError
-from pydantic import BaseModel, Field, field_validator, model_serializer, model_validator
-
 from awid.dns_auth import validate_did_key, verify_signed_json_request
 from awid.e2ee_keys import validate_encryption_key_assertion
 from awid.team_ids import parse_team_id
-from aweb.agent_wake import agent_wake_key, agent_wake_publisher, agent_wake_scope, record_agent_wake
-from aweb.inbound_modes import INBOUND_MODES, normalize_inbound_mode, effective_inbound_mode, set_identity_inbound_mode
-from aweb.service_errors import ForbiddenError
+from fastapi import APIRouter, Body, Depends, HTTPException, Request
+from pgdbm.errors import QueryError
+from pydantic import (
+    BaseModel,
+    Field,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
+
+from aweb.agent_wake import (
+    agent_wake_key,
+    agent_wake_publisher,
+    agent_wake_scope,
+    record_agent_wake,
+)
 from aweb.alias_allocator import candidate_name_prefixes, used_name_prefixes
+from aweb.auth_context import GRANT_SCOPE_ANY
 from aweb.coordination.roles import ROLE_MAX_LENGTH
 from aweb.coordination.routes.repos import canonicalize_git_url
 from aweb.coordination.workspace_registry import ensure_repo
 from aweb.deps import get_db, get_redis
-from aweb.grant_liveness import grant_liveness_expiry, cleanup_expired_grant_liveness, valid_grant_liveness_by_workspace
-from aweb.role_name_compat import normalize_optional_role_name, resolve_role_name_aliases
-from aweb.auth_context import GRANT_SCOPE_ANY
-from aweb.team_auth_deps import TeamIdentity, _resolve_team_key, get_team_identity, team_identity_with_grant_scope
+from aweb.grant_liveness import (
+    cleanup_expired_grant_liveness,
+    grant_liveness_expiry,
+    valid_grant_liveness_by_workspace,
+)
+from aweb.human_kind import agent_listing_predicate_sql, effective_agent_type
+from aweb.identity_address import require_address_evidence
+from aweb.inbound_modes import (
+    INBOUND_MODES,
+    effective_inbound_mode,
+    normalize_inbound_mode,
+    set_identity_inbound_mode,
+)
+from aweb.role_name_compat import (
+    normalize_optional_role_name,
+    resolve_role_name_aliases,
+)
+from aweb.service_errors import ForbiddenError
+from aweb.team_auth_deps import (
+    TeamIdentity,
+    _resolve_team_key,
+    get_team_identity,
+    team_identity_with_grant_scope,
+)
 
 from ..presence import list_agent_presences_by_workspace_ids, update_agent_presence
 
@@ -101,6 +129,7 @@ class EncryptionKeyAssertion(BaseModel):
 
     @model_serializer(mode="wrap")
     def serialize_without_null_optional_fields(self, handler):
+        """Serialize the public assertion while omitting absent optional fields."""
         return {key: value for key, value in handler(self).items() if value is not None}
 
 
@@ -119,6 +148,7 @@ class UpdateAgentInboundModeRequest(BaseModel):
     @field_validator("inbound_mode")
     @classmethod
     def validate_inbound_mode(cls, value: str) -> str:
+        """Accept only the native inbound delivery modes supported by this request."""
         return normalize_inbound_mode(value, default="")
 
 
@@ -132,6 +162,7 @@ class SuggestAliasPrefixRequest(BaseModel):
     @field_validator("exclude")
     @classmethod
     def validate_exclude(cls, values: list[str]) -> list[str]:
+        """Normalize the requested exclusion list for alias suggestions."""
         out: list[str] = []
         for value in values or []:
             item = str(value or "").strip().lower()
@@ -163,10 +194,12 @@ class PatchWorkspaceRequest(BaseModel):
     @field_validator("role", "role_name")
     @classmethod
     def validate_role_field(cls, value: Optional[str]) -> Optional[str]:
+        """Validate a requested role against the native role-name contract."""
         return normalize_optional_role_name(value)
 
     @model_validator(mode="after")
     def sync_role_aliases(self):
+        """Keep the supported role input spellings consistent before request handling."""
         resolved = resolve_role_name_aliases(role=self.role, role_name=self.role_name)
         self.role = resolved
         self.role_name = resolved
@@ -186,6 +219,7 @@ class PatchWorkspaceResponse(BaseModel):
 
     @model_validator(mode="after")
     def sync_role_aliases(self):
+        """Keep the supported role input spellings consistent before request handling."""
         resolved = resolve_role_name_aliases(role=self.role, role_name=self.role_name)
         self.role = resolved
         self.role_name = resolved
@@ -210,10 +244,12 @@ class ReplaceLocalIdentityKeyRequest(BaseModel):
     @field_validator("old_did_key", "new_did_key")
     @classmethod
     def validate_identity_did_key(cls, value: str) -> str:
+        """Validate the asserted public identity key before publication."""
         return validate_did_key(value)
 
     @model_validator(mode="after")
     def require_changed_key(self):
+        """Require a changed public key for this rotation request."""
         if self.old_did_key == self.new_did_key:
             raise ValueError("new_did_key must differ from old_did_key")
         return self
@@ -354,7 +390,6 @@ def _used_global_names(existing_names: list[str], exclude: list[str], *, user_pr
 
 
 def _identity_global_name_prefix(identity: TeamIdentity) -> str:
-    from aweb.identity_address import require_address_evidence
 
     require_address_evidence(identity)
     raw = ""

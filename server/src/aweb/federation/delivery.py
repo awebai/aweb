@@ -28,6 +28,9 @@ from aweb.service_errors import ForbiddenError
 from aweb.e2ee_messages import encrypted_message_storage_metadata
 from aweb.federation.authority_state import AuthoritySecurityToken
 from aweb.federation.envelope import FederationEnvelope
+from aweb.message_events import FederatedMessageSentContext
+from aweb.hooks import MutationDeliveryOutcome
+from aweb.messaging.kinds import MessageKind
 
 BeforeCommit = Callable[[], Awaitable[None]]
 
@@ -35,6 +38,7 @@ logger = logging.getLogger(__name__)
 
 
 def federation_envelope_hash(envelope: FederationEnvelope, signature: str) -> str:
+    """Hash the canonical signed envelope used for exact federation replay checks."""
     payload = envelope.model_dump(
         mode="json",
         exclude_none=True,
@@ -164,6 +168,7 @@ async def _require_current_stored_route(
         *,
         include_transport_hint: bool,
     ) -> None:
+        """Check that the stored conversation has the envelope participants required for replay."""
         route_fields = ["address", "delivery_origin", "current_did_key"]
         if include_transport_hint:
             route_fields.append("transport_hint")
@@ -767,6 +772,7 @@ async def _store_chat(tx, envelope: FederationEnvelope, signature: str, id_chain
 
 
 async def replay_federation_mutation_outbox(app, manager, *, limit: int = 100) -> int:
+    """Replay pending committed federation mutations through the serving callback."""
     callback = getattr(app.state, "on_mutation", None)
     if callback is None:
         return 0
@@ -774,6 +780,7 @@ async def replay_federation_mutation_outbox(app, manager, *, limit: int = 100) -
 
 
 async def deliver_federation_mutation_outbox(manager, callback, *, limit: int = 100) -> int:
+    """Deliver one durable outbox mutation and record its callback outcome."""
     delivered = 0
     async with manager.transaction() as tx:
         rows = await tx.fetch_all(
@@ -790,7 +797,9 @@ async def deliver_federation_mutation_outbox(manager, callback, *, limit: int = 
         for row in rows:
             payload = _decode_json(row["payload_json"])
             try:
-                await callback(row["event_type"], payload)
+                outcome = await callback(row["event_type"], payload)
+                if isinstance(outcome, MutationDeliveryOutcome):
+                    outcome.require_delivery()
             except Exception as exc:
                 logger.warning(
                     "Federation mutation outbox delivery failed",
@@ -961,22 +970,20 @@ async def _deliver_federated_phase_b(
             message_id,
             json.dumps(result, sort_keys=True, separators=(",", ":")),
         )
-        event_payload = {
-            "team_id": recipient.get("team_id"),
-            "from_agent_id": None,
-            "from_did": envelope.sender_current_did_key,
-            "from_did_aw": envelope.sender_did_aw,
-            "to_agent_id": str(recipient.get("agent_id") or "") or None,
-            "from_alias": (envelope.sender_address or envelope.sender_did_aw).split("/", 1)[-1],
-            "message_id": envelope.message_id,
-            "conversation_id": envelope.conversation_id,
-            "session_id": envelope.conversation_id if envelope.type == "chat" else None,
-            "to_alias": recipient.get("alias"),
-            "subject": envelope.subject or "",
-            "priority": envelope.priority or "normal",
-            "content_mode": envelope.content_mode or "legacy_plaintext_v1",
-            "federated": True,
-        }
+        event_context = FederatedMessageSentContext(
+            kind=MessageKind(envelope.type),
+            team_id=recipient.get("team_id"),
+            from_did=envelope.sender_current_did_key,
+            from_did_aw=envelope.sender_did_aw,
+            to_agent_id=str(recipient.get("agent_id") or "") or None,
+            from_alias=(envelope.sender_address or envelope.sender_did_aw).split("/", 1)[-1],
+            message_id=envelope.message_id,
+            conversation_id=envelope.conversation_id,
+            to_alias=recipient.get("alias"),
+            subject=envelope.subject or "",
+            priority=envelope.priority,
+            content_mode=envelope.content_mode,
+        )
         await tx.execute(
             """
             INSERT INTO {{tables.federation_mutation_outbox}} (
@@ -984,8 +991,8 @@ async def _deliver_federated_phase_b(
             ) VALUES ($1, $2, $3::jsonb)
             """,
             message_id,
-            "message.sent" if envelope.type == "mail" else "chat.message_sent",
-            json.dumps(event_payload, sort_keys=True, separators=(",", ":")),
+            event_context.event_type.value,
+            json.dumps(event_context.to_context(), sort_keys=True, separators=(",", ":")),
         )
         if before_commit is not None:
             await before_commit()
@@ -1005,6 +1012,7 @@ async def deliver_federated_phase_b(
     before_commit: BeforeCommit | None = None,
     envelope_hash_override: str | None = None,
 ) -> dict[str, object]:
+    """Commit verified federation delivery with its exact-replay and durable-event rules."""
     try:
         return await _deliver_federated_phase_b(
             db,

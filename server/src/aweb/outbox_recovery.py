@@ -16,7 +16,9 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import logging
-from typing import Any, Awaitable, Callable, Optional
+from typing import Any
+
+from .hooks import MutationCallback
 
 from .federation.delivery import deliver_federation_mutation_outbox
 from .lifecycle import replay_lifecycle_side_effects
@@ -33,7 +35,7 @@ async def recover_outboxes(
     *,
     aweb_db: Any,
     redis: Any,
-    on_mutation: Optional[Callable[[str, dict], Awaitable[None]]],
+    on_mutation: MutationCallback | None,
 ) -> None:
     """Deliver undelivered lifecycle and federation outbox rows, in bounded batches."""
     for _ in range(_LIFECYCLE_MAX_BATCHES):
@@ -59,6 +61,7 @@ async def _run_outbox_recovery(app: Any, interval_seconds: float) -> None:
 
 def start_outbox_recovery(app: Any, *, interval_seconds: float | None = None) -> None:
     # A fresh context: the loop outlives whatever request or startup started it.
+    """Start the native periodic recovery owner once for this serving application."""
     app.state.outbox_recovery_task = asyncio.create_task(
         _run_outbox_recovery(app, OUTBOX_RECOVERY_INTERVAL_SECONDS if interval_seconds is None else interval_seconds),
         context=contextvars.Context(),
@@ -91,6 +94,7 @@ class OutboxRecoveryStarter:
 
 
 async def stop_outbox_recovery(app: Any) -> None:
+    """Stop the periodic recovery task owned by this application."""
     task = getattr(app.state, "outbox_recovery_task", None)
     if task is None or task.done():
         return

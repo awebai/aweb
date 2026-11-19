@@ -26,12 +26,15 @@ def mutation_callback_from_scope(scope: Any) -> MutationCallback | None:
 
 
 def set_mutation_callback(callback: MutationCallback | None) -> contextvars.Token:
+    """Install the serving callback in this MCP call context and return its reset token."""
     return _mutation_callback.set(callback)
 
 
 def reset_mutation_callback(token: contextvars.Token) -> None:
+    """Restore the callback context after the MCP call completes."""
     _mutation_callback.reset(token)
 
 
 def current_mutation_callback() -> MutationCallback | None:
+    """Read the callback associated with the current MCP call."""
     return _mutation_callback.get()

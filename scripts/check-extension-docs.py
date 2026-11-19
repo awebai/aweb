@@ -216,6 +216,7 @@ MANAGED_GATEWAY_PRIVATE_TOKENS = (
 )
 
 HOOK_SOURCES = (
+    "server/src/aweb/event_types.py",
     "server/src/aweb/routes/messages.py",
     "server/src/aweb/messaging/mail_ack.py",
     "server/src/aweb/messaging/mail_send.py",
@@ -239,20 +240,102 @@ FORBIDDEN_PUBLIC_REFERENCES = (
 )
 
 
-def _string_literals(node: ast.AST) -> set[str]:
+def _expression_path(node: ast.AST) -> tuple[str, ...]:
+    if isinstance(node, ast.Name):
+        return (node.id,)
+    if isinstance(node, ast.Attribute):
+        parent = _expression_path(node.value)
+        return (*parent, node.attr) if parent else ()
+    return ()
+
+
+def _mutation_enum_members(root: Path) -> dict[str, str]:
+    """Read the canonical enum's literal assignments without executing source."""
+    source = root / "server/src/aweb/event_types.py"
+    if not source.is_file():
+        return {}
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef) and node.name == "MutationEventType":
+            return {
+                target.id: statement.value.value
+                for statement in node.body
+                if isinstance(statement, ast.Assign)
+                and isinstance(statement.value, ast.Constant)
+                and isinstance(statement.value.value, str)
+                for target in statement.targets
+                if isinstance(target, ast.Name)
+            }
+    return {}
+
+
+def _mutation_enum_imports(tree: ast.Module) -> set[tuple[str, ...]]:
+    """Resolve explicit canonical imports, conservatively refusing rebinding."""
+    references: set[tuple[str, ...]] = set()
+    canonical_imports: set[tuple[int, str]] = set()
+    for node in tree.body:
+        if isinstance(node, ast.ImportFrom) and node.module == "aweb.event_types":
+            for name in node.names:
+                if name.name == "MutationEventType":
+                    references.add((name.asname or name.name,))
+                    canonical_imports.add((id(node), name.asname or name.name))
+        elif isinstance(node, ast.Import):
+            for name in node.names:
+                if name.name == "aweb.event_types":
+                    references.add(
+                        (name.asname, "MutationEventType") if name.asname
+                        else ("aweb", "event_types", "MutationEventType")
+                    )
+                    canonical_imports.add((id(node), name.asname or name.name.split(".")[0]))
+    shadowed: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            shadowed.add(node.id)
+        elif isinstance(node, ast.Attribute) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            path = _expression_path(node)
+            if path:
+                shadowed.add(path[0])
+        elif isinstance(node, ast.arg):
+            shadowed.add(node.arg)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            shadowed.add(node.name)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for name in node.names:
+                bound = name.asname or name.name.split(".")[0]
+                canonical = (
+                    isinstance(node, ast.ImportFrom) and node.module == "aweb.event_types"
+                    and name.name == "MutationEventType"
+                ) or (isinstance(node, ast.Import) and name.name == "aweb.event_types")
+                if not canonical or (id(node), bound) not in canonical_imports:
+                    shadowed.add(bound)
+    return {reference for reference in references if reference[0] not in shadowed}
+
+
+def _string_literals(
+    node: ast.AST, *, enum_imports: set[tuple[str, ...]], enum_members: dict[str, str],
+) -> set[str]:
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return {node.value}
     if isinstance(node, ast.IfExp):
-        return _string_literals(node.body) | _string_literals(node.orelse)
+        left = _string_literals(node.body, enum_imports=enum_imports, enum_members=enum_members)
+        right = _string_literals(node.orelse, enum_imports=enum_imports, enum_members=enum_members)
+        return left | right if left and right else set()
+    path = _expression_path(node)
+    if path and path[-1] == "value":
+        path = path[:-1]
+    if len(path) >= 2 and path[:-1] in enum_imports and path[-1] in enum_members:
+        return {enum_members[path[-1]]}
     return set()
 
 
 class _HookCallVisitor(ast.NodeVisitor):
-    def __init__(self, relative: str, failures: list[str]) -> None:
+    def __init__(self, relative: str, failures: list[str], *, tree: ast.Module, enum_members: dict[str, str]) -> None:
         self.relative = relative
         self.failures = failures
         self.function_stack: list[str] = []
         self.call_sites: list[dict[str, str]] = []
+        self.enum_imports = _mutation_enum_imports(tree)
+        self.enum_members = enum_members
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         self._visit_function(node)
@@ -283,7 +366,9 @@ class _HookCallVisitor(ast.NodeVisitor):
                 (keyword.value for keyword in node.keywords if keyword.arg == "event_type"),
                 None,
             )
-            literals = _string_literals(event_expression) if event_expression is not None else set()
+            literals = _string_literals(
+                event_expression, enum_imports=self.enum_imports, enum_members=self.enum_members,
+            ) if event_expression is not None else set()
             if not literals:
                 self.failures.append(
                     f"unsupported non-literal {name} event expression: {self.relative}:{node.lineno}"
@@ -303,10 +388,11 @@ def _source_hook_call_sites(root: Path, failures: list[str]) -> list[dict[str, s
     if not source_root.is_dir():
         failures.append("missing hook source root: server/src/aweb")
         return call_sites
+    enum_members = _mutation_enum_members(root)
     for path in sorted(source_root.rglob("*.py")):
         relative = str(path.relative_to(root))
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=relative)
-        visitor = _HookCallVisitor(relative, failures)
+        visitor = _HookCallVisitor(relative, failures, tree=tree, enum_members=enum_members)
         visitor.visit(tree)
         call_sites.extend(visitor.call_sites)
     call_sites.sort(key=lambda item: (item["source"], item["function"], item["event"]))
@@ -891,7 +977,10 @@ def self_test(root: Path) -> int:
 
         chat_source = tmp / "server/src/aweb/messaging/chat_send.py"
         chat_source.write_text(
-            chat_source.read_text(encoding="utf-8").replace('"chat.message_sent",', "dynamic_event_name,", 1),
+            chat_source.read_text(encoding="utf-8")
+            .replace('"chat.message_sent",', "dynamic_event_name,", 1)
+            .replace("MutationEventType.CHAT_MESSAGE_SENT.value,", "dynamic_event_name,", 1)
+            .replace("MutationEventType.CHAT_MESSAGE_SENT,", "dynamic_event_name,", 1),
             encoding="utf-8",
         )
 

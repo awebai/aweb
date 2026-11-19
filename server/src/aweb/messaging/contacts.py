@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 
 def normalize_owner_dids(*, owner_did: str | None = None, owner_dids: list[str] | None = None) -> list[str]:
+    """Normalize the explicit owner identity set without adding inferred predecessors."""
     values: list[str] = []
     if owner_did is not None:
         values.append(owner_did)
@@ -421,6 +422,7 @@ async def bind_contact_identity(
     controller_did: str,
     replacement_accepted: bool,
 ) -> dict:
+    """Accept a contact binding only when its stored identity matches the exact expected old value."""
     owner_keys = normalize_owner_dids(owner_dids=owner_dids)
     try:
         contact_uuid = UUID(str(contact_id).strip())

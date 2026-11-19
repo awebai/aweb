@@ -7,6 +7,7 @@ from aweb.application_state import native_application_state
 
 
 def public_origins(request=None, *, public_origin: str | None = None) -> set[str]:
+    """Return the configured origins this application serves as its own."""
     return application_public_origins(
         getattr(getattr(request, "app", None), "state", None), public_origin=public_origin,
     )
@@ -27,6 +28,7 @@ def application_public_origins(state, *, public_origin: str | None = None) -> se
 
 
 def is_own_origin(delivery_origin: str, origins: set[str]) -> bool:
+    """Whether an origin belongs to the configured native serving application."""
     try:
         return canonical_server_origin(delivery_origin) in origins
     except ValueError:

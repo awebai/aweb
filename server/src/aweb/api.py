@@ -3,8 +3,15 @@ import logging
 import os
 from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Optional
+from uuid import uuid4
 
 import httpx
+from awid.dns_verify import DomainVerifier
+from awid.external_authority import SystemTXTOutcomeResolver
+from awid.federation_errors import FederationAuthorityError
+from awid.log import canonical_server_origin
+from awid.log_config import configure_logging
+from awid.registry import CachedRegistryClient, RegistryClient
 from fastapi import FastAPI, Request
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
@@ -13,52 +20,47 @@ from redis.asyncio import Redis
 from redis.asyncio import from_url as async_redis_from_url
 from starlette.routing import Mount
 
-from awid.dns_verify import DomainVerifier
-from awid.external_authority import SystemTXTOutcomeResolver
-from awid.registry import CachedRegistryClient, RegistryClient, RegistryError
-from awid.federation_errors import FederationAuthorityError
 from .application_state import RegistryClientUnavailable
 from .config import get_public_origin, get_settings
-from awid.log import canonical_server_origin
 from .connection_scope import ConnectionScopeMiddleware
+from .coordination.routes.repos import router as repos_router
+from .coordination.routes.tasks import router as tasks_router
+from .coordination.routes.team_instructions import instructions_router
+from .coordination.routes.team_roles import roles_router
+from .coordination.routes.workspaces import router as workspaces_router
 from .db import DatabaseInfra
 from .db import db_infra as default_db_infra
-from awid.log_config import configure_logging
 from .federation.errors import authority_error_body
-from .agent_wake import AgentWakeHub, AgentWakePublisher
-from .outbox_recovery import OutboxRecoveryStarter
-from .routing_utils import move_mount_before_spa_fallback
-from .service_errors import ServiceError
-from .messaging.chat_policy import HumanChatRefused
 from .install_admins import install_admin_setup_message
 from .mcp.server import NormalizeMountedMCPPathMiddleware
+from .messaging.chat_policy import HumanChatRefused
+from .outbox_recovery import OutboxRecoveryStarter
 from .request_compression import RequestDecompressionFastAPI
+from .resource_startup import start_agent_wakes as start_agent_wakes
+from .resource_startup import stop_agent_wakes as stop_agent_wakes
 from .routes.agent_activity import router as agent_activity_router
 from .routes.agent_status import router as agent_status_router
 from .routes.agents import router as agents_router
 from .routes.app_hooks import router as app_hooks_router
 from .routes.apps import router as apps_router
-from .routes.hook_bindings import router as hook_bindings_router
-from .routes.connect import router as connect_router
-from .routes.dashboard import router as dashboard_router
 from .routes.chat import router as chat_router
 from .routes.claims import router as claims_router
+from .routes.connect import router as connect_router
 from .routes.contacts import router as contacts_router
 from .routes.conversations import router as conversations_router
+from .routes.dashboard import router as dashboard_router
 from .routes.events import router as events_router
 from .routes.federation import router as federation_router
+from .routes.hook_bindings import router as hook_bindings_router
 from .routes.identity_grants import router as identity_grants_router
 from .routes.messages import router as messages_router
-from .routes.room import router as room_router
 from .routes.reservations import router as reservations_router
-from .routes.session_leases import router as session_leases_router
+from .routes.room import router as room_router
 from .routes.service_registration import router as service_registration_router
+from .routes.session_leases import router as session_leases_router
 from .routes.status import router as status_router
-from .coordination.routes.team_instructions import instructions_router
-from .coordination.routes.team_roles import roles_router
-from .coordination.routes.repos import router as repos_router
-from .coordination.routes.tasks import router as tasks_router
-from .coordination.routes.workspaces import router as workspaces_router
+from .routing_utils import move_mount_before_spa_fallback
+from .service_errors import ServiceError
 
 logger = logging.getLogger(__name__)
 
@@ -175,26 +177,8 @@ async def _mount_mcp_app(
     logger.info("MCP endpoint mounted at /mcp/")
 
 
-async def start_agent_wakes(app: FastAPI, redis: Redis) -> None:
-    """Start the process's agent wake publisher and subscriber on ``app.state``.
-
-    The shared native resource owner calls this for both lifespans and the
-    public embedded context. Legacy hosts managing a mounted app manually
-    must pair this with ``stop_agent_wakes`` at shutdown; without it, writes
-    publish no wakes and streams fall back to their 15 s reconcile.
-    """
-    app.state.agent_wake_publisher = AgentWakePublisher(redis)
-    app.state.agent_wake_hub = AgentWakeHub(redis)
-    await app.state.agent_wake_hub.start()
 
 
-async def stop_agent_wakes(app: FastAPI) -> None:
-    hub = getattr(app.state, "agent_wake_hub", None)
-    if hub is not None:
-        await hub.close()
-    publisher = getattr(app.state, "agent_wake_publisher", None)
-    if publisher is not None:
-        await publisher.close()
 
 
 def _build_awid_registry_client(
@@ -219,37 +203,23 @@ def _build_awid_registry_client(
     return client_class(**client_kwargs)
 
 
-async def _validate_awid_registry_client(registry_client: RegistryClient) -> None:
-    """Start-up needs the registry to answer. One that answers its health
-    report with a failed dependency of its own is reached; refusing to start
-    against it would spread its outage to this server."""
-    try:
-        await registry_client.health()
-    except Exception as exc:
-        if not _is_unhealthy_report(exc):
-            raise RuntimeError(
-                f"Failed to reach AWID registry at {registry_client.registry_url}: {exc}"
-            ) from exc
-        logger.warning(
-            "AWID registry at %s reports a failed dependency; starting", registry_client.registry_url
-        )
 
 
-def _is_unhealthy_report(exc: Exception) -> bool:
-    return (
-        isinstance(exc, RegistryError)
-        and exc.status_code == 503
-        and isinstance(exc.body, dict)
-        and exc.body.get("status") == "unhealthy"
-    )
 
 
 def _make_standalone_lifespan(*, host_runs_outbox_recovery: bool = False):
     """Own standalone connections; share the native serving-resource owner."""
-    from .embedding import OutboxRecoveryOwnership, default_mcp_factory, start_native_resources
+    # API module construction also creates the default app; defer this import
+    # until the lifecycle factory to avoid an API/embedding initialization cycle.
+    from .embedding import (
+        OutboxRecoveryOwnership,
+        default_mcp_factory,
+        start_native_resources,
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        """Run the shared native resource owner for this application lifespan."""
         settings = get_settings()
         configure_logging(log_level=settings.log_level, json_format=os.getenv("AWEB_LOG_JSON", "true").lower() == "true")
         logger.info("Starting aweb coordination server (standalone mode)")
@@ -284,10 +254,17 @@ def _make_library_lifespan(
     *, host_runs_outbox_recovery: bool = False,
 ):
     """Borrow host connections; close only this lifespan's registry client."""
-    from .embedding import OutboxRecoveryOwnership, default_mcp_factory, start_native_resources
+    # API module construction also creates the default app; defer this import
+    # until the lifecycle factory to avoid an API/embedding initialization cycle.
+    from .embedding import (
+        OutboxRecoveryOwnership,
+        default_mcp_factory,
+        start_native_resources,
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        """Run the shared native resource owner for this application lifespan."""
         logger.info("Starting aweb coordination server (library mode)")
         async with AsyncExitStack() as cleanup:
             registry = _build_awid_registry_client(app, redis, awid_transport, domain_verifier)
@@ -416,7 +393,6 @@ def create_app(
         if isinstance(matched_route_path, str) and matched_route_path.startswith(
             "/v1/federation/"
         ):
-            from uuid import uuid4
 
             reason = (
                 "federation_timestamp_invalid"
@@ -437,7 +413,6 @@ def create_app(
     async def _federation_authority_error_handler(
         request: Request, exc: FederationAuthorityError
     ):
-        from uuid import uuid4
 
         correlation_id = request.headers.get("X-Correlation-ID") or str(uuid4())
         headers = {"Retry-After": "1"} if exc.retry_after_required else None
@@ -471,11 +446,13 @@ def create_app(
     async def live() -> dict:
         # Checks no dependency: a Redis or database outage must not make an
         # orchestrator restart a process that is serving requests.
+        """Report whether this server process can answer requests."""
         return {"status": "ok"}
 
     @app.get("/health", tags=["internal"])
     @app.get("/ready", tags=["internal"])
     async def health(request: Request) -> JSONResponse:
+        """Report native dependency readiness, refusing when a required resource failed."""
         checks = {}
         healthy = True
         resources = getattr(request.app.state, "native_resources", None)

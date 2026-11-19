@@ -13,26 +13,38 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Protocol
 
+from awid.ratelimit import build_rate_limiter
+from awid.registry import RegistryClient
 from fastapi import FastAPI
 from redis.asyncio import Redis
 
-from awid.ratelimit import build_rate_limiter
-from awid.registry import RegistryClient
 from aweb.agent_wake import AgentWakeHub, AgentWakePublisher
-from aweb.federation.activation import FederationAuthorityActivation, build_federation_authority_activation
-from aweb.mcp.server import ManagedMCPApp
+from aweb.federation.activation import (
+    FederationAuthorityActivation,
+    build_federation_authority_activation,
+)
+from aweb.mcp.server import ManagedMCPApp, create_mcp_app
 from aweb.migrations import pending_native_migrations
 from aweb.mutation_hooks import create_mutation_handler
 from aweb.outbox_recovery import start_outbox_recovery, stop_outbox_recovery
+from aweb.resource_startup import (
+    start_agent_wakes,
+    stop_agent_wakes,
+    validate_awid_registry_client,
+)
 
 logger = logging.getLogger(__name__)
 
 
 class DatabaseInfrastructure(Protocol):
     @property
-    def is_initialized(self) -> bool: ...
+    def is_initialized(self) -> bool:
+        """Whether the host infrastructure has initialized its native managers."""
+        ...
 
-    def get_manager(self, name: str = "aweb") -> Any: ...
+    def get_manager(self, name: str = "aweb") -> Any:
+        """Return the initialized native manager for the requested module."""
+        ...
 
 
 class OutboxRecoveryOwnership(StrEnum):
@@ -88,6 +100,7 @@ class EmbeddedResources:
 
     @property
     def readiness(self) -> NativeResourceReadiness:
+        """Report the current native startup stage and required resource readiness."""
         if self._failure is not None:
             return self._failure
         if self._stage is ResourceStartupStage.CLOSED:
@@ -125,8 +138,7 @@ def native_resources(app: FastAPI) -> EmbeddedResources:
 
 
 def default_mcp_factory(resources: EmbeddedResources) -> ManagedMCPApp:
-    from aweb.mcp import create_mcp_app
-
+    """Build the native managed MCP app from the shared serving references."""
     return create_mcp_app(
         db_infra=resources.db_infra, redis=resources.redis,
         registry_client=resources.registry_client, federation_authority=resources.federation_authority,
@@ -141,7 +153,6 @@ async def start_native_resources(
     outbox_recovery: OutboxRecoveryOwnership, on_mutation=None, rate_limiter=None,
 ) -> AsyncIterator[EmbeddedResources]:
     """Shared native owner; caller retains DB, Redis and registry lifecycles."""
-    from aweb.api import _validate_awid_registry_client, start_agent_wakes, stop_agent_wakes
 
     if type(outbox_recovery) is not OutboxRecoveryOwnership:
         raise EmbeddingStartupError(ResourceStartupStage.CONFIGURATION,
@@ -164,7 +175,7 @@ async def start_native_resources(
             if not migrations.ready:
                 raise EmbeddingStartupError(ResourceStartupStage.DATABASE, migrations.message)
             resources._stage = ResourceStartupStage.REGISTRY
-            await _validate_awid_registry_client(registry_client)
+            await validate_awid_registry_client(registry_client)
             api_app.state.db = db_infra
             api_app.state.redis = redis
             api_app.state.awid_registry_client = registry_client
