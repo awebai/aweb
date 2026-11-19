@@ -13,6 +13,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from enum import StrEnum
 from uuid import uuid4
 
 import httpx
@@ -289,11 +290,21 @@ async def world_fixture(coordination, test_db_factory, tmp_path, monkeypatch, re
             )
 
 
+class ProducerKind(StrEnum):
+    """Who signs a delivery: the coordination server's core key, an app's
+    hook-event key, or a member's client certificate. The values are the
+    producer kinds :meth:`World.delivery` builds."""
+
+    CORE = "core"
+    APP = "app"
+    CLIENT = "client"
+
+
 def _code(response):
     return response.json()["detail"]["code"]
 
 
-@pytest.mark.parametrize("kind", ["core", "app", "client"])
+@pytest.mark.parametrize("kind", list(ProducerKind))
 async def test_a_real_delivery_appends_reverifiable_content_and_a_signed_receipt(world, kind):
     delivery = world.delivery(kind)
     response = await world.send(delivery)
@@ -407,7 +418,7 @@ async def test_unavailable_binding_authority_is_retryable(world):
     assert await world.db.fetch_value("SELECT count(*) FROM {{tables.chain_events}}") == 0
 
 
-@pytest.mark.parametrize("kind", ["core", "app"])
+@pytest.mark.parametrize("kind", [ProducerKind.CORE, ProducerKind.APP])
 async def test_a_team_server_logs_may_not_reach_is_a_permanent_refusal(world, kind, monkeypatch):
     # The team publishes a loopback address that Logs does not list: the egress
     # rule refuses it, retrying cannot help, and nothing is appended.
@@ -415,8 +426,13 @@ async def test_a_team_server_logs_may_not_reach_is_a_permanent_refusal(world, ki
     # that allows insecure origins, as the e2e stacks run it.
     monkeypatch.setenv("APP_ENV", "development")
     monkeypatch.setenv("AWID_ALLOW_INSECURE_DELIVERY_ORIGIN", "1")
+    # A record replaces the fixture's only when strictly newer, in whole
+    # seconds; AWID accepts one up to five minutes ahead.
     await world.coordination.registry.publish_team_server(
-        world.member.team_id, world.member.team_key, server_url="http://127.0.0.1:9"
+        world.member.team_id,
+        world.member.team_key,
+        server_url="http://127.0.0.1:9",
+        issued_at=datetime.now(UTC) + timedelta(seconds=1),
     )
     monkeypatch.delenv("APP_ENV")
     response = await world.send(world.delivery(kind))
