@@ -21,7 +21,7 @@ func initNextStepCommands(steps []initNextStep) string {
 // command and why, the same list in text and --json.
 func TestInitNextStepsFitThePathTaken(t *testing.T) {
 	const wd = "/work/alice"
-	hosted := initResult{ServerName: "app.aweb.ai", ExportBaseURL: "https://app.aweb.ai/api"}
+	hosted := initResult{Path: initPathNewTeam, ServerName: "app.aweb.ai", ExportBaseURL: "https://app.aweb.ai/api"}
 	for _, tc := range []struct {
 		name   string
 		result initResult
@@ -54,7 +54,7 @@ func TestInitNextStepsFitThePathTaken(t *testing.T) {
 		},
 		{
 			name:   "self-hosted team",
-			result: initResult{ServerName: "localhost", ExportBaseURL: "http://localhost:8000"},
+			result: initResult{Path: initPathNewTeam, ServerName: "localhost", ExportBaseURL: "http://localhost:8000"},
 			want:   []string{"aw init --join-from /work/alice --name <name>"},
 			absent: []string{"aw claim-human", "aweb.ai/aida"},
 		},
@@ -97,7 +97,7 @@ func TestInitNextStepsFitThePathTaken(t *testing.T) {
 
 // Docs injection and channel setup that already happened are not suggested.
 func TestInitNextStepsOmitWhatInitAlreadyDid(t *testing.T) {
-	result := initResult{ServerName: "localhost", ExportBaseURL: "http://localhost:8000"}
+	result := initResult{Path: initPathNewTeam, ServerName: "localhost", ExportBaseURL: "http://localhost:8000"}
 	commands := initNextStepCommands(initNextStepsAfter(&result, "/work/alice", initSetupDone{DocsInjected: true, ChannelSetUp: true}))
 	for _, absent := range []string{"aw init --inject-docs", "aw init --setup-channel"} {
 		if strings.Contains(commands, absent) {
@@ -207,13 +207,13 @@ func TestInitNextStepsJoinedPointToTheTeamNotTeamList(t *testing.T) {
 // Only hosted onboarding creates a separate account; on a self-hosted
 // stack the step only says how to add an agent to this team.
 func TestInitNextStepsSelfHostedDoNotClaimASeparateAccount(t *testing.T) {
-	result := initResult{ServerName: "localhost", ExportBaseURL: "http://localhost:8000"}
+	result := initResult{Path: initPathNewTeam, ServerName: "localhost", ExportBaseURL: "http://localhost:8000"}
 	for _, step := range initNextStepsAfter(&result, t.TempDir(), initSetupDone{DocsInjected: true, ChannelSetUp: true}) {
 		if strings.Contains(step.Why, "account") || strings.Contains(step.Why, "separate team") {
 			t.Fatalf("self-hosted step claims hosted behaviour: %+v", step)
 		}
 	}
-	hosted := initResult{ServerName: "app.aweb.ai", ExportBaseURL: "https://app.aweb.ai/api"}
+	hosted := initResult{Path: initPathNewTeam, ServerName: "app.aweb.ai", ExportBaseURL: "https://app.aweb.ai/api"}
 	text := strings.Join(initStepLines(initNextStepsAfter(&hosted, t.TempDir(), initSetupDone{DocsInjected: true, ChannelSetUp: true}), true), "\n")
 	if !strings.Contains(text, "creates a separate account and team instead") || strings.Contains(text, "cannot message") {
 		t.Fatalf("hosted steps do not say init elsewhere creates a separate account and team, or claim it cannot be reached:\n%s", text)
@@ -222,7 +222,7 @@ func TestInitNextStepsSelfHostedDoNotClaimASeparateAccount(t *testing.T) {
 
 // add-worktree is offered only inside a git worktree.
 func TestInitNextStepsOfferWorktreesOnlyInAGitRepo(t *testing.T) {
-	result := initResult{ServerName: "localhost", ExportBaseURL: "http://localhost:8000"}
+	result := initResult{Path: initPathNewTeam, ServerName: "localhost", ExportBaseURL: "http://localhost:8000"}
 	plain := t.TempDir()
 	if commands := initNextStepCommands(initNextStepsAfter(&result, plain, initSetupDone{DocsInjected: true, ChannelSetUp: true})); strings.Contains(commands, "aw workspace add-worktree") {
 		t.Fatalf("worktree step outside a git repo:\n%s", commands)
@@ -239,7 +239,7 @@ func TestInitNextStepsOfferWorktreesOnlyInAGitRepo(t *testing.T) {
 // aw init --setup-channel installs the Claude Code plugin, so the manual
 // install is not a second step; Pi is named once.
 func TestInitNextStepsNameEachChannelPathOnce(t *testing.T) {
-	result := initResult{ServerName: "localhost", ExportBaseURL: "http://localhost:8000"}
+	result := initResult{Path: initPathNewTeam, ServerName: "localhost", ExportBaseURL: "http://localhost:8000"}
 	text := strings.Join(initStepLines(initNextStepsAfter(&result, t.TempDir(), initSetupDone{DocsInjected: true, ChannelSetUp: false}), true), "\n")
 	if !strings.Contains(text, "aw init --setup-channel") || strings.Contains(text, "claude plugin install") {
 		t.Fatalf("channel install listed twice:\n%s", text)

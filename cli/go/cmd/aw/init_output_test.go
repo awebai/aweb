@@ -31,6 +31,7 @@ func TestCLITutorialRouteIsNotAliasedToTaskWorkflow(t *testing.T) {
 
 func TestInitNextStepLinesHostedPromoteChannelAndDashboard(t *testing.T) {
 	lines := initStepLines(initNextStepsAfter(&initResult{
+		Path:          initPathNewTeam,
 		ServerName:    "app.aweb.ai",
 		ExportBaseURL: "https://app.aweb.ai/api",
 	}, t.TempDir(), initSetupDone{DocsInjected: false, ChannelSetUp: false}), true)
@@ -58,6 +59,7 @@ func TestInitNextStepLinesHostedPromoteChannelAndDashboard(t *testing.T) {
 
 func TestInitNextStepLinesLocalDirAllDoneStillShowsChannelLaunch(t *testing.T) {
 	lines := initStepLines(initNextStepsAfter(&initResult{
+		Path:          initPathNewTeam,
 		ServerName:    "localhost",
 		ExportBaseURL: "http://127.0.0.1:8000/api",
 	}, t.TempDir(), initSetupDone{DocsInjected: true, ChannelSetUp: true}), true)
@@ -84,6 +86,7 @@ func TestInitNextStepLinesLocalDirAllDoneStillShowsChannelLaunch(t *testing.T) {
 
 func TestInitNextStepLinesAPIKeyAuthSuppressesClaimHuman(t *testing.T) {
 	lines := initStepLines(initNextStepsAfter(&initResult{
+		Path:          initPathAPIKey,
 		ServerName:    "app.aweb.ai",
 		ExportBaseURL: "https://app.aweb.ai/api",
 		APIKeyAuth:    true,
@@ -110,9 +113,9 @@ func TestInitNextStepLinesTellHowToAddASecondAgentToThisTeam(t *testing.T) {
 		result *initResult
 		done   bool
 	}{
-		{"hosted", &initResult{ServerName: "app.aweb.ai", ExportBaseURL: "https://app.aweb.ai/api"}, false},
-		{"api-key", &initResult{ServerName: "app.aweb.ai", ExportBaseURL: "https://app.aweb.ai/api", APIKeyAuth: true}, false},
-		{"local-all-done", &initResult{ServerName: "localhost", ExportBaseURL: "http://127.0.0.1:8000/api"}, true},
+		{"hosted", &initResult{Path: initPathNewTeam, ServerName: "app.aweb.ai", ExportBaseURL: "https://app.aweb.ai/api"}, false},
+		{"api-key", &initResult{Path: initPathAPIKey, ServerName: "app.aweb.ai", ExportBaseURL: "https://app.aweb.ai/api", APIKeyAuth: true}, false},
+		{"local-all-done", &initResult{Path: initPathNewTeam, ServerName: "localhost", ExportBaseURL: "http://127.0.0.1:8000/api"}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			text := strings.Join(initStepLines(initNextStepsAfter(tc.result, t.TempDir(), initSetupDone{DocsInjected: tc.done, ChannelSetUp: tc.done}), true), "\n")

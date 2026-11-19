@@ -106,8 +106,9 @@ type initResult struct {
 type initPath string
 
 const (
+	initPathUnspecified initPath = ""
 	// initPathNewTeam created a new account, team or namespace.
-	initPathNewTeam initPath = ""
+	initPathNewTeam initPath = "new_team"
 	initPathAPIKey  initPath = "api_key"
 	initPathJoined  initPath = "joined"
 	// initPathReconnect connected an identity that already existed.
@@ -803,6 +804,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 				ServerName:    hostFromBaseURL(awebURL),
 				ExportBaseURL: awebURL,
 				Alias:         strings.TrimSpace(result.Alias),
+				Path:          initPathNewTeam,
 			}
 			return printInitOutcome(result, resultInit, wd, initDefaultSetup(resultInit, wd))
 		}
@@ -1404,10 +1406,10 @@ func initDefaultSetup(result *initResult, workingDir string) func() (initSetupDo
 // initNextStepsAfter is the one list of next steps for the path init took,
 // after what its setup actually did. Text and --json both print it.
 func initNextStepsAfter(result *initResult, workingDir string, done initSetupDone) []initNextStep {
-	path := initPathNewTeam
+	path := initPathUnspecified
 	if result != nil {
 		path = result.Path
-		if result.APIKeyAuth && path == initPathNewTeam {
+		if result.APIKeyAuth && (path == initPathUnspecified || path == initPathNewTeam) {
 			path = initPathAPIKey
 		}
 	}
