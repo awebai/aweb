@@ -30,11 +30,19 @@ async def test_serving_entry_counts_compatibility_attempt_before_argument_refusa
     assert _counts()["contacts_add"] == before + 1
 
 
-def test_observer_labels_are_bounded_and_do_not_capture_arguments_or_unknown_names():
+def test_observer_labels_are_bounded_and_do_not_capture_arguments_or_unknown_names(
+    caplog,
+):
+    caplog.set_level("INFO", logger="aweb.mcp.compatibility")
     before = _counts()
     observe_compatibility_tool_call(tool_name="unknown-tool-with-private-input")
     observe_compatibility_tool_call(tool_name="send_mail")
     assert _counts() == before
+    assert caplog.records == []
     observe_compatibility_tool_call(tool_name="chat_pending")
     assert _counts()["chat_pending"] == before.get("chat_pending", 0) + 1
     assert set(_counts()) <= set(COMPATIBILITY_TOOL_REPLACEMENTS)
+
+    assert [record.getMessage() for record in caplog.records] == [
+        "mcp_compatibility_tool_call tool=chat_pending"
+    ]

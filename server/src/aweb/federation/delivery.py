@@ -779,8 +779,16 @@ async def replay_federation_mutation_outbox(app, manager, *, limit: int = 100) -
     return await deliver_federation_mutation_outbox(manager, callback, limit=limit)
 
 
-async def deliver_federation_mutation_outbox(manager, callback, *, limit: int = 100) -> int:
-    """Deliver one durable outbox mutation and record its callback outcome."""
+async def deliver_federation_mutation_outbox(
+    manager, callback, *, limit: int = 100
+) -> int:
+    """Replay the least-attempted pending rows before retrying older failures.
+
+    docs/aw-hooks-sot.md:83-88 requires durable at-least-once recovery. A
+    permanently failing batch cannot prevent an untried neighbour from running.
+    Row locks still coordinate concurrent workers; callback order is not a
+    conversation-delivery ordering guarantee.
+    """
     delivered = 0
     async with manager.transaction() as tx:
         rows = await tx.fetch_all(
@@ -788,7 +796,7 @@ async def deliver_federation_mutation_outbox(manager, callback, *, limit: int = 
             SELECT outbox_id, event_type, payload_json
             FROM {{tables.federation_mutation_outbox}}
             WHERE delivered_at IS NULL
-            ORDER BY created_at, outbox_id
+            ORDER BY attempt_count, created_at, outbox_id
             FOR UPDATE SKIP LOCKED
             LIMIT $1
             """,

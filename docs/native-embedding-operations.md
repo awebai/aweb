@@ -85,7 +85,8 @@ the caller to retry from current contacts.
 
 ## Encryption-key publication
 
-`aweb.routes.agents.publish_encryption_key(*, db, identity, payload)` accepts a
+`aweb.routes.agents.publish_encryption_key(*, db, payload, identity=None,
+generation=None, agent_id=None)` accepts a
 native manager/transaction, an authenticated `TeamIdentity`, and the native
 `EncryptionKeyAssertion` model. It returns `PublishEncryptionKeyResponse`.
 The HTTP `PUT /v1/agents/me/encryption-key` route calls this same owner.
@@ -295,3 +296,113 @@ proof, the one constructor can connect a working agent while its certificate's
 registration remains pending. Registration completion is a separate outcome;
 replay retains the exact signed artifact rather than minting another one.
 These are the two outcomes ruled by Antares `0ffc3028` and `5cb50151`.
+
+## Native application slots and the host resource reference
+
+Hosts consume `native_resources(app)`. The native API still has initialized
+application slots because its routes and shared dependencies read them. These
+are references to the resources already created by the one lifecycle owner,
+not additional clients or startup owners.
+
+| Application slot | Native reader | Disposition |
+|---|---|---|
+| `db` | `deps.get_db`, `db.get_db_infra`, team-key pin and identity binding dependencies, health and outbox recovery | Retain for the native request and transaction scope. |
+| `redis` | `deps.get_redis`, `redis_client.get_redis`, health, federation, dashboard and outbox recovery | Retain for native request dependencies and maintenance. |
+| `awid_registry_client` | Team/identity auth, team-key pins, service registration, messaging and federation routes; `application_registry_client` also supports initialized servers without a resources object | Retain until those native readers consume the resource reference; a host wrapper does not create a shadow client. |
+| `on_mutation` | `hooks.mutation_callback`, MCP callback scope, messaging runtime and durable federation replay | Retain the same callback reference for native producers/replay. |
+| `rate_limiter` | The SDK's `get_rate_limiter` request dependency | Retain; the SDK reads this native serving slot. |
+| `federation_authority` | Native federation/contact routes and messaging runtime | Retain for the existing native route and transport owner. |
+| `mcp_app` | No native route reads this slot; readiness and mounting use `EmbeddedResources.mcp_app` | This host compatibility projection is removed when the Cloud resource-reference consumer lands. Hosts use the typed reference rather than adding readers of this slot. |
+| `agent_wake_publisher`, `agent_wake_hub` | `agent_wake.agent_wake_publisher`, `routes.events._agent_wake_hub` and shared wake cleanup | Retain for native wake publishing/subscription and the released manual wake-start API. |
+
+`start_native_resources` writes seven direct slots beside `native_resources`;
+the shared wake starter writes the publisher/hub pair. `create_app` separately
+initializes `public_origin` and `attachment_backend`: native origin/signature
+checks and participant attachment reads still require them. The source census at `0c2924fc5c` has native dependency
+references in `deps.py:19`, `db.py:130`,
+`team_key_pins.py:121`, `hooks.py:61`, `messaging/runtime.py:46`,
+`routes/federation.py:377`, `routes/contacts.py:72`, `routes/events.py:888`,
+`attachment_service.py:206`, and `awid/ratelimit.py:227`. Slot retirement must
+convert those readers or preserve the released initialized-application path;
+removing a host-only slot does not authorize removing native request state.
+
+
+The optional extension inputs have structural contracts: `on_mutation` is
+`aweb.hooks.MutationCallback`, whose positional call returns an awaitable of
+`MutationDeliveryOutcome | None`; `rate_limiter` is
+`aweb.embedding.ServingRateLimiter`, whose `hit` returns the existing SDK
+`RateLimitDecision`; `attachment_backend` is the existing
+`aweb.attachments.AttachmentBackend` protocol. These annotations create no
+runtime admission or new validation. Ordinary None-returning host callbacks,
+SDK limiter implementations and existing attachment providers retain their
+current behavior.
+
+## Existing-member certificate replacement
+
+`aweb.certificate_projection.replace_member_certificate(*, db, agent_id,
+team_id, member_did_key, expected_certificate_id, generation,
+identity_binding=None)` updates an existing member without reconstructing its
+profile or workspace. `generation` is the actual verified generation; it
+supplies the checked artifact and independent current team key. The operation
+locks team then member, checks the live exact team/key/alias/scope and expected
+old certificate ID, and returns `CertificateProjectionResult` with
+`UPDATED`/`UNCHANGED`, the same agent ID, certificate ID and proof fingerprint.
+An exact already-applied generation is idempotent. A missing member, changed
+fence or stale team proof is an actionable named conflict, never an UPDATE0
+reported as success.
+
+An omitted `identity_binding` asserts that signed identity claims equal the
+stored verified binding, and the operation checks that assertion. If they
+differ, the caller must supply an independently fresh matching native
+`IdentityBinding`. The canonical `refresh_projection_binding` applies it in
+the same transaction as the certificate acceptance; no intermediate mismatch
+is committed. Without that proof, `certificate_binding_conflict` says what to
+supply and nothing changes. An unchanged binding requires no fresh-registry
+gate. Profile, role, kind, status and workspace fields remain unchanged. These
+are Antares `16d02630`'s four required outcomes. Hosts can update their complete
+artifact cache and retained operation in this transaction; native storage
+never names those host columns.
+
+## Requested workspace profile
+
+`connect_agent` also accepts optional `workspace_profile` using
+`WorkspaceProfile.MANUAL` or `WorkspaceProfile.HOSTED_MCP`. It is requested
+metadata, not member authority. A supplied or existing repository keeps the
+workspace kind `agent`; otherwise an explicit profile selects the non-repo
+kind. Omission preserves an existing kind. The Python result includes effective
+`workspace_type` so hosts do not read or rewrite native tables to discover it.
+There is no second workspace constructor or added HTTP input/output field.
+
+For retained admission completion, `publish_encryption_key` accepts
+`generation=VerifiedCertificateGeneration` and `agent_id=UUID`, mutually exclusive
+with `identity=TeamIdentity`. Pass the same open transaction used for
+`connect_agent`; it retains the constructor's team and member locks. The public
+member projection owner checks current eligibility and exact certificate/member/
+controller equality. Only its verified stable identity is attributed to the
+assertion. A manager alone is refused for this branch. The signed assertion
+validator and storage remain shared with authenticated request publication.
+Current request publication callers are the native PUT route and hosted service
+publication; the new generation caller is hosted retained creation completion.
+
+## Periodic maintenance
+
+`aweb.maintenance.run_native_maintenance(*, db_infra, redis, registry_client,
+on_mutation)` attempts outbox recovery and presence reconciliation once. It
+returns `NativeMaintenanceResult(presence)` on success. On failure it raises
+`NativeMaintenanceError` with named `failures` (stage and original error) and
+`completed_stages`; the other stage is still attempted. Cancellation propagates.
+
+Pass the exact serving `application_registry_client` reference. The native
+serving timer invokes this operation; a HOST owner invokes it on its existing
+maintenance schedule, retaining its released `outbox_recovery` operator name.
+Presence runs without dashboard viewers, using the R15 transition owner and
+R2's registry-aware grant validity. Runtime composition requires the complete
+R2 Python component at `25e2229017`, rather than an old grant reader or a
+missing-evidence fallback. Unknown grant authority cannot publish offline.
+
+A mounted server whose first request starts automatic recovery still recovers
+its outboxes if it lacks registry configuration: an explicit `None` reports a
+named presence configuration failure after attempting recovery. It never
+selects a shadow registry or marks presence healthy. Hosts with configured
+resources pass their selected client. Resource ownership, borrowed connections
+and cleanup remain with the existing lifecycle.

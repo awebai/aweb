@@ -14,6 +14,7 @@ from awid.dns_auth import validate_did_key, verify_signed_json_request
 from awid.e2ee_keys import validate_encryption_key_assertion
 from awid.team_ids import parse_team_id
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
+from pgdbm import AsyncDatabaseManager, TransactionManager
 from pgdbm.errors import QueryError
 from pydantic import (
     BaseModel,
@@ -31,6 +32,7 @@ from aweb.agent_wake import (
 )
 from aweb.alias_allocator import candidate_name_prefixes, used_name_prefixes
 from aweb.auth_context import GRANT_SCOPE_ANY
+from aweb.certificate_auth import VerifiedCertificateGeneration
 from aweb.coordination.roles import ROLE_MAX_LENGTH
 from aweb.coordination.routes.repos import canonicalize_git_url
 from aweb.coordination.workspace_registry import ensure_repo
@@ -47,6 +49,7 @@ from aweb.inbound_modes import (
     normalize_inbound_mode,
     set_identity_inbound_mode,
 )
+from aweb.member_team_key import current_member, read_member_projection
 from aweb.role_name_compat import (
     normalize_optional_role_name,
     resolve_role_name_aliases,
@@ -770,34 +773,88 @@ async def publish_my_encryption_key(
 
 async def publish_encryption_key(
     *,
-    db,
-    identity: TeamIdentity,
+    db: AsyncDatabaseManager | TransactionManager,
     payload: EncryptionKeyAssertion,
+    identity: TeamIdentity | None = None,
+    generation: VerifiedCertificateGeneration | None = None,
+    agent_id: UUID | None = None,
 ) -> PublishEncryptionKeyResponse:
-    """Validate and persist an authenticated member's signed encryption key.
+    """Validate and store a request-authenticated or just-admitted member's key.
 
-    ``db`` is the native manager or the host's open transaction. The host must
-    supply a verified identity; this operation checks the exact live member
-    row and validates signature, identity and validity before persisting. A
-    valid identity-signed renewal may update the same encryption key's validity
-    window. Private encryption material remains with its custody owner.
+    Request callers supply TeamIdentity. System admission callers supply the
+    actual generation and exact agent UUID inside the same open transaction
+    as connect_agent, retaining its team-then-member locks. This operation
+    never creates request proof or admits pending material. Current eligibility
+    and exact certificate/key equality come from the canonical member owner;
+    stable identity attribution comes only from its verified projection.
+    Both paths share signature/validity validation and storage. Private key
+    material stays with its custody owner; same-key renewal is supported.
     """
+    if (identity is None) == (generation is None) or (
+        identity is not None and agent_id is not None
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "encryption_publication_input_invalid",
+                "message": "Supply either a verified request identity or the admitted generation and agent_id, then retry.",
+            },
+        )
     aweb_db = db
-    expected_stable_id = identity.did_aw.strip() or None
+    row = None
+    if generation is not None:
+        if (
+            not isinstance(generation, VerifiedCertificateGeneration)
+            or not isinstance(agent_id, UUID)
+            or not isinstance(db, TransactionManager)
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "encryption_admission_transaction_required",
+                    "message": "Publish the verified generation and exact agent_id inside the same open admission transaction, then retry.",
+                },
+            )
+        claims = generation.certificate.claims
+        row = await read_member_projection(
+            db, team_id=claims["team_id"], agent_id=agent_id
+        )
+        if not current_member(row) or any(
+            (
+                row["did_key"] != claims["member_did_key"],
+                row["certificate_id"] != claims["certificate_id"],
+                row["accepted_team_did_key"] != generation.verified_team_did_key,
+            )
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "encryption_admission_conflict",
+                    "message": "The generation does not match the current admitted member. Complete admission with the current certificate and retry in that transaction.",
+                },
+            )
+        principal = row.verified_identity()
+        member_key = principal["did_key"]
+        member_id = principal["agent_id"]
+        team_id = principal["team_id"]
+        expected_stable_id = principal["did_aw"] or None
+    else:
+        member_key = identity.did_key
+        member_id = identity.agent_id
+        team_id = identity.team_id
+        expected_stable_id = identity.did_aw.strip() or None
     try:
         canonical_payload, created_at, not_before, expires_at = (
             validate_encryption_key_assertion(
                 payload.model_dump(exclude_none=True),
-                current_did_key=identity.did_key,
+                current_did_key=member_key,
                 stable_id=expected_stable_id,
                 now=datetime.now(timezone.utc),
             )
         )
     except ValueError as exc:
         logger.warning(
-            "Encryption-key assertion refused for member %s",
-            identity.agent_id,
-            exc_info=True,
+            "Encryption-key assertion refused for member %s", member_id, exc_info=True
         )
         raise HTTPException(
             status_code=422,
@@ -809,19 +866,20 @@ async def publish_encryption_key(
             },
         )
 
-    row = await aweb_db.fetch_one(
-        """
-        SELECT agent_id, team_id, alias
-        FROM {{tables.agents}}
-        WHERE team_id = $1
-          AND agent_id = $2::UUID
-          AND did_key = $3
-          AND deleted_at IS NULL
-        """,
-        identity.team_id,
-        identity.agent_id,
-        identity.did_key,
-    )
+    if row is None:
+        row = await aweb_db.fetch_one(
+            """
+            SELECT agent_id, team_id, alias
+            FROM {{tables.agents}}
+            WHERE team_id = $1
+              AND agent_id = $2::UUID
+              AND did_key = $3
+              AND deleted_at IS NULL
+            """,
+            team_id,
+            member_id,
+            member_key,
+        )
     if row is None:
         raise HTTPException(
             status_code=404,
@@ -873,8 +931,8 @@ async def publish_encryption_key(
             published_at = NOW(),
             revoked_at = NULL
         """,
-        identity.agent_id,
-        identity.team_id,
+        member_id,
+        team_id,
         payload.encryption_key_id,
         payload.encryption_public_key,
         payload.algorithm,

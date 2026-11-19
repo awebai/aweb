@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 from collections import OrderedDict
 from dataclasses import replace
+from enum import StrEnum
 from time import monotonic
 
 from awid.identity_observation import (
@@ -22,6 +24,31 @@ from aweb.application_state import native_application_state
 logger = logging.getLogger(__name__)
 _BINDING_TTL = 60
 _CACHE_LIMIT = 4096
+
+
+class IdentityProjectionField(StrEnum):
+    STABLE_DID = "did_aw"
+    ADDRESS = "address"
+
+
+def verified_key_sql(agent: str = "") -> str:
+    """The SQL form of verified_projection's current-key guard.
+
+    docs/identity.md:569-578 makes global claims conditional on this marker.
+    ``agent`` is a source-code SQL alias, never a value from a request.
+    """
+    if agent and not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", agent):
+        raise ValueError("Invalid identity projection SQL alias")
+    prefix = agent + "." if agent else ""
+    return f"{prefix}did_aw_verified_key = {prefix}did_key"
+
+
+def verified_identity_field_sql(field: IdentityProjectionField, *, agent: str = "") -> str:
+    """Attribute a stable DID/address through the same verified-key guard."""
+    if not isinstance(field, IdentityProjectionField):
+        raise ValueError("Invalid identity projection field")
+    prefix = agent + "." if agent else ""
+    return f"CASE WHEN {verified_key_sql(agent)} THEN {prefix}{field.value} END"
 
 
 def verified_projection(row):

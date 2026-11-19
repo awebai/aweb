@@ -16,8 +16,11 @@ from aweb.routes.agents import EncryptionKeyAssertion, publish_encryption_key
 from aweb.routes.connect import connect_agent
 from aweb.team_auth import parse_and_verify_certificate
 from aweb.team_auth_deps import TeamIdentity, resolve_team_identity
+import test_certificate_projection
 from test_messages_http import _encode_certificate, _make_certificate, _make_keypair
 
+
+projection_member = test_certificate_projection.projection_member
 
 def _assertion(member_sk, member_did, *, now=None, custody="self", public=None, previous=None):
     return build_encryption_key_assertion(
@@ -107,4 +110,110 @@ async def test_publication_shares_host_transaction_and_requires_live_member(aweb
     assert refused.value.status_code == 404
     assert refused.value.detail == (
         "Agent not found. Reconnect this identity to the team before publishing its encryption key."
+    )
+
+
+@pytest.mark.asyncio
+async def test_generation_publication_uses_admission_transaction_and_rolls_back(
+    projection_member,
+):
+    env = projection_member
+    payload = EncryptionKeyAssertion(
+        **_assertion(env.member, env.initial.certificate.claims["member_did_key"])
+    )
+    with pytest.raises(RuntimeError, match="custody completion failed"):
+        async with env.stack.aweb_db.transaction() as tx:
+            await connect_agent(**{**env.arguments, "db": tx})
+            result = await publish_encryption_key(
+                db=tx,
+                generation=env.initial,
+                agent_id=env.planned.agent_id,
+                payload=payload,
+            )
+            assert result.agent_id == str(env.planned.agent_id)
+            assert result.encryption_key == payload
+            raise RuntimeError("custody completion failed")
+    assert (
+        await env.stack.aweb_db.fetch_value(
+            "SELECT count(*) FROM {{tables.agent_encryption_keys}}"
+        )
+        == 0
+    )
+    async with env.stack.aweb_db.transaction() as tx:
+        await connect_agent(**{**env.arguments, "db": tx})
+        await publish_encryption_key(
+            db=tx,
+            generation=env.initial,
+            agent_id=env.planned.agent_id,
+            payload=payload,
+        )
+    assert (
+        await env.stack.aweb_db.fetch_value(
+            "SELECT assertion_signature FROM {{tables.agent_encryption_keys}}"
+        )
+        == payload.signature
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("conflict", ["certificate", "retired", "missing", "stale-key"])
+async def test_generation_publication_refuses_unmatched_or_ineligible_projection(
+    projection_member, conflict
+):
+    env = projection_member
+    generation = await env.proof() if conflict == "certificate" else env.initial
+    payload = EncryptionKeyAssertion(
+        **_assertion(env.member, generation.certificate.claims["member_did_key"])
+    )
+    async with env.stack.aweb_db.transaction() as tx:
+        await connect_agent(**{**env.arguments, "db": tx})
+        if conflict == "retired":
+            await tx.execute(
+                "UPDATE {{tables.agents}} SET status='retired' WHERE agent_id=$1",
+                env.planned.agent_id,
+            )
+        if conflict == "stale-key":
+            # Genuine earlier generation does not bypass current eligibility.
+            await tx.execute(
+                "UPDATE {{tables.agents}} SET accepted_team_did_key=NULL WHERE agent_id=$1",
+                env.planned.agent_id,
+            )
+        with pytest.raises(HTTPException) as refused:
+            await publish_encryption_key(
+                db=tx,
+                generation=generation,
+                agent_id=uuid4() if conflict == "missing" else env.planned.agent_id,
+                payload=payload,
+            )
+        assert refused.value.status_code == 409
+        assert refused.value.detail == {
+            "code": "encryption_admission_conflict",
+            "message": "The generation does not match the current admitted member. Complete admission with the current certificate and retry in that transaction.",
+        }
+        assert (
+            await tx.fetch_value(
+                "SELECT count(*) FROM {{tables.agent_encryption_keys}}"
+            )
+            == 0
+        )
+
+
+@pytest.mark.asyncio
+async def test_generation_publication_requires_open_admission_transaction(
+    projection_member,
+):
+    env = projection_member
+    payload = EncryptionKeyAssertion(
+        **_assertion(env.member, env.initial.certificate.claims["member_did_key"])
+    )
+    with pytest.raises(HTTPException) as refused:
+        await publish_encryption_key(
+            db=env.stack.aweb_db,
+            generation=env.initial,
+            agent_id=env.planned.agent_id,
+            payload=payload,
+        )
+    assert refused.value.status_code == 422
+    assert refused.value.detail["message"] == (
+        "Publish the verified generation and exact agent_id inside the same open admission transaction, then retry."
     )

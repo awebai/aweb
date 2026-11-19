@@ -7,22 +7,24 @@ owner borrows those clients and starts/closes only native serving resources.
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Protocol
 
-from awid.ratelimit import build_rate_limiter
+from awid.ratelimit import RateLimitDecision, build_rate_limiter
 from awid.registry import RegistryClient
 from fastapi import FastAPI
 from redis.asyncio import Redis
 
 from aweb.agent_wake import AgentWakeHub, AgentWakePublisher
+from aweb.attachments import AttachmentBackend
 from aweb.federation.activation import (
     FederationAuthorityActivation,
     build_federation_authority_activation,
 )
+from aweb.hooks import MutationCallback
 from aweb.mcp.server import ManagedMCPApp, create_mcp_app
 from aweb.migrations import pending_native_migrations
 from aweb.mutation_hooks import create_mutation_handler
@@ -44,6 +46,16 @@ class DatabaseInfrastructure(Protocol):
 
     def get_manager(self, name: str = "aweb") -> Any:
         """Return the initialized native manager for the requested module."""
+        ...
+
+
+class ServingRateLimiter(Protocol):
+    """The SDK rate-limit decision boundary implemented by an embedding host."""
+
+    async def hit(
+        self, *, bucket: str, key: str, limit: int, window_seconds: int,
+    ) -> RateLimitDecision:
+        """Return the canonical SDK decision for the named rate-limit bucket."""
         ...
 
 
@@ -90,7 +102,7 @@ class EmbeddedResources:
     registry_client: RegistryClient
     public_origin: str
     outbox_recovery: OutboxRecoveryOwnership
-    on_mutation: Callable[[str, dict], Awaitable[None]]
+    on_mutation: MutationCallback
     federation_authority: FederationAuthorityActivation | None = None
     agent_wake_publisher: AgentWakePublisher | None = None
     agent_wake_hub: AgentWakeHub | None = None
@@ -150,7 +162,9 @@ def default_mcp_factory(resources: EmbeddedResources) -> ManagedMCPApp:
 async def start_native_resources(
     *, api_app: FastAPI, db_infra: DatabaseInfrastructure, redis: Redis,
     registry_client: RegistryClient, mcp_factory: MCPFactory,
-    outbox_recovery: OutboxRecoveryOwnership, on_mutation=None, rate_limiter=None,
+    outbox_recovery: OutboxRecoveryOwnership,
+    on_mutation: MutationCallback | None = None,
+    rate_limiter: ServingRateLimiter | None = None,
 ) -> AsyncIterator[EmbeddedResources]:
     """Shared native owner; caller retains DB, Redis and registry lifecycles."""
 
@@ -222,7 +236,9 @@ async def start_native_resources(
 async def embedded_aweb(
     *, db_infra: DatabaseInfrastructure, redis: Redis, registry_client: RegistryClient,
     public_origin: str, mcp_factory: MCPFactory, outbox_recovery: OutboxRecoveryOwnership,
-    on_mutation=None, rate_limiter=None, attachment_backend=None,
+    on_mutation: MutationCallback | None = None,
+    rate_limiter: ServingRateLimiter | None = None,
+    attachment_backend: AttachmentBackend | None = None,
 ) -> AsyncIterator[EmbeddedResources]:
     """Create/start native API and the actual host-supplied extended MCP app.
 

@@ -84,7 +84,10 @@ row is marked delivered only when the callback returns. A callback exception is
 logged, counted in `attempt_count` and `last_error`, and retried on the next
 replay. Rows wait while no callback is installed. This path is at-least-once:
 the callback may run from the background loop rather than the route, and may
-see the same event more than once.
+see the same event more than once. Pending replay chooses the fewest-attempted
+rows first, then creation order, so an old failing batch cannot indefinitely
+hide an untried row behind it. This is retry fairness, not a per-conversation
+callback ordering guarantee.
 
 Event names and context keys are experimental Python integration data, not a
 versioned network protocol.
