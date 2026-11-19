@@ -142,10 +142,13 @@ async def test_corrupt_projection_is_not_empty_presence(privacy_app):
         await stream.subscribe(team_events_channel_name(TEAM))
         with pytest.raises(
             PresenceReconciliationError, match="Presence reconciliation incomplete"
-        ):
+        ) as refused:
             await reconcile_presence(
                 env.infra, env.redis, registry_client=env.app.state.awid_registry_client
             )
+        assert len(refused.value.failures) == 1
+        assert refused.value.failures[0].team_id == TEAM
+        assert isinstance(refused.value.failures[0].error, json.JSONDecodeError)
         assert await env.redis.get(key) == "{broken"
         assert await _through_barrier(env, stream) == []
 
