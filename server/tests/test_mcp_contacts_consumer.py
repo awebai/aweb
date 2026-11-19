@@ -102,7 +102,8 @@ async def _seed_hosted_target(aweb_db) -> str:
         c3po_agent_id,
     )
     await aweb_db.execute(
-        "UPDATE {{tables.agents}} SET did_aw_verified_key=did_key WHERE agent_id=$1", c3po_agent_id,
+        "UPDATE {{tables.agents}} SET did_aw_verified_key=did_key WHERE agent_id=$1",
+        c3po_agent_id,
     )
     return c3po_agent_id
 
@@ -256,7 +257,9 @@ async def test_mcp_read_tools_accept_old_new_and_expand_contract_shapes(
 
 
 @pytest.mark.asyncio
-async def test_legacy_mcp_tool_aliases_delegate_to_existing_implementations(monkeypatch):
+async def test_legacy_mcp_tool_aliases_delegate_to_existing_implementations(
+    monkeypatch,
+):
     collector = ToolCollector()
     calls: list[tuple[str, dict]] = []
 
@@ -303,7 +306,12 @@ async def test_legacy_mcp_tool_aliases_delegate_to_existing_implementations(monk
 
     assert calls[0] == (
         "check_inbox",
-        {"hosted_decryptor": None, "unread_only": True, "limit": 3, "include_bodies": True},
+        {
+            "hosted_decryptor": None,
+            "unread_only": True,
+            "limit": 3,
+            "include_bodies": True,
+        },
     )
     assert calls[1] == ("chat_pending", {"hosted_decryptor": None})
     assert calls[2][0] == "chat_send"
@@ -351,7 +359,9 @@ async def test_send_chat_public_tool_maps_to_unified_recipient_args(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_consumer_mcp_add_contact_by_email_rejects_multiple_at_signs(aweb_cloud_db, monkeypatch):
+async def test_consumer_mcp_add_contact_by_email_rejects_multiple_at_signs(
+    aweb_cloud_db, monkeypatch
+):
     _patch_auth(monkeypatch, _auth())
 
     result = json.loads(
@@ -366,7 +376,9 @@ async def test_consumer_mcp_add_contact_by_email_rejects_multiple_at_signs(aweb_
 
 
 @pytest.mark.asyncio
-async def test_consumer_mcp_add_contact_by_email_valid_email_returns_unavailable(aweb_cloud_db, monkeypatch):
+async def test_consumer_mcp_add_contact_by_email_valid_email_returns_unavailable(
+    aweb_cloud_db, monkeypatch
+):
     _patch_auth(monkeypatch, _auth())
 
     result = json.loads(
@@ -377,7 +389,9 @@ async def test_consumer_mcp_add_contact_by_email_valid_email_returns_unavailable
         )
     )
 
-    assert result == {"error": "Email contact requests are not available on this server"}
+    assert result == {
+        "error": "Email contact requests are not available on this server"
+    }
 
 
 @pytest.mark.asyncio
@@ -472,14 +486,21 @@ async def test_consumer_mcp_contacts_add_normalizes_hosted_handle_address(
 ):
     _patch_auth(monkeypatch, _auth())
 
-    authority = SimpleNamespace(resolve_contact=AsyncMock(return_value=SimpleNamespace(
-        canonical_address="jane.aweb.ai/c3po", did_aw="did:aw:c3po", controller_did="did:key:z6Mkcontroller",
-    )))
+    authority = SimpleNamespace(
+        resolve_contact=AsyncMock(
+            return_value=SimpleNamespace(
+                canonical_address="jane.aweb.ai/c3po",
+                did_aw="did:aw:c3po",
+                controller_did="did:key:z6Mkcontroller",
+            )
+        )
+    )
     result = json.loads(
         await contacts_tools.contacts_add(
             DBInfra(aweb_cloud_db.aweb_db),
             contact_address="@jane/c3po",
-            label="C-3PO", federation_authority=authority,
+            label="C-3PO",
+            federation_authority=authority,
         )
     )
 
@@ -487,11 +508,15 @@ async def test_consumer_mcp_contacts_add_normalizes_hosted_handle_address(
     assert result["contact_did_aw"] == "did:aw:c3po"
     assert result["binding_controller_did"] == "did:key:z6Mkcontroller"
     assert result["binding_accepted_at"] is not None
-    authority.resolve_contact.assert_awaited_once_with("jane.aweb.ai/c3po", source_ip="mcp:did:key:alice")
+    authority.resolve_contact.assert_awaited_once_with(
+        "jane.aweb.ai/c3po", source_ip="mcp:did:key:alice"
+    )
 
 
 @pytest.mark.asyncio
-async def test_mcp_mail_send_to_hosted_handle_uses_canonical_address(aweb_cloud_db, monkeypatch):
+async def test_mcp_mail_send_to_hosted_handle_uses_canonical_address(
+    aweb_cloud_db, monkeypatch
+):
     alice_agent_id, _ = await _seed_team(aweb_cloud_db.aweb_db)
     await _seed_hosted_target(aweb_cloud_db.aweb_db)
     _patch_auth(monkeypatch, _auth(agent_id=alice_agent_id))
@@ -521,7 +546,9 @@ async def test_mcp_mail_send_to_hosted_handle_uses_canonical_address(aweb_cloud_
 
 
 @pytest.mark.asyncio
-async def test_mcp_chat_send_to_hosted_handle_uses_canonical_address(aweb_cloud_db, monkeypatch):
+async def test_mcp_chat_send_to_hosted_handle_uses_canonical_address(
+    aweb_cloud_db, monkeypatch
+):
     alice_agent_id, _ = await _seed_team(aweb_cloud_db.aweb_db)
     await _seed_hosted_target(aweb_cloud_db.aweb_db)
     _patch_auth(monkeypatch, _auth(agent_id=alice_agent_id))
@@ -607,8 +634,15 @@ async def test_consumer_mcp_send_message_to_identity_contact_starts_new_mail_con
 
     assert result["status"] == "delivered"
     assert result["conversation_id"] != existing_conversation_id
-    assert await aweb_cloud_db.aweb_db.fetch_val("SELECT COUNT(*) FROM {{tables.conversations}}") == 2
-    row = await aweb_cloud_db.aweb_db.fetch_one("SELECT conversation_id, body FROM {{tables.messages}}")
+    assert (
+        await aweb_cloud_db.aweb_db.fetch_val(
+            "SELECT COUNT(*) FROM {{tables.conversations}}"
+        )
+        == 2
+    )
+    row = await aweb_cloud_db.aweb_db.fetch_one(
+        "SELECT conversation_id, body FROM {{tables.messages}}"
+    )
     assert str(row["conversation_id"]) == result["conversation_id"]
     assert row["body"] == "hello again"
 
@@ -671,7 +705,9 @@ async def test_consumer_mcp_send_message_to_handle_contact_uses_recent_active_ag
     )
 
     assert result["status"] == "delivered"
-    row = await aweb_cloud_db.aweb_db.fetch_one("SELECT to_did, to_alias FROM {{tables.messages}}")
+    row = await aweb_cloud_db.aweb_db.fetch_one(
+        "SELECT to_did, to_alias FROM {{tables.messages}}"
+    )
     assert row["to_did"] == "did:aw:recent"
     assert row["to_alias"] == "recent"
 
@@ -701,10 +737,16 @@ async def test_consumer_mcp_send_message_to_identity_pending_contact_is_sendable
         )
     )
 
-    assert result == {"error": "contact_identity_binding_required"}
-    assert await aweb_cloud_db.aweb_db.fetch_val(
-        "SELECT COUNT(*) FROM {{tables.messages}}"
-    ) == 0
+    assert result == {
+        "error": "This address now belongs to a different identity. Check the contact and explicitly bind it again before sending.",
+        "reason": "contact_identity_binding_required",
+    }
+    assert (
+        await aweb_cloud_db.aweb_db.fetch_val(
+            "SELECT COUNT(*) FROM {{tables.messages}}"
+        )
+        == 0
+    )
 
 
 @pytest.mark.asyncio
@@ -736,10 +778,16 @@ async def test_consumer_mcp_identity_contact_rejects_local_address_reassignment(
         )
     )
 
-    assert result == {"error": "contact_identity_binding_required"}
-    assert await aweb_cloud_db.aweb_db.fetch_val(
-        "SELECT COUNT(*) FROM {{tables.messages}}"
-    ) == 0
+    assert result == {
+        "error": "This address now belongs to a different identity. Check the contact and explicitly bind it again before sending.",
+        "reason": "contact_identity_binding_required",
+    }
+    assert (
+        await aweb_cloud_db.aweb_db.fetch_val(
+            "SELECT COUNT(*) FROM {{tables.messages}}"
+        )
+        == 0
+    )
 
 
 @pytest.mark.asyncio
@@ -792,10 +840,16 @@ async def test_consumer_mcp_identity_contact_rejects_reassigned_existing_mail_co
         )
     )
 
-    assert result == {"error": "contact_identity_binding_required"}
-    assert await aweb_cloud_db.aweb_db.fetch_val(
-        "SELECT COUNT(*) FROM {{tables.messages}}"
-    ) == 0
+    assert result == {
+        "error": "This address now belongs to a different identity. Check the contact and explicitly bind it again before sending.",
+        "reason": "contact_identity_binding_required",
+    }
+    assert (
+        await aweb_cloud_db.aweb_db.fetch_val(
+            "SELECT COUNT(*) FROM {{tables.messages}}"
+        )
+        == 0
+    )
 
 
 @pytest.mark.asyncio
@@ -847,10 +901,16 @@ async def test_consumer_mcp_identity_contact_rejects_reassigned_existing_chat_se
         )
     )
 
-    assert result == {"error": "contact_identity_binding_required"}
-    assert await aweb_cloud_db.aweb_db.fetch_val(
-        "SELECT COUNT(*) FROM {{tables.chat_messages}}"
-    ) == 0
+    assert result == {
+        "error": "This address now belongs to a different identity. Check the contact and explicitly bind it again before sending.",
+        "reason": "contact_identity_binding_required",
+    }
+    assert (
+        await aweb_cloud_db.aweb_db.fetch_val(
+            "SELECT COUNT(*) FROM {{tables.chat_messages}}"
+        )
+        == 0
+    )
 
 
 @pytest.mark.asyncio
@@ -891,6 +951,11 @@ async def test_consumer_mcp_send_message_to_contact_reuses_existing_chat_session
         bob_agent_id,
     )
 
+    # Historical fixtures inserted after setup must cross the shipped migration.
+    from chat_coverage_support import migrate_chat_conversation_coverage
+
+    await migrate_chat_conversation_coverage(aweb_cloud_db.aweb_db)
+
     class NoRegistry:
         async def resolve_address(self, *_args, **_kwargs):
             raise AssertionError("existing chat continuation must not rediscover")
@@ -907,14 +972,23 @@ async def test_consumer_mcp_send_message_to_contact_reuses_existing_chat_session
 
     assert result["delivered"] is True
     assert result["conversation_id"] == session_id
-    assert await aweb_cloud_db.aweb_db.fetch_val("SELECT COUNT(*) FROM {{tables.chat_sessions}}") == 1
-    row = await aweb_cloud_db.aweb_db.fetch_one("SELECT session_id, body FROM {{tables.chat_messages}}")
+    assert (
+        await aweb_cloud_db.aweb_db.fetch_val(
+            "SELECT COUNT(*) FROM {{tables.chat_sessions}}"
+        )
+        == 1
+    )
+    row = await aweb_cloud_db.aweb_db.fetch_one(
+        "SELECT session_id, body FROM {{tables.chat_messages}}"
+    )
     assert str(row["session_id"]) == session_id
     assert row["body"] == "hello chat"
 
 
 @pytest.mark.asyncio
-async def test_consumer_mcp_read_messages_from_contact_filters_on_server_side(aweb_cloud_db, monkeypatch):
+async def test_consumer_mcp_read_messages_from_contact_filters_on_server_side(
+    aweb_cloud_db, monkeypatch
+):
     alice_agent_id, bob_agent_id = await _seed_team(aweb_cloud_db.aweb_db)
     _patch_auth(monkeypatch, _auth(agent_id=alice_agent_id))
     contact = await aweb_cloud_db.aweb_db.fetch_one(
@@ -982,7 +1056,9 @@ async def test_consumer_mcp_read_messages_from_contact_filters_on_server_side(aw
 @pytest.mark.asyncio
 @pytest.mark.parametrize("channel", ["mail", "chat"])
 async def test_read_messages_from_contact_does_not_read_an_earlier_holder_of_the_address(
-    aweb_cloud_db, monkeypatch, channel,
+    aweb_cloud_db,
+    monkeypatch,
+    channel,
 ):
     """An address can pass to another identity. Reading is by the reader's
     identity: whoever holds the address now is no party to what its earlier
@@ -1150,17 +1226,42 @@ async def test_consumer_mcp_read_messages_from_contact_returns_encrypted_mail_me
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("name", ["add_contact", "contacts_add"])
-@pytest.mark.parametrize("failure", ["missing", "recipient_identity_not_found", "sender_registry_unavailable"])
-async def test_contact_creation_refuses_without_authority_evidence(aweb_cloud_db, monkeypatch, name, failure):
+@pytest.mark.parametrize(
+    "failure",
+    ["missing", "recipient_identity_not_found", "sender_registry_unavailable"],
+)
+async def test_contact_creation_refuses_without_authority_evidence(
+    aweb_cloud_db, monkeypatch, name, failure
+):
     from awid.federation_errors import FederationAuthorityError
+
     _patch_auth(monkeypatch, _auth())
     collector = ToolCollector()
-    authority = None if failure == "missing" else SimpleNamespace(
-        resolve_contact=AsyncMock(side_effect=FederationAuthorityError(failure)))
-    register_tools(collector, db_infra=DBInfra(aweb_cloud_db.aweb_db), redis=None,
-                   registry_client=None, federation_authority=authority)
+    authority = (
+        None
+        if failure == "missing"
+        else SimpleNamespace(
+            resolve_contact=AsyncMock(side_effect=FederationAuthorityError(failure))
+        )
+    )
+    register_tools(
+        collector,
+        db_infra=DBInfra(aweb_cloud_db.aweb_db),
+        redis=None,
+        registry_client=None,
+        federation_authority=authority,
+    )
     key = "address" if name == "add_contact" else "contact_address"
     result = json.loads(await collector.funcs[name](**{key: "example.test/alice"}))
-    expected = "federation_authority_coordination_unavailable" if failure == "missing" else failure
+    expected = (
+        "federation_authority_coordination_unavailable"
+        if failure == "missing"
+        else failure
+    )
     assert result == {"error": expected}
-    assert await aweb_cloud_db.aweb_db.fetch_value("SELECT COUNT(*) FROM {{tables.contacts}}") == 0
+    assert (
+        await aweb_cloud_db.aweb_db.fetch_value(
+            "SELECT COUNT(*) FROM {{tables.contacts}}"
+        )
+        == 0
+    )

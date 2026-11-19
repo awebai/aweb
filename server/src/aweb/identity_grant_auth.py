@@ -130,6 +130,7 @@ async def _verify_identity_grant_row(
     enforce_timestamp_skew(timestamp)
 
     body_sha256 = request_body_sha256(request)
+
     try:
         canonical = decode_signed_payload_header(
             str(request.headers.get("X-AWEB-Signed-Payload") or "").strip()

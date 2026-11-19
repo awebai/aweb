@@ -6,12 +6,15 @@ from enum import StrEnum
 
 
 RESOURCE_NOT_FOUND_DETAIL = "Not found"
+INTERNAL_SERVICE_ERROR_MESSAGE = "The server could not complete this request. Try again; if it keeps failing, contact the server operator."
 
 
 class ServiceError(Exception):
     """Base for service-layer errors with an HTTP-compatible status code."""
 
     status_code: int = 500
+    headers: dict[str, str] | None = None
+    recovery_action: str | None = None
 
     def __init__(self, detail: str | dict = "Internal service error") -> None:
         self.detail = detail

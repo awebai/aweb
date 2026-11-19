@@ -34,8 +34,7 @@ from .outbox_recovery import (
 )
 from awid.ratelimit import build_rate_limiter
 from .routing_utils import move_mount_before_spa_fallback
-from .auth_error_transport import install_auth_error_handlers
-from .service_errors import ServiceError
+from .error_responses import install_service_error_handlers
 from .messaging.chat_policy import HumanChatRefused
 from .install_admins import install_admin_setup_message
 from .mcp.server import NormalizeMountedMCPPathMiddleware
@@ -577,17 +576,7 @@ def create_app(
             ),
         )
 
-    install_auth_error_handlers(app)
-
-    @app.exception_handler(ServiceError)
-    async def _service_error_handler(request: Request, exc: ServiceError):
-        if exc.status_code >= 500:
-            logger.exception("Unhandled ServiceError", exc_info=exc)
-            return JSONResponse(status_code=500, content={"detail": "Internal server error"})
-        return JSONResponse(
-            status_code=exc.status_code,
-            content={"detail": exc.detail},
-        )
+    install_service_error_handlers(app)
 
     @app.get("/live", tags=["internal"])
     async def live() -> dict:

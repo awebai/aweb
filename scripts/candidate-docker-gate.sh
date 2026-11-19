@@ -284,7 +284,12 @@ record_input() {
   tree="$sha"
   [[ "$path" == "$repo" ]] || tree="$sha:${path#"$repo"/}"
   mkdir -p "$work/inputs/$name"
-  git -C "$repo" archive "$tree" | tar -xf - -C "$work/inputs/$name"
+  chmod 0755 "$work/inputs" "$work/inputs/$name"
+  (
+    umask 0022
+    # Drain Git padding on BSD/GNU tar; pipefail still reports archive errors.
+    git -C "$repo" archive "$tree" | tar --ignore-zeros -xf - -C "$work/inputs/$name"
+  )
 }
 record_input blueprints "$LIBRARY_E2E_BLUEPRINT_SRC"
 LIBRARY_E2E_BLUEPRINT_SRC="$work/inputs/blueprints"

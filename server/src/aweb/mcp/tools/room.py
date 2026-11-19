@@ -17,6 +17,7 @@ from aweb.application_state import application_registry_client
 from aweb.identity_binding import verify_identity_binding
 from aweb.mcp.auth import current_agent_wake_publisher, get_auth
 from aweb.mcp.signing import sign_hosted_message
+from aweb.mcp.mutations import current_mutation_callback
 from aweb.mcp.tools._common import team_identity
 from aweb.member_team_key import (
     CURRENT_MEMBERSHIP_REQUIRED_DETAIL,
@@ -136,6 +137,10 @@ async def room_post(db, *, hosted_signer=None, subject="", body="", e2ee=False, 
         )
     with agent_wake_scope(current_agent_wake_publisher()):
         output = await post_room_message(
-            db, actor, payload, id_chain=getattr(auth.request.state, "id_chain", None)
+            db,
+            actor,
+            payload,
+            id_chain=getattr(auth.request.state, "id_chain", None),
+            on_mutation=current_mutation_callback(),
         )
     return json.dumps(await present_room(db, auth.request, output))

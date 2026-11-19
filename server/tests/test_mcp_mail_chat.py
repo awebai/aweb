@@ -1523,7 +1523,7 @@ async def test_mcp_send_mail_requires_current_local_address_authority(
         assert result["status"] == "delivered"
     else:
         assert result["error"] == (
-            "otherco.com/bob is not a registered address. A local identity has no address and is reachable only from inside its own team, by alias; a global identity is reachable by address once one is assigned."
+            "otherco.com/bob is not a registered address. A local identity has no address and is reachable only from inside its own team, by alias; a global identity is reachable by address once one is assigned. Check the address or use a teammate alias and retry."
         )
 
 
@@ -2275,7 +2275,7 @@ async def test_mcp_chat_send_requires_current_local_address_authority(
         assert result["session_id"]
     else:
         assert result["error"] == (
-            "otherco.com/bob is not a registered address. A local identity has no address and is reachable only from inside its own team, by alias; a global identity is reachable by address once one is assigned."
+            "otherco.com/bob is not a registered address. A local identity has no address and is reachable only from inside its own team, by alias; a global identity is reachable by address once one is assigned. Check the address or use a teammate alias and retry."
         )
 
 
@@ -3419,7 +3419,10 @@ async def test_mcp_same_team_contacts_only(
     if allowed:
         assert "error" not in result, result
     else:
-        assert result == {"error": "Recipient only accepts messages from exact active contacts"}
+        assert result == {
+            "error": "Recipient only accepts messages from exact active contacts. Ask the recipient to add your exact address as a contact or check their inbound policy.",
+            "reason": "recipient_policy_rejected",
+        }
 
     if allowed and kind == "chat" and mode == "contacts_only":
         continuation_args = dict(
@@ -3435,7 +3438,10 @@ async def test_mcp_same_team_contacts_only(
         before = await manager.fetch_value("SELECT COUNT(*) FROM {{tables.chat_messages}}")
         await manager.execute("DELETE FROM {{tables.contacts}} WHERE owner_did='did:aw:bob'")
         removed = json.loads(await chat_tools.chat_send(DBInfra(manager), **continuation_args))
-        assert removed == {"error": "Recipient only accepts messages from exact active contacts"}
+        assert removed == {
+            "error": "Recipient only accepts messages from exact active contacts. Ask the recipient to add your exact address as a contact or check their inbound policy.",
+            "reason": "recipient_policy_rejected",
+        }
         assert await manager.fetch_value("SELECT COUNT(*) FROM {{tables.chat_messages}}") == before
 
 
@@ -3538,6 +3544,6 @@ async def test_mcp_full_address_to_another_teams_local_identity_is_refused_witho
     # whether a local identity holds this name in another team.
     assert result == {
         "error": (
-            "otherco.com/bob is not a registered address. A local identity has no address and is reachable only from inside its own team, by alias; a global identity is reachable by address once one is assigned."
+            "otherco.com/bob is not a registered address. A local identity has no address and is reachable only from inside its own team, by alias; a global identity is reachable by address once one is assigned. Check the address or use a teammate alias and retry."
         )
     }, result

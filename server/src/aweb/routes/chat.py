@@ -2,11 +2,15 @@ from __future__ import annotations
 
 from aweb.identity_binding import verified_key_sql
 
+from aweb.messaging.kinds import ContentMode
+
+from aweb.messaging.chat_models import CreateSessionRequest as CreateSessionRequest
+from aweb.messaging.chat_models import SendMessageRequest as SendMessageRequest
+from aweb.client_address import request_client_address
 from aweb.agent_wake import agent_wake_publisher
 
 from aweb.attachment_service import (
     prepare_attachment_send,
-    attachment_retry,
     attachment_references_by_message,
 )
 
@@ -26,7 +30,13 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 from redis.asyncio.client import PubSub
 from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import RedisError
@@ -34,7 +44,10 @@ from redis.exceptions import RedisError
 from aweb.deps import get_db, get_redis
 from aweb.events import chat_session_channel_name
 from aweb.redis_subscriptions import open_subscription, release_subscription
-from aweb.identity_metadata import lookup_identity_metadata_by_did, routable_chat_address
+from aweb.identity_metadata import (
+    lookup_identity_metadata_by_did,
+    routable_chat_address,
+)
 from aweb.id_chain_auth import stored_id_chain
 from aweb.messaging.chat_send import (
     _address_from_alias,
@@ -48,9 +61,6 @@ from aweb.messaging.chat_send import (
 from aweb.messaging.runtime import messaging_runtime
 from aweb.identity_auth_deps import participant_dids
 from aweb.identity_auth_deps import MessagingAuth, get_messaging_auth
-from aweb.messaging.alias_targets import (
-    validate_alias_selector,
-)
 from aweb.messaging.chat import (
     HANG_ON_EXTENSION_SECONDS,
     MAX_CHAT_MARK_READ_IDS,
@@ -65,7 +75,6 @@ from aweb.messaging.contacts import (
     get_contact_addresses,
     is_address_in_contacts,
 )
-from aweb.messaging.handle_addresses import normalize_hosted_handle_reference
 from aweb.messaging.messages import utc_iso as _utc_iso
 from aweb.messaging.verification import verified_signed_recipient_fields
 from aweb.messaging.waiting import (
@@ -97,8 +106,8 @@ CHAT_STREAM_KEEPALIVE_SECONDS = 30.0
 def _parse_uuid(value: str, *, field: str) -> str:
     try:
         return str(UUID(str(value).strip()))
-    except Exception:
-        raise ValueError(f"Invalid {field} format")
+    except ValueError as exc:
+        raise ValueError(f"Invalid {field} format") from exc
 
 
 def _parse_deadline(value: str) -> datetime:
@@ -165,117 +174,6 @@ async def _targets_left(db, *, session_id: UUID, target_dids: list[str]) -> list
         list(left_dids),
     )
     return [row["alias"] for row in part_rows]
-
-
-class CreateSessionRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    session_id: str | None = None
-    to_aliases: list[str] = Field(default_factory=list)
-    to_dids: list[str] = Field(default_factory=list)
-    to_addresses: list[str] = Field(default_factory=list)
-    message: str
-    content_mode: str = "legacy_plaintext_v1"
-    message_version: int = 1
-    encrypted_envelope: dict[str, Any] | None = None
-    leaving: bool = False
-    hang_on: bool = False
-    wait_seconds: int | None = None
-    message_id: str | None = None
-    reply_to: str | None = None
-    timestamp: str | None = None
-    from_did: str | None = Field(default=None, max_length=256)
-    signature: str | None = Field(default=None, max_length=512)
-    signed_payload: str | None = None
-    attachments: object = None
-    attachment_refs: object = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def _normalize_hosted_handle_targets(cls, data):
-        if not isinstance(data, dict):
-            return data
-        normalized = dict(data)
-        aliases: list[str] = []
-        promoted_addresses: list[str] = []
-        for value in normalized.get("to_aliases") or []:
-            text = str(value or "").strip()
-            address = normalize_hosted_handle_reference(text, require_agent=True)
-            if text.startswith("@") and address != text and "/" in address:
-                promoted_addresses.append(address)
-            else:
-                aliases.append(text)
-        if promoted_addresses:
-            normalized["to_aliases"] = aliases
-            normalized["to_addresses"] = (
-                list(normalized.get("to_addresses") or []) + promoted_addresses
-            )
-        if normalized.get("to_addresses"):
-            normalized["to_addresses"] = [
-                normalize_hosted_handle_reference(str(value), require_agent=True)
-                for value in normalized.get("to_addresses") or []
-            ]
-        return normalized
-
-    @field_validator("to_aliases", "to_dids", "to_addresses")
-    @classmethod
-    def _clean_targets(cls, values: list[str]) -> list[str]:
-        cleaned: list[str] = []
-        for value in values or []:
-            value = (value or "").strip()
-            if value:
-                cleaned.append(value)
-        return cleaned
-
-    @field_validator("to_aliases")
-    @classmethod
-    def _validate_aliases(cls, values: list[str]) -> list[str]:
-        return [validate_alias_selector(value, field="to_aliases") for value in values]
-
-    @field_validator("to_addresses")
-    @classmethod
-    def _validate_addresses(cls, values: list[str]) -> list[str]:
-        for value in values:
-            if value.startswith("@"):
-                raise ValueError("Invalid to_addresses format")
-        return values
-
-    @model_validator(mode="after")
-    def _validate_targets(self) -> "CreateSessionRequest":
-        if not self.to_aliases and not self.to_dids and not self.to_addresses:
-            raise ValueError("Must provide to_aliases, to_dids, or to_addresses")
-        if len(self.to_aliases) != len(set(self.to_aliases)):
-            raise ValueError("to_aliases contains duplicates")
-        if len(self.to_dids) != len(set(self.to_dids)):
-            raise ValueError("to_dids contains duplicates")
-        if len(self.to_addresses) != len(set(self.to_addresses)):
-            raise ValueError("to_addresses contains duplicates")
-        return self
-
-    @model_validator(mode="after")
-    def _validate_content_mode(self) -> "CreateSessionRequest":
-        encrypted = (
-            self.content_mode == "encrypted_v2"
-            or self.message_version == 2
-            or self.encrypted_envelope is not None
-        )
-        if encrypted:
-            if self.content_mode != "encrypted_v2":
-                raise ValueError("content_mode must be encrypted_v2 for encrypted chat")
-            if self.message_version != 2:
-                raise ValueError("message_version must be 2 for encrypted chat")
-            if self.encrypted_envelope is None:
-                raise ValueError("encrypted_envelope is required for encrypted chat")
-        elif self.content_mode != "legacy_plaintext_v1" or self.message_version != 1:
-            raise ValueError("unsupported chat content mode")
-        return self
-
-    @field_validator("session_id", "message_id", "reply_to")
-    @classmethod
-    def _validate_message_id(cls, v: str | None, info: ValidationInfo) -> str | None:
-        if v is None:
-            return None
-        return _parse_uuid(v, field=str(info.field_name or "message_id"))
 
 
 class CreateSessionParticipant(BaseModel):
@@ -381,7 +279,7 @@ async def create_or_send(
         sender,
         payload,
         runtime,
-        source=str(request.client.host if request.client else "unknown"),
+        source=request_client_address(request),
     )
     target_dids = sorted({_target_did(row) for row in target.recipients if _target_did(row)})
     sent = await send_chat(db, sender, target, payload, runtime)
@@ -542,7 +440,7 @@ async def pending(
                 "participant_addresses": participant_addresses,
                 "last_message": item["last_message"],
                 "last_message_content_mode": item.get("last_message_content_mode")
-                or "legacy_plaintext_v1",
+                or ContentMode.PLAINTEXT,
                 "last_message_version": item.get("last_message_version") or 1,
                 "last_encrypted_envelope": item.get("last_encrypted_envelope"),
                 "last_from": item["last_from"],
@@ -594,7 +492,8 @@ async def history(
 
     aweb_db = db.get_manager("aweb")
     sess = await aweb_db.fetch_one(
-        "SELECT team_id FROM {{tables.chat_sessions}} WHERE session_id = $1", session_uuid
+        "SELECT team_id FROM {{tables.chat_sessions}} WHERE session_id = $1",
+        session_uuid,
     )
     if not sess:
         raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
@@ -653,7 +552,7 @@ async def history(
                 "from_agent": msg["from_alias"],
                 "from_address": from_address,
                 "body": msg["body"],
-                "content_mode": msg.get("content_mode") or "legacy_plaintext_v1",
+                "content_mode": msg.get("content_mode") or ContentMode.PLAINTEXT,
                 "message_version": msg.get("message_version") or 1,
                 "encrypted_envelope": msg.get("encrypted_envelope"),
                 "timestamp": _utc_iso(msg["created_at"]),
@@ -714,7 +613,13 @@ async def mark_read(
         raise HTTPException(
             status_code=401, detail="Authenticated identity is missing a routing DID"
         )
-    session_uuid = UUID(session_id.strip())
+    try:
+        session_uuid = UUID(_parse_uuid(session_id, field="session_id"))
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"{exc}. Choose a session_id from aw chat pending and retry.",
+        ) from exc
 
     aweb_db = db.get_manager("aweb")
     sess = await aweb_db.fetch_one(
@@ -820,7 +725,8 @@ async def _sse_events(
             yield f"event: error\ndata: {json.dumps({'error': 'Session not found'})}\n\n"
             return
         viewer_row = next(
-            (row for row in participant_rows if (row.get("did") or "").strip() == viewer_did), None
+            (row for row in participant_rows if (row.get("did") or "").strip() == viewer_did),
+            None,
         )
         if viewer_row is None:
             yield f"event: error\ndata: {json.dumps({'error': 'Session not found'})}\n\n"
@@ -865,7 +771,8 @@ async def _sse_events(
                 last_pubsub_ping = time.monotonic()
             except RedisError:
                 logger.info(
-                    "Chat session pubsub subscribe failed; using DB fallback polling", exc_info=True
+                    "Chat session pubsub subscribe failed; using DB fallback polling",
+                    exc_info=True,
                 )
                 next_reconnect_at = time.monotonic() + reconnect_delay_seconds
                 reconnect_delay_seconds = min(
@@ -947,7 +854,11 @@ async def _sse_events(
             should_poll = now_mono - last_db_poll >= CHAT_STREAM_FALLBACK_POLL_SECONDS
             if not should_poll:
                 wait_timeout = min(
-                    1.0, max(0.0, CHAT_STREAM_FALLBACK_POLL_SECONDS - (now_mono - last_db_poll))
+                    1.0,
+                    max(
+                        0.0,
+                        CHAT_STREAM_FALLBACK_POLL_SECONDS - (now_mono - last_db_poll),
+                    ),
                 )
                 if pubsub is not None:
                     try:
@@ -968,7 +879,8 @@ async def _sse_events(
                         message = None
                     except RedisError:
                         logger.warning(
-                            "Chat session pubsub error; using DB fallback polling", exc_info=True
+                            "Chat session pubsub error; using DB fallback polling",
+                            exc_info=True,
                         )
                         await _close_session_pubsub(pubsub, channel)
                         pubsub = None
@@ -1056,7 +968,9 @@ async def _sse_events(
                         yield grant_terminal_sse(reason)
                         return
                     memberships = await sender_memberships(
-                        request, db, [dict(r, team_id=delivery_team_id) for r in new_msgs]
+                        request,
+                        db,
+                        [dict(r, team_id=delivery_team_id) for r in new_msgs],
                     )
                     numbered_frames: list[tuple[int, str]] = []
                     for row in new_msgs:
@@ -1069,7 +983,10 @@ async def _sse_events(
                         )
                         payload = {
                             "sender_membership": memberships[
-                                (str(delivery_team_id or ""), str(row.get("from_agent_id") or ""))
+                                (
+                                    str(delivery_team_id or ""),
+                                    str(row.get("from_agent_id") or ""),
+                                )
                             ].model_dump(),
                             "type": "message",
                             "session_id": session_id_str,
@@ -1081,7 +998,7 @@ async def _sse_events(
                             "from_stable_id": identity_map.get(from_did, {}).get("stable_id")
                             or None,
                             "body": row["body"],
-                            "content_mode": row.get("content_mode") or "legacy_plaintext_v1",
+                            "content_mode": row.get("content_mode") or ContentMode.PLAINTEXT,
                             "message_version": row.get("message_version") or 1,
                             "encrypted_envelope": row.get("encrypted_envelope"),
                             "sender_leaving": bool(row["sender_leaving"]),
@@ -1103,7 +1020,10 @@ async def _sse_events(
                             "is_contact": is_address_in_contacts(from_address, contact_addrs),
                         }
                         numbered_frames.append(
-                            (row["seq"], f"event: message\ndata: {json.dumps(payload)}\n\n")
+                            (
+                                row["seq"],
+                                f"event: message\ndata: {json.dumps(payload)}\n\n",
+                            )
                         )
                     for row in receipts:
                         payload = {
@@ -1119,7 +1039,10 @@ async def _sse_events(
                             "timestamp": _utc_iso(row["last_read_at"]),
                         }
                         numbered_frames.append(
-                            (row["seq"], f"event: read_receipt\ndata: {json.dumps(payload)}\n\n")
+                            (
+                                row["seq"],
+                                f"event: read_receipt\ndata: {json.dumps(payload)}\n\n",
+                            )
                         )
                     for _, frame in sorted(numbered_frames):
                         yield frame
@@ -1190,7 +1113,8 @@ async def stream(
 
     aweb_db = db.get_manager("aweb")
     sess = await aweb_db.fetch_one(
-        "SELECT team_id FROM {{tables.chat_sessions}} WHERE session_id = $1", session_uuid
+        "SELECT team_id FROM {{tables.chat_sessions}} WHERE session_id = $1",
+        session_uuid,
     )
     if not sess:
         raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
@@ -1256,54 +1180,6 @@ async def stream(
     )
 
 
-class SendMessageRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    body: str = ""
-    content_mode: str = "legacy_plaintext_v1"
-    message_version: int = 1
-    encrypted_envelope: dict[str, Any] | None = None
-    leaving: bool = False
-    hang_on: bool = False
-    wait_seconds: int | None = Field(default=None, ge=0, le=600)
-    reply_to: str | None = None
-    message_id: str | None = None
-    timestamp: str | None = None
-    from_did: str | None = Field(default=None, max_length=256)
-    signature: str | None = Field(default=None, max_length=512)
-    signed_payload: str | None = None
-    attachments: object = None
-    attachment_refs: object = None
-
-    @model_validator(mode="after")
-    def _validate_content_mode(self) -> "SendMessageRequest":
-        encrypted = (
-            self.content_mode == "encrypted_v2"
-            or self.message_version == 2
-            or self.encrypted_envelope is not None
-        )
-        if encrypted:
-            if self.content_mode != "encrypted_v2":
-                raise ValueError("content_mode must be encrypted_v2 for encrypted chat")
-            if self.message_version != 2:
-                raise ValueError("message_version must be 2 for encrypted chat")
-            if self.encrypted_envelope is None:
-                raise ValueError("encrypted_envelope is required for encrypted chat")
-            return self
-        if self.content_mode != "legacy_plaintext_v1" or self.message_version != 1:
-            raise ValueError("unsupported chat content mode")
-        if not self.body:
-            raise ValueError("body is required")
-        return self
-
-    @field_validator("message_id", "reply_to")
-    @classmethod
-    def _validate_message_id(cls, v: str | None) -> str | None:
-        if v is None:
-            return None
-        return _parse_uuid(v, field="message_id")
-
-
 class SendMessageResponse(BaseModel):
     message_id: str
     conversation_id: str
@@ -1326,16 +1202,6 @@ async def send_message(
     )
     if attachment_context is not None:
         with attachment_context:
-            existing = await attachment_retry(db, payload, "chat")
-            if existing:
-                binding, row = existing
-                if binding.conversation_id != session_id:
-                    raise HTTPException(409, detail={"code": "attachment_conflict"})
-                return SendMessageResponse(
-                    message_id=binding.message_id,
-                    conversation_id=binding.conversation_id,
-                    delivered=True,
-                )
             return await send_message(request, session_id, payload, db=db, auth=auth)
     runtime = messaging_runtime(request.app.state)
     sender = replace(auth, id_chain=getattr(getattr(request, "state", None), "id_chain", None))
@@ -1344,7 +1210,7 @@ async def send_message(
         sender,
         session_id,
         runtime,
-        source=str(request.client.host if request.client else "unknown"),
+        source=request_client_address(request),
     )
     sent = await send_chat(db, sender, target, payload, runtime)
     return SendMessageResponse(

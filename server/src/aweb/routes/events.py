@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from aweb.identity_binding import IdentityProjectionField, verified_identity_field_sql
-
+from aweb.messaging.kinds import ContentMode
+from aweb.messaging.mail_attribution import incoming_mail_snapshot_predicate
 from aweb.messaging.participant_succession import MailSuccessionScope, load_mail_succession_scope
 
 import asyncio
@@ -41,7 +42,10 @@ from aweb.agent_wake import (
     team_room_wake_key,
 )
 from aweb.deps import get_db, get_redis
-from aweb.identity_metadata import lookup_identity_metadata_by_did, routable_chat_address
+from aweb.identity_metadata import (
+    lookup_identity_metadata_by_did,
+    routable_chat_address,
+)
 from aweb.messaging.chat import get_pending_conversations
 from aweb.messaging.room_notices import (
     RoomAuthorityUnavailable,
@@ -61,7 +65,11 @@ from aweb.grant_streams import (
     require_valid_stream_grant,
 )
 from aweb.service_errors import ServiceError
-from aweb.team_auth_deps import TeamIdentity, get_team_identity, team_identity_with_grant_scope
+from aweb.team_auth_deps import (
+    TeamIdentity,
+    get_team_identity,
+    team_identity_with_grant_scope,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -158,7 +166,9 @@ def _app_event_response(record: AppEventRecord) -> AppEventEmitResponse:
     )
 
 
-def _subscription_response(subscription: AppEventSubscription) -> AppEventSubscriptionResponse:
+def _subscription_response(
+    subscription: AppEventSubscription,
+) -> AppEventSubscriptionResponse:
     return AppEventSubscriptionResponse(
         subscription_id=subscription.subscription_id,
         team_id=subscription.team_id,
@@ -186,28 +196,14 @@ async def _current_actionable_mail(
     aweb_db, *, inbox_dids: list[str], mail_scope: MailSuccessionScope
 ) -> list[dict[str, Any]]:
     """Return unread incoming mail using preloaded, exact thread evidence."""
-    args: list[Any] = [inbox_dids]
-    targets = ["m.to_did = ANY($1::text[])"]
-    senders = ["m.from_did = ANY($1::text[])"]
-    for dids, conversations in mail_scope.identity_threads:
-        did_param, conversation_param = len(args) + 1, len(args) + 2
-        args.extend((list(dids), list(conversations)))
-        for field, clauses in (("to_did", targets), ("from_did", senders)):
-            clauses.append(
-                f"(m.{field} = ANY(${did_param}::text[]) "
-                f"AND m.conversation_id = ANY(${conversation_param}::uuid[]))"
-            )
-    # Exact current targets retain legacy/no-conversation wake delivery. Extra
-    # identities require their recorded thread, on BOTH sides of attribution.
-    # A merged predecessor's outgoing mail is not incoming even if sent to H.
-    predicate = f"({' OR '.join(targets)}) AND NOT COALESCE(({' OR '.join(senders)}), FALSE)"
+    predicate = incoming_mail_snapshot_predicate(inbox_dids=inbox_dids, scope=mail_scope)
     rows = await aweb_db.fetch_all(
         f"""
         WITH unread AS (
             SELECT message_id, conversation_id, from_did, from_alias, from_address, subject, priority,
                    created_at, content_mode, message_version
             FROM {{{{tables.messages}}}} m
-            WHERE {predicate}
+            WHERE {predicate.sql}
               AND read_at IS NULL
         ),
         windowed AS (
@@ -232,7 +228,7 @@ async def _current_actionable_mail(
         FROM windowed
         ORDER BY created_at ASC, message_id ASC
         """,
-        *args,
+        *predicate.arguments,
     )
     sender_map = await lookup_identity_metadata_by_did(
         aweb_db,
@@ -254,11 +250,13 @@ async def _current_actionable_mail(
                 or r["from_alias"]
                 or ""
             ),
-            "subject": "" if r.get("content_mode") == "encrypted_v2" else (r["subject"] or ""),
+            "subject": ""
+            if r.get("content_mode") == ContentMode.ENCRYPTED
+            else (r["subject"] or ""),
             "priority": (r.get("priority") or "normal").strip().lower(),
-            "content_mode": r.get("content_mode") or "legacy_plaintext_v1",
+            "content_mode": r.get("content_mode") or ContentMode.PLAINTEXT,
             "message_version": int(r.get("message_version") or 1),
-            "encrypted": r.get("content_mode") == "encrypted_v2",
+            "encrypted": r.get("content_mode") == ContentMode.ENCRYPTED,
             "unread_count": int(r.get("unread_count") or 0),
             "wake_mode": _mail_wake_mode(r.get("priority")),
             "created_at": r["created_at"].astimezone(timezone.utc).isoformat(),

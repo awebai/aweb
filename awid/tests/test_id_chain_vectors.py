@@ -121,7 +121,14 @@ def test_ancestry_does_not_reuse_decode_time_claimed_issuer_verdict():
 
 @pytest.mark.parametrize(
     "mutation",
-    ["extra", "duplicate", "missing", "wrong-domain", "over-limit", "revocation-after-witness"],
+    [
+        "extra",
+        "duplicate",
+        "missing",
+        "wrong-domain",
+        "over-limit",
+        "revocation-after-witness",
+    ],
 )
 def test_invalid_status_never_confers_authority(mutation):
     bundle, subject, evidence, domain = inputs(V["verification_cases"][0])

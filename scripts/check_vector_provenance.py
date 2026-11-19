@@ -48,13 +48,18 @@ def _consumer(names: str | Iterable[str], *root_markers: str) -> ConsumerSpec:
 SERVER_CONSUMER = PurePosixPath("server/tests/test_identity_conformance_vectors.py")
 GO_CONSUMER = PurePosixPath("cli/go/internal/conformance/conformance_test.go")
 ROOT_CONSUMERS = {
+    PurePosixPath("server/tests/test_message_event_contracts.py"): _consumer(
+        "mutation-hook-call-sites-v1.json",
+        "root = Path(__file__).resolve().parents[2]",
+        '(root / "docs/vectors/mutation-hook-call-sites-v1.json").read_text()',
+    ),
     PurePosixPath("cli/go/cmd/aw/id_human_add_test.go"): _consumer(
         "id-certificates-v1.json",
         '"../../../../docs/vectors/id-certificates-v1.json"',
     ),
     PurePosixPath("server/tests/test_human_chat_policy.py"): _consumer(
         "id-certificates-v1.json",
-        "Path(__file__).resolve().parents[2] / 'docs/vectors/id-certificates-v1.json'",
+        'Path(__file__).resolve().parents[2] / "docs/vectors/id-certificates-v1.json"',
     ),
     PurePosixPath("server/tests/test_id_chain_request_auth.py"): _consumer(
         "id-certificates-v1.json",
@@ -82,7 +87,7 @@ ROOT_CONSUMERS = {
     ),
     PurePosixPath("awid/tests/test_id_chain_vectors.py"): _consumer(
         "id-certificates-v1.json",
-        "Path(__file__).resolve().parents[2] / 'docs/vectors/id-certificates-v1.json'",
+        'Path(__file__).resolve().parents[2] / "docs/vectors/id-certificates-v1.json"',
     ),
     PurePosixPath("cli/go/internal/conformance/id_chain_test.go"): _consumer(
         "id-certificates-v1.json",
@@ -108,7 +113,9 @@ ROOT_CONSUMERS = {
         "id-certificates-v1.json",
         'readRootVector(t, "id-certificates-v1.json")',
     ),
-    PurePosixPath("cli/go/internal/conformance/id_certificate_request_test.go"): _consumer(
+    PurePosixPath(
+        "cli/go/internal/conformance/id_certificate_request_test.go"
+    ): _consumer(
         "id-certificates-v1.json",
         'readRootVector(t, "id-certificates-v1.json")',
     ),
@@ -141,7 +148,11 @@ ROOT_CONSUMERS = {
         'filepath.Join("..", "..", "..", "docs", "vectors", "awid-controller-request-v2.json")',
     ),
     PurePosixPath("server/tests/test_c2_vectors.py"): _consumer(
-        ("app-task-authorization-v1.json", "app-request-credential-v1.json", "task-answer-v1.json"),
+        (
+            "app-task-authorization-v1.json",
+            "app-request-credential-v1.json",
+            "task-answer-v1.json",
+        ),
         'Path(__file__).resolve().parents[2] / "docs" / "vectors"',
     ),
     PurePosixPath("naapp-lib/tests/runtime/test_app_credential_signer.py"): _consumer(
@@ -283,11 +294,15 @@ ROOT_CONSUMERS = {
         "team-certificate-verification-v1.json",
         '(Path(__file__).resolve().parents[2] / "docs/vectors/team-certificate-verification-v1.json")',
     ),
-    PurePosixPath("naapp-lib/tests/runtime/test_team_certificate_vectors.py"): _consumer(
+    PurePosixPath(
+        "naapp-lib/tests/runtime/test_team_certificate_vectors.py"
+    ): _consumer(
         "team-certificate-verification-v1.json",
         '(Path(__file__).resolve().parents[3] / "docs/vectors/team-certificate-verification-v1.json")',
     ),
-    PurePosixPath("naapp-lib/tests/runtime/test_member_credential_startup_check.py"): _consumer(
+    PurePosixPath(
+        "naapp-lib/tests/runtime/test_member_credential_startup_check.py"
+    ): _consumer(
         "team-certificate-verification-v1.json",
         '(Path(__file__).resolve().parents[3] / "docs/vectors/team-certificate-verification-v1.json")',
     ),
@@ -438,7 +453,9 @@ ROOT_CONSUMERS = {
         "principal-attestation-v1.json",
         '(Path(__file__).parents[3] / "docs" / "vectors" / "principal-attestation-v1.json")',
     ),
-    PurePosixPath("naapp-lib/tests/console/test_human_role_holding_identity.py"): _consumer(
+    PurePosixPath(
+        "naapp-lib/tests/console/test_human_role_holding_identity.py"
+    ): _consumer(
         "human-role-holding-v1.json",
         '"docs/vectors/human-role-holding-v1.json"',
     ),
@@ -506,7 +523,11 @@ ROOT_CONSUMERS = {
         'AWEB_ROOT / "docs" / "vectors" / "page-proposal-v1.json"',
     ),
     PurePosixPath("naapp-lib/tests/runtime/test_task_request_vectors.py"): _consumer(
-        ("app-task-authorization-v1.json", "app-request-credential-v1.json", "task-answer-v1.json"),
+        (
+            "app-task-authorization-v1.json",
+            "app-request-credential-v1.json",
+            "task-answer-v1.json",
+        ),
         'AWEB_ROOT / "docs" / "vectors" / "app-task-authorization-v1.json"',
         'AWEB_ROOT / "docs" / "vectors" / "app-request-credential-v1.json"',
         'AWEB_ROOT / "docs" / "vectors" / "task-answer-v1.json"',
@@ -606,7 +627,9 @@ ROOT_CONSUMERS = {
         "owner-act-delivery-v1.json",
         'AWEB_ROOT / "docs" / "vectors" / "owner-act-delivery-v1.json"',
     ),
-    PurePosixPath("cli/go/internal/appmanifest/owner_act_manifest_vectors_test.go"): _consumer(
+    PurePosixPath(
+        "cli/go/internal/appmanifest/owner_act_manifest_vectors_test.go"
+    ): _consumer(
         "owner-act-delivery-v1.json",
         '"docs", "vectors", "owner-act-delivery-v1.json"',
     ),
@@ -638,12 +661,18 @@ ROOT_CONSUMERS = {
         "owner-act-delivery-v1.json",
         '"../../../../docs/vectors/owner-act-delivery-v1.json"',
     ),
-    PurePosixPath("naapp-lib/tests/console/test_human_role_holding_identity.py"): _consumer(
+    PurePosixPath(
+        "naapp-lib/tests/console/test_human_role_holding_identity.py"
+    ): _consumer(
         "human-role-holding-v1.json",
         'Path(__file__).resolve().parents[3] / "docs/vectors/human-role-holding-v1.json"',
     ),
     PurePosixPath("cli/go/hookevent/vectors_test.go"): _consumer(
-        {"hook-catalog-v1.json", "hook-delivery-credential-v2.json", "hook-event-envelope-v1.json"},
+        {
+            "hook-catalog-v1.json",
+            "hook-delivery-credential-v2.json",
+            "hook-event-envelope-v1.json",
+        },
         '"../../../docs/vectors/hook-event-envelope-v1.json"',
         '"../../../docs/vectors/hook-delivery-credential-v2.json"',
         '"../../../docs/vectors/hook-catalog-v1.json"',

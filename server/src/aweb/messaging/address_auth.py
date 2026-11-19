@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import json
 import logging
-from types import SimpleNamespace
-from typing import Any, Mapping
+from dataclasses import replace
+from typing import TYPE_CHECKING, Any, Mapping
 
 from awid.federation_errors import FederationAuthorityError
+from awid.registry import Address
 from awid.log import canonical_server_origin
 from awid.registry import RegistryError
 from awid.signing import verify_did_key_signature
-from fastapi import HTTPException
 
 from aweb.awid_error_handling import AWID_DEPENDENCY_ERRORS
 from aweb.federation.errors import RecipientNotResidentError
@@ -17,31 +17,48 @@ from aweb.federation.origins import is_own_origin
 from aweb.identity_binding import observe_current_identity_binding
 from aweb.messaging.alias_targets import namespace_exists
 from aweb.messaging.runtime import MessagingRuntime
+from aweb.messaging.recipient import Recipient
+from aweb.service_errors import IdentityBindingCode, IdentityBindingError
+
+if TYPE_CHECKING:
+    from aweb.federation.activation import ResolvedContactIdentity
+    from aweb.identity_auth_deps import MessagingAuth
 
 
-def local_recipient_visible_to_auth(row: Mapping[str, Any] | None, auth: Any) -> bool:
+def resolved_recipient_delivery_origin(
+    resolution: Address | ResolvedContactIdentity,
+) -> str:
+    """Read either admitted address projection, preserving an absent origin."""
+    if isinstance(resolution, Address):
+        return (
+            (resolution.delivery.origin if resolution.delivery is not None else "") or ""
+        ).strip()
+    return (resolution.delivery_origin or "").strip()
+
+
+def resolved_recipient_controller_did(
+    resolution: Address | ResolvedContactIdentity,
+) -> str:
+    """Only strict external resolution carries its verified controller here."""
+    return "" if isinstance(resolution, Address) else (resolution.controller_did or "").strip()
+
+
+def local_recipient_visible_to_auth(row: Mapping[str, Any] | None, auth: MessagingAuth) -> bool:
+    """Check same-team visibility only; this does not establish an address binding."""
     row_team_id = str((row or {}).get("team_id") or "").strip()
-    auth_team_id = str(getattr(auth, "team_id", None) or "").strip()
+    auth_team_id = str(auth.team_id or "").strip()
     return bool(row_team_id and auth_team_id and row_team_id == auth_team_id)
 
 
-def identity_recipient(row: Mapping[str, Any], address: str | None = None) -> dict:
+def identity_recipient(row: Mapping[str, Any], address: str | None = None) -> Recipient:
     """Project an admitted identity/route, never a team actor as a participant."""
-    recipient = dict(row)
-    recipient["agent_id"] = None
-    if recipient.get("did_aw"):
-        recipient["team_id"] = None
-    if address is not None:
-        recipient["address"] = address or None
-        recipient["alias"] = (
-            address.split("/", 1)[-1]
-            if address
-            else (recipient.get("did_aw") or recipient.get("did_key"))
-        )
-    return recipient
+    recipient = row if isinstance(row, Recipient) else Recipient.from_local_projection(row)
+    return recipient.as_identity(address=address)
 
 
-async def local_recipient_for_address_binding(db, resolution: Any, address: str) -> dict | None:
+async def local_recipient_for_address_binding(
+    db, *, did_aw: str, current_did_key: str | None, address: str
+) -> Recipient | None:
     """Find residence for an independently admitted address identity.
 
     docs/identity-messaging-contract.md:272-277: "locality is residence of that
@@ -60,16 +77,16 @@ async def local_recipient_for_address_binding(db, resolution: Any, address: str)
         ORDER BY agent_id
         LIMIT 1
         """,
-        resolution.did_aw,
+        did_aw,
     )
     if row is None:
         return None
     recipient = identity_recipient(row, address)
-    recipient["did_key"] = resolution.current_did_key
-    return recipient
+    return replace(recipient, did_key=current_did_key)
 
 
 def requires_registry_address_binding(row: Mapping[str, Any] | None) -> bool:
+    """Identify global projections whose address needs registry binding evidence."""
     return str((row or {}).get("identity_scope") or "").strip().lower() == "global"
 
 
@@ -84,7 +101,7 @@ def refuse_same_origin_nonresident(delivery_origin: str, *, origins: set[str]) -
 
 async def local_recipient_for_own_route(
     db, route: Mapping[str, Any], runtime: MessagingRuntime
-) -> dict | None:
+) -> Recipient | None:
     """Classify a stored/refreshed route before forwarding or persisting it.
 
     The stored route supplies identity, never current-key evidence. Residence
@@ -97,8 +114,9 @@ async def local_recipient_for_own_route(
     if did.startswith("did:aw:"):
         recipient = await local_recipient_for_address_binding(
             db,
-            SimpleNamespace(did_aw=did, current_did_key=None),
-            str(route.get("address") or ""),
+            did_aw=did,
+            current_did_key=None,
+            address=str(route.get("address") or ""),
         )
     else:
         # A did:key return route is already an established participant; this
@@ -112,17 +130,19 @@ async def local_recipient_for_own_route(
         # As with a stable-only signed continuation, discover the current key
         # through the existing binding authority, outside database transactions.
         # This validation context never repairs a participant or agent marker.
+        if runtime.registry_client is None:
+            raise IdentityBindingError(IdentityBindingCode.UNAVAILABLE)
         try:
             resolution = await runtime.registry_client.resolve_key_fresh(did)
-        except Exception as exc:
+        except AWID_DEPENDENCY_ERRORS as exc:
             mismatch = isinstance(exc, RegistryError) and exc.status_code == 404
             if not mismatch:
                 logging.getLogger(__name__).warning(
-                    "Own-route recipient binding unavailable", exc_info=True
+                    "Own-route recipient binding unavailable failure_type=%s",
+                    type(exc).__name__,
                 )
-            raise HTTPException(
-                status_code=403 if mismatch else 503,
-                detail="identity_binding_mismatch" if mismatch else "identity_binding_unavailable",
+            raise IdentityBindingError(
+                IdentityBindingCode.MISMATCH if mismatch else IdentityBindingCode.UNAVAILABLE
             ) from exc
         address = str(route.get("address") or "")
         binding = await observe_current_identity_binding(
@@ -132,7 +152,7 @@ async def local_recipient_for_own_route(
             did_aw=did,
             address=address if "/" in address else "",
         )
-        recipient["did_key"] = binding.did_key
+        recipient = replace(recipient, did_key=binding.did_key)
     return recipient
 
 
@@ -142,7 +162,7 @@ def unreachable_address_refusal(address: str) -> str:
     return (
         f"{address} is not a registered address. A local identity has no address and "
         "is reachable only from inside its own team, by alias; a global identity is "
-        "reachable by address once one is assigned."
+        "reachable by address once one is assigned. Check the address or use a teammate alias and retry."
     )
 
 
@@ -152,6 +172,7 @@ def verified_signed_payload_json(
     signature: str | None,
     did_key: str | None,
 ) -> dict[str, Any] | None:
+    """Decode a cryptographically verified object, returning no evidence on invalid input."""
     if not signed_payload or not signature or not did_key:
         return None
     try:
@@ -169,6 +190,7 @@ def verified_signed_payload_json(
 async def namespace_uses_home_registry(db, registry_client, domain: str) -> bool:
     # A local team label alone is not authority. Use the configured registry
     # only when it is the selected origin and actually serves this namespace.
+    """Compare fresh canonical namespace authority with this client's registry origin."""
     if registry_client is None or not await namespace_exists(db, domain):
         return False
     try:
@@ -179,7 +201,8 @@ async def namespace_uses_home_registry(db, registry_client, domain: str) -> bool
         namespace = await registry_client.get_namespace_fresh(domain)
     except AWID_DEPENDENCY_ERRORS as exc:
         logging.getLogger(__name__).warning(
-            "Messaging home namespace lookup unavailable for %s", domain, exc_info=True
+            "Messaging home namespace lookup unavailable failure_type=%s",
+            type(exc).__name__,
         )
         raise FederationAuthorityError("sender_registry_unavailable") from exc
     return bool(

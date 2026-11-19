@@ -971,7 +971,7 @@ reference duplication are mutation-tested failures.
 | `identity-log-v1.json` | Python AWID `test_conformance_vectors.py`, `test_did.py`, `test_external_registry.py`, and `test_identity_log_verify.py`; Python aweb `test_identity_conformance_vectors.py` and pre-activation federation harness; Go AWID `registry_register_test.go`, `federation_authority_test.go`, and `federation_external_registry_test.go`; Go shared `conformance_test.go`; TypeScript channel-core `registry.test.ts`, `log_rollback.test.ts`, and `received_sender_trust.test.ts` |
 | `message-display-binding-v1.json` | Go AWID `request_envelope_as_message_test.go`; TypeScript channel-core `request_envelope_as_message.test.ts` |
 | `message-signing-v1.json` | Python AWID and aweb conformance tests, including the pre-activation federation harness; Go shared `conformance_test.go` |
-| `mutation-hook-call-sites-v1.json` | Build guard `scripts/check-extension-docs.py` |
+| `mutation-hook-call-sites-v1.json` | Build guard `scripts/check-extension-docs.py`; server `test_message_event_contracts.py` verifies the canonical event vocabulary covers the recorded call sites |
 | `pin-store-raw-wire-v1.json` | Go shared `pin_store_raw_wire_test.go`; TypeScript channel-core `pin_store_raw_wire.test.ts` |
 | `rotation-announcements-v1.json` | Python AWID and aweb conformance tests; Go shared `conformance_test.go` |
 | `stable-id-v1.json` | Python AWID and aweb conformance tests; Go shared `conformance_test.go` |
