@@ -51,6 +51,19 @@ def verified_identity_field_sql(
     return f"CASE WHEN {verified_key_sql(agent)} THEN {prefix}{field.value} END"
 
 
+def verified_principal_did_sql(*, agent: str = "") -> str:
+    """Project a member principal without adopting a raw stable-DID claim.
+
+    docs/identity.md:569-585 requires registry-verified marker evidence for
+    stable identity. A local principal remains its literal signing did:key.
+    """
+    stable = verified_identity_field_sql(
+        IdentityProjectionField.STABLE_DID, agent=agent
+    )
+    prefix = agent + "." if agent else ""
+    return f"COALESCE(NULLIF(({stable}), ''), {prefix}did_key)"
+
+
 def verified_projection(row):
     """Keep local key/agent authority, withholding unverified global claims."""
     if row is None:

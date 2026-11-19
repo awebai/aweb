@@ -24,6 +24,7 @@ from ..service_errors import (
     ValidationError,
 )
 from ..team_auth_deps import TeamIdentity
+from ..identity_binding import verified_principal_did_sql
 
 logger = logging.getLogger(__name__)
 
@@ -179,8 +180,8 @@ async def get_task_answer_on(
 async def _read_answer_member_principal_on(tx, *, agent_id: str, team_id: str):
     """Read the answer actor under the existing shared member lock."""
     return await tx.fetch_one(
-        """SELECT COALESCE(NULLIF(did_aw, ''), did_key) AS principal_did, certificate_id
-           FROM {{tables.agents}} WHERE agent_id = $1 AND team_id = $2
+        f"""SELECT {verified_principal_did_sql()} AS principal_did, certificate_id
+           FROM {{{{tables.agents}}}} WHERE agent_id = $1 AND team_id = $2
              AND deleted_at IS NULL AND status = 'active' FOR SHARE""",
         UUID(agent_id),
         team_id,
@@ -190,8 +191,8 @@ async def _read_answer_member_principal_on(tx, *, agent_id: str, team_id: str):
 async def _read_claimant_principal_on(tx, *, team_id: str, alias: str):
     """Read a claim's principal under the existing shared member lock."""
     return await tx.fetch_one(
-        """SELECT COALESCE(NULLIF(did_aw, ''), did_key) AS principal_did
-           FROM {{tables.agents}}
+        f"""SELECT {verified_principal_did_sql()} AS principal_did
+           FROM {{{{tables.agents}}}}
            WHERE team_id = $1 AND alias = $2 AND deleted_at IS NULL
            FOR SHARE""",
         team_id,
@@ -745,9 +746,9 @@ async def _resolve_assignee_on(
     except ValueError:
         agent_id = None
     row = await manager.fetch_one(
-        """
-        SELECT alias, COALESCE(NULLIF(did_aw, ''), did_key) AS principal_did
-        FROM {{tables.agents}}
+        f"""
+        SELECT alias, {verified_principal_did_sql()} AS principal_did
+        FROM {{{{tables.agents}}}}
         WHERE team_id = $1 AND deleted_at IS NULL
           AND (($2::uuid IS NOT NULL AND agent_id = $2)
                OR ($2::uuid IS NULL AND alias = $3))
