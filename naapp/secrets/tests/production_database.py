@@ -3,7 +3,7 @@
 import secrets
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import timedelta
 from urllib.parse import quote, urlsplit
 from uuid import uuid4
@@ -16,7 +16,7 @@ from aweb_secrets.erasure import initialize_erasure_store
 
 
 @asynccontextmanager
-async def _prepared_database(factory, *, suffix: str) -> AsyncIterator[AsyncDatabaseManager]:
+async def _prepared_database(factory, *, suffix: str) -> AsyncIterator["PreparedDatabase"]:
     operator = await factory.create_db(suffix=suffix, schema="public")
     role = "secrets_runtime_" + uuid4().hex
     password = secrets.token_urlsafe(32)
@@ -47,7 +47,9 @@ async def _prepared_database(factory, *, suffix: str) -> AsyncIterator[AsyncData
         )
         pool = await AsyncDatabaseManager.create_shared_pool(configured)
         try:
-            yield AsyncDatabaseManager(pool=pool, schema=operator.schema)
+            yield PreparedDatabase(
+                runtime=AsyncDatabaseManager(pool=pool, schema=operator.schema), operator=operator
+            )
         finally:
             await pool.close()
     finally:
@@ -56,12 +58,44 @@ async def _prepared_database(factory, *, suffix: str) -> AsyncIterator[AsyncData
 
 
 @dataclass(kw_only=True, repr=False)
+class PreparedDatabase:
+    runtime: AsyncDatabaseManager
+    operator: AsyncDatabaseManager
+
+
+def _database_name(db: AsyncDatabaseManager) -> str:
+    if db.config is None:
+        raise ValueError("Use a database prepared by this fixture's operator.")
+    return urlsplit(db.config.get_dsn()).path
+
+
+@dataclass(kw_only=True, repr=False)
 class PreparedDatabaseFactory:
     factory: SchemaDatabases
     stack: AsyncExitStack
+    databases: dict[str, PreparedDatabase] = field(default_factory=dict)
 
     async def create_db(self, *, suffix: str) -> AsyncDatabaseManager:
-        return await self.stack.enter_async_context(_prepared_database(self.factory, suffix=suffix))
+        prepared = await self.stack.enter_async_context(
+            _prepared_database(self.factory, suffix=suffix)
+        )
+        self.databases[_database_name(prepared.runtime)] = prepared
+        return prepared.runtime
+
+    @asynccontextmanager
+    async def unavailable_erasure_storage(self, db: AsyncDatabaseManager) -> AsyncIterator[None]:
+        """Refuse actual ledger INSERTs in this owned DB, preserving the live trigger."""
+        prepared = self.databases[_database_name(db)]
+        await prepared.operator.execute(
+            "ALTER TABLE secrets_erasure.erasures ADD CONSTRAINT test_storage_unavailable"
+            " CHECK (false) NOT VALID"
+        )
+        try:
+            yield
+        finally:
+            await prepared.operator.execute(
+                "ALTER TABLE secrets_erasure.erasures DROP CONSTRAINT test_storage_unavailable"
+            )
 
 
 @pytest.fixture
