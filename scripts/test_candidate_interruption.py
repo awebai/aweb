@@ -64,6 +64,8 @@ run_candidate() {
  if [[ "$EMPTY_LOG" == 0 ]]; then printf 'real completed checks\\n' > "$LOG_DIR/checks.log"; else : > "$LOG_DIR/checks.log"; fi
  printf 'real completed artifacts\\n' > "$LOG_DIR/artifacts.log"
  printf 'integration incomplete\\n' > "$LOG_DIR/integration.log"
+ mkdir -p "$LOG_DIR/test-egress"
+ for number in {1..200}; do printf 'full child traceback line %s\\n' "$number"; done > "$LOG_DIR/test-egress/suite.log"
  if [[ "$CORRUPT_SUMMARY" == 1 ]]; then printf 'checks\\tPASSED\\twrong.log\\t1s\\n' > "$LOG_DIR/summary.tsv"; fi
  if [[ "$CLEANUP_CONTROL" == 1 ]]; then printf 'checks\\tPASSED\\tchecks.log\\t1s\\t\\n' > "$LOG_DIR/summary.tsv"; fi
  if [[ "$CONTROL_STATUS" == 0 ]]; then
@@ -215,6 +217,23 @@ run_candidate() {
             [(r[1], r[2]) for r in rows],
             [("checks", "passed"), ("artifacts", "passed"), ("integration", "failed")],
         )
+
+    def test_full_child_log_and_summary_survive_in_ledger_evidence(self):
+        for status in (0, 1, 143):
+            with self.subTest(status=status):
+                code, _, logs, output = self.invoke(status=status)
+                self.assertEqual(code, status, output)
+                retained = logs.parent / "ledger-logs/tree-inputs-evidence-test-run"
+                self.assertTrue((retained / "test-egress/suite.log").is_file())
+                self.assertTrue((retained / "summary.tsv").is_file())
+                self.assertEqual(
+                    (retained / "test-egress/suite.log").read_bytes(),
+                    (logs / "test-egress/suite.log").read_bytes(),
+                )
+                self.assertEqual(
+                    (retained / "summary.tsv").read_bytes(),
+                    (logs / "summary.tsv").read_bytes(),
+                )
 
     def test_docker_proof_command_resolves_from_supervisor_directory(self):
         import test_candidate_gate_ledger as proof

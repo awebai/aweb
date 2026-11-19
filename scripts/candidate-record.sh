@@ -9,6 +9,18 @@ record_candidate_row() {
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "$KEY" "$stage" "$result" "$SOURCE_SHA" "" "$log" "$OWNER" "$started" "$finished" "$note" >>"$LEDGER"
 }
+retain_candidate_evidence() {
+  local relative source target="$LEDGER_LOGS/${KEY:0:12}-evidence-$run_id"
+  # The stage output contains only the child's tail. Keep its original report
+  # beside the ledger on every outcome, before an ephemeral VM is deleted.
+  for relative in summary.tsv test-egress/suite.log; do
+    source="$LOG_DIR/$relative"
+    [[ -e "$source" || -L "$source" ]] || continue
+    [[ -f "$source" && ! -L "$source" ]] || return 1
+    mkdir -p "$(dirname "$target/$relative")" || return 1
+    cp "$source" "$target/$relative" || return 1
+  done
+}
 finalize_candidate() {
   local status="$1" interrupted=0 stage
   [[ "$candidate_recorded" == 0 ]] || return "$status"
@@ -25,6 +37,7 @@ finalize_candidate() {
     # stages passed. The interrupted stage has no manufactured code verdict.
     write_candidate_interruption "$status"
   fi
+  retain_candidate_evidence || return 1
   for stage in $pending; do
     if [[ -s "$LOG_DIR/$stage.log" && -f "$LOG_DIR/summary.tsv" ]] && \
        awk -F'\t' -v stage="$stage" '$1 == stage && $2 == "PASSED" && $3 == stage ".log" && $4 ~ /^[0-9]+s$/ {n++} END {exit !(n == 1)}' "$LOG_DIR/summary.tsv"; then
@@ -88,6 +101,7 @@ candidate_interrupted() {
   # vanished process alone never supplies a successful cleanup receipt.
   if [[ -f "$LOG_DIR/run-id" && "$(cat "$LOG_DIR/run-id")" == "$run_id" ]]; then
     write_candidate_interruption "$status"
+    retain_candidate_evidence || printf 'gate: evidence retention failed after interruption\n' >&2
   fi
   exit "$status"
 }
