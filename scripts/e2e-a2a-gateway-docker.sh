@@ -216,7 +216,7 @@ wait_for_http() {
 }
 
 rpc_post() {
-  local body="$1"
+  local body="$1" route_id="${2:-personal}"
   local token_header=()
   if [[ -n "${A2A_TASK_TOKEN:-}" ]]; then
     token_header=(-H "X-A2A-Task-Token: $A2A_TASK_TOKEN")
@@ -227,7 +227,50 @@ rpc_post() {
     -H 'X-Request-ID: docker-e2e-request' \
     "${token_header[@]}" \
     -d "$body" \
-    "$GATEWAY_URL/a2a/agents/personal/rpc"
+    "$GATEWAY_URL/a2a/agents/$route_id/rpc"
+}
+
+# Read through aw's real inbox verification and acknowledgement path. Invalid
+# JSON or a failed CLI read is a test failure, rather than an empty inbox.
+wait_for_task_mail() {
+  local task_id="$1" fence="$2"
+  local inbox message
+  for _ in $(seq 1 80); do
+    inbox="$(run_aw_in "$PERSONAL_DIR" mail inbox --json --show-all)" || return 1
+    message="$(python3 -c '
+import json, re, sys
+task_id, fence = sys.argv[1:]
+for message in json.load(sys.stdin)["messages"]:
+    match = re.search(r"(?ms)^```" + re.escape(fence) + r"\n(.*?)\n```$", message["body"])
+    if match and json.loads(match[1])["task_id"] == task_id:
+        print(json.dumps(message))
+        break
+' "$task_id" "$fence" <<<"$inbox")" || return 1
+    if [[ -n "$message" ]]; then
+      printf '%s\n' "$message"
+      return 0
+    fi
+    sleep 0.5
+  done
+  echo "Timed out reading $fence mail for task $task_id" >&2
+  return 1
+}
+
+wait_for_task_state() {
+  local task_id="$1" task_token="$2" expected_state="$3" route_id="$4"
+  local payload response state
+  payload="$(python3 -c 'import json,sys; print(json.dumps({"jsonrpc":"2.0","id":"get-state","method":"GetTask","params":{"id":sys.argv[1]}}))' "$task_id")" || return 1
+  for _ in $(seq 1 80); do
+    response="$(A2A_TASK_TOKEN="$task_token" rpc_post "$payload" "$route_id")" || return 1
+    state="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["status"]["state"])' <<<"$response")" || return 1
+    if [[ "$state" == "$expected_state" ]]; then
+      printf '%s\n' "$response"
+      return 0
+    fi
+    sleep 0.5
+  done
+  echo "Task $task_id did not reach $expected_state: $response" >&2
+  return 1
 }
 
 echo "=== Build local binaries and gateway image ==="
@@ -326,6 +369,10 @@ capture_success personal_accept "personal accept invite" run_aw_in "$PERSONAL_DI
 capture_success gateway_init "gateway aw init" run_aw_in "$GATEWAY_DIR" init --url "$AWEB_DOCKER_URL"
 capture_success personal_init "personal aw init" run_aw_in "$PERSONAL_DIR" init --url "$AWEB_DOCKER_URL"
 capture_success personal_open "personal inbound open" run_aw_in "$PERSONAL_DIR" inbound-mode open --json
+private_member_status="$(curl -sS -o "$TMP_ROOT/unsigned-member.json" -w '%{http_code}' "$AWID_URL/v1/namespaces/a2a.test.local/teams/demo/members/personal")"
+assert_eq "private team refuses unsigned member read" "403" "$private_member_status"
+private_member_code="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["detail"]["code"])' <"$TMP_ROOT/unsigned-member.json")"
+assert_eq "unsigned member read reports team_private" "team_private" "$private_member_code"
 echo ""
 
 echo "=== Start A2A gateway container ==="
@@ -382,7 +429,8 @@ router_card:
       tags: ["router"]
 
 routes:
-  - route_id: "personal"
+  - &personal_route
+    route_id: "personal"
     address: "a2a.test.local/personal"
     response_timeout: "20s"
     auth:
@@ -406,6 +454,9 @@ routes:
           name: "Answer test messages"
           description: "Replies to Docker e2e test tasks."
           tags: ["test"]
+  - <<: *personal_route
+    route_id: "member"
+    address: "demo:a2a.test.local/personal"
 EOF
 
 capture_success gateway_check "gateway config/workspace check" docker run --rm \
@@ -463,34 +514,22 @@ assert_not_empty "a2a task id" "$task_id"
 assert_not_empty "a2a public task bearer token" "$task_token"
 assert_eq "a2a send enters working state" "TASK_STATE_WORKING" "$initial_state"
 
-conversation_id=""
-last_inbox=""
-for _ in $(seq 1 80); do
-  inbox="$(run_aw_in "$PERSONAL_DIR" mail inbox --json --show-all 2>/dev/null || true)"
-  last_inbox="$inbox"
-  conversation_id="$(INBOX_JSON="$inbox" python3 - "$task_id" <<'PY' 2>/dev/null || true
-import json, os, sys
-task_id = sys.argv[1]
-try:
-    messages = json.loads(os.environ.get("INBOX_JSON", "{}")).get("messages", [])
-except Exception:
-    messages = []
-for msg in messages:
-    if task_id in json.dumps(msg, sort_keys=True):
-        print(msg.get("conversation_id", ""))
-        break
-PY
-)"
-  if [[ -n "$conversation_id" ]]; then
-    break
-  fi
-  sleep 0.5
-done
+task_mail="$(wait_for_task_mail "$task_id" a2a-task)"
+conversation_id="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["conversation_id"])' <<<"$task_mail")"
 assert_not_empty "personal received bridge mail conversation" "$conversation_id"
-if [[ -z "$conversation_id" ]]; then
-  echo "  inbox sample: ${last_inbox:0:2400}"
-  exit 1
-fi
+python3 -c '
+import json, re, sys
+message = json.load(sys.stdin)
+assert message["verification_status"] == "verified", message
+assert message["from_address"] == "a2a.test.local/gateway", message
+body = message["body"]
+envelope = json.loads(re.search(r"(?ms)^```a2a-task\n(.*?)\n```$", body)[1])
+assert envelope["task_id"] == sys.argv[1], envelope
+assert envelope["context_id"] == "ctx-1", envelope
+assert envelope["request_id"] == "docker-e2e-request", envelope
+assert envelope["target_address"] == "a2a.test.local/personal", envelope
+assert "Customer message (untrusted):\n\nPlease complete the Docker A2A journey." in body, body
+' "$task_id" <<<"$task_mail"
 
 reply_body="$(cat <<EOF
 \`\`\`a2a-reply
@@ -504,24 +543,80 @@ capture_success reply_send "personal sends a2a reply" run_aw_in "$PERSONAL_DIR" 
   --body "$reply_body" \
   --json
 
-completed_resp=""
-completed_state=""
-for _ in $(seq 1 80); do
-  get_payload="{\"jsonrpc\":\"2.0\",\"id\":\"get-1\",\"method\":\"GetTask\",\"params\":{\"id\":\"$task_id\"}}"
-  completed_resp="$(A2A_TASK_TOKEN="$task_token" rpc_post "$get_payload")"
-  completed_state="$(echo "$completed_resp" | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["status"]["state"])' 2>/dev/null || true)"
-  if [[ "$completed_state" == "TASK_STATE_COMPLETED" ]]; then
-    break
-  fi
-  sleep 0.5
-done
+completed_resp="$(wait_for_task_state "$task_id" "$task_token" TASK_STATE_COMPLETED personal)"
+completed_state="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["status"]["state"])' <<<"$completed_resp")"
 assert_eq "a2a task completes from real mail reply" "TASK_STATE_COMPLETED" "$completed_state"
-if [[ "$completed_state" != "TASK_STATE_COMPLETED" ]]; then
-  echo "  GetTask response: ${completed_resp:0:2400}"
-  exit 1
-fi
 answer_text="$(echo "$completed_resp" | python3 -c 'import json,sys; data=json.load(sys.stdin); print(data["result"]["artifacts"][0]["parts"][0]["text"])')"
 assert_eq "a2a completed answer text" "Docker A2A e2e completed through the real aweb backend." "$answer_text"
+reply_verification="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["metadata"]["reply_verification"])' <<<"$completed_resp")"
+assert_eq "shared reader verified the real target reply" "verified" "$reply_verification"
+
+echo "=== Cancel a second task and read its real signed continuation notice ==="
+cancel_send_payload="$(python3 -c 'import json,sys; request=json.load(sys.stdin); request["id"]="send-cancel"; request["params"]["message"]["messageId"]="msg-cancel"; print(json.dumps(request))' <<<"$send_payload")"
+cancel_send_resp="$(rpc_post "$cancel_send_payload")"
+cancel_task_id="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["task"]["id"])' <<<"$cancel_send_resp")"
+cancel_task_token="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["task"]["metadata"]["task_bearer_token"])' <<<"$cancel_send_resp")"
+cancel_task_mail="$(wait_for_task_mail "$cancel_task_id" a2a-task)"
+cancel_conversation_id="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["conversation_id"])' <<<"$cancel_task_mail")"
+cancel_payload="$(python3 -c 'import json,sys; print(json.dumps({"jsonrpc":"2.0","id":"cancel-1","method":"CancelTask","params":{"id":sys.argv[1]}}))' "$cancel_task_id")"
+cancel_resp="$(A2A_TASK_TOKEN="$cancel_task_token" rpc_post "$cancel_payload")"
+cancel_state="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["status"]["state"])' <<<"$cancel_resp")"
+assert_eq "public task token authorizes cancellation" "TASK_STATE_CANCELED" "$cancel_state"
+cancel_notice="$(wait_for_task_mail "$cancel_task_id" a2a-cancel)"
+python3 -c '
+import json, re, sys
+message = json.load(sys.stdin)
+assert message["verification_status"] == "verified", message
+assert message["from_address"] == "a2a.test.local/gateway", message
+assert message["conversation_id"] == sys.argv[2], message
+envelope = json.loads(re.search(r"(?ms)^```a2a-cancel\n(.*?)\n```$", message["body"])[1])
+assert envelope == {"task_id":sys.argv[1], "context_id":"ctx-1", "request_id":"docker-e2e-request", "state":"TASK_STATE_CANCELED"}, envelope
+' "$cancel_task_id" "$cancel_conversation_id" <<<"$cancel_notice"
+
+python3 - "$TMP_ROOT/audit/a2a.jsonl" "$task_id" <<'PY'
+import json, pathlib, sys
+raw = pathlib.Path(sys.argv[1]).read_text()
+events = [json.loads(line) for line in raw.splitlines()]
+stages = {event["stage"] for event in events if event.get("task_id") == sys.argv[2]}
+required = {"bridge_send", "reply_ingest", "task_state_transition"}
+assert required <= stages, (required - stages, events)
+request_stages = {event["stage"] for event in events if event.get("request_id") == "docker-e2e-request"}
+assert {"gateway_ingress", "gateway_response"} <= request_stages, events
+assert "Please complete the Docker A2A journey." not in raw, raw
+assert "Docker A2A e2e completed through the real aweb backend." not in raw, raw
+PY
+
+echo "=== Deliver through the signed member read of the private team ==="
+member_payload="$(python3 -c 'import json,sys; request=json.load(sys.stdin); request["id"]="send-member"; request["params"]["message"]["messageId"]="msg-member"; print(json.dumps(request))' <<<"$send_payload")"
+member_resp="$(rpc_post "$member_payload" member)"
+member_task_id="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["task"]["id"])' <<<"$member_resp")"
+member_task_token="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["task"]["metadata"]["task_bearer_token"])' <<<"$member_resp")"
+member_state="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["task"]["status"]["state"])' <<<"$member_resp")"
+assert_eq "member route starts a real task" "TASK_STATE_WORKING" "$member_state"
+member_mail="$(wait_for_task_mail "$member_task_id" a2a-task)"
+python3 -c '
+import json, re, sys
+message = json.load(sys.stdin)
+assert message["verification_status"] == "verified", message
+assert message["from_address"] == "a2a.test.local/gateway", message
+assert message["conversation_id"], message
+envelope = json.loads(re.search(r"(?ms)^```a2a-task\n(.*?)\n```$", message["body"])[1])
+assert envelope["task_id"] == sys.argv[1], envelope
+assert envelope["route_id"] == "member", envelope
+assert envelope["target_address"] == "demo:a2a.test.local/personal", envelope
+' "$member_task_id" <<<"$member_mail"
+echo "  PASS: member route delivered through the signed private-team read"
+member_conversation_id="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["conversation_id"])' <<<"$member_mail")"
+member_reply="$(python3 -c 'import json,sys; print("```a2a-reply\n" + json.dumps({"task_id":sys.argv[1], "context_id":"ctx-1", "state":"completed", "text":"Private-team member route completed."}) + "\n```")' "$member_task_id")"
+capture_success member_reply_send "personal replies to member-route task" run_aw_in "$PERSONAL_DIR" mail send \
+  --plaintext --conversation-id "$member_conversation_id" --body "$member_reply" --json
+member_completed="$(wait_for_task_state "$member_task_id" "$member_task_token" TASK_STATE_COMPLETED member)"
+python3 -c '
+import json, sys
+task = json.load(sys.stdin)["result"]
+assert task["metadata"]["reply_verification"] == "verified", task
+assert task["artifacts"][0]["parts"][0]["text"] == "Private-team member route completed.", task
+' <<<"$member_completed"
 
 list_payload='{"jsonrpc":"2.0","id":"list-1","method":"ListTasks","params":{"includeArtifacts":true}}'
 list_resp="$(rpc_post "$list_payload")"

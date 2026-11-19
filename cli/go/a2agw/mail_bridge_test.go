@@ -11,57 +11,6 @@ import (
 	"github.com/awebai/aw/awid"
 )
 
-func TestMailBridgeSendIngestReplyAndGetCompletedTask(t *testing.T) {
-	transport := &fakeMailTransport{}
-	audit := &memoryAuditSink{}
-	bridge := newTestMailBridge(t, transport, audit)
-	gw := newTestGateway(t, Config{Host: "team.aweb.ai", Bridge: bridge, Audit: audit, Routes: []Route{supportRoute("r_support")}})
-	bridge.SetReplyApplier(gw)
-
-	resp := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-1", "SendMessage", map[string]any{
-		"message":       testUserMessage("msg-1", "ctx-1", "Where is order 1234?"),
-		"configuration": map[string]any{"returnImmediately": true},
-	}), map[string]string{"X-A2A-Caller-ID": "alice", "X-Request-ID": "trace-1"}, 200)
-	sentTask := rpcTaskResult(t, resp, "task")
-	taskID := sentTask["id"].(string)
-	token := taskBearerToken(t, sentTask)
-	if len(transport.sent) != 1 {
-		t.Fatalf("sent=%d, want 1", len(transport.sent))
-	}
-	body := transport.sent[0].Body
-	for _, want := range []string{"```a2a-task", `"task_id": "` + taskID + `"`, `"request_id": "trace-1"`, "Customer message (untrusted):", "Where is order 1234?"} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("bridge body missing %q:\n%s", want, body)
-		}
-	}
-
-	replyBody := "```a2a-reply\n{\"task_id\":\"" + taskID + "\",\"context_id\":\"ctx-1\",\"state\":\"completed\",\"artifacts\":[{\"type\":\"text\",\"text\":\"Order 1234 shipped Tuesday.\"}]}\n```"
-	task, ok, err := bridge.IngestInboxMessage(context.Background(), awid.InboxMessage{FromDID: "did:key:target", FromStableID: "did:aw:target",
-		MessageID:          "reply-1",
-		ConversationID:     "conv-1",
-		Body:               replyBody,
-		VerificationStatus: awid.Verified,
-	})
-	if err != nil || !ok {
-		t.Fatalf("ingest: ok=%t err=%v", ok, err)
-	}
-	if task.Status.State != TaskStateCompleted {
-		t.Fatalf("state=%s", task.Status.State)
-	}
-	get := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-2", "GetTask", map[string]any{"id": taskID}), map[string]string{"X-A2A-Task-Token": token}, 200)
-	got := rpcTaskResult(t, get, "")
-	if taskStatus(got) != TaskStateCompleted {
-		t.Fatalf("get state=%s", taskStatus(got))
-	}
-	artifacts := got["artifacts"].([]any)
-	part := artifacts[0].(map[string]any)["parts"].([]any)[0].(map[string]any)
-	if part["text"] != "Order 1234 shipped Tuesday." {
-		t.Fatalf("artifact text=%v", part["text"])
-	}
-	assertAuditHasStages(t, audit.events, "gateway_ingress", "bridge_send", "reply_ingest", "task_state_transition", "gateway_response")
-	assertAuditRedacted(t, audit.events, "Where is order 1234?")
-}
-
 func TestMailBridgeDoesNotLeakAuthorizationToRecipient(t *testing.T) {
 	transport := &fakeMailTransport{}
 	bridge := newTestMailBridge(t, transport, nil)
@@ -178,24 +127,6 @@ func TestMailBridgeRejectsMissingContextForContextualTask(t *testing.T) {
 	}
 }
 
-func TestMailBridgeCancellationSendsVisibleNotice(t *testing.T) {
-	transport := &fakeMailTransport{}
-	bridge := newTestMailBridge(t, transport, nil)
-	gw := newTestGateway(t, Config{Host: "team.aweb.ai", Bridge: bridge, Routes: []Route{supportRoute("r_support")}})
-	bridge.SetReplyApplier(gw)
-	taskID, token := sendTestA2ATaskWithToken(t, gw)
-	cancel := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-cancel", "CancelTask", map[string]any{"id": taskID}), map[string]string{"X-A2A-Task-Token": token, "X-Request-ID": "trace-cancel"}, 200)
-	if got := taskStatus(rpcTaskResult(t, cancel, "")); got != TaskStateCanceled {
-		t.Fatalf("cancel state=%s", got)
-	}
-	if len(transport.sent) != 2 {
-		t.Fatalf("sent=%d want 2", len(transport.sent))
-	}
-	if body := transport.sent[1].Body; !strings.Contains(body, "```a2a-cancel") || !strings.Contains(body, taskID) {
-		t.Fatalf("cancel body missing marker/task:\n%s", body)
-	}
-}
-
 func TestMailBridgeTreatsPromptInjectionLookingCallerTextAsData(t *testing.T) {
 	transport := &fakeMailTransport{}
 	bridge := newTestMailBridge(t, transport, nil)
@@ -282,30 +213,6 @@ func (s *memoryAuditSink) RecordA2A(event AuditEvent) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.events = append(s.events, event)
-}
-
-func assertAuditHasStages(t *testing.T, events []AuditEvent, stages ...string) {
-	t.Helper()
-	seen := map[string]bool{}
-	for _, event := range events {
-		seen[event.Stage] = true
-	}
-	for _, stage := range stages {
-		if !seen[stage] {
-			t.Fatalf("audit missing stage %s in %#v", stage, events)
-		}
-	}
-}
-
-func assertAuditRedacted(t *testing.T, events []AuditEvent, forbidden string) {
-	t.Helper()
-	body := ""
-	for _, event := range events {
-		body += event.Stage + event.RequestID + event.RouteID + event.TaskID + event.CallerScopeClass + event.GatewayIdentityHash + event.TargetAddressHash + event.Outcome + event.Code
-	}
-	if strings.Contains(body, forbidden) {
-		t.Fatalf("audit leaked forbidden plaintext %q: %#v", forbidden, events)
-	}
 }
 
 // lateReplyTransport returns the a2a-reply only after several conversation
