@@ -341,11 +341,11 @@ func verifyIDChain(bundle map[string]any, subject IDChainSubject, evidence *IDCh
 				return "", err
 			}
 			signed = r.Signed
-			if idKnownTime(r.RegisteredAt).Before(status.cutoff) {
+			if r.validity.from.Before(status.cutoff) {
 				return "", idCertificateRefusal(IDRefusalRootReplaced)
 			}
 			row, _ := status.row(id)
-			if row.Revocation != nil && !idKnownTime(row.Revocation.EffectiveFrom).After(at) {
+			if row.Revocation != nil && !row.Revocation.effectiveAt.After(at) {
 				return "", idCertificateRefusal(IDRefusalRevoked)
 			}
 		} else {
@@ -374,7 +374,7 @@ func verifyIDChain(bundle map[string]any, subject IDChainSubject, evidence *IDCh
 			parentID := p["id"].(string)
 			parentAt := at
 			if c["kind"] == "human" && r != nil {
-				parentAt = idKnownTime(r.RegisteredAt)
+				parentAt = r.validity.from
 			}
 			var parent map[string]any
 			if strings.HasPrefix(parentID, "did:aw:") {
@@ -427,7 +427,9 @@ func CheckIDChain(bundle map[string]any, subject IDChainSubject, evidence *IDCha
 		if code == "" {
 			code = IDRefusalEvidenceUnavailable
 		}
-		return idChainFailure(code)
+		failure := idChainFailure(code)
+		failure.diagnostic = idStatusDiagnostic(err)
+		return failure
 	}
 	return result
 }

@@ -12,7 +12,12 @@ type IDChainVerdict struct {
 	IdentityValid *bool
 	Kind          *IDCertificateKind
 	Refusal       IDRefusal
+	diagnostic    string
 }
+
+// Diagnostic names the failed snapshot rule for optional debug output. It is
+// never part of the wire verdict and contains no carrier-supplied response text.
+func (verdict IDChainVerdict) Diagnostic() string { return verdict.diagnostic }
 
 // Legacy preserves the released IDChainResult fields and their exact JSON
 // meanings. New callers can use CheckIDChain without changing the wire profile.

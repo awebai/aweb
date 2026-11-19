@@ -3,16 +3,30 @@ package awid
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"strings"
 	"time"
 )
 
+type idNamespaceContinuity string
+
+const (
+	idNamespaceReplaced idNamespaceContinuity = "replaced"
+	idNamespaceRotated  idNamespaceContinuity = "rotated"
+)
+
+type idWitnessInterval struct {
+	from  time.Time
+	until *time.Time
+}
+
 type idNamespaceEpoch struct {
-	Seq          int     `json:"seq"`
-	DIDKey       string  `json:"did_key"`
-	RegisteredAt string  `json:"registered_at"`
-	RetiredAt    *string `json:"retired_at"`
-	Continuity   string  `json:"continuity"`
+	Seq          int                   `json:"seq"`
+	DIDKey       string                `json:"did_key"`
+	RegisteredAt string                `json:"registered_at"`
+	RetiredAt    *string               `json:"retired_at"`
+	Continuity   idNamespaceContinuity `json:"continuity"`
+	validity     idWitnessInterval
 }
 type idStatusKey struct {
 	Entry        DidKeyEvidence `json:"entry"`
@@ -23,10 +37,13 @@ type idStatusRevision struct {
 	RegisteredAt string         `json:"registered_at"`
 	SupersededAt *string        `json:"superseded_at"`
 	IssuerKeySeq int            `json:"issuer_key_seq"`
+	certificate  IDCertificateView
+	validity     idWitnessInterval
 }
 type idStatusRevocation struct {
 	RevokedAt     string `json:"revoked_at"`
 	EffectiveFrom string `json:"effective_from"`
+	effectiveAt   time.Time
 }
 type idStatusIdentity struct {
 	ID                   string              `json:"id"`
@@ -62,7 +79,7 @@ func idWitness(s string) (time.Time, error) {
 	}
 	return t, nil
 }
-func idKnownTime(s string) time.Time { t, _ := idWitness(s); return t }
+
 func idStatusFields(v any, fields string) bool {
 	m, ok := v.(map[string]any)
 	return ok && idCertificateExactFields(m, strings.Fields(fields)...)
@@ -120,155 +137,247 @@ func idStatusRequired(s map[string]any) bool {
 	}
 	return true
 }
-func parseIDStatus(e *IDChainEvidence, domain string) (*idStatusSnapshot, error) {
-	bad := idCertificateRefusal(IDRefusalEvidenceUnavailable)
-	raw, err := idCertificateCanonical(e.Status)
-	if err != nil || len(raw) > 131072 || !idStatusRequired(e.Status) {
-		return nil, bad
+
+// idStatusReadError keeps the released refusal while identifying the failed
+// snapshot rule for typed-verdict diagnostics. It contains no response payload.
+type idStatusReadError struct{ rule string }
+
+func (err *idStatusReadError) Error() string { return string(IDRefusalEvidenceUnavailable) }
+func (err *idStatusReadError) Unwrap() error {
+	return idCertificateRefusal(IDRefusalEvidenceUnavailable)
+}
+func idStatusRefusal(rule string) error { return &idStatusReadError{rule: rule} }
+func idStatusDiagnostic(err error) string {
+	var refusal *idStatusReadError
+	if errors.As(err, &refusal) {
+		return refusal.rule
 	}
-	var s idStatusSnapshot
-	d := json.NewDecoder(bytes.NewReader(raw))
-	d.UseNumber()
-	d.DisallowUnknownFields()
-	if d.Decode(&s) != nil || s.V != 1 || s.Domain != domain {
-		return nil, bad
+	return ""
+}
+
+// parseIDStatus reads one complete snapshot before any chain can consume its
+// facts (docs/id-certificates.md §4). Each check owns one group of invariants.
+func parseIDStatus(evidence *IDChainEvidence, domain string) (*idStatusSnapshot, error) {
+	raw, err := idCertificateCanonical(evidence.Status)
+	if err != nil || len(raw) > 131072 || !idStatusRequired(evidence.Status) {
+		return nil, idStatusRefusal("snapshot fields or encoding")
 	}
-	s.now, err = idWitness(s.ObservedAt)
+	var snapshot idStatusSnapshot
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&snapshot); err != nil {
+		return nil, idStatusRefusal("snapshot field types")
+	}
+	if snapshot.V != 1 || snapshot.Domain != domain {
+		return nil, idStatusRefusal("snapshot version or namespace")
+	}
+	snapshot.now, err = idWitness(snapshot.ObservedAt)
 	if err != nil {
-		return nil, bad
+		return nil, idStatusRefusal("snapshot observation witness")
 	}
-	epochs := s.Namespace.Epochs
-	if len(epochs) == 0 || epochs[0].Continuity != "replaced" {
-		return nil, bad
+	if err := snapshot.checkEpochs(); err != nil {
+		return nil, err
 	}
-	for n, epoch := range epochs {
-		start, er := idWitness(epoch.RegisteredAt)
-		if er != nil || start.After(s.now) || epoch.Seq != n+1 || !idCertificateIDValid(epoch.DIDKey, true) || (epoch.Continuity != "rotated" && epoch.Continuity != "replaced") {
-			return nil, bad
+	if err := snapshot.checkNamespaceAuthority(evidence.NamespaceAuthority); err != nil {
+		return nil, err
+	}
+	snapshot.byID = make(map[string]*idStatusIdentity)
+	snapshot.missing = make(map[string]bool)
+	for index := range snapshot.Identities {
+		row := &snapshot.Identities[index]
+		if err := snapshot.checkIdentityRow(row); err != nil {
+			return nil, err
 		}
+		snapshot.byID[row.ID] = row
+	}
+	if err := snapshot.checkIssuerKeys(); err != nil {
+		return nil, err
+	}
+	if err := snapshot.checkMissingIdentities(); err != nil {
+		return nil, err
+	}
+	return &snapshot, nil
+}
+
+func (snapshot *idStatusSnapshot) checkEpochs() error {
+	epochs := snapshot.Namespace.Epochs
+	if len(epochs) == 0 || epochs[0].Continuity != idNamespaceReplaced {
+		return idStatusRefusal("namespace initial epoch")
+	}
+	for index := range epochs {
+		epoch := &epochs[index]
+		start, err := idWitness(epoch.RegisteredAt)
+		if err != nil || start.After(snapshot.now) {
+			return idStatusRefusal("namespace epoch start")
+		}
+		if epoch.Seq != index+1 || !idCertificateIDValid(epoch.DIDKey, true) {
+			return idStatusRefusal("namespace epoch sequence or key")
+		}
+		if epoch.Continuity != idNamespaceRotated && epoch.Continuity != idNamespaceReplaced {
+			return idStatusRefusal("namespace continuity kind")
+		}
+		epoch.validity.from = start
 		if epoch.RetiredAt != nil {
-			end, er := idWitness(*epoch.RetiredAt)
-			if er != nil || end.Before(start) || end.After(s.now) {
-				return nil, bad
+			end, err := idWitness(*epoch.RetiredAt)
+			if err != nil || end.Before(start) || end.After(snapshot.now) {
+				return idStatusRefusal("namespace epoch retirement")
+			}
+			epoch.validity.until = &end
+		}
+		if index > 0 {
+			previous := epochs[index-1]
+			if previous.validity.until == nil || previous.validity.until.After(start) {
+				return idStatusRefusal("namespace epoch overlap")
+			}
+			if epoch.Continuity == idNamespaceRotated && *previous.RetiredAt != epoch.RegisteredAt {
+				return idStatusRefusal("namespace rotation boundary")
 			}
 		}
-		if n > 0 {
-			prev := epochs[n-1]
-			if prev.RetiredAt == nil || idKnownTime(*prev.RetiredAt).After(start) {
-				return nil, bad
-			}
-			if epoch.Continuity == "rotated" && *prev.RetiredAt != epoch.RegisteredAt {
-				return nil, bad
-			}
-		}
-		if epoch.Continuity == "replaced" {
-			s.cutoff = start
+		if epoch.Continuity == idNamespaceReplaced {
+			snapshot.cutoff = start
 		}
 	}
-	last := epochs[len(epochs)-1]
-	a := e.NamespaceAuthority
-	if last.RetiredAt != nil || !idStatusFields(a, "domain dns_name inherited controller_key") || a["domain"] != domain {
-		return nil, bad
+	return nil
+}
+
+func (snapshot *idStatusSnapshot) checkNamespaceAuthority(authority map[string]any) error {
+	last := snapshot.Namespace.Epochs[len(snapshot.Namespace.Epochs)-1]
+	if last.RetiredAt != nil || !idStatusFields(authority, "domain dns_name inherited controller_key") || authority["domain"] != snapshot.Domain {
+		return idStatusRefusal("current namespace epoch or authority fields")
 	}
-	dnsName, nameOK := a["dns_name"].(string)
-	controller, keyOK := a["controller_key"].(string)
-	inherited, inheritedOK := a["inherited"].(bool)
-	if !nameOK || !keyOK || !inheritedOK || verifyIDNamespaceAuthority(domain, DomainAuthority{DNSName: dnsName, ControllerDID: controller, Inherited: inherited}, last.DIDKey, s.Namespace.Delegation) != nil {
-		return nil, bad
+	dnsName, nameOK := authority["dns_name"].(string)
+	controller, keyOK := authority["controller_key"].(string)
+	inherited, inheritedOK := authority["inherited"].(bool)
+	if !nameOK || !keyOK || !inheritedOK {
+		return idStatusRefusal("namespace authority field types")
 	}
-	s.byID = map[string]*idStatusIdentity{}
-	s.missing = map[string]bool{}
-	for n := range s.Identities {
-		row := &s.Identities[n]
-		if !idCertificateIDValid(row.ID, false) || !strings.HasPrefix(row.ID, "did:aw:") || s.byID[row.ID] != nil || len(row.KeyHistory) == 0 || row.CurrentKeySeq != len(row.KeyHistory) || len(row.Certificates) == 0 {
-			return nil, bad
+	if err := verifyIDNamespaceAuthority(snapshot.Domain, DomainAuthority{DNSName: dnsName, ControllerDID: controller, Inherited: inherited}, last.DIDKey, snapshot.Namespace.Delegation); err != nil {
+		return idStatusRefusal("current namespace authority")
+	}
+	return nil
+}
+
+func (snapshot *idStatusSnapshot) checkIdentityRow(row *idStatusIdentity) error {
+	if !idCertificateIDValid(row.ID, false) || !strings.HasPrefix(row.ID, "did:aw:") || snapshot.byID[row.ID] != nil {
+		return idStatusRefusal("registered identity or duplicate row")
+	}
+	if len(row.KeyHistory) == 0 || row.CurrentKeySeq != len(row.KeyHistory) || len(row.Certificates) == 0 {
+		return idStatusRefusal("identity history or current sequence")
+	}
+	entries := make([]DidKeyEvidence, 0, len(row.KeyHistory))
+	for _, key := range row.KeyHistory {
+		if _, err := idWitness(key.RegisteredAt); err != nil {
+			return idStatusRefusal("identity key registration witness")
 		}
-		entries := []DidKeyEvidence{}
-		for _, k := range row.KeyHistory {
-			if _, er := idWitness(k.RegisteredAt); er != nil {
-				return nil, bad
-			}
-			if !idCertificateIDValid(k.Entry.NewDIDKey, true) || !idCertificateIDValid(k.Entry.AuthorizedBy, true) {
-				return nil, bad
-			}
-			entries = append(entries, k.Entry)
+		if !idCertificateIDValid(key.Entry.NewDIDKey, true) || !idCertificateIDValid(key.Entry.AuthorizedBy, true) {
+			return idStatusRefusal("identity history key")
 		}
-		// Reuse the released genesis-anchored DID-log verifier; its old timestamps
-		// are continuity only. The gate's witnessed issuer_key_seq selects the key.
-		if _, er := VerifyDidLogEntries(row.ID, entries, s.now); er != nil {
-			return nil, bad
+		entries = append(entries, key.Entry)
+	}
+	// Registry registration witnesses select issuer_key_seq; DID-log timestamps
+	// establish continuity through the existing genesis-anchored verifier.
+	if _, err := VerifyDidLogEntries(row.ID, entries, snapshot.now); err != nil {
+		return idStatusRefusal("identity key continuity")
+	}
+	if err := snapshot.checkIdentityCertificates(row); err != nil {
+		return err
+	}
+	if row.Revocation != nil {
+		revokedAt, err := idWitness(row.Revocation.RevokedAt)
+		if err != nil {
+			return idStatusRefusal("identity revocation witness")
 		}
-		seen := map[string]bool{}
-		for i, rev := range row.Certificates {
-			c, er := idCertificateShape(rev.Signed)
-			if er != nil || VerifyIDCertificate(rev.Signed, c["issuer_key"].(string)) != nil || c["id"] != row.ID || c["domain"] != domain || rev.IssuerKeySeq < 1 || int64(rev.IssuerKeySeq) > maxSafeInteger {
-				return nil, bad
+		effectiveAt, err := idWitness(row.Revocation.EffectiveFrom)
+		if err != nil || revokedAt.After(snapshot.now) || effectiveAt.After(revokedAt) {
+			return idStatusRefusal("identity revocation boundary")
+		}
+		row.Revocation.effectiveAt = effectiveAt
+	}
+	return nil
+}
+
+func (snapshot *idStatusSnapshot) checkIdentityCertificates(row *idStatusIdentity) error {
+	seen := make(map[string]bool)
+	for index := range row.Certificates {
+		revision := &row.Certificates[index]
+		certificate, err := checkedIDCertificateView(revision.Signed)
+		if err != nil {
+			return idStatusRefusal("identity certificate shape")
+		}
+		if err := VerifyIDCertificate(revision.Signed, certificate.IssuerKey()); err != nil {
+			return idStatusRefusal("identity certificate signature")
+		}
+		if certificate.ID() != row.ID || certificate.Domain() != snapshot.Domain || revision.IssuerKeySeq < 1 || int64(revision.IssuerKeySeq) > maxSafeInteger {
+			return idStatusRefusal("identity certificate binding or issuer sequence")
+		}
+		revision.certificate = certificate
+		digest, err := certificate.CertificateID()
+		if err != nil || seen[digest] {
+			return idStatusRefusal("identity certificate commitment or duplicate")
+		}
+		seen[digest] = true
+		start, err := idWitness(revision.RegisteredAt)
+		if err != nil || start.After(snapshot.now) {
+			return idStatusRefusal("certificate registration witness")
+		}
+		revision.validity.from = start
+		if revision.SupersededAt != nil {
+			end, err := idWitness(*revision.SupersededAt)
+			if err != nil || !end.After(start) || end.After(snapshot.now) {
+				return idStatusRefusal("certificate supersession witness")
 			}
-			digest, er := IDCertificateID(c)
-			if er != nil || seen[digest] {
-				return nil, bad
+			revision.validity.until = &end
+		}
+		if index > 0 {
+			previous := row.Certificates[index-1]
+			if previous.SupersededAt == nil || *previous.SupersededAt != revision.RegisteredAt {
+				return idStatusRefusal("certificate revision boundary")
 			}
-			seen[digest] = true
-			start, er := idWitness(rev.RegisteredAt)
-			if er != nil || start.After(s.now) {
-				return nil, bad
+		}
+		if certificate.Parent().Kind() == IDParentKindNamespace {
+			if revision.IssuerKeySeq > len(snapshot.Namespace.Epochs) {
+				return idStatusRefusal("certificate namespace issuer sequence")
 			}
-			if rev.SupersededAt != nil {
-				end, er := idWitness(*rev.SupersededAt)
-				if er != nil || !end.After(start) || end.After(s.now) {
-					return nil, bad
+			epoch := snapshot.Namespace.Epochs[revision.IssuerKeySeq-1]
+			if start.Before(epoch.validity.from) || (epoch.validity.until != nil && !start.Before(*epoch.validity.until)) || certificate.IssuerKey() != epoch.DIDKey {
+				return idStatusRefusal("certificate namespace issuer epoch")
+			}
+		}
+	}
+	current := row.Certificates[len(row.Certificates)-1]
+	digest, err := current.certificate.CertificateID()
+	if err != nil || current.SupersededAt != nil || row.CurrentCertificateID != digest {
+		return idStatusRefusal("identity current certificate head")
+	}
+	return nil
+}
+
+func (snapshot *idStatusSnapshot) checkIssuerKeys() error {
+	for _, row := range snapshot.Identities {
+		for _, revision := range row.Certificates {
+			parent := revision.certificate.Parent()
+			if parent.Kind() != IDParentKindIdentity {
+				continue
+			}
+			if issuer := snapshot.byID[parent.ID()]; issuer != nil {
+				if revision.IssuerKeySeq > len(issuer.KeyHistory) || revision.certificate.IssuerKey() != issuer.KeyHistory[revision.IssuerKeySeq-1].Entry.NewDIDKey {
+					return idStatusRefusal("certificate parent issuer key")
 				}
 			}
-			if i > 0 {
-				prev := row.Certificates[i-1]
-				if prev.SupersededAt == nil || *prev.SupersededAt != rev.RegisteredAt {
-					return nil, bad
-				}
-			}
-			if c["parent"].(map[string]any)["kind"] == "namespace" {
-				if rev.IssuerKeySeq > len(epochs) {
-					return nil, bad
-				}
-				epoch := epochs[rev.IssuerKeySeq-1]
-				if start.Before(idKnownTime(epoch.RegisteredAt)) || (epoch.RetiredAt != nil && !start.Before(idKnownTime(*epoch.RetiredAt))) || c["issuer_key"] != epoch.DIDKey {
-					return nil, bad
-				}
-			}
-		}
-		current := row.Certificates[len(row.Certificates)-1]
-		digest, _ := IDCertificateID(current.Signed["certificate"].(map[string]any))
-		if current.SupersededAt != nil || row.CurrentCertificateID != digest {
-			return nil, bad
-		}
-		if row.Revocation != nil {
-			at, er := idWitness(row.Revocation.RevokedAt)
-			effective, ee := idWitness(row.Revocation.EffectiveFrom)
-			if er != nil || ee != nil || at.After(s.now) || effective.After(at) {
-				return nil, bad
-			}
-		}
-		s.byID[row.ID] = row
-	}
-	for _, row := range s.Identities {
-		for _, rev := range row.Certificates {
-			c := rev.Signed["certificate"].(map[string]any)
-			parent := c["parent"].(map[string]any)
-			if parent["kind"] == "identity" {
-				if p := s.byID[parent["id"].(string)]; p != nil {
-					if rev.IssuerKeySeq > len(p.KeyHistory) || c["issuer_key"] != p.KeyHistory[rev.IssuerKeySeq-1].Entry.NewDIDKey {
-						return nil, bad
-					}
-				}
-			}
 		}
 	}
-	for _, id := range s.Missing {
-		if !idCertificateIDValid(id, false) || !strings.HasPrefix(id, "did:aw:") || s.byID[id] != nil || s.missing[id] {
-			return nil, bad
+	return nil
+}
+
+func (snapshot *idStatusSnapshot) checkMissingIdentities() error {
+	for _, id := range snapshot.Missing {
+		if !idCertificateIDValid(id, false) || !strings.HasPrefix(id, "did:aw:") || snapshot.byID[id] != nil || snapshot.missing[id] {
+			return idStatusRefusal("missing identity binding or duplicate")
 		}
-		s.missing[id] = true
+		snapshot.missing[id] = true
 	}
-	return &s, nil
+	return nil
 }
 func (s *idStatusSnapshot) row(id string) (*idStatusIdentity, error) {
 	if s.missing[id] {
@@ -287,7 +396,7 @@ func (s *idStatusSnapshot) revision(id string, at time.Time) (*idStatusRevision,
 	}
 	for n := range row.Certificates {
 		r := &row.Certificates[n]
-		if !at.Before(idKnownTime(r.RegisteredAt)) && (r.SupersededAt == nil || at.Before(idKnownTime(*r.SupersededAt))) {
+		if !at.Before(r.validity.from) && (r.validity.until == nil || at.Before(*r.validity.until)) {
 			return r, nil
 		}
 	}
