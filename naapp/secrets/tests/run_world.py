@@ -94,6 +94,19 @@ class RunInstallations(Installations):
         )
 
 
+async def _activate_source(tx, *, uses, record: SecretRecord, value: str):
+    scope = uses.world.admitted
+    await records.create_secret(tx, scope.installation_id, TEAM, record)
+    version = await uses.world.custody.sealer.ingest(
+        tx,
+        installation_id=scope.installation_id,
+        team_id=TEAM,
+        secret_id=record.secret_id,
+        value=encode_value("bearer", {"value": value}),
+    )
+    await records.set_active_version(tx, scope.installation_id, TEAM, record.secret_id, version)
+
+
 async def setup(
     uses,
     *,
@@ -168,17 +181,7 @@ async def setup(
             sources.append((*secondary, "grt_durable002" + variant))
         for source_record, source_value, grant_id in sources:
             if reuse_source is None:
-                await records.create_secret(tx, scope.installation_id, TEAM, source_record)
-                version = await uses.world.custody.sealer.ingest(
-                    tx,
-                    installation_id=scope.installation_id,
-                    team_id=TEAM,
-                    secret_id=source_record.secret_id,
-                    value=encode_value("bearer", {"value": source_value}),
-                )
-                await records.set_active_version(
-                    tx, scope.installation_id, TEAM, source_record.secret_id, version
-                )
+                await _activate_source(tx, uses=uses, record=source_record, value=source_value)
             await records.create_grant(
                 tx,
                 scope.installation_id,
