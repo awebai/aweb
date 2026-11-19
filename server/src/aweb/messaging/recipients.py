@@ -12,8 +12,6 @@ from aweb.messaging.refusals import (
 from aweb.messaging.refusals import DeliveryRefusal
 from http import HTTPStatus
 from awid.federation_errors import FederationAuthorityError
-from awid.registry import Address
-from aweb.federation.activation import ResolvedContactIdentity
 
 from aweb.awid_error_handling import (
     AWID_DEPENDENCY_ERRORS,
@@ -21,6 +19,8 @@ from aweb.awid_error_handling import (
 from aweb.messaging.address_auth import (
     identity_recipient,
     local_recipient_for_address_binding,
+    resolved_recipient_delivery_origin,
+    resolved_recipient_controller_did,
     local_recipient_visible_to_auth,
     namespace_uses_home_registry,
     refuse_same_origin_nonresident,
@@ -53,22 +53,6 @@ class RecipientIdentityBinding:
 
 
 logger = logging.getLogger(__name__)
-
-
-def _delivery_origin(resolution: Address | ResolvedContactIdentity) -> str:
-    if isinstance(resolution, Address):
-        return (
-            resolution.delivery.origin if resolution.delivery is not None else ""
-        ).strip()
-    return resolution.delivery_origin.strip()
-
-
-def _controller_did(resolution: Address | ResolvedContactIdentity) -> str:
-    return (
-        resolution.controller_did.strip()
-        if isinstance(resolution, ResolvedContactIdentity)
-        else ""
-    )
 
 
 async def _local_recipient_at_address(db, *, domain: str, name: str) -> dict | None:
@@ -197,9 +181,14 @@ async def _resolve_address_identity(
         resolution = await registry.resolve_address(domain, name, did_key=auth.did_key)
 
     if resolution is not None and resolution.did_aw:
-        recipient = await local_recipient_for_address_binding(db, resolution, address)
+        recipient = await local_recipient_for_address_binding(
+            db,
+            did_aw=resolution.did_aw,
+            current_did_key=resolution.current_did_key,
+            address=address,
+        )
         if recipient is None:
-            origin = _delivery_origin(resolution)
+            origin = resolved_recipient_delivery_origin(resolution)
             refuse_same_origin_nonresident(origin, origins=runtime.public_origins)
             recipient = Recipient.from_remote_projection(
                 {
@@ -216,7 +205,7 @@ async def _resolve_address_identity(
             )
         return replace(
             recipient,
-            authority_controller_did=_controller_did(resolution),
+            authority_controller_did=resolved_recipient_controller_did(resolution),
         )
 
     # Local fallback requires the same visibility and signed-recipient rule as

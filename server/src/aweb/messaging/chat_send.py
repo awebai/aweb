@@ -60,6 +60,7 @@ from aweb.identity_auth_deps import MessagingAuth, auth_dids, participant_dids
 from aweb.messaging.address_auth import (
     identity_recipient,
     local_recipient_for_own_route,
+    resolved_recipient_delivery_origin,
 )
 from aweb.messaging.alias_targets import (
     resolve_alias_target,
@@ -155,9 +156,9 @@ def _require_remote_chat_signature(
 
 def _payload_is_encrypted(payload: CreateSessionRequest | SendMessageRequest) -> bool:
     return (
-        getattr(payload, "content_mode", ContentMode.PLAINTEXT) == ContentMode.ENCRYPTED
-        or getattr(payload, "message_version", 1) == 2
-        or getattr(payload, "encrypted_envelope", None) is not None
+        payload.content_mode == ContentMode.ENCRYPTED
+        or payload.message_version == 2
+        or payload.encrypted_envelope is not None
     )
 
 
@@ -376,10 +377,10 @@ async def deliver_federated_chat(
             if _payload_is_encrypted(payload)
             else str(payload.signed_payload),
             conversation_id=session_id,
-            content_mode=getattr(payload, "content_mode", None),
-            message_version=getattr(payload, "message_version", None),
-            encrypted_envelope=getattr(payload, "encrypted_envelope", None),
-            wait_seconds=getattr(payload, "wait_seconds", None),
+            content_mode=payload.content_mode,
+            message_version=payload.message_version,
+            encrypted_envelope=payload.encrypted_envelope,
+            wait_seconds=payload.wait_seconds,
             reply_to=payload.reply_to,
             sender_leaving=_chat_payload_leaving(payload),
             hang_on=_chat_payload_hang_on(payload),
@@ -877,8 +878,8 @@ async def _resolve_remote_chat_route(
             status_code=HTTPStatus.NOT_FOUND,
             detail=f"Recipient route not found: {address}",
         )
-    target_stable_id = str(getattr(resolution, "did_aw", "") or "").strip()
-    target_current_did = str(getattr(resolution, "current_did_key", "") or "").strip()
+    target_stable_id = (resolution.did_aw or "").strip()
+    target_current_did = (resolution.current_did_key or "").strip()
     recipient_stable_id = str(recipient.get("did_aw") or "").strip()
     recipient_did = str(recipient.get("did") or "").strip()
     if target_stable_id not in {recipient_stable_id, recipient_did}:
@@ -886,12 +887,7 @@ async def _resolve_remote_chat_route(
             status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
             detail="Remote chat recipient identity changed",
         )
-    delivery = getattr(resolution, "delivery", None)
-    resolved_origin = str(
-        getattr(resolution, "delivery_origin", None)
-        or getattr(delivery, "origin", "")
-        or ""
-    ).strip()
+    resolved_origin = resolved_recipient_delivery_origin(resolution)
     delivery_origin = resolved_origin or _target_delivery_origin(recipient)
     if not delivery_origin:
         raise DeliveryRefusal(
