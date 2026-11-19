@@ -351,7 +351,7 @@ func buildClientSelectionForDir(ctx context.Context, workingDir, teamIDOverride 
 		return nil, nil, err
 	}
 	if awconfig.IsGrantHome(identityHome.Root) {
-		return buildGrantClientSelectionForTeam(ctx, workingDir, identityHome, teamFlag, baseURL)
+		return buildGrantClientSelectionForTeam(ctx, workingDir, identityHome, teamIDOverride, baseURL)
 	}
 	sel, err := resolveSelectionAtIdentityHome(workingDir, teamIDOverride, identityHome)
 	if err != nil {
