@@ -119,6 +119,7 @@ from aweb.messaging.signatures import (
 )
 from aweb.messaging.verification import require_conversation_not_legacy_bound
 from aweb.service_errors import (
+    ConflictError,
     ForbiddenError,
     NotFoundError,
     ValidationError,
@@ -1962,17 +1963,36 @@ async def _send_to_remote_named_chat(
             detail="Federated chat response message_id mismatch",
         )
 
-    session_id, msg_row = await _store_remote_chat_create(
-        db,
-        auth=auth,
-        runtime=runtime,
-        payload=payload,
-        author=author,
-        participant_rows=participant_rows,
-        session_id=requested_session_id,
-        encrypted_metadata=encrypted_metadata,
-        message_id=pre_message_id,
-    )
+    try:
+        session_id, msg_row = await _store_remote_chat_create(
+            db,
+            auth=auth,
+            runtime=runtime,
+            payload=payload,
+            author=author,
+            participant_rows=participant_rows,
+            session_id=requested_session_id,
+            encrypted_metadata=encrypted_metadata,
+            message_id=pre_message_id,
+        )
+    except (ConflictError, QueryError, asyncpg.exceptions.UniqueViolationError) as exc:
+        if not isinstance(exc, ConflictError) and not is_unique_write_conflict(exc):
+            raise
+        # Session/message projection commits as one unit. A unique loser sees
+        # the winner's committed artifact before returning its stored answer.
+        stored = await _stored_exact_chat_send(
+            db,
+            payload,
+            auth=auth,
+            session_id=requested_session_id,
+            recipient_rows=target_rows,
+            actor_dids=participant_dids(auth),
+        )
+        if stored is None:
+            raise
+        return SentChat(
+            session_id=stored["session_id"], message=dict(stored), federated=True
+        )
     if msg_row is None:
         raise DeliveryRefusal(
             status_code=HTTPStatus.NOT_FOUND, detail=SENDER_NOT_IN_SESSION
@@ -2024,35 +2044,37 @@ async def _store_remote_chat_create(
     actor_agent_id = author.agent_id
     actor_alias = author.alias
     sender_address = author.address
-    session_id = await ensure_session(
-        db,
-        team_id=auth.team_id,
-        participant_rows=participant_rows,
-        created_by=actor_alias,
-        session_id=requested_session_id,
-    )
     with agent_wake_scope(runtime.agent_wake_publisher):
-        msg_row = await send_in_session(
-            db,
-            id_chain=id_chain,
-            session_id=session_id,
-            sender_did=actor_did,
-            sender_agent_id=actor_agent_id,
-            sender_address=sender_address,
-            body=payload.message,
-            reply_to=uuid_mod.UUID(payload.reply_to)
-            if payload.reply_to is not None
-            else None,
-            leaving=payload.leaving,
-            hang_on=payload.hang_on,
-            signature=payload.signature,
-            signed_payload=payload.signed_payload,
-            content_mode=payload.content_mode,
-            message_version=payload.message_version,
-            encrypted_envelope=payload.encrypted_envelope,
-            encrypted_metadata=encrypted_metadata,
-            message_id=pre_message_id,
-        )
+        async with db.get_manager("aweb").transaction() as tx:
+            send_db = TransactionInfra(db, tx)
+            session_id = await ensure_session(
+                send_db,
+                team_id=auth.team_id,
+                participant_rows=participant_rows,
+                created_by=actor_alias,
+                session_id=requested_session_id,
+            )
+            msg_row = await send_in_session(
+                send_db,
+                id_chain=id_chain,
+                session_id=session_id,
+                sender_did=actor_did,
+                sender_agent_id=actor_agent_id,
+                sender_address=sender_address,
+                body=payload.message,
+                reply_to=uuid_mod.UUID(payload.reply_to)
+                if payload.reply_to is not None
+                else None,
+                leaving=payload.leaving,
+                hang_on=payload.hang_on,
+                signature=payload.signature,
+                signed_payload=payload.signed_payload,
+                content_mode=payload.content_mode,
+                message_version=payload.message_version,
+                encrypted_envelope=payload.encrypted_envelope,
+                encrypted_metadata=encrypted_metadata,
+                message_id=pre_message_id,
+            )
     return session_id, msg_row
 
 
