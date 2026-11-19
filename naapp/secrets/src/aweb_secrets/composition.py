@@ -53,7 +53,13 @@ from fastapi import APIRouter, Request
 from pgdbm.core import TransactionManager
 
 from aweb_secrets.activity_service import ActivityReads
-from aweb_secrets.app import Authorized, ConsoleRouter, SecretsService, create_app
+from aweb_secrets.app import (
+    Authorized,
+    ConsoleRouter,
+    OwnerApplicationServices,
+    SecretsService,
+    create_app,
+)
 from aweb_secrets.approval_email import ApprovalEmailDelivery
 from aweb_secrets.approval_kind import approval_kind
 from aweb_secrets.audit_sink import SecretsAudit
@@ -163,9 +169,9 @@ class _Approvers:
         return await self._uses.is_current(scope, subject, tx=tx)
 
 
-@dataclass
+@dataclass(kw_only=True)
 class _Services:
-    console: OwnerConsole
+    owner: OwnerApplicationServices
     owner_delivery: APIRouter
     handoffs: ConsoleHandoffs
     changes: ConsoleChanges
@@ -179,6 +185,16 @@ class _Services:
     runs: RunDispatch
     status: UseStatus
     custody: Custody
+
+    @property
+    def console(self) -> OwnerConsole:
+        return self.owner.console
+
+
+@dataclass(frozen=True, kw_only=True)
+class _OwnerDelivery:
+    router: APIRouter
+    verifier: OwnerActVerifier
 
 
 async def _advance_owner_revision(
@@ -198,9 +214,15 @@ def _owner_delivery_router(
     passkeys: Passkeys,
     credentials: CredentialAudit,
     team_key_for: Callable[[str], Awaitable[str]],
-) -> APIRouter:
+) -> _OwnerDelivery:
     """Compose human-role delivery at its human origin (secrets.md:1677-1687)."""
     router = APIRouter()
+    verifier = OwnerActVerifier(
+        scope=settings.app_id,
+        audience=settings.console_origin,
+        acts=HUMAN_ROLE_ACTS,
+        team_key_for=team_key_for,
+    )
     mount_owner_act_routes(
         router,
         runtime=runtime,
@@ -212,19 +234,14 @@ def _owner_delivery_router(
             check_member=runtime.check_human_role_member,
             on_applied=_advance_owner_revision,
         ),
-        verifier=OwnerActVerifier(
-            scope=settings.app_id,
-            audience=settings.console_origin,
-            acts=HUMAN_ROLE_ACTS,
-            team_key_for=team_key_for,
-        ),
+        verifier=verifier,
         limiter=OwnerActLimiter(
             client_identity=ClientIdentity(trusted_header=settings.client_address_header),
             limit=12,
             window=timedelta(minutes=1),
         ),
     )
-    return router
+    return _OwnerDelivery(router=router, verifier=verifier)
 
 
 async def _compose(
@@ -492,26 +509,26 @@ async def _compose(
     )
     containment.deregister_runner = runs.deregister_runner
     return _Services(
-        console,
-        owner_delivery,
-        handoffs,
-        changes,
-        containment,
-        ConsoleValues(console=console, custody=custody),
-        ConsoleUseApprovals(
+        owner=OwnerApplicationServices(console=console, verifier=owner_delivery.verifier),
+        owner_delivery=owner_delivery.router,
+        handoffs=handoffs,
+        changes=changes,
+        containment=containment,
+        values=ConsoleValues(console=console, custody=custody),
+        use_pages=ConsoleUseApprovals(
             console=console, approvals=approvals, use_audit=use_audit, registration_view=use_view
         ),
-        ConsoleActivity(console=console, reads=ActivityReads()),
-        ConsoleAuditDelivery(
+        activity=ConsoleActivity(console=console, reads=ActivityReads()),
+        audit_delivery=ConsoleAuditDelivery(
             console=console,
             registrations=registrations,
             max_backlog_age=timedelta(seconds=settings.hook_events_stalled_after_seconds),
         ),
-        Catalog(db, fence=fence),
-        broker,
-        runs,
-        UseStatus(db, fence=fence, approvals=approvals, runs=runs.status),
-        custody,
+        catalog=Catalog(db, fence=fence),
+        broker=broker,
+        runs=runs,
+        status=UseStatus(db, fence=fence, approvals=approvals, runs=runs.status),
+        custody=custody,
     )
 
 
@@ -608,6 +625,7 @@ def create_service(
         active = await _compose(
             runtime, settings, provider, mailer, committer, response_key, run_dispatch
         )
+        service.owner_services = active.owner
         stop = asyncio.Event()
         recovery = asyncio.create_task(_recover(active, stop, settings.sweep_interval_seconds))
         try:
@@ -618,6 +636,7 @@ def create_service(
                 await recovery
             finally:
                 active = None
+                service.owner_services = None
 
     def metadata(runtime: NaappRuntime, authorized: Authorized) -> APIRouter:
         return metadata_router(
@@ -661,7 +680,7 @@ def create_service(
             ),
         )
 
-    return create_app(
+    service = create_app(
         settings,
         policy=tool_policy,
         kms=kms,
@@ -703,3 +722,4 @@ def create_service(
             lambda rt: runner_dispatch_router(service=lambda: current().runs),
         ),
     )
+    return service

@@ -16,10 +16,12 @@ import json
 import logging
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
+from dataclasses import dataclass
 from enum import StrEnum
 from functools import partial
 from ipaddress import IPv4Network, IPv6Network
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import httpx
 from aweb_naapp.egress import Egress
@@ -47,6 +49,11 @@ from aweb_secrets.retirement import retire_team
 from aweb_secrets.revisions import apply_revision_migrations
 from aweb_secrets.surfaces import mount_public_surfaces
 
+if TYPE_CHECKING:
+    from aweb_naapp.hooks.owner_act_nonces import OwnerActVerifier
+
+    from aweb_secrets.console import OwnerConsole
+
 MIGRATIONS_PATH = Path(__file__).resolve().parent / "migrations"
 MODULE_NAME = "aweb_secrets"
 _PROBE_LOGGER = logging.getLogger("uvicorn.error")
@@ -56,6 +63,14 @@ ToolRouter = Callable[[NaappRuntime, Authorized], APIRouter]
 ConsoleRouter = Callable[[NaappRuntime], APIRouter]
 RunnerRouter = Callable[[NaappRuntime], APIRouter]
 Prepare = Callable[[NaappRuntime], AbstractAsyncContextManager[None]]
+
+
+@dataclass(frozen=True, kw_only=True)
+class OwnerApplicationServices:
+    """The original owner dependencies of a running production application."""
+
+    console: OwnerConsole
+    verifier: OwnerActVerifier
 
 
 class SecretsService(OriginApps):
@@ -71,6 +86,7 @@ class SecretsService(OriginApps):
             human_origin=settings.console_origin,
         )
         self.runtime = runtime
+        self.owner_services: OwnerApplicationServices | None = None
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http" or scope["path"] not in {"/ready", "/live"}:

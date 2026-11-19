@@ -119,9 +119,14 @@ async def test_production_startup_prepares_every_store_before_serving_and_cleans
         service = create_service(
             settings(database, tmp_path, smtp), awid_transport=registry.transport
         )
+        assert service.owner_services is None
         for _ in range(2):
             async with service.api_app.router.lifespan_context(service.api_app):
                 db = service.runtime.db()
+                owner_services = service.owner_services
+                assert owner_services is not None
+                assert owner_services.console.db is db
+                assert owner_services.verifier.audience == service.runtime.settings.console_origin
                 for table in (
                     "approvals",
                     "passkey_approvers",
@@ -152,6 +157,7 @@ async def test_production_startup_prepares_every_store_before_serving_and_cleans
                             if path != "/live":
                                 assert response.json()["checks"]["kms"] == "ok"
             assert service.runtime.connected_db() is None
+            assert service.owner_services is None
             async with httpx.AsyncClient(transport=httpx.ASGITransport(service)) as client:
                 assert (await client.get(CONSOLE + "/enrolment")).status_code == 404
 

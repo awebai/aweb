@@ -125,13 +125,21 @@ class OwnerActVerifier:
         self._team_key_for = team_key_for
         self._clock = clock
 
+    async def current_team_key(self, team_id: str) -> str:
+        """Read the current controller key through this verifier's authority.
+
+        Resolve outside effect transactions, using the configured registry and
+        its freshness bound, just as signature preparation does.
+        """
+        return await self._team_key_for(team_id)
+
     async def prepare(self, signing: bytes, signature: str, *, team_id: str) -> PreparedOwnerAct:
         """Read the team's current key and check the act up to its signature.
 
         Call this outside any transaction: it may read the registry over the
         network. The result is not authority; pass it to ``consume_in``.
         """
-        team_key = await self._team_key_for(team_id)
+        team_key = await self.current_team_key(team_id)
         now = self._clock()
         checked = _check_owner_act(
             signing,

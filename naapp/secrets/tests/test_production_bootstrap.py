@@ -201,41 +201,20 @@ class EnrolledOwner:
     csrf_token: str
 
 
-def _mounted_owner_endpoint(service, path):
-    """Find an existing production endpoint through FastAPI's lazy includes."""
-    from fastapi.routing import APIRoute, _IncludedRouter
-
-    def original_routes(routes):
-        for route in routes:
-            if isinstance(route, _IncludedRouter):
-                yield from original_routes(route.original_router.routes)
-            elif isinstance(route, APIRoute):
-                yield route
-
-    [route] = [
-        route
-        for route in original_routes(service.console_app.routes)
-        if route.path == path and "POST" in route.methods
-    ]
-    return route.endpoint
+def _production_owner_services(service):
+    if service.owner_services is None:
+        raise RuntimeError("the production owner services are not running")
+    return service.owner_services
 
 
 def mounted_owner_console(service):
-    """The original console retained by its real 1Password ingress adapter."""
-    import inspect
-
-    endpoint = _mounted_owner_endpoint(
-        service, "/installations/{installation_id}/onepassword/references"
-    )
-    return inspect.getclosurevars(endpoint).nonlocals["services"].console
+    """Return the console composed for this running application."""
+    return _production_owner_services(service).console
 
 
 def mounted_owner_verifier(service):
-    """The verifier used by actual shared owner-act HTTP delivery."""
-    import inspect
-
-    endpoint = _mounted_owner_endpoint(service, "/.well-known/aweb-owner-act")
-    return inspect.getclosurevars(endpoint).nonlocals["verifier"]
+    """Return the verifier used by this application's owner-act delivery."""
+    return _production_owner_services(service).verifier
 
 
 async def enrolled_owner(root):
@@ -256,7 +235,7 @@ async def enrolled_owner(root):
     if fixture is None:
         admitted = await console.installation(installed["installation_id"], team_id=member.team_id)
         verifier = mounted_owner_verifier(service)
-        owner = TeamOwner(member.team_key, verifier, member.team_id, verifier._team_key_for)
+        owner = TeamOwner(member.team_key, verifier, member.team_id, verifier.current_team_key)
         fixture = SimpleNamespace(
             db=console.db,
             console=console,
