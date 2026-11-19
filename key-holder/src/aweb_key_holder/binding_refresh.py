@@ -29,27 +29,31 @@ class RefreshFailure(StrEnum):
     REQUEST_INVALID = "binding_refresh_request_invalid"
     ENROLLMENT_CHANGED = "binding_refresh_enrollment_changed"
     PERSON_REQUIRED = "binding_refresh_person_required"
+    IDENTITY_KEY_CHANGED = "binding_refresh_identity_key_changed"
     AUTHORITY_UNAVAILABLE = "identity_unavailable"
 
 
 REFRESH_ADVICE = {
     RefreshFailure.REQUEST_INVALID: "Use the current live binding commitment saved by the person's approval client.",
     RefreshFailure.ENROLLMENT_CHANGED: "Refresh only this person's active enrollment with the same identity key. Replacing a lost enrolled key is not implemented; ask the operator to issue a new ID and revoke the old one.",
+    RefreshFailure.IDENTITY_KEY_CHANGED: "The person's identity key changed. Binding refresh cannot replace it; ask the operator for enrolment or recovery. In this release the operator must revoke the old ID, issue a new ID and enrol again.",
     RefreshFailure.PERSON_REQUIRED: "Run binding refresh with this person's own current identity key.",
     RefreshFailure.AUTHORITY_UNAVAILABLE: "Check the person's registry status and this holder's current namespace authority, then retry refresh.",
 }
 
 
 def check_active_enrollment(row: dict, *, caller: Caller, trust: Trust) -> None:
+    """README.md: refresh preserves the enrolled person and identity key."""
+    if caller.identity != trust.person or caller.key != trust.identity_key:
+        raise Refused(RefreshFailure.PERSON_REQUIRED)
     if (
         row["person"] != trust.person
-        or caller.identity != trust.person
-        or row["identity_key"] != trust.identity_key
-        or caller.key != trust.identity_key
         or not row["active"]
         or row["retired_at"] is not None
     ):
         raise Refused(RefreshFailure.ENROLLMENT_CHANGED)
+    if row["identity_key"] != trust.identity_key:
+        raise Refused(RefreshFailure.IDENTITY_KEY_CHANGED)
 
 
 @dataclass(frozen=True, kw_only=True)

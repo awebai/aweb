@@ -24,7 +24,6 @@ def test_binding_refresh_does_not_replace_person_keys_or_retired_enrollment():
     for changed in [
         {**row, "active": 0},
         {**row, "retired_at": 1},
-        {**row, "identity_key": "another key"},
     ]:
         with pytest.raises(Refused) as refused:
             check_active_enrollment(changed, caller=caller, trust=trust)

@@ -176,6 +176,10 @@ of a physical key or completion of the separate Chromium/service journey.
 
 ### Refreshing a current issuer binding
 
+The transport profile is provisional and unfrozen in this release. Its canonical
+SHA256 is `7431cf776be61e7691c390af2ec04c18dce3fe0d4453bec7445ac315f421d64e`;
+a separate head may freeze it after use across a real issuer change.
+
 An active person uses their own current identity key to request
 `POST /v1/enrollments/{person}/refresh-binding` with
 `{"previous_binding_commitment":"sha256:..."}`. The existing covering identity
@@ -189,5 +193,8 @@ approval service and keeps its successful live binding apart from saved evidence
 The approval service atomically checks the previous live commitment, retains old
 binding versions, and records the authenticated person key and both bindings and
 issuers. Its operator reads that record with `awsign audit-binding-refreshes`.
-Refusals include the next step; changing the person's identity key or credential
-set requires the documented enrollment/recovery procedure instead.
+Refusals include the next step. A currently valid person whose identity key
+changed receives `binding_refresh_identity_key_changed` with enrolment or recovery
+advice; another caller receives `binding_refresh_person_required`. Refresh cannot
+replace an identity key or credential set. In this release the operator must
+revoke the old ID, issue a new ID and enrol again.

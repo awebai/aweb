@@ -59,6 +59,7 @@ def create_app(holder):
             status = 503
         elif code in {
             RefreshFailure.ENROLLMENT_CHANGED,
+            RefreshFailure.IDENTITY_KEY_CHANGED,
             "state_changed",
             "enrollment_changed",
             "person_already_exists",
