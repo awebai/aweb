@@ -113,16 +113,24 @@ class WorkspaceHeartbeatResponse(BaseModel):
     workspace_id: str
 
 
-def _require_workspace_owner(existing, identity: TeamIdentity, workspace_id: str, *, operation: str) -> None:
+def _require_workspace_owner(
+    existing, identity: TeamIdentity, workspace_id: str, *, operation: str
+) -> None:
     """Refuse a team-certificate caller acting on a workspace another agent owns."""
     if str(existing["agent_id"]) == identity.agent_id:
         return
     logger.warning(
         "Workspace %s refused: workspace belongs to another agent",
         operation,
-        extra={"workspace_id": workspace_id, "team_id": identity.team_id, "caller_agent_id": identity.agent_id},
+        extra={
+            "workspace_id": workspace_id,
+            "team_id": identity.team_id,
+            "caller_agent_id": identity.agent_id,
+        },
     )
-    raise HTTPException(status_code=403, detail=f"Workspace {workspace_id} belongs to another agent.")
+    raise HTTPException(
+        status_code=403, detail=f"Workspace {workspace_id} belongs to another agent."
+    )
 
 
 @router.post("/heartbeat", response_model=WorkspaceHeartbeatResponse)
@@ -182,8 +190,15 @@ async def heartbeat(
     if identity.grant is not None:
         if existing.get("agent_id") is not None and str(existing["agent_id"]) != identity.agent_id:
             raise HTTPException(status_code=403, detail="grant workspace mismatch")
-        if payload.role is not None or payload.hostname is not None or payload.workspace_path is not None or payload.human_name:
-            raise HTTPException(status_code=403, detail="grant workspace metadata is not shared presence")
+        if (
+            payload.role is not None
+            or payload.hostname is not None
+            or payload.workspace_path is not None
+            or payload.human_name
+        ):
+            raise HTTPException(
+                status_code=403, detail="grant workspace metadata is not shared presence"
+            )
         await cleanup_expired_grant_liveness(aweb_db)
         await aweb_db.fetch_one(
             """
@@ -366,8 +381,15 @@ async def update_workspace(
     if identity.grant is not None:
         if existing.get("agent_id") is not None and str(existing["agent_id"]) != identity.agent_id:
             raise HTTPException(status_code=403, detail="grant workspace mismatch")
-        if payload.role is not None or payload.hostname is not None or payload.workspace_path is not None or payload.human_name is not None:
-            raise HTTPException(status_code=403, detail="grant workspace metadata is not shared presence")
+        if (
+            payload.role is not None
+            or payload.hostname is not None
+            or payload.workspace_path is not None
+            or payload.human_name is not None
+        ):
+            raise HTTPException(
+                status_code=403, detail="grant workspace metadata is not shared presence"
+            )
     else:
         if payload.role is not None:
             set_clauses.append(f"role = ${idx}")
@@ -401,7 +423,7 @@ async def update_workspace(
         await aweb_db.execute(
             f"""
             UPDATE {{{{tables.workspaces}}}}
-            SET {', '.join(set_clauses)}
+            SET {", ".join(set_clauses)}
             WHERE workspace_id = $1
             """,
             *params,
@@ -1191,7 +1213,9 @@ async def list_team_workspaces(
             try:
                 live_workspace_ids.append(UUID(workspace_id))
             except ValueError:
-                logger.warning("Ignoring invalid workspace ID in team presence index: %s", workspace_id)
+                logger.warning(
+                    "Ignoring invalid workspace ID in team presence index: %s", workspace_id
+                )
 
     params: list = [team_id]
     param_idx = 2

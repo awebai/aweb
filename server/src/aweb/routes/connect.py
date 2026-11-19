@@ -55,6 +55,7 @@ class ConnectResponse(BaseModel):
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+
 class AliasConflictError(ValueError):
     """Raised when a connect would give an alias or a did_key two owners.
 
@@ -191,7 +192,9 @@ async def _ensure_agent(
                 accepted_team_did_key,
             )
     except (QueryError, asyncpg.exceptions.UniqueViolationError) as exc:
-        if isinstance(exc, QueryError) and not isinstance(exc.__cause__, asyncpg.exceptions.UniqueViolationError):
+        if isinstance(exc, QueryError) and not isinstance(
+            exc.__cause__, asyncpg.exceptions.UniqueViolationError
+        ):
             raise
         existing_agent = await db.fetch_one(
             """
@@ -337,7 +340,9 @@ async def _ensure_workspace(
         )
         return str(row["workspace_id"])
     except (QueryError, asyncpg.exceptions.UniqueViolationError) as exc:
-        if isinstance(exc, QueryError) and not isinstance(exc.__cause__, asyncpg.exceptions.UniqueViolationError):
+        if isinstance(exc, QueryError) and not isinstance(
+            exc.__cause__, asyncpg.exceptions.UniqueViolationError
+        ):
             raise
         existing = await _get_existing_workspace()
         if existing and str(existing["agent_id"]) == agent_id:
@@ -402,7 +407,9 @@ async def connect_agent(
     team_id = cert_info["team_id"]
     alias = cert_info["alias"]
     did_key = cert_info["did_key"]
-    identity_scope = normalize_identity_scope(cert_info.get("identity_scope") or cert_info.get("lifetime"))
+    identity_scope = normalize_identity_scope(
+        cert_info.get("identity_scope") or cert_info.get("lifetime")
+    )
     claimed_did_aw = cert_info.get("member_did_aw") or ""
     claimed_address = cert_info.get("member_address") or ""
     has_claims = bool(claimed_did_aw or claimed_address)
@@ -421,11 +428,14 @@ async def connect_agent(
 
     if identity_kind is not None and (
         not isinstance(identity_kind, IdentityKindObservation)
-        or identity_kind.did_key != did_key or identity_kind.did_aw != did_aw
+        or identity_kind.did_key != did_key
+        or identity_kind.did_aw != did_aw
     ):
         raise ValueError("identity_kind_mismatch")
     human_verified_key = did_key if identity_kind is not None and identity_kind.is_human else None
-    agent_type = "human" if human_verified_key else ("agent" if agent_type == "human" else agent_type)
+    agent_type = (
+        "human" if human_verified_key else ("agent" if agent_type == "human" else agent_type)
+    )
 
     async with db.transaction() as tx:
         await _ensure_team(tx, team_id, team_did_key)
@@ -448,7 +458,10 @@ async def connect_agent(
 
         if identity_binding is not None:
             await refresh_projection_binding(
-                tx, agent_id=agent_id, did_key=did_key, binding=identity_binding,
+                tx,
+                agent_id=agent_id,
+                did_key=did_key,
+                binding=identity_binding,
             )
 
         workspace_id = await _ensure_workspace(
@@ -509,7 +522,9 @@ async def connect_endpoint(
             agent_type=payload.agent_type,
         )
     except AliasConflictError as exc:
-        raise HTTPException(status_code=409, detail={"code": exc.code, "message": str(exc)}) from exc
+        raise HTTPException(
+            status_code=409, detail={"code": exc.code, "message": str(exc)}
+        ) from exc
     except ValueError as exc:
         if str(exc) in ("identity_binding_mismatch", "identity_kind_mismatch"):
             raise HTTPException(status_code=403, detail=str(exc)) from exc
@@ -529,9 +544,7 @@ class TeamInfoResponse(BaseModel):
 
 
 @router.get("/team", response_model=TeamInfoResponse)
-async def get_team_info(
-    request: Request, db=Depends(get_db)
-) -> TeamInfoResponse:
+async def get_team_info(request: Request, db=Depends(get_db)) -> TeamInfoResponse:
     """Get team info from the authenticated certificate."""
     from aweb.team_auth_deps import get_team_identity
 
