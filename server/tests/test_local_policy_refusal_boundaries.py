@@ -46,7 +46,7 @@ async def admitted_local_recipient(server, *, team="eng:acme.com"):
     assert connected.status_code == 200, connected.text
     return SimpleNamespace(
         sk=sk, did=did, id=connected.json()["agent_id"], team=team,
-        alias="local-bob", certificate=certificate,
+        alias="local-bob", certificate=certificate, certificate_id=fields["certificate_id"],
     )
 
 
@@ -78,7 +78,7 @@ async def test_http_local_agent_id_refusal_keeps_published_404(mail_server):
     refused = await env.client.post(
         "/v1/messages", content=body,
         headers={**_signed_identity_headers(env.pilot_key, env.pilot_did, env.pilot_stable, body),
-                 "X-Team-ID": "ops:acme.com", "Content-Type": "application/json"},
+                 "X-Team-ID": bob.team, "Content-Type": "application/json"},
     )
     assert refused.status_code == 404, refused.text
     assert refused.json()["reason"] == "local_recipient_route_missing"

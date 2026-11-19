@@ -3056,7 +3056,9 @@ async def test_cross_team_same_registry_chat_creates_bound_contact_from_resolved
                     "Content-Type": "application/json",
                 },
             )
-        assert reads.count(("GET", "/v1/namespaces/otherco.com/addresses/bob")) == 0, reads
+        # The automatic contact needs one independently verified controller
+        # binding; the sender's signature alone cannot grant contact trust.
+        assert reads.count(("GET", "/v1/namespaces/otherco.com/addresses/bob")) == 1, reads
         assert response.status_code == 200, response.text
         contact = dict(
             await env.db.fetch_one(

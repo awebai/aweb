@@ -120,6 +120,10 @@ async def test_named_exact_retry_retains_local_party_after_current_key_gains_glo
     row = await env.db.fetch_one(
         "SELECT * FROM {{tables.chat_messages}} WHERE message_id=$1", UUID(message_id)
     )
+    await env.registry.revoke_team_certificate(
+        "acme.com", "ops", team_controller_signing_key=env.fixture.team_sk,
+        certificate_id=bob.certificate_id,
+    )
     global_bob = await admit_messaging_actor(
         env.fixture, alias=bob.alias, team_id=bob.team, signing_key=bob.sk,
         address="acme.com/local-bob",
