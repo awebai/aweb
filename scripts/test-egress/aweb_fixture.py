@@ -78,18 +78,28 @@ def apply_command(zone: DnsServer, line: str) -> dict:
         return {"error": "command needs an integer id"}
     reply = {"id": command["id"]}
     request = command.get("zone")
-    if set(command) != {"id", "zone"} or not isinstance(request, dict) or set(request) != {"domain", "controller"}:
+    if (
+        set(command) != {"id", "zone"}
+        or not isinstance(request, dict)
+        or set(request) != {"domain", "controller"}
+    ):
         reply["error"] = "the only command is zone with exactly domain and controller"
         return reply
     domain, controller = request["domain"], request["controller"]
     try:
-        canonical = canonical_protocol_domain(domain) if isinstance(domain, str) else None
+        canonical = (
+            canonical_protocol_domain(domain) if isinstance(domain, str) else None
+        )
     except FederationAuthorityError:
         canonical = None
     if canonical != domain:
         reply["error"] = "zone domain is not a canonical DNS name"
         return reply
-    if not isinstance(controller, str) or not controller.startswith("did:key:") or not validate_did(controller):
+    if (
+        not isinstance(controller, str)
+        or not controller.startswith("did:key:")
+        or not validate_did(controller)
+    ):
         reply["error"] = "zone controller is not an Ed25519 did:key"
         return reply
     name = (awid_txt_name(domain), "TXT")
