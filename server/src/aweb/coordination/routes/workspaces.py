@@ -27,7 +27,7 @@ from aweb.team_auth_deps import (
     team_identity_with_grant_scope,
 )
 
-from ...config import get_settings
+from ...config import get_presence_ttl_seconds
 from ...db import DatabaseInfra, get_db_infra
 from ...input_validation import (
     is_valid_alias,
@@ -248,7 +248,6 @@ async def heartbeat(
     # and Redis presence semantics. Grant workspace heartbeat intentionally does
     # not write these shared coordinates; it records grant-keyed ephemeral
     # liveness above, matching /v1/agents/heartbeat.
-    settings = get_settings()
     await aweb_db.execute(
         """
         UPDATE {{tables.workspaces}}
@@ -290,7 +289,7 @@ async def heartbeat(
             model=None,
             canonical_origin=repo_row["canonical_origin"] if repo_row else None,
             role=payload.role,
-            ttl_seconds=settings.presence_ttl_seconds,
+            ttl_seconds=get_presence_ttl_seconds(),
         )
     except Exception as e:
         logger.warning(
