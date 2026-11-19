@@ -205,6 +205,46 @@ async def _verify_identity_grant_row(
     )
     if row is None or row["grant_did_key"] != did_key:
         raise HTTPException(status_code=403, detail=_GENERIC_DETAIL)
+    issuing_certificate_id = await _require_request_grant_validity(request, row)
+
+    required = (
+        required_grant_scope(request.method, _app_relative_path(request))
+        if required_scope is _USE_PATH_SCOPE
+        else required_scope
+    )
+    scopes = tuple(
+        str(scope).strip() for scope in (row["scopes"] or []) if str(scope).strip()
+    )
+    if required != GRANT_SCOPE_ANY and required is not None and required not in scopes:
+        raise HTTPException(status_code=403, detail=_OUT_OF_SCOPE_DETAIL)
+
+    binding = await verify_identity_binding(
+        request,
+        did_key=row["subject_did_key"],
+        did_aw=row.get("did_aw") or "",
+        address=row.get("address") or "",
+    )
+    await authenticate_id_chain(request, binding)
+    await refresh_projection_binding(
+        aweb_db,
+        agent_id=row["agent_id"],
+        did_key=row["subject_did_key"],
+        binding=binding,
+    )
+    row = {**dict(row), "did_aw": binding.did_aw, "address": binding.address}
+    grant = GrantContext(
+        grant_id=grant_id,
+        session_did_key=did_key,
+        issuing_certificate_id=issuing_certificate_id or None,
+        scopes=scopes,
+        expires_at=row["expires_at"],
+        never_expires=never_expires(row.get("issued_at"), row["expires_at"]),
+    )
+    return dict(row), grant
+
+
+async def _require_request_grant_validity(request: Request, row) -> str:
+    """Check the authenticated grant's stored subject and issuer eligibility."""
     lifetime_state = grant_lifetime_state(
         issued_at=row.get("issued_at"),
         expires_at=row["expires_at"],
@@ -254,40 +294,7 @@ async def _verify_identity_grant_row(
                     + GRANT_ISSUER_RECOVERY_DETAIL,
                 )
 
-    required = (
-        required_grant_scope(request.method, _app_relative_path(request))
-        if required_scope is _USE_PATH_SCOPE
-        else required_scope
-    )
-    scopes = tuple(
-        str(scope).strip() for scope in (row["scopes"] or []) if str(scope).strip()
-    )
-    if required != GRANT_SCOPE_ANY and required is not None and required not in scopes:
-        raise HTTPException(status_code=403, detail=_OUT_OF_SCOPE_DETAIL)
-
-    binding = await verify_identity_binding(
-        request,
-        did_key=row["subject_did_key"],
-        did_aw=row.get("did_aw") or "",
-        address=row.get("address") or "",
-    )
-    await authenticate_id_chain(request, binding)
-    await refresh_projection_binding(
-        aweb_db,
-        agent_id=row["agent_id"],
-        did_key=row["subject_did_key"],
-        binding=binding,
-    )
-    row = {**dict(row), "did_aw": binding.did_aw, "address": binding.address}
-    grant = GrantContext(
-        grant_id=grant_id,
-        session_did_key=did_key,
-        issuing_certificate_id=issuing_certificate_id or None,
-        scopes=scopes,
-        expires_at=row["expires_at"],
-        never_expires=never_expires(row.get("issued_at"), row["expires_at"]),
-    )
-    return dict(row), grant
+    return issuing_certificate_id
 
 
 async def verify_identity_grant_auth(request: Request, db) -> MessagingAuth:
