@@ -13,7 +13,7 @@ from uuid import UUID
 
 from redis.asyncio import Redis
 
-from .claims import fetch_workspace_aliases, release_task_claims, upsert_claim
+from .claims import fetch_workspace_aliases, release_task_claims
 from .events import (
     ChatMessageEvent,
     Event,
@@ -282,9 +282,8 @@ async def _cascade_task_status_changed(
 ) -> None:
     """Announce the claim changes of a task status change.
 
-    When an aweb task moves to in_progress, create a task claim for the
-    acting workspace unless the status transaction already holds it, and
-    announce the claim. When it moves to any other status, announce the
+    When an aweb task moves to in_progress, announce the claim already acquired
+    by the task transaction. When it moves to any other status, announce the
     claims the status transaction released, which the context lists in
     ``released_claim_workspace_ids``; no claim is changed here.
     """
@@ -314,24 +313,7 @@ async def _cascade_task_status_changed(
 
     team_id = str(workspace["team_id"])
     alias = workspace["alias"]
-    if new_status == "in_progress":
-        if not claim_preacquired:
-            conflict = await upsert_claim(
-                db_infra,
-                team_id=team_id,
-                workspace_id=actor_workspace_id,
-                alias=alias,
-                human_name=workspace["human_name"] or "",
-                task_ref=task_ref,
-            )
-            if conflict:
-                logger.info(
-                    "Task %s already claimed by %s, skipping event",
-                    task_ref,
-                    conflict["alias"],
-                )
-                return
-
+    if new_status == "in_progress" and claim_preacquired:
         await publish_event(
             redis,
             TaskClaimedEvent(

@@ -1365,7 +1365,7 @@ async def update_task(
     now = datetime.now(timezone.utc)
     resolved_assignee_alias: str | None | object = _UNSET
     resolved_parent_task_id: UUID | None | object = _UNSET
-    claim_preacquired = False
+    claim_workspace_id = None
     released_claim_workspace_ids: list[str] = []
 
     if parent_task_id is not _UNSET:
@@ -1494,10 +1494,10 @@ async def update_task(
                 task_ref = format_task_ref(
                     team_slug=slug, task_ref_suffix=current["task_ref_suffix"]
                 )
-                claim_preacquired = await acquire_task_claim_on(
+                claim_workspace_id = await acquire_task_claim_on(
                     tx,
                     team_id=team_id,
-                    actor_alias=actor_alias,
+                    actor_agent_id=actor.agent_id,
                     task_ref=task_ref,
                     now=now,
                 )
@@ -1628,7 +1628,10 @@ async def update_task(
                 "actor_agent_id": actor.agent_id,
                 "actor_alias": actor.alias,
                 "actor_did_aw": actor.did_aw,
-                "claim_preacquired": claim_preacquired,
+                "claim_preacquired": claim_workspace_id is not None,
+                "actor_workspace_id": str(claim_workspace_id)
+                if claim_workspace_id is not None
+                else "",
                 "released_claim_workspace_ids": released_claim_workspace_ids,
             },
         )

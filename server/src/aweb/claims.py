@@ -187,34 +187,40 @@ async def _is_open_task_ref(
 
 
 async def acquire_task_claim_on(
-    tx, *, team_id: str, actor_alias: str, task_ref: str, now: datetime
-) -> bool:
-    """Acquire a claim while the caller holds its task row lock."""
+    tx, *, team_id: str, actor_agent_id: str, task_ref: str, now: datetime
+) -> UUID | None:
+    """Take a task claim under its row lock (docs/aweb-sot.md:1151–1162).
+
+    Conflicts apply even when the authenticated actor has no workspace. The
+    actor's actual workspace, rather than an alias match, owns a taken claim.
+    """
     apex_task_ref = await resolve_task_claim_apex_on(tx, team_id, task_ref)
     workspace = await tx.fetch_one(
         """
         SELECT workspace_id, alias, human_name
         FROM {{tables.workspaces}}
-        WHERE alias = $1 AND team_id = $2 AND deleted_at IS NULL
+        WHERE agent_id = $1 AND team_id = $2 AND deleted_at IS NULL
+        ORDER BY last_seen_at DESC NULLS LAST, workspace_id
+        LIMIT 1 FOR UPDATE
         """,
-        actor_alias,
+        UUID(actor_agent_id),
         team_id,
     )
-    if workspace is not None:
-        conflicting_claim = await tx.fetch_one(
-            """
-            SELECT workspace_id, alias
-            FROM {{tables.task_claims}}
-            WHERE team_id = $1 AND task_ref = $2 AND workspace_id != $3
-            LIMIT 1
-            """,
-            team_id,
-            task_ref,
-            workspace["workspace_id"],
-        )
-        if conflicting_claim:
-            raise ConflictError("Task is already in progress by another agent")
+    conflicting_claim = await tx.fetch_one(
+        """
+        SELECT workspace_id, alias
+        FROM {{tables.task_claims}}
+        WHERE team_id = $1 AND task_ref = $2 AND ($3::uuid IS NULL OR workspace_id != $3)
+        LIMIT 1
+        """,
+        team_id,
+        task_ref,
+        workspace["workspace_id"] if workspace is not None else None,
+    )
+    if conflicting_claim:
+        raise ConflictError("Task is already in progress by another agent")
 
+    if workspace is not None:
         await tx.execute(
             """
             INSERT INTO {{tables.task_claims}} (
@@ -251,82 +257,7 @@ async def acquire_task_claim_on(
             team_id,
             workspace["workspace_id"],
         )
-        return True
-    return False
-
-
-async def upsert_claim(
-    db_infra: DatabaseInfra,
-    *,
-    team_id: str,
-    workspace_id: str,
-    alias: str,
-    human_name: str,
-    task_ref: str,
-) -> Optional[dict[str, Any]]:
-    """Attempt to claim a task.
-
-    Returns ``None`` on success, or the conflicting
-    claim dict (with alias, human_name, workspace_id) if already held by
-    another workspace."""
-    aweb_db = db_infra.get_manager("aweb")
-
-    apex_task_ref = await resolve_task_claim_apex(db_infra, team_id, task_ref)
-
-    async with aweb_db.transaction() as tx:
-        # Check if another workspace already holds this claim.
-        existing = await tx.fetch_one(
-            """
-            SELECT workspace_id, alias, human_name
-            FROM {{tables.task_claims}}
-            WHERE team_id = $1 AND task_ref = $2 AND workspace_id != $3
-            """,
-            team_id,
-            task_ref,
-            UUID(workspace_id),
-        )
-        if existing:
-            return {
-                "workspace_id": str(existing["workspace_id"]),
-                "alias": existing["alias"],
-                "human_name": existing["human_name"],
-            }
-
-        await tx.execute(
-            """
-            INSERT INTO {{tables.task_claims}} (
-                team_id, workspace_id, alias, human_name, task_ref,
-                apex_task_ref, claimed_at
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
-            ON CONFLICT (team_id, task_ref, workspace_id)
-            DO UPDATE SET
-                alias = EXCLUDED.alias,
-                human_name = EXCLUDED.human_name,
-                apex_task_ref = EXCLUDED.apex_task_ref,
-                claimed_at = EXCLUDED.claimed_at
-            """,
-            team_id,
-            UUID(workspace_id),
-            alias,
-            human_name,
-            task_ref,
-            apex_task_ref,
-            _now(),
-        )
-        await tx.execute(
-            """
-            UPDATE {{tables.workspaces}}
-            SET focus_task_ref = $1,
-                focus_updated_at = NOW(),
-                updated_at = NOW()
-            WHERE team_id = $2 AND workspace_id = $3
-            """,
-            claim_focus_task_ref(task_ref, apex_task_ref),
-            team_id,
-            UUID(workspace_id),
-        )
-
+        return workspace["workspace_id"]
     return None
 
 
