@@ -586,8 +586,9 @@ func TestHostedInviteIssuePresentsSelectedAgentChain(t *testing.T) {
 	seed, _ := hex.DecodeString(v.Keys["root_agent"].SeedHex)
 	key := ed25519.NewKeyFromSeed(seed)
 	const team = "default:hosted.aweb.ai"
-	for _, wrongIssuer := range []bool{false, true} {
-		t.Run(fmt.Sprintf("wrong-issuer=%t", wrongIssuer), func(t *testing.T) {
+	for _, scenario := range []string{"success", "wrong issuer", "issuer store failure", "link store failure"} {
+		t.Run(scenario, func(t *testing.T) {
+			wrongIssuer := scenario == "wrong issuer"
 			t.Setenv("HOME", t.TempDir())
 			t.Setenv("APP_ENV", "development")
 			principal, decoy := t.TempDir(), t.TempDir()
@@ -637,7 +638,51 @@ func TestHostedInviteIssuePresentsSelectedAgentChain(t *testing.T) {
 			if err := awconfig.SaveInstalledIDChain(filepath.Join(principal, ".aw"), chain); err != nil {
 				t.Fatal(err)
 			}
+			if scenario == "issuer store failure" {
+				if err := os.WriteFile(awconfig.IdentityInvitationsDir(filepath.Join(principal, ".aw")), []byte("blocked directory"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var warningPath string
+			if scenario == "link store failure" {
+				directory, err := awconfig.DefaultTeamInvitesDir()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.MkdirAll(filepath.Join(directory, hostedTeamInviteRecordID("aw_inv_signed_fixture")+".json"), 0700); err != nil {
+					t.Fatal(err)
+				}
+				warning, err := os.CreateTemp(t.TempDir(), "warnings")
+				if err != nil {
+					t.Fatal(err)
+				}
+				warningPath = warning.Name()
+				previous := os.Stderr
+				os.Stderr = warning
+				t.Cleanup(func() {
+					os.Stderr = previous
+					if err := warning.Close(); err != nil {
+						t.Error(err)
+					}
+				})
+			}
 			created, err := createHostedTeamInvite(decoy, filepath.Join(principal, ".aw"), team, true)
+			if scenario == "issuer store failure" {
+				if err == nil || calls != 0 || created != nil {
+					t.Fatalf("local preparation failed after Cloud mint: calls=%d created=%v err=%v", calls, created != nil, err)
+				}
+				return
+			}
+			if scenario == "link store failure" {
+				if err != nil || created == nil || created.Token != "aw_inv_signed_fixture" || calls != 1 {
+					t.Fatalf("created invite was discarded: calls=%d created=%v err=%v", calls, created != nil, err)
+				}
+				warning, err := os.ReadFile(warningPath)
+				if err != nil || !bytes.Contains(warning, []byte("local creator link could not be saved")) || bytes.Contains(warning, []byte("aw_inv_signed_fixture")) {
+					t.Fatalf("warning=%q err=%v", warning, err)
+				}
+				return
+			}
 			if (err != nil) != wrongIssuer || calls != 1 || (!wrongIssuer && created.Token == "") {
 				t.Fatalf("err=%v calls=%d", err, calls)
 			}
