@@ -34,7 +34,9 @@ def member_for(case: dict) -> Member:
     return member
 
 
-async def present(registry, case, *, public_origin=None, path=None, body=None, payload=None, signature=None):
+async def present(
+    registry, case, *, public_origin=None, path=None, body=None, payload=None, signature=None
+):
     member = member_for(case)
     await registry.add_team(member.team_id, member.team_did_key)
     await registry.add_certificate(member.certificate())

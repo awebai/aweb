@@ -38,7 +38,9 @@ async def requester_app(handoff_db, registry):
     await registry.add_team(member.team_id, member.team_did_key)
     await registry.add_certificate(member.certificate())
     cache = AWIDTeamCache(
-        registry_url=REGISTRY_URL, ttl_seconds=60, service_token=SERVICE_TOKEN,
+        registry_url=REGISTRY_URL,
+        ttl_seconds=60,
+        service_token=SERVICE_TOKEN,
         transport=registry.transport,
     )
     seen = {"parent": HOLDER, "starts": []}
@@ -61,7 +63,9 @@ async def requester_app(handoff_db, registry):
         handoff_start_router(
             store=HandoffStore(handoff_db),
             principal=principal,
-            limiter=LoginLimiter(handoff_db, client_identity=ClientIdentity(), limit=50, window=timedelta(minutes=1)),
+            limiter=LoginLimiter(
+                handoff_db, client_identity=ClientIdentity(), limit=50, window=timedelta(minutes=1)
+            ),
             session_start=session_start,
             requester_parent=parent,
         )
@@ -71,7 +75,10 @@ async def requester_app(handoff_db, registry):
 
 async def post(app, member, body):
     raw = json.dumps(body, separators=(",", ":")).encode()
-    headers = {"Content-Type": "application/json", **member.headers(aud=API, method="POST", path="/handoffs", body=raw)}
+    headers = {
+        "Content-Type": "application/json",
+        **member.headers(aud=API, method="POST", path="/handoffs", body=raw),
+    }
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=API) as client:
         return await client.post("/handoffs", content=raw, headers=headers)
 
@@ -86,8 +93,11 @@ async def test_the_holders_direct_child_starts_a_session_for_it(requester_app):
     app, member, seen = requester_app
     response = await post(app, member, session_body_for(HOLDER))
     assert response.status_code == 201, response.text
-    (start, signer), = seen["starts"]
-    assert start.scope.principal == HOLDER and signer.did_aw == member.extra_cert_fields["member_did_aw"]
+    ((start, signer),) = seen["starts"]
+    assert (
+        start.scope.principal == HOLDER
+        and signer.did_aw == member.extra_cert_fields["member_did_aw"]
+    )
     # The requester's original evidence deadline travels to the start's effect.
     assert seen["requester"].parent == HOLDER
 

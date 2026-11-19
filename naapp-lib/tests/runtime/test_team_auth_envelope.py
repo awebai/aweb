@@ -23,8 +23,10 @@ TEAM_ID = "backend:example.com"
 @pytest.fixture
 async def member(registry) -> Member:
     member = Member(team_id=TEAM_ID)
-    member.extra_cert_fields = {"member_did_aw": await registry.register_did(member.member_key),
-                                "member_address": "example.com/alice"}
+    member.extra_cert_fields = {
+        "member_did_aw": await registry.register_did(member.member_key),
+        "member_address": "example.com/alice",
+    }
     await registry.add_team(TEAM_ID, member.team_did_key, visibility="private")
     await registry.add_certificate(member.certificate())
     return member
@@ -34,7 +36,8 @@ async def test_signed_request_yields_the_certified_principal(registry, member):
     async with relying_app(registry, public_origin=ORIGIN) as (client, _):
         body = b'{"title":"x"}'
         response = await client.post(
-            "/v1/items?draft=1", content=body,
+            "/v1/items?draft=1",
+            content=body,
             headers=member.headers(aud=ORIGIN, method="POST", path="/v1/items?draft=1", body=body),
         )
     assert response.status_code == 200, response.text
@@ -51,27 +54,48 @@ async def test_signed_request_yields_the_certified_principal(registry, member):
     }
 
 
-@pytest.mark.parametrize("offset,accepted", [(299, True), (-299, True), (301, False), (-301, False)])
+@pytest.mark.parametrize(
+    "offset,accepted", [(299, True), (-299, True), (301, False), (-301, False)]
+)
 async def test_timestamp_window_is_five_minutes(registry, member, offset, accepted):
     signed_at = datetime(2026, 10, 19, 12, 0, 0, tzinfo=UTC)
-    async with relying_app(registry, public_origin=ORIGIN, now=lambda: signed_at + timedelta(seconds=offset)) as (client, _):
+    async with relying_app(
+        registry, public_origin=ORIGIN, now=lambda: signed_at + timedelta(seconds=offset)
+    ) as (client, _):
         response = await client.get(
-            "/v1/items", headers=member.headers(aud=ORIGIN, method="GET", path="/v1/items", timestamp=utc_timestamp(signed_at)),
+            "/v1/items",
+            headers=member.headers(
+                aud=ORIGIN, method="GET", path="/v1/items", timestamp=utc_timestamp(signed_at)
+            ),
         )
     assert response.status_code == (200 if accepted else 401), response.text
 
 
-@pytest.mark.parametrize("configured,offset,accepted", [
-    (600, 299, True), (600, 301, False), (600, -301, False), (60, 59, True), (60, 61, False),
-])
-async def test_configured_window_never_exceeds_five_minutes(registry, member, configured, offset, accepted):
+@pytest.mark.parametrize(
+    "configured,offset,accepted",
+    [
+        (600, 299, True),
+        (600, 301, False),
+        (600, -301, False),
+        (60, 59, True),
+        (60, 61, False),
+    ],
+)
+async def test_configured_window_never_exceeds_five_minutes(
+    registry, member, configured, offset, accepted
+):
     signed_at = datetime(2026, 10, 19, 12, 0, 0, tzinfo=UTC)
     async with relying_app(
-        registry, public_origin=ORIGIN, timestamp_skew_seconds=configured,
+        registry,
+        public_origin=ORIGIN,
+        timestamp_skew_seconds=configured,
         now=lambda: signed_at + timedelta(seconds=offset),
     ) as (client, _):
         response = await client.get(
-            "/v1/items", headers=member.headers(aud=ORIGIN, method="GET", path="/v1/items", timestamp=utc_timestamp(signed_at)),
+            "/v1/items",
+            headers=member.headers(
+                aud=ORIGIN, method="GET", path="/v1/items", timestamp=utc_timestamp(signed_at)
+            ),
         )
     assert response.status_code == (200 if accepted else 401), response.text
 
@@ -80,14 +104,21 @@ async def test_configured_window_never_exceeds_five_minutes(registry, member, co
 async def test_timestamp_without_zone_or_unparseable_is_refused(registry, member, timestamp):
     async with relying_app(registry, public_origin=ORIGIN) as (client, _):
         response = await client.get(
-            "/v1/items", headers=member.headers(aud=ORIGIN, method="GET", path="/v1/items", timestamp=timestamp),
+            "/v1/items",
+            headers=member.headers(aud=ORIGIN, method="GET", path="/v1/items", timestamp=timestamp),
         )
     assert response.status_code == 401
 
 
-@pytest.mark.parametrize("authorization", [
-    "Bearer abc", "DIDKey only-two", "DIDKey did:web:example.com sig", "DIDKey did:key:z6Mk sig extra",
-])
+@pytest.mark.parametrize(
+    "authorization",
+    [
+        "Bearer abc",
+        "DIDKey only-two",
+        "DIDKey did:web:example.com sig",
+        "DIDKey did:key:z6Mk sig extra",
+    ],
+)
 async def test_authorization_header_must_be_didkey(registry, member, authorization):
     headers = member.headers(aud=ORIGIN, method="GET", path="/v1/items")
     headers["Authorization"] = authorization
@@ -96,7 +127,10 @@ async def test_authorization_header_must_be_didkey(registry, member, authorizati
     assert response.status_code == 401
 
 
-@pytest.mark.parametrize("missing", ["Authorization", "X-AWEB-Timestamp", "X-AWEB-Signed-Payload", "X-AWID-Team-Certificate"])
+@pytest.mark.parametrize(
+    "missing",
+    ["Authorization", "X-AWEB-Timestamp", "X-AWEB-Signed-Payload", "X-AWID-Team-Certificate"],
+)
 async def test_every_envelope_header_is_required(registry, member, missing):
     headers = member.headers(aud=ORIGIN, method="GET", path="/v1/items")
     headers.pop(missing)
@@ -105,15 +139,27 @@ async def test_every_envelope_header_is_required(registry, member, missing):
     assert response.status_code == 401
 
 
-@pytest.mark.parametrize("change", [
-    {"method": "POST"}, {"path": "/v1/other"}, {"path": "/v1/items?draft=1"},
-    {"team_id": "other:example.com"}, {"body_sha256": "0" * 64}, {"v": 1}, {"v": None},
-    {"timestamp": "2026-01-01T00:00:00Z"}, {"aud": "https://other.example.com"},
-])
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"method": "POST"},
+        {"path": "/v1/other"},
+        {"path": "/v1/items?draft=1"},
+        {"team_id": "other:example.com"},
+        {"body_sha256": "0" * 64},
+        {"v": 1},
+        {"v": None},
+        {"timestamp": "2026-01-01T00:00:00Z"},
+        {"aud": "https://other.example.com"},
+    ],
+)
 async def test_signed_claims_bind_the_actual_request(registry, member, change):
     async with relying_app(registry, public_origin=ORIGIN) as (client, _):
         response = await client.get(
-            "/v1/items", headers=member.headers(aud=ORIGIN, method="GET", path="/v1/items", payload_changes=change),
+            "/v1/items",
+            headers=member.headers(
+                aud=ORIGIN, method="GET", path="/v1/items", payload_changes=change
+            ),
         )
     assert response.status_code == 401
 
@@ -121,7 +167,8 @@ async def test_signed_claims_bind_the_actual_request(registry, member, change):
 async def test_audience_compares_canonical_origins(registry, member):
     async with relying_app(registry, public_origin=ORIGIN + "/") as (client, _):
         response = await client.get(
-            "/v1/items", headers=member.headers(aud="HTTPS://APP.EXAMPLE.COM", method="GET", path="/v1/items"),
+            "/v1/items",
+            headers=member.headers(aud="HTTPS://APP.EXAMPLE.COM", method="GET", path="/v1/items"),
         )
     assert response.status_code == 200, response.text
 
@@ -136,15 +183,29 @@ async def test_signed_payload_must_be_unpadded_base64url_canonical_json(registry
     }[encoding]
     for size in range(64):
         # The informational operation field only sizes the payload so the encoding under test shows.
-        payload = {"v": 2, "aud": ORIGIN, "method": "GET", "path": "/v1/items?q=%3F%3E", "team_id": TEAM_ID,
-                   "timestamp": timestamp, "operation": "o" * size,
-                   "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}
-        raw = json.dumps(payload).encode() if encoding == "non_canonical_json" else canonical_json_bytes(payload)
+        payload = {
+            "v": 2,
+            "aud": ORIGIN,
+            "method": "GET",
+            "path": "/v1/items?q=%3F%3E",
+            "team_id": TEAM_ID,
+            "timestamp": timestamp,
+            "operation": "o" * size,
+            "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        }
+        raw = (
+            json.dumps(payload).encode()
+            if encoding == "non_canonical_json"
+            else canonical_json_bytes(payload)
+        )
         if shows_encoding(raw):
             break
     headers = envelope_headers(
-        did_key=member.did_key, signature=sign_message(bytes(member.member_key), raw),
-        timestamp=timestamp, signed_payload=raw, cert=member.certificate(),
+        did_key=member.did_key,
+        signature=sign_message(bytes(member.member_key), raw),
+        timestamp=timestamp,
+        signed_payload=raw,
+        cert=member.certificate(),
     )
     if encoding == "padded":
         headers["X-AWEB-Signed-Payload"] = base64.urlsafe_b64encode(raw).decode()
@@ -159,7 +220,9 @@ async def test_signed_payload_must_be_unpadded_base64url_canonical_json(registry
 
 async def test_signature_must_be_the_members(registry, member):
     headers = member.headers(aud=ORIGIN, method="GET", path="/v1/items")
-    other = Member(team_id=TEAM_ID).headers(aud=ORIGIN, method="GET", path="/v1/items", timestamp=headers["X-AWEB-Timestamp"])
+    other = Member(team_id=TEAM_ID).headers(
+        aud=ORIGIN, method="GET", path="/v1/items", timestamp=headers["X-AWEB-Timestamp"]
+    )
     headers["Authorization"] = f"DIDKey {member.did_key} {other['Authorization'].split()[2]}"
     async with relying_app(registry, public_origin=ORIGIN) as (client, _):
         response = await client.get("/v1/items", headers=headers)
@@ -167,9 +230,13 @@ async def test_signature_must_be_the_members(registry, member):
 
 
 async def test_certificate_must_name_the_signer(registry, member):
-    impostor = Member(team_id=TEAM_ID, team_key=member.team_key, certificate_id="cert-2", alias="bob")
+    impostor = Member(
+        team_id=TEAM_ID, team_key=member.team_key, certificate_id="cert-2", alias="bob"
+    )
     await registry.add_certificate(impostor.certificate())
-    headers = impostor.headers(aud=ORIGIN, method="GET", path="/v1/items", cert=member.certificate())
+    headers = impostor.headers(
+        aud=ORIGIN, method="GET", path="/v1/items", cert=member.certificate()
+    )
     async with relying_app(registry, public_origin=ORIGIN) as (client, _):
         assert (await client.get("/v1/items", headers=headers)).status_code == 401
         neighbour = impostor.headers(aud=ORIGIN, method="GET", path="/v1/items")
@@ -181,11 +248,16 @@ async def test_certificate_requires_its_identifying_fields(registry, member, fie
     cert = member.certificate()
     cert.pop(field)
     async with relying_app(registry, public_origin=ORIGIN) as (client, _):
-        response = await client.get("/v1/items", headers=member.headers(aud=ORIGIN, method="GET", path="/v1/items", cert=cert))
+        response = await client.get(
+            "/v1/items",
+            headers=member.headers(aud=ORIGIN, method="GET", path="/v1/items", cert=cert),
+        )
     assert response.status_code == 401
 
 
-@pytest.mark.parametrize("header", ["not base64!", base64.b64encode(b"[]").decode(), base64.b64encode(b"{").decode()])
+@pytest.mark.parametrize(
+    "header", ["not base64!", base64.b64encode(b"[]").decode(), base64.b64encode(b"{").decode()]
+)
 async def test_malformed_certificate_is_refused(registry, member, header):
     headers = member.headers(aud=ORIGIN, method="GET", path="/v1/items")
     headers["X-AWID-Team-Certificate"] = header
@@ -196,7 +268,9 @@ async def test_malformed_certificate_is_refused(registry, member, header):
 async def test_certificate_signature_must_be_the_current_team_key(registry, member):
     altered = member.certificate()
     altered["alias"] = "mallory"
-    forged = Member(team_id=TEAM_ID, member_key=member.member_key)  # signed by a key that is not the team's
+    forged = Member(
+        team_id=TEAM_ID, member_key=member.member_key
+    )  # signed by a key that is not the team's
     async with relying_app(registry, public_origin=ORIGIN) as (client, _):
         for cert in (altered, forged.certificate()):
             headers = member.headers(aud=ORIGIN, method="GET", path="/v1/items", cert=cert)
@@ -206,7 +280,9 @@ async def test_certificate_signature_must_be_the_current_team_key(registry, memb
 async def test_team_key_rotation_invalidates_old_certificates(registry, member):
     await registry.rotate_team_key(TEAM_ID, did_key(SigningKey.generate()))
     async with relying_app(registry, public_origin=ORIGIN) as (client, _):
-        response = await client.get("/v1/items", headers=member.headers(aud=ORIGIN, method="GET", path="/v1/items"))
+        response = await client.get(
+            "/v1/items", headers=member.headers(aud=ORIGIN, method="GET", path="/v1/items")
+        )
     assert response.status_code == 401
 
 
@@ -235,9 +311,13 @@ async def test_raw_percent_encoding_is_what_is_signed(registry, member):
         assert (await client.get("/v1/items/a%2Fb", headers=decoded)).status_code == 401
 
 
-@pytest.mark.parametrize("raw_path,query_string", [
-    ("/v1/caf\u00e9".encode(), b""), (b"/v1/items", "q=caf\u00e9".encode()),
-])
+@pytest.mark.parametrize(
+    "raw_path,query_string",
+    [
+        ("/v1/caf\u00e9".encode(), b""),
+        (b"/v1/items", "q=caf\u00e9".encode()),
+    ],
+)
 async def test_non_ascii_request_target_is_a_client_error(registry, member, raw_path, query_string):
     from awid_service.testing import REGISTRY_URL
     from fastapi import HTTPException
@@ -246,9 +326,15 @@ async def test_non_ascii_request_target_is_a_client_error(registry, member, raw_
     from aweb_naapp.runtime.team_auth import AWIDTeamCache, authenticate_request
 
     headers = member.headers(aud=ORIGIN, method="GET", path="/v1/items")
-    scope = {"type": "http", "method": "GET", "path": raw_path.decode(), "raw_path": raw_path,
-             "query_string": query_string, "root_path": "",
-             "headers": [(k.lower().encode(), v.encode()) for k, v in headers.items()]}
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": raw_path.decode(),
+        "raw_path": raw_path,
+        "query_string": query_string,
+        "root_path": "",
+        "headers": [(k.lower().encode(), v.encode()) for k, v in headers.items()],
+    }
 
     async def receive():
         return {"type": "http.request", "body": b""}
