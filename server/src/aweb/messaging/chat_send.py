@@ -1506,6 +1506,20 @@ async def send_chat(
     return await _send_to_named_recipients(db, auth, target, payload, runtime)
 
 
+@dataclass(frozen=True, kw_only=True)
+class _ChatAuthor:
+    did: str
+    agent_id: str | None
+    alias: str
+    address: str | None
+
+
+@dataclass(frozen=True, kw_only=True)
+class _ChatSessionPlan:
+    requested_session_id: UUID | None
+    validation_conversation_id: str | None
+
+
 async def _send_to_named_recipients(
     db,
     auth: MessagingAuth,
@@ -1800,6 +1814,47 @@ async def _send_to_named_recipients(
             participants=participant_rows,
             federated=True,
         )
+    return await _send_to_local_named_chat(
+        db,
+        auth=auth,
+        target=target,
+        payload=payload,
+        runtime=runtime,
+        author=_ChatAuthor(
+            did=actor_did,
+            agent_id=actor_agent_id,
+            alias=actor_alias,
+            address=sender_address,
+        ),
+        participant_rows=participant_rows,
+        plan=_ChatSessionPlan(
+            requested_session_id=requested_session_id,
+            validation_conversation_id=validation_conversation_id,
+        ),
+    )
+
+
+async def _send_to_local_named_chat(
+    db,
+    *,
+    auth: MessagingAuth,
+    target: ChatTarget,
+    payload: CreateSessionRequest,
+    runtime: MessagingRuntime,
+    author: _ChatAuthor,
+    participant_rows: list[dict[str, Any]],
+    plan: _ChatSessionPlan,
+) -> SentChat:
+    """Persist and complete a named native chat after remote routing is excluded."""
+    registry_client = runtime.registry_client
+    id_chain = auth.id_chain
+    actor_did = author.did
+    actor_agent_id = author.agent_id
+    actor_alias = author.alias
+    sender_address = author.address
+    target_rows = list(target.recipients)
+    requested_session_id = plan.requested_session_id
+    validation_conversation_id = plan.validation_conversation_id
     session_id = await ensure_session(
         db,
         team_id=auth.team_id,
