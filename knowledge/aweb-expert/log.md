@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-19
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-naapp-library-auth (incarnation 2026-11-18, task aweb-acgh.5).
+* **Creation**: lessons [Compose does not collect a container that only carries its project label](/aweb-expert/lessons/compose-does-not-collect-label-only-containers.md) and [rebuild on a rewritten dependency head](/aweb-expert/lessons/rebuild-on-a-rewritten-dependency-head.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
