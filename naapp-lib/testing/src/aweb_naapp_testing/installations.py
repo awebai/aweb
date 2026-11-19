@@ -79,6 +79,7 @@ async def app_origin(directory: Path) -> AsyncIterator[AppOrigin]:
     The egress guard refuses loopback, so the origin listens on this host's own
     address. The settings it sets are restored when it exits."""
     host = local_address()
+    directory.mkdir(parents=True, exist_ok=True)
     certificates = make_certificates(directory, [host], [host])
     origin = AppOrigin(url="", ca_file=certificates.ca_file)
     server = TlsServer(certificates=certificates, host=host, respond=origin._forward)
