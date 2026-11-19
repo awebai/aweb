@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
 from typing import Any, Awaitable, Callable, Literal
 
 from awid.signing import canonical_payload, verify_did_key_signature
@@ -124,8 +125,8 @@ async def encrypt_hosted_message(
     encryptor: HostedMessageEncryptor | None,
     message_type: MessageType,
     payload: dict[str, Any],
-    recipient: dict[str, Any] | None = None,
-    recipients: list[dict[str, Any]] | None = None,
+    recipient: Mapping[str, Any] | None = None,
+    recipients: Sequence[Mapping[str, Any]] | None = None,
 ) -> HostedMessageEncryptionResult | None:
     """Encrypt an MCP message payload when auth came through hosted custody."""
     if not getattr(auth, "trusted_proxy", False):

@@ -157,6 +157,6 @@ async def store_chat(
     # Departed participants are woken too: leaving does not end their pending state.
     if wake_dids is None:
         wake_dids = tuple(inserted["wake_dids"] or ())
-    record_did_wakes(wake_dids, "chat")
+    record_did_wakes((did for did in wake_dids if did), "chat")
 
     return dict(msg_row)

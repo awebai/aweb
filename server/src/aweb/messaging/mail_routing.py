@@ -3,7 +3,8 @@ from __future__ import annotations
 from aweb.human_kind import is_verified_human
 
 from dataclasses import dataclass, replace
-from typing import Iterable
+from typing import Iterable, Any
+from collections.abc import Mapping
 
 from aweb.messaging.address_auth import identity_recipient
 from aweb.messaging.conversations import (
@@ -29,7 +30,7 @@ class ParticipantRetiredError(ValidationError):
 
 
 async def _require_live_mail_participant(
-    db, participant: dict, conversation: dict, *, human_only: bool = False
+    db, participant: Mapping[str, Any], conversation: dict, *, human_only: bool = False
 ) -> None:
     did = participant["did"]
     rows = await db.get_manager("aweb").fetch_all(
@@ -244,8 +245,11 @@ async def explicit_mail_target_matches_participant(
 
     if to_agent_id is not None and str(to_agent_id).strip():
         selected = await get_agent_by_id(db, agent_id=str(to_agent_id).strip())
+        selected_projection: Mapping[str, Any] = selected or {}
         selected_did = str(
-            (selected or {}).get("did_aw") or (selected or {}).get("did_key") or ""
+            selected_projection.get("did_aw")
+            or selected_projection.get("did_key")
+            or ""
         )
         selected_identity_matches = selected_did == participant_did
         checks.append(selected_identity_matches)

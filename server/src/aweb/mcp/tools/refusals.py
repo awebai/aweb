@@ -59,7 +59,7 @@ _HOSTED_ENVELOPE_NEXT_ACTIONS = {
     "federation_envelope_invalid": SENDER_KEY_NOT_VERIFIABLE,
     "recipient_encryption_assertion_invalid_or_stale": RECIPIENT_ENCRYPTION_KEY_NOT_VERIFIABLE,
 }
-_IDENTITY_BINDING_NEXT_ACTIONS = {
+_IDENTITY_BINDING_NEXT_ACTIONS: dict[str, str] = {
     IdentityBindingCode.MISMATCH: RECIPIENT_NOT_AS_REGISTERED,
     IdentityBindingCode.UNAVAILABLE: REGISTRY_CANNOT_CONFIRM_RECIPIENT_KEY,
 }

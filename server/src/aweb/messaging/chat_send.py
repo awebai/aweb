@@ -777,6 +777,8 @@ async def _stored_exact_chat_send(
             _parse_signed_timestamp(str(payload.timestamp))
         lookup.refuse_conflicting_message_id()
     row = lookup.message
+    if row is None:
+        raise RuntimeError("An exact chat replay state must retain its stored message")
     if _payload_is_encrypted(payload):
         validate_encrypted_chat_payload(
             payload,
@@ -787,6 +789,10 @@ async def _stored_exact_chat_send(
         )
         _parse_signed_timestamp(str(payload.timestamp))
     else:
+        if payload.signature is None or payload.timestamp is None:
+            raise RuntimeError(
+                "An exact plaintext replay must retain its signature and timestamp"
+            )
         if payload.from_did not in auth_dids(auth):
             raise DeliveryRefusal(
                 status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
@@ -1589,8 +1595,14 @@ async def _dispatch_chat(
     payload: CreateSessionRequest | SendMessageRequest,
     runtime: MessagingRuntime,
 ) -> SentChat:
+    from aweb.messaging.chat_models import CreateSessionRequest, SendMessageRequest
+
     if target.session_id is not None:
+        if not isinstance(payload, SendMessageRequest):
+            raise TypeError("A continued chat target requires SendMessageRequest")
         return await _send_in_continued_session(db, auth, target, payload, runtime)
+    if not isinstance(payload, CreateSessionRequest):
+        raise TypeError("A named chat target requires CreateSessionRequest")
     return await _send_to_named_recipients(db, auth, target, payload, runtime)
 
 
@@ -2336,6 +2348,8 @@ async def _send_in_continued_session(
     )
     sender_address = _sender_address(auth)
     session_uuid = target.session_id
+    if session_uuid is None:
+        raise ValueError("A continued chat target requires a session ID")
     actor_did = target.actor_did
     recipient_rows = target.recipients
 

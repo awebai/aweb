@@ -17,12 +17,14 @@ def install_service_error_handlers(app: FastAPI) -> None:
     install_auth_error_handlers(app)
 
 
-async def service_error_handler(request: Request, exc: ServiceError) -> JSONResponse:
+async def service_error_handler(request: Request, exc: Exception) -> JSONResponse:
     """Preserve expected refusal data and hide unexpected server internals.
 
     docs/mail-and-chat.md's shared HTTP/MCP send contract carries one refusal
     from its service owner; this adapter does not reinterpret its human detail.
     """
+    if not isinstance(exc, ServiceError):
+        raise TypeError("Service error handler received a different exception type")
     if exc.status_code >= 500 and not isinstance(exc, DeliveryRefusal):
         logger.error("Unhandled service error failure_type=%s", type(exc).__name__)
         return JSONResponse(

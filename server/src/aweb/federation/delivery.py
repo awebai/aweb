@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from aweb.messaging.kinds import ContentMode, MessagePriority
 from aweb.messaging.chat_storage import store_chat
 from aweb.messaging.message_replay import established_federation_receipt
@@ -266,7 +268,7 @@ async def _lock_current_recipient(
     tx,
     *,
     envelope: FederationEnvelope,
-    recipient: dict,
+    recipient: Mapping,
 ) -> dict:
     agent_id = recipient.get("agent_id")
     if agent_id is None:
@@ -321,7 +323,7 @@ async def _require_recipient_encryption_assertion(
     tx,
     *,
     envelope: FederationEnvelope,
-    recipient: dict,
+    recipient: Mapping,
 ) -> None:
     if envelope.content_mode != ContentMode.ENCRYPTED:
         return
@@ -376,7 +378,7 @@ async def _authorize_policy(
     tx,
     *,
     envelope: FederationEnvelope,
-    recipient: dict,
+    recipient: Mapping,
     stored_route_continuation: bool,
 ) -> None:
     try:
@@ -400,7 +402,7 @@ async def _ensure_sender_contact(
     tx,
     *,
     envelope: FederationEnvelope,
-    recipient: dict,
+    recipient: Mapping,
     controller_did: str | None,
 ) -> None:
     owner_did = str(recipient.get("did_aw") or "").strip()
@@ -432,7 +434,7 @@ async def _ensure_sender_contact(
 async def _ensure_mail_conversation(
     tx,
     envelope: FederationEnvelope,
-    recipient: dict,
+    recipient: Mapping,
     *,
     preserve_existing_route: bool,
 ) -> None:
@@ -475,7 +477,7 @@ async def _ensure_mail_conversation(
 async def _ensure_chat_session(
     tx,
     envelope: FederationEnvelope,
-    recipient: dict,
+    recipient: Mapping,
     *,
     preserve_existing_route: bool,
 ) -> None:
@@ -550,7 +552,7 @@ async def _ensure_chat_session(
         )
 
 
-def _participants(envelope: FederationEnvelope, recipient: dict):
+def _participants(envelope: FederationEnvelope, recipient: Mapping):
     sender_alias = (envelope.sender_address or envelope.sender_did_aw).split("/", 1)[-1]
     target_alias = str(
         recipient.get("alias") or envelope.target_address.split("/", 1)[-1]
@@ -578,7 +580,7 @@ def _participants(envelope: FederationEnvelope, recipient: dict):
 async def _upsert_conversation_participants(
     tx,
     envelope: FederationEnvelope,
-    recipient: dict,
+    recipient: Mapping,
     conversation_id: UUID,
     *,
     preserve_existing_route: bool,
@@ -628,7 +630,7 @@ async def _store_mail(
     *,
     envelope: FederationEnvelope,
     signature: str,
-    recipient: dict,
+    recipient: Mapping,
     id_chain: dict | None,
 ):
     """Project an admitted inbound envelope through the canonical mail writer."""
@@ -792,7 +794,7 @@ async def _deliver_federated_phase_b(
     *,
     envelope: FederationEnvelope,
     signature: str,
-    recipient: dict,
+    recipient: Mapping,
     id_chain: dict | None = None,
     authority_token: AuthoritySecurityToken | None,
     stored_route_continuation: bool = False,
@@ -976,7 +978,7 @@ async def deliver_federated_phase_b(
     *,
     envelope: FederationEnvelope,
     signature: str,
-    recipient: dict,
+    recipient: Mapping,
     id_chain: dict | None = None,
     authority_token: AuthoritySecurityToken | None,
     stored_route_continuation: bool = False,
