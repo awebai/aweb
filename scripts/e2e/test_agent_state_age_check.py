@@ -122,6 +122,7 @@ class AcquisitionTests(unittest.TestCase):
             answer = call.result()
             self.assertLess(time.monotonic() - began, 2 + 45)
             self.assertIn("could not be collected", answer.stderr)
+            self.assertFalse(answer.complete)
             self.assertIsNone(check.Call.current)
         finally:
             if marker.exists():
@@ -129,6 +130,47 @@ class AcquisitionTests(unittest.TestCase):
                     os.kill(int(marker.read_text()), signal.SIGKILL)
                 except ProcessLookupError:
                     pass
+
+
+class VerdictTests(unittest.TestCase):
+    """The harness's own outcome decides: a call that passed its deadline, or
+    whose cleanup is not accounted for, never makes a case pass, whatever
+    its exit code."""
+
+    def test_a_child_that_exits_0_on_the_harness_timeout_is_not_complete(self):
+        trap = ("import signal, sys, time\n"
+                "signal.signal(signal.SIGTERM, lambda *a: sys.exit(0))\n"
+                "time.sleep(600)\n")
+        answer = check.Call([sys.executable, "-c", trap], budget=1).result()
+        self.assertEqual(answer.returncode, 0)
+        self.assertFalse(answer.complete)
+        self.assertFalse(check.verdict(True, answer))
+
+    def test_a_call_that_finishes_in_time_is_complete(self):
+        answer = check.Call([sys.executable, "-c", "pass"], budget=30).result()
+        self.assertTrue(answer.complete)
+        self.assertTrue(check.verdict(True, answer))
+        self.assertFalse(check.verdict(False, answer))
+
+    def test_a_group_whose_absence_cannot_be_observed_is_unknown_and_its_pipes_still_close(self):
+        call = check.Call(SLEEPER, budget=60)
+        real = check.os.killpg
+
+        def refused(pgid, sent):
+            if sent == 0:
+                raise PermissionError(1, "Operation not permitted")
+            return real(pgid, sent)
+
+        check.os.killpg = refused
+        try:
+            self.assertIsNone(check.group_gone(call.process.pid))
+            self.assertIsNone(call.end())
+        finally:
+            check.os.killpg = real
+            call.release()
+        self.assertTrue(call.process.stdout.closed and call.process.stderr.closed)
+        self.assertIsNone(check.Call.current)
+        call.process.wait(timeout=10)
 
 
 if __name__ == "__main__":

@@ -119,12 +119,30 @@ def tree(root: Path) -> dict[str, tuple]:
     return entries
 
 
-def group_gone(pgid: int) -> bool:
+def group_gone(pgid: int) -> bool | None:
+    """Whether a process group is gone: True or False when the system says,
+    None when it cannot be observed (the probe is refused)."""
     try:
         os.killpg(pgid, 0)
     except ProcessLookupError:
         return True
+    except OSError:
+        return None
     return False
+
+
+class Answer(subprocess.CompletedProcess):
+    """A call's outcome. complete is the harness's own verdict: True only
+    when the call ended by itself within its deadline. The child's exit code
+    is kept beside it and never overrides it."""
+
+    complete: bool = False
+
+
+def verdict(ok: bool, *answers: Answer) -> bool:
+    """A case passes only when its own assertions hold and every call it
+    made completed within its deadline."""
+    return ok and all(answer.complete for answer in answers)
 
 
 class Call:
@@ -146,14 +164,15 @@ class Call:
     def remaining(self) -> float:
         return max(0.0, self.deadline - time.monotonic())
 
-    def end(self) -> bool:
-        """TERM to the group, then KILL, then reap; whether the group is gone."""
+    def end(self) -> bool | None:
+        """TERM to the group, then KILL, then reap; whether the group is gone
+        (None: it cannot be observed). It never raises."""
         for sent, grace in ((signal.SIGTERM, 10), (signal.SIGKILL, 10)):
             if group_gone(self.process.pid):
                 break
             try:
                 os.killpg(self.process.pid, sent)
-            except ProcessLookupError:
+            except OSError:
                 break
             try:
                 self.process.wait(timeout=grace)
@@ -166,38 +185,43 @@ class Call:
         return group_gone(self.process.pid)
 
     def release(self) -> None:
-        """Closes the call's pipes once it is ended, and lets it go."""
+        """Closes the call's pipes, and lets it go."""
         for stream in (self.process.stdout, self.process.stderr):
             if stream is not None and not stream.closed:
                 stream.close()
         Call.current = None
 
-    def result(self) -> subprocess.CompletedProcess:
+    def result(self) -> Answer:
         """Waits for the call within what is left of its deadline; past it,
-        ends the group."""
+        ends the group, and the answer is not complete whatever the exit code.
+        The pipes are released on every path."""
+        complete = False
+        stdout, stderr, note = "", "", ""
         try:
-            stdout, stderr = self.process.communicate(timeout=self.remaining())
-            note = ""
-        except subprocess.TimeoutExpired:
-            gone = self.end()
-            note = f"\n[check] the call passed its deadline; its group was ended; group gone: {gone}"
             try:
-                # Within the end's reserve: a process outside the group can
-                # hold the pipes open, and is not waited for.
-                stdout, stderr = self.process.communicate(timeout=10)
+                stdout, stderr = self.process.communicate(timeout=self.remaining())
+                complete = True
             except subprocess.TimeoutExpired:
-                stdout, stderr = "", ""
-                note += "; its output could not be collected (a process outside its group holds it): INCOMPLETE"
-        self.release()
-        return subprocess.CompletedProcess(self.process.args, self.process.returncode, stdout or "",
-                                           (stderr or "") + note)
+                gone = self.end()
+                note = f"\n[check] the call passed its deadline; its group was ended; group gone: {gone}: INCOMPLETE"
+                try:
+                    # Within the end's reserve: a process outside the group can
+                    # hold the pipes open, and is not waited for.
+                    stdout, stderr = self.process.communicate(timeout=10)
+                except subprocess.TimeoutExpired:
+                    note += "; its output could not be collected (a process outside its group holds it)"
+        finally:
+            self.release()
+        answer = Answer(self.process.args, self.process.returncode, stdout or "", (stderr or "") + note)
+        answer.complete = complete
+        return answer
 
 
 def tool(*args: str) -> list[str]:
     return [sys.executable, "-I", str(TOOL), *args]
 
 
-def cli(*args: str) -> subprocess.CompletedProcess:
+def cli(*args: str) -> Answer:
     return Call(tool(*args)).result()
 
 
@@ -230,7 +254,7 @@ def terminated_in_progress(call: Call, started) -> dict:
     SIGTERM and continues the group; returns what was seen. A call that
     finished first, a failed observation or a failed signal fails the case
     with the call ended; an interrupt of the check ends the call and goes on."""
-    seen: dict = {"caught_in_progress": False}
+    seen: dict = {"caught_in_progress": False, "complete": False}
     try:
         if wait_for(started, call):
             os.killpg(call.process.pid, signal.SIGSTOP)
@@ -241,13 +265,14 @@ def terminated_in_progress(call: Call, started) -> dict:
         answer = call.result()
     except Exception as error:
         seen.update(error=f"{type(error).__name__}: {error}", group_gone=call.end())
-        call.release()
         return seen
     except BaseException:
         call.end()
-        call.release()
         raise
-    seen.update(rc=answer.returncode, stderr=answer.stderr.strip()[-400:], group_gone=group_gone(call.process.pid))
+    finally:
+        call.release()
+    seen.update(rc=answer.returncode, stderr=answer.stderr.strip()[-400:], complete=answer.complete,
+                group_gone=group_gone(call.process.pid))
     return seen
 
 
@@ -318,10 +343,10 @@ def check(args: argparse.Namespace) -> int:
                        "--out", str(backup))
         manifest = json.loads((backup / "manifest.json").read_text()) if captured.returncode == 0 else {}
         plaintext = [path.name for path in backup.iterdir() if path.name.endswith(".tar")] if backup.exists() else []
-        case("capture", captured.returncode == 0 and plaintext == [] and manifest.get("omitted") == [
+        case("capture", verdict(captured.returncode == 0 and plaintext == [] and manifest.get("omitted") == [
             {"path": "home/.config/aw/wake/control.sock", "type": "socket",
-             "reason": "aw wake broker control socket of the store home/.config/aw/wake"}],
-             {"rc": captured.returncode, "stderr": captured.stderr.strip()[-400:], "omitted": manifest.get("omitted"),
+             "reason": "aw wake broker control socket of the store home/.config/aw/wake"}], captured),
+             {"rc": captured.returncode, "complete": captured.complete, "stderr": captured.stderr.strip()[-400:], "omitted": manifest.get("omitted"),
               "members": manifest.get("members"), "plaintext": plaintext})
 
         restored = work / "restored"
@@ -330,8 +355,8 @@ def check(args: argparse.Namespace) -> int:
         before = {path: entry for path, entry in tree(state).items() if not path.endswith("control.sock")}
         after = tree(restored) if answer.returncode == 0 else {}
         differ = sorted(path for path in set(before) | set(after) if before.get(path) != after.get(path))
-        case("restore", answer.returncode == 0 and not differ,
-             {"rc": answer.returncode, "stderr": answer.stderr.strip()[-400:], "entries": len(after),
+        case("restore", verdict(answer.returncode == 0 and not differ, answer),
+             {"rc": answer.returncode, "complete": answer.complete, "stderr": answer.stderr.strip()[-400:], "entries": len(after),
               "differ": differ[:20], "setgid": after.get("shared", (0, 0, 0, None))[3],
               "setuid": after.get("tool", (0, 0, 0, None))[3]})
 
@@ -339,8 +364,9 @@ def check(args: argparse.Namespace) -> int:
             target = work / f"target-{name}"
             answer = cli("restore", "--backup", str(backup_dir), *container, *pinned, *deadline, "--identity",
                          str(identity), "--target", str(target))
-            case(name, answer.returncode == 1 and not os.path.lexists(target) and expect in answer.stderr,
-                 {"rc": answer.returncode, "stderr": answer.stderr.strip()[-400:],
+            case(name, verdict(answer.returncode == 1 and not os.path.lexists(target) and expect in answer.stderr,
+                               answer),
+                 {"rc": answer.returncode, "complete": answer.complete, "stderr": answer.stderr.strip()[-400:],
                   "target_exists": os.path.lexists(target)})
 
         if manifest:
@@ -368,8 +394,9 @@ def check(args: argparse.Namespace) -> int:
         answer = cli("capture", "--state", str(state), *container, *pinned, *recipients, "--out", str(expired),
                      "--deadline", "0.001")
         left = sorted(path.name for path in expired.iterdir()) if expired.exists() else []
-        case("deadline-expiry", answer.returncode == 1 and "passed its deadline" in answer.stderr and left == [],
-             {"rc": answer.returncode, "stderr": answer.stderr.strip()[-400:], "left": left})
+        case("deadline-expiry", verdict(answer.returncode == 1 and "passed its deadline" in answer.stderr
+                                        and left == [], answer),
+             {"rc": answer.returncode, "complete": answer.complete, "stderr": answer.stderr.strip()[-400:], "left": left})
 
         stopped = work / "backup-terminated"
         partial = stopped / "state.tar.age.partial"
@@ -379,23 +406,24 @@ def check(args: argparse.Namespace) -> int:
         left = sorted(path.name for path in stopped.iterdir()) if stopped.exists() else []
         case("capture-terminated", seen["caught_in_progress"] and bool(seen.get("alive_when_stopped"))
              and seen.get("rc") == 143 and "terminated" in seen.get("stderr", "") and left == []
-             and seen["group_gone"], {**seen, "left": left})
+             and seen["complete"] and seen["group_gone"] is True, {**seen, "left": left})
 
         large_backup = work / "backup-large"
         answer = cli("capture", "--state", str(large), *container, *pinned, *recipients, *deadline,
                      "--out", str(large_backup))
         target = work / "restored-terminated"
-        if answer.returncode == 0:
+        if verdict(answer.returncode == 0, answer):
             call = Call(tool("restore", "--backup", str(large_backup), *container, *pinned, *deadline, "--identity",
                              str(keys / "identity"), "--target", str(target)))
             seen = terminated_in_progress(call, lambda: os.path.lexists(target))
             private = sorted(path.name for path in work.iterdir() if path.name.startswith(".agent-state-restore-"))
             case("restore-terminated", seen["caught_in_progress"] and bool(seen.get("alive_when_stopped"))
                  and seen.get("rc") == 143 and "incomplete" in seen.get("stderr", "") and os.path.lexists(target)
-                 and private == [] and seen["group_gone"], {**seen, "target_left": os.path.lexists(target),
+                 and private == [] and seen["complete"] and seen["group_gone"] is True, {**seen, "target_left": os.path.lexists(target),
                                                             "private_copies_left": private})
         else:
             case("restore-terminated", False, {"reason": "the large capture failed", "rc": answer.returncode,
+                                               "complete": answer.complete,
                                                "stderr": answer.stderr.strip()[-400:]})
     finally:
         listener.close()
