@@ -14,10 +14,23 @@ from aweb.service_errors import IdentityBindingCode, IdentityBindingError, Servi
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "code,status",
-    [(IdentityBindingCode.MISMATCH, 403), (IdentityBindingCode.UNAVAILABLE, 503)],
+    "code,status,message",
+    [
+        (
+            IdentityBindingCode.MISMATCH,
+            403,
+            "The claimed identity and signing key do not match. "
+            "Check the identity and its current public-key binding, "
+            "then correct the request and retry.",
+        ),
+        (
+            IdentityBindingCode.UNAVAILABLE,
+            503,
+            "Identity verification is unavailable. Retry when the identity registry is available.",
+        ),
+    ],
 )
-async def test_binding_handler_preserves_reason_status_retry_and_action(code, status):
+async def test_binding_handler_preserves_reason_status_retry_and_action(code, status, message):
     app = FastAPI()
 
     @app.exception_handler(ServiceError)
@@ -36,11 +49,7 @@ async def test_binding_handler_preserves_reason_status_retry_and_action(code, st
         response = await client.get("/binding")
     assert response.status_code == status
     assert response.json()["detail"] == code.value
-    assert (
-        "current credentials" in response.json()["message"]
-        if status == 403
-        else "Retry" in response.json()["message"]
-    )
+    assert response.json()["message"] == message
     assert response.headers["Retry-After"] == "7"
 
 
