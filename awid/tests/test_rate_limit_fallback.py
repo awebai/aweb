@@ -58,7 +58,7 @@ async def test_real_redis_outage_keeps_per_process_limits_and_actionable_error(
 async def test_memory_window_pruning_does_not_reset_a_longer_bucket(monkeypatch):
     from awid.ratelimit import MemoryFixedWindowRateLimiter
 
-    now = 0.0
+    now = 3600.0
     # Time is the input to this pure counter rule; no registry or decision is replaced.
     monkeypatch.setattr("awid.ratelimit.time.time", lambda: now)
     limiter = MemoryFixedWindowRateLimiter()
@@ -66,10 +66,10 @@ async def test_memory_window_pruning_does_not_reset_a_longer_bucket(monkeypatch)
         bucket="hourly", key="reader", limit=1, window_seconds=3600
     )
     assert first.allowed
-    now = 61.0
+    now = 3661.0
     await limiter.hit(bucket="minute", key="reader", limit=60, window_seconds=60)
     second = await limiter.hit(
         bucket="hourly", key="reader", limit=1, window_seconds=3600
     )
     assert not second.allowed
-    assert second.reset_epoch_seconds == first.reset_epoch_seconds == 3600
+    assert second.reset_epoch_seconds == first.reset_epoch_seconds == 7200
