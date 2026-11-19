@@ -3,11 +3,10 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import replace
-from typing import Any, Mapping
-from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any, Mapping
 
 from awid.federation_errors import FederationAuthorityError
-from awid.registry import RegistryError
+from awid.registry import Address, RegistryError
 from fastapi import HTTPException
 from awid.log import canonical_server_origin
 from awid.signing import verify_did_key_signature
@@ -19,10 +18,39 @@ from aweb.messaging.alias_targets import namespace_exists
 from aweb.messaging.runtime import MessagingRuntime
 from aweb.messaging.recipient import Recipient
 
+if TYPE_CHECKING:
+    from aweb.federation.activation import ResolvedContactIdentity
+    from aweb.identity_auth_deps import MessagingAuth
 
-def local_recipient_visible_to_auth(row: Mapping[str, Any] | None, auth: Any) -> bool:
+
+def resolved_recipient_delivery_origin(
+    resolution: Address | ResolvedContactIdentity,
+) -> str:
+    """Read either admitted address projection, preserving an absent origin."""
+    if isinstance(resolution, Address):
+        return (
+            (resolution.delivery.origin if resolution.delivery is not None else "")
+            or ""
+        ).strip()
+    return (resolution.delivery_origin or "").strip()
+
+
+def resolved_recipient_controller_did(
+    resolution: Address | ResolvedContactIdentity,
+) -> str:
+    """Only strict external resolution carries its verified controller here."""
+    return (
+        ""
+        if isinstance(resolution, Address)
+        else (resolution.controller_did or "").strip()
+    )
+
+
+def local_recipient_visible_to_auth(
+    row: Mapping[str, Any] | None, auth: MessagingAuth
+) -> bool:
     row_team_id = str((row or {}).get("team_id") or "").strip()
-    auth_team_id = str(getattr(auth, "team_id", None) or "").strip()
+    auth_team_id = str(auth.team_id or "").strip()
     return bool(row_team_id and auth_team_id and row_team_id == auth_team_id)
 
 
@@ -35,8 +63,8 @@ def identity_recipient(row: Mapping[str, Any], address: str | None = None) -> Re
 
 
 async def local_recipient_for_address_binding(
-    db, resolution: Any, address: str
-) -> dict | None:
+    db, *, did_aw: str, current_did_key: str | None, address: str
+) -> Recipient | None:
     """Find residence for an independently admitted address identity.
 
     The registry supplies the canonical DID and current signature key. A local
@@ -53,12 +81,12 @@ async def local_recipient_for_address_binding(
         ORDER BY agent_id
         LIMIT 1
         """,
-        resolution.did_aw,
+        did_aw,
     )
     if row is None:
         return None
     recipient = identity_recipient(row, address)
-    return replace(recipient, did_key=resolution.current_did_key)
+    return replace(recipient, did_key=current_did_key)
 
 
 def requires_registry_address_binding(row: Mapping[str, Any] | None) -> bool:
@@ -89,8 +117,9 @@ async def local_recipient_for_own_route(
     if did.startswith("did:aw:"):
         recipient = await local_recipient_for_address_binding(
             db,
-            SimpleNamespace(did_aw=did, current_did_key=None),
-            str(route.get("address") or ""),
+            did_aw=did,
+            current_did_key=None,
+            address=str(route.get("address") or ""),
         )
     else:
         # A did:key return route is already an established participant; this
