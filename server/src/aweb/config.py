@@ -19,6 +19,9 @@ from aweb_naapp.key_file import read_key_file
 from aweb_naapp.egress import EgressRefused, InternalDestinations
 from aweb_naapp.egress.addresses import check_internal_cidr
 
+from aweb.app_registry import canonical_app_origin
+from aweb.service_errors import ServiceError
+
 
 def _env_bool(*names: str, default: bool = False) -> bool:
     for name in names:
@@ -58,9 +61,6 @@ def get_app_internal_origins() -> AppInternalOrigins:
     Unset, every app origin is public: a manifest on a private address is
     refused. These are operator startup settings; no install request names them.
     """
-    from aweb.app_registry import canonical_app_origin
-    from aweb.service_errors import ServiceError
-
     raw_origins = (os.getenv("AWEB_APP_INTERNAL_ORIGINS") or "").strip()
     raw_cidr = (os.getenv("AWEB_APP_INTERNAL_CIDR") or "").strip()
     if not raw_origins and not raw_cidr:
@@ -408,6 +408,23 @@ def _url_from_environment_or_file(variable: str, fallback: str, file_variable: s
     return url
 
 
+def get_presence_ttl_seconds() -> int:
+    """Read the shared heartbeat window (docs/aweb-sot.md:1199–1205).
+
+    Default is thirty minutes; deployments may configure the presence TTL.
+    """
+    presence_ttl_str = os.getenv("AWEB_PRESENCE_TTL_SECONDS", "1800")
+    try:
+        presence_ttl = int(presence_ttl_str)
+    except ValueError as exc:
+        raise ValueError(
+            f"AWEB_PRESENCE_TTL_SECONDS must be a valid integer, got '{presence_ttl_str}'"
+        ) from exc
+    if presence_ttl < 10:
+        raise ValueError("AWEB_PRESENCE_TTL_SECONDS must be at least 10")
+    return presence_ttl
+
+
 def get_settings() -> Settings:
     """
     Load settings from environment at call time.
@@ -432,24 +449,12 @@ def get_settings() -> Settings:
     port_str = os.getenv("AWEB_PORT", "8000")
     try:
         port = int(port_str)
-        if not 1 <= port <= 65535:
-            raise ValueError(f"AWEB_PORT must be between 1 and 65535, got {port}")
-    except ValueError as e:
-        if "invalid literal" in str(e):
-            raise ValueError(f"AWEB_PORT must be a valid integer, got '{port_str}'")
-        raise
+    except ValueError as exc:
+        raise ValueError(f"AWEB_PORT must be a valid integer, got '{port_str}'") from exc
+    if not 1 <= port <= 65535:
+        raise ValueError(f"AWEB_PORT must be between 1 and 65535, got {port}")
 
-    presence_ttl_str = os.getenv("AWEB_PRESENCE_TTL_SECONDS", "1800")
-    try:
-        presence_ttl = int(presence_ttl_str)
-        if presence_ttl < 10:
-            raise ValueError("AWEB_PRESENCE_TTL_SECONDS must be at least 10")
-    except ValueError as e:
-        if "invalid literal" in str(e):
-            raise ValueError(
-                f"AWEB_PRESENCE_TTL_SECONDS must be a valid integer, got '{presence_ttl_str}'"
-            )
-        raise
+    presence_ttl = get_presence_ttl_seconds()
 
     service_token = get_awid_service_token()
     member_keys = get_awid_member_signing_keys()

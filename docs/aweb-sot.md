@@ -1199,10 +1199,50 @@ metadata.
 `DELETE /v1/workspaces/{workspace_id}` soft-deletes a gone local
 workspace and its bound agent row, plus releases any task claims held by
 the workspace. It returns `409` if the bound agent is global
-(global identities outlive workspaces) or if `last_seen_at` is
-within the 30-minute presence TTL and the workspace is not yet
-considered gone. The caller must present a team certificate for the same
+(global identities outlive workspaces), or when another member targets a
+workspace whose activity is within the presence TTL (30 minutes by default,
+configured by `AWEB_PRESENCE_TTL_SECONDS`). Activity is the newest workspace
+`last_seen_at`, Redis heartbeat timestamp, or currently valid grant-liveness
+timestamp. The lifecycle planner, cascade and agent list use the same activity
+owner. First connect and MCP heartbeats record `last_seen_at`; grant heartbeats
+keep their separate liveness records and do not overwrite shared metadata.
+Expired, revoked or stale grants do not keep a workspace live. Self cleanup
+remains immediate. The caller must present a team certificate for the same
 `team_id` as the target workspace.
+
+Repo deletion applies that same local-workspace cleanup owner to every workspace
+in the repo. It reports ineligible targets in `skipped_workspaces` with their
+refusal codes. A repo with skipped live or global workspaces stays available
+(`repo_deleted: false`); eligible cleanup still commits and emits the lifecycle
+events. Redis cleanup failures remain in the outbox and set `cleanup_pending`.
+
+Ordinary reservation release protects another active holder. Emergency
+`POST /v1/reservations/revoke` remains available to any team-certificate member,
+including an empty prefix to revoke all active team reservations. It records the
+verified actor in the operator audit transaction, emits the ordinary
+`reservation.released` event for each affected reservation and notifies its
+holder's workspace. Grants cannot invoke emergency revoke. Neither operation
+deletes coordination history.
+
+The Python coordination lifecycle owner accepts a named `AgentDisposition`
+(`PRESERVED`, `DELETED`, `RETIRED`, `PREPARED_REMOVAL`) in
+`LifecycleCascadeRequest.agent_disposition`. This is an embedding API, not an
+HTTP authority flag. The existing local-delete boolean remains a compatibility
+adapter. Explicit `target_agent_id` cleanup works with zero or already-deleted
+workspaces; `all_for_agent` cleans all active workspace paths. Claims on deleted
+paths, reservations, session admission leases, grant liveness, pending controls,
+status and presence are also cleared. Pending controls become consumed history;
+chat participants become left, retaining chat/mail/identity history.
+
+`DELETED` and `RETIRED` set the corresponding native status and `deleted_at`.
+`PREPARED_REMOVAL` sets `deleted_at` while retaining native status `active`,
+reports neither terminal identity flag, and denies ordinary native activity.
+The embedding host owns the exact removal ledger, restricted completion access,
+external certificate revocation and credential/custody disposal. Clearing grant
+liveness does not revoke retained session grants. `PRESERVED` leaves identity
+state unchanged while cleaning coordination. Named dispositions never destroy
+host credentials. The released archive option still archives native state;
+hosted custody cleanup belongs to the embedding host in that path as well.
 
 Lifecycle Redis effects are driven by `lifecycle_side_effect_outbox`, not by
 reconstructing deleted claim rows. Claim release captures workspace/team

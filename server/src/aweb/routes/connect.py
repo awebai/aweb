@@ -320,8 +320,8 @@ async def _ensure_workspace(
             """
             INSERT INTO {{tables.workspaces}}
                 (workspace_id, team_id, agent_id, repo_id, alias, human_name,
-                 role, hostname, workspace_path, workspace_type)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                 role, hostname, workspace_path, workspace_type, last_seen_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
             RETURNING workspace_id
             """,
             workspace_id,
