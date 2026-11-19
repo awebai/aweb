@@ -70,7 +70,7 @@ def test_a_request_of_another_type_is_not_rendered():
         use_approval_view(request)
 
 
-def test_pending_names_only_v1_approval_is_refused_instead_of_shown():
+def test_a_v1_approval_is_refused_instead_of_rendered():
     request = {**_request("broker-operation"), "v": 1}
     with pytest.raises(ApprovalUnrenderable) as refused:
         use_approval_view(request)
