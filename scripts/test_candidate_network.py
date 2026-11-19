@@ -256,11 +256,11 @@ class EndpointTests(unittest.TestCase):
                          [f'http://{network.hostname(project, "aweb")}:8000', f'http://{network.hostname(project, "awid")}:8010'])
 
     def test_naapp_database_and_registry_endpoints_are_direct(self):
-        # Library's stack is the shared aweb_naapp_testing.deployment one.
+        # Folio's and Library's stacks are the shared aweb_naapp_testing.deployment one.
+        deployment = ROOT / 'naapp-lib/testing/src/aweb_naapp_testing/deployment.py'
         sources = {
-            'folio': (ROOT / 'naapp/folio/tests/test_e2e_smoke.py', {}),
-            'library': (ROOT / 'naapp-lib/testing/src/aweb_naapp_testing/deployment.py',
-                        {'project': 'library-e2e', 'database': 'library'}),
+            'folio': (deployment, {'project': 'folio-e2e', 'database': 'folio'}),
+            'library': (deployment, {'project': 'library-e2e', 'database': 'library'}),
         }
         for package, (path, arguments) in sources.items():
             tree = ast.parse(path.read_text())
@@ -277,9 +277,8 @@ class EndpointTests(unittest.TestCase):
                                                'NAAPP_E2E_HOST': 'aweb-docker.test'}, **arguments)
                 self.assertEqual(stack.awid_url, f'http://{network.hostname(project, "awid")}:8010')
                 self.assertIn(f'{network.hostname(project, "postgres")}:5432', stack.postgres_url)
-                if package == 'folio':
-                    self.assertEqual(stack.redis_url, f'redis://{network.hostname(project, "redis")}:6379/0')
-                else:
+                self.assertEqual(stack.redis_url, f'redis://{network.hostname(project, "redis")}:6379/0')
+                if package == 'library':
                     old_path = ROOT / 'naapp/library/tests/test_old_registry_e2e.py'
                     test = next(node for node in ast.parse(old_path.read_text()).body
                                 if isinstance(node, ast.FunctionDef))
