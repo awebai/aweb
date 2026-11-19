@@ -1,6 +1,6 @@
 {
   "schema": "aweb.trust.registry-refetch.v1",
-  "description": "Bounded registry refetch (docs/trust-model.md, 'A cached registry answer is not the registry's answer'): a cached address binding or current key that disagrees with the signed message is read again from the registry once, and the fresh answer decides; at most one forced read per sender per refetch_interval_seconds. Responses are served in order per path, the last one repeating; steps run in order on one client, advancing its clock.",
+  "description": "Bounded registry refetch (docs/trust-model.md, 'A cached registry answer is not the registry's answer'): a cached address binding or current key that disagrees with the signed message is read again from the registry once, and the fresh answer decides; at most one forced read per sender per refetch_interval_seconds. Responses are served in order per path, the last one repeating; steps run in order on one client, advancing its clock. expected_requests counts the address and key reads the bound limits; log reads are not counted, since clients may verify a genesis head without one.",
   "start_time": "2026-11-18T00:00:00Z",
   "refetch_interval_seconds": 30,
   "vectors": [
@@ -96,7 +96,6 @@
       ],
       "expected_requests": {
         "/v1/did/did:aw:jPUMBAvNeJo8USHNtJ81Wm7cqnk/key": 2,
-        "/v1/did/did:aw:jPUMBAvNeJo8USHNtJ81Wm7cqnk/log": 1,
         "/v1/namespaces/acme.com/addresses/alice": 1
       }
     },
@@ -178,7 +177,6 @@
       ],
       "expected_requests": {
         "/v1/did/did:aw:jPUMBAvNeJo8USHNtJ81Wm7cqnk/key": 2,
-        "/v1/did/did:aw:jPUMBAvNeJo8USHNtJ81Wm7cqnk/log": 1,
         "/v1/namespaces/acme.com/addresses/alice": 1
       }
     },
@@ -268,7 +266,6 @@
       ],
       "expected_requests": {
         "/v1/did/did:aw:jPUMBAvNeJo8USHNtJ81Wm7cqnk/key": 3,
-        "/v1/did/did:aw:jPUMBAvNeJo8USHNtJ81Wm7cqnk/log": 1,
         "/v1/namespaces/acme.com/addresses/alice": 1
       }
     },
@@ -351,7 +348,6 @@
       ],
       "expected_requests": {
         "/v1/did/did:aw:jPUMBAvNeJo8USHNtJ81Wm7cqnk/key": 1,
-        "/v1/did/did:aw:jPUMBAvNeJo8USHNtJ81Wm7cqnk/log": 1,
         "/v1/namespaces/acme.com/addresses/alice": 2
       }
     },

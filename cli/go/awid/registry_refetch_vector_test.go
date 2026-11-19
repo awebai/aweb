@@ -97,7 +97,7 @@ func buildRegistryRefetchVector(t *testing.T) registryRefetchVector {
 
 	return registryRefetchVector{
 		Schema:                 "aweb.trust.registry-refetch.v1",
-		Description:            "Bounded registry refetch (docs/trust-model.md, 'A cached registry answer is not the registry's answer'): a cached address binding or current key that disagrees with the signed message is read again from the registry once, and the fresh answer decides; at most one forced read per sender per refetch_interval_seconds. Responses are served in order per path, the last one repeating; steps run in order on one client, advancing its clock.",
+		Description:            "Bounded registry refetch (docs/trust-model.md, 'A cached registry answer is not the registry's answer'): a cached address binding or current key that disagrees with the signed message is read again from the registry once, and the fresh answer decides; at most one forced read per sender per refetch_interval_seconds. Responses are served in order per path, the last one repeating; steps run in order on one client, advancing its clock. expected_requests counts the address and key reads the bound limits; log reads are not counted, since clients may verify a genesis head without one.",
 		StartTime:              "2026-11-18T00:00:00Z",
 		RefetchIntervalSeconds: 30,
 		Vectors: []registryRefetchCase{
@@ -108,7 +108,7 @@ func buildRegistryRefetchVector(t *testing.T) registryRefetchVector {
 					{FromDID: oldDID, ExpectedStatus: "verified"},
 					{FromDID: newDID, ExpectedStatus: "verified"},
 				},
-				ExpectedRequests: map[string]int{addressPath: 1, keyPath: 2, logPath: 1},
+				ExpectedRequests: map[string]int{addressPath: 1, keyPath: 2},
 			},
 			{
 				Name: "key-read-again-and-unchanged-is-a-mismatch-without-another-read-in-the-interval", Address: "acme.com/alice", FromStableID: stableID,
@@ -118,7 +118,7 @@ func buildRegistryRefetchVector(t *testing.T) registryRefetchVector {
 					{FromDID: newDID, ExpectedStatus: "identity_mismatch"},
 					{AdvanceSeconds: 10, FromDID: newDID, ExpectedStatus: "identity_mismatch"},
 				},
-				ExpectedRequests: map[string]int{addressPath: 1, keyPath: 2, logPath: 1},
+				ExpectedRequests: map[string]int{addressPath: 1, keyPath: 2},
 			},
 			{
 				Name: "key-read-that-fails-is-stale-until-the-interval-ends", Address: "acme.com/alice", FromStableID: stableID,
@@ -129,7 +129,7 @@ func buildRegistryRefetchVector(t *testing.T) registryRefetchVector {
 					{AdvanceSeconds: 10, FromDID: newDID, ExpectedStatus: "verification_stale"},
 					{AdvanceSeconds: 30, FromDID: newDID, ExpectedStatus: "verification_stale"},
 				},
-				ExpectedRequests: map[string]int{addressPath: 1, keyPath: 3, logPath: 1},
+				ExpectedRequests: map[string]int{addressPath: 1, keyPath: 3},
 			},
 			{
 				Name: "address-cached-for-another-identity-is-read-again-and-verifies", Address: "acme.com/alice", FromStableID: stableID,
@@ -137,7 +137,7 @@ func buildRegistryRefetchVector(t *testing.T) registryRefetchVector {
 				Steps: []registryRefetchStep{
 					{FromDID: oldDID, ExpectedStatus: "verified"},
 				},
-				ExpectedRequests: map[string]int{addressPath: 2, keyPath: 1, logPath: 1},
+				ExpectedRequests: map[string]int{addressPath: 2, keyPath: 1},
 			},
 			{
 				Name: "address-read-again-for-another-identity-is-a-mismatch-without-another-read-in-the-interval", Address: "acme.com/alice", FromStableID: stableID,
