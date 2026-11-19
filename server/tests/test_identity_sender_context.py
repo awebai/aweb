@@ -7,9 +7,12 @@ from enum import StrEnum
 from uuid import UUID, uuid4
 
 import pytest
+from awid.dns_verify import DomainAuthority
+from awid_service.deps import get_domain_verifier
 from aweb.api import _mount_mcp_app, _shutdown_mcp_app
 from test_cli_never_grants import registry_listener
-from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
+from test_dashboard_privacy import TEAM
+from test_dashboard_privacy import privacy_app as privacy_app
 from test_messages_http import (
     _encode_certificate,
     _make_certificate,
@@ -29,7 +32,11 @@ async def _send(
 ):
     if transport is SenderTransport.HTTP:
         path = "/v1/messages"
-        payload = {"to_did": env.actors["bob"].did, "body": "Selected sender", "subject": "From"}
+        payload = {
+            "to_did": env.actors["bob"].did,
+            "body": "Selected sender",
+            "subject": "From",
+        }
     else:
         path = "/mcp/"
         payload = {
@@ -81,7 +88,16 @@ async def test_identity_sender_uses_its_single_current_context_not_first_registe
     # admission and both message transports use real production routes.
     env = privacy_app
     actor = env.actors["alice"]
-    async with registry_listener(env) as (registry, _):
+    async with registry_listener(env) as (registry, registry_origin):
+        # Supply the external DNS fact to the actual registry route; all
+        # signatures, address writes and native admission remain production.
+        async def exact_namespace_authority(domain: str) -> DomainAuthority:
+            assert domain == "example.test"
+            return DomainAuthority(env.team_did, registry_origin, "_awid.example.test")
+
+        env.registry_app.dependency_overrides[get_domain_verifier] = lambda: (
+            exact_namespace_authority
+        )
         await register_namespace_controller(env, env.team_did)
         stable = (await registry.register_did(actor.did, actor.sk)).did_aw
         prefix = "sender-" + uuid4().hex[:12]
@@ -101,7 +117,10 @@ async def test_identity_sender_uses_its_single_current_context_not_first_registe
         )
         selected_address = f"{selected.domain}/{selected.name}"
         addresses = await registry.list_did_addresses(stable)
-        assert f"{addresses[0].domain}/{addresses[0].name}" == f"{earlier.domain}/{earlier.name}"
+        assert (
+            f"{addresses[0].domain}/{addresses[0].name}"
+            == f"{earlier.domain}/{earlier.name}"
+        )
         certificate = _encode_certificate(
             _make_certificate(
                 env.team_sk,

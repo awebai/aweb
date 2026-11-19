@@ -14,7 +14,8 @@ from awid.did import stable_id_from_did_key
 from awid.registry import CachedRegistryClient
 from awid.signing import canonical_json_bytes, sign_message
 from test_cli_never_grants import registry_listener
-from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
+from test_dashboard_privacy import TEAM
+from test_dashboard_privacy import privacy_app as privacy_app
 from test_messages_http import (
     _encode_certificate,
     _make_certificate,
@@ -663,12 +664,15 @@ async def test_verified_proxy_context_rechecks_subject_binding(
     monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", "binding-test-disposable-secret")
     async with registry_listener(env) as (registry, _):
         stable, address = await register(env, registry, bob)
-        await env.db.execute(
-            "UPDATE {{tables.agents}} SET did_aw=$2,address=$3,identity_scope='global' WHERE agent_id=$1",
-            bob.id,
-            stable,
-            address,
+        admitted = await request(
+            env,
+            bob,
+            "POST",
+            "/v1/connect",
+            {},
+            certificate=certificate(env, bob, stable, address),
         )
+        assert admitted.status_code == 200, admitted.text
         user_id = str(uuid4())
         headers = {
             "X-Team-ID": TEAM,
