@@ -383,6 +383,7 @@ test-awid-pooler:
 
 test-cli: production-awid-sync
 	python3 scripts/test-egress/test_fixture_imports.py
+	uv run --offline --frozen --project server python -P scripts/test-egress/test_aweb_fixture_commands.py
 	cd cli/go && go mod download
 	cd awid && uv sync --frozen
 	# A short, canonical temp root avoids macOS /var symlinks and socket limits.

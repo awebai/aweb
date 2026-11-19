@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -29,6 +30,14 @@ type commandStack struct {
 	ServerURL   string `json:"server_url"`
 }
 
+// Bounds on the shared stack's process, so a stuck stack fails the tests that
+// meet it instead of hanging the package. A cold start took 12.8 s locally.
+const (
+	commandStackReadyTimeout   = 2 * time.Minute
+	commandStackCommandTimeout = 30 * time.Second
+	commandStackStopTimeout    = time.Minute
+)
+
 // sharedCommandStack is the package's one real aweb/AWID stack
 // (scripts/test-egress/aweb_fixture.py). It starts on first use and
 // stopSharedCommandStack ends it from TestMain after every test has run.
@@ -40,22 +49,28 @@ var sharedCommandStack struct {
 	stack   commandStack
 	command *exec.Cmd
 	input   io.WriteCloser
-	replies *bufio.Scanner
+	// lines carries the stack's stdout lines and closes when stdout ends,
+	// after readErr is set.
+	lines   chan string
+	readErr error
 	// mu holds one command and its acknowledgement together.
 	mu     sync.Mutex
 	nextID int
+	// failed is the transport failure that stopped the stack. Later commands
+	// return it rather than read an acknowledgement meant for another.
+	failed error
 }
 
 func packageCommandStack(t *testing.T) commandStack {
 	t.Helper()
-	sharedCommandStack.once.Do(startSharedCommandStack)
+	sharedCommandStack.once.Do(func() { sharedCommandStack.err = startSharedCommandStack() })
 	if sharedCommandStack.err != nil {
 		t.Fatal(sharedCommandStack.err)
 	}
 	return sharedCommandStack.stack
 }
 
-func startSharedCommandStack() {
+func startSharedCommandStack() error {
 	shared := &sharedCommandStack
 	// From the package source, not the working directory: the test that
 	// starts the stack may have changed directory.
@@ -67,89 +82,174 @@ func startSharedCommandStack() {
 	command.Stderr = os.Stderr
 	input, err := command.StdinPipe()
 	if err != nil {
-		shared.err = err
-		return
+		return fmt.Errorf("real command stack input: %w", err)
 	}
 	output, err := command.StdoutPipe()
 	if err != nil {
-		shared.err = err
-		return
+		return errors.Join(fmt.Errorf("real command stack output: %w", err), input.Close())
 	}
 	started := time.Now()
 	if err := command.Start(); err != nil {
-		shared.err = fmt.Errorf("start real command stack: %w", err)
-		return
+		return errors.Join(fmt.Errorf("start real command stack: %w", err), input.Close(), output.Close())
 	}
-	shared.command, shared.input, shared.replies = command, input, bufio.NewScanner(output)
-	if !shared.replies.Scan() {
-		shared.err = fmt.Errorf("real command stack exited before publishing readiness: %v", stopSharedCommandStack())
-		return
+	shared.command, shared.input, shared.lines = command, input, make(chan string)
+	go func() {
+		scanner := bufio.NewScanner(output)
+		for scanner.Scan() {
+			shared.lines <- scanner.Text()
+		}
+		shared.readErr = scanner.Err()
+		close(shared.lines)
+	}()
+	line, err := nextStackLine(commandStackReadyTimeout)
+	if err != nil {
+		return failSharedCommandStack(fmt.Errorf("real command stack readiness: %w", err))
 	}
-	if err := json.Unmarshal(shared.replies.Bytes(), &shared.stack); err != nil {
-		shared.err = fmt.Errorf("real command stack readiness %q: %w", shared.replies.Text(), err)
-		return
+	if err := json.Unmarshal([]byte(line), &shared.stack); err != nil || shared.stack.RegistryURL == "" || shared.stack.ServerURL == "" {
+		return failSharedCommandStack(fmt.Errorf("real command stack readiness %q is not its two origins: %v", line, err))
 	}
 	fmt.Fprintf(os.Stderr, "shared real command stack start: %s\n", time.Since(started).Round(time.Millisecond))
+	return nil
 }
 
-// publishCommandZone publishes domain's _awid TXT record naming controller in
-// the stack's DNS zone. It writes nothing to the registry.
-func publishCommandZone(domain, controllerDID string) error {
-	return sendStackCommand("zone", map[string]string{"domain": domain, "controller": controllerDID})
+// nextStackLine waits at most timeout for the stack's next stdout line.
+func nextStackLine(timeout time.Duration) (string, error) {
+	shared := &sharedCommandStack
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case line, open := <-shared.lines:
+		if !open {
+			return "", fmt.Errorf("stack output ended (read error: %v)", shared.readErr)
+		}
+		return line, nil
+	case <-timer.C:
+		return "", fmt.Errorf("no answer within %s", timeout)
+	}
+}
+
+// failSharedCommandStack records err as the stack's failure and kills it;
+// stopSharedCommandStack still waits for it.
+func failSharedCommandStack(err error) error {
+	shared := &sharedCommandStack
+	shared.failed = err
+	if killErr := shared.command.Process.Kill(); killErr != nil {
+		return errors.Join(err, fmt.Errorf("kill real command stack: %w", killErr))
+	}
+	return err
+}
+
+// commandZone is one domain's _awid record in the stack's DNS zone.
+type commandZone struct {
+	Domain     string `json:"domain"`
+	Controller string `json:"controller"`
+}
+
+// publishCommandZone publishes zone's record. It writes nothing to the
+// registry.
+func publishCommandZone(zone commandZone) error {
+	return sendStackCommand("zone", zone)
 }
 
 // sendStackCommand sends one fixture command and waits for its own
-// acknowledgement.
+// acknowledgement. A refusal is returned as an error and leaves the stack
+// serving; a transport or protocol failure stops it.
 func sendStackCommand(name string, value any) error {
 	shared := &sharedCommandStack
 	shared.mu.Lock()
 	defer shared.mu.Unlock()
+	if shared.failed != nil {
+		return fmt.Errorf("real command stack stopped after an earlier failure: %w", shared.failed)
+	}
 	shared.nextID++
 	id := shared.nextID
 	line, err := json.Marshal(map[string]any{"id": id, name: value})
 	if err != nil {
 		return err
 	}
-	if _, err := shared.input.Write(append(line, '\n')); err != nil {
-		return fmt.Errorf("send %s command: %w", name, err)
+	written := make(chan error, 1)
+	go func() {
+		_, err := shared.input.Write(append(line, '\n'))
+		written <- err
+	}()
+	timer := time.NewTimer(commandStackCommandTimeout)
+	defer timer.Stop()
+	select {
+	case err := <-written:
+		if err != nil {
+			return failSharedCommandStack(fmt.Errorf("send %s command %d: %w", name, id, err))
+		}
+	case <-timer.C:
+		return failSharedCommandStack(fmt.Errorf("send %s command %d: not accepted within %s", name, id, commandStackCommandTimeout))
 	}
-	if !shared.replies.Scan() {
-		return fmt.Errorf("real command stack exited before acknowledging %s command %d: %v", name, id, shared.replies.Err())
+	reply, err := nextStackLine(commandStackCommandTimeout)
+	if err != nil {
+		return failSharedCommandStack(fmt.Errorf("%s command %d: %w", name, id, err))
 	}
-	var reply struct {
-		ID    int    `json:"id"`
-		OK    bool   `json:"ok"`
-		Error string `json:"error"`
+	refusal, err := parseStackAcknowledgement(reply, id)
+	if err != nil {
+		return failSharedCommandStack(fmt.Errorf("%s command: %w", name, err))
 	}
-	if err := json.Unmarshal(shared.replies.Bytes(), &reply); err != nil {
-		return fmt.Errorf("%s acknowledgement %q: %w", name, shared.replies.Text(), err)
-	}
-	if reply.ID != id {
-		return fmt.Errorf("%s acknowledgement %q does not answer command %d", name, shared.replies.Text(), id)
-	}
-	if !reply.OK {
-		return fmt.Errorf("%s command refused: %s", name, reply.Error)
+	if refusal != "" {
+		return fmt.Errorf("%s command refused: %s", name, refusal)
 	}
 	return nil
 }
 
+// parseStackAcknowledgement reads an acknowledgement of command id: exactly
+// one of ok or error. It returns the refusal ("" for ok), or an error when the
+// line is not such an answer.
+func parseStackAcknowledgement(line string, id int) (string, error) {
+	var reply struct {
+		ID    *int   `json:"id"`
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+	decoder := json.NewDecoder(strings.NewReader(line))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&reply); err != nil {
+		return "", fmt.Errorf("acknowledgement %q: %w", line, err)
+	}
+	if reply.ID == nil || *reply.ID != id {
+		return "", fmt.Errorf("acknowledgement %q does not answer command %d", line, id)
+	}
+	if reply.OK == (reply.Error != "") {
+		return "", fmt.Errorf("acknowledgement %q is not exactly one of ok and error", line)
+	}
+	return reply.Error, nil
+}
+
 // stopSharedCommandStack closes the stack's input, which stops its services and
-// drops its database, and waits for it to exit.
+// drops its database, and waits a bounded time for it to exit.
 func stopSharedCommandStack() error {
 	shared := &sharedCommandStack
 	if shared.command == nil {
 		return nil
 	}
-	closeErr := shared.input.Close()
-	waitErr := shared.command.Wait()
+	var closeErr error
+	if err := shared.input.Close(); err != nil {
+		closeErr = fmt.Errorf("close real command stack input: %w", err)
+	}
+	exited := make(chan error, 1)
+	go func() { exited <- shared.command.Wait() }()
+	timer := time.NewTimer(commandStackStopTimeout)
+	defer timer.Stop()
+	var waitErr error
+	select {
+	case err := <-exited:
+		if err != nil {
+			waitErr = fmt.Errorf("real command stack exit: %w", err)
+		}
+	case <-timer.C:
+		killErr := shared.command.Process.Kill()
+		waitErr = fmt.Errorf("real command stack did not stop within %s; killed (%v), exit: %v", commandStackStopTimeout, killErr, <-exited)
+	}
 	shared.command = nil
-	if waitErr != nil {
-		return fmt.Errorf("real command stack: %w", waitErr)
+	var failedErr error
+	if shared.failed != nil {
+		failedErr = fmt.Errorf("real command stack was stopped by: %w", shared.failed)
 	}
-	if closeErr != nil {
-		return fmt.Errorf("close real command stack input: %w", closeErr)
-	}
-	return nil
+	return errors.Join(failedErr, waitErr, closeErr)
 }
 
 // realCommandWorld owns setup through the same writers installed clients use.
@@ -185,7 +285,7 @@ func newRealCommandWorld(t *testing.T) *realCommandWorld {
 	if err := sendStackCommand("reset_rate_limits", map[string]any{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := publishCommandZone(world.Domain, didOf(world.NamespaceKey)); err != nil {
+	if err := publishCommandZone(commandZone{Domain: world.Domain, Controller: didOf(world.NamespaceKey)}); err != nil {
 		t.Fatal(err)
 	}
 	world.Registry = trustedClient(t, world.Stack.RegistryURL, nil)
@@ -413,15 +513,19 @@ func TestRealServerWorldsShareOneStackAndKeepTeamsApart(t *testing.T) {
 func TestRealServerZoneCommandPublishesOnlyValidNewRecords(t *testing.T) {
 	world := newRealCommandWorld(t)
 	controller := didOf(newKey(t))
-	for _, refused := range []struct{ domain, controller, reason string }{
-		{"Upper.test", controller, "zone domain is not a canonical DNS name"},
-		{"two words.test", controller, "zone domain is not a canonical DNS name"},
-		{freshName(t, "zone-") + ".test", "did:key:znot-a-key", "zone controller is not an Ed25519 did:key"},
-		{world.Domain, controller, "zone domain is already published"},
+	const notCanonical = "zone domain is not a canonical DNS name. Send lowercase ASCII labels with no trailing dot."
+	for _, refused := range []struct {
+		zone   commandZone
+		reason string
+	}{
+		{zone: commandZone{Domain: "Upper.test", Controller: controller}, reason: notCanonical},
+		{zone: commandZone{Domain: "two words.test", Controller: controller}, reason: notCanonical},
+		{zone: commandZone{Domain: freshName(t, "zone-") + ".test", Controller: "did:key:znot-a-key"}, reason: "zone controller is not an Ed25519 did:key. Send the namespace controller's did:key."},
+		{zone: commandZone{Domain: world.Domain, Controller: controller}, reason: "zone domain is already published. Use a fresh domain for each world."},
 	} {
-		err := publishCommandZone(refused.domain, refused.controller)
-		if err == nil || !strings.HasSuffix(err.Error(), "refused: "+refused.reason) {
-			t.Fatalf("zone %q/%q: got %v, want refusal %q", refused.domain, refused.controller, err, refused.reason)
+		err := publishCommandZone(refused.zone)
+		if err == nil || err.Error() != "zone command refused: "+refused.reason {
+			t.Fatalf("zone %+v: got %v, want refusal %q", refused.zone, err, refused.reason)
 		}
 	}
 	// The world's own published namespace still resolves after the refusals.
@@ -431,20 +535,53 @@ func TestRealServerZoneCommandPublishesOnlyValidNewRecords(t *testing.T) {
 
 func TestRealServerStackRefusesMalformedConfigurationCommands(t *testing.T) {
 	newRealCommandWorld(t)
+	const notLoopback = "public_origin is not a canonical http://127.0.0.1 origin. Send the front's origin as http://127.0.0.1:<port>."
 	for _, refused := range []struct {
 		name   string
 		value  any
 		reason string
 	}{
-		{"public_origin", "https://registry.example", "public_origin is not a canonical http://127.0.0.1 origin"},
-		{"public_origin", "http://127.0.0.1:8080/path", "public_origin is not a canonical http://127.0.0.1 origin"},
-		{"reset_rate_limits", map[string]any{"bucket": "all"}, "reset_rate_limits takes an empty object"},
-		{"seed_certificate", map[string]any{}, "a command is exactly one of zone, public_origin or reset_rate_limits"},
+		{name: "public_origin", value: "https://registry.example", reason: notLoopback},
+		{name: "public_origin", value: "http://127.0.0.1:8080/path", reason: notLoopback},
+		{name: "reset_rate_limits", value: map[string]any{"bucket": "all"}, reason: "reset_rate_limits takes an empty object. Send {'reset_rate_limits': {}}."},
+		{name: "seed_certificate", value: map[string]any{}, reason: "command names no single known operation. Send exactly one of zone, public_origin or reset_rate_limits."},
 	} {
 		err := sendStackCommand(refused.name, refused.value)
 		if err == nil || err.Error() != refused.name+" command refused: "+refused.reason {
 			t.Fatalf("%s %v: got %v, want refusal %q", refused.name, refused.value, err, refused.reason)
 		}
+	}
+}
+
+func TestStackAcknowledgementIsExactlyOneAnswerForItsCommand(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		line    string
+		refusal string
+		invalid string
+	}{
+		{name: "ok", line: `{"id": 4, "ok": true}`},
+		{name: "refusal", line: `{"id": 4, "error": "zone domain is already published."}`, refusal: "zone domain is already published."},
+		{name: "ok and error", line: `{"id": 4, "ok": true, "error": "both"}`, invalid: "is not exactly one of ok and error"},
+		{name: "neither", line: `{"id": 4}`, invalid: "is not exactly one of ok and error"},
+		{name: "explicit false without error", line: `{"id": 4, "ok": false}`, invalid: "is not exactly one of ok and error"},
+		{name: "another command", line: `{"id": 3, "ok": true}`, invalid: "does not answer command 4"},
+		{name: "no id", line: `{"ok": true}`, invalid: "does not answer command 4"},
+		{name: "unknown field", line: `{"id": 4, "ok": true, "warning": "x"}`, invalid: "unknown field"},
+		{name: "not JSON", line: `ready`, invalid: "invalid character"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			refusal, err := parseStackAcknowledgement(test.line, 4)
+			if test.invalid != "" {
+				if err == nil || !strings.Contains(err.Error(), test.invalid) {
+					t.Fatalf("got refusal %q, err %v; want invalid %q", refusal, err, test.invalid)
+				}
+				return
+			}
+			if err != nil || refusal != test.refusal {
+				t.Fatalf("got refusal %q, err %v; want refusal %q", refusal, err, test.refusal)
+			}
+		})
 	}
 }
 

@@ -77,40 +77,60 @@ async def serve_fixture_app(
             await asyncio.sleep(0.01)
 
 
+ZONE_FIELDS = "Send {'zone': {'domain': <name>, 'controller': <did:key>}}."
+COMMANDS = "Send exactly one of zone, public_origin or reset_rate_limits."
+
+
 def publish_zone(zone: DnsServer, request) -> str | None:
     """Publish one domain's _awid record; return the refusal, if any."""
     if not isinstance(request, dict) or set(request) != {"domain", "controller"}:
-        return "zone needs exactly domain and controller"
+        return "zone needs exactly domain and controller. " + ZONE_FIELDS
     domain, controller = request["domain"], request["controller"]
+    if not isinstance(domain, str):
+        return "zone domain is not a string. " + ZONE_FIELDS
     try:
-        canonical = (
-            canonical_protocol_domain(domain) if isinstance(domain, str) else None
-        )
+        canonical = canonical_protocol_domain(domain)
     except FederationAuthorityError:
         canonical = None
     if canonical != domain:
-        return "zone domain is not a canonical DNS name"
+        return (
+            "zone domain is not a canonical DNS name. "
+            "Send lowercase ASCII labels with no trailing dot."
+        )
     if (
         not isinstance(controller, str)
         or not controller.startswith("did:key:")
         or not validate_did(controller)
     ):
-        return "zone controller is not an Ed25519 did:key"
+        return (
+            "zone controller is not an Ed25519 did:key. "
+            "Send the namespace controller's did:key."
+        )
     name = (awid_txt_name(domain), "TXT")
     if name in zone.records:
-        return "zone domain is already published"
+        return "zone domain is already published. Use a fresh domain for each world."
     zone.records[name] = [f'"{awid_txt_value(controller)}"']
     return None
 
 
 def add_public_origin(registry: FastAPI, origin) -> str | None:
     """Name a loopback proxy as a registry public origin; return the refusal."""
-    try:
-        canonical = canonical_server_origin(origin) if isinstance(origin, str) else None
-    except ValueError:
+    if not isinstance(origin, str):
         canonical = None
-    if canonical != origin or not origin.startswith("http://127.0.0.1:"):
-        return "public_origin is not a canonical http://127.0.0.1 origin"
+    else:
+        try:
+            canonical = canonical_server_origin(origin)
+        except ValueError:
+            canonical = None
+    if (
+        canonical is None
+        or canonical != origin
+        or not origin.startswith("http://127.0.0.1:")
+    ):
+        return (
+            "public_origin is not a canonical http://127.0.0.1 origin. "
+            "Send the front's origin as http://127.0.0.1:<port>."
+        )
     registry.state.awid_public_origins += (origin,)
     return None
 
@@ -118,7 +138,9 @@ def add_public_origin(registry: FastAPI, origin) -> str | None:
 def reset_rate_limits(registry: FastAPI, request) -> str | None:
     """Give the registry fresh production buckets; return the refusal, if any."""
     if request != {}:
-        return "reset_rate_limits takes an empty object"
+        return (
+            "reset_rate_limits takes an empty object. Send {'reset_rate_limits': {}}."
+        )
     registry.state.rate_limiter = MemoryFixedWindowRateLimiter()
     return None
 
@@ -128,9 +150,10 @@ def apply_command(zone: DnsServer, registry: FastAPI, line: str) -> dict:
     try:
         command = json.loads(line)
     except json.JSONDecodeError:
-        return {"error": "command is not JSON"}
-    if not isinstance(command, dict) or not isinstance(command.get("id"), int):
-        return {"error": "command needs an integer id"}
+        return {"error": "command is not JSON. Send one JSON object per line."}
+    # bool is an int in Python; an id must be a real integer.
+    if not isinstance(command, dict) or type(command.get("id")) is not int:
+        return {"error": "command needs an integer id. Give every command its own id."}
     reply = {"id": command["id"]}
     names = set(command) - {"id"}
     if names == {"zone"}:
@@ -140,7 +163,7 @@ def apply_command(zone: DnsServer, registry: FastAPI, line: str) -> dict:
     elif names == {"reset_rate_limits"}:
         refusal = reset_rate_limits(registry, command["reset_rate_limits"])
     else:
-        refusal = "a command is exactly one of zone, public_origin or reset_rate_limits"
+        refusal = "command names no single known operation. " + COMMANDS
     if refusal is None:
         reply["ok"] = True
     else:
