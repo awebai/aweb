@@ -193,7 +193,15 @@ class RunStatus:
             payload = json.loads(payload) if isinstance(payload, str) else payload
             if not isinstance(payload, Mapping) or not isinstance(payload.get("refusal_code"), str):
                 raise UseAuditUnavailable()
-            return ToolReply(200, {"state": "refused", **identity, "code": payload["refusal_code"]})
+            return ToolReply(
+                200,
+                {
+                    **tool_results.refused(
+                        payload["refusal_code"], request_id=identity["request_id"]
+                    ),
+                    **identity,
+                },
+            )
         if state is State.OUTCOME_UNKNOWN:
             return ToolReply(200, tool_results.outcome_unknown(**identity))
         return ToolReply(200, {"state": state.value, **identity})

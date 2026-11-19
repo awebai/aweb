@@ -715,6 +715,23 @@ class BrokerRequests:
         with self._response_budget.reservation() as reserve:
             return await self._dispatch_reserved(use, submission, view, reserve)
 
+    async def _observe_backend(self, use: _PreparedUse) -> BackendObservation | None:
+        observation = await self._opener.observe(_context(use.call))
+        if observation is not None and observation.item_version != observation.binding.item_version:
+            if self._reconciler is None:
+                raise CustodyUnavailable("backend reconciliation unavailable")
+            changed = await self._reconciler.reconcile(
+                observation, admitted=use.admission.installation
+            )
+            for secret_id in changed.affected_secret_ids:
+                await self._tokens.evict_secret(
+                    installation_id=use.admission.installation.installation_id,
+                    team_id=use.admission.installation.team_id,
+                    secret_id=secret_id,
+                )
+            raise AdmissionRefused("secret_version_changed")
+        return observation
+
     async def _dispatch_reserved(
         self,
         use: _PreparedUse,
@@ -723,23 +740,7 @@ class BrokerRequests:
         reserve: Callable[[int], None],
     ) -> ToolReply:
         try:
-            observation = await self._opener.observe(_context(use.call))
-            if (
-                observation is not None
-                and observation.item_version != observation.binding.item_version
-            ):
-                if self._reconciler is None:
-                    raise CustodyUnavailable("backend reconciliation unavailable")
-                changed = await self._reconciler.reconcile(
-                    observation, admitted=use.admission.installation
-                )
-                for secret_id in changed.affected_secret_ids:
-                    await self._tokens.evict_secret(
-                        installation_id=use.admission.installation.installation_id,
-                        team_id=use.admission.installation.team_id,
-                        secret_id=secret_id,
-                    )
-                raise AdmissionRefused("secret_version_changed")
+            observation = await self._observe_backend(use)
             final = _PublicationFence(self, use, submission, observation, view)
             async with self._db.transaction() as tx:
                 await final.prepare(tx)

@@ -28,6 +28,7 @@ from aweb_naapp.egress import AddressPolicy, DnsResolver, Egress
 from aweb_naapp.email import EmailSettings, Mailer
 from aweb_naapp.hooks.owner_act import HUMAN_ROLE_ACTS
 from aweb_naapp.hooks.owner_act_nonces import OwnerActVerifier, apply_owner_act_migrations
+from aweb_naapp.hooks.producer import RegistrationView
 from aweb_naapp.key_file import read_key_file
 from aweb_naapp.nonces import apply_nonce_migrations
 from aweb_naapp.roles import is_holding_scope
@@ -50,6 +51,7 @@ from aweb_naapp.runtime.passkeys import Passkeys, RelyingParty
 from aweb_naapp.signing_key import read_signing_key_file
 from awid.dns_verify import DomainVerifier
 from fastapi import APIRouter, Request
+from pgdbm import AsyncDatabaseManager
 from pgdbm.core import TransactionManager
 
 from aweb_secrets.activity_service import ActivityReads
@@ -244,21 +246,17 @@ def _owner_delivery_router(
     return _OwnerDelivery(router=router, verifier=verifier)
 
 
-async def _compose(
-    runtime: NaappRuntime,
-    settings: ServiceSettings,
-    provider: KeyProvider,
-    mailer: Mailer,
-    committer: UseCommitter,
-    response_key: ResponseKey,
-    run_dispatch: Callable[..., RunDispatch],
-) -> _Services:
-    db = runtime.db()
-    fence = runtime.installation_fence()
-    # Configure the shared fence; never create another G1 source or fence.
-    fence.on_retire = partial(retire_team, app_id=settings.app_id)
-    registrations = runtime.hook_registrations()
-    store = PgApprovalStore(db)
+@dataclass(frozen=True, kw_only=True)
+class _ApprovalServices:
+    passkeys: Passkeys
+    credentials: CredentialAudit
+    owners: OwnerDirectory
+    approvals: Approvals
+    use_audit: UseApprovalAudit
+    use_view: Callable[[str], Awaitable[RegistrationView | None]]
+
+
+async def _migrate_stores(*, db: AsyncDatabaseManager, store: PgApprovalStore) -> None:
     await store.migrate()
     for migrate in (
         apply_owner_act_migrations,
@@ -276,6 +274,15 @@ async def _compose(
         apply_run_dispatch_migrations,
     ):
         await migrate(db)
+
+
+async def _compose_approvals(
+    *, runtime: NaappRuntime, settings: ServiceSettings, store: PgApprovalStore, mailer: Mailer
+) -> _ApprovalServices:
+    """Share the B2/B3 and audit lifecycle required by secrets.md §11.2."""
+    db = runtime.db()
+    fence = runtime.installation_fence()
+    registrations = runtime.hook_registrations()
 
     async def approval(tx: TransactionManager, approval_id: str) -> Approval | None:
         return await store.get_in(approval_id, tx)
@@ -339,6 +346,43 @@ async def _compose(
         authenticators=[passkeys.authenticator()],
         audit=audit,
     )
+
+    return _ApprovalServices(
+        passkeys=passkeys,
+        credentials=credentials,
+        owners=owners,
+        approvals=approvals,
+        use_audit=use_audit,
+        use_view=use_view,
+    )
+
+
+async def _compose(
+    runtime: NaappRuntime,
+    settings: ServiceSettings,
+    provider: KeyProvider,
+    mailer: Mailer,
+    committer: UseCommitter,
+    response_key: ResponseKey,
+    run_dispatch: Callable[..., RunDispatch],
+) -> _Services:
+    db = runtime.db()
+    fence = runtime.installation_fence()
+    # Configure the shared fence; never create another G1 source or fence.
+    fence.on_retire = partial(retire_team, app_id=settings.app_id)
+    registrations = runtime.hook_registrations()
+    store = PgApprovalStore(db)
+    await _migrate_stores(db=db, store=store)
+
+    approval_services = await _compose_approvals(
+        runtime=runtime, settings=settings, store=store, mailer=mailer
+    )
+    passkeys = approval_services.passkeys
+    credentials = approval_services.credentials
+    owners = approval_services.owners
+    approvals = approval_services.approvals
+    use_audit = approval_services.use_audit
+    use_view = approval_services.use_view
 
     async def current_team_controller_key(team_id: str) -> str:
         return (await runtime.team_cache().get(team_id)).team_did_key

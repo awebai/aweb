@@ -180,7 +180,15 @@ class UseStatus:
             payload = json.loads(event) if isinstance(event, str) else event
             if not isinstance(payload, Mapping) or not isinstance(payload.get("refusal_code"), str):
                 return self._unavailable(receipt)
-            return ToolReply(200, {"state": "refused", **receipt, "code": payload["refusal_code"]})
+            return ToolReply(
+                200,
+                {
+                    **tool_results.refused(
+                        payload["refusal_code"], request_id=receipt["request_id"]
+                    ),
+                    **receipt,
+                },
+            )
         if (
             state
             in {
