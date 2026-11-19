@@ -14,8 +14,6 @@ from aweb.messaging.kinds import (
     ContentModeValue,
     MessagePriority,
     MessagePriorityValue,
-    accepted_content_mode,
-    accepted_message_priority,
 )
 
 logger = logging.getLogger(__name__)
@@ -53,13 +51,9 @@ def observe_message_vocabulary(
     than in callback constructors that may never be reached on exact retries.
     """
     unnamed: list[_VocabularyField] = []
-    if content_mode is not None and not isinstance(
-        accepted_content_mode(content_mode), ContentMode
-    ):
+    if content_mode is not None and content_mode not in frozenset(ContentMode):
         unnamed.append(_VocabularyField.CONTENT_MODE)
-    if priority is not None and not isinstance(
-        accepted_message_priority(priority), MessagePriority
-    ):
+    if priority is not None and priority not in frozenset(MessagePriority):
         unnamed.append(_VocabularyField.PRIORITY)
     if not unnamed:
         return

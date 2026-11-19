@@ -53,7 +53,9 @@ async def test_outbound_resolution_reuses_fresh_cohort_and_refreshes_expired(
         )
         assert [row["bucket_key"] for row in sources] == ["203.0.113.1"]
         await env.db.execute(
-            "UPDATE {{tables.federation_address_authority_cohorts}} SET expires_at=clock_timestamp()-INTERVAL '1 second'",
+            "UPDATE {{tables.federation_address_authority_cohorts}} "
+            "SET authoritative_read_completed_at=authoritative_read_completed_at-INTERVAL '2 minutes', "
+            "expires_at=expires_at-INTERVAL '2 minutes'",
         )
         refreshed = await authority.resolve_contact(
             "foreign.test/bob", source_ip="203.0.113.3"

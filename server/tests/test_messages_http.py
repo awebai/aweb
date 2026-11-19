@@ -57,7 +57,7 @@ import aweb.routes.federation as federation_routes
 from aweb.routes.federation import router as federation_router
 from aweb.routes.messages import router as messages_router
 from federation_activation_support import TestFederationAuthority
-from did_key_fixtures import named_did_key
+from did_key_fixtures import named_did_key, named_signing_key
 
 
 def _make_keypair():
@@ -7579,7 +7579,9 @@ async def test_send_message_accepts_local_to_address_binding_when_awid_misses(
         "from_did": "did:aw:alice",
         "message_id": message_id,
         "timestamp": timestamp,
-        "signature": _raw_b64(bytes(64)),
+        "signature": sign_message(
+            named_signing_key("z6MkAliceCurrent"), signed_payload
+        ),
         "signed_payload": signed_payload.decode(),
     }
     async with AsyncClient(
@@ -8335,7 +8337,7 @@ async def test_send_message_team_and_contacts_accepts_verified_same_team_non_con
 
 @pytest.mark.asyncio
 async def test_send_message_resolves_tilde_alias_cross_team(aweb_cloud_db):
-    _, _, alice_did_key = _make_keypair()
+    alice_sk, _, alice_did_key = _make_keypair()
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
@@ -8398,7 +8400,7 @@ async def test_send_message_resolves_tilde_alias_cross_team(aweb_cloud_db):
                 "subject": "hello eng",
                 "body": "hi",
                 "from_did": alice_did_key,
-                "signature": _raw_b64(bytes(64)),
+                "signature": sign_message(alice_sk, signed_payload.encode()),
                 "message_id": message_id,
                 "timestamp": timestamp,
                 "signed_payload": signed_payload,
