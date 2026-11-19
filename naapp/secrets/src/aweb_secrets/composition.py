@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
 from datetime import timedelta
@@ -181,6 +181,52 @@ class _Services:
     custody: Custody
 
 
+async def _advance_owner_revision(
+    tx: TransactionManager,
+    installation: AdmittedInstallation,
+    result: OwnerActEffectResult,
+) -> None:
+    # The shared writer invokes this after the role/B3 effect in its original
+    # nonce/effect/governance transaction; revision remains the final SQL lock.
+    await bump_config_revision(tx, installation.installation_id, team_id=installation.team_id)
+
+
+def _owner_delivery_router(
+    *,
+    runtime: NaappRuntime,
+    settings: ServiceSettings,
+    passkeys: Passkeys,
+    credentials: CredentialAudit,
+    team_key_for: Callable[[str], Awaitable[str]],
+) -> APIRouter:
+    """Compose human-role delivery at its human origin (secrets.md:1677-1687)."""
+    router = APIRouter()
+    mount_owner_act_routes(
+        router,
+        runtime=runtime,
+        effect=HumanRoleActs(
+            roles=frozenset({OWNER_ROLE}),
+            notice_roles=frozenset({OWNER_ROLE}),
+            passkeys=passkeys,
+            recorder=credentials,
+            check_member=runtime.check_human_role_member,
+            on_applied=_advance_owner_revision,
+        ),
+        verifier=OwnerActVerifier(
+            scope=settings.app_id,
+            audience=settings.console_origin,
+            acts=HUMAN_ROLE_ACTS,
+            team_key_for=team_key_for,
+        ),
+        limiter=OwnerActLimiter(
+            client_identity=ClientIdentity(trusted_header=settings.client_address_header),
+            limit=12,
+            window=timedelta(minutes=1),
+        ),
+    )
+    return router
+
+
 async def _compose(
     runtime: NaappRuntime,
     settings: ServiceSettings,
@@ -277,41 +323,15 @@ async def _compose(
         audit=audit,
     )
 
-    async def team_key(team_id):
+    async def current_team_controller_key(team_id: str) -> str:
         return (await runtime.team_cache().get(team_id)).team_did_key
 
-    async def owner_revision(
-        tx: TransactionManager,
-        installation: AdmittedInstallation,
-        result: OwnerActEffectResult,
-    ) -> None:
-        # HumanRoleActs calls this after its role/B3 writer. Revision is the
-        # last SQL lock, in the original nonce/effect/governance transaction.
-        await bump_config_revision(tx, installation.installation_id, team_id=installation.team_id)
-
-    owner_delivery = APIRouter()
-    mount_owner_act_routes(
-        owner_delivery,
+    owner_delivery = _owner_delivery_router(
         runtime=runtime,
-        effect=HumanRoleActs(
-            roles=frozenset({OWNER_ROLE}),
-            notice_roles=frozenset({OWNER_ROLE}),
-            passkeys=passkeys,
-            recorder=credentials,
-            check_member=runtime.check_human_role_member,
-            on_applied=owner_revision,
-        ),
-        verifier=OwnerActVerifier(
-            scope=settings.app_id,
-            audience=settings.console_origin,
-            acts=HUMAN_ROLE_ACTS,
-            team_key_for=team_key,
-        ),
-        limiter=OwnerActLimiter(
-            client_identity=ClientIdentity(trusted_header=settings.client_address_header),
-            limit=12,
-            window=timedelta(minutes=1),
-        ),
+        settings=settings,
+        passkeys=passkeys,
+        credentials=credentials,
+        team_key_for=current_team_controller_key,
     )
 
     # These callbacks close the construction cycle without replacing the
@@ -339,7 +359,7 @@ async def _compose(
             scope=settings.app_id,
             audience=settings.public_origin,
             acts=APP_ACTS,
-            team_key_for=team_key,
+            team_key_for=current_team_controller_key,
         ),
         installation=InstallationLookup(fence),
         credential_audit=credentials,
