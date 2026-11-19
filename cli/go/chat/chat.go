@@ -702,7 +702,6 @@ const (
 )
 
 func findSessionWithOptions(ctx context.Context, client *awid.Client, targetAlias string, choice sessionChoice) (sessionID string, senderWaiting bool, err error) {
-	preferWaiting := choice == waitingSessionFirst
 	rawTarget := strings.TrimSpace(targetAlias)
 	targetAlias = normalizeSessionTarget(ctx, client, rawTarget)
 	bareAliasTarget := rawTarget != "" &&
@@ -739,15 +738,7 @@ func findSessionWithOptions(ctx context.Context, client *awid.Client, targetAlia
 		}
 		identityKeys := []string{}
 		appendKeys := func(participants, participantDIDs, participantAddresses []string) {
-			for _, key := range matchedParticipantIdentityKeys(participants, participantDIDs, participantAddresses, targetAlias) {
-				duplicate := false
-				for _, existing := range identityKeys {
-					duplicate = duplicate || strings.EqualFold(existing, key)
-				}
-				if !duplicate {
-					identityKeys = append(identityKeys, key)
-				}
-			}
+			identityKeys = appendUniqueFold(identityKeys, matchedParticipantIdentityKeys(participants, participantDIDs, participantAddresses, targetAlias)...)
 		}
 		for _, p := range pendingResp.Pending {
 			if matchesSelectedTeam(p.TeamID) {
@@ -763,102 +754,54 @@ func findSessionWithOptions(ctx context.Context, client *awid.Client, targetAlia
 			identityKeys = normalizeMatchedIdentityKeys(ctx, client, identityKeys)
 		}
 		if len(identityKeys) > 1 {
-			return "", false, fmt.Errorf("multiple conversations match %s; run `aw chat pending` to choose one", targetAlias)
+			return "", false, ambiguousConversation(targetAlias)
 		}
 	}
 
-	selectPending := func(match func([]string, []string, []string, string) bool, requireUnique bool, trackConcreteIdentity bool) (string, bool, error) {
-		var bestPendingID string
-		var bestPendingWaiting bool
-		var bestPendingActivity string
-		bestPendingSize := -1
+	selectAmong := func(candidates []sessionCandidate, rule candidateRule) (sessionCandidate, error) {
+		var best sessionCandidate
 		matchCount := 0
 		identityKeys := []string{}
-		appendIdentityKey := func(value string) {
-			value = strings.TrimSpace(value)
-			if value == "" {
-				return
-			}
-			for _, existing := range identityKeys {
-				if strings.EqualFold(existing, value) {
-					return
-				}
-			}
-			identityKeys = append(identityKeys, value)
-		}
-		for _, p := range pendingResp.Pending {
-			if !matchesSelectedTeam(p.TeamID) {
-				continue
-			}
-			if !match(p.Participants, p.ParticipantDIDs, p.ParticipantAddresses, targetAlias) {
+		for _, candidate := range candidates {
+			if !matchesSelectedTeam(candidate.teamID) || !rule.match(candidate.participants, candidate.participantDIDs, candidate.participantAddresses, targetAlias) {
 				continue
 			}
 			matchCount++
-			if trackConcreteIdentity {
-				for _, key := range matchedParticipantIdentityKeys(p.Participants, p.ParticipantDIDs, p.ParticipantAddresses, targetAlias) {
-					appendIdentityKey(key)
-				}
+			if rule.trackIdentity {
+				identityKeys = appendUniqueFold(identityKeys, matchedParticipantIdentityKeys(candidate.participants, candidate.participantDIDs, candidate.participantAddresses, targetAlias)...)
 			}
-			size := participantIdentityCount(p.Participants, p.ParticipantDIDs, p.ParticipantAddresses)
-			better := bestPendingSize < 0
-			if !better && preferWaiting {
-				// Prefer sender_waiting over non-waiting.
-				if p.SenderWaiting && !bestPendingWaiting {
-					better = true
-				} else if !p.SenderWaiting && bestPendingWaiting {
-					better = false
-				} else if size < bestPendingSize {
-					better = true
-				} else if size == bestPendingSize && p.LastActivity > bestPendingActivity {
-					better = true
-				}
-			} else if !better {
-				if size < bestPendingSize {
-					better = true
-				} else if size == bestPendingSize && p.LastActivity > bestPendingActivity {
-					better = true
-				}
-			}
-			if better {
-				bestPendingID = p.SessionID
-				bestPendingWaiting = p.SenderWaiting
-				bestPendingSize = size
-				bestPendingActivity = p.LastActivity
+			if candidate.betterThan(best, choice) {
+				best = candidate
 			}
 		}
-		if requireUnique && matchCount > 1 {
-			if trackConcreteIdentity && len(identityKeys) > 1 {
+		if rule.requireUnique && matchCount > 1 {
+			if rule.trackIdentity && len(identityKeys) > 1 {
 				identityKeys = normalizeMatchedIdentityKeys(ctx, client, identityKeys)
 			}
-			if !(trackConcreteIdentity && len(identityKeys) == 1) {
-				return "", false, fmt.Errorf("multiple conversations match %s; run `aw chat pending` to choose one", targetAlias)
+			if !(rule.trackIdentity && len(identityKeys) == 1) {
+				return sessionCandidate{}, ambiguousConversation(targetAlias)
 			}
 		}
-		if requireUniqueConcreteAlias && trackConcreteIdentity && len(identityKeys) > 1 {
+		if requireUniqueConcreteAlias && rule.trackIdentity && len(identityKeys) > 1 {
 			identityKeys = normalizeMatchedIdentityKeys(ctx, client, identityKeys)
 		}
-		if requireUniqueConcreteAlias && trackConcreteIdentity && len(identityKeys) > 1 {
-			return "", false, fmt.Errorf("multiple conversations match %s; run `aw chat pending` to choose one", targetAlias)
+		if requireUniqueConcreteAlias && rule.trackIdentity && len(identityKeys) > 1 {
+			return sessionCandidate{}, ambiguousConversation(targetAlias)
 		}
-		if bestPendingID != "" {
-			return bestPendingID, bestPendingWaiting, nil
-		}
-		return "", false, nil
+		return best, nil
 	}
-	bestPendingID, bestPendingWaiting, err := selectPending(exactParticipantMatch, requireUniqueExact, true)
-	if err != nil {
-		return "", false, err
-	}
-	if bestPendingID != "" {
-		return bestPendingID, bestPendingWaiting, nil
-	}
+	rules := []candidateRule{{match: exactParticipantMatch, requireUnique: requireUniqueExact, trackIdentity: true}}
 	if bareAliasTarget {
-		bestPendingID, bestPendingWaiting, err = selectPending(uniqueHandleParticipantMatch, true, false)
+		rules = append(rules, candidateRule{match: uniqueHandleParticipantMatch, requireUnique: true})
+	}
+	pending := pendingCandidates(pendingResp.Pending)
+	for _, rule := range rules {
+		best, err := selectAmong(pending, rule)
 		if err != nil {
 			return "", false, err
 		}
-		if bestPendingID != "" {
-			return bestPendingID, bestPendingWaiting, nil
+		if best.sessionID != "" {
+			return best.sessionID, best.senderWaiting, nil
 		}
 	}
 
@@ -867,86 +810,104 @@ func findSessionWithOptions(ctx context.Context, client *awid.Client, targetAlia
 	if err != nil {
 		return "", false, fmt.Errorf("listing chat sessions: %w", err)
 	}
-	selectSession := func(match func([]string, []string, []string, string) bool, requireUnique bool, trackConcreteIdentity bool) (string, error) {
-		var bestSessionID string
-		var bestSessionActivity string
-		bestSessionSize := -1
-		matchCount := 0
-		identityKeys := []string{}
-		appendIdentityKey := func(value string) {
-			value = strings.TrimSpace(value)
-			if value == "" {
-				return
-			}
-			for _, existing := range identityKeys {
-				if strings.EqualFold(existing, value) {
-					return
-				}
-			}
-			identityKeys = append(identityKeys, value)
-		}
-		for _, s := range sessionsResp.Sessions {
-			if !matchesSelectedTeam(s.TeamID) {
-				continue
-			}
-			if !match(s.Participants, s.ParticipantDIDs, s.ParticipantAddresses, targetAlias) {
-				continue
-			}
-			matchCount++
-			if trackConcreteIdentity {
-				for _, key := range matchedParticipantIdentityKeys(s.Participants, s.ParticipantDIDs, s.ParticipantAddresses, targetAlias) {
-					appendIdentityKey(key)
-				}
-			}
-			size := participantIdentityCount(s.Participants, s.ParticipantDIDs, s.ParticipantAddresses)
-			better := bestSessionSize < 0
-			if !better {
-				if size < bestSessionSize {
-					better = true
-				} else if size == bestSessionSize && sessionActivity(s) > bestSessionActivity {
-					better = true
-				}
-			}
-			if better {
-				bestSessionID = s.SessionID
-				bestSessionSize = size
-				bestSessionActivity = sessionActivity(s)
-			}
-		}
-		if requireUnique && matchCount > 1 {
-			if trackConcreteIdentity && len(identityKeys) > 1 {
-				identityKeys = normalizeMatchedIdentityKeys(ctx, client, identityKeys)
-			}
-			if !(trackConcreteIdentity && len(identityKeys) == 1) {
-				return "", fmt.Errorf("multiple conversations match %s; run `aw chat pending` to choose one", targetAlias)
-			}
-		}
-		if requireUniqueConcreteAlias && trackConcreteIdentity && len(identityKeys) > 1 {
-			identityKeys = normalizeMatchedIdentityKeys(ctx, client, identityKeys)
-		}
-		if requireUniqueConcreteAlias && trackConcreteIdentity && len(identityKeys) > 1 {
-			return "", fmt.Errorf("multiple conversations match %s; run `aw chat pending` to choose one", targetAlias)
-		}
-		return bestSessionID, nil
-	}
-	bestSessionID, err := selectSession(exactParticipantMatch, requireUniqueExact, true)
-	if err != nil {
-		return "", false, err
-	}
-	if bestSessionID != "" {
-		return bestSessionID, false, nil
-	}
-	if bareAliasTarget {
-		bestSessionID, err = selectSession(uniqueHandleParticipantMatch, true, false)
+	listed := listedCandidates(sessionsResp.Sessions)
+	for _, rule := range rules {
+		best, err := selectAmong(listed, rule)
 		if err != nil {
 			return "", false, err
 		}
-		if bestSessionID != "" {
-			return bestSessionID, false, nil
+		if best.sessionID != "" {
+			return best.sessionID, false, nil
 		}
 	}
 
 	return "", false, fmt.Errorf("no conversation found with %s", targetAlias)
+}
+
+// ErrAmbiguousConversation says a target matches more than one conversation
+// and the caller must choose.
+var ErrAmbiguousConversation = errors.New("multiple conversations match")
+
+func ambiguousConversation(target string) error {
+	return fmt.Errorf("%w %s; run `aw chat pending` to choose one", ErrAmbiguousConversation, target)
+}
+
+// sessionCandidate is one conversation a lookup may select: a pending item
+// or a listed session.
+type sessionCandidate struct {
+	sessionID            string
+	teamID               string
+	participants         []string
+	participantDIDs      []string
+	participantAddresses []string
+	senderWaiting        bool
+	activity             string
+	size                 int
+}
+
+func pendingCandidates(items []awid.ChatPendingItem) []sessionCandidate {
+	out := make([]sessionCandidate, 0, len(items))
+	for _, p := range items {
+		out = append(out, sessionCandidate{sessionID: p.SessionID, teamID: p.TeamID, participants: p.Participants,
+			participantDIDs: p.ParticipantDIDs, participantAddresses: p.ParticipantAddresses, senderWaiting: p.SenderWaiting,
+			activity: p.LastActivity, size: participantIdentityCount(p.Participants, p.ParticipantDIDs, p.ParticipantAddresses)})
+	}
+	return out
+}
+
+func listedCandidates(items []awid.ChatSessionItem) []sessionCandidate {
+	out := make([]sessionCandidate, 0, len(items))
+	for _, s := range items {
+		out = append(out, sessionCandidate{sessionID: s.SessionID, teamID: s.TeamID, participants: s.Participants,
+			participantDIDs: s.ParticipantDIDs, participantAddresses: s.ParticipantAddresses,
+			activity: sessionActivity(s), size: participantIdentityCount(s.Participants, s.ParticipantDIDs, s.ParticipantAddresses)})
+	}
+	return out
+}
+
+// betterThan ranks candidates: a session whose other party is waiting first
+// when the choice says so, then the fewest participants (1:1 over group),
+// then the latest activity. Any candidate beats none.
+func (c sessionCandidate) betterThan(best sessionCandidate, choice sessionChoice) bool {
+	if best.sessionID == "" {
+		return true
+	}
+	if choice == waitingSessionFirst && c.senderWaiting != best.senderWaiting {
+		return c.senderWaiting
+	}
+	if c.size != best.size {
+		return c.size < best.size
+	}
+	return c.activity > best.activity
+}
+
+// candidateRule is how one lookup pass matches candidates against its target.
+type candidateRule struct {
+	match func(participants, participantDIDs, participantAddresses []string, target string) bool
+	// requireUnique refuses more than one match, unless every match names
+	// one concrete identity.
+	requireUnique bool
+	// trackIdentity collects the concrete identities the matches name.
+	trackIdentity bool
+}
+
+// appendUniqueFold appends the non-empty values not already present,
+// ignoring case.
+func appendUniqueFold(keys []string, values ...string) []string {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		duplicate := false
+		for _, existing := range keys {
+			duplicate = duplicate || strings.EqualFold(existing, value)
+		}
+		if !duplicate {
+			keys = append(keys, value)
+		}
+	}
+	return keys
 }
 
 // findSessionByConfirmedDID selects a conversation with the participant the
@@ -955,7 +916,6 @@ func findSessionWithOptions(ctx context.Context, client *awid.Client, targetAlia
 // did, the identity's other DID and its address, as resolved for did. A bare
 // alias, which any participant may hold, is no fallback here.
 func findSessionByConfirmedDID(ctx context.Context, client *awid.Client, did string, choice sessionChoice) (sessionID string, senderWaiting bool, err error) {
-	preferWaiting := choice == waitingSessionFirst
 	dids := []string{did}
 	address := ""
 	// Resolution only widens the match to the same identity's other DID and
@@ -983,42 +943,26 @@ func findSessionByConfirmedDID(ctx context.Context, client *awid.Client, did str
 	if err := client.Get(ctx, "/v1/chat/pending", &pendingResp); err != nil {
 		return "", false, fmt.Errorf("getting pending chats: %w", err)
 	}
-	bestSize := -1
-	var bestWaiting bool
-	var bestActivity string
-	for _, p := range pendingResp.Pending {
-		if !hasParticipant(p.Participants, p.ParticipantDIDs, p.ParticipantAddresses) {
-			continue
-		}
-		size := participantIdentityCount(p.Participants, p.ParticipantDIDs, p.ParticipantAddresses)
-		better := bestSize < 0
-		if !better && preferWaiting && p.SenderWaiting != bestWaiting {
-			better = p.SenderWaiting
-		} else if !better {
-			better = size < bestSize || (size == bestSize && p.LastActivity > bestActivity)
-		}
-		if better {
-			sessionID, bestWaiting, bestSize, bestActivity = p.SessionID, p.SenderWaiting, size, p.LastActivity
+	var best sessionCandidate
+	for _, candidate := range pendingCandidates(pendingResp.Pending) {
+		if hasParticipant(candidate.participants, candidate.participantDIDs, candidate.participantAddresses) && candidate.betterThan(best, choice) {
+			best = candidate
 		}
 	}
-	if sessionID != "" {
-		return sessionID, bestWaiting, nil
+	if best.sessionID != "" {
+		return best.sessionID, best.senderWaiting, nil
 	}
 	sessionsResp, err := client.ChatListSessions(ctx)
 	if err != nil {
 		return "", false, fmt.Errorf("listing chat sessions: %w", err)
 	}
-	for _, s := range sessionsResp.Sessions {
-		if !hasParticipant(s.Participants, s.ParticipantDIDs, s.ParticipantAddresses) {
-			continue
-		}
-		size := participantIdentityCount(s.Participants, s.ParticipantDIDs, s.ParticipantAddresses)
-		if bestSize < 0 || size < bestSize || (size == bestSize && sessionActivity(s) > bestActivity) {
-			sessionID, bestSize, bestActivity = s.SessionID, size, sessionActivity(s)
+	for _, candidate := range listedCandidates(sessionsResp.Sessions) {
+		if hasParticipant(candidate.participants, candidate.participantDIDs, candidate.participantAddresses) && candidate.betterThan(best, choice) {
+			best = candidate
 		}
 	}
-	if sessionID != "" {
-		return sessionID, false, nil
+	if best.sessionID != "" {
+		return best.sessionID, false, nil
 	}
 	return "", false, fmt.Errorf("no conversation found with %s", did)
 }
@@ -1420,8 +1364,7 @@ func Send(ctx context.Context, client *awid.Client, myAlias string, targets []st
 				SessionID: sessionID,
 				MessageID: msgResp.MessageID,
 			}, myAlias, targets, message, waitSeconds, opts, &sentAt, callback)
-		} else if findErr != nil &&
-			strings.Contains(findErr.Error(), "multiple conversations match") {
+		} else if errors.Is(findErr, ErrAmbiguousConversation) {
 			return nil, findErr
 		}
 	}
@@ -1449,7 +1392,7 @@ func shouldProbeExistingSession(target string) bool {
 	// lets findLatestSession discover the existing session_id, route via
 	// ChatSendMessage on the per-session endpoint, and bypass the conflict
 	// entirely. Ambiguous targets are surfaced by findLatestSession as
-	// 'multiple conversations match' and propagate up.
+	// ErrAmbiguousConversation and propagate up.
 	return strings.TrimSpace(target) != ""
 }
 
