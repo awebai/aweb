@@ -57,8 +57,10 @@ def covering_payload(
     body: bytes,
     timestamp: str,
     claims: dict[str, Any] | None = None,
+    method: str = "POST",
 ) -> bytes:
-    """The covering-v2 payload every signer of a POST of ``body`` to ``path`` signs.
+    """The covering-v2 payload every signer of a ``method`` request of ``body``
+    (b"" for none) to ``path`` signs.
 
     ``aud`` is the canonical origin of the registry the request is sent to.
     """
@@ -67,7 +69,7 @@ def covering_payload(
         "v": 2,
         "type": CONTROLLER_REQUEST_TYPE,
         "aud": aud,
-        "method": "POST",
+        "method": method.upper(),
         "path": path,
         "body_sha256": hashlib.sha256(body).hexdigest(),
         "timestamp": timestamp,

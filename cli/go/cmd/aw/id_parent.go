@@ -28,7 +28,6 @@ import (
 // --root-parent, never inferred.
 
 var (
-	idParentHuman        string
 	idParentDomain       string
 	idParentInvitationID string
 	idParentParent       string
@@ -70,13 +69,18 @@ var (
 
 func init() {
 	for _, cmd := range []*cobra.Command{idParentRequestCmd, idParentImportCmd} {
-		cmd.Flags().StringVar(&idParentHuman, "human", "", "Act as this human prepared on this machine (did:aw)")
-		cmd.Flags().StringVar(&idParentDomain, "domain", "", "Namespace domain of the invitation")
+		cmd.Flags().StringVar(&idParentDomain, "domain", "", "Organization namespace for agent operations; with --human, the person's domain, as --human-domain")
 		idParentCmd.AddCommand(cmd)
+	}
+	for _, cmd := range []*cobra.Command{idParentRequestCmd, idParentImportCmd} {
+		if cmd.Long == "" {
+			cmd.Long = cmd.Short
+		}
+		cmd.Long += humanSigningHelp
 	}
 	idParentRequestCmd.Flags().StringVar(&idParentInvitationID, "invitation-id", "", "Invitation ID the parent gave you")
 	idParentRequestCmd.Flags().StringVar(&idParentParent, "parent", "", "did:aw or did:key of the parent identity")
-	idParentRequestCmd.Flags().BoolVar(&idParentRootParent, "root-parent", false, "The parent is the namespace root of --domain")
+	idParentRequestCmd.Flags().BoolVar(&idParentRootParent, "root-parent", false, "The parent is the namespace root of the selected organization")
 	idParentRequestCmd.Flags().BoolVar(&idParentResign, "resign", false, "Ask the parent to re-sign the certificate this local agent carries")
 	idParentRequestCmd.Flags().StringVar(&idParentOut, "out", "-", "Where to write the request (- for stdout)")
 	idParentImportCmd.Flags().StringVar(&idParentRegistry, "registry", "", "Registry origin, when the domain's _awid record names none (a record naming api.awid.ai counts as naming none)")
@@ -85,6 +89,7 @@ func init() {
 }
 
 type idParentOptions struct {
+	Operation       string
 	IdentityHome    string
 	Human           string
 	Domain          string
@@ -98,10 +103,14 @@ type idParentOptions struct {
 	Prompt          awid.PassphrasePrompt
 }
 
-func idParentOptionsFromFlags() idParentOptions {
+func idParentOptionsFromFlags(commands ...*cobra.Command) idParentOptions {
+	operation := "aw id parent"
+	if len(commands) > 0 {
+		operation = commands[0].CommandPath()
+	}
 	wd, _ := os.Getwd()
 	return idParentOptions{
-		Human: idParentHuman, Domain: idParentDomain, WorkingDir: wd, RegistryURL: idParentRegistry, NoRegister: idParentNoRegister,
+		Operation: operation, Human: humanFlag, Domain: idCommandDomain(idParentDomain), WorkingDir: wd, RegistryURL: idParentRegistry, NoRegister: idParentNoRegister,
 		HumanAtTerminal: humanAtTerminal, Keychain: awconfig.HumanKeychain{}, Prompt: awid.TerminalPassphrasePrompt(),
 	}
 }
@@ -116,6 +125,7 @@ type requester struct {
 	dir            string
 	signer         func(description string) awid.IDCertificateSigner
 	human          *awconfig.HumanRecord
+	session        *humanParticipation
 }
 
 func (r *requester) requests() awconfig.IDRequestFileStore {
@@ -177,9 +187,15 @@ func selectRequester(opts idParentOptions) (*requester, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &requester{id: rec.StableID, didKey: rec.DIDKey, domain: domain, kind: "human", dir: dir, human: rec,
+	h := newHumanSigningSession(rec, opts.Keychain, opts.Prompt)
+	h.operation = "aw id parent"
+	if opts.Operation != "" {
+		h.operation = opts.Operation
+	}
+	h.watchSignals()
+	return &requester{id: rec.StableID, didKey: rec.DIDKey, domain: domain, kind: "human", dir: dir, human: rec, session: h,
 		signer: func(description string) awid.IDCertificateSigner {
-			return awid.HumanSigner(opts.Keychain, rec.StableID, description, opts.Prompt)
+			return h.certificateSigner(description)
 		}}, nil
 }
 
@@ -196,12 +212,12 @@ func runIDParentRequest(cmd *cobra.Command, args []string) error {
 	var raw []byte
 	var err error
 	if idParentResign {
-		if idParentInvitationID != "" || idParentParent != "" || idParentRootParent || idParentDomain != "" {
-			return usageError("--resign takes its parent, domain and certificate from the installed chain; it takes no --invitation-id, --parent, --root-parent or --domain")
+		if idParentInvitationID != "" || idParentParent != "" || idParentRootParent || idParentDomain != "" || humanDomainFlag != "" {
+			return usageError("--resign takes its parent, domain and certificate from the installed chain; it takes no --invitation-id, --parent, --root-parent, --domain or --human-domain")
 		}
-		out, raw, err = executeIDParentResign(idParentOptionsFromFlags())
+		out, raw, err = executeIDParentResign(idParentOptionsFromFlags(cmd))
 	} else {
-		out, raw, err = executeIDParentRequest(idParentOptionsFromFlags(), idParentInvitationID, idParentParent, idParentRootParent)
+		out, raw, err = executeIDParentRequest(idParentOptionsFromFlags(cmd), idParentInvitationID, idParentParent, idParentRootParent)
 	}
 	if err != nil {
 		return err
@@ -238,6 +254,7 @@ func executeIDParentRequest(opts idParentOptions, invitationID, parentID string,
 	if err != nil {
 		return idParentRequestOutput{}, nil, err
 	}
+	defer r.close()
 	// An unregistered local parent can issue carried local agents, but cannot
 	// parent a human or registered child (docs/id-certificates.md §§2–3).
 	if strings.HasPrefix(strings.TrimSpace(parentID), "did:key:") && (r.kind != "agent" || !strings.HasPrefix(r.id, "did:key:")) {
@@ -381,7 +398,7 @@ func runIDParentImport(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	out, err := executeIDParentImport(cmd.Context(), idParentOptionsFromFlags(), raw)
+	out, err := executeIDParentImport(cmd.Context(), idParentOptionsFromFlags(cmd), raw)
 	if err != nil {
 		return err
 	}
@@ -406,6 +423,7 @@ func executeIDParentImport(ctx context.Context, opts idParentOptions, raw []byte
 	if err != nil {
 		return idParentImportOutput{}, err
 	}
+	defer r.close()
 	store := r.requests()
 	outgoing, err := store.Request(requestID)
 	if err != nil {
@@ -627,4 +645,10 @@ func installParentChain(home, command, requestID string, response []byte, chain 
 		}
 		return awconfig.SaveInstalledIDChain(home, chain)
 	}))
+}
+
+func (r *requester) close() {
+	if r != nil && r.session != nil {
+		r.session.close()
+	}
 }

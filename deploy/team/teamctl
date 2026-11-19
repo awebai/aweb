@@ -286,19 +286,27 @@ utc_now() {
   python_in_server -c 'import datetime; print(datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"))'
 }
 
-# Stops and reaps a follower this function started; nothing else.
+# Every capture cleanup rechecks the identity at the signal boundary. Missing
+# evidence or a reused PID never authorizes signalling somebody else's process.
 stop_follower() {
-  kill "$1" 2>/dev/null || true
-  wait "$1" 2>/dev/null || true
+  local pid="$1" expected_start="${2:-}" observed_start
+  if [[ -z "$expected_start" ]] \
+    || ! observed_start="$(ps -o lstart= -p "$pid" 2>/dev/null)" \
+    || [[ "$observed_start" != "$expected_start" ]]; then
+    echo "teamctl: egress capture: follower identity unavailable or changed; PID $pid not signalled" >&2
+    return 1
+  fi
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
 }
 
-# Whether the follower is still this capture: running (not exited or a
-# zombie) and still the command that was started.
+# The child PID and its start time bind this capture. ps's command display
+# depends on terminal width and must not decide whether a live child is ours.
 follower_live() {
-  local pid="$1" id="$2" state command
+  local pid="$1" expected_start="$2" state started
   state="$(ps -o stat= -p "$pid" 2>/dev/null)" || return 1
-  command="$(ps -o command= -p "$pid" 2>/dev/null)" || return 1
-  [[ -n "$state" && "$state" != Z* && "$command" == *"logs --timestamps --follow $id"* ]]
+  started="$(ps -o lstart= -p "$pid" 2>/dev/null)" || return 1
+  [[ -n "$expected_start" && -n "$state" && "$state" != *Z* && "$started" == "$expected_start" ]]
 }
 
 # With TEAM_DEPLOYMENT_EGRESS_LOG (an absolute path not yet there), egress's
@@ -328,6 +336,12 @@ capture_egress() {
   attached="$(utc_now)" || refuse "could not read the time"
   nohup docker logs --timestamps --follow "$id" >>"$log" 2>&1 </dev/null &
   follower=$!
+  # Bind the process we just spawned, before waiting for any witness/probe.
+  if ! started="$(ps -o lstart= -p "$follower")" || [[ -z "$started" ]]; then
+    stop_follower "$follower" "${started:-}" || true
+    echo "teamctl: egress capture: the follower exited before its identity was read" >&2
+    return 1
+  fi
   deadline=$((SECONDS + ${TEAM_DEPLOYMENT_CAPTURE_SECONDS:-30}))
   until python_in_server - "$log" "$attached" <<'PY'
 import sys
@@ -344,7 +358,7 @@ sys.exit(0 if any(stamp(line.split(" ", 1)[0]) > after for line in lines if line
 PY
   do
     if ((SECONDS >= deadline)); then
-      stop_follower "$follower"
+      stop_follower "$follower" "${started:-}" || true
       echo "teamctl: egress capture: no line after the follower attached at $attached" >&2
       return 1
     fi
@@ -353,12 +367,12 @@ PY
   # A fresh line is not enough: the follower must still be streaming. Its
   # identity (start time and command line, as ps reports them) lets the owner
   # that stops it by PID check it still is this process.
-  if ! follower_live "$follower" "$id"; then
-    stop_follower "$follower"
+  if ! follower_live "$follower" "$started"; then
+    stop_follower "$follower" "${started:-}" || true
     echo "teamctl: egress capture: the follower exited after its first line" >&2
     return 1
   fi
-  if ! witness="$(utc_now)" || ! started="$(ps -o lstart= -p "$follower")" || ! command="$(ps -o command= -p "$follower")" \
+  if ! witness="$(utc_now)" || ! command="$(ps -ww -o command= -p "$follower")" \
     || ! inspected="$(docker inspect --format '{{.Image}}|{{index .Config.Labels "com.docker.compose.project"}}|{{index .Config.Labels "com.docker.compose.service"}}|{{.HostConfig.LogConfig.Type}}|{{.State.StartedAt}}' "$id")" \
     || ! python_in_server - "$log.receipt.json" "$project" "$id" "$follower" "$attached" "$witness" "$started" "$command" \
       "$inspected" <<'PY'
@@ -385,11 +399,11 @@ with os.fdopen(fd, "w", encoding="utf-8") as handle:
     json.dump(receipt, handle, indent=2)
 PY
   then
-    stop_follower "$follower"
+    stop_follower "$follower" "${started:-}" || true
     echo "teamctl: egress capture: no receipt; the follower is stopped" >&2
     return 1
   fi
-  CAPTURE_PID="$follower" CAPTURE_ID="$id" CAPTURE_STARTED="$started"
+  CAPTURE_PID="$follower" CAPTURE_STARTED="$started"
   echo "egress capture: streaming into $log (follower $follower, attached $attached)"
 }
 
@@ -397,12 +411,11 @@ PY
 # live, with the start time recorded in its receipt. A follower that passed
 # capture_egress may have exited during the probes.
 capture_still_live() {
-  if follower_live "$CAPTURE_PID" "$CAPTURE_ID" \
-    && [[ "$(ps -o lstart= -p "$CAPTURE_PID" 2>/dev/null)" == "$CAPTURE_STARTED" ]]; then
+  if follower_live "$CAPTURE_PID" "$CAPTURE_STARTED"; then
     echo "egress capture: still streaming before the agent starts (follower $CAPTURE_PID)"
     return 0
   fi
-  stop_follower "$CAPTURE_PID"
+  stop_follower "$CAPTURE_PID" "$CAPTURE_STARTED" || true
   echo "teamctl: egress capture: the follower is no longer streaming" >&2
   return 1
 }
@@ -603,6 +616,10 @@ render() {
   mkdir -p "$run_dir"
   python_in_server "$TEAM_DIR/render_env.py" "$deployment" >"$env_file.tmp"
   mv "$env_file.tmp" "$env_file"
+  python_in_server "$TEAM_DIR/render_env.py" --human-approval "$deployment" >"$run_dir/human-approval.json.tmp"
+  chmod 0644 "$run_dir/human-approval.json.tmp"
+  mv "$run_dir/human-approval.json.tmp" "$run_dir/human-approval.json"
+  printf 'HUMAN_APPROVAL_CONFIG_FILE=%s\n' "$run_dir/human-approval.json" >>"$env_file"
   if [[ -n "$(env_value FRONT_IMAGE)" ]]; then
     mkdir -p "$run_dir/front"
     python_in_server "$TEAM_DIR/render_env.py" --front "$deployment" >"$run_dir/front/Caddyfile.tmp"

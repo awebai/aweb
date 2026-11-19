@@ -104,7 +104,7 @@ func exportEvidenceReports(ctx context.Context, raw json.RawMessage, bundle awid
 		if source != nil && link.Key != "" {
 			trust, _ = source(ctx, certificates[:i+1], id, link.Key, out.Domain)
 		}
-		reports = append(reports, approval.CheckCreationEvidence(link, statement, receipt, trust, trust, time.Now().Unix()))
+		reports = append(reports, approval.CheckHumanEvidence(link, statement, receipt, trust, trust, time.Now().Unix()))
 	}
 	return reports
 }

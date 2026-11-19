@@ -25,9 +25,62 @@ CONTROLLER_OPERATIONS = frozenset({
     'publish_team_custodian', 'publish_member_custody', 'publish_member_person',
     'register_address', 'update_address', 'delete_address', 'reassign_address',
     'register_id_certificate', 'revoke_id_certificate', 'rotate_namespace_controller',
-    'read_id_certificate_status',
+    'read_team',
 })
 logger = logging.getLogger(__name__)
+
+# Accepted-authentication metrics, one event per signed-request form.
+LEGACY_CONTROLLER_AUTH_EVENT = 'awid_legacy_controller_auth_accepted'
+COVERING_CONTROLLER_AUTH_EVENT = 'awid_controller_auth_accepted'
+PATH_SIGNED_READ_EVENT = 'awid_path_signed_read_accepted'
+_FORMS = {
+    LEGACY_CONTROLLER_AUTH_EVENT: 'legacy',
+    COVERING_CONTROLLER_AUTH_EVENT: 'covering',
+    PATH_SIGNED_READ_EVENT: 'path',
+}
+# Distinct aw versions counted per process; later ones count as aw/other. Any
+# key can sign an accepted read, so the client label must not grow without bound.
+MAX_TRACKED_AW_VERSIONS = 16
+# aw's User-Agent: aw/<version> (<os>/<arch>), cli/go/cmd/aw/main.go cliUserAgent.
+_AW_USER_AGENT = re.compile(
+    r'aw/(\d{1,6}\.\d{1,6}\.\d{1,6}(?:-[0-9A-Za-z]{1,16}(?:\.[0-9A-Za-z]{1,16}){0,3})?) \([0-9a-z_]{1,16}/[0-9a-z_]{1,16}\)'
+)
+
+
+def client_family(user_agent: str | None) -> str:
+    """The sending client for usage metrics: aw with its version, the Python
+    client, or other. Never the raw User-Agent."""
+    match = _AW_USER_AGENT.fullmatch(user_agent or '')
+    if match:
+        return 'aw/' + match.group(1)
+    if (user_agent or '').startswith('python-httpx/'):
+        return 'python-httpx'
+    return 'other'
+
+
+def _tracked_client(state, client: str) -> str:
+    """client, or aw/other once MAX_TRACKED_AW_VERSIONS aw versions are tracked."""
+    if not client.startswith('aw/'):
+        return client
+    tracked = getattr(state, 'tracked_aw_versions', None)
+    if tracked is None:
+        tracked = set()
+        state.tracked_aw_versions = tracked
+    if client in tracked:
+        return client
+    if len(tracked) >= MAX_TRACKED_AW_VERSIONS:
+        return 'aw/other'
+    tracked.add(client)
+    return client
+
+
+def record_accepted_auth(request: Request, event: str, operation: str) -> None:
+    """Note a verified proof; ControllerAuthRoute counts it if the route succeeds."""
+    pending = getattr(request.state, 'accepted_auth', None)
+    if pending is None:
+        pending = set()
+        request.state.accepted_auth = pending
+    pending.add((event, operation))
 
 
 @dataclass(frozen=True)
@@ -79,11 +132,7 @@ async def verify_controller_json_request(
             request, payload_dict=payload_dict, authorization_header=authorization_header,
             timestamp_header=timestamp_header,
         )
-        pending = getattr(request.state, 'legacy_controller_operations', None)
-        if pending is None:
-            pending = set()
-            request.state.legacy_controller_operations = pending
-        pending.add(operation)
+        record_accepted_auth(request, LEGACY_CONTROLLER_AUTH_EVENT, operation)
         _, signature = parse_didkey_auth(request.headers.get(authorization_header))
         timestamp = require_timestamp(request, header_name=timestamp_header)
         request.state.controller_proof = ControllerProof(
@@ -108,7 +157,11 @@ async def verify_controller_json_request(
     origins = getattr(request.app.state, 'awid_public_origins', ())
     allowed = {canonical_server_origin(value) for value in origins}
     if not allowed:
-        raise HTTPException(status_code=503, detail='AWID controller public origins are not configured')
+        raise HTTPException(
+            status_code=503,
+            detail='AWID controller public origins are not configured: set AWID_PUBLIC_ORIGINS to the '
+            'comma-separated public origins clients write to',
+        )
     if audience not in allowed:
         raise HTTPException(status_code=401, detail='AWID controller audience is not allowed')
     body = await request.body()
@@ -124,11 +177,13 @@ async def verify_controller_json_request(
     except ValueError as exc:
         raise HTTPException(status_code=401, detail='Invalid signature') from exc
     request.state.controller_proof = ControllerProof(did, raw, signature)
+    record_accepted_auth(request, COVERING_CONTROLLER_AUTH_EVENT, operation)
     return did
 
 
 class ControllerAuthRoute(APIRoute):
-    """Count successful legacy controller operations, never raw identifiers.
+    """Count successful signed requests by form, operation and client family,
+    never raw identifiers.
 
     The existing AWID metric convention is a per-process aggregate, reported at
     one and powers of two. Embedding operators ingest these structured metrics;
@@ -140,14 +195,19 @@ class ControllerAuthRoute(APIRoute):
         async def measured(request: Request):
             response = await handler(request)
             if response.status_code < 400:
-                counts = getattr(request.app.state, 'legacy_controller_auth_counts', None)
+                counts = getattr(request.app.state, 'controller_auth_counts', None)
                 if counts is None:
                     counts = {}
-                    request.app.state.legacy_controller_auth_counts = counts
-                for operation in getattr(request.state, 'legacy_controller_operations', ()):
-                    count = counts.get(operation, 0) + 1
-                    counts[operation] = count
+                    request.app.state.controller_auth_counts = counts
+                client = _tracked_client(request.app.state, client_family(request.headers.get('user-agent')))
+                for event, operation in sorted(getattr(request.state, 'accepted_auth', ())):
+                    key = (event, operation, client)
+                    count = counts.get(key, 0) + 1
+                    counts[key] = count
                     if count == 1 or count & (count - 1) == 0:
-                        logger.info('event=awid_legacy_controller_auth_accepted metric=awid_legacy_controller_auth_accepted value=%s operation=%s', count, operation)
+                        logger.info(
+                            'event=%s metric=%s value=%s operation=%s client=%s form=%s',
+                            event, event, count, operation, client, _FORMS[event],
+                        )
             return response
         return measured

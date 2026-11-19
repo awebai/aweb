@@ -83,9 +83,9 @@ the parent's `controller_did`.
 
 This is the standard mechanism, not a hosted special case. Any namespace owner
 can delegate child namespaces; a hosted operator uses the same public protocol
-under the base domain it controls. The child may register that same parent
-controller as its namespace controller; hosted `*.aweb.ai` namespaces use this
-shape so inherited parent DNS authority and the exact registry row agree.
+under the base domain it controls. A child may register its parent's
+controller key or a distinct child controller key; hosted `*.aweb.ai`
+namespaces use both arrangements.
 
 Authority flows downward: a namespace controller can rotate the team
 controller key, but the team controller cannot rotate the namespace
@@ -474,6 +474,14 @@ behind the current pin. The pin then moves by compare-and-swap. Anything else
 is logged as one warning line,
 `team_key_pin_mismatch team=<id> pinned=<key> served=<key> reason=<reason> enforced=<true|false>`,
 and, while enforcement is on, fails closed with 401 `team_key_unverified`.
+One case is neither accepted nor refused: when the registry's act names a
+different key than the one it serves, the served key is a read older than that
+act (a process whose registry cache predates a rotation) or a key substituted
+beside it. In both modes the pin stays, the pinned key is used, and the line is
+`team_key_pin_kept team=<id> pinned=<key> served=<key> reason=key_mismatch`.
+A server remembers its answer for each team's served key for 60 seconds, the
+registry key's own freshness bound, so a lasting mismatch costs one act read
+per minute rather than one per request.
 
 Enforcement is staged. `AWEB_ENFORCE_TEAM_KEY_PINS` (one name for the aweb
 server and every naapp, default off) turns refusal on. While it is off a
@@ -488,6 +496,16 @@ from before acts were kept) can be counted and re-attested by their namespace
 controller before enforcement. **Until it is on, the registry-substitution gap
 this section closes stays open.**
 
+What the measuring mode does and does not protect: it keeps a server on the
+team's current key across processes, so a stale registry read cannot move the
+pin back to an older key and remove the team's members. It does not stop a
+registry that serves another key and withholds the act: that answer looks like
+a rotation from before acts were kept, and the pin moves to it. Closing that
+needs enforcement, which hosted organisations cannot have until the act check
+accepts the delegation evidence their inherited DNS record carries (aweb-adfl):
+a hosted namespace has no `_awid` record of its own, so no act of its
+controller verifies against DNS.
+
 Named residuals:
 
 - **First admission trusts the registry.** A key substituted before a team's
@@ -498,8 +516,8 @@ Named residuals:
   by the parent, with no `_awid` record of their own, cannot present an act DNS
   verifies: the inherited record names the parent's key. Under enforcement
   their servers refuse a rotated key until the server operator re-pins it.
-  Hosted children are such namespaces: each has its own controller key, and
-  the parent's key signs only for the base domain. Before enforcement serves
+  Hosted children register either their parent's controller key or a distinct
+  controller key. Before enforcement serves
   hosted teams, an inherited authority must accept the child's controller
   through the parent-signed delegation, or hosted team keys are rotated and
   re-pinned first.

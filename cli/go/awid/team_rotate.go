@@ -113,9 +113,19 @@ type TeamRotateResponse struct {
 }
 
 // RotateTeamKey replaces the team key at AWID, under namespace-controller
-// authority. With resigned non-nil the records swap atomically with the key,
-// and members' certificates are replaced in the same transaction.
+// authority. With resigned non-nil the records swap atomically with the key.
 func (c *RegistryClient) RotateTeamKey(
+	ctx context.Context,
+	registryURL, domain, name, newTeamDIDKey string,
+	resigned *ResignedRecords,
+	controllerKey ed25519.PrivateKey,
+) (*TeamRotateResponse, error) {
+	return c.RotateTeamKeyWithMembers(ctx, registryURL, domain, name, newTeamDIDKey, resigned, nil, controllerKey)
+}
+
+// RotateTeamKeyWithMembers is RotateTeamKey that also replaces members'
+// certificates in the same transaction.
+func (c *RegistryClient) RotateTeamKeyWithMembers(
 	ctx context.Context,
 	registryURL, domain, name, newTeamDIDKey string,
 	resigned *ResignedRecords,
@@ -127,7 +137,9 @@ func (c *RegistryClient) RotateTeamKey(
 	if controllerKey == nil {
 		return nil, fmt.Errorf("controller signing key is required")
 	}
-	body := map[string]any{"new_team_did_key": newTeamDIDKey}
+	// resigned_records is null when the rotation re-signs no records, as the
+	// Python client sends it.
+	body := map[string]any{"new_team_did_key": newTeamDIDKey, "resigned_records": nil}
 	if resigned != nil {
 		body["resigned_records"] = resigned.wire()
 	}
@@ -135,12 +147,9 @@ func (c *RegistryClient) RotateTeamKey(
 		body["member_certificates"] = members
 	}
 	path := "/v1/namespaces/" + urlPathEscape(domain) + "/teams/" + urlPathEscape(name) + "/rotate"
-	headers := signedNamespaceHeaders(domain, "rotate_team_key", controllerKey, map[string]string{
-		"name":             name,
-		"new_team_did_key": newTeamDIDKey,
-	})
+	claims := map[string]any{"name": name, "new_team_did_key": newTeamDIDKey}
 	var out TeamRotateResponse
-	if err := c.requestJSON(ctx, http.MethodPost, registryURL, path, headers, body, &out); err != nil {
+	if err := c.controllerWrite(ctx, http.MethodPost, registryURL, path, domain, "rotate_team_key", claims, body, KeySigner(controllerKey), nil, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

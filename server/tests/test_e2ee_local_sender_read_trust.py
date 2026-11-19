@@ -25,6 +25,7 @@ from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
+from tests.js_runtime_tree import runtime_repo
 
 from awid.did import stable_id_from_did_key
 from awid.e2ee_keys import build_encryption_key_assertion
@@ -195,12 +196,16 @@ async def test_local_sender_e2ee_mail_read_trust(privacy_app, tmp_path, global_r
         }
 
 
-REPO = Path(__file__).resolve().parents[2]
+SOURCE_REPO = Path(__file__).resolve().parents[2]
+REPO = runtime_repo(SOURCE_REPO)
 
 
 @pytest.fixture(scope="module")
-def runtime_packages():
-    """Build the channel plugin and the Pi extension as they are packaged."""
+def runtime_packages(server_js_runtime):
+    """Build once per worker, or retain the original serial fixture path."""
+    if REPO != SOURCE_REPO:
+        assert server_js_runtime == REPO
+        return
     for package in ("channel", "pi-extension"):
         build = subprocess.run(["npm", "run", "build"], cwd=REPO / package, capture_output=True, text=True)
         assert build.returncode == 0, build.stdout + build.stderr

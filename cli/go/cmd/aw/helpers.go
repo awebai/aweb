@@ -533,6 +533,17 @@ func resolveIdentityMessagingClientSelectionForDir(workingDir string) (*aweb.Cli
 	return c, sel, nil
 }
 
+// aliasTeamSearchHelp describes resolveClientSelectionForAliasTarget to the
+// commands that use it.
+const aliasTeamSearchHelp = "\n\nA bare recipient name is looked up in the selected team. When that team's\n" +
+	"agent list and roster say the name is not there, this identity has other\n" +
+	"local team memberships, and --team is not given, aw looks in those teams:\n" +
+	"a name found in exactly one of them is sent from that team, which aw names\n" +
+	"on stderr; a name found in more than one needs --team. If any of those teams\n" +
+	"cannot be read, the send is refused rather than guessed. When the selected\n" +
+	"team itself cannot be read, aw stays in it, and the send confirms the\n" +
+	"recipient before delivery."
+
 func resolveClientSelectionForAliasTarget(ctx context.Context, targetAlias string) (*aweb.Client, *awconfig.Selection, error) {
 	wd, _ := os.Getwd()
 	c, sel, err := resolveClientSelectionForDir(wd)
@@ -552,8 +563,8 @@ func resolveClientSelectionForAliasTarget(ctx context.Context, targetAlias strin
 		return c, sel, nil
 	}
 	// Only a successful absent lookup may search another team's aliases.
-	// On unavailable evidence, keep this team and let its service resolve the
-	// unchanged alias with its current membership and recipient policy.
+	// On unavailable evidence, keep this team. The send path must confirm the
+	// recipient before delivery; retaining a selection is not a lookup result.
 	if _, live, lookupErr := resolveLiveTeamMemberAliasTarget(ctx, sel, targetAlias); lookupErr != nil || live {
 		return c, sel, nil
 	}
@@ -576,15 +587,15 @@ func resolveClientSelectionForAliasTarget(ctx context.Context, targetAlias strin
 		if teamID == "" || teamID == strings.TrimSpace(sel.TeamID) {
 			continue
 		}
+		// A team that cannot be searched may hold the alias too, so the
+		// teams that were searched do not establish a unique match.
 		candidateClient, candidateSel, err := resolveClientSelectionForDirWithTeamOverride(sel.WorkingDir, teamID)
 		if err != nil {
-			debugLog("resolve alias fallback team %s: %v", teamID, err)
-			continue
+			return nil, nil, recipientLookupError(targetAlias, "team "+teamID+" selection", err)
 		}
 		found, err := clientHasAgentAlias(ctx, candidateClient, targetAlias)
 		if err != nil {
-			debugLog("list agents for fallback team %s: %v", teamID, err)
-			continue
+			return nil, nil, recipientLookupError(targetAlias, "team "+teamID+" agent list", err)
 		}
 		if found {
 			candidates = append(candidates, aliasCandidate{client: candidateClient, selection: candidateSel})
@@ -620,6 +631,10 @@ func shouldSearchOtherLocalTeamsForAlias(sel *awconfig.Selection, targetAlias st
 		return false
 	}
 	return len(workspace.Memberships) > 1
+}
+
+func recipientLookupError(alias, source string, err error) error {
+	return fmt.Errorf("cannot confirm recipient %q: %s lookup failed: %w; retry or use the recipient's full address or DID", alias, source, err)
 }
 
 func clientAgentForAlias(ctx context.Context, c *aweb.Client, targetAlias string) (awid.AgentView, bool, error) {

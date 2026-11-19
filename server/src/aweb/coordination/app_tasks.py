@@ -80,7 +80,9 @@ async def verify_authorization_certificate(request, authorization):
         # C2 requires live authority even when the app otherwise uses a
         # CachedRegistryClient. Never use its stale/outage-grace reads here.
         team_key = await registry.get_team_public_key_fresh(domain, name)
-        revoked = await registry.get_team_revocations_fresh(domain, name)
+        select = getattr(registry, "get_team_revocations_for_certificates", None)
+        revoked = (await select(domain, name, [payload["certificate_id"]], fresh=True)
+                   if callable(select) else await registry.get_team_revocations_fresh(domain, name))
     except Exception as exc:
         raise HTTPException(status_code=503, detail="authority_unavailable") from exc
     if team_key:

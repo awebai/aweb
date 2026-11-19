@@ -75,15 +75,20 @@ secret use, increase permissions, or replace a controller-signed owner act.
 Manifest parameters named `human` or `human-domain` are reserved for CLI
 identity selection and refused at installation.
 
-Every signature prompts at the controlling terminal and wipes the decrypted
-key afterwards. A send needs both a mail-envelope signature and request
-signature; lookups, reads, acknowledgments and retries can require additional
-prompts. Prompts are numbered within the command. Mail send prompts identify
-the recipient, subject and body hash; a reply's preliminary read identifies the
-source message and proposed body's hash, then its send identifies the resolved
-recipient and subject. Prompting is a custody safeguard, not a remotely
+One person command unlocks the key at its first signature with one passphrase
+prompt at the controlling terminal. The key stays in memory for that command,
+including browser or confirmation waits, and is wiped on success, error or
+interruption. Another command unlocks again. A send still needs both a
+mail-envelope signature and request signature; lookups, reads, acknowledgments
+and retries can require additional signatures. Each signature's numbered
+description is printed on stderr before signing. The unlock prompt names the
+selected human and operation; descriptions identify the recipient, subject and
+body hash when those are known. Prompting is a custody safeguard, not a remotely
 verifiable assertion of a fresh human gesture. Known agent-runtime markers
 and a missing controlling terminal refuse this path.
+
+Ordinary human mail carries its ID chain and no saved enrollment or creation
+evidence. `aw id proof` exports that evidence separately.
 
 This initial path supports plaintext mail, not human encryption-key custody.
 Encrypted sends or replies refuse when that custody is unavailable; there is
@@ -332,6 +337,12 @@ parent-authorized delegation under independently discovered inherited DNS.
 Otherwise they are unavailable/evidence_unavailable. No new current status is issued during
 that disagreement; existing caches retain their normal freshness bounds. When
 the same exact key returns after an unavailable interval, its epoch continues.
+A DNS timeout, missing nameservers or another resolver failure returns retryable
+HTTP 503 `dns_unavailable` on status, registration and revocation, with
+`Retry-After: 1`. It does not mean the namespace lacks public proof. A missing
+or malformed record, an unproven root and a missing epoch continue to return
+`evidence_unavailable` when root authority is required.
+
 Publishing another party's public key without holding it grants no authority.
 Delete then re-register is different because deletion is an explicit act.
 
@@ -412,10 +423,32 @@ requires the hosted operator's authorization and execution of reaffirmation,
 with NULL-witness counts before and after, followed by `aw who` on a hosted
 agent proving its chain is verified, not evidence_unavailable. Public clients
 do not reaffirm implicitly.
-When a parent's controller changes through an authorized recovery or rotation,
-AWID updates its directly delegated children's `parent_controller_key` in the
-same transaction. A child's ordinary rotation updates its current controller
-and epoch atomically; the exposed witness always names that current child key.
+A rotation signed by the previous controller key preserves direct delegations
+bound to that key, updating their `parent_controller_key` in the same
+transaction. Recovery without the previous key withdraws the direct outgoing
+delegation witnesses in the replacement transaction; it does not carry them to
+the new key. Each approved child is restored by registration signed by the child
+and the new parent. An unchanged child's epoch and certificates are kept. If its
+key must also be replaced, parent-authorised recovery opens a replaced epoch
+for that child. A child's ordinary rotation updates its current controller and
+epoch atomically; the exposed witness always names that current child key.
+
+Withdrawal clears both witness fields, retaining child namespaces, keys,
+epochs, IDs, teams and addresses. A reused old parent key cannot revive a
+withdrawn witness. Namespace deletion also withdraws its outgoing witnesses.
+Same-key PUT retries do not withdraw children restored after recovery, and
+same-key first enrollment keeps witnesses already bound to that key. Recovery
+compares the requested key with the open epoch, even if reverify already moved
+the stored row. An exact-TXT child remains independently verifiable without
+the delegation. DNS observation alone never approves or permanently withdraws
+children. Existing evidence retains its normal freshness bounds.
+
+This withdraws public delegation authority. It does not revoke team credentials
+or every registry write made under the stolen key; writers that trust the stored
+controller are a separate boundary. For a hosted parent, explicit reaffirmation
+of its approved organisation and key inventory is part of recovery, before
+resuming creation that depends on those delegations. It is not an implicit
+approval of the registry's list of children.
 
 Brief DNS control can cause a permanent tree cutoff: an attacker who installs
 and proves a new key through the recovery path opens replaced. That is the
@@ -474,9 +507,8 @@ DIDKey signature, not team-certificate auth; the HTTP envelope name does not
 make that subject a namespace/team controller. Issuance authority still comes
 from the separately verified parent certificate signature. Revoke uses the
 same covering family with `operation="revoke_id_certificate"` and the allowed
-revoker's signature. Authenticated status reads use
-`operation="read_id_certificate_status"`; anonymous status has no signature.
-These new endpoints have no legacy envelope fallback. Register first verifies
+revoker's signature. Status reads are public and unsigned.
+Register and revoke have no legacy envelope fallback. Register first verifies
 subject key possession independently; it does not require its not-yet-registered
 child certificate already to confer tree authority.
 
@@ -746,16 +778,14 @@ over-depth or over-limit evidence means unavailable, never a partial success.
 `missing` is an explicit unknown-registration result. Invitation/email/account
 details, secrets and a human directory are not exposed by this endpoint.
 
-Use the existing per-caller rate limiter under the operation
-`id_certificate_status`: public requests charge their source-IP bucket, and an
-authenticated request additionally charges its verified caller-key bucket,
-with a default of 60 requests per minute per bucket. The existing configured
-`X-AWID-Service-Token` exempts only the source-IP bucket; a signed caller's
-key bucket still applies. A submitted ID is not
-caller identity; limit before expensive history/proof work and return 429 without partial
-evidence. The normal deployment rate-limit configuration may size these buckets
-for its callers. The service credential changes no request validation or
-evidence and grants no identity or controller authority.
+Use the existing source-IP rate limiter under the operation
+`id_certificate_status`, with a default of 60 requests per minute per source
+IP. This is a public read; there is no signed caller-key budget. The existing
+configured `X-AWID-Service-Token` exempts the source-IP budget. A submitted ID
+is not caller identity; limit before expensive history/proof work and return
+429 without partial evidence. The normal deployment rate-limit configuration
+may size this bucket for its callers. The service credential changes no
+request validation or evidence and grants no identity or controller authority.
 There is no list, prefix, search or pagination operation for a domain's humans.
 Only exact requested IDs and proof-necessary ancestor/key history are returned,
 never team memberships, private certificate blobs, email/account mappings or
@@ -1103,7 +1133,7 @@ or retroactively attach unrelated legacy agents.
 
 An agent immediately under its organisation's namespace may be adopted once
 through the adoption path by a person of that organisation, keeping its ID and
-key. Recorded-creator or owner/admin authority is required. The person explicitly
+key. The recorded creator alone may adopt while their account is active and they are a current member of the agent's team; organisation membership is not required. Otherwise, a current explicit team member with team-admin or owning-organisation owner/admin authority may adopt. The person explicitly
 signs for that named agent and key under their checked session or local command.
 A chain already containing a person refuses adoption. An agent immediately
 under another agent is not adopted independently; only its namespace-parented
@@ -1351,8 +1381,8 @@ init path, not a CSR exchange: the human operator creates their own human key,
 uses the current namespace controller to issue the namespace-parent human
 certificate directly, and registers with the subject's key proof. It creates
 no CSR or invitation. It requires a human interactive invocation; an agent-run
-or non-TTY command cannot use it to mint a human. Human key custody and each
-human signing prompt retain their existing rules. For a human prepared on a
+or non-TTY command cannot use it to mint a human. Human key custody follows §1; all human signatures in one command share its
+single terminal unlock. For a human prepared on a
 different machine, the issuer fixes the invitation and parent BEFORE CSR
 export; key/DID preparation may precede that, but `--domain` alone cannot
 produce an issue CSR without its required invitation ID and parent.
@@ -1385,7 +1415,7 @@ exchange never grants team membership, moves an address or rebinds a contact.
 
 `aw id revoke <id>` revokes a registered identity under §3, using the same
 signer selection as `aw id child invite`: the current identity by default,
-`--human <did:aw> --domain D` for a human held in the keychain, or
+`--human <did:aw> --human-domain D` for a human held in the keychain, or
 `--as-root --domain D` for the namespace root. An identity signer may revoke
 itself; revoking its current child requires that it remain a valid parent.
 Namespace-root authority follows §3. Team membership or team-controller

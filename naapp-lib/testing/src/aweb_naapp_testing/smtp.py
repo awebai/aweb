@@ -11,13 +11,14 @@ timeouts.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import socket
 import ssl
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from aiosmtpd.controller import Controller
 from aiosmtpd.smtp import AuthResult, LoginPassword
@@ -32,10 +33,11 @@ HOST = "localhost"
 ADDRESS = "127.0.0.1"
 
 
-def _free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-        probe.bind((ADDRESS, 0))
-        return int(probe.getsockname()[1])
+class _EphemeralController(Controller):
+    async def _create_server(self) -> asyncio.AbstractServer:
+        server = cast(asyncio.Server, await super()._create_server())
+        self.port = int(server.sockets[0].getsockname()[1])
+        return server
 
 
 @dataclass
@@ -64,10 +66,9 @@ class SmtpServer:
         self.certificates = make_certificates(self.directory, [HOST], [ADDRESS])
         context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
         context.load_cert_chain(self.certificates.cert_file, self.certificates.key_file)
-        self.port = _free_port()
         options: dict[str, Any] = dict(
             hostname=ADDRESS,
-            port=self.port,
+            port=0,
             server_hostname=HOST,
             authenticator=self._authenticate,
             # aiosmtpd counts only STARTTLS as TLS, so an implicit-TLS session
@@ -78,8 +79,9 @@ class SmtpServer:
             options.update(tls_context=context, require_starttls=True)
         elif self.mode == "implicit":
             options.update(ssl_context=context)
-        self._controller = Controller(self, **options)
+        self._controller = _EphemeralController(self, **options)
         self._controller.start()
+        self.port = self._controller.port
         return self
 
     def __exit__(self, *exc: object) -> None:

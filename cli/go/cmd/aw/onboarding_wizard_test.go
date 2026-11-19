@@ -699,11 +699,11 @@ func TestExecuteBYODPathProvisionsLocalTeamWithoutIdentityRegistrationAgainstSer
 	if gotCertPayload["identity_scope"] != awid.IdentityModeLocal {
 		t.Fatalf("cert identity_scope=%v", gotCertPayload["identity_scope"])
 	}
-	if _, ok := gotCertPayload["member_did_aw"]; ok {
-		t.Fatalf("local certificate registration should omit member_did_aw: %v", gotCertPayload["member_did_aw"])
+	if gotCertPayload["member_did_aw"] != nil {
+		t.Fatalf("local certificate registration should carry no member_did_aw: %v", gotCertPayload["member_did_aw"])
 	}
-	if _, ok := gotCertPayload["member_address"]; ok {
-		t.Fatalf("local certificate registration should omit member_address: %v", gotCertPayload["member_address"])
+	if gotCertPayload["member_address"] != nil {
+		t.Fatalf("local certificate registration should carry no member_address: %v", gotCertPayload["member_address"])
 	}
 	if _, err := os.Stat(filepath.Join(tmp, ".aw", "identity.yaml")); !os.IsNotExist(err) {
 		t.Fatalf("local BYOD should not write identity.yaml: %v", err)

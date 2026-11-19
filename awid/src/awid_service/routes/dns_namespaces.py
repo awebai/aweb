@@ -34,6 +34,7 @@ from awid_service.namespace_epochs import (
     record_delegation,
     delegation_of,
     advance_delegated_children,
+    withdraw_delegated_children,
 )
 from awid_service.routes.dns_namespace_reverify import (
     is_reserved_local_domain,
@@ -628,13 +629,16 @@ async def rotate_namespace_controller(
             # Recovery compares against the open epoch, not the stored row,
             # which reverify may already have moved to this key.
             epoch = await open_epoch_of(tx, domain, for_update=True)
+            previous_key = epoch["did_key"] if epoch is not None else existing["controller_did"]
+            if previous_key != new_controller_did:
+                await withdraw_delegated_children(tx, domain=domain)
+            elif epoch is None:
+                await withdraw_delegated_children(tx, domain=domain, retaining_key=new_controller_did)
             if epoch is None or epoch["did_key"] != new_controller_did:
                 await open_epoch(
                     tx, domain=domain, did_key=new_controller_did, continuity=REPLACED,
                     clock=app_clock(request.app),
                 )
-        if proves_root(dns_authority, new_controller_did) or parent_namespace is not None:
-            await advance_delegated_children(tx, domain=domain, controller_key=new_controller_did)
     if existing["controller_did"] != new_controller_did:
         logger.warning(
             "Namespace controller rotated: domain=%s old_controller_did=%s new_controller_did=%s",
@@ -713,7 +717,9 @@ async def rotate_namespace_with_previous_key(
         await open_epoch(
             tx, domain=domain, did_key=body["new_did_key"], continuity=ROTATED, clock=app_clock(request.app),
         )
-        await advance_delegated_children(tx, domain=domain, controller_key=body["new_did_key"])
+        await advance_delegated_children(
+            tx, domain=domain, previous_key=body["previous_did_key"], controller_key=body["new_did_key"],
+        )
     logger.warning(
         "Namespace controller rotated with previous-key consent: domain=%s from_seq=%s new_controller_did=%s",
         domain, body["from_seq"], body["new_did_key"],
@@ -878,6 +884,7 @@ async def delete_namespace(
             now,
         )
         await retire_namespace_controller(tx, domain=domain, clock=app_clock(request.app))
+        await withdraw_delegated_children(tx, domain=domain)
 
     return {"deleted": True, "namespace_id": str(row["namespace_id"]), "domain": domain}
 

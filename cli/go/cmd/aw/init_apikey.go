@@ -186,7 +186,7 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (out connectOutput, resultErr
 	defer func() {
 		if resultErr != nil && resumable {
 			if info, err := os.Lstat(apiKeyPartialInitPath(req.WorkingDir, req.IdentityHome)); err == nil && info.Mode().IsRegular() {
-				resultErr = fmt.Errorf("%w\nrerun the same command in this directory; do not delete .aw/partial-init.yaml", resultErr)
+				resultErr = fmt.Errorf("%w\n%s", resultErr, partialInitGuidance(resultErr))
 			}
 		}
 	}()
@@ -926,21 +926,22 @@ func postAPIKeyWorkspaceInit(ctx context.Context, awebURL, apiKey string, payloa
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		diagnostic := workspaceInitHTTPDiagnostic(resp, respBody, apiKey)
+		diagnostic, code := workspaceInitHTTPDiagnostic(resp, respBody, apiKey)
+		if code != "unknown" {
+			if mismatch, ok := parseWorkspaceInitIdentityKeyMismatch(respBody); ok && code == "identity_key_mismatch" {
+				guidance := fmt.Sprintf("workspace init cannot use agent name %q: it is bound to a different identity key. Choose a different agent name and retry, or ask a team operator to resolve the existing identity binding.", mismatch.Alias)
+				if mismatch.StrandedNamespace != "" {
+					guidance += fmt.Sprintf(" The server reported stranded namespace %q.", mismatch.StrandedNamespace)
+				}
+				return nil, withErrorCode(code, errors.New(guidance+" "+diagnostic))
+			}
+			return nil, withErrorCode(code, fmt.Errorf("workspace init was refused (%d %s): %s %s", resp.StatusCode, code, workspaceInitRefusalRemedies[code].remedy, diagnostic))
+		}
 		switch resp.StatusCode {
 		case http.StatusUnauthorized:
 			return nil, fmt.Errorf("workspace init rejected the API key (401): %s", diagnostic)
 		case http.StatusNotFound:
 			return nil, fmt.Errorf("workspace init target was not found or the team was deleted (404): %s", diagnostic)
-		case http.StatusConflict:
-			if mismatch, ok := parseWorkspaceInitIdentityKeyMismatch(respBody); ok {
-				guidance := fmt.Sprintf("workspace init cannot use agent name %q: it is bound to a different identity key. Choose a different agent name and retry, or ask a team operator to resolve the existing identity binding.", mismatch.Alias)
-				if mismatch.StrandedNamespace != "" {
-					guidance += fmt.Sprintf(" The server reported stranded namespace %q.", mismatch.StrandedNamespace)
-				}
-				return nil, errors.New(guidance + " " + diagnostic)
-			}
-			fallthrough
 		default:
 			return nil, fmt.Errorf("POST /api/v1/workspaces/init returned %d: %s", resp.StatusCode, diagnostic)
 		}

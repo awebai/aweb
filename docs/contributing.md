@@ -2,6 +2,12 @@
 
 This guide is for developers working inside the monorepo.
 
+uv uses its persistent user cache. Dependency preparation and offline checks
+must share that cache; putting it in the system temporary directory lets host
+cleanup remove individual package files. A caller may select another persistent
+location with `UV_CACHE_DIR`. The isolated image uses one fixed HOME for both
+preparation and its unprivileged runner, with the cache owned by that runner.
+
 ## Repository Layout
 
 | Path | Purpose |
@@ -24,7 +30,7 @@ This guide is for developers working inside the monorepo.
 ```bash
 cd server
 uv sync
-UV_CACHE_DIR=/tmp/uv-cache uv run pytest -q
+uv run pytest -q
 uv run aweb serve
 ```
 
@@ -120,7 +126,7 @@ belongs in the OSS e2e suite.
 Useful commands:
 
 ```bash
-cd server && UV_CACHE_DIR=/tmp/uv-cache uv run pytest -q
+cd server && uv run pytest -q
 cd cli/go && GOCACHE=/tmp/go-build-aweb go test ./...
 ./scripts/e2e-oss-user-journey.sh
 ```

@@ -212,3 +212,8 @@ func KeySigner(key ed25519.PrivateKey) IDCertificateSigner {
 		return ComputeDIDKey(key.Public().(ed25519.PublicKey)), ed25519.Sign(key, payload), nil
 	}
 }
+
+// SigningKeyPath returns the path to an agent's signing key file.
+func SigningKeyPath(keysDir, address string) string {
+	return filepath.Join(keysDir, addressToKeyFileBase(address)+".signing.key")
+}

@@ -1356,6 +1356,12 @@ Supported clean-directory outcomes:
   default identity scope is local. With `--global`, this reuses the current
   self-custodial global identity; if none exists the CLI fails with `aw id
   create` guidance rather than silently creating a local identity.
+- `--invite <token> [--parent <creator-home>]`: accept an existing invite and
+  connect. `--parent` selects a same-machine creator for a fresh child,
+  independently of the invite issuer; omit it to reuse an existing chain.
+  Joining preserves existing parentage and checks the invite's stored human
+  condition. `--join-from` is the shorthand that selects the same source for
+  both the creator and the invite.
 - `--admission-team-id <team> --expect-account <account-id>`: use host CLI
   auth with scope `cli.team_admission` to issue one admission invite, then
   accept and connect. Missing CLI auth starts bounded device authorization in
@@ -1416,16 +1422,26 @@ namespace family.
 
 ### Global agent (joining an existing team via invite)
 
+This example uses an invite issuer with no verified nearest human, so the
+invite has no human condition. An issuer with a verified nearest human defaults
+all its invites, including `--member-global`, to requiring that human;
+`--for-human <did:aw>` requires the named person instead. Acceptance checks the
+joining agent's chain against current registry evidence before granting
+membership. A chainless global identity cannot meet a human condition: joining
+never gives an existing identity the issuer as its parent. A conditioned join
+refuses if the chain is missing, names another human, or current evidence is
+unavailable. See [creator selection and invite conditions](identity.md#3-join-team).
+
 ```
 1. aw id create --name alice --domain acme.com
    → identity created at awid (did:aw, did:key, address)
 
-2. Team controller invites alice:
+2. Team controller, acting with an issuer that has no verified human, invites alice:
    aw id team invite --member-global
    → returns invite token
 
 3. Alice accepts:
-   aw id team accept-invite <token> --address acme.com/alice
+   aw id team accept-invite <token> --global --address acme.com/alice
    → team controller signs certificate for alice's did:key
    → certificate saved under .aw/team-certs/<team>.pem
 
@@ -1467,8 +1483,10 @@ own server URL for self-hosted aweb.)
    → aweb rejects the certificate after its revocation view refreshes
 ```
 
-With Redis, the documented cache policy permits up to 20 minutes of stale
-revocation state; without Redis the next verification reads AWID directly.
+With Redis, revocations are fresh for 60 seconds with one additional 60-second
+stale window. During registry failure only, last-known data may be served while
+its original fetch age is at most 15 minutes, with warnings; then the read
+fails closed. Without Redis the next verification reads AWID directly.
 Revocation does not itself mutate or delete the aweb runtime projection. That
 row remains available for history until an explicit aweb lifecycle operation
 changes it.
@@ -1504,7 +1522,7 @@ relies on are:
 |---------|---------|
 | `aw run <provider>` | Primary human entrypoint; guided onboarding + provider loop |
 | `aw init` | Bind the current workspace using the active certificate from `.aw/team-certs/` (`POST /v1/connect`) |
-| `aw connect --bootstrap-token TOKEN [--address ADDRESS]` | Join a team via a dashboard-issued bootstrap token; global when `--address` is supplied, local otherwise |
+| `aw connect --bootstrap-token TOKEN [--address ADDRESS]` | Unsupported bootstrap-token command retained for this release; use a dashboard setup key or `aw init --join-from` |
 | `aw id team create --name X --namespace Y` | Create team at awid |
 | `aw id team invite [--team X --namespace Y] [--member-global]` | Create invite token; defaults to the active team and a local invite. `--member-local` is the explicit default; the old `--global` and `--local` spellings are deprecated hidden aliases |
 | `aw id team accept-invite <token>` | Accept a hosted `aw_inv_` or local-controller invite, receive certificate; hosted local accepts into an explicit external `--identity-home` auto-connect that root when the invite names a service |

@@ -15,14 +15,13 @@ Enforcement is staged (``aweb.config.enforce_team_key_pins``): until
 from __future__ import annotations
 
 import logging
-import time
 from typing import Any
 
 from fastapi import HTTPException, Request
 
 from awid.external_authority import SystemTXTOutcomeResolver
 from awid.team_ids import parse_team_id
-from awid.team_key_acts import TeamKeyPin, TeamKeyUnverified, pinned_team_key as pin_team_key
+from awid.team_key_acts import TeamKeyMemo, TeamKeyPin, TeamKeyUnverified, pinned_team_key as pin_team_key
 
 from aweb.awid_error_handling import AWID_DEPENDENCY_ERRORS, awid_dependency_http_exception
 from aweb.config import enforce_team_key_pins
@@ -101,29 +100,22 @@ async def pinned_team_key(
     )
 
 
-# How long a pin this app read answers a request under the same key without
-# reading it again: the registry key's own freshness bound, so a memo adds no
-# window the registry cache does not already allow.
-PIN_MEMO_SECONDS = 60
-
-
 async def pinned_team_key_for_request(
     request: Request, team_id: str, served_key: str, *, db: Any = None,
 ) -> str:
     """``pinned_team_key`` with ``db`` (the request's aweb database manager,
     else the app's), the app's registry and its DNS resolver; an unverified
     key is the 401 ``team_key_unverified`` and a failed act read is the
-    registry dependency error. A request under exactly the key this app read
-    as the pin within PIN_MEMO_SECONDS reads nothing; any other key reads the
-    pin."""
+    registry dependency error. A request under a served key this app answered
+    within the memo window (awid TeamKeyMemo) reads nothing."""
     state = request.app.state
     memo = getattr(state, "team_key_pin_memo", None)
     if memo is None:
-        memo = {}
+        memo = TeamKeyMemo()
         state.team_key_pin_memo = memo
-    remembered = memo.get(team_id)
-    if remembered is not None and remembered[0] == served_key and time.monotonic() - remembered[1] < PIN_MEMO_SECONDS:
-        return served_key
+    remembered = memo.get(team_id, served_key)
+    if remembered is not None:
+        return remembered
     try:
         key = await pinned_team_key(
             db=db if db is not None else state.db.get_manager("aweb"),
@@ -137,5 +129,5 @@ async def pinned_team_key_for_request(
     except AWID_DEPENDENCY_ERRORS as exc:
         logger.warning("AWID registry dependency failed for the team key act of %s", team_id, exc_info=True)
         raise awid_dependency_http_exception(exc, operation="AWID team key act read") from exc
-    memo[team_id] = (key, time.monotonic())
+    memo.put(team_id, served_key, key)
     return key

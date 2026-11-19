@@ -1,11 +1,16 @@
 package main
 
 import (
+	"crypto/ed25519"
 	"crypto/sha256"
 	"fmt"
+	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
+	"syscall"
 
 	aweb "github.com/awebai/aw"
 	"github.com/awebai/aw/awconfig"
@@ -17,17 +22,77 @@ var humanFlag, humanDomainFlag string
 var activeHuman *humanParticipation
 
 type humanParticipation struct {
-	operation string
-	record    *awconfig.HumanRecord
-	dir       string
-	chain     map[string]any
-	sign      awid.InteractiveSigner
+	operation   string
+	record      *awconfig.HumanRecord
+	dir         string
+	chain       map[string]any
+	sign        awid.InteractiveSigner
+	output      io.Writer
+	signMu      sync.Mutex
+	keyMu       sync.Mutex
+	unlockedKey ed25519.PrivateKey
+	unlockErr   error
+	closed      bool
+	stopSignals func()
+}
+
+func init() {
+	// Cobra finalizers run on success, returned errors and panics. Plugin
+	// dispatch has its own defer because it does not execute through Cobra.
+	cobra.OnFinalize(func() {
+		if activeHuman != nil {
+			activeHuman.close()
+		}
+	})
+}
+
+func (h *humanParticipation) close() {
+	h.keyMu.Lock()
+	defer h.keyMu.Unlock()
+	if h.closed {
+		return
+	}
+	h.closed = true
+	wipeBytes(h.unlockedKey)
+	h.unlockedKey = nil
+	if h.stopSignals != nil {
+		h.stopSignals()
+		h.stopSignals = nil
+	}
+}
+
+func (h *humanParticipation) watchSignals() {
+	interrupts := make(chan os.Signal, 1)
+	done := make(chan struct{})
+	signal.Notify(interrupts, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	h.keyMu.Lock()
+	if h.closed {
+		h.keyMu.Unlock()
+		signal.Stop(interrupts)
+		return
+	}
+	h.stopSignals = func() { signal.Stop(interrupts); close(done) }
+	h.keyMu.Unlock()
+	go func() {
+		select {
+		case caught := <-interrupts:
+			h.close()
+			code := 130
+			if caught == syscall.SIGTERM {
+				code = 143
+			} else if caught == syscall.SIGHUP {
+				code = 129
+			}
+			os.Exit(code)
+		case <-done:
+		}
+	}()
 }
 
 // Kept separate from resolveLocalSigningIdentity: arbitrary signing, blueprint
 // publishing and worker custody must never inherit human authority.
 func humanParticipationAllowed(cmd *cobra.Command) bool {
-	return cmd == initCmd || cmd == teamFetchCertCmd || cmd == mailSendCmd || cmd == mailInboxCmd || cmd == mailShowCmd || cmd == mailReplyCmd || (cmd == idRequestCmd && idRequestTeamAuth) ||
+	return cmd.Annotations[humanCommandAnnotation] != "" || cmd == initCmd || cmd == teamFetchCertCmd || cmd == mailSendCmd || cmd == mailInboxCmd || cmd == mailShowCmd || cmd == mailReplyCmd || (cmd == idRequestCmd && idRequestTeamAuth) ||
 		cmd == appCredentialRegisterCmd || cmd == appRoleDesignateCmd || cmd == appCredentialReplaceCmd
 }
 func humanSelectionRequested() bool { return humanFlag != "" || humanDomainFlag != "" }
@@ -35,14 +100,23 @@ func prepareHumanParticipation(cmd *cobra.Command) error {
 	if !humanParticipationAllowed(cmd) {
 		return usageError("--human is not supported for %s; use human mail or ordinary team-auth requests", cmd.CommandPath())
 	}
-	h, err := loadHumanParticipation(humanFlag, humanDomainFlag, awconfig.HumanKeychain{}, awid.TerminalPassphrasePrompt(), humanAtTerminal)
+	h, err := loadHumanParticipationState(humanFlag, humanDomainFlag, awconfig.HumanKeychain{}, awid.TerminalPassphrasePrompt(), humanAtTerminal, cmd.Annotations[humanCommandAnnotation] == "prepared")
 	if err != nil {
 		return err
 	}
 	activeHuman = h
+	h.operation = cmd.CommandPath()
+	h.output = cmd.ErrOrStderr()
+	h.watchSignals()
 	return nil
 }
 func loadHumanParticipation(id, domain string, store awid.HumanKeyStore, prompt awid.PassphrasePrompt, terminal func() error) (*humanParticipation, error) {
+	return loadHumanParticipationState(id, domain, store, prompt, terminal, false)
+}
+
+// Only enrollment and certificate registration may select a prepared human.
+// The same terminal and encrypted-key signer are used before and after issuance.
+func loadHumanParticipationState(id, domain string, store awid.HumanKeyStore, prompt awid.PassphrasePrompt, terminal func() error, allowPrepared bool) (*humanParticipation, error) {
 	if strings.TrimSpace(id) == "" || strings.TrimSpace(domain) == "" {
 		return nil, usageError("--human and --human-domain are both required")
 	}
@@ -56,7 +130,7 @@ func loadHumanParticipation(id, domain string, store awid.HumanKeyStore, prompt 
 	if err != nil {
 		return nil, err
 	}
-	if rec == nil || rec.State != awconfig.HumanRegistered {
+	if rec == nil || (rec.State != awconfig.HumanRegistered && (!allowPrepared || (rec.State != awconfig.HumanPrepared && rec.State != awconfig.HumanDIDRegistered))) {
 		return nil, usageError("human %s is not registered on this device in %s", id, domain)
 	}
 	dir, err := awconfig.HumanRecordDir(domain, id)
@@ -67,26 +141,95 @@ func loadHumanParticipation(id, domain string, store awid.HumanKeyStore, prompt 
 	if err != nil {
 		return nil, err
 	}
-	if installed == nil {
+	if installed == nil && rec.State == awconfig.HumanRegistered {
 		return nil, usageError("selected human has no installed ID chain")
 	}
-	subject, err := installed.Subject(rec.DIDKey)
-	if err != nil || subject.ID != rec.StableID {
-		return nil, usageError("installed ID chain does not belong to selected human")
+	var chain map[string]any
+	if installed != nil {
+		subject, err := installed.Subject(rec.DIDKey)
+		if err != nil || subject.ID != rec.StableID {
+			return nil, usageError("installed ID chain does not belong to selected human")
+		}
+		certificates := installed.Bundle["certificates"].([]any)
+		leaf := certificates[len(certificates)-1].(map[string]any)["certificate"].(map[string]any)
+		if leaf["kind"] != "human" {
+			return nil, usageError("selected ID chain is not a human identity")
+		}
+		chain = installed.Bundle
 	}
-	certificates := installed.Bundle["certificates"].([]any)
-	leaf := certificates[len(certificates)-1].(map[string]any)["certificate"].(map[string]any)
-	if leaf["kind"] != "human" {
-		return nil, usageError("selected ID chain is not a human identity")
-	}
+	h := newHumanSigningSession(rec, store, prompt)
+	h.dir, h.chain = dir, chain
+	return h, nil
+}
+
+// Every human path shares this one command-owned unlock and wipe boundary.
+// Callers validate their own command-specific record/chain before using it.
+func newHumanSigningSession(rec *awconfig.HumanRecord, store awid.HumanKeyStore, prompt awid.PassphrasePrompt) *humanParticipation {
+	id := rec.StableID
 	n := 0
-	h := &humanParticipation{record: rec, dir: dir, chain: installed.Bundle}
+	h := &humanParticipation{record: rec, output: os.Stderr}
 	sign := func(payload []byte, description string) (string, []byte, error) {
+		h.signMu.Lock()
+		defer h.signMu.Unlock()
+		h.keyMu.Lock()
+		if h.closed {
+			h.keyMu.Unlock()
+			return "", nil, fmt.Errorf("human command has ended")
+		}
+		if h.unlockErr != nil {
+			err := h.unlockErr
+			h.keyMu.Unlock()
+			return "", nil, err
+		}
+		needsUnlock := h.unlockedKey == nil
+		h.keyMu.Unlock()
 		n++
-		return awid.HumanSigner(store, id, fmt.Sprintf("signature %d: %s", n, h.operation+"; "+description), prompt)(payload)
+		if _, err := fmt.Fprintf(h.output, "Sign as %s to signature %d: %s; %s.\n", id, n, h.operation, description); err != nil {
+			return "", nil, err
+		}
+		if needsUnlock {
+			// Do not hold keyMu while waiting on the terminal: an interrupt
+			// must be able to close the command even during its first prompt.
+			blob, err := store.LoadHumanKey(id)
+			var passphrase []byte
+			var key ed25519.PrivateKey
+			if err == nil {
+				passphrase, err = prompt(fmt.Sprintf("Unlock human %s for %s.\nPassphrase for that human key: ", id, h.operation))
+			}
+			h.keyMu.Lock()
+			// Hold the key lock through decryption and ownership transfer, so
+			// signal cleanup cannot exit with an unowned decrypted key.
+			if err == nil && h.closed {
+				err = fmt.Errorf("human command has ended")
+			}
+			if err == nil && !h.closed {
+				key, err = awid.ImportHumanKeyBackup(blob, passphrase)
+			}
+			wipeBytes(passphrase)
+			if err == nil && awid.ComputeDIDKey(key.Public().(ed25519.PublicKey)) != rec.DIDKey {
+				err = fmt.Errorf("keychain key does not match the selected human")
+			}
+			if err != nil || h.closed {
+				wipeBytes(key)
+				if err == nil {
+					err = fmt.Errorf("human command has ended")
+				}
+				h.unlockErr = err
+				h.keyMu.Unlock()
+				return "", nil, err
+			}
+			h.unlockedKey = key
+			h.keyMu.Unlock()
+		}
+		h.keyMu.Lock()
+		defer h.keyMu.Unlock()
+		if h.closed {
+			return "", nil, fmt.Errorf("human command has ended")
+		}
+		return awid.KeySigner(h.unlockedKey)(payload)
 	}
 	h.sign = sign
-	return h, nil
+	return h
 }
 func (h *humanParticipation) membership(team string) (*awconfig.TeamState, *awconfig.TeamMembership, *awid.TeamCertificate, error) {
 	state, err := awconfig.LoadTeamStateFromIdentityHome(h.dir)
@@ -296,3 +439,9 @@ func setHumanMailOperation(recipient, subject, body string) {
 	sum := sha256.Sum256([]byte(body))
 	activeHuman.operation = fmt.Sprintf("mail to %q; subject %q; body sha256 %.12x", recipient, subject, sum)
 }
+
+func (h *humanParticipation) certificateSigner(description string) awid.IDCertificateSigner {
+	return func(payload []byte) (string, []byte, error) { return h.sign(payload, description) }
+}
+
+const humanSigningHelp = "\n\nWhen acting as a human, the first signature asks once for the selected person's\nkeychain passphrase at a real terminal. Each signature is described; the key\nstays in memory for this command, including confirmation waits, and is wiped\non success, error or interruption. Another command asks again."

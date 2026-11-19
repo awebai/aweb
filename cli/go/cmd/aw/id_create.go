@@ -74,7 +74,13 @@ func init() {
 	idCreateCmd.Flags().StringVar(&idCreateDomain, "domain", "", "Namespace domain for the global identity address")
 	idCreateCmd.Flags().StringVar(&idCreateRegistryURL, "registry", "", "Registry origin override (default: api.awid.ai)")
 	idCreateCmd.Flags().BoolVar(&idCreateSkipDNSVerify, "skip-dns-verify", false, "Skip the DNS TXT verification prompt and lookup")
-	idCreateCmd.Flags().StringVar(&idCreateHumanParent, "human-parent", "", "did:aw of the issuing human (local key, or a registered account human with --org)")
+	for _, cmd := range []*cobra.Command{idCreateCmd} {
+		if cmd.Long == "" {
+			cmd.Long = cmd.Short
+		}
+		cmd.Long += humanSigningHelp
+	}
+	idCreateCmd.Flags().StringVar(&idCreateHumanParent, "human-parent", "", "Parent person did:aw, who signs locally in --domain (--human ID --human-domain DOMAIN may also name them; with --org, a registered account human)")
 	idCreateCmd.Flags().BoolVar(&idCreateRootParent, "root-parent", false, "Have this machine's namespace controller issue a humanless agent (BYOT only)")
 	idCreateCmd.Flags().BoolVar(&idCreateLocal, "local", false, "Create a key-only local identity (a did:key registered nowhere) in an explicit fresh --identity-home; resumable, and a rerun returns it")
 	idCreateCmd.Flags().BoolVar(&idCreateNoAddress, "no-address", false, "Create a registered identity with no address in an explicit fresh --identity-home, registering its own did:aw at --registry; resumable")
@@ -233,6 +239,7 @@ func executeIDCreate(workingDir string, opts idCreateOptions) (idCreateOutput, e
 		if issuer, err = parent.issuer(opts, plan.Domain, prepared.ControllerKey, registry, plan.RegistryURL); err != nil {
 			return idCreateOutput{}, err
 		}
+		defer issuer.close()
 		if err := parent.preflight(ctx, opts, issuer, plan.Domain, prepared.ControllerKey); err != nil {
 			return idCreateOutput{}, err
 		}

@@ -37,9 +37,13 @@ var (
 		Short: "Create your human ID in a namespace",
 		Long: "Create your human ID in --domain. With --as-root the namespace controller on\n" +
 			"this machine issues its certificate now. Without it, the human is only\n" +
-			"prepared: an issuer elsewhere admits it through `aw id parent request`.\n\n" +
+			"prepared: give the public ID and key to your issuer. With a holder, its\n" +
+			"operator hands you an issued FILE for `aw id human register FILE`, or\n" +
+			"a pending intent for `aw id human enroll --intent FILE --issuer URL`.\n" +
+			"Enrollment asks you to register and confirm a key in the named browser.\n" +
+			"The existing `aw id parent request` exchange is also supported.\n\n" +
 			"The human key is kept in the OS keychain, encrypted under a passphrase you\n" +
-			"choose; every signature asks for that passphrase on the terminal. This needs\n" +
+			"choose; person commands unlock it once on the terminal and wipe it at exit. This needs\n" +
 			"a human at an interactive terminal: it refuses without one and inside an\n" +
 			"agent runtime. A run that fails resumes from where it stopped.",
 		RunE: runIDHumanInit,
@@ -182,9 +186,11 @@ func executeIDHumanInit(ctx context.Context, opts idHumanInitOptions) (idHumanIn
 			return idHumanInitOutput{}, fmt.Errorf("resume %s: %w", rec.StableID, err)
 		}
 	}
-	signer := func(description string) awid.IDCertificateSigner {
-		return awid.HumanSigner(opts.Keychain, rec.StableID, description, opts.Prompt)
-	}
+	h := newHumanSigningSession(rec, opts.Keychain, opts.Prompt)
+	h.operation = "aw id human init --as-root"
+	h.watchSignals()
+	defer h.close()
+	signer := h.certificateSigner
 
 	if rec.State == awconfig.HumanPrepared {
 		call, cancel := commandAPIContext(nil, ctx)
@@ -424,9 +430,12 @@ func formatIDHumanInit(v any) string {
 	switch out.Status {
 	case "prepared":
 		sb.WriteString("Prepared locally; not registered at AWID.\n")
-		sb.WriteString("Complete enrollment with your issuer using `aw id parent request` and `aw id parent import`.\n")
+		sb.WriteString("Give this public ID and key to your issuer. For the request exchange use `aw id parent request` and `aw id parent import`.\n")
+		fmt.Fprintf(&sb, "If the operator gives you an issued FILE, run aw id human register FILE --human %s --human-domain %s.\n", out.ID, out.Domain)
+		fmt.Fprintf(&sb, "For a pending enrollment intent, run aw id human enroll --intent FILE --issuer URL --human %s --human-domain %s, then register and confirm your key in its browser.\n", out.ID, out.Domain)
 	case "registered":
 		sb.WriteString("Registered at AWID; authority is checked against the tree at each use.\n")
+		sb.WriteString("Next: optionally enroll an approval key with aw id human enroll, or sign a portable message with aw id proof --message-file FILE.\n")
 	}
 	return sb.String()
 }

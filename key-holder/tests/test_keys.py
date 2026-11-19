@@ -1,24 +1,22 @@
 """Actual private storage, Ed25519 signatures, encrypted backup and audit writes."""
 
-from dataclasses import asdict, replace
 import json
 import os
 import sqlite3
 import subprocess
+from dataclasses import asdict, replace
 
-from nacl.public import PrivateKey, SealedBox
-from nacl.exceptions import CryptoError
-from nacl.signing import VerifyKey
 import pytest
-
+from aweb_key_holder.keys import KeyStore, Refused
 from awid.controller_signing import (
     ControllerSigningContext,
     parse_controller_object,
     parse_controller_request,
 )
 from awid.did import public_key_from_did, stable_id_from_did_key
-
-from aweb_key_holder.keys import KeyStore, Refused
+from nacl.exceptions import CryptoError
+from nacl.public import PrivateKey, SealedBox
+from nacl.signing import VerifyKey
 
 
 @pytest.fixture
@@ -177,7 +175,7 @@ def test_backup_only_leaves_encrypted_to_the_offline_operator_key(store):
             == "local"
         )
         assert restored.execute("SELECT seed FROM keys").fetchone()[0] == secret
-        assert restored.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert restored.execute("PRAGMA user_version").fetchone()[0] == 5
         assert restored.execute("SELECT count(*) FROM enrollments").fetchone()[0] == 0
     with pytest.raises(CryptoError):
         SealedBox(PrivateKey.generate()).decrypt(encrypted)

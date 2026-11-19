@@ -18,7 +18,7 @@ var (
 		Short: "Revoke a registered identity's ID-tree authority",
 		Long: "Revoke a registered identity under docs/id-certificates.md §3, signed by\n" +
 			"the current identity (itself, or its current child), by --human <did:aw>\n" +
-			"--domain D for a human on this machine, or by --as-root --domain D for the\n" +
+			"--human-domain D for a human on this machine, or by --as-root --domain D for the\n" +
 			"namespace root. AWID decides whether the signer may revoke the identity.\n" +
 			"The revocation takes effect at AWID's serialization time; only --as-root\n" +
 			"may set an earlier --cutoff. This revokes ID-tree authority, not team\n" +
@@ -29,10 +29,15 @@ var (
 )
 
 func init() {
-	idRevokeCmd.Flags().BoolVar(&idChildAsRoot, "as-root", false, "Revoke as the namespace root, with this machine's controller key")
-	idRevokeCmd.Flags().StringVar(&idChildDomain, "domain", "", "Namespace domain (with --as-root or --human)")
-	idRevokeCmd.Flags().StringVar(&idChildHuman, "human", "", "Revoke as this human on this machine (did:aw)")
+	idRevokeCmd.Flags().StringVar(&idChildDomain, "domain", "", "Organization namespace for agent or --as-root operations; with --human, the person's domain, as --human-domain")
+	idRevokeCmd.Flags().BoolVar(&idChildAsRoot, "as-root", false, "Revoke as the namespace root of --domain, with this machine's controller key")
 	idRevokeCmd.Flags().StringVar(&idChildRegistry, "registry", "", "Registry origin for --as-root, when the domain's _awid record names none")
+	for _, cmd := range []*cobra.Command{idRevokeCmd} {
+		if cmd.Long == "" {
+			cmd.Long = cmd.Short
+		}
+		cmd.Long += humanSigningHelp
+	}
 	idRevokeCmd.Flags().StringVar(&idRevokeCutoffFlag, "cutoff", "", "With --as-root: the earlier time (RFC 3339) the revocation takes effect from")
 	identityCmd.AddCommand(idRevokeCmd)
 }
@@ -45,7 +50,7 @@ type idRevokeOutput struct {
 }
 
 func runIDRevoke(cmd *cobra.Command, args []string) error {
-	out, err := executeIDRevoke(cmd.Context(), idChildOptionsFromFlags(), args[0], idRevokeCutoffFlag)
+	out, err := executeIDRevoke(cmd.Context(), idChildOptionsFromFlags(cmd), args[0], idRevokeCutoffFlag)
 	if err != nil {
 		return err
 	}
@@ -76,6 +81,7 @@ func executeIDRevoke(ctx context.Context, opts idChildOptions, target, cutoff st
 	if err != nil {
 		return idRevokeOutput{}, err
 	}
+	defer issuer.close()
 	registry := newAWIDRegistryClient(nil, opts.TXTResolver)
 	registry.DefaultRegistryURL = issuer.registryURL
 	head, err := idRevokeHead(ctx, idStatusAt(registry, opts.TXTResolver, issuer.registryURL), issuer.domain, target)

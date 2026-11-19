@@ -1081,6 +1081,9 @@ func dispatchPluginIfRequested(args []string) (int, bool) {
 				fmt.Fprintln(os.Stderr, err)
 				return 1, true
 			}
+			defer activeHuman.close()
+			activeHuman.operation = "aw " + commandName
+			activeHuman.watchSignals()
 		}
 		// Cobra does not run for installed apps, so validate its global JSON
 		// boolean here as well as in the tool argument parser.

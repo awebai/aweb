@@ -233,7 +233,7 @@ func TestMailSendPlainAliasRoutesToOSSEndpoint(t *testing.T) {
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/agents":
-			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{Agents: []awid.AgentView{}})
+			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{Agents: []awid.AgentView{{AgentID: "bob-agent", Alias: "bob"}}})
 		case "/v1/messages":
 			gotPath = r.URL.Path
 			var sent map[string]any

@@ -48,6 +48,11 @@ async def registry_listener(env, *, listener_socket: socket.socket | None = None
             await asyncio.sleep(.02)
         assert server.started
         origin = f"http://127.0.0.1:{sock.getsockname()[1]}"
+        # Served there, the registry has that public origin too, which covering
+        # controller signatures name.
+        env.registry_app.state.awid_public_origins = (
+            *getattr(env.registry_app.state, "awid_public_origins", ()), origin,
+        )
         client = RegistryClient(origin, service_token=existing.service_token)
         env.app.state.awid_registry_client = client
         yield client, origin

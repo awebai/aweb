@@ -10,9 +10,14 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"net/http/httptrace"
+	"net/url"
 	"strings"
+	"sync/atomic"
 )
 
 const controllerRequestType = "aweb.awid-controller-request"
@@ -72,7 +77,9 @@ func (c *RegistryClient) RegisterIDCertificateAt(ctx context.Context, registryUR
 	}
 	certificates := bundle["certificates"].([]any)
 	body := map[string]any{"certificate": certificates[len(certificates)-1], "expected_head": optionalText(expectedHead), "invitation_id": optionalText(invitationID)}
-	return c.coveringRequest(ctx, registryURL, "/v1/id-certificates/register", domain, "register_id_certificate", body, signer, map[string]string{"X-AWID-ID-Chain": header})
+	var answer map[string]any
+	err = c.controllerWrite(ctx, http.MethodPost, registryURL, "/v1/id-certificates/register", domain, "register_id_certificate", nil, body, signer, map[string]string{"X-AWID-ID-Chain": header}, &answer)
+	return answer, err
 }
 
 // RevokeIDCertificate revokes the registered id; the registry decides
@@ -88,56 +95,104 @@ func (c *RegistryClient) RevokeIDCertificate(ctx context.Context, domain, id str
 // RevokeIDCertificateAt revokes at an explicit registry origin.
 func (c *RegistryClient) RevokeIDCertificateAt(ctx context.Context, registryURL, domain, id string, signer IDCertificateSigner, expectedHead, effectiveFrom *string) (map[string]any, error) {
 	body := map[string]any{"domain": domain, "id": id, "expected_head": optionalText(expectedHead), "effective_from": optionalText(effectiveFrom)}
-	return c.coveringRequest(ctx, registryURL, "/v1/id-certificates/revoke", domain, "revoke_id_certificate", body, signer, nil)
+	var answer map[string]any
+	err := c.controllerWrite(ctx, http.MethodPost, registryURL, "/v1/id-certificates/revoke", domain, "revoke_id_certificate", nil, body, signer, nil, &answer)
+	return answer, err
 }
 
-// coveringRequest POSTs body under a covering-v2 envelope. A signer that
-// fails or answers with anything but a valid signature by a valid key over
-// the exact payload sends nothing.
-func (c *RegistryClient) coveringRequest(ctx context.Context, registryURL, path, domain, operation string, body map[string]any, signer IDCertificateSigner, headers map[string]string) (map[string]any, error) {
+// controllerWrite sends one controller write under a covering-v2 envelope:
+// body (nil for none) is serialized once, as canonical JSON, and those bytes
+// are both the ones signed and the ones sent. The signature names the
+// destination registry's origin, the method, the request's escaped path and
+// the body's hash, with the operation's claims. A signer that fails or answers
+// with anything but a valid signature by a valid key over the exact payload
+// sends nothing. There is no fallback to the legacy form.
+func (c *RegistryClient) controllerWrite(ctx context.Context, method, registryURL, path, domain, operation string, claims map[string]any, body any, signer IDCertificateSigner, headers map[string]string, out any) error {
+	// An empty registry URL is the client's default registry, as for every
+	// other registry request.
+	if strings.TrimSpace(registryURL) == "" {
+		registryURL = c.defaultRegistryURL()
+	}
 	aud, err := canonicalServerOrigin(registryURL)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	raw, err := CanonicalJSONValue(body)
-	if err != nil {
-		return nil, err
+	var raw []byte
+	if body != nil {
+		if raw, err = sortedJSONBytes(body); err != nil {
+			return err
+		}
 	}
-	timestamp := c.now().Format("2006-01-02T15:04:05Z")
-	payload, err := ControllerRequestPayload(aud, http.MethodPost, path, []byte(raw), timestamp, domain, operation, nil)
+	target, err := url.Parse(aud + path)
 	if err != nil {
-		return nil, err
+		return err
+	}
+	signedPath := target.EscapedPath()
+	if target.RawQuery != "" {
+		signedPath += "?" + target.RawQuery
+	}
+	timestamp := c.now().UTC().Format("2006-01-02T15:04:05Z")
+	payload, err := ControllerRequestPayload(aud, method, signedPath, raw, timestamp, domain, operation, claims)
+	if err != nil {
+		return err
 	}
 	didKey, signature, err := signer(payload)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	// The key is decoded strictly (ExtractPublicKey refuses degenerate keys).
 	if err := idStrictVerify(didKey, signature, func() ([]byte, error) { return payload, nil }); err != nil {
-		return nil, fmt.Errorf("signer answer refused: %w", err)
+		return fmt.Errorf("signer answer refused: %w", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(aud, "/")+path, bytes.NewReader([]byte(raw)))
-	if err != nil {
-		return nil, err
+	signed := map[string]string{
+		"X-AWEB-Timestamp":      timestamp,
+		"X-AWEB-Signed-Payload": base64.RawURLEncoding.EncodeToString(payload),
+		"Authorization":         "DIDKey " + didKey + " " + base64.RawStdEncoding.EncodeToString(signature),
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("X-AWEB-Timestamp", timestamp)
-	req.Header.Set("X-AWEB-Signed-Payload", base64.RawURLEncoding.EncodeToString(payload))
-	req.Header.Set("Authorization", "DIDKey "+didKey+" "+base64.RawStdEncoding.EncodeToString(signature))
 	for k, v := range headers {
-		req.Header.Set(k, v)
+		signed[k] = v
 	}
-	setUserAgent(req, "")
-	resp, err := DoNoRedirectWithTimeout(c.httpClientFor(aud), req, APITimeout())
-	if err != nil {
-		return nil, err
+	var sent atomic.Bool
+	traced := httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
+		WroteRequest: func(info httptrace.WroteRequestInfo) {
+			if info.Err == nil {
+				sent.Store(true)
+			}
+		},
+	})
+	err = c.requestBytes(traced, method, aud, path, signed, raw, out)
+	var answered *RegistryError
+	if err != nil && sent.Load() && !errors.As(err, &answered) && !isReplaySafeRegistryRequest(method, path) {
+		// The registry received the whole write and its answer was lost. aw
+		// does not replay such a write, and the registry may have applied it.
+		state := controllerWriteStates[operation]
+		if state.write == "" {
+			state = controllerWriteState{write: strings.ReplaceAll(operation, "_", " "), check: "aw id show"}
+		}
+		return &OutcomeUnknownError{err: err, write: state.write, check: state.check}
 	}
-	var answer map[string]any
-	if err := decodeRegistryResponse(resp, &answer); err != nil {
-		return nil, err
-	}
-	return answer, nil
+	return err
+}
+
+// controllerWriteState names a controller write to the user and a command
+// that reads the registry state it changes.
+type controllerWriteState struct {
+	write string
+	check string
+}
+
+var controllerWriteStates = map[string]controllerWriteState{
+	"create_team":             {"team create", "aw id team members"},
+	"set_team_visibility":     {"team visibility change", "aw id team members"},
+	"delete_team":             {"team delete", "aw id team members"},
+	"rotate_team_key":         {"team key rotation", "aw id team members"},
+	"register_certificate":    {"certificate registration", "aw id team members --include-revoked"},
+	"revoke_certificate":      {"certificate revocation", "aw id team members --include-revoked"},
+	"register_id_certificate": {"ID certificate registration", "aw id show"},
+	"revoke_id_certificate":   {"ID certificate revocation", "aw id show"},
+	"update_namespace":        {"namespace update", "aw id namespace <domain>"},
+	"delete_namespace":        {"namespace delete", "aw id namespace <domain>"},
+	"delete_address":          {"address delete", "aw id namespace addresses <domain>"},
 }
 
 func idBundleLeafDomain(bundle map[string]any) (string, error) {
@@ -154,4 +209,33 @@ func optionalText(value *string) any {
 		return nil
 	}
 	return *value
+}
+
+// nullIfEmpty is value, or JSON null when it is empty.
+func nullIfEmpty(value string) any {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	return value
+}
+
+// sortedJSONBytes is v as canonical JSON with every object's keys sorted,
+// structs included: CanonicalJSONValue keeps a struct's declaration order, so
+// v is first read back as generic JSON (numbers kept exact).
+func sortedJSONBytes(v any) ([]byte, error) {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	var generic any
+	if err := decoder.Decode(&generic); err != nil {
+		return nil, err
+	}
+	encoded, err := CanonicalJSONValue(generic)
+	if err != nil {
+		return nil, err
+	}
+	return []byte(encoded), nil
 }

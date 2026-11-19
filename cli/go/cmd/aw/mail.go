@@ -113,7 +113,11 @@ var mailSendCmd = &cobra.Command{
 		"that conversation; its title stays the first message's subject, so --subject\n" +
 		"is refused there. JSON returns message_id and conversation_id. A server that\n" +
 		"answers a new thread with another conversation_id fails without retry; the\n" +
-		"message may already have been sent into that conversation.",
+		"message may already have been sent into that conversation.\n\n" +
+		"With --human, unlock once at a real terminal for this command; each signature\n" +
+		"is described on stderr and the key is wiped at exit. Ordinary human mail\n" +
+		"carries the ID chain and no saved enrollment or creation evidence.\n" +
+		"Use aw id proof to export that evidence for someone else to verify.",
 	Args: func(cmd *cobra.Command, args []string) error {
 		recipient := strings.TrimSpace(mailSendTo+mailSendToDID+mailSendToAddress) != ""
 		if strings.TrimSpace(mailSendConversationID) != "" {
@@ -178,15 +182,13 @@ var mailSendCmd = &cobra.Command{
 			// /v1/agents lists the team's agents; a name it lacks may be a
 			// human on the live roster, which binds the member's current key.
 			if _, found, findErr := clientAgentForAlias(ctx, c, targetValue); findErr != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: recipient lookup failed: %v\n", findErr)
-				req.ToAlias = targetValue
+				return recipientLookupError(targetValue, "agent list", findErr)
 			} else if found || sendEncryptE2EE {
 				// Key discovery for a human is scoped to the selected team,
 				// using its original identity-signed assertion.
 				req.ToAlias = targetValue
 			} else if liveTarget, liveFound, liveErr := resolveLiveTeamMemberAliasTarget(ctx, sel, targetValue); liveErr != nil {
-				debugLog("resolve live team member %s/%s: %v", strings.TrimSpace(sel.TeamID), targetValue, liveErr)
-				req.ToAlias = targetValue
+				return recipientLookupError(targetValue, "live roster", liveErr)
 			} else if liveFound {
 				kind, value := liveTarget.identityTarget()
 				applyMailRecipientTarget(req, kind, value)

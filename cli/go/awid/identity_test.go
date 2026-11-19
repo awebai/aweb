@@ -212,7 +212,10 @@ func TestChainResolverFallsBackToPinWhenRegistryAddressMissing(t *testing.T) {
 	var registryHits atomic.Int64
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		registryHits.Add(1)
-		http.NotFound(w, r)
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]any{"detail": map[string]string{
+			"code": "address_not_found", "message": "Address not found",
+		}})
 	}))
 	t.Cleanup(server.Close)
 

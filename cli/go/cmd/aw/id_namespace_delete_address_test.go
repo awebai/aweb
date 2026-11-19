@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -188,15 +190,7 @@ func verifyRegistrySignatureForTest(t *testing.T, r *http.Request, pub ed25519.P
 	if timestamp == "" {
 		t.Fatal("missing X-AWEB-Timestamp")
 	}
-	payload := make(map[string]string, len(fields)+1)
-	for key, value := range fields {
-		payload[key] = value
-	}
-	payload["timestamp"] = timestamp
-	canonical, err := awid.CanonicalJSONValue(payload)
-	if err != nil {
-		t.Fatal(err)
-	}
+	canonical := coveringControllerPayloadForTest(t, r, timestamp, fields)
 	sig, err := base64.RawStdEncoding.DecodeString(parts[2])
 	if err != nil {
 		t.Fatal(err)
@@ -204,4 +198,36 @@ func verifyRegistrySignatureForTest(t *testing.T, r *http.Request, pub ed25519.P
 	if !ed25519.Verify(pub, []byte(canonical), sig) {
 		t.Fatalf("invalid signature for payload %s", canonical)
 	}
+}
+
+// coveringControllerPayloadForTest is the covering-v2 payload a controller
+// signs for fields (domain and operation, and the operation's claims) over
+// exactly the request r at timestamp, checked against r's
+// X-AWEB-Signed-Payload. r's body is restored for the handler to read.
+func coveringControllerPayloadForTest(t *testing.T, r *http.Request, timestamp string, fields map[string]string) string {
+	t.Helper()
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	if len(body) == 0 {
+		body = nil
+	}
+	claims := map[string]any{}
+	for key, value := range fields {
+		if key != "domain" && key != "operation" && key != "timestamp" {
+			claims[key] = value
+		}
+	}
+	payload, err := awid.ControllerRequestPayload("http://"+r.Host, r.Method, r.URL.EscapedPath(), body,
+		timestamp, fields["domain"], fields["operation"], claims)
+	if err != nil {
+		t.Fatalf("covering payload: %v", err)
+	}
+	signed, err := base64.RawURLEncoding.DecodeString(r.Header.Get("X-AWEB-Signed-Payload"))
+	if err != nil || !bytes.Equal(signed, payload) {
+		t.Fatalf("signed payload %s, want %s", signed, payload)
+	}
+	return string(payload)
 }

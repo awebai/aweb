@@ -1,6 +1,6 @@
 [project]
 name = "aweb"
-version = "1.27.51rc2"
+version = "1.27.51rc3"
 description = "Agent Web: self-hostable coordination server for AI agents (identity, presence, mail, chat, tasks, locks)"
 readme = "README.md"
 license = "MIT"
@@ -19,9 +19,9 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Application Frameworks",
 ]
 dependencies = [
-    "awid-service>=0.5.40rc2",
+    "awid-service>=0.5.40rc3",
     # Shared origin egress, manifest reader and hooks; no runtime extra.
-    "aweb-naapp[egress,hooks]>=0.5.2rc2",
+    "aweb-naapp[egress,hooks]>=0.5.2rc3",
     "base58>=2.1.1",
     "cryptography>=45.0.6",
     "dnspython>=2.8.0",
@@ -86,6 +86,7 @@ dev = [
     "aweb-naapp",
     "pytest>=9.0.0",
     "pytest-asyncio>=1.2.0",
+    "pytest-xdist>=3.8.0",
     "playwright==1.63.0",
 ]
 

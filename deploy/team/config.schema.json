@@ -819,6 +819,26 @@
           }
         }
       }
+    },
+    "human_approval": {
+      "description": "Optional organisation policy; the shared approval-service gate validates supported action names and levels before serving any action.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "service": {
+          "$ref": "#/$defs/origin"
+        },
+        "require": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "organisation.human.add": {
+              "type": "string",
+              "enum": ["hardware", "passkey"]
+            }
+          }
+        }
+      }
     }
   }
 }

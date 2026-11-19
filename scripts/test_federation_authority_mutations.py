@@ -86,7 +86,6 @@ def run_python_test(
 ) -> subprocess.CompletedProcess[str]:
     environment = {
         **os.environ,
-        "UV_CACHE_DIR": os.environ.get("UV_CACHE_DIR", "/tmp/uv-cache"),
     }
     return run_fixture(
         ["uv", "run", "--frozen", "pytest", "-q", test_file, "-k", pattern],
@@ -102,7 +101,6 @@ def run_python_test(
 def run_server_tests(root: Path, *nodes: str) -> subprocess.CompletedProcess[str]:
     environment = {
         **os.environ,
-        "UV_CACHE_DIR": os.environ.get("UV_CACHE_DIR", "/tmp/uv-cache"),
     }
     return run_fixture(
         ["uv", "run", "--frozen", "pytest", "-q", *nodes],

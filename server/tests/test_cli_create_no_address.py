@@ -62,6 +62,8 @@ async def test_a_root_is_created_with_no_address_at_the_real_registry_and_only_o
     registry_sock, registry_origin = _listener()
     db = await test_db_factory.create_db(suffix="cli_create", schema="app")
     async with running_registry(db.config.get_dsn()) as registry:
+        # Served at registry_origin, which covering controller signatures name.
+        registry.app.state.awid_public_origins = (*registry.app.state.awid_public_origins, registry_origin)
         async with _serving(registry.app, registry_sock):
             root = (tmp_path / "new-root").resolve()
             no_opener = tmp_path / "no-browser-opener"

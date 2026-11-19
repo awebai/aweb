@@ -96,3 +96,21 @@ func TestStatusFromStoreReportsUnreadableRegistrations(t *testing.T) {
 	}
 	assertFaultsReported(t, status.RegistrationFaults, bad)
 }
+
+// The released ListRegistrations still refuses when a registry file is
+// unusable; ListRegistrationsWithFaults skips it and names it.
+func TestListRegistrationsKeepsItsReleasedRefusal(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	bad := writeUnreadableRegistrations(t, store)
+	if regs, err := store.ListRegistrations(); err == nil || !strings.Contains(err.Error(), bad[0]) {
+		t.Fatalf("ListRegistrations()=%v, %v; want the first unusable file as an error", regs, err)
+	}
+	_, faults, err := store.ListRegistrationsWithFaults()
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFaultsReported(t, faults, bad)
+}

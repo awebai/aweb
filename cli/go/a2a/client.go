@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -230,4 +231,27 @@ func randomHexString(n int) string {
 		return fmt.Sprintf("%d", time.Now().UnixNano())
 	}
 	return hex.EncodeToString(buf)
+}
+
+func IsTerminalState(state string) bool {
+	switch state {
+	case TaskStateCompleted, TaskStateFailed, TaskStateCanceled, TaskStateRejected:
+		return true
+	default:
+		return false
+	}
+}
+
+func SameOriginRPCFromCardURL(cardURL string) string {
+	parsed, err := url.Parse(strings.TrimSpace(cardURL))
+	if err != nil {
+		return ""
+	}
+	if strings.HasSuffix(parsed.Path, "/agent-card.json") {
+		parsed.Path = strings.TrimSuffix(parsed.Path, "/agent-card.json") + "/rpc"
+		parsed.RawQuery = ""
+		parsed.Fragment = ""
+		return parsed.String()
+	}
+	return ""
 }

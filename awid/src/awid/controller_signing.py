@@ -149,18 +149,6 @@ def _snapshot(value):
         raise ControllerSigningError("request_invalid") from exc
 
 
-def _legacy_controller_payload(domain, operation, timestamp, claims=None):
-    """One existing canonical construction for raw-key and typed callers."""
-    return canonical_json_bytes(
-        {
-            "domain": domain,
-            "operation": operation,
-            "timestamp": timestamp,
-            **(claims or {}),
-        }
-    )
-
-
 @dataclass(frozen=True)
 class ControllerDescriptor:
     scope: Literal["namespace", "team"]
@@ -520,7 +508,7 @@ class ControllerHTTPPlan:
     body: bytes | None
     wire_operation: str
     claims: bytes
-    format: Literal["legacy", "covering", "path", "object"]
+    format: Literal["covering", "path", "object"]
 
 
 def controller_http_plan(request: ControllerRequest) -> ControllerHTTPPlan:
@@ -528,7 +516,7 @@ def controller_http_plan(request: ControllerRequest) -> ControllerHTTPPlan:
     op, d, p = request.operation, request.domain, request.parameters
     base = f"/v1/namespaces/{d}"
     team = base + "/teams/" + p.get("name", "")
-    body, claims, fmt = None, {}, "legacy"
+    body, claims, fmt = None, {}, "covering"
     if op == "namespace_register":
         method, path, wire = "POST", "/v1/namespaces", "register"
         body = {"domain": d, "controller_did": p["controller_did"]}
@@ -722,35 +710,24 @@ def _build_controller_payload(
     plan = controller_http_plan(request)
     if plan.format == "object":
         return record_signing_bytes(p["record"])
-    if plan.format == "covering":
-        return covering_payload(
-            aud=origin,
-            path=plan.path,
-            domain=request.domain,
-            operation=plan.wire_operation,
-            body=plan.body,
-            timestamp=timestamp,
-            claims=json.loads(plan.claims),
-        )
     if plan.format == "path":
         return f"{timestamp}\nGET\n{plan.path.partition('?')[0]}".encode()
+    operation, claims = plan.wire_operation, json.loads(plan.claims)
     if role == "parent":
+        # The parent authorizes the child's controller over the same request.
         register = op == "namespace_register"
-        return _snapshot(
-            {
-                "domain": request.domain,
-                "child_domain": request.domain,
-                "controller_did" if register else "new_controller_did": p[
-                    "controller_did" if register else "new_controller_did"
-                ],
-                "operation": "authorize_subdomain_registration"
-                if register
-                else "authorize_subdomain_rotation",
-                "timestamp": timestamp,
-            }
-        )
-    return _legacy_controller_payload(
-        request.domain, plan.wire_operation, timestamp, json.loads(plan.claims)
+        field = "controller_did" if register else "new_controller_did"
+        operation = "authorize_subdomain_registration" if register else "authorize_subdomain_rotation"
+        claims = {"child_domain": request.domain, field: p[field]}
+    return covering_payload(
+        aud=origin,
+        method=plan.method,
+        path=plan.path,
+        domain=request.domain,
+        operation=operation,
+        body=plan.body or b"",
+        timestamp=timestamp,
+        claims=claims,
     )
 
 

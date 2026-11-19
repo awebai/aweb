@@ -33,6 +33,7 @@ from awid.log import (
 )
 from awid.pagination import encode_cursor, validate_pagination_params
 from awid.ratelimit import rate_limit_dep
+from awid.registry_types import ADDRESS_NOT_FOUND
 from awid.signing import verify_did_key_signature
 from awid_service.deps import get_db, get_domain_verifier
 from awid_service.routes.dns_namespace_reverify import reverify_namespace_row
@@ -950,7 +951,10 @@ async def get_address(
         name,
     )
     if row is None:
-        raise HTTPException(status_code=404, detail="Address not found")
+        raise HTTPException(
+            status_code=404,
+            detail={"code": ADDRESS_NOT_FOUND, "message": "Address not found"},
+        )
     return _address_response(row, domain)
 
 

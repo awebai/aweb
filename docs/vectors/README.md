@@ -139,6 +139,19 @@ purpose refusals. Legacy forms remain accepted and measured until the operator's
 cutoff; clients emit this shape only after the accepting registry is deployed.
 See [AWID controller requests](../awid-controller-requests.md).
 
+### `awid-controller-writes-v1.json`
+
+The controller writes aw and the Python `awid` client both make (namespace
+register, update and delete; team create, visibility, delete and key rotation;
+certificate register and revoke; address register and delete, one with an
+escaped name), as the Python client sends them: the call's arguments, and the
+exact method, raw path, body bytes and signing headers of the covering-v2
+request. Keys come from fixed seeds and the timestamp is fixed.
+`scripts/generate_controller_write_vectors.py` writes the file from the Python
+client and checks it with `--check`; the Python client is the reference because
+the deployed registry is shown to accept its bytes. aw's Go client must send the
+same bytes for the same call.
+
 ## Current protocol fixtures
 
 These fixtures govern shipped non-A2A protocol behavior.
@@ -478,8 +491,8 @@ The member-signed `aweb.app-task-authorization/1` (aweb-acgg.8): task body
 digests, domain-prefixed signing bytes and base64url signatures under fixed
 test keys, verification cases at a pinned clock with the bindings each is
 checked against and its expected refusal code, strict-JSON refusals, and task
-body bounds. The reference consumer is `aweb_naapp.runtime.task_requests` in
-`naapp-lib/tests/runtime/`. See [app task requests](../app-task-requests.md).
+body bounds. The reference consumers are `aweb_naapp.runtime.task_requests` in
+`naapp-lib/tests/runtime/` and `aw`'s signer in `cli/go/awid/`. See [app task requests](../app-task-requests.md).
 
 ### `app-request-credential-v1.json`
 
@@ -531,8 +544,8 @@ lockout cases are checked by `aweb_naapp.runtime.capability_links`. See
 
 `proposal_sha256` for page proposals (aweb-acgg.8): canonical bytes and
 digests over a record's collection, id and value, a bundle built from item
-digests, and value refusals. The reference consumer is `aweb_naapp.pages` in
-`naapp-lib/tests/pages/`. See
+digests, and value refusals. The reference consumers are `aweb_naapp.pages` in
+`naapp-lib/tests/pages/` and `cli/go/awid/`. See
 [the page format](../page-format.md) §5.
 
 ### `decision-display-v1.json`
@@ -939,7 +952,7 @@ reference duplication are mutation-tested failures.
 
 | Public fixture | Actual source consumers |
 |---|---|
-| `app-task-authorization-v1.json` | naapp-lib `test_task_request_vectors.py`; Python aweb `test_c2_vectors.py` |
+| `app-task-authorization-v1.json` | naapp-lib `test_task_request_vectors.py`; Go AWID `app_task_authorization_test.go`; Python aweb `test_c2_vectors.py` |
 | `app-request-credential-v1.json` | naapp-lib `test_task_request_vectors.py`, `test_app_credential_signer.py`; Python aweb `test_c2_vectors.py` |
 | `task-answer-v1.json` | naapp-lib `test_task_request_vectors.py`; Python aweb `test_c2_vectors.py`, including the ordered signed HTTP sequence |
 | `a2a-awid-publication-v1.json` | Python AWID `test_a2a_publication_route.py`; Go AWID `a2a_publication_test.go`; Go shared `conformance_test.go` |

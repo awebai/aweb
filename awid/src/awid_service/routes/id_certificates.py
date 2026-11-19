@@ -3,18 +3,19 @@
 from __future__ import annotations
 
 import os
+import logging
 import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from awid.controller_request import verify_controller_json_request
-from awid.dns_verify import DnsVerificationError, DomainVerifier, DomainAuthority
-from awid.id_certificates import IDCertificateError, decode_id_chain_header, strict_did_key, verify_id_certificate
+from awid.dns_verify import DnsLookupError, DnsVerificationError, DomainVerifier, DomainAuthority
+from awid.id_certificates import IDCertificateError, decode_id_chain_header, verify_id_certificate
 from awid.did import validate_stable_id
-from awid.ratelimit import enforce_rate_limit, rate_limit_dep
+from awid.ratelimit import rate_limit_dep
 from awid_service.deps import get_db, get_domain_verifier
 from awid_service.id_chains import check_chain_structure
 from awid_service.id_registration import register_certificate
@@ -22,6 +23,8 @@ from awid_service.id_revocation import revoke_identity
 from awid_service.id_status import status_snapshot
 from awid_service.id_tree_gate import IdentityTreeRefusal, strict_json_object
 from awid_service.id_tree_clock import app_clock
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/id-certificates", tags=["id-certificates"])
 
@@ -119,19 +122,6 @@ def _is_stable_id(value) -> bool:
         return False
 
 
-async def _status_caller(request: Request, domain: str) -> str | None:
-    """The verified did:key of an authenticated status caller, or None when anonymous.
-
-    Supplied but invalid proof is refused, never treated as anonymous.
-    """
-    if request.headers.get("Authorization") is None and request.headers.get(SIGNED_PAYLOAD_HEADER) is None:
-        return None
-    caller = await _covering_signer(request, domain=domain, operation="read_id_certificate_status")
-    if not strict_did_key(caller):
-        raise HTTPException(status_code=401, detail="Invalid caller key")
-    return caller
-
-
 async def _dns_authority(verify_domain: DomainVerifier, domain: str) -> DomainAuthority | None:
     """The existing exact-first ancestor discovery result, or no DNS anchor.
 
@@ -142,6 +132,13 @@ async def _dns_authority(verify_domain: DomainVerifier, domain: str) -> DomainAu
         return None
     try:
         authority = await verify_domain(domain)
+    except DnsLookupError as exc:
+        logger.warning("ID-tree DNS authority lookup unavailable for %s: %s", domain, type(exc).__name__)
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "dns_unavailable", "message": "DNS lookup unavailable; retry later"},
+            headers={"Retry-After": "1"},
+        ) from exc
     except DnsVerificationError:
         return None
     return authority
@@ -227,23 +224,18 @@ async def revoke_id_certificate(
 )
 async def id_certificate_status(
     request: Request,
-    response: Response,
     db_infra=Depends(get_db),
     verify_domain: DomainVerifier = Depends(get_domain_verifier),
 ) -> dict:
     """A coherent snapshot of the domain's epochs and of exact requested registered IDs.
 
     Public requests are charged to their source IP's bucket; the configured
-    service token exempts only that budget. A verified caller is always
-    additionally charged to its key's bucket.
+    service token exempts that budget.
     """
     try:
         domain, ids = _status_body(await request.body())
     except IDCertificateError as exc:
         raise _refusal(exc.code, 400) from exc
-    caller = await _status_caller(request, domain)
-    if caller is not None:
-        await enforce_rate_limit(request, response, bucket="id_certificate_status", key=f"did:{caller}")
     dns_authority = await _dns_authority(verify_domain, domain)
     db = db_infra.get_manager("aweb")
     try:

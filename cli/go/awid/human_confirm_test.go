@@ -39,3 +39,27 @@ func TestTerminalConfirmRefusesWithoutATerminal(t *testing.T) {
 		t.Fatalf("ok=%v err=%v", ok, err)
 	}
 }
+
+func TestTerminalTextUsesTheControllingTerminal(t *testing.T) {
+	master, tty, err := pty.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer master.Close()
+	defer tty.Close()
+	go func() { _, _ = io.Copy(io.Discard, master) }()
+	if _, err = master.Write([]byte("2\n")); err != nil {
+		t.Fatal(err)
+	}
+	got, err := terminalText(tty.Name(), tty.Name(), "How many keys? ")
+	if err != nil || got != "2" {
+		t.Fatalf("%q %v", got, err)
+	}
+	file := t.TempDir() + "/pipe-input"
+	if err = os.WriteFile(file, []byte("2\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := terminalText(file, file, "How many keys? "); err != ErrNoTerminal {
+		t.Fatalf("read redirected input: %v", err)
+	}
+}

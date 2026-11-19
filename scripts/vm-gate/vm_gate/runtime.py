@@ -40,6 +40,7 @@ class Runtime:
         executor_factory=Executor,
     ):
         self.config = dict(config)
+        self.config["server_type"] = getattr(args, "type", None)
         self.directory = Path(directory) if directory else None
         self.source = source
         self.command = command

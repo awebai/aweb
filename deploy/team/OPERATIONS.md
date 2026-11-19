@@ -252,6 +252,24 @@ team's deployment (above).
 | Database passwords, Redis's password | Not exercised for this bundle: the role's password, the component's URL file and `postgres/roles/<name>` (or Redis's `users.acl` and aweb's `redis-url`) change together, then the services restart. | | Not qualified |
 | The agents' harness login | The OATS container's; see its documentation. | | |
 
+### Before rotating the team key
+
+A rotation issues each member a new certificate, with a new certificate id,
+and revokes the old one. From then on the server refuses a member's old
+certificate with 401 `team_key_not_current`, and that member is not a member
+(it receives no mail and passes no sender check) until it presents the new
+certificate.
+
+- **Do not rotate the team key until every member runs an `aw` release that
+  refreshes its certificate on `team_key_not_current`.** Stable `aw` 1.36.58
+  does not: it reports the refusal and stops. Before such a release, the only
+  path is to give each member its new certificate id and have it run
+  `aw id team fetch-cert --team <name> --namespace <domain> --cert-id <new id> --force`.
+- **No hosted team's key rotates** until aweb Cloud records the team key each
+  agent it issues a certificate for was accepted under, and re-records it on a
+  rotation (`aweb-adfr`). Cloud's agents that present no certificate would
+  otherwise stay non-members after the rotation.
+
 ### The owner's log key for the agents' local logs (`aweb-acyh`)
 
 The agents' local logs are plaintext today

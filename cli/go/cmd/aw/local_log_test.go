@@ -472,7 +472,7 @@ func TestAwMailSendSealsTheCommLogAfterLogKeyInstall(t *testing.T) {
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/agents":
-			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{Agents: []awid.AgentView{}})
+			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{Agents: []awid.AgentView{{AgentID: "eve-agent", Alias: "eve"}}})
 		case "/v1/messages":
 			var posted awid.SendMessageRequest
 			_ = json.NewDecoder(r.Body).Decode(&posted)

@@ -144,7 +144,7 @@ async def capture_call(call, **kwargs):
 async def test_public_client_wire_keeps_its_method_target_body_and_route_claims(case):
     sent = await capture_call(case.call, **case.kwargs)
     assert (sent.method, str(sent.url)) == (case.method, ORIGIN + case.path)
-    body = b"" if case.body is None else json.dumps(case.body, separators=(",", ":"), ensure_ascii=False).encode()
+    body = b"" if case.body is None else canonical_json_bytes(case.body)
     assert sent.content == body
     claims = {"domain": DOMAIN, **case.claims}
     request = http_request(dict(sent.headers), body=sent.content, path=sent.url.raw_path.decode(), method=sent.method)
@@ -159,11 +159,10 @@ async def test_public_client_wire_keeps_its_method_target_body_and_route_claims(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("case", CASES, ids=lambda case: case.call)
-async def test_adcn_legacy_client_headers_omit_the_covering_envelope(case):
-    """records the adcn defect; the adcn fix inverts this assertion"""
+async def test_client_headers_carry_the_covering_envelope(case):
     sent = await capture_call(case.call, **case.kwargs)
     authentication = {name for name in sent.headers if name == "authorization" or name.startswith("x-aweb-")}
-    assert authentication == {"authorization", "x-aweb-timestamp"}
+    assert authentication == {"authorization", "x-aweb-timestamp", "x-aweb-signed-payload"}
 
 
 @pytest.mark.asyncio
@@ -194,8 +193,7 @@ async def test_parent_authorization_keeps_its_distinct_headers_and_claims(rotati
 @pytest.mark.asyncio
 @pytest.mark.parametrize("destination", [ORIGIN, "https://other-registry.example"], ids=["same-registry", "other-registry"])
 @pytest.mark.parametrize("field", ["visibility", "team_did_key", "address_mapping"])
-async def test_adcn_legacy_authentication_accepts_substituted_effect_fields_and_destination(field, destination):
-    """records the adcn defect; the adcn fix inverts this assertion"""
+async def test_authentication_refuses_substituted_effect_fields_and_destination(field, destination):
     call = "register_address" if field == "address_mapping" else "register_team"
     case = next(case for case in CASES if case.call == call)
     sent = await capture_call(case.call, **case.kwargs)
@@ -211,10 +209,20 @@ async def test_adcn_legacy_authentication_accepts_substituted_effect_fields_and_
     else:
         changed[field] = "public"
     assert changed != json.loads(sent.content)
-    assert await verify_controller_json_request(
-        http_request(dict(sent.headers), body=canonical_json_bytes(changed), path=sent.url.raw_path.decode(),
-                     origins=(destination,)), payload_dict=claims,
-    ) == DID
+    with pytest.raises(HTTPException) as refused:
+        await verify_controller_json_request(
+            http_request(dict(sent.headers), body=canonical_json_bytes(changed), path=sent.url.raw_path.decode(),
+                         origins=(destination,)), payload_dict=claims,
+        )
+    assert refused.value.status_code == 401
+    if destination != ORIGIN:
+        # The unchanged request is refused by any other registry.
+        with pytest.raises(HTTPException) as elsewhere:
+            await verify_controller_json_request(
+                http_request(dict(sent.headers), body=sent.content, path=sent.url.raw_path.decode(),
+                             origins=(destination,)), payload_dict=claims,
+            )
+        assert elsewhere.value.status_code == 401
 
 
 @pytest.mark.asyncio
@@ -355,3 +363,15 @@ def test_team_server_object_signature_is_not_a_generic_json_or_controller_reques
     with pytest.raises(TeamServerRecordError):
         verify_team_server_record(record, sign_message(SEED, canonical_json_bytes(record)),
                                   team_id=f"{TEAM}:{DOMAIN}", current_team_did_key=DID, now=now)
+
+@pytest.mark.asyncio
+async def test_a_registry_without_public_origins_names_the_setting_it_needs():
+    case = next(case for case in CASES if case.call == "register_team")
+    sent = await capture_call(case.call, **case.kwargs)
+    with pytest.raises(HTTPException) as unavailable:
+        await verify_controller_json_request(
+            http_request(dict(sent.headers), body=sent.content, path=sent.url.raw_path.decode(), origins=()),
+            payload_dict={"domain": DOMAIN, **case.claims},
+        )
+    assert unavailable.value.status_code == 503
+    assert "AWID_PUBLIC_ORIGINS" in unavailable.value.detail

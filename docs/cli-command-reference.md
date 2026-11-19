@@ -417,6 +417,7 @@ Subcommands:
 - `log` Show a global AWID DID log
 - `namespace` Protocol/admin namespace controller and address operations
 - `parent` Request and import your own certificate from a parent
+- `proof` Export a message signed by your human key with its saved evidence
 - `register` Register the current global identity at the configured registry
 - `request` Make a DIDKey-signed HTTP request with the local identity key
 - `resolve` Resolve a did:aw to its current did:key
@@ -508,11 +509,15 @@ Sign the certificate for one received request and write the response
 terminal that its key fingerprint matches what the recipient told you over a
 separate trusted channel; nothing else approves it.
 
+When acting as a human, the first signature asks once for the selected person's
+keychain passphrase at a real terminal. Each signature is described; the key
+stays in memory for this command, including confirmation waits, and is wiped
+on success, error or interruption. Another command asks again.
+
 Flags:
-- `--as-root Act as the namespace root, with this machine's controller key`
-- `--domain string Namespace domain (with --as-root or --human)`
+- `--as-root Act as the namespace root of --domain, with this machine's controller key`
+- `--domain string Organization namespace for agent or --as-root operations; with --human, the person's domain, as --human-domain`
 - `-h, --help help for approve`
-- `--human string Act as this human on this machine (did:aw)`
 - `--out string Where to write the response (- for stdout) (default "-")`
 - `--registry string Registry origin for --as-root, when the domain's _awid record names none`
 
@@ -525,12 +530,16 @@ needs to export its request: invitation ID, parent, domain, kind and expiry.
 --recipient is your private note of who it is for; it is never exported.
 An invitation expires after --expires (7 days by default).
 
+When acting as a human, the first signature asks once for the selected person's
+keychain passphrase at a real terminal. Each signature is described; the key
+stays in memory for this command, including confirmation waits, and is wiped
+on success, error or interruption. Another command asks again.
+
 Flags:
-- `--as-root Act as the namespace root, with this machine's controller key`
-- `--domain string Namespace domain (with --as-root or --human)`
+- `--as-root Act as the namespace root of --domain, with this machine's controller key`
+- `--domain string Organization namespace for agent or --as-root operations; with --human, the person's domain, as --human-domain`
 - `--expires duration How long the invitation stays open (default 168h0m0s)`
 - `-h, --help help for invite`
-- `--human string Act as this human on this machine (did:aw)`
 - `--kind string Kind of the child: human or agent`
 - `--recipient string Your private note of who the invitation is for`
 - `--registry string Registry origin for --as-root, when the domain's _awid record names none`
@@ -541,11 +550,15 @@ Flags:
 
 List the requests bound to your invitations
 
+When acting as a human, the first signature asks once for the selected person's
+keychain passphrase at a real terminal. Each signature is described; the key
+stays in memory for this command, including confirmation waits, and is wiped
+on success, error or interruption. Another command asks again.
+
 Flags:
-- `--as-root Act as the namespace root, with this machine's controller key`
-- `--domain string Namespace domain (with --as-root or --human)`
+- `--as-root Act as the namespace root of --domain, with this machine's controller key`
+- `--domain string Organization namespace for agent or --as-root operations; with --human, the person's domain, as --human-domain`
 - `-h, --help help for pending`
-- `--human string Act as this human on this machine (did:aw)`
 - `--registry string Registry origin for --as-root, when the domain's _awid record names none`
 
 ## `id child receive`
@@ -554,11 +567,15 @@ Flags:
 
 Receive a child's request against one of your invitations
 
+When acting as a human, the first signature asks once for the selected person's
+keychain passphrase at a real terminal. Each signature is described; the key
+stays in memory for this command, including confirmation waits, and is wiped
+on success, error or interruption. Another command asks again.
+
 Flags:
-- `--as-root Act as the namespace root, with this machine's controller key`
-- `--domain string Namespace domain (with --as-root or --human)`
+- `--as-root Act as the namespace root of --domain, with this machine's controller key`
+- `--domain string Organization namespace for agent or --as-root operations; with --human, the person's domain, as --human-domain`
 - `-h, --help help for receive`
-- `--human string Act as this human on this machine (did:aw)`
 - `--registry string Registry origin for --as-root, when the domain's _awid record names none`
 
 ## `id child refuse`
@@ -567,11 +584,15 @@ Flags:
 
 Refuse one received request without signing
 
+When acting as a human, the first signature asks once for the selected person's
+keychain passphrase at a real terminal. Each signature is described; the key
+stays in memory for this command, including confirmation waits, and is wiped
+on success, error or interruption. Another command asks again.
+
 Flags:
-- `--as-root Act as the namespace root, with this machine's controller key`
-- `--domain string Namespace domain (with --as-root or --human)`
+- `--as-root Act as the namespace root of --domain, with this machine's controller key`
+- `--domain string Organization namespace for agent or --as-root operations; with --human, the person's domain, as --human-domain`
 - `-h, --help help for refuse`
-- `--human string Act as this human on this machine (did:aw)`
 - `--registry string Registry origin for --as-root, when the domain's _awid record names none`
 
 ## `id child show`
@@ -580,11 +601,15 @@ Flags:
 
 Show one received request and the fingerprint of its key
 
+When acting as a human, the first signature asks once for the selected person's
+keychain passphrase at a real terminal. Each signature is described; the key
+stays in memory for this command, including confirmation waits, and is wiped
+on success, error or interruption. Another command asks again.
+
 Flags:
-- `--as-root Act as the namespace root, with this machine's controller key`
-- `--domain string Namespace domain (with --as-root or --human)`
+- `--as-root Act as the namespace root of --domain, with this machine's controller key`
+- `--domain string Organization namespace for agent or --as-root operations; with --human, the person's domain, as --human-domain`
 - `-h, --help help for show`
-- `--human string Act as this human on this machine (did:aw)`
 - `--registry string Registry origin for --as-root, when the domain's _awid record names none`
 
 ## `id create`
@@ -607,10 +632,15 @@ or API key is used for that path. With --owner-identity-home, the existing
 organization owner's native key authorizes creation using its bound service;
 otherwise the host's human CLI login authorizes it.
 
+When acting as a human, the first signature asks once for the selected person's
+keychain passphrase at a real terminal. Each signature is described; the key
+stays in memory for this command, including confirmation waits, and is wiped
+on success, error or interruption. Another command asks again.
+
 Flags:
 - `--domain string Namespace domain for the global identity address`
 - `-h, --help help for create`
-- `--human-parent string did:aw of the issuing human (local key, or a registered account human with --org)`
+- `--human-parent string Parent person did:aw, who signs locally in --domain (--human ID --human-domain DOMAIN may also name them; with --org, a registered account human)`
 - `--inbound-mode string Hosted inbound delivery mode (default team-and-contacts; requires --org)`
 - `--local Create a key-only local identity (a did:key registered nowhere) in an explicit fresh --identity-home; resumable, and a rerun returns it`
 - `--name string Global identity name (address name under --domain)`
@@ -729,10 +759,82 @@ Flags:
 Human identities in a namespace's identity tree
 
 Subcommands:
+- `add` Ask your issuer to add a new person
+- `enroll` Enroll an approval key for your new or existing human ID
 - `init` Create your human ID in a namespace
+- `register` Register your issued human certificate with your own key
 
 Flags:
 - `-h, --help help for human`
+
+## `id human add`
+
+### `id human add`
+
+Run as a current person with --human ID --human-domain DOMAIN.
+With no human_approval requirement, the issuer returns a certificate without
+contacting an approval service or requiring your enrollment. Give it to the new
+person, who runs aw id human register FILE with their own human selector.
+If the organisation requires approval, you must be enrolled; the issuer asks
+for human approval through the existing 428 protocol. Review the exact act in your approval-service browser page. Every
+identity signature uses your keychain key, unlocked once at this terminal for
+this command, including the approval wait. The key is wiped at command exit.
+When approval is required, an agent requester uses the generic aw id request
+command instead; agents cannot use the unconfigured issuance path.
+
+The configured approval path returns a pending intent; it never enrolls the new person. The new
+person first prepares their own key with aw id human init and gives you its ID
+and key. Give them the resulting FILE. They run aw id human enroll --intent FILE
+--issuer URL with their own --human ID --human-domain DOMAIN, then register and
+confirm their approval key in the browser named by that signed intent.
+
+The first person is still bootstrapped by the organization's operator on the
+holder host. There is no operator network route.
+An expired approval can be archived with --restart to ask for a fresh approval.
+It never extends or reuses the old approval deadline.
+
+Flags:
+- `--approval-origin string Optional equality pin for your enrolled approval service`
+- `-h, --help help for add`
+- `--identity-key string New person's prepared identity did:key`
+- `--issuer string Issuer HTTPS origin; defaults to your saved enrollment`
+- `--out string New pending-intent file; default is JSON on stdout`
+- `--person string New person's prepared did:aw`
+- `--restart Archive an expired approval attempt and ask the issuer for a fresh request`
+
+## `id human enroll`
+
+### `id human enroll`
+
+Run this yourself with --human ID --human-domain DOMAIN at a terminal.
+Your identity key stays in the passphrase-protected OS keychain. For a new person,
+first run aw id human init and obtain a pending --intent FILE from your issuer.
+For an existing person, --issuer URL asks that issuer for an enrollment intent.
+After the first use, the issuer is remembered with your human record.
+The first signature asks once for your passphrase. The key stays unlocked in
+memory for this command, including browser and "type yes" waits, and is wiped
+when the command ends or is interrupted. Each signature is described on stderr.
+
+The signed intent supplies the approval service and RP ID; --approval-origin is
+an optional equality pin. You see the service before opening its enrollment page.
+Register and confirm your key in that browser, then continue at this terminal.
+Interrupted commands resume their original enrollment. After expiry, use --restart
+to preserve the old attempt and start again; a new person needs a fresh intent.
+Once confirmation is saved, resume activation without --restart, even after expiry.
+Register a second approval key in the same browser enrollment before continuing.
+Lost-key replacement is not implemented: loss of your only key requires the
+operator to issue a new ID and revoke the old one. Enrollment of an existing
+person never adds or changes a creation claim.
+
+Next: use aw id proof --message-file FILE --out proof.json, then give proof.json
+to anyone; they run plain aw verify proof.json on their machine.
+
+Flags:
+- `--approval-origin string Optional pin; must equal the service in the issuer's signed intent`
+- `-h, --help help for enroll`
+- `--intent string Pending signed enrollment intent handed to a new person by the issuer`
+- `--issuer string Your issuer's HTTPS origin; remembered after first use`
+- `--restart Archive an expired unconfirmed attempt and start fresh; never replace saved confirmation`
 
 ## `id human init`
 
@@ -740,10 +842,14 @@ Flags:
 
 Create your human ID in --domain. With --as-root the namespace controller on
 this machine issues its certificate now. Without it, the human is only
-prepared: an issuer elsewhere admits it through `aw id parent request`.
+prepared: give the public ID and key to your issuer. With a holder, its
+operator hands you an issued FILE for `aw id human register FILE`, or
+a pending intent for `aw id human enroll --intent FILE --issuer URL`.
+Enrollment asks you to register and confirm a key in the named browser.
+The existing `aw id parent request` exchange is also supported.
 
 The human key is kept in the OS keychain, encrypted under a passphrase you
-choose; every signature asks for that passphrase on the terminal. This needs
+choose; person commands unlock it once on the terminal and wipe it at exit. This needs
 a human at an interactive terminal: it refuses without one and inside an
 agent runtime. A run that fails resumes from where it stopped.
 
@@ -753,6 +859,21 @@ Flags:
 - `--domain string Namespace domain`
 - `-h, --help help for init`
 - `--registry string Registry origin, when the domain's _awid record names none (a record naming api.awid.ai counts as naming none)`
+
+## `id human register`
+
+### `id human register`
+
+Register the certificate handed to you by your organization's operator or
+approved issuer. Run this yourself with --human ID --human-domain DOMAIN at a
+terminal; unlock once with your keychain passphrase for this command. Prepare your human ID
+first with aw id human init. This registers your ID without enrolling an approval
+key. Afterwards you may optionally run aw id human enroll, or create a portable
+message with aw id proof --message-file FILE for anyone to check with aw verify.
+
+Flags:
+- `-h, --help help for register`
+- `--registry string Optional registry pin; must agree with the domain's DNS record`
 
 ## `id log`
 
@@ -953,10 +1074,14 @@ chain and register it at AWID with your own key (--no-register leaves the
 registration pending). A failed registration keeps the signed response;
 run import again to retry it.
 
+When acting as a human, the first signature asks once for the selected person's
+keychain passphrase at a real terminal. Each signature is described; the key
+stays in memory for this command, including confirmation waits, and is wiped
+on success, error or interruption. Another command asks again.
+
 Flags:
-- `--domain string Namespace domain of the invitation`
+- `--domain string Organization namespace for agent operations; with --human, the person's domain, as --human-domain`
 - `-h, --help help for import`
-- `--human string Act as this human prepared on this machine (did:aw)`
 - `--no-register Install the certificate but leave its AWID registration pending`
 - `--registry string Registry origin, when the domain's _awid record names none (a record naming api.awid.ai counts as naming none)`
 
@@ -968,7 +1093,7 @@ Verify and install an already-issued public ID chain for this home's own did:key
 The home must have no chain or the identical chain. This does not adopt or re-parent.
 
 Flags:
-- `--domain string Identity namespace (defaults to the chain)`
+- `--domain string Organization namespace for agent operations (defaults to the chain)`
 - `-h, --help help for install`
 - `--registry string Registry origin when DNS names none`
 
@@ -980,7 +1105,7 @@ Fetch and verify current registered ancestry, preserving local certificates belo
 For a branch with only local ancestors, use parent request --resign with the parent.
 
 Flags:
-- `--domain string Identity namespace (defaults to the installed chain)`
+- `--domain string Organization namespace for agent operations (defaults to the chain)`
 - `-h, --help help for refresh`
 - `--registry string Registry origin when DNS names none`
 
@@ -998,15 +1123,39 @@ With --resign, a local agent (whose ID is its did:key) instead asks the parent
 of the certificate it carries to re-sign it with the parent's current key,
 after its key or ancestry changed.
 
+When acting as a human, the first signature asks once for the selected person's
+keychain passphrase at a real terminal. Each signature is described; the key
+stays in memory for this command, including confirmation waits, and is wiped
+on success, error or interruption. Another command asks again.
+
 Flags:
-- `--domain string Namespace domain of the invitation`
+- `--domain string Organization namespace for agent operations; with --human, the person's domain, as --human-domain`
 - `-h, --help help for request`
-- `--human string Act as this human prepared on this machine (did:aw)`
 - `--invitation-id string Invitation ID the parent gave you`
 - `--out string Where to write the request (- for stdout) (default "-")`
 - `--parent string did:aw or did:key of the parent identity`
 - `--resign Ask the parent to re-sign the certificate this local agent carries`
-- `--root-parent The parent is the namespace root of --domain`
+- `--root-parent The parent is the namespace root of the selected organization`
+
+## `id proof`
+
+### `id proof`
+
+Sign the text in --message-file with your human key at a terminal, asking for
+its keychain passphrase once for this command and wiping the key at exit.
+The JSON export carries your ID chain and any saved
+enrollment evidence. It needs no team or mail server. Missing enrollment is not
+a refusal and adds no evidence. Run with --human ID --human-domain DOMAIN.
+Saved evidence rides only in proof files; ordinary mail does not yet carry it.
+
+Next: give the output file to anyone. On another machine they run:
+  aw verify FILE
+No identity, credentials, initialization or registry flag is needed.
+
+Flags:
+- `-h, --help help for proof`
+- `--message-file string Text file to sign as your message`
+- `--out string New export file; default is JSON on stdout`
 
 ## `id register`
 
@@ -1053,18 +1202,22 @@ Flags:
 
 Revoke a registered identity under docs/id-certificates.md §3, signed by
 the current identity (itself, or its current child), by --human <did:aw>
---domain D for a human on this machine, or by --as-root --domain D for the
+--human-domain D for a human on this machine, or by --as-root --domain D for the
 namespace root. AWID decides whether the signer may revoke the identity.
 The revocation takes effect at AWID's serialization time; only --as-root
 may set an earlier --cutoff. This revokes ID-tree authority, not team
 membership, addresses or DID key history.
 
+When acting as a human, the first signature asks once for the selected person's
+keychain passphrase at a real terminal. Each signature is described; the key
+stays in memory for this command, including confirmation waits, and is wiped
+on success, error or interruption. Another command asks again.
+
 Flags:
-- `--as-root Revoke as the namespace root, with this machine's controller key`
+- `--as-root Revoke as the namespace root of --domain, with this machine's controller key`
 - `--cutoff string With --as-root: the earlier time (RFC 3339) the revocation takes effect from`
-- `--domain string Namespace domain (with --as-root or --human)`
+- `--domain string Organization namespace for agent or --as-root operations; with --human, the person's domain, as --human-domain`
 - `-h, --help help for revoke`
-- `--human string Revoke as this human on this machine (did:aw)`
 - `--registry string Registry origin for --as-root, when the domain's _awid record names none`
 
 ## `id rotate-key`
@@ -2511,6 +2664,15 @@ aweb address like acme.aweb.ai/reviewer, or a did:aw identity. The
 resolved address is always shown: mail goes out under this workspace's
 cryptographically verified identity.
 
+A bare recipient name is looked up in the selected team. When that team's
+agent list and roster say the name is not there, this identity has other
+local team memberships, and --team is not given, aw looks in those teams:
+a name found in exactly one of them is sent from that team, which aw names
+on stderr; a name found in more than one needs --team. If any of those teams
+cannot be read, the send is refused rather than guessed. When the selected
+team itself cannot be read, aw stays in it, and the send confirms the
+recipient before delivery.
+
 Flags:
 - `--body string Alias for --message`
 - `--cc stringArray Not supported in v1: send to each recipient separately`
@@ -2674,6 +2836,15 @@ Flags:
 
 Send a message and leave the conversation. Warning: double-quoted shell arguments expand backticks and $(...) before aw runs; use --body-file for Markdown or command examples
 
+A bare recipient name is looked up in the selected team. When that team's
+agent list and roster say the name is not there, this identity has other
+local team memberships, and --team is not given, aw looks in those teams:
+a name found in exactly one of them is sent from that team, which aw names
+on stderr; a name found in more than one needs --team. If any of those teams
+cannot be read, the send is refused rather than guessed. When the selected
+team itself cannot be read, aw stays in it, and the send confirms the
+recipient before delivery.
+
 Flags:
 - `--body-file string Read message body from a file; safe for Markdown or command examples`
 - `--e2ee Send E2E encrypted chat; fails closed if encryption keys are missing`
@@ -2686,6 +2857,15 @@ Flags:
 ### `chat send-and-wait`
 
 Send a message and wait for a reply. Warning: double-quoted shell arguments expand backticks and $(...) before aw runs; use --body-file for Markdown or command examples
+
+A bare recipient name is looked up in the selected team. When that team's
+agent list and roster say the name is not there, this identity has other
+local team memberships, and --team is not given, aw looks in those teams:
+a name found in exactly one of them is sent from that team, which aw names
+on stderr; a name found in more than one needs --team. If any of those teams
+cannot be read, the send is refused rather than guessed. When the selected
+team itself cannot be read, aw stays in it, and the send confirms the
+recipient before delivery.
 
 Flags:
 - `--body-file string Read message body from a file; safe for Markdown or command examples`
@@ -3214,6 +3394,20 @@ that conversation; its title stays the first message's subject, so --subject
 is refused there. JSON returns message_id and conversation_id. A server that
 answers a new thread with another conversation_id fails without retry; the
 message may already have been sent into that conversation.
+
+With --human, unlock once at a real terminal for this command; each signature
+is described on stderr and the key is wiped at exit. Ordinary human mail
+carries the ID chain and no saved enrollment or creation evidence.
+Use aw id proof to export that evidence for someone else to verify.
+
+A bare recipient name is looked up in the selected team. When that team's
+agent list and roster say the name is not there, this identity has other
+local team memberships, and --team is not given, aw looks in those teams:
+a name found in exactly one of them is sent from that team, which aw names
+on stderr; a name found in more than one needs --team. If any of those teams
+cannot be read, the send is refused rather than guessed. When the selected
+team itself cannot be read, aw stays in it, and the send confirms the
+recipient before delivery.
 
 Flags:
 - `--body string Body. Warning: double-quoted shell arguments expand backticks and $(...) before aw runs; use --body-file for Markdown or command examples`

@@ -14,6 +14,7 @@ import base64
 import binascii
 import json
 import logging
+import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
@@ -185,6 +186,28 @@ class MemoryTeamKeyPins:
         return True
 
 
+class TeamKeyMemo:
+    """Each team's last served key and the key ``pinned_team_key`` answered
+    for it, for ``seconds``: the registry key's own freshness bound, so the
+    memo adds no window the registry cache does not already allow. A request
+    under the same served key reads neither the pin nor the act again, also
+    while the answer is the pinned key rather than the served one."""
+
+    def __init__(self, seconds: float = 60, clock: Callable[[], float] = time.monotonic) -> None:
+        self._seconds = seconds
+        self._clock = clock
+        self._entries: dict[str, tuple[str, str, float]] = {}
+
+    def get(self, team_id: str, served_key: str) -> str | None:
+        entry = self._entries.get(team_id)
+        if entry is None or entry[0] != served_key or self._clock() - entry[2] >= self._seconds:
+            return None
+        return entry[1]
+
+    def put(self, team_id: str, served_key: str, answer: str) -> None:
+        self._entries[team_id] = (served_key, answer, self._clock())
+
+
 class TeamKeyUnverified(Exception):
     """The registry names a key for a pinned team that no valid act establishes."""
 
@@ -205,14 +228,17 @@ async def pinned_team_key(
 ) -> str:
     """``served_key`` when it is the team's pinned key, or when the namespace
     controller's act (``fetch_act()``, None when the registry has none) moves
-    the pin to it. Otherwise the mismatch is logged as
+    the pin to it. When the registry's act names a different key than
+    ``served_key``, the read is older than that act or substituted beside it:
+    in both modes the pin stays, ``team_key_pin_kept`` is logged and the
+    pinned key is returned. Otherwise the mismatch is logged as
     ``team_key_pin_mismatch`` and, with ``enforce``, refused with
     TeamKeyUnverified; without it (the staged measuring mode) the pin moves
     to ``served_key``, logged as ``team_key_pin_moved_without_act``, and
-    ``served_key`` is returned. The pin is therefore the key certificates are
-    verified under in both modes, and the server holds one current key for
-    the team. A team never seen is pinned to ``served_key``. Registry read
-    errors from ``fetch_act`` propagate."""
+    ``served_key`` is returned. The returned key is therefore the pin, the key
+    certificates are verified under in both modes, and the server holds one
+    current key for the team. A team never seen is pinned to ``served_key``.
+    Registry read errors from ``fetch_act`` propagate."""
     pin = await pins.pin(team_id)
     if pin is None:
         pin = await pins.first_sight(team_id, served_key)
@@ -227,6 +253,15 @@ async def pinned_team_key(
             record, domain=domain, name=name, team_did_key=served_key, pinned_at=pin.act_at, resolver=resolver,
         )
     except TeamKeyActError as exc:
+        if exc.reason == "key_mismatch":
+            # The registry's own act names another key: the served key is a
+            # read older than that act, or substituted beside it. Neither
+            # moves the pin in either mode.
+            logger.warning(
+                "team_key_pin_kept team=%s pinned=%s served=%s reason=%s",
+                team_id, pin.team_did_key, served_key, exc.reason,
+            )
+            return pin.team_did_key
         _mismatch(team_id, pin.team_did_key, served_key, exc.reason, enforce=enforce)
         return await _move_without_act(team_id, pins, pin, served_key, exc.reason)
     if not await pins.move(team_id, expected=pin, new=TeamKeyPin(served_key, act.signed_at)):

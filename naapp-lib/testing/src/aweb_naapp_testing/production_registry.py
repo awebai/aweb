@@ -60,7 +60,7 @@ async def verify(domain):
 
 app = create_app()
 app.dependency_overrides[get_domain_verifier] = lambda: verify
-uvicorn.run(app, host="127.0.0.1", port=int(sys.argv[1]))
+uvicorn.run(app, fd=int(sys.argv[1]))
 """
 
 
@@ -159,38 +159,40 @@ async def running_production_registry(
     schema = _SCHEMA_PREFIX + uuid.uuid4().hex
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
+        sock.listen()
         port = sock.getsockname()[1]
-    origin = f"http://127.0.0.1:{port}"
-    env = {name: value for name, value in os.environ.items() if name != "PYTHONPATH"}
-    env.update(
-        AWID_DATABASE_URL=database_url,
-        AWID_DB_SCHEMA=schema,
-        AWID_REDIS_URL=redis_url or os.environ.get("REDIS_URL", "redis://localhost:6379/0"),
-        AWID_RATE_LIMIT_BACKEND="memory",
-        AWID_PUBLIC_ORIGINS=REGISTRY_URL,
-        AWID_SERVICE_TOKEN=SERVICE_TOKEN,
-        APP_ENV="test",
-    )
-    env.pop("AWID_SKIP_DNS_VERIFY", None)
-    env.pop("VIRTUAL_ENV", None)
-    app = ReleaseApp()
-    authority = await _serve_authority(app)
-    authority_port = authority.sockets[0].getsockname()[1]
-    process = await asyncio.create_subprocess_exec(
-        "uv",
-        "run",
-        "--offline",
-        "--frozen",
-        "--project",
-        str(_project()),
-        "python",
-        "-c",
-        _SERVE_RELEASE,
-        str(port),
-        f"http://127.0.0.1:{authority_port}/",
-        cwd=tempfile.gettempdir(),
-        env=env,
-    )
+        origin = f"http://127.0.0.1:{port}"
+        env = {name: value for name, value in os.environ.items() if name != "PYTHONPATH"}
+        env.update(
+            AWID_DATABASE_URL=database_url,
+            AWID_DB_SCHEMA=schema,
+            AWID_REDIS_URL=redis_url or os.environ.get("REDIS_URL", "redis://localhost:6379/0"),
+            AWID_RATE_LIMIT_BACKEND="memory",
+            AWID_PUBLIC_ORIGINS=REGISTRY_URL,
+            AWID_SERVICE_TOKEN=SERVICE_TOKEN,
+            APP_ENV="test",
+        )
+        env.pop("AWID_SKIP_DNS_VERIFY", None)
+        env.pop("VIRTUAL_ENV", None)
+        app = ReleaseApp()
+        authority = await _serve_authority(app)
+        authority_port = authority.sockets[0].getsockname()[1]
+        process = await asyncio.create_subprocess_exec(
+            "uv",
+            "run",
+            "--offline",
+            "--frozen",
+            "--project",
+            str(_project()),
+            "python",
+            "-c",
+            _SERVE_RELEASE,
+            str(sock.fileno()),
+            f"http://127.0.0.1:{authority_port}/",
+            cwd=tempfile.gettempdir(),
+            env=env,
+            pass_fds=(sock.fileno(),),
+        )
     db: AsyncDatabaseManager | None = None
     transport: ProductionServiceTransport | None = None
     try:

@@ -37,7 +37,17 @@ var rootCmd = &cobra.Command{
 		if _, independent := offlineCommands[cmd]; independent {
 			return nil // Export verification never selects or unlocks an acting human.
 		}
-		if humanSelectionRequested() {
+		idSelection, err := prepareIDHumanSelection(cmd)
+		if err != nil {
+			return err
+		}
+		if idSelection && humanFlag != "" {
+			return nil
+		}
+		if cmd.Annotations[humanCommandAnnotation] != "" && !humanSelectionRequested() {
+			return usageError("select your human key with --human ID --human-domain DOMAIN; prepare it with aw id human init")
+		}
+		if humanSelectionRequested() && !idSelection {
 			return prepareHumanParticipation(cmd)
 		}
 		// Offline key preparation validates its explicit destination itself.

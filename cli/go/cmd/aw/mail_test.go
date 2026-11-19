@@ -1671,7 +1671,13 @@ func TestAwMailSendStartsAThreadDespiteInvalidRosterKey(t *testing.T) {
 	run := exec.CommandContext(ctx, bin, "mail", "send", "--subject", "Test thread", "--to", "peer", "--body", "reply")
 	run.Dir, run.Env = tmp, append(testCommandEnv(tmp), "AWEB_URL="+server.URL)
 	out, err := run.CombinedOutput()
-	if err != nil || !strings.Contains(string(out), "Warning: recipient lookup failed:") {
-		t.Fatalf("missing lookup warning: err=%v output=%s", err, out)
+	if err == nil || !strings.Contains(string(out), "agent list lookup failed:") ||
+		!strings.Contains(string(out), "full address or DID") {
+		t.Fatalf("missing lookup refusal: err=%v output=%s", err, out)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if posts != after {
+		t.Fatal("failed recipient lookup stored a message")
 	}
 }

@@ -82,7 +82,7 @@ async def world(monkeypatch, aweb_cloud_db):
         name = request.url.path.rsplit("/", 1)[-1]
         env.key_reads += 1
         if name not in env.keys:
-            return httpx.Response(404, json={"detail": "Unknown team"})
+            return httpx.Response(404, json={"detail": "Team not found"})
         env.entered.set()
         if env.release is not None:
             await env.release.wait()

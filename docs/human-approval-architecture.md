@@ -5,8 +5,14 @@ act, how an identity is shown to belong to a person, and where an
 organisation's keys are kept. It is the reference for the registry, the
 approval service, the key holder, the servers and the applications.
 
-It describes the target design, which is being built. Where the code does not
-yet do what is written here, this document is the intent.
+The implemented core is the approval service for hardware keys and passkeys,
+the Python and Go receipt and evidence verifiers, the key holder, and
+`aw id human register|enroll|add`, `aw id proof` and `aw verify`. Approval is
+optional and off by default. Lost-key replacement is not implemented.
+
+[Human verification: planned target](#human-verification-planned-target),
+decided 2026-11-16, describes the four pieces still to build. It is a plan,
+not a claim that those pieces are running. Shipping without them is supported.
 
 ## The rule everything rests on
 
@@ -25,7 +31,7 @@ domain, the parent's controller key can also replace its controller.
 | Part | What it does | What it holds |
 |---|---|---|
 | Registry | Publishes organisations, teams, certificates and the tree from organisation to person to agents | Public records only |
-| Approval service | Enrols a person's key and obtains that person's approval of one exact act | No secrets. It cannot forge an approval |
+| Approval service | Enrols a person's key and obtains that person's approval of one exact act | No person signing key. It cannot forge a hardware-key or passkey approval |
 | Key holder | Holds an organisation's keys and signs with them only by its rules | The organisation's controller key and team keys |
 | Servers and applications | Do their work, and enforce the rules for what they own | Their own state |
 
@@ -94,22 +100,27 @@ so the enforcer keeps no list of issued values. Where an act cannot be repeated
 harmlessly, the enforcer records the value as used in the same transaction as
 the effect.
 
-User verification is always required. A touch alone is not accepted.
+User verification is required for hardware-key and passkey approvals. A touch
+alone is not accepted. The planned email level has no user-verification ceremony
+and a different, service-signed receipt.
 
-## Rules
+## Current rules
 
-Each enforcer holds its own rules: which operations need a person, which
-people may approve, and which grade of key is needed.
+The shared gate reads the organisation's `human_approval` configuration.
+`organisation.human.add` is its first action, enforced by the key holder.
+The registry does not acquire an approval policy.
 
-- Adding a requirement, or raising one, needs no approval.
-- Lowering or removing the requirement on an operation needs an approval that
-  satisfies that operation's current requirement.
-- Some operations always need a person. That minimum is fixed and cannot be
-  lowered.
-- There is no unsigned override.
-- A rule that cannot be read never means that no approval is needed.
-- A rule that lets a team's people approve does not give those people roles in
-  an application.
+With no requirement configured, a current person of the organisation can use
+`aw id human add` to request a new person's certificate without enrolling an
+approval key or contacting awsign. An agent, an identity with no standing in
+the organisation, a retired person and a revoked person cannot do this. The
+first person is bootstrapped through the holder's private operator command.
+With the action configured, the requester carries the exact 428 request to
+awsign and returns the receipt before issuance proceeds.
+
+The old `human_issuance` setting is retired. An existing approved holder refuses
+to start until the operator writes the replacement `human_approval` section
+and explicitly migrates the store. It never silently becomes approval off.
 
 ## Showing that an ID belongs to a person
 
@@ -122,7 +133,7 @@ and reports "can approve since T, grade G"; it never adds a creation claim.
 For an existing person, the person's current identity key authorises enrolment
 and the issuer checks the registration before signing the binding.
 
-### Grades
+### Current key grades
 
 | Grade | Meaning |
 |---|---|
@@ -147,6 +158,12 @@ the person's ID signs both.
 Two keys are involved. The person's key is the identity key that the person's
 certificate names. An enrolled key is a key the person approves with.
 
+Today evidence is presented in an `aw id proof` file. Ordinary mail and chat
+carry the ID chain without this evidence.
+
+The following key-transition semantics are planned; they do not provide an
+implemented lost-key replacement command today.
+
 - Evidence belongs to the person's current key. A change of the person's key
   carries a receipt from an enrolled key that was current before it, so a
   verifier follows the changes from creation.
@@ -166,13 +183,16 @@ certificate names. An enrolled key is a key the person approves with.
 
 ### Lost keys
 
+Replacing a lost enrolled key is not implemented; today a person who loses their only enrolled key is issued a new ID by the operator and enrols again, and the old ID is revoked. Enrol two keys.
+
 A person who approves has at least one enrolled key and is advised to enrol a
-second. A lost enrolled key is replaced with another
+second. In the planned recovery model, a lost enrolled key is replaced with another
 person's approval, and the verifier reports the evidence from then on as
 continued on that person's approval, not as an unbroken chain. A person who is
 alone in an organisation and loses every key is
 created again on the organisation's authority; this is recovery and is visible
-as such. An account recovered by mail cannot produce an approval.
+as such. Mail recovery cannot produce a hardware-key or passkey approval. The
+planned email level can produce only its distinct email approval.
 
 ## The key holder
 
@@ -182,10 +202,11 @@ parent domain is kept in a key holder as well. It offers a closed list of operat
 without a person under a fixed rule, or requires a receipt.
 
 Issuing a person without an approval service is supported and yields an ID
-without evidence. The issuing setting is `operator` by default: a private
-operator command issues the ID. With awsign configured, an organisation may
-select `approved`, requiring an enrolled person's approval. Agents cannot issue
-people unattended in either mode.
+without evidence. The deployment file configures `organisation.human.add`, not
+a separate holder switch. Only a current person may use the unconfigured public
+issuance route; the initial operator bootstrap remains private. Any activated,
+currently valid person of the organisation, enrolled at creation or later,
+may approve when the action requires it.
 
 The process that asks it to sign cannot read its memory or storage, cannot
 sign directly, and cannot change its rules. Its database permissions and
@@ -270,7 +291,8 @@ Not established:
 - The person opens the approval service. A notice carries no link and no
   detail of the act.
 - One receipt per act and per enforcer.
-- No weaker method is offered, and none for recovery.
+- No method weaker than the configured requirement is accepted; email will
+  never satisfy a hardware-key or passkey requirement.
 - The approval page loads no third-party scripts.
 
 A key is bound to the address of the approval service it was enrolled at.
@@ -282,3 +304,153 @@ Published evidence contains only what the statement needs: no certificate that
 identifies an individual device, nothing that links a person's separate IDs,
 and no application receipts or resource names. The raw attestation of a key
 stays private; its grade is published.
+
+## Human verification: planned target
+
+Decided 2026-11-16. This section is the plan for the optional human
+verification track, for both Cloud and self-hosted organisations. It supersedes
+any earlier requirement that an operation must always need a person. Nothing
+in this track is required before the rest of the product can ship.
+
+### Optional, action by action
+
+An organisation that has not enabled human verification never meets it: no
+server demands approval, nothing contacts the approval service, and no command,
+signup or deployment step mentions it. Each organisation chooses which actions
+need a person and the verification level for each. When an action requires a
+person, awsign is where that person approves it.
+
+### Three levels
+
+A weaker level never satisfies a stronger requirement. Level names are
+provisional; their wire values must have one shared definition so a rename is
+one change. These are the planned configuration levels, not a change to the
+existing signed key-grade values.
+The existing `certified_hardware` grade satisfies `hardware` and `passkey`,
+`passkey_uv` satisfies `passkey`, and `email` corresponds to no key grade.
+
+| Level | Wire value | What the person does | What it establishes |
+|---|---|---|---|
+| Hardware key | `hardware` | Touches a certified security key and gives its PIN or fingerprint | A person was physically present; the only level supporting the statement "a human did this" |
+| Passkey | `passkey` | Unlocks a passkey on their device with a fingerprint, face or PIN | The device verified its user; nothing is proven about the device |
+| Email | `email` | Confirms from a mailbox the organisation registered for them | Someone with access to that mailbox confirmed; not evidence of a human |
+
+At `hardware` and `passkey`, the person's own enrolled key signs the approval;
+the approval service cannot forge it. At `email`, there is no such key: the
+approval service signs the receipt itself, and its operator can forge an email
+approval. This limitation is stated wherever email is offered. An email receipt
+is a distinct receipt kind and is never accepted for either stronger level.
+
+The organisation gives the mailbox address privately to the approval service
+when the person enrols at that level. It never appears in a receipt, the
+registry or anything a verifier sees. Only `hardware` and `passkey` produce
+identity evidence such as "created with a hardware key" or "can approve since
+T". Email produces none.
+
+### Declared actions
+
+Each server or application declares the actions it can require a person for.
+An action has a fixed name and structured description; the requester never
+writes the text the person reads. Declaring an action does not enable a
+requirement.
+
+| Action | Declared by |
+|---|---|
+| `organisation.human.add` | Key holder; Cloud |
+| `team.human.add` | Cloud; aweb server |
+| `agent.root.authorize` | Key holder; Cloud |
+
+The holder enforces the first action through the shared gate using the existing
+`human.add` signed act definition. Other declared actions are not enabled yet.
+A Secrets action is not yet defined: Secrets brokers credential use instead of
+issuing keys, and already has its own per-secret approval on its console.
+How that approval relates to organisation configuration is a separate decision;
+there is no key-export endpoint or substitute action in this piece.
+
+### One configuration per organisation
+
+The default is empty: no action requires a person. For example, an organisation
+may opt in with:
+
+```yaml
+human_approval:
+  service: https://awsign.com
+  require:
+    organisation.human.add: hardware
+```
+
+- Self-hosted: a section of the one deployment file, rendered to each
+  component. The operator who edits that file is the authority; each component
+  records changes in its audit record.
+- Cloud: one per-organisation setting, edited on one dashboard page listing
+  every available action and its level: none, email, passkey or hardware.
+- Adding or raising a requirement needs no approval. On Cloud, lowering or
+  removing one requires approval at that action's current level.
+- A server that cannot read its configuration refuses the actions it declares.
+  An unreadable configuration never means an empty one.
+- Any current person of the organisation enrolled at the required level or
+  above may approve. Naming particular approvers per action is a later
+  extension of this same configuration.
+- Permission to approve an action does not grant a role in the application.
+
+There are no per-server switches, second configuration or additional levels.
+The key holder uses `organisation.human.add` in this configuration. Until the
+email piece exists, `email` is invalid configuration, as are unknown levels
+and unknown action names.
+
+### One shared gate
+
+Every enforcer uses the gate in the approval-service library:
+
+1. The server asks the gate about the action it is about to perform.
+2. If the action is unconfigured, it proceeds. Nothing else happens.
+3. If configured, it answers HTTP 428 with a request for that exact act. The
+   requester, `aw` or the dashboard, carries the request to awsign and presents
+   the receipt after the person approves.
+4. The gate checks this act, this server, the deadline, the named requester,
+   the entitled person, a level at least as strong as configured, and current
+   evidence. Only then does the server proceed.
+
+The server never contacts the approval service. Adding a gated action is a
+declaration of its name and description and one call to this gate. Every
+enforcer must prove that an unconfigured action proceeds with no approval
+service reachable. This does not remove the action's ordinary authorisation.
+
+### Responsibilities
+
+| Responsibility | Self-hosted | Cloud |
+|---|---|---|
+| Holds organisation keys and countersigns a person's enrolment | Key holder | Cloud |
+| Enforces actions | Key holder, aweb server, applications | Cloud, applications |
+| Stores configuration | Deployment file | Per-organisation setting and dashboard |
+| Approval service | awsign.com or the organisation's own instance | awsign.com |
+
+Enrolment is one command for a new or existing person: `aw id human enroll`.
+The dashboard offers the same operation for a hosted person.
+
+### Four pieces, in order
+
+Build these pieces in order. The shared gate and holder integration implement
+piece 1; the later pieces remain planned. Each is complete only when its stated
+result works on a real stack with product commands.
+
+1. **Shared gate and configuration (aweb-adfa).** Move
+   `organisation.human.add` onto the shared gate as the one action. Done when
+   an operator edits the deployment file, adding a person through the holder
+   receives an approval request, a person approves at awsign, and the same
+   command succeeds; and when removing the section lets the same command
+   succeed with no approval service reachable. The gate knows nothing about
+   the holder. Secrets is excluded pending the separate decision above. If
+   only one piece is built before the track is parked, it is this one.
+2. **Cloud enrolment and enforcement (aweb-adfb).** Cloud countersigns hosted
+   people's enrolment, enforces declared actions with the same gate, and
+   provides the configuration dashboard page. Done when a hosted person enrols
+   with `aw id human enroll` and a hosted organisation gates one action from
+   the dashboard.
+3. **Email level (aweb-adfc).** Add private mailbox enrolment, the distinct
+   service-signed email receipt and its verification in the gate.
+4. **awsign.com hosted (aweb-adfd).** Host the approval service. This is
+   production work and is decided separately.
+
+Shipping before these pieces exist is supported. Existing identity, membership
+and messaging operations remain usable without human verification configured.

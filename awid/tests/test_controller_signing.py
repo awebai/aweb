@@ -3,6 +3,7 @@
 import base64
 import asyncio
 import copy
+import hashlib
 import json
 
 import pytest
@@ -53,14 +54,18 @@ def payload(req, controller=CONTROLLER, role="controller"):
     )
 
 
-def test_legacy_team_bytes_are_existing_claims_not_a_body_or_audience_claim():
-    assert payload(request()) == canonical_json_bytes(
-        {
-            "domain": "example.com",
-            "operation": "create_team",
-            "name": "team",
-            "timestamp": TS,
-        }
+def test_team_bytes_cover_the_body_and_the_audience():
+    # The team key, visibility and display name are in the signed bytes, and
+    # the signature names the one registry it is for.
+    assert payload(request()) == covering_payload(
+        aud=ORIGIN,
+        method="POST",
+        path="/v1/namespaces/example.com/teams",
+        domain="example.com",
+        operation="create_team",
+        body=canonical_json_bytes(request().parameters),
+        timestamp=TS,
+        claims={"name": "team"},
     )
 
 
@@ -257,8 +262,11 @@ async def test_owned_transport_pins_destination_and_checks_exact_wire_before_sen
         await client.aclose()
     assert len(sent) == 1
     assert str(sent[0].url) == ORIGIN + "/v1/namespaces/example.com/teams"
-    assert json.loads(sent[0].content) == request().parameters
-    assert "x-aweb-signed-payload" not in sent[0].headers
+    # The bytes sent are the bytes signed.
+    assert sent[0].content == canonical_json_bytes(request().parameters)
+    signed = base64.urlsafe_b64decode(sent[0].headers["x-aweb-signed-payload"] + "==")
+    assert json.loads(signed)["body_sha256"] == hashlib.sha256(sent[0].content).hexdigest()
+    assert json.loads(signed)["aud"] == ORIGIN
 
 
 @pytest.mark.asyncio
@@ -318,13 +326,16 @@ def test_parent_role_keeps_its_distinct_proof_and_domain():
             "parent_domain": "example.com",
         }
     )
-    assert json.loads(payload(req, CONTROLLER, "parent")) == {
-        "domain": child.domain,
-        "child_domain": child.domain,
-        "controller_did": NEW_KEY,
-        "operation": "authorize_subdomain_registration",
-        "timestamp": TS,
-    }
+    assert payload(req, CONTROLLER, "parent") == covering_payload(
+        aud=ORIGIN,
+        method="POST",
+        path="/v1/namespaces",
+        domain=child.domain,
+        operation="authorize_subdomain_registration",
+        body=canonical_json_bytes({"domain": child.domain, "controller_did": NEW_KEY}),
+        timestamp=TS,
+        claims={"child_domain": child.domain, "controller_did": NEW_KEY},
+    )
     with pytest.raises(ControllerSigningError, match="controller_scope"):
         payload(req, child, "parent")
 

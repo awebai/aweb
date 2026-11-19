@@ -31,6 +31,15 @@ This directory holds what both layers share.
 holds literals that are not secret and references to where secrets are. It
 never holds a credential.
 
+The optional organisation-wide `human_approval` section currently gates
+`organisation.human.add` at the key holder. `teamctl` renders it to
+`human-approval.json` in its run directory and records that path as
+`HUMAN_APPROVAL_CONFIG_FILE` in the env file. Mount that snapshot read-only at
+the holder's configured path; see [key-holder setup](../../key-holder/README.md).
+Removing the section and rendering again writes an explicit empty policy.
+An unreadable or invalid configured snapshot refuses issuance; it never means
+approval off. Components that do not declare this action do not consult it.
+
 A key is the camelCase of the setting the service already reads, under its
 component: `aweb.publicOrigin` is `AWEB_PUBLIC_ORIGIN`. No component has a
 second set of names.

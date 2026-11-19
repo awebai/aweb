@@ -754,7 +754,7 @@ func TestAwChatSendAndLeavePositionalArgs(t *testing.T) {
 		case "/v1/agents":
 			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{
 				TeamID: "backend:demo",
-				Agents: []awid.AgentView{},
+				Agents: []awid.AgentView{{AgentID: "bob-agent", Alias: "bob", DIDKey: "did:key:z6Mkbob"}},
 			})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
@@ -894,7 +894,7 @@ func TestAwChatSendAndLeavePositionalArgsOrder(t *testing.T) {
 		case "/v1/agents":
 			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{
 				TeamID: "backend:demo",
-				Agents: []awid.AgentView{},
+				Agents: []awid.AgentView{{AgentID: "bob-agent", Alias: "bob", DIDKey: "did:key:z6Mkbob"}},
 			})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
@@ -1201,7 +1201,7 @@ func TestAwMailSendAliasUsesTeamScopedTarget(t *testing.T) {
 		case "/v1/agents":
 			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{
 				TeamID: "backend:demo",
-				Agents: []awid.AgentView{},
+				Agents: []awid.AgentView{{AgentID: "alice-agent", Alias: "alice"}},
 			})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
@@ -2020,7 +2020,7 @@ func TestAwMailSendWritesCommLog(t *testing.T) {
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/agents":
-			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{Agents: []awid.AgentView{}})
+			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{Agents: []awid.AgentView{{AgentID: "eve-agent", Alias: "eve"}}})
 		case "/v1/messages":
 			var posted awid.SendMessageRequest
 			_ = json.NewDecoder(r.Body).Decode(&posted)

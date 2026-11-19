@@ -161,3 +161,49 @@ async def test_before_enforcement_a_mismatch_is_logged_and_moves_the_pin(registr
         f"served={substituted.team_did_key} reason=no_act enforced=false",
         f"team_key_pin_moved_without_act team={TEAM_ID} from={member.team_did_key} to={substituted.team_did_key} reason=no_act",
     ]
+
+
+class _CountingTransport(httpx.AsyncBaseTransport):
+    """The registry transport, counting team-key act reads."""
+
+    def __init__(self, inner: httpx.AsyncBaseTransport) -> None:
+        self._inner = inner
+        self.act_reads = 0
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/key-act"):
+            self.act_reads += 1
+        return await self._inner.handle_async_request(request)
+
+
+async def test_a_served_key_the_act_does_not_name_keeps_the_pin_with_one_act_read(registry, pins_db, namespace_key):
+    await _register_namespace(registry, did_key(namespace_key))
+    first = Member(team_id=TEAM_ID)
+    await registry.add_team(TEAM_ID, first.team_did_key, visibility="public")
+    current = Member(team_id=TEAM_ID, alias="steady", certificate_id="steady-1")
+    transport = _CountingTransport(registry.transport)
+    # Team facts are re-read on every request, so each one sees the served key.
+    cache = AWIDTeamCache(
+        registry_url=REGISTRY_URL, ttl_seconds=0, transport=transport,
+        team_key_pins=DatabaseTeamKeyPins(lambda: pins_db),
+        txt_resolver=dns_naming("example.com", namespace_key), enforce_team_key_pins=True,
+    )
+    await _rotate(registry, namespace_key, current.team_did_key)
+    await registry.add_certificate(current.certificate())
+    assert (await _get(registry, cache, current)).status_code == 200
+    # The registry serves another key beside its genuine latest act, whose
+    # signed bytes name the pinned key.
+    substituted = Member(team_id=TEAM_ID, alias="other").team_did_key
+    await registry.rotate_team_key(TEAM_ID, substituted)
+    await registry.db.execute(
+        "UPDATE {{tables.team_key_acts}} SET team_did_key = $1 WHERE team_did_key = $2",
+        substituted, current.team_did_key,
+    )
+    reads_before = transport.act_reads
+
+    statuses = [(await _get(registry, cache, current)).status_code for _ in range(5)]
+
+    assert statuses == [200] * 5
+    assert transport.act_reads - reads_before == 1
+    pinned = await pins_db.fetch_value("SELECT team_did_key FROM {{tables.team_key_pins}} WHERE team_id = $1", TEAM_ID)
+    assert pinned == current.team_did_key

@@ -22,7 +22,7 @@ var idParentInstallCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		result, err := executeIDParentInstall(cmd.Context(), idParentOptionsFromFlags(), raw)
+		result, err := executeIDParentInstall(cmd.Context(), idParentOptionsFromFlags(cmd), raw)
 		if err != nil {
 			return err
 		}
@@ -34,7 +34,7 @@ var idParentInstallCmd = &cobra.Command{
 }
 
 func init() {
-	idParentInstallCmd.Flags().StringVar(&idParentDomain, "domain", "", "Identity namespace (defaults to the chain)")
+	idParentInstallCmd.Flags().StringVar(&idParentDomain, "domain", "", "Organization namespace for agent operations (defaults to the chain)")
 	idParentInstallCmd.Flags().StringVar(&idParentRegistry, "registry", "", "Registry origin when DNS names none")
 	idParentCmd.AddCommand(idParentInstallCmd)
 }
@@ -52,6 +52,7 @@ func executeIDParentInstall(ctx context.Context, opts idParentOptions, raw []byt
 	if err != nil {
 		return nil, err
 	}
+	defer r.close()
 	if r.id != r.didKey || !strings.HasPrefix(r.id, "did:key:") || leaf["id"] != r.id || leaf["kind"] != "agent" || leaf["domain"] != r.domain {
 		return nil, &awid.IDCertificateError{Code: "request_binding_mismatch"}
 	}

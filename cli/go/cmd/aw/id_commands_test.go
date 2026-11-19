@@ -348,6 +348,10 @@ func TestAwIDCreateWritesStandaloneIdentityAndRegisters(t *testing.T) {
 				t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 			}
 			namespaceAuthDID = didFromRegistryAuthHeader(t, r)
+			verifyCanonicalRegistryAuth(t, r, map[string]string{
+				"domain":    "acme.com",
+				"operation": "register",
+			})
 			var payload map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 				t.Fatal(err)
@@ -356,10 +360,6 @@ func TestAwIDCreateWritesStandaloneIdentityAndRegisters(t *testing.T) {
 				t.Fatalf("namespace domain=%v", payload["domain"])
 			}
 			controllerDID, _ = payload["controller_did"].(string)
-			verifyCanonicalRegistryAuth(t, r, map[string]string{
-				"domain":    "acme.com",
-				"operation": "register",
-			})
 			namespaceCreated.Store(true)
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"namespace_id":        "ns-1",
@@ -2987,12 +2987,7 @@ func verifyCanonicalRegistryAuth(t *testing.T, r *http.Request, fields map[strin
 	if len(parts) != 3 || parts[0] != "DIDKey" {
 		t.Fatalf("unexpected Authorization header %q", auth)
 	}
-	fields = cloneStringMap(fields)
-	fields["timestamp"] = timestamp
-	payload, err := json.Marshal(fields)
-	if err != nil {
-		t.Fatalf("marshal payload: %v", err)
-	}
+	payload := []byte(coveringControllerPayloadForTest(t, r, timestamp, fields))
 	sig, err := base64.RawStdEncoding.DecodeString(parts[2])
 	if err != nil {
 		t.Fatalf("decode signature: %v", err)

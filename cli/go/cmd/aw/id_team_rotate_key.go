@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/ed25519"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -298,6 +299,13 @@ func onlyMissingCustodians(detail *awid.ResignedRecordsIncomplete) bool {
 }
 
 func rotateRefusal(teamID string, err error) error {
+	var unknown *awid.OutcomeUnknownError
+	if errors.As(err, &unknown) {
+		return &plainRefusal{
+			text: fmt.Sprintf("the rotation of %s lost its answer (%v); the registry may have applied this rotation; the new key is kept as the pending key, and running aw id team rotate-key again finishes it.", teamID, errors.Unwrap(unknown)),
+			err:  err,
+		}
+	}
 	if awid.MemberCertificatesUnsupported(err) {
 		return fmt.Errorf("AWID refused the rotation of %s: this registry cannot change a team key together with its members' certificates; the team key is unchanged: %w", teamID, err)
 	}
@@ -396,7 +404,7 @@ func executeTeamRotateKey(ctx context.Context, opts teamRotateKeyOptions) (teamR
 		opts.AfterRead()
 	}
 	newDID := didOf(newKey)
-	_, err = registry.RotateTeamKey(ctx, registryURL, domain, teamName, newDID, &rotation.resigned, rotation.members, controllerKey)
+	_, err = registry.RotateTeamKeyWithMembers(ctx, registryURL, domain, teamName, newDID, &rotation.resigned, rotation.members, controllerKey)
 	if detail, ok := awid.ResignedRecordsIncompleteDetail(err); ok && onlyMissingCustodians(detail) {
 		learned := append([]string{}, detail.Missing.TeamCustodians...)
 		sort.Strings(learned)
@@ -409,7 +417,7 @@ func executeTeamRotateKey(ctx context.Context, opts teamRotateKeyOptions) (teamR
 			}
 		}
 		out.LearnedCustodians = learned
-		_, err = registry.RotateTeamKey(ctx, registryURL, domain, teamName, newDID, &rotation.resigned, rotation.members, controllerKey)
+		_, err = registry.RotateTeamKeyWithMembers(ctx, registryURL, domain, teamName, newDID, &rotation.resigned, rotation.members, controllerKey)
 	}
 	if err != nil {
 		return teamRotateKeyOutput{}, rotateRefusal(teamID, err)

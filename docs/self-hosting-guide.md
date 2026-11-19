@@ -11,6 +11,27 @@ Source of truth for this guide:
 - [`server/.env.example`](../server/.env.example)
 - [`scripts/e2e-oss-user-journey.sh`](../scripts/e2e-oss-user-journey.sh)
 
+## Upgrading a registry for the covering controller signatures
+
+**Set `AWID_PUBLIC_ORIGINS` on your `awid` before you upgrade `aw`, or anything
+that writes to the registry through the Python `awid` package** (aweb Cloud,
+your own scripts; the aweb server itself makes no controller writes). From this
+release both sign every controller write in the covering form, which names the
+registry origin it is sent to, and neither sends the older form any more. A
+registry without `AWID_PUBLIC_ORIGINS` refuses those writes with 503, and `aw`
+prints the registry's message, which names the setting: creating and deleting
+namespaces and teams, team visibility and key rotation, registering and
+revoking certificates, and address writes. A registry older than
+`awid-service` 0.5.39 may refuse them too. Stable `aw` 1.36.58 signed only its
+ID-certificate writes this way, so a registry that has served those already has
+the setting; one that has served only team, certificate and address writes may
+not.
+
+Clients address a registry by its origin. `aw` and the Python client refuse a
+registry URL with a path, so a registry served under a path prefix is not
+supported for their controller writes, although the registry itself verifies a
+prefixed path (see [AWID controller requests](awid-controller-requests.md)).
+
 ## 1. Try It Locally
 
 This is the fastest path. It uses:
@@ -175,8 +196,18 @@ AWID_TOKEN_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/aweb/awid-service-token"
 export AWID_SERVICE_TOKEN="$(tr -d '\r\n' < "$AWID_TOKEN_FILE")"
 export AWID_DATABASE_URL=postgresql://aweb:password@localhost:5432/aweb
 export AWID_REDIS_URL=redis://localhost:6379/0
+export AWID_PUBLIC_ORIGINS=https://registry.acme.internal,http://localhost:8010
 uv run awid
 ```
+
+`AWID_PUBLIC_ORIGINS` lists, comma-separated, every origin clients write to
+the registry through: its public URL, and any internal URL a server or
+operator uses. Each controller write (creating a namespace or team,
+registering or revoking a certificate, writing an address) signs the origin
+it is sent to, so a write to an origin not on the list is refused with 401,
+and with the setting missing every such write is refused with 503 naming it.
+In the Compose stack it defaults to `http://localhost:${AWID_PORT},http://awid:8010`;
+set it to the registry's public URL when other machines use it.
 
 In the aweb service terminal:
 
@@ -415,6 +446,9 @@ For `awid`:
 
 - `AWID_DATABASE_URL`
 - `AWID_REDIS_URL`
+- `AWID_PUBLIC_ORIGINS`: every origin clients write to the registry through,
+  comma-separated. Required for controller writes (see "Start `awid` and
+  `aweb`").
 - optional `AWID_SKIP_DNS_VERIFY=1` for first-registration namespace bootstrap
   on internal networks; controller replacement still requires recovery proof
 

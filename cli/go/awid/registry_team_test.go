@@ -181,7 +181,7 @@ func TestSetTeamVisibilitySignsVisibilityInPayload(t *testing.T) {
 			t.Fatalf("authorization DID=%s want team DID=%s", parts[1], teamDID)
 		}
 		timestamp := strings.TrimSpace(r.Header.Get("X-AWEB-Timestamp"))
-		payload := canonicalRegistryJSON(map[string]string{
+		payload := coveringPayloadFor(t, r, map[string]string{
 			"domain":     "acme.com",
 			"operation":  "set_team_visibility",
 			"team_name":  "backend",
@@ -284,7 +284,7 @@ func TestDeleteTeamSignsTeamNameInPayload(t *testing.T) {
 			t.Fatalf("authorization DID=%s want controller DID=%s", parts[1], controllerDID)
 		}
 		timestamp := strings.TrimSpace(r.Header.Get("X-AWEB-Timestamp"))
-		payload := canonicalRegistryJSON(map[string]string{
+		payload := coveringPayloadFor(t, r, map[string]string{
 			"domain":    "acme.com",
 			"operation": "delete_team",
 			"team_name": "backend",
@@ -359,12 +359,18 @@ func TestRegisterCertificate(t *testing.T) {
 	if gotPayload["member_did_key"] != ComputeDIDKey(memberPub) {
 		t.Fatalf("member_did_key=%v", gotPayload["member_did_key"])
 	}
-	encoded, err := EncodeTeamCertificateHeader(cert)
+	// The blob is the certificate as canonical JSON, the encoding the
+	// Python client sends.
+	blob, _ := gotPayload["certificate"].(string)
+	if _, err := DecodeTeamCertificateHeader(blob); err != nil {
+		t.Fatalf("certificate blob not sent: %v", err)
+	}
+	canonical, err := sortedJSONBytes(cert)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gotPayload["certificate"] != encoded {
-		t.Fatalf("certificate blob not sent")
+	if blob != base64.StdEncoding.EncodeToString(canonical) {
+		t.Fatalf("certificate blob is not canonical JSON")
 	}
 	_ = teamPub
 }

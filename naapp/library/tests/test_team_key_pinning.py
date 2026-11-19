@@ -158,3 +158,32 @@ async def test_rotation_signed_by_the_dns_controller_moves_the_pin(world):
 
     assert accepted.status_code == 200, accepted.text
     assert await _pinned_key(app_db) == _did(next_key)
+
+
+async def test_a_served_key_the_act_does_not_name_keeps_the_pin_with_one_act_read(world, monkeypatch):
+    client, db, app_db, team_key, certify, rotate = world
+    current_key = SigningKey.generate()
+    await rotate(current_key)
+    assert (await _shelf(client, await certify(current_key, "steady"))).status_code == 200
+    # The registry serves another key beside its genuine latest act, whose
+    # signed bytes name the pinned key.
+    substituted = _did(SigningKey.generate())
+    await db.execute("UPDATE {{tables.teams}} SET team_did_key = $1 WHERE name = 'backend'", substituted)
+    await db.execute(
+        "UPDATE {{tables.team_key_acts}} SET team_did_key = $1 WHERE team_did_key = $2", substituted, _did(current_key),
+    )
+    act_reads = []
+
+    async def count(request):
+        if request.url.path.endswith("/key-act"):
+            act_reads.append(request.url.path)
+
+    make_client = auth.httpx.AsyncClient
+    monkeypatch.setattr(auth.httpx, "AsyncClient", lambda **kw: make_client(event_hooks={"request": [count]}, **kw))
+
+    # Each request is a member not seen before, so each reads the served key.
+    statuses = [(await _shelf(client, await certify(current_key, f"member-{n}"))).status_code for n in range(5)]
+
+    assert statuses == [200] * 5
+    assert len(act_reads) == 1
+    assert await _pinned_key(app_db) == _did(current_key)
