@@ -181,9 +181,9 @@ def test_inbound_federation_preserves_its_distinct_documented_context(kind, mode
     assert "to_aliases" not in context and "preview" not in context
     with pytest.raises(TypeError, match="Pass a MessageKind value for kind"):
         replace(dto, kind=kind.value)
-    with pytest.raises(ValueError) as unsupported:
-        replace(dto, kind=MessageKind.ROOM)
-    assert str(unsupported.value) == "Use mail or chat for a federation message event."
+    # Room posts have their own context/event, not a federation message kind.
+    with pytest.raises(TypeError, match="Pass a MessageKind value for kind"):
+        replace(dto, kind="room")
 
 
 @pytest.mark.parametrize("mode", list(ContentMode))
