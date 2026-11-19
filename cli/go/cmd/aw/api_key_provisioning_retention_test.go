@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/awebai/aw/awconfig"
@@ -62,5 +63,8 @@ func TestRosterKeepsAPIKeyInitMaterialAfterSubmittedTransportFailure(t *testing.
 	}
 	if !retainUnfinishedProvisioningIdentity(err) {
 		t.Fatalf("submitted API-key recovery was not exposed through the shared retention contract: %v", err)
+	}
+	if !strings.Contains(err.Error(), home.Root) || !strings.Contains(err.Error(), "--alias retained") || strings.Contains(err.Error(), teamHumanExtendAPIKey) {
+		t.Fatal("recovery advice lost its child target/command or exposed the setup key")
 	}
 }

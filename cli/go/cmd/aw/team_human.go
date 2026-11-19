@@ -1445,7 +1445,7 @@ func bootstrapTeamHumanAddAgentWithAPIKey(homeDir string, plan teamHumanAddedAge
 	}
 	out, err := runAPIKeyBootstrapInit(request)
 	if err != nil {
-		return nil, err
+		return nil, apiKeyCreationRecoveryAdvice(request, err)
 	}
 	certPath := awconfig.TeamCertificatePath(homeDir, strings.TrimSpace(out.TeamID))
 	cert, err := awid.LoadTeamCertificate(certPath)

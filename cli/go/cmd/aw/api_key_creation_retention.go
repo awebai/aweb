@@ -1,11 +1,44 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
 	"github.com/awebai/aw/awconfig"
+	"strings"
 )
+
+// apiKeyCreationRecoveryAdvice names the child operation's directory when its
+// caller runs in the creator's directory. It never includes the API key.
+func apiKeyCreationRecoveryAdvice(request apiKeyInitRequest, cause error) error {
+	if !retainUnfinishedProvisioningIdentity(cause) {
+		return cause
+	}
+	if remedy, known := workspaceInitRefusalRemedies[errorCodeOf(cause)]; known && remedy.changesContext {
+		return fmt.Errorf("%w\nThe original identity material remains at %s; keep it for reconciliation.", cause, request.IdentityHome)
+	}
+	args := []string{"aw", "--identity-home", request.IdentityHome, "init"}
+	if request.RegistryURL != "" {
+		args = append(args, "--awid-registry", request.RegistryURL)
+	}
+	if request.Global {
+		args = append(args, "--global", "--name", request.Name)
+	} else {
+		args = append(args, "--alias", request.Alias)
+	}
+	for _, setting := range []struct{ flag, value string }{
+		{"--role-name", request.Role}, {"--human-name", request.HumanName}, {"--agent-type", request.AgentType}, {"--inbound-mode", request.InboundMode},
+	} {
+		if strings.TrimSpace(setting.value) != "" {
+			args = append(args, setting.flag, setting.value)
+		}
+	}
+	if request.ContextFile == workspaceContextPreserve {
+		args = append(args, "--write-context=false")
+	}
+	return fmt.Errorf("%w\nThe retained creation directory is %s. From there, with the original service URL, API key and registry selection (AWEB_URL, AWEB_API_KEY and AWID_REGISTRY_URL), run `%s` to finish this same identity before resuming roster/worktree setup.", cause, request.WorkingDir, formatShellCommand(args))
+}
 
 type apiKeyInitRecoveryState uint8
 
@@ -20,11 +53,21 @@ type apiKeyInitFailure struct {
 	State apiKeyInitRecoveryState
 }
 
+// finalizeAPIKeyInitFailure preserves the prepared key/request through outer
+// roster and worktree cleanup. Registration or submission may already have
+// happened; a response status does not prove that this home is disposable.
 func finalizeAPIKeyInitFailure(input apiKeyInitFailure) error {
-	if input.Cause != nil && input.State == apiKeyInitRecoverable {
-		if info, err := os.Lstat(apiKeyPartialInitPath(input.Home)); err == nil && info.Mode().IsRegular() {
-			return fmt.Errorf("%w\n%s", input.Cause, partialInitGuidance(input.Cause))
+	if input.Cause == nil {
+		return nil
+	}
+	cause := input.Cause
+	if input.State == apiKeyInitRecoverable {
+		info, stateErr := os.Lstat(apiKeyPartialInitPath(input.Home))
+		if stateErr == nil && info.Mode().IsRegular() {
+			cause = fmt.Errorf("%w\n%s", cause, partialInitGuidance(cause))
+		} else if stateErr != nil && !errors.Is(stateErr, os.ErrNotExist) {
+			cause = errors.Join(cause, fmt.Errorf("inspect retained API-key init state: %w", stateErr))
 		}
 	}
-	return input.Cause
+	return retainIdentityForRecovery(cause)
 }

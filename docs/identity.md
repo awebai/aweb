@@ -633,6 +633,18 @@ as a substitute for coordination cleanup. The refusal names a concrete
 authority. Reuse requires the same installed member key, team, name and scope;
 normal admission still checks current authority. To abandon the member, use the
 ordered `aw team admin remove-agent` operation from its controller workspace.
+A failed `workspace add-worktree` also retains an issued member and its git
+worktree for reconciliation instead of revoking its registry certificate and
+deleting the credential. Its refusal names the existing child's connect command.
+
+API-key creation keeps its original partial-init journal after preparation,
+including when submission loses its response. Outer roster and worktree cleanup
+must retain that directory. The refusal identifies the child directory and its
+`aw init` command; keep the original service, API-key and registry selections.
+Quarantined material remains for operator reconciliation and is never restored
+automatically. These recoveries keep the original key and request; they do not
+create a replacement identity.
+
 Membership-only joins continue to install their membership before their separate
 connection step.
 
