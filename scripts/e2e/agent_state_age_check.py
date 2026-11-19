@@ -157,8 +157,8 @@ class Call:
         # The call is registered before an interrupt can be raised, so that
         # every exit of the check finds it to end.
         with signals_held():
-            self.process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                                            start_new_session=True, preexec_fn=unheld)
+            self.process = subprocess.Popen(unheld(command), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                            text=True, start_new_session=True)
             Call.current = self
 
     def remaining(self) -> float:

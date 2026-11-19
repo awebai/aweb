@@ -152,7 +152,13 @@ def capture(root: Path, sink: BinaryIO, endpoints: Endpoints = DEFAULT_ENDPOINTS
     with tarfile.open(fileobj=Discard(), mode="w", format=tarfile.PAX_FORMAT) as probe:  # type: ignore[call-overload]
         planned = [probe.gettarinfo(path, arcname) for path, arcname in members]
     check(planned)
-    with tarfile.open(fileobj=sink, mode="w|", format=tarfile.PAX_FORMAT) as tar:
+    # Not a with-block: on an exception its exit would close the stream, and
+    # closing writes the archive's last blocks into the sink, which blocks for
+    # ever when the sink is a pipe its reader has stopped draining. The
+    # stream is closed only once every member is written; on failure the
+    # caller ends the reader.
+    tar = tarfile.open(fileobj=sink, mode="w|", format=tarfile.PAX_FORMAT)
+    try:
         for (path, arcname), expected in zip(members, planned, strict=True):
             info = tar.gettarinfo(path, arcname)
             if (info.type, info.size, info.mtime, info.linkname) != (expected.type, expected.size, expected.mtime,
@@ -163,6 +169,13 @@ def capture(root: Path, sink: BinaryIO, endpoints: Endpoints = DEFAULT_ENDPOINTS
                     tar.addfile(info, data)
             else:
                 tar.addfile(info)
+    except BaseException:
+        # Abandoned unwritten: marked closed, so that neither this exit nor
+        # the stream's own finalizer later writes into the sink.
+        tar.fileobj.closed = True
+        tar.closed = True
+        raise
+    tar.close()
     return {"members": len(planned), "omitted": omitted}
 
 
@@ -213,10 +226,27 @@ def signals_held():
         signal.pthread_sigmask(signal.SIG_SETMASK, held)
 
 
-def unheld() -> None:
-    """In a child, before it execs: the parent's hold on SIGINT and SIGTERM
-    is not the child's, which must end on the SIGTERM sent to it."""
-    signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGINT, signal.SIGTERM})
+# How every child starts: a Python that clears the signal mask it inherited
+# from the parent's hold on SIGINT and SIGTERM, then becomes the command by
+# its absolute path (same process, same streams). No Python code runs in the
+# parent's forked image between fork and exec: a preexec_fn would, and that
+# can deadlock once threads exist, as the deadline timers do.
+UNHELD = (
+    "import os, signal, sys\n"
+    "signal.pthread_sigmask(signal.SIG_SETMASK, set())\n"
+    "try:\n"
+    "    os.execv(sys.argv[1], sys.argv[1:])\n"
+    "except OSError as error:\n"
+    "    sys.stderr.write(f'cannot run {sys.argv[1]}: {error}\\n')\n"
+    "    os._exit(127)\n"
+)
+
+
+def unheld(command: list[str]) -> list[str]:
+    """command, started through UNHELD; it must name its program absolutely."""
+    if not os.path.isabs(command[0]):
+        raise Refused(f"{command[0]} is not an absolute path; a child is started by its absolute path")
+    return [sys.executable, "-I", "-c", UNHELD, *command]
 
 
 def read_whole(read: Callable[[], BinaryIO], each: Callable[[tarfile.TarFile], object]) -> None:
@@ -307,7 +337,10 @@ class Child:
     def __init__(self, command: list[str], deadline: float, **popen):
         self.command = command
         self.expired = False
-        self.process = subprocess.Popen(command, preexec_fn=unheld, **popen)
+        # The deadline begins once Popen returns, that is once the starter
+        # has been exec'd; it covers the starter clearing its mask, its exec
+        # of the command, and the command.
+        self.process = subprocess.Popen(unheld(command), **popen)
         try:
             self.timer = threading.Timer(deadline, self.expire)
             self.timer.daemon = True

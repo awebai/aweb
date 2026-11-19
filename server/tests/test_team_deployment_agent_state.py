@@ -433,6 +433,10 @@ def test_a_terminated_cli_ends_its_age_child_and_leaves_no_partial(tmp_path):
     import time
 
     root = state(tmp_path)
+    # More than any pipe buffer: the stand-in never reads, so the CLI is
+    # blocked writing the archive when the signal comes. Ending must not
+    # first try to finish the archive into that full pipe.
+    (root / "home" / "large").write_bytes(os.urandom(1 << 20))
     out = tmp_path / "backup"
     started = tmp_path / "started"
     fake_age = tmp_path / "age"
@@ -595,4 +599,65 @@ def test_a_child_started_while_signals_are_held_does_not_inherit_the_hold(tmp_pa
     out, _ = child.process.communicate(timeout=30)
     child.finish()
     blocked = json.loads(out)
+    assert int(signal.SIGTERM) not in blocked and int(signal.SIGINT) not in blocked
+
+
+def test_no_child_is_launched_with_python_code_between_fork_and_exec(tmp_path, monkeypatch):
+    # preexec_fn runs Python in the forked child, which can deadlock once
+    # threads exist (the deadline timers); no launch may use it.
+    seen = []
+    real = subprocess.Popen
+
+    def recording(*args, **kwargs):
+        seen.append(kwargs)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(agent_state.subprocess, "Popen", recording)
+    child = agent_state.Child([sys.executable, "-c", "pass"], 30)
+    child.finish()
+    decrypted = agent_state.Decrypted([sys.executable, "-c", "pass"], 30)
+    decrypted.close()
+    assert seen and all("preexec_fn" not in kwargs for kwargs in seen)
+
+
+def test_a_launch_refuses_a_command_that_is_not_an_absolute_path():
+    with pytest.raises(agent_state.Refused, match="not an absolute path"):
+        agent_state.Child(["age", "--version"], 30)
+
+
+def test_a_second_launch_while_the_first_timer_thread_lingers_completes_unheld(tmp_path):
+    # The reviewer's sequence: one age child ends, its timer thread is kept
+    # alive (teardown delayed), and the next child is launched with SIGINT
+    # and SIGTERM held. Run in its own process under an external timeout, so
+    # a stall fails this test instead of hanging the suite.
+    script = tmp_path / "second.py"
+    script.write_text(f"""
+import json, subprocess, sys, threading, time
+sys.path.insert(0, {str(TEAM)!r})
+import agent_state
+
+lingering = threading.Event()
+real_cancel = threading.Timer.cancel
+
+def delayed_cancel(self):
+    real_cancel(self)
+    # Keep a thread alive through the next launch, as a slow teardown would.
+    threading.Thread(target=lingering.wait, args=(5,), daemon=True).start()
+
+threading.Timer.cancel = delayed_cancel
+probe = [sys.executable, "-c", "import signal; print(sorted(int(s) for s in signal.pthread_sigmask(signal.SIG_BLOCK, [])))"]
+first = agent_state.Decrypted([sys.executable, "-c", "pass"], 30)
+first.close()
+assert threading.active_count() > 1
+with agent_state.signals_held():
+    second = agent_state.Child(probe, 30, stdout=subprocess.PIPE, text=True)
+out, _ = second.process.communicate(timeout=30)
+second.finish()
+lingering.set()
+print(out.strip())
+""")
+    answer = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=60)
+    assert answer.returncode == 0, answer.stderr
+    blocked = json.loads(answer.stdout.strip().splitlines()[-1])
+    import signal
     assert int(signal.SIGTERM) not in blocked and int(signal.SIGINT) not in blocked
