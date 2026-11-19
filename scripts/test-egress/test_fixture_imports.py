@@ -21,7 +21,9 @@ class FixtureImportTests(unittest.TestCase):
                 str(ROOT / "server"),
                 "python",
                 "-c",
+                "import sys; sys.path.insert(0, sys.argv[1]); "
                 "import dns.asyncresolver; print(dns.asyncresolver.__file__)",
+                str(FIXTURE_DIRECTORY),
             ],
             cwd=FIXTURE_DIRECTORY,
             text=True,
