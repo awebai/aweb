@@ -149,22 +149,12 @@ func TestMailShowPerStepBudgetAndCallerCancellation(t *testing.T) {
 			})
 			command := &cobra.Command{}
 			command.SetContext(caller)
-			output, err := os.CreateTemp(root, "result-*.json")
-			if err != nil {
-				t.Fatal(err)
-			}
-			stdout := os.Stdout
-			t.Cleanup(func() { os.Stdout = stdout })
-			os.Stdout = output
-			started := time.Now()
-			err = mailShowCmd.RunE(command, nil)
-			elapsed := time.Since(started)
-			os.Stdout = stdout
-			_ = output.Close()
-			body, readErr := os.ReadFile(output.Name())
-			if readErr != nil {
-				t.Fatal(readErr)
-			}
+			var elapsed time.Duration
+			body := []byte(captureStdout(t, func() {
+				started := time.Now()
+				err = mailShowCmd.RunE(command, nil)
+				elapsed = time.Since(started)
+			}))
 			if scenario == "independent_steps" {
 				if err != nil || calls.Load() != 4 || elapsed < 400*time.Millisecond {
 					t.Fatalf("healthy steps must outlive one API budget: calls=%d elapsed=%s err=%v", calls.Load(), elapsed, err)

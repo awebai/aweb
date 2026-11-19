@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"io"
-	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -153,19 +152,13 @@ func TestInitJSONOnTheSelfHostedPathPrintsItsNextSteps(t *testing.T) {
 	cmd.ResetFlagsForTest()
 	cmd.Command.SetIn(strings.NewReader(""))
 
-	reader, writer, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	realStdout := os.Stdout
-	os.Stdout = writer
+	var err error
 	dir := t.TempDir()
-	withTestWorkingDir(t, dir, func() {
-		err = runInit(&cmd.Command, nil)
+	raw := captureStdout(t, func() {
+		withTestWorkingDir(t, dir, func() {
+			err = runInit(&cmd.Command, nil)
+		})
 	})
-	os.Stdout = realStdout
-	writer.Close()
-	raw, _ := io.ReadAll(reader)
 	if err != nil {
 		t.Fatalf("init: %v\n%s", err, raw)
 	}
@@ -173,7 +166,7 @@ func TestInitJSONOnTheSelfHostedPathPrintsItsNextSteps(t *testing.T) {
 		NextSteps []initNextStep `json:"next_steps"`
 		Guide     string         `json:"guide"`
 	}
-	if err := json.Unmarshal(raw, &out); err != nil {
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
 		t.Fatalf("not one JSON document: %v\n%s", err, raw)
 	}
 	commands := initNextStepCommands(out.NextSteps)

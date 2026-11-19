@@ -32,20 +32,6 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 			v := loadWhoVectors(t)
 			t.Setenv("HOME", t.TempDir())
 			t.Setenv("AW_CONFIG_PATH", "")
-			var warningLog *os.File
-			if scenario == "further-team cleanup warning" {
-				var err error
-				warningLog, err = os.CreateTemp(t.TempDir(), "stderr")
-				if err != nil {
-					t.Fatal(err)
-				}
-				oldStderr := os.Stderr
-				os.Stderr = warningLog
-				t.Cleanup(func() {
-					os.Stderr = oldStderr
-					warningLog.Close()
-				})
-			}
 			root := t.TempDir()
 			joinFrom := strings.HasPrefix(scenario, "join-from")
 			furtherTeam := strings.HasPrefix(scenario, "further-team")
@@ -270,21 +256,30 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 					t.Setenv("AWEB_URL", origin)
 				}
 				teamAcceptAlias, teamAcceptLocal, teamAcceptGlobal = "child", true, false
+				// The cleanup-warning scenario reads what accepting prints to stderr.
+				var cleanupWarning string
 				accept := func() error {
 					var result error
-					withTestWorkingDir(t, childDir, func() {
-						cmd := authTestCmd(&bytes.Buffer{})
-						cmd.Flags().Bool("token-stdin", true, "")
-						if scenario == "further-team parent source" {
-							cmd.Flags().String("parent", root, "")
-						}
-						cmd.SetIn(strings.NewReader(token + "\n"))
-						if scenario == "further-team independent init" {
-							result = runInit(cmd, nil)
-						} else {
-							result = runTeamAcceptInvite(cmd, nil)
-						}
-					})
+					run := func() {
+						withTestWorkingDir(t, childDir, func() {
+							cmd := authTestCmd(&bytes.Buffer{})
+							cmd.Flags().Bool("token-stdin", true, "")
+							if scenario == "further-team parent source" {
+								cmd.Flags().String("parent", root, "")
+							}
+							cmd.SetIn(strings.NewReader(token + "\n"))
+							if scenario == "further-team independent init" {
+								result = runInit(cmd, nil)
+							} else {
+								result = runTeamAcceptInvite(cmd, nil)
+							}
+						})
+					}
+					if scenario == "further-team cleanup warning" {
+						cleanupWarning += captureStderr(t, run)
+					} else {
+						run()
+					}
 					return result
 				}
 				firstErr := accept()
@@ -409,9 +404,8 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 					t.Fatalf("selected home ancestry=%+v err=%v", verdict, err)
 				}
 				if scenario == "further-team cleanup warning" {
-					warning, err := os.ReadFile(warningLog.Name())
-					if err != nil || !strings.Contains(string(warning), "warning: failed to delete consumed invite "+recordID+":") {
-						t.Fatalf("missing cleanup warning: %q err=%v", warning, err)
+					if !strings.Contains(cleanupWarning, "warning: failed to delete consumed invite "+recordID+":") {
+						t.Fatalf("missing cleanup warning: %q", cleanupWarning)
 					}
 					if _, err := os.Stat(filepath.Join(recipientHome, hostedInviteRecoveryFile)); !os.IsNotExist(err) {
 						t.Fatalf("successful accept retained recovery: %v", err)

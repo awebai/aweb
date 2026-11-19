@@ -44,16 +44,8 @@ func TestVersionCommandUpdateCheck(t *testing.T) {
 			resetUpdateCheckTestState(t, "1.0.0", "", &unused, tc.tty)
 			t.Setenv("AW_NO_UPDATE_CHECK", tc.disable)
 			jsonFlag = tc.json
-			output, err := os.CreateTemp(t.TempDir(), "version-output")
-			if err != nil {
-				t.Fatal(err)
-			}
-			oldStdout, oldStderr, oldTransport := os.Stdout, os.Stderr, http.DefaultTransport
-			os.Stdout, os.Stderr = output, output
-			t.Cleanup(func() {
-				os.Stdout, os.Stderr, http.DefaultTransport = oldStdout, oldStderr, oldTransport
-				output.Close()
-			})
+			oldTransport := http.DefaultTransport
+			t.Cleanup(func() { http.DefaultTransport = oldTransport })
 			calls := 0
 			http.DefaultTransport = versionCheckTransport(func(r *http.Request) (*http.Response, error) {
 				calls++
@@ -66,9 +58,15 @@ func TestVersionCommandUpdateCheck(t *testing.T) {
 				}
 				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"tag_name":"v2.0.0"}`)), Header: make(http.Header)}, nil
 			})
-			start := time.Now()
-			versionCmd.Run(versionCmd, nil)
-			elapsed := time.Since(start)
+			var stdout string
+			var elapsed time.Duration
+			stderr := captureStderr(t, func() {
+				stdout = captureStdout(t, func() {
+					start := time.Now()
+					versionCmd.Run(versionCmd, nil)
+					elapsed = time.Since(start)
+				})
+			})
 			if !tc.wantCall && elapsed >= 500*time.Millisecond {
 				t.Errorf("version took %s with update checks disabled; want under 500ms", elapsed)
 			}
@@ -79,15 +77,13 @@ func TestVersionCommandUpdateCheck(t *testing.T) {
 			if calls != wantCalls {
 				t.Errorf("release requests=%d, want %d", calls, wantCalls)
 			}
-			data, err := os.ReadFile(output.Name())
-			if err != nil {
-				t.Fatal(err)
+			// The version report is the command's output; the upgrade hint is
+			// advice on stderr, so it never mixes into a parsed version.
+			if !strings.HasPrefix(stdout, "aw 1.0.0\n") {
+				t.Errorf("missing version output: %q", stdout)
 			}
-			if !strings.HasPrefix(string(data), "aw 1.0.0\n") {
-				t.Errorf("missing version output: %q", data)
-			}
-			if gotHint := strings.Contains(string(data), "Upgrade available"); gotHint != tc.wantCall {
-				t.Errorf("upgrade hint=%t, want %t: %q", gotHint, tc.wantCall, data)
+			if gotHint := strings.Contains(stderr, "Upgrade available"); gotHint != tc.wantCall {
+				t.Errorf("upgrade hint on stderr=%t, want %t: %q", gotHint, tc.wantCall, stderr)
 			}
 		})
 	}
