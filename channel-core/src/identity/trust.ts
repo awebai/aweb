@@ -419,6 +419,12 @@ export class SenderTrustManager {
       if (meta.resolutionError === "unavailable" && this.pinnedToKey(store, trustAddress, fromDID, fromStableID)) {
         return { status, stored: false };
       }
+      // The registry no longer has a pinned sender's address, and the message
+      // is signed by the pinned key: not a forgery, not current either
+      // (docs/trust-model.md; Antares 2e8881d7).
+      if (meta.resolutionError === "not_found" && this.pinnedToKey(store, trustAddress, fromDID, fromStableID)) {
+        return { status: "verification_stale", stored: false };
+      }
       return this.unresolvedMetadataResult(meta);
     }
 

@@ -553,7 +553,12 @@ sequence/hash so rollback detection survives process restarts.
 
 A sender already pinned stays verified by its pin while the registry cannot be
 reached. A later registry answer that names another key for a pinned address is
-an `identity_mismatch`, and the pin is kept.
+an `identity_mismatch`, and the pin is kept. A registry answer that a pinned
+sender's address does not exist, for a message signed by the pinned key, is
+`verification_stale`: not a forgery, and not current verification either. It is
+the same for a message arriving now and for one read again later; the registry
+gives one answer for an address that was retired and one that never existed, so
+no history cut is drawn.
 
 The delivering server can never delete a pin or its anti-rollback anchor. When
 the team roster gives a team-scoped member name to a local identity, the name's
@@ -596,7 +601,8 @@ The visible outcomes mean:
 - `verified_custodial` — the same verification result with hosted-custodial
   sender metadata; it is not stronger cryptography;
 - `verification_stale` — the signature may be valid, but authoritative
-  continuity/freshness could not be completed or a required new checkpoint
+  continuity/freshness could not be completed (the registry could not be asked,
+  or no longer has a pinned sender's address) or a required new checkpoint
   could not be persisted; it must not overwrite a pin;
 - `identity_mismatch` — recipient binding, stable-key verification, rollback
   protection, or the pinned address identity conflicts;

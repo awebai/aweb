@@ -1235,7 +1235,7 @@ export function isTrustedVerificationStatus(status: VerificationStatus | undefin
 export function trustWarningLine(status: VerificationStatus | undefined): string {
   if (isTrustedVerificationStatus(status)) return "";
   if (status === "verification_stale") {
-    return "WARNING: sender signature verified, but stale registry key material could not be refreshed. This is not an identity-mismatch finding; retry verification before sensitive work.";
+    return "WARNING: sender signature verified, but the sender's current registry binding could not be confirmed (it could not be refreshed, or the registry no longer has the sender's address). This is not an identity-mismatch finding; retry verification or confirm the sender another way before sensitive work.";
   }
   if (status === "pin_conflict") {
     return "WARNING: two pin records conflict for this sender. Stable-identity migration was refused to avoid discarding trust state; inspect and repair the pin store before trusting the sender.";

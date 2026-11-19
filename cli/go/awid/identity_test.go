@@ -246,8 +246,8 @@ func TestChainResolverFallsBackToPinWhenRegistryAddressMissing(t *testing.T) {
 	if registryHits.Load() == 0 {
 		t.Fatal("registry was not tried before pin fallback")
 	}
-	if identity.ResolvedVia != "pin" {
-		t.Fatalf("ResolvedVia=%q, want pin", identity.ResolvedVia)
+	if identity.ResolvedVia != ResolvedViaPinAfterRegistryMiss {
+		t.Fatalf("ResolvedVia=%q, want %q", identity.ResolvedVia, ResolvedViaPinAfterRegistryMiss)
 	}
 	if identity.DID != did {
 		t.Fatalf("DID=%q, want %q", identity.DID, did)

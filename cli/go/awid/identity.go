@@ -23,8 +23,12 @@ type ResolvedIdentity struct {
 	Custody        string // "self" or "custodial"
 	IdentityScope  string // "local" or "global"
 	ResolvedAt     time.Time
-	ResolvedVia    string // "did:key", "registry", "pin"
+	ResolvedVia    string // "did:key", "registry", "pin", ResolvedViaPinAfterRegistryMiss
 }
+
+// ResolvedViaPinAfterRegistryMiss marks an identity answered from a pin
+// because the registry answered that the address does not exist.
+const ResolvedViaPinAfterRegistryMiss = "pin_after_registry_miss"
 
 // IdentityResolver resolves an identifier to a ResolvedIdentity.
 type IdentityResolver interface {
@@ -183,6 +187,9 @@ func (r *ChainResolver) resolveIdentifier(ctx context.Context, identifier string
 			}
 			if r.Pin != nil && registryMissAllowsPinFallback(err) {
 				if pinIdentity, pinErr := r.Pin.Resolve(ctx, identifier); pinErr == nil {
+					// The registry no longer has the address: the answer is the
+					// pin's, and says so (docs/trust-model.md).
+					pinIdentity.ResolvedVia = ResolvedViaPinAfterRegistryMiss
 					return pinIdentity, nil
 				}
 			}

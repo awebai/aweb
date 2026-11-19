@@ -257,6 +257,9 @@ type agentMeta struct {
 	// the registry or the reader's own team roster, and not from a pin or
 	// from the key alone.
 	Authoritative bool
+	// RegistryAddressMissing says the registry answered that the address does
+	// not exist and the identity came from this client's pin.
+	RegistryAddressMissing bool
 	// ResolutionError says why an address was not resolved: "not_found" when
 	// the authority answered that it does not exist, "unavailable" when it
 	// could not be asked now, "no_resolver" when the client has none to ask.
@@ -268,6 +271,13 @@ type agentMeta struct {
 func (m *agentMeta) names(did, stableID string) bool {
 	return m.Resolved && m.Authoritative && m.DID != "" && m.DID == did &&
 		(stableID == "" || m.StableID == stableID)
+}
+
+// registrySaysNoSuchAddress reports a definite answer from the registry that
+// the address does not exist: answered from this client's pin after the
+// registry's 404, or left unresolved as not_found.
+func (m *agentMeta) registrySaysNoSuchAddress() bool {
+	return m.RegistryAddressMissing || (!m.Resolved && m.ResolutionError == "not_found")
 }
 
 // namesPin reports whether the identity this metadata names is the one pin
@@ -920,12 +930,13 @@ func (c *Client) resolveAgentMetaFresh(ctx context.Context, address string, forc
 		}
 		if identity, err := resolve(ctx, trustAddress); err == nil {
 			meta := &agentMeta{
-				DID:           strings.TrimSpace(identity.DID),
-				StableID:      strings.TrimSpace(identity.StableID),
-				IdentityScope: IdentityModeGlobal,
-				Custody:       CustodySelf,
-				Resolved:      true,
-				Authoritative: identity.ResolvedVia == "registry" || identity.ResolvedVia == "team_roster",
+				DID:                    strings.TrimSpace(identity.DID),
+				StableID:               strings.TrimSpace(identity.StableID),
+				IdentityScope:          IdentityModeGlobal,
+				Custody:                CustodySelf,
+				Resolved:               true,
+				Authoritative:          identity.ResolvedVia == "registry" || identity.ResolvedVia == "team_roster",
+				RegistryAddressMissing: identity.ResolvedVia == ResolvedViaPinAfterRegistryMiss,
 			}
 			if identity.IdentityScope != "" {
 				meta.IdentityScope = NormalizeIdentityScope(identity.IdentityScope)
@@ -1242,6 +1253,14 @@ func (c *Client) checkTOFUPinWithMeta(ctx context.Context, status VerificationSt
 		// belongs to another key.
 		if fromStableID == "" && meta.Resolved && meta.Authoritative && meta.DID != "" && meta.DID != fromDID {
 			return IdentityMismatch
+		}
+		// The message is signed by the key this client pinned, and the registry
+		// no longer has the address: not a forgery, not current either
+		// (docs/trust-model.md; Antares 2e8881d7).
+		if meta.registrySaysNoSuchAddress() {
+			if pin, ok := c.pinStore.Pins[pinKey]; !ok || strings.TrimSpace(pin.DIDKey) == "" || pin.DIDKey == fromDID {
+				return VerificationStale
+			}
 		}
 		if fromStableID != "" {
 			if pin, ok := c.pinStore.Pins[pinKey]; ok && strings.TrimSpace(pin.DIDKey) != "" && pin.DIDKey != fromDID {
