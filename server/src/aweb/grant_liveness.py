@@ -1,22 +1,17 @@
 from __future__ import annotations
 
 from typing import Any
-from enum import StrEnum
 from datetime import datetime, timedelta, timezone
 
+from .grant_liveness_policy import (
+    GrantLivenessFailurePolicy as GrantLivenessFailurePolicy,
+)
 from .auth_context import GrantContext
 from .member_team_key import grant_issuer_current_sql, member_key_columns_sql
 from .identity_grant_status import GrantValidityState, grant_validity
 from .grant_expiry import never_expires
 from .certificate_registration import configured_registration_mode
 from starlette.requests import Request
-
-
-class GrantLivenessFailurePolicy(StrEnum):
-    """How a consumer treats a grant whose authority cannot be observed."""
-
-    OMIT_UNPROVEN = "omit_unproven"
-    REQUIRE_KNOWN = "require_known"
 
 
 DEFAULT_GRANT_LIVENESS_TTL_SECONDS = 1800
