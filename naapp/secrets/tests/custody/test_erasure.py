@@ -1,6 +1,5 @@
 """Erasure is atomic with plain SQL writers and cannot be bypassed by the service role."""
 
-import json
 import secrets
 from datetime import UTC, datetime, timedelta
 from urllib.parse import quote, urlsplit
@@ -11,7 +10,8 @@ import pytest
 from aweb_secrets.schema import service_schema_fingerprint
 from pgdbm import AsyncDatabaseManager
 
-from aweb_secrets.custody import Custody, LocalKeyFileProvider, encode_value
+from aweb_secrets.custody import Custody, LocalKeyFileProvider, SealContext, encode_value
+from aweb_secrets.custody.onepassword import project_item
 from aweb_secrets.custody.run_pins import RunPins
 from aweb_secrets.erasure import (
     ErasureFailure,
@@ -22,6 +22,9 @@ from aweb_secrets.erasure import (
     operator_receipts,
 )
 from aweb_secrets.run_pin_store import retain
+from aweb_secrets.secret import SecretRecord
+from tests.custody.conftest import initial_record
+from tests.custody.test_onepassword import field, reference, sdk_item
 
 
 @pytest.fixture
@@ -66,13 +69,17 @@ async def erasedb(test_db_factory, tmp_path):
 
 
 async def staged(custody, db):
+    record = initial_record("sec_" + uuid4().hex)
     async with db.transaction() as tx:
-        return await custody.stage_backend_credential(
+        version = await custody.sealer.ingest(
             tx,
             installation_id="erasure-installation",
             team_id="erasure:test",
+            secret_id=record.secret_id,
             value=encode_value("bearer", {"value": secrets.token_urlsafe(32)}),
+            initial=record,
         )
+    return SealContext("erasure-installation", "erasure:test", record.secret_id, version)
 
 
 async def test_uninitialised_store_has_actionable_failure(test_db_factory):
@@ -138,17 +145,34 @@ async def test_every_plain_destructive_statement_is_atomic_with_its_tombstone(
     _, db, _, custody = erasedb
     context = await staged(custody, db)
     if carrier.startswith("reference"):
-        await db.execute(
-            "INSERT INTO {{tables.onepassword_versions}}"
-            " (installation_id,team_id,secret_id,version,credential_version,version_ref,binding,item_updated_at)"
-            " VALUES($1,$2,$3,$4,1,$5,$6,clock_timestamp())",
-            context.installation_id,
-            context.team_id,
-            context.secret_id,
-            context.version,
-            "sv_" + uuid4().hex,
-            json.dumps({"synthetic": "reference"}),
+        async with db.transaction() as tx:
+            credential = await custody.stage_backend_credential(
+                tx,
+                installation_id=context.installation_id,
+                team_id=context.team_id,
+                value=encode_value("bearer", {"value": secrets.token_urlsafe(32)}),
+            )
+        record = SecretRecord.from_after(
+            {
+                **initial_record("sec_" + uuid4().hex).after,
+                "backend": "onepassword",
+            }
         )
+        observed = project_item(
+            reference(),
+            sdk_item([field("credential", secrets.token_urlsafe(32))]),
+            credential_context=credential,
+        )
+        async with db.transaction() as tx:
+            candidate = await custody.stage_onepassword_reference(
+                tx,
+                installation_id=context.installation_id,
+                team_id=context.team_id,
+                secret_id=record.secret_id,
+                observed=observed,
+                initial=record,
+            )
+        context = candidate.context
         table = "onepassword_versions"
         statement = (
             "UPDATE {{tables.onepassword_versions}} SET binding=NULL,destroyed_at=clock_timestamp()"
@@ -157,7 +181,7 @@ async def test_every_plain_destructive_statement_is_atomic_with_its_tombstone(
         )
         live = "binding IS NOT NULL"
     elif carrier == "pin":
-        value = await custody.backend_credential_preview.open(context)
+        value = await custody.opener.open(context)
         pin = await RunPins(LocalKeyFileProvider(tmp_path / "custody-key")).prepare(
             context, uuid4(), value, observation=None, grant_id="grt_synthetic0001"
         )
@@ -277,7 +301,7 @@ async def test_startup_refuses_tampered_or_unreadable_authority(erasedb, fault):
     await staged(custody, db)
     statements = {
         "identity": "UPDATE secrets_erasure.store SET identity=gen_random_uuid()",
-        "schema": "UPDATE secrets_erasure.store SET schema_digest='different-schema'",
+        "schema": "UPDATE secrets_erasure.store SET schema_digest='sha256:'||repeat('0',64)",
         "floor": "DELETE FROM secrets_erasure.allocations",
         "trigger": "ALTER TABLE {{tables.sealed_versions}} DISABLE TRIGGER secrets_record_erasure",
         "readability": f'REVOKE SELECT ON secrets_erasure.store FROM "{role}"',

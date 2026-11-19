@@ -2,7 +2,7 @@
 CREATE TABLE secrets_erasure.store (
     singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
     identity uuid NOT NULL,
-    schema_digest text NOT NULL CHECK (length(schema_digest) BETWEEN 1 AND 256),
+    schema_digest text NOT NULL CHECK (schema_digest ~ '^sha256:[0-9a-f]{64}$'),
     content_schema name NOT NULL,
     application_role name NOT NULL,
     max_backup_age_seconds bigint NOT NULL CHECK (max_backup_age_seconds > 0)
