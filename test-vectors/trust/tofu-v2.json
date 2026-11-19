@@ -343,7 +343,7 @@
       }
     },
     {
-      "name": "ephemeral-sender-clears-existing-pin",
+      "name": "ephemeral-sender-leaves-the-pin-at-a-real-address",
       "initial_status": "verified",
       "raw_address": "alice.example.com/alice",
       "trust_address": "alice.example.com/alice",
@@ -372,8 +372,17 @@
       },
       "expected_status": "verified",
       "expected_pin_store_after": {
-        "pins": {},
-        "addresses": {}
+        "pins": {
+          "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs": {
+            "address": "alice.example.com/alice",
+            "first_seen": "2026-04-01T00:00:00Z",
+            "last_seen": "2026-04-01T00:00:00Z",
+            "server": ""
+          }
+        },
+        "addresses": {
+          "alice.example.com/alice": "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs"
+        }
       }
     },
     {

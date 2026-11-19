@@ -6579,11 +6579,14 @@ func TestCheckTOFUPinEphemeralSkipsPinning(t *testing.T) {
 	if _, ok := ps.Pins[senderDID]; ok {
 		t.Fatal("ephemeral agent should not be pinned")
 	}
-	if _, ok := ps.Addresses["myco/ephemeral-bot"]; ok {
-		t.Fatal("ephemeral agent should not remain in address index")
+	// A pin at a real address is never deleted on a local answer for that
+	// address (Antares 2e8881d7; tofu-v2 ephemeral-sender-leaves-the-pin-at-a-real-address):
+	// the earlier pin stays as it was, and the ephemeral sender is not added.
+	if ps.Addresses["myco/ephemeral-bot"] != "did:key:stale" {
+		t.Fatalf("the earlier pin at the address changed: %v", ps.Addresses)
 	}
-	if _, ok := ps.Pins["did:key:stale"]; ok {
-		t.Fatal("stale ephemeral pin should be pruned")
+	if _, ok := ps.Pins["did:key:stale"]; !ok {
+		t.Fatal("the earlier pin at a real address was deleted")
 	}
 }
 
