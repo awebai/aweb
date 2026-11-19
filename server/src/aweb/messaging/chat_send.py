@@ -1982,35 +1982,17 @@ async def _send_to_remote_named_chat(
             detail="Federated chat response message_id mismatch",
         )
 
-    session_id = await ensure_session(
+    session_id, msg_row = await _store_remote_chat_create(
         db,
-        team_id=auth.team_id,
+        auth=auth,
+        runtime=runtime,
+        payload=payload,
+        author=author,
         participant_rows=participant_rows,
-        created_by=actor_alias,
         session_id=requested_session_id,
+        encrypted_metadata=encrypted_metadata,
+        message_id=pre_message_id,
     )
-    with agent_wake_scope(runtime.agent_wake_publisher):
-        msg_row = await send_in_session(
-            db,
-            id_chain=id_chain,
-            session_id=session_id,
-            sender_did=actor_did,
-            sender_agent_id=actor_agent_id,
-            sender_address=sender_address,
-            body=payload.message,
-            reply_to=uuid_mod.UUID(payload.reply_to)
-            if payload.reply_to is not None
-            else None,
-            leaving=payload.leaving,
-            hang_on=payload.hang_on,
-            signature=payload.signature,
-            signed_payload=payload.signed_payload,
-            content_mode=payload.content_mode,
-            message_version=payload.message_version,
-            encrypted_envelope=payload.encrypted_envelope,
-            encrypted_metadata=encrypted_metadata,
-            message_id=pre_message_id,
-        )
     if msg_row is None:
         raise DeliveryRefusal(
             status_code=HTTPStatus.NOT_FOUND, detail=SENDER_NOT_IN_SESSION
@@ -2040,6 +2022,58 @@ async def _send_to_remote_named_chat(
         participants=participant_rows,
         federated=True,
     )
+
+
+async def _store_remote_chat_create(
+    db,
+    *,
+    auth: MessagingAuth,
+    runtime: MessagingRuntime,
+    payload: CreateSessionRequest,
+    author: _ChatAuthor,
+    participant_rows: list[dict[str, Any]],
+    session_id: UUID,
+    encrypted_metadata: dict | None,
+    message_id: UUID,
+) -> tuple[UUID, dict | None]:
+    """Persist the accepted remote create's local session/message projection."""
+    requested_session_id = session_id
+    pre_message_id = message_id
+    id_chain = auth.id_chain
+    actor_did = author.did
+    actor_agent_id = author.agent_id
+    actor_alias = author.alias
+    sender_address = author.address
+    session_id = await ensure_session(
+        db,
+        team_id=auth.team_id,
+        participant_rows=participant_rows,
+        created_by=actor_alias,
+        session_id=requested_session_id,
+    )
+    with agent_wake_scope(runtime.agent_wake_publisher):
+        msg_row = await send_in_session(
+            db,
+            id_chain=id_chain,
+            session_id=session_id,
+            sender_did=actor_did,
+            sender_agent_id=actor_agent_id,
+            sender_address=sender_address,
+            body=payload.message,
+            reply_to=uuid_mod.UUID(payload.reply_to)
+            if payload.reply_to is not None
+            else None,
+            leaving=payload.leaving,
+            hang_on=payload.hang_on,
+            signature=payload.signature,
+            signed_payload=payload.signed_payload,
+            content_mode=payload.content_mode,
+            message_version=payload.message_version,
+            encrypted_envelope=payload.encrypted_envelope,
+            encrypted_metadata=encrypted_metadata,
+            message_id=pre_message_id,
+        )
+    return session_id, msg_row
 
 
 async def _send_to_local_named_chat(
