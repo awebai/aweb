@@ -78,9 +78,7 @@ class AdmittedTeamKeys:
         # Admission (connect, service registration) writes the row.
         return TeamKeyPin(team_did_key, None, admitted_at=datetime.now(timezone.utc))
 
-    async def move(
-        self, team_id: str, *, expected: TeamKeyPin, new: TeamKeyPin
-    ) -> bool:
+    async def move(self, team_id: str, *, expected: TeamKeyPin, new: TeamKeyPin) -> bool:
         moved = await self._db.fetch_value(
             """
             UPDATE {{tables.teams}}
@@ -175,7 +173,5 @@ async def pinned_team_key_for_request(
             team_id,
             exc_info=True,
         )
-        raise awid_dependency_http_exception(
-            exc, operation="AWID team key act read"
-        ) from exc
+        raise awid_dependency_http_exception(exc, operation="AWID team key act read") from exc
     return key
