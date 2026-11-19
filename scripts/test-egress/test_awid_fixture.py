@@ -1,6 +1,9 @@
 """Exercise the disposable services the AWID and command-stack fixtures own."""
+import os
 import subprocess
+import tempfile
 import unittest
+from pathlib import Path
 
 from disposable_services import (
     disposable_postgres_and_redis,
@@ -57,7 +60,7 @@ def container_on_host_port(port):
 
 class DisposablePostgresAndRedis(unittest.TestCase):
     def test_services_answer_on_tmpfs_and_are_removed(self):
-        with disposable_postgres_and_redis() as services:
+        with disposable_postgres_and_redis(password='fixture-test') as services:
             postgres = container_on_host_port(services['PGPORT'])
             redis = container_on_host_port(services['REDIS_URL'].rsplit(':', 1)[1].split('/')[0])
             mounts = run('docker', 'exec', postgres, 'cat', '/proc/mounts')
@@ -71,10 +74,32 @@ class DisposablePostgresAndRedis(unittest.TestCase):
     def test_postgres_on_the_container_filesystem_is_refused(self):
         owned = []
         self.addCleanup(remove_owned_containers, owned)
-        postgres, _ = start_container(owned, 'postgres:17', 5432, '-e', 'POSTGRES_PASSWORD=postgres')
+        postgres, _ = start_container(owned, image='postgres:17', port=5432, options=('-e', 'POSTGRES_PASSWORD=postgres'))
         wait_for_postgres(postgres)
         with self.assertRaisesRegex(RuntimeError, 'is not on tmpfs'):
             verify_postgres_on_tmpfs(postgres)
+
+
+class OwnedContainerRemovalFailures(unittest.TestCase):
+    """Without a daemon: a docker on PATH that cannot remove one container."""
+
+    def test_one_failed_removal_does_not_skip_the_others(self):
+        directory = Path(tempfile.mkdtemp())
+        calls = directory / 'calls'
+        docker = directory / 'docker'
+        docker.write_text('#!/bin/sh\necho "$@" >> "$DOCKER_CALLS"\n'
+                          'if [ "$4" = stuck ]; then echo "removal of stuck failed" >&2; exit 1; fi\n')
+        docker.chmod(0o755)
+        saved = dict(os.environ)
+        self.addCleanup(os.environ.update, saved)
+        os.environ['PATH'] = f"{directory}{os.pathsep}{os.environ['PATH']}"
+        os.environ['DOCKER_CALLS'] = str(calls)
+
+        with self.assertRaisesRegex(RuntimeError, 'could not remove owned containers: stuck: removal of stuck failed'):
+            remove_owned_containers(['first', 'stuck', 'last'])
+
+        self.assertEqual(calls.read_text().splitlines(),
+                         ['rm -f -v last', 'rm -f -v stuck', 'rm -f -v first'])
 
 
 if __name__ == '__main__':

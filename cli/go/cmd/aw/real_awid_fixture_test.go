@@ -69,8 +69,12 @@ func startAWIDFixture(t *testing.T, extraEnv ...string) (string, realAWIDStorage
 	if err != nil {
 		t.Fatalf("resolve parent uv cache: %v", err)
 	}
+	services, err := packageServicesEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
 	cmd := exec.Command("python3", script)
-	cmd.Env = append(append(os.Environ(), "UV_CACHE_DIR="+strings.TrimSpace(string(cacheDir))), extraEnv...)
+	cmd.Env = append(append(append(os.Environ(), "UV_CACHE_DIR="+strings.TrimSpace(string(cacheDir))), services...), extraEnv...)
 	cmd.Stderr = os.Stderr
 	input, err := cmd.StdinPipe()
 	if err != nil {

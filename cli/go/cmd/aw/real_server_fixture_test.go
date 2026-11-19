@@ -59,7 +59,11 @@ func startSharedCommandStack() error {
 	project := filepath.Join(awTestBinary.sourceDir, "../../server")
 	// No test's context: the stack outlives every test that uses it.
 	command := exec.Command("uv", "run", "--offline", "--frozen", "--project", project, "python", "-P", script)
-	command.Env = append([]string{}, awTestBinary.env...)
+	services, err := packageServicesEnv()
+	if err != nil {
+		return err
+	}
+	command.Env = append(append([]string{}, awTestBinary.env...), services...)
 	command.Stderr = os.Stderr
 	started := time.Now()
 	process, line, err := startCommandStackProcess(command, sharedCommandStackDeadlines)

@@ -253,20 +253,16 @@ async def main(services: dict[str, str]) -> None:
         await serve_commands(zone, registry.app)
 
 
-def run_with_services() -> None:
-    """Run on the suite's PG/Redis when it supplies them, otherwise on
-    disposable containers this process owns; never on a host database it was
-    not given."""
-    if os.environ.get("PGHOST"):
-        asyncio.run(main(dict(os.environ)))
-        return
-    # -P keeps this directory off the path; only this sibling is wanted.
-    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-    from disposable_services import disposable_postgres_and_redis
-
-    with disposable_postgres_and_redis() as services:
-        asyncio.run(main(services))
+def run() -> None:
+    """Run on the PG/Redis the caller supplies: the isolated runner's, or the
+    cmd/aw package's disposable pair. Never a host database it was not given."""
+    if not os.environ.get("PGHOST") or not os.environ.get("REDIS_URL"):
+        raise SystemExit(
+            "PGHOST and REDIS_URL are required: the isolated runner or the cmd/aw "
+            "package's disposable services supply them"
+        )
+    asyncio.run(main(dict(os.environ)))
 
 
 if __name__ == "__main__":
-    run_with_services()
+    run()

@@ -13,8 +13,10 @@ as published (pinned in production-awid/), instead of this repository's AWID;
 the DNS dependency is not available there. Run uv sync --frozen in that project
 beforehand.
 
-Uses the suite's PG/Redis when configured, otherwise owns disposable containers.
-No service responses are synthesized. Run uv sync --frozen in awid beforehand.
+Runs on the PG/Redis its caller supplies in PGHOST/PGPORT/PGUSER/PGPASSWORD and
+REDIS_URL (the isolated runner's, or the cmd/aw package's disposable pair), in a
+schema of its own that it drops on exit. No service responses are synthesized.
+Run uv sync --frozen in awid beforehand.
 """
 
 import json
@@ -54,20 +56,16 @@ def fixture_app():
 
 
 def main():
-    # Imported here: the AWID child loads this file through runpy, without
-    # this directory on its path, for fixture_app alone.
-    from disposable_services import disposable_postgres_and_redis
-
-    if os.environ.get("PGHOST"):
-        serve(dict(os.environ), owns_services=False)
-        return
-    with disposable_postgres_and_redis() as services:
-        serve({**os.environ, **services}, owns_services=True)
+    if not os.environ.get("PGHOST") or not os.environ.get("REDIS_URL"):
+        raise SystemExit(
+            "PGHOST and REDIS_URL are required: the isolated runner or the "
+            "cmd/aw package's disposable services supply them"
+        )
+    serve(dict(os.environ))
 
 
-def serve(env, *, owns_services):
-    """Serve AWID on env's PG/Redis until stdin closes. Storage this fixture
-    does not own is cleaned by dropping its schema."""
+def serve(env):
+    """Serve AWID on env's PG/Redis until stdin closes, then drop its schema."""
     process = None
     listener = None
     schema = "test_cli_" + uuid.uuid4().hex
@@ -176,8 +174,7 @@ def serve(env, *, owns_services):
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait()
-            if not owns_services:
-                cleanup = """import asyncio, asyncpg, os
+            cleanup = """import asyncio, asyncpg, os
 async def clean():
     conn = await asyncpg.connect(os.environ['AWID_DATABASE_URL'])
     try:
@@ -186,21 +183,21 @@ async def clean():
         await conn.close()
 asyncio.run(clean())
 """
-                subprocess.run(
-                    [
-                        "uv",
-                        "run",
-                        "--offline",
-                        "--frozen",
-                        "--project",
-                        str(ROOT / "awid"),
-                        "python",
-                        "-c",
-                        cleanup,
-                    ],
-                    env=env,
-                    check=True,
-                )
+            subprocess.run(
+                [
+                    "uv",
+                    "run",
+                    "--offline",
+                    "--frozen",
+                    "--project",
+                    str(ROOT / "awid"),
+                    "python",
+                    "-c",
+                    cleanup,
+                ],
+                env=env,
+                check=True,
+            )
 
 
 if __name__ == "__main__":
