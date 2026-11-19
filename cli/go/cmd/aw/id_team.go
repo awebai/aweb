@@ -2527,7 +2527,11 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 		if err := persistLocalSigningKeyAndCertificateAt(workingDir, home.Root, signingKey, cert); err != nil {
 			return nil, err
 		}
-	} else if err := persistGuidedHostedState(workingDir, registryURL, signingKey, cert, didKey, stableID, memberAddress, false, home.Root); err != nil {
+	} else if err := persistHostedIdentityState(hostedStatePersistence{
+		WorkingDir: workingDir, IdentityHome: home, RegistryURL: registryURL,
+		SigningKey: signingKey, Certificate: cert, DIDKey: didKey,
+		DIDAW: stableID, MemberAddress: memberAddress, Scope: localHostedIdentity,
+	}); err != nil {
 		return nil, err
 	}
 	// Accept completed: clear the pending marker so the home is no longer in
