@@ -180,14 +180,19 @@ func prepareInviteChildIdentity(home string) error {
 	return awconfig.SaveWorktreeIdentityTo(path, &awconfig.WorktreeIdentity{DID: awid.ComputeDIDKey(key.Public().(ed25519.PublicKey)), IdentityScope: awid.IdentityModeLocal, Custody: awid.CustodySelf, CreatedAt: time.Now().UTC().Format(time.RFC3339)})
 }
 
-func consumedInviteParent(token, parentHome string) {
+func teamInviteParentRecordID(token, parentHome string) string {
 	if parentHome == "" {
-		return
+		return ""
 	}
-	id := "creator-" + strings.TrimPrefix(hostedTeamInviteRecordID(token), "hosted-")
-	if err := recordConsumedTeamInvite(id); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+	return "creator-" + strings.TrimPrefix(hostedTeamInviteRecordID(token), "hosted-")
+}
+
+func consumedInviteParent(token, parentHome string) error {
+	id := teamInviteParentRecordID(token, parentHome)
+	if id == "" {
+		return nil
 	}
+	return recordConsumedTeamInvite(id)
 }
 
 // recordConsumedTeamInvite retains the irreversible issuance consequence, with

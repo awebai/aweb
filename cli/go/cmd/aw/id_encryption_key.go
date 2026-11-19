@@ -814,10 +814,6 @@ func saveEncryptionAssertion(path string, assertion *awid.EncryptionKeyAssertion
 	return awid.AtomicWriteFile(path, data)
 }
 
-func loadEncryptionAssertion(root, relPath string) (*awid.EncryptionKeyAssertion, error) {
-	return loadEncryptionAssertionAt(root, "", relPath)
-}
-
 func loadEncryptionAssertionAt(workingDir, identityHome, relPath string) (*awid.EncryptionKeyAssertion, error) {
 	path, err := resolveIdentityStoredPath(workingDir, identityHome, relPath)
 	if err != nil {

@@ -29,8 +29,13 @@ type TeamInviteIDChild struct {
 }
 
 type TeamInvite struct {
-	ForHuman *string            `json:"for_human,omitempty"`
-	IDChild  *TeamInviteIDChild `json:"id_child,omitempty"`
+	ForHuman *string             `json:"for_human,omitempty"`
+	IDChild  *TeamInviteIDChild  `json:"id_child,omitempty"`
+	Issuance *TeamInviteIssuance `json:"issuance,omitempty"`
+	// SuspendedSecret retains the existing controller-owned bearer while an
+	// attempt is unresolved. Secret is empty so released acceptors cannot mint
+	// another certificate while ignoring the additive issuance payload.
+	SuspendedSecret string `json:"suspended_secret,omitempty"`
 
 	InviteID      string `json:"invite_id" yaml:"invite_id"`
 	Domain        string `json:"domain" yaml:"domain"`
@@ -60,6 +65,9 @@ func ConsumeTeamInvite(input ConsumeTeamInviteInput) error {
 	invite, err := LoadTeamInvite(input.InviteID)
 	if err != nil {
 		return err
+	}
+	if invite.Issuance != nil || invite.SuspendedSecret != "" {
+		return errors.New("invite issuance requires exact-certificate confirmation; retain the record and resume its issuance")
 	}
 	if invite.ConsumedAt != "" {
 		return nil

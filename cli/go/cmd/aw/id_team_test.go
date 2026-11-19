@@ -841,11 +841,15 @@ func TestExecuteTeamRegisterSignsAndPostsServicePayload(t *testing.T) {
 		}
 	}))
 
-	out, err := executeTeamRegister(
+	target, err := resolveTeamRegistrationEndpoint(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := executeTeamRegisterWithTarget(
 		context.Background(),
 		teamKey,
 		"circle:juanreyero.com",
-		srv.URL,
+		target,
 		false,
 		"2026-05-25T12:00:00Z",
 	)
@@ -1298,9 +1302,9 @@ func TestBootstrapFirstLocalTeamMemberCreatesTeamAndRegistersCertificate(t *test
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	result, err := bootstrapFirstLocalTeamMember(ctx, registry, "", "acme.com", "default", "", controllerKey, memberKey, awid.ComputeStableID(memberPub), "acme.com/alice", "alice")
+	result, err := bootstrapLocalTeamMemberWithScope(ctx, registry, "", "acme.com", "default", "", controllerKey, memberKey, awid.ComputeStableID(memberPub), "acme.com/alice", "alice", awid.IdentityModeGlobal)
 	if err != nil {
-		t.Fatalf("bootstrapFirstLocalTeamMember: %v", err)
+		t.Fatalf("bootstrapLocalTeamMemberWithScope: %v", err)
 	}
 	if result.TeamID != "default:acme.com" {
 		t.Fatalf("team_id=%q", result.TeamID)

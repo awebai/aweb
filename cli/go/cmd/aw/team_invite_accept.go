@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
@@ -337,7 +338,9 @@ func completeHostedInviteResponse(ctx context.Context, responseRequest hostedInv
 			return nil, err
 		}
 	}
-	consumedInviteParent(token, opts.ParentHome)
+	if err := consumedInviteParent(token, opts.ParentHome); err != nil {
+		return nil, err
+	}
 	return &acceptedTeamInvite{
 		Output: &teamAcceptInviteOutput{
 			IDRegistration: registration,
@@ -581,6 +584,8 @@ func resolveHostedInviteRecipient(request teamInviteAcceptanceRequest) (hostedIn
 type nativeInviteIssuanceRequest struct {
 	Invite             *awconfig.TeamInvite
 	Plan               teamMemberEnrollmentPlan
+	Home               awconfig.IdentityHome
+	ParentInviteID     string
 	TeamKey            ed25519.PrivateKey
 	Registry           *awid.RegistryClient
 	RegistryURL        string
@@ -605,7 +610,20 @@ func issueNativeInviteCertificate(ctx context.Context, request nativeInviteIssua
 		return nil, err
 	}
 
-	if err := registry.RegisterCertificate(ctx, registryURL, invite.Domain, invite.TeamName, cert, teamKey); err != nil {
+	if err := awconfig.BeginTeamInviteIssuance(awconfig.BeginTeamInviteIssuanceInput{
+		InviteID:    invite.InviteID,
+		Context:     awconfig.TeamInviteIssuanceContext{IdentityHome: request.Home.Root, RegistryURL: registryURL, AwebURL: invite.AwebURL, ParentInviteID: request.ParentInviteID},
+		Certificate: *cert,
+	}); err != nil {
+		return nil, nativeInviteIssuanceRefusal(invite, fmt.Errorf("retain exact issuance before registration: %w", err))
+	}
+	if err := registerExactNativeInviteCertificate(ctx, nativeInviteRegistrationRequest{Invite: invite, Certificate: cert, TeamKey: teamKey, MemberKey: plan.IdentitySigningKey, Registry: registry, RegistryURL: registryURL}); err != nil {
+		if !nativeInviteRegistrationDefinitelyRefused(err) {
+			return nil, nativeInviteIssuanceRefusal(invite, err)
+		}
+		if clearErr := awconfig.ClearTeamInviteIssuanceAfterRefusal(awconfig.TeamInviteIssuanceOutcomeInput{InviteID: invite.InviteID, CertificateID: cert.CertificateID}); clearErr != nil {
+			return nil, nativeInviteIssuanceRefusal(invite, errors.Join(err, clearErr))
+		}
 		registerErr := fmt.Errorf("register certificate at registry: %w", err)
 		if isAliasConflict(err) {
 			// A refused registration does not consume the invite, so it still
@@ -620,10 +638,8 @@ func issueNativeInviteCertificate(ctx context.Context, request nativeInviteIssua
 			registerErr,
 		)
 	}
-	// Registry issuance consumes enrollment even if a later recipient write
-	// fails. Keep that fact before attempting to persist the recipient copy.
-	if err := recordConsumedTeamInvite(invite.InviteID); err != nil {
-		return nil, err
+	if err := awconfig.ConfirmTeamInviteIssuance(awconfig.TeamInviteIssuanceOutcomeInput{InviteID: invite.InviteID, CertificateID: cert.CertificateID, Now: time.Now()}); err != nil {
+		return nil, nativeInviteIssuanceRefusal(invite, err)
 	}
 
 	return cert, nil

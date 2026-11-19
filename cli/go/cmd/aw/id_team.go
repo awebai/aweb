@@ -1174,7 +1174,7 @@ func runTeamAcceptInviteWithConnect(cmd *cobra.Command, args []string, connectWo
 	if err != nil {
 		return err
 	}
-	if home.External() && acceptScope == awid.IdentityModeLocal && !canResumeTeamInviteIDChild(rawToken, home.Root) {
+	if home.External() && acceptScope == awid.IdentityModeLocal && !canResumeNativeInviteIssuance(rawToken, home.Root) && !canResumeTeamInviteIDChild(rawToken, home.Root) {
 		if err := ensureExternalLocalAcceptHomeAvailable(home.Root); err != nil {
 			return err
 		}
@@ -1939,11 +1939,6 @@ func acceptTeamInviteWithDetails(workingDir, token string, opts teamAcceptInvite
 		return acceptHostedTeamInviteWithDetails(workingDir, token, opts)
 	}
 
-	scope, err := validateTeamInviteAcceptance(teamInviteAcceptanceRequest{WorkingDir: workingDir, Options: opts})
-	if err != nil {
-		return nil, err
-	}
-
 	decoded, err := awconfig.DecodeInviteToken(token)
 	if err != nil {
 		return nil, err
@@ -1959,6 +1954,19 @@ func acceptTeamInviteWithDetails(workingDir, token string, opts teamAcceptInvite
 	}
 	defer closeTeamInviteLock(inviteLock)
 	invite, err = awconfig.LoadTeamInvite(decoded.InviteID)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := commandAPIContext(nil)
+	defer cancel()
+	issuance, err := awconfig.InspectTeamInviteIssuance(invite)
+	if err != nil {
+		return nil, nativeInviteIssuanceRefusal(invite, err)
+	}
+	if issuance != nil {
+		return resumeNativeInviteIssuance(ctx, nativeInviteResumeRequest{WorkingDir: workingDir, Options: opts, Invite: invite, Issuance: issuance})
+	}
+	scope, err := validateTeamInviteAcceptance(teamInviteAcceptanceRequest{WorkingDir: workingDir, Options: opts})
 	if err != nil {
 		return nil, err
 	}
@@ -1982,9 +1990,6 @@ func acceptTeamInviteWithDetails(workingDir, token string, opts teamAcceptInvite
 	if registryURL == "" {
 		registryURL = strings.TrimSpace(registry.DefaultRegistryURL)
 	}
-	ctx, cancel := commandAPIContext(nil)
-	defer cancel()
-
 	home, err := identityHomeForTarget(workingDir, opts.IdentityHome)
 	if err != nil {
 		return nil, err
@@ -2024,7 +2029,7 @@ func acceptTeamInviteWithDetails(workingDir, token string, opts teamAcceptInvite
 		return nil, err
 	}
 
-	cert, err := issueNativeInviteCertificate(ctx, nativeInviteIssuanceRequest{Invite: invite, Plan: plan, TeamKey: teamKey, Registry: registry, RegistryURL: registryURL, DefaultClaimResult: appliedDefaultClaim})
+	cert, err := issueNativeInviteCertificate(ctx, nativeInviteIssuanceRequest{Invite: invite, Plan: plan, Home: home, ParentInviteID: teamInviteParentRecordID(token, opts.ParentHome), TeamKey: teamKey, Registry: registry, RegistryURL: registryURL, DefaultClaimResult: appliedDefaultClaim})
 	if err != nil {
 		return nil, err
 	}
@@ -2039,7 +2044,9 @@ func acceptTeamInviteWithDetails(workingDir, token string, opts teamAcceptInvite
 			return nil, err
 		}
 	}
-	consumedInviteParent(token, opts.ParentHome)
+	if err := consumedInviteParent(token, opts.ParentHome); err != nil {
+		return nil, err
+	}
 	return &acceptedTeamInvite{
 		Output: &teamAcceptInviteOutput{
 			Status:   "accepted",
@@ -3302,21 +3309,6 @@ func runTeamCleanupCloud(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func executeTeamRegister(
-	ctx context.Context,
-	teamKey ed25519.PrivateKey,
-	awidTeamID string,
-	serviceURL string,
-	dryRun bool,
-	timestamp string,
-) (teamRegisterOutput, error) {
-	target, err := resolveTeamRegistrationEndpoint(serviceURL)
-	if err != nil {
-		return teamRegisterOutput{}, err
-	}
-	return executeTeamRegisterWithTarget(ctx, teamKey, awidTeamID, target, dryRun, timestamp)
-}
-
 type teamRegistrationEndpoint struct {
 	ServiceURL  string
 	EndpointURL string
@@ -4099,29 +4091,6 @@ func ensureLocalTeamRegistered(
 		TeamKey:     teamPriv,
 		TeamKeyPath: teamKeyPath,
 	}, nil
-}
-
-func bootstrapFirstLocalTeamMember(
-	ctx context.Context,
-	registry *awid.RegistryClient,
-	registryURL, domain, teamName, displayName string,
-	controllerKey, memberKey ed25519.PrivateKey,
-	memberDIDAW, memberAddress, alias string,
-) (*localTeamBootstrapResult, error) {
-	return bootstrapLocalTeamMemberWithScope(
-		ctx,
-		registry,
-		registryURL,
-		domain,
-		teamName,
-		displayName,
-		controllerKey,
-		memberKey,
-		memberDIDAW,
-		memberAddress,
-		alias,
-		awid.IdentityModeGlobal,
-	)
 }
 
 func bootstrapLocalTeamMemberWithScope(

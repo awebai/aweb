@@ -74,6 +74,7 @@ the service, rather than becoming a universal CLI vocabulary.
 | `team_name_taken` | The registry pins this team to another controller; restore that key or choose another team name. |
 | `grant_not_found` | The selected team has no such grant; run grant list in that team and identity home. |
 | `certificate_persistence_incomplete` | Registry issuance succeeded but its recipient copy could not be saved; retain the key and fetch the exact certificate named in the recovery command. |
+| `invite_issuance_pending` | Issuance is attempted or unknown; keep the exact recipient and record, check online, and resume the retained certificate. Offline cancellation leaves its child untouched. |
 | `team_server_record_missing` | No signed service record is published for this team; its controller must register the service. |
 | `invalid_alias`, `invalid_team_id`, `invalid_team_server_url` | Correct the input using the validation command's remedy. |
 
@@ -141,6 +142,38 @@ retains a secret-free record and its original lifetime metadata as soon as nativ
 registry issuance succeeds, before later recipient writes. A failed recipient
 write therefore leaves a used invite and an active certificate, with a recovery
 command for that exact certificate.
+
+Before submitting a native certificate, acceptance durably saves its exact signed
+bytes, recipient identity home and selected registry inside the existing invite
+record. Its shared recovery header reports `attempted`; it is neither unused nor
+consumed. `ConsumedAt` is set only after confirmed exact issuance. A failed or
+unknown confirmation write keeps the attempt. Offline cancellation refuses an
+attempt with `status: attempted`, `code: invite_issuance_pending`, and a retained
+linked-child disposition. Unknown progress is also refused. A definite refusal
+of the original registration restores the unused invite and its original token;
+an uncertain write or refusal of a later replay does not.
+
+`aw id team check-invite --invite-id ID --json` inspects the existing record and,
+when it retains a certificate, reads that certificate's status at its recorded
+registry. It returns `state`, `code`, `certificate_id`, `identity_home`,
+`registry_url` and `next_step`, without a token or private key. A failed check
+exits nonzero. An absent certificate after an uncertain submission does not
+clear the attempt or authorize cancellation: the earlier write may still finish.
+
+`aw --identity-home HOME id team resume-invite --invite-id ID --json` requires
+the original recipient key and home and resumes that same certificate, member
+and registry. It never creates another certificate or recipient. An
+already-registered reply is successful only when the fetched certificate is
+identical and its exact team status is active. Confirmed effects complete local
+installation without resubmitting. A stored registry URL records routing, not
+private-network admission; the same explicit administrative pin is still needed.
+
+The controller's existing bearer is suspended outside the public issuance
+payload while attempted, leaving the released `secret` field empty. Released
+acceptors therefore refuse to mint another certificate while ignoring the new
+metadata. Confirmation removes both bearer copies. The payload shares the
+`RecoveryProgress` version/state header with identity recovery, but retains public
+membership proof rather than recipient key custody. No extra journal is created.
 
 Cancellation does not revoke an issued certificate. `next_step` names
 `aw id team remove-member` for that separate controller-authorized operation.

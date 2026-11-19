@@ -15,13 +15,15 @@ type inviteCancellationState string
 type inviteChildDisposition string
 
 const (
-	inviteCancelled    inviteCancellationState = "cancelled"
-	inviteAbsent       inviteCancellationState = "absent"
-	inviteAlreadyUsed  inviteCancellationState = "already_used"
-	inviteChildNone    inviteChildDisposition  = "none"
-	inviteChildVoided  inviteChildDisposition  = "voided"
-	inviteChildIssued  inviteChildDisposition  = "already_issued"
-	inviteChildMissing inviteChildDisposition  = "absent"
+	inviteCancelled     inviteCancellationState = "cancelled"
+	inviteAbsent        inviteCancellationState = "absent"
+	inviteAlreadyUsed   inviteCancellationState = "already_used"
+	inviteAttempted     inviteCancellationState = "attempted"
+	inviteChildNone     inviteChildDisposition  = "none"
+	inviteChildVoided   inviteChildDisposition  = "voided"
+	inviteChildIssued   inviteChildDisposition  = "already_issued"
+	inviteChildMissing  inviteChildDisposition  = "absent"
+	inviteChildRetained inviteChildDisposition  = "retained"
 )
 
 type inviteCancellationOutput struct {
@@ -64,6 +66,20 @@ func runTeamRevokeInvite(cmd *cobra.Command, args []string) (resultErr error) {
 		return nil
 	}
 	out.NextStep = formatShellCommand([]string{"aw", "id", "team", "remove-member", "--team", invite.TeamName, "--namespace", invite.Domain, "--cert-id", "<certificate-id>"})
+	issuance, inspectErr := awconfig.InspectTeamInviteIssuance(invite)
+	if inspectErr != nil || (issuance != nil && issuance.State == awconfig.RecoveryAttempted) {
+		out.Status, out.Code = inviteAttempted, "invite_issuance_pending"
+		out.Message = "This invite has an attempted or unknown issuance. Cancellation cannot determine whether its certificate was issued."
+		out.NextStep = formatShellCommand([]string{"aw", "id", "team", "check-invite", "--invite-id", id, "--json"})
+		if invite.IDChild != nil {
+			out.LinkedChild = inviteChildRetained
+		}
+		printOutput(out, formatJSONOutput)
+		if inspectErr == nil {
+			inspectErr = awconfig.ErrInviteIssuanceUnknown
+		}
+		return nativeInviteIssuanceRefusal(invite, inspectErr)
+	}
 	if invite.ConsumedAt != "" {
 		out.Status, out.Code, out.Message = inviteAlreadyUsed, "invite_already_used", "This invite was already used. Cancelling an unused invite does not revoke an issued certificate."
 		if invite.IDChild != nil {
@@ -74,6 +90,9 @@ func runTeamRevokeInvite(cmd *cobra.Command, args []string) (resultErr error) {
 	}
 	if invite.Domain == "" || invite.TeamName == "" || strings.HasPrefix(id, "hosted-") || strings.HasPrefix(id, "creator-") {
 		return withErrorCode("invite_not_local_controller", fmt.Errorf("this record is not an unused local controller invite; cancel the hosted invitation through its issuing service"))
+	}
+	if invite.Secret == "" {
+		return nativeInviteIssuanceRefusal(invite, awconfig.ErrInviteIssuanceUnknown)
 	}
 	if _, err := awconfig.LoadTeamKey(invite.Domain, invite.TeamName); err != nil {
 		return teamKeyLoadError(awid.BuildTeamID(invite.Domain, invite.TeamName), invite.Domain, err)

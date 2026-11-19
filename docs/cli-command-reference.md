@@ -1302,6 +1302,7 @@ holders, service projection, or diagnostics.
 Subcommands:
 - `accept-invite` Accept a team invite and receive a membership certificate
 - `add-member` Protocol/admin: add a member by signing a team certificate
+- `check-invite` Inspect a saved invite and check its exact attempted certificate online
 - `cleanup-cloud` Protocol/admin: delete aweb Cloud's BYOT projection after registry team deletion
 - `create` Create a hosted sibling team or a customer-controlled AWID team
 - `delete` Protocol/admin: delete an AWID team using the namespace controller key
@@ -1316,6 +1317,7 @@ Subcommands:
 - `reissue-cert` Protocol/admin: mint and register a fresh certificate for the same member key
 - `remove-member` Protocol/admin: remove a member by revoking a team certificate
 - `request` Protocol/admin bridge: print the add-member command the team owner should run
+- `resume-invite` Resume the exact saved certificate into its original recipient home
 - `revoke-invite` Cancel an unused local controller invite; issued membership certificates remain valid
 - `rotate-key` Rotate the team controller key, re-signing the team's AWID records with it
 - `set-server` Publish the team's coordination server at AWID, signed by the team controller key
@@ -1388,6 +1390,16 @@ Flags:
 - `--name string Member name to use with --did`
 - `--namespace string Namespace domain`
 - `--team string Team name`
+
+## `id team check-invite`
+
+### `id team check-invite`
+
+Inspect a saved invite and check its exact attempted certificate online
+
+Flags:
+- `-h, --help help for check-invite`
+- `--invite-id string Saved local invite_id to inspect`
 
 ## `id team cleanup-cloud`
 
@@ -1695,6 +1707,16 @@ Flags:
 - `-h, --help help for request`
 - `--name string Suggested member name for the new team membership`
 - `--team string Canonical team ID (<name>:<domain>)`
+
+## `id team resume-invite`
+
+### `id team resume-invite`
+
+Resume the exact saved certificate into its original recipient home
+
+Flags:
+- `-h, --help help for resume-invite`
+- `--invite-id string Saved invite_id whose exact issuance is resumed`
 
 ## `id team revoke-invite`
 
