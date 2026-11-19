@@ -40,6 +40,8 @@ from ..service_errors import (
 )
 from ..team_auth_deps import TeamIdentity
 from ..identity_binding import verified_principal_did_sql
+from ..workspace_activity import workspace_activity_by_id
+from ..grant_liveness_policy import GrantLivenessFailurePolicy
 
 logger = logging.getLogger(__name__)
 
@@ -1160,7 +1162,9 @@ async def list_tasks_paginated(
     ]
 
 
-async def list_active_work(db, *, team_id: str) -> list[dict[str, Any]]:
+async def list_active_work(
+    db, *, team_id: str, redis, registry_client, request=None
+) -> list[dict[str, Any]]:
     """Read active claims and associated tasks within the explicit team."""
     slug = _get_team_slug(team_id)
     aweb_db = db.get_manager("aweb")
@@ -1229,7 +1233,7 @@ async def list_active_work(db, *, team_id: str) -> list[dict[str, Any]]:
             workspace_placeholders.append(f"${len(workspace_params)}")
         workspace_rows = await aweb_db.fetch_all(
             f"""
-            SELECT w.workspace_id, w.alias, w.last_seen_at, r.canonical_origin
+            SELECT w.workspace_id, w.alias, r.canonical_origin
             FROM {{{{tables.workspaces}}}} w
             LEFT JOIN {{{{tables.repos}}}} r ON w.repo_id = r.id AND r.deleted_at IS NULL
             WHERE w.team_id = $1
@@ -1238,16 +1242,27 @@ async def list_active_work(db, *, team_id: str) -> list[dict[str, Any]]:
             """,
             *workspace_params,
         )
-        workspace_meta_by_id = {
-            str(row["workspace_id"]): {
+        activity = await workspace_activity_by_id(
+            aweb_db,
+            redis,
+            workspace_ids=[str(row["workspace_id"]) for row in workspace_rows],
+            registry_client=registry_client,
+            request=request,
+            failure_policy=GrantLivenessFailurePolicy.OMIT_UNPROVEN,
+        )
+        for row in workspace_rows:
+            workspace_id = str(row["workspace_id"])
+            observed = activity.get(workspace_id)
+            workspace_meta_by_id[workspace_id] = {
                 "alias": row["alias"],
-                "last_seen_at": row["last_seen_at"].isoformat()
-                if row["last_seen_at"]
+                "last_seen_at": observed.last_seen_at.isoformat()
+                if observed and observed.last_seen_at
                 else None,
                 "canonical_origin": row["canonical_origin"],
+                "branch": (observed.presence or {}).get("current_branch")
+                if observed
+                else None,
             }
-            for row in workspace_rows
-        }
 
     items: list[dict[str, Any]] = []
     for row in task_rows:

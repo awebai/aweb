@@ -483,7 +483,12 @@ async def test_list_active_work_allows_null_updated_at(aweb_cloud_db):
         datetime(2026, 4, 11, 12, 0, tzinfo=timezone.utc),
     )
 
-    tasks = await list_active_work(db, team_id=TEAM_ID)
+    from awid.registry import RegistryClient
+    registry = RegistryClient(registry_url="https://registry.example.test")
+    try:
+        tasks = await list_active_work(db, team_id=TEAM_ID, redis=None, registry_client=registry)
+    finally:
+        await registry.aclose()
 
     assert len(tasks) == 1
     assert tasks[0]["task_id"] == str(task_id)

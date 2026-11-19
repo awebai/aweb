@@ -27,7 +27,11 @@ def register_tools(mcp: FastMCP, dependencies: ToolDependencies) -> None:
     )
     async def work_active() -> str:
         """List active in-progress work across the team."""
-        return await _work_active_impl(dependencies.db_infra)
+        return await _work_active_impl(
+            dependencies.db_infra,
+            dependencies.redis,
+            registry_client=dependencies.registry_client,
+        )
 
     @mcp.tool(
         name="work_blocked", description="List blocked tasks in the current team."
