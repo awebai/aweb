@@ -3,7 +3,8 @@ not supply services to.
 
 Each container takes a daemon-assigned loopback port and is removed, with its
 anonymous volumes, on exit. PostgreSQL's data directory is on tmpfs, verified
-rather than assumed.
+rather than assumed. Each is labelled with its launcher's pid, so a launcher
+killed before its cleanup leaves containers the next launcher removes.
 
 Run as a script with the PostgreSQL password the caller chose in PGPASSWORD,
 it prints one JSON line of PGHOST/PGPORT/REDIS_URL settings once both answer,
@@ -20,6 +21,7 @@ from collections.abc import Generator
 from contextlib import contextmanager
 
 POSTGRES_DATA = "/var/lib/postgresql/data"
+OWNER_LABEL = "aw-test-services.owner-pid"
 READY_ATTEMPTS = 120
 READY_INTERVAL = 0.25
 
@@ -50,16 +52,53 @@ def remove_owned_containers(owned: list[str]) -> None:
         raise RuntimeError("could not remove owned containers: " + "; ".join(failures))
 
 
+def process_exists(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def reap_orphaned_containers() -> None:
+    """Remove containers a launcher labelled whose launcher no longer exists.
+
+    Containers without the label, and labels that do not name a pid, are left
+    alone: they are not this launcher's to judge.
+    """
+    listing = run(
+        "docker",
+        "ps",
+        "-a",
+        "--filter",
+        "label=" + OWNER_LABEL,
+        "--format",
+        '{{.ID}} {{.Label "' + OWNER_LABEL + '"}}',
+    )
+    orphans = []
+    for line in listing.splitlines():
+        container, _, owner = line.partition(" ")
+        if owner.isdigit() and not process_exists(int(owner)):
+            orphans.append(container)
+    if orphans:
+        remove_owned_containers(orphans)
+
+
 def start_container(
     owned: list[str], *, image: str, port: int, options: tuple[str, ...] = ()
 ) -> tuple[str, str]:
-    """Start image publishing port on a daemon-assigned loopback port; record
-    the container in owned and return it with its host port."""
+    """Start image publishing port on a daemon-assigned loopback port, labelled
+    with this launcher's pid; record the container in owned and return it with
+    its host port."""
     container = run(
         "docker",
         "run",
         "-d",
         "--rm",
+        "--label",
+        f"{OWNER_LABEL}={os.getpid()}",
         "--cpus",
         "1",
         "--memory",
@@ -108,6 +147,7 @@ def verify_postgres_on_tmpfs(container: str) -> None:
 def disposable_postgres_and_redis(*, password: str) -> Generator[dict[str, str]]:
     """Yield PGHOST/PGPORT/REDIS_URL for containers removed on exit; the
     postgres user's password is the caller's."""
+    reap_orphaned_containers()
     owned: list[str] = []
     try:
         postgres, postgres_port = start_container(

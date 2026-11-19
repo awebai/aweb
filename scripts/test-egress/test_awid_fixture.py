@@ -6,7 +6,9 @@ import unittest
 from pathlib import Path
 
 from disposable_services import (
+    OWNER_LABEL,
     disposable_postgres_and_redis,
+    reap_orphaned_containers,
     remove_owned_containers,
     run,
     start_container,
@@ -100,6 +102,35 @@ class OwnedContainerRemovalFailures(unittest.TestCase):
 
         self.assertEqual(calls.read_text().splitlines(),
                          ['rm -f -v last', 'rm -f -v stuck', 'rm -f -v first'])
+
+
+class OrphanedContainerReaping(unittest.TestCase):
+    """Without a daemon: a docker on PATH listing labelled containers."""
+
+    def test_only_containers_whose_launcher_is_gone_are_removed(self):
+        finished = subprocess.Popen(['true'])
+        finished.wait()
+        directory = Path(tempfile.mkdtemp())
+        calls = directory / 'calls'
+        docker = directory / 'docker'
+        listing = '\n'.join([
+            f'orphan {finished.pid}',
+            f'live {os.getpid()}',
+            'unreadable not-a-pid',
+        ])
+        docker.write_text('#!/bin/sh\necho "$@" >> "$DOCKER_CALLS"\n'
+                          f'if [ "$1" = ps ]; then printf "%s\\n" "{listing}"; fi\n')
+        docker.chmod(0o755)
+        saved = dict(os.environ)
+        self.addCleanup(os.environ.update, saved)
+        os.environ['PATH'] = f"{directory}{os.pathsep}{os.environ['PATH']}"
+        os.environ['DOCKER_CALLS'] = str(calls)
+
+        reap_orphaned_containers()
+
+        recorded = calls.read_text().splitlines()
+        self.assertIn(f'ps -a --filter label={OWNER_LABEL} --format {{{{.ID}}}} {{{{.Label "{OWNER_LABEL}"}}}}', recorded)
+        self.assertEqual([call for call in recorded if call.startswith('rm ')], ['rm -f -v orphan'])
 
 
 if __name__ == '__main__':
