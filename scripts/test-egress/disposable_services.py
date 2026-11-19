@@ -49,7 +49,12 @@ def remove_owned_containers(owned: list[str]) -> None:
         if removal.returncode != 0:
             failures.append(f"{container}: {removal.stderr.strip()}")
     if failures:
-        raise RuntimeError("could not remove owned containers: " + "; ".join(failures))
+        raise RuntimeError(
+            "could not remove owned containers: "
+            + "; ".join(failures)
+            + ". Inspect the listed owned containers and finish their cleanup "
+            "before another run."
+        )
 
 
 def process_exists(pid: int) -> bool:
@@ -112,11 +117,16 @@ def start_container(
     return container, run("docker", "port", container, str(port)).rsplit(":", 1)[1]
 
 
-def wait_for_postgres(container: str) -> None:
+def wait_for_postgres(
+    container: str,
+    *,
+    attempts: int = READY_ATTEMPTS,
+    interval: float = READY_INTERVAL,
+) -> None:
     # Over TCP: the image's initialization server listens on its socket only,
     # so only the final server answers here.
     probe = ["docker", "exec", container, "pg_isready", "-h", "127.0.0.1"]
-    for _ in range(READY_ATTEMPTS):
+    for _ in range(attempts):
         ready = subprocess.run(
             [*probe, "-U", "postgres"],
             stdout=subprocess.DEVNULL,
@@ -124,10 +134,11 @@ def wait_for_postgres(container: str) -> None:
         )
         if ready.returncode == 0:
             return
-        time.sleep(READY_INTERVAL)
+        time.sleep(interval)
     raise RuntimeError(
-        f"PostgreSQL in {container} was not ready after "
-        f"{READY_ATTEMPTS * READY_INTERVAL:.0f}s"
+        f"PostgreSQL in {container} was not ready after {attempts * interval:g}s. "
+        f"Inspect its startup with docker logs {container}, fix what stops it, "
+        "and rerun the fixture."
     )
 
 
@@ -139,7 +150,8 @@ def verify_postgres_on_tmpfs(container: str) -> None:
     if data_directory != POSTGRES_DATA or POSTGRES_DATA not in tmpfs:
         raise RuntimeError(
             f"PostgreSQL data directory {data_directory!r} is not on tmpfs "
-            f"(tmpfs mounts: {sorted(tmpfs)})"
+            f"(tmpfs mounts: {sorted(tmpfs)}). Start the owned PostgreSQL "
+            f"container with --tmpfs {POSTGRES_DATA} and rerun the fixture."
         )
 
 
