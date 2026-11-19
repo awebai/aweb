@@ -1,6 +1,9 @@
 """A retained read-attribution key alone does not select a stable send recipient."""
 
+import json
 import pytest
+from test_mcp_mail_conversation_parity import mail_server as mail_server
+from test_messages_http import _signed_identity_headers
 from aweb.messaging.mail_routing import explicit_mail_target_matches_participant
 
 
@@ -32,3 +35,37 @@ async def test_send_selector_needs_the_recorded_identity_not_only_its_retained_k
         )
         is matches
     )
+
+
+@pytest.mark.asyncio
+async def test_continued_mail_retained_key_alone_does_not_replace_stable_binding(mail_server):
+    env = mail_server
+    first = await env.human_mail()
+    conversation_id = first["conversation_id"]
+    payload = {
+        "conversation_id": conversation_id,
+        "to_did": env.human_did,
+        "subject": "retained key selector",
+        "body": "new continuation",
+    }
+
+    async def post(body):
+        raw = json.dumps(body).encode()
+        return await env.client.post(
+            "/v1/messages",
+            content=raw,
+            headers={
+                **_signed_identity_headers(env.pilot_key, env.pilot_did, env.pilot_stable, raw),
+                "Content-Type": "application/json",
+            },
+        )
+
+    refused = await post(payload)
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["detail"] == (
+        "conversation_id recipient does not match the requested recipient. Use the stored recipient or start a new conversation."
+    )
+    assert await env.db.fetch_value("SELECT count(*) FROM {{tables.messages}}") == 1
+    accepted = await post({**payload, "to_stable_id": env.human_stable})
+    assert accepted.status_code == 200, accepted.text
+    assert await env.db.fetch_value("SELECT count(*) FROM {{tables.messages}}") == 2
