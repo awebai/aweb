@@ -2309,7 +2309,7 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 		}
 		_, refusal := verifyInviteMembership(ctx, prior.MembershipChain, awid.IDChainSubject{ID: subjectID, DIDKey: prior.DIDKey}, prior.ForHuman, opts.Registry, opts.TXTResolver)
 		if awid.IDCertificateErrorCode(refusal) == "human_mismatch" {
-			if err := discardHostedInviteAttempt(recoveryPath, hostedAcceptPendingMarkerPath(workingDir, home.Root)); err != nil {
+			if err := discardHostedInviteAttempt(recoveryPath); err != nil {
 				return nil, errors.Join(refusal, err)
 			}
 			prior = nil
@@ -2334,7 +2334,7 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 		// be definitively refused locally, but a server answer is ambiguous.
 		localMismatch := awid.IDCertificateErrorCode(resultErr) == "human_mismatch"
 		if creation.ResponseJSON == "" && !submittedBefore && (knownUnsubmitted || localMismatch) {
-			resultErr = releaseRefusedHostedInvite(recoveryPath, hostedAcceptPendingMarkerPath(workingDir, home.Root), resultErr)
+			resultErr = releaseRefusedHostedInvite(recoveryPath, resultErr)
 		}
 		// Unknown 4xx codes remain resumable, including the first answer.
 		// Give every retained refusal the same reconciliation exit.
@@ -2706,9 +2706,9 @@ func identityHomeForTarget(workingDir, identityHome string) (awconfig.IdentityHo
 	return identityHomeForDir(workingDir)
 }
 
-// hostedAcceptPendingMarkerPath is the marker written next to the signing key
-// while a hosted accept is pending, so a retry reuses the key while a stray
-// leftover key (no marker) is refused.
+// hostedAcceptPendingMarkerPath records that acceptance minted this key and it
+// has not joined yet. It survives a definitive operation release and is removed
+// on successful acceptance, so a correct invite reuses the same fresh key.
 func hostedAcceptPendingMarkerPath(workingDir string, identityHomes ...string) string {
 	root := filepath.Join(filepath.Clean(workingDir), ".aw")
 	if len(identityHomes) > 0 && strings.TrimSpace(identityHomes[0]) != "" {

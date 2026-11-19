@@ -184,7 +184,7 @@ func runRecoverableJoinFrom(cmd *cobra.Command, wd, source, sourceHome, team str
 			if uncertain {
 				return uncertainHostedInviteError(home.Root, team, errors.New("invite expired"))
 			}
-			if err := discardHostedInviteAttempt(recoveryPath, hostedAcceptPendingMarkerPath(wd, home.Root)); err != nil {
+			if err := discardHostedInviteAttempt(recoveryPath); err != nil {
 				return err
 			}
 			if err := releaseInitInviteRecovery(path, wd, home.Root); err != nil {

@@ -386,23 +386,23 @@ func pendingHostedInviteRequester(opts idParentOptions) (*requester, error) {
 
 // A condition refusal grants no membership. It releases the operation selection,
 // never the identity, signed ancestry, or a retained successful Cloud answer.
-func releaseRefusedHostedInvite(recoveryPath, markerPath string, refusal error) error {
+func releaseRefusedHostedInvite(recoveryPath string, refusal error) error {
 	if !hostedInviteDefinitiveRefusal(refusal) {
 		return refusal
 	}
-	if err := discardHostedInviteAttempt(recoveryPath, markerPath); err != nil {
+	if err := discardHostedInviteAttempt(recoveryPath); err != nil {
 		return errors.Join(refusal, err)
 	}
 	return refusal
 }
 
-func discardHostedInviteAttempt(recoveryPath, markerPath string) error {
+func discardHostedInviteAttempt(recoveryPath string) error {
 	if err := os.Remove(filepath.Join(filepath.Dir(recoveryPath), inviteParentRecoveryFile)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return errors.New("release refused creator exchange")
 	}
-	if err := removeHostedAcceptPendingMarker(markerPath); err != nil {
-		return fmt.Errorf("release refused invite marker: %w", err)
-	}
+	// The pending marker is the key's provenance: acceptance minted it and
+	// it has never joined. A replacement invite may reuse that same key;
+	// only successful acceptance removes this marker.
 	if err := os.Remove(recoveryPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("release refused invite recovery: %w", err)
 	}
