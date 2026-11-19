@@ -146,7 +146,6 @@ async def test_a_restored_logs_serves_no_content_purged_after_its_backup(world, 
         world.db,
         PurgeLedger(world.ledger),
         now=world.now + timedelta(days=RETENTION_DAYS + 1),
-        logs_origin=ORIGIN,
     )
     retention_act = f"logs.retention.set:{retention_event}"
 

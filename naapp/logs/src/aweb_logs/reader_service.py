@@ -271,7 +271,6 @@ async def reader_service(
             fence=fence,
             verifier=verifier,
             recorder=recorder,
-            logs_origin=runtime.settings.public_origin,
         ),
         owner_acts=owner_acts,
     )

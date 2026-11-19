@@ -345,13 +345,21 @@ _EVENT_COLUMNS = (
     " receipt_bytes, receipt_signature"
 )
 
+# Whether the chain event ``e`` is one of logs' own governance entries: its
+# hook, produced by the logs origin of the epoch it is in. Each epoch keeps its
+# own origin, so an entry stays logs' own after logs moves to another origin.
+OWN_GOVERNANCE = (
+    "(e.hook = '" + GOVERNANCE_HOOK + "' AND e.producer_origin ="
+    " (SELECT p.logs_origin FROM {{tables.chain_epochs}} p"
+    " WHERE p.team_id = e.team_id AND p.chain_epoch = e.chain_epoch))"
+)
+
 # logs' own governance entries in a team's epochs before $2, read through
 # idx_chain_events_governance: their count, not the team's history, is the cost.
 GOVERNANCE_BEFORE = (
     "SELECT " + _EVENT_COLUMNS + " FROM {{tables.chain_events}} e"
-    " JOIN {{tables.chain_epochs}} p USING (team_id, chain_epoch)"
-    " WHERE e.team_id = $1 AND e.chain_epoch < $2 AND e.hook = '" + GOVERNANCE_HOOK + "'"
-    " AND e.producer_origin = p.logs_origin ORDER BY e.chain_epoch, e.team_seq"
+    " WHERE e.team_id = $1 AND e.chain_epoch < $2 AND " + OWN_GOVERNANCE +
+    " ORDER BY e.chain_epoch, e.team_seq"
 )
 
 
