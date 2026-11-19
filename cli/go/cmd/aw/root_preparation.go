@@ -1,100 +1,216 @@
 package main
 
 import (
+	"fmt"
+	"os"
+	"strings"
+
 	"github.com/awebai/aw/awconfig"
 	"github.com/spf13/cobra"
-	"os"
 )
 
-func prepareRootCommand(cmd *cobra.Command, args []string) error {
-	if _, independent := offlineCommands[cmd]; independent {
-		return nil // Export verification never selects or unlocks an acting human.
+type rootPreparationMode string
+
+const (
+	rootPreparationOffline   rootPreparationMode = "offline"
+	rootPreparationNeutral   rootPreparationMode = "identity-neutral"
+	rootPreparationLocalOnly rootPreparationMode = "local-only"
+	rootPreparationNoRenewal rootPreparationMode = "no-renewal"
+	rootPreparationFull      rootPreparationMode = "full"
+
+	rootPreparationAnnotation = "aw.root-preparation"
+	rootLocalFlagsAnnotation  = "aw.root-local-flags"
+	rootNeutralFlagAnnotation = "aw.root-neutral-flag"
+)
+
+func init() {
+	// These capabilities apply to a command's descendants unless a leaf
+	// declares another mode. They do not alter its own admission or authority.
+	for command, mode := range map[*cobra.Command]rootPreparationMode{
+		activityCmd:          rootPreparationLocalOnly,
+		statusCmd:            rootPreparationLocalOnly,
+		statusHostCmd:        rootPreparationLocalOnly,
+		teamInstallCertCmd:   rootPreparationLocalOnly,
+		teamInviteInspectCmd: rootPreparationNoRenewal,
+	} {
+		if command.Annotations == nil {
+			command.Annotations = make(map[string]string)
+		}
+		command.Annotations[rootPreparationAnnotation] = string(mode)
 	}
-	idSelection, err := prepareIDHumanSelection(cmd)
-	if err != nil {
-		return err
+	idCreateCmd.Annotations[rootLocalFlagsAnnotation] = "org owner-identity-home no-address local"
+	initCmd.Annotations[rootNeutralFlagAnnotation] = "remove-notify-hook"
+}
+
+// rootPreparationForCommand assigns identity and maintenance behavior before
+// execution. Offline artifacts never select an actor; neutral operations keep
+// their explicit human selection but do not load a principal (CLI identity
+// selection §State classification). Local producers retain home admission.
+func rootPreparationForCommand(command *cobra.Command) (rootPreparationMode, error) {
+	if _, independent := offlineCommands[command]; independent {
+		return rootPreparationOffline, nil
 	}
-	if idSelection && humanFlag != "" {
-		return nil
+	if isIdentityHomeNeutralCommand(command) {
+		return rootPreparationNeutral, nil
 	}
-	if cmd.Annotations[humanCommandAnnotation] != "" && !humanSelectionRequested() {
-		return usageError("select your human key with --human ID --human-domain DOMAIN; prepare it with aw id human init")
-	}
-	if humanSelectionRequested() && !idSelection {
-		return prepareHumanParticipation(cmd)
-	}
-	// Offline key preparation validates its explicit destination itself.
-	// Do not renew keys or contact update services before its two-state
-	// check, including on a refusal.
-	if flag := cmd.Annotations[identityKeyPreparationAnnotation]; flag != "" && cmd.Flags().Changed(flag) {
-		enabled, _ := cmd.Flags().GetBool(flag)
+	if flag := command.Annotations[rootNeutralFlagAnnotation]; flag != "" {
+		enabled, err := command.Flags().GetBool(flag)
+		if err != nil {
+			return "", err
+		}
 		if enabled {
-			return nil
+			return rootPreparationNeutral, nil
 		}
 	}
-	// Explicit Claude settings cleanup uses cwd only; no credential selection,
-	// assertion renewal or update checks are needed for this local action.
-	if isIdentityHomeNeutralCommand(cmd) || (cmd == initCmd && initRemoveNotifyHook) {
-		return nil
+	if flag := command.Annotations[identityKeyPreparationAnnotation]; flag != "" && command.Flags().Changed(flag) {
+		enabled, err := command.Flags().GetBool(flag)
+		if err != nil {
+			return "", err
+		}
+		if enabled {
+			return rootPreparationNeutral, nil
+		}
 	}
+	for _, flag := range strings.Fields(command.Annotations[rootLocalFlagsAnnotation]) {
+		if command.Flags().Changed(flag) {
+			return rootPreparationLocalOnly, nil
+		}
+	}
+	for current := command; current != nil; current = current.Parent() {
+		mode := rootPreparationMode(current.Annotations[rootPreparationAnnotation])
+		switch mode {
+		case "":
+			continue
+		case rootPreparationOffline, rootPreparationNeutral, rootPreparationLocalOnly, rootPreparationNoRenewal, rootPreparationFull:
+			return mode, nil
+		default:
+			return "", fmt.Errorf("invalid command preparation mode %q for %s", mode, current.CommandPath())
+		}
+	}
+	if command.Name() == "help" {
+		return rootPreparationNoRenewal, nil
+	}
+	return rootPreparationFull, nil
+}
+
+func prepareRootCommand(command *cobra.Command, _ []string) error {
+	mode, err := rootPreparationForCommand(command)
+	if err != nil || mode == rootPreparationOffline {
+		return err
+	}
+	humanSelected, err := prepareRootHuman(command)
+	if err != nil || humanSelected == rootHumanSelected || mode == rootPreparationNeutral {
+		return err
+	}
+	selected, err := prepareRootIdentityHome(command)
+	if err != nil || selected.PendingExchange {
+		return err
+	}
+	switch mode {
+	case rootPreparationLocalOnly:
+		return nil
+	case rootPreparationFull:
+		workingDir, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("read working directory: %w", err)
+		}
+		maybeRenewIdentityEncryptionAssertion(command.Context(), workingDir, currentEncryptionKeyIdentityHome(), command.ErrOrStderr())
+	}
+	maybeCheckLatestVersion(command)
+	return nil
+}
+
+type rootHumanSelection uint8
+
+const (
+	rootHumanNotSelected rootHumanSelection = iota
+	rootHumanSelected
+)
+
+func prepareRootHuman(command *cobra.Command) (rootHumanSelection, error) {
+	idSelection, err := prepareIDHumanSelection(command)
+	if err != nil {
+		return rootHumanNotSelected, err
+	}
+	if idSelection && humanFlag != "" {
+		return rootHumanSelected, nil
+	}
+	if command.Annotations[humanCommandAnnotation] != "" && !humanSelectionRequested() {
+		return rootHumanNotSelected, usageError("select your human key with --human ID --human-domain DOMAIN; prepare it with aw id human init")
+	}
+	if humanSelectionRequested() && !idSelection {
+		return rootHumanSelected, prepareHumanParticipation(command)
+	}
+	return rootHumanNotSelected, nil
+}
+
+type rootIdentitySelection struct {
+	Home            awconfig.IdentityHome
+	PendingExchange bool
+}
+
+func prepareRootIdentityHome(command *cobra.Command) (rootIdentitySelection, error) {
 	if !debugFlag && os.Getenv("AW_DEBUG") == "1" {
 		debugFlag = true
 	}
 	if traceFlag {
-		_ = os.Setenv("AW_TRACE", "1")
+		if err := os.Setenv("AW_TRACE", "1"); err != nil {
+			return rootIdentitySelection{}, err
+		}
 	}
-	identityHomeEnv, hadIdentityHomeEnv := os.LookupEnv(awconfig.IdentityHomeEnv)
-	previousActiveIdentityHome := activeIdentityHome
 	home, err := awconfig.ResolveIdentityHome("", identityHomeFlag)
 	if err != nil {
-		return err
+		return rootIdentitySelection{}, err
 	}
-	pendingExchange, err := pendingHostedExchangeTarget(cmd, home)
+	pending, err := pendingHostedExchangeTarget(command, home)
 	if err != nil {
-		return err
+		return rootIdentitySelection{}, err
 	}
+	selected := rootIdentitySelection{Home: home, PendingExchange: pending}
+	if err := validateRootIdentityTarget(command, selected); err != nil {
+		return rootIdentitySelection{}, err
+	}
+	previous := captureIdentityHomeEnvironment()
 	if home.External() {
-		// A fresh destination is meaningful only when explicitly named for an
-		// operation which creates identity state. An inherited selector is
-		// always an acting principal, never an implicit creation destination.
-		freshTarget := home.Source == awconfig.IdentityHomeFlag && cmd.Annotations[identityCreationTargetAnnotation] == "true"
-		keyOnlyTarget := false
-		if home.Source == awconfig.IdentityHomeFlag && cmd.Annotations[identityKeyOnlyTargetAnnotation] == "true" {
-			path, pathErr := awconfig.IdentityHomePath(home, "signing.key")
-			if pathErr == nil {
-				keyOnlyTarget, _ = teamRequestKeyOnly(home.Root, path)
-			}
+		if err := os.Setenv(awconfig.IdentityHomeEnv, home.Root); err != nil {
+			return rootIdentitySelection{}, err
 		}
-		if !freshTarget && !keyOnlyTarget && !pendingExchange {
-			if err := validateSelectedIdentityHome(home); err != nil {
+		activeIdentityHome = home
+	} else {
+		activeIdentityHome = awconfig.IdentityHome{}
+	}
+	restoreIdentityHomeAfterCommand(command, previous)
+	return selected, nil
+}
+
+// validateRootIdentityTarget preserves the explicit empty/key-only destination
+// exceptions in docs/cli-identity-selection.md. An inherited home is always an
+// actor, never an implicit creation target.
+func validateRootIdentityTarget(command *cobra.Command, selected rootIdentitySelection) error {
+	home := selected.Home
+	if !home.External() || selected.PendingExchange {
+		return nil
+	}
+	if home.Source == awconfig.IdentityHomeFlag {
+		if command.Annotations[identityCreationTargetAnnotation] == "true" {
+			return nil
+		}
+		if command.Annotations[identityKeyOnlyTargetAnnotation] == "true" {
+			path, err := awconfig.IdentityHomePath(home, "signing.key")
+			if err != nil {
 				return err
 			}
+			keyOnly, err := teamRequestKeyOnly(home.Root, path)
+			if err == nil && keyOnly {
+				return nil
+			}
+			// A complete existing principal is also a valid fetch target. The
+			// key-only classifier's structural refusal does not reject it;
+			// normal home validation owns the existing-principal error.
+			if err != nil {
+				return validateSelectedIdentityHome(home)
+			}
 		}
 	}
-	activeIdentityHome = awconfig.IdentityHome{}
-	if home.External() {
-		_ = os.Setenv(awconfig.IdentityHomeEnv, home.Root)
-		activeIdentityHome = home
-	}
-	restoreIdentityHomeAfterCommand(cmd, identityHomeEnv, hadIdentityHomeEnv, previousActiveIdentityHome)
-	if pendingExchange {
-		return nil
-	}
-	if cmd == idCreateCmd && (cmd.Flags().Changed("org") || cmd.Flags().Changed("owner-identity-home") || cmd.Flags().Changed("no-address") || cmd.Flags().Changed("local")) {
-		// Validate the original creation association before any key renewal or network work.
-		return nil
-	}
-	if cmd == teamInstallCertCmd {
-		// Check the certificate before any key renewal or network work; a
-		// verified install ensures the encryption key itself.
-		return nil
-	}
-	if isAgentStatusCommand(cmd) || isActivityCommand(cmd) {
-		return nil // Producer commands never renew encryption keys or check updates.
-	}
-	if !isTeamInviteInspectCommand(cmd) && cmd.Name() != "help" {
-		maybeRenewIdentityEncryptionAssertion(cmd.Context(), mustGetwd(), currentEncryptionKeyIdentityHome(), cmd.ErrOrStderr())
-	}
-	maybeCheckLatestVersion(cmd)
-	return nil
+	return validateSelectedIdentityHome(home)
 }

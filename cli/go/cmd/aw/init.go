@@ -41,9 +41,6 @@ After confirming channel/broker delivery, use --remove-notify-hook on its own
 for backed-up removal of exact aw notify PostToolUse entries from the current
 directory's and, inside a git repo, the repository root's .claude/settings.json.
 Init and upgrades never remove them implicitly.` + "\n\n" + creationAuthorityHelp + "\nA selected native workspace (--identity-home or AWEB_IDENTITY_HOME) may create a child into a clean current directory; its own home is never overwritten.",
-	PersistentPreRun: func(cmd *cobra.Command, args []string) {
-		// Root initialization runs first with hook traversal enabled.
-	},
 	RunE: runInit,
 }
 
