@@ -1267,7 +1267,6 @@ async def resolve_mail_target(
     signature the sender made over the recipient binding. ``source`` keys the
     federation authority's rate bucket for this caller.
     """
-    registry_client = runtime.registry_client
     sender_did = (auth.did_aw or auth.did_key or "").strip()
     if not sender_did:
         raise DeliveryRefusal(
@@ -1275,6 +1274,29 @@ async def resolve_mail_target(
             detail="Authenticated identity is missing a routing DID",
         )
 
+    continuation = await _resolve_requested_mail_continuation(
+        db, auth=auth, payload=payload, sender_did=sender_did
+    )
+    if continuation is not None:
+        return continuation
+    return await _resolve_new_mail_target(
+        db,
+        auth=auth,
+        payload=payload,
+        runtime=runtime,
+        source=source,
+        recipient_binding=recipient_binding,
+    )
+
+
+async def _resolve_requested_mail_continuation(
+    db,
+    *,
+    auth: MessagingAuth,
+    payload: SendMessageRequest,
+    sender_did: str,
+) -> MailTarget | None:
+    """Resolve an existing thread before any first-contact recipient lookup."""
     has_explicit_recipient = any(
         value is not None
         for value in (
@@ -1353,6 +1375,20 @@ async def resolve_mail_target(
                 )
             return MailTarget(continuation=requested_continuation)
 
+    return None
+
+
+async def _resolve_new_mail_target(
+    db,
+    *,
+    auth: MessagingAuth,
+    payload: SendMessageRequest,
+    runtime: MessagingRuntime,
+    source: str,
+    recipient_binding: RecipientIdentityBinding | None,
+) -> MailTarget:
+    """Resolve the explicit recipient selectors and require their agreement."""
+    registry_client = runtime.registry_client
     recipient = None
     recipient_did: str | None = None
     to_agent_id: str | None = payload.to_agent_id
