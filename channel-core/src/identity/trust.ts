@@ -384,8 +384,8 @@ export class SenderTrustManager {
       const local = resolved.receivedLocalSender;
       if (!acceptedInput || recipientBindingMismatch) return { status, stored: false };
       if (local.did !== fromDID || fromStableID) return { status: "verification_stale", stored: false };
-      return { status: local.status, stored: local.status === "verified" && rawAddress.includes("/")
-        ? store.removeAddresses([rawAddress]) : false };
+      return { status: local.status, stored: local.status === "verified"
+        ? releaseTeamNamePin(store, rawAddress, rawAddress, this.now()) : false };
     }
     if (resolved?.receivedSender) {
       const received = resolved.receivedSender;
@@ -739,10 +739,7 @@ export class SenderTrustManager {
     }
 
     if (meta.identityScope === "local") {
-      return {
-        status,
-        stored: store.removeAddresses([trustAddress, rawAddress !== trustAddress ? rawAddress : ""]),
-      };
+      return { status, stored: releaseTeamNamePin(store, rawAddress, trustAddress, this.now()) };
     }
 
     if (meta.custody === "custodial" && status === "verified") {
@@ -1221,4 +1218,33 @@ function escapeJSON(s: string): string {
     }
   }
   return result;
+}
+
+/**
+ * Frees a team-scoped member name the roster gives to a local identity: the
+ * previous holder's pin moves to a retired key that keeps its record and
+ * anti-rollback anchor, since the delivering server never deletes a pin
+ * (Antares 2e8881d7). A real domain/name address is not a team name: its pin
+ * is never touched here. Returns whether the store changed.
+ */
+export function releaseTeamNamePin(store: PinStore, rawAddress: string, trustAddress: string, now: number): boolean {
+  if (!isTeamScopedName(rawAddress)) return false;
+  const retiredAt = new Date(now).toISOString().replace(/\.\d{3}Z$/, "Z");
+  let moved = false;
+  for (const key of new Set([trustAddress, rawAddress.trim()])) {
+    if (key) moved = store.retireAddress(key, `retired:${key}@${retiredAt}`) || moved;
+  }
+  return moved;
+}
+
+/** A member name: bare, or qualified by its team (team:domain/name); never a domain/name address. */
+export function isTeamScopedName(reference: string): boolean {
+  const value = reference.trim();
+  if (!value) return false;
+  if (!value.includes("/") && !value.includes("~")) return true;
+  const slash = value.indexOf("/");
+  const team = value.slice(0, slash);
+  const name = value.slice(slash + 1).trim();
+  const colon = team.indexOf(":");
+  return colon > 0 && colon === team.lastIndexOf(":") && colon < team.length - 1 && name !== "" && !name.includes("/");
 }

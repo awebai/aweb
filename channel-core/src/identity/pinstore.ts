@@ -230,6 +230,32 @@ export class PinStore {
     return removed;
   }
 
+  /**
+   * Moves the pin bound to address to retiredKey, an address no lookup
+   * reaches, keeping its record and anti-rollback anchor; address is then
+   * free. Returns true when a pin was moved.
+   */
+  retireAddress(address: string, retiredKey: string): boolean {
+    let moved = false;
+    const pinKey = this.addresses.get(address);
+    if (pinKey !== undefined) {
+      this.addresses.delete(address);
+      const pin = this.mutablePins.get(pinKey);
+      if (pin?.address === address) {
+        pin.address = retiredKey;
+        this.addresses.set(retiredKey, pinKey);
+      }
+      moved = true;
+    }
+    for (const [key, pin] of this.mutablePins) {
+      if (pin.address !== address) continue;
+      pin.address = retiredKey;
+      this.addresses.set(retiredKey, key);
+      moved = true;
+    }
+    return moved;
+  }
+
   removeAddresses(addresses: string[]): boolean {
     let removed = false;
     for (const address of addresses) {

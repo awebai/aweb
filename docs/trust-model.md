@@ -555,6 +555,16 @@ A sender already pinned stays verified by its pin while the registry cannot be
 reached. A later registry answer that names another key for a pinned address is
 an `identity_mismatch`, and the pin is kept.
 
+The delivering server can never delete a pin or its anti-rollback anchor. When
+the team roster gives a team-scoped member name to a local identity, the name's
+previous holder's pin moves to a retired key (`retired:<name>@<time>`) that no
+lookup reaches, keeping its record and anchor, and the name is free for the
+holder the roster names. A pin at a real `domain/name` address is never touched
+on the word of the roster or a membership attestation. A registered identity
+that is not, or no longer, on the reader's team is verified against the
+registry and its pin: the roster's silence says nothing about it, and leaving a
+team is not a sign of forgery.
+
 A cached registry answer is not the registry's answer. When a sender's cached
 address binding (its `did:aw`) or cached current key disagrees with the signed
 message, the client asks the registry once more, past every cache, and decides

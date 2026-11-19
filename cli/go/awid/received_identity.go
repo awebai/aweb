@@ -263,16 +263,10 @@ func (c *Client) receivedLocalSenderTrust(status VerificationStatus, address, di
 	if _, err := ExtractPublicKey(did); err != nil {
 		return IdentityMismatch, true
 	}
-	if c.pinStore != nil && strings.Contains(address, "/") {
-		c.pinStore.mu.Lock()
-		removed := c.pinStore.RemoveAddress(address)
-		c.pinStore.mu.Unlock()
-		if removed {
-			if err := c.savePinStore(); err != nil {
-				return VerificationStale, true
-			}
-		}
-	}
+	// The server's membership attestation never deletes a pin (Antares
+	// 2e8881d7): a team-scoped name's previous holder is retired with its
+	// anchor, and a pin at a real address is left untouched.
+	c.releaseTeamNamePin(address, address)
 	return Verified, true
 }
 

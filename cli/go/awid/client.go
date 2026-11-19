@@ -1042,20 +1042,47 @@ func (c *Client) verifyResolvedLocalSender(fresh *agentMeta, rawAddress, trustAd
 	if strings.TrimSpace(fresh.DID) != strings.TrimSpace(fromDID) {
 		return IdentityMismatch
 	}
-	if c.pinStore != nil {
-		c.pinStore.mu.Lock()
-		removed := c.pinStore.RemoveAddress(trustAddress)
-		if rawAddress != "" && rawAddress != trustAddress {
-			removed = c.pinStore.RemoveAddress(rawAddress) || removed
-		}
-		c.pinStore.mu.Unlock()
-		if removed {
-			// A removal that does not persist leaves the old pin on disk, so the
-			// next process is stricter, not laxer. Not a continuity claim.
-			_ = c.savePinStore()
+	c.releaseTeamNamePin(rawAddress, trustAddress)
+	return acceptedStatus
+}
+
+// releaseTeamNamePin frees a team-scoped member name the roster now gives to
+// a local identity: the previous holder's pin moves to a retired key that
+// keeps its record and anti-rollback anchor (Antares 2e8881d7, the delivering
+// server never deletes a pin). A real domain/name address is not a team
+// name: its pin is never touched here.
+func (c *Client) releaseTeamNamePin(rawAddress, trustAddress string) {
+	if c.pinStore == nil || !teamScopedName(rawAddress) {
+		return
+	}
+	retiredAt := time.Now().UTC().Format(time.RFC3339)
+	c.pinStore.mu.Lock()
+	moved := false
+	for _, key := range []string{trustAddress, strings.TrimSpace(rawAddress)} {
+		if key != "" {
+			moved = c.pinStore.RetireAddress(key, "retired:"+key+"@"+retiredAt) || moved
 		}
 	}
-	return acceptedStatus
+	c.pinStore.mu.Unlock()
+	if moved {
+		// A move that does not persist leaves the old binding on disk, so the
+		// next process is stricter, not laxer. Not a continuity claim.
+		_ = c.savePinStore()
+	}
+}
+
+// teamScopedName reports a sender reference that is a member name: bare, or
+// qualified by its team (team:domain/name), never a domain/name address.
+func teamScopedName(reference string) bool {
+	reference = strings.TrimSpace(reference)
+	if reference == "" {
+		return false
+	}
+	if !strings.Contains(reference, "/") && !strings.Contains(reference, "~") {
+		return true
+	}
+	_, _, ok := splitTeamMemberReference(reference)
+	return ok
 }
 
 // NormalizeRecipientBinding applies the local recipient-binding check after
@@ -1156,17 +1183,7 @@ func (c *Client) checkTOFUPinWithMeta(ctx context.Context, status VerificationSt
 		return status
 	}
 	if meta.Resolved && meta.IdentityScope == IdentityModeLocal {
-		c.pinStore.mu.Lock()
-		removed := c.pinStore.RemoveAddress(trustAddress)
-		rawAddress = strings.TrimSpace(rawAddress)
-		if rawAddress != "" && rawAddress != trustAddress {
-			removed = c.pinStore.RemoveAddress(rawAddress) || removed
-		}
-		c.pinStore.mu.Unlock()
-		if removed {
-			// As above: an unpersisted removal fails safe (the pin survives).
-			_ = c.savePinStore()
-		}
+		c.releaseTeamNamePin(rawAddress, trustAddress)
 		return status
 	}
 
