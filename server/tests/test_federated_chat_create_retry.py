@@ -60,6 +60,9 @@ async def test_concurrent_federated_chat_create_returns_one_committed_projection
         result.text for result in results
     ]
     assert results[0].json() == results[1].json()
+    repeated = await _post(sender, request)
+    assert repeated.status_code == 200, repeated.text
+    assert repeated.json() == results[0].json()
     for node in (pair.source, pair.target):
         assert (
             await node.db.fetch_value(

@@ -30,6 +30,7 @@ from dataclasses import dataclass
 
 import httpx
 import pytest_asyncio
+from nacl.signing import SigningKey
 from aweb.testing import Server, running_server
 from awid.dns_verify import DnsVerificationError, DomainAuthority
 from awid_service.deps import get_domain_verifier
@@ -48,15 +49,19 @@ class Coordination:
     registry: Registry
     server: Server
 
-    async def add_member(self, member: Member) -> None:
+    async def add_member(
+        self, member: Member, *, namespace_controller: SigningKey | None = None
+    ) -> None:
         """Registers the member's team, if new, and its certificate in AWID."""
         name, domain = member.team_id.split(":", 1)
         known = await self.registry.db.fetch_value(
             "SELECT 1 FROM {{tables.teams}} WHERE domain = $1 AND name = $2", domain, name
         )
         if known is None:
-            await self.registry.add_team(member.team_id, member.team_did_key)
-        await self.registry.add_certificate(member.certificate())
+            await self.registry.add_team(
+                member.team_id, member.team_did_key, namespace_controller=namespace_controller
+            )
+        await self.registry.add_certificate(member.certificate(), team_key=member.team_key)
 
     async def publish_server(self, member: Member) -> None:
         """Publishes the server as the member's team server, signed by the team key."""

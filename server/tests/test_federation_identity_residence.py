@@ -44,7 +44,11 @@ async def _supersede_resident_membership(fixture, receiver) -> None:
         "new_team_did_key": next_did,
     }
     timestamp = datetime.now(timezone.utc).isoformat()
-    signature = sign_message(env.team_sk, canonical_json_bytes({**payload, "timestamp": timestamp}))
+    namespace_key = await env.registry.ensure_namespace(domain="recipient.test")
+    namespace = await env.registry.namespace_authority("recipient.test")
+    signature = sign_message(
+        bytes(namespace_key), canonical_json_bytes({**payload, "timestamp": timestamp})
+    )
     # Preserve the real clock's precision: admission is a first-sight floor,
     # and the later controller act must actually be newer than that floor.
     async with httpx.AsyncClient(
@@ -55,7 +59,7 @@ async def _supersede_resident_membership(fixture, receiver) -> None:
             "/v1/namespaces/recipient.test/teams/recipients/rotate",
             json={"new_team_did_key": next_did},
             headers={
-                "Authorization": f"DIDKey {env.team_did} {signature}",
+                "Authorization": f"DIDKey {namespace.controller_did} {signature}",
                 "X-AWEB-Timestamp": timestamp,
             },
         )

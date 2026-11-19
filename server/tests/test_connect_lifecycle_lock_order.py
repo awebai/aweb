@@ -4,7 +4,7 @@ import asyncio
 from uuid import UUID
 
 import pytest
-from asyncpg import LockNotAvailableError
+from asyncpg.exceptions import LockNotAvailableError
 
 from test_dashboard_privacy import TEAM, privacy_app as privacy_app
 from test_member_team_key import _connect

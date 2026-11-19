@@ -72,7 +72,7 @@ async def human(world, principal, *, member=None, client=None, kind="human"):
     )
     root = getattr(world, "human_root", None)
     if root is None:
-        root = world.human_root = SigningKey.generate()
+        root = world.human_root = await world.registry.ensure_namespace(domain="example.com")
         world.human_members = {}
         world.human_identities = {}
 
@@ -92,8 +92,6 @@ async def human(world, principal, *, member=None, client=None, kind="human"):
     ) as registry:
         member = world.human_members.get(principal)
         if member is None:
-            if not world.human_members:
-                await registry.register_namespace("example.com", did_key(root), bytes(root))
             member = Member(
                 team_id=principal.team_id,
                 team_key=world.owner.team_key,
@@ -104,7 +102,7 @@ async def human(world, principal, *, member=None, client=None, kind="human"):
             mapping = await registry.register_did(member.did_key, bytes(member.member_key))
             assert mapping.did_aw == principal.principal_did
             member.extra_cert_fields = {"member_did_aw": mapping.did_aw}
-            await world.registry.add_certificate(member.certificate())
+            await world.registry.add_certificate(member.certificate(), team_key=member.team_key)
             fields = {
                 "v": 1,
                 "type": "aweb.id-certificate",
@@ -250,7 +248,7 @@ async def register_holder_member(world, registry, principal, *, team_key):
         extra_cert_fields={"member_did_aw": principal.principal_did},
     )
     assert await registry.register_did(member.member_key) == principal.principal_did
-    await registry.add_certificate(member.certificate())
+    await registry.add_certificate(member.certificate(), team_key=member.team_key)
     return member
 
 

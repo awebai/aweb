@@ -19,7 +19,6 @@ from test_messages_http import (
     _signed_identity_headers,
     _signed_team_headers,
 )
-from test_team_key_pinning import register_namespace_controller
 
 
 class SenderTransport(StrEnum):
@@ -106,26 +105,25 @@ async def test_identity_sender_uses_its_single_current_context_not_first_registe
         # signatures, address writes and native admission remain production.
         async def exact_namespace_authority(domain: str) -> DomainAuthority:
             assert domain == "example.test"
-            return DomainAuthority(env.team_did, registry_origin, "_awid.example.test")
+            return DomainAuthority(env.namespace_did, registry_origin, "_awid.example.test")
 
         env.registry_app.dependency_overrides[get_domain_verifier] = lambda: (
             exact_namespace_authority
         )
-        await register_namespace_controller(env, env.team_did)
         stable = (await registry.register_did(actor.did, actor.sk)).did_aw
         prefix = "a-" + uuid4().hex[:12]
         earlier = await registry.register_address(
             "example.test",
             prefix + "-other",
             stable,
-            env.team_sk,
+            env.namespace_sk,
             current_did_key=actor.did,
         )
         selected = await registry.register_address(
             "example.test",
             "alice",
             stable,
-            env.team_sk,
+            env.namespace_sk,
             current_did_key=actor.did,
         )
         selected_address = f"{selected.domain}/{selected.name}"
