@@ -352,6 +352,11 @@ def _make_library_lifespan(
     return lifespan
 
 
+def _install_expected_error_handlers(app: FastAPI) -> None:
+    install_auth_error_handlers(app)
+    install_certificate_error_handlers(app)
+
+
 def create_app(
     *,
     db_infra: Optional[DatabaseInfra] = None,
@@ -530,8 +535,7 @@ def create_app(
             ),
         )
 
-    install_auth_error_handlers(app)
-    install_certificate_error_handlers(app)
+    _install_expected_error_handlers(app)
 
     @app.exception_handler(ServiceError)
     async def _service_error_handler(request: Request, exc: ServiceError):
