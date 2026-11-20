@@ -176,7 +176,7 @@ def main() -> None:
             "tests/test_federation_activation_contacts.py::test_contact_authority_requires_exact_address_and_stable_identity",
             "tests/test_federation_envelope.py::test_verify_federation_envelope_uses_signed_address_when_wrapper_is_absent",
             "tests/test_messages_http.py::test_receive_federated_encrypted_mail_routes_ciphertext_only",
-            "tests/test_contacts_http.py::test_contact_reassignment_requires_signed_explicit_acceptance",
+            "tests/test_id_tree_contact_replacement.py::test_address_replacement_does_not_transfer_contact_trust",
             "tests/test_federation_preactivation_harness.py::test_http_ingress_uses_production_dns_authority_not_receiver_home_registry",
             "tests/test_federation_preactivation_harness.py::test_mcp_cross_registry_uses_production_strict_authority_not_home_registry",
             "tests/test_mcp_contacts_consumer.py::test_consumer_mcp_identity_contact_rejects_reassigned_existing_mail_conversation",
@@ -547,7 +547,7 @@ def main() -> None:
         )
         require_killed(
             run_server_tests(checkout, activation_nodes[5]),
-            "test_contact_reassignment_requires_signed_explicit_acceptance",
+            "test_address_replacement_does_not_transfer_contact_trust",
         )
 
         replace_exact(
