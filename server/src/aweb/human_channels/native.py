@@ -400,8 +400,6 @@ class NativeMessagingService:
                 recipient_agent=recipient,
                 sender_did=_principal(auth),
                 sender_address=auth.address,
-                sender_team_id=auth.team_id,
-                sender_verified_team_id=auth.verified_team_id,
                 sender_verified_dids=auth_dids(auth),
             )
         except ServiceError as error:

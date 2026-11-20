@@ -1071,8 +1071,6 @@ async def _commit_mail_continuation(
             to_agent_id=message.recipient.agent_id,
             sender_did=sender.did,
             sender_address=sender.address,
-            team_id=message.local_team_id,
-            sender_verified_team_id=None,
             sender_verified_dids=sender.verified_dids,
             stored_route_continuation=True,
         )
@@ -1220,8 +1218,6 @@ async def send_mail_conversation_continuation(
         to_agent_id=recipient.get("agent_id"),
         sender_did=sender_did,
         sender_address=sender_address,
-        team_id=continuation.conversation.get("team_id") or auth.team_id,
-        sender_verified_team_id=auth.verified_team_id,
         sender_verified_dids=auth_dids(auth),
         stored_route_continuation=True,
     )
@@ -1831,8 +1827,6 @@ async def _commit_new_local_mail(
             recipient_agent=recipient,
             sender_did=sender_did,
             sender_address=sender_address,
-            sender_team_id=auth.team_id,
-            sender_verified_team_id=auth.verified_team_id,
             sender_verified_dids=auth_dids(auth),
         )
         # If an explicit recipient is present, conversation_id is a caller-chosen
@@ -2011,8 +2005,6 @@ async def _send_mail_to_resolved_target(
                 recipient_agent=recipient,
                 sender_did=sender_did,
                 sender_address=sender_address,
-                sender_team_id=auth.team_id,
-                sender_verified_team_id=auth.verified_team_id,
                 sender_verified_dids=auth_dids(auth),
             )
         encrypted_metadata = _validate_encrypted_payload(

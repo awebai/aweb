@@ -55,8 +55,6 @@ async def participant(
             recipient_agent=row,
             sender_did=auth.did_aw or auth.did_key,
             sender_address=sender_address(auth),
-            sender_team_id=auth.team_id,
-            sender_verified_team_id=auth.verified_team_id,
             sender_verified_dids=auth_dids(auth),
         )
     except DeliveryPolicyRefused as error:

@@ -84,7 +84,6 @@ async def test_inbound_policy_uses_all_current_active_memberships(
                     recipient_agent=recipient,
                     sender_did=sender_did,
                     sender_address=envelope.sender_address,
-                    sender_team_id=teams[1],
                     sender_verified_dids=[sender_did, sender_key],
                 )
     except ForbiddenError as exc:
