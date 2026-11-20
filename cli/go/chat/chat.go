@@ -1674,29 +1674,26 @@ func ExtendWait(ctx context.Context, client *awid.Client, targetAlias string, me
 }
 
 // ContinuationEncrypted reports whether a message to an existing session is
-// end-to-end encrypted: --e2ee and --plaintext decide alone, and otherwise
-// the session's own encryption carries over. --plaintext into an encrypted
-// session is announced through status. The session's encryption is read
-// from its stored rows; a failed read, or one that cannot establish it,
-// refuses the default send (*awid.UnknownConversationEncryptionError).
+// end-to-end encrypted, by awid.ContinuationEncryption from the session's
+// stored rows (read unless --e2ee decides alone). A plaintext send into an
+// encrypted session is announced through status; a failed read, or one that
+// cannot establish the encryption, refuses a default send.
 func ContinuationEncrypted(ctx context.Context, client *awid.Client, sessionID string, choice E2EEChoice, status StatusCallback) (bool, error) {
-	if choice == E2EERequired {
-		return true, nil
-	}
-	reading, err := client.ChatSessionEncryption(ctx, sessionID)
-	if err != nil {
-		return false, fmt.Errorf("reading whether the conversation is end-to-end encrypted: %w", err)
-	}
-	if choice == E2EEPlaintext {
-		if reading.State == awid.ConversationEncrypted && status != nil {
-			status("plaintext", awid.PlaintextIntoEncryptedNotice)
+	var reading awid.ConversationEncryptionReading
+	if choice != E2EERequired {
+		var err error
+		if reading, err = client.ChatSessionEncryption(ctx, sessionID); err != nil {
+			return false, fmt.Errorf("reading whether the conversation is end-to-end encrypted: %w", err)
 		}
-		return false, nil
 	}
-	if reading.State == awid.ConversationEncryptionUnknown {
-		return false, &awid.UnknownConversationEncryptionError{Reason: reading.Reason}
+	decision, err := awid.ContinuationEncryption(reading, choice)
+	if err != nil {
+		return false, err
 	}
-	return reading.State == awid.ConversationEncrypted, nil
+	if decision.Notice != "" && status != nil {
+		status("plaintext", decision.Notice)
+	}
+	return decision.Encrypt, nil
 }
 
 func ExtendWaitWithOptions(ctx context.Context, client *awid.Client, targetAlias string, message string, opts ExtendWaitOptions) (*ExtendWaitResult, error) {

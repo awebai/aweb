@@ -188,7 +188,7 @@ async def test_a_default_continuation_is_refused_once_the_readable_page_is_full_
             "--json",
         )
         _assert_refused(code, output)
-        assert "latest 2000 messages are plaintext" in output, output
+        assert "the 2000 messages the server returns are plaintext" in output, output
 
     stored = await _stored_bodies(env, session_id)
     assert "last readable" in stored and "beyond the page" not in stored

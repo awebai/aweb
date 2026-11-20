@@ -58,7 +58,7 @@ func TestMessagingCommandsRespectAPITimeout(t *testing.T) {
 					if operation.name == "chat_send" && r.Method == http.MethodGet && r.URL.Path == operation.path {
 						// The session's history, read to inherit its encryption:
 						// not the operation whose budget this test measures.
-						_ = json.NewEncoder(w).Encode(awid.ChatHistoryResponse{})
+						_ = json.NewEncoder(w).Encode(awid.ChatHistoryResponse{Messages: []awid.ChatMessage{}})
 						return
 					}
 					if r.URL.Path != operation.path {

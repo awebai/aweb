@@ -175,10 +175,11 @@ var mailSendCmd = &cobra.Command{
 			if err != nil {
 				return fmt.Errorf("reading whether the conversation is end-to-end encrypted: %w", err)
 			}
-			sendEncryptE2EE, inheritedE2EE, err = mailContinuationEncrypted(cmd, conversation, mailSendE2EE, mailSendPlaintext || mailSendLegacyPlaintext)
+			decision, err := mailContinuation(cmd, conversation, e2eeFlagChoice(cmd, mailSendE2EE, mailSendPlaintext || mailSendLegacyPlaintext))
 			if err != nil {
 				return err
 			}
+			sendEncryptE2EE, inheritedE2EE = decision.Encrypt, decision.Inherited
 		case "alias":
 			if activeHuman != nil {
 				c, sel, err = activeHuman.client(teamFlag, "")
@@ -381,10 +382,11 @@ var mailReplyCmd = &cobra.Command{
 		if awid.StoredRowEncrypted(source.ContentMode, source.MessageVersion, source.Encrypted) {
 			sourceEncryption.State = awid.ConversationEncrypted
 		}
-		encryptReply, _, err := mailContinuationEncrypted(cmd, sourceEncryption, mailReplyE2EE, mailReplyPlaintext || mailReplyLegacyPlaintext)
+		replyDecision, err := mailContinuation(cmd, sourceEncryption, e2eeFlagChoice(cmd, mailReplyE2EE, mailReplyPlaintext || mailReplyLegacyPlaintext))
 		if err != nil {
 			return err
 		}
+		encryptReply := replyDecision.Encrypt
 		if encryptReply {
 			if err := configureClientE2EE(ctx, c, sel, true); err != nil {
 				return err
@@ -401,7 +403,7 @@ var mailReplyCmd = &cobra.Command{
 			Body:           body,
 			Priority:       awid.MessagePriority(mailReplyPriority),
 			EncryptE2EE:    encryptReply,
-			E2EEInherited:  encryptReply && !cmd.Flags().Changed("e2ee"),
+			E2EEInherited:  replyDecision.Inherited,
 		}
 		if encryptReply && inbox.Messages[0].Encrypted != nil {
 			source := inbox.Messages[0]
@@ -538,29 +540,14 @@ func (e *e2eeDecryptionUnavailableError) Error() string {
 	return fmt.Sprintf("E2E decryption unavailable: %s at %s", e.reason, e.statePath)
 }
 
-// mailContinuationEncrypted decides whether a mail into an existing
-// conversation is end-to-end encrypted: --e2ee and --plaintext decide alone,
-// and otherwise the conversation's encryption carries over (inherited).
-// --plaintext into an encrypted conversation is announced; a default
-// continuation whose conversation's encryption is unknown is refused.
-func mailContinuationEncrypted(cmd *cobra.Command, conversation awid.ConversationEncryptionReading, e2ee, plaintext bool) (encrypt bool, inherited bool, err error) {
-	explicitPlaintext := plaintext || (cmd.Flags().Changed("e2ee") && !e2ee)
-	if explicitPlaintext {
-		if conversation.State == awid.ConversationEncrypted {
-			fmt.Fprintf(cmd.ErrOrStderr(), "Note: %s\n", awid.PlaintextIntoEncryptedNotice)
-		}
-		return false, false, nil
+// mailContinuation applies the one continuation rule
+// (awid.ContinuationEncryption) to a mail and shows its notice on stderr.
+func mailContinuation(cmd *cobra.Command, conversation awid.ConversationEncryptionReading, choice awid.E2EEChoice) (awid.ContinuationDecision, error) {
+	decision, err := awid.ContinuationEncryption(conversation, choice)
+	if err == nil && decision.Notice != "" {
+		fmt.Fprintf(cmd.ErrOrStderr(), "Note: %s\n", decision.Notice)
 	}
-	if cmd.Flags().Changed("e2ee") {
-		return true, false, nil
-	}
-	switch conversation.State {
-	case awid.ConversationEncrypted:
-		return true, true, nil
-	case awid.ConversationPlaintext:
-		return false, false, nil
-	}
-	return false, false, &awid.UnknownConversationEncryptionError{Reason: conversation.Reason}
+	return decision, err
 }
 
 func configureClientE2EEForRead(cmd *cobra.Command, ctx context.Context, c *aweb.Client, sel *awconfig.Selection) error {

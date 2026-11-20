@@ -39,10 +39,10 @@ func writeChatStatus(w io.Writer, kind, message string) {
 	termtext.Fprintln(w, "[chat:%s] %s", kind, message)
 }
 
-// chatE2EEChoice is the encryption a chat command's flags ask for: --e2ee or
-// --plaintext decide, and with neither a continuation inherits its
-// conversation's encryption.
-func chatE2EEChoice(cmd *cobra.Command, e2ee, plaintext bool) chat.E2EEChoice {
+// e2eeFlagChoice is the encryption a chat or mail command's flags ask for:
+// --e2ee or --plaintext decide (--e2ee=false is --plaintext), and with
+// neither a continuation inherits its conversation's encryption.
+func e2eeFlagChoice(cmd *cobra.Command, e2ee, plaintext bool) chat.E2EEChoice {
 	switch {
 	case cmd.Flags().Changed("e2ee") && e2ee:
 		return chat.E2EERequired
@@ -319,7 +319,7 @@ var chatSendAndWaitCmd = &cobra.Command{
 			Wait:              chatSendAndWaitWait,
 			WaitExplicit:      cmd.Flags().Changed("wait"),
 			StartConversation: chatSendAndWaitStartConversation,
-			E2EE:              chatE2EEChoice(cmd, chatSendAndWaitE2EE, chatSendAndWaitPlaintext),
+			E2EE:              e2eeFlagChoice(cmd, chatSendAndWaitE2EE, chatSendAndWaitPlaintext),
 		})
 		if err != nil {
 			return networkError(err, args[0])
@@ -375,7 +375,7 @@ var chatSendAndLeaveCmd = &cobra.Command{
 			Wait:              0,
 			Leaving:           true,
 			StartConversation: chatSendAndLeaveStartConversation,
-			E2EE:              chatE2EEChoice(cmd, chatSendAndLeaveE2EE, chatSendAndLeavePlaintext),
+			E2EE:              e2eeFlagChoice(cmd, chatSendAndLeaveE2EE, chatSendAndLeavePlaintext),
 		})
 		if err != nil {
 			return networkError(err, args[0])
@@ -552,7 +552,7 @@ var chatSendCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		choice := chatE2EEChoice(cmd, chatSendE2EE, chatSendPlaintext)
+		choice := e2eeFlagChoice(cmd, chatSendE2EE, chatSendPlaintext)
 		if err := configureChatE2EE(ctx, c, sel, choice); err != nil {
 			return err
 		}
@@ -645,7 +645,7 @@ var chatExtendWaitCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		choice := chatE2EEChoice(cmd, chatExtendWaitE2EE, chatExtendWaitPlaintext)
+		choice := e2eeFlagChoice(cmd, chatExtendWaitE2EE, chatExtendWaitPlaintext)
 		if err := configureChatE2EE(ctx, c, sel, choice); err != nil {
 			return err
 		}

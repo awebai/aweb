@@ -136,17 +136,14 @@ type ExtendWaitResult struct {
 	ExtendsWaitSeconds int    `json:"extends_wait_seconds"`
 }
 
-// E2EEChoice is how a chat send chooses end-to-end encryption.
-type E2EEChoice int
+// E2EEChoice is how a chat send chooses end-to-end encryption; it is
+// awid's, so chat and mail share one continuation rule.
+type E2EEChoice = awid.E2EEChoice
 
 const (
-	// E2EEInherit continues an encrypted conversation encrypted and starts
-	// a new one in plaintext.
-	E2EEInherit E2EEChoice = iota
-	// E2EERequired encrypts, failing closed when keys are missing (--e2ee).
-	E2EERequired
-	// E2EEPlaintext sends server-readable plaintext (--plaintext).
-	E2EEPlaintext
+	E2EEInherit   = awid.E2EEInherit
+	E2EERequired  = awid.E2EERequired
+	E2EEPlaintext = awid.E2EEPlaintext
 )
 
 // SendOptions configures message sending behavior.

@@ -267,6 +267,11 @@ func TestExternalStandaloneIdentityAuthMailUsesPrincipalMismatchContext(t *testi
 		if readErr != nil {
 			t.Fatal(readErr)
 		}
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/messages/conversations/conversation-1" {
+			// The continuation reads the conversation's stored rows: none.
+			_ = json.NewEncoder(w).Encode(awid.InboxResponse{Messages: []awid.InboxMessage{}})
+			return
+		}
 		request = messagingSignedRequest{authorization: r.Header.Get("Authorization"), timestamp: r.Header.Get("X-AWEB-Timestamp"), body: body, payload: requestSigningPayloadForTest(t, r, body)}
 		_ = json.NewEncoder(w).Encode(awid.SendMessageResponse{MessageID: "message-1", ConversationID: "conversation-1", Status: "delivered"})
 	}))
