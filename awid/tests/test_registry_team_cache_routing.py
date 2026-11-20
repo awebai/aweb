@@ -152,3 +152,20 @@ async def test_team_reads_change_origins_only_after_freshness_expires(
     cache_age[0] = 601
     assert await read_team(client, name) == expected_team(keys["second"], "second")
     assert len(first.transport.calls) == len(second.transport.calls) == 4
+
+
+@pytest.mark.asyncio
+async def test_failed_registry_read_does_not_install_a_warm_origin(
+    team_registries, registry_audience_dns
+):
+    client, first, second, keys, name = team_registries
+    first.transport.down = True
+    with pytest.raises(RegistryError) as refused:
+        await client.get_team_public_key(DOMAIN, name)
+    assert refused.value.status_code == 503
+    assert len(first.transport.calls) == 1 and second.transport.calls == []
+
+    registry_audience_dns.answer = AuthorityAnswer.PUBLIC_DEFAULT
+    assert await client.get_team_public_key(DOMAIN, name) == keys["second"]
+    assert len(first.transport.calls) == len(second.transport.calls) == 1
+    assert len(registry_audience_dns.queries) == 2

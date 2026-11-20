@@ -555,7 +555,9 @@ class RegistryClient:
             and canonical_server_origin(self.registry_url) == DEFAULT_AWID_REGISTRY_URL
         )
 
-    async def _registry_url_for_domain(self, domain: str, *, fallback_on_dns_error: bool = True) -> str:
+    async def _registry_url_for_domain(
+        self, domain: str, *, fallback_on_dns_error: bool = True
+    ) -> str:
         if self.domain_registry_resolver is not None:
             return canonical_server_origin(await self.domain_registry_resolver(domain))
         default_registry_url = canonical_server_origin(self.registry_url)
@@ -2152,6 +2154,13 @@ class _RegistryCacheRoute:
 
 
 @dataclass(frozen=True, kw_only=True)
+class _TeamReadOrigin:
+    registry_url: str
+    lookup_error: RegistryError | None = None
+    discovered_at: int | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
 class _CertificateMissAdmission:
     """Redis admission for a team and, when supplied, its verified certificate."""
 
@@ -2337,7 +2346,10 @@ class CachedRegistryClient(RegistryClient):
                 ex=_ID_STATUS_FRESH_SECONDS,
             )
             await self._write_registry_cache_route(
-                route_key, registry_url, fetched_at=fetched_at, retention_seconds=_ID_STATUS_FRESH_SECONDS
+                route_key,
+                registry_url,
+                fetched_at=fetched_at,
+                retention_seconds=_ID_STATUS_FRESH_SECONDS,
             )
         return _IDStatusRefresh(entry=entry, age=_whole_seconds_up(_monotonic_ns() - started_ns))
 
@@ -2417,7 +2429,7 @@ class CachedRegistryClient(RegistryClient):
 
     async def _team_read_origin(
         self, domain: str, name: str, *, fresh_seconds: int, outage_grace_seconds: int = 0
-    ) -> tuple[str, RegistryError | None]:
+    ) -> _TeamReadOrigin:
         """Locate origin-scoped evidence without renewing its freshness or grace.
 
         DNS recovery may change the origin. A lookup outage can point the key
@@ -2425,13 +2437,13 @@ class CachedRegistryClient(RegistryClient):
         Explicit resolver/transport policies keep their original selection.
         """
         if not self._uses_dns_registry_discovery() or self.registry_origin_context is not None:
-            return await self._registry_url_for_domain(domain), None
+            return _TeamReadOrigin(registry_url=await self._registry_url_for_domain(domain))
 
-        route_key = self._registry_route_key("team", build_team_id(domain, name))
+        route_key = self._team_registry_route_key(domain, name)
         _, route = await self._read_registry_cache_route(route_key)
         started_at = _cache_now()
         if route is not None and 0 <= started_at - route.fetched_at < fresh_seconds:
-            return route.registry_url, None
+            return _TeamReadOrigin(registry_url=route.registry_url)
 
         try:
             origin = await self._registry_url_for_domain(domain, fallback_on_dns_error=False)
@@ -2443,18 +2455,27 @@ class CachedRegistryClient(RegistryClient):
             ):
                 error = RegistryError(str(exc), status_code=503, code="unavailable")
                 error.__cause__ = exc
-                return route.registry_url, error
+                return _TeamReadOrigin(registry_url=route.registry_url, lookup_error=error)
             # A DNS outage can select the configured fallback for this read,
             # but cannot install it as the newly discovered owner.
-            return canonical_server_origin(self.registry_url), None
+            return _TeamReadOrigin(registry_url=canonical_server_origin(self.registry_url))
 
-        await self._write_registry_cache_route(
-            route_key,
-            origin,
-            fetched_at=started_at,
-            retention_seconds=_TEAM_REVOCATIONS_OUTAGE_GRACE_SECONDS,
-        )
-        return origin, None
+        if route is not None and origin != route.registry_url:
+            # A confirmed move ends reuse of the old locator even if the new
+            # origin fails to answer. Its data stays in its own partition.
+            await self._invalidate_keys(route_key)
+        return _TeamReadOrigin(registry_url=origin, discovered_at=started_at)
+
+    async def _remember_team_read_origin(
+        self, domain: str, name: str, origin: _TeamReadOrigin
+    ) -> None:
+        if origin.discovered_at is not None:
+            await self._write_registry_cache_route(
+                self._team_registry_route_key(domain, name),
+                origin.registry_url,
+                fetched_at=origin.discovered_at,
+                retention_seconds=_TEAM_REVOCATIONS_OUTAGE_GRACE_SECONDS,
+            )
 
     async def resolve_key(self, did_aw: str) -> KeyResolution:
         return await self._cached_read(
@@ -2603,9 +2624,10 @@ class CachedRegistryClient(RegistryClient):
         """
         ttl_seconds = _TEAM_REVOCATIONS_CACHE_TTL_SECONDS
         grace_seconds = _TEAM_REVOCATIONS_OUTAGE_GRACE_SECONDS
-        registry_url, lookup_error = await self._team_read_origin(
+        origin = await self._team_read_origin(
             domain, name, fresh_seconds=ttl_seconds, outage_grace_seconds=grace_seconds
         )
+        registry_url, lookup_error = origin.registry_url, origin.lookup_error
         cache_key = self._team_public_key_cache_key(domain, name, registry_url=registry_url)
         cached = await self._read_cache_entry(cache_key, decode=lambda value: value)
         fetched_at = _cache_entry_fetched_at(cached, ttl_seconds) if cached is not None else None
@@ -2615,6 +2637,7 @@ class CachedRegistryClient(RegistryClient):
             and fetched_at is not None
             and max(0, _cache_now() - fetched_at) < ttl_seconds
         ):
+            await self._remember_team_read_origin(domain, name, origin)
             return cached["value"]
         try:
             if lookup_error is not None:
@@ -2646,6 +2669,7 @@ class CachedRegistryClient(RegistryClient):
             # A successful not-found read replaces prior authority; it is not
             # an outage and must not let that old key reappear during grace.
             await self._invalidate_keys(cache_key)
+            await self._remember_team_read_origin(domain, name, origin)
             return None
         await self._write_cache_entry(
             cache_key,
@@ -2654,6 +2678,7 @@ class CachedRegistryClient(RegistryClient):
             encode=lambda value: value,
             retention_seconds=ttl_seconds + grace_seconds,
         )
+        await self._remember_team_read_origin(domain, name, origin)
         return key
 
     async def refresh_team_key_after_signature_failure(
@@ -2670,9 +2695,10 @@ class CachedRegistryClient(RegistryClient):
         even if the attempt outlasts that window. An unchanged or failed read
         never renews the old key's fact age.
         """
-        registry_url, _ = await self._team_read_origin(
+        origin = await self._team_read_origin(
             domain, name, fresh_seconds=_TEAM_REVOCATIONS_CACHE_TTL_SECONDS
         )
+        registry_url = origin.registry_url
         cache_key = self._team_public_key_cache_key(domain, name, registry_url=registry_url)
         task = self._team_key_signature_refreshes.get(cache_key)
         if task is None:
@@ -2689,7 +2715,10 @@ class CachedRegistryClient(RegistryClient):
             task.add_done_callback(
                 lambda _task: self._team_key_signature_refreshes.pop(cache_key, None)
             )
-        return await asyncio.shield(task)
+        key = await asyncio.shield(task)
+        if key is not None:
+            await self._remember_team_read_origin(domain, name, origin)
+        return key
 
     async def _refresh_rejected_team_key(
         self,
@@ -2736,10 +2765,11 @@ class CachedRegistryClient(RegistryClient):
         return None
 
     async def get_team(self, domain: str, name: str) -> Team | None:
-        registry_url, _ = await self._team_read_origin(
+        origin = await self._team_read_origin(
             domain, name, fresh_seconds=_TEAM_METADATA_CACHE_TTL_SECONDS
         )
-        return await self._cached_read(
+        registry_url = origin.registry_url
+        team = await self._cached_read(
             cache_key=self._team_metadata_cache_key(domain, name, registry_url=registry_url),
             ttl_seconds=_TEAM_METADATA_CACHE_TTL_SECONDS,
             fetcher=lambda: self._get_team_at_origin(
@@ -2748,6 +2778,8 @@ class CachedRegistryClient(RegistryClient):
             encode=lambda value: None if value is None else _team_to_json(value),
             decode=lambda payload: None if payload is None else _team_from_json(payload),
         )
+        await self._remember_team_read_origin(domain, name, origin)
+        return team
 
     async def get_team_fresh(self, domain: str, name: str) -> Team | None:
         registry_url = await self._registry_url_for_domain(domain)
@@ -2799,9 +2831,10 @@ class CachedRegistryClient(RegistryClient):
         # timestamp), never on Redis expiry alone.
         ttl_seconds = _TEAM_REVOCATIONS_CACHE_TTL_SECONDS
         grace_seconds = _TEAM_REVOCATIONS_OUTAGE_GRACE_SECONDS
-        registry_url, lookup_error = await self._team_read_origin(
+        origin = await self._team_read_origin(
             domain, name, fresh_seconds=ttl_seconds, outage_grace_seconds=grace_seconds
         )
+        registry_url, lookup_error = origin.registry_url, origin.lookup_error
         cache_key = self._team_revocations_cache_key(domain, name, registry_url=registry_url)
         retention_seconds = ttl_seconds + grace_seconds
 
@@ -2847,6 +2880,7 @@ class CachedRegistryClient(RegistryClient):
             fetched_at = _cache_entry_fetched_at(cached, ttl_seconds)
             cached_age = max(0, _cache_now() - fetched_at)
             if lookup_error is None and cached["fresh"]:
+                await self._remember_team_read_origin(domain, name, origin)
                 return project(cached["value"])
             if lookup_error is None and cached_age <= ttl_seconds * _STALE_MULTIPLIER:
                 # Serve bounded stale evidence while refreshing; record an
@@ -2871,6 +2905,7 @@ class CachedRegistryClient(RegistryClient):
                     retention_seconds=retention_seconds,
                     on_failure=_on_refresh_failure,
                 ):
+                    await self._remember_team_read_origin(domain, name, origin)
                     return project(cached["value"])
 
         try:
@@ -2911,6 +2946,7 @@ class CachedRegistryClient(RegistryClient):
             encode=encode_revocations,
             retention_seconds=retention_seconds,
         )
+        await self._remember_team_read_origin(domain, name, origin)
         return project(set(fresh_value))
 
     async def refresh_team_certificates_after_miss(
@@ -2932,9 +2968,10 @@ class CachedRegistryClient(RegistryClient):
         Both a waiter and the shared producer retain the client's total bound;
         cancelling a waiter does not cancel another waiter's bounded producer.
         """
-        registry_url, _ = await self._team_read_origin(
+        origin = await self._team_read_origin(
             domain, name, fresh_seconds=_TEAM_CERTIFICATES_CACHE_TTL_SECONDS
         )
+        registry_url = origin.registry_url
         cache_key = await self._generation_cache_key(
             self._team_certificates_cache_key(
                 domain, name, active_only=False, registry_url=registry_url
@@ -2983,6 +3020,7 @@ class CachedRegistryClient(RegistryClient):
                     or refresh.certificate_id == certificate_id
                     or any(cert.certificate_id == certificate_id for cert in certificates)
                 ):
+                    await self._remember_team_read_origin(domain, name, origin)
                     return certificates
                 # Another member's refresh predates this registration. Reuse
                 # its positive facts, but require both admission budgets if
@@ -3066,9 +3104,10 @@ class CachedRegistryClient(RegistryClient):
         # enforcement input exactly as a failed revocation refresh does, and is
         # logged as loudly. Retention is unchanged: no grace, no widened TTL —
         # this is a logging-parity change only.
-        registry_url, _ = await self._team_read_origin(
+        origin = await self._team_read_origin(
             domain, name, fresh_seconds=_TEAM_CERTIFICATES_CACHE_TTL_SECONDS
         )
+        registry_url = origin.registry_url
 
         def _on_refresh_failure(exc: BaseException, age_seconds: int) -> None:
             logger.warning(
@@ -3082,7 +3121,7 @@ class CachedRegistryClient(RegistryClient):
                 exc,
             )
 
-        return await self._cached_read(
+        certificates = await self._cached_read(
             cache_key=self._team_certificates_cache_key(
                 domain,
                 name,
@@ -3105,6 +3144,8 @@ class CachedRegistryClient(RegistryClient):
             decode=lambda payload: [_team_certificate_from_json(item) for item in payload],
             on_refresh_failure=_on_refresh_failure,
         )
+        await self._remember_team_read_origin(domain, name, origin)
+        return certificates
 
     async def register_team_certificate(
         self,
@@ -3808,6 +3849,9 @@ class CachedRegistryClient(RegistryClient):
     def _id_status_route_key(self, request: dict[str, Any]) -> str:
         digest = hashlib.sha256(canonical_json_bytes(request)).hexdigest()
         return self._registry_route_key("id_status", f"{request['domain']}:{digest}")
+
+    def _team_registry_route_key(self, domain: str, name: str) -> str:
+        return self._registry_route_key("team", build_team_id(domain, name))
 
     def _registry_route_key(self, kind: str, scope: str) -> str:
         origin = canonical_server_origin(self.registry_url)
