@@ -124,7 +124,6 @@ source = { editable = "../../naapp-lib" }
 
 [package.metadata]
 requires-dist = [
-    { name = "aweb-naapp", extras = ["egress"], marker = "extra == 'runtime'" },
     { name = "awid-service", marker = "extra == 'hooks'", editable = "../../awid" },
     { name = "awid-service", marker = "extra == 'runtime'", editable = "../../awid" },
     { name = "cbor2", marker = "extra == 'runtime'", specifier = ">=6.1.2" },

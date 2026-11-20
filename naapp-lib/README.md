@@ -241,11 +241,7 @@ An app names its signing keys by kid, as key files:
 must be a regular file of at most 1 KiB, and must not be group- or world-writable. The
 app-event key may instead be given as `<PREFIX>APP_EMIT_KEY_SEED_HEX` with
 `<PREFIX>APP_EMIT_KID`, a form that signs app events only. An app with
-`<PREFIX>APP_EVENTS_ORIGIN` set must hold its app-event key. Despite its name, the
-setting is the core's base URL, not a bare origin: https, or http on `127.0.0.1`,
-`[::1]` or `localhost`, optionally with the path prefix the core is mounted under
-(`https://core.example/api`), and no query, fragment or userinfo. Events are
-posted to `<base>/v1/events/app`.
+`<PREFIX>APP_EVENTS_ORIGIN` set (https, or http on loopback) must hold its app-event key.
 
 ### The served manifest
 

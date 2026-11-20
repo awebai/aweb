@@ -185,21 +185,7 @@ header, event or certificate.
    `issued_at` more than five minutes ahead of the client clock. Any other
    refusal of the record is `team_server_record_invalid`.
 4. **Use.** Call only `server_url`, sign with `aud` set to its origin, and
-   follow no redirects. The record is the team's own statement, so its
-   address is the team's choice, and the app reaches it only through the
-   shared egress guard (`aweb_naapp.egress`): https only, every address the
-   name resolves to checked against the egress address policy, and the
-   connection pinned to a checked address. A server the guard refuses is
-   refused with 403 `team_server_not_allowed`, and nothing is sent. The
-   refusal is not transient, unlike 503 `authority_unavailable`: retrying
-   cannot help, and only the team's controller can fix it, by publishing a
-   public https address (`aw id team set-server`). The one
-   exception is the operator's own server: an origin listed in
-   `<PREFIX>TEAM_SERVER_INTERNAL_ORIGINS` (https, or http on `127.0.0.1`,
-   `[::1]` or `localhost`; a malformed entry stops the app starting) is
-   reached directly when the record's audience equals it exactly. Development
-   and e2e stacks whose coordination server runs on loopback list it there;
-   production leaves it empty.
+   follow no redirects.
 5. **Cache.** Key the cache on `(registry origin, team_id)`, reuse for at most
    60 s, and keep no expired fallback. A refresh failure returns
    `authority_unavailable`. A verified absent record returns
@@ -527,8 +513,8 @@ GET /v1/apps/self/hooks/{catalog_id}/{catalog_version}/{hook}/productions
 
 ## 5. Client in `aweb_naapp.runtime`
 
-Placed under the `runtime` extra, which depends on `awid-service`, `httpx`
-and the `egress` extra (`naapp-lib/pyproject.toml`). The runtime builds one `TeamServerDirectory`
+Placed under the `runtime` extra, which depends on `awid-service` and `httpx`
+(`naapp-lib/pyproject.toml`). The runtime builds one `TeamServerDirectory`
 and one `HookResolver` and shares them (`NaappRuntime.team_server_directory`,
 `NaappRuntime.hook_resolver`; decision 69):
 

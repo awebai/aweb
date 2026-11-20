@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from enum import StrEnum
 from typing import Any
 from uuid import UUID
 
@@ -33,7 +32,6 @@ from aweb_naapp.runtime.hook_resolver import (
     HookBinding,
     HookBindingRequired,
     HookResolutionUnavailable,
-    HookTeamServerNotAllowed,
     OwnHookBinding,
 )
 from aweb_naapp.runtime.manifest_hooks import bounded_body
@@ -135,11 +133,7 @@ class Ingestor:
     """
 
     def __init__(
-        self,
-        runtime: NaappRuntime,
-        signer: LogsSigner,
-        catalog: Catalog,
-        quota: ClientQuota,
+        self, runtime: NaappRuntime, signer: LogsSigner, catalog: Catalog, quota: ClientQuota,
         purges: PurgeLedger,
     ) -> None:
         self.runtime = runtime
@@ -162,12 +156,10 @@ class Ingestor:
             auth = request.headers.get("Authorization", "")
             if not auth.startswith(AUTH_SCHEME):
                 raise Refused("wrong_scheme")
-            parts = auth[len(AUTH_SCHEME) :].split(" ")
+            parts = auth[len(AUTH_SCHEME):].split(" ")
             if len(parts) != 2:
                 raise Refused("wrong_scheme")
-            signed = decode_base64url(
-                request.headers.get(SIGNED_PAYLOAD_HEADER, ""), "signed payload"
-            )
+            signed = decode_base64url(request.headers.get(SIGNED_PAYLOAD_HEADER, ""), "signed payload")
             hint = parse_canonical_object(signed)
             verify_signature(parts[0], signed, parts[1])
             binding_id = hint.get("binding_id")
@@ -179,22 +171,13 @@ class Ingestor:
             producer = hint.get("producer")
             if isinstance(producer, str) and producer.startswith("client:"):
                 team_key_did = await self._current_team_key(team_id)
-                client_facts = await self._team_certificates(
-                    team_id, producer.removeprefix("client:")
-                )
+                client_facts = await self._team_certificates(team_id, producer.removeprefix("client:"))
             received = verify_delivery(
-                request.method,
-                raw_request_target(request),
-                headers,
-                body,
+                request.method, raw_request_target(request), headers, body,
                 ReceiveOptions(
-                    audience=self.runtime.settings.public_origin,
-                    binding_id=binding_id,
-                    now=received_at,
-                    team_key_did=team_key_did,
-                    revoked_certificate_ids=client_facts.revoked_certificate_ids
-                    if client_facts
-                    else (),
+                    audience=self.runtime.settings.public_origin, binding_id=binding_id,
+                    now=received_at, team_key_did=team_key_did,
+                    revoked_certificate_ids=client_facts.revoked_certificate_ids if client_facts else (),
                     registered_certificate_ids=(
                         client_facts.published_certificate_ids if client_facts else None
                     ),
@@ -210,25 +193,17 @@ class Ingestor:
             raise IngestRefused(401, "transport_invalid_value") from exc
 
         event = received.envelope
-        occurred_at = datetime.strptime(event.fields["occurred_at"], _EVENT_TIME).replace(
-            tzinfo=UTC
-        )
+        occurred_at = datetime.strptime(event.fields["occurred_at"], _EVENT_TIME).replace(tzinfo=UTC)
         binding = await self._binding(event, UUID(binding_id), occurred_at, request)
         evidence = await self._provenance(
-            event,
-            occurred_at,
-            headers,
-            team_key_did,
-            received_at=received_at,
+            event, occurred_at, headers, team_key_did, received_at=received_at,
         )
         evidence["binding_ids"].insert(0, str(binding.binding_id))
-        evidence["admissions"] = [
-            {
-                "registration": _binding_evidence(binding, event),
-                "production": evidence.pop("production", None),
-                "server_url": evidence.get("server_url"),
-            }
-        ]
+        evidence["admissions"] = [{
+            "registration": _binding_evidence(binding, event),
+            "production": evidence.pop("production", None),
+            "server_url": evidence.get("server_url"),
+        }]
         check_schema(event, self.catalog, received_at=received_at)
         # Retain exactly the bytes verified by the kit, not a reserialization.
         content = parse_canonical_object(body)
@@ -236,12 +211,8 @@ class Ingestor:
 
         async def charge(tx: Any) -> None:
             await charge_client_quota(
-                tx,
-                self.quota,
-                team_id=event.team_id,
-                member=event.fields["producer"]["certificate_id"],
-                size=len(body),
-                now=received_at,
+                tx, self.quota, team_id=event.team_id,
+                member=event.fields["producer"]["certificate_id"], size=len(body), now=received_at,
             )
 
         # An event purged before the content database was restored is
@@ -249,13 +220,8 @@ class Ingestor:
         purge_act = await self.purges.act(event.team_id, UUID(event.event_id))
         try:
             result = await append(
-                self.runtime.db(),
-                self.signer,
-                event=event,
-                signing_bytes=signing,
-                signature=content["signature"],
-                key_evidence=evidence,
-                received_at=received_at,
+                self.runtime.db(), self.signer, event=event, signing_bytes=signing,
+                signature=content["signature"], key_evidence=evidence, received_at=received_at,
                 before_append=charge if event.producer_kind == "client" else None,
                 purge_act=purge_act,
             )
@@ -304,47 +270,32 @@ class Ingestor:
     ) -> OwnHookBinding:
         try:
             resolution = await self.resolver.own_bindings(event.team_id, binding_id=binding_id)
-        except HookBindingRequired as exc:
+        except (HookBindingRequired, HookResolutionUnavailable) as exc:
             raise IngestRefused(503, "binding_authority_unavailable") from exc
-        except HookResolutionUnavailable as exc:
-            raise _unresolved(exc, Lookup.BINDING) from exc
         for binding in resolution.items:
             if (
-                binding.kind == "registration"
-                and binding.state == "active"
+                binding.kind == "registration" and binding.state == "active"
                 and (binding.catalog_id, binding.catalog_version, binding.hook)
                 == (event.fields["catalog"]["id"], event.fields["catalog"]["version"], event.hook)
-                and binding.active_from is not None
-                and binding.active_from <= occurred_at
+                and binding.active_from is not None and binding.active_from <= occurred_at
                 and binding.origin == self.runtime.settings.public_origin
-                and binding.method == request.method
-                and binding.path == raw_request_target(request)
+                and binding.method == request.method and binding.path == raw_request_target(request)
             ):
                 return binding
         raise IngestRefused(403, "binding_required")
 
     async def _provenance(
-        self,
-        event: Envelope,
-        occurred_at: datetime,
-        headers: dict[str, str],
-        team_key_did: str,
-        *,
-        received_at: datetime,
+        self, event: Envelope, occurred_at: datetime, headers: dict[str, str], team_key_did: str,
+        *, received_at: datetime,
     ) -> dict[str, Any]:
         producer = event.fields["producer"]
         evidence: dict[str, Any] = {
-            "kid": event.producer_kid,
-            "did_key": event.producer_did_key,
-            "purposes": [],
-            "installation_id": None,
-            "generation": None,
-            "binding_ids": [],
+            "kid": event.producer_kid, "did_key": event.producer_did_key,
+            "purposes": [], "installation_id": None, "generation": None, "binding_ids": [],
         }
         if event.producer_kind == "client":
             evidence.update(
-                kid="member",
-                certificate=decode_team_certificate(headers["x-awid-team-certificate"]),
+                kid="member", certificate=decode_team_certificate(headers["x-awid-team-certificate"]),
                 team_did_key=team_key_did,
             )
             return evidence
@@ -354,84 +305,40 @@ class Ingestor:
                 if producer["origin"] == canonical_server_origin(resolution.server_url):
                     for core_key in resolution.items:
                         if (
-                            core_key.kid == event.producer_kid
-                            and core_key.did_key == event.producer_did_key
+                            core_key.kid == event.producer_kid and core_key.did_key == event.producer_did_key
                             and core_key.valid_from <= occurred_at
                             and core_key.valid_from <= received_at
-                            and (
-                                core_key.valid_until is None
-                                or (
-                                    occurred_at < core_key.valid_until
-                                    and received_at < core_key.valid_until
-                                )
-                            )
+                            and (core_key.valid_until is None or (
+                                occurred_at < core_key.valid_until and received_at < core_key.valid_until
+                            ))
                         ):
-                            return {
-                                **evidence,
-                                "purposes": ["hook-event"],
-                                "server_url": resolution.server_url,
-                            }
+                            return {**evidence, "purposes": ["hook-event"], "server_url": resolution.server_url}
                 raise IngestRefused(403, "provenance_core_key")
             productions = await self.resolver.productions(
-                event.team_id,
-                event.fields["catalog"]["id"],
-                event.fields["catalog"]["version"],
-                event.hook,
+                event.team_id, event.fields["catalog"]["id"], event.fields["catalog"]["version"], event.hook,
             )
         except HookBindingRequired as exc:
             raise IngestRefused(403, "provenance_app_production") from exc
         except HookResolutionUnavailable as exc:
-            raise _unresolved(exc, Lookup.PROVENANCE) from exc
+            raise IngestRefused(503, "provenance_authority_unavailable") from exc
         for production in productions.items:
             if (
-                (
-                    production.app_id,
-                    production.origin,
-                    production.installation_id,
-                    production.generation,
-                )
-                == (
-                    producer["app_id"],
-                    producer["origin"],
-                    producer["installation_id"],
-                    producer["generation"],
-                )
-                and production.active_from is not None
-                and production.active_from <= occurred_at
+                (production.app_id, production.origin, production.installation_id, production.generation)
+                == (producer["app_id"], producer["origin"], producer["installation_id"], producer["generation"])
+                and production.active_from is not None and production.active_from <= occurred_at
             ):
                 for production_key in production.keys:
                     if (
-                        production_key.kid == event.producer_kid
-                        and production_key.did_key == event.producer_did_key
+                        production_key.kid == event.producer_kid and production_key.did_key == event.producer_did_key
                         and "hook-event" in production_key.purposes
                     ):
                         return {
-                            **evidence,
-                            "purposes": list(production_key.purposes),
-                            "installation_id": production.installation_id,
-                            "generation": production.generation,
+                            **evidence, "purposes": list(production_key.purposes),
+                            "installation_id": production.installation_id, "generation": production.generation,
                             "binding_ids": [str(production.binding_id)],
                             "production": _binding_evidence(production, event),
                         }
         raise IngestRefused(403, "provenance_app_production")
-
-
-class Lookup(StrEnum):
-    """A hook read the ingest makes of the team's server; each value is the
-    code a delivery is refused with, retryably, when that read fails."""
-
-    BINDING = "binding_authority_unavailable"
-    PROVENANCE = "provenance_authority_unavailable"
-
-
-def _unresolved(exc: HookResolutionUnavailable, lookup: Lookup) -> IngestRefused:
-    """The refusal for a hook read the team's server did not answer: permanent
-    when the egress rule refuses that server, which only the team's controller
-    can fix (docs/design/app-team-server-api.md §1, trust chain step 4), and
-    otherwise the lookup's own code, which the sender retries."""
-    if isinstance(exc, HookTeamServerNotAllowed):
-        return IngestRefused(403, "team_server_not_allowed")
-    return IngestRefused(503, lookup)
 
 
 def _binding_evidence(binding: HookBinding, event: Envelope) -> dict[str, Any]:
@@ -442,20 +349,13 @@ def _binding_evidence(binding: HookBinding, event: Envelope) -> dict[str, Any]:
     A production's lifecycle fields beyond active_from are not in that API.
     """
     evidence: dict[str, Any] = {
-        "team_id": event.team_id,
-        "binding_id": str(binding.binding_id),
-        "kind": binding.kind,
-        "app_id": binding.app_id,
-        "origin": binding.origin,
-        "installation_id": binding.installation_id,
-        "generation": binding.generation,
-        "digest": binding.digest,
-        "method": binding.method,
-        "path": binding.path,
+        "team_id": event.team_id, "binding_id": str(binding.binding_id),
+        "kind": binding.kind, "app_id": binding.app_id, "origin": binding.origin,
+        "installation_id": binding.installation_id, "generation": binding.generation,
+        "digest": binding.digest, "method": binding.method, "path": binding.path,
         "active_from": format_time(binding.active_from) if binding.active_from else None,
         "catalog_id": event.fields["catalog"]["id"],
-        "catalog_version": event.fields["catalog"]["version"],
-        "hook": event.hook,
+        "catalog_version": event.fields["catalog"]["version"], "hook": event.hook,
         "state": "active",
     }
     if isinstance(binding, OwnHookBinding):

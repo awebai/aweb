@@ -65,9 +65,7 @@ TEAM = "h"
 APP_ID = "lane-secrets"
 TEAM_ID = f"{TEAM}:{DOMAIN}"
 REGISTRY = "http://awid.svc.test:8010"
-# The lane's coordination server, behind the TLS front: the team publishes an
-# https name, and both apps list it as the operator's own team server.
-AWEB = "https://aweb.svc.test"
+AWEB = "http://aweb.svc.test:8000"
 API = "https://api.secrets.svc.test"
 CONSOLE = "https://console.secrets.svc.test"
 ROLE = "secrets.owner"
@@ -96,7 +94,6 @@ LOGS_COMPOSE_ENV = {
 }
 # What the TLS front serves, and the service behind each host.
 UPSTREAMS = {
-    "aweb.svc.test": "aweb:8000",
     "api.secrets.svc.test": "secrets:8770",
     "console.secrets.svc.test": "secrets:8770",
     "api.logs.svc.test": "logs:8765",
@@ -130,9 +127,7 @@ def write_tls(runtime: Path, hosts: list[str]) -> tuple[str, str]:
 def write_secrets_env(lane) -> None:
     """The app's settings file. Compose checks every service's env_file when
     any service starts, so it is written before the lane's first service."""
-    (lane.runtime / "secrets.env").write_text(
-        "".join(f"{k}={v}\n" for k, v in secrets_env().items())
-    )
+    (lane.runtime / "secrets.env").write_text("".join(f"{k}={v}\n" for k, v in secrets_env().items()))
 
 
 def secrets_env() -> dict[str, str]:
@@ -146,14 +141,9 @@ def secrets_env() -> dict[str, str]:
         "SECRETS_PUBLIC_ORIGIN": API,
         "SECRETS_CONSOLE_ORIGIN": CONSOLE,
         "SECRETS_AWID_REGISTRY_URL": REGISTRY,
-        "SECRETS_AWID_MEMBER_CREDENTIALS": json.dumps(
-            {
-                TEAM_ID: {
-                    "signing_key_file": "/run/secrets-keys/member.pem",
-                    "certificate_file": "/run/secrets-keys/member-cert.json",
-                }
-            }
-        ),
+        "SECRETS_AWID_MEMBER_CREDENTIALS": json.dumps({TEAM_ID: {
+            "signing_key_file": "/run/secrets-keys/member.pem",
+            "certificate_file": "/run/secrets-keys/member-cert.json"}}),
         "SECRETS_AUTH_CACHE_TTL_SECONDS": "1",
         "SECRETS_CUSTODY_KEY_FILE": "/run/secrets-keys/custody",
         "SECRETS_SECRET_REQUEST_KEY_FILE": "/run/secrets-keys/request",
@@ -161,14 +151,11 @@ def secrets_env() -> dict[str, str]:
         "SECRETS_RESPONSE_KEY_FILE": "/run/secrets-keys/response",
         "SECRETS_RUNNER_SERVICE_KEY_FILE": "/run/secrets-keys/runner",
         "SECRETS_MANIFEST_REQUEST_KEY_FILE": "/run/secrets-keys/manifest",
-        "SECRETS_APP_KEY_FILES": json.dumps(
-            {
-                "secrets.hook-event-1": "/run/secrets-keys/event",
-                "secrets.hook-delivery-1": "/run/secrets-keys/delivery",
-                "secrets:grant-read-1": "/run/secrets-keys/grant",
-                "secrets:hook-resolve-1": "/run/secrets-keys/resolve",
-            }
-        ),
+        "SECRETS_APP_KEY_FILES": json.dumps({
+            "secrets.hook-event-1": "/run/secrets-keys/event",
+            "secrets.hook-delivery-1": "/run/secrets-keys/delivery",
+            "secrets:grant-read-1": "/run/secrets-keys/grant",
+            "secrets:hook-resolve-1": "/run/secrets-keys/resolve"}),
         "SECRETS_EMAIL_SMTP_HOST": "smtp.svc.test",
         "SECRETS_EMAIL_SMTP_PORT": "1025",
         "SECRETS_EMAIL_USERNAME": "lane",
@@ -179,12 +166,6 @@ def secrets_env() -> dict[str, str]:
         "SECRETS_HOOK_INTERNAL_DESTINATIONS": "allowed",
         "SECRETS_HOOK_INTERNAL_CIDR": LANE_SUBNET,
         "SECRETS_HOOK_CA_FILE": "/run/secrets-keys/hook-ca.pem",
-        "SECRETS_TEAM_SERVER_INTERNAL_ORIGINS": json.dumps([AWEB]),
-        # The team's domain names the lane's http registry, which awid accepts
-        # only in development, as every other lane service runs.
-        "APP_ENV": "development",
-        # The lane's CA, which the team server's TLS front presents.
-        "SSL_CERT_FILE": "/run/secrets-keys/hook-ca.pem",
     }
 
 
@@ -206,23 +187,9 @@ class Lane:
 
     def compose(self, *args: str, timeout: int = 900) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
-            [
-                "docker",
-                "compose",
-                "-p",
-                self.project,
-                "-f",
-                str(APP_DIR / "docker-compose.e2e.yml"),
-                "--profile",
-                "logs",
-                *args,
-            ],
-            cwd=APP_DIR,
-            env=self.env,
-            text=True,
-            capture_output=True,
-            timeout=timeout,
-            check=False,
+            ["docker", "compose", "-p", self.project, "-f", str(APP_DIR / "docker-compose.e2e.yml"),
+             "--profile", "logs", *args],
+            cwd=APP_DIR, env=self.env, text=True, capture_output=True, timeout=timeout, check=False,
         )
 
     def up(self, *services: str) -> None:
@@ -230,9 +197,7 @@ class Lane:
         if result.returncode != 0:
             # The services' own last words, before the fixture's down -v.
             logs = self.compose("logs", "--no-color", "--tail", "60", *services)
-            raise AssertionError(
-                result.stderr[-4000:] + "\n--- service logs ---\n" + logs.stdout + logs.stderr
-            )
+            raise AssertionError(result.stderr[-4000:] + "\n--- service logs ---\n" + logs.stdout + logs.stderr)
 
     def machine(self, name: str) -> str:
         """Start a cli container as one person's machine; its HOME is /runtime/<name>."""
@@ -246,28 +211,14 @@ class Lane:
         if not accounts.exists():
             accounts.mkdir(mode=0o755)
             accounts.chmod(0o755)  # mkdir's mode is masked by the launching umask
-            (accounts / "passwd").write_text(
-                f"root:x:0:0:root:/root:/bin/sh\nlane:x:{uid}:{gid}:lane:/runtime:/bin/sh\n"
-            )
+            (accounts / "passwd").write_text(f"root:x:0:0:root:/root:/bin/sh\nlane:x:{uid}:{gid}:lane:/runtime:/bin/sh\n")
             (accounts / "group").write_text(f"root:x:0:\nlane:x:{gid}:\n")
             for path in accounts.iterdir():
                 path.chmod(0o644)
         result = self.compose(
-            "run",
-            "-d",
-            "--name",
-            container,
-            "--user",
-            f"{uid}:{gid}",
-            "-v",
-            f"{accounts / 'passwd'}:/etc/passwd:ro",
-            "-v",
-            f"{accounts / 'group'}:/etc/group:ro",
-            "-e",
-            f"HOME={machine_dir(name)}",
-            "-w",
-            machine_dir(name),
-            "cli",
+            "run", "-d", "--name", container, "--user", f"{uid}:{gid}",
+            "-v", f"{accounts / 'passwd'}:/etc/passwd:ro", "-v", f"{accounts / 'group'}:/etc/group:ro",
+            "-e", f"HOME={machine_dir(name)}", "-w", machine_dir(name), "cli",
         )
         assert result.returncode == 0, result.stdout + result.stderr
         return container
@@ -321,21 +272,11 @@ class Holder(SharedHolder):
     def browser(self, page: str, purpose: str, *, page_check: bool) -> None:
         """The holder's browser, in the holder's network namespace."""
         args = [
-            "run",
-            "--rm",
-            f"--network=container:{self.container}",
-            "--user",
-            f"{os.getuid()}:{os.getgid()}",
-            f"--volume={self.lane.runtime}:/runtime",
-            f"{self.lane.project}-browser",
-            "--page",
-            page,
-            "--purpose",
-            purpose,
-            "--device",
-            "/runtime/holder/authenticator.json",
-            "--ca",
-            "/runtime/tls/ca.pem",
+            "run", "--rm", f"--network=container:{self.container}",
+            "--user", f"{os.getuid()}:{os.getgid()}",
+            f"--volume={self.lane.runtime}:/runtime", f"{self.lane.project}-browser",
+            "--page", page, "--purpose", purpose, "--device", "/runtime/holder/authenticator.json",
+            "--ca", "/runtime/tls/ca.pem",
         ]
         if not page_check:
             args.append("--no-page")
@@ -350,20 +291,9 @@ def lane(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Lane]:
     project = os.environ.get("NAAPP_E2E_PROJECT", "secrets-owner-acts-e2e")
     runtime = tmp_path_factory.mktemp("owner-acts")
     runtime.chmod(0o755)
-    commit = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=REPO, text=True, capture_output=True, check=True
-    ).stdout.strip()
-    lane = Lane(
-        project,
-        runtime,
-        {
-            **os.environ,
-            "SECRETS_E2E_RUNTIME": str(runtime),
-            "SECRETS_E2E_SOURCE_COMMIT": commit,
-            "SECRETS_E2E_AWID_SERVICE_TOKEN": secrets.token_hex(32),
-            **LOGS_COMPOSE_ENV,
-        },
-    )
+    commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPO, text=True, capture_output=True, check=True).stdout.strip()
+    lane = Lane(project, runtime, {**os.environ, "SECRETS_E2E_RUNTIME": str(runtime), "SECRETS_E2E_SOURCE_COMMIT": commit,
+                                       "SECRETS_E2E_AWID_SERVICE_TOKEN": secrets.token_hex(32), **LOGS_COMPOSE_ENV})
 
     write_dns(runtime)
     publish_awid_txt(lane, "did:key:z6MkpendingpendingpendingpendingpendingpendingpendingP")
@@ -373,13 +303,10 @@ def lane(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Lane]:
     try:
         lane.up("dns")
         dns = lane.compose("ps", "-q", "dns").stdout.strip()
-        ip = _docker(
-            "inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", dns
-        ).stdout.strip()
+        ip = _docker("inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", dns).stdout.strip()
         assert ip, "no DNS address"
         lane.env["SECRETS_E2E_DNS_IP"] = ip
-        # The front carries the coordination server's https name from the start.
-        lane.up("postgres", "redis", "awid", "aweb", "smtp", "front")
+        lane.up("postgres", "redis", "awid", "aweb", "smtp")
         result = lane.compose("--profile", "browser", "build", "cli", "browser")
         assert result.returncode == 0, result.stdout + result.stderr
         _docker("tag", f"{project}-browser", f"{project}-browser")
@@ -396,20 +323,8 @@ def lane(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Lane]:
 def grant_install_owner(lane: Lane, did_key: str) -> None:
     """The server operator's local bootstrap of the team's first installation
     owner. Membership grants no install authority; only this does."""
-    granted = lane.compose(
-        "exec",
-        "-T",
-        "aweb",
-        "aweb",
-        "install-admin",
-        "grant",
-        "--team-id",
-        TEAM_ID,
-        "--principal-did",
-        did_key,
-        "--role",
-        "owner",
-    )
+    granted = lane.compose("exec", "-T", "aweb", "aweb", "install-admin", "grant", "--team-id", TEAM_ID,
+                           "--principal-did", did_key, "--role", "owner")
     assert granted.returncode == 0, granted.stdout + granted.stderr
 
 
@@ -422,21 +337,8 @@ def admit_app_member(lane: Lane, controller: str, name: str, home: Path) -> tupl
     from awid.did import did_from_public_key  # noqa: PLC0415
 
     did = did_from_public_key(bytes(key.verify_key))
-    added = aw(
-        controller,
-        "id",
-        "team",
-        "add-member",
-        "--team",
-        TEAM,
-        "--namespace",
-        DOMAIN,
-        "--did",
-        did,
-        "--name",
-        name,
-        "--global",
-    )
+    added = aw(controller, "id", "team", "add-member", "--team", TEAM, "--namespace", DOMAIN,
+               "--did", did, "--name", name, "--global")
     pem = (
         "-----BEGIN ED25519 PRIVATE KEY-----\n"
         + __import__("base64").b64encode(bytes(key)).decode()
@@ -445,22 +347,9 @@ def admit_app_member(lane: Lane, controller: str, name: str, home: Path) -> tupl
     home.mkdir(mode=0o700)
     (home / "signing.key").write_text(pem)
     (home / "signing.key").chmod(0o600)
-    fetched = aw(
-        controller,
-        "--identity-home",
-        f"/runtime/{home.relative_to(lane.runtime)}",
-        "id",
-        "team",
-        "fetch-cert",
-        "--namespace",
-        DOMAIN,
-        "--team",
-        TEAM,
-        "--cert-id",
-        added["certificate_id"],
-        "--registry",
-        REGISTRY,
-    )
+    fetched = aw(controller, "--identity-home", f"/runtime/{home.relative_to(lane.runtime)}", "id", "team",
+                 "fetch-cert", "--namespace", DOMAIN, "--team", TEAM, "--cert-id", added["certificate_id"],
+                 "--registry", REGISTRY)
     return pem, home / fetched["cert_path"]
 
 
@@ -472,23 +361,10 @@ def write_service_member(lane: Lane, controller: str) -> None:
     pem, certificate = admit_app_member(lane, controller, "secrets-service", keys / "service-home")
     (keys / "member.pem").write_text(pem)
     shutil.copyfile(certificate, keys / "member-cert.json")
-    for name in (
-        "custody",
-        "request",
-        "params",
-        "response",
-        "runner",
-        "smtp",
-        "manifest",
-        "event",
-        "delivery",
-        "grant",
-        "resolve",
-    ):
+    for name in ("custody", "request", "params", "response", "runner", "smtp", "manifest", "event", "delivery", "grant", "resolve"):
         # The app's shared key-file format: 64 hex characters, each independent.
         (keys / name).write_text(secrets.token_hex(32) + "\n")
-    # The lane's CA, which the app's hook deliveries to the lane's Logs and its
-    # team-server reads trust.
+    # The lane's CA, which the app's hook deliveries to the lane's Logs trust.
     shutil.copyfile(lane.runtime / "tls" / "ca.pem", keys / "hook-ca.pem")
     for path in keys.iterdir():
         path.chmod(0o644)
@@ -502,9 +378,7 @@ def write_logs_files(lane: Lane, controller: str) -> None:
     files = lane.runtime / "logs"
     files.mkdir(mode=0o755)
     files.chmod(0o755)  # mkdir's mode is masked by the launching umask
-    pem, certificate = admit_app_member(
-        lane, controller, "logs-service", lane.runtime / "logs-member"
-    )
+    pem, certificate = admit_app_member(lane, controller, "logs-service", lane.runtime / "logs-member")
     (files / "awid-member-key").write_text(pem)
     shutil.copyfile(certificate, files / "awid-member-certificate")
     for name in ("logs-chain", "logs-resolve", "logs-grants", "logs-governance"):
@@ -512,29 +386,15 @@ def write_logs_files(lane: Lane, controller: str) -> None:
     (files / "smtp-username").write_text("logs-service")
     (files / "smtp-password").write_text(secrets.token_urlsafe(16))
     (files / "database-url").write_text("postgresql://secrets:disposable@postgres:5432/logs\n")
-    (files / "purge-ledger-database-url").write_text(
-        "postgresql://secrets:disposable@postgres:5432/logsledger\n"
-    )
+    (files / "purge-ledger-database-url").write_text("postgresql://secrets:disposable@postgres:5432/logsledger\n")
     for path in files.iterdir():
         path.chmod(0o644)
 
 
 def create_logs_databases(lane: Lane) -> None:
     for database in ("logs", "logsledger"):
-        created = lane.compose(
-            "exec",
-            "-T",
-            "postgres",
-            "psql",
-            "-U",
-            "secrets",
-            "-d",
-            "secrets",
-            "-v",
-            "ON_ERROR_STOP=1",
-            "-c",
-            f"CREATE DATABASE {database}",
-        )
+        created = lane.compose("exec", "-T", "postgres", "psql", "-U", "secrets", "-d", "secrets", "-v",
+                               "ON_ERROR_STOP=1", "-c", f"CREATE DATABASE {database}")
         assert created.returncode == 0, created.stdout + created.stderr
 
 
@@ -559,12 +419,9 @@ def install_apps(lane: Lane, controller: str, owner_did_key: str) -> None:
 
 def secrets_query(lane: Lane):
     def query(select: str) -> str:
-        result = lane.compose(
-            "exec", "-T", "postgres", *read_only_psql("secrets", "secrets", select)
-        )
+        result = lane.compose("exec", "-T", "postgres", *read_only_psql("secrets", "secrets", select))
         assert result.returncode == 0, result.stdout + result.stderr
         return result.stdout.strip()
-
     return query
 
 
@@ -573,16 +430,7 @@ def test_the_owner_designates_a_human_holder_registered_on_another_machine(lane:
     holder = Holder(lane, lane.machine("holder"))
 
     # Setup authority: the namespace, its root human (the holder) and the team.
-    prepared = aw(
-        holder.container,
-        "id",
-        "namespace",
-        "prepare-controller",
-        "--domain",
-        DOMAIN,
-        "--registry",
-        REGISTRY,
-    )
+    prepared = aw(holder.container, "id", "namespace", "prepare-controller", "--domain", DOMAIN, "--registry", REGISTRY)
     publish_awid_txt(lane, prepared["controller_did"])
     await_awid_txt(holder.container, prepared["controller_did"])
     child = holder.spawn("--json", "id", "human", "init", "--domain", DOMAIN, "--as-root")
@@ -591,18 +439,7 @@ def test_the_owner_designates_a_human_holder_registered_on_another_machine(lane:
     assert child.exitstatus == 0, output
     human = first_json(output)
     principal = human["id"]
-    aw(
-        holder.container,
-        "id",
-        "team",
-        "create",
-        "--name",
-        TEAM,
-        "--namespace",
-        DOMAIN,
-        "--registry",
-        REGISTRY,
-    )
+    aw(holder.container, "id", "team", "create", "--name", TEAM, "--namespace", DOMAIN, "--registry", REGISTRY)
 
     # The team key moves to the owner's machine; the holder keeps none.
     team_key = lane.runtime / "holder" / ".awid" / "team-keys" / DOMAIN / f"{TEAM}.key"
@@ -615,71 +452,19 @@ def test_the_owner_designates_a_human_holder_registered_on_another_machine(lane:
     # owner's machine's identity folder (a fresh explicit target). Only the
     # owner's own key and certificate land there; the namespace controller key
     # stays where it is.
-    owner = aw(
-        holder.container,
-        "--identity-home",
-        identity_folder("controller"),
-        "id",
-        "create",
-        "--name",
-        "owner",
-        "--domain",
-        DOMAIN,
-        "--root-parent",
-        "--registry",
-        REGISTRY,
-    )
+    owner = aw(holder.container, "--identity-home", identity_folder("controller"), "id", "create", "--name", "owner",
+               "--domain", DOMAIN, "--root-parent", "--registry", REGISTRY)
     # Then the owner's membership, and the holder's.
-    invite = aw(
-        controller, "id", "team", "invite", "--team", TEAM, "--namespace", DOMAIN, "--member-global"
-    )
+    invite = aw(controller, "id", "team", "invite", "--team", TEAM, "--namespace", DOMAIN, "--member-global")
     # The owner's machine holds no namespace authority, so the membership
     # names the address the namespace root already issued to this identity.
-    aw(
-        controller,
-        "id",
-        "team",
-        "accept-invite",
-        invite["token"],
-        "--name",
-        "owner",
-        "--global",
-        "--address",
-        owner["address"],
-    )
+    aw(controller, "id", "team", "accept-invite", invite["token"], "--name", "owner", "--global",
+       "--address", owner["address"])
     aw(controller, "init", "--url", AWEB, "--name", "owner", "--do-not-touch-agents-md")
-    added = aw(
-        controller,
-        "id",
-        "team",
-        "add-member",
-        "--team",
-        TEAM,
-        "--namespace",
-        DOMAIN,
-        "--did",
-        human["did_key"],
-        "--did-aw",
-        principal,
-        "--name",
-        "holder",
-        "--global",
-    )
-    child = holder.act(
-        principal,
-        "--json",
-        "id",
-        "team",
-        "fetch-cert",
-        "--namespace",
-        DOMAIN,
-        "--team",
-        TEAM,
-        "--cert-id",
-        added["certificate_id"],
-        "--registry",
-        REGISTRY,
-    )
+    added = aw(controller, "id", "team", "add-member", "--team", TEAM, "--namespace", DOMAIN,
+               "--did", human["did_key"], "--did-aw", principal, "--name", "holder", "--global")
+    child = holder.act(principal, "--json", "id", "team", "fetch-cert",
+                         "--namespace", DOMAIN, "--team", TEAM, "--cert-id", added["certificate_id"], "--registry", REGISTRY)
     output = holder.answer_passphrases(child)
     child.close()
     assert child.exitstatus == 0, output
@@ -697,17 +482,8 @@ def test_the_owner_designates_a_human_holder_registered_on_another_machine(lane:
     assert child.exitstatus == 0, output
 
     # The holder registers a passkey on their own machine and exports it.
-    child = holder.act(
-        principal,
-        "app",
-        "credential",
-        "register",
-        APP_ID,
-        "--role",
-        ROLE,
-        "--out",
-        "/runtime/holder/export.json",
-    )
+    child = holder.act(principal, "app", "credential", "register",
+                         APP_ID, "--role", ROLE, "--out", "/runtime/holder/export.json")
     output = holder.answer_passphrases(child, until=r"Open this page to continue: (\S+)")
     page = re.search(r"Open this page to continue: (\S+)", output).group(1)
     assert page.startswith(CONSOLE + "/handoff/"), page
@@ -716,36 +492,22 @@ def test_the_owner_designates_a_human_holder_registered_on_another_machine(lane:
     rest = child.before
     child.close()
     assert child.exitstatus == 0, rest
-    fingerprint = re.search(
-        r"Fingerprint: ([0-9a-f]{4} [0-9a-f]{4} [0-9a-f]{4} [0-9a-f]{4})", output + rest
-    ).group(1)
+    fingerprint = re.search(r"Fingerprint: ([0-9a-f]{4} [0-9a-f]{4} [0-9a-f]{4} [0-9a-f]{4})", output + rest).group(1)
     exported = json.loads((lane.runtime / "holder" / "export.json").read_text())
 
     # The designation's governance needs its audit target: the owner
     # activates the apps' hook bindings and waits until they are in effect.
     hooks = activate_hooks(controller, {"secrets": APP_ID, "logs": LOGS_APP_ID})
     installed = hooks["active"]["secrets/production/post-governance-hook"]
-    holding = Holding(
-        app_id=APP_ID,
-        installation_id=installed["installation_id"],
-        generation=installed["generation"],
-        team_id=TEAM_ID,
-        role=ROLE,
-        principal=principal,
-    )
-    designation = Designation(
-        holding=holding,
-        audience=CONSOLE,
-        credential_sha256=credential_sha256(exported["credential"]),
-        contact=CONTACT,
-    )
+    holding = Holding(app_id=APP_ID, installation_id=installed["installation_id"],
+                      generation=installed["generation"], team_id=TEAM_ID, role=ROLE, principal=principal)
+    designation = Designation(holding=holding, audience=CONSOLE,
+                              credential_sha256=credential_sha256(exported["credential"]), contact=CONTACT)
     query = secrets_query(lane)
     baseline = designation_snapshot(query, holding, schema=SECRETS_SCHEMA)
 
     # The owner signs only for that exact credential: the fingerprint matches.
-    shutil.copyfile(
-        lane.runtime / "holder" / "export.json", lane.runtime / "controller" / "export.json"
-    )
+    shutil.copyfile(lane.runtime / "holder" / "export.json", lane.runtime / "controller" / "export.json")
     command = designate_command(APP_ID, ROLE, principal, "/runtime/controller/export.json", CONTACT)
     result = _docker("exec", controller, *command, timeout=300)
     assert result.returncode == 0, result.stdout + result.stderr
