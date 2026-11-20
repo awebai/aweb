@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from enum import StrEnum
 from types import MappingProxyType
-from typing import Any, Awaitable, Callable, TypedDict
+from typing import Any, Awaitable, Callable, Literal, TypedDict, cast
 from urllib.parse import quote
 from uuid import UUID, uuid4
 
@@ -2145,6 +2145,33 @@ class RegistryClient:
         )
 
 
+# Claiming a DNS confirmation and publishing its later HTTP answer share
+# one Redis locator. A move clears the usable route while the new answer
+# is pending. A slow answer can only publish under its own confirmation.
+_UPDATE_REGISTRY_ROUTE = """
+local action, discovery_id, value, ttl = unpack(ARGV)
+local route = {}
+local raw = redis.call('GET', KEYS[1])
+if raw then
+    local ok, decoded = pcall(cjson.decode, raw)
+    if ok and type(decoded) == 'table' then
+        route = decoded
+    end
+end
+if action == 'confirm' then
+    if route.registry_url ~= value then
+        route = {}
+    end
+    route.discovery_id = discovery_id
+    value = cjson.encode(route)
+elseif route.discovery_id ~= discovery_id then
+    return 0
+end
+redis.call('SET', KEYS[1], value, 'EX', ttl)
+return 1
+"""
+
+
 @dataclass(frozen=True, kw_only=True)
 class _RegistryCacheRoute:
     """A bounded locator; only the answering origin's entry supplies evidence."""
@@ -2158,6 +2185,7 @@ class _TeamReadOrigin:
     registry_url: str
     lookup_error: RegistryError | None = None
     discovered_at: int | None = None
+    discovery_id: str | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -2405,6 +2433,8 @@ class CachedRegistryClient(RegistryClient):
         if entry is None:
             return redis_now, None
         origin, fetched_at = entry.get("registry_url"), entry.get("fetched_at")
+        if origin is None and isinstance(entry.get("discovery_id"), str):
+            return redis_now, None
         if isinstance(origin, str) and type(fetched_at) is int:
             try:
                 if canonical_server_origin(origin) == origin:
@@ -2419,13 +2449,42 @@ class CachedRegistryClient(RegistryClient):
         return redis_now, None
 
     async def _write_registry_cache_route(
-        self, route_key: str, registry_url: str, *, fetched_at: int, retention_seconds: int
+        self,
+        route_key: str,
+        registry_url: str,
+        *,
+        fetched_at: int,
+        retention_seconds: int,
+        discovery_id: str | None = None,
     ) -> None:
-        await self._redis_set(
-            route_key,
-            json.dumps({"registry_url": registry_url, "fetched_at": fetched_at}),
-            ex=retention_seconds,
-        )
+        payload = json.dumps({"registry_url": registry_url, "fetched_at": fetched_at})
+        if discovery_id is None:
+            await self._redis_set(route_key, payload, ex=retention_seconds)
+        else:
+            await self._update_registry_route(
+                route_key, "publish", discovery_id, payload, retention_seconds
+            )
+
+    async def _update_registry_route(
+        self,
+        route_key: str,
+        action: Literal["confirm", "publish"],
+        discovery_id: str,
+        value: str,
+        retention_seconds: int,
+    ) -> bool:
+        try:
+            # Redis shares its EVAL annotation with the synchronous client.
+            result = cast(
+                Awaitable[int],
+                self.redis_client.eval(
+                    _UPDATE_REGISTRY_ROUTE, 1, route_key, action, discovery_id, value, retention_seconds
+                ),
+            )
+            return await result == 1
+        except (RedisError, OSError):
+            logger.debug("AWID registry route update unavailable", exc_info=True)
+            return False
 
     async def _team_read_origin(
         self, domain: str, name: str, *, fresh_seconds: int, outage_grace_seconds: int = 0
@@ -2448,6 +2507,8 @@ class CachedRegistryClient(RegistryClient):
         try:
             origin = await self._registry_url_for_domain(domain, fallback_on_dns_error=False)
         except DnsLookupError as exc:
+            if outage_grace_seconds:
+                _, route = await self._read_registry_cache_route(route_key)
             if (
                 route is not None
                 and outage_grace_seconds
@@ -2460,21 +2521,26 @@ class CachedRegistryClient(RegistryClient):
             # but cannot install it as the newly discovered owner.
             return _TeamReadOrigin(registry_url=canonical_server_origin(self.registry_url))
 
-        if route is not None and origin != route.registry_url:
-            # A confirmed move ends reuse of the old locator even if the new
-            # origin fails to answer. Its data stays in its own partition.
-            await self._invalidate_keys(route_key)
-        return _TeamReadOrigin(registry_url=origin, discovered_at=started_at)
+        discovery_id = uuid4().hex
+        confirmed = await self._update_registry_route(
+            route_key, "confirm", discovery_id, origin, _TEAM_REVOCATIONS_OUTAGE_GRACE_SECONDS
+        )
+        return _TeamReadOrigin(
+            registry_url=origin,
+            discovered_at=started_at,
+            discovery_id=discovery_id if confirmed else None,
+        )
 
     async def _remember_team_read_origin(
         self, domain: str, name: str, origin: _TeamReadOrigin
     ) -> None:
-        if origin.discovered_at is not None:
+        if origin.discovered_at is not None and origin.discovery_id is not None:
             await self._write_registry_cache_route(
                 self._team_registry_route_key(domain, name),
                 origin.registry_url,
                 fetched_at=origin.discovered_at,
                 retention_seconds=_TEAM_REVOCATIONS_OUTAGE_GRACE_SECONDS,
+                discovery_id=origin.discovery_id,
             )
 
     async def resolve_key(self, did_aw: str) -> KeyResolution:
