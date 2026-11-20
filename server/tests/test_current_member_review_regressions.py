@@ -17,6 +17,7 @@ from test_current_member_selector_surfaces import (
     _http,
 )
 from test_dashboard_privacy import TEAM
+from test_dashboard_privacy import privacy_app as privacy_app
 from test_member_team_key import _change_key
 from test_messages_http import _signed_team_headers
 from test_team_key_pinning import pinning as pinning
