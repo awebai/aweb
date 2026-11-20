@@ -11,6 +11,7 @@ import pytest
 from deploy.vendor import (
     MODULES,
     LockError,
+    applies,
     assemble,
     installed_files,
     lock_entry,
@@ -150,3 +151,25 @@ def test_an_existing_install_root_refuses(tmp_path):
     (tmp_path / "install").mkdir()
     with pytest.raises(FileExistsError):
         assemble(tmp_path / "install", lock_for(path, digest, "dep"), tmp_path, HERE, (3, 13, 0))
+
+
+@pytest.mark.parametrize(
+    "marker, python, holds",
+    [
+        # PEP 440: a release with fewer parts is zero-padded, never a prefix.
+        ("python_full_version == '3.13'", (3, 13, 15), False),
+        ("python_full_version == '3.13'", (3, 13, 0), True),
+        ("python_full_version == '3.13.15'", (3, 13, 15), True),
+        ("python_full_version != '3.13'", (3, 13, 15), True),
+        ("python_full_version != '3.13.15'", (3, 13, 15), False),
+        ("python_full_version <= '3.13'", (3, 13, 15), False),
+        ("python_full_version > '3.13'", (3, 13, 15), True),
+        ("python_full_version >= '3.13'", (3, 13, 0), True),
+        ("python_full_version < '3.15'", (3, 14, 2), True),
+        ("python_full_version < '3.15'", (3, 15, 0), False),
+        ("python_full_version < '3'", (2, 7, 18), True),
+        (None, (3, 13, 15), True),
+    ],
+)
+def test_a_marker_compares_versions_as_pep_440_does(marker, python, holds):
+    assert applies(marker, python) is holds

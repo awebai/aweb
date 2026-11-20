@@ -95,11 +95,14 @@ def runtime_closure(uv_lock: Path) -> list[Package]:
 
 
 def applies(marker: str | None, python: tuple[int, ...]) -> bool:
+    """Whether a python_full_version marker holds for an interpreter
+    version, compared as PEP 440 compares releases: both sides zero-padded
+    to three parts, so '3.13' means 3.13.0 and never 3.13.15."""
     if marker is None:
         return True
     operator, version = MARKER.fullmatch(marker).groups()
-    bound = tuple(int(part) for part in version.split("."))
-    actual = python[: len(bound)]
+    bound = _release(tuple(int(part) for part in version.split(".")))
+    actual = _release(python)
     return {
         "<": actual < bound,
         "<=": actual <= bound,
@@ -108,6 +111,11 @@ def applies(marker: str | None, python: tuple[int, ...]) -> bool:
         "==": actual == bound,
         "!=": actual != bound,
     }[operator]
+
+
+def _release(parts: tuple[int, ...]) -> tuple[int, int, int]:
+    padded = (*parts, 0, 0, 0)
+    return padded[0], padded[1], padded[2]
 
 
 def wheel_name(url: str) -> str:
