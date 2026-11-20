@@ -1,9 +1,9 @@
 ---
 type: Lesson
 title: Accepted guarantees change only by ruling
-description: When an implementation cannot meet a promise in an accepted design, do not align the text down to the implementation; quote the promise and get a ruling. A service-held verification summary or a keyed digest whose key is later destroyed cannot give independent later verification.
+description: When an implementation cannot meet a promise in an accepted design, do not align the text down to the implementation; quote the promise and get a ruling. A service-held verification summary or a keyed digest whose key is later destroyed cannot give independent later verification. A lifecycle consequence is derived from the canonical Effects text, never from a reviewer's paraphrase.
 tags: [lesson, design, contracts, audit, passkeys]
-timestamp: 2026-10-21
+timestamp: 2026-11-09
 ---
 
 The accepted secrets design promised that a reviewer holding an approver's
@@ -25,6 +25,16 @@ an approval later, without trusting our service."
   reviewer's trusted key. A stored success record only asserts what the service
   checked. A summary HMAC whose key is destroyed cannot supply the check after
   rotation; the public commitment must be unkeyed.
+- The canonical text also governs what is derived from it. Before writing
+  any lifecycle consequence (for example, what a cooling-off does to the
+  current credential or to sessions), re-read the canonical Effects text it
+  derives from, even when a reviewer suggested the wording. In the
+  human-role-holders review, "a replace in cooling-off leaves the old
+  credential current" came from a reviewer's note and went unchallenged
+  until a second reviewer compared it with the design's Effects, which say a
+  replace retires the current credential at once. (Added 2026-11-09 from an
+  OKF proposal by aweb-protocol-expert/aweb-protocol-expert-secrets-docs;
+  notes/two-origin-handoff-and-carried-certificate.md.)
 
 The settled wire contract is in `docs/hook-events.md`; this records why the
 weaker form was rejected.
