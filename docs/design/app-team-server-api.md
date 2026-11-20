@@ -187,19 +187,30 @@ header, event or certificate.
 4. **Use.** Call only `server_url`, sign with `aud` set to its origin, and
    follow no redirects. The record is the team's own statement, so its
    address is the team's choice, and the app reaches it only through the
-   shared egress guard (`aweb_naapp.egress`): https only, every address the
-   name resolves to checked against the egress address policy, and the
-   connection pinned to a checked address. A server the guard refuses is
-   refused with 403 `team_server_not_allowed`, and nothing is sent. The
-   refusal is not transient, unlike 503 `authority_unavailable`: retrying
-   cannot help, and only the team's controller can fix it, by publishing a
-   public https address (`aw id team set-server`). The one
-   exception is the operator's own server: an origin listed in
-   `<PREFIX>TEAM_SERVER_INTERNAL_ORIGINS` (https, or http on `127.0.0.1`,
-   `[::1]` or `localhost`; a malformed entry stops the app starting) is
-   reached directly when the record's audience equals it exactly. Development
-   and e2e stacks whose coordination server runs on loopback list it there;
-   production leaves it empty.
+   deployment's egress guard (`aweb_naapp.egress`), the one its hook
+   deliveries use: https only, every address the name resolves to checked
+   against the floor and the operator's denied networks, the connection pinned
+   to a checked address, no proxy from the environment. A server the guard
+   refuses is refused with 403 `team_server_not_allowed`, and nothing is sent.
+   The refusal is not transient, unlike 503 `authority_unavailable`: retrying
+   cannot help, and it is never cached. Either the deployment's operator lists
+   its own server, or the team's controller publishes a reachable public https
+   address (`aw id team set-server`). The operator's own team server is
+   reached by the one rule for internal destinations
+   (`aweb_naapp.egress.internal`): when the guard refuses the first attempt
+   because the name resolves to a denied address, and the operator allows
+   internal destinations, names its network
+   (`<PREFIX>HOOK_INTERNAL_DESTINATIONS=allowed`, `<PREFIX>HOOK_INTERNAL_CIDR`)
+   and lists the server's exact https origin in
+   `<PREFIX>TEAM_SERVER_INTERNAL_ORIGINS`, the same read is sent once more as
+   an internal destination, accepted only if every address is inside that
+   network. Each purpose has its own origin list, so a listed team server
+   grants hook deliveries nothing, and the reverse. A listed origin without
+   the network, or the network without an origin, stops the app starting, and
+   every listed origin's addresses are checked before it serves. A hosted
+   deployment lists none. In a team deployment the operator opts each app in
+   (`secrets.teamServerInternal`, `logs.teamServerInternal`), which lists
+   exactly aweb's public origin inside `network.servicesCidr`.
 5. **Cache.** Key the cache on `(registry origin, team_id)`, reuse for at most
    60 s, and keep no expired fallback. A refresh failure returns
    `authority_unavailable`. A verified absent record returns

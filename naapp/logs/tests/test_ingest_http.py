@@ -723,4 +723,3 @@ def test_each_lookup_refuses_permanently_when_the_team_server_is_refused(lookup)
     assert (refused.status, refused.code) == (403, "team_server_not_allowed")
     unavailable = unresolved_refusal(HookResolutionUnavailable("authority_unavailable"), lookup)
     assert (unavailable.status, unavailable.code) == (503, lookup.value)
-
