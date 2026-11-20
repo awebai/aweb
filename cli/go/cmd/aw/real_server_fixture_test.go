@@ -2,9 +2,11 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -118,7 +120,14 @@ func (world *realCommandWorld) runInIdentityHome(home string, args ...string) (s
 	command := exec.CommandContext(world.Context, world.Binary, append([]string{"--identity-home", home, "--json"}, args...)...)
 	command.Dir = filepath.Dir(home)
 	command.Env = append(idCreateCommandEnv(world.UserHome), "AWID_REGISTRY_URL="+world.Stack.RegistryURL, "AW_NO_UPDATE_CHECK=1")
-	out, err := command.CombinedOutput()
+	// JSON is a stdout contract; stderr may carry ordinary recovery prose.
+	// Keep that diagnostic on the error without mixing it into the envelope.
+	var diagnostic bytes.Buffer
+	command.Stderr = &diagnostic
+	out, err := command.Output()
+	if err != nil && diagnostic.Len() != 0 {
+		err = fmt.Errorf("%w: %s", err, diagnostic.String())
+	}
 	return string(out), err
 }
 
@@ -179,9 +188,31 @@ func TestRealServerMailChatAndUnregisteredCertificate(t *testing.T) {
 	if _, err := awconfig.SaveTeamCertificateForTeamToIdentityHome(alice.Home, world.TeamID, unregistered); err != nil {
 		t.Fatal(err)
 	}
-	out, err := world.runInIdentityHome(alice.Home, "mail", "send", "--to", "bob", "--subject", "must-not-arrive", "--body", "unregistered")
+	// Bob's first admission may just have spent the team's five-second
+	// certificate-miss refresh budget (awid/registry.py's
+	// refresh_team_certificates_after_miss). A suppressed refresh is 503,
+	// never proof of unregistration. Retry only that precise transient until
+	// a fresh read establishes the separate 401; all other outcomes fail.
+	var out string
 	var refused cliErrorEnvelope
-	if err == nil || json.Unmarshal([]byte(out), &refused) != nil || refused.Error.Code != "http_error" || refused.Error.HTTPStatus != 401 || refused.Error.Detail != "unregistered" {
+	var decodeErr error
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		out, err = world.runInIdentityHome(alice.Home, "mail", "send", "--to", "bob", "--subject", "must-not-arrive", "--body", "unregistered")
+		refused = cliErrorEnvelope{}
+		decodeErr = json.Unmarshal([]byte(out), &refused)
+		if err == nil || decodeErr != nil ||
+			refused.Error.Code != "http_error" || refused.Error.HTTPStatus != 503 ||
+			refused.Error.Detail != "AWID certificate existence check upstream error (RegistryError status=503): AWID certificate existence refresh suppressed" {
+			break
+		}
+		if !time.Now().Before(deadline) {
+			t.Fatalf("certificate refresh never became available: %v\n%s", err, out)
+		}
+		t.Log("certificate refresh suppressed (503); unregistered verdict remains unproved")
+		time.Sleep(100 * time.Millisecond)
+	}
+	if err == nil || decodeErr != nil || refused.Error.Code != "http_error" || refused.Error.HTTPStatus != 401 || refused.Error.Detail != "unregistered" {
 		t.Fatalf("unregistered certificate did not get its own HTTP 401 refusal: %v\n%s", err, out)
 	}
 	if inbox := world.requireCommand(t, bob.Home, "mail", "inbox"); strings.Contains(inbox, "must-not-arrive") {
