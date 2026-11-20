@@ -10,7 +10,7 @@ import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { DiagnosticOutput, prepareKernelProbeDirectories, preparePassiveKernelLaunch, runKernelProbeCommand } from "./user_paths_kernel_setup.mjs";
+import { DiagnosticOutput, prepareKernelProbeDirectories, preparePassiveKernelLaunch, runKernelLifecycleCommand, runKernelProbeCommand } from "./user_paths_kernel_setup.mjs";
 
 const KernelBackend = Object.freeze({ Tmux: "tmux" });
 const OWNED_TMUX = ["tmux", "-L", "oats"];
@@ -44,7 +44,7 @@ const passiveLaunch = preparePassiveKernelLaunch({ bin, node: process.execPath }
 function command({ name, argv, cwd = deployment, timeout = 60000, output = DiagnosticOutput.Credential }) {
   return runKernelProbeCommand({ name, argv, cwd, env, timeout, output });
 }
-const oats = (...argv) => command({ name: `oats ${argv.slice(0, 2).join(" ")}`, argv: [process.execPath, KERNEL, ...argv], output: DiagnosticOutput.Public });
+const oats = (...args) => runKernelLifecycleCommand({ kernel: KERNEL, args, cwd: deployment, env });
 const aw = ({ identity, args }) => command({ name: `aw ${args.slice(0, 3).join(" ")}`, argv: [join(bin, "aw"), "--identity-home", join(identity, ".aw"), ...args], cwd: identity });
 const parseObject = (raw) => { const value = JSON.parse(raw); assert.ok(value && typeof value === "object" && !Array.isArray(value), "expected command JSON object"); return value; };
 function wakeInstances(status) {
@@ -146,7 +146,7 @@ try {
   writeFileSync(join(cache, "runner.mjs"), legacyBytes, { mode: 0o600 });
   writeFileSync(join(cache, "runner.sha256"), "old success stamp\n", { mode: 0o600 });
   broker = startOwnedBroker();
-  const wakeStatus = () => parseObject(command({ name: "aw wake status", argv: [join(bin, "aw"), "wake", "status", "--json"], cwd: home, output: DiagnosticOutput.Public }));
+  const wakeStatus = () => parseObject(command({ name: "aw wake status", argv: [join(bin, "aw"), "wake", "status", "--json"], cwd: home }));
   await until({ read: wakeStatus, ready: (status) => status.daemon_running === true && status.daemon_pid === broker.pid, label: "isolated broker" });
   const spawned = parseObject(oats("spawn", "probe", "--name", "r20-wake-probe", "--backend", KernelBackend.Tmux, "--no-launch", "--json"));
   assert.equal(spawned.ok, true);

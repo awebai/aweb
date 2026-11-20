@@ -51,7 +51,8 @@ provider's conditional package requirement. Actual wake and terminal delivery
 remain the user-paths stage's responsibility.
 
 Command failures retain a child label, executable, PID, elapsed time, configured
-deadline and bounded output tails. Credential-bearing aw calls withhold both
-streams; lifecycle JSON diagnostics redact credential fields. The command
+deadline and bounded output tails from known non-secret producers. All kernel
+lifecycle and aw status/credential calls withhold both streams, retaining only
+the safe error code and child identity/timing/status/cause fields. The command
 deadline remains 60 seconds. Diagnostics identify a failure without certifying
 its underlying cause.

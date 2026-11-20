@@ -1,15 +1,40 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, existsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
-import { DiagnosticOutput, preparePassiveKernelLaunch, runKernelProbeCommand } from "./user_paths_kernel_setup.mjs";
+import { DiagnosticOutput, preparePassiveKernelLaunch, runKernelLifecycleCommand, runKernelProbeCommand } from "./user_paths_kernel_setup.mjs";
+
+for (const [name, payload] of [
+  ["Authorization", JSON.stringify({ headers: { Authorization: "Bearer fixture-credential-marker" } })],
+  ["error message", JSON.stringify({ error: { code: "E_PROVIDER_FAILED", message: "private fixture-credential-marker" } })],
+  ["non-JSON", "private fixture-credential-marker"],
+  ["token", JSON.stringify({ token: "fixture-credential-marker" })],
+]) {
+  test(`lifecycle ${name} failure withholds credentials from both retained fields`, () => {
+    const root = mkdtempSync(join(tmpdir(), "kernel-private-diagnostic-"));
+    try {
+      const child = join(root, "child.mjs");
+      writeFileSync(child, `process.stdout.write(${JSON.stringify(payload)});process.stderr.write(${JSON.stringify(payload)});process.exit(7);\n`);
+      assert.throws(() => runKernelLifecycleCommand({ kernel: child, args: ["spawn", "probe"], cwd: root, env: process.env }), (error) => {
+        assert.equal(error.diagnostic.command, "oats spawn probe");
+        assert.equal(error.diagnostic.status, 7);
+        if (name === "error message") assert.equal(error.diagnostic.error_code, "E_PROVIDER_FAILED");
+        assert.doesNotMatch(error.message, /fixture-credential-marker/);
+        assert.doesNotMatch(JSON.stringify(error.diagnostic), /fixture-credential-marker/);
+        return true;
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
 
 test("timeout identifies the actual child and retains bounded public tails", () => {
   const command = {
     name: "owned kernel timeout control", cwd: process.cwd(), env: process.env,
-    argv: [process.execPath, "-e", "console.log(JSON.stringify({phase:'preflight',token:'private-marker'}));console.error('public stderr marker');setInterval(()=>{},1000)"],
+    argv: [process.execPath, "-e", "console.log(JSON.stringify({phase:'preflight'}));console.error('public stderr marker');setInterval(()=>{},1000)"],
     timeout: 500, output: DiagnosticOutput.Public,
   };
   assert.throws(() => runKernelProbeCommand(command), (error) => {
@@ -22,9 +47,7 @@ test("timeout identifies the actual child and retains bounded public tails", () 
     assert.ok(detail.elapsed_ms >= 500);
     assert.ok(detail.elapsed_ms < 10000);
     assert.equal(JSON.parse(detail.stdout_tail).phase, "preflight");
-    assert.equal(JSON.parse(detail.stdout_tail).token, "<redacted>");
     assert.match(detail.stderr_tail, /public stderr marker/);
-    assert.doesNotMatch(error.message, /private-marker/);
     assert.match(error.message, /Inspect this child's diagnostics before rerunning/);
     return true;
   });

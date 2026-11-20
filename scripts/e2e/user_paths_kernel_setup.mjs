@@ -4,6 +4,14 @@ import { spawnSync } from "node:child_process";
 
 export const DiagnosticOutput = Object.freeze({ Public: "public", Credential: "credential" });
 
+export function runKernelLifecycleCommand({ kernel, args, cwd, env, timeout = 60000 }) {
+  return runKernelProbeCommand({
+    name: `oats ${args.slice(0, 2).join(" ")}`,
+    argv: [process.execPath, kernel, ...args], cwd, env, timeout,
+    output: DiagnosticOutput.Credential,
+  });
+}
+
 export function preparePassiveKernelLaunch({ bin, node }) {
   const program = join(bin, "passive-session.mjs");
   writeFileSync(program, "setInterval(() => {}, 1000);\n", { mode: 0o600 });
@@ -13,16 +21,8 @@ export function preparePassiveKernelLaunch({ bin, node }) {
 
 function diagnosticTail(output, policy) {
   if (policy === DiagnosticOutput.Credential) return "<credential output withheld>";
-  const text = String(output ?? "");
-  try {
-    const value = JSON.parse(text);
-    return JSON.stringify(value, (key, field) =>
-      /token|secret|password|credential|private|seed|api.?key|signing.?key/i.test(key) ? "<redacted>" : field
-    ).slice(-4096);
-  } catch (error) {
-    if (!(error instanceof SyntaxError)) throw error;
-    return text.slice(-4096);
-  }
+  // Public output is reserved for known non-secret producers, not lifecycle JSON.
+  return String(output ?? "").slice(-4096);
 }
 
 export function runKernelProbeCommand({ name, argv, cwd, env, timeout = 60000, output = DiagnosticOutput.Credential }) {
