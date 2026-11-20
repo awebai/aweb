@@ -497,7 +497,7 @@ async def test_server_move_discards_cached_grant_and_signs_the_mount_prefix(
     await stack.publish_server(
         TEAM,
         team_controller,
-        server_url="https://aweb.example/api",
+        server_url=f"{stack.aweb_url}/api",
         issued_at=datetime.now(UTC) + timedelta(seconds=1),
     )
     assert await source.grant_for(TEAM) is not None
