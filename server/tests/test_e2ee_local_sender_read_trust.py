@@ -252,9 +252,13 @@ async def _local_sender_mail(
         HOME=str(tmp_path),
         XDG_CONFIG_HOME=str(tmp_path / "config"),
     )
-    registry = SimpleNamespace(url="", responses=[], address_lookup_status=None)
+    registry = SimpleNamespace(
+        url="", responses=[], address_lookup_status=None, key_responses=[]
+    )
 
     async def recorded_registry(scope, receive, send):
+        key_body = []
+
         async def record(event):
             if event["type"] == "http.response.start":
                 user_agent = (
@@ -263,6 +267,21 @@ async def _local_sender_mail(
                 registry.responses.append(
                     (scope["method"], scope["path"], event["status"], user_agent)
                 )
+            if (
+                scope.get("type") == "http"
+                and scope["path"].endswith("/key")
+                and event["type"] == "http.response.body"
+            ):
+                key_body.append(event.get("body", b""))
+                if not event.get("more_body", False):
+                    user_agent = (
+                        dict(scope.get("headers") or [])
+                        .get(b"user-agent", b"")
+                        .decode()
+                    )
+                    registry.key_responses.append(
+                        (scope["path"], user_agent, b"".join(key_body).decode())
+                    )
             await send(event)
 
         if (
@@ -677,6 +696,34 @@ async def test_channel_core_addressless_human_mail(
         status, text = await PRESENTERS[runtime](
             tmp_path, binary, command_dir, runtime_env, message_id, conversation_id
         )
+        if not sender_retired:
+            # Observe the real public head already used by this Node presenter;
+            # invoke the unchanged verifier on those exact bytes, never replace it.
+            key_path = f"/v1/did/{privacy_app.actors['alice'].stable_id}/key"
+            head = next(
+                body
+                for path, agent, body in registry.key_responses
+                if path == key_path and agent == "node"
+            )
+            head_file = tmp_path / "actual-human-key.json"
+            head_file.write_text(head)
+            verification = await asyncio.create_subprocess_exec(
+                "node",
+                "--input-type=module",
+                "-e",
+                "import {readFileSync} from 'node:fs'; "
+                "import {pathToFileURL} from 'node:url'; "
+                "const {verifyDidKeyResolution}=await import(pathToFileURL(process.argv[1]).href); "
+                "console.log(JSON.stringify(verifyDidKeyResolution(JSON.parse(readFileSync(process.argv[2],'utf8')),undefined,Date.now())));",
+                str(REPO / "channel-core/dist/identity/registry.js"),
+                str(head_file),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            outcome, error = await asyncio.wait_for(verification.communicate(), 10)
+            assert verification.returncode == 0, error.decode()
+            print("ACTUAL_HUMAN_KEY", head)
+            print("ACTUAL_HUMAN_KEY_VERIFICATION", outcome.decode().strip())
         await _assert_runtime_presentation(
             privacy_app, tmp_path, runtime, expected, status, text, message_id
         )
