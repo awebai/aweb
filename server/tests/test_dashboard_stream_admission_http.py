@@ -30,7 +30,11 @@ async def test_missing_selected_registry_refuses_before_stream_headers(privacy_a
         assert response.status_code == 503
         assert response.headers["content-type"].startswith("application/json")
         body = await response.aread()
-        assert json.loads(body)["detail"]["code"] == "registry_client_unavailable"
+        detail = json.loads(body)["detail"]
+        assert detail["code"] == "registry_client_unavailable"
+        assert detail["message"].endswith(
+            "Configure the serving registry client and start the application before retrying."
+        )
         assert b"event: connected" not in body
 
 
