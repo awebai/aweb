@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from enum import Enum, auto
@@ -9,6 +10,8 @@ from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
+from nacl.signing import SigningKey
+from awid.did import did_from_public_key
 from pgdbm.errors import ConnectionError as DatabaseConnectionError
 
 from awid.federation_errors import FederationAuthorityError
@@ -19,6 +22,9 @@ from aweb.federation.delivery import (
 )
 from aweb.federation.envelope import FederationEnvelope
 from did_key_fixtures import named_did_key
+from chat_pair_support import route_pair as route_pair
+from messaging_actor_support import admit_messaging_actor, set_messaging_inbound_mode
+from test_messages_http import _federated_mail_payload, _registered_routing_pair
 
 
 class _AdmissionKey(Enum):
@@ -34,7 +40,9 @@ class _DB:
         return self.manager
 
 
-def _envelope(*, message_id: UUID | None = None, kind: str = "mail") -> FederationEnvelope:
+def _envelope(
+    *, message_id: UUID | None = None, kind: str = "mail"
+) -> FederationEnvelope:
     return FederationEnvelope(
         type=kind,
         sender_did_aw="did:aw:alice",
@@ -83,7 +91,9 @@ async def _seed_recipient_and_authority(
     return dict(recipient), await _seed_sender_authority(db, envelope)
 
 
-async def _seed_sender_authority(db, envelope: FederationEnvelope) -> AuthoritySecurityToken:
+async def _seed_sender_authority(
+    db, envelope: FederationEnvelope
+) -> AuthoritySecurityToken:
     await db.execute(
         """
         INSERT INTO {{tables.federation_did_checkpoints}} (
@@ -206,7 +216,11 @@ async def _seed_stored_route(db, envelope: FederationEnvelope, recipient: dict) 
     }
     chat = (
         {
-            did: {key: value for key, value in participant.items() if key != "transport_hint"}
+            did: {
+                key: value
+                for key, value in participant.items()
+                if key != "transport_hint"
+            }
             for did, participant in conversation.items()
         }
         if envelope.type == "chat"
@@ -462,7 +476,9 @@ async def test_phase_b_waits_for_and_enforces_concurrent_recipient_policy_change
             )
         )
         await asyncio.sleep(0.1)
-        assert not delivery.done(), "Phase B must wait for the recipient policy row lock"
+        assert not delivery.done(), (
+            "Phase B must wait for the recipient policy row lock"
+        )
 
     with pytest.raises(FederationAuthorityError) as error:
         await delivery
@@ -694,7 +710,9 @@ async def test_phase_b_rejects_preexisting_noncanonical_stored_route(
             conversation_id,
             target_did,
         )
-        snapshot["conversation"][target_did]["delivery_origin"] = "https://poisoned-target.example"
+        snapshot["conversation"][target_did]["delivery_origin"] = (
+            "https://poisoned-target.example"
+        )
     else:
         did = sender_did if malformed_route.startswith("sender") else target_did
         await manager.execute(
@@ -740,7 +758,9 @@ async def test_phase_b_rejects_preexisting_external_chat_target_origin(
         conversation_id,
         envelope.target_did_aw,
     )
-    snapshot["chat"][envelope.target_did_aw]["delivery_origin"] = "https://poisoned-target.example"
+    snapshot["chat"][envelope.target_did_aw]["delivery_origin"] = (
+        "https://poisoned-target.example"
+    )
 
     with pytest.raises(FederationAuthorityError) as error:
         await deliver_federated_phase_b(
@@ -1060,7 +1080,9 @@ async def test_phase_b_contacts_only_requires_exact_active_contact(
             "message_ingress_receipts",
             "federation_mutation_outbox",
         ):
-            assert await manager.fetch_value(f'SELECT COUNT(*) FROM "aweb".{table}') == 0
+            assert (
+                await manager.fetch_value(f'SELECT COUNT(*) FROM "aweb".{table}') == 0
+            )
 
     await refused()
     # An address-only contact, a wrong identity at the right address, a wrong
@@ -1090,7 +1112,9 @@ async def test_phase_b_contacts_only_requires_exact_active_contact(
         "UPDATE {{tables.contacts}} SET status='active', owner_did='did:aw:wrong-owner'"
     )
     await refused()
-    await manager.execute("UPDATE {{tables.contacts}} SET owner_did=$1", envelope.target_did_aw)
+    await manager.execute(
+        "UPDATE {{tables.contacts}} SET owner_did=$1", envelope.target_did_aw
+    )
     accepted = await deliver()
     assert accepted["message_id"] == envelope.message_id
     # Both a new first-contact send and a stored-route continuation recheck
@@ -1127,7 +1151,9 @@ async def test_phase_b_contacts_only_requires_exact_active_contact(
         snapshot["chat"] = {row["did"]: dict(row) for row in participants}
     continuation = envelope.model_copy(update={"message_id": str(uuid4())})
     with pytest.raises(FederationAuthorityError) as continued:
-        await deliver(continuation, stored_route_continuation=True, stored_route_snapshot=snapshot)
+        await deliver(
+            continuation, stored_route_continuation=True, stored_route_snapshot=snapshot
+        )
     assert continued.value.reason == "recipient_policy_rejected"
 
     fresh = envelope.model_copy(
@@ -1185,7 +1211,9 @@ async def test_identity_policy_share_locks_allow_opposite_team_deliveries(
 
     async def check(envelope, recipient, index):
         async with manager.transaction() as tx:
-            locked = await _lock_current_recipient(tx, envelope=envelope, recipient=recipient)
+            locked = await _lock_current_recipient(
+                tx, envelope=envelope, recipient=recipient
+            )
             current = locked.recipient
             ready[index].set()
             await ready[1 - index].wait()
@@ -1196,12 +1224,16 @@ async def test_identity_policy_share_locks_allow_opposite_team_deliveries(
                 stored_route_continuation=False,
             )
 
-    await asyncio.wait_for(asyncio.gather(check(forward, bob, 0), check(reverse, alice, 1)), 5)
+    await asyncio.wait_for(
+        asyncio.gather(check(forward, bob, 0), check(reverse, alice, 1)), 5
+    )
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("marked", [True, False])
-async def test_recipient_lock_reads_identity_from_current_storage(aweb_cloud_db, marked):
+async def test_recipient_lock_reads_identity_from_current_storage(
+    aweb_cloud_db, marked
+):
     from aweb.federation.delivery import _lock_current_recipient
 
     manager = aweb_cloud_db.aweb_db
@@ -1226,7 +1258,9 @@ async def test_recipient_lock_reads_identity_from_current_storage(aweb_cloud_db,
         )
     # A stored key-addressed route or minimal lookup result must still discover
     # the live recipient's global identity policy from storage.
-    keyed = envelope.model_copy(update={"target_did_aw": envelope.target_current_did_key})
+    keyed = envelope.model_copy(
+        update={"target_did_aw": envelope.target_current_did_key}
+    )
     async with manager.transaction() as tx:
         locked = await _lock_current_recipient(
             tx, envelope=keyed, recipient={"agent_id": recipient["agent_id"]}
@@ -1237,7 +1271,9 @@ async def test_recipient_lock_reads_identity_from_current_storage(aweb_cloud_db,
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["open", "contacts_only", None, "unknown"])
-async def test_global_recipient_without_stable_did_uses_own_federation_policy(aweb_cloud_db, mode):
+async def test_global_recipient_without_stable_did_uses_own_federation_policy(
+    aweb_cloud_db, mode
+):
     from aweb.federation.delivery import _lock_current_recipient, _authorize_policy
 
     manager = aweb_cloud_db.aweb_db
@@ -1254,7 +1290,9 @@ async def test_global_recipient_without_stable_did_uses_own_federation_policy(aw
         recipient["agent_id"],
         mode,
     )
-    keyed = envelope.model_copy(update={"target_did_aw": envelope.target_current_did_key})
+    keyed = envelope.model_copy(
+        update={"target_did_aw": envelope.target_current_did_key}
+    )
     async with manager.transaction() as tx:
         locked = await _lock_current_recipient(tx, envelope=keyed, recipient=recipient)
         current = locked.recipient
@@ -1298,55 +1336,108 @@ async def test_global_recipient_without_stable_did_uses_own_federation_policy(aw
     ],
 )
 async def test_phase_b_shared_team_delivery_requires_both_current_admissions(
-    aweb_cloud_db, sender_key, recipient_key, delivered
+    route_pair, sender_key, recipient_key, delivered
 ):
-    manager = aweb_cloud_db.aweb_db
-    envelope = _envelope()
-    recipient, token = await _seed_recipient_and_authority(manager, envelope)
-    await manager.execute(
-        "UPDATE {{tables.agents}} SET inbound_mode='team_and_contacts' WHERE agent_id=$1",
-        recipient["agent_id"],
+    # Same-team policy requires actual controller certificates and native
+    # admission for BOTH identities (identity-messaging-contract.md:81-99).
+    world = await _registered_routing_pair(route_pair)
+    bob = world.target.actor
+    target = world.target.node
+    alice = await admit_messaging_actor(
+        world.target.env,
+        alias="shared-sender",
+        team_id=bob.team_id,
+        address=bob.address.rsplit("/", 1)[0] + "/shared-sender",
     )
-    current_key = await manager.fetch_value(
-        "SELECT team_did_key FROM {{tables.teams}} WHERE team_id='backend:beta.example'",
-    )
-    admission_keys = {
-        _AdmissionKey.CURRENT: current_key,
-        _AdmissionKey.SUPERSEDED: "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
-    }
-    await manager.execute(
-        "UPDATE {{tables.agents}} SET accepted_team_did_key=$2 WHERE agent_id=$1",
-        recipient["agent_id"],
-        admission_keys[recipient_key],
-    )
-    await manager.execute(
-        """
-        INSERT INTO {{tables.agents}} (team_id, alias, did_key, did_aw, address, identity_scope, inbound_mode,
-                                       did_aw_verified_key, certificate_id, accepted_team_did_key)
-        VALUES ('backend:beta.example', 'alice', $1, $2, $3, 'global', 'open', $1, 'alice-certificate', $4)
-    """,
-        envelope.sender_current_did_key,
-        envelope.sender_did_aw,
-        envelope.sender_address,
-        admission_keys[sender_key],
-    )
-
-    if delivered:
-        accepted = await deliver_federated_phase_b(
-            _DB(manager),
-            envelope=envelope,
-            signature="signed-message",
-            recipient=recipient,
-            authority_token=token,
+    await set_messaging_inbound_mode(world.target.env, bob, mode="team_and_contacts")
+    if _AdmissionKey.SUPERSEDED in (sender_key, recipient_key):
+        name, domain = bob.team_id.split(":", 1)
+        controller = await target.registry.ensure_namespace(domain=domain)
+        new_key = SigningKey.generate()
+        new_did = did_from_public_key(bytes(new_key.verify_key))
+        # Controller acts have second precision; order the real act after the
+        # real native admission floor, rather than forging a pin or accepted row.
+        await asyncio.sleep(1)
+        await target.registry_client.rotate_team_key(
+            domain,
+            name,
+            new_team_did_key=new_did,
+            namespace_controller_signing_key=bytes(controller),
         )
-        assert accepted["message_id"] == envelope.message_id
+        world.target.env.team_sk, world.target.env.team_did = bytes(new_key), new_did
+        await admit_messaging_actor(
+            world.target.env,
+            alias="rotation-observer",
+            team_id=bob.team_id,
+            local=True,
+        )
+        for alias, actor, key_state in (
+            ("bob", bob, recipient_key),
+            ("shared-sender", alice, sender_key),
+        ):
+            if key_state is _AdmissionKey.CURRENT:
+                previous = json.loads(base64.b64decode(actor.certificate))
+                await target.registry_client.revoke_team_certificate(
+                    domain,
+                    name,
+                    team_controller_signing_key=bytes(new_key),
+                    certificate_id=previous["certificate_id"],
+                )
+                readmitted = await admit_messaging_actor(
+                    world.target.env,
+                    alias=alias,
+                    team_id=bob.team_id,
+                    existing_identity=actor,
+                )
+                assert readmitted.agent_id == actor.agent_id
+    for actor, key_state in ((alice, sender_key), (bob, recipient_key)):
+        row = await target.db.fetch_one(
+            "SELECT a.accepted_team_did_key, t.team_did_key FROM {{tables.agents}} a "
+            "JOIN {{tables.teams}} t ON t.team_id=a.team_id WHERE a.agent_id=$1",
+            UUID(actor.agent_id),
+        )
+        assert (row["accepted_team_did_key"] == row["team_did_key"]) is (
+            key_state is _AdmissionKey.CURRENT
+        )
+    payload = _federated_mail_payload(
+        sender_sk=alice.signing_key,
+        sender_did_key=alice.did_key,
+        sender_did_aw=alice.stable_id,
+        sender_address=alice.address,
+        sender_delivery_origin=target.origin,
+        target_address=bob.address,
+        target_did_aw=bob.stable_id,
+        target_did_key=bob.did_key,
+        target_delivery_origin=target.origin,
+    )
+    response = await target.client.post("/v1/federation/messages", json=payload)
+    envelope = payload["envelope"]
+    if delivered:
+        assert response.status_code == 200, response.text
+        assert response.json()["message_id"] == envelope["message_id"]
+        stored = await target.db.fetch_one(
+            "SELECT from_did, to_did, signed_payload, signature FROM {{tables.messages}} "
+            "WHERE message_id=$1",
+            UUID(envelope["message_id"]),
+        )
+        assert tuple(stored.values()) == (
+            alice.stable_id,
+            bob.stable_id,
+            envelope["signed_payload"],
+            payload["signature"],
+        )
     else:
-        with pytest.raises(FederationAuthorityError) as refused:
-            await deliver_federated_phase_b(
-                _DB(manager),
-                envelope=envelope,
-                signature="signed-message",
-                recipient=recipient,
-                authority_token=token,
+        assert response.status_code == 403, response.text
+        assert response.json()["reason"] == "recipient_policy_rejected"
+        for table in (
+            "messages",
+            "message_ingress_receipts",
+            "federation_mutation_outbox",
+        ):
+            assert (
+                await target.db.fetch_value(
+                    f'SELECT COUNT(*) FROM "aweb".{table} WHERE message_id=$1',
+                    UUID(envelope["message_id"]),
+                )
+                == 0
             )
-        assert refused.value.reason == "recipient_policy_rejected"

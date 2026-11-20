@@ -104,6 +104,7 @@ async def test_lost_authority_refuses_on_refresh(registry, cache, member, change
     if change == "revoke":
         await registry.revoke(member.certificate_id)
     elif change == "remove":
+        # unreachable-state: corrupt registry storage loses an admitted certificate; normal revocation retains it.
         await registry.db.execute(
             "DELETE FROM {{tables.team_certificates}} WHERE certificate_id = $1", member.certificate_id
         )
@@ -145,10 +146,11 @@ async def test_unreadable_private_team_facts_are_retryable(registry, member):
     {"team_did_key": ""}, {"team_did_key": None},
 ])
 async def test_incomplete_mint_evidence_refuses_before_lookup(registry, cache, member, evidence):
+    setup_calls = list(registry.transport.calls)
     with pytest.raises(HTTPException) as refused:
         await require(cache, member, **evidence)
     assert refused.value.status_code == 403
-    assert registry.transport.calls == []
+    assert registry.transport.calls == setup_calls
 
 
 async def test_runtime_uses_the_request_verifiers_bounded_cache(registry, member, test_db_factory, tmp_path):

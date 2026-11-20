@@ -160,25 +160,46 @@ async def resolve_team_identity(
     # A worker may still hold a verified old key in its memo, or a host may
     # have read its snapshot before rotation. Recheck under the same locks
     # that protect acceptance and binding writes; no registry read occurs here.
-    async with db.transaction() as tx:
-        row = await read_member_projection(
-            tx, team_id=team_id, did_key=did_key, read_lock=MemberReadLock.UPDATE
-        )
-        if not row or not current_member({
-            **dict(row), "accepted_team_did_key": verified_team_did_key,
-        }):
-            raise ValueError(CURRENT_MEMBERSHIP_REQUIRED_DETAIL)
-        await refresh_projection_binding(
-            tx, agent_id=row["agent_id"], did_key=did_key, binding=binding
-        )
-        if presented_certificate_id and (
-            presented_certificate_id != (row.get("certificate_id") or "").strip()
-            or verified_team_did_key != (row.get("accepted_team_did_key") or "").strip()
-        ):
-            await tx.execute(
-                "UPDATE {{tables.agents}} SET certificate_id = $2, accepted_team_did_key = $3 WHERE agent_id = $1",
-                row["agent_id"], presented_certificate_id, verified_team_did_key,
+    # A reader with cached/local binding evidence and the same credential
+    # does not write acceptance. Share its membership lock with delivery's
+    # policy locks, while retaining the transactional current-key check.
+    # If the credential changed, release SHARE before taking UPDATE so two
+    # readers never deadlock while upgrading their locks. Reread and validate
+    # again in that transaction; the earlier row grants no authority.
+    read_locks = (
+        (MemberReadLock.UPDATE,)
+        if binding.fresh_observation or (
+            presented_certificate_id and (
+                presented_certificate_id != (row.get("certificate_id") or "").strip()
+                or verified_team_did_key != (row.get("accepted_team_did_key") or "").strip()
             )
+        )
+        else (MemberReadLock.SHARE, MemberReadLock.UPDATE)
+    )
+    for read_lock in read_locks:
+        async with db.transaction() as tx:
+            row = await read_member_projection(
+                tx, team_id=team_id, did_key=did_key, read_lock=read_lock
+            )
+            if not row or not current_member({
+                **dict(row), "accepted_team_did_key": verified_team_did_key,
+            }):
+                raise ValueError(CURRENT_MEMBERSHIP_REQUIRED_DETAIL)
+            update_certificate = presented_certificate_id and (
+                presented_certificate_id != (row.get("certificate_id") or "").strip()
+                or verified_team_did_key != (row.get("accepted_team_did_key") or "").strip()
+            )
+            if read_lock is MemberReadLock.SHARE and update_certificate:
+                continue
+            await refresh_projection_binding(
+                tx, agent_id=row["agent_id"], did_key=did_key, binding=binding
+            )
+            if update_certificate:
+                await tx.execute(
+                    "UPDATE {{tables.agents}} SET certificate_id = $2, accepted_team_did_key = $3 WHERE agent_id = $1",
+                    row["agent_id"], presented_certificate_id, verified_team_did_key,
+                )
+            break
 
     return TeamIdentity(
         team_id=team_id,

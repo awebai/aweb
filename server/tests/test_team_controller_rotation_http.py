@@ -170,30 +170,33 @@ async def test_awid_rotation_replaces_oss_controller_authority(
         env, operation, env.team_sk, env.team_did
     )
     if age >= 60 and operation == "status_host":
-        # A rotated controller cannot designate a host whose membership still
-        # belongs to the former key. Admit the intended host under the new key
-        # before exercising the independent controller-authorization boundary.
-        host = env.actors["carol"]
-        certificate = _encode_certificate(
-            _make_certificate(
+        # Target and designated host independently require current membership.
+        # Keep controller authorization separate by re-admitting both through
+        # real SDK certificate registration and signed native connect.
+        from nacl.signing import SigningKey
+
+        for alias in ("alice", "carol"):
+            actor = env.actors[alias]
+            fields = _make_certificate(
                 next_sk,
                 next_did,
-                host.did,
+                actor.did,
                 team_id=TEAM,
-                alias="carol",
+                alias=alias,
                 identity_scope="local",
-                certificate_id="rotation-current-host",
+                certificate_id="rotation-current-" + alias,
             )
-        )
-        connected = await env.client.post(
-            "/v1/connect",
-            content=b"{}",
-            headers={
-                **_signed_team_headers(host.sk, host.did, TEAM, certificate, b"{}"),
-                "Content-Type": "application/json",
-            },
-        )
-        assert connected.status_code == 200, connected.text
+            await env.registry.add_certificate(fields, team_key=SigningKey(next_sk))
+            certificate = _encode_certificate(fields)
+            connected = await env.client.post(
+                "/v1/connect",
+                content=b"{}",
+                headers={
+                    **_signed_team_headers(actor.sk, actor.did, TEAM, certificate, b"{}"),
+                    "Content-Type": "application/json",
+                },
+            )
+            assert connected.status_code == 200, connected.text
     new, stored, expected = await _controller_action(env, operation, next_sk, next_did)
     expected_statuses = (200, 403) if age < 60 else (403, 200)
     assert (old.status_code, new.status_code) == expected_statuses, {

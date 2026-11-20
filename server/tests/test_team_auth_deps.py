@@ -216,7 +216,13 @@ class TestResolveTeamIdentity:
                 human_name="",
                 agent_type="agent",
             )
-            identity = await resolve_team_identity(env.db, cert_info)
+            assert binding.fresh_observation
+            queries = []
+            async with env.db.transaction() as tx:
+                with tx.connection.query_logger(lambda event: queries.append(event.query)):
+                    identity = await resolve_team_identity(tx, cert_info)
+                    assert await tx.fetch_value("SELECT 1") == 1
+            assert any("FOR SHARE OF t FOR UPDATE OF a" in query for query in queries)
             assert (
                 await env.db.fetch_value(
                     "SELECT accepted_team_did_key FROM {{tables.agents}} WHERE agent_id=$1", bob.id
@@ -272,7 +278,7 @@ class TestResolveTeamIdentity:
             query for query in queries if "agents" in query.lower() and "select" in query.lower()
         ]
         assert len(member_reads) == 1, member_reads
-        assert "FOR SHARE OF t FOR UPDATE OF a" in member_reads[0]
+        assert "FOR SHARE OF t, a" in member_reads[0]
 
     @pytest.mark.asyncio
     async def test_another_members_snapshot_requires_the_exact_native_lookup(self, privacy_app):
@@ -295,7 +301,7 @@ class TestResolveTeamIdentity:
             query for query in queries if "agents" in query.lower() and "select" in query.lower()
         ]
         assert len(member_reads) == 2, member_reads
-        assert "FOR SHARE OF t FOR UPDATE OF a" in member_reads[-1]
+        assert "FOR SHARE OF t, a" in member_reads[-1]
 
 
 @pytest.mark.asyncio

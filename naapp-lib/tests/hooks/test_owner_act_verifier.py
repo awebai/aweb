@@ -206,6 +206,9 @@ async def test_a_rotated_team_key_stops_verifying(db, registry, team_key) -> Non
     verify = verifier(registry)
     await apply_effect(db, verify, *owner_act(team_key, issued=datetime.now(UTC)))
     new_key = SigningKey.generate()
+    # The controller SDK signs in whole seconds; its act must postdate first admission.
+    next_second = datetime.now(UTC).replace(microsecond=0) + timedelta(seconds=1)
+    await asyncio.sleep(max(0, (next_second - datetime.now(UTC)).total_seconds()))
     await registry.rotate_team_key_by_controller(TEAM_ID, did_key(new_key), NAMESPACE_KEY)
     with pytest.raises(Refused) as refused:
         await apply_effect(db, verify, *owner_act(team_key, issued=datetime.now(UTC)))

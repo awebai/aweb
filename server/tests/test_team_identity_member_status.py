@@ -1,5 +1,7 @@
 """Pure eligibility boundary; real certificate/HTTP controls run separately."""
 
+from contextlib import asynccontextmanager
+
 import pytest
 from aweb.identity_binding import IdentityBinding
 from aweb.member_status import MemberStatus
@@ -28,8 +30,18 @@ async def test_checked_certificate_context_still_requires_an_active_native_row(
         "agent_row": row,
         "identity_binding": IdentityBinding(did_key=row["did_key"]),
     }
+
+    class RowDatabase:
+        # Unit-only transaction carrier; actual locking/authority has real controls.
+        @asynccontextmanager
+        async def transaction(self):
+            yield self
+
+        async def fetch_one(self, *args):
+            return dict(row)
+
     if status is MemberStatus.ACTIVE:
-        identity = await resolve_team_identity(object(), checked)
+        identity = await resolve_team_identity(RowDatabase(), checked)
         assert identity.agent_id == str(row["agent_id"])
     else:
         with pytest.raises(ValueError, match="Reconnect with a certificate"):
