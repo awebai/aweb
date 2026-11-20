@@ -36,13 +36,6 @@ async def _set_connections(database_url: str, *, allowed: bool) -> None:
         await admin.close()
 
 
-# Not strict: aweb-adji's hang is intermittent, so one completed shutdown does
-# not show that it is fixed.
-@pytest.mark.xfail(
-    strict=False,
-    raises=ShutdownHung,
-    reason="aweb-adji: a naapp's shutdown hangs once its database connections were terminated",
-)
 async def test_ready_fails_and_live_holds_once_the_database_stops_answering(
     database_url: str, caplog: pytest.LogCaptureFixture
 ) -> None:
