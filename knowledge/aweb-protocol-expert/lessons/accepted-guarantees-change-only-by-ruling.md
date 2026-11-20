@@ -29,6 +29,9 @@ an approval later, without trusting our service."
 The settled wire contract is in `docs/hook-events.md`; this records why the
 weaker form was rejected.
 
+For the approval service, [the requester owns the terminal approval proof](/aweb-protocol-expert/decisions/the-requester-owns-the-terminal-approval-proof.md)
+moves custody of these bytes to the requester. It keeps this guarantee.
+
 # Provenance
 
 Harvested 2026-10-25 from seat `aweb-protocol-expert-secrets-design` (note
