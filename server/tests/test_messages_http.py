@@ -5236,7 +5236,6 @@ async def test_receive_old_v1_federated_mail_ignores_deprecated_fields_and_deliv
     alice, bob = (world.source.actor, world.target.actor)
     alice_sk, alice_did_key = (alice.signing_key, alice.did_key)
     bob_did_key = bob.did_key
-    bob_agent_id = bob.agent_id
     app = world.target.node.server.app
     aweb_cloud_db = SimpleNamespace(aweb_db=world.target.node.db)
     payload = _federated_mail_payload(
@@ -5279,7 +5278,7 @@ async def test_receive_old_v1_federated_mail_ignores_deprecated_fields_and_deliv
     assert row["from_did"] == alice.stable_id
     assert row["to_did"] == bob.stable_id
     assert row["from_address"] == alice.address
-    assert str(row["to_agent_id"]) == bob_agent_id
+    assert row["to_agent_id"] is None
     assert row["signature"] == payload["signature"]
     assert row["signed_payload"] == envelope["signed_payload"]
     participants = await _conversation_participants(
@@ -6854,119 +6853,147 @@ async def test_receive_federated_mail_allows_explicit_inbound_mode_open(route_pa
 
 
 
+@pytest_asyncio.fixture
+async def registered_selector_pair(shared_test_pool, monkeypatch):
+    from messaging_actor_support import admit_messaging_actor, register_messaging_team
+    from test_dashboard_privacy import privacy_stack
+
+    async with privacy_stack(shared_test_pool, monkeypatch) as env:
+        domain = f"selector-{uuid4().hex}.test"
+        primary, secondary = f"ops:{domain}", f"stable:{domain}"
+        for team in (primary, secondary):
+            await register_messaging_team(env, team_id=team)
+        sender = await admit_messaging_actor(
+            env, alias="alice", team_id=primary, address=f"{domain}/alice"
+        )
+        recipient = await admit_messaging_actor(
+            env, alias="bob", team_id=primary, address=f"{domain}/bob"
+        )
+        yield env, sender, recipient, secondary
+
+
+async def _send_registered_selector_mail(env, sender, payload):
+    body = json.dumps(payload).encode()
+    return await env.client.post(
+        "/v1/messages",
+        content=body,
+        headers={
+            **_signed_team_headers(
+                sender.signing_key, sender.did_key, sender.team_id, sender.certificate, body
+            ),
+            "Content-Type": "application/json",
+        },
+    )
+
+
 @pytest.mark.asyncio
 async def test_send_message_accepts_to_stable_id_did_binding_with_duplicate_identity_rows(
-    aweb_cloud_db,
+    registered_selector_pair,
 ):
-    _, _, bob_old_did_key = _make_keypair()
-    _, _, bob_current_did_key = _make_keypair()
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES
-            ('stable:identity.local', 'identity.local', 'stable', 'did:key:z6MkiaaDnotCpnwVHYrGYjT1pbYPxbMcPbysqfiGpJZSZtAg' /* team-stable */),
-            ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkjcDPjZawPWvfr97BGyobCr6SkdZYyrxYu8CBESNWJyZi' /* team-address */)
-        """
+    env, sender, recipient, secondary = registered_selector_pair
+    registry = env.app.state.awid_registry_client
+    current_key, _, current_did = _make_keypair()
+    await registry.rotate_key(recipient.stable_id, current_did, recipient.signing_key, current_key)
+    certificate_fields = _make_certificate(
+        env.team_sk,
+        env.team_did,
+        current_did,
+        team_id=secondary,
+        alias="bob-current",
+        identity_scope="global",
+        member_did_aw=recipient.stable_id,
+        member_address=recipient.address,
+        certificate_id=f"selector-current-{uuid4()}",
     )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, created_at, did_aw_verified_key)
-        VALUES
-            ('ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', '2026-04-25T00:00:00Z', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN $1 END),
-            ('stable:identity.local', $2, 'did:aw:bob', NULL, 'bob-stable', 'global', 'developer', 'open', '2026-04-26T00:00:00Z', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN $2 END)
-        """,
-        bob_old_did_key,
-        bob_current_did_key,
+    certificate = _encode_certificate(certificate_fields)
+    name, domain = secondary.split(":", 1)
+    await registry.register_team_certificate(
+        domain,
+        name,
+        team_controller_signing_key=env.team_sk,
+        certificate_id=certificate_fields["certificate_id"],
+        member_did_key=current_did,
+        member_did_aw=recipient.stable_id,
+        member_address=recipient.address,
+        alias="bob-current",
+        identity_scope="global",
+        certificate=certificate,
     )
-
-    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
-
-    async def _send_auth_override():
-        return MessagingAuth(
-            did_key=named_did_key("z6MkAliceCurrent"),
-            did_aw="did:aw:alice",
-            address="acme.com/alice",
-        )
-
-    app.dependency_overrides[get_messaging_auth] = _send_auth_override
-
+    connected = await env.client.post(
+        "/v1/connect",
+        content=b"{}",
+        headers={
+            **_signed_team_headers(current_key, current_did, secondary, certificate, b"{}"),
+            "Content-Type": "application/json",
+        },
+    )
+    assert connected.status_code == 200, connected.text
+    policy = b'{"inbound_mode":"open"}'
+    configured = await env.client.patch(
+        "/v1/agents/me/inbound-mode",
+        content=policy,
+        headers={
+            **_signed_team_headers(current_key, current_did, secondary, certificate, policy),
+            "Content-Type": "application/json",
+        },
+    )
+    assert configured.status_code == 200, configured.text
+    old = await env.db.fetch_one(
+        "SELECT did_aw_verified_key FROM {{tables.agents}} WHERE agent_id=$1",
+        UUID(recipient.agent_id),
+    )
+    assert old["did_aw_verified_key"] is None
     payload = {
-        "to_did": bob_old_did_key,
-        "to_stable_id": "did:aw:bob",
+        "to_did": recipient.did_key,
+        "to_stable_id": recipient.stable_id,
         "subject": "duplicate did binding rows",
         "body": "hi",
     }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.post("/v1/messages", json=payload)
-
-    assert resp.status_code == 200, resp.text
-    row = await aweb_cloud_db.aweb_db.fetch_one(
-        """
-        SELECT to_did, to_agent_id, to_alias
-        FROM {{tables.messages}}
-        WHERE subject = 'duplicate did binding rows'
-        """
+    obsolete = await _send_registered_selector_mail(env, sender, payload)
+    assert obsolete.status_code == 422, obsolete.text
+    assert "to_did" in obsolete.text
+    assert await env.db.fetch_value("SELECT count(*) FROM {{tables.messages}}") == 0
+    response = await _send_registered_selector_mail(env, sender, {**payload, "to_did": current_did})
+    assert response.status_code == 200, response.text
+    row = await env.db.fetch_one(
+        "SELECT to_did,to_agent_id,to_alias FROM {{tables.messages}} WHERE message_id=$1",
+        UUID(response.json()["message_id"]),
     )
-    assert row["to_did"] == "did:aw:bob"
+    assert row["to_did"] == recipient.stable_id
     assert row["to_agent_id"] is None
-    assert row["to_alias"] == "bob-stable"
+    assert row["to_alias"] == "bob-current"
 
 
 @pytest.mark.asyncio
 async def test_send_message_accepts_to_stable_id_alias_binding_with_duplicate_identity_rows(
-    aweb_cloud_db,
+    registered_selector_pair,
 ):
-    _, _, bob_did_key = _make_keypair()
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES
-            ('stable:identity.local', 'identity.local', 'stable', 'did:key:z6MkiaaDnotCpnwVHYrGYjT1pbYPxbMcPbysqfiGpJZSZtAg' /* team-stable */),
-            ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkjcDPjZawPWvfr97BGyobCr6SkdZYyrxYu8CBESNWJyZi' /* team-address */)
-        """
+    from messaging_actor_support import admit_messaging_actor
+
+    env, sender, recipient, secondary = registered_selector_pair
+    duplicate = await admit_messaging_actor(
+        env,
+        alias="bob-secondary",
+        team_id=secondary,
+        signing_key=recipient.signing_key,
     )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, created_at, did_aw_verified_key)
-        VALUES
-            ('ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', '2026-04-25T00:00:00Z', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN $1 END),
-            ('stable:identity.local', $1, 'did:aw:bob', NULL, 'bob-stable', 'global', 'developer', 'open', '2026-04-26T00:00:00Z', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN $1 END)
-        """,
-        bob_did_key,
-    )
-
-    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
-
-    async def _send_auth_override():
-        return MessagingAuth(
-            did_key=named_did_key("z6MkAliceCurrent"),
-            did_aw="did:aw:alice",
-            address="acme.com/alice",
-            team_id="ops:otherco.com",
-        )
-
-    app.dependency_overrides[get_messaging_auth] = _send_auth_override
-
+    assert duplicate.stable_id == recipient.stable_id
+    assert duplicate.agent_id != recipient.agent_id
     payload = {
         "to_alias": "bob",
-        "to_stable_id": "did:aw:bob",
-        "subject": "duplicate stable alias binding rows",
+        "to_stable_id": recipient.stable_id,
+        "subject": "duplicate alias binding rows",
         "body": "hi",
     }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.post("/v1/messages", json=payload)
-
-    assert resp.status_code == 200, resp.text
-    row = await aweb_cloud_db.aweb_db.fetch_one(
-        """
-        SELECT to_did, to_agent_id, to_alias
-        FROM {{tables.messages}}
-        WHERE subject = 'duplicate stable alias binding rows'
-        """
+    response = await _send_registered_selector_mail(env, sender, payload)
+    assert response.status_code == 200, response.text
+    row = await env.db.fetch_one(
+        "SELECT to_did,to_agent_id,to_alias FROM {{tables.messages}} WHERE message_id=$1",
+        UUID(response.json()["message_id"]),
     )
-    assert row["to_did"] == "did:aw:bob"
+    assert row["to_did"] == recipient.stable_id
     assert row["to_agent_id"] is None
-    assert row["to_alias"] == "bob-stable"
+    assert row["to_alias"] == recipient.stable_id
 
 
 @pytest.mark.asyncio
@@ -7342,59 +7369,34 @@ async def test_send_message_rejects_mismatched_to_alias_and_to_did(aweb_cloud_db
 
 @pytest.mark.asyncio
 async def test_send_message_accepts_to_did_alias_binding_with_duplicate_identity_rows(
-    aweb_cloud_db,
+    registered_selector_pair,
 ):
-    _, _, bob_did_key = _make_keypair()
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES
-            ('stable:identity.local', 'identity.local', 'stable', 'did:key:z6MkiaaDnotCpnwVHYrGYjT1pbYPxbMcPbysqfiGpJZSZtAg' /* team-stable */),
-            ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkjcDPjZawPWvfr97BGyobCr6SkdZYyrxYu8CBESNWJyZi' /* team-address */)
-        """
+    from messaging_actor_support import admit_messaging_actor
+
+    env, sender, recipient, secondary = registered_selector_pair
+    duplicate = await admit_messaging_actor(
+        env,
+        alias="bob-secondary",
+        team_id=secondary,
+        signing_key=recipient.signing_key,
     )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, created_at, did_aw_verified_key)
-        VALUES
-            ('ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', '2026-04-25T00:00:00Z', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN $1 END),
-            ('stable:identity.local', $1, 'did:aw:bob', NULL, 'bob-stable', 'global', 'developer', 'open', '2026-04-26T00:00:00Z', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN $1 END)
-        """,
-        bob_did_key,
-    )
-
-    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
-
-    async def _send_auth_override():
-        return MessagingAuth(
-            did_key=named_did_key("z6MkAliceCurrent"),
-            did_aw="did:aw:alice",
-            address="acme.com/alice",
-            team_id="ops:otherco.com",
-        )
-
-    app.dependency_overrides[get_messaging_auth] = _send_auth_override
-
+    assert duplicate.stable_id == recipient.stable_id
+    assert duplicate.agent_id != recipient.agent_id
     payload = {
-        "to_did": "did:aw:bob",
+        "to_did": recipient.stable_id,
         "to_alias": "bob",
-        "subject": "duplicate did alias binding rows",
+        "subject": "duplicate alias binding rows",
         "body": "hi",
     }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.post("/v1/messages", json=payload)
-
-    assert resp.status_code == 200, resp.text
-    row = await aweb_cloud_db.aweb_db.fetch_one(
-        """
-        SELECT to_did, to_agent_id, to_alias
-        FROM {{tables.messages}}
-        WHERE subject = 'duplicate did alias binding rows'
-        """
+    response = await _send_registered_selector_mail(env, sender, payload)
+    assert response.status_code == 200, response.text
+    row = await env.db.fetch_one(
+        "SELECT to_did,to_agent_id,to_alias FROM {{tables.messages}} WHERE message_id=$1",
+        UUID(response.json()["message_id"]),
     )
-    assert row["to_did"] == "did:aw:bob"
+    assert row["to_did"] == recipient.stable_id
     assert row["to_agent_id"] is None
-    assert row["to_alias"] == "bob-stable"
+    assert row["to_alias"] == recipient.stable_id
 
 
 @pytest.mark.asyncio
