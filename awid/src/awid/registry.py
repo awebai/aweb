@@ -220,6 +220,34 @@ class _RevocationScan:
     entries_all_timestamped: bool
 
 
+def _revocation_page_entries(data: dict[str, Any], *, team_id: str) -> list[dict[str, Any]]:
+    """Accept only a complete CRL page (docs/awid-sot.md, registry outbound bounds)."""
+    entries = data.get("revocations")
+    valid_pagination = "has_more" not in data or (
+        type(data["has_more"]) is bool
+        and (
+            not data["has_more"]
+            or (isinstance(data.get("next_cursor"), str) and bool(data["next_cursor"].strip()))
+        )
+    )
+    if (
+        not isinstance(entries, list)
+        or not all(
+            isinstance(entry, dict)
+            and isinstance(entry.get("certificate_id"), str)
+            and bool(entry["certificate_id"].strip())
+            for entry in entries
+        )
+        or not valid_pagination
+    ):
+        raise RegistryError(
+            f"AWID revocation response is malformed for {team_id}. "
+            "Retry against a registry that returns a complete revocations list.",
+            status_code=502,
+        )
+    return entries
+
+
 def _parse_revoked_at(value: Any) -> datetime | None:
     if not isinstance(value, str) or not value:
         return None
@@ -1683,7 +1711,7 @@ class RegistryClient:
                     # their independent key read must still establish authority.
                     return _RevocationScan(set(), None, True)
                 raise
-            entries = data.get("revocations", [])
+            entries = _revocation_page_entries(data, team_id=build_team_id(domain, name))
             before = len(revoked)
             revoked |= {r["certificate_id"] for r in entries}
             page_newest: datetime | None = None
@@ -1879,15 +1907,28 @@ class RegistryClient:
             "X-AWEB-Signed-Payload": base64.urlsafe_b64encode(expected).rstrip(b"=").decode(),
             "Content-Type": "application/json",
         }
-        await self.invalidate_team_certificate_cache(domain, name)
+        await self._invalidate_prepared_revocation_cache(domain, name)
         try:
             await self._request_json(
                 "POST", path, headers=headers, content=body, registry_url=registry_url
             )
         finally:
-            # Even a dropped answer can follow an applied revocation. Never
-            # retain a cached active membership after attempting the mutation.
+            # A lost reply can follow an applied revocation; try invalidation
+            # again without replacing the registry's outcome with a cache fault.
+            await self._invalidate_prepared_revocation_cache(domain, name)
+
+    async def _invalidate_prepared_revocation_cache(self, domain: str, name: str) -> None:
+        """Cache availability cannot prevent a controller revoke (docs/awid-sot.md)."""
+        try:
             await self.invalidate_team_certificate_cache(domain, name)
+        except (RedisError, OSError):
+            logger.warning(
+                "AWID revocation cache invalidation unavailable for team %s/%s; "
+                "the controller revocation still goes to the registry",
+                domain,
+                name,
+                exc_info=True,
+            )
 
     async def invalidate_team_certificate_cache(self, domain: str, name: str) -> None:
         """Drop cached certificate/revocation reads for a team, if this client caches them."""

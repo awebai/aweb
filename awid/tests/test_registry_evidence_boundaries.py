@@ -7,7 +7,6 @@ Native service and Redis qualification remains in the composed caller packet.
 from __future__ import annotations
 
 import base64
-import json
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -18,7 +17,7 @@ import pytest
 
 from awid.did import did_from_public_key, generate_keypair
 from awid.id_tree_requests import covering_payload
-from awid.registry import CachedRegistryClient, RegistryClient, RegistryError
+from awid.registry import CachedRegistryClient, RegistryError
 from awid.signing import canonical_json_bytes, sign_message
 from test_registry_client import FakeRedis
 
@@ -141,11 +140,12 @@ def prepared_revoke(*, origin: str) -> dict:
         timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         claims={"team_name": TEAM, "certificate_id": certificate_id},
     )
+    encoded_signature = sign_message(seed, signed)
     return {
         "certificate_id": certificate_id,
         "controller_did": did_from_public_key(public),
         "signing": signed,
-        "signature": base64.b64decode(sign_message(seed, signed)),
+        "signature": base64.b64decode(encoded_signature + "=" * (-len(encoded_signature) % 4)),
     }
 
 
