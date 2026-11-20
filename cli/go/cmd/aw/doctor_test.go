@@ -98,7 +98,9 @@ func runDoctorCLI(t *testing.T, bin, dir string, args ...string) ([]byte, error)
 }
 
 // runDoctorCLIWithRegistry is runDoctorCLI with registryURL named by
-// AWID_REGISTRY_URL, the operator's explicit registry choice.
+// AWID_REGISTRY_URL, the operator's explicit registry choice. An empty
+// registryURL is the operator naming none, so the identity's stored registry,
+// or its absence, decides.
 func runDoctorCLIWithRegistry(t *testing.T, bin, dir, registryURL string, args ...string) ([]byte, error) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

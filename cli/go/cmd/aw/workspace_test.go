@@ -1852,9 +1852,6 @@ func TestAPIKeyBootstrapAddWorktreeMailRoundTrip(t *testing.T) {
 		t.Helper()
 		run := exec.CommandContext(ctx, bin, args...)
 		run.Env = env
-		if len(args) > 0 && args[0] == "mail" {
-			run.Env = append(run.Env, "AWID_REGISTRY_URL=http://127.0.0.1:1")
-		}
 		run.Dir = dir
 		out, err := run.CombinedOutput()
 		if err != nil {
@@ -1862,7 +1859,7 @@ func TestAPIKeyBootstrapAddWorktreeMailRoundTrip(t *testing.T) {
 		}
 		return string(out)
 	}
-	baseEnv := withoutEnvForTest(testCommandEnv(tmp), "AWEB_URL", "AWID_REGISTRY_URL", "AWEB_API_KEY")
+	baseEnv := withoutEnvForTest(testCommandEnv(tmp), "AWEB_URL", "AWEB_API_KEY")
 	initEnv := append(append([]string{}, baseEnv...), "AWEB_API_KEY="+apiKey)
 	runAW(repo, initEnv, "init", "--aweb-url", externalLikeTestURL(t, awebServer.URL), "--name", "alice", "--role", "developer")
 
