@@ -44,8 +44,11 @@ from aweb.routes.chat import router as chat_router
 from aweb.routes.federation import router as federation_router
 from federation_activation_support import TestFederationAuthority
 from did_key_fixtures import named_did_key
-from test_messages_http import (_admit_seeded_team_members, registered_mail_actors as registered_mail_actors, route_pair as route_pair, _registered_routing_pair, _record_federation, _registered_actor_headers, _registered_history, _registered_address_reads, _registered_outbound_chat_history, _MovedFederationTransport, _admit_registered_local, _mirror_retained_local_history)
+from test_messages_http import (_admit_seeded_team_members, registered_mail_actors as registered_mail_actors, _registered_routing_pair, _record_federation, _registered_actor_headers, _registered_history, _registered_address_reads, _registered_outbound_chat_history, _MovedFederationTransport, _admit_registered_local, _mirror_retained_local_history)
 
+
+# Pytest loads the canonical fixture after this module's shared helpers exist.
+pytest_plugins = ("chat_pair_support",)
 
 def _make_keypair():
     sk = SigningKey.generate()
@@ -1147,27 +1150,28 @@ async def test_chat_continuation_refreshes_stale_delivery_origin_once(route_pair
     app = world.source.node.server.app
     aweb_cloud_db = SimpleNamespace(aweb_db=world.source.node.db)
     session_id = await _registered_outbound_chat_history(world)
+    old_origin = "https://old.example"
     await world.source.node.db.execute(
         "UPDATE {{tables.chat_participants}} SET delivery_origin=$2 WHERE session_id=$1 AND did=$3",
         session_id,
-        world.source.node.origin,
+        old_origin,
         bob.stable_id,
     )
     await world.source.node.db.execute(
         "UPDATE {{tables.conversation_participants}} SET delivery_origin=$2, transport_hint=$4 WHERE conversation_id=$1 AND did=$3",
         session_id,
-        world.source.node.origin,
+        old_origin,
         bob.stable_id,
-        f"federation:{world.source.node.origin}",
+        f"federation:{old_origin}",
     )
     transport = _MovedFederationTransport(
         app.state.federation_authority.delivery_transport,
-        refused_origin=world.source.node.origin,
+        refused_origin=old_origin,
     )
     app.state.federation_chat_transport = transport
     remote_requests = transport.requests
     await world.source.node.db.execute(
-        "UPDATE {{tables.federation_address_authority_cohorts}} SET expires_at=statement_timestamp()-INTERVAL '1 second' WHERE canonical_address=$1",
+        "UPDATE {{tables.federation_address_authority_cohorts}} SET authoritative_read_completed_at=authoritative_read_completed_at-INTERVAL '2 minutes', expires_at=expires_at-INTERVAL '2 minutes' WHERE canonical_address=$1",
         bob.address,
     )
     prior_reads = _registered_address_reads(world.target)
@@ -1220,10 +1224,10 @@ async def test_chat_continuation_refreshes_stale_delivery_origin_once(route_pair
         )
     assert resp.status_code == 200, resp.text
     assert [str(request.url) for request in remote_requests] == [
-        world.source.node.origin + "/v1/federation/messages",
+        old_origin + "/v1/federation/messages",
         world.target.node.origin + "/v1/federation/messages",
     ]
-    assert _registered_address_reads(world.target) == prior_reads + 1
+    assert _registered_address_reads(world.target) == prior_reads + 2
     chat_participant = await aweb_cloud_db.aweb_db.fetch_one(
         """
         SELECT delivery_origin, current_did_key
@@ -1271,6 +1275,7 @@ async def test_chat_continuation_refreshes_stale_delivery_origin_once(route_pair
 
 
 
+
 @pytest.mark.asyncio
 async def test_chat_continuation_does_not_retry_when_refresh_keeps_same_origin(
     route_pair,
@@ -1291,7 +1296,7 @@ async def test_chat_continuation_does_not_retry_when_refresh_keeps_same_origin(
 
     app.state.federation_chat_transport = httpx.MockTransport(refuse)
     await world.source.node.db.execute(
-        "UPDATE {{tables.federation_address_authority_cohorts}} SET expires_at=statement_timestamp()-INTERVAL '1 second' WHERE canonical_address=$1",
+        "UPDATE {{tables.federation_address_authority_cohorts}} SET authoritative_read_completed_at=authoritative_read_completed_at-INTERVAL '2 minutes', expires_at=expires_at-INTERVAL '2 minutes' WHERE canonical_address=$1",
         bob.address,
     )
     prior_reads = _registered_address_reads(world.target)
@@ -1344,7 +1349,7 @@ async def test_chat_continuation_does_not_retry_when_refresh_keeps_same_origin(
         )
     assert resp.status_code == 421, resp.text
     assert len(remote_requests) == 1
-    assert _registered_address_reads(world.target) == prior_reads + 1
+    assert _registered_address_reads(world.target) == prior_reads + 2
     chat_participant = await aweb_cloud_db.aweb_db.fetch_one(
         "SELECT delivery_origin FROM {{tables.chat_participants}} WHERE session_id = $1 AND did = 'did:aw:bob'".replace(
             "did:aw:bob", bob.stable_id
