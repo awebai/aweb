@@ -7,8 +7,9 @@ from typing import Any
 
 import pytest
 import pytest_asyncio
+from aweb_naapp_testing.databases import selected_test_database_config
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
-from pgdbm.testing import AsyncTestDatabase, DatabaseTestConfig
+from pgdbm.testing import AsyncTestDatabase
 from test_e2e_smoke import (  # noqa: F401
     aw_workspace,
     aw_workspace_factory,
@@ -23,20 +24,13 @@ _MIGRATIONS = Path(__file__).resolve().parent.parent / "src" / "library" / "migr
 # no user schema at all.
 TEST_SCHEMA = "naapp_test"
 
-_TEST_DB_CONFIG = DatabaseTestConfig(
-    host=os.environ.get("TEST_DB_HOST", "localhost"),
-    port=int(os.environ.get("TEST_DB_PORT", "5432")),
-    user=os.environ.get("TEST_DB_USER", "postgres"),
-    password=os.environ.get("TEST_DB_PASSWORD", "postgres"),
-)
-
 
 @pytest_asyncio.fixture
 async def migrated_db() -> AsyncIterator[AsyncDatabaseManager]:
     """A real Postgres database with library's migrations applied. Skips cleanly when
     no Postgres is reachable, so it runs in CI / the reviewer's real-DB pass and is a
     no-op in environments without a database."""
-    test_database = AsyncTestDatabase(_TEST_DB_CONFIG)
+    test_database = AsyncTestDatabase(selected_test_database_config())
     try:
         await test_database.create_test_database()
     except Exception as exc:  # pragma: no cover - environment without Postgres

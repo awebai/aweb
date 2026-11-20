@@ -28,7 +28,7 @@ from library import api as library_api
 from library import auth
 from library.config import Settings
 
-pytest_plugins = ("pgdbm.fixtures.conftest",)
+pytest_plugins = ("aweb_naapp_testing.postgres",)
 TEAM_ID = "backend:example.com"
 ORIGIN = "https://library.example.com"
 REGISTRY = "https://registry.example"
