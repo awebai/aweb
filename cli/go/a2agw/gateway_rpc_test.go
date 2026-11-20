@@ -9,6 +9,7 @@ import (
 	"os"
 	"regexp"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -278,14 +279,30 @@ func TestGatewayRPCTaskIDUniquenessAndShape(t *testing.T) {
 func TestGatewayRPCTaskExpiryHidesTask(t *testing.T) {
 	route := supportRoute("r_support")
 	route.Limits.TaskTTL = 5 * time.Millisecond
-	gw := newTestGateway(t, Config{Host: "team.aweb.ai", Bridge: &fakeBridge{}, Routes: []Route{route}})
+	bridge := &fakeBridge{onSend: func(BridgeTask) {
+		// Force the native failure's ordering: delivery outlasts the wall TTL.
+		timer := time.NewTimer(2 * route.Limits.TaskTTL)
+		defer timer.Stop()
+		<-timer.C
+	}}
+	gw := newTestGateway(t, Config{Host: "team.aweb.ai", Bridge: bridge, Routes: []Route{route}})
+	// Freeze the test's storage clock until the seed is visible, then test the
+	// exact expiry boundary (docs/a2a.md:938-941), independent of delivery time.
+	now := time.Now()
+	var elapsed atomic.Int64
+	gw.tasks.now = func() time.Time { return now.Add(time.Duration(elapsed.Load())) }
 	resp := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-1", "SendMessage", map[string]any{
 		"message":       testUserMessage("msg-1", "ctx-1", "expires"),
 		"configuration": map[string]any{"returnImmediately": true},
 	}), map[string]string{"X-A2A-Caller-ID": "alice"}, http.StatusOK)
 	task := rpcTaskResult(t, resp, "task")
 	taskID := task["id"].(string)
-	time.Sleep(10 * time.Millisecond)
+	headers := map[string]string{"X-A2A-Task-Token": taskBearerToken(t, task)}
+	live := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-live", "GetTask", map[string]any{"id": taskID}), headers, http.StatusOK)
+	if rpcTaskResult(t, live, "")["id"] != taskID {
+		t.Fatal("seed task was unavailable before its storage deadline")
+	}
+	elapsed.Store(int64(route.Limits.TaskTTL))
 	get := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-2", "GetTask", map[string]any{"id": taskID}), map[string]string{"X-A2A-Task-Token": taskBearerToken(t, task)}, http.StatusOK)
 	if rpcErrorCode(get) != "task_not_found" {
 		t.Fatalf("expired get: %#v", get)

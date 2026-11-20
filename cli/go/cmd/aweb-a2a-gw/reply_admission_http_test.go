@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -263,6 +264,7 @@ func newManagedHTTPReplyFixture(t *testing.T, options managedHTTPReplyOptions) *
 	f.runtime = runtime
 	f.gateway = gateway
 	f.server = httptest.NewServer(gateway)
+	t.Cleanup(runtime.bridge.Close)
 	t.Cleanup(f.server.Close)
 	return f
 }
@@ -352,6 +354,63 @@ func TestHTTPManagedReusedConversationDoesNotReplayEarlierQuestion(t *testing.T)
 	}
 	if firstAfter := f.readTask(t, first); firstAfter.Status.State != a2agw.TaskStateInputRequired || len(firstAfter.Artifacts) != 1 || firstAfter.Artifacts[0].Name != "question" {
 		t.Fatalf("later answer mutated the earlier task: %#v", firstAfter)
+	}
+}
+
+// Pause after the real task-store application, before the bridge's final audit.
+// A visible state alone therefore cannot stand in for a joined reply worker.
+type pausedReplyApplication struct {
+	gateway *a2agw.Gateway
+	applied chan struct{}
+	release chan struct{}
+}
+
+func (p *pausedReplyApplication) ApplyBridgeReply(reply a2agw.BridgeReply) (a2agw.Task, bool, error) {
+	task, applied, err := p.gateway.ApplyBridgeReply(reply)
+	close(p.applied)
+	<-p.release
+	return task, applied, err
+}
+
+func TestHTTPManagedFixtureJoinsReplyAuditBeforeTeardown(t *testing.T) {
+	f := newManagedHTTPReplyFixture(t, managedHTTPReplyOptions{})
+	paused := &pausedReplyApplication{gateway: f.gateway, applied: make(chan struct{}), release: make(chan struct{})}
+	var release sync.Once
+	unblock := func() { release.Do(func() { close(paused.release) }) }
+	defer unblock()
+	f.runtime.bridge.SetReplyApplier(paused)
+	task := sentHTTPTask(t, f.callOK(t, sendHTTPInput("pending-transition-audit")))
+	body := fmt.Sprintf("```a2a-reply\n{\"task_id\":%q,\"context_id\":%q,\"state\":\"completed\",\"text\":\"answer\"}\n```", task.ID, task.ContextID)
+	f.injectSignedReply(t, signedHTTPReply{Task: task, Body: body, Binding: conversationSigned})
+	select {
+	case <-paused.applied:
+	case <-time.After(2 * time.Second):
+		t.Fatal("production reader did not apply the reply")
+	}
+	if got := f.readTask(t, task); got.Status.State != a2agw.TaskStateCompleted {
+		t.Fatalf("reply was not visible before its final audit: %#v", got)
+	}
+	closed := make(chan struct{})
+	go func() { f.close(); close(closed) }()
+	select {
+	case <-closed:
+		t.Error("fixture closed while its reply worker still had a pending audit write")
+	case <-time.After(50 * time.Millisecond):
+		// Teardown must remain blocked on the deliberately paused worker.
+	}
+	unblock()
+	select {
+	case <-closed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("fixture did not finish after the reply worker was released")
+	}
+	// Close must return after the real JSONL write, without another polling wait.
+	data, err := os.ReadFile(f.auditPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"stage":"task_state_transition"`) {
+		t.Fatal("fixture closed before the reply worker finished its transition audit")
 	}
 }
 
