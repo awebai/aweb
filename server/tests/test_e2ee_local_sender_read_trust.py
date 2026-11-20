@@ -17,7 +17,7 @@ from awid.identity_observation import IdentityKind
 import base64
 
 import asyncio
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import datetime, timezone
 import json
 import os
@@ -30,6 +30,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from tests.js_runtime_tree import runtime_repo
+from aweb_naapp_testing.network import DnsServer
 
 from awid.e2ee_keys import build_encryption_key_assertion
 from awid.signing import canonical_json_bytes, sign_message
@@ -252,13 +253,9 @@ async def _local_sender_mail(
         HOME=str(tmp_path),
         XDG_CONFIG_HOME=str(tmp_path / "config"),
     )
-    registry = SimpleNamespace(
-        url="", responses=[], address_lookup_status=None, key_responses=[]
-    )
+    registry = SimpleNamespace(url="", responses=[], address_lookup_status=None)
 
     async def recorded_registry(scope, receive, send):
-        key_body = []
-
         async def record(event):
             if event["type"] == "http.response.start":
                 user_agent = (
@@ -267,21 +264,6 @@ async def _local_sender_mail(
                 registry.responses.append(
                     (scope["method"], scope["path"], event["status"], user_agent)
                 )
-            if (
-                scope.get("type") == "http"
-                and scope["path"].endswith("/key")
-                and event["type"] == "http.response.body"
-            ):
-                key_body.append(event.get("body", b""))
-                if not event.get("more_body", False):
-                    user_agent = (
-                        dict(scope.get("headers") or [])
-                        .get(b"user-agent", b"")
-                        .decode()
-                    )
-                    registry.key_responses.append(
-                        (scope["path"], user_agent, b"".join(key_body).decode())
-                    )
             await send(event)
 
         if (
@@ -300,9 +282,60 @@ async def _local_sender_mail(
             return
         await env.registry_app(scope, receive, record)
 
-    async with _registry_http(recorded_registry) as (registry_url, _):
+    async with AsyncExitStack() as network:
+        registry_url, _ = await network.enter_async_context(
+            _registry_http(recorded_registry)
+        )
         registry.url = registry_url
         child_env["AWID_REGISTRY_URL"] = registry_url
+        if human:
+            # Enrollment locates authoritative status even when the message omits
+            # id_chain (docs/id-certificates.md:963-976). Serve that actual
+            # namespace through the existing disposable DNS/registry owners.
+            key = await application_registry_client(env.app.state).resolve_key(
+                sender["stable_id"]
+            )
+            assert key.id_tree is not None and key.id_tree.domain is not None
+            domain = key.id_tree.domain
+            authority = await env.registry.namespace_authority(domain)
+            dns_server = DnsServer()
+            await dns_server.start()
+            network.callback(dns_server.close)
+            registry_host = f"registry-{uuid4().hex}.test"
+            public_registry = registry_url.replace("127.0.0.1", registry_host)
+            dns_server.records[(f"_awid.{domain}", "TXT")] = [
+                f'"awid=v1;controller={authority.controller_did};registry={public_registry}"'
+            ]
+            dns_server.records[(registry_host, "A")] = ["127.0.0.1"]
+            registry.dns = dns_server
+            registry.enrollment_domain = domain
+            env.registry_app.state.awid_public_origins = (
+                *env.registry_app.state.awid_public_origins,
+                public_registry,
+            )
+            # Node's lookup uses the OS resolver, unlike resolveTxt. Forward
+            # both APIs to the SAME live DNS server; do not synthesize answers.
+            dns_preload = tmp_path / "disposable-dns.cjs"
+            dns_preload.write_text(
+                "const dns = require('node:dns');\n"
+                f"dns.setServers(['127.0.0.1:{dns_server.port}']);\n"
+                "dns.lookup = (host, options, callback) => {\n"
+                "  if (typeof options === 'function') { callback=options; options={}; }\n"
+                "  if (typeof options === 'number') options={family:options};\n"
+                "  const family=options?.family === 6 ? 6 : 4;\n"
+                "  const resolve=family === 6 ? dns.resolve6 : dns.resolve4;\n"
+                "  resolve(host, (error, addresses) => {\n"
+                "    if (error) return callback(error);\n"
+                "    if (options?.all) callback(null, addresses.map(address=>({address,family})));\n"
+                "    else callback(null, addresses[0], family);\n"
+                "  });\n"
+                "};\n"
+                "require('node:module').syncBuiltinESMExports();\n"
+            )
+            child_env["NODE_OPTIONS"] = (
+                child_env.get("NODE_OPTIONS", "") + f" --require={dns_preload}"
+            ).strip()
+            child_env["APP_ENV"] = "development"
         async with _reply_context(
             binary,
             tmp_path,
@@ -517,6 +550,9 @@ async def _present_by_channel(
         plugin.terminate()
         await asyncio.wait_for(plugin.wait(), 10)
         stderr.close()
+    (tmp_path / "presented-responsibility.json").write_text(
+        params["meta"].get("responsibility", "null")
+    )
     return params["meta"].get("trust_status"), params["content"]
 
 
@@ -696,34 +732,6 @@ async def test_channel_core_addressless_human_mail(
         status, text = await PRESENTERS[runtime](
             tmp_path, binary, command_dir, runtime_env, message_id, conversation_id
         )
-        if not sender_retired:
-            # Observe the real public head already used by this Node presenter;
-            # invoke the unchanged verifier on those exact bytes, never replace it.
-            key_path = f"/v1/did/{privacy_app.actors['alice'].stable_id}/key"
-            head = next(
-                body
-                for path, agent, body in registry.key_responses
-                if path == key_path and agent == "node"
-            )
-            head_file = tmp_path / "actual-human-key.json"
-            head_file.write_text(head)
-            verification = await asyncio.create_subprocess_exec(
-                "node",
-                "--input-type=module",
-                "-e",
-                "import {readFileSync} from 'node:fs'; "
-                "import {pathToFileURL} from 'node:url'; "
-                "const {verifyDidKeyResolution}=await import(pathToFileURL(process.argv[1]).href); "
-                "console.log(JSON.stringify(verifyDidKeyResolution(JSON.parse(readFileSync(process.argv[2],'utf8')),undefined,Date.now())));",
-                str(REPO / "channel-core/dist/identity/registry.js"),
-                str(head_file),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            outcome, error = await asyncio.wait_for(verification.communicate(), 10)
-            assert verification.returncode == 0, error.decode()
-            print("ACTUAL_HUMAN_KEY", head)
-            print("ACTUAL_HUMAN_KEY_VERIFICATION", outcome.decode().strip())
         await _assert_runtime_presentation(
             privacy_app, tmp_path, runtime, expected, status, text, message_id
         )
@@ -733,6 +741,26 @@ async def test_channel_core_addressless_human_mail(
         assert not any("/addresses/" in path for path in node_reads), node_reads
         if not sender_retired:
             assert any(path.endswith("/key") for path in node_reads), node_reads
+            assert (
+                registry.dns.queries[(f"_awid.{registry.enrollment_domain}", "TXT")] > 0
+            )
+            assert (
+                "POST",
+                "/v1/id-certificates/status",
+                200,
+                "node",
+            ) in registry.responses
+            (tmp_path / "human-authority-observations.json").write_text(
+                json.dumps(
+                    {
+                        "domain": registry.enrollment_domain,
+                        "dns_queries": [
+                            [*key, count] for key, count in registry.dns.queries.items()
+                        ],
+                        "registry_requests": registry.responses,
+                    }
+                )
+            )
 
 
 @pytest.mark.usefixtures("source_cli_binary")
