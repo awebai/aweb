@@ -29,7 +29,11 @@ type replyAttachment struct {
 // tasks for a conversation-only QUESTION (docs/a2a.md:978-994).
 func (b *MailBridge) attachReply(msg awid.InboxMessage, reply BridgeReply) replyAttachment {
 	if reply.TaskID != "" {
-		return replyAttachment{Reply: reply, Thread: b.thread(reply.TaskID), Binding: taskNamedInBody}
+		thread := b.thread(reply.TaskID)
+		if !thread.acceptsReplies() {
+			thread = nil
+		}
+		return replyAttachment{Reply: reply, Thread: thread, Binding: taskNamedInBody}
 	}
 	candidates := b.threadsByConversation(msg.ConversationID)
 	if b.requireVerifiedReplies {
@@ -56,7 +60,7 @@ func (b *MailBridge) threadsByConversation(conversationID string) []*mailBridgeT
 	defer b.mu.Unlock()
 	var threads []*mailBridgeThread
 	for _, thread := range b.threads {
-		if conversationID != "" && thread.ConversationID == conversationID && thread.RetentionContext.Err() == nil {
+		if conversationID != "" && thread.ConversationID == conversationID && thread.acceptsReplies() {
 			copy := *thread
 			copy.SeenMessages = make(map[string]bool, len(thread.SeenMessages))
 			for id, seen := range thread.SeenMessages {
@@ -67,6 +71,10 @@ func (b *MailBridge) threadsByConversation(conversationID string) []*mailBridgeT
 	}
 	sort.Slice(threads, func(i, j int) bool { return threads[i].TaskID < threads[j].TaskID })
 	return threads
+}
+
+func (thread *mailBridgeThread) acceptsReplies() bool {
+	return thread != nil && !thread.AwaitingInput && thread.RetentionContext.Err() == nil
 }
 
 type replyRefusalCode string

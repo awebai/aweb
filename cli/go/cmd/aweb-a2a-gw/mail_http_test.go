@@ -34,6 +34,7 @@ type mailHTTPOptions struct {
 
 type mailHTTPFixture struct {
 	server       *httptest.Server
+	rpcBaseURL   string
 	configPath   string
 	auditPath    string
 	gateway      *a2agw.Gateway
@@ -41,6 +42,7 @@ type mailHTTPFixture struct {
 	mu           sync.Mutex
 	mailTasks    map[string]string
 	taskMessages map[string]string
+	lastNotice   string
 	inbox        map[string][]awid.InboxMessage
 	corrections  []awid.SendMessageRequest
 	targetKey    ed25519.PrivateKey
@@ -138,6 +140,9 @@ func newMailHTTPFixture(t *testing.T, options mailHTTPOptions) *mailHTTPFixture 
 					http.Error(w, "cancellation notice refused", 403)
 					return
 				}
+				f.mu.Lock()
+				f.lastNotice = envelope.Body
+				f.mu.Unlock()
 			} else if mail.Subject == "A2A reply needs binding" {
 				f.mu.Lock()
 				f.corrections = append(f.corrections, mail)
@@ -203,11 +208,6 @@ func newMailHTTPFixture(t *testing.T, options mailHTTPOptions) *mailHTTPFixture 
 	return f
 }
 
-func (f *mailHTTPFixture) close() {
-	f.server.Close()
-	f.runtime.bridge.Close()
-}
-
 func (f *mailHTTPFixture) call(input httpRPCInput) (httpRPCResult, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -215,7 +215,8 @@ func (f *mailHTTPFixture) call(input httpRPCInput) (httpRPCResult, error) {
 	if err != nil {
 		return httpRPCResult{}, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, f.server.URL+"/a2a/agents/"+firstNonEmpty(input.RouteID, "r_personal")+"/rpc", bytes.NewReader(data))
+	baseURL := firstNonEmpty(f.rpcBaseURL, f.server.URL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/a2a/agents/"+firstNonEmpty(input.RouteID, "r_personal")+"/rpc", bytes.NewReader(data))
 	if err != nil {
 		return httpRPCResult{}, err
 	}
@@ -379,12 +380,34 @@ func TestHTTPMailBridgeTaskTokenAccess(t *testing.T) {
 		}
 	}
 	headers := tokenHeaders(t, task)
+	issued := headers["X-A2A-Task-Token"]
+	wrong := "0" + issued[1:]
+	if wrong == issued {
+		wrong = "1" + issued[1:]
+	}
+	for _, method := range []string{"GetTask", "CancelTask"} {
+		got := f.callOK(t, httpRPCInput{Method: method, Params: map[string]string{"id": task.ID}, Headers: map[string]string{"X-A2A-Task-Token": wrong}})
+		if got.Error == nil || got.Error.Data.Code != "task_not_found" {
+			t.Fatalf("wrong same-length task token admitted %s: %#v", method, got)
+		}
+	}
 	if got := f.callOK(t, httpRPCInput{Method: "GetTask", Params: map[string]string{"id": task.ID}, Headers: headers}); got.Error != nil {
 		t.Fatalf("issued token refused: %#v", got)
 	}
 	got := f.callOK(t, httpRPCInput{Method: "CancelTask", Params: map[string]string{"id": task.ID}, Headers: headers})
 	if got.Error != nil {
 		t.Fatalf("token cancellation refused: %#v", got.Error)
+	}
+}
+
+func TestHTTPMailBridgeCancelWithoutBindingDoesNotSend(t *testing.T) {
+	f := newMailHTTPFixture(t, mailHTTPOptions{})
+	err := f.runtime.bridge.CancelTask(t.Context(), a2agw.BridgeCancel{TaskID: "unknown-task", ContextID: "caller-context", Address: "a2a.aweb.ai/personal", RouteID: "r_personal"})
+	if err == nil || !strings.Contains(err.Error(), "Contact the target agent with this task ID") {
+		t.Fatalf("missing mail binding did not give recovery guidance: %v", err)
+	}
+	if f.notices.Load() != 0 {
+		t.Fatal("missing mail binding attempted a cancellation notice")
 	}
 }
 
@@ -493,7 +516,7 @@ func TestHTTPMailBridgeRefusesResolvedLocalTargetsBeforeSending(t *testing.T) {
 
 func TestNativeStartupRefusesLocalTargetBeforeOpeningListener(t *testing.T) {
 	f := newMailHTTPFixture(t, mailHTTPOptions{TargetReference: "default:a2a.aweb.ai/private"})
-	err := run([]string{"-config", f.configPath, "-listen", "invalid-listen-address"}, os.Stdout, os.Stderr)
+	err := run(t.Context(), []string{"-config", f.configPath, "-listen", "invalid-listen-address"}, os.Stdout, os.Stderr)
 	if err == nil || !strings.Contains(err.Error(), "route \"r_personal\"") || !strings.Contains(err.Error(), "An A2A route needs an agent with a public address") {
 		t.Fatalf("startup did not refuse local target before listening: %v", err)
 	}
@@ -515,7 +538,7 @@ func TestNativeOfflineConfigCheckDoesNotResolveTargets(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := f.resolutions.Load()
-	runErr := run([]string{"-config", f.configPath, "-check"}, output, os.Stderr)
+	runErr := run(t.Context(), []string{"-config", f.configPath, "-check"}, output, os.Stderr)
 	closeErr := output.Close()
 	if runErr != nil {
 		t.Fatal(runErr)

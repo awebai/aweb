@@ -65,7 +65,7 @@ func TestGatewayRandomFailureIsRecoverableWithoutLosingAcceptedTask(t *testing.T
 	bridge.SetReplyApplier(gw)
 	retention, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	bridge.threads[record.ID] = &mailBridgeThread{TaskID: record.ID, ContextID: "ctx", TargetDID: "did:key:target", ConversationID: "conversation", SeenMessages: map[string]bool{}, RetentionContext: retention}
+	bridge.threads[record.ID] = &mailBridgeThread{TaskID: record.ID, ContextID: "ctx", CallerContextID: "ctx", TargetDID: "did:key:target", ConversationID: "conversation", SeenMessages: map[string]bool{}, RetentionContext: retention}
 	body := "```a2a-reply\n{\"task_id\":\"" + record.ID + "\",\"context_id\":\"ctx\",\"state\":\"completed\",\"text\":\"answer\"}\n```"
 	reply := awid.InboxMessage{MessageID: "reply", FromDID: "did:key:target", ConversationID: "conversation", Body: body, VerificationStatus: awid.Verified}
 	rand.Reader = strings.NewReader("")

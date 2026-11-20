@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -254,7 +256,7 @@ func newManagedHTTPReplyFixture(t *testing.T, options managedHTTPReplyOptions) *
 	cfg := mustLoadConfig(t, f.configPath)
 	cfg.ManagedConfig = managedConfigForTest(provider.URL, "gw", "provider-token")
 	cfg.AllowQuestionReply = true
-	if err := applyManagedRuntimeConfig(&cfg); err != nil {
+	if err := applyManagedRuntimeConfig(t.Context(), &cfg); err != nil {
 		t.Fatal(err)
 	}
 	runtime, gateway, err := buildGatewayWithRuntime(cfg, nil, nil)
@@ -372,8 +374,39 @@ func (p *pausedReplyApplication) ApplyBridgeReply(reply a2agw.BridgeReply) (a2ag
 	return task, applied, err
 }
 
-func TestHTTPManagedFixtureJoinsReplyAuditBeforeTeardown(t *testing.T) {
-	f := newManagedHTTPReplyFixture(t, managedHTTPReplyOptions{})
+func TestHTTPGatewayShutdownJoinsReplyAudit(t *testing.T) {
+	t.Run("native", func(t *testing.T) {
+		assertShutdownJoinsReplyAudit(t, newMailHTTPFixture(t, mailHTTPOptions{PollTimeout: 3 * time.Second}))
+	})
+	t.Run("managed", func(t *testing.T) {
+		assertShutdownJoinsReplyAudit(t, newManagedHTTPReplyFixture(t, managedHTTPReplyOptions{}))
+	})
+}
+
+func assertShutdownJoinsReplyAudit(t *testing.T, f *mailHTTPFixture) {
+	t.Helper()
+	f.server.Close()
+	ctx, stop := context.WithCancel(context.Background())
+	defer stop()
+	server := gatewayHTTPServer("127.0.0.1:0", f.gateway)
+	defer server.Close()
+	listening := make(chan string, 1)
+	server.BaseContext = func(listener net.Listener) context.Context {
+		listening <- "http://" + listener.Addr().String()
+		return context.Background()
+	}
+	admissionStopped := make(chan struct{})
+	server.RegisterOnShutdown(func() { close(admissionStopped) })
+	done := make(chan error, 1)
+	go func() { done <- serveGateway(ctx, server, f.runtime.bridge, nil) }()
+	select {
+	case f.rpcBaseURL = <-listening:
+	case err := <-done:
+		t.Fatalf("gateway failed before it was ready: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("gateway did not listen")
+	}
+
 	paused := &pausedReplyApplication{gateway: f.gateway, applied: make(chan struct{}), release: make(chan struct{})}
 	var release sync.Once
 	unblock := func() { release.Do(func() { close(paused.release) }) }
@@ -390,27 +423,44 @@ func TestHTTPManagedFixtureJoinsReplyAuditBeforeTeardown(t *testing.T) {
 	if got := f.readTask(t, task); got.Status.State != a2agw.TaskStateCompleted {
 		t.Fatalf("reply was not visible before its final audit: %#v", got)
 	}
-	closed := make(chan struct{})
-	go func() { f.close(); close(closed) }()
+	stop()
 	select {
-	case <-closed:
-		t.Error("fixture closed while its reply worker still had a pending audit write")
+	case <-admissionStopped:
+	case <-time.After(2 * time.Second):
+		t.Fatal("gateway did not close its HTTP listener after shutdown was requested")
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("gateway stopped with a pending reply audit: %v", err)
 	case <-time.After(50 * time.Millisecond):
-		// Teardown must remain blocked on the deliberately paused worker.
 	}
 	unblock()
 	select {
-	case <-closed:
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("gateway shutdown: %v", err)
+		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("fixture did not finish after the reply worker was released")
+		t.Fatal("gateway did not finish after the reply worker was released")
 	}
-	// Close must return after the real JSONL write, without another polling wait.
-	data, err := os.ReadFile(f.auditPath)
+	audit, err := os.Open(f.auditPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), `"stage":"task_state_transition"`) {
-		t.Fatal("fixture closed before the reply worker finished its transition audit")
+	defer audit.Close()
+	decoder := json.NewDecoder(audit)
+	for {
+		var event a2agw.AuditEvent
+		err := decoder.Decode(&event)
+		if err == io.EOF {
+			t.Fatal("gateway stopped before writing the task transition audit")
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if event.Stage == "task_state_transition" && event.TaskID == task.ID && event.Outcome == string(a2agw.AuditOK) {
+			return
+		}
 	}
 }
 
@@ -563,7 +613,14 @@ func TestHTTPManagedUnverifiedQuestionRefusesAmbiguousTask(t *testing.T) {
 	if got := f.readTask(t, first); got.Status.State != a2agw.TaskStateWorking {
 		t.Fatalf("task-named question changed its neighbor: %#v", got)
 	}
-	f.callOK(t, httpRPCInput{Method: "CancelTask", Params: map[string]string{"id": first.ID}, Headers: tokenHeaders(t, first)})
+	f.waitForAppliedTransition(t, second.ID)
+	f.injectSignedReply(t, signedHTTPReply{Task: first, Body: "QUESTION: Which shipment?", Binding: conversationUnsigned})
+	if got := f.waitForTaskReply(t, first); got.Status.State != a2agw.TaskStateInputRequired || got.Status.Message == nil || len(got.Status.Message.Parts) != 1 || got.Status.Message.Parts[0].Text != "Which shipment?" {
+		t.Fatalf("retained, interrupted task blocked a question for its working neighbor: %#v", got.Status)
+	}
+	if result := f.callOK(t, httpRPCInput{Method: "CancelTask", Params: map[string]string{"id": first.ID}, Headers: tokenHeaders(t, first)}); result.Error != nil {
+		t.Fatalf("question cancellation failed: %#v", result.Error)
+	}
 }
 
 func TestHTTPMailBridgeQuestionsHaveQuestionArtifacts(t *testing.T) {
@@ -648,8 +705,7 @@ func TestHTTPMailBridgeQuestionCannotContinueSameTask(t *testing.T) {
 	if lateMessage == nil || lateMessage.VerificationStatus != awid.Verified || lateMessage.FromDID != f.targetDID {
 		t.Fatalf("late answer did not pass the production HTTP mail reader: %#v", lateMessage)
 	}
-	// Exercise the production bridge as well: even explicit ingestion cannot
-	// attach the authentic late answer to the finished question thread.
+	// Explicit ingestion of an authentic late answer cannot resume the question.
 	if _, applied, err := f.runtime.bridge.IngestInboxMessage(ctx, *lateMessage); err != nil || applied {
 		t.Fatalf("same-task late answer applied=%v err=%v", applied, err)
 	}
@@ -670,5 +726,93 @@ func TestHTTPMailBridgeQuestionCannotContinueSameTask(t *testing.T) {
 	if got := f.readTask(t, task); got.Status.State != a2agw.TaskStateInputRequired {
 		t.Fatalf("new task changed question task: %#v", got)
 	}
-	f.callOK(t, httpRPCInput{Method: "CancelTask", Params: map[string]string{"id": newTask.ID}, Headers: tokenHeaders(t, newTask)})
+	for _, cancel := range []a2agw.Task{task, newTask} {
+		before := f.notices.Load()
+		result := f.callOK(t, httpRPCInput{Method: "CancelTask", Params: map[string]string{"id": cancel.ID}, Headers: tokenHeaders(t, cancel)})
+		if result.Error != nil || f.notices.Load() != before+1 || f.readTask(t, cancel).Status.State != a2agw.TaskStateCanceled {
+			t.Fatalf("cancellation did not notify the target in the task's signed conversation: %#v", result.Error)
+		}
+	}
+}
+
+func TestHTTPMailBridgeControlIDsKeepCallerTextOut(t *testing.T) {
+	f := newMailHTTPFixture(t, mailHTTPOptions{QuestionReplies: true, PollTimeout: 3 * time.Second})
+	callerContext := strings.Repeat("customer context ` ñ ", 20)
+	const externalID = "caller-selected-trace"
+	requestIDs := map[string]bool{externalID: true}
+	auditIDs := map[string]string{}
+	controlToken := regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
+	parseControl := func(body, fence string) map[string]string {
+		t.Helper()
+		body, ok := strings.CutPrefix(body, "```"+fence+"\n")
+		payload, _, closed := strings.Cut(body, "\n```\n")
+		var fields map[string]string
+		if !ok || !closed || json.Unmarshal([]byte(payload), &fields) != nil {
+			t.Fatalf("invalid %s control block", fence)
+		}
+		return fields
+	}
+	for _, id := range []string{"first-context", "second-context"} {
+		task := sentHTTPTask(t, f.callOK(t, httpRPCInput{Method: "SendMessage", Headers: map[string]string{"X-Request-ID": externalID}, Params: map[string]any{
+			"message":       a2agw.A2AMessage{MessageID: id, ContextID: callerContext, Role: a2agw.RoleUser, Parts: []a2agw.A2APart{{Text: "Customer message", MediaType: "text/plain"}}},
+			"configuration": map[string]bool{"returnImmediately": true},
+		}}))
+		f.mu.Lock()
+		body := f.taskMessages[task.ID]
+		f.mu.Unlock()
+		fields := parseControl(body, "a2a-task")
+		requestID, contextID := fields["request_id"], fields["context_id"]
+		if !controlToken.MatchString(requestID) || requestIDs[requestID] || task.Metadata["request_id"] != requestID {
+			t.Errorf("task did not get a unique gateway request ID: %q", requestID)
+		}
+		requestIDs[requestID] = true
+		auditIDs[requestID] = "bridge_send"
+		if !controlToken.MatchString(contextID) || strings.Contains(body, callerContext) || task.ContextID != callerContext {
+			t.Errorf("caller context leaked into the control block or changed in the RPC result: %q", contextID)
+		}
+		f.injectSignedReply(t, signedHTTPReply{Task: task, Body: f.questionForm(t, task), Binding: conversationSigned})
+		if got := f.waitForTaskReply(t, task); got.Status.State != a2agw.TaskStateInputRequired || got.ContextID != callerContext {
+			t.Fatalf("control context did not bind the question to the original RPC task: %#v", got.Status)
+		}
+		f.waitForAppliedTransition(t, task.ID)
+		headers := tokenHeaders(t, task)
+		headers["X-Request-ID"] = externalID
+		result := f.callOK(t, httpRPCInput{Method: "CancelTask", Params: map[string]string{"id": task.ID}, Headers: headers})
+		if result.Error != nil {
+			t.Fatalf("question cancellation failed: %#v", result.Error)
+		}
+		f.mu.Lock()
+		notice := f.lastNotice
+		f.mu.Unlock()
+		canceled := parseControl(notice, "a2a-cancel")
+		cancelID := canceled["request_id"]
+		if canceled["context_id"] != contextID || canceled["task_id"] != task.ID || !controlToken.MatchString(cancelID) || requestIDs[cancelID] {
+			t.Fatalf("cancel notice lost its task binding or gateway request ID: %#v", canceled)
+		}
+		requestIDs[cancelID] = true
+		auditIDs[cancelID] = "bridge_cancel"
+	}
+	audit, err := os.Open(f.auditPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer audit.Close()
+	decoder := json.NewDecoder(audit)
+	for {
+		var event a2agw.AuditEvent
+		if err := decoder.Decode(&event); err == io.EOF {
+			break
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		if event.RequestID == externalID {
+			t.Fatal("caller-supplied request ID reached the audit log")
+		}
+		if auditIDs[event.RequestID] == event.Stage {
+			delete(auditIDs, event.RequestID)
+		}
+	}
+	if len(auditIDs) != 0 {
+		t.Fatalf("signed control IDs are missing from the matching audit events: %#v", auditIDs)
+	}
 }

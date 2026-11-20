@@ -13,11 +13,13 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/awebai/aw/a2a"
@@ -42,13 +44,15 @@ const minimumAWIDServiceVersion = "0.5.11"
 const maxProviderResponseBytes = 1 << 20
 
 func main() {
-	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if err := run(ctx, os.Args[1:], os.Stdout, os.Stderr); err != nil {
 		fmt.Fprintln(os.Stderr, "aweb-a2a-gw:", err)
 		os.Exit(1)
 	}
 }
 
-func run(args []string, stdout, _ *os.File) error {
+func run(ctx context.Context, args []string, stdout, _ *os.File) error {
 	fs := flag.NewFlagSet("aweb-a2a-gw", flag.ContinueOnError)
 	configPath := fs.String("config", strings.TrimSpace(os.Getenv("AWEB_A2A_GW_CONFIG")), "gateway YAML config")
 	listenOverride := fs.String("listen", "", "listen address override")
@@ -69,25 +73,26 @@ func run(args []string, stdout, _ *os.File) error {
 	}
 	listen := firstNonEmpty(cfg.Listen, ":8080")
 	if managedConfigEnabled(cfg.ManagedConfig) && !*checkOnly {
-		return runManagedGateway(cfg, listen)
+		return runManagedGateway(ctx, cfg, listen)
 	}
-	if err := applyManagedRuntimeConfig(&cfg); err != nil {
+	if err := applyManagedRuntimeConfig(ctx, &cfg); err != nil {
 		return err
 	}
-	gateway, err := buildGateway(cfg)
+	runtime, gateway, err := buildGatewayWithRuntime(cfg, nil, nil)
 	if err != nil {
 		return err
 	}
 	if *checkOnly {
 		return json.NewEncoder(stdout).Encode(gateway.Diagnostics())
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if err := gateway.ValidateTargets(ctx); err != nil {
+	validationCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	err = gateway.ValidateTargets(validationCtx)
+	cancel()
+	if err != nil {
 		return err
 	}
 	server := gatewayHTTPServer(listen, runtimeHandler(gateway, cfg))
-	return server.ListenAndServe()
+	return serveGateway(ctx, server, runtime.bridge, nil)
 }
 
 type runtimeHealth struct {
@@ -173,15 +178,50 @@ type managedGateway struct {
 	runtime *gatewayRuntime
 }
 
-func runManagedGateway(base fileConfig, listen string) error {
-	initial, err := buildManagedSnapshot(base, managedStartDegraded)
+func runManagedGateway(ctx context.Context, base fileConfig, listen string) error {
+	initial, err := buildManagedSnapshot(ctx, base, managedStartDegraded)
 	if err != nil {
 		return err
 	}
 	manager := &managedGateway{cfg: initial.cfg, gateway: initial.gateway, runtime: initial.runtime}
-	go manager.refreshLoop(base)
+	// Keep refreshing while admitted HTTP requests drain. The shutdown owner
+	// cancels and joins refresh before closing the shared bridge.
+	refreshCtx, stopRefresh := context.WithCancel(context.Background())
+	refreshed := make(chan struct{})
+	go func() {
+		defer close(refreshed)
+		manager.refreshLoop(refreshCtx, base)
+	}()
 	server := gatewayHTTPServer(listen, manager)
-	return server.ListenAndServe()
+	return serveGateway(ctx, server, initial.runtime.bridge, func() {
+		stopRefresh()
+		<-refreshed
+	})
+}
+
+func serveGateway(ctx context.Context, server *http.Server, bridge *a2agw.MailBridge, stopRefresh func()) error {
+	serving := make(chan error, 1)
+	go func() { serving <- server.ListenAndServe() }()
+	var serveErr error
+	select {
+	case serveErr = <-serving:
+		serving = nil
+	case <-ctx.Done():
+	}
+	// The signal stops admission, but the shutdown context must stay live
+	// until admitted handlers finish using the bridge.
+	shutdownErr := server.Shutdown(context.Background())
+	if serving != nil {
+		serveErr = <-serving
+	}
+	if stopRefresh != nil {
+		stopRefresh()
+	}
+	bridge.Close()
+	if errors.Is(serveErr, http.ErrServerClosed) {
+		serveErr = nil
+	}
+	return errors.Join(serveErr, shutdownErr)
 }
 
 // gatewayHTTPServer bounds request lifetimes (docs/a2a.md:1017-1018).
@@ -195,8 +235,8 @@ type managedSnapshot struct {
 	runtime *gatewayRuntime
 }
 
-func buildManagedSnapshot(base fileConfig, policy managedFetchFailurePolicy) (managedSnapshot, error) {
-	cfg, err := loadManagedConfig(base, policy)
+func buildManagedSnapshot(ctx context.Context, base fileConfig, policy managedFetchFailurePolicy) (managedSnapshot, error) {
+	cfg, err := loadManagedConfig(ctx, base, policy)
 	if err != nil {
 		return managedSnapshot{}, err
 	}
@@ -207,9 +247,9 @@ func buildManagedSnapshot(base fileConfig, policy managedFetchFailurePolicy) (ma
 	return managedSnapshot{cfg: cfg, gateway: gateway, runtime: runtime}, nil
 }
 
-func loadManagedConfig(base fileConfig, policy managedFetchFailurePolicy) (fileConfig, error) {
+func loadManagedConfig(ctx context.Context, base fileConfig, policy managedFetchFailurePolicy) (fileConfig, error) {
 	cfg := base
-	if err := applyManagedRuntimeConfig(&cfg); err != nil {
+	if err := applyManagedRuntimeConfig(ctx, &cfg); err != nil {
 		if isFatalInitialManagedRuntimeConfigError(err) {
 			return fileConfig{}, err
 		}
@@ -221,12 +261,20 @@ func loadManagedConfig(base fileConfig, policy managedFetchFailurePolicy) (fileC
 	return cfg, nil
 }
 
-func (m *managedGateway) refreshLoop(base fileConfig) {
+func (m *managedGateway) refreshLoop(ctx context.Context, base fileConfig) {
 	interval := managedConfigPollInterval()
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-	for range ticker.C {
-		cfg, err := loadManagedConfig(base, managedKeepCurrentSnapshot)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		cfg, err := loadManagedConfig(ctx, base, managedKeepCurrentSnapshot)
+		if ctx.Err() != nil {
+			return
+		}
 		if err != nil {
 			m.markRefreshError(err)
 			continue
@@ -736,7 +784,7 @@ func (e *managedRuntimeConfigFetchError) Error() string {
 
 func (e *managedRuntimeConfigFetchError) Unwrap() error { return e.Cause }
 
-func applyManagedRuntimeConfig(cfg *fileConfig) error {
+func applyManagedRuntimeConfig(ctx context.Context, cfg *fileConfig) error {
 	url, err := managedConfigURL(cfg.ManagedConfig)
 	if err != nil {
 		return err
@@ -748,7 +796,7 @@ func applyManagedRuntimeConfig(cfg *fileConfig) error {
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
 	}
@@ -1111,11 +1159,6 @@ func (r *gatewayRuntime) applyConfig(cfg fileConfig, gateway *a2agw.Gateway, gat
 		r.bridge.SetGatewayIdentity(gatewayIdentity)
 		r.bridge.SetReplyApplier(gateway)
 	}
-}
-
-func buildGateway(cfg fileConfig) (*a2agw.Gateway, error) {
-	_, gateway, err := buildGatewayWithRuntime(cfg, nil, nil)
-	return gateway, err
 }
 
 func buildGatewayWithRuntime(cfg fileConfig, runtime *gatewayRuntime, previous *a2agw.Gateway) (*gatewayRuntime, *a2agw.Gateway, error) {
