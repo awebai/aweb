@@ -8,6 +8,7 @@ from awid.signing import verify_did_key_signature
 from fastapi import Depends, HTTPException, Request
 
 from aweb.application_state import application_registry_client
+from aweb.awid_error_handling import AWID_DEPENDENCY_ERRORS
 from aweb.auth_context import GrantContext as GrantContext
 from aweb.auth_context import IdentityAuth, MessagingAuth, TeamIdentity
 from aweb.auth_metrics import count_legacy_request_auth
@@ -116,7 +117,7 @@ async def resolve_identity_auth(request: Request, *, db=None) -> IdentityAuth:
     address = None
     try:
         addresses = await registry_client.list_did_addresses(did_aw)
-    except Exception as exc:
+    except AWID_DEPENDENCY_ERRORS as exc:
         # Retain the typed cause in request-local evidence; log no URL, name,
         # exception message or credentials. Failed discovery grants no fact.
         outcome = AddressResolution(AddressResolutionState.UNKNOWN, cause=exc)
