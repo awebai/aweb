@@ -257,7 +257,9 @@ async def set_messaging_inbound_mode(env, actor, *, mode):
     assert response.status_code == 200, response.text
 
 
-async def add_messaging_contact(env, owner, *, address, key_owner=False):
+async def add_messaging_contact(
+    env, owner, *, address, key_owner=False, status="active"
+):
     """Use the contact service with current SDK address/controller evidence."""
     from aweb.messaging.contacts import add_contact
 
@@ -273,6 +275,7 @@ async def add_messaging_contact(env, owner, *, address, key_owner=False):
         contact_did_aw=resolved.did_aw,
         binding_controller_did=namespace.controller_did,
         label="Alice",
+        status=status,
     )
 
 
