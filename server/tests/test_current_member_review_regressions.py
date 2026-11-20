@@ -15,6 +15,7 @@ from test_current_member_selector_surfaces import (
     _admit,
     _capture_room_actor,
     _http,
+    _readmit,
 )
 from test_dashboard_privacy import TEAM
 from test_dashboard_privacy import privacy_app as privacy_app
@@ -135,3 +136,54 @@ async def test_certificate_acceptance_rechecks_current_member_after_verification
         "SELECT certificate_id, accepted_team_did_key, did_aw_verified_key "
         "FROM {{tables.agents}} WHERE agent_id=$1", actor.id,
     ) == before
+
+
+@pytest.mark.asyncio
+async def test_a_superseded_claim_is_released_when_a_current_member_claims(pinning):
+    env = pinning
+    holder = await _admit(env, "claimholder")
+    contender = await _admit(env, "claimcontender")
+    created = await _http(env, holder, "POST", "/v1/tasks", {"title": "owned claim"})
+    assert created.status_code == 200, created.text
+    ref = created.json()["task_ref"]
+    path = "/v1/tasks/" + ref
+    claimed = await _http(env, holder, "PATCH", path, {"status": "in_progress"})
+    assert claimed.status_code == 200, claimed.text
+    conflict = await _http(env, contender, "PATCH", path, {"status": "in_progress"})
+    assert conflict.status_code == 409, conflict.text
+    next_key = await _change_key(env)
+    await _readmit(env, contender, next_key)
+    claimed = await _http(env, contender, "PATCH", path, {"status": "in_progress"})
+    assert claimed.status_code == 200, claimed.text
+    claims = await env.db.fetch_all(
+        "SELECT c.alias, w.agent_id FROM {{tables.task_claims}} c "
+        "JOIN {{tables.workspaces}} w ON w.workspace_id=c.workspace_id "
+        "WHERE c.team_id=$1 AND c.task_ref=$2", TEAM, ref,
+    )
+    assert [(c["alias"], c["agent_id"]) for c in claims] == [(contender.alias, contender.id)]
+    assert claimed.json()["assignee_alias"] == contender.alias
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["superseded", "inactive"])
+async def test_identity_context_filters_members_before_projection_writes(pinning, change):
+    from aweb.identity_auth_deps import lookup_identity_agent_context
+
+    env = pinning
+    actor = await _admit(env, "projectiontarget", global_identity=True)
+    request = _request(env, actor)
+    # Acquire actual verified binding evidence on the original signed request.
+    await verify_request_certificate(request, env.infra)
+    if change == "superseded":
+        await _change_key(env)
+    else:
+        # Negative native row state; this cannot manufacture member authority.
+        await env.db.execute("UPDATE {{tables.agents}} SET status='retired' WHERE agent_id=$1", actor.id)
+    queries = []
+    async with env.db.transaction() as tx:
+        with tx.connection.query_logger(lambda event: queries.append(event.query)):
+            assert await lookup_identity_agent_context(
+                tx, did_key=actor.did, did_aw=actor.stable, request=request,
+            ) is None
+            assert await tx.fetch_value("SELECT 1") == 1
+    assert not [q for q in queries if "UPDATE" in q and "agents" in q], queries
