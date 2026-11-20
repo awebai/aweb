@@ -3590,7 +3590,7 @@ async def test_create_chat_session_to_address_does_not_fall_back_to_local_persis
     )
 
     env, actors = registered_mail_actors
-    alice, bob = actors["alice"], actors["bob"]
+    alice, bob = (actors["alice"], actors["bob"])
     await register_messaging_team(env, team_id="ops:otherco.com")
     recipient = await admit_messaging_actor(
         env,
@@ -3617,7 +3617,6 @@ async def test_create_chat_session_to_address_does_not_fall_back_to_local_persis
             content=body,
             headers={
                 "Content-Type": "application/json",
-                "X-Team-ID": alice.team_id,
                 **_signed_identity_headers(
                     alice.signing_key, alice.did_key, alice.stable_id, body
                 ),
@@ -3913,7 +3912,6 @@ async def test_create_chat_session_to_private_address_rejects_unverified_client_
         content=body,
         headers={
             "Content-Type": "application/json",
-            "X-Team-ID": alice.team_id,
             **_signed_identity_headers(
                 alice.signing_key, alice.did_key, alice.stable_id, body
             ),
