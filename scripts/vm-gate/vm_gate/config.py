@@ -52,8 +52,14 @@ def load(path, repo):
             raise Refused(f"{key} must be positive and finite")
     if "run_ceiling_eur" in config:
         money(config["run_ceiling_eur"])
+    config["manifest"] = read_manifest(config["snapshot_manifest"])
+    config["config_path"] = str(path)
+    return config
+
+
+def read_manifest(path):
     try:
-        manifest = json.loads(Path(config["snapshot_manifest"]).read_text())
+        manifest = json.loads(Path(path).read_text())
     except (OSError, ValueError):
         raise Refused("snapshot manifest is unavailable") from None
     if (
@@ -88,6 +94,14 @@ def load(path, repo):
             raise Refused("snapshot binary manifest is incomplete: " + tool)
     if not manifest["dpkg"].strip():
         raise Refused("snapshot package manifest is empty")
-    config["manifest"] = manifest
-    config["config_path"] = str(path)
-    return config
+    return manifest
+
+
+def select_manifest(config, target):
+    if target == "merak":
+        settings = config.get("merak") or {}
+        path = settings.get("manifest")
+        if not isinstance(path, str) or not Path(path).is_absolute():
+            raise Refused("Merak requires its own absolute manifest path")
+        config["manifest"] = read_manifest(path)
+        config["execution_manifest"] = path

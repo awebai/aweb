@@ -272,3 +272,28 @@ decrease. Raw counters are preserved without guessed percentages. The
 [PSI interface](https://docs.kernel.org/accounting/psi.html) supplies trend
 averages and cumulative stall time; before/after data supports diagnosis but
 does not on its own identify a physical host or prove noisy-neighbor causation.
+
+### Merak
+
+Select the dedicated KVM host with `--target merak`. The Mac operator config
+supplies `merak.host` (an SSH alias with a trusted host key),
+`merak.base_sha256`, and `merak.launcher_image_id` (the immutable local Docker
+image ID including `sha256:`). Set `merak.manifest` to the absolute path of
+the approved Merak toolchain manifest and `merak.package_delta` to its recorded
+OS package comparison. Each Merak receipt carries both file digests, the
+observed Python binary hash and the package comparison itself. Build the launcher from `scripts/vm-gate/merak`
+with a digest-pinned Debian base supplied as the `BASE` build argument.
+
+Place the verified disk at `~/.local/share/aweb-gates/base/<sha256>.raw` with
+mode 0444. Merak holds one slot from admission through cleanup. Each invocation
+boots a new writable overlay and NoCloud seed under
+`~/.local/share/aweb-gates/runs/<run-id>`. The controller reaches the guest SSH listener through the launcher container’s
+loopback interface using the pinned host connection. The controller checks both SSH pins and runs the shared Linux
+executor, host manifest checks and ledger import. The guest has its own Docker
+daemon. Its writable disk contains its containers, volumes, networks and source
+checkout. Closure records the removed launcher ID and disk directory, and is
+read back on a fresh SSH connection.
+
+After the checks proof passes, the operator can set `default_target` to
+`merak`. An explicit `--type ccx33` or `--type ccx43` still selects Hetzner.
+The default for configurations without this setting is Hetzner.

@@ -50,7 +50,9 @@ class Executor:
     def env(self, root=False):
         home = "/root" if root else "/home/gateuser"
         profile = "ccx33" if self.config.get("server_type") == "ccx33" else "portable"
-        return f"env -i HOME={home} PATH={HOST_PATH} GOTOOLCHAIN=local PYTHONPATH={REMOTE}/operator AWEB_GATE_UNIT_PROFILE={profile} "
+        project = self.config.get("compose_project")
+        compose = "COMPOSE_PROJECT_NAME=" + Q(project) + " " if project else ""
+        return f"env -i {compose}HOME={home} PATH={HOST_PATH} GOTOOLCHAIN=local PYTHONPATH={REMOTE}/operator AWEB_GATE_UNIT_PROFILE={profile} "
 
     def host_check(self, root=False):
         return (
@@ -129,8 +131,7 @@ exit "$status"
         validate_command(script)
         (self.directory / "launch.sh").write_text(script)
 
-    def prepare(self, server, timeout):
-        self.deadline = time.monotonic() + timeout
+    def connect(self, server):
         while True:
             info = self.provider.read("server_info", server["id"])
             if info.get("labels", {}).get(PREFIX + "run") != server["run_id"]:
@@ -147,6 +148,11 @@ exit "$status"
                 except Infrastructure:
                     pass  # Bounded, idempotent readiness probe; never a create retry.
             time.sleep(min(2, self.remaining()))
+
+    def prepare(self, server, timeout):
+        self.deadline = time.monotonic() + timeout
+        if self.transport is None:
+            self.connect(server)
         negative = self.transport.prove_mismatch(timeout=min(10, self.remaining()))
         (self.directory / "ssh-host-key-negative.stderr").write_text(negative.stderr)
         (self.directory / "ssh-host-key-negative.stdout").write_text(negative.stdout)

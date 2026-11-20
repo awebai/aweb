@@ -19,6 +19,56 @@ def write_summary(directory, summary):
     temporary.replace(path)
 
 
+def execute_guest(remote, server, budget, summary, clock=time.time):
+    """Execute the shared guest contract, including partial evidence on interruption."""
+    source_sha, run_id = summary["sha"], summary["run_id"]
+    prepared = False
+    pull_attempted = False
+    try:
+        remote.prepare(server, timeout=budget.require("setup", now=clock()))
+        prepared = True
+        summary["gate_started"] = clock()
+        result = remote.execute(server, timeout=budget.require("gate", now=clock()))
+        if not isinstance(result, int) or result < 0 or result > 255:
+            raise Infrastructure("remote gate returned an invalid exit status")
+        summary.update(
+            gate_exit=result, gate_finished=clock(), exit=result, infrastructure=None
+        )
+        pull_attempted = True
+        evidence = remote.collect(server, timeout=budget.require("pull", now=clock()))
+        summary.update(evidence)
+        # Evidence may add stages/memory, never change verdict identity.
+        summary.update(exit=result, infrastructure=None, sha=source_sha, run_id=run_id)
+    finally:
+        with handling(cleanup=True):
+            if prepared and not pull_attempted:
+                # A first stop unwinds the SSH call. Let the owned remote group
+                # finalize before pulling, but never spend the pull/cleanup reserve.
+                try:
+                    summary["remote_stop"] = remote.stop(
+                        server, timeout=budget.require("grace", now=clock())
+                    )
+                except BaseException as exc:  # noqa: BLE001 -- stop failure must not prevent collection or deletion
+                    summary["remote_stop"] = {"finalized": False, "error": str(exc)}
+                try:
+                    partial = remote.collect(
+                        server, timeout=budget.require("pull", now=clock())
+                    )
+                    for field in [
+                        "supervision",
+                        "stages",
+                        "gate_summaries",
+                        "memory",
+                        "archive_sha256",
+                        "archive_links_omitted",
+                    ]:
+                        if field in partial:
+                            summary[field] = partial[field]
+                    summary["partial_evidence"] = True
+                except BaseException as exc:  # noqa: BLE001 -- retain failure and finish bounded cleanup
+                    summary["evidence_error"] = type(exc).__name__
+
+
 def run_session(
     *,
     provider,
@@ -50,8 +100,6 @@ def run_session(
         "resources": [],
         "memory": None,
     }
-    prepared = False
-    pull_attempted = False
     reserved = False
     server = None
     server_start = None
@@ -115,20 +163,7 @@ def run_session(
         store.update(
             run_id, {"server_id": server["id"], "resources": summary["resources"]}
         )
-        remote.prepare(server, timeout=budget.require("setup", now=clock()))
-        prepared = True
-        summary["gate_started"] = clock()
-        result = remote.execute(server, timeout=budget.require("gate", now=clock()))
-        if not isinstance(result, int) or result < 0 or result > 255:
-            raise Infrastructure("remote gate returned an invalid exit status")
-        summary.update(
-            gate_exit=result, gate_finished=clock(), exit=result, infrastructure=None
-        )
-        pull_attempted = True
-        evidence = remote.collect(server, timeout=budget.require("pull", now=clock()))
-        summary.update(evidence)
-        # Evidence may add stages/memory, never change verdict identity.
-        summary.update(exit=result, infrastructure=None, sha=sha, run_id=run_id)
+        execute_guest(remote, server, budget, summary, clock)
     except BaseException as exc:  # noqa: BLE001 -- retain failure and finish bounded cleanup
         if isinstance(exc, (Refused, Infrastructure)):
             summary.update(
@@ -152,33 +187,6 @@ def run_session(
             )
     finally:
         with handling(cleanup=True):
-            if prepared and not pull_attempted:
-                # A first stop unwinds the SSH call. Let the owned remote group
-                # finalize before pulling, but never spend the pull/cleanup reserve.
-                try:
-                    summary["remote_stop"] = remote.stop(
-                        server, timeout=budget.require("grace", now=clock())
-                    )
-                except BaseException as exc:  # noqa: BLE001 -- stop failure must not prevent collection or deletion
-                    summary["remote_stop"] = {"finalized": False, "error": str(exc)}
-                try:
-                    partial = remote.collect(
-                        server, timeout=budget.require("pull", now=clock())
-                    )
-                    for field in [
-                        "supervision",
-                        "stages",
-                        "gate_summaries",
-                        "memory",
-                        "archive_sha256",
-                        "archive_links_omitted",
-                    ]:
-                        if field in partial:
-                            summary[field] = partial[field]
-                    summary["partial_evidence"] = True
-                except BaseException as exc:  # noqa: BLE001 -- retain failure and finish bounded cleanup
-                    summary["evidence_error"] = type(exc).__name__
-
             try:
                 summary["cleanup"] = provider.cleanup(
                     run_id, recorded=summary["resources"]
