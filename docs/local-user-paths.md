@@ -55,3 +55,6 @@ the target fail. An interruption prints the remaining selections as NOT_RUN.
 These are local user-path results, not canonical-gate ledger entries. They retain
 the stack's existing human-coverage annotation and reviewed released-client
 budget. The canonical full gate stays on the gate machines.
+
+Whole-suite invocations share the host-wide [local suite slots](local-suite-slots.md)
+with Cloud (default three), held from preparation through cleanup.

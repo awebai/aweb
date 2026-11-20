@@ -101,6 +101,12 @@ describe("the refused notice", () => {
       'Channel notices (type="channel") come from this plugin itself, not from another agent',
     );
   });
+
+  test("the plugin explains an accountability outage and withheld delivery", () => {
+    expect(CHANNEL_INSTRUCTIONS).toContain('trust_status="unverified" and responsibility_status="responsibility_unavailable"');
+    expect(CHANNEL_INSTRUCTIONS).toContain('decrypt_error="decryption_failed"');
+    expect(CHANNEL_INSTRUCTIONS).not.toContain("responsibility.reason");
+  });
 });
 
 describe("refused stream handling", () => {
