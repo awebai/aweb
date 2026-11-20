@@ -22,6 +22,7 @@ func TestMessagePresentationVector(t *testing.T) {
 			Status          awid.VerificationStatus
 			Trusted         bool
 			Sender          string
+			FromAddress     string `json:"from_address"`
 			PresentedSender string `json:"presented_sender"`
 			MessageID       string `json:"message_id"`
 			SessionID       string `json:"session_id"`
@@ -39,10 +40,14 @@ func TestMessagePresentationVector(t *testing.T) {
 			if got := row.Status.Trusted(); got != row.Trusted {
 				t.Fatalf("trusted: got %v, want %v", got, row.Trusted)
 			}
-			if got := claimedSenderIdentifier(row.Sender); got != row.PresentedSender {
+			sender := row.Sender
+			if row.FromAddress != "" {
+				sender = row.FromAddress
+			}
+			if got := claimedSenderIdentifier(sender); got != row.PresentedSender {
 				t.Fatalf("claimed sender: got %q, want %q", got, row.PresentedSender)
 			}
-			input := messageNotice{Kind: row.Kind, Status: row.Status, Sender: row.Sender, MessageID: row.MessageID, SessionID: row.SessionID}
+			input := messageNotice{Kind: row.Kind, Status: row.Status, Sender: sender, MessageID: row.MessageID, SessionID: row.SessionID}
 			want := ""
 			if row.Recovery != "" {
 				label := ""

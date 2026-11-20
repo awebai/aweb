@@ -199,8 +199,19 @@ inbox or pending-chat check. The Go `aw notify` hook has only pending-chat
 metadata and follows the same sender label rule. Explicit read commands can
 show the original content and its verification status.
 
+An undecryptable message uses the same identifier projection. Its
+`decrypt_error` is the fixed code `decryption_failed` and the notice contains
+no provider diagnostic text.
+
 The native Claude and Pi adapters render the channel-core notice. The terminal
 broker renders it with the receiving identity and leaves held messages unread.
+When the sender signature passed but current accountability evidence for an
+enrolled sender cannot be established (`stale_issuer_key`, `status_expired`, or
+`evidence_unavailable`), native mail and chat present the content as
+`trust_status=unverified` with `responsibility_status=responsibility_unavailable`.
+Definitive identity refusals still report `failed` and withhold content. This
+presentation rule grants no authority to make an authenticated request or to
+act for a human.
 Other untrusted results carry warnings on the native adapters, subject to the
 terminal broker's separate hold policy. See [the terminal adapter contract](channel-core-terminal-adapter.md).
 

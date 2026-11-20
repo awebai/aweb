@@ -1,6 +1,7 @@
 import { isIP } from "node:net";
 import { isCanonicalDidAw, isCanonicalDidKey, isCanonicalDomain } from "./identity/id_certificates.js";
-import { withholdsMessageContent } from "./identity/signing.js";
+import { idRequestDisposition, isUnavailableIdEvidence, type IdSubject, type IdVerification } from "./identity/id_verification.js";
+import { isTrustedVerificationStatus, withholdsMessageContent, type VerificationStatus } from "./identity/signing.js";
 import type { ChannelAwakening } from "./channel.js";
 
 const aliasPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
@@ -24,6 +25,28 @@ export function validatedNoticeID(value: string | undefined): string | undefined
   return value && value === value.trim() && noticeIDPattern.test(value) ? value : undefined;
 }
 
+interface MessageResponsibility {
+  status: VerificationStatus | undefined;
+  subject: IdSubject;
+  responsibility: IdVerification;
+}
+
+// docs/receiving-events.md, “Autonomous message presentation”. This describes
+// received content; it grants no admission or human authority.
+export function messageTrustMetadata({ status, subject, responsibility }: MessageResponsibility): Record<string, string> {
+  if (isTrustedVerificationStatus(status) && idRequestDisposition(responsibility, subject, true).ordinary === "refuse") {
+    if (isUnavailableIdEvidence(responsibility.reason)) {
+      return { trust_status: "unverified", verified: "false", responsibility_status: "responsibility_unavailable" };
+    }
+    status = "failed";
+  }
+  return {
+    trust_status: status || "unknown",
+    verified: String(isTrustedVerificationStatus(status)),
+    responsibility: JSON.stringify(responsibility),
+  };
+}
+
 // See docs/receiving-events.md, “Autonomous message presentation”. Only the
 // verified status and bounded identifiers influence the withheld notice.
 export function withheldMessageNotice(awakening: Pick<ChannelAwakening, "kind" | "meta">, awCommand = "aw"): string | undefined {
@@ -44,10 +67,22 @@ export function withheldMessageNotice(awakening: Pick<ChannelAwakening, "kind" |
 // Never forward a server subject, body, priority, or responsibility projection
 // in a withheld awakening.
 export function presentMessageAwakening(awakening: ChannelAwakening): ChannelAwakening {
-  const content = withheldMessageNotice(awakening);
-  if (content === undefined) return awakening;
   const { kind, meta: raw } = awakening;
-  const meta: Record<string, string> = { type: kind, trust_status: raw.trust_status, verified: "false", content_withheld: "true" };
+  if (kind !== "mail" && kind !== "chat") return awakening;
+  const undecryptable = raw.decrypted === "false";
+  const content = undecryptable
+    ? "The message could not be decrypted. Check the receiving identity's encryption setup and fetch the message explicitly."
+    : withheldMessageNotice(awakening);
+  if (content === undefined) return awakening;
+  const meta: Record<string, string> = { type: kind, content_withheld: "true" };
+  if (undecryptable) {
+    meta.encrypted = "true";
+    meta.decrypted = "false";
+    meta.decrypt_error = "decryption_failed";
+  } else {
+    meta.trust_status = raw.trust_status;
+    meta.verified = "false";
+  }
   const sender = claimedSenderIdentifier(raw.from);
   if (sender) meta.from = sender;
   for (const field of ["message_id", "session_id", "conversation_id"]) {

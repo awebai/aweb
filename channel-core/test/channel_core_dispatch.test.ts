@@ -1498,11 +1498,11 @@ describe("channel-core dispatchAgentEvent", () => {
 
     expect(onAwakening).toHaveBeenCalledWith(expect.objectContaining<Partial<ChannelAwakening>>({
       kind: "mail",
-      content: "",
+      content: "The message could not be decrypted. Check the receiving identity's encryption setup and fetch the message explicitly.",
       meta: expect.objectContaining({
         encrypted: "true",
         decrypted: "false",
-        decrypt_error: "missing local encryption key",
+        decrypt_error: "decryption_failed",
       }),
     }));
     expect(client.post).not.toHaveBeenCalled();
@@ -1765,7 +1765,7 @@ describe("channel-core dispatchAgentEvent", () => {
 
     expect(onAwakening).toHaveBeenCalledWith(expect.objectContaining<Partial<ChannelAwakening>>({
       kind: "chat",
-      content: "",
+      content: "The message could not be decrypted. Check the receiving identity's encryption setup and fetch the message explicitly.",
       meta: expect.objectContaining({
         encrypted: "true",
         decrypted: "false",

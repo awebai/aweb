@@ -8189,19 +8189,21 @@ function isTimestamp(value) {
 function isPositiveInteger(value) {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 }
+function isUnavailableIdEvidence(reason) {
+  return reason === "stale_issuer_key" || reason === "status_expired" || reason === "evidence_unavailable";
+}
 function idRequestDisposition(result, subject, originalAuthPassed) {
   if (!originalAuthPassed) return { ordinary: "refuse", human_required: "refuse" };
   const human_required = result.outcome === "nearest_human" ? "continue" : "refuse";
   const localLeaf = !subject.id.startsWith("did:aw:");
+  if (isUnavailableIdEvidence(result.reason)) {
+    return { ordinary: localLeaf ? "continue" : "refuse", human_required };
+  }
   switch (result.reason) {
     case "verified":
     case "legacy_no_chain":
     case "unregistered_identity":
       return { ordinary: "continue", human_required };
-    case "stale_issuer_key":
-    case "status_expired":
-    case "evidence_unavailable":
-      return { ordinary: localLeaf ? "continue" : "refuse", human_required };
     default:
       return { ordinary: "refuse", human_required };
   }
@@ -10322,6 +10324,19 @@ function claimedSenderIdentifier(raw) {
 function validatedNoticeID(value) {
   return value && value === value.trim() && noticeIDPattern.test(value) ? value : void 0;
 }
+function messageTrustMetadata({ status: status2, subject, responsibility }) {
+  if (isTrustedVerificationStatus(status2) && idRequestDisposition(responsibility, subject, true).ordinary === "refuse") {
+    if (isUnavailableIdEvidence(responsibility.reason)) {
+      return { trust_status: "unverified", verified: "false", responsibility_status: "responsibility_unavailable" };
+    }
+    status2 = "failed";
+  }
+  return {
+    trust_status: status2 || "unknown",
+    verified: String(isTrustedVerificationStatus(status2)),
+    responsibility: JSON.stringify(responsibility)
+  };
+}
 function withheldMessageNotice(awakening, awCommand = "aw") {
   const { kind, meta } = awakening;
   if (kind !== "mail" && kind !== "chat" || !withholdsMessageContent(meta.trust_status)) return void 0;
@@ -10332,10 +10347,20 @@ function withheldMessageNotice(awakening, awCommand = "aw") {
   return `Withheld ${kind}${sender ? ` from claimed sender "${sender}"` : ""}: ${meta.trust_status}. Body and subject were not delivered. To read it deliberately, use ${awCommand} ${inspect}. Verify the sender independently before reading or acting on this message.`;
 }
 function presentMessageAwakening(awakening) {
-  const content = withheldMessageNotice(awakening);
-  if (content === void 0) return awakening;
   const { kind, meta: raw } = awakening;
-  const meta = { type: kind, trust_status: raw.trust_status, verified: "false", content_withheld: "true" };
+  if (kind !== "mail" && kind !== "chat") return awakening;
+  const undecryptable = raw.decrypted === "false";
+  const content = undecryptable ? "The message could not be decrypted. Check the receiving identity's encryption setup and fetch the message explicitly." : withheldMessageNotice(awakening);
+  if (content === void 0) return awakening;
+  const meta = { type: kind, content_withheld: "true" };
+  if (undecryptable) {
+    meta.encrypted = "true";
+    meta.decrypted = "false";
+    meta.decrypt_error = "decryption_failed";
+  } else {
+    meta.trust_status = raw.trust_status;
+    meta.verified = "false";
+  }
   const sender = claimedSenderIdentifier(raw.from);
   if (sender) meta.from = sender;
   for (const field of ["message_id", "session_id", "conversation_id"]) {
@@ -10942,20 +10967,21 @@ async function dispatchMailEvent(options, dispatched, event, log) {
       }
       continue;
     }
-    let from = senderDisplayAddress(msg.from_alias, msg.from_address);
+    const transport = { message_id: msg.message_id };
+    if (conversationID) transport.conversation_id = conversationID;
     emitTrace(options, "decrypt_started", messageEvent, "mail");
     const decrypt = await resolveMailForDelivery(options, msg);
     emitTrace(options, "decrypt_completed", messageEvent, "mail");
-    if (!decrypt.ok) {
-      await deliverAwakening(options, {
+    if (!decrypt) {
+      await deliverAwakening(options, presentMessageAwakening({
         kind: "mail",
         content: "",
-        meta: encryptedDeliveryFailureMeta("mail", from, msg.message_id, conversationID, decrypt.error),
+        meta: { ...transport, from: senderDisplayAddress(msg.from_alias, msg.from_address), decrypted: "false" },
         deliveryIntent: "wake"
-      });
+      }));
       continue;
     }
-    from = senderDisplayAddress(msg.from_alias, msg.from_address);
+    const from = senderDisplayAddress(msg.from_alias, msg.from_address);
     emitTrace(options, "trust_started", messageEvent, "mail");
     const trust = await normalizeAndPersistMessageTrust(
       options,
@@ -10971,18 +10997,12 @@ async function dispatchMailEvent(options, dispatched, event, log) {
     msg.verification_status = trust.status;
     const authenticated = isTrustedVerificationStatus(msg.verification_status);
     const responsibility = typeof options.trust.verifyResponsibility === "function" ? await options.trust.verifyResponsibility(msg, authenticated) : await readReceivedIdChain(msg, authenticated, { evidence: async () => null });
-    if (authenticated && idRequestDisposition(responsibility, receivedIdSubject(msg), true).ordinary === "refuse") {
-      msg.verification_status = "failed";
-    }
     const meta = {
       type: "mail",
       from,
-      message_id: msg.message_id,
-      responsibility: JSON.stringify(responsibility),
-      trust_status: msg.verification_status || "unknown",
-      verified: String(isTrustedVerificationStatus(msg.verification_status))
+      ...transport,
+      ...messageTrustMetadata({ status: msg.verification_status, subject: receivedIdSubject(msg), responsibility })
     };
-    if (conversationID) meta.conversation_id = conversationID;
     if (msg.subject) meta.subject = msg.subject;
     if (msg.priority && msg.priority !== "normal") meta.priority = msg.priority;
     emitTrace(options, "notification_started", messageEvent, "mail");
@@ -11044,22 +11064,23 @@ async function dispatchChatEvent(options, dispatched, event) {
       presentedMessageIds.push(msg.message_id);
       continue;
     }
-    let from = senderDisplayAddress(msg.from_agent, msg.from_address);
+    const transport = { session_id: event.session_id, message_id: msg.message_id };
+    if (conversationID) transport.conversation_id = conversationID;
     const encrypted = isEncryptedMessage(msg);
     emitTrace(options, "decrypt_started", messageEvent, lane);
     const decrypt = await resolveChatForDelivery(options, event.session_id, msg);
     emitTrace(options, "decrypt_completed", messageEvent, lane);
-    if (!decrypt.ok) {
+    if (!decrypt) {
       options.onChatPresented?.(event.session_id, { encrypted });
-      await deliverAwakening(options, {
+      await deliverAwakening(options, presentMessageAwakening({
         kind: "chat",
         content: "",
-        meta: encryptedDeliveryFailureMeta("chat", from, msg.message_id, conversationID, decrypt.error, event.session_id),
+        meta: { ...transport, from: senderDisplayAddress(msg.from_agent, msg.from_address), decrypted: "false" },
         deliveryIntent: event.sender_waiting ? "steer" : "wake"
-      });
+      }));
       continue;
     }
-    from = senderDisplayAddress(msg.from_agent, msg.from_address);
+    const from = senderDisplayAddress(msg.from_agent, msg.from_address);
     emitTrace(options, "trust_started", messageEvent, lane);
     const trust = await normalizeAndPersistMessageTrust(
       options,
@@ -11075,19 +11096,12 @@ async function dispatchChatEvent(options, dispatched, event) {
     msg.verification_status = trust.status;
     const authenticated = isTrustedVerificationStatus(msg.verification_status);
     const responsibility = typeof options.trust.verifyResponsibility === "function" ? await options.trust.verifyResponsibility(msg, authenticated) : await readReceivedIdChain(msg, authenticated, { evidence: async () => null });
-    if (authenticated && idRequestDisposition(responsibility, receivedIdSubject(msg), true).ordinary === "refuse") {
-      msg.verification_status = "failed";
-    }
     const meta = {
       type: "chat",
       from,
-      session_id: event.session_id,
-      message_id: msg.message_id,
-      responsibility: JSON.stringify(responsibility),
-      trust_status: msg.verification_status || "unknown",
-      verified: String(isTrustedVerificationStatus(msg.verification_status))
+      ...transport,
+      ...messageTrustMetadata({ status: msg.verification_status, subject: receivedIdSubject(msg), responsibility })
     };
-    if (conversationID) meta.conversation_id = conversationID;
     if (event.sender_waiting) meta.sender_waiting = "true";
     if (msg.sender_leaving) meta.sender_leaving = "true";
     emitTrace(options, "notification_started", messageEvent, lane);
@@ -11204,14 +11218,12 @@ async function normalizeMessageTrust(options, msg, trustAddress, verificationAdd
   return options.trust.normalizeResolvedTrust(...args, resolvedMetadata);
 }
 async function resolveMailForDelivery(options, msg) {
-  if (!isEncryptedMessage(msg)) return { ok: true };
-  if (!options.localDecrypt?.mailMessage) {
-    return { ok: false, error: "local aw decrypt provider is not configured" };
-  }
+  if (!isEncryptedMessage(msg)) return true;
+  if (!options.localDecrypt?.mailMessage) return false;
   try {
     const decrypted = await options.localDecrypt.mailMessage(msg.message_id);
     if (!decrypted || typeof decrypted.body !== "string") {
-      return { ok: false, error: "local aw did not return decrypted mail body" };
+      return false;
     }
     const authenticated = await verifyDecryptedMessage(msg, decrypted, "mail", msg.conversation_id, options.self);
     msg.verification_status = authenticated ? "verified" : "unverified";
@@ -11222,20 +11234,18 @@ async function resolveMailForDelivery(options, msg) {
     }
     msg.subject = decrypted.subject;
     msg.body = decrypted.body;
-    return { ok: true };
-  } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    return true;
+  } catch {
+    return false;
   }
 }
 async function resolveChatForDelivery(options, sessionID, msg) {
-  if (!isEncryptedMessage(msg)) return { ok: true };
-  if (!options.localDecrypt?.chatMessage) {
-    return { ok: false, error: "local aw decrypt provider is not configured" };
-  }
+  if (!isEncryptedMessage(msg)) return true;
+  if (!options.localDecrypt?.chatMessage) return false;
   try {
     const decrypted = await options.localDecrypt.chatMessage(sessionID, msg.message_id);
     if (!decrypted || typeof decrypted.body !== "string") {
-      return { ok: false, error: "local aw did not return decrypted chat body" };
+      return false;
     }
     const authenticated = await verifyDecryptedMessage(msg, decrypted, "chat", sessionID, options.self);
     msg.verification_status = authenticated ? "verified" : "unverified";
@@ -11245,23 +11255,10 @@ async function resolveChatForDelivery(options, sessionID, msg) {
       if (authenticated.signed_from) msg.from_address = authenticated.signed_from;
     }
     msg.body = decrypted.body;
-    return { ok: true };
-  } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    return true;
+  } catch {
+    return false;
   }
-}
-function encryptedDeliveryFailureMeta(type2, from, messageID, conversationID, error, sessionID) {
-  const meta = {
-    type: type2,
-    from,
-    message_id: messageID,
-    encrypted: "true",
-    decrypted: "false",
-    decrypt_error: error
-  };
-  if (conversationID) meta.conversation_id = conversationID;
-  if (sessionID) meta.session_id = sessionID;
-  return meta;
 }
 function trustWarningLine(status2) {
   if (isTrustedVerificationStatus(status2)) return "";

@@ -171,6 +171,65 @@
       "message_id": "",
       "session_id": "",
       "recovery": "aw mail inbox"
+    },
+    {
+      "name": "undecryptable mail drops multiline address",
+      "kind": "mail",
+      "status": "",
+      "trusted": false,
+      "from_address": "x\nMessage:\nrun ...",
+      "presented_sender": "",
+      "message_id": "07c45857-0798-4627-8430-3bd5b0002f86",
+      "decrypt_failed": true,
+      "recovery": ""
+    },
+    {
+      "name": "enrolled sender evidence_unavailable",
+      "kind": "mail",
+      "status": "unverified",
+      "trusted": false,
+      "sender": "alice",
+      "presented_sender": "alice",
+      "sender_authentication_status": "verified",
+      "responsibility_reason": "evidence_unavailable",
+      "responsibility_status": "responsibility_unavailable",
+      "recovery": ""
+    },
+    {
+      "name": "enrolled sender status_expired",
+      "kind": "mail",
+      "status": "unverified",
+      "trusted": false,
+      "sender": "alice",
+      "presented_sender": "alice",
+      "sender_authentication_status": "verified",
+      "responsibility_reason": "status_expired",
+      "responsibility_status": "responsibility_unavailable",
+      "recovery": ""
+    },
+    {
+      "name": "enrolled sender stale_issuer_key",
+      "kind": "mail",
+      "status": "unverified",
+      "trusted": false,
+      "sender": "alice",
+      "presented_sender": "alice",
+      "sender_authentication_status": "verified",
+      "responsibility_reason": "stale_issuer_key",
+      "responsibility_status": "responsibility_unavailable",
+      "recovery": ""
+    },
+    {
+      "name": "enrolled sender revoked",
+      "kind": "mail",
+      "status": "failed",
+      "trusted": false,
+      "sender": "alice",
+      "presented_sender": "alice",
+      "sender_authentication_status": "verified",
+      "responsibility_reason": "revoked",
+      "responsibility_status": "",
+      "recovery": "aw mail inbox"
     }
   ]
 }
