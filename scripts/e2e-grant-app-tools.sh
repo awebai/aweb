@@ -12,7 +12,17 @@ COMPOSE=(docker compose -p "$PROJECT" --project-directory "$REPO_ROOT" -f "$REPO
 EVIDENCE="${GRANT_APP_E2E_EVIDENCE_DIR:-$(mktemp -d /tmp/aweb-grant-app-evidence.XXXXXX)}"
 mkdir -p "$EVIDENCE"
 exec > >(tee -a "$EVIDENCE/run.log") 2>&1
-SEED="grant-app-seed-$$"
+# The TLS seed container, named under the project so a run that was killed
+# before its own cleanup leaves a seed the next run removes by that prefix.
+SEED="$PROJECT-seed-$$"
+remove_seeds() {
+  local seeds
+  seeds="$(docker ps -aq --filter "name=^${PROJECT}-seed-")"
+  if [[ -n "$seeds" ]]; then
+    # shellcheck disable=SC2086 # one container id per word
+    docker rm -f $seeds >/dev/null
+  fi
+}
 cleanup() {
   status=$?
   "${COMPOSE[@]}" logs --no-color >"$EVIDENCE/compose-logs.txt" 2>&1 || true
@@ -20,7 +30,7 @@ cleanup() {
   docker ps -aq --filter "label=com.docker.compose.project=$PROJECT" \
     | xargs -r docker inspect -f '{{.Name}} cpus_nano={{.HostConfig.NanoCpus}} memory={{.HostConfig.Memory}} pids={{.HostConfig.PidsLimit}}' >"$EVIDENCE/container-limits.txt" 2>&1 || true
   "${COMPOSE[@]}" down -v --rmi local --remove-orphans || status=1
-  docker rm -f "$SEED" >/dev/null 2>&1 || true
+  remove_seeds || { echo "FATAL: could not remove the seed containers of $PROJECT" >&2; status=1; }
   for kind in container network volume image; do
     case "$kind" in
       container) residue="$(docker ps -aq --filter "label=com.docker.compose.project=$PROJECT")" ;;
@@ -41,7 +51,10 @@ trap cleanup EXIT
 docker buildx inspect "$BUILDER" >"$EVIDENCE/builder.txt" 2>&1
 "${COMPOSE[@]}" build --builder "$BUILDER" >"$EVIDENCE/build.log" 2>&1
 "${COMPOSE[@]}" create --no-build aweb library
-docker create --name "$SEED" --user 0 --entrypoint /app/.venv/bin/python \
+remove_seeds
+# The project label also makes a leftover seed visible to the residue check.
+docker create --name "$SEED" --label "com.docker.compose.project=$PROJECT" \
+  --user 0 --entrypoint /app/.venv/bin/python \
   -v "$PROJECT-fixture:/fixture" -e PYTHONPATH=/fixture/test-support \
   "$PROJECT-aweb" /fixture/e2e/stack_tls_prepare.py library-grant.test aweb-grant.test >/dev/null
 docker cp "$REPO_ROOT/scripts/e2e/." "$SEED:/fixture/e2e"
