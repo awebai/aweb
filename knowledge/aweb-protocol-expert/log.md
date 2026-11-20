@@ -1,5 +1,10 @@
 # Knowledge log
 
+## 2026-11-20
+* **Harvest**: OKF proposal from seat aweb-protocol-expert-local-log-encryption with three backing notes (tasks aweb-aczi and aweb-adae); decisions and review commits are source-reported, landing verified on main.
+* **Creation**: decision [registry trust is the operator's choice in this process](/aweb-protocol-expert/decisions/registry-trust-is-the-operators-choice.md); lesson [sweep every package, harness and process after a shared change](/aweb-protocol-expert/lessons/sweep-every-consumer-of-a-shared-change.md).
+* **Update**: [vary independent assurance dimensions in review](/aweb-protocol-expert/lessons/vary-independent-assurance-dimensions.md) gains "Probe the neighbouring answer": one probe or mutation per neighbouring answer, and a suggested predicate fix only with a mutation showing what it would drop.
+
 ## 2026-11-06
 * **Fix**: review of the db-access proposal on npm gitHead, PubSub release and stream checkouts: hosted specifics in [stream bodies leave the request connection scope](/aweb-protocol-expert/lessons/stream-bodies-leave-the-request-connection-scope.md) and [an npm tarball publish records no gitHead](/aweb-protocol-expert/lessons/npm-tarball-publish-records-no-githead.md) are stated generically or dropped, as the OSS and Cloud boundary requires.
 * **Update**: [SSE cleanup is cancelled on client disconnect](/aweb-protocol-expert/lessons/sse-cleanup-is-cancelled-on-disconnect.md) and [a PubSub release survives any cancellation](/aweb-protocol-expert/decisions/pubsub-release-survives-any-cancellation.md) link each other: the AnyIO shield covers Starlette's disconnect, not native task cancellation.
