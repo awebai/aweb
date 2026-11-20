@@ -42,6 +42,8 @@ import json
 import logging
 
 import asyncpg
+from fastapi import HTTPException
+from aweb.application_state import RegistryClientUnavailable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Awaitable, Callable
@@ -402,14 +404,13 @@ def _resident_participant(
     current["agent_type"] = IdentityKind.HUMAN.value if humans else IdentityKind.UNKNOWN.value
     current["human_verified_key"] = envelope.target_current_did_key if humans else None
     reference = recipient.get("agent_id")
-    attributed = next(
-        (row for row in residences if str(row["agent_id"]) == str(reference)), None
-    )
+    attributed = next((row for row in residences if str(row["agent_id"]) == str(reference)), None)
     if attributed is None and reference is None and len(residences) == 1:
         attributed = residences[0]
     if attributed is not None:
         current.update(
-            agent_id=attributed["agent_id"], team_id=attributed["team_id"],
+            agent_id=attributed["agent_id"],
+            team_id=attributed["team_id"],
             alias=attributed["alias"],
         )
     return current
@@ -487,11 +488,13 @@ async def _authorize_policy(
     envelope: FederationEnvelope,
     recipient: Mapping,
     stored_route_continuation: bool,
+    registry_client,
 ) -> None:
     try:
         await authorize_delivery(
             TransactionInfra(None, tx),
             recipient=recipient,
+            registry_client=registry_client,
             sender=DeliverySender(
                 did=envelope.sender_did_aw,
                 address=envelope.sender_address,
@@ -503,6 +506,8 @@ async def _authorize_policy(
         )
     except DeliveryPolicyRefused as exc:
         raise FederationPolicyRefused(exc) from exc
+    except (HTTPException, RegistryClientUnavailable) as exc:
+        raise FederationAuthorityError("federation_authority_coordination_unavailable") from exc
 
 
 async def _ensure_sender_contact(
@@ -894,6 +899,7 @@ async def _deliver_federated_phase_b(
     recipient: Mapping,
     id_chain: dict | None = None,
     authority_token: AuthoritySecurityToken | None,
+    registry_client=None,
     stored_route_continuation: bool = False,
     stored_route_snapshot: dict | None = None,
     before_commit: BeforeCommit | None = None,
@@ -956,11 +962,13 @@ async def _deliver_federated_phase_b(
             if stored_reference in locked_residence.storage_agent_ids:
                 recipient_storage_agent_id = stored_reference
                 attributed = next(
-                    row for row in locked_residence.residences
+                    row
+                    for row in locked_residence.residences
                     if row["agent_id"] == stored_reference
                 )
                 recipient.update(
-                    agent_id=attributed["agent_id"], team_id=attributed["team_id"],
+                    agent_id=attributed["agent_id"],
+                    team_id=attributed["team_id"],
                     alias=attributed["alias"],
                 )
         await _require_recipient_encryption_assertion(
@@ -972,6 +980,7 @@ async def _deliver_federated_phase_b(
             tx,
             envelope=envelope,
             recipient=recipient,
+            registry_client=registry_client,
             stored_route_continuation=stored_route_continuation,
         )
         await _ensure_sender_contact(
@@ -1086,6 +1095,7 @@ async def deliver_federated_phase_b(
     recipient: Mapping,
     id_chain: dict | None = None,
     authority_token: AuthoritySecurityToken | None,
+    registry_client=None,
     stored_route_continuation: bool = False,
     stored_route_snapshot: dict | None = None,
     before_commit: BeforeCommit | None = None,
@@ -1100,6 +1110,7 @@ async def deliver_federated_phase_b(
             recipient=recipient,
             id_chain=id_chain,
             authority_token=authority_token,
+            registry_client=registry_client,
             stored_route_continuation=stored_route_continuation,
             stored_route_snapshot=stored_route_snapshot,
             before_commit=before_commit,

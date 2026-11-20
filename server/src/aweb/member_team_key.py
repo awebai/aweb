@@ -377,16 +377,24 @@ async def read_participant_identity_projection(
 
 
 async def current_member_team_ids_for_identity(
-    db, dids: list[str], *, read_lock: MemberReadLock = MemberReadLock.NONE
+    db, dids: list[str], *, registry_client=None, read_lock: MemberReadLock = MemberReadLock.NONE
 ) -> set[str]:
-    """All current memberships of the exact verified identity, for R5 policy."""
+    """Current memberships with the admitting certificate's live standing.
+
+    The existing identity-auth membership owner applies SDK revocation and
+    staged registration policy; a native SQL projection alone is not standing.
+    """
+    from aweb.identity_auth_deps import current_membership
+
     selected = [did.strip() for did in dids if did and did.strip()]
     if not selected:
         return set()
-    return {
-        row["team_id"]
-        for row in await current_member_projections(db, dids=selected, read_lock=read_lock)
-    }
+    teams = set()
+    for row in await current_member_projections(db, dids=selected, read_lock=read_lock):
+        standing = await current_membership(registry_client, dict(row))
+        if standing is not None and standing.get("team_id"):
+            teams.add(standing["team_id"])
+    return teams
 
 
 def grant_issuer_current(row) -> bool:

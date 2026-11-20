@@ -1008,6 +1008,7 @@ async def _commit_mail_continuation(
     message: MailStorageInput,
     recipient: Mapping[str, Any],
     sender: DeliverySender,
+    registry_client,
 ) -> StoredMail:
     """Recheck stored-route policy and commit the message under its read locks."""
     if message.conversation_id is None:
@@ -1016,6 +1017,7 @@ async def _commit_mail_continuation(
         send_db = TransactionInfra(db, tx)
         await admit_message_delivery(
             send_db,
+            registry_client=registry_client,
             recipient=recipient,
             recipient_did=message.recipient.did,
             to_agent_id=message.recipient.agent_id,
@@ -1161,6 +1163,7 @@ async def send_mail_conversation_continuation(
     # Admission comes before any replay, as for any send.
     await admit_message_delivery(
         db,
+        registry_client=runtime.registry_client,
         recipient=recipient,
         recipient_did=recipient_participant["did"],
         to_agent_id=recipient.get("agent_id"),
@@ -1178,6 +1181,7 @@ async def send_mail_conversation_continuation(
             message_id, server_received_at = await _commit_mail_continuation(
                 db,
                 recipient=recipient,
+                registry_client=runtime.registry_client,
                 sender=DeliverySender(
                     did=sender_did,
                     address=sender_address,
@@ -1428,9 +1432,15 @@ async def _accepted_encrypted_mail_target_matches_participant(
         or payload.to_did is None
         or payload.message_id is None
         or payload.conversation_id is None
-        or any(value is not None for value in (
-            payload.to_agent_id, payload.to_alias, payload.to_address, payload.to_stable_id
-        ))
+        or any(
+            value is not None
+            for value in (
+                payload.to_agent_id,
+                payload.to_alias,
+                payload.to_address,
+                payload.to_stable_id,
+            )
+        )
     ):
         return False
     routing = payload.encrypted_envelope.get("routing")
@@ -1581,7 +1591,8 @@ async def _resolve_new_mail_target(
     if payload.to_address is None and payload.to_stable_id is not None:
         recipient_did = payload.to_stable_id.strip()
         recipient = await resolve_agent_by_did(
-            db, recipient_did,
+            db,
+            recipient_did,
             team_id=auth.team_id if recipient_did.startswith("did:key:") else None,
         )
         if recipient is not None:
@@ -1592,7 +1603,8 @@ async def _resolve_new_mail_target(
             raise recipient_not_found()
         if payload.to_did is not None and payload.to_did.strip():
             bound_recipient = await resolve_agent_by_did(
-                db, payload.to_did.strip(),
+                db,
+                payload.to_did.strip(),
                 team_id=auth.team_id if payload.to_did.strip().startswith("did:key:") else None,
             )
             if not _recipient_identity_matches(bound_recipient, recipient):
@@ -1614,7 +1626,8 @@ async def _resolve_new_mail_target(
     elif payload.to_address is None and payload.to_did is not None:
         requested_recipient_did = payload.to_did.strip()
         recipient = await resolve_agent_by_did(
-            db, requested_recipient_did,
+            db,
+            requested_recipient_did,
             team_id=auth.team_id if requested_recipient_did.startswith("did:key:") else None,
         )
         if recipient is not None:
@@ -1788,6 +1801,7 @@ class _LocalMailCommit:
 async def _commit_new_local_mail(
     db,
     *,
+    runtime: MessagingRuntime,
     auth: MessagingAuth,
     target: MailTarget,
     payload: SendMessageRequest,
@@ -1811,6 +1825,7 @@ async def _commit_new_local_mail(
         # that commits it, keeping membership/contact locks until delivery.
         await authorize_message_delivery(
             send_db,
+            registry_client=runtime.registry_client,
             recipient_agent=recipient,
             sender_did=sender_did,
             sender_address=sender_address,
@@ -1987,6 +2002,7 @@ async def _send_mail_to_resolved_target(
         if not recipient.get("external"):
             await authorize_message_delivery(
                 db,
+                registry_client=runtime.registry_client,
                 recipient_agent=recipient,
                 sender_did=sender_did,
                 sender_address=sender_address,
@@ -2016,6 +2032,7 @@ async def _send_mail_to_resolved_target(
                 # delivery leaves no conversation behind.
                 committed = await _commit_new_local_mail(
                     db,
+                    runtime=runtime,
                     auth=auth,
                     target=target,
                     payload=payload,
