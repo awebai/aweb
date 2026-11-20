@@ -154,14 +154,14 @@ def _request_auth_signature_payload(
         return TeamAuthEnvelope(version=1, canonical_payload=canonical, payload={})
 
     canonical = decode_signed_payload_header(signed_payload_header, profile=profile)
+    # docs/team-auth-envelope-v2.md:47-49 requires decodable canonical JSON.
+    # Its re-encoding can refuse Unicode escapes that JSON itself accepts.
     try:
         payload = json.loads(canonical)
-    except Exception as exc:
+        if not isinstance(payload, dict) or canonical_json_bytes(payload) != canonical:
+            raise ValueError("invalid X-AWEB-Signed-Payload header")
+    except (ValueError, TypeError, RecursionError) as exc:
         raise ValueError("invalid X-AWEB-Signed-Payload header") from exc
-    if not isinstance(payload, dict):
-        raise ValueError("invalid X-AWEB-Signed-Payload header")
-    if canonical_json_bytes(payload) != canonical:
-        raise ValueError("invalid X-AWEB-Signed-Payload header")
 
     if payload.get("type") == "aweb.awid-controller-request":
         raise ValueError(

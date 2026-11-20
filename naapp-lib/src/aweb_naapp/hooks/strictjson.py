@@ -14,8 +14,6 @@ import json
 import re
 from typing import Any
 
-from awid.signature_wire import Base64Profile, decode_base64
-
 MAX_SAFE_INTEGER = 2**53 - 1
 MAX_DEPTH = 8
 SIGNATURE_LENGTH = 86
@@ -180,6 +178,10 @@ def parse_canonical_object(data: bytes) -> dict[str, Any]:
 def decode_signature(signature: str) -> bytes:
     """Accept exactly one spelling of a 64-byte Ed25519 signature: 86 characters
     of the standard base64 alphabet, no padding, and zero trailing bits."""
+    # docs/hook-events.md:20-25 keeps parsing separate from signed envelopes;
+    # commitment/canonical-JSON callers need no SDK or crypto dependency.
+    from awid.signature_wire import decode_base64
+
     if len(signature) != SIGNATURE_LENGTH or not _SIGNATURE.fullmatch(signature):
         raise Refused("signature_encoding", f"a signature is {SIGNATURE_LENGTH} characters")
     try:
@@ -191,6 +193,8 @@ def decode_signature(signature: str) -> bytes:
 
 def decode_base64url(text: str, what: str) -> bytes:
     """Accept exactly one spelling: the URL alphabet, no padding, zero trailing bits."""
+    from awid.signature_wire import Base64Profile, decode_base64
+
     if not _BASE64URL.fullmatch(text) or len(text) % 4 == 1:
         raise Refused("invalid_value", f"{what} is not strict unpadded base64url")
     try:
