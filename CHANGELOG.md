@@ -22,6 +22,26 @@
   the key the run generated is removed, and the refusal says to choose another
   team name or run on the machine that holds that team's key.
 
+- `aw chat send --session-id`, `aw chat send-and-wait`, `aw chat extend-wait`
+  and `aw mail send --conversation-id` continue a conversation with its own
+  end-to-end encryption. When aw cannot read whether the conversation is
+  encrypted (the server will not show it this identity, for example a grant
+  scoped to sending only, or every message it returns is plaintext and older
+  ones cannot be read), the send is refused and names `--e2ee` and
+  `--plaintext`, instead of sending server-readable text.
+
+- Go library (`chat`, `awid`): a continuation with no encryption choice
+  (`E2EE` left at `E2EEInherit` and `EncryptE2EE` false, the zero value)
+  now inherits the conversation's end-to-end encryption, where it used to
+  send plaintext, and it can return `*awid.UnknownConversationEncryptionError`.
+  Plaintext on purpose is `E2EE: E2EEPlaintext`. The entry points released in
+  aw-v1.36.58 keep their signatures: `chat.ExtendWait`,
+  `SendOptions.EncryptE2EE` and `ExtendWaitOptions.EncryptE2EE`, string
+  `Event.Type` and `SendResult.Status`,
+  `(*awid.Client).NormalizeReceivedSenderTrust`, and
+  `(*awid.RegistryResolver).SeedVerifiedHead`, which seeds an anchor for every
+  registry; `SeedVerifiedHeadAt` seeds one.
+
 - `aw` reports JSON error code `alias_conflict` for HTTP 409 `alias_taken`, preserving the server's `reason` and `detail`.
 - AWID cache invalidation for identity-tree, address and team-certificate
   writes no longer scans unrelated Redis keys. Random cache generations keep
