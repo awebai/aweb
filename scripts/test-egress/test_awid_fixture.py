@@ -152,5 +152,34 @@ class ServiceEntryPointsRequireTheOptIn(unittest.TestCase):
                 self.assertFalse(calls.exists(), calls.read_text() if calls.exists() else '')
 
 
+class PostgresPasswordStaysOutOfDiagnostics(unittest.TestCase):
+    """Without a daemon: a docker on PATH that refuses to run a container."""
+
+    def test_a_failed_start_reports_without_the_generated_password(self):
+        directory = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        received = directory / 'received'
+        docker = directory / 'docker'
+        docker.write_text('#!/bin/sh\n'
+                          'if [ "$1" = run ]; then printf %s "$POSTGRES_PASSWORD" > "$RECEIVED"; '
+                          'echo "docker: no space left on device" >&2; exit 125; fi\n')
+        docker.chmod(0o755)
+        saved = dict(os.environ)
+        self.addCleanup(os.environ.update, saved)
+        os.environ['PATH'] = f"{directory}{os.pathsep}{os.environ['PATH']}"
+        os.environ['RECEIVED'] = str(received)
+        secret = 'generated-pg-secret-31337'
+
+        with self.assertRaises(subprocess.CalledProcessError) as failed:
+            with disposable_postgres_and_redis(password=secret):
+                pass
+
+        self.assertEqual(failed.exception.returncode, 125)
+        self.assertIn('POSTGRES_PASSWORD', failed.exception.cmd)
+        for diagnostic in (str(failed.exception), repr(failed.exception.cmd)):
+            self.assertNotIn(secret, diagnostic)
+        # The value still reaches docker, through its environment.
+        self.assertEqual(received.read_text(), secret)
+
+
 if __name__ == '__main__':
     unittest.main()

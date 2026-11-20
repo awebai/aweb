@@ -38,8 +38,8 @@ def require_test_services() -> None:
         raise SystemExit(TEST_SERVICES_REFUSAL)
 
 
-def run(*args: str) -> str:
-    return subprocess.check_output(args, text=True).strip()
+def run(*args: str, env: dict[str, str] | None = None) -> str:
+    return subprocess.check_output(args, text=True, env=env).strip()
 
 
 def remove_owned_containers(owned: list[str]) -> None:
@@ -110,10 +110,17 @@ def start_container(
     port: int,
     options: tuple[str, ...] = (),
     command: tuple[str, ...] = (),
+    secrets: dict[str, str] | None = None,
 ) -> tuple[str, str]:
     """Start image with options and command, publishing port on a
     daemon-assigned loopback port and labelled with this launcher's pid; record
-    the container in owned and return it with its host port."""
+    the container in owned and return it with its host port.
+
+    secrets are environment settings passed by name: docker reads each value
+    from its own environment, so no value appears in an argv that a failure
+    reports."""
+    secrets = secrets or {}
+    names = tuple(part for name in secrets for part in ("-e", name))
     container = run(
         "docker",
         "run",
@@ -124,8 +131,10 @@ def start_container(
         "-p",
         f"127.0.0.1::{port}",
         *options,
+        *names,
         image,
         *command,
+        env={**os.environ, **secrets},
     )
     owned.append(container)
     return container, run("docker", "port", container, str(port)).rsplit(":", 1)[1]
@@ -147,10 +156,9 @@ def disposable_postgres_and_redis(*, password: str) -> Generator[dict[str, str]]
                 "--cpus",
                 "1",
                 *memory.docker_options,
-                "-e",
-                "POSTGRES_PASSWORD=" + password,
             ),
             command=memory.server_args,
+            secrets={"POSTGRES_PASSWORD": password},
         )
         _, redis_port = start_container(
             owned,
