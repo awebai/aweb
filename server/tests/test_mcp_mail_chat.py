@@ -8,9 +8,10 @@ from aweb.identity_binding import IdentityBinding
 from awid.registry import IDTreeEnrollment
 from aweb.team_auth_deps import TeamIdentity
 from datetime import datetime, timedelta, timezone
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
+from test_mcp_mail_conversation_parity import mail_server as mail_server
 import httpx
 from fastapi import HTTPException
 from starlette.requests import Request
@@ -3541,105 +3542,24 @@ async def test_mcp_same_team_contacts_only(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("tool", ["mail", "chat"])
-async def test_mcp_full_address_to_another_teams_local_identity_is_refused_without_confirming_it(
-    aweb_cloud_db, monkeypatch, tool
+async def test_mcp_full_address_to_another_teams_local_identity_keeps_detail_and_reason(
+    mail_server, tool
 ):
-    """Outside its team, a full address to a local identity is refused with
-    the reason a full address can fail, in the words used for an unknown name."""
-    alice_agent_id = uuid4()
-    _, alice_pub = generate_keypair()
-    alice_did = did_from_public_key(alice_pub)
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES
-            ('ops:acme.com', 'acme.com', 'ops', 'did:key:z6MkiCjepNBfAFPiASoBnxAFuZcERqR5z1yW8Jfob8YMYmhJ' /* z6MkTeam1 */),
-            ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkjDjkDkLwiaCvhbzB37J8Z9FB31zvSDYHb5aEddNr47XB' /* z6MkTeam2 */)
-        """
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, inbound_mode, did_aw_verified_key)
-        VALUES
-            ($1, 'ops:acme.com', $2, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'active', 'open', $2),
-            ($3, 'ops:otherco.com', 'did:key:z6MkpaT971acDhK45NmrbxAZj9q2bXnxJFqodxZDH17gZib9' /* z6MkBob */, NULL, NULL, 'bob', 'local', 'active', 'open', NULL)
-        """,
-        alice_agent_id,
-        alice_did,
-        uuid4(),
-    )
-    tools = mail_tools if tool == "mail" else chat_tools
-    monkeypatch.setattr(
-        tools,
-        "get_auth",
-        lambda: AuthContext(
-            team_id="ops:acme.com",
-            agent_id=str(alice_agent_id),
-            workspace_id="",
-            alias="alice",
-            did_key=alice_did,
-            did_aw="did:aw:alice",
-            address="acme.com/alice",
-            trusted_proxy=False,
-        ),
-    )
+    from test_local_policy_refusal_boundaries import admitted_local_recipient
 
-    class _Registry:
-        registry_url = "https://registry.test"
-
-        async def registry_audience(self, domain: str):
-            return "https://registry.test"
-
-        async def resolve_address(
-            self, domain: str, name: str, *, did_key: str | None = None
-        ):
-            return await self.resolve_address_fresh(domain, name)
-
-        async def resolve_address_fresh(
-            self, domain: str, name: str, *, did_key: str | None = None
-        ):
-            assert (domain, name) == ("otherco.com", "bob")
-            return None
-
-        async def get_namespace_fresh(self, domain: str):
-            assert domain == "otherco.com"
-            return Namespace(
-                namespace_id="namespace-otherco",
-                domain=domain,
-                controller_did=named_did_key("z6MkNamespaceController"),
-                verification_status="verified",
-                last_verified_at=None,
-                created_at=datetime.now(timezone.utc).isoformat(),
-            )
-
-    if tool == "mail":
-        result = json.loads(
-            await mail_tools.send_mail(
-                DBInfra(aweb_cloud_db.aweb_db),
-                registry_client=_Registry(),
-                hosted_signer=None,
-                to="otherco.com/bob",
-                subject="cross team local",
-                body="hello bob",
-            )
-        )
-    else:
-        result = json.loads(
-            await chat_tools.chat_send(
-                DBInfra(aweb_cloud_db.aweb_db),
-                None,
-                registry_client=_Registry(),
-                hosted_signer=None,
-                to_address="otherco.com/bob",
-                message="hello bob",
-            )
-        )
-
-    # The same words as for a name nobody holds: the refusal does not say
-    # whether a local identity holds this name in another team.
+    env = mail_server
+    bob = await admitted_local_recipient(env, team="eng:otherco.com", alias="bob")
+    assert await env.db.fetch_value(
+        "SELECT address FROM {{tables.agents}} WHERE agent_id=$1", UUID(bob.id)
+    ) is None
+    name = "send_mail" if tool == "mail" else "send_chat"
+    content = {"subject": "cross team local", "body": "hello bob"} if tool == "mail" else {"message": "hello bob"}
+    result = await env.mcp_call(name, to="otherco.com/bob", plaintext=True, **content)
+    # Preserve the canonical published reason beside the existing human detail.
+    # Distinct missing/local-only reasons are not an indistinguishability claim.
     assert result == {
-        "error": (
-            "otherco.com/bob is not a registered address. A local identity has no address and is reachable only from inside its own team, by alias; a global identity is reachable by address once one is assigned. Check the address or use a teammate alias and retry."
-        )
-    }, result
+        "error": "otherco.com/bob is not a registered address. A local identity has no address and is reachable only from inside its own team, by alias; a global identity is reachable by address once one is assigned. Check the address or use a teammate alias and retry.",
+        "reason": "local_recipient_route_missing",
+    }
+    assert await env.db.fetch_value("SELECT count(*) FROM {{tables.messages}}") == 0
+    assert await env.db.fetch_value("SELECT count(*) FROM {{tables.chat_messages}}") == 0
