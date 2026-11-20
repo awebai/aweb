@@ -235,6 +235,7 @@ class LedgerEntry:
             isinstance(seat, str)
             and isinstance(sha256, str)
             and isinstance(target, str)
+            and isinstance(status, str)
             and status in set(JobStatus)
             and (item_id is None or isinstance(item_id, str))
         ):

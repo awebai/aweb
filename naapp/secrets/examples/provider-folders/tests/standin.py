@@ -30,9 +30,10 @@ def reference_quick_xor(data: bytes) -> str:
 class OneDriveStandIn:
     """In-memory app folder with Graph-shaped requests, responses and faults."""
 
-    def __init__(self, page_size: int = 2):
+    PAGE_SIZE = 2
+
+    def __init__(self):
         self.items: dict[str, dict] = {}
-        self.page_size = page_size
         self.sessions: dict[str, dict] = {}
         self.committed_uploads = 0
         self.lose_next_commit_response = False
@@ -114,11 +115,11 @@ class OneDriveStandIn:
     def _list(self, url) -> httpx.Response:
         start = int(parse_qs(url.query).get("skiptoken", ["0"])[0])
         ordered = sorted(self.items.values(), key=lambda item: item["name"])
-        page = ordered[start : start + self.page_size]
+        page = ordered[start : start + self.PAGE_SIZE]
         body: dict[str, object] = {"value": [_public(item) for item in page]}
-        if start + self.page_size < len(ordered):
+        if start + self.PAGE_SIZE < len(ordered):
             body["@odata.nextLink"] = self.foreign_next_link or (
-                f"{GRAPH}/me/drive/special/approot/children?skiptoken={start + self.page_size}"
+                f"{GRAPH}/me/drive/special/approot/children?skiptoken={start + self.PAGE_SIZE}"
             )
         return httpx.Response(200, json=body)
 

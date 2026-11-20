@@ -15,6 +15,8 @@ import pytest
 from onedrive import GraphAppFolder
 from publisher import (
     DirectoryOutbox,
+    JobStatus,
+    LedgerEntry,
     PublishConfig,
     Publisher,
     PublishUncertain,
@@ -338,6 +340,24 @@ def test_a_malformed_answer_after_the_write_reconciles_to_one_item(standin, outb
     assert len(standin.items) == 1
 
 
+VALID_ENTRY = {
+    "seat": "seat-a",
+    "sha256": "0" * 64,
+    "target": "report.md",
+    "status": "done",
+    "item_id": None,
+}
+
+
+def test_the_malformed_ledger_cases_start_from_a_valid_entry():
+    assert LedgerEntry.parse(VALID_ENTRY).status is JobStatus.DONE
+
+
+def ledger_with_entry(entry: object) -> bytes:
+    destination = {"drive_id": "standin-drive", "folder_id": "STANDIN-APPROOT"}
+    return json.dumps({"v": 1, "destination": destination, "jobs": {"x": entry}}).encode()
+
+
 @pytest.mark.parametrize(
     "ledger",
     [
@@ -348,9 +368,20 @@ def test_a_malformed_answer_after_the_write_reconciles_to_one_item(standin, outb
         b'{"v": 1, "destination": {"drive_id": "standin-drive", "folder_id": "STANDIN-APPROOT"}, "jobs": []}',
         b'{"v": 1, "destination": {"drive_id": "standin-drive", "folder_id": "STANDIN-APPROOT"}, "jobs": {"x": {"seat": 3}}}',
         b'{"v": 2, "destination": {"drive_id": "standin-drive", "folder_id": "STANDIN-APPROOT"}, "jobs": {}}',
+        *(
+            ledger_with_entry(entry)
+            for entry in (
+                {**VALID_ENTRY, "status": ["done"]},
+                {**VALID_ENTRY, "status": {"done": 1}},
+                {**VALID_ENTRY, "status": "finished"},
+                {**VALID_ENTRY, "item_id": 7},
+                {**VALID_ENTRY, "extra": None},
+                [VALID_ENTRY],
+            )
+        ),
     ],
 )
-def test_an_unreadable_ledger_is_refused_until_the_operator_removes_it(
+def test_every_malformed_ledger_is_refused_as_unreadable_until_the_operator_removes_it(
     standin, outbox_dir, state_dir, ledger
 ):
     job_id = new_job(outbox_dir)

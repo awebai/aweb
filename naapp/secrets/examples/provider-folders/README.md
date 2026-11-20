@@ -91,12 +91,11 @@ publisher's own state is a cache.
 
 ## Limits of the current slice
 
-- No provider token is used. The Microsoft refresh-token custody
-  (`oauth2-refresh`) waits for Juan's ruling, and there is no Microsoft token
-  step of any kind until then.
-- The runner job packaging (the executable entry point, the run configuration
-  and the job pin) follows once the runner binding is set. Known open items on
-  that path: aweb-acgh.18.52, aweb-acgh.18.15, aweb-acwd.4.6, and the HO6/S19
+- No provider token is used. Secrets builds Microsoft refresh-token custody
+  (`oauth2-refresh`) after the release; until then there is no Microsoft token
+  step of any kind.
+- There is no executable entry point, run configuration or job pin yet. Known
+  open items on the runner path: aweb-acgh.18.52, aweb-acgh.18.15, aweb-acwd.4.6, and the HO6/S19
   dedicated-user evidence.
 - Full crash and retry qualification also needs Secrets' reconciliation of
   accepted assignments (aweb-adje.16 11.3).
@@ -110,6 +109,10 @@ uv sync
 uv run pytest
 uv run ruff check . && uv run ruff format --check .
 ```
+
+The candidate gate lints this package (`make lint`) in its checks stage and runs
+its suite (`make test`) in the unit stage, through `NAAPP_PACKAGES` in the
+repository Makefile.
 
 `tests/standin.py` is an in-memory Graph app folder with injected faults: a
 response lost after commit, a name created concurrently, a denial, and a
