@@ -91,6 +91,10 @@ jobs:
     env:
       PGHOST: localhost
       PGPORT: "5432"
+      # Test databases are created only on a Postgres the run names (aweb-admf):
+      # this job's own postgres service.
+      TEST_DB_HOST: localhost
+      TEST_DB_PORT: "5432"
       PGUSER: postgres
       PGPASSWORD: postgres
       PGDATABASE: postgres
