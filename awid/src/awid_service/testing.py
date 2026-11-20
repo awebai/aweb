@@ -15,11 +15,12 @@ from __future__ import annotations
 
 import asyncio
 import base64
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
+from inspect import isawaitable
 from typing import Any, Protocol
 
 import httpx
@@ -53,6 +54,20 @@ SERVICE_TOKEN = "awid-testing-service-token-32-bytes"
 
 # Changes the real response in place, or returns a response to send instead.
 ResponseFault = Callable[[httpx.Request, httpx.Response], httpx.Response | None]
+
+
+async def fixture_domain_authority(
+    overrides: Mapping[Callable[..., Any], Callable[[], DomainVerifier | Awaitable[DomainVerifier]]],
+    domain: str,
+) -> DomainAuthority:
+    """Resolve the fixture's DNS override outside FastAPI dependency injection."""
+    factory = overrides.get(get_domain_verifier)
+    if factory is None:
+        raise DnsVerificationError(f"No TXT records found for _awid.{domain}")
+    verifier = factory()
+    if isawaitable(verifier):
+        verifier = await verifier
+    return await verifier(domain)
 
 
 class ServiceTransport(httpx.AsyncBaseTransport):

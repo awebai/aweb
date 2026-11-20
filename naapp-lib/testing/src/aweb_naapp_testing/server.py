@@ -31,9 +31,14 @@ from dataclasses import dataclass
 import httpx
 import pytest_asyncio
 from aweb.testing import Server, running_server
-from awid.dns_verify import DnsVerificationError, DomainAuthority
-from awid_service.deps import get_domain_verifier
-from awid_service.testing import REGISTRY_URL, SERVICE_TOKEN, Registry, running_registry
+from awid.dns_verify import DomainAuthority
+from awid_service.testing import (
+    REGISTRY_URL,
+    SERVICE_TOKEN,
+    Registry,
+    fixture_domain_authority,
+    running_registry,
+)
 from nacl.signing import SigningKey
 from redis.asyncio import Redis
 
@@ -112,10 +117,7 @@ def awid_dns(registry: Registry):
     record at all (tests never reach real DNS)."""
 
     async def verify(domain: str) -> DomainAuthority:
-        override = registry.app.dependency_overrides.get(get_domain_verifier)
-        if override is None:
-            raise DnsVerificationError(f"No TXT records found for _awid.{domain}")
-        return await override()(domain)
+        return await fixture_domain_authority(registry.app.dependency_overrides, domain)
 
     return verify
 
