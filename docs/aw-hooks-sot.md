@@ -124,7 +124,8 @@ newly fail on accepted metadata, so callback timing remains unchanged.
 Mail send, chat send, mail acknowledgement and inbound federation producers
 use these contexts before passing dictionaries to the existing callback or
 durable outbox. They pass the accepted mode and priority to the context without
-adding defaults; absent and empty metadata remain distinct. The inbound
+changing the request or signed bytes; the context supplies the historical
+emitted defaults described above. The inbound
 context keeps its shared mail/chat shape rather than acquiring native chat's
 preview or recipient-alias list.
 

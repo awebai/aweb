@@ -717,6 +717,8 @@ async def _stored_exact_chat_send(
     from age only. The shared owner decides sameness; this adapter retains chat
     request binding, current sender key and encrypted expiry checks.
     """
+    from aweb.messaging.chat_models import SendMessageRequest
+
     if payload.message_id is None:
         return None
     lookup = await read_stored_message(
@@ -762,6 +764,20 @@ async def _stored_exact_chat_send(
             and payload.signature is not None
             and not _payload_is_encrypted(payload)
         ):
+            if isinstance(payload, SendMessageRequest) and session_id is not None:
+                # Continued plaintext replay runs before new-message attestation
+                # so retained departed parties can acknowledge their artifact.
+                # A different artifact must still verify before the age-only
+                # carrier tells its sender that re-signing is appropriate.
+                await _validate_continued_chat_attestation(
+                    db,
+                    auth,
+                    payload=payload,
+                    actor_did=actor_dids[0],
+                    sender_address=_sender_address(auth),
+                    session_uuid=session_id,
+                    recipient_rows=recipient_rows,
+                )
             _parse_signed_timestamp(str(payload.timestamp))
         lookup.refuse_conflicting_message_id()
     row = lookup.message
@@ -1031,12 +1047,14 @@ def _is_stale_delivery_origin_status(status_code: int) -> bool:
     return status_code in {404, 410, 421}
 
 
-async def resolve_actor_agent(db, actor_dids: list[str]) -> Mapping[str, Any] | None:
+async def resolve_actor_agent(
+    db, actor_dids: list[str], *, team_id: str | None = None
+) -> Mapping[str, Any] | None:
     """Find a local sender projection for the adapter's authenticated DIDs."""
     for did in actor_dids:
         if not did:
             continue
-        actor_agent = await resolve_agent_by_did(db, did)
+        actor_agent = await resolve_agent_by_did(db, did, team_id=team_id)
         if actor_agent is not None and actor_agent.get("agent_id") is not None:
             return actor_agent
     return None
@@ -1684,7 +1702,7 @@ async def _send_to_named_recipients(
 ) -> SentChat:
     actor_dids = participant_dids(auth)
     actor_did = actor_dids[0]
-    actor_agent = await resolve_actor_agent(db, actor_dids)
+    actor_agent = await resolve_actor_agent(db, actor_dids, team_id=auth.team_id)
     actor_agent_id = auth.agent_id or (str(actor_agent["agent_id"]) if actor_agent else None)
     actor_alias = _actor_alias(auth, actor_agent)
     sender_address = _sender_address(auth)
@@ -2297,7 +2315,7 @@ async def _send_in_continued_session(
     registry_client = runtime.registry_client
     id_chain = auth.id_chain
     actor_dids = participant_dids(auth)
-    actor_agent = await resolve_actor_agent(db, actor_dids)
+    actor_agent = await resolve_actor_agent(db, actor_dids, team_id=auth.team_id)
     actor_agent_id = auth.agent_id or (str(actor_agent["agent_id"]) if actor_agent else None)
     sender_address = _sender_address(auth)
     session_uuid = target.session_id

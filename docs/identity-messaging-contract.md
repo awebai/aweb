@@ -349,7 +349,12 @@ Receipts survive ordinary message garbage collection.
 For native signed mail, an exact retry whose identical signed payload is
 already stored returns that stored result before applying the attestation age
 limit. Signature, sender/recipient binding, encryption and current delivery
-admission checks still precede this lookup. A stored answer is not a new
+admission checks still precede returning the stored answer. An exact encrypted
+artifact may identify its own recorded mail target when the outer selector
+carries only the key and its protected routing binds the recorded stable
+identity. This lookup locates only that accepted target, supplies no new-send
+authority, and does not skip ordinary encryption freshness or current policy.
+A stored answer is not a new
 attestation; a new message still requires a timestamp within the accepted skew.
 Age refusal is HTTP 422 with the existing human `detail` plus a signing action
 and additive `X-AWEB-Error-Code: message_timestamp_outside_skew` header. Shape

@@ -6,6 +6,7 @@ All endpoints are read-only.
 
 from __future__ import annotations
 
+from aweb.application_state import application_registry_client
 from aweb.identity_binding import IdentityProjectionField, verified_identity_field_sql
 
 from aweb.human_kind import agent_listing_predicate_sql, effective_agent_type
@@ -29,14 +30,12 @@ from aweb.coordination.tasks_service import list_tasks_paginated
 from aweb.awid_error_handling import (
     AWID_DEPENDENCY_ERRORS,
     awid_dependency_http_exception,
-    awid_registry_not_configured_exception,
 )
 from aweb.config import get_settings
 from aweb.deps import get_db, get_redis
 from aweb.events import (
     team_events_channel_name,
 )
-from aweb.application_state import application_registry_client
 from aweb.grant_liveness_policy import GrantLivenessFailurePolicy
 from aweb.presence_transitions import team_online_aliases
 from aweb.workspace_activity import latest_workspace_activity, workspace_activity_by_id
@@ -132,11 +131,7 @@ async def _get_team_visibility(request: Request, team_id: str) -> str:
     except ValueError:
         return "private"
 
-    registry_client = getattr(request.app.state, "awid_registry_client", None)
-    if registry_client is None:
-        raise awid_registry_not_configured_exception(
-            operation="AWID dashboard team visibility lookup"
-        )
+    registry_client = application_registry_client(request.app.state)
 
     try:
         team = await registry_client.get_team(domain, team_name)
@@ -591,6 +586,10 @@ async def stream_team_events(
     await _require_dashboard_auth(request, team_id, allow_public=False)
     if redis is None:
         raise HTTPException(status_code=503, detail="Redis unavailable")
+
+    # Configuration refusals must precede SSE headers; the snapshot still
+    # follows the subscription and performs the actual evidence reads.
+    application_registry_client(request.app.state)
 
     return StreamingResponse(
         _sse_dashboard_events(request=request, db=db, redis=redis, team_id=team_id),

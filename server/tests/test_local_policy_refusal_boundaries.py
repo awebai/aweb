@@ -21,9 +21,10 @@ from test_messages_http import (
 )
 
 
-async def admitted_local_recipient(server, *, team="eng:acme.com"):
+async def admitted_local_recipient(server, *, team="eng:acme.com", alias="local-bob"):
     """Issue, register and connect a local member under its real team controller."""
     env = server.fixture
+    team_name, namespace = team.split(":", 1)
     await register_messaging_team(env, team_id=team)
     sk, _, did = _make_keypair()
     fields = _make_certificate(
@@ -31,20 +32,20 @@ async def admitted_local_recipient(server, *, team="eng:acme.com"):
         env.team_did,
         did,
         team_id=team,
-        alias="local-bob",
+        alias=alias,
         identity_scope="local",
         certificate_id=f"local-policy-{uuid4()}",
     )
     certificate = _encode_certificate(fields)
     await server.registry.register_team_certificate(
-        "acme.com",
-        team.split(":")[0],
+        namespace,
+        team_name,
         team_controller_signing_key=env.team_sk,
         certificate_id=fields["certificate_id"],
         member_did_key=did,
         member_did_aw=None,
         member_address=None,
-        alias="local-bob",
+        alias=alias,
         identity_scope="local",
         certificate=certificate,
     )
@@ -63,7 +64,7 @@ async def admitted_local_recipient(server, *, team="eng:acme.com"):
         did=did,
         id=connected.json()["agent_id"],
         team=team,
-        alias="local-bob",
+        alias=alias,
         certificate=certificate,
         certificate_id=fields["certificate_id"],
     )
