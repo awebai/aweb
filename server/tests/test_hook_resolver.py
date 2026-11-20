@@ -31,7 +31,6 @@ from aweb_naapp.runtime.hook_resolver import (
 from awid.did import did_from_public_key
 from nacl.signing import SigningKey
 from tests.installation_fixtures import seed_hook_installation
-from tests.real_stack import AWEB_URL
 
 TEAM = "backend:resolve.example"
 HOOK = ("aweb.hooks", 1, "post-secret-use-hook")
@@ -138,7 +137,7 @@ async def team(real_stack):
         *,
         refresh_timeout: float = 5.0,
         directory_ttl: int | None = None,
-        internal_origins: frozenset[str] = frozenset({AWEB_URL}),
+        internal_origins: frozenset[str] | None = None,
     ) -> HookResolver:
         key = await _key(
             db, app, kid=f"resolve-{app['app_id']}", purposes=[HOOK_RESOLVE]
@@ -199,7 +198,7 @@ async def test_a_producer_resolves_where_to_deliver(team):
         registration.binding_id,
     )
     assert binding.active_from == stored
-    assert resolution.server_url == AWEB_URL
+    assert resolution.server_url == team["stack"].aweb_url
     assert resolution.fresh_until == team["clock"].now + seconds_to_ns(60)
     assert type(resolution.fresh_until) is int
 
@@ -353,9 +352,11 @@ async def test_a_changed_team_server_record_is_followed_even_while_an_answer_is_
     # Discovery refreshes sooner than the answer expires, so the moved record
     # is seen while the old server's answer is still fresh: it must not be reused.
     # The operator runs both servers, so the stack's transport carries both.
-    moved = "https://aweb.moved.example"
+    moved = team["stack"].moved_url
     resolver = await team["resolver_for"](
-        SECRETS, directory_ttl=10, internal_origins=frozenset({AWEB_URL, moved})
+        SECRETS,
+        directory_ttl=10,
+        internal_origins=frozenset({team["stack"].aweb_url, moved}),
     )
     await resolver.registrations(TEAM, *HOOK)
     await team["stack"].publish_server(

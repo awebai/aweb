@@ -39,11 +39,14 @@ from awid.did import did_from_public_key
 from aweb.routes.app_hooks import router as app_hooks_router
 from aweb.routes.apps import router as apps_router
 from aweb_naapp.runtime.team_auth import AWIDTeamCache
+from aweb_naapp.runtime.operator_egress import OperatorNetworkSettings
 from aweb_naapp.runtime.team_server import TeamServerDirectory, TeamServerReach
+from aweb_naapp_testing.team_server_site import TeamServerSite, team_server_site
 from tests.test_app_events_http import _build_events_app, _seed_team_and_agent
 
 REGISTRY_URL = "https://registry.example"
-AWEB_URL = "https://aweb.example"
+# A second name of the stack's aweb, as a team that moves its server names it.
+MOVED_NAME = "aweb.moved.example"
 
 # Changes the real response in place, or returns a response to send instead.
 ResponseFault = Callable[[httpx.Request, httpx.Response], httpx.Response | None]
@@ -80,6 +83,17 @@ class RealStack:
     awid: ServiceTransport
     aweb: ServiceTransport
     service_token: str
+    # Where aweb listens: TLS on this host's private address, behind which
+    # ``aweb`` records and faults every request as before.
+    site: TeamServerSite
+
+    @property
+    def aweb_url(self) -> str:
+        return self.site.origin
+
+    @property
+    def moved_url(self) -> str:
+        return f"https://{MOVED_NAME}:{self.site.tls.port}"
 
     async def add_team(self, team_id: str) -> SigningKey:
         """Create the team in AWID and in aweb; returns its team key."""
@@ -99,7 +113,7 @@ class RealStack:
         team_id: str,
         team_key: SigningKey,
         *,
-        server_url: str = AWEB_URL,
+        server_url: str | None = None,
         issued_at: datetime | None = None,
     ) -> None:
         """Publish the team's aweb.team-server/1 record through AWID's own route."""
@@ -109,7 +123,7 @@ class RealStack:
             "type": "aweb.team-server",
             "team_id": team_id,
             "team_did_key": did_from_public_key(bytes(team_key.verify_key)),
-            "server_url": server_url,
+            "server_url": server_url or self.aweb_url,
             "issued_at": (issued_at or datetime.now(timezone.utc)).strftime(
                 "%Y-%m-%dT%H:%M:%SZ"
             ),
@@ -152,16 +166,26 @@ class RealStack:
         )
 
     def team_server_reach(
-        self, *, internal_origins: frozenset[str] = frozenset({AWEB_URL})
+        self, *, internal_origins: frozenset[str] | None = None
     ) -> TeamServerReach:
-        """Reads of the stack's aweb: the operator's own servers, listed as
-        such and carried by its in-process transport."""
-        return TeamServerReach(internal_origins=internal_origins, transport=self.aweb)
+        """Reads of the stack's aweb through the app's egress guard: the
+        operator's own servers (by default the stack's aweb), listed as such
+        inside a network of exactly the site's address."""
+        settings = OperatorNetworkSettings(
+            **{
+                **self.site.settings(),
+                "team_server_internal_origins": internal_origins
+                if internal_origins is not None
+                else frozenset({self.aweb_url}),
+            }
+        )
+        egress = self.site.egress(settings)
+        return TeamServerReach(egress=egress.egress, internal=egress.team_servers)
 
 
 @pytest_asyncio.fixture
 async def real_stack(
-    aweb_cloud_db, test_db_factory, monkeypatch
+    aweb_cloud_db, test_db_factory, monkeypatch, tmp_path_factory
 ) -> AsyncIterator[RealStack]:
     service_token = os.environ["AWID_SERVICE_TOKEN"]
     awid_database = await test_db_factory.create_db(suffix="aweb_real_stack_awid")
@@ -178,16 +202,22 @@ async def real_stack(
     awid_app.include_router(awid_attestation_records_router)
     awid_app.include_router(awid_did_router)
 
-    aweb_app = _build_events_app(aweb_cloud_db.aweb_db, public_origin=AWEB_URL)
-    aweb_app.include_router(apps_router)
-    aweb_app.include_router(app_hooks_router)
     try:
-        yield RealStack(
-            aweb_db=aweb_cloud_db.aweb_db,
-            awid_db=infra.get_manager("aweb"),
-            awid=ServiceTransport(awid_app),
-            aweb=ServiceTransport(aweb_app),
-            service_token=service_token,
-        )
+        async with team_server_site(
+            tmp_path_factory.mktemp("real-stack-aweb"), also_names=(MOVED_NAME,)
+        ) as site:
+            aweb_app = _build_events_app(aweb_cloud_db.aweb_db, public_origin=site.origin)
+            aweb_app.include_router(apps_router)
+            aweb_app.include_router(app_hooks_router)
+            aweb = ServiceTransport(aweb_app)
+            site.serve_transport(aweb)
+            yield RealStack(
+                aweb_db=aweb_cloud_db.aweb_db,
+                awid_db=infra.get_manager("aweb"),
+                awid=ServiceTransport(awid_app),
+                aweb=aweb,
+                service_token=service_token,
+                site=site,
+            )
     finally:
         await infra.close()
