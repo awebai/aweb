@@ -488,7 +488,7 @@ async def _authorize_policy(
     envelope: FederationEnvelope,
     recipient: Mapping,
     stored_route_continuation: bool,
-    registry_client,
+    registry_client=None,
 ) -> None:
     try:
         await authorize_delivery(
