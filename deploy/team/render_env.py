@@ -112,6 +112,37 @@ def _collect(schema: dict, value: object, out: dict[str, str]) -> None:
 # The components an operator can leave out, each in its own Compose file.
 OPTIONAL_COMPONENTS = ("secrets", "logs", "agents", "front")
 
+# The narrowest prefix an app's egress guard accepts as an internal network
+# (aweb_naapp.egress.addresses.MIN_INTERNAL_PREFIX).
+MIN_INTERNAL_PREFIX = {4: 8, 6: 32}
+
+
+def _check_internal_range(cidr: str) -> None:
+    """Refuse a services range the apps' egress guard would refuse at startup."""
+    network = ipaddress.ip_network(cidr, strict=True)
+    if (
+        network.prefixlen < MIN_INTERNAL_PREFIX[network.version]
+        or network.is_loopback
+        or network.is_link_local
+        or network.is_multicast
+        or network.is_unspecified
+    ):
+        raise Refused(
+            f"network.servicesCidr: {cidr} is not a network the apps may reach internally; "
+            "name the services network's own private range"
+        )
+
+
+def _canonical_origin(origin: str) -> str:
+    """``origin`` as the apps compare it: lowercase host, no default port."""
+    parts = urlsplit(origin)
+    host = (parts.hostname or "").lower()
+    authority = f"[{host}]" if ":" in host else host
+    if parts.port not in (None, 443):
+        authority += f":{parts.port}"
+    return f"https://{authority}"
+
+
 def render(config: object) -> dict[str, str]:
     """The settings of the Compose layer for this configuration."""
     config = normalize(config)
@@ -164,9 +195,18 @@ def render(config: object) -> dict[str, str]:
     # aweb fetches app manifests from internal addresses only inside the services range.
     if "appInternalOrigins" in config["aweb"]:
         out["AWEB_APP_INTERNAL_CIDR"] = config["network"]["servicesCidr"]
-    # An app takes the three settings of internal hook destinations together.
+    # An app reaches internal addresses, inside the services range only, for
+    # the hook receivers the operator lists and, when the operator opts it
+    # in, for aweb's own public origin: never an origin the operator types.
     for app in ("secrets", "logs"):
-        if "hookInternalOrigins" in config.get(app, {}):
+        section = config.get(app, {})
+        team_server = section.get("teamServerInternal", False)
+        if team_server:
+            out[f"{app.upper()}_TEAM_SERVER_INTERNAL_ORIGINS"] = json.dumps(
+                [_canonical_origin(config["aweb"]["publicOrigin"])]
+            )
+        if team_server or "hookInternalOrigins" in section:
+            _check_internal_range(config["network"]["servicesCidr"])
             out[f"{app.upper()}_HOOK_INTERNAL_DESTINATIONS"] = "allowed"
             out[f"{app.upper()}_HOOK_INTERNAL_CIDR"] = config["network"]["servicesCidr"]
     # A component the operator leaves out has no file in the model.

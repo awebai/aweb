@@ -584,6 +584,11 @@
           "x-env": "SECRETS_HOOK_INTERNAL_ORIGINS",
           "minItems": 1
         },
+        "teamServerInternal": {
+          "description": "Reach the team's coordination server, aweb.publicOrigin, inside network.servicesCidr: set when that origin resolves to an address in the services range, as behind this deployment's own front. Off, the app reaches it as a public server.",
+          "type": "boolean",
+          "default": false
+        },
         "egressDeniedNetworks": {
           "description": "Addresses and ranges the app never connects to, beyond its fixed floor.",
           "type": "array",
@@ -724,6 +729,11 @@
           },
           "x-env": "LOGS_HOOK_INTERNAL_ORIGINS",
           "minItems": 1
+        },
+        "teamServerInternal": {
+          "description": "Reach the team's coordination server, aweb.publicOrigin, inside network.servicesCidr: set when that origin resolves to an address in the services range, as behind this deployment's own front. Off, the app reaches it as a public server.",
+          "type": "boolean",
+          "default": false
         },
         "egressDeniedNetworks": {
           "description": "Addresses and ranges the app never connects to, beyond its fixed floor.",

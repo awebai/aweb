@@ -432,3 +432,37 @@ def test_egress_external_takes_only_the_two_roles_as_switches_and_a_resolver_lis
 def test_egress_external_defaults_every_role_off():
     config = {**copy.deepcopy(EXAMPLE), "egress": {"image": EGRESS_IMAGE, "external": {}}}
     assert render_env.normalize(config)["egress"]["external"] == {"source": False, "model": False, "resolvers": []}
+
+
+def test_an_app_opted_in_reads_its_team_server_inside_the_services_range():
+    # The opt-in names no origin: the one it renders is aweb's own public origin.
+    config = {**EXAMPLE, "secrets": {**app("secrets"), "teamServerInternal": True}, "logs": app("logs")}
+    rendered = render_env.render(config)
+    assert {
+        name: value
+        for name, value in rendered.items()
+        if "TEAM_SERVER_INTERNAL" in name or "HOOK_INTERNAL" in name
+    } == {
+        "SECRETS_TEAM_SERVER_INTERNAL_ORIGINS": '["https://aweb.example.com"]',
+        "SECRETS_HOOK_INTERNAL_DESTINATIONS": "allowed",
+        "SECRETS_HOOK_INTERNAL_CIDR": "172.31.0.0/24",
+    }
+
+
+def test_an_app_reads_its_team_server_publicly_unless_the_operator_opts_it_in():
+    rendered = render_env.render({**EXAMPLE, "secrets": app("secrets"), "logs": app("logs")})
+    assert not [name for name in rendered if "TEAM_SERVER_INTERNAL" in name or "HOOK_INTERNAL" in name]
+
+
+@pytest.mark.parametrize("cidr", ["10.0.0.0/7", "127.0.0.0/8"])
+def test_an_opted_in_app_needs_a_services_range_its_guard_accepts(cidr):
+    config = copy.deepcopy({**EXAMPLE, "logs": {**app("logs"), "teamServerInternal": True}})
+    config["network"]["servicesCidr"] = cidr
+    with pytest.raises(render_env.Refused, match="network.servicesCidr"):
+        render_env.render(config)
+
+
+def test_the_team_server_opt_in_is_a_boolean():
+    config = {**EXAMPLE, "secrets": {**app("secrets"), "teamServerInternal": "https://aweb.example.com"}}
+    with pytest.raises(render_env.Refused, match="secrets.teamServerInternal"):
+        render_env.render(config)
