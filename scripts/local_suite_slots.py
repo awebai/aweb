@@ -69,8 +69,10 @@ def pytest_scope(arguments: list[str]) -> Scope:
             "--lf",
             "--ff",
         ):
-            # Do not mistake an option's value (for example a report path) for a test path.
-            index += 1
+            # Consume a possible value, never the next option: that option may
+            # itself own a report path which must not become a test selector.
+            if index + 1 < len(arguments) and not arguments[index + 1].startswith("-"):
+                index += 1
         index += 1
     return Scope.WHOLE
 

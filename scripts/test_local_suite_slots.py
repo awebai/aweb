@@ -159,6 +159,19 @@ class SlotProcesses(unittest.TestCase):
         whole.terminate()
         self.assertEqual(whole.wait(timeout=5), 143)
 
+    def test_reporting_combinations_wait_when_all_slots_are_held(self):
+        self.holders()
+        for selection in (
+            "--no-header --junitxml report.xml",
+            "-vvvv --junitxml report.xml",
+        ):
+            with self.subTest(selection=selection):
+                whole, events = self.start(selection=selection)
+                event, trace = self.event(events)
+                self.assertTrue(event.startswith("Waiting for local suite slot"), trace)
+                whole.terminate()
+                self.assertEqual(whole.wait(timeout=5), 143)
+
     def test_failure_releases_after_caller_cleanup(self):
         holders = self.holders()
         waiting, events = self.start()
@@ -254,6 +267,9 @@ class SelectionScope(unittest.TestCase):
             ["--", "tests"],
             [".", "--durations=0"],
             ["--junitxml", "tests/report.xml"],
+            ["--no-header", "--junitxml", "report.xml"],
+            ["-vvvv", "--junitxml", "report.xml"],
+            ["--no-header", "--durations", "0", "--junitxml", "report.xml"],
             ["--junitxml=tests/report.xml"],
             ["-q", "--durations", "0"],
             ["-k", ""],
@@ -267,6 +283,8 @@ class SelectionScope(unittest.TestCase):
             ["-q", "tests/test_mail.py::test_send"],
             ["tests/messaging"],
             ["-k", "mail"],
+            ["--no-header", "-k", "mail"],
+            ["-vvvv", "--junitxml", "report.xml", "tests/test_mail.py"],
             ["-kmail"],
             ["-m", "native"],
             ["--deselect=tests/test_mail.py::test_send"],
