@@ -12,7 +12,7 @@ from messaging_actor_support import (
     messaging_actor_headers,
     set_messaging_inbound_mode,
 )
-from test_dashboard_privacy import privacy_app  # noqa: F401
+from test_dashboard_privacy import privacy_app as privacy_app
 
 
 def json_bytes(payload):
