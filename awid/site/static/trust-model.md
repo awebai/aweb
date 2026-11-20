@@ -521,11 +521,14 @@ Named residuals:
   hosted teams, an inherited authority must accept the child's controller
   through the parent-signed delegation, or hosted team keys are rotated and
   re-pinned first.
-- **A pin set at first sight has no act time.** An act is required to be newer
-  than the act behind the pin only when there is one, so before enforcement
-  is turned on, a genuine but older act (a historical rotation, or one for a
-  deleted team of the same name) could move such a pin. The admission time is
-  to serve as the floor.
+- **A pin set at first sight uses its admission time as the floor.** A signed
+  act must be strictly newer than that admission before it can establish a
+  different key. Once an act has set the pin, its signing time is the floor
+  for the next act. Admission time remains separate from the signed act time,
+  including in compare-and-swap storage. A genuine historical act, including
+  one for a deleted team of the same name, cannot replace a newly admitted
+  key under enforcement. Measuring mode records the same would-refuse result
+  while retaining its staged acceptance behavior.
 - **The `local` namespace** has no DNS, so a pinned local team cannot rotate
   without the server operator re-pinning it.
 - **Hosted teams.** Pinning separates the registry from the namespace
