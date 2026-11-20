@@ -10,7 +10,7 @@ import tarfile
 import time
 
 from .backend import Backend
-from .config import child_environment, select_manifest
+from .config import child_environment, select_manifest, select_target
 from .config_lease import ConfigLease
 from .errors import Infrastructure, Refused
 from .executor import Executor
@@ -39,6 +39,8 @@ class Runtime:
         executor_factory=Executor,
     ):
         self.config = dict(config)
+        if command is not None:
+            select_target(args, self.config)
         select_manifest(self.config, getattr(args, "target", None))
         self.config["server_type"] = getattr(args, "type", None)
         self.directory = Path(directory) if directory else None

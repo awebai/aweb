@@ -10,7 +10,7 @@ import uuid
 
 from . import aweb
 from .admission import aweb_requirements
-from .config import load, select_manifest
+from .config import load, select_manifest, select_target
 from .errors import Infrastructure, Refused
 from .lifecycle import write_summary
 from .source import git, prepare
@@ -76,14 +76,7 @@ def main(argv=None, *, factory=None, out=None):
             directory = Path(config["state_root"]) / "runs" / run_id
             directory.mkdir(parents=True, mode=0o700)
             if args.action == "run":
-                if args.type and args.target == "merak":
-                    raise Refused("--type selects a Hetzner machine")
-                args.target = args.target or (
-                    "hetzner" if args.type else config.get("default_target", "hetzner")
-                )
-                if args.target not in {"hetzner", "merak"}:
-                    raise Refused("unknown execution target")
-                args.type = (args.type or "ccx33") if args.target == "hetzner" else None
+                select_target(args, config)
                 select_manifest(config, args.target)
                 if args.timeout <= 0:
                     raise Refused("timeout must be positive")

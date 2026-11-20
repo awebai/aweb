@@ -10,6 +10,7 @@ import select
 import shutil
 import subprocess
 import sys
+import time
 
 
 ROOT = Path.home() / ".local/share/aweb-gates"
@@ -25,6 +26,43 @@ def docker(*args):
 
 def notify(**fields):
     print(json.dumps(fields), flush=True)
+
+
+def observe_guest(job, duration):
+    """Observe physical host pressure while waiting for close, EOF or expiry."""
+    start = time.monotonic()
+    metrics = {"sample_interval_seconds": 5, "samples": 0, "sample_errors": 0}
+    while True:
+        try:
+            info = {}
+            for line in Path("/proc/meminfo").read_text().splitlines():
+                key, value = line.split(":", 1)
+                if key in {"MemTotal", "MemAvailable"}:
+                    info[key] = int(value.split()[0]) * 1024
+            used = info["MemTotal"] - info["MemAvailable"]
+            free = shutil.disk_usage(job).free
+            # The raw base's logical size is shared by every overlay. st_blocks
+            # counts space actually allocated to this job's writable disk.
+            disk = job / "disk.qcow2"
+            allocated = disk.stat().st_blocks * 512 if disk.exists() else 0
+            metrics.update(
+                samples=metrics["samples"] + 1,
+                host_memory_total_bytes=info["MemTotal"],
+                host_used_peak_bytes=max(metrics.get("host_used_peak_bytes", 0), used),
+                filesystem_min_free_bytes=min(
+                    metrics.get("filesystem_min_free_bytes", free), free
+                ),
+                overlay_peak_allocated_bytes=max(
+                    metrics.get("overlay_peak_allocated_bytes", 0), allocated
+                ),
+            )
+        except (KeyError, OSError, ValueError):
+            metrics["sample_errors"] += 1
+        remaining = start + duration - time.monotonic()
+        if remaining <= 0 or select.select([sys.stdin], [], [], min(5, remaining))[0]:
+            break
+    metrics["observed_seconds"] = time.monotonic() - start
+    return metrics
 
 
 def remove_guest(job):
@@ -94,6 +132,7 @@ def serve(spec):
         before = shutil.disk_usage(runs).free
         job.mkdir(mode=0o700)
         (job / "owner").write_text(run)
+        metrics = {}
         try:
             (job / "user-data").write_text("#cloud-config\n" + json.dumps(spec["seed"]))
             (job / "meta-data").write_text(
@@ -146,10 +185,16 @@ def serve(spec):
                 disk_free_before=before,
             )
             # EOF (including lost controller) and deadline take the same cleanup path.
-            if select.select([sys.stdin], [], [], duration)[0]:
-                sys.stdin.readline()
+            metrics = observe_guest(job, duration)
+            try:
+                metrics["launcher_cgroup_peak_bytes"] = int(
+                    docker("exec", identifier, "cat", "/sys/fs/cgroup/memory.peak")
+                )
+            except (ValueError, OSError, subprocess.SubprocessError) as exc:
+                metrics["launcher_cgroup_error"] = type(exc).__name__
         finally:
             closure = remove_guest(job)
+            closure["capacity"] = metrics
             (ROOT / (run + ".closure.json")).write_text(json.dumps(closure))
             notify(cleanup=closure)
 

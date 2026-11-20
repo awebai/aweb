@@ -293,6 +293,11 @@ daemon. Its writable disk contains its containers, volumes, networks and source
 checkout. Closure records the removed launcher ID and disk directory, and is
 read back on a fresh SSH connection.
 
-After the checks proof passes, the operator can set `default_target` to
-`merak`. An explicit `--type ccx33` or `--type ccx43` still selects Hetzner.
+Set `default_target` to `merak` to queue gates and qualifications on the
+dedicated host. An explicit `--target hetzner`, `--type ccx33` or `--type ccx43` selects Hetzner.
 The default for configurations without this setting is Hetzner.
+
+The Merak closure includes sampled physical host memory use, minimum host
+filesystem free space, peak allocated overlay bytes and the launcher's cgroup
+memory peak when readable. Use those figures with the native stage times and
+total elapsed time to assess capacity.

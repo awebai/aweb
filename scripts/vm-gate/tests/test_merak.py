@@ -1,14 +1,44 @@
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
+from vm_gate.config import select_target
 from vm_gate.errors import Refused
 from vm_gate.merak import endpoint
 from vm_gate import merak_host
 
 
 class MerakTests(unittest.TestCase):
+    def test_dispatch_defaults_and_explicit_machine(self):
+        config = {"default_target": "merak"}
+        for args, expected in [
+            (SimpleNamespace(), ("merak", None)),
+            (SimpleNamespace(type="ccx43"), ("hetzner", "ccx43")),
+            (SimpleNamespace(target="hetzner"), ("hetzner", "ccx33")),
+        ]:
+            select_target(args, config)
+            self.assertEqual((args.target, args.type), expected)
+        with self.assertRaises(Refused):
+            select_target(SimpleNamespace(type="ccx43", target="merak"), config)
+
+    def test_capacity_counts_allocated_overlay_and_used_host_memory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            job = Path(tmp)
+            disk = job / "disk.qcow2"
+            disk.write_bytes(b"volume" * 1024)
+            with patch.object(
+                Path, "read_text", return_value="MemTotal: 100 kB\nMemAvailable: 40 kB"
+            ):
+                metrics = merak_host.observe_guest(job, 0)
+            self.assertEqual(metrics["host_used_peak_bytes"], 60 * 1024)
+            self.assertEqual(
+                metrics["overlay_peak_allocated_bytes"], disk.stat().st_blocks * 512
+            )
+            self.assertGreater(metrics["filesystem_min_free_bytes"], 0)
+            self.assertEqual(metrics["sample_errors"], 0)
+
     def test_requires_content_addressed_images(self):
         with self.assertRaises(Refused):
             endpoint({"merak": {"base_sha256": "latest"}})

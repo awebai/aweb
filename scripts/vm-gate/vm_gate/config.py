@@ -97,6 +97,19 @@ def read_manifest(path):
     return manifest
 
 
+def select_target(args, config):
+    machine = getattr(args, "type", None)
+    target = getattr(args, "target", None)
+    if machine and target == "merak":
+        raise Refused("--type selects a Hetzner machine")
+    args.target = target or (
+        "hetzner" if machine else config.get("default_target", "hetzner")
+    )
+    if args.target not in {"hetzner", "merak"}:
+        raise Refused("unknown execution target")
+    args.type = (machine or "ccx33") if args.target == "hetzner" else None
+
+
 def select_manifest(config, target):
     if target == "merak":
         settings = config.get("merak") or {}
