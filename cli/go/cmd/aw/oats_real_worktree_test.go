@@ -15,7 +15,14 @@ import (
 func TestOATSRealProvisioningCommandsRetainKeyAfterCertificateWriteFailure(t *testing.T) {
 	for _, mode := range []string{"workspace add-worktree", "team admin add"} {
 		t.Run(mode, func(t *testing.T) {
-			world := newRealCommandWorld(t)
+			const alias = "recipient"
+			target := filepath.Join(t.TempDir(), alias)
+			var world *realCommandWorld
+			if mode == "team admin add" {
+				world = newRealCommandWorldWithCertificateObstruction(t, awconfig.WorktreeIdentityHome(target))
+			} else {
+				world = newRealCommandWorld(t)
+			}
 			source := world.addLocalMember(t, "issuer")
 			t.Setenv("HOME", world.UserHome)
 			if err := awconfig.SaveTeamKey(world.Domain, "backend", world.TeamKey); err != nil {
@@ -24,9 +31,7 @@ func TestOATSRealProvisioningCommandsRetainKeyAfterCertificateWriteFailure(t *te
 			if err := awconfig.SaveControllerMeta(world.Domain, &awconfig.ControllerMeta{RegistryURL: world.Stack.RegistryURL}); err != nil {
 				t.Fatal(err)
 			}
-			const alias = "recipient"
 			workDir := filepath.Dir(source.Home)
-			target := filepath.Join(t.TempDir(), alias)
 			args := []string{"team", "admin", "add", alias + ":local", "--home", target}
 			if mode == "workspace add-worktree" {
 				workDir = filepath.Join(t.TempDir(), "repo")
@@ -53,8 +58,6 @@ func TestOATSRealProvisioningCommandsRetainKeyAfterCertificateWriteFailure(t *te
 				if err := os.WriteFile(hook, []byte("#!/bin/sh\n"+formatShellCommand([]string{"mkdir", "-p", certPath})+"\n"), 0o700); err != nil {
 					t.Fatal(err)
 				}
-			} else if err := os.MkdirAll(certPath, 0o700); err != nil {
-				t.Fatal(err)
 			}
 			cmd := exec.CommandContext(world.Context, world.Binary, append([]string{"--identity-home", source.Home, "--json"}, args...)...)
 			cmd.Dir = workDir
@@ -76,17 +79,32 @@ func TestOATSRealProvisioningCommandsRetainKeyAfterCertificateWriteFailure(t *te
 				}
 				requireRegisteredRecoveryWorktree(t, worktreeAgentCreation{RepoRoot: workDir, BranchName: alias})
 			}
-			if !strings.Contains(stderr.String(), "run `aw id team fetch-cert") || !strings.Contains(stderr.String(), member.CertificateID) {
-				t.Fatalf("recover the exact certificate from the retained home: %s", stderr.String())
+			fetchArgs := []string{"id", "team", "fetch-cert", "--namespace", world.Domain, "--team", "backend", "--cert-id", member.CertificateID, "--registry", world.Stack.RegistryURL}
+			recovery := "run `" + formatShellCommand(append([]string{"aw"}, fetchArgs...)) + "` from the same identity home"
+			if !strings.Contains(stderr.String(), recovery) {
+				t.Fatalf("expected recovery instruction %q:\n%s", recovery, stderr.String())
 			}
 			key, err := awid.LoadSigningKey(filepath.Join(home, "signing.key"))
 			if err != nil {
 				t.Fatalf("rollback removed the recipient signing key: %v", err)
 			}
+			if member.MemberDIDKey != didOf(key) {
+				t.Fatalf("active certificate belongs to %s, retained key is %s", member.MemberDIDKey, didOf(key))
+			}
+			if info, err := os.Stat(certPath); err != nil || !info.IsDir() {
+				t.Fatalf("certificate write obstruction was not created at %s: %v", certPath, err)
+			}
 			if err := os.Remove(certPath); err != nil {
 				t.Fatal(err)
 			}
-			world.requireCommand(t, home, "id", "team", "fetch-cert", "--namespace", world.Domain, "--team", "backend", "--cert-id", member.CertificateID, "--registry", world.Stack.RegistryURL)
+			// Run the advertised recovery from the recipient workspace. Its
+			// default .aw has the key but no initialized team state yet.
+			recoverCert := exec.CommandContext(world.Context, world.Binary, fetchArgs...)
+			recoverCert.Dir = target
+			recoverCert.Env = append(cmd.Env, awconfig.IdentityHomeEnv+"=")
+			if out, err := recoverCert.CombinedOutput(); err != nil {
+				t.Fatalf("recover certificate from recipient workspace: %v\n%s", err, out)
+			}
 			if restored, err := awconfig.LoadTeamCertificateForTeamFromIdentityHome(home, world.TeamID); err != nil || restored.CertificateID != member.CertificateID || restored.MemberDIDKey != didOf(key) {
 				t.Fatalf("retained home could not recover its exact issued certificate: %#v; %v", restored, err)
 			}

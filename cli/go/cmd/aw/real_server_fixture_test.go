@@ -24,8 +24,9 @@ type commandStack struct {
 }
 
 type commandStackAuthority struct {
-	Domain        string
-	ControllerDID string
+	Domain                 string
+	ControllerDID          string
+	CertificateObstruction string
 }
 
 func realCommandStack(t *testing.T, ctx context.Context, authority commandStackAuthority) commandStack {
@@ -37,6 +38,7 @@ func realCommandStack(t *testing.T, ctx context.Context, authority commandStackA
 	project := filepath.Join(awTestBinary.sourceDir, "../../server")
 	command := exec.CommandContext(ctx, "uv", "run", "--offline", "--frozen", "--project", project, "python", script)
 	command.Env = append(append([]string{}, awTestBinary.env...), "AW_COMMAND_DOMAIN="+authority.Domain, "AW_COMMAND_CONTROLLER="+authority.ControllerDID)
+	command.Env = append(command.Env, "AW_COMMAND_CERTIFICATE_OBSTRUCTION="+authority.CertificateObstruction)
 	command.Stderr = os.Stderr
 	input, err := command.StdinPipe()
 	if err != nil {
@@ -89,6 +91,11 @@ type commandMember struct {
 
 func newRealCommandWorld(t *testing.T) *realCommandWorld {
 	t.Helper()
+	return newRealCommandWorldWithCertificateObstruction(t, "")
+}
+
+func newRealCommandWorldWithCertificateObstruction(t *testing.T, recipientHome string) *realCommandWorld {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	t.Cleanup(cancel)
 	world := &realCommandWorld{
@@ -97,7 +104,16 @@ func newRealCommandWorld(t *testing.T) *realCommandWorld {
 		Domain:   freshName(t, "commands-") + ".test", NamespaceKey: newKey(t), TeamKey: newKey(t),
 	}
 	buildAwBinary(t, ctx, world.Binary)
-	world.Stack = realCommandStack(t, ctx, commandStackAuthority{Domain: world.Domain, ControllerDID: didOf(world.NamespaceKey)})
+	world.TeamID = awid.BuildTeamID(world.Domain, "backend")
+	authority := commandStackAuthority{Domain: world.Domain, ControllerDID: didOf(world.NamespaceKey)}
+	if recipientHome != "" {
+		var err error
+		authority.CertificateObstruction, err = awconfig.TeamCertificatePathFromIdentityHome(recipientHome, world.TeamID)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	world.Stack = realCommandStack(t, ctx, authority)
 	world.Registry = trustedClient(t, world.Stack.RegistryURL, nil)
 	if _, err := world.Registry.RegisterNamespaceAt(ctx, world.Stack.RegistryURL, world.Domain, didOf(world.NamespaceKey), world.NamespaceKey); err != nil {
 		t.Fatal(err)
@@ -105,7 +121,6 @@ func newRealCommandWorld(t *testing.T) *realCommandWorld {
 	if _, err := world.Registry.CreateTeam(ctx, world.Stack.RegistryURL, world.Domain, "backend", "Command tests", didOf(world.TeamKey), world.NamespaceKey); err != nil {
 		t.Fatal(err)
 	}
-	world.TeamID = awid.BuildTeamID(world.Domain, "backend")
 	target, err := resolveTeamRegistrationEndpoint(world.Stack.ServerURL)
 	if err != nil {
 		t.Fatal(err)

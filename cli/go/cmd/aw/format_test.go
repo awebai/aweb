@@ -451,10 +451,10 @@ func TestFormatChatHistoryPrefersFromAddress(t *testing.T) {
 	}
 
 	out := formatChatHistory(result)
-	if !strings.Contains(out, "otherco/carol: hello") {
+	if !strings.Contains(out, "otherco/carol [unverified]: hello") {
 		t.Fatalf("chat history should prefer sender address:\n%s", out)
 	}
-	if strings.Contains(out, "\ncarol: hello") {
+	if strings.Contains(out, "\ncarol: hello") || strings.Contains(out, "\ncarol [unverified]: hello") {
 		t.Fatalf("chat history should not use alias-only sender label:\n%s", out)
 	}
 }
@@ -473,7 +473,7 @@ func TestFormatChatHistoryFallsBackToStableID(t *testing.T) {
 	}
 
 	out := formatChatHistory(result)
-	if !strings.Contains(out, "did:aw:carol: hello") {
+	if !strings.Contains(out, "did:aw:carol [unverified]: hello") {
 		t.Fatalf("chat history should preserve stable identity fallback:\n%s", out)
 	}
 }
