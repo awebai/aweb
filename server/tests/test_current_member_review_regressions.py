@@ -629,3 +629,33 @@ async def test_deleting_a_workspace_does_not_make_its_current_member_claim_stale
         )
         == claim
     )
+
+
+@pytest.mark.asyncio
+async def test_warm_certificate_authentication_can_read_a_delivery_locked_member(pinning):
+    """A7's locked recheck must not serialize an unchanged reader with delivery."""
+    import asyncio
+
+    env = pinning
+    actor = await _admit(env, "concurrentreader")
+    warm = await _http(env, actor, "GET", "/v1/agents")
+    assert warm.status_code == 200, warm.text
+    before = await env.db.fetch_one(
+        "SELECT certificate_id, accepted_team_did_key FROM {{tables.agents}} WHERE agent_id=$1",
+        actor.id,
+    )
+    # Phase B holds precisely this SHARE lock through commit. Keep it held
+    # while a real certificate-signed request authenticates, as when opening
+    # an event stream before the delivery's commit/wake.
+    async with env.db.transaction() as tx:
+        await tx.fetch_value(
+            "SELECT agent_id FROM {{tables.agents}} WHERE agent_id=$1 FOR SHARE", actor.id,
+        )
+        async with asyncio.timeout(6):
+            response = await _http(env, actor, "GET", "/v1/agents")
+        assert response.status_code == 200, response.text
+    after = await env.db.fetch_one(
+        "SELECT certificate_id, accepted_team_did_key FROM {{tables.agents}} WHERE agent_id=$1",
+        actor.id,
+    )
+    assert dict(after) == dict(before)
