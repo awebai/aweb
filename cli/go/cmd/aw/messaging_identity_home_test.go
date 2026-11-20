@@ -84,6 +84,10 @@ func TestExternalIdentityHomeOutboundMessagingSignsAsPrincipal(t *testing.T) {
 			}}})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/messages/inbox":
 			_ = json.NewEncoder(w).Encode(awid.InboxResponse{Messages: []awid.InboxMessage{{MessageID: "message-1", ConversationID: "conversation-1", FromAlias: "recipient", FromDID: recipientDID, FromAddress: "aweb.test/recipient", ToDID: principalDID, ToAddress: "aweb.test/principal", Subject: "hello", Body: "body"}}})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/messages/conversations/conversation-1":
+			// The conversation's stored rows, which a continuation reads to
+			// sign its recipient and to inherit its encryption.
+			_ = json.NewEncoder(w).Encode(awid.InboxResponse{Messages: []awid.InboxMessage{{MessageID: "message-1", ConversationID: "conversation-1", FromAlias: "recipient", FromDID: recipientDID, FromAddress: "aweb.test/recipient", ToDID: principalDID, ToAddress: "aweb.test/principal", Subject: "hello", Body: "body"}}})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/messages":
 			var sent awid.SendMessageRequest
 			_ = json.NewDecoder(r.Body).Decode(&sent)
