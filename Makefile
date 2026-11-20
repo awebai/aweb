@@ -158,6 +158,18 @@ test: test-egress-controls check-aw-commit-repo-stamp check-cli-go-tidy test-ide
 test-scripts:
 	PYTHONPYCACHEPREFIX=/tmp/pycache uv run --frozen --project server python -m unittest discover -s scripts -p 'test_*.py' -v
 
+# Package configurations own rules; the root owner compares raw findings once.
+.PHONY: prepare-python-static check-python-static test-python-static
+prepare-python-static:
+	uv sync --frozen --project server
+	uv sync --frozen --project awid
+
+check-python-static: prepare-python-static
+	uv run --offline --frozen --no-sync --project server python scripts/python_static.py $(PYTHON_STATIC_ARGS)
+
+test-python-static:
+	uv run --offline --frozen --project server python -m unittest discover -s scripts -p test_python_static.py -v
+
 test-shipping: test-scripts
 	$(MAKE) test-vm-gate
 
@@ -332,6 +344,15 @@ PRODUCTION_AWID_PROJECT := scripts/test-egress/production-awid
 production-awid-sync:
 	uv sync --frozen --project $(PRODUCTION_AWID_PROJECT)
 
+# Unique loopback Compose services; this does not use an existing host database.
+.PHONY: test-server-local
+test-server-local:
+	python3 scripts/test_server_local.py
+
+.PHONY: test-user-paths-local
+test-user-paths-local:
+	python3 scripts/test_user_paths_local.py
+
 test-server: production-awid-sync
 	cd server && uv sync --frozen
 	set -eu; cd server; build_dir=$$(mktemp -d); trap 'rm -rf "$$build_dir"' EXIT; \
@@ -400,6 +421,13 @@ test-node-deps:
 	cd channel-core && npm ci --no-audit --no-fund
 	cd channel && npm ci --no-audit --no-fund
 	cd pi-extension && npm ci --no-audit --no-fund
+
+# Local server fixtures consume these Node artifacts before their first test.
+.PHONY: prepare-server-node
+prepare-server-node: test-node-deps
+	cd channel-core && npm run build
+	cd channel && npm run build
+	cd pi-extension && npm run build
 
 test-channel test-channel-core test-pi-extension test-wake-channel-core-bundle: test-node-deps
 
