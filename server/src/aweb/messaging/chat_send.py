@@ -737,6 +737,8 @@ async def _stored_exact_chat_send(
     from age only. The shared owner decides sameness; this adapter retains chat
     request binding, current sender key and encrypted expiry checks.
     """
+    from aweb.messaging.chat_models import SendMessageRequest
+
     if payload.message_id is None:
         return None
     lookup = await read_stored_message(
