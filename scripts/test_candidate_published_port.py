@@ -7,6 +7,7 @@ import os
 import subprocess
 import tempfile
 import unittest
+from http.client import RemoteDisconnected
 from pathlib import Path
 from unittest.mock import patch
 
@@ -18,7 +19,8 @@ spec.loader.exec_module(boundaries)
 
 
 class PublishedPortPropertyTests(unittest.TestCase):
-    def exercise(self, outcome, *, stolen=False, lost=False, stopped=False):
+    def exercise(self, outcome, *, stolen=False, lost=False, stopped=False,
+                 startup_disconnect=False, later_disconnect=False):
         containers = {}
         removed = []
         responses = []
@@ -61,6 +63,8 @@ class PublishedPortPropertyTests(unittest.TestCase):
 
         def http(port):
             self.assertEqual(str(port), "32768")
+            if startup_disconnect or (later_disconnect and len(containers) > 1):
+                raise RemoteDisconnected("Remote end closed connection without response")
             return "competitor\n" if stolen and len(containers) > 1 else responses[0] + "\n"
 
         boundary = boundaries.HostPublishedPortTests(
@@ -72,7 +76,10 @@ class PublishedPortPropertyTests(unittest.TestCase):
                     patch.dict(boundaries.os.environ, {}, clear=True):
                 boundary.test_docker_assigned_published_port_is_reserved_by_its_service()
         finally:
-            self.assertEqual(set(removed), set(containers))
+            expected = set(containers)
+            expected.update(name.replace("aweb-publish-original-", "aweb-publish-competitor-", 1)
+                            for name in containers)
+            self.assertEqual(set(removed), expected)
 
     def test_refused_competitor_and_success_without_mapping_are_valid(self):
         for outcome in ("refused", "unmapped"):
@@ -90,6 +97,15 @@ class PublishedPortPropertyTests(unittest.TestCase):
                 self.exercise("unmapped", **kwargs)
         with self.assertRaises(AssertionError):
             self.exercise("unrelated-error")
+
+    def test_persistent_startup_disconnect_still_fails_at_the_original_deadline(self):
+        with patch.object(boundaries.time, "monotonic", side_effect=[0, 11]):
+            with self.assertRaisesRegex(AssertionError, "original host publication never became reachable"):
+                self.exercise("refused", startup_disconnect=True)
+
+    def test_disconnect_after_readiness_is_not_retried(self):
+        with self.assertRaises(RemoteDisconnected):
+            self.exercise("refused", later_disconnect=True)
 
 
 class HostPublishedPortWiringTests(unittest.TestCase):

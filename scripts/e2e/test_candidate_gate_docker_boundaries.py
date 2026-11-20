@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import os
 import subprocess
@@ -420,6 +421,43 @@ def read_published_response(port: str) -> str:
 
 class HostPublishedPortTests(unittest.TestCase):
     """Only the host-side checks preflight invokes this real-socket test."""
+
+    def test_initial_disconnect_waits_for_service_startup(self) -> None:
+        real_run = run
+        real_read = read_published_response
+        original: str | None = None
+        startup_errors: list[str] = []
+
+        def held_startup(
+            *args: str, check: bool = True, env: dict[str, str] | None = None,
+            timeout: float | None = None,
+        ) -> subprocess.CompletedProcess[str]:
+            nonlocal original
+            if args[:2] == ("docker", "run"):
+                name = args[args.index("--name") + 1]
+                if name.startswith("aweb-publish-original-"):
+                    original = name
+                    args = (*args[:-1],
+                            "while [ ! -e /tmp/release-startup ]; do sleep 0.05; done; "
+                            + args[-1])
+            return real_run(*args, check=check, env=env, timeout=timeout)
+
+        def release_after_first_read(port: str) -> str:
+            try:
+                return real_read(port)
+            except (urllib.error.URLError, TimeoutError, http.client.RemoteDisconnected) as error:
+                if not startup_errors:
+                    startup_errors.append(type(error).__name__)
+                    if original is None:
+                        raise AssertionError("original service was not launched") from error
+                    real_run("docker", "exec", original, "touch", "/tmp/release-startup", timeout=10)
+                raise
+
+        # Hold real nginx after Docker publishes its socket, then release it on
+        # the first actual HTTP error. Run every existing competition assertion.
+        with patch.dict(globals(), run=held_startup, read_published_response=release_after_first_read):
+            self.test_docker_assigned_published_port_is_reserved_by_its_service()
+        self.assertEqual(len(startup_errors), 1)
 
     def test_docker_assigned_published_port_is_reserved_by_its_service(self) -> None:
         self.assertNotIn("CANDIDATE_RUNNER_NAME", os.environ,
