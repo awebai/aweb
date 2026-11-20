@@ -33,7 +33,13 @@ An inherited database URL or host/port that names a non-loopback host or port
 5432 is refused before creating services. Unset it; this target supplies its own
 `TEST_DB_*`, `TEST_DATABASE_URL`, `PG*`, Redis settings and `AWEB_TEST_SERVICES=1`.
 It does not attach to an existing host database. Each xdist worker binds its own
-ports before fixtures import their database settings.
+ports before fixtures import their database settings. Port discovery reads the
+owned container's `NetworkSettings.Ports`, verifying its ID and Compose project
+and service labels. It waits up to five seconds for a nonzero `127.0.0.1` binding;
+Compose's exposed-port summary is not used as a connection address. A refusal
+prints a bounded `LOCAL_PORT_DIAGNOSTIC` JSON record with the container ID,
+port-map readback and Compose port output before cleanup. No container environment
+or credentials are inspected.
 
 The target resolves Docker's context-over-host precedence before any daemon
 operation, refuses remote endpoints, and pins the selected Unix socket for disk
