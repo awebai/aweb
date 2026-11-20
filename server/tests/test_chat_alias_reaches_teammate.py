@@ -216,7 +216,7 @@ async def test_encrypted_first_chat_to_a_teammate_alias_is_encrypted_to_the_team
     pair = route_pair
     me = pair.target.global_actor
     teammate = await _actor(pair.target, "bob", global_identity=False)
-    await _actor(pair.source, "bob", global_identity=True)
+    outsider = await _actor(pair.source, "bob", global_identity=True)
     root, env = _cli_home(tmp_path, me)
     teammate_root, teammate_env = _cli_home(tmp_path, teammate)
     binary = Path(os.environ["AW_TEST_CLI_BINARY"])
@@ -225,12 +225,19 @@ async def test_encrypted_first_chat_to_a_teammate_alias_is_encrypted_to_the_team
                       "bob", "encrypted first contact", "--json")
 
     stored = await pair.target.db.fetch_one(
-        "SELECT body, encrypted_ciphertext FROM {{tables.chat_messages}} WHERE message_id=$1", sent["message_id"],
+        "SELECT body, encrypted_ciphertext, encrypted_envelope, encrypted_key_wraps"
+        " FROM {{tables.chat_messages}} WHERE message_id=$1", sent["message_id"],
     )
     assert stored["encrypted_ciphertext"], dict(stored)
     assert "encrypted first contact" not in (stored["body"] or ""), dict(stored)
-    dids, _ = await _participants(pair.target, sent["session_id"])
+    envelope, wraps = (json.loads(v) if isinstance(v, str) else v
+                       for v in (stored["encrypted_envelope"], stored["encrypted_key_wraps"]))
+    assert [r["did"] for r in envelope["recipients"]] == [teammate.did], envelope["recipients"]
+    assert [w["recipient_did"] for w in wraps if w["wrap_purpose"] == "delivery"] == [teammate.did], wraps
+    dids, addresses = await _participants(pair.target, sent["session_id"])
     assert teammate.did in dids, dids
+    assert outsider.did not in dids and outsider.stable not in dids, (dids, addresses)
+    assert outsider.address not in addresses, (dids, addresses)
     history = await _cli(binary, teammate_root, teammate_env, "chat", "history", me.alias, "--json")
     assert "encrypted first contact" in json.dumps(history), history
 
