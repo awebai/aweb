@@ -707,9 +707,12 @@ async def test_native_facts_project_identity_in_endpoint_team(native_send):
 @pytest.mark.asyncio
 async def test_legacy_native_policy_retains_forbidden_contract_after_local_refusal(mail_server):
     from dataclasses import replace
+    from types import SimpleNamespace
     from test_local_policy_refusal_boundaries import admitted_local_recipient
 
     env = mail_server
+    # Only the configured SDK resource is supplied to this policy seam.
+    service = SimpleNamespace(registry_client=env.registry)
     bob = await admitted_local_recipient(env)
     recipient = await env.db.fetch_one(
         "SELECT * FROM {{tables.agents}} WHERE agent_id=$1", UUID(bob.id)
@@ -719,7 +722,7 @@ async def test_legacy_native_policy_retains_forbidden_contract_after_local_refus
         team_id="ops:acme.com", verified_team_id="ops:acme.com",
     )
     with pytest.raises(ContractError) as refused:
-        await NativeMessagingService._policy(None, env.fixture.infra, outsider, recipient)
+        await NativeMessagingService._policy(service, env.fixture.infra, outsider, recipient)
     assert refused.value.code == "forbidden"
     assert refused.value.field == (
         "The recipient is not reachable from outside its team. "
@@ -728,4 +731,4 @@ async def test_legacy_native_policy_retains_forbidden_contract_after_local_refus
     )
     member = replace(outsider, did_key=bob.did, did_aw=None, team_id=bob.team,
                      verified_team_id=bob.team)
-    await NativeMessagingService._policy(None, env.fixture.infra, member, recipient)
+    await NativeMessagingService._policy(service, env.fixture.infra, member, recipient)

@@ -5,6 +5,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum, auto
 
+from fastapi import HTTPException
+from aweb.application_state import RegistryClientUnavailable
+
 from aweb.inbound_modes import (
     InboundMode,
     effective_inbound_mode,
@@ -12,11 +15,17 @@ from aweb.inbound_modes import (
 )
 from aweb.member_team_key import MemberReadLock, current_member_team_ids_for_identity
 from aweb.messaging.contacts import IdentityContactMatch, identity_contact_match
-from aweb.messaging.refusals import CONTACT_REBIND_ACTION, DeliveryRefusalCode, unreachable_address_refusal
+from aweb.messaging.refusals import (
+    CONTACT_REBIND_ACTION,
+    DeliveryRefusalCode,
+    unreachable_address_refusal,
+)
 from aweb.service_errors import ForbiddenError
 
 logger = logging.getLogger(__name__)
-_POLICY_ACTION = "Ask the recipient to add your exact address as a contact or check their inbound policy."
+_POLICY_ACTION = (
+    "Ask the recipient to add your exact address as a contact or check their inbound policy."
+)
 
 
 class DeliveryAttempt(Enum):
@@ -35,9 +44,7 @@ class DeliverySender:
     def identity_dids(self) -> list[str]:
         return list(
             dict.fromkeys(
-                value.strip()
-                for value in (*self.verified_dids, self.did)
-                if value.strip()
+                value.strip() for value in (*self.verified_dids, self.did) if value.strip()
             )
         )
 
@@ -70,9 +77,7 @@ async def recipient_inbound_mode(db, recipient: Mapping) -> InboundMode:
     policy_did = recipient.get("policy_did_aw", recipient.get("did_aw"))
     try:
         mode = (
-            await effective_inbound_mode(
-                db.get_manager("aweb"), str(policy_did), for_share=True
-            )
+            await effective_inbound_mode(db.get_manager("aweb"), str(policy_did), for_share=True)
             if policy_did
             else normalize_inbound_mode(recipient.get("inbound_mode"), default="")
         )
@@ -89,16 +94,17 @@ async def has_current_shared_team(
     *,
     recipient: Mapping,
     sender_dids: list[str],
+    registry_client=None,
 ) -> bool:
     """Intersect all current active memberships using R2's single selector."""
     recipient_dids = [
         str(recipient[field]) for field in ("did_aw", "did_key") if recipient.get(field)
     ]
     recipient_teams = await current_member_team_ids_for_identity(
-        db, recipient_dids, read_lock=MemberReadLock.SHARE
+        db, recipient_dids, registry_client=registry_client, read_lock=MemberReadLock.SHARE
     )
     sender_teams = await current_member_team_ids_for_identity(
-        db, sender_dids, read_lock=MemberReadLock.SHARE
+        db, sender_dids, registry_client=registry_client, read_lock=MemberReadLock.SHARE
     )
     return bool(recipient_teams & sender_teams)
 
@@ -109,6 +115,7 @@ async def authorize_delivery(
     recipient: Mapping,
     sender: DeliverySender,
     attempt: DeliveryAttempt,
+    registry_client=None,
 ) -> None:
     """Enforce docs/identity-messaging-contract.md:69-93 on every transport.
 
@@ -122,15 +129,21 @@ async def authorize_delivery(
         return
     if not global_recipient and attempt is DeliveryAttempt.STORED_ROUTE:
         return
-    if mode is not InboundMode.CONTACTS_ONLY and await has_current_shared_team(
-        db,
-        recipient=recipient,
-        sender_dids=sender.identity_dids(),
-    ):
-        return
-    owner_dids = [
-        str(recipient[field]) for field in ("did_aw", "did_key") if recipient.get(field)
-    ]
+    membership_error = None
+    if mode is not InboundMode.CONTACTS_ONLY:
+        try:
+            if await has_current_shared_team(
+                db,
+                recipient=recipient,
+                sender_dids=sender.identity_dids(),
+                registry_client=registry_client,
+            ):
+                return
+        except (HTTPException, RegistryClientUnavailable) as exc:
+            # An exact contact independently admits the sender. Otherwise an
+            # unavailable membership read must retain its cause and retry status.
+            membership_error = exc
+    owner_dids = [str(recipient[field]) for field in ("did_aw", "did_key") if recipient.get(field)]
     match = await identity_contact_match(
         db,
         owner_dids=owner_dids,
@@ -139,6 +152,8 @@ async def authorize_delivery(
     )
     if match is IdentityContactMatch.MATCHED:
         return
+    if membership_error is not None:
+        raise membership_error
     if match is IdentityContactMatch.NEEDS_BINDING:
         raise DeliveryPolicyRefused(
             code=DeliveryRefusalCode.CONTACT_IDENTITY_BINDING_REQUIRED,
@@ -156,6 +171,4 @@ async def authorize_delivery(
         if mode is InboundMode.CONTACTS_ONLY
         else "Recipient only accepts messages from verified team members or exact active contacts. "
     ) + _POLICY_ACTION
-    raise DeliveryPolicyRefused(
-        code=DeliveryRefusalCode.RECIPIENT_POLICY_REJECTED, detail=detail
-    )
+    raise DeliveryPolicyRefused(code=DeliveryRefusalCode.RECIPIENT_POLICY_REJECTED, detail=detail)

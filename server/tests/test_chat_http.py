@@ -1489,7 +1489,7 @@ async def test_receive_old_v1_federated_chat_ignores_deprecated_fields_and_deliv
     by_did = {row["did"]: row for row in participants}
     assert by_did[alice.stable_id]["delivery_origin"] == world.source.node.origin
     assert by_did[alice.stable_id]["current_did_key"] == alice_did_key
-    assert by_did[bob.stable_id]["agent_id"] is None
+    assert by_did[bob.stable_id]["agent_id"] == UUID(bob.agent_id)
     assert by_did[bob.stable_id]["delivery_origin"] is None
     assert by_did[bob.stable_id]["current_did_key"] == bob_did_key
     remote_requests = _record_federation(world.target.node)

@@ -385,6 +385,9 @@ async def test_a_revoked_client_certificate_is_refused_by_the_certificate_check(
 
 async def test_client_certificate_verification_reads_the_controller_key_fresh(world):
     assert (await world.send(world.delivery("client"))).status_code == 200
+    # Controller acts use whole seconds. Make this act strictly newer than
+    # the database's first-admission pin, including its fractional seconds.
+    await asyncio.sleep(1)
     await world.coordination.registry.rotate_team_key_by_controller(
         world.member.team_id, did_key(bytes(SigningKey.generate())), NAMESPACE_KEY,
     )

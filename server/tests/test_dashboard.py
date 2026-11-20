@@ -309,9 +309,15 @@ async def test_tasks_filters_in_isolation(dashboard_stack):
         headers={"X-Dashboard-Token": token},
     )
 
-    assert [task["title"] for task in status_resp.json()["tasks"]] == ["Build dashboard"]
-    assert [task["title"] for task in assignee_resp.json()["tasks"]] == ["Build dashboard"]
-    assert [task["title"] for task in priority_resp.json()["tasks"]] == ["Build dashboard"]
+    assert [task["title"] for task in status_resp.json()["tasks"]] == [
+        "Build dashboard"
+    ]
+    assert [task["title"] for task in assignee_resp.json()["tasks"]] == [
+        "Build dashboard"
+    ]
+    assert [task["title"] for task in priority_resp.json()["tasks"]] == [
+        "Build dashboard"
+    ]
     assert [task["title"] for task in q_resp.json()["tasks"]] == ["Document claims"]
 
 
@@ -411,7 +417,9 @@ async def test_missing_token_returns_401(privacy_app):
 
 
 @pytest.mark.asyncio
-async def test_anonymous_request_reports_upstream_registry_connect_errors_as_503(dashboard_stack):
+async def test_anonymous_request_reports_upstream_registry_connect_errors_as_503(
+    dashboard_stack,
+):
     env = dashboard_stack
     await _seed(env)
     with socket.socket() as unused:
@@ -474,8 +482,9 @@ async def test_anonymous_request_returns_503_during_partial_init_without_registr
     assert resp.status_code == 503
     detail = resp.json()["detail"]
     assert detail["code"] == "registry_client_unavailable"
-    assert detail["message"].endswith(
-        "Configure the serving registry client and start the application before retrying."
+    assert (
+        detail["message"]
+        == "Registry client is unavailable. Configure the serving registry client and start the application before retrying."
     )
 
 
@@ -643,7 +652,9 @@ async def test_list_agents_excludes_human_typed_attribution_rows(privacy_app):
 async def test_public_team_allows_anonymous_dashboard_reads(privacy_app):
     response = await privacy_app.client.get(f"/v1/teams/{TEAM}/agents")
     assert response.status_code == 200, response.text
-    assert {row["alias"] for row in response.json()["agents"]} == set(privacy_app.actors)
+    assert {row["alias"] for row in response.json()["agents"]} == set(
+        privacy_app.actors
+    )
 
 
 @pytest.mark.asyncio
@@ -651,7 +662,9 @@ async def test_status_endpoint_uses_shared_activity(privacy_app):
     from test_coordination_state_http import request_as
 
     env = privacy_app
-    heartbeat = await request_as(env, alias="alice", method="POST", path="/v1/agents/heartbeat")
+    heartbeat = await request_as(
+        env, alias="alice", method="POST", path="/v1/agents/heartbeat"
+    )
     assert heartbeat.status_code == 200, heartbeat.text
     await env.redis.delete(f"presence:{env.actors['alice'].workspace}")
     response = await env.client.get(
@@ -700,7 +713,9 @@ async def test_private_team_jwt_read_does_not_require_public_visibility_lookup(
                 headers={"X-Dashboard-Token": _make_jwt([TEAM])},
             )
             assert authenticated.status_code == 200, authenticated.text
-            assert {row["alias"] for row in authenticated.json()["agents"]} == set(env.actors)
+            assert {row["alias"] for row in authenticated.json()["agents"]} == set(
+                env.actors
+            )
         finally:
             env.app.state.awid_registry_client = original
     finally:

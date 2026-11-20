@@ -238,7 +238,7 @@ async def explicit_mail_target_matches_participant(
         if str(participant.get("agent_id") or "") == selected_id:
             # This is a consistency check against the already-authorized
             # participant, not a new member selector or routing authority.
-            checks.append(True)
+            selected_identity_matches = True
         else:
             selected = await read_member_projection(db.get_manager("aweb"), agent_id=selected_id)
             projected = (
@@ -247,7 +247,8 @@ async def explicit_mail_target_matches_participant(
                 else {}
             )
             selected_did = str(projected.get("did_aw") or projected.get("did_key") or "")
-            checks.append(selected_did == participant_did)
+            selected_identity_matches = selected_did == participant_did
+        checks.append(selected_identity_matches)
     if to_alias is not None and str(to_alias).strip():
         checks.append(participant_alias == str(to_alias).strip())
     if to_stable_id is not None and str(to_stable_id).strip():

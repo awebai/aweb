@@ -56,6 +56,8 @@ class TeamIdentity:
     certificate_id: str
     grant: GrantContext | None = None
     address_resolution: AddressResolution = field(default_factory=AddressResolution)
+    # The verifier's checked key, retained for this credential's stream lifetime.
+    verified_team_did_key: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "identity_scope", normalize_identity_scope(self.identity_scope))
@@ -87,6 +89,7 @@ class MessagingAuth:
     grant: GrantContext | None = None
     id_chain: dict | None = None
     address_resolution: AddressResolution = field(default_factory=AddressResolution)
+    verified_team_did_key: str | None = None
 
     def __post_init__(self) -> None:
         if self.identity_scope is not None:

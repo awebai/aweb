@@ -6,7 +6,6 @@ from __future__ import annotations
 from aweb.human_kind import IdentityKind, is_verified_human
 from aweb.member_team_key import (
     MemberProjection,
-    current_member,
     member_projection_columns_sql,
     messaging_identity_projection,
 )
@@ -43,6 +42,8 @@ import json
 import logging
 
 import asyncpg
+from fastapi import HTTPException
+from aweb.application_state import RegistryClientUnavailable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Awaitable, Callable
@@ -283,6 +284,7 @@ class _LockedRecipientResidence:
 
     recipient: dict
     storage_agent_ids: tuple[UUID, ...]
+    residences: tuple[MemberProjection, ...]
 
 
 async def _lock_current_recipient(
@@ -293,9 +295,10 @@ async def _lock_current_recipient(
 ) -> _LockedRecipientResidence:
     """Lock exact-DID residence without selecting a membership as its authority.
 
-    docs/identity-messaging-contract.md:272-277 makes independently verified
+    Continuations (docs/identity-messaging-contract.md:311-316) makes independently verified
     address residence independent of current membership and binding markers.
-    Row IDs locate storage only; an identity-only ingress stays actor-free.
+    Row IDs locate storage and notification attribution only. They grant no
+    same-team admission; that remains the current-member policy owner's rule.
     """
     target_did = envelope.target_did_aw
     target_key = envelope.target_current_did_key
@@ -355,6 +358,7 @@ async def _lock_current_recipient(
     return _LockedRecipientResidence(
         recipient=current,
         storage_agent_ids=tuple(row["agent_id"] for row in residences),
+        residences=residences,
     )
 
 
@@ -367,9 +371,9 @@ def _resident_participant(
 ) -> dict:
     """Keep verified target identity and explicit references separate from rows.
 
-    docs/identity-messaging-contract.md:262-277 assigns current key authority
-    to the resolved address, never a newest membership. Existing explicit row
-    references may remain references; an absent reference is never invented.
+    Continuations (docs/identity-messaging-contract.md:301-316) assigns key
+    authority to the resolved address. A unique known residence retains its
+    storage/event attribution, never a membership or newest-row authority.
     """
     current = dict(recipient)
     current.update(agent_id=None, team_id=None, did_key=envelope.target_current_did_key)
@@ -400,16 +404,16 @@ def _resident_participant(
     ]
     current["agent_type"] = IdentityKind.HUMAN.value if humans else IdentityKind.UNKNOWN.value
     current["human_verified_key"] = envelope.target_current_did_key if humans else None
-    for row in residences:
-        if str(row["agent_id"]) == str(recipient.get("agent_id")):
-            current["agent_id"] = row["agent_id"]
-            if (
-                current_member(row)
-                and row["did_key"] == envelope.target_current_did_key
-                and row.verified_identity().get("did_aw") == current.get("did_aw")
-            ):
-                current["team_id"] = row["team_id"]
-            break
+    reference = recipient.get("agent_id")
+    attributed = next((row for row in residences if str(row["agent_id"]) == str(reference)), None)
+    if attributed is None and reference is None and len(residences) == 1:
+        attributed = residences[0]
+    if attributed is not None:
+        current.update(
+            agent_id=attributed["agent_id"],
+            team_id=attributed["team_id"],
+            alias=attributed["alias"],
+        )
     return current
 
 
@@ -485,11 +489,13 @@ async def _authorize_policy(
     envelope: FederationEnvelope,
     recipient: Mapping,
     stored_route_continuation: bool,
+    registry_client=None,
 ) -> None:
     try:
         await authorize_delivery(
             TransactionInfra(None, tx),
             recipient=recipient,
+            registry_client=registry_client,
             sender=DeliverySender(
                 did=envelope.sender_did_aw,
                 address=envelope.sender_address,
@@ -501,6 +507,8 @@ async def _authorize_policy(
         )
     except DeliveryPolicyRefused as exc:
         raise FederationPolicyRefused(exc) from exc
+    except (HTTPException, RegistryClientUnavailable) as exc:
+        raise FederationAuthorityError("federation_authority_coordination_unavailable") from exc
 
 
 async def _ensure_sender_contact(
@@ -638,7 +646,7 @@ async def _ensure_chat_session(
                 session_id, did, agent_id, alias, address, delivery_origin, current_did_key
             ) VALUES ($1, $2, $3, $4, $5, $6, $7)
             ON CONFLICT (session_id, did) DO UPDATE SET
-                agent_id = EXCLUDED.agent_id,
+                agent_id = CASE WHEN $8 THEN COALESCE({{tables.chat_participants}}.agent_id, EXCLUDED.agent_id) ELSE EXCLUDED.agent_id END,
                 alias = EXCLUDED.alias,
                 address = CASE WHEN $8 THEN {{tables.chat_participants}}.address ELSE EXCLUDED.address END,
                 delivery_origin = CASE WHEN $8 THEN {{tables.chat_participants}}.delivery_origin ELSE EXCLUDED.delivery_origin END,
@@ -696,7 +704,7 @@ async def _upsert_conversation_participants(
                 current_did_key, transport_hint, role
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             ON CONFLICT (conversation_id, did) DO UPDATE SET
-                agent_id = EXCLUDED.agent_id,
+                agent_id = CASE WHEN $10 THEN COALESCE({{tables.conversation_participants}}.agent_id, EXCLUDED.agent_id) ELSE EXCLUDED.agent_id END,
                 alias = EXCLUDED.alias,
                 address = CASE WHEN $10 THEN {{tables.conversation_participants}}.address ELSE EXCLUDED.address END,
                 delivery_origin = CASE WHEN $10 THEN {{tables.conversation_participants}}.delivery_origin ELSE EXCLUDED.delivery_origin END,
@@ -894,6 +902,7 @@ async def _deliver_federated_phase_b(
     recipient: Mapping,
     id_chain: dict | None = None,
     authority_token: AuthoritySecurityToken | None,
+    registry_client=None,
     stored_route_continuation: bool = False,
     stored_route_snapshot: dict | None = None,
     before_commit: BeforeCommit | None = None,
@@ -950,11 +959,21 @@ async def _deliver_federated_phase_b(
                 envelope=envelope,
                 expected=stored_route_snapshot,
             )
-            # Retain a saved row reference only after both its participant and
-            # exact identity residence have been locked. It stays storage data;
-            # recipient/team authorization and wake targets remain identity-only.
+            # Retain the saved reference after its participant and exact DID
+            # residence are locked. Reuse those facts for storage/event
+            # attribution; admission is still checked by the policy owner.
             if stored_reference in locked_residence.storage_agent_ids:
                 recipient_storage_agent_id = stored_reference
+                attributed = next(
+                    row
+                    for row in locked_residence.residences
+                    if row["agent_id"] == stored_reference
+                )
+                recipient.update(
+                    agent_id=attributed["agent_id"],
+                    team_id=attributed["team_id"],
+                    alias=attributed["alias"],
+                )
         await _require_recipient_encryption_assertion(
             tx,
             envelope=envelope,
@@ -964,6 +983,7 @@ async def _deliver_federated_phase_b(
             tx,
             envelope=envelope,
             recipient=recipient,
+            registry_client=registry_client,
             stored_route_continuation=stored_route_continuation,
         )
         await _ensure_sender_contact(
@@ -1078,6 +1098,7 @@ async def deliver_federated_phase_b(
     recipient: Mapping,
     id_chain: dict | None = None,
     authority_token: AuthoritySecurityToken | None,
+    registry_client=None,
     stored_route_continuation: bool = False,
     stored_route_snapshot: dict | None = None,
     before_commit: BeforeCommit | None = None,
@@ -1092,6 +1113,7 @@ async def deliver_federated_phase_b(
             recipient=recipient,
             id_chain=id_chain,
             authority_token=authority_token,
+            registry_client=registry_client,
             stored_route_continuation=stored_route_continuation,
             stored_route_snapshot=stored_route_snapshot,
             before_commit=before_commit,

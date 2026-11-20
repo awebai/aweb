@@ -8,6 +8,7 @@ from awid.signing import verify_did_key_signature
 from fastapi import Depends, HTTPException, Request
 
 from aweb.application_state import application_registry_client
+from aweb.awid_error_handling import AWID_DEPENDENCY_ERRORS
 from aweb.auth_context import GrantContext as GrantContext
 from aweb.auth_context import IdentityAuth, MessagingAuth, TeamIdentity
 from aweb.auth_metrics import count_legacy_request_auth
@@ -116,7 +117,7 @@ async def resolve_identity_auth(request: Request, *, db=None) -> IdentityAuth:
     address = None
     try:
         addresses = await registry_client.list_did_addresses(did_aw)
-    except Exception as exc:
+    except AWID_DEPENDENCY_ERRORS as exc:
         # Retain the typed cause in request-local evidence; log no URL, name,
         # exception message or credentials. Failed discovery grants no fact.
         outcome = AddressResolution(AddressResolutionState.UNKNOWN, cause=exc)
@@ -181,6 +182,13 @@ async def lookup_identity_agent_context(
     )
     if not rows:
         return None
+    registry = application_registry_client(request.app.state)
+    eligible = []
+    for row in rows:
+        member = await current_membership(registry, row, request=request)
+        if member and member.get("team_id"):
+            eligible.append(member)
+    rows = eligible
     prior_resolution = getattr(request.state, "identity_address_resolution", None)
     if (
         prior_resolution is not None
@@ -209,13 +217,6 @@ async def lookup_identity_agent_context(
             )
         rows = [{**dict(row), "did_aw_verified_key": did_key} for row in rows]
     rows = [verified_projection(row) for row in rows]
-    registry = application_registry_client(request.app.state)
-    eligible = []
-    for row in rows:
-        member = await current_membership(registry, row, request=request)
-        if member and member.get("team_id"):
-            eligible.append(member)
-    rows = eligible
     outcome = getattr(request.state, "identity_address_resolution", AddressResolution())
     if len(rows) > 1:
         if did_aw_value and outcome.state is AddressResolutionState.VERIFIED:
@@ -335,6 +336,7 @@ async def get_messaging_auth(request: Request, db=Depends(get_db)) -> MessagingA
             agent_id=team_identity.agent_id,
             identity_scope=team_identity.identity_scope,
             certificate_id=team_identity.certificate_id,
+            verified_team_did_key=team_identity.verified_team_did_key,
             verified_team_id=team_identity.team_id,
             id_chain=getattr(request.state, "id_chain", None),
             address_resolution=team_identity.address_resolution,

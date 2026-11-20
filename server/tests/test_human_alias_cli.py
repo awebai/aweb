@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 import pytest
+from aweb.application_state import application_registry_client
 from aweb.e2ee_messages import generate_x25519_keypair
 from awid.e2ee_keys import build_encryption_key_assertion
 from test_cli_human_reply import _cli
@@ -247,7 +248,10 @@ async def test_cli_first_contact_human_alias_with_signed_key(
             ),
         )
         provider = HostAuthority(env.db, binding)
-        service = NativeMessagingService(env.infra, authority=provider, service=binding)
+        service = NativeMessagingService(
+            env.infra, authority=provider, service=binding,
+            registry_client=application_registry_client(env.app.state),
+        )
         env.app.state.human_channels_service = service
 
         if global_human:

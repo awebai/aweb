@@ -202,6 +202,7 @@ class TestResolveTeamIdentity:
                 identity_scope="global",
                 certificate_id="cert-001",
                 identity_binding=binding,
+                verified_team_did_key=env.team_did,
             )
             result = await connect_agent(
                 db=env.db,
@@ -250,7 +251,7 @@ class TestResolveTeamIdentity:
             await resolve_team_identity(db, cert_info)
 
     @pytest.mark.asyncio
-    async def test_uses_the_exact_native_snapshot_without_a_second_member_read(self, privacy_app):
+    async def test_rechecks_the_exact_native_snapshot_under_acceptance_locks(self, privacy_app):
         from aweb.member_team_key import read_member_projection
         from aweb.team_auth_deps import resolve_team_identity
 
@@ -267,9 +268,11 @@ class TestResolveTeamIdentity:
                 # observation on the caller's connection, not a DB replacement.
                 assert await tx.fetch_value("SELECT 1") == 1
         assert identity.agent_id == str(member.id)
-        assert not [
+        member_reads = [
             query for query in queries if "agents" in query.lower() and "select" in query.lower()
         ]
+        assert len(member_reads) == 1, member_reads
+        assert "FOR SHARE OF t FOR UPDATE OF a" in member_reads[0]
 
     @pytest.mark.asyncio
     async def test_another_members_snapshot_requires_the_exact_native_lookup(self, privacy_app):
@@ -291,7 +294,8 @@ class TestResolveTeamIdentity:
         member_reads = [
             query for query in queries if "agents" in query.lower() and "select" in query.lower()
         ]
-        assert len(member_reads) == 1, member_reads
+        assert len(member_reads) == 2, member_reads
+        assert "FOR SHARE OF t FOR UPDATE OF a" in member_reads[-1]
 
 
 @pytest.mark.asyncio

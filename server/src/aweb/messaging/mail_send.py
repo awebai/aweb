@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from aweb.messaging.refusals import RecipientIdentityBindingError
+
 import json
 import logging
 from collections.abc import Mapping, Sequence
@@ -955,18 +957,18 @@ async def _continuation_signature_recipient(
     if not signed_stable and isinstance(signed_to, str) and signed_to.startswith("did:aw:"):
         signed_stable = signed_to
     if not stable.startswith("did:aw:") or signed_stable != stable:
-        raise IdentityBindingError(IdentityBindingCode.MISMATCH)
+        raise RecipientIdentityBindingError(IdentityBindingCode.MISMATCH)
     address = str(participant.get("address") or "")
     signed_address = signed_to if isinstance(signed_to, str) and "/" in signed_to else ""
     if signed_address and signed_address != address:
-        raise IdentityBindingError(IdentityBindingCode.MISMATCH)
+        raise RecipientIdentityBindingError(IdentityBindingCode.MISMATCH)
     if not signed_key and isinstance(signed_to, str) and signed_to.startswith("did:key:"):
         signed_key = signed_to
     if not signed_key:
         # Released clients may sign only the stable DID on a stored route.
         # Discover its current key solely for validation, never for delivery.
         if runtime.registry_client is None:
-            raise IdentityBindingError(IdentityBindingCode.UNAVAILABLE)
+            raise RecipientIdentityBindingError(IdentityBindingCode.UNAVAILABLE)
         try:
             resolved = await runtime.registry_client.resolve_key_fresh(stable)
             signed_key = resolved.current_did_key
@@ -981,22 +983,25 @@ async def _continuation_signature_recipient(
                 if exc.status_code == 404
                 else IdentityBindingCode.UNAVAILABLE
             )
-            raise IdentityBindingError(code) from exc
+            raise RecipientIdentityBindingError(code) from exc
         except AWID_DEPENDENCY_ERRORS as exc:
             logging.getLogger(__name__).warning(
                 "Stored mail signature binding dependency failed failure_type=%s",
                 type(exc).__name__,
             )
-            raise IdentityBindingError(IdentityBindingCode.UNAVAILABLE) from exc
+            raise RecipientIdentityBindingError(IdentityBindingCode.UNAVAILABLE) from exc
     if not isinstance(signed_key, str) or not signed_key.startswith("did:key:"):
-        raise IdentityBindingError(IdentityBindingCode.MISMATCH)
-    await observe_current_identity_binding(
-        runtime.registry_client,
-        runtime.identity_binding_cache,
-        did_key=signed_key,
-        did_aw=stable,
-        address=signed_address,
-    )
+        raise RecipientIdentityBindingError(IdentityBindingCode.MISMATCH)
+    try:
+        await observe_current_identity_binding(
+            runtime.registry_client,
+            runtime.identity_binding_cache,
+            did_key=signed_key,
+            did_aw=stable,
+            address=signed_address,
+        )
+    except IdentityBindingError as exc:
+        raise RecipientIdentityBindingError(exc.code, headers=exc.headers) from exc
     # This copy is passed only to the payload validator. The original recipient,
     # participant agent_id, policy rows and all projection markers stay intact.
     return {**recipient, "did_aw": stable, "did_key": signed_key, "address": address}
@@ -1008,6 +1013,7 @@ async def _commit_mail_continuation(
     message: MailStorageInput,
     recipient: Mapping[str, Any],
     sender: DeliverySender,
+    registry_client,
 ) -> StoredMail:
     """Recheck stored-route policy and commit the message under its read locks."""
     if message.conversation_id is None:
@@ -1016,6 +1022,7 @@ async def _commit_mail_continuation(
         send_db = TransactionInfra(db, tx)
         await admit_message_delivery(
             send_db,
+            registry_client=registry_client,
             recipient=recipient,
             recipient_did=message.recipient.did,
             to_agent_id=message.recipient.agent_id,
@@ -1161,6 +1168,7 @@ async def send_mail_conversation_continuation(
     # Admission comes before any replay, as for any send.
     await admit_message_delivery(
         db,
+        registry_client=runtime.registry_client,
         recipient=recipient,
         recipient_did=recipient_participant["did"],
         to_agent_id=recipient.get("agent_id"),
@@ -1178,6 +1186,7 @@ async def send_mail_conversation_continuation(
             message_id, server_received_at = await _commit_mail_continuation(
                 db,
                 recipient=recipient,
+                registry_client=runtime.registry_client,
                 sender=DeliverySender(
                     did=sender_did,
                     address=sender_address,
@@ -1428,9 +1437,15 @@ async def _accepted_encrypted_mail_target_matches_participant(
         or payload.to_did is None
         or payload.message_id is None
         or payload.conversation_id is None
-        or any(value is not None for value in (
-            payload.to_agent_id, payload.to_alias, payload.to_address, payload.to_stable_id
-        ))
+        or any(
+            value is not None
+            for value in (
+                payload.to_agent_id,
+                payload.to_alias,
+                payload.to_address,
+                payload.to_stable_id,
+            )
+        )
     ):
         return False
     routing = payload.encrypted_envelope.get("routing")
@@ -1580,7 +1595,11 @@ async def _resolve_new_mail_target(
 
     if payload.to_address is None and payload.to_stable_id is not None:
         recipient_did = payload.to_stable_id.strip()
-        recipient = await resolve_agent_by_did(db, recipient_did)
+        recipient = await resolve_agent_by_did(
+            db,
+            recipient_did,
+            team_id=auth.team_id if recipient_did.startswith("did:key:") else None,
+        )
         if recipient is not None:
             recipient = identity_recipient(recipient)
         if recipient is None:
@@ -1588,7 +1607,11 @@ async def _resolve_new_mail_target(
                 _raise_bare_did_first_contact_unsupported()
             raise recipient_not_found()
         if payload.to_did is not None and payload.to_did.strip():
-            bound_recipient = await resolve_agent_by_did(db, payload.to_did.strip())
+            bound_recipient = await resolve_agent_by_did(
+                db,
+                payload.to_did.strip(),
+                team_id=auth.team_id if payload.to_did.strip().startswith("did:key:") else None,
+            )
             if not _recipient_identity_matches(bound_recipient, recipient):
                 raise recipient_selector_mismatch(
                     supplied=RecipientSelectorField.DID,
@@ -1607,7 +1630,11 @@ async def _resolve_new_mail_target(
         to_alias = recipient.get("alias")
     elif payload.to_address is None and payload.to_did is not None:
         requested_recipient_did = payload.to_did.strip()
-        recipient = await resolve_agent_by_did(db, requested_recipient_did)
+        recipient = await resolve_agent_by_did(
+            db,
+            requested_recipient_did,
+            team_id=auth.team_id if requested_recipient_did.startswith("did:key:") else None,
+        )
         if recipient is not None:
             recipient = identity_recipient(recipient)
         if recipient is None:
@@ -1779,6 +1806,7 @@ class _LocalMailCommit:
 async def _commit_new_local_mail(
     db,
     *,
+    runtime: MessagingRuntime,
     auth: MessagingAuth,
     target: MailTarget,
     payload: SendMessageRequest,
@@ -1802,6 +1830,7 @@ async def _commit_new_local_mail(
         # that commits it, keeping membership/contact locks until delivery.
         await authorize_message_delivery(
             send_db,
+            registry_client=runtime.registry_client,
             recipient_agent=recipient,
             sender_did=sender_did,
             sender_address=sender_address,
@@ -1978,6 +2007,7 @@ async def _send_mail_to_resolved_target(
         if not recipient.get("external"):
             await authorize_message_delivery(
                 db,
+                registry_client=runtime.registry_client,
                 recipient_agent=recipient,
                 sender_did=sender_did,
                 sender_address=sender_address,
@@ -2007,6 +2037,7 @@ async def _send_mail_to_resolved_target(
                 # delivery leaves no conversation behind.
                 committed = await _commit_new_local_mail(
                     db,
+                    runtime=runtime,
                     auth=auth,
                     target=target,
                     payload=payload,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from aweb.task_refs import TaskTitleFields, task_title_join
+from aweb.member_team_key import current_member_sql
 
 import time
 from collections import OrderedDict
@@ -348,9 +349,11 @@ async def status(
             focus_info.title AS focus_task_title,
             focus_info.issue_type AS focus_task_type
         FROM {{{{tables.workspaces}}}} w
+        JOIN {{{{tables.agents}}}} a ON a.agent_id=w.agent_id AND a.team_id=w.team_id
         LEFT JOIN {{{{tables.repos}}}} r ON w.repo_id = r.id AND r.deleted_at IS NULL
         {task_title_join(alias="focus_info", team_id_col="w.team_id", task_ref_col="w.focus_task_ref", fields=TaskTitleFields.TITLE_AND_TYPE)}
         WHERE w.team_id = $1
+          AND {current_member_sql("a")}
           AND w.deleted_at IS NULL
           AND w.workspace_id = ANY($2::uuid[])
         ORDER BY w.updated_at DESC, w.alias ASC
@@ -358,6 +361,8 @@ async def status(
         team_id,
         workspace_ids,
     )
+    if "workspace_count" in workspace_info:
+        workspace_info["workspace_count"] = len(workspace_rows)
     workspace_rows_by_id = {str(row["workspace_id"]): row for row in workspace_rows}
     ordered_workspace_ids = [
         ws_id for ws_id in workspace_ids if ws_id in workspace_rows_by_id

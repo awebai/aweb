@@ -519,7 +519,7 @@
       "tool": "ruff",
       "file": "awid/src/awid/registry.py",
       "code": "BLE001",
-      "count": 7
+      "count": 5
     },
     {
       "tool": "ruff",
@@ -1094,12 +1094,6 @@
     {
       "tool": "ruff",
       "file": "server/tests/test_awid_controller_type_refusal_http.py",
-      "code": "F401",
-      "count": 1
-    },
-    {
-      "tool": "ruff",
-      "file": "server/tests/test_awid_registry_client.py",
       "code": "F401",
       "count": 1
     },

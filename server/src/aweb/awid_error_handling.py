@@ -27,7 +27,7 @@ def awid_registry_not_configured_detail(*, operation: str = "AWID registry") -> 
 
 
 def awid_registry_not_configured_exception(*, operation: str = "AWID registry") -> HTTPException:
-    return HTTPException(status_code=500, detail=awid_registry_not_configured_detail(operation=operation))
+    return HTTPException(status_code=503, detail=awid_registry_not_configured_detail(operation=operation))
 
 
 def awid_dependency_http_exception(

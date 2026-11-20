@@ -27,7 +27,11 @@ async def test_retained_deleted_claim_is_locked_but_never_reacquired(privacy_app
     # docs/aweb-sot.md:1155–1165 and the retained-path cleanup contract.
     env = privacy_app
     created = await request_as(
-        env, alias="alice", method="POST", path="/v1/tasks", payload={"title": "Retained claim"}
+        env,
+        alias="alice",
+        method="POST",
+        path="/v1/tasks",
+        payload={"title": "Retained claim"},
     )
     assert created.status_code == 200, created.text
     ref = created.json()["task_ref"]
@@ -38,7 +42,9 @@ async def test_retained_deleted_claim_is_locked_but_never_reacquired(privacy_app
     assert claimed.status_code == 200, claimed.text
     old_workspace = env.actors["alice"].workspace
     claim_before = await env.db.fetch_one(
-        "SELECT * FROM {{tables.task_claims}} WHERE team_id=$1 AND task_ref=$2", TEAM, ref
+        "SELECT * FROM {{tables.task_claims}} WHERE team_id=$1 AND task_ref=$2",
+        TEAM,
+        ref,
     )
     # Retained claims on deleted workspaces are supported cleanup input. This
     # changes lifecycle state, never authentication or the claim decision.
@@ -61,7 +67,9 @@ async def test_retained_deleted_claim_is_locked_but_never_reacquired(privacy_app
     ) == dict(workspace_before)
     assert dict(
         await env.db.fetch_one(
-            "SELECT * FROM {{tables.task_claims}} WHERE team_id=$1 AND task_ref=$2", TEAM, ref
+            "SELECT * FROM {{tables.task_claims}} WHERE team_id=$1 AND task_ref=$2",
+            TEAM,
+            ref,
         )
     ) == dict(claim_before)
 
@@ -78,7 +86,9 @@ async def test_retained_deleted_claim_is_locked_but_never_reacquired(privacy_app
         )
         == 0
     )
-    connected = await request_as(env, alias="alice", method="POST", path="/v1/connect", payload={})
+    connected = await request_as(
+        env, alias="alice", method="POST", path="/v1/connect", payload={}
+    )
     assert connected.status_code == 200, connected.text
     live_workspace = UUID(connected.json()["workspace_id"])
     assert live_workspace != old_workspace
@@ -104,34 +114,52 @@ async def test_later_writer_cannot_replace_or_suppress_committed_claim_event(
     # docs/aweb-sot.md:1155–1166: the hook announces the actual transaction.
     env = privacy_app
     parent = await request_as(
-        env, alias="bob", method="POST", path="/v1/tasks", payload={"title": "Later parent"}
+        env,
+        alias="bob",
+        method="POST",
+        path="/v1/tasks",
+        payload={"title": "Later parent"},
     )
     assert parent.status_code == 200, parent.text
     created = await request_as(
-        env, alias="alice", method="POST", path="/v1/tasks", payload={"title": "Before claim"}
+        env,
+        alias="alice",
+        method="POST",
+        path="/v1/tasks",
+        payload={"title": "Before claim"},
     )
     assert created.status_code == 200, created.text
     task_id, ref = created.json()["task_id"], created.json()["task_ref"]
     path = f"/v1/tasks/{ref}"
     committed, resume = asyncio.Event(), asyncio.Event()
     real_transaction = env.db.transaction
-    first_transaction = True
+    first_task_commit = True
 
     @asynccontextmanager
-    async def pause_first_committed_transaction():
+    async def pause_first_committed_task_transaction():
         # Scheduler instrumentation only: the original pgdbm transaction and
-        # every query/result are untouched. Pause after its real COMMIT, before
-        # returning to the first HTTP writer; a second signed writer then runs.
-        nonlocal first_transaction
-        pause = first_transaction
-        first_transaction = False
+        # every query/result are untouched. Admission may commit earlier work;
+        # pause only after the target task's real COMMIT, before returning to
+        # the first HTTP writer. A second signed writer then runs.
+        nonlocal first_task_commit
         async with real_transaction() as tx:
             yield tx
-        if pause:
+        if not first_task_commit:
+            return
+        row = await env.db.fetch_one(
+            "SELECT status,assignee_alias,title FROM {{tables.tasks}} WHERE task_id=$1",
+            UUID(task_id),
+        )
+        if row and (row["status"], row["assignee_alias"], row["title"]) == (
+            "in_progress",
+            "alice",
+            "Alice committed title",
+        ):
+            first_task_commit = False
             committed.set()
             await resume.wait()
 
-    monkeypatch.setattr(env.db, "transaction", pause_first_committed_transaction)
+    monkeypatch.setattr(env.db, "transaction", pause_first_committed_task_transaction)
     async with env.redis.pubsub() as stream:
         await stream.subscribe(team_events_channel_name(TEAM))
         subscribed = await stream.get_message(timeout=5)
@@ -149,7 +177,8 @@ async def test_later_writer_cannot_replace_or_suppress_committed_claim_event(
             async with asyncio.timeout(5):
                 await committed.wait()
             row = await env.db.fetch_one(
-                "SELECT status,assignee_alias FROM {{tables.tasks}} WHERE task_id=$1", UUID(task_id)
+                "SELECT status,assignee_alias FROM {{tables.tasks}} WHERE task_id=$1",
+                UUID(task_id),
             )
             assert (row["status"], row["assignee_alias"]) == ("in_progress", "alice")
             assert (
@@ -179,7 +208,9 @@ async def test_later_writer_cannot_replace_or_suppress_committed_claim_event(
         finally:
             resume.set()
             response = await first
-        assert response.status_code == (200 if later_write == "reopen" else 404), response.text
+        assert response.status_code == (200 if later_write == "reopen" else 404), (
+            response.text
+        )
         transitions = [
             context
             for event, context in env.dispatched
@@ -189,7 +220,10 @@ async def test_later_writer_cannot_replace_or_suppress_committed_claim_event(
         ]
         assert len(transitions) == 1
         transition = transitions[0]
-        assert (transition["old_status"], transition["new_status"]) == ("open", "in_progress")
+        assert (transition["old_status"], transition["new_status"]) == (
+            "open",
+            "in_progress",
+        )
         assert transition["assignee_alias"] == "alice"
         assert transition["title"] == "Alice committed title"
         assert transition["parent_task_id"] is None
@@ -200,7 +234,9 @@ async def test_later_writer_cannot_replace_or_suppress_committed_claim_event(
         events = []
         async with asyncio.timeout(5):
             while True:
-                frame = await stream.get_message(ignore_subscribe_messages=True, timeout=1)
+                frame = await stream.get_message(
+                    ignore_subscribe_messages=True, timeout=1
+                )
                 if frame is None:
                     continue
                 event = json.loads(frame["data"])

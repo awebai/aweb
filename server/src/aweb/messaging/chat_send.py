@@ -125,10 +125,10 @@ from aweb.messaging.signatures import (
     require_verified_message_signature,
 )
 from aweb.messaging.verification import require_conversation_not_legacy_bound
+from aweb.messaging.refusals import RecipientIdentityBindingError
 from aweb.service_errors import (
     ConflictError,
     IdentityBindingCode,
-    IdentityBindingError,
     ForbiddenError,
     NotFoundError,
     ValidationError,
@@ -428,10 +428,11 @@ async def deliver_federated_chat(
     local = await local_recipient_for_own_route(db, route, runtime)
     if local is not None:
         if envelope.target_current_did_key != local.get("did_key"):
-            raise IdentityBindingError(IdentityBindingCode.MISMATCH)
+            raise RecipientIdentityBindingError(IdentityBindingCode.MISMATCH)
         await require_agent_chat(db, [local])
         await authorize_message_delivery(
             db,
+            registry_client=runtime.registry_client,
             recipient_agent=local,
             sender_did=sender_routing_did,
             sender_address=sender_address,
@@ -1158,7 +1159,9 @@ async def _resolve_named_recipients(
                 resolved[target_did] = row
 
     for did in to_dids:
-        row = await resolve_agent_by_did(db, did)
+        row = await resolve_agent_by_did(
+            db, did, team_id=auth.team_id if did.startswith("did:key:") else None
+        )
         if row is None and did.startswith("did:aw:"):
             _raise_bare_did_chat_first_contact_unsupported()
         if row is None:
@@ -1197,6 +1200,7 @@ async def _resolve_named_recipients(
         try:
             await authorize_message_delivery(
                 db,
+                registry_client=runtime.registry_client,
                 recipient_agent=row,
                 sender_did=actor_did,
                 sender_address=sender_address,
@@ -1529,6 +1533,7 @@ async def _resolve_session_target(
         for policy_recipient in policy_rows:
             await authorize_message_delivery(
                 db,
+                registry_client=runtime.registry_client,
                 recipient_agent=policy_recipient,
                 sender_did=actor_did,
                 sender_address=sender_address,
@@ -1585,7 +1590,9 @@ async def _dispatch_chat(
     return await _send_to_named_recipients(db, auth, target, payload, runtime)
 
 
-async def _authorize_local_chat_commit(db, *, auth: MessagingAuth, target: ChatTarget) -> None:
+async def _authorize_local_chat_commit(
+    db, *, auth: MessagingAuth, target: ChatTarget, runtime: MessagingRuntime
+) -> None:
     """Hold native policy rows through the write, using the one delivery rule.
 
     docs/identity-messaging-contract.md:69-87 applies current policy even to a
@@ -1610,7 +1617,13 @@ async def _authorize_local_chat_commit(db, *, auth: MessagingAuth, target: ChatT
         )
         selected = policies if attempt is DeliveryAttempt.STORED_ROUTE else (recipient,)
         for policy in selected:
-            await authorize_delivery(db, recipient=policy, sender=sender, attempt=attempt)
+            await authorize_delivery(
+                db,
+                recipient=policy,
+                sender=sender,
+                attempt=attempt,
+                registry_client=runtime.registry_client,
+            )
     await require_agent_chat(db, target.recipients)
 
 
@@ -1629,7 +1642,9 @@ async def _send_local_chat(
         with agent_wake_scope(runtime.agent_wake_publisher):
             async with db.get_manager("aweb").transaction() as tx:
                 send_db = TransactionInfra(db, tx)
-                await _authorize_local_chat_commit(send_db, auth=auth, target=target)
+                await _authorize_local_chat_commit(
+                    send_db, auth=auth, target=target, runtime=runtime
+                )
                 sent = await _dispatch_chat(
                     send_db,
                     auth=auth,
@@ -1642,7 +1657,7 @@ async def _send_local_chat(
             raise
         async with db.get_manager("aweb").transaction() as tx:
             send_db = TransactionInfra(db, tx)
-            await _authorize_local_chat_commit(send_db, auth=auth, target=target)
+            await _authorize_local_chat_commit(send_db, auth=auth, target=target, runtime=runtime)
             stored = await _stored_exact_chat_send(
                 send_db,
                 payload,
