@@ -19,7 +19,6 @@ import pytest
 import pytest_asyncio
 from redis.asyncio import Redis
 from awid.registry import RegistryClient
-from awid.team_certificate import issue_team_certificate
 from aweb.api import create_app
 from aweb.db import DatabaseInfra
 from tests.real_stack import REGISTRY_URL
@@ -31,6 +30,8 @@ from aweb.mcp.server import create_mcp_app
 from aweb.mcp.signing import HostedMessageSigningResult, canonical_signed_payload
 from aweb.mutation_hooks import create_mutation_handler
 from test_messages_http import (
+    _encode_certificate,
+    _make_certificate,
     _make_keypair,
     _signed_team_headers,
 )
@@ -135,15 +136,18 @@ async def server(real_stack, shared_test_pool, monkeypatch):
                 await registry.register_address(
                     "local", alias, mapping.did_aw, namespace_key, current_did_key=did
                 )
-                certificate, encoded = issue_team_certificate(
+                certificate = _make_certificate(
+                    team_key,
+                    team_did,
+                    did,
                     team_id=TEAM,
-                    team_signing_key=team_key,
-                    member_did_key=did,
+                    certificate_id=f"parity-{alias}",
                     member_did_aw=mapping.did_aw,
                     member_address=f"local/{alias}",
                     alias=alias,
                     identity_scope="global",
                 )
+                encoded = _encode_certificate(certificate)
                 await registry.register_team_certificate(
                     "local",
                     "mutation-parity",
