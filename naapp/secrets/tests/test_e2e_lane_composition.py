@@ -34,12 +34,9 @@ LANE = yaml.safe_load((APP_DIR / "docker-compose.e2e.yml").read_text())
 LOGS_BASE = (APP_DIR.parent / "logs" / "compose.logs.yaml").read_text()
 REQUIRED = re.compile(r"\$\{([A-Z0-9_]+):\?")
 # Settings only the lane's Logs has, which never belong in the deployment
-# base: the lane's http registry is accepted only in development, its
-# certificates are the lane's own CA, and its coordination server is the
-# operator's own. Every other setting comes through the base.
-LANE_ONLY_LOGS_SETTINGS = frozenset(
-    {"APP_ENV", "SSL_CERT_FILE", "LOGS_TEAM_SERVER_INTERNAL_ORIGINS"}
-)
+# base: the lane's http registry is accepted only in development. Every other
+# setting comes through the base.
+LANE_ONLY_LOGS_SETTINGS = frozenset({"APP_ENV"})
 
 
 def test_every_setting_the_logs_base_requires_is_in_the_lanes_compose_environment():

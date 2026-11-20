@@ -1,22 +1,27 @@
-"""Production owner events drain through the supplied real DNS/TLS hook network."""
+"""Production owner events drain through the supplied real DNS/TLS hook network.
+
+The hook receiver and the team's coordination server both live on this
+host's private address, in the operator's network, under names only the
+site's DNS answers and one disposable CA: Secrets reaches both through its
+one egress guard, built from its settings.
+"""
 
 import asyncio
 import json
 from contextlib import AsyncExitStack
 from datetime import UTC, datetime, timedelta
-from ipaddress import ip_network
 
 import dns.asyncresolver as dns_api
 import httpx
 import pytest
 from aweb_logs.chain import open_receipt
-from aweb_naapp.egress import AddressPolicy, DnsResolver, Egress, InternalDestinations
 from aweb_naapp.hooks.delivery import ReceiveOptions, verify_delivery
 from aweb_naapp.hooks.envelope import open_envelope
 from aweb_naapp_testing import Member
-from aweb_naapp_testing.network import DnsServer, TlsServer, local_address, make_certificates
+from aweb_naapp_testing.network import TlsServer
 from aweb_naapp_testing.owner_acts import AUDIENCE
 from aweb_naapp_testing.smtp import SmtpServer
+from aweb_naapp_testing.team_server_site import team_server_site
 from awid.dns_verify import awid_txt_value
 from awid_service.testing import REGISTRY_URL, SERVICE_TOKEN
 
@@ -24,7 +29,6 @@ from aweb_secrets.composition import create_service
 from aweb_secrets.deployment import DeploymentSettings, create_deployment
 from tests.human_owner import member_key
 from tests.production_authority import (
-    SERVER,
     authority,
     install,
     install_audit_receiver,
@@ -36,42 +40,23 @@ from tests.test_production_bootstrap import enrolled_owner
 
 
 @pytest.mark.parametrize(
-    "internal,listed,denied,guard_denied,deployment",
-    [
-        (False, True, False, False, False),
-        (True, True, False, False, False),
-        (True, False, False, False, False),
-        (True, True, True, False, False),
-        (True, True, False, True, False),
-        (True, True, False, False, True),
-    ],
+    "listed,deployment",
+    [(True, False), (False, False), (True, True)],
+    ids=["listed", "not-listed", "deployment"],
 )
 async def test_production_hook_delivery_uses_explicit_dns_ca_and_internal_network(
-    test_db_factory,
-    registry,
-    tmp_path,
-    monkeypatch,
-    internal,
-    listed,
-    denied,
-    guard_denied,
-    deployment,
+    test_db_factory, registry, tmp_path, monkeypatch, listed, deployment
 ):
-    deliverable = internal and listed and not denied and not guard_denied
     member = Member(member_key=member_key("alice"), team_id="root:example.com")
-    host, name = local_address(), "logs.root-hooks.test"
-    certificates = make_certificates(tmp_path, [name], [host])
-    dns = DnsServer(records={(name, "A"): [host]})
-    target = TlsServer(certificates, host)
+    name = "logs.root-hooks.test"
     verified = []
     binding_id = None
     origin = ""
 
     async def receive(seen):
-        method, path, _ = seen.request_line.split(" ")
         received = verify_delivery(
-            method,
-            path,
+            seen.method,
+            seen.target,
             dict(seen.headers),
             seen.body,
             ReceiveOptions(audience=origin, binding_id=binding_id, now=datetime.now(UTC)),
@@ -88,24 +73,26 @@ async def test_production_hook_delivery_uses_explicit_dns_ca_and_internal_networ
             [("Content-Type", "application/json")],
         )
 
-    target.respond = receive
-    await dns.start()
-    try:
-        if deployment:
-            dns.records[("_awid.example.com", "TXT")] = [
-                '"' + awid_txt_value(member.team_did_key, REGISTRY_URL) + '"'
-            ]
-            system_dns = dns_api.Resolver(configure=False)
-            system_dns.nameservers = ["127.0.0.1"]
-            system_dns.port = dns.port
-            monkeypatch.setattr(dns_api, "default_resolver", system_dns)
-        async with authority(test_db_factory, registry, member) as (aweb_db, transport):
+    async with (
+        team_server_site(tmp_path / "aweb", also_names=(name,)) as site,
+        authority(test_db_factory, registry, member, site) as aweb_db,
+    ):
+        host, dns = site.host, site.dns
+        target = TlsServer(site.certificates, host)
+        target.respond = receive
+        try:
+            if deployment:
+                dns.records[("_awid.example.com", "TXT")] = [
+                    '"' + awid_txt_value(member.team_did_key, REGISTRY_URL) + '"'
+                ]
+                system_dns = dns_api.Resolver(configure=False)
+                system_dns.nameservers = ["127.0.0.1"]
+                system_dns.port = dns.port
+                monkeypatch.setattr(dns_api, "default_resolver", system_dns)
             async with AsyncExitStack() as stack:
                 if deployment:
                     origin, logs_manifest, logs_db = await stack.enter_async_context(
-                        logs_receiver(
-                            test_db_factory, registry, transport, tmp_path, host, name, certificates
-                        )
+                        logs_receiver(test_db_factory, registry, site, tmp_path, name)
                     )
                 else:
                     await target.start()
@@ -116,9 +103,9 @@ async def test_production_hook_delivery_uses_explicit_dns_ca_and_internal_networ
                         update={
                             "public_origin": AUDIENCE,
                             "awid_service_token": SERVICE_TOKEN,
-                            "team_server_internal_origins": frozenset({SERVER}),
-                            "egress_denied_networks": (
-                                ip_network(f"{host}/32" if denied else "192.0.2.0/24"),
+                            **site.settings(),
+                            "hook_internal_origins": (
+                                frozenset({origin}) if listed else frozenset()
                             ),
                         }
                     )
@@ -126,33 +113,13 @@ async def test_production_hook_delivery_uses_explicit_dns_ca_and_internal_networ
                         service = create_service(
                             configured,
                             awid_transport=registry.transport,
-                            team_server_transport=transport,
-                            hook_egress=Egress(
-                                addresses=AddressPolicy(
-                                    internal_destinations=InternalDestinations.ALLOWED,
-                                    denied=(
-                                        ip_network(
-                                            f"{host}/32" if guard_denied else "198.51.100.0/24"
-                                        ),
-                                    ),
-                                ),
-                                resolver=DnsResolver(nameservers=["127.0.0.1"], port=dns.port),
-                                user_agent="secrets-root/hooks-test",
-                                ca_file=certificates.ca_file,
-                            ),
-                            hook_internal_cidr=ip_network(f"{host}/32") if internal else None,
-                            hook_internal_origins=frozenset({origin}) if listed else frozenset(),
+                            egress=site.egress(configured),
                         )
                     else:
-                        monkeypatch.setenv("SECRETS_HOOK_INTERNAL_DESTINATIONS", "allowed")
-                        monkeypatch.setenv("SECRETS_HOOK_INTERNAL_CIDR", f"{host}/32")
-                        monkeypatch.setenv("SECRETS_HOOK_INTERNAL_ORIGINS", json.dumps([origin]))
-                        monkeypatch.setenv("SECRETS_HOOK_CA_FILE", str(certificates.ca_file))
                         service = create_deployment(
                             DeploymentSettings(_env_file=None, **configured.model_dump()),
-                            resolver=DnsResolver(nameservers=["127.0.0.1"], port=dns.port),
+                            resolver=site.resolver(),
                             awid_transport=registry.transport,
-                            team_server_transport=transport,
                         )
                     if not deployment:
                         service.runtime.team_server_directory()._registry_override = no_dns_override
@@ -185,16 +152,7 @@ async def test_production_hook_delivery_uses_explicit_dns_ca_and_internal_networ
                             binding_id = view.registrations[0].binding_id
                             client.owner_fixture_registry = registry
                             await enrolled_owner(
-                                (
-                                    service,
-                                    client,
-                                    configured,
-                                    member,
-                                    installed,
-                                    smtp,
-                                    transport,
-                                    dns,
-                                )
+                                (service, client, configured, member, installed, smtp, site, dns)
                             )
                             db = service.runtime.db()
                             async with asyncio.timeout(10):
@@ -204,14 +162,14 @@ async def test_production_hook_delivery_uses_explicit_dns_ca_and_internal_networ
                                     )
                                     if rows and all(
                                         row["state"] == "delivered"
-                                        if deliverable
+                                        if listed
                                         else row["last_error_class"] is not None
                                         for row in rows
                                     ):
                                         break
                                     await asyncio.sleep(0.02)
                             assert dns.queries[(name, "A")] > 0
-                            if deliverable:
+                            if listed:
                                 assert [row["state"] for row in rows] == ["delivered"]
                                 if deployment:
                                     records = await logs_db.fetch_all(
@@ -253,6 +211,5 @@ async def test_production_hook_delivery_uses_explicit_dns_ca_and_internal_networ
                                 )
                                 assert target.seen == [] and verified == []
                     assert service.runtime.connected_db() is None
-    finally:
-        await target.close()
-        dns.close()
+        finally:
+            await target.close()

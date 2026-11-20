@@ -42,10 +42,12 @@ services:
       LOGS_EMAIL_USERNAME_FILE: /run/secrets/logs/smtp-username
       LOGS_EMAIL_PASSWORD_FILE: /run/secrets/logs/smtp-password
       LOGS_EMAIL_FROM: ${LOGS_EMAIL_FROM:?LOGS_EMAIL_FROM is required, logs.emailFrom}
-      # Hooks reach a receiver at an internal address only when the operator
-      # names its origin, and then only inside the services network. The
-      # three settings come together from the env file, or not at all.
+      # Hooks and team-server reads reach an internal address only when the
+      # operator names its origin for that purpose, and then only inside the
+      # services network (DESTINATIONS and CIDR). They come from the env
+      # file, or not at all.
       LOGS_HOOK_INTERNAL_ORIGINS:
+      LOGS_TEAM_SERVER_INTERNAL_ORIGINS:
       LOGS_HOOK_INTERNAL_DESTINATIONS:
       LOGS_HOOK_INTERNAL_CIDR:
       LOGS_EGRESS_DENIED_NETWORKS: ${LOGS_EGRESS_DENIED_NETWORKS:?LOGS_EGRESS_DENIED_NETWORKS is required, logs.egressDeniedNetworks}

@@ -97,7 +97,8 @@ def test_broker_options_do_not_enable_hooks_or_supply_hook_trust(monkeypatch):
     monkeypatch.setenv("SECRETS_EGRESS_CA_FILE", "/run/keys/broker-ca")
     configured = DeploymentSettings(_env_file=None, **inputs())
     assert configured.hook_internal_cidr is None
-    assert configured.hook_internal_origins is None
+    assert configured.hook_internal_origins == frozenset()
+    assert configured.team_server_internal_origins == frozenset()
     assert configured.hook_ca_file is None
 
 

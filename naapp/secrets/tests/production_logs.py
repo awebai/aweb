@@ -11,14 +11,13 @@ from aweb_logs.app import create_app
 from aweb_logs.config import LogsSettings
 from aweb_naapp.email import EmailSettings
 from aweb_naapp_testing.smtp import SmtpServer
+from aweb_naapp_testing.team_server_site import TeamServerSite
 from awid_service.testing import REGISTRY_URL, SERVICE_TOKEN
 from service_server import Listener, serving
 
-from tests.production_authority import SERVER
-
 
 @asynccontextmanager
-async def logs_receiver(test_db_factory, registry, transport, directory, host, name, certificates):
+async def logs_receiver(test_db_factory, registry, site: TeamServerSite, directory, name):
     """One real app/lifespan; caller keeps DNS and authority alive until teardown.
 
     Logs mails reader enrolment links through a real TLS SMTP server that lives
@@ -26,7 +25,10 @@ async def logs_receiver(test_db_factory, registry, transport, directory, host, n
 
     Installation and owner activation remain caller-owned external preconditions.
     No runtime transports, discovery functions or ledger writers are replaced.
+    Logs listens at ``name`` on ``site``'s address with ``site``'s certificate,
+    and reaches the team's server at ``site`` through its own guard.
     """
+    host, certificates = site.host, site.certificates
     database = await test_db_factory.create_db(suffix="production_logs_receiver")
     purge_ledger = await test_db_factory.create_db(suffix="production_logs_purge_ledger")
     keys = {}
@@ -50,8 +52,8 @@ async def logs_receiver(test_db_factory, registry, transport, directory, host, n
                 console_origin=f"https://console.{name}:{ports[0]}",
                 awid_registry_url=REGISTRY_URL,
                 awid_service_token=SERVICE_TOKEN,
-                team_server_internal_origins=[SERVER],
                 app_key_files=keys,
+                **site.settings(),
             ),
             email=EmailSettings.from_env(
                 "LOGS_",
@@ -65,7 +67,7 @@ async def logs_receiver(test_db_factory, registry, transport, directory, host, n
                 },
             ),
             awid_transport=registry.transport,
-            team_server_transport=transport,
+            resolver=site.resolver(),
         )
 
     with SmtpServer(directory / "logs-smtp") as smtp:

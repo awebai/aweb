@@ -15,7 +15,6 @@ from aweb_naapp_testing import Member
 from aweb_naapp_testing.human_members import registered_human
 from aweb_naapp_testing.webauthn import SoftAuthenticator
 
-from tests.production_authority import SERVER
 from tests.test_production_bootstrap import root as root
 from tests.test_production_handoffs import start_request
 
@@ -43,7 +42,7 @@ async def unchanged_authority_and_handoff(db, handoff):
 async def test_holder_credential_outage_is_503_without_writes_and_recovers(
     root, registry, monkeypatch, step
 ):
-    service, client, settings, team_member, _, _, _, _ = root
+    service, client, settings, team_member, _, _, site, _ = root
     # root already registered its own member certificate. This distinct human
     # follows the real registration helper once, under the same team controller.
     member = Member(
@@ -123,7 +122,7 @@ async def test_holder_credential_outage_is_503_without_writes_and_recovers(
 
         # Restore the real signed publication. The same unspent handoff and,
         # for complete, the original real registration response can now finish.
-        await registry.publish_team_server(member.team_id, member.team_key, server_url=SERVER)
+        await registry.publish_team_server(member.team_id, member.team_key, server_url=site.origin)
         recovered = (
             await client.get(endpoint)
             if step == "state"

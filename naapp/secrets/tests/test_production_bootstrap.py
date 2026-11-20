@@ -7,7 +7,7 @@ import asyncio
 import base64
 import json
 import secrets
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
@@ -15,15 +15,15 @@ from uuid import uuid4
 import dns.asyncresolver as dns_api
 import httpx
 import pytest
-from aweb_naapp.egress import DnsResolver, InternalDestinations
+from aweb_naapp.egress import InternalDestinations
 from aweb_naapp.hooks.envelope import KID_PATTERN, verify
 from aweb_naapp.roles import PrincipalKey, unassign
 from aweb_naapp.runtime.passkeys import contact_sha256
 from aweb_naapp.runtime.settings import AWIDMemberCredentialFiles
 from aweb_naapp_testing import Member
-from aweb_naapp_testing.network import DnsServer
 from aweb_naapp_testing.owner_acts import AUDIENCE, TeamOwner
 from aweb_naapp_testing.smtp import SmtpServer
+from aweb_naapp_testing.team_server_site import team_server_site
 from aweb_naapp_testing.webauthn import SoftAuthenticator
 from awid.did import did_from_public_key
 from awid.dns_verify import DnsVerificationError
@@ -43,7 +43,6 @@ from aweb_secrets.policy import Policy
 from aweb_secrets.secret import SecretRecord
 from tests.human_owner import apply_holder, fixture_principal, member_key
 from tests.production_authority import (
-    SERVER,
     authority,
     install,
     install_audit_receiver,
@@ -81,16 +80,19 @@ async def root(test_db_factory, registry, tmp_path, request, monkeypatch):
         return await configured()(domain)
 
     private = options.get("private_team", False)
-    async with authority(
-        test_db_factory, registry, member, visibility="private" if private else "public"
-    ) as (aweb_db, transport):
+    async with (
+        team_server_site(tmp_path / "aweb") as site,
+        authority(
+            test_db_factory, registry, member, site, visibility="private" if private else "public"
+        ) as aweb_db,
+    ):
         database = await test_db_factory.create_db(suffix="production_bootstrap")
         with SmtpServer(tmp_path / "smtp") as smtp:
             configured = settings(database, tmp_path, smtp).model_copy(
                 update={
                     "public_origin": AUDIENCE,
                     "awid_service_token": SERVICE_TOKEN,
-                    "team_server_internal_origins": frozenset({SERVER}),
+                    **site.settings(),
                 }
             )
             service_member = None
@@ -128,50 +130,40 @@ async def root(test_db_factory, registry, tmp_path, request, monkeypatch):
                 configured,
                 awid_transport=registry.transport,
                 awid_domain_verifier=None if options.get("real_identity_dns") else domain_authority,
-                team_server_transport=transport,
+                egress=site.egress(configured),
             )
             service.runtime.team_server_directory()._registry_override = no_dns_override
             # The activated receiver is external fixture state, not a running
-            # logs service. Keep the real drain/transport and give its resolver
-            # a real local NXDOMAIN answer instead of querying public DNS.
-            dns = DnsServer()
-            await dns.start()
+            # logs service: the site's DNS, which Secrets' guard resolves with,
+            # answers it NXDOMAIN instead of public DNS answering.
+            dns = site.dns
             # The SDK's AWID authority lookups read TXT through dnspython's
             # default resolver. Point it at the same private server, so a test
             # publishes the TXT evidence it needs and nothing reaches public DNS.
             resolver = dns_api.Resolver(configure=False)
             resolver.nameservers, resolver.port = ["127.0.0.1"], dns.port
             monkeypatch.setattr(dns_api, "default_resolver", resolver)
-            hook_transport = service.runtime._hooks.transport
-            assert hook_transport is not None
-            hook_transport._egress = replace(
-                hook_transport._egress,
-                resolver=DnsResolver(nameservers=["127.0.0.1"], port=dns.port),
-            )
-            try:
-                async with service.api_app.router.lifespan_context(service.api_app):
-                    async with httpx.AsyncClient(transport=httpx.ASGITransport(service)) as client:
-                        client.owner_fixture_registry = registry
-                        client.service_fixture_member = service_member
-                        version = getattr(request, "param", {}).get("manifest_version", 2)
-                        manifest = await client.get(AUDIENCE + f"/manifests/v{version}.json")
-                        assert manifest.status_code == 200
-                        installed = await install(
-                            aweb_db,
-                            member,
-                            manifest.content,
-                            ["secrets:read", "secrets:use", "secrets:run", "secrets:admin"],
+            async with service.api_app.router.lifespan_context(service.api_app):
+                async with httpx.AsyncClient(transport=httpx.ASGITransport(service)) as client:
+                    client.owner_fixture_registry = registry
+                    client.service_fixture_member = service_member
+                    version = getattr(request, "param", {}).get("manifest_version", 2)
+                    manifest = await client.get(AUDIENCE + f"/manifests/v{version}.json")
+                    assert manifest.status_code == 200
+                    installed = await install(
+                        aweb_db,
+                        member,
+                        manifest.content,
+                        ["secrets:read", "secrets:use", "secrets:run", "secrets:admin"],
+                    )
+                    await install_audit_receiver(aweb_db, member)
+                    assert (
+                        await service.runtime.db().fetch_value(
+                            "SELECT count(*) FROM installation_fences"
                         )
-                        await install_audit_receiver(aweb_db, member)
-                        assert (
-                            await service.runtime.db().fetch_value(
-                                "SELECT count(*) FROM installation_fences"
-                            )
-                            == 0
-                        )
-                        yield service, client, configured, member, installed, smtp, transport, dns
-            finally:
-                dns.close()
+                        == 0
+                    )
+                    yield service, client, configured, member, installed, smtp, site, dns
 
 
 def owner_body(configured, member, installation_id):
@@ -236,7 +228,7 @@ async def enrolled_owner(root):
     """
     from types import SimpleNamespace
 
-    service, client, configured, member, installed, smtp, transport, dns = root
+    service, client, configured, member, installed, smtp, site, dns = root
     # Read the actual mounted dependency; do not build a second app service or
     # replace its verifier, audit sink, installation lookup or Passkeys.
     console = mounted_owner_console(service)
@@ -287,7 +279,7 @@ async def signed_in_owner(root):
 
 
 async def test_a_canonical_component_holder_logs_into_the_production_console(root):
-    service, client, configured, member, installed, smtp, transport, dns = root
+    service, client, configured, member, installed, smtp, site, dns = root
     human = configured.console_origin
     scope, body, _ = await signed_in_owner(root)
     home = await client.get(human + "/")
@@ -300,10 +292,8 @@ async def test_a_canonical_component_holder_logs_into_the_production_console(roo
     assert [event["payload"]["act"] for event in await envelopes(db, member.team_id)] == [
         "role.designated",
     ]
-    assert any(call.url.path.endswith("/self/grant") for call in transport.calls)
-    assert any(
-        call.url.path.endswith("/post-governance-hook/registrations") for call in transport.calls
-    )
+    assert any(seen.path.endswith("/self/grant") for seen in site.tls.seen)
+    assert any(seen.path.endswith("/post-governance-hook/registrations") for seen in site.tls.seen)
     # B1 authorizes the genuine registered member through the real team-server
     # grant; Catalog sees the same installation/owner state and no secret rows.
     headers = member.headers(aud=AUDIENCE, method="GET", path="/v1/secrets")
@@ -329,7 +319,7 @@ async def test_a_canonical_component_holder_logs_into_the_production_console(roo
 
 
 async def test_the_production_console_serves_the_access_view_only_to_its_current_owner(root):
-    service, client, configured, member, installed, smtp, transport, dns = root
+    service, client, configured, member, installed, smtp, site, dns = root
     human = configured.console_origin
     async with httpx.AsyncClient(transport=httpx.ASGITransport(service)) as stranger:
         signed_out = await stranger.get(human + "/access")
@@ -349,7 +339,7 @@ async def test_the_production_console_serves_the_access_view_only_to_its_current
 
 
 async def test_the_production_console_serves_audit_delivery_only_to_its_current_owner(root):
-    service, client, configured, member, installed, smtp, transport, dns = root
+    service, client, configured, member, installed, smtp, site, dns = root
     human = configured.console_origin
     async with httpx.AsyncClient(transport=httpx.ASGITransport(service)) as stranger:
         signed_out = await stranger.get(human + "/audit-delivery")
@@ -390,7 +380,7 @@ async def test_the_production_console_serves_audit_delivery_only_to_its_current_
 
 @pytest.mark.parametrize("fault", ["wrong_team", "wrong_installation", "unavailable"])
 async def test_bootstrap_authority_controls_leave_no_owner_nonce_or_audit(root, fault):
-    service, client, configured, member, installed, smtp, transport, _ = root
+    service, client, configured, member, installed, smtp, site, _ = root
     installation_id = installed["installation_id"]
     _, body = owner_body(configured, member, installation_id)
     if fault == "wrong_team":
@@ -398,7 +388,7 @@ async def test_bootstrap_authority_controls_leave_no_owner_nonce_or_audit(root, 
     elif fault == "wrong_installation":
         installation_id = str(uuid4())
     else:
-        transport.down = True
+        site.stop_answering()
     response = await client.post(
         configured.console_origin + f"/installations/{installation_id}/owner-acts", json=body
     )
