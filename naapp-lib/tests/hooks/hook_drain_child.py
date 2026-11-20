@@ -17,6 +17,7 @@ from pathlib import Path
 from pgdbm import AsyncDatabaseManager, DatabaseConfig
 
 from aweb_naapp.egress import AddressPolicy, DnsResolver, Egress, InternalDestinations
+from aweb_naapp.egress.internal import InternalReach
 from aweb_naapp.hooks.producer import HOOKS_CHANNEL, Registration, RegistrationView, hook_targets
 from aweb_naapp.hooks.transport import HookTransport
 from aweb_naapp.outbox import RetryPolicy, drain
@@ -66,8 +67,7 @@ async def main(argv: list[str]) -> None:
             seed=bytes.fromhex(seed),
             egress=egress,
             registrations=views,
-            internal_cidr=ip_network(f"{address}/32"),
-            internal_origins=frozenset({origin}),
+            internal_reach=InternalReach.of(ip_network(f"{address}/32"), {origin}),
         ),
         policy=RetryPolicy(stalled_after=timedelta(hours=1)),
     )

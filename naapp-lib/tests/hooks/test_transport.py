@@ -39,6 +39,7 @@ from aweb_naapp.egress import (
     Egress,
     InternalDestinations,
 )
+from aweb_naapp.egress.internal import InternalReach
 from aweb_naapp.hooks.delivery import ReceiveOptions, verify_delivery
 from aweb_naapp.hooks.producer import (
     HOOKS_CHANNEL,
@@ -200,8 +201,10 @@ def transport(target: Target_, views: Views, **options) -> HookTransport:
         seed=SEED,
         egress=options.pop("egress", None) or target.egress(),
         registrations=views,
-        internal_cidr=options.pop("internal_cidr", ip_network(f"{target.host}/32")),
-        internal_origins=options.pop("internal_origins", frozenset({target.origin})),
+        internal_reach=InternalReach.of(
+            options.pop("internal_cidr", ip_network(f"{target.host}/32")),
+            options.pop("internal_origins", frozenset({target.origin})),
+        ),
     )
 
 
@@ -381,7 +384,7 @@ async def test_an_operator_cidr_alone_does_not_authorize_a_registered_origin(db,
         seed=SEED,
         egress=target.egress(),
         registrations=views,
-        internal_cidr=ip_network(f"{target.host}/32"),
+        internal_reach=InternalReach.of(ip_network(f"{target.host}/32"), ()),
     )
     outcome = await guard.deliver(await stored_event(db), target_of(target))
     assert outcome == Permanent("egress_refused:destination_address_denied")

@@ -3,6 +3,7 @@ purpose, and a refusal at startup for any incomplete combination."""
 
 from __future__ import annotations
 
+import logging
 from ipaddress import ip_network
 
 import pytest
@@ -89,3 +90,18 @@ def test_a_listed_origin_is_kept_in_its_canonical_spelling() -> None:
         **NETWORK, team_server_internal_origins=["https://AWEB.example:443/"]
     )
     assert settings.team_server_internal_origins == {TEAM_SERVER}
+
+
+def test_listed_origins_are_logged_at_startup_for_their_purpose(caplog) -> None:
+    with caplog.at_level(logging.WARNING, logger="aweb_naapp.runtime.operator_egress"):
+        OperatorEgress.from_settings(
+            OperatorNetworkSettings(**NETWORK, team_server_internal_origins=[TEAM_SERVER])
+        )
+    [warning] = [record.getMessage() for record in caplog.records]
+    assert "team-server reads" in warning and TEAM_SERVER in warning
+
+
+def test_nothing_is_logged_when_no_origin_is_listed(caplog) -> None:
+    with caplog.at_level(logging.WARNING, logger="aweb_naapp.runtime.operator_egress"):
+        OperatorEgress.from_settings(OperatorNetworkSettings())
+    assert caplog.records == []

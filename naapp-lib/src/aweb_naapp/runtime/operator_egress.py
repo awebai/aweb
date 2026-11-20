@@ -18,6 +18,7 @@ reverse.
 from __future__ import annotations
 
 import asyncio
+import logging
 import ssl
 from dataclasses import dataclass
 from ipaddress import IPv4Network, IPv6Network
@@ -38,6 +39,8 @@ from aweb_naapp.egress.addresses import check_internal_cidr
 from aweb_naapp.egress.internal import InternalReach
 from aweb_naapp.egress.send import Resolver
 from aweb_naapp.egress.urls import canonical_url
+
+logger = logging.getLogger(__name__)
 
 # How long the startup check of the internal origins may take, in seconds.
 PREFLIGHT_SECONDS = 10
@@ -152,6 +155,18 @@ class OperatorEgress:
             ca_file=settings.hook_ca_file,
         )
         cidr = settings.hook_internal_cidr
+        for purpose, origins in (
+            ("hook deliveries", settings.hook_internal_origins),
+            ("team-server reads", settings.team_server_internal_origins),
+        ):
+            if origins:
+                # Visible in every deployment's log: a hosted one lists none.
+                logger.warning(
+                    "Origins reached inside the operator's network %s for %s: %s",
+                    cidr,
+                    purpose,
+                    ", ".join(sorted(origins)),
+                )
         return cls(
             egress=guard,
             hooks=InternalReach.of(cidr, settings.hook_internal_origins),

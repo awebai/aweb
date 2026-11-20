@@ -11,6 +11,7 @@ from fastapi import FastAPI
 from nacl.signing import SigningKey
 
 from aweb_naapp.egress import AddressPolicy
+from aweb_naapp.egress.internal import InternalReach
 from aweb_naapp.hooks.commitment import CommitmentError, Purpose
 from aweb_naapp.hooks.envelope import verify
 from aweb_naapp.manifest import canonical_bytes
@@ -18,6 +19,7 @@ from aweb_naapp.runtime.app import NaappRuntime
 from aweb_naapp.runtime.app_keys import AppKeyError
 from aweb_naapp.runtime.clock import seconds_to_ns
 from aweb_naapp.runtime.hook_resolver import HookBinding, Resolution
+from aweb_naapp.runtime.operator_egress import OperatorEgress
 from tests.hooks.test_producer import SYSTEM, TEAM
 from tests.hooks.test_transport import SECRET_USE
 from tests.hooks.test_transport import target as target
@@ -90,9 +92,15 @@ def runtime(
         module_name="hook_fixture",
         migrations_path=migrations,
         manifest_path=manifest,
-        hook_egress=egress,
-        hook_internal_cidr=internal,
-        hook_internal_origins=internal_origins,
+        egress=(
+            OperatorEgress(
+                egress=egress,
+                hooks=InternalReach.of(internal, internal_origins),
+                team_servers=None,
+            )
+            if egress is not None
+            else None
+        ),
         awid_transport=registry.transport if registry is not None else None,
         root_path=root_path,
     )
