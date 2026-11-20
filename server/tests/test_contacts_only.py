@@ -552,15 +552,16 @@ async def test_contact_creation_paths_bind_identity_before_delivery(
         from aweb.application_state import application_registry_client
 
         namespace_registry = application_registry_client(env.app.state)
+        monkeypatch.setenv("APP_ENV", "development")
+        monkeypatch.setenv("AWID_ALLOW_INSECURE_DELIVERY_ORIGIN", "1")
+        monkeypatch.setenv("AWEB_FEDERATION_TEST", "1")
+        monkeypatch.setenv("AWEB_FEDERATION_TEST_DEFAULT_REGISTRY", "1")
+        monkeypatch.setenv("AWID_REGISTRY_URL", registry_origin)
         await namespace_registry.update_namespace_delivery_origin(
             "example.test",
             env.namespace_sk,
             default_delivery_origin=str(env.client.base_url).rstrip("/"),
         )
-        monkeypatch.setenv("APP_ENV", "development")
-        monkeypatch.setenv("AWEB_FEDERATION_TEST", "1")
-        monkeypatch.setenv("AWEB_FEDERATION_TEST_DEFAULT_REGISTRY", "1")
-        monkeypatch.setenv("AWID_REGISTRY_URL", registry_origin)
         authority = build_federation_authority_activation(
             env.infra, public_origin=str(env.client.base_url).rstrip("/")
         )
