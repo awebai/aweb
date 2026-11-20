@@ -51,7 +51,9 @@ aw validate team-server-url URL --json
 ```
 
 They return `kind`, `input`, `valid`, and `canonical`; the URL command also
-returns its signing `audience`. Invalid input exits nonzero. The team-ID command
+returns its signing `audience`. Invalid input exits nonzero. Alias validation
+uses the enrollment rule, which lowercases and trims a nonempty name and
+rejects `/`. The team-ID command
 uses the SDK input normalization rule, not a stricter signed-field profile.
 Canonical URL validation establishes format, not permission to connect to a
 destination. The signed record vectors are
@@ -79,6 +81,9 @@ the service, rather than becoming a universal CLI vocabulary.
 | `team_name_taken` | The registry pins this team to another controller; restore that key or choose another team name. |
 | `grant_not_found` | The selected team has no such grant; run grant list in that team and identity home. |
 | `certificate_persistence_incomplete` | Registry issuance succeeded but its recipient copy could not be saved; retain the key and fetch the exact certificate named in the recovery command. |
+| `certificate_rollback_pending` | The exact issued certificate could not be revoked during rollback; keep the recipient home and ask the team controller to revoke it. |
+| `retirement_receipt_unavailable` | The CLI could not lock or write the retirement receipt; retain the identity home and repair the receipt destination before retrying. |
+| `workspace_cleanup_incomplete` | The service did not confirm cleanup of the exact workspace and local identity; reconcile it before revoking the certificate. |
 | `invite_issuance_pending` | Issuance is attempted or unknown; keep the exact recipient and record, check online, and resume the retained certificate. Offline cancellation leaves its child untouched. |
 | `team_server_record_missing` | No signed service record is published for this team; its controller must register the service. |
 | `invalid_alias`, `invalid_team_id`, `invalid_team_server_url` | Correct the input using the validation command's remedy. |
@@ -109,7 +114,7 @@ A ready verdict has code `ready`. Non-ready codes are:
 | Code | Condition |
 | --- | --- |
 | `daemon_unavailable` | Control failed; `control_error` retains the error. This does not prove process absence. |
-| `daemon_not_running` | Status reports the daemon stopped. |
+| `daemon_not_running` | Status reports the daemon stopped, or the control dial finds no listener and the state lock has no owner. A failed dial still appears in `control_error`. |
 | `daemon_version_unknown`, `daemon_outdated` | Version cannot establish the caller's requirement. |
 | `home_not_registered` | No saved registration or live row for HOME. |
 | `registration_mismatch` | Live delivery, primary identity, binding set or pending/conflicting registration differs from the saved registration. |

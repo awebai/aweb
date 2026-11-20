@@ -5,16 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import test from "node:test";
-import { DiagnosticOutput, createProbeAssertions, wakeTimestampIsUnset, kernelSessionSnapshot, preparePassiveKernelLaunch, runKernelLifecycleCommand, runKernelProbeCommand } from "./user_paths_kernel_setup.mjs";
-
-function cleanupPassiveTerminal({ root, tmuxBinary, env }) {
-  const stopped = spawnSync(tmuxBinary, ["-L", "oats", "kill-server"], { env, encoding: "utf8", timeout: 10000 });
-  const noServer = stopped.status === 1 && /^(?:no server running on [^\r\n]+|error connecting to [^\r\n]+ \(No such file or directory\))\s*$/.test(stopped.stderr);
-  if (stopped.error || stopped.signal || (stopped.status !== 0 && !noServer)) {
-    throw new Error(`Owned tmux cleanup failed (status=${stopped.status}, signal=${stopped.signal}, code=${stopped.error?.code ?? "none"}); socket root retained at ${root}. Inspect the owned server before removing that directory.`, { cause: stopped.error });
-  }
-  rmSync(root, { recursive: true, force: true });
-}
+import { DiagnosticOutput, cleanupPassiveTerminal, createProbeAssertions, wakeTimestampIsUnset, kernelSessionSnapshot, preparePassiveKernelLaunch, runKernelLifecycleCommand, runKernelProbeCommand } from "./user_paths_kernel_setup.mjs";
 
 const CleanupCase = Object.freeze({ NoServer: "no-server", ExitFailure: "exit-failure", SpawnError: "spawn-error", Signal: "signal" });
 
@@ -39,6 +30,39 @@ test("passive terminal cleanup retains its socket root on child failure", () => 
         assert.equal(existsSync(root), true, `${outcome} preserves the socket root for inspection`);
       }
     } finally { rmSync(root, { recursive: true, force: true }); }
+  }
+});
+
+test("the wake probe keeps its socket root when its owned tmux cleanup fails", () => {
+  // The real probe, failing early, tears down through its own finally block.
+  assert.ok(existsSync("/opt/user-paths/oats-aweb"), "the probe runs only with the gate image's staged kernel and provider");
+  const probe = fileURLToPath(new URL("./user_paths_oats.mjs", import.meta.url));
+  const tmuxBinary = spawnSync("/usr/bin/which", ["tmux"], { encoding: "utf8" }).stdout.trim();
+  assert.ok(tmuxBinary, "the no-server case requires installed tmux");
+  for (const outcome of [CleanupCase.NoServer, CleanupCase.ExitFailure, CleanupCase.Signal]) {
+    const scratch = mkdtempSync("/tmp/kwp-");
+    try {
+      const root = join(scratch, "root"), output = join(scratch, "receipt.json"), notAw = join(scratch, "not-aw");
+      // The probe's PATH starts with <root>/bin, which its directory setup keeps.
+      mkdirSync(join(root, "bin"), { recursive: true, mode: 0o700 });
+      if (outcome === CleanupCase.NoServer) symlinkSync(tmuxBinary, join(root, "bin/tmux"));
+      else if (outcome === CleanupCase.ExitFailure) writeFileSync(join(root, "bin/tmux"), "#!/bin/sh\nexit 1\n", { mode: 0o700 });
+      else writeFileSync(join(root, "bin/tmux"), "#!/bin/sh\nkill -TERM $$\n", { mode: 0o700 });
+      // Not an executable aw: the probe fails at its first aw command.
+      writeFileSync(notAw, "not an aw binary\n", { mode: 0o600 });
+      const run = spawnSync(process.execPath, [probe, "--aw", notAw, "--root", root, "--seat", scratch, "--fixture-home", scratch, "--sender", scratch,
+        "--team", "members:probe.test", "--source-commit", "0000000", "--output", output], { encoding: "utf8", timeout: 60000 });
+      assert.equal(run.status, 1, `${outcome}: the probe fails`);
+      const receipt = JSON.parse(readFileSync(output, "utf8"));
+      assert.equal(receipt.result, "FAILED", outcome);
+      if (outcome === CleanupCase.NoServer) {
+        assert.deepEqual(receipt.cleanup_errors, [], "confirmed no-server cleanup records no error");
+        assert.equal(existsSync(root), false, "confirmed no-server cleanup removes the probe root");
+      } else {
+        assert.match(receipt.cleanup_errors.join("\n"), /Owned tmux cleanup failed.*socket root retained/, outcome);
+        assert.equal(existsSync(join(root, "tmux")), true, `${outcome} preserves the socket root for inspection`);
+      }
+    } finally { rmSync(scratch, { recursive: true, force: true }); }
   }
 });
 

@@ -2,7 +2,10 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -11,6 +14,53 @@ import (
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 )
+
+func TestOATSRealFailedRevocationKeepsTheLocalCertificate(t *testing.T) {
+	world := newRealCommandWorld(t)
+	member := world.addLocalMember(t, "worker")
+	t.Setenv("HOME", world.UserHome)
+	t.Setenv("AWID_REGISTRY_URL", world.Stack.RegistryURL)
+	_, wrongKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveTeamKey(world.Domain, "backend", wrongKey); err != nil {
+		t.Fatal(err)
+	}
+	accepted := &acceptedTeamInvite{
+		Output:      &teamAcceptInviteOutput{CertPath: awconfig.TeamCertificateRelativePath(world.TeamID)},
+		Certificate: member.Certificate, Domain: world.Domain, TeamName: "backend", RegistryURL: world.Stack.RegistryURL,
+	}
+	path, err := awconfig.TeamCertificatePathFromIdentityHome(member.Home, world.TeamID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cause := errors.New("recording accepted workspace membership failed")
+	err = rollbackAddedTeamCertificate(filepath.Dir(member.Home), member.Home, accepted, cause)
+	if !errors.Is(err, cause) || errorCodeOf(err) != "certificate_rollback_pending" || !strings.Contains(err.Error(), member.Certificate.CertificateID) || !strings.HasSuffix(err.Error(), "Retain the identity home and ask the team controller to revoke this certificate before retrying.") {
+		t.Fatalf("failed revoke lost its exact recovery: %v", err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("failed revoke discarded the local certificate: %v", err)
+	}
+	status, err := world.Registry.GetTeamCertificateStatus(world.Context, world.Stack.RegistryURL, world.Domain, "backend", member.Certificate.CertificateID)
+	if err != nil || status.Status != "active" {
+		t.Fatalf("wrong controller changed the certificate: %#v; %v", status, err)
+	}
+	if err := awconfig.SaveTeamKey(world.Domain, "backend", world.TeamKey); err != nil {
+		t.Fatal(err)
+	}
+	if err := rollbackAddedTeamCertificate(filepath.Dir(member.Home), member.Home, accepted, cause); !errors.Is(err, cause) || errorCodeOf(err) == "certificate_rollback_pending" {
+		t.Fatalf("valid controller could not revoke: %v", err)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("confirmed revoke left the local certificate: %v", err)
+	}
+	status, err = world.Registry.GetTeamCertificateStatus(world.Context, world.Stack.RegistryURL, world.Domain, "backend", member.Certificate.CertificateID)
+	if err != nil || status.Status != "revoked" {
+		t.Fatalf("valid controller did not revoke the certificate: %#v; %v", status, err)
+	}
+}
 
 func TestOATSRealSingletonWorkspaceStatus(t *testing.T) {
 	world := newRealCommandWorld(t)
@@ -199,7 +249,8 @@ func TestOATSRealIssuedInviteRemainsUsedWhenRecipientPersistenceFails(t *testing
 		t.Fatalf("test did not reach actual membership issuance: %#v; %v", member, err)
 	}
 	out, err := world.runInIdentityHome(source.Home, "id", "team", "revoke-invite", "--invite-id", created.InviteID)
-	if err == nil || !strings.Contains(out, "invite_already_used") {
+	var cancellation inviteCancellationOutput
+	if err == nil || json.Unmarshal([]byte(out), &cancellation) != nil || cancellation.Code != "invite_already_used" || cancellation.Status != inviteAlreadyUsed {
 		t.Fatalf("issued membership was described as an unused cancellation: %v\n%s", err, out)
 	}
 	if errorCodeOf(acceptErr) != "certificate_persistence_incomplete" || !strings.Contains(acceptErr.Error(), member.CertificateID) || !strings.Contains(acceptErr.Error(), "repair its certificate path, and run `aw id team fetch-cert") {
@@ -258,10 +309,84 @@ func TestOATSRealControllerRetirement(t *testing.T) {
 	}
 }
 
+func TestOATSRealNonHostedRetirementPreservesReleasedNoControllerOutcomes(t *testing.T) {
+	world := newRealCommandWorld(t)
+	member := world.addLocalMember(t, "worker")
+	var status identityStatusOutput
+	if err := json.Unmarshal([]byte(world.requireCommand(t, member.Home, "id", "status", "--team", world.TeamID)), &status); err != nil {
+		t.Fatal(err)
+	}
+	out, err := world.runInIdentityHome(member.Home, "workspace", "delete", status.WorkspaceID)
+	var envelope cliErrorEnvelope
+	wantMessage := fmt.Sprintf("refusing aw workspace delete through external identity home for principal %s; only own hosted local self-release is supported for an external identity home (reason: team_not_hosted)", member.Certificate.MemberDIDKey)
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 2 || strings.TrimSpace(strings.TrimPrefix(err.Error(), exit.Error()+": ")) != wantMessage || json.Unmarshal([]byte(out), &envelope) != nil || envelope.Error.Code != "team_not_hosted" || envelope.Error.Message != wantMessage {
+		t.Fatalf("released OATS refusal changed: %v\n%s", err, out)
+	}
+	// The implicit workspace command retains its existing workspace-only delete.
+	cmd := exec.CommandContext(world.Context, world.Binary, "--json", "workspace", "delete", status.WorkspaceID)
+	cmd.Dir = filepath.Dir(member.Home)
+	cmd.Env = append(idCreateCommandEnv(world.UserHome), "AWEB_IDENTITY_HOME=", "AWID_REGISTRY_URL="+world.Stack.RegistryURL, "AW_NO_UPDATE_CHECK=1")
+	plain, err := cmd.CombinedOutput()
+	var deleted workspaceDeleteOutput
+	if err != nil || json.Unmarshal(plain, &deleted) != nil || deleted.WorkspaceID != status.WorkspaceID || !deleted.IdentityDeleted || deleted.AliasReleased || deleted.AliasReleasedReason != "team_not_hosted" || deleted.ReceiptPath != "" {
+		t.Fatalf("plain workspace-only delete changed: %v\n%s", err, plain)
+	}
+	certificate, err := world.Registry.GetTeamCertificateStatus(world.Context, world.Stack.RegistryURL, world.Domain, "backend", member.Certificate.CertificateID)
+	if err != nil || certificate.Status != "active" {
+		t.Fatalf("workspace-only delete touched registry membership: %#v; %v", certificate, err)
+	}
+}
+
+func TestOATSRealRetirementRequiresPreparedReceiptBeforeDeleting(t *testing.T) {
+	world := newRealCommandWorld(t)
+	member := world.addLocalMember(t, "worker")
+	t.Setenv("HOME", world.UserHome)
+	if err := awconfig.SaveTeamKey(world.Domain, "backend", world.TeamKey); err != nil {
+		t.Fatal(err)
+	}
+	var status identityStatusOutput
+	if err := json.Unmarshal([]byte(world.requireCommand(t, member.Home, "id", "status", "--team", world.TeamID)), &status); err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := localRetirementReceiptPath(awconfig.IdentityHome{Root: member.Home}, status.WorkspaceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A directory at the lock file is a deterministic failure even as root.
+	if err := os.MkdirAll(receipt+".lock", 0o700); err != nil {
+		t.Fatal(err)
+	}
+	out, err := world.runInIdentityHome(member.Home, "workspace", "delete", status.WorkspaceID)
+	var envelope cliErrorEnvelope
+	if err == nil || json.Unmarshal([]byte(out), &envelope) != nil || envelope.Error.Code != "retirement_receipt_unavailable" {
+		t.Fatalf("retirement did not refuse before deleting: %v\n%s", err, out)
+	}
+	world.requireCommand(t, member.Home, "workspace", "status")
+	cert, err := world.Registry.GetTeamCertificateStatus(world.Context, world.Stack.RegistryURL, world.Domain, "backend", member.Certificate.CertificateID)
+	if err != nil || cert.Status != "active" {
+		t.Fatalf("receipt failure changed membership: %#v; %v", cert, err)
+	}
+	if err := os.Remove(receipt + ".lock"); err != nil {
+		t.Fatal(err)
+	}
+	var retired workspaceDeleteOutput
+	if out := world.requireCommand(t, member.Home, "workspace", "delete", status.WorkspaceID); json.Unmarshal([]byte(out), &retired) != nil || retired.RetirementCode != retiredAndRevoked {
+		t.Fatalf("repaired receipt destination could not retire: %s", out)
+	}
+}
+
 func TestOATSRealRetirementResumesOnlyControllerRevocation(t *testing.T) {
 	world := newRealCommandWorld(t)
 	member := world.addLocalMember(t, "worker")
 	t.Setenv("HOME", world.UserHome)
+	_, wrongKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveTeamKey(world.Domain, "backend", wrongKey); err != nil {
+		t.Fatal(err)
+	}
 	statusJSON := world.requireCommand(t, member.Home, "id", "status", "--team", world.TeamID)
 	var status identityStatusOutput
 	if err := json.Unmarshal([]byte(statusJSON), &status); err != nil {
@@ -269,13 +394,13 @@ func TestOATSRealRetirementResumesOnlyControllerRevocation(t *testing.T) {
 	}
 	out, err := world.runInIdentityHome(member.Home, "workspace", "delete", status.WorkspaceID)
 	if err == nil {
-		t.Fatalf("missing controller must be incomplete: %s", out)
+		t.Fatalf("refused controller revocation must be incomplete: %s", out)
 	}
 	var pending workspaceDeleteOutput
 	if err := json.NewDecoder(strings.NewReader(out)).Decode(&pending); err != nil {
 		t.Fatalf("pending receipt: %v\n%s", err, out)
 	}
-	if pending.AliasReleased || pending.RetirementCode != retiredKeyHolderRequired || pending.ReceiptPath == "" || !strings.Contains(pending.NextStep, member.Certificate.CertificateID) {
+	if pending.AliasReleased || pending.RetirementCode != retiredRevocationPending || pending.ReceiptPath == "" || !strings.Contains(pending.NextStep, member.Certificate.CertificateID) {
 		t.Fatalf("false retirement completion: %s", out)
 	}
 	if _, err := os.Stat(pending.ReceiptPath); err != nil {

@@ -146,7 +146,7 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 							http.Error(w, "missing own chain", 422)
 							return
 						}
-						chain = req.IDChain
+						chain = *req.IDChain
 					} else {
 						chain = req.IDTree.IDChain
 						requestID = req.IDTree.RequestID

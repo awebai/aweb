@@ -1,6 +1,7 @@
 package wake
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
 	"slices"
@@ -81,7 +82,9 @@ func EvaluateReadiness(input ReadinessInput) ReadinessVerdict {
 		out.Code, out.Reason = code, reason
 		return out
 	}
-	if input.ControlError != nil {
+	// A missing listener establishes absence only if the store's lock probe
+	// also found no owner. An interrupted exchange is still unavailable.
+	if input.ControlError != nil && (!errors.Is(input.ControlError, ErrDaemonDown) || input.Status.DaemonRunning) {
 		return fail(ReadinessDaemonUnavailable, "Wake control is unavailable; inspect the control error and restore the wake service before retrying.")
 	}
 	if !input.Status.DaemonRunning {

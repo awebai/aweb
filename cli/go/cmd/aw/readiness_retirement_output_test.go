@@ -4,13 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/awebai/aw/awconfig"
+	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/wake"
 )
 
@@ -32,6 +32,22 @@ func closedCommandStdout(t *testing.T) *os.File {
 		t.Fatal(err)
 	}
 	return file
+}
+
+func TestInitOutcomeReturnsClosedOutputAfterConnecting(t *testing.T) {
+	previousJSON := jsonFlag
+	t.Cleanup(func() { jsonFlag = previousJSON })
+	for _, json := range []bool{true, false} {
+		jsonFlag = json
+		root := t.TempDir()
+		result := &initResult{ServerName: "local", Path: initPathReconnect}
+		err := invokeWithCommandStdout(t, closedCommandStdout(t), func() error {
+			return printInitOutcome(connectOutput{Status: "connected", TeamID: "one:example.test", Alias: "member"}, result, root, initDefaultSetup(result, root))
+		})
+		if !errors.Is(err, os.ErrClosed) || !strings.HasSuffix(err.Error(), "Check the output destination and inspect the connected identity before retrying init.") {
+			t.Fatalf("init JSON=%t lost its output failure and recovery: %v", json, err)
+		}
+	}
 }
 
 func TestWakeReadinessReturnsClosedOutputAndKeepsItsDiagnosticJSON(t *testing.T) {
@@ -85,66 +101,57 @@ func TestWakeReadinessReturnsClosedOutputAndKeepsItsDiagnosticJSON(t *testing.T)
 				if err := json.Unmarshal(out.Readiness, &verdict); err != nil {
 					t.Fatal(err)
 				}
-				if verdict.Home != wakeStatusHome || verdict.Ready || verdict.Code != wake.ReadinessDaemonUnavailable {
-					t.Fatalf("unavailable control became ready: %s", raw)
+				if verdict.Home != wakeStatusHome || verdict.Ready || verdict.Code != wake.ReadinessDaemonNotRunning {
+					t.Fatalf("proved absence changed: %s", raw)
 				}
 			}
 		})
 	}
 }
 
-func TestLocalRetirementReturnsClosedOutputAndKeepsItsReceiptOutcome(t *testing.T) {
+func TestOATSRealLocalRetirementReturnsClosedOutputAndKeepsItsReceiptOutcome(t *testing.T) {
 	for _, revoked := range []bool{true, false} {
 		name := "revocation pending"
 		if revoked {
 			name = "already revoked"
 		}
 		t.Run(name, func(t *testing.T) {
-			t.Setenv("HOME", t.TempDir())
+			world := newRealCommandWorld(t)
+			member := world.addLocalMember(t, "worker")
+			t.Setenv("HOME", world.UserHome)
+			t.Setenv("AWID_REGISTRY_URL", world.Stack.RegistryURL)
 			t.Setenv("AWEB_IDENTITY_HOME", "")
-			listener, err := net.Listen("tcp", "127.0.0.1:0")
-			if err != nil {
-				t.Fatal(err)
-			}
-			registryURL := "http://" + listener.Addr().String()
-			if err := listener.Close(); err != nil {
-				t.Fatal(err)
-			}
-			t.Setenv("AWID_REGISTRY_URL", registryURL)
-			root := t.TempDir()
-			previousDir, err := os.Getwd()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := os.Chdir(root); err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() {
-				if err := os.Chdir(previousDir); err != nil {
-					t.Error(err)
+			key := world.TeamKey
+			if !revoked {
+				_, wrongKey, err := awid.GenerateKeypair()
+				if err != nil {
+					t.Fatal(err)
 				}
+				key = wrongKey
+			}
+			if err := awconfig.SaveTeamKey(world.Domain, "backend", key); err != nil {
+				t.Fatal(err)
+			}
+			var binding identityStatusOutput
+			if err := json.Unmarshal([]byte(world.requireCommand(t, member.Home, "id", "status", "--team", world.TeamID)), &binding); err != nil {
+				t.Fatal(err)
+			}
+			workspaceID := binding.WorkspaceID
+			initial, initialErr := world.runInIdentityHome(member.Home, "workspace", "delete", workspaceID)
+			if (initialErr == nil) != revoked {
+				t.Fatalf("real retirement did not produce the selected outcome: %v / %s", initialErr, initial)
+			}
+			var initialOutput workspaceDeleteOutput
+			if err := json.Unmarshal([]byte(initial), &initialOutput); err != nil || initialOutput.ReceiptPath == "" || initialOutput.AliasReleased != revoked {
+				t.Fatalf("real retirement did not produce its receipt: %v / %s", err, initial)
+			}
+			path := initialOutput.ReceiptPath
+			t.Chdir(filepath.Dir(member.Home))
+			previousHome, previousActive, previousTeam, previousJSON := identityHomeFlag, activeIdentityHome, teamFlag, jsonFlag
+			identityHomeFlag, activeIdentityHome, teamFlag, jsonFlag = "", awconfig.IdentityHome{}, "", true
+			t.Cleanup(func() {
+				identityHomeFlag, activeIdentityHome, teamFlag, jsonFlag = previousHome, previousActive, previousTeam, previousJSON
 			})
-			previousHome, previousTeam, previousJSON := identityHomeFlag, teamFlag, jsonFlag
-			identityHomeFlag, teamFlag, jsonFlag = "", "", true
-			t.Cleanup(func() { identityHomeFlag, teamFlag, jsonFlag = previousHome, previousTeam, previousJSON })
-			output, certificate := writeSelfCustodyIdentityForTest(t, root, "one:example.test")
-			state := teamStateBinding(certificate.Team, certificate.Alias)
-			if err := awconfig.SaveTeamState(root, &state); err != nil {
-				t.Fatal(err)
-			}
-			workspaceID := "11111111-1111-4111-8111-111111111111"
-			binding := workspaceBinding("https://service.example.test", certificate.Team, output.Alias, workspaceID)
-			if err := awconfig.SaveWorktreeWorkspaceTo(filepath.Join(root, ".aw", "workspace.yaml"), &binding); err != nil {
-				t.Fatal(err)
-			}
-			path, err := localRetirementReceiptPath(awconfig.IdentityHome{Root: filepath.Join(root, ".aw")}, workspaceID)
-			if err != nil {
-				t.Fatal(err)
-			}
-			receipt := localRetirementReceipt{Version: localRetirementReceiptVersion, TeamID: certificate.Team, CertificateID: certificate.CertificateID, MemberDIDKey: certificate.MemberDIDKey, RegistryURL: registryURL, Revoked: revoked, Delete: workspaceDeleteOutput{WorkspaceID: workspaceID, Alias: certificate.Alias, IdentityDeleted: true}}
-			if err := saveLocalRetirementReceipt(path, receipt); err != nil {
-				t.Fatal(err)
-			}
 			before, err := os.ReadFile(path)
 			if err != nil {
 				t.Fatal(err)
@@ -155,8 +162,7 @@ func TestLocalRetirementReturnsClosedOutputAndKeepsItsReceiptOutcome(t *testing.
 				t.Fatalf("retirement lost the output failure: %v", closedErr)
 			}
 			if !revoked {
-				var transport *net.OpError
-				if errorCodeOf(closedErr) != string(retiredRevocationPending) || !errors.As(closedErr, &transport) || !strings.Contains(closedErr.Error(), "receipt retained at "+path+"; retry aw workspace delete "+workspaceID) {
+				if errorCodeOf(closedErr) != string(retiredRevocationPending) || !strings.Contains(closedErr.Error(), "receipt retained at "+path+"; retry aw workspace delete "+workspaceID) {
 					t.Fatalf("output failure replaced pending revocation or its recovery: %v", closedErr)
 				}
 			}

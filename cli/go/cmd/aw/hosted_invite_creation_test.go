@@ -451,7 +451,7 @@ func TestHostedInviteGlobalRegistrationRetainsPerChildInvitation(t *testing.T) {
 					var registration any = map[string]any{"expected_head": nil, "invitation_id": childInvitation}
 					if reuse {
 						registration = nil
-						if _, err := awid.EncodeIDChainHeader(req.IDChain); err != nil {
+						if _, err := awid.EncodeIDChainHeader(*req.IDChain); err != nil {
 							t.Error("existing global membership lost its signed chain")
 							http.Error(w, "invalid chain", 422)
 							return

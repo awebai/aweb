@@ -1338,11 +1338,11 @@ func acceptAndStoreTeamInvite(request teamInviteStoreRequest) (*acceptedTeamInvi
 		if store.Duplicates == membershipRejectDuplicate {
 			return nil, rollbackAddedTeamCertificate(workingDir, identityHomeRoot, accepted, err)
 		}
-		return nil, err
+		return nil, retainIdentityForRecovery(err)
 	}
 	if explicitIdentityHome {
 		if err := writeExternalLocalIdentityStateIfNeeded(identityHomeRoot, accepted.Certificate); err != nil {
-			return nil, err
+			return nil, retainedIssuedIdentityStateFailure(accepted.Certificate, err)
 		}
 	}
 	return accepted, nil
@@ -2015,11 +2015,11 @@ func acceptTeamInviteWithDetails(input teamInviteAcceptanceRequest) (*acceptedTe
 
 	if attribution == nativeInviteChildIdentity {
 		if err := writeExternalLocalIdentityStateIfNeeded(home.Root, cert); err != nil {
-			return nil, err
+			return nil, retainedIssuedIdentityStateFailure(cert, err)
 		}
 	}
 	if err := consumedInviteParent(token, opts.ParentHome); err != nil {
-		return nil, err
+		return nil, retainIdentityForRecovery(err)
 	}
 	return &acceptedTeamInvite{
 		Output: &teamAcceptInviteOutput{
@@ -3828,8 +3828,11 @@ func requireTeamStateForMembershipAt(workingDir, identityHome string) (*awconfig
 }
 
 func rollbackAddedTeamCertificate(workingDir, identityHome string, accepted *acceptedTeamInvite, cause error) error {
+	if err := revokeAcceptedTeamCertificate(accepted); err != nil {
+		pending := fmt.Errorf("rollback of certificate %s failed: %w. Retain the identity home and ask the team controller to revoke this certificate before retrying.", accepted.Certificate.CertificateID, err)
+		return retainIdentityForRecovery(withErrorCode("certificate_rollback_pending", errors.Join(cause, pending)))
+	}
 	var cleanupErr error
-	revokeErr := revokeAcceptedTeamCertificate(accepted)
 	if accepted != nil && accepted.Output != nil && strings.TrimSpace(accepted.Output.CertPath) != "" {
 		home := awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(workingDir)}
 		if identityHome != "" {
@@ -3841,9 +3844,6 @@ func rollbackAddedTeamCertificate(workingDir, identityHome string, accepted *acc
 		} else if err := os.Remove(certPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 			cleanupErr = fmt.Errorf("remove rolled-back certificate: %w", err)
 		}
-	}
-	if revokeErr != nil {
-		cause = fmt.Errorf("%w (rollback revoke failed: %v)", cause, revokeErr)
 	}
 	return errors.Join(cause, cleanupErr)
 }

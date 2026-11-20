@@ -51,15 +51,13 @@ func TestOATSAttemptedInviteCannotCancelItsLinkedChildOrReplaceItsRecipient(t *t
 	cmd.Dir = dir
 	cmd.Env = append(testCommandEnv(dir), "AW_NO_UPDATE_CHECK=1", "AWEB_IDENTITY_HOME=")
 	out, err := cmd.CombinedOutput()
-	if err == nil || !strings.Contains(string(out), "invite_issuance_pending") || !strings.Contains(string(out), "check-invite --invite-id attempted-test --json") || !strings.Contains(string(out), `"linked_child_disposition": "retained"`) {
+	var cancellation inviteCancellationOutput
+	wantNext := formatShellCommand([]string{"aw", "--identity-home", home, "id", "team", "check-invite", "--invite-id", "attempted-test", "--json"})
+	if err == nil || json.NewDecoder(bytes.NewReader(out)).Decode(&cancellation) != nil || cancellation.Code != "invite_issuance_pending" || cancellation.LinkedChild != inviteChildRetained || cancellation.NextStep != wantNext {
 		t.Fatalf("attempt cancellation did not give a distinct refusal/action: %v\n%s", err, out)
 	}
 	if strings.Contains(string(out), invite.Secret) || strings.Contains(string(out), `"status": "cancelled"`) {
 		t.Fatal("attempt was cancelled or exposed its bearer")
-	}
-	var cancellation inviteCancellationOutput
-	if err := json.NewDecoder(bytes.NewReader(out)).Decode(&cancellation); err != nil {
-		t.Fatal(err)
 	}
 	expectedStep := formatShellCommand([]string{"aw", "--identity-home", home, "id", "team", "check-invite", "--invite-id", invite.InviteID, "--json"})
 	if cancellation.IdentityHome != home || cancellation.NextStep != expectedStep {
