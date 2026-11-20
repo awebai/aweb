@@ -30,40 +30,60 @@ class WirePeer:
     response: bytes = b'{"revocations":[],"has_more":false}'
     status: int = 200
     requests: list[tuple[str, str, bytes]] = field(default_factory=list)
+    request_headers: list[dict[str, str]] = field(default_factory=list)
+    replies: dict[tuple[str, str], tuple[int, bytes]] = field(default_factory=dict)
 
 
 @pytest.fixture
-def peer():
-    state = WirePeer()
+def peer_factory():
+    servers = []
 
-    class Endpoint(BaseHTTPRequestHandler):
-        def answer(self) -> None:
-            body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
-            state.requests.append((self.command, self.path, body))
-            self.send_response(state.status)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(state.response)))
-            self.end_headers()
-            self.wfile.write(state.response)
+    def make() -> WirePeer:
+        state = WirePeer()
 
-        do_GET = do_POST = answer
+        class Endpoint(BaseHTTPRequestHandler):
+            def answer(self) -> None:
+                body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+                state.requests.append((self.command, self.path, body))
+                state.request_headers.append(
+                    {key.lower(): value for key, value in self.headers.items()}
+                )
+                status, response = state.replies.get(
+                    (self.command, self.path), (state.status, state.response)
+                )
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(response)))
+                self.end_headers()
+                self.wfile.write(response)
 
-        def log_message(self, *_args: object) -> None:
-            return None
+            do_GET = do_POST = do_PUT = do_PATCH = do_DELETE = answer
 
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Endpoint)
-    state.origin = f"http://127.0.0.1:{server.server_port}"
-    thread = threading.Thread(
-        target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
-    )
-    thread.start()
+            def log_message(self, *_args: object) -> None:
+                return None
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Endpoint)
+        state.origin = f"http://127.0.0.1:{server.server_port}"
+        thread = threading.Thread(
+            target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+        )
+        thread.start()
+        servers.append((server, thread))
+        return state
+
     try:
-        yield state
+        yield make
     finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=1)
-        assert not thread.is_alive()
+        for server, thread in servers:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=1)
+            assert not thread.is_alive()
+
+
+@pytest.fixture
+def peer(peer_factory):
+    return peer_factory()
 
 
 @pytest.mark.asyncio
@@ -183,5 +203,32 @@ async def test_invalid_prepared_revoke_does_not_send_through_a_redis_outage(peer
         with pytest.raises(ValueError):
             await client.revoke_team_certificate_with_proof(DOMAIN, TEAM, **selected)
         assert peer.requests == []
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_malformed_later_revocation_page_cannot_publish_partial_evidence(peer):
+    path = f"/v1/namespaces/{DOMAIN}/teams/{TEAM}/revocations"
+    peer.replies[("GET", path + "?limit=200")] = (
+        200,
+        b'{"revocations":[{"certificate_id":"first"}],"has_more":true,"next_cursor":"tail"}',
+    )
+    peer.response = b"{}"
+    redis = FakeRedis()
+    client = CachedRegistryClient(peer.origin, redis)
+    try:
+        with pytest.raises(RegistryError) as refused:
+            await client.get_team_revocations(DOMAIN, TEAM)
+        assert refused.value.status_code == 502
+        assert redis.values == {}
+        assert [request[1] for request in peer.requests] == [
+            path + "?limit=200",
+            path + "?limit=200&cursor=tail",
+        ]
+        peer.replies.clear()
+        peer.response = b'{"revocations":[{"certificate_id":"first"},{"certificate_id":"last"}],"has_more":false}'
+        assert await client.get_team_revocations(DOMAIN, TEAM) == {"first", "last"}
+        assert len(peer.requests) == 3
     finally:
         await client.aclose()

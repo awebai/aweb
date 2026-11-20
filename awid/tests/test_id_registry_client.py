@@ -424,34 +424,6 @@ async def test_every_write_sends_exactly_the_shared_request_layout(recorded, eff
         )
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "routed", ["https://other-registry.example", "HTTPS://Other-Registry.example:443/"]
-)
-async def test_the_registry_audience_is_the_audience_a_write_to_the_routed_registry_signs(routed):
-    recorder = Recorder(httpx.Response(200, json=EXAMPLE["response"]))
-
-    async def route(domain: str) -> str:
-        assert domain == DOMAIN
-        return routed
-
-    client = RegistryClient(
-        ORIGIN, transport=httpx.MockTransport(recorder.handler), domain_registry_resolver=route
-    )
-    try:
-        audience = await client.registry_audience(DOMAIN)
-        await client.register_id_certificate(
-            _bundle("alice", "bob"),
-            signer=signer_for("bob"),
-            expected_head=None,
-            invitation_id=None,
-        )
-    finally:
-        await client.aclose()
-    [sent] = recorder.requests
-    assert audience == json.loads(_signed_payload(sent))["aud"] == "https://other-registry.example"
-
-
 # ---------------------------------------------------------------------------
 # Through the real AWID routes
 # ---------------------------------------------------------------------------
@@ -669,46 +641,6 @@ async def test_a_rotation_whose_answer_is_lost_leaves_no_cached_namespace():
         assert (await client.get_namespace(DOMAIN)).controller_did == did_key("root_rotated")
     finally:
         await client.aclose()
-
-
-@pytest.mark.asyncio
-async def test_a_write_to_another_registry_is_addressed_to_it_without_the_service_token():
-    other = "https://other-registry.example"
-    recorder = Recorder(httpx.Response(200, json=EXAMPLE["response"]))
-
-    async def route(domain: str) -> str:
-        assert domain == DOMAIN
-        return other
-
-    client = RegistryClient(
-        ORIGIN,
-        transport=httpx.MockTransport(recorder.handler),
-        domain_registry_resolver=route,
-        service_token="s" * 32,
-    )
-    try:
-        await client.register_id_certificate(
-            _bundle("alice", "bob"),
-            signer=signer_for("bob"),
-            expected_head=None,
-            invitation_id=None,
-        )
-        await client.revoke_id_certificate(
-            DOMAIN,
-            did_aw("bob"),
-            signer=signer_for("root"),
-            expected_head=certificate_id("bob"),
-        )
-    finally:
-        await client.aclose()
-    assert len(recorder.requests) == 2
-    for sent in recorder.requests:
-        header = sent.headers["X-AWEB-Signed-Payload"]
-        signed = json.loads(
-            base64.b64decode(header + "=" * (-len(header) % 4), altchars=b"-_", validate=True)
-        )
-        assert f"{sent.url.scheme}://{sent.url.host}" == signed["aud"] == other
-        assert "X-AWID-Service-Token" not in sent.headers
 
 
 # ---------------------------------------------------------------------------

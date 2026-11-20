@@ -573,7 +573,7 @@ async def test_a_clock_stepping_back_during_a_refresh_leaves_its_evidence_unavai
 @pytest.mark.parametrize("fetched_at", [1_000_000.5, "1000000", True, None])
 async def test_a_corrupt_stored_entry_is_dropped_and_refreshed(env, fetched_at):
     await _evidence(env)
-    [key] = [key for key in env.redis.values if not key.startswith("awid:cache_generation:")]
+    [key] = [key for key in env.redis.values if key.startswith("awid:registry_cache:")]
     entry = json.loads(env.redis.values[key])
     env.redis.values[key] = json.dumps(entry | {"fetched_at": fetched_at})
     env.clock[0] += 1
