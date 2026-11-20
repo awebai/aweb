@@ -66,6 +66,7 @@ async def test_warm_roster_uses_three_statements_and_one_pool_checkout(
     monkeypatch.setattr(connection_scope, "_acquire_from", observed_acquire)
     agents = await roster(env)
     assert any(agent["alias"] == "alice" for agent in agents)
+    print(f"ROSTER_COST statements={len(statements)} checkouts={len(checkouts)}")
     assert len(statements) == 3, {"count": len(statements), "statements": statements}
     assert len(checkouts) == 1
 
@@ -105,3 +106,39 @@ async def test_listening_roster_keeps_the_newest_activity_source(roster_stack, n
         assert datetime.fromisoformat(agent["last_seen"]) == times[newest]
     finally:
         await clear_workspace_presence(env.redis, [str(actor.workspace)])
+
+
+@pytest.mark.asyncio
+async def test_invalid_newest_grant_does_not_hide_older_valid_activity(roster_stack):
+    env = roster_stack
+    actor = env.actors["alice"]
+    await admit_room_member(env, alias="alice")
+    older = await _send_grant_heartbeat(env, path=GrantHeartbeatRoute.WORKSPACE)
+    newer = await _send_grant_heartbeat(env, path=GrantHeartbeatRoute.WORKSPACE)
+    now = datetime.now(UTC).replace(microsecond=0)
+    expected = now - timedelta(minutes=2)
+    await env.db.execute(
+        "UPDATE {{tables.workspaces}} SET last_seen_at=$2 WHERE workspace_id=$1",
+        actor.workspace,
+        now - timedelta(hours=1),
+    )
+    await env.db.execute(
+        "UPDATE {{tables.identity_grant_liveness}} SET last_seen_at=$2 WHERE grant_id=$1",
+        older,
+        expected,
+    )
+    await env.db.execute(
+        "UPDATE {{tables.identity_grant_liveness}} SET last_seen_at=$2 WHERE grant_id=$1",
+        newer,
+        now,
+    )
+    revoked = await env.client.post(
+        f"/v1/identity-grants/{newer}/revoke",
+        headers=_signed_team_headers(actor.sk, actor.did, TEAM, actor.certificate),
+    )
+    assert revoked.status_code == 200, revoked.text
+    # No root presence can supply the expected online time.
+    await clear_workspace_presence(env.redis, [str(actor.workspace)])
+    agent = next(agent for agent in await roster(env) if agent["alias"] == "alice")
+    assert agent["online"] is True
+    assert datetime.fromisoformat(agent["last_seen"]) == expected
