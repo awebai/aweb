@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from aweb.identity_binding import IdentityBinding
 from awid.registry import IDTreeEnrollment
 from datetime import datetime, timedelta, timezone
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from test_mcp_mail_conversation_parity import mail_server as mail_server
