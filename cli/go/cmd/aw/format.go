@@ -12,20 +12,21 @@ import (
 )
 
 // formatVerificationTag returns a warning string for non-verified messages.
-// Returns empty string for verified or unset status.
+// Returns empty string for a trusted verification result.
 // ALL CAPS for active security failures; lowercase for informational (no signature present).
 func formatVerificationTag(status awid.VerificationStatus) string {
+	if status.Trusted() {
+		return ""
+	}
 	switch status {
 	case awid.Failed:
 		return " [VERIFICATION FAILED]"
 	case awid.IdentityMismatch:
 		return " [IDENTITY MISMATCH]"
-	case awid.Unverified:
-		return " [unverified]"
 	case awid.VerificationStale:
 		return " [verification stale]"
 	default:
-		return ""
+		return " [unverified]"
 	}
 }
 
