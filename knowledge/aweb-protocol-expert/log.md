@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-15
+* **Harvest**: OKF proposal from seat aweb-protocol-expert-offline-verify with one backing note; a design boundary whose acceptance the coordinator relayed (source-reported). Message identifiers and reviewer names are omitted.
+* **Creation**: decision [public identity evidence approves its own public act](/aweb-protocol-expert/decisions/public-identity-evidence-approves-its-own-public-act.md); accepted adcl design, with remaining wire choices checked in code review rather than a separate format gate. No implementation or runtime claim, and no supersession of [vary independent assurance dimensions](/aweb-protocol-expert/lessons/vary-independent-assurance-dimensions.md).
+
 ## 2026-11-06
 * **Fix**: review of the db-access proposal on npm gitHead, PubSub release and stream checkouts: hosted specifics in [stream bodies leave the request connection scope](/aweb-protocol-expert/lessons/stream-bodies-leave-the-request-connection-scope.md) and [an npm tarball publish records no gitHead](/aweb-protocol-expert/lessons/npm-tarball-publish-records-no-githead.md) are stated generically or dropped, as the OSS and Cloud boundary requires.
 * **Update**: [SSE cleanup is cancelled on client disconnect](/aweb-protocol-expert/lessons/sse-cleanup-is-cancelled-on-disconnect.md) and [a PubSub release survives any cancellation](/aweb-protocol-expert/decisions/pubsub-release-survives-any-cancellation.md) link each other: the AnyIO shield covers Starlette's disconnect, not native task cancellation.
