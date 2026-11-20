@@ -21,6 +21,9 @@ func serveOneWakeStatus(t *testing.T, socketPath string, status wake.Status) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = listener.Close() })
+	if err := os.Chmod(socketPath, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	go func() {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -42,7 +45,7 @@ func runWakeStatusJSONForTest(t *testing.T, stateDir string) map[string]any {
 	wakeStateDirFlag, jsonFlag = "", true
 	t.Cleanup(func() { wakeStateDirFlag, jsonFlag = prevState, prevJSON })
 	var runErr error
-	out := captureIDCommandStdout(t, func() { runErr = wakeStatusCmd.RunE(wakeStatusCmd, nil) })
+	out := captureStdout(t, func() { runErr = wakeStatusCmd.RunE(wakeStatusCmd, nil) })
 	if runErr != nil {
 		t.Fatalf("wake status: %v", runErr)
 	}

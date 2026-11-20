@@ -240,8 +240,13 @@ Four distinct lifecycle stories that must not be conflated:
   hosted team the cloud holds the team controller and does exactly that, so
   `aw workspace delete <your-own-workspace>` retires you; the command reports
   `alias_released` for whether the name is actually reusable, which is a fact
-  about the certificate and not about the local delete. Everywhere else a
-  delete stays a delete and reports `alias_released: false` with a reason.
+  about the certificate and not about the local delete. For a non-hosted local
+  member, the CLI deletes its own workspace while its member credential is
+  valid, saves an exact local receipt, then revokes with the team's locally held
+  controller key. A failed revocation retains the receipt; retry performs only
+  the controller operation. Missing local controller authority reports the
+  exact command for the key holder and remains incomplete. Other deletes
+  report `alias_released: false` with a reason.
   Retiring a **global** identity is not this story: global identities outlive
   workspaces, and their names are released by team-authorized removal only.
   Retiring another member is also not this story; that requires an explicit
@@ -342,6 +347,13 @@ X-AWID-Team-Certificate: <base64-encoded certificate JSON; team auth only>
 X-AWEB-Signed-Payload: <optional base64url canonical JSON for team-auth v2>
 X-AWEB-DID-AW: <optional did:aw; global identity-only auth only>
 ```
+
+A missing grant in the selected team, or a missing or expired session lease,
+is a resource-not-found result. Clients preserve that refusal rather than
+claiming the server version is unsupported. Only the router's missing-endpoint
+answer (`{"detail":"Not Found"}`) supports the minimum-server diagnostic; that
+diagnostic ends with an action to upgrade the server or select the intended
+service URL.
 
 Team-certificate routes accept two signed envelopes:
 

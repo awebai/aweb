@@ -416,8 +416,9 @@ func TestLoopInterruptedProviderDoesNotFinalizeDelivery(t *testing.T) {
 	}
 }
 
-func TestLoopPropagatesPostDeliveryFailure(t *testing.T) {
-	loop := NewLoop(fakeProvider{event: &Event{Type: EventDone}}, &bytes.Buffer{})
+func TestLoopReportsPostDeliveryFailureWithoutStopping(t *testing.T) {
+	var output bytes.Buffer
+	loop := NewLoop(fakeProvider{event: &Event{Type: EventDone}}, &output)
 	loop.Runner = func(_ context.Context, _ string, _ []string, onLine func(string), _ any) error {
 		onLine("ignored")
 		return nil
@@ -430,8 +431,8 @@ func TestLoopPropagatesPostDeliveryFailure(t *testing.T) {
 	}}}
 
 	err := loop.Run(context.Background(), LoopOptions{MaxRuns: 1})
-	if err == nil || !strings.Contains(err.Error(), "mark read failed") {
-		t.Fatalf("Run error=%v, want post-delivery failure", err)
+	if err != nil || !strings.Contains(output.String(), "mark read failed") {
+		t.Fatalf("Run error=%v, want successful run with visible acknowledgement warning", err)
 	}
 }
 
@@ -2543,5 +2544,32 @@ drainOutput:
 	}
 	if got := strings.ReplaceAll(output.String(), "\r", ""); !strings.Contains(got, "\ny\n") {
 		t.Fatalf("PTY input was not echoed by the provider: %q", got)
+	}
+}
+
+func TestLoopRetriesAcknowledgementWithoutRerunningDeliveredPrompt(t *testing.T) {
+	var out bytes.Buffer
+	loop := NewLoop(fakeProvider{event: &Event{Type: EventDone, Session: "session"}}, &out)
+	runs, acks := 0, 0
+	loop.Runner = func(_ context.Context, _ string, _ []string, onLine func(string), _ any) error {
+		runs++
+		onLine("done")
+		return nil
+	}
+	loop.Dispatch = &fakeDispatcher{decisions: []DispatchDecision{{Mission: "first", AfterDelivery: func(context.Context) error {
+		acks++
+		if acks == 1 {
+			return errors.New("ack unavailable")
+		}
+		return nil
+	}}, {Mission: "second"}}}
+	if err := loop.Run(context.Background(), LoopOptions{MaxRuns: 2}); err != nil {
+		t.Fatal(err)
+	}
+	if runs != 2 || acks != 2 {
+		t.Fatalf("runs=%d acks=%d output=%s", runs, acks, out.String())
+	}
+	if !strings.Contains(out.String(), "The message was delivered; acknowledgement will be retried without running it again.") {
+		t.Fatalf("missing actionable notice: %s", out.String())
 	}
 }

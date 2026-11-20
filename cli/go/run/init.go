@@ -49,6 +49,7 @@ func InitUserConfig(in io.Reader, out io.Writer, existing UserConfig) error {
 		CommsPromptSuffix: commsSuffix,
 		WaitSeconds:       waitSeconds,
 		IdleWaitSeconds:   idleWaitSeconds,
+		Services:          existing.Services,
 	}
 	path, err := WriteUserConfig(cfg)
 	if err != nil {

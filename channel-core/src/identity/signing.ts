@@ -1,11 +1,7 @@
-import * as ed from "@noble/ed25519";
-import { sha512 } from "@noble/hashes/sha2.js";
+import { signBytes as signEd25519, verifyBytes } from "./signature_wire.js";
 import { extractPublicKey } from "./did.js";
 import { decodeRawStdBase64 } from "./base64.js";
-import { compareByCodePoint } from "./canonical.js";
-
-// @noble/ed25519 v2 requires setting the hash function
-ed.etc.sha512Sync = (...m) => sha512(ed.etc.concatBytes(...m));
+import { canonicalStringObject } from "./canonical.js";
 
 export interface MessageEnvelope {
   from: string;
@@ -56,53 +52,7 @@ export function canonicalJSON(env: MessageEnvelope): string {
   if (env.message_id) fields.push(["message_id", env.message_id]);
   if (env.to_stable_id) fields.push(["to_stable_id", env.to_stable_id]);
 
-  fields.sort((a, b) => compareByCodePoint(a[0], b[0]));
-
-  let result = "{";
-  for (let i = 0; i < fields.length; i++) {
-    if (i > 0) result += ",";
-    result += '"' + fields[i][0] + '":"' + escapeJSON(fields[i][1]) + '"';
-  }
-  result += "}";
-  return result;
-}
-
-/** JSON-escape a string value, matching Go's writeEscapedString exactly. */
-function escapeJSON(s: string): string {
-  let result = "";
-  for (const ch of s) {
-    const code = ch.codePointAt(0)!;
-    switch (ch) {
-      case '"':
-        result += '\\"';
-        break;
-      case "\\":
-        result += "\\\\";
-        break;
-      case "\n":
-        result += "\\n";
-        break;
-      case "\r":
-        result += "\\r";
-        break;
-      case "\t":
-        result += "\\t";
-        break;
-      case "\b":
-        result += "\\b";
-        break;
-      case "\f":
-        result += "\\f";
-        break;
-      default:
-        if (code < 0x20) {
-          result += "\\u" + code.toString(16).padStart(4, "0");
-        } else {
-          result += ch;
-        }
-    }
-  }
-  return result;
+  return canonicalStringObject(fields);
 }
 
 function b64Encode(bytes: Uint8Array): string {
@@ -116,8 +66,8 @@ function b64Encode(bytes: Uint8Array): string {
 function b64Decode(s: string): Uint8Array {
   // Strict, matching Go's RawStdEncoding. This is the message-envelope
   // signature path (verifyMessage / verifySignedPayload) — the most exercised
-  // one — so a lenient decode here diverges from Go on every message
-  // (default-aajc.8). Throws on malformed input: both callers wrap this in a
+  // one — so the message profile requires the strict raw standard alphabet.
+  // Throws on malformed input: both callers wrap this in a
   // try/catch that reports "failed", so a bad signature must not decode to
   // empty bytes and fall through to the verifier.
   return decodeRawStdBase64(s);
@@ -125,7 +75,7 @@ function b64Decode(s: string): Uint8Array {
 
 /** Sign bytes with an Ed25519 seed. Returns raw standard base64 (no padding). */
 export function signBytes(seed: Uint8Array, bytes: Uint8Array): string {
-  return b64Encode(ed.sign(bytes, seed));
+  return b64Encode(signEd25519({ message: bytes, seed }));
 }
 
 /** Sign a message envelope. Returns base64 signature (no padding). */
@@ -169,11 +119,11 @@ export async function verifyMessage(
   try {
     const sigBytes = b64Decode(env.signature);
     const payload = canonicalJSON(env);
-    const valid = ed.verify(
-      sigBytes,
-      new TextEncoder().encode(payload),
+    const valid = verifyBytes({
+      signature: sigBytes,
+      message: new TextEncoder().encode(payload),
       publicKey,
-    );
+    });
     return valid ? "verified" : "failed";
   } catch {
     return "failed";
@@ -211,11 +161,11 @@ export async function verifySignedPayload(
 
   try {
     const sigBytes = b64Decode(signatureB64);
-    const valid = ed.verify(
-      sigBytes,
-      new TextEncoder().encode(signedPayload),
+    const valid = verifyBytes({
+      signature: sigBytes,
+      message: new TextEncoder().encode(signedPayload),
       publicKey,
-    );
+    });
     return valid ? "verified" : "failed";
   } catch {
     return "failed";
@@ -229,9 +179,14 @@ export function signedPayloadConversationStatus(
   const expected = (conversationID || "").trim();
   if (!expected) return "verified";
   try {
-    const payload = JSON.parse(signedPayload) as { conversation_id?: unknown };
-    if (payload.conversation_id === expected) return "verified";
-    if (payload.conversation_id === undefined || payload.conversation_id === "") {
+    const payload: unknown = JSON.parse(signedPayload);
+    if (payload === null) return "failed";
+    const conversationID =
+      typeof payload === "object" && "conversation_id" in payload
+        ? payload.conversation_id
+        : undefined;
+    if (conversationID === expected) return "verified";
+    if (conversationID === undefined || conversationID === "") {
       return "verified_legacy";
     }
     return "failed";

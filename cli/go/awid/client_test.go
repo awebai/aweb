@@ -2917,12 +2917,15 @@ func TestSendMessageByIdentityUsesToDID(t *testing.T) {
 		return &ResolvedIdentity{DID: recipientCurrentDID, StableID: recipientDID}, nil
 	}})
 
-	_, err = c.SendMessageByIdentity(context.Background(), &SendMessageRequest{
+	response, err := c.SendMessageByIdentity(context.Background(), &SendMessageRequest{
 		ToDID: recipientDID,
 		Body:  "hello direct",
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if response.RecipientDID != recipientCurrentDID || response.RecipientStableID != recipientDID {
+		t.Fatalf("response must carry exactly the signed recipient: %#v", response)
 	}
 
 	gotBody := captured()
@@ -2939,7 +2942,10 @@ func TestSendMessageByIdentityUsesToDID(t *testing.T) {
 	if !ok || sp == "" {
 		t.Fatal("signed_payload missing")
 	}
-	sig := gotBody["signature"].(string)
+	sig, ok := gotBody["signature"].(string)
+	if !ok {
+		t.Fatal("signature missing")
+	}
 	status, err := VerifySignedPayload(sp, sig, did, did)
 	if err != nil {
 		t.Fatalf("VerifySignedPayload: %v", err)

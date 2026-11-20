@@ -13,22 +13,23 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from contextlib import aclosing, asynccontextmanager
-from dataclasses import dataclass
 import hashlib
 import importlib.metadata
 import json
 import os
 import re
 import shutil
-from pathlib import Path
 import subprocess
 import tarfile
 import time
-import tomllib
+from contextlib import aclosing, asynccontextmanager
+from dataclasses import dataclass
+from pathlib import Path
 from urllib.parse import quote
 
-APPROVAL = "7dac79afab8d6c341b14f7afa1625d2e42a050bb"
+import tomllib
+
+APPROVAL = "77f1a74e454c81f4634826b4da79a4014ab7a99b"
 ORG = "org.adcl6.test"
 REGISTRY = "https://awid.adcl6.test"
 SITE = "https://approval.adcl6.test"
@@ -43,6 +44,7 @@ STEP_OWNERS = {
         "human register",
         "human enroll start/material/confirm/activate",
         "human add through generic 428 approval",
+        "human refresh-binding no-op refusal through own-person holder and service",
         "id proof with stored evidence",
         "plain outside aw verify",
     ],
@@ -96,6 +98,7 @@ def retain(args) -> None:
         "controller-public.json",
         "command-failure.stderr",
         "prompt-counts.json",
+        "first-binding-refresh-refused.json",
     )
     paths = [work / name for name in names if (work / name).exists()]
     public = work / "public"
@@ -157,6 +160,7 @@ def archive_running_tree(root: Path, archive: Path) -> str:
                 "cli/go",
                 "awid",
                 "key-holder",
+                "naapp-lib",
                 "deploy/team",
             ],
             cwd=root,
@@ -166,18 +170,25 @@ def archive_running_tree(root: Path, archive: Path) -> str:
     return source_sha
 
 
-def prepare(args) -> None:
-    runtime = args.runtime.resolve()
-    build = runtime / "build"
-    build.mkdir(mode=0o700)
-    extract(args.approval_archive, APPROVAL, build / "approval")
+@dataclass(frozen=True, kw_only=True)
+class PreparedProductSource:
+    commit: str
+    go_tree: str
+    archive_sha256: str
+
+
+def stage_product_source(
+    *, root: Path, runtime: Path, build: Path, architecture: str
+) -> PreparedProductSource:
     # Build aw and holder from this clean checkout, including the landing merge.
     # Only compiled artifacts/wheels enter the application image.
-    root = Path(__file__).resolve().parents[1]
     archive = runtime / "source.tar"
     source_sha = archive_running_tree(root, archive)
     extract(
-        archive, source_sha, build / "holder", ("awid/", "key-holder/", "deploy/team/")
+        archive,
+        source_sha,
+        build / "holder",
+        ("awid/", "key-holder/", "naapp-lib/", "deploy/team/"),
     )
     go_tree = subprocess.check_output(
         ["git", "rev-parse", f"{source_sha}:cli/go"], cwd=root, text=True
@@ -187,7 +198,7 @@ def prepare(args) -> None:
     env = dict(
         os.environ,
         GOOS="linux",
-        GOARCH=args.architecture,
+        GOARCH=architecture,
         CGO_ENABLED="0",
         GOWORK="off",
     )
@@ -206,6 +217,23 @@ def prepare(args) -> None:
         check=True,
     )
     shutil.rmtree(product)
+    return PreparedProductSource(
+        commit=source_sha,
+        go_tree=go_tree,
+        archive_sha256=hashlib.sha256(archive.read_bytes()).hexdigest(),
+    )
+
+
+def prepare(args) -> None:
+    runtime = args.runtime.resolve()
+    build = runtime / "build"
+    build.mkdir(mode=0o700)
+    extract(args.approval_archive, APPROVAL, build / "approval")
+    root = Path(__file__).resolve().parents[1]
+    product_source = stage_product_source(
+        root=root, runtime=runtime, build=build, architecture=args.architecture
+    )
+    source_sha, go_tree = product_source.commit, product_source.go_tree
     (build / "journey.py").write_bytes(Path(__file__).read_bytes())
     (build / "Dockerfile").write_bytes(
         (root / "scripts/adcl6-first-path.Dockerfile").read_bytes()
@@ -472,7 +500,7 @@ http {
             "approval_archive_sha256": hashlib.sha256(
                 args.approval_archive.read_bytes()
             ).hexdigest(),
-            "source_archive_sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
+            "source_archive_sha256": product_source.archive_sha256,
         },
     )
 
@@ -526,7 +554,13 @@ async def command(*args, data=None, cwd=None, env=None, timeout=120):
 
 
 async def human_command(
-    home, args, *, actor=None, json_output=True, approval_ready=None
+    home,
+    args,
+    *,
+    actor=None,
+    json_output=True,
+    approval_ready=None,
+    expected_exit: int = 0,
 ):
     """Run the installed human client at a real PTY, with a real Secret Service.
 
@@ -603,7 +637,7 @@ async def human_command(
                 child.sendline("yes")
         child.close()
         text = "".join(transcript)
-        if child.exitstatus != 0:
+        if child.exitstatus != expected_exit:
             failure = Path("/work/command-failure.stderr")
             failure.write_text(text)
             failure.chmod(0o600)
@@ -673,14 +707,75 @@ class Person:
             self.home / ".awid" / "humans" / ORG / self.identity.removeprefix("did:aw:")
         )
 
-    async def aw(self, *args, actor=None, json_output=True, approval_ready=None):
+    async def aw(
+        self,
+        *args,
+        actor=None,
+        json_output=True,
+        approval_ready=None,
+        expected_exit: int = 0,
+    ):
         return await human_command(
             self.home,
             ["--human", self.identity, "--human-domain", ORG, *args],
             actor=actor,
             json_output=json_output,
             approval_ready=approval_ready,
+            expected_exit=expected_exit,
         )
+
+
+async def assert_unchanged_binding_refresh_refused(
+    *, subject: Person, work: Path
+) -> None:
+    """An unchanged-custody refresh refuses and preserves the person's evidence.
+
+    The service's registry test separately covers a changed controller; the
+    native holder and Cobra controls cover genuinely changed bindings. This
+    product-command path must report that no live update is needed.
+    """
+    from approval_service.seams import commitment
+
+    historical = {
+        name: (subject.record_dir / name).read_bytes()
+        for name in (
+            "approval-binding.json",
+            "approval-evidence.json",
+            "enrollment-session.json",
+        )
+    }
+    live_path = subject.record_dir / "approval-live-binding.json"
+    live_before = live_path.read_bytes() if live_path.exists() else None
+    current = json.loads(live_before or historical["approval-binding.json"])
+    pending_path = subject.record_dir / "approval-binding-refresh.json"
+    response = await subject.aw(
+        "id", "human", "refresh-binding", "--json", expected_exit=1
+    )
+    advice = (
+        "Nothing to refresh: the submitted binding is already current. "
+        "Keep using the saved live binding; request a refresh only after the issuer or certificate changes."
+    )
+    expected_message = (
+        "binding_refresh_nothing_to_refresh. "
+        + advice
+        + ". The service definitively refused this packet. Restore your last successful live binding if it changed elsewhere. "
+        + "To ask the holder for a new packet, remove "
+        + json.dumps(str(pending_path))
+        + " and repeat refresh-binding with --issuer URL for the current issuer."
+    )
+    assert response == {"error": {"code": "error", "message": expected_message}}
+    assert (live_path.read_bytes() if live_path.exists() else None) == live_before
+    retained = json.loads(pending_path.read_bytes())
+    assert pending_path.stat().st_mode & 0o777 == 0o600
+    assert retained["previous_binding_commitment"] == commitment(
+        "binding_commitment", current
+    )
+    assert commitment("binding_commitment", retained["binding"]) == commitment(
+        "binding_commitment", current
+    )
+    for name, before in historical.items():
+        assert (subject.record_dir / name).read_bytes() == before, name
+    save(work / (subject.name + "-binding-refresh-refused.json"), response)
 
 
 async def deployment_policy(section):
@@ -979,10 +1074,10 @@ async def browsers():
 async def driver():
     import dns.asyncresolver
     import httpx
-    from awid.registry import RegistryClient, DIDKeyNotFoundError
     from approval_service.canonical import parse
     from approval_service.encoding import decode
     from approval_service.seams import make_needs_human
+    from awid.registry import DIDKeyNotFoundError, RegistryClient
 
     work = Path("/work")
     runtime = work / "browser-home" / "keyring-runtime"
@@ -1287,6 +1382,10 @@ async def driver():
                     first.activation["evidence"]["evidence"]["kind"]
                     == "human_enrolled_later"
                 )
+            async with phase(
+                "aw refuses an unchanged binding refresh without changing saved evidence"
+            ):
+                await assert_unchanged_binding_refresh_refused(subject=first, work=work)
             async with phase(
                 "plain outsider aw verify reports later approval evidence without creation"
             ):

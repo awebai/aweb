@@ -702,3 +702,25 @@ func TestRefreshLibraryProfileRefusesMismatchedProfileRef(t *testing.T) {
 		t.Fatalf("ref.json was rewritten despite the refusal: %+v", after)
 	}
 }
+
+func TestPruneRejectsRecordedCredentialPathsBeforeRemovingProfileFiles(t *testing.T) {
+	home := t.TempDir()
+	for _, rel := range []string{"AGENTS.md", ".aw/signing.key"} {
+		path := filepath.Join(home, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("keep"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	err := pruneRemovedManagedProfileFiles(home, []string{"AGENTS.md", ".aw/signing.key"}, nil)
+	if err == nil || !strings.Contains(err.Error(), "Use a profile destination") {
+		t.Fatalf("unsafe recorded path accepted: %v", err)
+	}
+	for _, rel := range []string{"AGENTS.md", ".aw/signing.key"} {
+		if data, err := os.ReadFile(filepath.Join(home, filepath.FromSlash(rel))); err != nil || string(data) != "keep" {
+			t.Fatalf("partial/credential deletion %s: %q %v", rel, data, err)
+		}
+	}
+}

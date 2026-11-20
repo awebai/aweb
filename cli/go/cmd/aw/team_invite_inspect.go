@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -15,19 +16,29 @@ import (
 	"github.com/spf13/cobra"
 )
 
+type invitePreviewStatus string
+
+const (
+	invitePreviewUnverified invitePreviewStatus = "unverified"
+	invitePreviewActive     invitePreviewStatus = "active"
+	invitePreviewExpired    invitePreviewStatus = "expired"
+	invitePreviewExhausted  invitePreviewStatus = "exhausted"
+	invitePreviewRevoked    invitePreviewStatus = "revoked"
+)
+
 type inviteInspection struct {
-	Kind            string  `json:"kind"`
-	CanonicalTeamID string  `json:"canonical_team_id"`
-	IdentityScope   string  `json:"identity_scope"`
-	ServerURL       string  `json:"server_url"`
-	ExpiresAt       *string `json:"expires_at,omitempty"`
-	Status          string  `json:"status"`
+	Kind            teamInviteAuthorityKind `json:"kind"`
+	CanonicalTeamID string                  `json:"canonical_team_id"`
+	IdentityScope   string                  `json:"identity_scope"`
+	ServerURL       string                  `json:"server_url"`
+	ExpiresAt       *string                 `json:"expires_at,omitempty"`
+	Status          invitePreviewStatus     `json:"status"`
 }
 
-// Hosted expiry is explicitly nullable; controller metadata has no expiry.
+// Hosted expiry is explicitly nullable; a controller token carries no expiry.
 func (r inviteInspection) MarshalJSON() ([]byte, error) {
 	type plain inviteInspection
-	if r.Kind == "hosted" {
+	if r.Kind == inviteAuthorityHosted {
 		return json.Marshal(struct {
 			plain
 			ExpiresAt *string `json:"expires_at"`
@@ -55,7 +66,7 @@ var teamInviteInspectCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		token, err := readInspectToken(cmd.InOrStdin())
 		if err != nil {
-			return reportInviteInspectError(cmd, nil, err.(*inviteInspectError))
+			return reportInviteInspectError(cmd, nil, err)
 		}
 		result, inspectErr := inspectInvite(cmd.Context(), token)
 		if inspectErr != nil {
@@ -77,23 +88,30 @@ func init() {
 }
 
 func reportInviteInspectError(cmd *cobra.Command, result *inviteInspection, err *inviteInspectError) error {
+	var writeErr error
 	if jsonFlag {
-		_ = json.NewEncoder(cmd.OutOrStdout()).Encode(struct {
+		writeErr = json.NewEncoder(cmd.OutOrStdout()).Encode(struct {
 			Error  *inviteInspectError `json:"error"`
 			Invite *inviteInspection   `json:"invite,omitempty"`
 		}{err, result})
 	} else if result != nil {
-		_ = formatInviteInspection(cmd, result)
+		writeErr = formatInviteInspection(cmd, result)
+	}
+	if writeErr != nil {
+		return errors.Join(err, fmt.Errorf("write invite inspection: %w; check the output destination and retry", writeErr))
 	}
 	return err
 }
 
 func formatInviteInspection(cmd *cobra.Command, result *inviteInspection) error {
 	_, err := fmt.Fprintf(cmd.OutOrStdout(), "Kind: %s\nTeam: %s\nIdentity scope: %s\nServer: %s\nStatus: %s\n", result.Kind, result.CanonicalTeamID, result.IdentityScope, result.ServerURL, result.Status)
-	if result.Kind == "controller" {
-		fmt.Fprintln(cmd.OutOrStdout(), "Locally decoded metadata only; scope, expiry and validity are unknown until acceptance.")
+	if err != nil {
+		return err
+	}
+	if result.Kind == inviteAuthorityController {
+		_, err = fmt.Fprintln(cmd.OutOrStdout(), "Locally decoded metadata only; scope, expiry and validity are unknown until acceptance.")
 	} else {
-		fmt.Fprintln(cmd.OutOrStdout(), "Status reported by the invite's service; no invite was redeemed. The unsigned envelope does not authenticate that service.")
+		_, err = fmt.Fprintln(cmd.OutOrStdout(), "Status reported by the invite's service; no invite was redeemed. The unsigned envelope does not authenticate that service.")
 	}
 	return err
 }
@@ -111,19 +129,19 @@ func inspectInvite(ctx context.Context, token string) (*inviteInspection, *invit
 	if strings.HasPrefix(token, "aw_inv_") {
 		envelope, err := decodeInspectHostedEnvelope(token)
 		if err != nil {
-			return nil, err.(*inviteInspectError)
+			return nil, err
 		}
 		return inspectHostedInvite(ctx, token, envelope)
 	}
 	decoded, err := decodeInspectControllerToken(token)
 	if err != nil {
-		return nil, err.(*inviteInspectError)
+		return nil, err
 	}
 	id, valid := inspectCanonicalTeam(decoded.Domain, decoded.TeamName)
 	if !valid {
 		return nil, malformedInspectToken()
 	}
-	result := &inviteInspection{Kind: "controller", CanonicalTeamID: id, IdentityScope: "unknown", ServerURL: decoded.AwebURL, Status: "unverified"}
+	result := &inviteInspection{Kind: inviteAuthorityController, CanonicalTeamID: id, IdentityScope: "unknown", ServerURL: decoded.AwebURL, Status: invitePreviewUnverified}
 	if inspectResultLeaks(result, token, decoded.Secret) {
 		return nil, malformedInspectToken()
 	}
@@ -133,7 +151,7 @@ func inspectInvite(ctx context.Context, token string) (*inviteInspection, *invit
 func inspectResultLeaks(result *inviteInspection, secrets ...string) bool {
 	// Values are validated separately; even syntactically valid service metadata
 	// must not echo the submitted capability or its secret.
-	values := []string{result.Kind, result.CanonicalTeamID, result.IdentityScope, result.ServerURL, result.Status}
+	values := []string{string(result.Kind), result.CanonicalTeamID, result.IdentityScope, result.ServerURL, string(result.Status)}
 	if result.ExpiresAt != nil {
 		values = append(values, *result.ExpiresAt)
 	}
@@ -165,9 +183,12 @@ func sameInviteService(a, b string) bool {
 }
 
 func readHostedInvitePreview(ctx context.Context, token string, envelope hostedJoinTokenEnvelope) (*inviteInspection, *awid.SpawnInvitePreviewResponse, *inviteInspectError) {
-	body, _ := json.Marshal(struct {
+	body, err := json.Marshal(struct {
 		Token string `json:"token"`
 	}{token})
+	if err != nil {
+		return nil, nil, inspectUnavailable()
+	}
 	base := strings.TrimSuffix(envelope.AwebURL, "/api")
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/api/v1/spawn/invite-preview", bytes.NewReader(body))
 	if err != nil {
@@ -180,7 +201,7 @@ func readHostedInvitePreview(ctx context.Context, token string, envelope hostedJ
 	// Do not use identity clients or generic HTTP tracing: headers, URLs and
 	// malformed bodies can all reflect secrets. This fixed trace is sufficient
 	// to show the sole request and its status without logging token-derived data.
-	trace := traceFlag || os.Getenv("AW_TRACE") == "1"
+	trace := traceFlag || awid.TraceEnabled()
 	if trace {
 		fmt.Fprintln(os.Stderr, "AW TRACE invite preview: POST /api/v1/spawn/invite-preview (credentials and response omitted)")
 	}
@@ -218,8 +239,8 @@ func readHostedInvitePreview(ctx context.Context, token string, envelope hostedJ
 	if err != nil || !valid || id != wire.CanonicalTeamID || (wire.IdentityScope != "local" && wire.IdentityScope != "global" && wire.IdentityScope != "unknown") {
 		return nil, nil, inspectUnavailable()
 	}
-	server, err := inspectServiceURL(wire.ServerURL)
-	if err != nil {
+	server, serviceRefusal := inspectServiceURL(wire.ServerURL)
+	if serviceRefusal != nil {
 		return nil, nil, inspectUnavailable()
 	}
 	if !sameInviteService(server, envelope.AwebURL) {
@@ -230,14 +251,18 @@ func readHostedInvitePreview(ctx context.Context, token string, envelope hostedJ
 			return nil, nil, inspectUnavailable()
 		}
 	}
-	result := &inviteInspection{"hosted", id, wire.IdentityScope, server, wire.ExpiresAt, wire.Status}
+	status, known := inspectedHostedPreviewStatus(wire.Status)
+	if !known {
+		return nil, nil, inspectUnavailable()
+	}
+	result := &inviteInspection{Kind: inviteAuthorityHosted, CanonicalTeamID: id, IdentityScope: wire.IdentityScope, ServerURL: server, ExpiresAt: wire.ExpiresAt, Status: status}
 	if inspectResultLeaks(result, token, envelope.InnerToken, strings.TrimPrefix(envelope.InnerToken, "aw_inv_")) {
 		return nil, nil, inspectUnavailable()
 	}
-	switch wire.Status {
-	case "active":
+	switch status {
+	case invitePreviewActive:
 		return result, &wire, nil
-	case "expired", "exhausted", "revoked":
+	case invitePreviewExpired, invitePreviewExhausted, invitePreviewRevoked:
 		return result, &wire, &inviteInspectError{wire.Status, "Invite is " + wire.Status + "; request a new invite. No invite was redeemed.", 1}
 	default:
 		return nil, nil, inspectUnavailable()
@@ -248,4 +273,21 @@ func readHostedInvitePreview(ctx context.Context, token string, envelope hostedJ
 // incidental network or state-writing side effects from command hooks.
 func isTeamInviteInspectCommand(cmd *cobra.Command) bool {
 	return cmd != nil && cmd.CommandPath() == "aw team invite inspect"
+}
+
+// A service preview may name only the released lifecycle states; local token
+// decoding remains explicitly unverified (docs/invite-inspection.md:66-74,86-94).
+func inspectedHostedPreviewStatus(raw string) (invitePreviewStatus, bool) {
+	switch raw {
+	case string(invitePreviewActive):
+		return invitePreviewActive, true
+	case string(invitePreviewExpired):
+		return invitePreviewExpired, true
+	case string(invitePreviewExhausted):
+		return invitePreviewExhausted, true
+	case string(invitePreviewRevoked):
+		return invitePreviewRevoked, true
+	default:
+		return "", false
+	}
 }

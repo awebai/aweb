@@ -50,57 +50,97 @@ func init() {
 	idHumanAddCmd.Flags().StringVar(&humanAddPerson, "person", "", "New person's prepared did:aw")
 	idHumanAddCmd.Flags().StringVar(&humanAddKey, "identity-key", "", "New person's prepared identity did:key")
 	idHumanAddCmd.Flags().StringVar(&humanAddOut, "out", "", "New pending-intent file; default is JSON on stdout")
-	_ = idHumanAddCmd.MarkFlagRequired("person")
-	_ = idHumanAddCmd.MarkFlagRequired("identity-key")
+	if err := idHumanAddCmd.MarkFlagRequired("person"); err != nil {
+		panic(err)
+	}
+	if err := idHumanAddCmd.MarkFlagRequired("identity-key"); err != nil {
+		panic(err)
+	}
 	idHumanAddCmd.Flags().BoolVar(&humanAddRestart, "restart", false, "Archive an expired approval attempt and ask the issuer for a fresh request")
 	idHumanCmd.AddCommand(idHumanAddCmd)
 }
 
 // This is the typed command's requested-act binding, not a receipt verifier.
-func checkHumanAddRequest(request map[string]any, human *awconfig.HumanRecord, person, key, issuer string) error {
+type humanAddRequestCheck struct {
+	Request      map[string]any
+	Human        *awconfig.HumanRecord
+	Person       string
+	IdentityKey  string
+	IssuerOrigin string
+}
+
+func checkHumanAddRequest(input humanAddRequestCheck) error {
+	request, human := input.Request, input.Human
+	person, key, issuer := input.Person, input.IdentityKey, input.IssuerOrigin
 	act := enrollmentObject(request["act"])
 	target := enrollmentObject(act["target"])
 	expectedRequester := map[string]any{"kind": "identity", "id": human.StableID, "key": human.DIDKey}
 	if act["operation"] != "human.add" || target["person"] != person || target["identity_key"] != key || request["approver"] != human.StableID || request["organisation"] != human.Domain || enrollmentObject(request["enforcer"])["audience"] != issuer || !sameEnrollmentValue(request["requester"], expectedRequester) {
-		return usageError("issuer's approval request differs from the person and action you requested")
+		return humanIssuanceRefusal("issuer's approval request differs from the person and action you requested")
 	}
 	return proof.CheckDefinition(request)
 }
 
 // This checks the handover result against the requested person and the namespace
 // controller obtained independently from DNS and the registry, not its own key.
-func checkHumanAddIssued(answer map[string]any, person, key, domain, controller string) error {
+type humanAddIssuedCheck struct {
+	Answer      map[string]any
+	Person      string
+	IdentityKey string
+	Domain      string
+	Controller  string
+}
+
+func checkHumanAddIssued(input humanAddIssuedCheck) error {
+	answer := input.Answer
+	person, key, domain, controller := input.Person, input.IdentityKey, input.Domain, input.Controller
 	if answer["state"] != "issued" || answer["person"] != person || answer["identity_key"] != key {
-		return usageError("issuer returned a different person or identity key")
+		return humanIssuanceRefusal("issuer returned a different person or identity key")
 	}
 	public, err := awid.ExtractPublicKey(key)
 	if err != nil {
 		return err
 	}
 	if awid.ComputeStableID(public) != person {
-		return usageError("issued fresh person does not match the prepared identity key")
+		return humanIssuanceRefusal("issued fresh person does not match the prepared identity key")
 	}
 	signed := enrollmentObject(answer["certificate"])
 	cert := enrollmentObject(signed["certificate"])
 	if cert["id"] != person || cert["domain"] != domain || cert["kind"] != "human" || cert["issuer_key"] != controller || !sameEnrollmentValue(cert["parent"], map[string]any{"kind": "namespace", "id": domain}) {
-		return usageError("issued human certificate differs from the requested organisation or controller")
+		return humanIssuanceRefusal("issued human certificate differs from the requested organisation or controller")
 	}
 	return awid.VerifyIDCertificate(signed, controller)
 }
 
+type humanAddOptions struct {
+	Issuer         string
+	ApprovalOrigin string
+	Person         string
+	IdentityKey    string
+	Output         string
+	Restart        bool
+}
+
 func runIDHumanAdd(cmd *cobra.Command, args []string) error {
+	return executeHumanAdd(cmd, humanAddOptions{
+		Issuer: humanAddIssuer, ApprovalOrigin: humanAddOrigin, Person: humanAddPerson,
+		IdentityKey: humanAddKey, Output: humanAddOut, Restart: humanAddRestart,
+	})
+}
+
+func executeHumanAdd(cmd *cobra.Command, options humanAddOptions) error {
 	h := activeHuman
-	h.operation = "ask your issuer to add human " + humanAddPerson
-	if !strings.HasPrefix(humanAddPerson, "did:aw:") {
+	h.operation = "ask your issuer to add human " + options.Person
+	if !strings.HasPrefix(options.Person, "did:aw:") {
 		return usageError("--person must be the new person's prepared did:aw")
 	}
-	if _, err := awid.DecodeStableID(strings.TrimPrefix(humanAddPerson, "did:aw:")); err != nil {
+	if _, err := awid.DecodeStableID(strings.TrimPrefix(options.Person, "did:aw:")); err != nil {
 		return err
 	}
-	if _, err := awid.ExtractPublicKey(humanAddKey); err != nil {
+	if _, err := awid.ExtractPublicKey(options.IdentityKey); err != nil {
 		return err
 	}
-	issuer := strings.TrimSpace(humanAddIssuer)
+	issuer := strings.TrimSpace(options.Issuer)
 	if issuer == "" {
 		saved, err := loadHumanEnrollment(filepath.Join(h.dir, "enrollment-session.json"), h)
 		if err != nil {
@@ -120,7 +160,7 @@ func runIDHumanAdd(cmd *cobra.Command, args []string) error {
 	var origin string
 	var binding map[string]any
 	var client *approval.Client
-	body := map[string]any{"person": humanAddPerson, "identity_key": humanAddKey, "approver": h.record.StableID}
+	body := map[string]any{"person": options.Person, "identity_key": options.IdentityKey, "approver": h.record.StableID}
 	canonical, err := proof.Canonical(body)
 	if err != nil {
 		return err
@@ -129,19 +169,19 @@ func runIDHumanAdd(cmd *cobra.Command, args []string) error {
 	digest := sha256.Sum256(append([]byte(targetURL+"\n"), canonical...))
 	recordPath := filepath.Join(h.dir, fmt.Sprintf("human-add-%x.json", digest))
 	loadApproval := func() error {
-		raw, e := readFileBounded(filepath.Join(h.dir, "approval-binding.json"), maxResponseBytes)
-		if e != nil {
-			return fmt.Errorf("this issuer requires approval; run aw id human enroll first: %w", e)
-		}
-		binding, e = proof.Parse(raw)
+		var e error
+		binding, e = loadHumanApprovalBinding(h.dir)
 		if e != nil {
 			return e
 		}
 		origin = enrollmentText(enrollmentObject(binding["binding"])["origin"])
-		if humanAddOrigin != "" && humanAddOrigin != origin {
+		if options.ApprovalOrigin != "" && options.ApprovalOrigin != origin {
 			return usageError("--approval-origin differs from your enrolled binding")
 		}
-		client = humanEnrollmentClient(h, origin)
+		client, e = humanEnrollmentClient(h, origin)
+		if e != nil {
+			return e
+		}
 		client.PollInterval = 5 * time.Second
 		client.Notify = cmd.ErrOrStderr()
 		client.Retain = approvalRecordWriter(recordPath, origin, targetURL)
@@ -151,9 +191,9 @@ func runIDHumanAdd(cmd *cobra.Command, args []string) error {
 	var presentation []byte
 	var result *idRequestExecutionResult
 	var request map[string]any
-	showApproval := func() {
-		fmt.Fprintf(cmd.ErrOrStderr(), "Open %s/ and sign in as %s to review human.add for %s.\n", origin, h.record.StableID, humanAddPerson)
-		_ = openBrowser(origin + "/")
+	showApproval := func() error {
+		fmt.Fprintf(cmd.ErrOrStderr(), "Open %s/ and sign in as %s to review human.add for %s.\n", origin, h.record.StableID, options.Person)
+		return openHumanApprovalPage(cmd.ErrOrStderr(), origin+"/")
 	}
 	var original []byte
 	var receipt map[string]any
@@ -169,10 +209,10 @@ func runIDHumanAdd(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		if err = checkHumanAddRequest(request, h.record, humanAddPerson, humanAddKey, issuer); err != nil {
+		if err = checkHumanAddRequest(humanAddRequestCheck{Request: request, Human: h.record, Person: options.Person, IdentityKey: options.IdentityKey, IssuerOrigin: issuer}); err != nil {
 			return err
 		}
-		archive, err := restartHumanAttempt(recordPath, request, time.Now().Unix(), humanAddRestart, false)
+		archive, err := restartHumanAttempt(recordPath, request, time.Now().Unix(), options.Restart, false)
 		if err != nil {
 			return err
 		}
@@ -187,7 +227,9 @@ func runIDHumanAdd(cmd *cobra.Command, args []string) error {
 	}
 	if original != nil {
 		if receipt == nil {
-			showApproval()
+			if err := showApproval(); err != nil {
+				return err
+			}
 		}
 		presentation, err = client.Resume(ctx, original, receipt)
 		if err != nil {
@@ -207,10 +249,12 @@ func runIDHumanAdd(cmd *cobra.Command, args []string) error {
 				return err
 			}
 			request = pending.Request
-			if err = checkHumanAddRequest(request, h.record, humanAddPerson, humanAddKey, issuer); err != nil {
+			if err = checkHumanAddRequest(humanAddRequestCheck{Request: request, Human: h.record, Person: options.Person, IdentityKey: options.IdentityKey, IssuerOrigin: issuer}); err != nil {
 				return err
 			}
-			showApproval()
+			if err := showApproval(); err != nil {
+				return err
+			}
 			presentation, err = client.Complete428(ctx, result.Body, result.Status)
 			if err != nil {
 				return err
@@ -252,7 +296,7 @@ func runIDHumanAdd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if answer["state"] == "issued" {
-		if err = checkHumanAddIssued(answer, humanAddPerson, humanAddKey, h.record.Domain, issuerKey); err != nil {
+		if err = checkHumanAddIssued(humanAddIssuedCheck{Answer: answer, Person: options.Person, IdentityKey: options.IdentityKey, Domain: h.record.Domain, Controller: issuerKey}); err != nil {
 			return err
 		}
 		if request != nil {
@@ -262,17 +306,17 @@ func runIDHumanAdd(cmd *cobra.Command, args []string) error {
 				return e
 			}
 			if enrollmentObject(enrollmentObject(request["act"])["target"])["certificate"] != id {
-				return usageError("issued certificate differs from the approved act")
+				return humanIssuanceRefusal("issued certificate differs from the approved act")
 			}
 		}
-		if err = writeExchangeFile(humanAddOut, result.Body); err != nil {
+		if err = writeExchangeFile(options.Output, result.Body); err != nil {
 			return err
 		}
-		file := humanAddOut
+		file := options.Output
 		if file == "" || file == "-" {
 			file = "the saved certificate file"
 		}
-		fmt.Fprintf(cmd.ErrOrStderr(), "Issued %s without enrolling an approval key. Give %s to that person. They run aw id human register FILE --human %s --human-domain %s. Enrollment is optional.\n", humanAddPerson, file, humanAddPerson, h.record.Domain)
+		fmt.Fprintf(cmd.ErrOrStderr(), "Issued %s without enrolling an approval key. Give %s to that person. They run aw id human register FILE --human %s --human-domain %s. Enrollment is optional.\n", options.Person, file, options.Person, h.record.Domain)
 		return nil
 	}
 	if client == nil {
@@ -281,11 +325,11 @@ func runIDHumanAdd(cmd *cobra.Command, args []string) error {
 		}
 	}
 	i := enrollmentObject(enrollmentObject(answer["intent"])["intent"])
-	if answer["state"] != "enrollment_pending" || i["person"] != humanAddPerson || i["identity_key"] != humanAddKey || i["organisation"] != h.record.Domain {
-		return usageError("issuer returned a different person or no pending intent")
+	if answer["state"] != "enrollment_pending" || i["person"] != options.Person || i["identity_key"] != options.IdentityKey || i["organisation"] != h.record.Domain {
+		return humanIssuanceRefusal("issuer returned a different person or no pending intent")
 	}
 	if _, err = proof.CheckEnrollmentIntent(enrollmentObject(answer["intent"]), proof.EnrollmentInput{
-		IssuerKey: issuerKey, Requester: map[string]any{"kind": "identity", "id": humanAddPerson, "key": humanAddKey},
+		IssuerKey: issuerKey, Requester: map[string]any{"kind": "identity", "id": options.Person, "key": options.IdentityKey},
 		Origin: origin, RPID: enrollmentText(enrollmentObject(binding["binding"])["rp_id"]), Now: time.Now().Unix(),
 	}); err != nil {
 		return err
@@ -297,16 +341,20 @@ func runIDHumanAdd(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		if enrollmentObject(enrollmentObject(request["act"])["target"])["certificate"] != certificate {
-			return usageError("pending certificate differs from the approved act")
+			return humanIssuanceRefusal("pending certificate differs from the approved act")
 		}
 	}
-	if err = writeExchangeFile(humanAddOut, result.Body); err != nil {
+	if err = writeExchangeFile(options.Output, result.Body); err != nil {
 		return err
 	}
-	file := humanAddOut
+	file := options.Output
 	if file == "" || file == "-" {
 		file = "the saved intent file"
 	}
-	fmt.Fprintf(cmd.ErrOrStderr(), "Pending acceptance by %s. Give %s to that person. They run aw id human enroll --intent FILE --issuer %s --human %s --human-domain %s, then register and confirm their key in the named browser.\n", humanAddPerson, file, issuer, humanAddPerson, h.record.Domain)
+	fmt.Fprintf(cmd.ErrOrStderr(), "Pending acceptance by %s. Give %s to that person. They run aw id human enroll --intent FILE --issuer %s --human %s --human-domain %s, then register and confirm their key in the named browser.\n", options.Person, file, issuer, options.Person, h.record.Domain)
 	return nil
+}
+
+func humanIssuanceRefusal(message string) error {
+	return fmt.Errorf("%s. Ask the issuer to check the requested person and controller, then retry.", message)
 }

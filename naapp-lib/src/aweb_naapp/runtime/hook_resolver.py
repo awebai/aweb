@@ -43,8 +43,6 @@ from typing import Any
 from urllib.parse import quote, urlencode
 from uuid import UUID
 
-import httpx
-
 from aweb_naapp.runtime.app_credentials import HOOK_RESOLVE, AppCredentialSigner
 from aweb_naapp.runtime.clock import MonotonicClock
 from aweb_naapp.runtime.freshness import (
@@ -53,7 +51,14 @@ from aweb_naapp.runtime.freshness import (
     FreshnessCache,
     RefreshTimedOut,
 )
-from aweb_naapp.runtime.team_server import TeamServer, TeamServerDirectory, TeamServerUnavailable
+from aweb_naapp.runtime.team_server import (
+    TeamServer,
+    TeamServerDirectory,
+    TeamServerReach,
+    TeamServerRefused,
+    TeamServerUnavailable,
+    TeamServerUnreachable,
+)
 
 HOOK_BINDING_REQUIRED = "hook_binding_required"
 HOOK_KEY_PURPOSES = frozenset({"hook-event", "hook-delivery"})
@@ -107,6 +112,16 @@ class HookResolutionUnavailable(Exception):
     def __init__(self, code: str) -> None:
         super().__init__(code)
         self.code = code
+
+
+class HookTeamServerNotAllowed(HookResolutionUnavailable):
+    """The team's published server is not one this app may reach. Not
+    transient: only the team's controller can fix it
+    (docs/design/app-team-server-api.md §1, trust chain step 4)."""
+
+    def __init__(self, server_url: str) -> None:
+        super().__init__("team_server_not_allowed")
+        self.server_url = server_url
 
 
 class HookBindingRequired(Exception):
@@ -185,7 +200,7 @@ class HookResolver:
         directory: TeamServerDirectory,
         signer: AppCredentialSigner,
         app_origin: str,
-        transport: httpx.AsyncBaseTransport | None = None,
+        reach: TeamServerReach,
         refresh_timeout: float = DEFAULT_REFRESH_TIMEOUT_SECONDS,
         monotonic: MonotonicClock = time.monotonic_ns,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
@@ -197,7 +212,7 @@ class HookResolver:
         self._directory = directory
         self._signer = signer
         self._app_origin = app_origin
-        self._transport = transport
+        self._reach = reach
         self._clock = clock
         self._cache: FreshnessCache[tuple[Any, ...], tuple[Any, ...]] = FreshnessCache(
             refresh_timeout=refresh_timeout, monotonic=monotonic
@@ -227,7 +242,7 @@ class HookResolver:
             team_id,
             (f"{kind}s", catalog_id, catalog_version, hook),
             path,
-            signed=True,
+            signer=self._signer,
             parse=lambda body: _list_answer(body, team_id, catalog_id, catalog_version, hook, kind),
         )
 
@@ -260,7 +275,7 @@ class HookResolver:
             team_id,
             key,
             f"/v1/apps/self/hooks/bindings?{query}",
-            signed=True,
+            signer=self._signer,
             parse=lambda body: _own_answer(
                 body,
                 team_id,
@@ -277,7 +292,7 @@ class HookResolver:
             team_id,
             ("producer-keys",),
             "/v1/hooks/producer-keys",
-            signed=False,
+            signer=None,
             parse=_producer_keys_answer,
         )
 
@@ -287,7 +302,7 @@ class HookResolver:
         selection: tuple[Any, ...],
         path: str,
         *,
-        signed: bool,
+        signer: AppCredentialSigner | None,
         parse: Callable[[dict[str, Any]], tuple[Any, ...]],
     ) -> Resolution[Any]:
         try:
@@ -303,7 +318,7 @@ class HookResolver:
         asked_at = self._clock()
 
         async def fetch() -> tuple[tuple[Any, ...], int]:
-            body = await self._get(server, team_id, path, signed=signed)
+            body = await self._get(server, path, signer=signer)
             try:
                 max_age = _max_age(body)
                 window = min(max_age, FRESHNESS_CEILING_SECONDS)
@@ -330,25 +345,28 @@ class HookResolver:
         )
 
     async def _get(
-        self, server: TeamServer, team_id: str, path: str, *, signed: bool
+        self, server: TeamServer, path: str, *, signer: AppCredentialSigner | None
     ) -> dict[str, Any]:
-        url = f"{server.server_url}{path}"
-        headers = (
-            self._signer.sign(method="GET", target=url, team_id=team_id).headers if signed else {}
-        )
-        options: dict[str, Any] = {"timeout": REQUEST_TIMEOUT_SECONDS, "follow_redirects": False}
-        if self._transport is not None:
-            options["transport"] = self._transport
+        """GET ``path`` from the team's server, signed by ``signer`` (None: a public read)."""
         try:
-            async with httpx.AsyncClient(**options) as client:
-                async with client.stream("GET", url, headers=headers) as response:
-                    content = await _bounded_body(response)
-        except (httpx.HTTPError, httpx.InvalidURL) as exc:
+            answer = await self._reach.get(
+                server,
+                path,
+                signer=signer,
+                max_bytes=MAX_ANSWER_BYTES,
+                timeout=REQUEST_TIMEOUT_SECONDS,
+            )
+        except TeamServerRefused as exc:
+            raise HookTeamServerNotAllowed(exc.server_url) from exc
+        except TeamServerUnreachable as exc:
             raise HookResolutionUnavailable("server_unreachable") from exc
-        if response.status_code == 403 and _detail(content) == HOOK_BINDING_REQUIRED:
+        if answer.truncated:
+            raise HookResolutionUnavailable("answer_too_large")
+        content = answer.body
+        if answer.status == 403 and _detail(content) == HOOK_BINDING_REQUIRED:
             raise HookBindingRequired()
-        if response.status_code != 200:
-            raise HookResolutionUnavailable(f"server_status_{response.status_code}")
+        if answer.status != 200:
+            raise HookResolutionUnavailable(f"server_status_{answer.status}")
         try:
             body = json.loads(content)
         except ValueError as exc:
@@ -356,16 +374,6 @@ class HookResolver:
         if not isinstance(body, dict):
             raise HookResolutionUnavailable("answer_malformed")
         return body
-
-
-async def _bounded_body(response: httpx.Response) -> bytes:
-    """The response body, refused unread past MAX_ANSWER_BYTES."""
-    content = bytearray()
-    async for chunk in response.aiter_bytes():
-        content += chunk
-        if len(content) > MAX_ANSWER_BYTES:
-            raise HookResolutionUnavailable("answer_too_large")
-    return bytes(content)
 
 
 def _detail(content: bytes) -> object:

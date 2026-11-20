@@ -1,15 +1,15 @@
 """The same covering identity request aw sends, with real Ed25519 signatures."""
 
 import base64
-from datetime import datetime, timezone
 import hashlib
+from datetime import UTC, datetime
 
-from fastapi import HTTPException
 import pytest
-from starlette.requests import Request
-
 from awid.did import did_from_public_key, generate_keypair, stable_id_from_did_key
 from awid.signing import canonical_json_bytes, sign_message
+from fastapi import HTTPException
+from starlette.requests import Request
+
 from aweb_key_holder.auth import authenticate
 
 
@@ -18,7 +18,7 @@ def signed():
     seed, public = generate_keypair()
     key = did_from_public_key(public)
     identity = stable_id_from_did_key(key)
-    timestamp = datetime.now(timezone.utc).isoformat()
+    timestamp = datetime.now(UTC).isoformat()
     body = b'{"person":"second"}'
     payload = {
         "v": 2,

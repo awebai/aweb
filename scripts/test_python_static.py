@@ -340,6 +340,86 @@ class PythonStaticControls(unittest.TestCase):
         self.assertEqual(accepted.returncode, 0, accepted.stdout + accepted.stderr)
         self.assertIn("0 diagnostics", accepted.stdout)
 
+    def test_gate_checkout_requires_the_supplied_reviewed_main_reference(self) -> None:
+        def git(*arguments: str) -> str:
+            return subprocess.run(
+                ["git", *arguments],
+                cwd=self.root,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            ).stdout.strip()
+
+        def check() -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "scripts/python_static.py"),
+                    "--root",
+                    str(self.root),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=90,
+            )
+
+        self.prepare_cli_packages()
+        self.write_budget([])
+        self.prepare_reviewed_reference()
+        reviewed_sha = git("rev-parse", "refs/remotes/origin/main")
+        path = self.source / "defaults.py"
+        path.write_text("def first(value=[]):\n    return value\n")
+        self.write_budget(
+            [
+                {
+                    "tool": "ruff",
+                    "file": "server/src/aweb/defaults.py",
+                    "code": "B006",
+                    "count": 1,
+                }
+            ]
+        )
+        git(
+            "-c",
+            "user.name=Static control",
+            "-c",
+            "user.email=static-control@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+            "commit",
+            "--quiet",
+            "--all",
+            "-m",
+            "Candidate budget",
+        )
+        git("checkout", "--detach", "HEAD")
+        self.assertNotEqual(git("rev-parse", "HEAD"), reviewed_sha)
+        git("update-ref", "-d", "refs/remotes/origin/main")
+        self.assertEqual(git("for-each-ref", "refs/remotes/"), "")
+        missing = check()
+        self.assertEqual(missing.returncode, 2, missing.stdout + missing.stderr)
+        self.assertIn(
+            "cannot inspect synchronized main ceilings: fatal: Needed a single revision",
+            missing.stderr,
+        )
+        # The gate supplies the reviewed SHA, not the candidate's committed budget.
+        git("update-ref", "refs/remotes/origin/main", reviewed_sha)
+        inflated = check()
+        self.assertEqual(inflated.returncode, 1, inflated.stdout + inflated.stderr)
+        self.assertIn("[B006]: 1 > 0", inflated.stderr)
+        self.assertIn(
+            "Reviewed Python diagnostic ceilings cannot increase", inflated.stderr
+        )
+        path.write_text("def first(value=None):\n    return value\n")
+        self.write_budget([])
+        accepted = check()
+        self.assertEqual(accepted.returncode, 0, accepted.stdout + accepted.stderr)
+        self.assertIn("0 diagnostics", accepted.stdout)
+        self.assertEqual(git("rev-parse", "refs/remotes/origin/main"), reviewed_sha)
+
     def test_changed_file_refusal_names_how_to_recover(self) -> None:
         self.write_budget([])
         (self.root / "outside.py").write_text("value = 1\n")

@@ -239,9 +239,9 @@ intended lifecycle; a missing runtime or path is not itself retirement evidence.
 
 ### Stale local-identity workspace cleanup
 
-`aw workspace delete` is only the stale local-identity cleanup path. It is not a
-general self-custodial-home retirement command. Inspect identity scope and
-workspace state first:
+`aw workspace delete` cleans up local-identity workspaces. A local member can
+delete its own workspace immediately; another member's workspace is subject to
+the server's stale-presence rule. Inspect identity scope and workspace state:
 
 ```bash
 aw whoami --json
@@ -256,13 +256,13 @@ The current server refuses cleanup rather than guessing:
   applicable identity and namespace authorities. The current self-custodial CLI
   has no archive/replace command, so preserve the mapping and credentials and
   hand the lifecycle decision to the authorized owner.
-- `local_workspace_still_active` means the local workspace was seen within the
+- `local_workspace_still_active` means another member's local workspace was seen within the
   current 1,800-second presence TTL. Stop its runtime, retain the identity home,
   wait until that recorded presence is stale, and then retry. An immediate retry
   must not be treated as cleanup progress.
 
-Only for a stopped local-identity workspace whose recorded presence is stale,
-run from that retained identity home:
+From the retained identity home, retire its own local workspace, or clean up
+another local workspace only when that workspace is stopped and stale:
 
 ```bash
 aw workspace delete <workspace-id-or-name> --json
@@ -273,6 +273,18 @@ and releases its task claims. Inspect the structured result, including whether
 identity cleanup was established. On any refusal, error, or indeterminate result,
 persist an explicit partial retirement state and retain the identity home; never
 turn an incomplete result into permission to delete local credentials.
+
+For non-hosted own-member retirement, `retirement_code` distinguishes
+`retired_and_revoked`, `retired_revocation_pending`, and
+`retired_key_holder_required`. Only the first reports `alias_released: true`.
+The latter two exit nonzero and supply `next_step` with the exact key-holder
+command. A saved receipt is named by `receipt_path`; if its write fails, the
+command reports that failure and the controller operation remains incomplete.
+The selected home's private receipt contains no
+keys or tokens. A retry matches the original team, member, workspace and
+certificate, and needs only the controller operation; it does not authenticate
+to the service as the deleted member. Hosted self-retirement keeps its existing
+service-authorized flow. Global identity and other-member removal stay separate.
 
 ### Team-authorized retirement
 

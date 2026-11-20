@@ -24,9 +24,10 @@ from aweb_naapp.hooks.strictjson import (
 )
 from aweb_naapp.runtime.approvals.request import RequestNotCanonical, parse_request_json
 from awid.did import did_from_public_key, public_key_from_did
+from awid.signature_wire import sign_bytes, verify_bytes
 from awid.signing import canonical_json_bytes
 from nacl.exceptions import BadSignatureError
-from nacl.signing import SigningKey, VerifyKey
+from nacl.signing import SigningKey
 from pgdbm import TransactionManager
 
 REQUEST_TYPE = "aweb.secrets.runner-request"
@@ -158,9 +159,10 @@ def verify_request_signature(parsed: ParsedRequest, *, registered_kid: str | Non
     if registered_kid is None or p["kid"] != registered_kid:
         raise RunnerRefused("runner_unknown")
     try:
-        VerifyKey(public_key_from_did(registered_kid)).verify(
-            (REQUEST_TYPE + "/1\n").encode() + parsed.raw,
-            parsed.signature,
+        verify_bytes(
+            key=public_key_from_did(registered_kid),
+            payload=(REQUEST_TYPE + "/1\n").encode() + parsed.raw,
+            signature=parsed.signature,
         )
     except (BadSignatureError, ValueError, TypeError):
         raise RunnerRefused("runner_request_invalid") from None
@@ -268,7 +270,9 @@ def sign_assignment(
         "issued_at": format_time(issued_at),
         "expires_at": format_time(expires_at),
     }
-    signature = key.sign((ASSIGNMENT_TYPE + "/1\n").encode() + canonical(payload)).signature
+    signature = sign_bytes(
+        key=key, payload=(ASSIGNMENT_TYPE + "/1\n").encode() + canonical(payload)
+    )
     result = {
         "assignment": payload,
         "signature": encode_base64url(signature),

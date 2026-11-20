@@ -37,6 +37,9 @@ var rootCmd = &cobra.Command{
 		if _, independent := offlineCommands[cmd]; independent {
 			return nil // Export verification never selects or unlocks an acting human.
 		}
+		if cmd.Annotations[offlineIdentityInspectionAnnotation] == "true" {
+			return prepareOfflineIdentityInspection(cmd, args)
+		}
 		idSelection, err := prepareIDHumanSelection(cmd)
 		if err != nil {
 			return err
@@ -116,8 +119,17 @@ var rootCmd = &cobra.Command{
 			// verified install ensures the encryption key itself.
 			return nil
 		}
-		if isAgentStatusCommand(cmd) || isActivityCommand(cmd) {
-			return nil // Producer commands never renew encryption keys or check updates.
+		if flag := cmd.Annotations[identityReadOnlyFlagAnnotation]; flag != "" {
+			readOnly, err := cmd.Flags().GetBool(flag)
+			if err != nil {
+				return err
+			}
+			if readOnly {
+				return nil
+			}
+		}
+		if isAgentStatusCommand(cmd) || isActivityCommand(cmd) || cmd.Annotations[identityNoRenewalAnnotation] == "true" {
+			return nil // Status producers and retirement must not renew credentials or check updates.
 		}
 		if !isTeamInviteInspectCommand(cmd) && cmd.Name() != "help" {
 			maybeRenewIdentityEncryptionAssertion(cmd.Context(), mustGetwd(), currentEncryptionKeyIdentityHome(), cmd.ErrOrStderr())

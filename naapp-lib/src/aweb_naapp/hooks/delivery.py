@@ -20,6 +20,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from awid.did import did_from_public_key
+from awid.signature_wire import sign_bytes
 from awid.team_certificate import (
     TeamCertificateError,
     check_team_certificate,
@@ -159,7 +160,7 @@ def sign_delivery(
         "Authorization": AUTH_SCHEME
         + did_key
         + " "
-        + encode_signature(key.sign(payload).signature),
+        + encode_signature(sign_bytes(key=key, payload=payload)),
         SIGNED_PAYLOAD_HEADER: encode_base64url(payload),
         "Content-Type": "application/json",
     }

@@ -12,6 +12,7 @@ import tempfile
 import time
 import uuid
 from user_paths_result import qualification
+from user_paths_kernel_result import add_kernel_wake_result
 from container_fixture_modes import make_public_tree_readable
 
 REPO = Path(__file__).resolve().parents[2]
@@ -211,6 +212,38 @@ for origin in ['http://awid:8010','http://server:8000','http://peer:8000']:
     )
 
 
+def run_released_kernel_wake_probe(*, lane, binary, lane_failures):
+    """Enforce docs/wake-runner-integrity.md:30-33 with the real kernel seam."""
+    with phase("released-kernel-wake"):
+        try:
+            compose(
+                "exec",
+                "-T",
+                "cli",
+                "node",
+                "/work/user_paths_oats.mjs",
+                "--aw",
+                binary,
+                "--root",
+                "/identities/kernel-wake",
+                "--seat",
+                f"/identities/{lane}/g1",
+                "--fixture-home",
+                f"/identities/{lane}/home",
+                "--sender",
+                f"/identities/{lane}/t1",
+                "--team",
+                f"members:{lane}-g1.test",
+                "--source-commit",
+                os.environ.get("USER_PATHS_CANDIDATE_SHA")
+                or run("git", "rev-parse", "HEAD", capture=True).stdout.strip(),
+                "--output",
+                "/work/released-kernel-wake.json",
+            )
+        except subprocess.CalledProcessError:
+            lane_failures.append("released-kernel-wake")
+
+
 def prepare_container_inputs() -> None:
     (WORK / "dns").mkdir()
     (WORK / "dns").chmod(0o755)
@@ -230,6 +263,8 @@ def prepare_container_inputs() -> None:
         "scripts/fetch_released_aw.py",
         "scripts/e2e/user_paths.py",
         "scripts/e2e/user_paths_receive.mjs",
+        "scripts/e2e/user_paths_oats.mjs",
+        "scripts/e2e/user_paths_kernel_setup.mjs",
         "scripts/e2e/user_paths_result.py",
     ):
         shutil.copy2(REPO / source, WORK / Path(source).name)
@@ -240,6 +275,7 @@ def prepare_container_inputs() -> None:
 
 def main():
     global BASELINE_READY
+    kernel_wake_required = True
     # Every invocation exposes the human gap, even if infrastructure fails
     # before provisioning. Runnable agent cases alone control admission.
     initial = qualification({}, time.monotonic() - START, [])
@@ -542,6 +578,13 @@ def main():
                     )
                 except subprocess.CalledProcessError:
                     lane_failures.append(lane)
+        # Historical and directional component diagnostics keep their existing scope.
+        kernel_wake_required = not BASELINE_READY and not CANDIDATE_BIN
+        if kernel_wake_required:
+            probe_lane, probe_binary = selected_lanes[0]
+            run_released_kernel_wake_probe(
+                lane=probe_lane, binary=probe_binary, lane_failures=lane_failures
+            )
         status = 1 if lane_failures else 0
     finally:
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
@@ -565,6 +608,14 @@ def main():
                     timeout=15,
                 ),
             )
+            if (WORK / "released-kernel-wake.json").exists():
+                cleanup_action(
+                    "released kernel wake evidence",
+                    lambda: shutil.copy2(
+                        WORK / "released-kernel-wake.json",
+                        EVIDENCE / "released-kernel-wake.json",
+                    ),
+                )
             # Retain actual source, artifact identity, named case output and timings.
             for lane in ["head", "released", "forward", "reverse"]:
                 if (WORK / lane).exists():
@@ -619,6 +670,14 @@ def main():
             if (EVIDENCE / lane / "results.json").exists()
         }
         result = qualification(lanes, TIMINGS["total"], cleanup_errors)
+        if kernel_wake_required:
+            kernel_path = EVIDENCE / "released-kernel-wake.json"
+            result = add_kernel_wake_result(
+                qualification=result,
+                kernel_receipt=json.loads(kernel_path.read_text())
+                if kernel_path.exists()
+                else None,
+            )
         (EVIDENCE / "qualification.json").write_text(
             json.dumps(result, indent=2) + "\n"
         )

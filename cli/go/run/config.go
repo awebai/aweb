@@ -64,6 +64,16 @@ func FindLocalConfigPath(startDir string) (string, error) {
 	return filepath.Join(filepath.Dir(ctxPath), "run.json"), nil
 }
 
+// LoadGlobalUserConfig reads only the user's configuration; directory overrides
+// are never persisted as global defaults by the init workflow.
+func LoadGlobalUserConfig() (UserConfig, error) {
+	path, err := DefaultConfigPath()
+	if err != nil {
+		return UserConfig{}, err
+	}
+	return loadUserConfigFile(path)
+}
+
 func LoadUserConfig(startDir string) (UserConfig, error) {
 	if strings.TrimSpace(startDir) == "" {
 		wd, err := os.Getwd()

@@ -124,11 +124,35 @@ every future change to the file without anyone reading it.
 
 ### Messages whose sender is not verified
 
-The mail and chat that wake the agent are placed in its prompt. When a
-message's sender could not be verified (the signature is missing or does not
-match, the identity does not match the address, or the check could not be
-made), the prompt says so next to that message and tells the agent to treat
-the text as untrusted.
+Mail and chat are fetched from durable messages before entering the prompt.
+When verification is `failed` or `identity_mismatch`, the launcher withholds
+the body and subject. It presents the claimed sender, the verification failure,
+and an `aw mail show --message-id ...` or `aw chat history --session-id ...`
+command for a deliberate read. A claimed sender from any message or event field
+is shown only when it is a valid alias, domain/name address, `did:key` or
+`did:aw`, using the existing identifier validators. Other labels become the
+fixed phrase "a sender whose name is not a valid identifier", with none of the
+original text. Identifier grammar bounds the label's length. These withheld
+messages remain unread.
+
+Unsigned, stale, missing and unknown verification results keep a warning next
+to the content. A warning does not establish authorship; retry verification
+before sensitive work. Verified messages keep their normal reply flow.
+
+A failed history read is reported and retried; a pending conversation's unsigned
+`last_message` preview never replaces durable history in the prompt. Event hints
+without a durable reference provide a command to inspect pending messages.
+
+The launcher acknowledges messages after the provider accepts their prompt.
+If acknowledgement fails, it reports the error and retries acknowledgement
+without rerunning the delivered prompt. Chat delivery receipts belong to the
+working directory selected by `--dir`. An unreadable receipt store stops chat
+presentation and names the file to repair. After a process restart, an
+unacknowledged message can be presented again; delivery is not exactly once.
+
+`aw run --init` edits the user's global configuration and preserves configured
+services. A trusted directory's overrides apply to runs there and are never
+copied into the global file by initialization.
 
 ## In-Session Controls
 

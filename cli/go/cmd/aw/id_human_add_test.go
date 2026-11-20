@@ -26,12 +26,12 @@ func TestHumanAddBindsTheApprovalToTheRequestedPersonAndIssuer(t *testing.T) {
 	target := r["act"].(map[string]any)["target"].(map[string]any)
 	person, key := target["person"].(string), target["identity_key"].(string)
 	issuer := r["enforcer"].(map[string]any)["audience"].(string)
-	if err := checkHumanAddRequest(r, record, person, key, issuer); err != nil {
+	if err := checkHumanAddRequest(humanAddRequestCheck{Request: r, Human: record, Person: person, IdentityKey: key, IssuerOrigin: issuer}); err != nil {
 		t.Fatal(err)
 	}
 	for name, values := range map[string][]string{"other person": {"did:aw:other", key, issuer}, "other key": {person, "did:key:other", issuer}, "other issuer": {person, key, "https://other.example"}} {
 		t.Run(name, func(t *testing.T) {
-			if err := checkHumanAddRequest(r, record, values[0], values[1], values[2]); err == nil {
+			if err := checkHumanAddRequest(humanAddRequestCheck{Request: r, Human: record, Person: values[0], IdentityKey: values[1], IssuerOrigin: values[2]}); err == nil || exitCode(err) != 1 || err.Error() != "issuer's approval request differs from the person and action you requested. Ask the issuer to check the requested person and controller, then retry." {
 				t.Fatal("accepted approval for another requested act")
 			}
 		})
@@ -122,7 +122,7 @@ func TestHumanAddIssuedPacketUsesTheIndependentController(t *testing.T) {
 	key := enrollmentText(enrollmentObject(enrollmentObject(v["keys"])["alice"])["did_key"])
 	person, domain, controller := enrollmentText(cert["id"]), enrollmentText(cert["domain"]), enrollmentText(cert["issuer_key"])
 	packet := map[string]any{"state": "issued", "person": person, "identity_key": key, "certificate": signed}
-	if err := checkHumanAddIssued(packet, person, key, domain, controller); err != nil {
+	if err := checkHumanAddIssued(humanAddIssuedCheck{Answer: packet, Person: person, IdentityKey: key, Domain: domain, Controller: controller}); err != nil {
 		t.Fatal(err)
 	}
 	for name, values := range map[string][]string{
@@ -132,7 +132,7 @@ func TestHumanAddIssuedPacketUsesTheIndependentController(t *testing.T) {
 		"wrong controller": {person, key, domain, key},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if checkHumanAddIssued(packet, values[0], values[1], values[2], values[3]) == nil {
+			if err := checkHumanAddIssued(humanAddIssuedCheck{Answer: packet, Person: values[0], IdentityKey: values[1], Domain: values[2], Controller: values[3]}); err == nil || exitCode(err) != 1 {
 				t.Fatal("accepted unrelated issued certificate")
 			}
 		})
