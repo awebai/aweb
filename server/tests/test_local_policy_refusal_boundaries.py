@@ -83,7 +83,7 @@ async def test_mcp_local_only_targets_keep_not_routable_action_and_reason(
     content = {"body": "refused mail"} if kind == "mail" else {"message": "refused chat"}
     refused = await env.mcp_call(tool, to=target, plaintext=True, **content)
     assert refused == {
-        "error": "The recipient is not a registered address. A local identity has no address and is reachable only from inside its own team, by alias; a global identity is reachable by address once one is assigned. Check the address or use a teammate alias and retry.",
+        "error": "The recipient is not reachable from outside its team. Use a teammate alias from inside its team, or ask the recipient for a registered address and retry.",
         "reason": "local_recipient_route_missing",
     }
     assert await env.db.fetch_value("SELECT count(*) FROM {{tables.messages}}") == 0
@@ -138,7 +138,8 @@ async def test_participant_discovery_retains_legacy_403_and_member_neighbor(mail
     with pytest.raises(HTTPException) as refused:
         await participant(bob.alias, request, db=env.fixture.infra, auth=outsider)
     assert refused.value.status_code == 403
-    assert "reachable only from inside its own team" in refused.value.detail
+    # Antares042efe38 item4: a DID/agent selector is not an address claim.
+    assert refused.value.detail == 'The recipient is not reachable from outside its team. Use a teammate alias from inside its team, or ask the recipient for a registered address and retry.'
     member = replace(outsider, did_key=bob.did, did_aw=None, verified_team_id=bob.team)
     accepted = await participant(bob.alias, request, db=env.fixture.infra, auth=member)
     assert accepted["did_key"] == bob.did
