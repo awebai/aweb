@@ -69,12 +69,7 @@ async def test_newly_admitted_global_human_connects_behind_warm_strict_list(
                 expected_head=None,
                 invitation_id=None,
             )
-            # Namespace authority for the existing fixture team, not the ID-tree domain.
-            await env.registry_db.execute(
-                "INSERT INTO {{tables.dns_namespaces}} (domain, controller_did, verification_status) "
-                "VALUES ('example.test', $1, 'verified')",
-                env.team_did,
-            )
+            # The shared producer already enrolled the independent example.test namespace.
             before = await cached.list_team_certificates(
                 "example.test", TEAM_NAME, active_only=False
             )
