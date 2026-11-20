@@ -57,21 +57,22 @@ def _runtime(tmp_path: Path, coordination: Coordination, database_url: str) -> N
     manifest.write_bytes(canonical_bytes(template))
     migrations = tmp_path / "migrations"
     migrations.mkdir()
+    settings = ExampleSettings(
+        _env_file=None,
+        database_url=database_url,
+        app_key_files={"grant-read": key},
+        awid_registry_url=REGISTRY_URL,
+        awid_service_token=SERVICE_TOKEN,
+        **coordination.site.settings(),
+    )
     runtime = NaappRuntime(
-        ExampleSettings(
-            _env_file=None,
-            database_url=database_url,
-            app_key_files={"grant-read": key},
-            awid_registry_url=REGISTRY_URL,
-            awid_service_token=SERVICE_TOKEN,
-            team_server_internal_origins=[coordination.server.url],
-        ),
+        settings,
         module_name="example",
         migrations_path=migrations,
         manifest_path=manifest,
         stores=(apply_installation_migrations,),
         awid_transport=coordination.registry.transport,
-        team_server_transport=coordination.server.transport,
+        egress=coordination.site.egress(settings),
     )
     return runtime
 
