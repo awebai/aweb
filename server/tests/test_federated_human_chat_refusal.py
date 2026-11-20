@@ -168,6 +168,7 @@ async def test_remote_human_refusal_keeps_typed_body_through_source(
                 "Accept": "application/json, text/event-stream",
                 **(
                     {
+                        "X-Team-ID": TEAM,
                         "X-User-ID": principal,
                         "X-AWEB-Actor-ID": alice.agent_id,
                         "X-AWEB-Auth": build_internal_auth_header_value(
