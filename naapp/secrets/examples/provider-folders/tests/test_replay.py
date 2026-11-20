@@ -1,4 +1,5 @@
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -8,7 +9,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from replay import ExitCode, RunRefused, load_config, run
+from replay import TOKEN_ENV, ExitCode, RunRefused, load_config, main, run
 from submit import submit
 from tests.outbox import provision_outbox
 from tests.standin import TOKEN, OneDriveStandIn
@@ -33,14 +34,7 @@ def outbox_dir(tmp_path):
 
 
 @pytest.fixture
-def token_file(tmp_path):
-    path = tmp_path / "token"
-    path.write_text(TOKEN + "\n")
-    return path
-
-
-@pytest.fixture
-def config_body(tmp_path, outbox_dir, token_file, standin):
+def config_body(tmp_path, outbox_dir, standin):
     return {
         "seat": SEAT,
         "state_dir": str(tmp_path / "publisher-state"),
@@ -52,7 +46,6 @@ def config_body(tmp_path, outbox_dir, token_file, standin):
             "folder_id": standin.approot["id"],
         },
         "graph_origin": ORIGIN,
-        "token_file": str(token_file),
         "ca_bundle": None,
         "output_max_bytes": 65536,
     }
@@ -64,7 +57,7 @@ def write_config(tmp_path, body) -> Path:
     return path
 
 
-def replay(tmp_path, body, standin):
+def replay(tmp_path, body, standin, token=TOKEN):
     requests = []
 
     def handle(request):
@@ -73,7 +66,7 @@ def replay(tmp_path, body, standin):
 
     config = load_config(write_config(tmp_path, body))
     client = httpx.Client(transport=httpx.MockTransport(handle))
-    code, output = run(config, client)
+    code, output = run(config, client, token)
     assert len(output) <= config.output_max_bytes
     return code, json.loads(output), requests
 
@@ -148,18 +141,25 @@ def test_uncertain_wins_over_refused(tmp_path, config_body, outbox_dir, standin)
 
 @pytest.mark.parametrize(
     "token",
-    [None, b"", b"\n", b"two words", b"x" * 16385, b"tok\x01en", b"tok@en", b"to=ken"],
-    ids=["missing", "empty", "blank", "whitespace", "oversized", "control", "symbol", "inner-pad"],
+    [None, "", "\n", f"{TOKEN}\n", "two words", "x" * 16385, "tok\x01en", "tok@en", "to=ken"],
+    ids=[
+        "missing",
+        "empty",
+        "blank",
+        "newline",
+        "whitespace",
+        "oversized",
+        "control",
+        "symbol",
+        "inner-pad",
+    ],
 )
-def test_an_unusable_token_file_refuses_the_run_before_any_provider_call(
-    tmp_path, config_body, outbox_dir, standin, token_file, token
+def test_an_unusable_token_refuses_the_run_before_any_provider_call(
+    tmp_path, config_body, outbox_dir, standin, token
 ):
     queue(outbox_dir)
-    token_file.unlink()
-    if token is not None:
-        token_file.write_bytes(token)
 
-    code, report, requests = replay(tmp_path, config_body, standin)
+    code, report, requests = replay(tmp_path, config_body, standin, token)
 
     assert code is ExitCode.RUN_REFUSED
     assert report == {
@@ -168,20 +168,6 @@ def test_an_unusable_token_file_refuses_the_run_before_any_provider_call(
         "reason": "token_unavailable",
         "receipts": [],
     }
-    assert requests == []
-
-
-def test_a_symlinked_token_file_refuses_the_run_before_any_provider_call(
-    tmp_path, config_body, outbox_dir, standin, token_file
-):
-    queue(outbox_dir)
-    link = tmp_path / "token-link"
-    link.symlink_to(token_file)
-
-    code, report, requests = replay(tmp_path, {**config_body, "token_file": str(link)}, standin)
-
-    assert code is ExitCode.RUN_REFUSED
-    assert report["reason"] == "token_unavailable"
     assert requests == []
 
 
@@ -300,7 +286,6 @@ def test_a_graph_origin_may_name_a_port(tmp_path, config_body):
         {"seat": "Not A Slug"},
         {"state_dir": "relative/state"},
         {"outbox": "relative/outbox"},
-        {"token_file": "relative/token"},
         {"ca_bundle": "relative/ca.pem"},
         {"max_bytes": 0},
         {"max_bytes": True},
@@ -322,21 +307,18 @@ def test_a_config_without_a_field_is_refused(tmp_path, config_body):
         load_config(write_config(tmp_path, config_body))
 
 
-def run_cli(*args):
+def run_cli(*args, env=None):
     return subprocess.run(
         [sys.executable, "-I", str(HERE / "replay.py"), *args],
         capture_output=True,
         text=True,
         cwd="/",
+        env=env or {},
         timeout=60,
     )
 
 
-def test_the_cli_runs_isolated_and_refuses_a_missing_token_with_exit_5(
-    tmp_path, config_body, token_file
-):
-    token_file.unlink()
-
+def test_the_cli_runs_isolated_and_refuses_a_missing_token_with_exit_5(tmp_path, config_body):
     result = run_cli("--config", str(write_config(tmp_path, config_body)))
 
     assert result.returncode == ExitCode.RUN_REFUSED == 5
@@ -370,14 +352,13 @@ def test_the_cli_refuses_an_unreadable_ca_bundle_with_exit_5(tmp_path, config_bo
     assert result.stderr == ""
 
 
-def test_a_vendored_file_cannot_shadow_a_standard_library_module(tmp_path, config_body, token_file):
+def test_a_vendored_file_cannot_shadow_a_standard_library_module(tmp_path, config_body):
     install = tmp_path / "install"
     install.mkdir()
     for name in ("replay.py", "publisher.py", "onedrive.py", "hashes.py"):
         shutil.copy2(HERE / name, install / name)
     (install / "vendor").mkdir()
     (install / "vendor" / "json.py").write_text("raise SystemExit(97)\n")
-    token_file.unlink()
 
     result = subprocess.run(
         [
@@ -403,7 +384,7 @@ def run_cli_with_env(config_path, env):
         capture_output=True,
         text=True,
         cwd="/",
-        env=env,
+        env={TOKEN_ENV: TOKEN, **env},
         timeout=60,
     )
 
@@ -468,10 +449,36 @@ def test_tls_session_keys_are_never_logged_even_without_isolated_mode(
         capture_output=True,
         text=True,
         cwd="/",
-        env={"SSLKEYLOGFILE": str(keylog)},
+        env={TOKEN_ENV: TOKEN, "SSLKEYLOGFILE": str(keylog)},
         timeout=60,
     )
 
     assert result.returncode == ExitCode.OK, result.stdout + result.stderr
     assert listener.requests
     assert not keylog.exists()
+
+
+def test_the_token_is_removed_from_the_environment_before_anything_else(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setenv(TOKEN_ENV, TOKEN)
+
+    code = main(["--config", str(tmp_path / "missing.json")])
+
+    assert code == ExitCode.RUN_REFUSED
+    assert TOKEN_ENV not in os.environ
+    assert TOKEN not in capsys.readouterr().out
+
+
+def test_the_token_never_appears_in_output_or_receipts(tmp_path, config_body, tls_listener):
+    ca, listener = tls_listener
+    body = tls_config(config_body, listener, str(ca))
+    queue(Path(body["outbox"]))
+    listener_state = Path(body["state_dir"])
+
+    result = run_cli_with_env(write_config(tmp_path, body), {})
+
+    assert listener.requests
+    written = "".join(path.read_text() for path in listener_state.rglob("*") if path.is_file())
+    assert written and TOKEN not in written
+    assert TOKEN not in result.stdout and TOKEN not in result.stderr

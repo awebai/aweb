@@ -5,7 +5,7 @@ against the Graph stand-in over real TLS.
 
 ROOT is an install tree (deploy/vendor.py assemble); PYTHON the interpreter
 the job pins. Each replay is `PYTHON -I -B ROOT/replay.py --config FILE`
-from an empty environment, with a dummy token file. With --pinned, the tree
+from an environment holding only the dummy token field (TOKEN_ENV). With --pinned, the tree
 must be exactly the vendor-lock.json pin before and after.
 
 Cases: the trust root (the lab CA from ca_bundle only, never from the
@@ -37,6 +37,7 @@ import argparse  # noqa: E402
 from deploy.standin_tls import TLSStandIn, lab_ca  # noqa: E402
 from deploy.vendor import LOCK, PACKAGE, expected_files, installed_files  # noqa: E402
 from publisher import format_binding  # noqa: E402
+from replay import TOKEN_ENV  # noqa: E402
 from submit import submit  # noqa: E402
 from tests.outbox import provision_outbox  # noqa: E402
 from tests.standin import TOKEN  # noqa: E402
@@ -71,8 +72,6 @@ class Drill:
         self.outbox = work / "outbox"
         self.outbox.mkdir()
         provision_outbox(self.outbox)
-        self.token = work / "token"
-        self.token.write_text(TOKEN + "\n")
         self.jobs: dict[str, tuple[str, bytes]] = {}
 
     def config(self, state: Path, ca_bundle: Path | None, output_max_bytes: int = 65536) -> Path:
@@ -88,7 +87,6 @@ class Drill:
                 "folder_id": approot["id"],
             },
             "graph_origin": self.served.graph_origin,
-            "token_file": str(self.token),
             "ca_bundle": None if ca_bundle is None else str(ca_bundle),
             "output_max_bytes": output_max_bytes,
         }
@@ -99,7 +97,7 @@ class Drill:
     def replay(self, config: Path, env: dict[str, str] | None = None) -> tuple[int, dict]:
         done = subprocess.run(
             [self.python, "-I", "-B", str(self.root / "replay.py"), "--config", str(config)],
-            env=env or {},
+            env={TOKEN_ENV: TOKEN, **(env or {})},
             cwd=self.work,
             capture_output=True,
             timeout=REPLAY_TIMEOUT_S,

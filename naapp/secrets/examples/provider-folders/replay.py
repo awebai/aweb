@@ -2,9 +2,9 @@
 
 Usage: python3 -I replay.py --config <operator config>
 
-The operator configuration fixes every input. The access token is read from
-the file the runner fills; this program never obtains, refreshes or stores
-one. The outcome is one JSON object on stdout and an exit code from ExitCode.
+The operator configuration fixes every input. The access token arrives in the
+one environment variable TOKEN_ENV, the credential field the job definition
+declares; this program never obtains, refreshes or stores one. The outcome is one JSON object on stdout and an exit code from ExitCode.
 """
 
 import sys
@@ -22,7 +22,6 @@ import json  # noqa: E402
 import os  # noqa: E402
 import re  # noqa: E402
 import ssl  # noqa: E402
-import stat  # noqa: E402
 from dataclasses import asdict, dataclass  # noqa: E402
 from enum import IntEnum  # noqa: E402
 from urllib.parse import urlsplit  # noqa: E402
@@ -52,7 +51,9 @@ CONFIG_MAX_BYTES = 65536
 TOKEN_MAX_BYTES = 16384
 OUTPUT_MIN_BYTES = 512
 # RFC 6750 b64token: the only characters a bearer token may carry.
-BEARER_TOKEN = re.compile(rb"[A-Za-z0-9\-._~+/]+=*")
+BEARER_TOKEN = re.compile(r"[A-Za-z0-9\-._~+/]+=*")
+# The job definition's declared credential field for the Graph access token.
+TOKEN_ENV = "GRAPH_ACCESS_TOKEN"
 CONFIG_FIELDS = frozenset(
     {
         "seat",
@@ -62,7 +63,6 @@ CONFIG_FIELDS = frozenset(
         "extensions",
         "destination",
         "graph_origin",
-        "token_file",
         "ca_bundle",
         "output_max_bytes",
     }
@@ -96,7 +96,6 @@ class RunConfig:
     extensions: frozenset[str]
     destination: Destination
     graph_origin: str
-    token_file: Path
     ca_bundle: Path | None
     output_max_bytes: int
 
@@ -125,7 +124,7 @@ def load_config(path: Path) -> RunConfig:
         and set(destination) == {"drive_id", "folder_id"}
         and all(isinstance(value, str) and value for value in destination.values())
         and _https_origin(body["graph_origin"])
-        and all(_absolute(body[key]) for key in ("state_dir", "outbox", "token_file"))
+        and all(_absolute(body[key]) for key in ("state_dir", "outbox"))
         and (ca_bundle is None or _absolute(ca_bundle))
     ):
         raise RunRefused(Reason.CONFIG_INVALID)
@@ -137,34 +136,22 @@ def load_config(path: Path) -> RunConfig:
         extensions=frozenset(extensions),
         destination=Destination(**destination),
         graph_origin=body["graph_origin"],
-        token_file=Path(body["token_file"]),
         ca_bundle=None if ca_bundle is None else Path(ca_bundle),
         output_max_bytes=body["output_max_bytes"],
     )
 
 
-def read_token(path: Path) -> str:
-    """Read the access token the runner placed; any doubt refuses the run."""
-    try:
-        handle = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-    except OSError:
-        raise RunRefused(Reason.TOKEN_UNAVAILABLE) from None
-    try:
-        if not stat.S_ISREG(os.fstat(handle).st_mode):
-            raise RunRefused(Reason.TOKEN_UNAVAILABLE)
-        raw = os.read(handle, TOKEN_MAX_BYTES + 1)
-    finally:
-        os.close(handle)
-    token = raw.removesuffix(b"\n")
-    if len(raw) > TOKEN_MAX_BYTES or not BEARER_TOKEN.fullmatch(token):
+def check_token(token: str | None) -> str:
+    """Accept only a present RFC 6750 b64token within the size bound."""
+    if token is None or len(token) > TOKEN_MAX_BYTES or not BEARER_TOKEN.fullmatch(token):
         raise RunRefused(Reason.TOKEN_UNAVAILABLE)
-    return token.decode("ascii")
+    return token
 
 
-def run(config: RunConfig, client: httpx.Client) -> tuple[ExitCode, bytes]:
+def run(config: RunConfig, client: httpx.Client, token: str | None) -> tuple[ExitCode, bytes]:
     """Replay the outbox; return the exit code and the bounded JSON report."""
     try:
-        token = read_token(config.token_file)
+        token = check_token(token)
         folder = GraphAppFolder(client, token=lambda: token, base=f"{config.graph_origin}/v1.0")
         publisher = Publisher(
             PublishConfig(config.seat, config.state_dir, config.max_bytes, config.extensions),
@@ -191,6 +178,9 @@ def run(config: RunConfig, client: httpx.Client) -> tuple[ExitCode, bytes]:
 
 
 def main(argv: list[str]) -> int:
+    # Taken out of the environment first, so no child process, error report or
+    # later code path can see it there.
+    token = os.environ.pop(TOKEN_ENV, None)
     parser = argparse.ArgumentParser(prog="replay.py")
     parser.add_argument("--config", required=True, type=Path)
     arguments = parser.parse_args(argv)
@@ -203,7 +193,7 @@ def main(argv: list[str]) -> int:
         # trust_env=False: no proxy, certificate or netrc setting from the
         # environment can redirect the bearer away from the configured origin.
         with httpx.Client(verify=verify, trust_env=False) as client:
-            code, output = run(config, client)
+            code, output = run(config, client, token)
     sys.stdout.buffer.write(output + b"\n")
     return code
 

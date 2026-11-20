@@ -112,13 +112,19 @@ The operator configuration is one JSON object with exactly these keys:
 | `max_bytes`, `extensions` | the report bounds (`extensions` without dots) |
 | `destination` | `{"drive_id", "folder_id"}` of the app folder; any other refuses the run |
 | `graph_origin` | a bare `https://host[:port]` origin; the bearer goes to it only |
-| `token_file` | the access token file the runner fills (absolute) |
 | `ca_bundle` | the only CA file trusted for the origin, or `null` for the pinned certifi bundle |
 | `output_max_bytes` | the stdout bound, at least 512 |
 
-The access token is read from `token_file` before any provider call. A missing,
-linked, non-regular, empty or oversized token, or one with any character outside
-the RFC 6750 `b64token` set, refuses the run. An unreadable `ca_bundle` is
+The access token arrives in one environment variable, `GRAPH_ACCESS_TOKEN`: the
+credential field the job/1 definition declares, for example
+`"env": {"GRAPH_ACCESS_TOKEN": {"$credential": "<secret ref>", "field": "value"}}`.
+`replay.py` removes it from its environment before anything else, so no child
+process or error report can see it there, and it never appears in stdout, stderr,
+receipts or the ledger. As with any environment value, the process's initial
+environment (`/proc/<pid>/environ`) stays readable to the same UID and to root,
+which are inside the runner's credential boundary. A missing, empty or oversized
+token (over 16 KiB), or one with any character outside the RFC 6750 `b64token`
+set (a trailing newline included), refuses the run before any provider call. An unreadable `ca_bundle` is
 `config_invalid`.
 
 The trust root comes from `ca_bundle` or certifi alone. The TLS context is built
