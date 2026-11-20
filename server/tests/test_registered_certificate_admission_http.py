@@ -3,7 +3,9 @@
 Real AWID/aweb HTTP apps, signatures, identity tree, PostgreSQL and Redis.
 Only DNS selects the disposable registry authority, as in the human-kind tests.
 """
+import asyncio
 import json
+from time import monotonic
 from uuid import UUID, uuid4
 
 import httpx
@@ -14,7 +16,7 @@ from awid_service.deps import get_domain_verifier
 from test_cli_never_grants import registry_listener
 from test_dashboard_privacy import TEAM, TEAM_NAME, privacy_app  # noqa: F401
 from test_id_chain_request_auth import ALICE, ROOT, _fixture_signer, _signed_fixture_certificate
-from test_messages_http import _encode_certificate, _make_certificate, _signed_team_headers
+from test_messages_http import _encode_certificate, _make_certificate, _make_keypair, _signed_team_headers
 
 
 class _CountLists(httpx.AsyncHTTPTransport):
@@ -26,6 +28,63 @@ class _CountLists(httpx.AsyncHTTPTransport):
         if request.method == "GET" and request.url.path.endswith("/certificates"):
             self.reads += 1
         return await super().handle_async_request(request)
+
+
+@pytest.mark.asyncio
+async def test_first_connect_for_members_registered_between_list_reads(privacy_app, monkeypatch):  # noqa: F811
+    env = privacy_app
+    monkeypatch.setenv("AWEB_REQUIRE_REGISTERED_CERTIFICATES", "true")
+    transport = _CountLists()
+    domain = "example.test"
+    async with registry_listener(env) as (writer, origin):
+        async def exact_dns(selected):
+            assert selected == domain
+            return DomainAuthority(env.team_did, origin, "_awid." + domain)
+
+        env.registry_app.dependency_overrides[get_domain_verifier] = lambda: exact_dns
+        monkeypatch.setenv("AWID_REGISTRY_URL", origin)
+        monkeypatch.setenv("AWEB_DATABASE_URL", "postgresql://unused/test")
+        cached = _build_awid_registry_client(env.app, redis=env.redis, transport=transport)
+        object.__setattr__(cached, "_domain_verifier", exact_dns)
+        env.app.state.awid_registry_client = cached
+        try:
+            await writer.register_namespace(domain, env.team_did, env.team_sk)
+            await cached.list_team_certificates(domain, TEAM_NAME, active_only=False)
+            reads_before = transport.reads
+            body = b"{}"
+
+            async def register(alias):
+                seed, _, did = _make_keypair()
+                cert_id = str(uuid4())
+                certificate = _encode_certificate(_make_certificate(
+                    env.team_sk, env.team_did, did, team_id=TEAM, alias=alias,
+                    identity_scope="local", certificate_id=cert_id,
+                ))
+                await writer.register_team_certificate(
+                    domain, TEAM_NAME, team_controller_signing_key=env.team_sk,
+                    certificate_id=cert_id, member_did_key=did, member_did_aw=None,
+                    member_address=None, alias=alias, identity_scope="local", certificate=certificate,
+                )
+                headers = _signed_team_headers(seed, did, TEAM, certificate, body)
+                return cert_id, {**headers, "Content-Type": "application/json"}
+
+            async def connect(member):
+                cert_id, headers = member
+                response = await env.client.post("/v1/connect", content=body, headers=headers, timeout=15)
+                assert response.status_code == 200, response.text
+                row = await env.db.fetch_one("SELECT certificate_id FROM {{tables.agents}} WHERE agent_id=$1",
+                                             UUID(response.json()["agent_id"]))
+                assert row["certificate_id"] == cert_id
+
+            admitted = monotonic()
+            await connect(await register("first-member"))
+            assert transport.reads == reads_before + 1
+            later = await asyncio.gather(register("second-member"), register("third-member"))
+            assert monotonic() - admitted < 1
+            await asyncio.gather(*(connect(member) for member in later))
+            assert transport.reads == reads_before + 2
+        finally:
+            await cached.aclose()
 
 
 @pytest.mark.asyncio
