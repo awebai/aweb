@@ -30,7 +30,7 @@ def notify(**fields):
 def remove_guest(job):
     if job.is_symlink() or not RUN.fullmatch(job.name) or job.parent != ROOT / "runs":
         raise ValueError("invalid guest directory")
-    if (job / "owner").read_text().strip() != job.name:
+    if job.exists() and (job / "owner").read_text().strip() != job.name:
         raise ValueError("missing run directory ownership")
     selector = f"label={LABEL}={job.name}"
     ids = docker("ps", "-aq", "--no-trunc", "--filter", selector).splitlines()

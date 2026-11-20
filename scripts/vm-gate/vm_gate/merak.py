@@ -1,6 +1,7 @@
 """Acquire one disposable KVM guest through the Merak host's exclusive slot."""
 
 import json
+import os
 import hashlib
 from pathlib import Path
 import re
@@ -34,6 +35,13 @@ SSH = [
 ]
 
 
+def host_ssh():
+    # The host login can use the Mac's agent. The guest uses its per-run key;
+    # neither SSH hop forwards the agent or its environment to the remote host.
+    sock = os.environ.get("SSH_AUTH_SOCK")
+    return [*SSH, "-o", "IdentityAgent=" + sock] if sock else SSH
+
+
 def endpoint(config):
     settings = config.get("merak") or {}
     host = settings.get("host", "merak")
@@ -55,7 +63,7 @@ def guest_transport(directory, run, host, container):
     transport = Transport(directory, "127.0.0.1", int(run[3:], 16) or 1)
     proxy = shlex.join(
         [
-            *SSH,
+            *host_ssh(),
             host,
             "docker",
             "exec",
@@ -129,7 +137,7 @@ def run_guest(runtime, remote):
     write_summary(directory, summary)
     with (directory / "merak-host.stderr").open("w") as errors:
         proc = subprocess.Popen(
-            [*SSH, host, command],
+            [*host_ssh(), host, command],
             text=True,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
@@ -199,7 +207,7 @@ def run_guest(runtime, remote):
                 # Re-read the persisted host receipt over an independent pinned connection.
                 try:
                     rc = subprocess.run(
-                        [*SSH, host, command + " --reconcile " + shlex.quote(run)],
+                        [*host_ssh(), host, command + " --reconcile " + shlex.quote(run)],
                         env=child_environment(),
                         text=True,
                         capture_output=True,
