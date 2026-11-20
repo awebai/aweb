@@ -17,6 +17,7 @@ import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import NamedTuple
 from urllib.parse import parse_qs, urljoin, urlsplit
 
 import asyncpg
@@ -106,8 +107,44 @@ def _served(response: httpx.Response, payload: bytes) -> bool:
     )
 
 
-def _refused(response: httpx.Response, payload: bytes) -> bool:
-    return 400 <= response.status_code < 500 and payload not in response.content
+class Refusal(NamedTuple):
+    """A refusal Folio answers, as status and JSON ``detail``."""
+
+    status: int
+    detail: object
+
+
+# No route serves the bare Markdown reference /assets/<uuid>.
+NO_ROUTE = Refusal(404, "Not Found")
+# A live link or session asked for an image its capability does not show.
+NOT_SHOWN = Refusal(404, "Asset not found")
+# The link or session is revoked, expired or unknown.
+LINK_GONE = Refusal(404, "Presentation not found")
+# A capability of an uninstalled Folio (installation_access hides the cause's status).
+CAPABILITY_UNINSTALLED = Refusal(404, {"code": "installation_inactive"})
+# A member route of an uninstalled Folio.
+MEMBER_UNINSTALLED = Refusal(403, {"code": "installation_inactive"})
+
+
+def _refused(response: httpx.Response, payload: bytes, refusal: Refusal) -> bool:
+    """Exactly ``refusal``, and none of the image's bytes."""
+    return (
+        response.status_code == refusal.status
+        and response.json().get("detail") == refusal.detail
+        and payload not in response.content
+    )
+
+
+def _member_refused(
+    result: subprocess.CompletedProcess[bytes], payload: bytes, refusal: Refusal
+) -> bool:
+    """aw's raw read answered ``refusal`` (body on stdout, status on stderr)."""
+    return (
+        result.returncode != 0
+        and f"HTTP {refusal.status}" in result.stderr.decode(errors="replace")
+        and json.loads(result.stdout).get("detail") == refusal.detail
+        and payload not in result.stdout
+    )
 
 
 def _member_read(team: E2ETeam, url: str) -> subprocess.CompletedProcess[bytes]:
@@ -132,13 +169,19 @@ def _content_url(folio: RunningFolio, asset_id: str) -> str:
 GRANT_MAX_AGE_SECONDS = 60
 
 
-def _wait_until_refused(url: str, *, bound_seconds: float) -> None:
+def _wait_until_refused(url: str, refusal: Refusal, *, bound_seconds: float) -> None:
+    """Polls until ``url`` answers exactly ``refusal``; any other answer keeps waiting."""
     deadline = time.monotonic() + bound_seconds
     while True:
-        status = httpx.get(url, timeout=10.0).status_code
-        if 400 <= status < 500:
+        response = httpx.get(url, timeout=10.0)
+        if (
+            response.status_code == refusal.status
+            and response.json().get("detail") == refusal.detail
+        ):
             return
-        assert time.monotonic() < deadline, f"{url} still answers {status} after {bound_seconds}s"
+        assert time.monotonic() < deadline, (
+            f"{url} still answers {response.status_code} {response.text[:200]} after {bound_seconds}s"
+        )
         time.sleep(0.5)
 
 
@@ -151,7 +194,7 @@ def test_bare_asset_reference_is_served_to_nobody(
     asset_id = _upload(folio, team, image)
 
     anonymous = httpx.get(f"{folio.origin}/assets/{asset_id}", timeout=10.0)
-    assert _refused(anonymous, image), anonymous.status_code
+    assert _refused(anonymous, image, NO_ROUTE), (anonymous.status_code, anonymous.text)
 
 
 def test_present_page_images_follow_their_link(
@@ -190,13 +233,13 @@ def test_present_page_images_follow_their_link(
     for unreferenced, payload in ((second_id, second), (foreign_id, foreign)):
         swapped = image_url.replace(first_id, unreferenced)
         assert swapped != image_url
-        assert _refused(httpx.get(swapped, timeout=10.0), payload)
+        assert _refused(httpx.get(swapped, timeout=10.0), payload, NOT_SHOWN)
 
     revoked = _aw_request(team, "POST", f"{folio.origin}/v1/present/{pinned['token']}/revoke")
     assert _aw_json(revoked, context="revoke link") == {"revoked": True}
     assert httpx.get(pinned["url"], timeout=10.0).status_code == 404
-    assert _refused(httpx.get(image_url, timeout=10.0), first)
-    assert _refused(httpx.get(logo_url, timeout=10.0), logo)
+    assert _refused(httpx.get(image_url, timeout=10.0), first, LINK_GONE)
+    assert _refused(httpx.get(logo_url, timeout=10.0), logo, LINK_GONE)
 
     short = _mint_present(folio, team, slug="deck", version=1, ttl_seconds=3)
     short_page = httpx.get(short["url"], timeout=10.0)
@@ -207,8 +250,8 @@ def test_present_page_images_follow_their_link(
     expires_at = datetime.fromisoformat(str(short["expires_at"]).replace("Z", "+00:00"))
     time.sleep(max(0.0, (expires_at - datetime.now(UTC)).total_seconds()) + 0.5)
     assert httpx.get(short["url"], timeout=10.0).status_code == 404
-    assert _refused(httpx.get(short_image, timeout=10.0), first)
-    assert _refused(httpx.get(short_logo, timeout=10.0), logo)
+    assert _refused(httpx.get(short_image, timeout=10.0), first, LINK_GONE)
+    assert _refused(httpx.get(short_logo, timeout=10.0), logo, LINK_GONE)
 
 
 def test_member_reads_image_bytes_with_team_auth_in_its_own_team(
@@ -225,11 +268,11 @@ def test_member_reads_image_bytes_with_team_auth_in_its_own_team(
     assert read.stdout == image
 
     cross_team = _member_read(other, _content_url(folio, asset_id))
-    assert cross_team.returncode != 0
-    assert image not in cross_team.stdout
+    assert _member_refused(cross_team, image, NOT_SHOWN), cross_team.stderr
 
     anonymous = httpx.get(_content_url(folio, asset_id), timeout=10.0)
-    assert _refused(anonymous, image), anonymous.status_code
+    # Team auth refuses a request that carries no member signature.
+    assert anonymous.status_code == 401 and image not in anonymous.content, anonymous.text
 
 
 def test_uninstall_ends_presented_images_and_member_reads(
@@ -253,11 +296,12 @@ def test_uninstall_ends_presented_images_and_member_reads(
     _run_aw(team.workspace, "plugin", "uninstall", folio.app_id)
 
     # The unrevoked link's page ends once Folio observes the uninstall.
-    _wait_until_refused(link["url"], bound_seconds=GRANT_MAX_AGE_SECONDS + 10)
-    assert _refused(httpx.get(image_url, timeout=10.0), image)
+    _wait_until_refused(
+        link["url"], CAPABILITY_UNINSTALLED, bound_seconds=GRANT_MAX_AGE_SECONDS + 10
+    )
+    assert _refused(httpx.get(image_url, timeout=10.0), image, CAPABILITY_UNINSTALLED)
     after = _member_read(team, _content_url(folio, asset_id))
-    assert after.returncode != 0
-    assert image not in after.stdout
+    assert _member_refused(after, image, MEMBER_UNINSTALLED), after.stderr
 
 
 def test_editor_session_reads_images_until_revoked(
@@ -296,12 +340,12 @@ def test_editor_session_reads_images_until_revoked(
     [preview_image] = _rendered_srcs(preview, _IMG_SRC)
     for url, payload in ((snapshot_image, image), (preview_image, image), (logo_url, logo)):
         assert _served(httpx.get(url, headers=headers, timeout=10.0), payload)
-        assert _refused(httpx.get(url, timeout=10.0), payload)
+        assert _refused(httpx.get(url, timeout=10.0), payload, LINK_GONE)
 
     revoked = _aw_request(team, "POST", f"{folio.origin}/v1/present/{editable['token']}/revoke")
     assert _aw_json(revoked, context="revoke editable link") == {"revoked": True}
     for url, payload in ((preview_image, image), (logo_url, logo)):
-        assert _refused(httpx.get(url, headers=headers, timeout=10.0), payload)
+        assert _refused(httpx.get(url, headers=headers, timeout=10.0), payload, LINK_GONE)
 
 
 async def _stored_copies(token: str) -> list[str]:
