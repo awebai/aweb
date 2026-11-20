@@ -46,18 +46,28 @@ async def test_cli_first_contact_human_alias_with_signed_key(
             "UPDATE {{tables.agents}} SET agent_type='human', human_verified_key=did_key WHERE agent_id=$1",
             actor.id,
         )
-        private, public = generate_x25519_keypair()
         row = await env.db.fetch_one(
             "SELECT did_aw FROM {{tables.agents}} WHERE agent_id=$1", actor.id
         )
-        assertion = build_encryption_key_assertion(
-            signing_key=actor.sk,
-            identity_did=actor.did,
-            identity_stable_id=row["did_aw"] or "",
-            encryption_public_key=public,
-            custody="hosted_custodial",
-            now=datetime.now(UTC),
+        previous = await env.db.fetch_one(
+            "SELECT encryption_key_id, assertion_created_at FROM {{tables.agent_encryption_keys}} "
+            "WHERE agent_id=$1 AND revoked_at IS NULL", actor.id,
         )
+        # Reproduce the observed same-second collision with the self key first.
+        for _ in range(100000):
+            private, public = generate_x25519_keypair()
+            assertion = build_encryption_key_assertion(
+                signing_key=actor.sk,
+                identity_did=actor.did,
+                identity_stable_id=row["did_aw"] or "",
+                encryption_public_key=public,
+                custody="hosted_custodial",
+                now=previous["assertion_created_at"],
+            )
+            if assertion["encryption_key_id"] < previous["encryption_key_id"]:
+                break
+        else:
+            raise AssertionError("Could not arrange the observed key ordering")
         body_file = tmp_path / "first-contact.txt"
         body_file.write_text("First encrypted contact through team alias")
 
