@@ -167,6 +167,7 @@ _TEAM_METADATA_CACHE_TTL_SECONDS = 10 * 60  # 10 minutes
 # and survives process restarts, so the TTL is the only bound.
 _TEAM_REVOCATIONS_CACHE_TTL_SECONDS = 60
 _TEAM_KEY_SIGNATURE_REFRESH_COOLDOWN_SECONDS = 5
+_TEAM_CERTIFICATES_MISS_REFRESH_COOLDOWN_SECONDS = 5
 # Team-controller keys share this freshness bound, with synchronous refresh.
 # Registry-outage grace adopted for revocations (Juan 2026-08-17; see
 # trust-model.md "Registry availability posture"); team-controller keys share
@@ -2047,6 +2048,14 @@ class RegistryClient:
 
 
 @dataclass(frozen=True, kw_only=True)
+class _CertificateMissAdmission:
+    """Redis admission for a team and, when supplied, its verified certificate."""
+
+    team_key: str
+    certificate_key: str | None
+
+
+@dataclass(frozen=True, kw_only=True)
 class _CertificateMissRefresh:
     """One reader-partition producer and the verified omission it rechecks."""
 
@@ -2172,7 +2181,9 @@ class CachedRegistryClient(RegistryClient):
             task = asyncio.create_task(self._refresh_id_status(cache_key, request))
             self._id_status_refreshes[cache_key] = task
 
-            def discard_completed_refresh(_task: asyncio.Task[_IDStatusRefresh]) -> None:
+            def discard_completed_refresh(
+                _task: asyncio.Task[_IDStatusRefresh],
+            ) -> None:
                 self._id_status_refreshes.pop(cache_key, None)
 
             task.add_done_callback(discard_completed_refresh)
@@ -2701,9 +2712,11 @@ class CachedRegistryClient(RegistryClient):
     ) -> list[TeamCertificate]:
         """Recheck a signature-verified certificate missing from the cached list.
 
-        Distinct newly registered members need independent miss admission
-        (aweb-adjw). A verified certificate shares one five-second budget across
-        clients; legacy callers without an ID retain their team-wide budget.
+        docs/aweb-sot.md "Registered-certificate cache misses" bounds added
+        list reads to one per registry/team per five seconds across clients.
+        Per-certificate admission remains inside that team ceiling, including
+        legacy callers without an ID. A later registration can retry after the
+        ceiling expires instead of being treated as an authoritative absence.
         Call only after signature and revocation checks. Suppression is
         unavailable authority, never proof of absence.
         Both a waiter and the shared producer retain the client's total bound;
@@ -2713,14 +2726,20 @@ class CachedRegistryClient(RegistryClient):
             self._team_certificates_cache_key(domain, name, active_only=False),
             self._team_certificates_generation_key(domain, name),
         )
-        admission_key = f"awid:team_certificates_miss_refresh:{self.registry_url}:{domain}/{name}"
+        team_admission_key = (
+            f"awid:team_certificates_miss_refresh:{self.registry_url}:{domain}/{name}"
+        )
+        certificate_admission_key = None
         if certificate_id is not None:
             if not isinstance(certificate_id, str) or not certificate_id.strip():
                 raise ValueError(
                     "Pass the exact signature-verified certificate ID for a registration miss."
                 )
             digest = hashlib.sha256(certificate_id.encode()).hexdigest()
-            admission_key += f":certificate:{digest}"
+            certificate_admission_key = f"{team_admission_key}:certificate:{digest}"
+        admission = _CertificateMissAdmission(
+            team_key=team_admission_key, certificate_key=certificate_admission_key
+        )
         async with asyncio.timeout(self.timeout_seconds):
             while True:
                 refresh = self._team_certificate_miss_refreshes.get(cache_key)
@@ -2730,7 +2749,7 @@ class CachedRegistryClient(RegistryClient):
                             domain,
                             name,
                             cache_key=cache_key,
-                            admission_key=admission_key,
+                            admission=admission,
                         )
                     )
                     refresh = _CertificateMissRefresh(certificate_id=certificate_id, task=task)
@@ -2752,8 +2771,8 @@ class CachedRegistryClient(RegistryClient):
                 ):
                     return certificates
                 # Another member's refresh predates this registration. Reuse
-                # its positive facts, but spend this verified omission's own
-                # bounded admission if it still needs an authoritative answer.
+                # its positive facts, but require both admission budgets if
+                # this omission still needs an authoritative answer.
                 if self._team_certificate_miss_refreshes.get(cache_key) is refresh:
                     self._team_certificate_miss_refreshes.pop(cache_key)
 
@@ -2768,26 +2787,40 @@ class CachedRegistryClient(RegistryClient):
         if not task.cancelled():
             task.exception()  # Observe failures after every waiter was cancelled.
 
+    async def _admit_team_certificate_miss(self, admission: _CertificateMissAdmission) -> None:
+        """Enforce docs/aweb-sot.md's per-team ceiling without spending denied IDs."""
+        refusal = "AWID certificate existence refresh suppressed. Retry after five seconds."
+        if admission.certificate_key is not None:
+            if await self.redis_client.get(admission.certificate_key) is not None:
+                raise RegistryError(refusal, status_code=503)
+        admitted = await self.redis_client.set(
+            admission.team_key,
+            "1",
+            nx=True,
+            ex=_TEAM_CERTIFICATES_MISS_REFRESH_COOLDOWN_SECONDS,
+        )
+        if not admitted:
+            raise RegistryError(refusal, status_code=503)
+        if admission.certificate_key is not None:
+            admitted = await self.redis_client.set(
+                admission.certificate_key,
+                "1",
+                nx=True,
+                ex=_TEAM_CERTIFICATES_MISS_REFRESH_COOLDOWN_SECONDS,
+            )
+            if not admitted:
+                raise RegistryError(refusal, status_code=503)
+
     async def _refresh_missing_team_certificate(
         self,
         domain: str,
         name: str,
         *,
         cache_key: str,
-        admission_key: str,
+        admission: _CertificateMissAdmission,
     ) -> list[TeamCertificate]:
         async with asyncio.timeout(self.timeout_seconds):
-            # Only an independently verified artifact may spend its own budget.
-            admitted = await self.redis_client.set(
-                admission_key,
-                "1",
-                nx=True,
-                ex=_TEAM_KEY_SIGNATURE_REFRESH_COOLDOWN_SECONDS,
-            )
-            if not admitted:
-                raise RegistryError(
-                    "AWID certificate existence refresh suppressed", status_code=503
-                )
+            await self._admit_team_certificate_miss(admission)
             certificates = await self.list_team_certificates_fresh(domain, name, active_only=False)
             await self._write_cache_entry(
                 cache_key,

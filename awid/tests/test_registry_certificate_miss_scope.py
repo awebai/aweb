@@ -11,7 +11,7 @@ from test_registry_client import FakeRedis
 
 
 @pytest.mark.asyncio
-async def test_distinct_verified_certificates_have_independent_miss_budgets():
+async def test_distinct_verified_certificates_share_a_per_team_ceiling_across_clients():
     redis = FakeRedis()
     reads = []
 
@@ -32,20 +32,55 @@ async def test_distinct_verified_certificates_have_independent_miss_budgets():
             )
             for _ in range(2)
         ]
-        for certificate_id in ("alice", "bob", "carol"):
-            assert (
-                await clients[0].refresh_team_certificates_after_miss(
-                    "example.test", "team", certificate_id=certificate_id
-                )
-                == []
+        assert (
+            await clients[0].refresh_team_certificates_after_miss(
+                "example.test", "team", certificate_id="alice"
             )
-        assert len(reads) == 3
+            == []
+        )
         for client in clients:
-            with pytest.raises(RegistryError) as refused:
-                await client.refresh_team_certificates_after_miss(
-                    "example.test", "team", certificate_id="alice"
+            for certificate_id in ("bob", "carol", None, "alice"):
+                with pytest.raises(RegistryError) as refused:
+                    await client.refresh_team_certificates_after_miss(
+                        "example.test", "team", certificate_id=certificate_id
+                    )
+                assert refused.value.status_code == 503
+                assert str(refused.value) == (
+                    "AWID certificate existence refresh suppressed. Retry after five seconds."
                 )
-            assert refused.value.status_code == 503
+        assert len(reads) == 1
+        team_budget = "awid:team_certificates_miss_refresh:http://registry.test:example.test/team"
+        assert redis.expirations[team_budget] == 5
+        assert (
+            len([key for key in redis.values if key.startswith(team_budget + ":certificate:")]) == 1
+        )
+        # This unit Redis has no clock: remove just the team's expired marker.
+        # A rejected different ID must not have spent its own admission budget.
+        await redis.delete(team_budget)
+        # The per-certificate marker still suppresses the original omission,
+        # without spending the team's next admission for a different member.
+        with pytest.raises(RegistryError) as refused:
+            await clients[1].refresh_team_certificates_after_miss(
+                "example.test", "team", certificate_id="alice"
+            )
+        assert refused.value.status_code == 503
+        assert str(refused.value) == (
+            "AWID certificate existence refresh suppressed. Retry after five seconds."
+        )
+        assert len(reads) == 1
+        assert (
+            await clients[1].refresh_team_certificates_after_miss(
+                "example.test", "team", certificate_id="bob"
+            )
+            == []
+        )
+        assert len(reads) == 2
+        assert (
+            await clients[1].refresh_team_certificates_after_miss(
+                "example.test", "other-team", certificate_id="carol"
+            )
+            == []
+        )
         assert len(reads) == 3
 
 
@@ -120,10 +155,11 @@ async def test_different_verified_members_share_positive_refresh_but_recheck_a_l
             },
         )
 
+    redis = FakeRedis()
     async with aclosing(
         CachedRegistryClient(
             registry_url="http://registry.test",
-            redis_client=FakeRedis(),
+            redis_client=redis,
             transport=httpx.MockTransport(registry_reply),
         )
     ) as client:
@@ -142,7 +178,24 @@ async def test_different_verified_members_share_positive_refresh_but_recheck_a_l
         )
         await asyncio.sleep(0)
         release.set()
-        alice_result, bob_result = await asyncio.wait_for(asyncio.gather(alice, bob), 1)
+        alice_result = await asyncio.wait_for(alice, 1)
         assert "alice" in {cert.certificate_id for cert in alice_result}
+        if registered_before_refresh:
+            bob_result = await asyncio.wait_for(bob, 1)
+        else:
+            with pytest.raises(RegistryError) as refused:
+                await asyncio.wait_for(bob, 1)
+            assert refused.value.status_code == 503
+            assert str(refused.value) == (
+                "AWID certificate existence refresh suppressed. Retry after five seconds."
+            )
+            assert len(reads) == 1
+            # The later registration remains recoverable after the team window.
+            await redis.delete(
+                "awid:team_certificates_miss_refresh:http://registry.test:example.test/team"
+            )
+            bob_result = await client.refresh_team_certificates_after_miss(
+                "example.test", "team", certificate_id="bob"
+            )
         assert "bob" in {cert.certificate_id for cert in bob_result}
         assert len(reads) == (1 if registered_before_refresh else 2)
