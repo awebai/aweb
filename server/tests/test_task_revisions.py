@@ -1,5 +1,17 @@
 """Task revisions and assignment principals use the real service and database."""
 
+from contextlib import aclosing
+import base64
+import json
+from nacl.signing import SigningKey
+from aweb_naapp_testing import Member
+from aweb_naapp_testing.human_members import HumanNamespace
+from awid.registry import RegistryClient
+from test_dashboard_privacy import TEAM
+from test_dashboard_privacy import privacy_app as privacy_app
+from test_messages_http import _encode_certificate
+from test_agents_suggest_alias_http import request_as
+
 from uuid import UUID
 from pathlib import Path
 import shutil
@@ -123,32 +135,94 @@ async def test_assignment_principal_does_not_follow_alias_reuse(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
-async def test_global_principal_uses_did_aw_and_claim_reassigns_it(aweb_cloud_db):
-    db = aweb_cloud_db.aweb_db
-    await _seed_team(db)
-    human_id = await _member(db, "requester", human=True)
-    agent_id = await _member(db, "alice")
-    await db.execute(
-        "UPDATE {{tables.agents}} SET did_aw = 'did:aw:human' WHERE agent_id = $1",
-        human_id,
-    )
-    service = _DbShim(db)
-    task = await create_task(
-        service,
-        actor=ALICE,
-        on_mutation=None,
-        title="Decide",
-        assignee_alias=str(human_id),
-    )
-    assert task["assignee_did"] == "did:aw:human"
-    claimed = await update_task(
-        service,
-        actor=ALICE,
-        on_mutation=None,
-        ref=task["task_ref"],
-        status="in_progress",
-    )
-    assert claimed["assignee_did"] == f"did:key:{agent_id}"
+async def test_global_principal_uses_did_aw_and_claim_reassigns_it(privacy_app):
+    # The original assignee is a human: prove that kind and its stable DID
+    # through the real namespace/ID chain, then admit its team certificate.
+    env = privacy_app
+    subject = env.actors["bob"]
+    old_client = env.app.state.awid_registry_client
+    # Once the registry has an explicit certificate inventory, preserve every
+    # already-admitted neighbor through the same signed registration route.
+    for actor in env.actors.values():
+        if actor is subject:
+            continue
+        await env.registry.add_certificate(
+            json.loads(base64.b64decode(actor.certificate)),
+            team_key=SigningKey(env.team_sk),
+        )
+    async with aclosing(
+        RegistryClient(
+            registry_url=old_client.registry_url,
+            transport=env.registry.transport,
+            service_token=old_client.service_token,
+            domain_verifier=env.registry.namespace_authority,
+        )
+    ) as client:
+        namespace = HumanNamespace(
+            registry=env.registry,
+            client=client,
+            controller_seed=env.namespace_sk,
+            controller_did=env.namespace_did,
+            domain="example.test",
+            authority=env.registry.namespace_authority,
+        )
+        member = Member(
+            team_id=TEAM,
+            team_key=SigningKey(env.team_sk),
+            member_key=SigningKey(subject.sk),
+            alias="bob",
+            certificate_id="task-global-human",
+        )
+        human = await namespace.register(member)
+        subject.certificate = _encode_certificate(member.certificate())
+        env.app.state.awid_registry_client = client
+        try:
+            connected = await request_as(
+                env,
+                alias="bob",
+                method="POST",
+                path="/v1/connect",
+                payload={
+                    "hostname": "test",
+                    "workspace_path": "/human",
+                    "agent_type": "human",
+                },
+            )
+            assert connected.status_code == 200, connected.text
+            projection = await env.db.fetch_one(
+                "SELECT agent_type,human_verified_key,did_aw_verified_key "
+                "FROM {{tables.agents}} WHERE agent_id=$1",
+                subject.id,
+            )
+            assert projection["agent_type"] == "human"
+            assert projection["human_verified_key"] == subject.did
+            assert projection["did_aw_verified_key"] == subject.did
+            made = await request_as(
+                env,
+                alias="alice",
+                method="POST",
+                path="/v1/tasks",
+                payload={"title": "Decide", "assignee_alias": str(subject.id)},
+            )
+            assert made.status_code == 200, made.text
+            task = made.json()
+            assert task["assignee_did"] == human.principal
+            claimed = await request_as(
+                env,
+                alias="alice",
+                method="PATCH",
+                path=f"/v1/tasks/{task['task_ref']}",
+                payload={"status": "in_progress"},
+            )
+            assert claimed.status_code == 200, claimed.text
+            assert claimed.json()["assignee_did"] == env.actors["alice"].did
+            persisted = await env.db.fetch_one(
+                "SELECT assignee_did FROM {{tables.tasks}} WHERE task_id=$1",
+                UUID(task["task_id"]),
+            )
+            assert persisted["assignee_did"] == env.actors["alice"].did
+        finally:
+            env.app.state.awid_registry_client = old_client
 
 
 @pytest.mark.asyncio
