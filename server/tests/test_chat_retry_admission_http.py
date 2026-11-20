@@ -90,7 +90,9 @@ async def test_changed_continued_chat_proof_verifies_before_the_age_only_refusal
         "SELECT * FROM {{tables.chat_messages}} WHERE message_id=$1", UUID(message_id)
     )
     signed = json.loads(row["signed_payload"])
-    signed["timestamp"] = (datetime.now(timezone.utc) - timedelta(minutes=6)).isoformat()
+    signed["timestamp"] = (
+        (datetime.now(timezone.utc) - timedelta(minutes=6)).replace(microsecond=0).isoformat()
+    )
     changed_bytes = canonical_json_bytes(signed)
     sender_key, sender_did = env.keys["pilot"]
     signer = sender_key if valid_signature else bytes(SigningKey.generate())
