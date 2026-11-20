@@ -18,12 +18,11 @@ from messaging_actor_support import admit_messaging_actor, register_messaging_te
 from test_dashboard_privacy import TEAM, privacy_app as privacy_app
 from test_messages_http import _signed_team_headers
 from test_same_origin_delivery import (
+    SAME_ORIGIN_PROXY_SECRET,
     foreign_receiver as foreign_receiver,
     same_origin as same_origin,
     same_origin_registry_socket as same_origin_registry_socket,
 )
-
-PROXY_SECRET = "federated-human-refusal-test-secret"
 
 
 @pytest.fixture(autouse=True)
@@ -31,7 +30,7 @@ def configured_host_signing(monkeypatch):
     # Configure the public host boundary before native/MCP creation, including
     # hosts which capture their configuration at resource startup.
     monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
-    monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", PROXY_SECRET)
+    monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", SAME_ORIGIN_PROXY_SECRET)
 
 
 @pytest.mark.asyncio
@@ -172,7 +171,7 @@ async def test_remote_human_refusal_keeps_typed_body_through_source(
                         "X-User-ID": principal,
                         "X-AWEB-Actor-ID": alice.agent_id,
                         "X-AWEB-Auth": build_internal_auth_header_value(
-                            secret=PROXY_SECRET,
+                            secret=SAME_ORIGIN_PROXY_SECRET,
                             team_id=TEAM,
                             principal_type="u",
                             principal_id=principal,

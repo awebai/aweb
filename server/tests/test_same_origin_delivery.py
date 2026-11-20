@@ -58,11 +58,14 @@ def same_origin_registry_socket():
         yield listener
 
 
+SAME_ORIGIN_PROXY_SECRET = "disposable-acst-proxy-secret"
+
+
 @pytest_asyncio.fixture
 async def same_origin(privacy_app, monkeypatch, same_origin_registry_socket):
     env = privacy_app
     monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
-    monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", "disposable-acst-proxy-secret")
+    monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", SAME_ORIGIN_PROXY_SECRET)
     target_team = "recipients:recipient.test"
     await env.db.execute(
         "INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key) "
