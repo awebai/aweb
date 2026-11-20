@@ -6,7 +6,12 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from aweb_naapp_testing.deployment import aw_workspace_env, candidate_hostname, e2e_stack
+from aweb_naapp_testing.deployment import (
+    aw_workspace_env,
+    candidate_hostname,
+    e2e_stack,
+    running_app,
+)
 
 _CALLER_AW_SETTINGS = (
     "AWEB_IDENTITY_HOME",
@@ -90,3 +95,15 @@ def test_disposable_aw_workspace_carries_only_the_aw_settings_the_test_sets(
     }
     assert env["AWID_REGISTRY_URL"] == "http://awid.test:8010"
     assert env["HOME"] == str(tmp_path / "home")
+
+
+def test_an_app_that_has_to_be_killed_fails_its_deployment() -> None:
+    # A shutdown that never ends must not pass as a normal stop.
+    apps = str(Path(__file__).parent / "deployment_apps")
+    with pytest.raises(RuntimeError, match="killed"):
+        with running_app(
+            name="stuck",
+            factory="stuck_shutdown_app:create_app",
+            env_for=lambda origin: {"PYTHONPATH": apps},
+        ):
+            pass

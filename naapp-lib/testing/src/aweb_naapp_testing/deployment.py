@@ -40,6 +40,9 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
 # The locked server source environment runs the stack server, not an installed aweb artifact.
 STACK_SERVER = REPOSITORY_ROOT / "scripts" / "e2e" / "stack_server.py"
 SERVER_PROJECT = REPOSITORY_ROOT / "server"
+# How long a deployed app may take to stop after SIGTERM; one that has to be
+# killed fails its deployment.
+STOP_TIMEOUT_SECONDS = 10
 
 
 @dataclass(frozen=True)
@@ -579,12 +582,14 @@ def running_app(
             proxy.server_close()
             thread.join(timeout=5)
             proc.terminate()
+            killed = False
             try:
-                proc.wait(timeout=10)
+                proc.wait(timeout=STOP_TIMEOUT_SECONDS)
             except subprocess.TimeoutExpired:
                 proc.kill()
-                proc.wait(timeout=10)
-            failed = proc.returncode not in (0, -15, -9, None)
+                proc.wait(timeout=STOP_TIMEOUT_SECONDS)
+                killed = True
+            failed = killed or proc.returncode not in (0, -15, None)
             show_logs = failed or setup_error is not None
             stdout = proc.stdout.read() if show_logs and proc.stdout else ""
             stderr = proc.stderr.read() if show_logs and proc.stderr else ""
@@ -593,9 +598,14 @@ def running_app(
             if proc.stderr:
                 proc.stderr.close()
             if show_logs:
+                stopped = (
+                    f"uvicorn did not stop within {STOP_TIMEOUT_SECONDS} s of SIGTERM and was "
+                    "killed"
+                    if killed
+                    else f"uvicorn exited with {proc.returncode}"
+                )
                 raise RuntimeError(
-                    f"uvicorn exited with {proc.returncode}; setup error: {setup_error}\n"
-                    f"stdout:\n{stdout}\nstderr:\n{stderr}"
+                    f"{stopped}; setup error: {setup_error}\nstdout:\n{stdout}\nstderr:\n{stderr}"
                 ) from setup_error
 
 
