@@ -227,14 +227,14 @@ class _RevocationScan:
 
 
 def _revocation_page_entries(data: dict[str, Any], *, team_id: str) -> list[dict[str, Any]]:
-    """Accept only a complete CRL page (docs/awid-sot.md, registry outbound bounds)."""
+    """Validate CRL rows and pagination together (docs/awid-sot.md:1411-1423)."""
     entries = data.get("revocations")
-    valid_pagination = "has_more" not in data or (
-        type(data["has_more"]) is bool
-        and (
-            not data["has_more"]
-            or (isinstance(data.get("next_cursor"), str) and bool(data["next_cursor"].strip()))
-        )
+    has_more = data.get("has_more")
+    next_cursor = data.get("next_cursor")
+    valid_pagination = (
+        ("has_more" not in data and "next_cursor" not in data)
+        or (has_more is False and next_cursor is None)
+        or (has_more is True and isinstance(next_cursor, str) and bool(next_cursor.strip()))
     )
     if (
         not isinstance(entries, list)

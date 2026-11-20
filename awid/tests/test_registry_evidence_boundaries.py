@@ -103,6 +103,13 @@ def peer(peer_factory):
         b'{"revocations":[],"has_more":true}',
         b'{"revocations":[],"has_more":true,"next_cursor":17}',
         b'{"revocations":[],"has_more":"false"}',
+        b'{"revocations":[],"next_cursor":"next"}',
+        b'{"revocations":[],"next_cursor":null}',
+        b'{"revocations":[],"has_more":false,"next_cursor":17}',
+        b'{"revocations":[],"has_more":false,"next_cursor":"next"}',
+        b'{"revocations":[],"has_more":false,"next_cursor":""}',
+        b'{"revocations":[],"has_more":true,"next_cursor":""}',
+        b'{"revocations":[],"has_more":true,"next_cursor":"   "}',
     ],
 )
 async def test_malformed_revocations_never_become_cached_absence(peer, wire):
@@ -126,7 +133,14 @@ async def test_malformed_revocations_never_become_cached_absence(peer, wire):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("wire", [b'{"revocations":[]}', b'{"revocations":[],"has_more":false}'])
+@pytest.mark.parametrize(
+    "wire",
+    [
+        b'{"revocations":[]}',
+        b'{"revocations":[],"has_more":false}',
+        b'{"revocations":[],"has_more":false,"next_cursor":null}',
+    ],
+)
 async def test_explicit_empty_revocations_remain_a_cacheable_complete_answer(peer, wire):
     peer.response = wire
     redis = FakeRedis()

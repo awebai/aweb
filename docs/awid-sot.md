@@ -1411,8 +1411,11 @@ checks. A locator miss, corruption or expiry requires a new bounded acquisition.
 A successful revocation response must contain an explicit list of rows with
 nonempty string certificate IDs. An explicit empty list remains valid, including
 released legacy responses without pagination fields. If pagination fields are
-present, `has_more` is boolean, and a nonterminal page has a nonempty string
-cursor. Missing or malformed lists and incomplete pagination raise a retryable
+present, `has_more` is boolean. A nonterminal page has a nonempty string
+cursor; a terminal page omits its cursor or sets it to null. A cursor without
+`has_more` is incomplete pagination, including a null orphan cursor. Only a
+response with neither pagination field uses the released legacy paging path.
+Missing or malformed lists and incomplete pagination raise a retryable
 502 instead of becoming cached empty evidence or resetting its age. The exact
 released first-page missing-team response keeps its separate compatibility rule.
 Redis cache invalidation failure cannot prevent a correctly prepared controller
