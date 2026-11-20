@@ -8,7 +8,8 @@ skip these checks. Complete the explicit Linux proof before qualifying an OCI
 integration.
 
 On a Linux Docker host with AppArmor enabled, the host operator first loads the
-reviewed profile. [Proof profile](aweb-secrets-oci-proof.apparmor)
+reviewed profile. It uses AppArmor ABI 4.0, available on Ubuntu 24.04.
+[Proof profile](aweb-secrets-oci-proof.apparmor)
 
 Load it from the runner package directory on that host.
 
