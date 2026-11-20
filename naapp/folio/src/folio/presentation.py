@@ -524,14 +524,14 @@ def _served_image_src(
     image_urls: dict[UUID, str],
 ) -> str | None:
     """The ``src`` a viewer loads for a validated asset reference: the URL the
-    caller's capability serves it at, or the reference itself when none is given."""
+    caller's capability serves it at. A reference no capability serves shows nothing."""
     reference = _safe_image_src(src, public_origin=public_origin, image_asset_ids=image_asset_ids)
     if reference is None:
         return None
     asset_id = _asset_id_from_same_origin_src(reference, public_origin=public_origin)
     if asset_id is None:
         return None
-    return image_urls.get(asset_id, reference)
+    return image_urls.get(asset_id)
 
 
 def _video_iframe_html(*, iframe_url: str, title: str) -> str:
@@ -712,7 +712,6 @@ def render_presented_markdown(
     body: str,
     *,
     public_origin: str | None = None,
-    allowed_asset_ids: set[UUID] | None = None,
     asset_embeds: dict[UUID, dict[str, str]] | None = None,
 ) -> str:
     """Render Markdown to sanitized HTML safe for unauthenticated public pages.
@@ -727,12 +726,7 @@ def render_presented_markdown(
         for asset_id, embed in embeds.items()
         if str(embed.get("kind") or AssetKind.IMAGE) == AssetKind.IMAGE and embed.get("url")
     }
-    image_asset_ids = {
-        asset_id
-        for asset_id, embed in embeds.items()
-        if str(embed.get("kind") or AssetKind.IMAGE) == AssetKind.IMAGE
-    }
-    image_asset_ids.update(allowed_asset_ids or set())
+    image_asset_ids = set(image_urls)
     video_embeds = {
         asset_id: embed
         for asset_id, embed in embeds.items()
@@ -785,14 +779,12 @@ def render_presented_page(
     body: str,
     theme: dict[str, Any] | None = None,
     public_origin: str | None = None,
-    allowed_asset_ids: set[UUID] | None = None,
     asset_embeds: dict[UUID, dict[str, str]] | None = None,
     nonce: str | None = None,
 ) -> str:
     content = render_presented_markdown(
         body,
         public_origin=public_origin,
-        allowed_asset_ids=allowed_asset_ids,
         asset_embeds=asset_embeds,
     )
     tokens = (theme or {}).get("tokens")
@@ -1005,14 +997,12 @@ def render_editor_page(
     version_number: int,
     theme: dict[str, Any] | None = None,
     public_origin: str | None = None,
-    allowed_asset_ids: set[UUID] | None = None,
     asset_embeds: dict[UUID, dict[str, str]] | None = None,
     nonce: str,
 ) -> str:
     preview = render_presented_markdown(
         body,
         public_origin=public_origin,
-        allowed_asset_ids=allowed_asset_ids,
         asset_embeds=asset_embeds,
     )
     logo_url = str((theme or {}).get("logo_url") or "")
