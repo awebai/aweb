@@ -38,7 +38,7 @@ jobs:
         with:
           enable-cache: true
       - name: Check Python diagnostic ceilings
-        run: make check-python-static
+        run: make check-python-static check-product-table-writes
 
   test:
     name: Test suite

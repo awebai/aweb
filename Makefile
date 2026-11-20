@@ -170,6 +170,11 @@ check-python-static: prepare-python-static
 test-python-static:
 	uv run --offline --frozen --project server python -m unittest discover -s scripts -p test_python_static.py -v
 
+# AST-only test-state ceiling; no package preparation, services or network.
+.PHONY: check-product-table-writes
+check-product-table-writes:
+	python3 scripts/product_table_writes.py $(PRODUCT_TABLE_WRITE_ARGS)
+
 test-shipping: test-scripts
 	$(MAKE) test-vm-gate
 
