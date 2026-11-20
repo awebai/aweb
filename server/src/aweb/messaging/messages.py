@@ -65,8 +65,6 @@ async def authorize_message_delivery(
     recipient_agent: Mapping[str, Any],
     sender_did: str,
     sender_address: str | None,
-    sender_team_id: str | None = None,
-    sender_verified_team_id: str | None = None,
     sender_verified_dids: list[str] | tuple[str, ...] | None = None,
     stored_route_continuation: bool = False,
 ) -> None:
@@ -93,8 +91,6 @@ async def admit_message_delivery(
     to_agent_id: str | None,
     sender_did: str,
     sender_address: str | None,
-    team_id: str | None,
-    sender_verified_team_id: str | None,
     sender_verified_dids,
     stored_route_continuation: bool,
 ) -> None:
@@ -122,8 +118,6 @@ async def admit_message_delivery(
             recipient_agent=policy_recipient,
             sender_did=sender_did,
             sender_address=sender_address,
-            sender_team_id=team_id,
-            sender_verified_team_id=sender_verified_team_id,
             sender_verified_dids=sender_verified_dids,
             stored_route_continuation=stored_route_continuation,
         )

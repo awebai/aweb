@@ -440,8 +440,6 @@ async def deliver_federated_chat(
             recipient_agent=local,
             sender_did=sender_routing_did,
             sender_address=sender_address,
-            sender_team_id=auth.team_id,
-            sender_verified_team_id=auth.verified_team_id,
             sender_verified_dids=auth_dids(auth),
             stored_route_continuation=True,
         )
@@ -1225,8 +1223,6 @@ async def _resolve_named_recipients(
                 recipient_agent=row,
                 sender_did=actor_did,
                 sender_address=sender_address,
-                sender_team_id=auth.team_id,
-                sender_verified_team_id=auth.verified_team_id,
                 sender_verified_dids=auth_dids(auth),
             )
         except DeliveryPolicyRefused:
@@ -1570,8 +1566,6 @@ async def _resolve_session_target(
                 recipient_agent=policy_recipient,
                 sender_did=actor_did,
                 sender_address=sender_address,
-                sender_team_id=auth.team_id,
-                sender_verified_team_id=auth.verified_team_id,
                 sender_verified_dids=auth_dids(auth),
                 stored_route_continuation=True,
             )
