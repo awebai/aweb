@@ -9,11 +9,16 @@ hold each response, so the code under test, the routes and the database all
 stay real.
 
 No rate limit applies. Nothing here is used by the registry service itself.
+
+:func:`require_selected_test_database` is the one rule for which Postgres a test
+database may be created on; ``awid_service.testing_postgres`` applies it to
+pgdbm's fixtures in every suite that loads that plugin.
 """
 
 from __future__ import annotations
 
 import asyncio
+import os
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -24,6 +29,7 @@ import httpx
 from fastapi import FastAPI
 from nacl.signing import SigningKey
 from pgdbm import AsyncDatabaseManager, DatabaseConfig
+from pgdbm.testing import DatabaseTestConfig
 from redis.asyncio import Redis
 
 from awid.attestation_records import sign_record
@@ -38,6 +44,46 @@ from .db import AwidDatabaseInfra
 from .main import mount_registry
 
 REGISTRY_URL = "https://registry.example"
+
+# The Postgres server a run names for its test databases (pgdbm's own names).
+_SELECTION = ("TEST_DB_HOST", "TEST_DB_PORT")
+
+
+class PostgresNotSelected(RuntimeError):
+    """A test database was requested on a Postgres server the run did not name."""
+
+
+def selected_test_database_config() -> DatabaseTestConfig:
+    """pgdbm's test database settings for the Postgres server the run names.
+
+    Without TEST_DB_HOST and TEST_DB_PORT, pgdbm falls back to localhost:5432,
+    which on a workstation is the host's own shared Postgres; a test database is
+    never created there by default (aweb-admf).
+    """
+    missing = [name for name in _SELECTION if not os.environ.get(name)]
+    if missing:
+        raise PostgresNotSelected(
+            f"{' and '.join(missing)} unset: test databases are created only on a "
+            "Postgres server the run names, never by default on the host's "
+            "localhost:5432. Run the database tests on a gate-vms lease, or point "
+            "TEST_DB_HOST and TEST_DB_PORT at a disposable Postgres you started for "
+            "this run. Setting TEST_DB_PORT=5432 by hand on a workstation is a "
+            "knowing choice of the host's own Postgres."
+        )
+    return DatabaseTestConfig.from_env()
+
+
+def require_selected_test_database(config: DatabaseTestConfig) -> None:
+    """Refuses ``config`` unless it is the Postgres server the run names."""
+    selected = selected_test_database_config()
+    if (config.host, config.port) != (selected.host, selected.port):
+        raise PostgresNotSelected(
+            f"pgdbm's test databases target {config.host}:{config.port}, but the run "
+            f"names {selected.host}:{selected.port}. Set TEST_DB_HOST and TEST_DB_PORT "
+            "before the test run starts, so pgdbm reads them when it loads."
+        )
+
+
 SERVICE_TOKEN = "awid-testing-service-token-32-bytes"
 
 # Changes the real response in place, or returns a response to send instead.
