@@ -1770,7 +1770,7 @@ func TestChatWakeTellsTheAgentWhichMessagesHaveNoVerifiedSender(t *testing.T) {
 		{MessageID: "m1", FromAgent: "alice", Body: "signed and confirmed", VerificationStatus: awid.Verified},
 		{MessageID: "m2", FromAgent: "alice", Body: "text under a signature that does not match", VerificationStatus: awid.Failed},
 	}
-	resolution := chatWakeResolution(nil, "session", messages, awid.AgentEvent{})
+	resolution := chatWakeResolution(nil, "43583126-b052-4bce-97fb-1baa85a90eed", messages, awid.AgentEvent{})
 
 	if !strings.Contains(resolution.CycleContext, "signed and confirmed") {
 		t.Fatal("verified message was withheld")

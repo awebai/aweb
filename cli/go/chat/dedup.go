@@ -23,7 +23,7 @@ const (
 type deliveredIDsFile map[string]string
 
 // deliveredIDsRoot keeps receipt scope stable on lookup failures; only absent
-// markers permit a parent search (docs/receiving-events.md, “What the native channel does,” line 174).
+// markers permit a parent search (docs/receiving-events.md, “What the native channel does,” line 173).
 func deliveredIDsRoot(startDir string) (string, error) {
 	directory := filepath.Clean(startDir)
 	for _, name := range []string{"context", "workspace.yaml"} {
@@ -123,7 +123,7 @@ func SaveDeliveredIDsForDir(startDir string, ids []string) error {
 
 // withDeliveryReceiptLock serializes merges and cache recovery so recovering a
 // corrupt cache cannot discard a concurrent accepted delivery
-// (docs/receiving-events.md, “What the native channel does,” line 174). Kernel locks are released on process exit.
+// (docs/receiving-events.md, “What the native channel does,” line 173). Kernel locks are released on process exit.
 func withDeliveryReceiptLock(path string, operation func() error) (err error) {
 	lock, err := awconfig.LockExclusive(path + ".lock")
 	if err != nil {
@@ -177,7 +177,7 @@ func FilterDeliveredMessages(messages []awid.ChatMessage) []awid.ChatMessage {
 // FilterDeliveredMessagesForDir binds suppression to the selected workspace and
 // reports workspace lookup failures. Corrupt caches are quarantined and reset,
 // with a warning that messages may be shown again.
-// docs/receiving-events.md, “What the native channel does,” line 174 defines per-workspace suppression.
+// docs/receiving-events.md, “What the native channel does,” line 173 defines per-workspace suppression.
 func FilterDeliveredMessagesForDir(startDir string, messages []awid.ChatMessage) ([]awid.ChatMessage, error) {
 	delivered, err := LoadDeliveredIDsForDir(startDir)
 	if err != nil {
@@ -196,7 +196,7 @@ func FilterDeliveredMessagesForDir(startDir string, messages []awid.ChatMessage)
 // loadDeliveredIDTimesWithRecovery leaves missing and expired receipts empty.
 // This is a ten-minute suppression cache, not proof of delivery authority: a
 // corrupt cache degrades to possible duplicate presentation instead of blocking
-// chat. Workspace lookup failures still refuse (docs/receiving-events.md, “What the native channel does,” line 174).
+// chat. Workspace lookup failures still refuse (docs/receiving-events.md, “What the native channel does,” line 173).
 func loadDeliveredIDTimesWithRecovery(path string, now time.Time) (map[string]time.Time, error) {
 	entries, err := loadDeliveredIDTimes(path, now)
 	if err == nil {
@@ -304,7 +304,7 @@ func writeDeliveredIDs(path string, entries map[string]time.Time) error {
 
 func receiptStoreMarkerExists(path string) (bool, error) {
 	// The marker itself selects scope; a dangling target must not redirect
-	// receipts to a parent workspace (docs/receiving-events.md, “What the native channel does,” line 174).
+	// receipts to a parent workspace (docs/receiving-events.md, “What the native channel does,” line 173).
 	_, err := os.Lstat(path)
 	if err == nil {
 		return true, nil
