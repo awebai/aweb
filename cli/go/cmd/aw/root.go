@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/awebai/aw/awconfig"
@@ -358,7 +359,13 @@ func Execute() {
 		if hint := checkVerificationRequired(err); hint != "" {
 			msg = hint
 		}
-		reportCLIError(err, msg, jsonFlag)
+		// docs/cli-command-reference.md, Errors under --json: flag refusals
+		// also carry an envelope, even when parsing stops before --json.
+		asJSON := jsonFlag
+		if !rootCmd.PersistentFlags().Changed("json") {
+			asJSON = argsContainJSONFlag(os.Args[1:])
+		}
+		reportCLIError(err, msg, asJSON)
 		os.Exit(exitCode(err))
 	}
 }
@@ -519,17 +526,28 @@ func (t *trackedStdout) Fd() uintptr {
 	return os.Stdout.Fd()
 }
 
-// argsContainJSONFlag reads --json before flags are parsed.
+// argsContainJSONFlag reads the requested JSON mode before flags are parsed.
+// Repeated boolean assignments apply in order; -- ends flag selection.
 func argsContainJSONFlag(args []string) bool {
+	asJSON := false
 	for _, arg := range args {
 		if arg == "--" {
-			return false
+			break
 		}
 		if arg == "--json" {
-			return true
+			asJSON = true
+			continue
+		}
+		if value, assigned := strings.CutPrefix(arg, "--json="); assigned {
+			enabled, err := strconv.ParseBool(value)
+			if err != nil {
+				// Cobra reports the invalid value; retain the preceding mode.
+				return asJSON
+			}
+			asJSON = enabled
 		}
 	}
-	return false
+	return asJSON
 }
 
 // writeCLIError prints a command's error, which may carry a server's text.
