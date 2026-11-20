@@ -592,6 +592,10 @@ async def stream_team_events(
     if redis is None:
         raise HTTPException(status_code=503, detail="Redis unavailable")
 
+    # Configuration refusals must precede SSE headers; the snapshot still
+    # follows the subscription and performs the actual evidence reads.
+    application_registry_client(request.app.state)
+
     return StreamingResponse(
         _sse_dashboard_events(request=request, db=db, redis=redis, team_id=team_id),
         media_type="text/event-stream",

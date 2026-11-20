@@ -4,7 +4,8 @@ import json
 
 import pytest
 
-from test_dashboard_privacy import TEAM, _make_jwt, _next_event, privacy_app  # noqa: F401
+from test_dashboard_privacy import TEAM, _make_jwt, _next_event
+from test_dashboard_privacy import privacy_app as privacy_app
 
 
 @pytest.mark.asyncio
