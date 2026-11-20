@@ -184,6 +184,9 @@ def decode_signature(signature: str) -> bytes:
 
     if len(signature) != SIGNATURE_LENGTH or not _SIGNATURE.fullmatch(signature):
         raise Refused("signature_encoding", f"a signature is {SIGNATURE_LENGTH} characters")
+    # JSON-only commitment consumers do not need the signing runtime.
+    from awid.signature_wire import decode_base64
+
     try:
         raw = decode_base64(signature)
     except ValueError as exc:
@@ -197,6 +200,8 @@ def decode_base64url(text: str, what: str) -> bytes:
 
     if not _BASE64URL.fullmatch(text) or len(text) % 4 == 1:
         raise Refused("invalid_value", f"{what} is not strict unpadded base64url")
+    from awid.signature_wire import Base64Profile, decode_base64
+
     try:
         raw = decode_base64(text, profile=Base64Profile.CANONICAL_URL)
     except (binascii.Error, ValueError):

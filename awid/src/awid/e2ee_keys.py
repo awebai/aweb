@@ -13,9 +13,8 @@ import hashlib
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from nacl.signing import SigningKey
 
-from awid.did import did_from_public_key, public_key_from_did
+from awid.did import did_key_from_signing_key, public_key_from_did
 from awid.signature_wire import Base64Profile, decode_base64
 from awid.signing import canonical_json_bytes, sign_message, verify_did_key_signature
 from awid.utc_timestamps import parse_zoned_timestamp
@@ -96,8 +95,7 @@ def build_encryption_key_assertion(
         raise ValueError("encryption_public_key must be 32 bytes")
     if not signing_key:
         raise ValueError("signing_key is required")
-    verify_key = bytes(SigningKey(signing_key).verify_key)
-    if did_from_public_key(verify_key) != identity_did:
+    if did_key_from_signing_key(signing_key) != identity_did:
         raise ValueError("identity_did does not match signing key")
     custody = (custody or "").strip()
     if custody not in {ENCRYPTION_KEY_CUSTODY_SELF, ENCRYPTION_KEY_CUSTODY_HOSTED}:

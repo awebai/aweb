@@ -1,12 +1,15 @@
 """The routed team listing rejects malformed page state with a usable retry."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 import pytest
-from awid.pagination import encode_cursor
+from awid.did import did_from_public_key, generate_keypair
+from awid.pagination import decode_cursor, encode_cursor
 from awid_service.routes.teams import _team_list_parameters, _TeamListingAccess
 from fastapi import HTTPException
+
+from conftest import send_controller_request
 
 
 @pytest.mark.asyncio
@@ -29,19 +32,91 @@ async def test_team_listing_recovery_for_invalid_cursor(client):
     assert retried.status_code == 200
     assert retried.json() == {"teams": [], "has_more": False, "next_cursor": None}
 
-    valid_page = await client.get(
+
+@pytest.mark.asyncio
+async def test_team_listing_cursor_pages_a_populated_registry(controller_app):
+    env = controller_app
+    path = "/v1/namespaces/local/teams"
+
+    # The fixture's base team and these two writes all go through the real
+    # create-team route. Order by exactly the listing's two documented fields.
+    created = []
+    first_team = await env.client.get(f"{path}/base")
+    assert first_team.status_code == 200, first_team.text
+    created.append(first_team.json())
+    for name in ("cursor-alpha", "cursor-beta"):
+        _, team_public_key = generate_keypair()
+        response = await send_controller_request(
+            env,
+            "POST",
+            path,
+            {"domain": "local", "operation": "create_team", "name": name},
+            {
+                "name": name,
+                "team_did_key": did_from_public_key(team_public_key),
+                "visibility": "public",
+            },
+        )
+        assert response.status_code == 200, response.text
+        created.append(response.json())
+    # Team UUIDs are cursor internals, absent from the public TeamResponse.
+    ids = {
+        row["name"]: row["team_uuid"]
+        for row in await env.db.fetch_all(
+            "SELECT name, team_uuid FROM {{tables.teams}} WHERE domain = $1", "local"
+        )
+    }
+    expected = sorted(
+        created,
+        key=lambda team: (
+            datetime.fromisoformat(team["created_at"]),
+            ids[team["name"]],
+        ),
+    )
+
+    first = await env.client.get(path, params={"limit": 1})
+    assert first.status_code == 200, first.text
+    page = first.json()
+    assert page["teams"] == expected[:1]
+    assert page["has_more"] is True
+    cursor = decode_cursor(page["next_cursor"])
+    assert cursor == {
+        "created_at": expected[0]["created_at"],
+        "team_uuid": str(ids[expected[0]["name"]]),
+    }
+    alternative_time = datetime.fromisoformat(cursor["created_at"]).astimezone(
+        timezone(timedelta(hours=1))
+    )
+    alternative_cursor = encode_cursor(
+        {
+            "created_at": alternative_time.isoformat(),
+            "team_uuid": "{" + cursor["team_uuid"].upper() + "}",
+        }
+    )
+    middle = await env.client.get(path, params={"limit": 1, "cursor": alternative_cursor})
+    assert middle.status_code == 200, middle.text
+    page = middle.json()
+    assert page["teams"] == expected[1:2]
+    assert page["has_more"] is True
+
+    last = await env.client.get(path, params={"limit": 1, "cursor": page["next_cursor"]})
+    assert last.status_code == 200, last.text
+    assert last.json() == {
+        "teams": expected[2:],
+        "has_more": False,
+        "next_cursor": None,
+    }
+    beyond = await env.client.get(
         path,
         params={
+            "limit": 1,
             "cursor": encode_cursor(
-                {
-                    "created_at": "2026-11-19T01:00:00+01:00",
-                    "team_uuid": "{12345678-1234-1234-1234-123456789ABC}",
-                }
-            )
+                {"created_at": expected[-1]["created_at"], "team_uuid": str(ids[expected[-1]["name"]])}
+            ),
         },
     )
-    assert valid_page.status_code == 200
-    assert valid_page.json() == {"teams": [], "has_more": False, "next_cursor": None}
+    assert beyond.status_code == 200, beyond.text
+    assert beyond.json() == {"teams": [], "has_more": False, "next_cursor": None}
 
 
 @pytest.mark.parametrize(

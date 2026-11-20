@@ -81,6 +81,7 @@ ROOT_CONSUMERS = {
         "naapp/secrets/runner/tests/test_shared_wire_primitives.py"
     ): _consumer(
         {
+            "signature-point-encoding-v2.json",
             "signature-primitives-v1.json",
             "canonical-json-v1.json",
             "message-signing-v1.json",

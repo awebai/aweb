@@ -22,7 +22,6 @@ from urllib.parse import quote, urlparse
 from uuid import UUID, uuid4
 
 import httpx
-from nacl.signing import SigningKey
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
@@ -388,25 +387,12 @@ class AddressAlreadyBoundError(RegistryError):
         )
 
 
-class _AddressConflictCode(StrEnum):
-    REGISTRATION_REQUIRED = "did_registration_required"
-    CURRENT_KEY_MISMATCH = "did_current_key_mismatch"
-    ADDRESS_ALREADY_BOUND = "address_already_bound"
-
-
-# Released registry responses carry these exact detail strings. Keep this
-# adapter until a supported registry floor and measured use permit removal.
-_ADDRESS_CONFLICT_DETAILS = {
-    "did_aw must be registered before address assignment": _AddressConflictCode.REGISTRATION_REQUIRED,
-    "did_aw current key does not match": _AddressConflictCode.CURRENT_KEY_MISMATCH,
-    "address already bound to a different did_aw": _AddressConflictCode.ADDRESS_ALREADY_BOUND,
-}
+# The registry's three address conflicts are identified by exact string detail.
 _ADDRESS_CONFLICT_ERRORS = {
-    _AddressConflictCode.REGISTRATION_REQUIRED: DIDRegistrationRequiredError,
-    _AddressConflictCode.CURRENT_KEY_MISMATCH: DIDCurrentKeyMismatchError,
-    _AddressConflictCode.ADDRESS_ALREADY_BOUND: AddressAlreadyBoundError,
+    "did_aw must be registered before address assignment": DIDRegistrationRequiredError,
+    "did_aw current key does not match": DIDCurrentKeyMismatchError,
+    "address already bound to a different did_aw": AddressAlreadyBoundError,
 }
-
 
 def _raise_registry_response_error(*, status_code: int, content: bytes) -> None:
     """Decode bounded registry errors without interpreting malformed JSON as absence."""
@@ -429,21 +415,10 @@ def _raise_registry_response_error(*, status_code: int, content: bytes) -> None:
         detail = None
         code = None
     response_text = _safe_error_text(content)
-    if status_code == 409:
-        conflict = None
-        if code is not None:
-            conflict = next(
-                (
-                    known_code
-                    for known_code in _AddressConflictCode
-                    if known_code == code
-                ),
-                None,
-            )
-        elif detail is not None:
-            conflict = _ADDRESS_CONFLICT_DETAILS.get(detail)
+    if status_code == 409 and detail is not None:
+        conflict = _ADDRESS_CONFLICT_ERRORS.get(detail)
         if conflict is not None:
-            raise _ADDRESS_CONFLICT_ERRORS[conflict]()
+            raise conflict()
     raise RegistryError(
         detail or response_text,
         status_code=status_code,
@@ -978,7 +953,7 @@ class RegistryClient:
 
         def local(context):
             return descriptor.did_key, sign_bytes(
-                key=SigningKey(controller_signing_key), payload=context.signing_bytes()
+                key=controller_signing_key, payload=context.signing_bytes()
             )
 
         return await self.controller_request(
@@ -1015,7 +990,7 @@ class RegistryClient:
 
         def local(context):
             return descriptor.did_key, sign_bytes(
-                key=SigningKey(namespace_controller_signing_key),
+                key=namespace_controller_signing_key,
                 payload=context.signing_bytes(),
             )
 
@@ -1221,7 +1196,7 @@ class RegistryClient:
             raise ValueError("signing_key must match did_key for DID registration")
 
         def signer(payload: bytes) -> tuple[str, bytes]:
-            return did_key, sign_bytes(key=SigningKey(signing_key), payload=payload)
+            return did_key, sign_bytes(key=signing_key, payload=payload)
 
         entry = initial_registration_entry(did_key, timestamp=_utc_timestamp())
         await self._register_initial_did(entry, signer)

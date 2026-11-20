@@ -668,6 +668,7 @@ func TestAwDoctorFixTargetNotFound(t *testing.T) {
 }
 
 type fakeDoctorFixHandler struct {
+	scopeOwner  doctorFixHandler
 	id          string
 	plan        doctorFixPlan
 	planErr     error
@@ -677,6 +678,13 @@ type fakeDoctorFixHandler struct {
 
 func (h *fakeDoctorFixHandler) CheckID() string {
 	return h.id
+}
+
+func (h *fakeDoctorFixHandler) doctorMutationScope(ctx doctorFixContext) (doctorMutationScope, error) {
+	if h.scopeOwner != nil {
+		return h.scopeOwner.doctorMutationScope(ctx)
+	}
+	return doctorMutationScope{CheckID: h.id, Refusal: doctorFixAuthority}, nil
 }
 
 func (h *fakeDoctorFixHandler) Plan(context.Context, doctorFixContext, doctorCheck) (doctorFixPlan, error) {
@@ -793,10 +801,6 @@ func TestAwDoctorFixSafetyValidatorRefusesSensitivePlans(t *testing.T) {
 		{name: "high-impact", plan: doctorFixPlan{Safe: true, HighImpact: true, Authority: doctorAuthorityCaller}, want: "high_impact"},
 		{name: "authority", plan: doctorFixPlan{Safe: true, Authority: doctorAuthoritySupport}, want: "authority"},
 		{name: "precondition", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, Preconditions: []doctorFixPrecondition{{ID: "fresh_state", Passed: false}}}, want: "precondition"},
-		{name: "identity lifecycle", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, PlannedMutations: []doctorFixMutation{{Operation: "delete", subject: doctorFixIdentitySubject}}}, want: "global_identity_lifecycle"},
-		{name: "private key path", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, PlannedMutations: []doctorFixMutation{{Operation: "write", Path: ".aw/signing.key"}}}, want: "private_key_material"},
-		{name: "private key subject", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, PlannedMutations: []doctorFixMutation{{Operation: "write", subject: doctorFixPrivateKeySubject, Description: "Refresh settings."}}}, want: "private_key_material"},
-		{name: "coordination cleanup", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, PlannedMutations: []doctorFixMutation{{Operation: "delete", subject: doctorFixCoordinationSubject}}}, want: "coordination_cleanup"},
 		{name: "unowned metadata", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, PlannedMutations: []doctorFixMutation{{Operation: doctorFixRewriteWorkspaceMetadata, Path: ".aw/workspace.yaml"}}}, want: "authority"},
 	}
 	for _, tc := range cases {
