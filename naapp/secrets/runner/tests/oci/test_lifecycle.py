@@ -108,7 +108,8 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(report["exit_code"], 0)
         mounts = dict(line.split() for line in report["stdout"].splitlines())
         self.assertEqual(
-            mounts.keys(), {"/proc/bus", "/proc/fs", "/proc/irq", "/proc/sys", "/proc/sysrq-trigger"}
+            mounts.keys(),
+            {"/proc/bus", "/proc/fs", "/proc/irq", "/proc/sys", "/proc/sysrq-trigger"},
         )
         for target, options in mounts.items():
             self.assertIn("ro", options.split(","), target)
