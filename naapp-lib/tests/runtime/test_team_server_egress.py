@@ -4,32 +4,32 @@ Real AWID on real PostgreSQL stores each team's signed server record through
 its own route and validator; the app is a real NaappRuntime. A team that
 publishes its server on the app's own loopback, or under an https name that
 resolves to a private address, gets a refusal and no connection, unless the
-operator listed exactly that origin as one of its own team servers.
+operator listed exactly that origin as one of its own team servers and its
+address is inside the operator's network.
 """
 
 from __future__ import annotations
 
 import asyncio
-import ipaddress
-import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
-from enum import StrEnum
 from pathlib import Path
 
 import httpx
 import pytest
 from aweb_naapp_testing import REGISTRY_URL, SERVICE_TOKEN, Member
-from aweb_naapp_testing.network import DnsServer, local_address
+from aweb_naapp_testing.network import DnsServer
+from aweb_naapp_testing.team_server_site import team_server_site
 from fastapi import Depends, FastAPI
 from nacl.signing import SigningKey
 
-from aweb_naapp.egress import AddressPolicy, DnsResolver, Egress
+from aweb_naapp.egress import DnsResolver
 from aweb_naapp.manifest import canonical_bytes
 from aweb_naapp.runtime.app import NaappRuntime
 from aweb_naapp.runtime.app_credentials import APP_GRANT_READ, HOOK_RESOLVE
 from aweb_naapp.runtime.hook_resolver import HookResolutionUnavailable
+from aweb_naapp.runtime.operator_egress import OperatorEgress
 from tests.runtime.test_naapp_runtime import allow_all
 from tests.runtime.test_served_manifest import (
     HOSTED_ORIGIN,
@@ -65,8 +65,7 @@ def _runtime(
     registry,
     *,
     database_url: str = "postgresql://localhost/unused",
-    team_server_egress: Egress | None = None,
-    team_server_transport: httpx.AsyncBaseTransport | None = None,
+    resolver: DnsResolver | None = None,
     **settings,
 ) -> NaappRuntime:
     keys = (("grants", [APP_GRANT_READ]), ("hooks", [HOOK_RESOLVE]))
@@ -75,22 +74,22 @@ def _runtime(
     manifest.write_bytes(canonical_bytes(_v2_template(*keys)))
     migrations = tmp_path / "migrations"
     migrations.mkdir(exist_ok=True)
-    extra = {} if team_server_egress is None else {"team_server_egress": team_server_egress}
+    app_settings = ExampleSettings(
+        _env_file=None,
+        app_key_files=files,
+        awid_registry_url=REGISTRY_URL,
+        awid_service_token=SERVICE_TOKEN,
+        database_url=database_url,
+        **settings,
+    )
     runtime = NaappRuntime(
-        ExampleSettings(
-            _env_file=None,
-            app_key_files=files,
-            awid_registry_url=REGISTRY_URL,
-            awid_service_token=SERVICE_TOKEN,
-            database_url=database_url,
-            **settings,
-        ),
+        app_settings,
         module_name="example",
         migrations_path=migrations,
         manifest_path=manifest,
         awid_transport=registry.transport,
-        team_server_transport=team_server_transport,
-        **extra,
+        # The guard the production factories build, with this test's DNS.
+        egress=OperatorEgress.from_settings(app_settings, resolver=resolver),
     )
 
     async def no_registry_override(domain: str) -> None:
@@ -150,7 +149,8 @@ def _refusal_code(response: httpx.Response) -> str | None:
 
 
 def _assert_actionable_refusal(response: httpx.Response) -> None:
-    # Retrying cannot help: only the team's controller can change its server.
+    # Retrying cannot help: the operator lists its own server, or the team's
+    # controller publishes a reachable one.
     assert response.status_code == 403
     assert _refusal_code(response) == REFUSED
     message = response.json()["detail"]["message"]
@@ -179,158 +179,98 @@ async def test_a_loopback_team_server_is_refused_without_a_connection(
 
 
 @asynccontextmanager
-async def private_name(host: str) -> AsyncIterator[Egress]:
-    """An egress whose resolver answers PRIVATE_NAME with ``host``.
-
-    AWID accepts any https name as a team server, whatever it resolves to.
-    """
-    assert ipaddress.ip_address(host).is_private, f"{host} must not be a public address"
-    dns = DnsServer(records={(PRIVATE_NAME, "A"): [host]})
+async def loopback_name() -> AsyncIterator[tuple[int, list[str], DnsResolver]]:
+    """An https name only this test's DNS answers, with this host's loopback."""
+    dns = DnsServer(records={(PRIVATE_NAME, "A"): ["127.0.0.1"]})
     await dns.start()
     try:
-        yield Egress(
-            addresses=AddressPolicy(),
-            resolver=DnsResolver(nameservers=["127.0.0.1"], port=dns.port),
-            user_agent="team-server-egress-test",
-        )
+        async with listener("127.0.0.1") as (port, connections):
+            yield port, connections, DnsResolver(nameservers=["127.0.0.1"], port=dns.port)
     finally:
         dns.close()
 
 
-class InternalAddress(StrEnum):
-    """Where an https team-server name resolves, inside the app's own network."""
-
-    PRIVATE = "private"  # this host's own private address
-    LOOPBACK = "loopback"
-
-    def host(self) -> str:
-        return local_address() if self is InternalAddress.PRIVATE else "127.0.0.1"
-
-
-@pytest.mark.parametrize("address", list(InternalAddress))
-async def test_an_https_name_resolving_to_an_internal_address_is_refused(
-    tmp_path, registry, test_db_factory, address: InternalAddress
+async def test_an_https_name_resolving_to_loopback_is_refused_without_a_connection(
+    tmp_path, registry, test_db_factory
 ):
-    host = address.host()
-    async with listener(host) as (port, connections), private_name(host) as egress:
+    async with loopback_name() as (port, connections, resolver):
         member = await _member_of_team_serving_at(registry, f"https://{PRIVATE_NAME}:{port}/x")
+        runtime = _runtime(
+            tmp_path, registry, resolver=resolver, database_url=await _database_url(test_db_factory)
+        )
+        async with serving(runtime) as client:
+            response = await _member_request(client, member)
+
+    assert connections == []
+    _assert_actionable_refusal(response)
+
+
+def _coordination_server() -> FastAPI:
+    """A team server that answers every read with 404: reached, and nothing granted."""
+    return FastAPI()
+
+
+async def test_an_unlisted_team_server_on_a_private_address_is_refused_without_a_connection(
+    tmp_path, registry, test_db_factory
+):
+    async with team_server_site(tmp_path, _coordination_server()) as site:
+        member = await _member_of_team_serving_at(registry, f"{site.origin}/x")
         runtime = _runtime(
             tmp_path,
             registry,
-            team_server_egress=egress,
+            resolver=site.resolver(),
             database_url=await _database_url(test_db_factory),
+            **site.settings(listed=False),
         )
         async with serving(runtime) as client:
             response = await _member_request(client, member)
             with pytest.raises(HookResolutionUnavailable) as refused:
                 await runtime.hook_resolver().core_producer_keys(TEAM_ID)
 
-    assert connections == []
+    assert site.tls.connections == 0
     _assert_actionable_refusal(response)
     assert refused.value.code == REFUSED
 
 
-class RecordingTransport(httpx.AsyncBaseTransport):
-    def __init__(self, status_code: int = 200, headers: dict[str, str] | None = None) -> None:
-        self.requests: list[httpx.Request] = []
-        self._status_code = status_code
-        self._headers = headers or {}
-
-    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-        self.requests.append(request)
-        return httpx.Response(self._status_code, headers=self._headers, json={})
-
-
-async def test_an_injected_transport_does_not_reach_an_origin_the_operator_did_not_list(
+async def test_a_refusal_is_not_kept_once_the_operator_lists_its_own_server(
     tmp_path, registry, test_db_factory
 ):
-    transport = RecordingTransport()
-    member = await _member_of_team_serving_at(registry, "http://127.0.0.1:9/x")
-    runtime = _runtime(
-        tmp_path,
-        registry,
-        team_server_transport=transport,
-        database_url=await _database_url(test_db_factory),
-    )
-    async with serving(runtime) as client:
-        response = await _member_request(client, member)
-        with pytest.raises(HookResolutionUnavailable) as refused:
-            await runtime.hook_resolver().core_producer_keys(TEAM_ID)
-
-    assert transport.requests == []
-    _assert_actionable_refusal(response)
-    assert refused.value.code == REFUSED
-
-
-async def test_an_operator_listed_loopback_origin_is_reached(tmp_path, registry, test_db_factory):
-    async with listener("127.0.0.1") as (port, connections):
-        origin = f"http://127.0.0.1:{port}"
-        member = await _member_of_team_serving_at(registry, f"{origin}/x")
-        runtime = _runtime(
+    # The same team, registry and database: first unlisted, then listed after
+    # a restart. Nothing remembers the refusal.
+    database_url = await _database_url(test_db_factory)
+    async with team_server_site(tmp_path, _coordination_server()) as site:
+        member = await _member_of_team_serving_at(registry, f"{site.origin}/x")
+        unlisted = _runtime(
             tmp_path,
             registry,
-            team_server_internal_origins=[origin],
-            database_url=await _database_url(test_db_factory),
+            resolver=site.resolver(),
+            database_url=database_url,
+            **site.settings(listed=False),
         )
-        async with serving(runtime) as client:
-            response = await _member_request(client, member)
-
-    assert connections != []
-    assert _refusal_code(response) != REFUSED
-
-
-async def test_a_redirect_from_a_listed_origin_is_not_followed(tmp_path, registry, test_db_factory):
-    transport = RecordingTransport(302, {"location": "http://127.0.0.1:9/elsewhere"})
-    member = await _member_of_team_serving_at(registry, "http://127.0.0.1:8000/x")
-    runtime = _runtime(
-        tmp_path,
-        registry,
-        team_server_transport=transport,
-        team_server_internal_origins=["http://127.0.0.1:8000"],
-        database_url=await _database_url(test_db_factory),
-    )
-    async with serving(runtime) as client:
-        response = await _member_request(client, member)
-
-    assert [str(request.url) for request in transport.requests] == [
-        "http://127.0.0.1:8000/x/v1/apps/self/grant"
-    ]
-    assert response.status_code >= 400
-
-
-def test_listed_origins_are_logged_once_at_startup(tmp_path, registry, caplog):
-    with caplog.at_level(logging.WARNING, logger="aweb_naapp.runtime.team_server"):
-        _runtime(
+        async with serving(unlisted) as client:
+            refused = await _member_request(client, member)
+        listed = _runtime(
             tmp_path,
             registry,
-            team_server_internal_origins=["http://127.0.0.1:8000", "https://Coord.Egress.Example"],
+            resolver=site.resolver(),
+            database_url=database_url,
+            **site.settings(),
         )
-    warnings = [record for record in caplog.records if record.levelno == logging.WARNING]
-    assert len(warnings) == 1
-    assert "http://127.0.0.1:8000" in warnings[0].getMessage()
-    assert "https://coord.egress.example" in warnings[0].getMessage()
+        async with serving(listed) as client:
+            reached = await _member_request(client, member)
 
-
-def test_no_startup_warning_when_no_origin_is_listed(tmp_path, registry, caplog):
-    with caplog.at_level(logging.WARNING, logger="aweb_naapp.runtime.team_server"):
-        _runtime(tmp_path, registry)
-    assert not [record for record in caplog.records if record.levelno >= logging.WARNING]
-
-
-def test_a_well_formed_listed_origin_is_accepted(tmp_path, registry):
-    runtime = _runtime(
-        tmp_path,
-        registry,
-        team_server_internal_origins=["http://127.0.0.1:8000", "https://coord.egress.example"],
-    )
-    assert runtime.installation_grants() is not None
+    _assert_actionable_refusal(refused)
+    assert site.tls.connections == 1
+    assert [seen.request_line for seen in site.tls.seen] == ["GET /x/v1/apps/self/grant HTTP/1.1"]
+    assert _refusal_code(reached) != REFUSED
 
 
 @pytest.mark.parametrize(
     "entry",
     [
-        "http://coord.egress.example",  # http off loopback
-        "http://127.0.0.1:8000/x",  # a path
+        "http://coord.egress.example",  # plain http
+        "http://127.0.0.1:8000",  # plain http on loopback
+        "https://coord.egress.example/x",  # a path
         "https://user@coord.egress.example",  # userinfo
         "https://*.egress.example",  # a wildcard
         "https://coord.egress.example?x=1",  # a query
@@ -339,4 +279,10 @@ def test_a_well_formed_listed_origin_is_accepted(tmp_path, registry):
 )
 def test_a_malformed_listed_origin_stops_the_app_starting(tmp_path, registry, entry):
     with pytest.raises(ValueError):
-        _runtime(tmp_path, registry, team_server_internal_origins=[entry])
+        _runtime(
+            tmp_path,
+            registry,
+            hook_internal_destinations="allowed",
+            hook_internal_cidr="10.20.0.0/16",
+            team_server_internal_origins=[entry],
+        )
