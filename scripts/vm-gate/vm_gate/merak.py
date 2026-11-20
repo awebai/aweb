@@ -9,6 +9,7 @@ import shlex
 import subprocess
 import time
 
+from . import merak_network
 from .config import child_environment
 from .errors import Infrastructure, Refused
 from .expiry import CompletionBudget
@@ -193,6 +194,17 @@ def run_guest(runtime, remote):
                 raise Infrastructure(
                     "guest image has a different Merak toolchain manifest"
                 )
+            merak_network.check_subnets(admission["host_subnets"])
+            setup = Path(merak_network.__file__).read_bytes()
+            remote.transport.copy(Path(merak_network.__file__), "/run/merak_network.py", timeout=30)
+            network = remote.transport.run(
+                "chmod 0444 /run/merak_network.py && python3 -I /run/merak_network.py", timeout=180
+            )
+            manifest = json.loads(network.stdout)
+            manifest["setup_sha256"] = hashlib.sha256(setup).hexdigest()
+            network_bytes = (json.dumps(manifest, indent=2) + "\n").encode()
+            (directory / "merak-guest-network.json").write_bytes(network_bytes)
+            summary["guest_network_manifest_sha256"] = hashlib.sha256(network_bytes).hexdigest()
             execute_guest(remote, {"run_id": run}, budget, summary)
         except BaseException as exc:
             summary.update(
