@@ -410,6 +410,12 @@ func TestAuditVerifyGivesEveryOtherFailureExitTwo(t *testing.T) {
 
 func TestAuditVerifyFlagErrorsRespectJSONOutputSelection(t *testing.T) {
 	w := newAuditVerifyWorld(t)
+	t.Run("json_is_a_bundle_value", func(t *testing.T) {
+		run := w.run(nil, "--bundle", "--json", "--receipt-key", "did:key:x")
+		if run.code != 2 || strings.TrimSpace(run.stdout) != "" || !strings.Contains(run.stderr, "did:key:x") {
+			t.Fatalf("expected the text key refusal: exit %d, stdout %q, stderr %q", run.code, run.stdout, run.stderr)
+		}
+	})
 	for _, tc := range []struct {
 		name string
 		args []string

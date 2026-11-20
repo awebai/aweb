@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -179,6 +180,7 @@ func init() {
 	// Cobra normally runs only the nearest persistent hook. Traversal makes the
 	// root identity selection run before commands with their own hooks.
 	cobra.EnableTraverseRunHooks = true
+	setCLIFlagErrorFunc(rootCmd, rootCmd.FlagErrorFunc())
 	rootCmd.AddGroup(
 		&cobra.Group{ID: groupWorkspace, Title: "Workspace Setup"},
 		&cobra.Group{ID: groupIdentity, Title: "Identity"},
@@ -324,6 +326,18 @@ func refuseUnknownSubcommands(cmd *cobra.Command) {
 	}
 }
 
+type cliFlagParsingError struct{ cause error }
+
+func (e *cliFlagParsingError) Error() string { return e.cause.Error() }
+func (e *cliFlagParsingError) Unwrap() error { return e.cause }
+
+// Mark errors at Cobra's ParseFlags callback, before command execution.
+func setCLIFlagErrorFunc(cmd *cobra.Command, classify func(*cobra.Command, error) error) {
+	cmd.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
+		return &cliFlagParsingError{cause: classify(cmd, err)}
+	})
+}
+
 func Execute() {
 	finishHTTPDiagnostics := awid.StartHTTPDiagnostics()
 	refuseUnknownSubcommands(rootCmd)
@@ -334,8 +348,7 @@ func Execute() {
 	if err != nil {
 		finishHTTPDiagnostics(err)
 		err = normalizeStatusCommandError(os.Args[1:], err)
-		reportCLIError(err, err.Error(), argsContainJSONFlag(os.Args[1:]))
-		os.Exit(exitCode(err))
+		os.Exit(exitCode(reportCLIError(err, err.Error(), argsContainJSONFlag(os.Args[1:]))))
 	}
 	defer restorePluginIdentityHome()
 	if code, dispatched := dispatchPluginIfRequested(os.Args[1:]); dispatched {
@@ -362,11 +375,11 @@ func Execute() {
 		// docs/cli-command-reference.md, Errors under --json: flag refusals
 		// also carry an envelope, even when parsing stops before --json.
 		asJSON := jsonFlag
-		if !rootCmd.PersistentFlags().Changed("json") {
+		var flagErr *cliFlagParsingError
+		if errors.As(err, &flagErr) && !rootCmd.PersistentFlags().Changed("json") {
 			asJSON = argsContainJSONFlag(os.Args[1:])
 		}
-		reportCLIError(err, msg, asJSON)
-		os.Exit(exitCode(err))
+		os.Exit(exitCode(reportCLIError(err, msg, asJSON)))
 	}
 }
 
@@ -486,12 +499,16 @@ func checkVersionFromHeader() {
 // reportCLIError prints a failed command's error on stderr and, under --json,
 // its error envelope on stdout. stdout carries one document: a command that
 // already printed its own output keeps it, without a second document.
-func reportCLIError(err error, msg string, asJSON bool) {
+func reportCLIError(err error, msg string, asJSON bool) error {
 	msg = codedRefusalText(err, msg)
 	writeCLIError(os.Stderr, msg)
-	if asJSON && !commandStdout.written {
-		writeCLIErrorEnvelope(commandStdout, err, msg)
+	if !commandStdout.written {
+		if writeErr := writeCLIErrorResult(commandStdout, cliErrorResult{Refusal: err, Message: msg, JSON: asJSON}); writeErr != nil {
+			writeCLIError(os.Stderr, writeErr.Error())
+			return errors.Join(err, writeErr)
+		}
 	}
+	return err
 }
 
 // codedRefusalText says a coded server refusal in the server's own words: the
