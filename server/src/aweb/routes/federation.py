@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
 from aweb.client_address import request_client_address
+from aweb.application_state import RegistryClientUnavailable, application_registry_client
 from aweb.message_vocabulary import MessageInputSource, observe_message_vocabulary
 from aweb.agent_wake import agent_wake_publisher, agent_wake_scope
 from aweb.awid_error_handling import AWID_DEPENDENCY_ERRORS
@@ -343,9 +344,10 @@ async def receive_federated_message(
     db=Depends(get_db),
 ):
     try:
-        registry_client = getattr(request.app.state, "awid_registry_client", None)
-        if registry_client is None:
-            raise FederationAuthorityError("federation_authority_coordination_unavailable")
+        try:
+            registry_client = application_registry_client(request.app.state)
+        except RegistryClientUnavailable as exc:
+            raise FederationAuthorityError("federation_authority_coordination_unavailable") from exc
         (
             envelope,
             ingress_envelope_hash,

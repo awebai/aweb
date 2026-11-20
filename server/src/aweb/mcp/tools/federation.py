@@ -6,6 +6,7 @@ from collections import OrderedDict
 from typing import Any
 
 from aweb.agent_wake import agent_wake_publisher
+from aweb.application_state import RegistryClientUnavailable, application_registry_client
 from aweb.identity_auth_deps import MessagingAuth
 from aweb.identity_binding import identity_binding_cache
 from aweb.identity_scope import normalize_identity_scope
@@ -67,12 +68,14 @@ def mcp_messaging_runtime(
     """
     state = getattr(getattr(auth.request, "app", None), "state", None)
     origin = (public_origin or "").strip()
+    if registry_client is None and state is not None:
+        try:
+            registry_client = application_registry_client(state)
+        except RegistryClientUnavailable:
+            # As with native sends, routing/binding owns required-client refusals.
+            registry_client = None
     return MessagingRuntime(
-        registry_client=(
-            registry_client
-            if registry_client is not None
-            else getattr(state, "awid_registry_client", None)
-        ),
+        registry_client=registry_client,
         federation_authority=federation_authority,
         mail_transport=mail_transport,
         chat_transport=chat_transport,

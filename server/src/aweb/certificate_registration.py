@@ -178,7 +178,12 @@ async def read_certificate_registration(
 
     member_team_scope(team_id)
     try:
-        registered = await registered_certificates(registry_client, team_id)
+        # OFF measurement follows revocation verification, so the SDK active
+        # view avoids scanning that history. REQUIRED keeps the complete-list
+        # cache shared with signature-verified miss refreshes.
+        registered = await registered_certificates(
+            registry_client, team_id, active_only=mode is RegistrationMode.NOT_REQUIRED
+        )
     except HTTPException as exc:
         if exc.status_code < 500:
             raise

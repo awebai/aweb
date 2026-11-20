@@ -180,9 +180,18 @@ async def request_registered_certificates(request: Request, team_id: str) -> set
 
 
 async def registered_certificates(
-    registry_client, team_id: str, *, missing_certificate_id: str | None = None
+    registry_client,
+    team_id: str,
+    *,
+    missing_certificate_id: str | None = None,
+    active_only: bool = False,
 ) -> set[str]:
-    """The certificate IDs the AWID registry knows for a team, read through this registry client."""
+    """Read registry certificate IDs through the existing SDK list owner.
+
+    Ordinary staged observations can select the active view after checking
+    revocation. Existing callers and signature-verified miss refreshes retain
+    the complete-list contract by default.
+    """
     domain, team_name = member_team_scope(team_id)
 
     if registry_client is None:
@@ -195,7 +204,7 @@ async def registered_certificates(
             )
         else:
             certificates = await registry_client.list_team_certificates(
-                domain, team_name, active_only=False
+                domain, team_name, active_only=active_only
             )
     except AWID_DEPENDENCY_ERRORS as exc:
         status_code = getattr(exc, "status_code", None)
