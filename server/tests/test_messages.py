@@ -42,8 +42,6 @@ async def _deliver_fixture_mail(db, **fields):
         to_agent_id=fields.get("to_agent_id"),
         sender_did=fields["from_did"],
         sender_address=fields.get("sender_address"),
-        team_id=fields.get("team_id"),
-        sender_verified_team_id=fields.get("sender_verified_team_id"),
         sender_verified_dids=fields.get("sender_verified_dids"),
         stored_route_continuation=fields.get("stored_route_continuation", False),
     )
@@ -763,6 +761,5 @@ async def test_contacts_only_rejects_verified_teammate_before_contact(aweb_cloud
             recipient_agent=recipient,
             sender_did="did:aw:teammate",
             sender_address="acme.com/teammate",
-            sender_verified_team_id="backend:acme.com",
             stored_route_continuation=True,
         )

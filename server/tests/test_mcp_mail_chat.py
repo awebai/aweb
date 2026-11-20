@@ -7,11 +7,11 @@ from types import SimpleNamespace
 from aweb.identity_binding import IdentityBinding
 from awid.registry import IDTreeEnrollment
 from datetime import datetime, timedelta, timezone
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 import httpx
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
 from starlette.requests import Request
 
 from awid.did import did_from_public_key, generate_keypair
@@ -105,7 +105,9 @@ async def _insert_mcp_chat_agents(
     )
 
 
-def _request_with_headers(headers: dict[str, str], *, verified_bindings=()) -> Request:
+def _request_with_headers(
+    headers: dict[str, str], *, verified_bindings=(), app: FastAPI | None = None
+) -> Request:
     return Request(
         {
             "type": "http",
@@ -117,7 +119,9 @@ def _request_with_headers(headers: dict[str, str], *, verified_bindings=()) -> R
             "server": ("testserver", 80),
             "client": ("127.0.0.1", 12345),
             "http_version": "1.1",
-            "app": SimpleNamespace(
+            "app": app
+            if app is not None
+            else SimpleNamespace(
                 state=SimpleNamespace(
                     awid_registry_client=legacy_registry(),
                     identity_binding_cache=OrderedDict(

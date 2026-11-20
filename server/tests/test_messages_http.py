@@ -7027,7 +7027,7 @@ async def test_send_message_rejects_mismatched_to_address_and_to_did(aweb_cloud_
 
 
 @pytest.mark.asyncio
-async def test_send_message_accepts_local_to_address_binding_when_awid_misses(
+async def test_send_message_accepts_signed_local_address_binding_without_registry_lookup(
     aweb_cloud_db,
 ):
     _, _, bob_did_key = _make_keypair()
@@ -7046,7 +7046,6 @@ async def test_send_message_accepts_local_to_address_binding_when_awid_misses(
     )
 
     registry = AsyncMock()
-    registry.resolve_address = AsyncMock(return_value=None)
     app = _build_test_app(aweb_cloud_db.aweb_db, registry)
 
     async def _send_auth_override():

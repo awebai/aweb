@@ -29,8 +29,9 @@ from aweb.attachments import (
 from aweb.deps import get_db
 from aweb.identity_auth_deps import MessagingAuth, auth_dids, get_messaging_auth
 from aweb.messaging.kinds import MessageKind
+from aweb.messaging.refusals import DeliveryRefusal
+from aweb.service_errors import ServiceError
 from aweb.messaging.message_replay import (
-    ChatReplayControls,
     StoredMessageClaim,
     EncryptedReplayArtifact,
     stored_message_matches,
@@ -60,6 +61,20 @@ def _send_context(context):
         yield
         if not context.bound:
             raise AttachmentError("attachment_conflict").http()
+    except ServiceError as exc:
+        if exc.status_code not in (409, 422) or isinstance(exc.detail, dict):
+            raise
+        # Managed sends keep the released attachment code alongside the safe
+        # message from ordinary validation or the shared replay owner.
+        raise DeliveryRefusal(
+            status_code=exc.status_code,
+            detail={
+                "code": "attachment_conflict" if exc.status_code == 409 else "request_invalid",
+                "message": exc.detail,
+            },
+            headers=exc.headers,
+            code=exc.code if isinstance(exc, DeliveryRefusal) else None,
+        ) from exc
     finally:
         _current.reset(token)
 
@@ -379,75 +394,14 @@ def _attachment_retry_conflict() -> HTTPException:
     )
 
 
-async def attachment_retry(db, payload, kind: MessageKind | str):
-    """Use the common accepted-artifact identity plus the stored ordered refs."""
-    message_kind = MessageKind(kind)
+async def confirm_accepted_attachment_refs(db, *, kind: MessageKind, message_id: UUID) -> None:
+    """Confirm only ordered refs after the send owner proves the accepted artifact."""
+    if not isinstance(kind, MessageKind):
+        raise TypeError("Select a named MessageKind before confirming attachment refs.")
     context = _current.get()
     if context is None:
-        return None
-    envelope = payload.encrypted_envelope or {}
-    message_id = envelope.get("message_id")
-    if not message_id:
-        return None
-    table = "messages" if message_kind is MessageKind.MAIL else "chat_messages"
-    try:
-        message_uuid = UUID(message_id)
-    except (ValueError, TypeError, AttributeError):
-        raise AttachmentError("request_invalid").http() from None
-    exists = await db.get_manager("aweb").fetch_one(
-        f"SELECT message_id FROM {{{{tables.{table}}}}} WHERE message_id=$1",
-        message_uuid,
-    )
-    if not exists:
-        return None
-    # This verifies stored sender, content, ordered refs and commitment. It
-    # cannot call provider.bind on this path: stored binding rows must exist.
-    previous = await attachment_references(db, kind, message_id)
+        return
+    previous = await attachment_references(db, kind.value, str(message_id))
     if previous != [item.model_dump() for item in context.references]:
         raise _attachment_retry_conflict()
-    binding, row = await _binding(db.get_manager("aweb"), kind, message_id)
-    requested_conversation = getattr(payload, "conversation_id", None) or getattr(
-        payload, "session_id", None
-    )
-    claim = StoredMessageClaim(
-        kind=message_kind,
-        message_id=message_uuid,
-        sender_did=binding.sender_did,
-        conversation_id=UUID(requested_conversation)
-        if requested_conversation
-        else None,
-        artifact=EncryptedReplayArtifact(envelope=envelope),
-        chat_controls=ChatReplayControls(
-            sender_leaving=payload.leaving,
-            hang_on=payload.hang_on,
-            reply_to=UUID(payload.reply_to) if payload.reply_to else None,
-            timestamp=payload.timestamp,
-            signing_did=payload.from_did,
-        )
-        if message_kind is MessageKind.CHAT
-        else None,
-    )
-    if (
-        not stored_message_matches(row, claim=claim)
-        or binding.sender_did not in auth_dids(context.auth)
-        or payload.message_id != message_id
-        or payload.timestamp != envelope.get("created_at")
-        or (
-            payload.from_did and payload.from_did != envelope.get("from", {}).get("did")
-        )
-        or (
-            getattr(payload, "conversation_id", None)
-            and payload.conversation_id != binding.conversation_id
-        )
-    ):
-        raise _attachment_retry_conflict()
-    for name, allowed in {
-        "to_did": {row.get("to_did"), envelope.get("routing", {}).get("to_did")},
-        "to_stable_id": {envelope.get("routing", {}).get("to_stable_id")},
-        "to_address": {envelope.get("routing", {}).get("to")},
-        "to_alias": {row.get("to_alias"), envelope.get("routing", {}).get("to")},
-    }.items():
-        if getattr(payload, name, None) and getattr(payload, name) not in allowed:
-            raise _attachment_retry_conflict()
     context.bound = True
-    return binding, row

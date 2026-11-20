@@ -349,12 +349,6 @@
     },
     {
       "tool": "mypy",
-      "file": "server/src/aweb/messaging/address_auth.py",
-      "code": "arg-type",
-      "count": 1
-    },
-    {
-      "tool": "mypy",
       "file": "server/src/aweb/messaging/chat_send.py",
       "code": "arg-type",
       "count": 1
@@ -793,6 +787,12 @@
     },
     {
       "tool": "ruff",
+      "file": "server/src/aweb/message_vocabulary.py",
+      "code": "BLE001",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
       "file": "server/src/aweb/messaging/address_auth.py",
       "code": "BLE001",
       "count": 1
@@ -1177,12 +1177,6 @@
     },
     {
       "tool": "ruff",
-      "file": "server/tests/test_cli_invite_registry_discovery.py",
-      "code": "F401",
-      "count": 1
-    },
-    {
-      "tool": "ruff",
       "file": "server/tests/test_cli_never_grants.py",
       "code": "B023",
       "count": 2
@@ -1371,7 +1365,7 @@
       "tool": "ruff",
       "file": "server/tests/test_mail_unread_count.py",
       "code": "F401",
-      "count": 3
+      "count": 1
     },
     {
       "tool": "ruff",
@@ -1419,7 +1413,7 @@
       "tool": "ruff",
       "file": "server/tests/test_participant_identity_authority.py",
       "code": "F401",
-      "count": 4
+      "count": 3
     },
     {
       "tool": "ruff",
