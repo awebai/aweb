@@ -94,6 +94,7 @@ class _RecordingWakes:
 async def server(real_stack, shared_test_pool, monkeypatch):
     """Actual registry admission, HTTP/MCP auth and Redis publications."""
     monkeypatch.setenv("AWID_REGISTRY_URL", REGISTRY_URL)
+    monkeypatch.setenv("AWEB_DATABASE_URL", os.environ["TEST_DATABASE_URL"])
     monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
     monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", INTERNAL_SECRET)
     db = real_stack.aweb_db
