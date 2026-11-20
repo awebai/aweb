@@ -417,3 +417,42 @@ async def test_same_artifact_with_different_resolved_parties_never_advises_a_new
     assert refused.value.detail == (
         "The stored chat participants differ from the resolved recipients. Retry the original conversation and recipient identities unchanged."
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "current_key,expected",
+    [
+        ("did:key:original-recipient", StoredMessageState.EXACT),
+        ("did:key:rotated-recipient", StoredMessageState.PARTICIPANTS_CHANGED),
+    ],
+)
+async def test_registered_party_matches_its_original_local_key_only_while_current(
+    current_key, expected
+):
+    claim, row = signed_artifact(MessageKind.CHAT)
+    claim = replace(
+        claim,
+        chat_participant_dids=frozenset({"did:key:accepted-sender", "did:aw:registered-recipient"}),
+        chat_participant_current_keys={"did:aw:registered-recipient": current_key},
+    )
+    observed = await read_stored_message(StoredChatParties(row), claim=claim)
+    assert observed.state is expected
+    assert row["from_did"] == "did:key:accepted-sender"
+
+
+@pytest.mark.asyncio
+async def test_one_recorded_key_cannot_stand_in_for_two_requested_parties():
+    claim, row = signed_artifact(MessageKind.CHAT)
+    claim = replace(
+        claim,
+        chat_participant_dids=frozenset({
+            "did:key:accepted-sender", "did:aw:recipient-one", "did:aw:recipient-two",
+        }),
+        chat_participant_current_keys={
+            "did:aw:recipient-one": "did:key:original-recipient",
+            "did:aw:recipient-two": "did:key:original-recipient",
+        },
+    )
+    observed = await read_stored_message(StoredChatParties(row), claim=claim)
+    assert observed.state is StoredMessageState.PARTICIPANTS_CHANGED
