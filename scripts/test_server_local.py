@@ -18,6 +18,8 @@ from pathlib import Path
 from typing import Iterator
 from urllib.parse import urlsplit
 
+from local_suite_slots import SuiteLabel, pytest_scope, suite_slot
+
 ROOT = Path(__file__).resolve().parents[1]
 RECOVERY = "Unset inherited database settings and use this target's disposable loopback services."
 DATABASE_URLS = (
@@ -517,11 +519,22 @@ def main() -> int:
         arguments = pytest_selection(
             os.environ.get("PYTEST_ADDOPTS", "")
         ) + pytest_selection(os.environ.get("LOCAL_PYTEST_ARGS", ""))
-        with local_services(
-            workers=1 if suite is Suite.REGISTRY else workers,
-            project="aw-local-" + uuid.uuid4().hex[:12],
-            environ=dict(os.environ),
-        ) as env:
+        validate_workers(workers)
+        check_inherited_database(dict(os.environ))
+        with (
+            suite_slot(
+                scope=pytest_scope(arguments),
+                label=SuiteLabel.REGISTRY
+                if suite is Suite.REGISTRY
+                else SuiteLabel.SERVER,
+                root=ROOT,
+            ),
+            local_services(
+                workers=1 if suite is Suite.REGISTRY else workers,
+                project="aw-local-" + uuid.uuid4().hex[:12],
+                environ=dict(os.environ),
+            ) as env,
+        ):
             return run_suites(
                 suite=suite, workers=workers, arguments=arguments, environ=env
             )
