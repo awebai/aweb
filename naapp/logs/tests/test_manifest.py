@@ -14,7 +14,7 @@ from aweb_naapp.hooks.catalog import load_catalog
 from aweb_naapp.hooks.owner_act import HUMAN_ROLE_ACTS
 from aweb_naapp.manifest import load_manifest
 from aweb_naapp.runtime.app_keys import load_app_key
-from aweb_naapp.runtime.hook_egress import HookEgress
+from aweb_naapp.runtime.operator_egress import OperatorEgress
 
 from aweb_logs.app import create_runtime
 from aweb_logs.chain import CHECKPOINT_PURPOSE, RECEIPT_PURPOSE
@@ -72,7 +72,9 @@ def test_owners_designate_log_readers_on_the_console_origin(tmp_path: Path) -> N
         app_id=TEST_APP_ID,
         app_key_files=write_key_files(tmp_path),
     )
-    owner_acts = create_runtime(settings, HookEgress.from_settings(settings)).manifest.owner_acts
+    owner_acts = create_runtime(
+        settings, OperatorEgress.from_settings(settings)
+    ).manifest.owner_acts
     assert owner_acts is not None
     assert owner_acts["origin"] == CONSOLE
     assert [
@@ -146,7 +148,13 @@ def test_kids_and_purposes_come_from_the_file_and_keys_from_configuration(
     manifest = load_manifest(served_manifest(key_files, origin=ORIGIN))
 
     assert {kid: list(purposes) for kid, _, purposes in manifest.app_keys} == template_keys
-    for purpose in (RECEIPT_PURPOSE, CHECKPOINT_PURPOSE, "hook-resolve", "app-grant-read", "hook-event"):
+    for purpose in (
+        RECEIPT_PURPOSE,
+        CHECKPOINT_PURPOSE,
+        "hook-resolve",
+        "app-grant-read",
+        "hook-event",
+    ):
         key = load_app_key(settings, manifest, purpose)
         assert purpose in template_keys[key.kid]
         assert key.did_key == did_key_of(key_files[key.kid])

@@ -45,7 +45,7 @@ async def logs_started(world: World):
         world.settings,
         email=no_mail(),
         awid_transport=world.coordination.registry.transport,
-        team_server_transport=world.coordination.server.transport,
+        resolver=world.coordination.site.resolver(),
         now=lambda: world.now,
     )
     async with service.api_app.router.lifespan_context(service.api_app):

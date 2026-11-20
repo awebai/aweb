@@ -66,6 +66,15 @@ class TeamServerSite:
         """The app's guard, as its production factory builds it from ``settings``."""
         return OperatorEgress.from_settings(settings, resolver=self.resolver())
 
+    def stop_answering(self) -> None:
+        """Close every connection without an answer: the server is down, and
+        a read sent to it fails without a response."""
+
+        async def drop(seen: Seen) -> Reply:
+            raise ConnectionResetError("the team server is down")
+
+        self.tls.respond = drop
+
     def serve(self, app: Any) -> None:
         """Answer every request with ``app``: a server whose public origin is
         this site's, so it can only be built once the site listens."""

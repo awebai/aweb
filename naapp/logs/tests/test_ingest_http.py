@@ -24,6 +24,7 @@ from aweb_naapp.hooks import envelope
 from aweb_naapp.hooks.delivery import MAX_DELIVERY_BYTES, sign_delivery
 from aweb_naapp.hooks.strictjson import decode_base64url
 from aweb_naapp.manifest import load_manifest
+from aweb_naapp.runtime.hook_resolver import HookResolutionUnavailable, HookTeamServerNotAllowed
 from aweb_naapp_testing import Member
 from awid_service.testing import REGISTRY_URL, SERVICE_TOKEN, dns_naming
 from nacl.signing import SigningKey
@@ -31,6 +32,7 @@ from nacl.signing import SigningKey
 from aweb_logs.app import create_app
 from aweb_logs.chain import open_receipt
 from aweb_logs.config import LogsSettings
+from aweb_logs.ingest import Lookup, unresolved_refusal
 from aweb_logs.ledger import load_epoch
 from aweb_logs.verify import verify_chain
 
@@ -223,8 +225,8 @@ async def world_fixture(coordination, test_db_factory, tmp_path, monkeypatch, re
         app_key_files=write_key_files(tmp_path),
         **{
             "client_events_per_minute": 1,
-            # The in-process coordination server is the operator's own.
-            "team_server_internal_origins": [coordination.server.url],
+            # The coordination server is the operator's own, on its network.
+            **coordination.site.settings(),
             **overrides,
         },
     )
@@ -268,7 +270,7 @@ async def world_fixture(coordination, test_db_factory, tmp_path, monkeypatch, re
         email=no_mail(),
         awid_transport=coordination.registry.transport,
         awid_txt_resolver=dns_naming("ingest.example", NAMESPACE_KEY),
-        team_server_transport=coordination.server.transport,
+        resolver=coordination.site.resolver(),
         now=lambda: now,
     )
     async with service.api_app.router.lifespan_context(service.api_app):
@@ -379,8 +381,7 @@ async def test_binding_precedes_producer_authority_and_schema(world):
     )
     assert (response.status_code, _code(response)) == (403, "binding_required")
     assert not any(
-        call.url.path == "/v1/hooks/producer-keys"
-        for call in world.coordination.server.transport.calls
+        _read_path(seen) == "/v1/hooks/producer-keys" for seen in world.coordination.site.tls.seen
     )
 
 
@@ -412,14 +413,13 @@ async def test_an_event_before_the_registration_pad_is_refused(world):
 
 
 async def test_unavailable_binding_authority_is_retryable(world):
-    world.coordination.server.transport.down = True
+    world.coordination.site.stop_answering()
     response = await world.send(world.delivery("core"))
     assert (response.status_code, _code(response)) == (503, "binding_authority_unavailable")
     assert await world.db.fetch_value("SELECT count(*) FROM {{tables.chain_events}}") == 0
 
 
-@pytest.mark.parametrize("kind", [ProducerKind.CORE, ProducerKind.APP])
-async def test_a_team_server_logs_may_not_reach_is_a_permanent_refusal(world, kind, monkeypatch):
+async def test_a_team_server_logs_may_not_reach_is_a_permanent_refusal(world, monkeypatch):
     # The team publishes a loopback address that Logs does not list: the egress
     # rule refuses it, retrying cannot help, and nothing is appended.
     # AWID stores a plain-http loopback server only as a development registry
@@ -435,7 +435,8 @@ async def test_a_team_server_logs_may_not_reach_is_a_permanent_refusal(world, ki
         issued_at=datetime.now(UTC) + timedelta(seconds=1),
     )
     monkeypatch.delenv("APP_ENV")
-    response = await world.send(world.delivery(kind))
+    # The binding lookup, the first read of the team's server, meets the refusal.
+    response = await world.send(world.delivery(ProducerKind.CORE))
     assert (response.status_code, _code(response)) == (403, "team_server_not_allowed")
     assert await world.db.fetch_value("SELECT count(*) FROM {{tables.chain_events}}") == 0
 
@@ -446,7 +447,8 @@ async def test_a_core_key_cannot_assert_an_unanchored_origin(world):
     )
     assert (response.status_code, _code(response)) == (403, "provenance_core_key")
     assert not any(
-        call.url.host == "forged.example" for call in world.coordination.server.transport.calls
+        dict(seen.headers).get("Host", "").startswith("forged.example")
+        for seen in world.coordination.site.tls.seen
     )
 
 
@@ -712,3 +714,18 @@ async def test_invalid_observed_value_refusal_uses_the_packaged_catalog(world):
         )
     )
     assert response.status_code == 200, response.text
+
+
+@pytest.mark.parametrize("lookup", list(Lookup))
+def test_each_lookup_refuses_permanently_when_the_team_server_is_refused(lookup):
+    # One function decides both lookups' refusals. The provenance lookup meets
+    # a refused server only when the team's record changes between its two
+    # reads of one delivery, so this rule is checked where it is decided.
+    refused = unresolved_refusal(HookTeamServerNotAllowed("http://127.0.0.1:9"), lookup)
+    assert (refused.status, refused.code) == (403, "team_server_not_allowed")
+    unavailable = unresolved_refusal(HookResolutionUnavailable("authority_unavailable"), lookup)
+    assert (unavailable.status, unavailable.code) == (503, lookup.value)
+
+
+def _read_path(seen) -> str:
+    return seen.request_line.split(" ")[1].split("?")[0]

@@ -307,7 +307,7 @@ class Ingestor:
         except HookBindingRequired as exc:
             raise IngestRefused(503, "binding_authority_unavailable") from exc
         except HookResolutionUnavailable as exc:
-            raise _unresolved(exc, Lookup.BINDING) from exc
+            raise unresolved_refusal(exc, Lookup.BINDING) from exc
         for binding in resolution.items:
             if (
                 binding.kind == "registration"
@@ -381,7 +381,7 @@ class Ingestor:
         except HookBindingRequired as exc:
             raise IngestRefused(403, "provenance_app_production") from exc
         except HookResolutionUnavailable as exc:
-            raise _unresolved(exc, Lookup.PROVENANCE) from exc
+            raise unresolved_refusal(exc, Lookup.PROVENANCE) from exc
         for production in productions.items:
             if (
                 (
@@ -424,7 +424,7 @@ class Lookup(StrEnum):
     PROVENANCE = "provenance_authority_unavailable"
 
 
-def _unresolved(exc: HookResolutionUnavailable, lookup: Lookup) -> IngestRefused:
+def unresolved_refusal(exc: HookResolutionUnavailable, lookup: Lookup) -> IngestRefused:
     """The refusal for a hook read the team's server did not answer: permanent
     when this deployment's egress policy refuses that server, which the
     deployment's operator or the team's controller fixes

@@ -38,6 +38,7 @@ from aweb_naapp_testing import Member
 from aweb_naapp_testing.human_members import HumanMember, HumanNamespace, human_namespace
 from aweb_naapp_testing.owner_acts import AUDIENCE, TeamOwner
 from aweb_naapp_testing.smtp import SmtpServer
+from aweb_naapp_testing.team_server_site import TeamServerSite
 from aweb_naapp_testing.webauthn import SoftAuthenticator
 from awid_service.testing import REGISTRY_URL, SERVICE_TOKEN
 
@@ -54,12 +55,16 @@ CONSOLE = "https://console.app.example.com"
 
 
 class Unresolved:
-    """The hook drain's resolver: no host resolves, and every attempt is kept."""
+    """Logs' resolver: only the team's coordination server resolves; no
+    other host does, and every attempt at one is kept."""
 
-    def __init__(self) -> None:
+    def __init__(self, site: TeamServerSite) -> None:
         self.hosts: list[str] = []
+        self._site = site
 
     async def resolve(self, host: str) -> list[Any]:
+        if host == self._site.name:
+            return await self._site.resolver().resolve(host)
         self.hosts.append(host)
         raise EgressNotSent(f"{host} is not resolved in this test")
 
@@ -188,8 +193,8 @@ async def deployment(
         console_origin=CONSOLE,
         awid_registry_url=REGISTRY_URL,
         awid_service_token=SERVICE_TOKEN,
-        team_server_internal_origins=[coordination.server.url],
         app_key_files=key_files,
+        **coordination.site.settings(),
         **getattr(request, "param", {}),
     )
     with blocked_dns() as looked_up, SmtpServer(tmp_path / "smtp") as smtp:
@@ -202,8 +207,7 @@ async def deployment(
                 settings,
                 email=email_settings(smtp, tmp_path),
                 awid_transport=coordination.registry.transport,
-                team_server_transport=coordination.server.transport,
-                resolver=Unresolved(),
+                resolver=Unresolved(coordination.site),
                 awid_domain_verifier=humans.authority,
             )
             # Installed at the version 3 logs publishes, as an owner who
