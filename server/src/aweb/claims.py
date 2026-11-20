@@ -432,8 +432,9 @@ async def release_noncurrent_task_claims_on(
 ) -> list[str]:
     """Reclaim only this task's stale holders through the claim/focus owner.
 
-    Current members retain their conflicts. Key rotation does not sweep claims;
-    a new claim request rechecks its competing holders in its own transaction.
+    Current members retain their conflicts, including retained deleted paths
+    pending explicit cleanup (docs/aweb-sot.md:1259-1265). Key rotation does not
+    sweep claims; a new claim request rechecks competing holders in its transaction.
     """
     stale = await tx.fetch_all(
         f"""
@@ -442,7 +443,7 @@ async def release_noncurrent_task_claims_on(
             SELECT 1 FROM {{{{tables.workspaces}}}} w
             JOIN {{{{tables.agents}}}} a ON a.agent_id=w.agent_id AND a.team_id=w.team_id
             WHERE w.workspace_id=c.workspace_id AND w.team_id=c.team_id
-              AND w.deleted_at IS NULL AND {current_member_sql("a")}
+              AND {current_member_sql("a")}
         )
         ORDER BY c.workspace_id FOR UPDATE OF c
         """,
