@@ -160,9 +160,7 @@ class Actor:
 
 async def _admit(env, alias, *, global_identity=False):
     if global_identity:
-        await application_registry_client(
-            env.app.state
-        ).update_namespace_delivery_origin(
+        await application_registry_client(env.app.state).update_namespace_delivery_origin(
             "example.test", bytes(env.namespace_sk), "https://matrix.example.test"
         )
     actual = await admit_messaging_actor(
@@ -362,9 +360,7 @@ async def _probe(env, case, sender, target, *, phase, team_key):
         )
     if op is Operation.TASK:
         if case.surface is Surface.MCP:
-            return await _tool(
-                env, sender, "task_create", {"title": "selector", "assignee": ref}
-            )
+            return await _tool(env, sender, "task_create", {"title": "selector", "assignee": ref})
         return await _http(
             env,
             sender,
@@ -432,11 +428,7 @@ async def _probe(env, case, sender, target, *, phase, team_key):
     if op is Operation.NOTICE_COUNT:
         from aweb.messaging.room_notices import count_room_notices
 
-        return {
-            "target_notices": await count_room_notices(
-                env.infra, env.matrix_target_identity
-            )
-        }
+        return {"target_notices": await count_room_notices(env.infra, env.matrix_target_identity)}
     if op is Operation.ROOM:
         from test_team_room import metadata, post, post_payload
 
@@ -488,9 +480,7 @@ def _check(result, case, target, *, current, phase):
         return
     if op is Operation.STATUS:
         assert (
-            target.alias in json.dumps(data)
-            if current
-            else target.alias not in json.dumps(data)
+            target.alias in json.dumps(data) if current else target.alias not in json.dumps(data)
         ), context
         return
     if op in (Operation.TEAM_COUNT, Operation.DASHBOARD_COUNT, Operation.USAGE_COUNT):
@@ -525,6 +515,39 @@ def _check(result, case, target, *, current, phase):
             assert result.status_code == status, context
 
 
+async def _assert_send_effect(env, result, case, sender, target):
+    if case.operation not in (Operation.MAIL, Operation.CHAT):
+        return
+    data = result if isinstance(result, dict) else result.json()
+    if "error" in data or not data.get("message_id"):
+        return
+    message_id = UUID(data["message_id"])
+    if case.operation is Operation.MAIL:
+        row = await env.db.fetch_one(
+            "SELECT from_did, to_did, body FROM {{tables.messages}} WHERE message_id=$1",
+            message_id,
+        )
+        assert (row["from_did"], row["to_did"], row["body"]) == (
+            sender.stable or sender.did,
+            target.stable or target.did,
+            "selector",
+        ), case.id
+    else:
+        row = await env.db.fetch_one(
+            "SELECT from_did, session_id, body FROM {{tables.chat_messages}} WHERE message_id=$1",
+            message_id,
+        )
+        assert (row["from_did"], row["body"]) == (sender.stable or sender.did, "selector"), case.id
+        participants = await env.db.fetch_all(
+            "SELECT did FROM {{tables.chat_participants}} WHERE session_id=$1",
+            row["session_id"],
+        )
+        assert {item["did"] for item in participants} == {
+            sender.stable or sender.did,
+            target.stable or target.did,
+        }, case.id
+
+
 async def _capture_room_actor(env, actor):
     from starlette.requests import Request
     from aweb.team_auth_deps import get_team_identity
@@ -535,9 +558,7 @@ async def _capture_room_actor(env, actor):
             "type": "http",
             "method": "GET",
             "path": "/v1/room",
-            "headers": [
-                (key.lower().encode(), value.encode()) for key, value in headers.items()
-            ],
+            "headers": [(key.lower().encode(), value.encode()) for key, value in headers.items()],
             "app": env.app,
         }
     )
@@ -546,9 +567,7 @@ async def _capture_room_actor(env, actor):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("case", CASES, ids=lambda case: case.id)
-async def test_selector_and_surface_recheck_membership_after_product_rotation(
-    pinning, case
-):
+async def test_selector_and_surface_recheck_membership_after_product_rotation(pinning, case):
     env = pinning
     sender = await _admit(env, "matrixsender")
     global_target = case.selector in (Selector.DID_AW, Selector.ADDRESS)
@@ -594,11 +613,13 @@ async def test_selector_and_surface_recheck_membership_after_product_rotation(
         key = (env.team_sk, env.team_did)
         before = await _probe(env, case, sender, target, phase=0, team_key=key)
         _check(before, case, target, current=True, phase=0)
+        await _assert_send_effect(env, before, case, sender, target)
         key = await _change_key(env)
         await _readmit(env, target if case.superseded_sender else sender, key)
         counts = await _effect_counts(env)
         after = await _probe(env, case, sender, target, phase=1, team_key=key)
         _check(after, case, target, current=case.global_residence, phase=1)
+        await _assert_send_effect(env, after, case, sender, target)
         if not case.global_residence and case.operation in (
             Operation.MAIL,
             Operation.CHAT,
@@ -611,3 +632,4 @@ async def test_selector_and_surface_recheck_membership_after_product_rotation(
             env.matrix_target_identity = await _capture_room_actor(env, target)
         restored = await _probe(env, case, sender, target, phase=2, team_key=key)
         _check(restored, case, target, current=True, phase=2)
+        await _assert_send_effect(env, restored, case, sender, target)
