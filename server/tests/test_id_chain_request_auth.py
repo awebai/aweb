@@ -178,7 +178,7 @@ async def test_enrollment_controls_domain_before_any_tree_fetch(enrollment, reas
             pytest.fail("unselected or conflicting domain caused a tree read")
 
     app = FastAPI()
-    app.state.awid_registry_client = NoTreeRead()
+    reader = NoTreeRead()
     bundle = {
         "v": 1,
         "type": "aweb.id-chain",
@@ -189,6 +189,7 @@ async def test_enrollment_controls_domain_before_any_tree_fetch(enrollment, reas
         await authenticate_id_chain(
             req,
             IdentityBinding(did_aw=ALICE["did_aw"], did_key=ALICE["did_key"], id_tree=enrollment),
+            registry_client=reader,
         )
     assert refused.value.detail == reason
     assert refused.value.status_code == (503 if enrollment is None else 403)

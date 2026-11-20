@@ -33,13 +33,10 @@ def _controller_headers(sk, did, payload):
 
 
 async def register_namespace_controller(env, did: str) -> None:
-    await env.registry_db.execute(
-        # Most callers retain the controller established by the shared fixture.
-        # The adversarial registry-operator case deliberately replaces this row;
-        # its independent DNS answer stays with the actual namespace controller.
-        "UPDATE {{tables.dns_namespaces}} SET controller_did=$1 WHERE domain='example.test'",
-        did,
-    )
+    """Reuse the independent namespace controller retained by the producer."""
+    controller = await env.registry.ensure_namespace(domain="example.test")
+    assert bytes(controller) == env.namespace_sk
+    assert did == env.namespace_did
 
 
 async def rotate_team_key(env, controller_sk, controller_did, new_team_did: str) -> None:
@@ -193,7 +190,11 @@ async def test_rotation_by_a_controller_dns_does_not_name_is_refused(pinning):
     env = pinning
     # The registry's own namespace row names a controller DNS does not.
     registry_sk, _, registry_did = _make_keypair()
-    await register_namespace_controller(env, registry_did)
+    # Model a dishonest registry row while independent DNS retains the actual controller.
+    await env.registry_db.execute(
+        "UPDATE {{tables.dns_namespaces}} SET controller_did=$1 WHERE domain='example.test'",
+        registry_did,
+    )
     next_sk, _, next_did = _make_keypair()
     await rotate_team_key(env, registry_sk, registry_did, next_did)
 

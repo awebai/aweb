@@ -1387,12 +1387,6 @@
     },
     {
       "tool": "ruff",
-      "file": "server/tests/test_mcp_mutation_hook_parity.py",
-      "code": "B905",
-      "count": 1
-    },
-    {
-      "tool": "ruff",
       "file": "server/tests/test_mcp_notifications.py",
       "code": "B905",
       "count": 1

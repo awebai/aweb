@@ -717,6 +717,8 @@ async def _stored_exact_chat_send(
     from age only. The shared owner decides sameness; this adapter retains chat
     request binding, current sender key and encrypted expiry checks.
     """
+    from aweb.messaging.chat_models import SendMessageRequest
+
     if payload.message_id is None:
         return None
     lookup = await read_stored_message(
@@ -762,6 +764,20 @@ async def _stored_exact_chat_send(
             and payload.signature is not None
             and not _payload_is_encrypted(payload)
         ):
+            if isinstance(payload, SendMessageRequest) and session_id is not None:
+                # Continued plaintext replay runs before new-message attestation
+                # so retained departed parties can acknowledge their artifact.
+                # A different artifact must still verify before the age-only
+                # carrier tells its sender that re-signing is appropriate.
+                await _validate_continued_chat_attestation(
+                    db,
+                    auth,
+                    payload=payload,
+                    actor_did=actor_dids[0],
+                    sender_address=_sender_address(auth),
+                    session_uuid=session_id,
+                    recipient_rows=recipient_rows,
+                )
             _parse_signed_timestamp(str(payload.timestamp))
         lookup.refuse_conflicting_message_id()
     row = lookup.message
