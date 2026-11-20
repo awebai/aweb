@@ -84,6 +84,26 @@ class RegistryStateOwnerTests(unittest.TestCase):
             [],
         )
 
+    def test_indirect_state_and_resource_reads_cannot_bypass_the_owner(self) -> None:
+        for source, line in (
+            ("key = 'awid_registry_client'\nx = getattr(state, key)", 2),
+            ("key = 'awid_registry_client'\nx = vars(state)[key]", 2),
+            ("x = state.__dict__.get('awid_registry_client')", 1),
+            ("x = state.__dict__['awid_registry_client']", 1),
+            ("x = state.native_resources.registry_client", 1),
+            ("ref = state.native_resources\nx = ref.registry_client", 2),
+            ("ref = getattr(state, 'native_resources')\nother = ref\n"
+             "key = 'registry_client'\nx = getattr(other, key)", 4),
+            ("ref = state.native_resources\nx = vars(ref).get('registry_client')", 2),
+        ):
+            with self.subTest(source=source):
+                self.assertEqual(registry_slot_reads(source, "aweb/consumer.py"), [line])
+
+    def test_explicit_runtime_registry_is_not_an_application_resource_read(self) -> None:
+        self.assertEqual(
+            registry_slot_reads("x = runtime.registry_client", "aweb/consumer.py"), [],
+        )
+
     def test_api_consumers_cannot_borrow_the_lifecycle_exception(self) -> None:
         self.assertEqual(
             registry_slot_reads(
