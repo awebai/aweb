@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-13
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-deploy-team.
+* **Creation**: lessons [a native e2e runner owns its processes, its evidence and its cleanup on every path](/aweb-expert/lessons/a-native-runner-owns-its-processes-evidence-and-cleanup.md), [witness an answer the front aborts on a loopback listener](/aweb-expert/lessons/witness-an-aborted-answer-on-a-loopback-listener.md) and [a limiter fixture keyed on a shared front throttles everyone behind it](/aweb-expert/lessons/a-limiter-on-a-shared-front-throttles-everyone-behind-it.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
