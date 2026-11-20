@@ -53,6 +53,7 @@ async def participant(
     try:
         await authorize_message_delivery(
             db,
+            registry_client=application_registry_client(request.app.state),
             recipient_agent=row,
             sender_did=auth.did_aw or auth.did_key,
             sender_address=sender_address(auth),
@@ -105,18 +106,14 @@ async def participant(
                 row["agent_id"],
                 exc_info=True,
             )
-            raise HTTPException(
-                422, detail={"code": "invalid_encryption_key_assertion"}
-            ) from error
+            raise HTTPException(422, detail={"code": "invalid_encryption_key_assertion"}) from error
         except Exception as error:
             logger.warning(
                 "Participant current-key authority unavailable for %s",
                 row["agent_id"],
                 exc_info=True,
             )
-            raise HTTPException(
-                503, detail={"code": "authority_unavailable"}
-            ) from error
+            raise HTTPException(503, detail={"code": "authority_unavailable"}) from error
     return {
         **{
             name: str(row[name]) if name == "agent_id" else row.get(name)
@@ -144,9 +141,7 @@ def _service(request):
     if service is None:
         from aweb.human_channels.contract import ContractError
 
-        raise ContractError(
-            "authority_unavailable", "configured custody/access authority"
-        )
+        raise ContractError("authority_unavailable", "configured custody/access authority")
     return service
 
 
@@ -193,9 +188,7 @@ def _refusal(error, family):
 
 
 @router.get("/capabilities")
-async def capabilities(
-    request: Request, auth: MessagingAuth = Depends(get_messaging_auth)
-):
+async def capabilities(request: Request, auth: MessagingAuth = Depends(get_messaging_auth)):
     service = getattr(request.app.state, "human_channels_service", None)
     if service is None:
         return {

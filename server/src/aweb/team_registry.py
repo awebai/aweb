@@ -7,6 +7,7 @@ scope, dependency errors and the admitted team-key rule; it creates no cache.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import Any
 
 from awid.team_ids import build_team_id, parse_team_id
@@ -69,7 +70,14 @@ def _team_read_failure(
     return awid_dependency_http_exception(exc, operation=operation, team_id=team_id)
 
 
-async def resolve_team_key(request: Request, team_id: str, *, db: Any = None) -> str:
+async def resolve_team_key(
+    request: Request,
+    team_id: str,
+    *,
+    db: Any = None,
+    evidence: EvidenceMode = EvidenceMode.CACHED,
+    check_key: Callable[[str], None] | None = None,
+) -> str:
     """Request adapter preserving native unknown-team, pin and dependency errors."""
     try:
         domain, name = parse_team_id(team_id)
@@ -86,8 +94,9 @@ async def resolve_team_key(request: Request, team_id: str, *, db: Any = None) ->
             registry_client=registry_client,
             txt_resolver=txt_resolver_for(state),
             team_id=build_team_id(domain, name),
-            evidence=EvidenceMode.CACHED,
+            evidence=evidence,
             pin_memo=memo,
+            check_key=check_key,
         )
     except TeamKeyUnverified:
         raise team_key_unverified_exception() from None

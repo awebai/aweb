@@ -281,9 +281,7 @@ async def test_a_grant_ends_with_its_issuing_certificate_and_does_not_return(pin
     next_sk, next_did = await _change_key(env)
     refused = await _use_grant(env, grant)
     assert refused.status_code == 403, refused.text
-    assert refused.json()["detail"].endswith(
-        "Ask the issuer for a new grant, or enable renewal on launch and restart the seat if you use OATS."
-    )
+    assert refused.json()["detail"] == 'grant issuing certificate revoked. This grant was issued from a certificate that is no longer current. Ask the issuer for a new grant, or enable renewal on launch and restart the seat if you use OATS.'
 
     assert (
         await _connect(env, member, _certificate(next_sk, next_did, member, "granter-2"))

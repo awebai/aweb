@@ -677,7 +677,7 @@ async def _sse_events(
     async def _stream_grant_reason():
         nonlocal next_grant_check
         reason = grant_expiry_reason(auth)
-        if reason or auth.grant is None:
+        if reason:
             return reason
         if time.monotonic() < next_grant_check:
             return None

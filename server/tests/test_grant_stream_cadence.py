@@ -290,10 +290,7 @@ async def test_revoked_issuer_cannot_open_stream(harness, kind):
     with pytest.raises(HTTPException) as exc:
         await harness.open(kind)
     assert exc.value.status_code == 403
-    assert exc.value.detail.startswith("identity grant issuer revoked. ")
-    assert exc.value.detail.endswith(
-        "Ask the issuer for a new grant, or enable renewal on launch and restart the seat if you use OATS."
-    )
+    assert exc.value.detail == 'identity grant issuer revoked. This grant was issued from a certificate that is no longer current. Ask the issuer for a new grant, or enable renewal on launch and restart the seat if you use OATS.'
 
 
 @pytest.mark.asyncio

@@ -6,6 +6,8 @@ This owner publishes observations only; it never expires claims or grants.
 
 from __future__ import annotations
 
+from aweb.member_team_key import current_member_sql
+
 import hashlib
 import json
 import logging
@@ -64,7 +66,7 @@ async def team_online_aliases(
         FROM {{{{tables.workspaces}}}} w
         JOIN {{{{tables.agents}}}} a ON a.agent_id=w.agent_id AND a.team_id=w.team_id
         WHERE w.team_id=$1 AND w.deleted_at IS NULL
-          AND a.deleted_at IS NULL AND a.status='active'
+          AND {current_member_sql("a")}
           AND {agent_listing_predicate_sql("a")}
         """,
         team_id,

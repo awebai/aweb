@@ -8,7 +8,7 @@ registry serves without such an act stays refused.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
@@ -26,12 +26,12 @@ from test_team_key_pinning import (  # noqa: F401
 SERVICE = "https://aweb.example.test"
 
 
-async def _register(env, team_sk, *, team_id=TEAM, dry_run=False):
+async def _register(env, team_sk, *, team_id=TEAM, dry_run=False, timestamp=None):
     body = {
         "awid_team_id": team_id,
         "service_url": SERVICE,
         "dry_run": dry_run,
-        "timestamp": datetime.now(timezone.utc)
+        "timestamp": (timestamp or datetime.now(timezone.utc))
         .replace(microsecond=0)
         .isoformat()
         .replace("+00:00", "Z"),
@@ -209,4 +209,37 @@ async def test_concurrent_registration_returns_created_and_synced(registering):
             team_did,
         )
         == 1
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("refusal", ["timestamp", "signature"])
+@pytest.mark.parametrize("dry_run", [False, True])
+async def test_invalid_registration_cannot_advance_the_pin(
+    registering, refusal, dry_run
+):
+    env = registering
+    await register_namespace_controller(env, env.namespace_did)
+    next_sk, _, next_did = _make_keypair()
+    await rotate_team_key(env, env.namespace_sk, env.namespace_did, next_did)
+    before = await env.db.fetch_one(
+        "SELECT team_did_key, team_key_act_at FROM {{tables.teams}} WHERE team_id=$1",
+        TEAM,
+    )
+    response = await _register(
+        env,
+        env.team_sk if refusal == "signature" else next_sk,
+        dry_run=dry_run,
+        timestamp=datetime.now(timezone.utc) - timedelta(hours=1)
+        if refusal == "timestamp"
+        else None,
+    )
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"]["code"] == "invalid_controller_" + refusal
+    assert (
+        await env.db.fetch_one(
+            "SELECT team_did_key, team_key_act_at FROM {{tables.teams}} WHERE team_id=$1",
+            TEAM,
+        )
+        == before
     )

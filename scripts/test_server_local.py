@@ -39,6 +39,8 @@ class Suite(StrEnum):
     ALL = "all"
     SERVER = "server"
     REGISTRY = "registry"
+    NAAPP_LIB = "naapp-lib"
+    LOGS = "logs"
 
 
 class Interrupted(Exception):
@@ -488,14 +490,18 @@ def run_suites(
             )
             return prepared.returncode
     for item in selected:
-        target = "test-server" if item is Suite.SERVER else "test-awid"
         env = dict(environ, PYTEST_ADDOPTS=shlex.join(arguments))
-        result = invoke(
-            [
-                "make",
-                target,
+        if item in (Suite.NAAPP_LIB, Suite.LOGS):
+            package = "naapp-lib" if item is Suite.NAAPP_LIB else "naapp/logs"
+            command = ["make", "test-naapp", f"NAAPP_PACKAGES={package}"]
+        else:
+            target = "test-server" if item is Suite.SERVER else "test-awid"
+            command = [
+                "make", target,
                 f"SERVER_TEST_WORKERS={workers if item is Suite.SERVER else 0}",
-            ],
+            ]
+        result = invoke(
+            command,
             env=env,
             stdout=None,
             timeout=None,
@@ -530,7 +536,7 @@ def main() -> int:
                 root=ROOT,
             ),
             local_services(
-                workers=1 if suite is Suite.REGISTRY else workers,
+                workers=workers if suite in (Suite.ALL, Suite.SERVER) else 1,
                 project="aw-local-" + uuid.uuid4().hex[:12],
                 environ=dict(os.environ),
             ) as env,

@@ -50,6 +50,7 @@ def copy_checkout(destination: Path) -> None:
             "awid/tests/test_external_authority.py",
             "awid/tests/test_external_registry.py",
             "server/tests/test_contacts_http.py",
+            "server/tests/test_id_tree_contact_replacement.py",
             "server/tests/test_federation_activation_contacts.py",
             "server/tests/test_federation_activation_delivery.py",
             "server/tests/test_federation_envelope.py",
@@ -116,7 +117,10 @@ def run_server_tests(root: Path, *nodes: str) -> subprocess.CompletedProcess[str
 def replace_exact(path: Path, old: str, new: str) -> None:
     source = path.read_text(encoding="utf-8")
     if source.count(old) != 1:
-        raise SystemExit(f"expected one mutation target in {path}, found {source.count(old)}")
+        raise SystemExit(
+            f"expected one mutation target in {path}, found {source.count(old)}"
+        )
+    print(f"Mutation target: {path}: {old.splitlines()[0].strip()}", flush=True)
     path.write_text(source.replace(old, new), encoding="utf-8")
 
 
@@ -160,7 +164,9 @@ def main() -> None:
                 f"Python authority mutation baseline failed:\n{python_baseline.stdout}"
             )
         delegation_baseline = run_python_test(
-            checkout, "namespace_delegation_authority", "tests/test_external_registry.py"
+            checkout,
+            "namespace_delegation_authority",
+            "tests/test_external_registry.py",
         )
         if delegation_baseline.returncode != 0:
             raise SystemExit(
@@ -172,7 +178,7 @@ def main() -> None:
             "tests/test_federation_activation_contacts.py::test_contact_authority_requires_exact_address_and_stable_identity",
             "tests/test_federation_envelope.py::test_verify_federation_envelope_uses_signed_address_when_wrapper_is_absent",
             "tests/test_messages_http.py::test_receive_federated_encrypted_mail_routes_ciphertext_only",
-            "tests/test_contacts_http.py::test_contact_reassignment_requires_signed_explicit_acceptance",
+            "tests/test_id_tree_contact_replacement.py::test_address_replacement_does_not_transfer_contact_trust",
             "tests/test_federation_preactivation_harness.py::test_http_ingress_uses_production_dns_authority_not_receiver_home_registry",
             "tests/test_federation_preactivation_harness.py::test_mcp_cross_registry_uses_production_strict_authority_not_home_registry",
             "tests/test_mcp_contacts_consumer.py::test_consumer_mcp_identity_contact_rejects_reassigned_existing_mail_conversation",
@@ -194,13 +200,17 @@ def main() -> None:
                 f"Federation activation mutation baseline failed:\n{activation_baseline.stdout}"
             )
 
-        address_auth = checkout / "server" / "src" / "aweb" / "messaging" / "address_auth.py"
+        address_auth = (
+            checkout / "server" / "src" / "aweb" / "messaging" / "address_auth.py"
+        )
         original_address_auth = address_auth.read_text(encoding="utf-8")
         replace_exact(
             address_auth,
             """    return bool(
-        namespace and namespace.domain == domain
-        and namespace.verification_status == "verified" and namespace.controller_did
+        namespace
+        and namespace.domain == domain
+        and namespace.verification_status == "verified"
+        and namespace.controller_did
     )
 """,
             "    return True\n",
@@ -225,22 +235,20 @@ def main() -> None:
             run_test(checkout, "TestStrictFederationOriginAndIPVectors"),
             "ipv4_shared",
         )
-        shutil.copy2(ROOT / "cli" / "go" / "awid" / "federation_authority.go", authority)
-
-        registry = (
-            checkout
-            / "cli"
-            / "go"
-            / "awid"
-            / "federation_external_registry.go"
+        shutil.copy2(
+            ROOT / "cli" / "go" / "awid" / "federation_authority.go", authority
         )
+
+        registry = checkout / "cli" / "go" / "awid" / "federation_external_registry.go"
         replace_exact(
             registry,
             'if authority.Selection == "dns" && namespace.ControllerDID != authority.ControllerDID {',
             'if false && authority.Selection == "dns" && namespace.ControllerDID != authority.ControllerDID {',
         )
         require_killed(
-            run_test(checkout, "TestStrictGoAuthorityLookupVectors/dns_controller_mismatch"),
+            run_test(
+                checkout, "TestStrictGoAuthorityLookupVectors/dns_controller_mismatch"
+            ),
             "dns_controller_mismatch",
         )
         shutil.copy2(
@@ -270,7 +278,9 @@ def main() -> None:
             'if False and authority.selection == "dns" and namespace_controller != authority.controller_did:',
         )
         require_killed(
-            run_python_test(checkout, "authority_lookup_vectors and dns_controller_mismatch"),
+            run_python_test(
+                checkout, "authority_lookup_vectors and dns_controller_mismatch"
+            ),
             "dns_controller_mismatch",
         )
         python_registry.write_text(original_python_registry, encoding="utf-8")
@@ -281,7 +291,8 @@ def main() -> None:
         )
         require_killed(
             run_python_test(
-                checkout, "namespace_delegation_authority and wrong_parent_key",
+                checkout,
+                "namespace_delegation_authority and wrong_parent_key",
                 "tests/test_external_registry.py",
             ),
             "test_namespace_delegation_authority[wrong_parent_key-False]",
@@ -346,8 +357,8 @@ def main() -> None:
         original_contacts = contacts.read_text(encoding="utf-8")
         replace_exact(
             contacts,
-            "          AND contact_did_aw = $3\n",
-            "          AND $3::text IS NOT NULL\n",
+            '    if any(row["contact_did_aw"] == bound_did for row in rows):\n',
+            "    if rows:\n",
         )
         require_killed(
             run_server_tests(checkout, activation_nodes[2]),
@@ -357,8 +368,12 @@ def main() -> None:
 
         replace_exact(
             delivery,
-            "        if before_commit is not None:\n            await before_commit()\n",
-            "        if before_commit is not None:\n            return result\n",
+            """        if before_commit is not None:
+            await before_commit()
+""",
+            """        if before_commit is not None:
+            return result
+""",
         )
         require_killed(
             run_server_tests(checkout, activation_nodes[1]),
@@ -368,15 +383,13 @@ def main() -> None:
 
         replace_exact(
             delivery,
-            """        if (
-            envelope.sender_did_aw.startswith("did:aw:")
-            and not sender_key
-        ) or (sender_key and sender_key != envelope.sender_current_did_key):
+            """        if (envelope.sender_did_aw.startswith("did:aw:") and not sender_key) or (
+            sender_key and sender_key != envelope.sender_current_did_key
+        ):
             raise FederationAuthorityError("federation_conversation_invalid")
-        if (
-            envelope.target_did_aw.startswith("did:aw:")
-            and not target_key
-        ) or (target_key and target_key != envelope.target_current_did_key):
+        if (envelope.target_did_aw.startswith("did:aw:") and not target_key) or (
+            target_key and target_key != envelope.target_current_did_key
+        ):
             raise FederationAuthorityError("federation_conversation_invalid")
 """,
             """        if sender_key and sender_key != envelope.sender_current_did_key:
@@ -423,7 +436,9 @@ def main() -> None:
 
         replace_exact(
             delivery,
-            '    if envelope.content_mode != "encrypted_v2":\n        return\n',
+            """    if envelope.content_mode != ContentMode.ENCRYPTED:
+        return
+""",
             "    return\n",
         )
         require_killed(
@@ -432,7 +447,9 @@ def main() -> None:
         )
         delivery.write_text(original_delivery, encoding="utf-8")
 
-        federation_route = checkout / "server" / "src" / "aweb" / "routes" / "federation.py"
+        federation_route = (
+            checkout / "server" / "src" / "aweb" / "routes" / "federation.py"
+        )
         original_federation_route = federation_route.read_text(encoding="utf-8")
         replace_exact(
             federation_route,
@@ -443,9 +460,7 @@ def main() -> None:
                     current_did_key=envelope.sender_current_did_key,
                     delivery_origin=sender_origin or "",
                 ),
-                source_ip=ClientIdentity(
-                    trusted_header=os.getenv("AWEB_CLIENT_ADDRESS_HEADER", "").strip() or None,
-                ).of(request) or "unknown",
+                source_ip=request_client_address(request),
             )
 """,
             """            authorized = await registry_client.resolve_key(
@@ -460,74 +475,35 @@ def main() -> None:
         federation_route.write_text(original_federation_route, encoding="utf-8")
 
         mail_send = checkout / "server" / "src" / "aweb" / "messaging" / "mail_send.py"
-        original_mail_send = mail_send.read_text(encoding="utf-8")
+        recipients = (
+            checkout / "server" / "src" / "aweb" / "messaging" / "recipients.py"
+        )
+        original_recipients = recipients.read_text(encoding="utf-8")
+        # Mail and chat first-contact authority now have this single resolver.
         replace_exact(
-            mail_send,
-            """                resolved = await strict_authority.resolve_contact(
-                    address,
-                    source_ip=source,
-                )
-""",
-            """                resolved = await registry_client.resolve_address(
-                    domain, name, did_key=auth.did_key
-                )
-""",
+            recipients,
+            "            resolution = await authority.resolve_contact(address, source_ip=source)\n",
+            "            resolution = await registry.resolve_address(domain, name, did_key=auth.did_key)\n",
         )
         require_killed(
             run_server_tests(checkout, activation_nodes[7]),
             "test_mcp_cross_registry_uses_production_strict_authority_not_home_registry",
         )
-        mail_send.write_text(original_mail_send, encoding="utf-8")
-
-        chat_send = checkout / "server" / "src" / "aweb" / "messaging" / "chat_send.py"
-        original_chat_send = chat_send.read_text(encoding="utf-8")
+        recipients.write_text(original_recipients, encoding="utf-8")
+        # Saved contact identity constraints now travel through the shared resolver.
         replace_exact(
-            chat_send,
-            """            try:
-                resolution = await strict_authority.resolve_contact(
-                    address,
-                    source_ip=source,
-                )
-""",
-            """            try:
-                resolution = await registry_client.resolve_address(
-                    domain, name, did_key=auth.did_key
-                )
-""",
-        )
-        require_killed(
-            run_server_tests(checkout, activation_nodes[7]),
-            "test_mcp_cross_registry_uses_production_strict_authority_not_home_registry",
-        )
-        chat_send.write_text(original_chat_send, encoding="utf-8")
-
-        mcp_contacts = (
-            checkout
-            / "server"
-            / "src"
-            / "aweb"
-            / "mcp"
-            / "tools"
-            / "contacts.py"
-        )
-        replace_exact(
-            mcp_contacts,
-            """        target = await _resolve_contact_target(
-            db_infra,
-            registry_client=registry_client,
-            federation_authority=federation_authority,
-            contact=contact,
-        )
-""",
-            """        target = await _target_from_contact_reference(
-            db_infra, contact=contact
-        )
-""",
+            recipients,
+            "    if binding is not None and not binding.matches(recipient):\n",
+            "    if False and binding is not None and not binding.matches(recipient):\n",
         )
         require_killed(
             run_server_tests(checkout, activation_nodes[8], activation_nodes[9]),
             "test_consumer_mcp_identity_contact_rejects_reassigned_existing_mail_conversation",
         )
+        recipients.write_text(original_recipients, encoding="utf-8")
+
+        chat_send = checkout / "server" / "src" / "aweb" / "messaging" / "chat_send.py"
+        original_chat_send = chat_send.read_text(encoding="utf-8")
 
         local_contacts = (
             checkout / "server" / "src" / "aweb" / "messaging" / "contacts.py"
@@ -535,8 +511,12 @@ def main() -> None:
         original_local_contacts = local_contacts.read_text(encoding="utf-8")
         replace_exact(
             local_contacts,
-            "        resolved = await registry_client.resolve_address_fresh(domain, name)\n        namespace = await registry_client.get_namespace_fresh(domain)\n",
-            "        resolved = await registry_client.resolve_address(domain, name)\n        namespace = await registry_client.get_namespace(domain)\n",
+            """        resolved = await registry_client.resolve_address_fresh(domain, name)
+        namespace = await registry_client.get_namespace_fresh(domain)
+""",
+            """        resolved = await registry_client.resolve_address(domain, name)
+        namespace = await registry_client.get_namespace(domain)
+""",
         )
         require_killed(
             run_server_tests(checkout, activation_nodes[12]),
@@ -547,8 +527,14 @@ def main() -> None:
         envelope = checkout / "server" / "src" / "aweb" / "federation" / "envelope.py"
         replace_exact(
             envelope,
-            "    except Exception as exc:\n        raise FederationEnvelopeError(\"Invalid federation message signature\") from exc\n    return model.model_copy(update={\"sender_address\": signed_sender_address})\n",
-            "    except Exception as exc:\n        raise FederationEnvelopeError(\"Invalid federation message signature\") from exc\n    return model\n",
+            """    except ValueError as exc:
+        raise FederationEnvelopeError("Invalid federation message signature") from exc
+    return model.model_copy(update={"sender_address": signed_sender_address})
+""",
+            """    except ValueError as exc:
+        raise FederationEnvelopeError("Invalid federation message signature") from exc
+    return model
+""",
         )
         require_killed(
             run_server_tests(checkout, activation_nodes[3]),
@@ -563,12 +549,12 @@ def main() -> None:
         )
         require_killed(
             run_server_tests(checkout, activation_nodes[5]),
-            "test_contact_reassignment_requires_signed_explicit_acceptance",
+            "test_address_replacement_does_not_transfer_contact_trust",
         )
 
         replace_exact(
             mail_send,
-            '                    "current_did_key": sender_current_did,\n',
+            '                "current_did_key": sender_current_did,\n',
             "",
         )
         require_killed(
@@ -580,7 +566,9 @@ def main() -> None:
         original_chat_service = chat_service.read_text(encoding="utf-8")
         replace_exact(
             chat_service,
-            '                "transport_hint": transport_hint or (\n                    "federation:" + delivery_origin if delivery_origin else "local"\n                ),\n',
+            """                "transport_hint": transport_hint
+                or ("federation:" + delivery_origin if delivery_origin else "local"),
+""",
             '                "transport_hint": "chat",\n',
         )
         require_killed(
@@ -589,21 +577,35 @@ def main() -> None:
         )
         chat_service.write_text(original_chat_service, encoding="utf-8")
 
+        # A missing current-route flag now just repeats valid strict authority.
+        # Mutate the actual dispatch boundary instead: substituting the configured
+        # registry origin for the admitted recipient origin violates
+        # docs/identity-messaging-contract.md:150-161,175-177.
         replace_exact(
             chat_send,
-            '                    "_authority_route_current": home_namespace or strict_authority is not None,\n',
-            "",
+            '            "delivery_origin": _target_delivery_origin(recipient),\n',
+            '            "delivery_origin": registry_client.registry_url,\n',
         )
+        result = run_server_tests(checkout, activation_nodes[15])
         require_killed(
-            run_server_tests(checkout, activation_nodes[15]),
+            result,
             "test_chat_to_external_address_posts_federated_chat_and_projects_locally",
         )
+        if "assert 404 == 200" not in result.stdout:
+            raise SystemExit(
+                "recipient-origin mutation failed for the wrong reason:\n"
+                f"{result.stdout}"
+            )
         chat_send.write_text(original_chat_send, encoding="utf-8")
 
         replace_exact(
             chat_send,
-            "    except (HTTPException, FederationAuthorityError):\n        raise\n",
-            "    except HTTPException:\n        raise\n",
+            """    except (DeliveryRefusal, FederationAuthorityError):
+        raise
+""",
+            """    except DeliveryRefusal:
+        raise
+""",
         )
         require_killed(
             run_server_tests(checkout, activation_nodes[16]),
@@ -613,7 +615,9 @@ def main() -> None:
 
         replace_exact(
             chat_send,
-            "                current_did_key = $4,\n                transport_hint = 'federation:' || $3\n",
+            """                current_did_key = $4,
+                transport_hint = 'federation:' || $3
+""",
             "                current_did_key = $4\n",
         )
         require_killed(

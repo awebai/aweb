@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from aweb.member_team_key import current_member_sql
+
 from aweb.identity_binding import verified_key_sql
 
 import logging
@@ -432,7 +434,7 @@ async def resolve_handle_contact_agent(
               ON w.agent_id = a.agent_id
              AND w.deleted_at IS NULL
             WHERE a.deleted_at IS NULL
-              AND a.status = 'active'
+              AND {current_member_sql("a")}
               AND a.identity_scope = 'global'
               AND {verified_key_sql("a")}
               AND a.address = $1
@@ -454,7 +456,7 @@ async def resolve_handle_contact_agent(
               ON w.agent_id = a.agent_id
              AND w.deleted_at IS NULL
             WHERE a.deleted_at IS NULL
-              AND a.status = 'active'
+              AND {current_member_sql("a")}
               AND a.identity_scope = 'global'
               AND {verified_key_sql("a")}
               AND a.address LIKE $1

@@ -2172,3 +2172,62 @@ falls back to `DATABASE_USES_TRANSACTION_POOLER`, and
 | Dashboard | Out of scope for aweb (any external service that holds `AWEB_DASHBOARD_JWT_SECRET`) |
 | Human accounts | Out of scope for aweb (hosted operator concern) |
 | Coordination (mail, chat, tasks, claims, locks, roles, instructions) | aweb |
+
+## Native request authority reads
+
+### Serving registry selection
+
+All native serving consumers borrow the registry client through
+`aweb.application_state.application_registry_client`. A host's selected
+`native_resources` reference takes precedence over an application-state slot;
+a missing or invalid client in that reference cannot fall through to another
+client. Without a resource reference, the initialized native application slot
+is selected. This reference is configuration, never member or request proof.
+Missing or invalid selected configuration returns `503` with
+`registry_client_unavailable` and the action to configure the serving client
+and start the application. Read-only sender-membership projections retain
+`unknown` when that authority cannot be acquired.
+
+### Current certificate acceptance and stream lifetime
+
+A verified certificate's checked team key is retained as
+`verified_team_did_key` in the native authenticated context. Acceptance checks
+the current-member owner under the same team/member transaction locks as any
+acceptance or projection writes. A cached key or a host snapshot cannot
+substitute for that check, and a missing checked key cannot be filled from the
+member's stored accepted key.
+
+Certificate-authenticated event, status and chat streams recheck their original
+checked key, current membership and certificate standing on the existing
+30-second grant-stream cadence. Rotation, revocation or inactive membership
+closes the stream with `team_membership_not_current`; unavailable evidence
+fails closed. Readmitting the member under a new certificate does not change
+the credential that opened the old stream. Independent identity-only thread
+participation remains governed by the Identity and Messaging Contract.
+
+A task claim conflicts with a new claimant only while its holder remains a
+current member. The claim owner releases a non-current holder's claim through
+its normal claim/focus release operation in the new claim transaction. Key
+rotation does not sweep unrelated tasks or claims.
+
+### Staged certificate-registration observations
+
+While registration enforcement is off, successful artifact and revocation
+checks still evaluate registration and record the would-refuse observation.
+This deliberate measurement supports the decision to enable enforcement; an
+off-mode observation is not a promise of no existence read. The read uses the
+existing SDK active-certificate view after revocation checks, without a new
+cache. An unavailable observation remains unknown and cannot turn an otherwise
+valid off-mode operation into a refusal. Enforcing mode retains its complete
+registration-list and signature-verified miss-refresh owners. This
+staged measurement does not change request or certificate authority.
+
+### Controller-key acquisition and request validation
+
+Native authentication, app-task authorization, hook owner acts and service
+registration use `team_key_reader.read_team_key` to acquire SDK key evidence
+and apply the existing native pin owner. Their cached or fresh acquisition
+strength remains explicit; a consumer cannot accept a registry key by bypassing
+that pin. A controller registration request checks its timestamp and signature
+before a pin can change, including `dry_run` requests. Invalid request bytes
+cannot advance the admitted key or its controller-act timestamp.

@@ -10,6 +10,7 @@ from uuid import UUID
 from awid.team_ids import team_slug
 from .service_errors import ConflictError
 from .task_refs import format_task_ref, task_ref_suffix
+from aweb.member_team_key import current_member_sql
 
 if TYPE_CHECKING:
     from .db import DatabaseInfrastructure
@@ -216,7 +217,13 @@ async def lock_task_claim_workspaces_on(
 
 
 async def acquire_task_claim_on(
-    tx, *, team_id: str, actor_agent_id: str, task_ref: str, now: datetime
+    tx,
+    *,
+    team_id: str,
+    actor_agent_id: str,
+    task_ref: str,
+    now: datetime,
+    released_workspace_ids: list[str] | None = None,
 ) -> UUID | None:
     """Take a task claim under its row lock (docs/aweb-sot.md:1151–1162).
 
@@ -230,6 +237,11 @@ async def acquire_task_claim_on(
         task_ref=task_ref,
         actor_agent_id=actor_agent_id,
     )
+    released = await release_noncurrent_task_claims_on(
+        tx, team_id=team_id, task_ref=task_ref
+    )
+    if released_workspace_ids is not None:
+        released_workspace_ids.extend(released)
     # Retained deleted claimant rows must stay locked for cleanup, but cannot
     # become an eligible workspace merely because they belong to this actor.
     candidates = [
@@ -413,3 +425,38 @@ async def release_task_claims_on(
         )
 
     return [str(ws_id) for ws_id in affected_ws_ids]
+
+
+async def release_noncurrent_task_claims_on(
+    tx, *, team_id: str, task_ref: str
+) -> list[str]:
+    """Reclaim only this task's stale holders through the claim/focus owner.
+
+    Current members retain their conflicts. Key rotation does not sweep claims;
+    a new claim request rechecks its competing holders in its own transaction.
+    """
+    stale = await tx.fetch_all(
+        f"""
+        SELECT c.workspace_id FROM {{{{tables.task_claims}}}} c
+        WHERE c.team_id=$1 AND c.task_ref=$2 AND NOT EXISTS (
+            SELECT 1 FROM {{{{tables.workspaces}}}} w
+            JOIN {{{{tables.agents}}}} a ON a.agent_id=w.agent_id AND a.team_id=w.team_id
+            WHERE w.workspace_id=c.workspace_id AND w.team_id=c.team_id
+              AND w.deleted_at IS NULL AND {current_member_sql("a")}
+        )
+        ORDER BY c.workspace_id FOR UPDATE OF c
+        """,
+        team_id,
+        task_ref,
+    )
+    released = []
+    for row in stale:
+        released.extend(
+            await release_task_claims_on(
+                tx,
+                team_id=team_id,
+                task_ref=task_ref,
+                workspace_id=str(row["workspace_id"]),
+            )
+        )
+    return released

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from aweb.config import get_presence_ttl_seconds
+from aweb.member_team_key import current_member_sql
+
 from aweb.human_kind import agent_listing_predicate_sql, effective_agent_type
 
 import json
@@ -39,7 +41,7 @@ async def list_agents(db_infra, redis, *, registry_client=None) -> str:
          AND w.agent_id = a.agent_id
          AND w.alias = a.alias
          AND w.deleted_at IS NULL
-        WHERE a.team_id = $1 AND a.deleted_at IS NULL AND {agent_listing_predicate_sql("a")}
+        WHERE a.team_id = $1 AND {current_member_sql("a")} AND {agent_listing_predicate_sql("a")}
         ORDER BY a.alias
         """,
         auth.team_id,

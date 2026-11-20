@@ -100,6 +100,8 @@ async def test_row_without_recorded_certificate_passes_without_registry_call():
     out = await current_membership(registry, row)
     assert out is row
     registry.get_team_revocations_for_certificates.assert_not_awaited()
+    registry.get_team_revocations.assert_not_awaited()
+    assert registry.mock_calls == []
 
 
 @pytest.mark.asyncio
@@ -109,6 +111,8 @@ async def test_row_without_team_context_passes_without_registry_call():
     out = await current_membership(registry, row)
     assert out is row
     registry.get_team_revocations_for_certificates.assert_not_awaited()
+    registry.get_team_revocations.assert_not_awaited()
+    assert registry.mock_calls == []
 
 
 @pytest.mark.asyncio

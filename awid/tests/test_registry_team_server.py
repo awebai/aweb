@@ -174,7 +174,9 @@ async def test_publish_preserves_typed_refusals(database_url, failure, status, d
 
 
 @pytest.mark.asyncio
-async def test_methods_follow_domain_resolver_without_leaking_home_service_token(database_url):
+async def test_publish_pins_home_and_read_follows_domain_without_leaking_service_token(
+    database_url,
+):
     key = SigningKey.generate()
     resolved_domains = []
 
@@ -197,19 +199,22 @@ async def test_methods_follow_domain_resolver_without_leaking_home_service_token
         try:
             assert await client.publish_team_server_record(DOMAIN, NAME, **body) == body
             assert await client.get_team_server_record(DOMAIN, NAME) == body
-            assert resolved_domains == [DOMAIN, DOMAIN]
+            assert resolved_domains == [DOMAIN]
             assert [
                 (request.method, request.url.host, request.url.path)
                 for request in registry.transport.calls[action_start:]
             ] == [
-                (method, "foreign.registry.example", f"/v1/namespaces/{DOMAIN}/teams/{NAME}/server")
-                for method in ("PUT", "GET")
+                (
+                    "PUT",
+                    httpx.URL(REGISTRY_URL).host,
+                    f"/v1/namespaces/{DOMAIN}/teams/{NAME}/server",
+                ),
+                ("GET", "foreign.registry.example", f"/v1/namespaces/{DOMAIN}/teams/{NAME}/server"),
             ]
             assert json.loads(registry.transport.calls[action_start].content) == body
-            assert all(
-                "X-AWID-Service-Token" not in request.headers
-                for request in registry.transport.calls[action_start:]
-            )
+            publish, read = registry.transport.calls[action_start:]
+            assert publish.headers[AWID_SERVICE_TOKEN_HEADER] == SERVICE_TOKEN
+            assert AWID_SERVICE_TOKEN_HEADER not in read.headers
         finally:
             await client.aclose()
 

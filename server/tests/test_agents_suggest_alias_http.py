@@ -9,7 +9,10 @@ import pytest_asyncio
 from nacl.public import PrivateKey
 
 from aweb.embedding import OutboxRecoveryOwnership
-from awid.e2ee_keys import build_encryption_key_assertion, canonical_encryption_assertion
+from awid.e2ee_keys import (
+    build_encryption_key_assertion,
+    canonical_encryption_assertion,
+)
 from awid.signing import sign_message
 from identity_binding_support import register_global_identity
 from test_coordination_state_http import request_as
@@ -98,7 +101,9 @@ async def test_suggest_alias_prefix_no_body_keeps_legacy_response_shape(privacy_
 
 
 @pytest.mark.asyncio
-async def test_suggest_alias_prefix_uses_agent_aliases_without_workspace_rows(privacy_app):
+async def test_suggest_alias_prefix_uses_agent_aliases_without_workspace_rows(
+    privacy_app,
+):
     env = privacy_app
     await _only_alice(env)
     await env.db.execute("DELETE FROM {{tables.workspaces}} WHERE team_id=$1", TEAM)
@@ -124,7 +129,9 @@ async def test_suggest_alias_prefix_count_and_exclude_are_ordered(privacy_app):
 
 
 @pytest.mark.asyncio
-async def test_suggest_alias_prefix_global_uses_namespace_names_and_user_prefix(privacy_app):
+async def test_suggest_alias_prefix_global_uses_namespace_names_and_user_prefix(
+    privacy_app,
+):
     env = privacy_app
     await _global_actor(env, address="example.test/maria")
     registry = env.app.state.awid_registry_client
@@ -141,7 +148,9 @@ async def test_suggest_alias_prefix_global_uses_namespace_names_and_user_prefix(
         await registry.register_address(
             domain, name, stable, bytes(controller), current_did_key=did
         )
-    response = await _suggest(env, {"scope": "global", "exclude": ["maria-charlie"], "count": 2})
+    response = await _suggest(
+        env, {"scope": "global", "exclude": ["maria-charlie"], "count": 2}
+    )
     assert response.status_code == 200, response.text
     assert response.json() == {
         "team_id": TEAM,
@@ -238,7 +247,9 @@ async def test_patch_agent_workspace_omission_preserves_concurrent_repo_binding(
 async def test_patch_agent_workspace_repairs_ssh_over_443_repo_binding(privacy_app):
     env = privacy_app
     body = {"repo_origin": "ssh://git@ssh.github.com:443/acme/backend.git"}
-    first = await request_as(env, alias="alice", method="PATCH", path="/v1/agents/me", payload=body)
+    first = await request_as(
+        env, alias="alice", method="PATCH", path="/v1/agents/me", payload=body
+    )
     second = await request_as(
         env, alias="alice", method="PATCH", path="/v1/agents/me", payload=body
     )
@@ -260,14 +271,24 @@ async def test_patch_agent_workspace_repairs_ssh_over_443_repo_binding(privacy_a
 async def test_get_my_inbound_mode_returns_current_global_agent_policy(privacy_app):
     env = privacy_app
     await _global_actor(env)
-    response = await request_as(env, alias="alice", method="GET", path="/v1/agents/me/inbound-mode")
+    changed = await request_as(
+        env,
+        alias="alice",
+        method="PATCH",
+        path="/v1/agents/me/inbound-mode",
+        payload={"inbound_mode": "contacts_only"},
+    )
+    assert changed.status_code == 200, changed.text
+    response = await request_as(
+        env, alias="alice", method="GET", path="/v1/agents/me/inbound-mode"
+    )
     assert response.status_code == 200, response.text
     assert response.json() == {
         "agent_id": str(env.actors["alice"].id),
         "team_id": TEAM,
         "alias": "alice",
         "identity_scope": "global",
-        "inbound_mode": "open",
+        "inbound_mode": "contacts_only",
         "configurable": True,
     }
 
@@ -330,22 +351,31 @@ async def _listed_alice(env):
     response = await request_as(env, alias="alice", method="GET", path="/v1/agents")
     assert response.status_code == 200, response.text
     return next(
-        row for row in response.json()["agents"] if row["agent_id"] == str(env.actors["alice"].id)
+        row
+        for row in response.json()["agents"]
+        if row["agent_id"] == str(env.actors["alice"].id)
     )
 
 
 @pytest.mark.asyncio
-async def test_publish_my_encryption_key_for_local_agent_and_list_returns_verified_key(privacy_app):
+async def test_publish_my_encryption_key_for_local_agent_and_list_returns_verified_key(
+    privacy_app,
+):
     env = privacy_app
     assertion = _assertion(env.actors["alice"])
     publish = await _publish(env, assertion)
     assert publish.status_code == 200, publish.text
-    assert publish.json()["encryption_key"]["encryption_key_id"] == assertion["encryption_key_id"]
+    assert (
+        publish.json()["encryption_key"]["encryption_key_id"]
+        == assertion["encryption_key_id"]
+    )
     assert "identity_stable_id" not in publish.json()["encryption_key"]
     agent = await _listed_alice(env)
     assert agent["agent_id"] == str(env.actors["alice"].id)
     assert agent["repo"] is None
-    assert agent["encryption_key"]["encryption_key_id"] == assertion["encryption_key_id"]
+    assert (
+        agent["encryption_key"]["encryption_key_id"] == assertion["encryption_key_id"]
+    )
     assert "identity_stable_id" not in agent["encryption_key"]
 
 
@@ -366,7 +396,9 @@ async def test_publish_my_encryption_key_rejects_unsigned_custody_mutation(priva
     actor = env.actors["alice"]
     assertion = _assertion(actor)
     del assertion["custody"]
-    assertion["signature"] = sign_message(actor.sk, canonical_encryption_assertion(assertion))
+    assertion["signature"] = sign_message(
+        actor.sk, canonical_encryption_assertion(assertion)
+    )
     assertion["custody"] = "self"
     response = await _publish(env, assertion)
     assert response.status_code == 422, response.text
@@ -374,7 +406,9 @@ async def test_publish_my_encryption_key_rejects_unsigned_custody_mutation(priva
 
 
 @pytest.mark.asyncio
-async def test_replayed_older_local_encryption_key_does_not_roll_back_listed_key(privacy_app):
+async def test_replayed_older_local_encryption_key_does_not_roll_back_listed_key(
+    privacy_app,
+):
     env = privacy_app
     now = datetime.now(timezone.utc)
     older = _assertion(env.actors["alice"], now=now - timedelta(minutes=2))
@@ -387,10 +421,14 @@ async def test_replayed_older_local_encryption_key_does_not_roll_back_listed_key
 
 
 @pytest.mark.asyncio
-async def test_publish_my_encryption_key_rejects_team_controller_substitution(privacy_app):
+async def test_publish_my_encryption_key_rejects_team_controller_substitution(
+    privacy_app,
+):
     env = privacy_app
     assertion = _assertion(env.actors["alice"])
-    assertion["signature"] = sign_message(env.team_sk, canonical_encryption_assertion(assertion))
+    assertion["signature"] = sign_message(
+        env.team_sk, canonical_encryption_assertion(assertion)
+    )
     response = await _publish(env, assertion)
     assert response.status_code == 422, response.text
     assert response.json()["detail"]["code"] == "invalid_encryption_key_assertion"
@@ -398,7 +436,9 @@ async def test_publish_my_encryption_key_rejects_team_controller_substitution(pr
 
 
 @pytest.mark.asyncio
-async def test_publish_my_encryption_key_rejects_empty_local_stable_id_field(privacy_app):
+async def test_publish_my_encryption_key_rejects_empty_local_stable_id_field(
+    privacy_app,
+):
     env = privacy_app
     assertion = _assertion(env.actors["alice"])
     assertion["identity_stable_id"] = ""
