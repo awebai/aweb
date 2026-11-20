@@ -27,6 +27,7 @@ from pgdbm import AsyncDatabaseManager, DatabaseConfig
 from redis.asyncio import Redis
 
 from awid.attestation_records import sign_record
+from awid.db_config import close_owned_pool
 from awid.did import did_from_public_key
 from awid.external_authority import DNSLookup
 from awid.ratelimit import NoOpRateLimiter
@@ -34,7 +35,7 @@ from awid.registry import RegistryClient
 from awid.signing import canonical_json_bytes, sign_message
 from awid.team_server_record import record_signing_bytes
 
-from .db import AwidDatabaseInfra, close_owned_pool
+from .db import AwidDatabaseInfra
 from .main import mount_registry
 
 REGISTRY_URL = "https://registry.example"

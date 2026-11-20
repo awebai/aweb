@@ -287,12 +287,11 @@ def revalidate_human_kind_command(
     schema: str = typer.Option("aweb", "--schema", help="Existing canonical agents schema; migration 047 must be applied"),
 ) -> None:
     """Report historical human kinds. Exit 1 if active rows remain unresolved."""
-    from awid.db_config import build_database_config
+    from awid.db_config import build_database_config, close_owned_pool
     from awid.registry import CachedRegistryClient
     from pgdbm import AsyncDatabaseManager
     from redis.asyncio import Redis
     from .connection_scope import DatabaseManager
-    from .db import close_owned_pool
     from .human_kind_revalidation import revalidate_human_kind
 
     if not schema.isascii() or not schema.isidentifier():

@@ -1,9 +1,18 @@
 from __future__ import annotations
 
+import asyncio
+import logging
+from typing import TYPE_CHECKING
+
 from pgdbm import DatabaseConfig
 
+if TYPE_CHECKING:
+    from asyncpg.pool import Pool
+
+logger = logging.getLogger(__name__)
 DEFAULT_TRANSACTION_POOLER_MIN_CONNECTIONS = 1
 DEFAULT_TRANSACTION_POOLER_MAX_CONNECTIONS = 5
+SHARED_POOL_CLOSE_TIMEOUT_SECONDS = 5.0
 
 
 def build_database_config(
@@ -47,3 +56,17 @@ def build_database_config(
     kwargs["shared_pool_search_path"] = shared_pool_search_path
 
     return DatabaseConfig(**kwargs)
+
+
+async def close_owned_pool(pool: Pool) -> None:
+    """Give checked-out connections time to return, then terminate the pool."""
+    # Unify this policy with pgdbm's bounded disconnect when aweb-adly lands.
+    deadline = asyncio.timeout(SHARED_POOL_CLOSE_TIMEOUT_SECONDS)
+    try:
+        async with deadline:
+            await pool.close()
+    except TimeoutError:
+        if not deadline.expired():
+            raise
+        pool.terminate()
+        logger.warning("PostgreSQL pool close timed out. Remaining connections were terminated.")

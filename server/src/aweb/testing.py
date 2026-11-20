@@ -22,7 +22,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
 import httpx
-from awid.db_config import build_database_config
+from awid.db_config import build_database_config, close_owned_pool
 from awid.dns_verify import DomainVerifier
 from awid_service.testing import ServiceTransport
 from fastapi import FastAPI
@@ -30,7 +30,7 @@ from pgdbm import AsyncDatabaseManager
 from redis.asyncio import Redis
 
 from .api import create_app
-from .db import DatabaseInfra, close_owned_pool
+from .db import DatabaseInfra
 
 SERVER_URL = "https://aweb.example"
 
