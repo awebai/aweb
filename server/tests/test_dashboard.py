@@ -284,47 +284,26 @@ def _parse_sse_chunk(chunk: str):
 
 
 @pytest.mark.asyncio
-async def test_list_agents(aweb_cloud_db):
-    app = _build_app(aweb_cloud_db.aweb_db)
-    alice_id, bob_id = await _seed(aweb_cloud_db.aweb_db)
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.workspaces}} (
-            workspace_id, team_id, agent_id, alias, workspace_path, last_seen_at
-        )
-        VALUES (
-            $1, 'backend:acme.com', $2, 'alice', '/Users/alice/project', $3
-        )
-        """,
-        uuid.uuid4(),
-        uuid.UUID(alice_id),
-        datetime(2026, 4, 8, 12, 0, 0, tzinfo=timezone.utc),
+async def test_list_agents(dashboard_stack):
+    env = dashboard_stack
+    await _seed_dashboard_directory(env)
+    alice, bob = env.actors["alice"], env.actors["bob"]
+    await env.db.execute(
+        "UPDATE {{tables.workspaces}} SET workspace_path='/Users/alice/project',last_seen_at=$1 WHERE workspace_id=$2",
+        datetime(2026, 4, 8, 12, 0, tzinfo=timezone.utc),
+        alice.workspace,
     )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.workspaces}} (
-            workspace_id, team_id, agent_id, alias, workspace_path, last_seen_at, deleted_at
-        )
-        VALUES (
-            $1, 'backend:acme.com', $2, 'bob', '/Users/bob/stale', $3, $4
-        )
-        """,
-        uuid.uuid4(),
-        uuid.UUID(bob_id),
-        datetime(2026, 4, 8, 13, 0, 0, tzinfo=timezone.utc),
-        datetime(2026, 4, 8, 13, 5, 0, tzinfo=timezone.utc),
+    await env.db.execute(
+        "UPDATE {{tables.workspaces}} SET workspace_path='/Users/bob/stale',last_seen_at=$1,deleted_at=$2 WHERE workspace_id=$3",
+        datetime(2026, 4, 8, 13, 0, tzinfo=timezone.utc),
+        datetime(2026, 4, 8, 13, 5, tzinfo=timezone.utc),
+        bob.workspace,
     )
-    token = _make_jwt(["backend:acme.com"])
-
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        resp = await client.get(
-            "/v1/teams/backend:acme.com/agents",
-            headers={"X-Dashboard-Token": token},
-        )
-
-    assert resp.status_code == 200
+    resp = await env.client.get(
+        f"/v1/teams/{env.team_id}/agents",
+        headers={"X-Dashboard-Token": _make_jwt([env.team_id])},
+    )
+    assert resp.status_code == 200, resp.text
     data = resp.json()
     assert len(data["agents"]) == 2
     agents = {a["alias"]: a for a in data["agents"]}
@@ -332,7 +311,7 @@ async def test_list_agents(aweb_cloud_db):
     assert agents["alice"]["workspace_path"] == "/Users/alice/project"
     assert agents["alice"]["last_seen"] == "2026-04-08T12:00:00+00:00"
     assert agents["alice"]["human_name"] == "Alice"
-    assert agents["alice"]["address"] == "acme.com/alice"
+    assert agents["alice"]["address"] == "example.test/alice"
     assert agents["alice"]["agent_type"] == "coder"
     assert agents["bob"]["workspace_path"] is None
     assert agents["bob"]["last_seen"] is None
@@ -343,119 +322,71 @@ async def test_list_agents(aweb_cloud_db):
 
 @pytest.mark.asyncio
 async def test_list_agents_prefers_active_workspace_over_newer_deleted_workspace(
-    aweb_cloud_db,
+    dashboard_stack,
 ):
-    app = _build_app(aweb_cloud_db.aweb_db)
-    alice_id, bob_id = await _seed(aweb_cloud_db.aweb_db)
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.workspaces}} (
-            workspace_id, team_id, agent_id, alias, workspace_path, last_seen_at
-        )
-        VALUES (
-            $1, 'backend:acme.com', $2, 'alice', '/Users/alice/project', $3
-        )
-        """,
-        uuid.uuid4(),
-        uuid.UUID(alice_id),
-        datetime(2026, 4, 8, 12, 0, 0, tzinfo=timezone.utc),
+    env = dashboard_stack
+    await _seed_dashboard_directory(env)
+    bob = env.actors["bob"]
+    await env.db.execute(
+        "UPDATE {{tables.workspaces}} SET workspace_path='/Users/bob/active',last_seen_at=$1 WHERE workspace_id=$2",
+        datetime(2026, 4, 8, 11, 0, tzinfo=timezone.utc),
+        bob.workspace,
     )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.workspaces}} (
-            workspace_id, team_id, agent_id, alias, workspace_path, last_seen_at, deleted_at
-        )
-        VALUES
-            ($1, 'backend:acme.com', $2, 'bob', '/Users/bob/stale', $3, $4),
-            ($5, 'backend:acme.com', $2, 'bob', '/Users/bob/active', $6, NULL)
-        """,
+    await env.db.execute(
+        "INSERT INTO {{tables.workspaces}} (workspace_id,team_id,agent_id,alias,workspace_path,last_seen_at,deleted_at) VALUES ($1,$2,$3,'bob-stale','/Users/bob/stale',$4,$5)",
         uuid.uuid4(),
-        uuid.UUID(bob_id),
-        datetime(2026, 4, 8, 13, 0, 0, tzinfo=timezone.utc),
-        datetime(2026, 4, 8, 13, 5, 0, tzinfo=timezone.utc),
-        uuid.uuid4(),
-        datetime(2026, 4, 8, 11, 0, 0, tzinfo=timezone.utc),
+        env.team_id,
+        bob.id,
+        datetime(2026, 4, 8, 13, 0, tzinfo=timezone.utc),
+        datetime(2026, 4, 8, 13, 5, tzinfo=timezone.utc),
     )
-    token = _make_jwt(["backend:acme.com"])
-
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        resp = await client.get(
-            "/v1/teams/backend:acme.com/agents",
-            headers={"X-Dashboard-Token": token},
-        )
-
-    assert resp.status_code == 200
+    resp = await env.client.get(
+        f"/v1/teams/{env.team_id}/agents",
+        headers={"X-Dashboard-Token": _make_jwt([env.team_id])},
+    )
+    assert resp.status_code == 200, resp.text
     agents = {a["alias"]: a for a in resp.json()["agents"]}
     assert agents["bob"]["workspace_path"] == "/Users/bob/active"
     assert agents["bob"]["last_seen"] == "2026-04-08T11:00:00+00:00"
 
 
 @pytest.mark.asyncio
-async def test_list_agents_excludes_human_typed_action_attribution_rows(aweb_cloud_db):
-    """Cloud creates aweb.agents rows with agent_type='human' to attribute
-    dashboard actions to a real user (the cowork-<hmac> slug pattern in
-    auth_bridge.py). These records are internal: the user has no useful
-    action to take on them, and seeing the opaque slug labelled as an
-    'agent' alongside their real agents is alarming. list_agents must
-    exclude agent_type='human' rows from every dashboard surface.
-    Mirrors the mcp/tools/agents.py:27 filter discipline.
-    """
-    app = _build_app(aweb_cloud_db.aweb_db)
-    await _seed(aweb_cloud_db.aweb_db)
-    human_attribution_id = uuid.uuid4()
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}} (
-            agent_id, team_id, did_key, did_aw, address, alias, identity_scope, role, status, human_name, agent_type
-        )
-        VALUES
-            ($1, 'backend:acme.com', 'did:key:z6Mkjuan', 'did:aw:juan', NULL, 'cowork-gzo3o2loh252', 'global', 'developer', 'active', 'Juan', 'human')
-        """,
-        human_attribution_id,
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        "UPDATE {{tables.agents}} SET human_verified_key=did_key WHERE agent_id=$1",
-        human_attribution_id,
-    )
-    token = _make_jwt(["backend:acme.com"])
+async def test_list_agents_excludes_human_typed_action_attribution_rows(
+    dashboard_stack,
+):
+    from awid.identity_observation import IdentityKind
+    from messaging_actor_support import admit_messaging_actor
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        resp = await client.get(
-            "/v1/teams/backend:acme.com/agents",
-            headers={"X-Dashboard-Token": token},
-        )
-
-    assert resp.status_code == 200
+    env = dashboard_stack
+    await _seed_dashboard_stack(env)
+    await admit_messaging_actor(
+        env, alias="cowork-gzo3o2loh252", team_id=env.team_id, kind=IdentityKind.HUMAN
+    )
+    resp = await env.client.get(
+        f"/v1/teams/{env.team_id}/agents",
+        headers={"X-Dashboard-Token": _make_jwt([env.team_id])},
+    )
+    assert resp.status_code == 200, resp.text
     aliases = {a["alias"] for a in resp.json()["agents"]}
     assert aliases == {"alice", "bob"}, (
-        f"human-typed cowork-* slug leaked into agent list: {aliases}"
+        f"human-typed attribution row leaked into agent list: {aliases}"
     )
     assert "cowork-gzo3o2loh252" not in aliases
 
 
 @pytest.mark.asyncio
-async def test_agent_detail(aweb_cloud_db):
-    app = _build_app(aweb_cloud_db.aweb_db)
-    await _seed(aweb_cloud_db.aweb_db)
-    token = _make_jwt(["backend:acme.com"])
-
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        resp = await client.get(
-            "/v1/teams/backend:acme.com/agents/alice",
-            headers={"X-Dashboard-Token": token},
-        )
-
-    assert resp.status_code == 200
+async def test_agent_detail(dashboard_stack):
+    env = dashboard_stack
+    await _seed_dashboard_directory(env)
+    resp = await env.client.get(
+        f"/v1/teams/{env.team_id}/agents/alice",
+        headers={"X-Dashboard-Token": _make_jwt([env.team_id])},
+    )
+    assert resp.status_code == 200, resp.text
     data = resp.json()
     assert data["alias"] == "alice"
     assert data["role"] == "developer"
-    assert data["address"] == "acme.com/alice"
+    assert data["address"] == "example.test/alice"
     assert data["agent_type"] == "coder"
 
 
@@ -517,16 +448,11 @@ async def test_claims_unauthorized_returns_403(dashboard_stack):
 
 
 @pytest.mark.asyncio
-async def test_claims_missing_token_returns_401(aweb_cloud_db):
-    app = _build_app(aweb_cloud_db.aweb_db)
-    await _seed(aweb_cloud_db.aweb_db)
-
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        resp = await client.get("/v1/teams/backend:acme.com/claims")
-
-    assert resp.status_code == 401
+async def test_claims_missing_token_returns_401(dashboard_stack):
+    env = dashboard_stack
+    await _seed_dashboard_stack(env)
+    resp = await env.client.get(f"/v1/teams/{env.team_id}/claims")
+    assert resp.status_code == 401, resp.text
 
 
 @pytest.mark.asyncio
@@ -1005,31 +931,22 @@ async def test_unauthorized_team_returns_403(dashboard_stack):
 
 
 @pytest.mark.asyncio
-async def test_missing_token_returns_401(aweb_cloud_db):
-    app = _build_app(aweb_cloud_db.aweb_db)
-
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        resp = await client.get("/v1/teams/backend:acme.com/agents")
-
-    assert resp.status_code == 401
+async def test_missing_token_returns_401(dashboard_stack):
+    env = dashboard_stack
+    await _seed_dashboard_stack(env)
+    resp = await env.client.get(f"/v1/teams/{env.team_id}/agents")
+    assert resp.status_code == 401, resp.text
 
 
 @pytest.mark.asyncio
-async def test_public_team_allows_anonymous_dashboard_reads(aweb_cloud_db):
-    registry_client = _FakeRegistryClient(visibility="public")
-    app = _build_app(aweb_cloud_db.aweb_db, registry_client=registry_client)
-    await _seed(aweb_cloud_db.aweb_db)
-
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        resp = await client.get("/v1/teams/backend:acme.com/agents")
-
-    assert resp.status_code == 200
+async def test_public_team_allows_anonymous_dashboard_reads(dashboard_stack):
+    env = dashboard_stack
+    await _seed_dashboard_stack(env)
+    await env.registry_db.execute("UPDATE {{tables.teams}} SET visibility='public'")
+    resp = await env.client.get(f"/v1/teams/{env.team_id}/agents")
+    assert resp.status_code == 200, resp.text
+    assert {agent["alias"] for agent in resp.json()["agents"]} == {"alice", "bob"}
     assert len(resp.json()["agents"]) == 2
-    assert registry_client.calls == [("acme.com", "backend")]
 
 
 @pytest.mark.asyncio
@@ -1058,21 +975,31 @@ async def test_anonymous_request_reports_upstream_registry_connect_errors_as_503
 
 @pytest.mark.asyncio
 async def test_private_team_with_valid_jwt_does_not_fail_on_registry_lookup_error(
-    aweb_cloud_db,
+    dashboard_stack,
 ):
-    app = _build_app(aweb_cloud_db.aweb_db, registry_client=_FailingRegistryClient())
-    await _seed(aweb_cloud_db.aweb_db)
-    token = _make_jwt(["backend:acme.com"])
+    env = dashboard_stack
+    await _seed_dashboard_stack(env)
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        resp = await client.get(
-            "/v1/teams/backend:acme.com/agents",
-            headers={"X-Dashboard-Token": token},
+    async def fail_at_transport(request):
+        raise RuntimeError("registry visibility transport failed")
+
+    original = env.app.state.awid_registry_client
+    failing = RegistryClient(
+        registry_url="http://registry.test",
+        transport=httpx.MockTransport(fail_at_transport),
+        service_token=original.service_token,
+        domain_verifier=env.registry.namespace_authority,
+    )
+    try:
+        env.app.state.awid_registry_client = failing
+        resp = await env.client.get(
+            f"/v1/teams/{env.team_id}/agents",
+            headers={"X-Dashboard-Token": _make_jwt([env.team_id])},
         )
-
-    assert resp.status_code == 200
+    finally:
+        env.app.state.awid_registry_client = original
+        await failing.aclose()
+    assert resp.status_code == 200, resp.text
     assert len(resp.json()["agents"]) == 2
 
 
@@ -1124,23 +1051,21 @@ async def test_anonymous_request_returns_503_during_partial_init_without_registr
 
 
 @pytest.mark.asyncio
-async def test_authenticated_request_succeeds_during_partial_init_without_registry_client(
-    aweb_cloud_db,
+async def test_authenticated_presence_read_refuses_a_missing_serving_client(
+    dashboard_stack,
 ):
-    app = _build_app(aweb_cloud_db.aweb_db, registry_client=None)
-    await _seed(aweb_cloud_db.aweb_db)
-    token = _make_jwt(["backend:acme.com"])
-
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        resp = await client.get(
-            "/v1/teams/backend:acme.com/agents",
-            headers={"X-Dashboard-Token": token},
-        )
-
-    assert resp.status_code == 200
-    assert len(resp.json()["agents"]) == 2
+    env = dashboard_stack
+    await _seed_dashboard_stack(env)
+    del env.app.state.awid_registry_client
+    resp = await env.client.get(
+        f"/v1/teams/{env.team_id}/agents",
+        headers={"X-Dashboard-Token": _make_jwt([env.team_id])},
+    )
+    assert resp.status_code == 503, resp.text
+    assert resp.json()["detail"]["code"] == "registry_client_unavailable"
+    assert resp.json()["detail"]["message"].endswith(
+        "Configure the serving registry client and start the application before retrying."
+    )
 
 
 @pytest.mark.asyncio
@@ -1166,23 +1091,26 @@ async def test_usage_endpoint(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
-async def test_status_endpoint(aweb_cloud_db):
-    app = _build_app(aweb_cloud_db.aweb_db)
-    await _seed(aweb_cloud_db.aweb_db)
-    token = _make_jwt(["backend:acme.com"])
+async def test_status_endpoint(dashboard_stack):
+    from aweb.presence import clear_workspace_presence
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        resp = await client.get(
-            "/v1/teams/backend:acme.com/status",
-            headers={"X-Dashboard-Token": token},
-        )
-
-    assert resp.status_code == 200
+    env = dashboard_stack
+    await _seed_dashboard_stack(env)
+    await clear_workspace_presence(
+        env.redis, [str(actor.workspace) for actor in env.actors.values()]
+    )
+    await env.db.execute(
+        "UPDATE {{tables.workspaces}} SET last_seen_at=NOW()-INTERVAL '2 hours'"
+    )
+    resp = await env.client.get(
+        f"/v1/teams/{env.team_id}/status",
+        headers={"X-Dashboard-Token": _make_jwt([env.team_id])},
+    )
+    assert resp.status_code == 200, resp.text
     data = resp.json()
-    assert data["team_id"] == "backend:acme.com"
+    assert data["team_id"] == env.team_id
     assert data["agent_count"] == 2
+    assert data["online_agents"] == []
 
 
 @pytest.mark.asyncio
@@ -1286,3 +1214,18 @@ async def _seed_dashboard_stack(env):
         env.team_id,
     )
     return str(alice.id), str(bob.id)
+
+
+async def _seed_dashboard_directory(env):
+    from test_agents_suggest_alias_http import _global_actor
+
+    await _seed_dashboard_stack(env)
+    await _global_actor(env, "alice", address="example.test/alice")
+    await env.db.execute(
+        "UPDATE {{tables.agents}} SET human_name='Alice',agent_type='coder' WHERE agent_id=$1",
+        env.actors["alice"].id,
+    )
+    await env.db.execute(
+        "UPDATE {{tables.agents}} SET human_name='Bob',agent_type='reviewer' WHERE agent_id=$1",
+        env.actors["bob"].id,
+    )
