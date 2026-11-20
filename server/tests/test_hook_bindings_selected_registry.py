@@ -1,9 +1,11 @@
 """Owner acts on an embedded root use its selected serving registry.
 
-The existing real world enrolls the team and authenticates/adopts the member
-through the native constructor. Membership only scopes the request; the actual
-team controller's signed owner act authorizes the binding change (owner-act.md,
-design/audit-substrate.md A3). Pending installation rows confer neither proof.
+The existing real world enrolls the team and admits the member through native
+connect. A host-style auth adapter delegates the actual signed request to the
+native verifier on its initialized state; no principal is manufactured. This
+isolates the owner-act registry consumer from R2's separately tested root-auth
+adapter. Membership only scopes the request; the controller's signed owner act
+authorizes the change (owner-act.md, design/audit-substrate.md A3).
 """
 
 import base64
@@ -19,11 +21,12 @@ from httpx import ASGITransport, AsyncClient
 from awid.registry import RegistryClient
 from awid.signing import sign_message
 from awid.team_certificate import decode_team_certificate
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 
 from aweb.api import RequestBodyCacheMiddleware
 from aweb.hook_bindings import list_app_bindings
 from aweb.routes.hook_bindings import router
+from aweb.routes import hook_bindings as hook_routes
 from aweb_naapp.hooks.owner_act import hook_binding_subject, owner_act_signing_bytes
 from aweb_naapp_testing.network import make_certificates
 from test_hook_binding_activation import _bindings, _install
@@ -58,6 +61,19 @@ async def admitted_world(shared_test_pool, monkeypatch, tmp_path_factory):
         )
         assert admitted.status_code == 200, admitted.text
         assert admitted.json()["agent_id"] == str(actor.id)
+        authenticate = hook_routes.get_team_identity
+
+        async def member_auth(request, db_infra):
+            # The lower R5 auth owner takes its native State. Forward the real
+            # signed request, keeping its cached body and all signed headers.
+            scope = {**request.scope, "app": env.app}
+            identity = await authenticate(Request(scope, receive=request.receive), db_infra)
+            assert identity.agent_id == str(actor.id)
+            assert identity.team_id == TEAM
+            assert identity.did_key == actor.did
+            return identity
+
+        monkeypatch.setattr(hook_routes, "get_team_identity", member_auth)
         yield env
 
 
@@ -130,7 +146,6 @@ async def test_selected_root_activates_and_revokes_actual_owner_act(
     async with aclosing(RegistryClient(registry_url="http://unselected.invalid")) as unselected:
         if shadow:
             root.state.awid_registry_client = unselected
-            monkeypatch.setattr(env.app.state, "awid_registry_client", unselected)
         else:
             assert not hasattr(root.state, "awid_registry_client")
         async with AsyncClient(
