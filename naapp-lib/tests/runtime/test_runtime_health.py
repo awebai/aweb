@@ -158,8 +158,8 @@ class ClosingRelay:
     def __init__(self, host: str, port: int) -> None:
         self._upstream = (host, port)
         self._server: asyncio.AbstractServer | None = None
+        self._closing = False
         self._open: dict[int, asyncio.Event] = {}
-        self._writers: list[asyncio.StreamWriter] = []
         self._handlers: set[asyncio.Task] = set()
         self._failures: list[BaseException] = []
         self.held_closes = 0
@@ -179,10 +179,14 @@ class ClosingRelay:
     async def _accept(
         self, client_reader: asyncio.StreamReader, client_writer: asyncio.StreamWriter
     ) -> None:
+        # Owned before its first await, so close() cancels every handler that
+        # has started; one accepted after close() began is refused.
+        if self._closing:
+            client_writer.close()
+            return
         handler = asyncio.current_task()
         assert handler is not None
         self._handlers.add(handler)
-        self._writers.append(client_writer)
         try:
             await self._relay(client_reader, client_writer)
         except Exception as failure:
@@ -194,47 +198,51 @@ class ClosingRelay:
     async def _relay(
         self, client_reader: asyncio.StreamReader, client_writer: asyncio.StreamWriter
     ) -> None:
+        upstream_writer: asyncio.StreamWriter | None = None
+        port: int | None = None
         try:
-            upstream_reader, upstream_writer = await asyncio.open_connection(*self._upstream)
-        except OSError:
-            # The client meets a closed connection, as it would without the relay.
-            client_writer.close()
-            return
-        self._writers.append(upstream_writer)
-        port = upstream_writer.get_extra_info("sockname")[1]
-        held = self._open[port] = asyncio.Event()
-        server_closed = asyncio.Event()
-
-        async def to_server() -> None:
-            # Once the server has closed a held connection, the client's next
-            # write (or its own close) is the moment it learns it is gone.
-            while data := await client_reader.read(65536):
-                if server_closed.is_set():
-                    break
-                upstream_writer.write(data)
-                await upstream_writer.drain()
-
-        async def to_client() -> None:
-            while data := await upstream_reader.read(65536):
-                client_writer.write(data)
-                await client_writer.drain()
-            server_closed.set()
-            self._open.pop(port, None)
-            if not held.is_set():
-                client_writer.close()
+            try:
+                upstream_reader, upstream_writer = await asyncio.open_connection(*self._upstream)
+            except OSError:
+                # The client meets a closed connection, as without the relay.
                 return
-            async with self._closed:
-                self.held_closes += 1
-                self._closed.notify_all()
+            port = upstream_writer.get_extra_info("sockname")[1]
+            held = self._open[port] = asyncio.Event()
+            server_closed = asyncio.Event()
+            # Bound for the nested pumps, which see the narrowed name.
+            upstream = upstream_writer
 
-        try:
+            async def to_server() -> None:
+                # Once the server has closed a held connection, the client's
+                # next write (or its own close) is the moment it learns it is gone.
+                while data := await client_reader.read(65536):
+                    if server_closed.is_set():
+                        break
+                    upstream.write(data)
+                    await upstream.drain()
+
+            async def to_client() -> None:
+                while data := await upstream_reader.read(65536):
+                    client_writer.write(data)
+                    await client_writer.drain()
+                server_closed.set()
+                self._open.pop(port, None)
+                if not held.is_set():
+                    client_writer.close()
+                    return
+                async with self._closed:
+                    self.held_closes += 1
+                    self._closed.notify_all()
+
             # Both directions run to their end: a reset on one side must not
             # leave the other pumping after the handler returns.
             outcomes = await asyncio.gather(to_server(), to_client(), return_exceptions=True)
         finally:
-            self._open.pop(port, None)
-            for writer in (client_writer, upstream_writer):
-                writer.close()
+            if port is not None:
+                self._open.pop(port, None)
+            client_writer.close()
+            if upstream_writer is not None:
+                upstream_writer.close()
         for outcome in outcomes:
             # A reset is how a terminated or closed connection ends.
             if isinstance(outcome, BaseException) and not isinstance(outcome, OSError):
@@ -245,13 +253,15 @@ class ClosingRelay:
             await self._closed.wait_for(lambda: self.held_closes >= count)
 
     async def close(self) -> None:
-        """Stop accepting, close every relayed connection, wait for each
-        handler to finish, and raise the first failure a handler met."""
+        """Stop accepting, cancel every handler and wait for it (each closes
+        its own sockets), and raise the first failure a handler met."""
+        self._closing = True
         if self._server is not None:
             self._server.close()
-        for writer in self._writers:
-            writer.close()
-        await asyncio.gather(*self._handlers)
+        handlers = list(self._handlers)
+        for handler in handlers:
+            handler.cancel()
+        await asyncio.gather(*handlers, return_exceptions=True)
         if self._server is not None:
             await self._server.wait_closed()
         if self._failures:
