@@ -8,6 +8,8 @@ from datetime import UTC, datetime
 
 import httpx
 import pytest
+from aweb_key_holder.enrollment import Holder
+from aweb_key_holder.http import create_app
 from awid.controller_signing import (
     parse_controller_object,
     parse_controller_request,
@@ -16,9 +18,6 @@ from awid.controller_signing import (
 from policy_inputs import policy_file
 from test_native_holder import call, commit_identity, register_identity
 from test_native_review import first_person, revoke
-
-from aweb_key_holder.enrollment import Holder
-from aweb_key_holder.http import create_app
 
 
 async def request_add(holder, own, target):
@@ -75,7 +74,7 @@ async def test_off_accepts_a_current_person_without_enrollment_and_refuses_agent
     }
     await commit_identity(registry, {"id_chain": own["chain"]}, seed, key)
     assert holder.approval_origin is None and holder.grading is None
-    with holder.store.connection() as db:
+    with holder.store._connection() as db:
         assert db.execute("SELECT count(*) FROM enrollments").fetchone()[0] == 0
     target = await register_identity(registry)
     result = await request_add(holder, own, target)
@@ -142,11 +141,10 @@ async def test_receipt_is_rechecked_after_the_actual_effect_lock_wait(
     import asyncio
     import threading
     import time
-
     from approval_service.canonical import canonical
     from approval_service.encoding import encode
-    from approval_service.grading import EnrollmentGrading
     from approval_service.seams import check_presentation
+    from approval_service.grading import EnrollmentGrading
     from awid.id_certificates import id_certificate_id
 
     if change == "policy":
@@ -176,9 +174,9 @@ async def test_receipt_is_rechecked_after_the_actual_effect_lock_wait(
         while time.time() % 1 < 0.55:
             await asyncio.sleep(0.01)
     start = int(time.time())
-    with holder.store.connection() as db:
+    with holder.store._connection() as db:
         certificate = holder._certificate(
-            holder.store.descriptor_in_transaction(db), target, key, start
+            holder.store._descriptor(db), target, key, start
         )
         request = holder._request(
             db,
@@ -219,7 +217,7 @@ async def test_receipt_is_rechecked_after_the_actual_effect_lock_wait(
     held, release = threading.Event(), threading.Event()
 
     def locker():
-        with holder.store.connection() as db, db:
+        with holder.store._connection() as db, db:
             db.execute("BEGIN IMMEDIATE")
             held.set()
             assert release.wait(10), "test_lock_not_released"
@@ -257,7 +255,7 @@ async def test_receipt_is_rechecked_after_the_actual_effect_lock_wait(
     # A rejected effect cannot issue or consume its nonce. The failed transaction
     # also rolls back the attempted policy audit; it will be applied on the next use.
     assert holder.store.audit() == before
-    with holder.store.connection() as db:
+    with holder.store._connection() as db:
         assert (
             db.execute(
                 "SELECT count(*) FROM consumed WHERE nonce=?",

@@ -3,7 +3,7 @@ name = "aweb-key-holder"
 version = "0.0.0"
 description = "Self-hosted organisation keys and typed controller operations"
 requires-python = ">=3.12"
-dependencies = ["awid-service>=0.5.40rc2", "pynacl>=1.6.2", "aweb-approval-service", "aweb-naapp[webauthn]"]
+dependencies = ["awid-service>=0.5.40rc2", "pynacl>=1.6.2", "aweb-approval-service"]
 
 [project.scripts]
 aweb-key-holder = "aweb_key_holder.cli:main"
@@ -17,27 +17,11 @@ packages = ["src/aweb_key_holder"]
 
 [tool.uv.sources]
 awid-service = { path = "../awid", editable = true }
-aweb-naapp = { path = "../naapp-lib", editable = true }
-aweb-approval-service = { git = "https://github.com/awebai/approval-service.git", rev = "77f1a74e454c81f4634826b4da79a4014ab7a99b" }
+aweb-approval-service = { git = "https://github.com/awebai/approval-service.git", rev = "b22bf7984933e34e63581d67f78f3539bc8b5164" }
 
 [dependency-groups]
-dev = ["pytest>=9.0.0", "pytest-asyncio>=1.2.0", "ruff==0.15.0", "mypy==1.19.1"]
+dev = ["pytest>=9.0.0", "pytest-asyncio>=1.2.0"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 asyncio_default_fixture_loop_scope = "function"
-
-[tool.ruff]
-target-version = "py312"
-
-[tool.ruff.lint]
-select = ["E", "F", "I", "B", "BLE", "UP"]
-ignore = ["E501"]
-
-[tool.mypy]
-python_version = "3.12"
-files = ["src/aweb_key_holder"]
-ignore_missing_imports = true
-warn_unused_configs = true
-check_untyped_defs = true
-disallow_untyped_defs = true

@@ -13,24 +13,22 @@ from approval_service.requester import AdmittedRequester
 from approval_service.seams import check_enrollment_intent, commitment
 from approval_service.verify import Refused as ApprovalRefused
 from authenticator import Passkey
+from aweb_key_holder.auth import Caller
+from aweb_key_holder.enrollment import Holder
+from aweb_key_holder.keys import KeyStore, Refused
 from awid.did import did_from_public_key, generate_keypair, stable_id_from_did_key
 from pending import expire_pending
 from policy_inputs import policy_file
 
-from aweb_key_holder.auth import Caller
-from aweb_key_holder.enrollment import Holder
-from aweb_key_holder.keys import KeyStore, Refused
-from aweb_key_holder.refusals import Refusal
-
 
 @pytest.fixture
-def holder(registry_client, tmp_path):
+def holder(tmp_path):
     store = KeyStore.create(tmp_path / "private", organisation="example.test")
     policy = policy_file(tmp_path / "human-approval.json", store.descriptor().domain)
     return Holder(
         store,
         human_approval_config=policy,
-        registry=registry_client,
+        registry=None,
         origin="https://holder.example",
         approval_origin="https://approval.example",
         rp_id="approval.example",
@@ -91,7 +89,7 @@ def test_bad_creation_proof_cannot_sign_evidence_or_consume_nonce(holder):
         holder.finish_creation(target, {}, issuer=None, **owner(holder, target))
     assert holder.pending(target) == result
     assert len(holder.store.audit()) == 3
-    with holder.store.connection() as db:
+    with holder.store._connection() as db:
         assert db.execute("SELECT count(*) FROM consumed").fetchone()[0] == 0
 
 
@@ -167,7 +165,7 @@ def test_creation_proof_evidence_and_nonce_commit_once_with_real_webauthn_crypto
         == value
     )
     assert holder.store.audit() == audit
-    with holder.store.connection() as db:
+    with holder.store._connection() as db:
         assert db.execute("SELECT count(*) FROM consumed").fetchone()[0] == 1
     # Signed creation evidence alone does not establish public committed identity.
     with pytest.raises(Refused, match="approver_not_active"):
@@ -177,7 +175,7 @@ def test_creation_proof_evidence_and_nonce_commit_once_with_real_webauthn_crypto
 def test_nonce_write_failure_rolls_back_evidence_and_signature_audit(holder):
     target, receipt = creation(holder)
     before = holder.store.audit()
-    with holder.store.connection() as db:
+    with holder.store._connection() as db:
         db.execute(
             "CREATE TRIGGER fail_consumption BEFORE INSERT ON consumed BEGIN SELECT RAISE(ABORT,'consume_failed'); END"
         )
@@ -185,7 +183,7 @@ def test_nonce_write_failure_rolls_back_evidence_and_signature_audit(holder):
     with pytest.raises(sqlite3.IntegrityError, match="consume_failed"):
         holder.finish_creation(target, receipt, issuer=issuer, **owner(holder, target))
     assert holder.store.audit() == before
-    with holder.store.connection() as db:
+    with holder.store._connection() as db:
         assert (
             db.execute(
                 "SELECT evidence FROM enrollments WHERE person=?", (target,)
@@ -232,7 +230,7 @@ def test_live_pending_or_any_evidence_cannot_be_replaced(holder, has_evidence):
         )
         expire_pending(holder, target)
     before = holder.store.audit()
-    with holder.store.connection() as db, db:
+    with holder.store._connection() as db, db:
         db.execute("BEGIN IMMEDIATE")
         row = holder._row(db, target)
         original = parse(row["intent"].encode())["intent"]
@@ -265,9 +263,5 @@ async def test_error_status_distinguishes_input_state_and_authentication(
 ):
     from aweb_key_holder.http import create_app
 
-    try:
-        error = Refused(Refusal(code))
-    except ValueError:
-        error = ApprovalRefused(code)
-    response = await create_app(holder).exception_handlers[Refused](None, error)
+    response = await create_app(holder).exception_handlers[Refused](None, Refused(code))
     assert response.status_code == status

@@ -14,6 +14,7 @@ from typing import Any
 
 from webauthn import (
     generate_registration_options,
+    verify_authentication_response,
     verify_registration_response,
 )
 from webauthn.helpers import options_to_json_dict
@@ -25,8 +26,6 @@ from webauthn.helpers.structs import (
 )
 
 from aweb_naapp.runtime.passkeys.rp import RelyingParty
-from aweb_naapp.webauthn import AssertionFailure, AssertionRefused
-from aweb_naapp.webauthn import verify_assertion as verify_shared_assertion
 
 
 class WebAuthnRefused(Exception):
@@ -104,17 +103,18 @@ def verify_assertion(
     naming any other credential is refused. The caller passes the stored
     credential it chose for the expected subject."""
     try:
-        verified = verify_shared_assertion(
-            proof,
+        verified = verify_authentication_response(
+            credential=dict(proof),
             expected_challenge=challenge,
             expected_rp_id=rp.rp_id,
             expected_origin=rp.origin,
-            public_key=public_key,
-            credential_id=credential_id,
-            sign_count=sign_count,
+            credential_public_key=public_key,
+            credential_current_sign_count=sign_count,
+            require_user_verification=True,
         )
-    except AssertionRefused as exc:
-        if exc.reason is AssertionFailure.CREDENTIAL_MISMATCH:
-            raise WebAuthnRefused("assertion names another credential") from exc
+    # py_webauthn reports a corrupt stored key as a lookup error, not its own.
+    except (WebAuthnException, LookupError, TypeError, ValueError) as exc:
         raise WebAuthnRefused("assertion did not verify") from exc
+    if verified.credential_id != credential_id:
+        raise WebAuthnRefused("assertion names another credential")
     return VerifiedAssertion(new_sign_count=verified.new_sign_count)
