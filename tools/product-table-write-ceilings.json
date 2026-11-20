@@ -167,6 +167,7 @@
     "naapp/secrets/tests/test_use_audit.py": 1,
     "naapp/secrets/tests/test_use_context.py": 1,
     "naapp/secrets/tests/test_use_dispatch_authority.py": 2,
+    "scripts/test-egress/seed_awid_attestation_records.py": 1,
     "server/tests/chat_pair_support.py": 5,
     "server/tests/federation_activation_support.py": 2,
     "server/tests/identity_binding_support.py": 2,
@@ -219,7 +220,7 @@
     "server/tests/test_dashboard.py": 19,
     "server/tests/test_dashboard_privacy.py": 10,
     "server/tests/test_delegated_namespace_contacts.py": 2,
-    "server/tests/test_e2ee_local_sender_read_trust.py": 12,
+    "server/tests/test_e2ee_local_sender_read_trust.py": 11,
     "server/tests/test_events_http.py": 51,
     "server/tests/test_federated_human_chat_refusal.py": 3,
     "server/tests/test_federation_activation_delivery.py": 45,
@@ -322,6 +323,7 @@
     "server/tests/test_verified_installations.py": 6,
     "server/tests/test_workspaces_delete_http.py": 37
   },
+  "marked_files": {},
   "nonliteral_files": {
     "awid/tests/test_id_enrollment_resolution.py": 1,
     "awid/tests/test_schema.py": 4,
@@ -374,6 +376,7 @@
     "naapp/secrets/tests/test_use_context.py": 1,
     "naapp/secrets/tests/test_use_ref_broker.py": 2,
     "naapp/secrets/tests/test_use_ref_run.py": 1,
+    "scripts/test-egress/seed_awid_attestation_records.py": 1,
     "scripts/test_fetch_released_aw.py": 8,
     "scripts/vm-gate/tests/test_executor_metrics.py": 2,
     "server/tests/chat_pair_support.py": 2,
