@@ -121,6 +121,8 @@ async def test_cli_first_contact_human_alias_with_signed_key(
             )
             stdout, stderr = await asyncio.wait_for(process.communicate(), 30)
             assert process.returncode == 1, (stdout, stderr)
+            error_envelope = json.loads(stdout)
+            assert "reason" in error_envelope["error"], error_envelope
             assert json.loads(stdout)["error"]["reason"] == "recipient_human_mail_only"
             await assert_no_delivery()
             assert await privacy_state() == before
