@@ -77,7 +77,10 @@ async def test_same_team_delivery_requires_unrevoked_membership(
     path, payload = (
         ("/v1/messages", {"to_address": recipient.address, "body": "revocation policy"})
         if kind == "mail"
-        else ("/v1/chat/sessions", {"to_dids": [recipient.address], "message": "revocation policy"})
+        else (
+            "/v1/chat/sessions",
+            {"to_addresses": [recipient.address], "message": "revocation policy"},
+        )
     )
     response = await _http(env, sender, "POST", path, payload, identity_only=True)
     expected = 200 if inbound_mode == "open" else 403
