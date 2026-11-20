@@ -18,11 +18,9 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from enum import StrEnum
 from functools import partial
-from ipaddress import IPv4Network, IPv6Network
 from pathlib import Path
 
 import httpx
-from aweb_naapp.egress import Egress
 from aweb_naapp.idempotency import apply_idempotency_migrations
 from aweb_naapp.ratelimit import apply_ratelimit_migrations
 from aweb_naapp.roles import apply_roles_migrations
@@ -34,6 +32,7 @@ from aweb_naapp.runtime.installation import (
     InstallationGrantSource,
     apply_installation_migrations,
 )
+from aweb_naapp.runtime.operator_egress import OperatorEgress
 from aweb_naapp.runtime.origins import OriginApps
 from awid.dns_verify import DomainVerifier
 from fastapi import APIRouter, Depends, FastAPI, HTTPException
@@ -142,10 +141,7 @@ def create_app(
     health_labels: Mapping[str, StrEnum] | None = None,
     awid_transport: httpx.AsyncBaseTransport | None = None,
     awid_domain_verifier: DomainVerifier | None = None,
-    team_server_transport: httpx.AsyncBaseTransport | None = None,
-    hook_egress: Egress | None = None,
-    hook_internal_cidr: IPv4Network | IPv6Network | None = None,
-    hook_internal_origins: frozenset[str] = frozenset(),
+    egress: OperatorEgress | None = None,
     tool_routers: Sequence[ToolRouter] = (),
     prepare: Prepare | None = None,
     console_routers: Sequence[ConsoleRouter] = (),
@@ -175,11 +171,8 @@ def create_app(
         owner_acts_origin=settings.console_origin,
         awid_transport=awid_transport,
         awid_domain_verifier=awid_domain_verifier,
-        team_server_transport=team_server_transport,
-        hook_egress=hook_egress,
-        hook_internal_cidr=hook_internal_cidr,
-        hook_internal_origins=hook_internal_origins,
         stores=STORES,
+        egress=egress,
     )
     checks = {**runtime.health_checks(), "kms": kms}
 

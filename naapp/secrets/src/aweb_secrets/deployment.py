@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
-
 import httpx
 from aweb_naapp.egress.send import Resolver
-from aweb_naapp.runtime.hook_egress import HookEgress, HookEgressSettings
+from aweb_naapp.runtime.operator_egress import OperatorEgress
 from pydantic import Field
 from pydantic_settings import SettingsConfigDict
 
@@ -15,8 +13,9 @@ from aweb_secrets.composition import create_service
 from aweb_secrets.config import ServiceSettings
 
 
-class DeploymentSettings(ServiceSettings, HookEgressSettings):
-    """Explicit hook options; broker trust and switches are independent."""
+class DeploymentSettings(ServiceSettings):
+    """The customer-run service's settings, read from the environment only;
+    broker trust and switches are independent of the operator network."""
 
     model_config = SettingsConfigDict(hide_input_in_errors=True)
 
@@ -32,29 +31,15 @@ def create_deployment(
     *,
     resolver: Resolver | None = None,
     awid_transport: httpx.AsyncBaseTransport | None = None,
-    team_server_transport: httpx.AsyncBaseTransport | None = None,
 ) -> SecretsService:
-    """Build the real root; validate every internal origin before its lifespan."""
+    """Build the real root. The runtime checks every listed internal origin
+    before its lifespan serves anything."""
     settings = settings if settings is not None else DeploymentSettings(_env_file=None)
-    hooks = HookEgress.from_settings(settings, resolver=resolver)
-    service = create_service(
+    return create_service(
         settings,
         awid_transport=awid_transport,
-        team_server_transport=team_server_transport,
-        hook_egress=hooks.egress,
-        hook_internal_cidr=hooks.internal_cidr,
-        hook_internal_origins=hooks.internal_origins,
+        egress=OperatorEgress.from_settings(settings, resolver=resolver),
     )
-    lifespan = service.api_app.router.lifespan_context
-
-    @asynccontextmanager
-    async def checked_lifespan(app):
-        await hooks.preflight()
-        async with lifespan(app) as state:
-            yield state
-
-    service.api_app.router.lifespan_context = checked_lifespan
-    return service
 
 
 def create_app() -> SecretsService:

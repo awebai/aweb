@@ -6,11 +6,10 @@ import asyncio
 import logging
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import timedelta
 from enum import StrEnum
 from functools import partial
-from ipaddress import IPv4Network, IPv6Network
 from typing import Any
 
 import httpx
@@ -44,6 +43,7 @@ from aweb_naapp.runtime.credential_audit import CredentialAudit, GovernanceUnava
 from aweb_naapp.runtime.health import CheckResult
 from aweb_naapp.runtime.human_role_acts import HumanRoleActs
 from aweb_naapp.runtime.installation import AdmittedInstallation
+from aweb_naapp.runtime.operator_egress import OperatorEgress
 from aweb_naapp.runtime.owner_act_delivery import OwnerActEffectResult
 from aweb_naapp.runtime.owner_act_router import OwnerActLimiter, mount_owner_act_routes
 from aweb_naapp.runtime.passkeys import Passkeys, RelyingParty
@@ -515,12 +515,11 @@ def create_service(
     *,
     awid_transport: httpx.AsyncBaseTransport | None = None,
     awid_domain_verifier: DomainVerifier | None = None,
-    team_server_transport: httpx.AsyncBaseTransport | None = None,
-    hook_egress: Egress | None = None,
-    hook_internal_cidr: IPv4Network | IPv6Network | None = None,
-    hook_internal_origins: frozenset[str] = frozenset(),
+    egress: OperatorEgress | None = None,
 ) -> SecretsService:
-    """The production entry point; construction and startup require every dependency."""
+    """The production entry point; construction and startup require every
+    dependency. ``egress`` is the app's guard for hook deliveries and
+    team-server reads, built from ``settings`` by default."""
     key_files = {
         "secret_request_key_file": settings.secret_request_key_file,
         "secret_params_key_file": settings.secret_params_key_file,
@@ -625,23 +624,6 @@ def create_service(
 
         return build
 
-    if hook_egress is None:
-        hook_egress = Egress(
-            addresses=AddressPolicy(denied=settings.egress_denied_networks),
-            resolver=DnsResolver(),
-            user_agent="aweb-naapp/hooks",
-        )
-    else:
-        hook_egress = replace(
-            hook_egress,
-            addresses=replace(
-                hook_egress.addresses,
-                denied=tuple(
-                    dict.fromkeys((*hook_egress.addresses.denied, *settings.egress_denied_networks))
-                ),
-            ),
-        )
-
     return create_app(
         settings,
         policy=tool_policy,
@@ -649,10 +631,7 @@ def create_service(
         health_labels={"custody_mode": custody_mode},
         awid_transport=awid_transport,
         awid_domain_verifier=awid_domain_verifier,
-        team_server_transport=team_server_transport,
-        hook_egress=hook_egress,
-        hook_internal_cidr=hook_internal_cidr,
-        hook_internal_origins=hook_internal_origins,
+        egress=egress if egress is not None else OperatorEgress.from_settings(settings),
         prepare=prepare,
         tool_routers=(metadata, uses, contain),
         handoff_router=lambda rt: current().handoffs.api_router(),

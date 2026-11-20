@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Literal, Self
 
 from aweb_naapp.egress import InternalDestinations
-from aweb_naapp.runtime.hook_egress import EgressDeniedNetworks
 from aweb_naapp.runtime.settings import NaappSettings
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import SettingsConfigDict
@@ -44,7 +43,7 @@ class SecretsSettings(NaappSettings):
         return value
 
 
-class ServiceSettings(SecretsSettings, EgressDeniedNetworks):
+class ServiceSettings(SecretsSettings):
     """Inputs to the production root; private material is supplied only by file."""
 
     custody_key_file: Path | None = None

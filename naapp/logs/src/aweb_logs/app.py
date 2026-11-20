@@ -28,7 +28,7 @@ from aweb_naapp.runtime.app import NaappRuntime, mount_manifest_routes
 from aweb_naapp.runtime.app_keys import AppKeyError, load_app_key
 from aweb_naapp.runtime.authorization import DeclaredTool
 from aweb_naapp.runtime.health import mount_health
-from aweb_naapp.runtime.hook_egress import HookEgress
+from aweb_naapp.runtime.operator_egress import OperatorEgress
 from aweb_naapp.runtime.origins import OriginApps
 from aweb_naapp.runtime.passkeys.email import PasskeyEmailDelivery
 from aweb_naapp.runtime.team_auth import Principal
@@ -104,15 +104,15 @@ async def admit_members(request: Request, principal: Principal, tool: DeclaredTo
 
 def create_runtime(
     settings: LogsSettings,
-    hooks: HookEgress,
+    egress: OperatorEgress,
     *,
     awid_transport: httpx.AsyncBaseTransport | None = None,
     awid_txt_resolver: TXTOutcomeResolver | None = None,
-    team_server_transport: httpx.AsyncBaseTransport | None = None,
     awid_domain_verifier: DomainVerifier | None = None,
 ) -> NaappRuntime:
     """logs' runtime: its schema, its manifest, with the reader role its owner
-    designates on the console origin, and its hook events leaving through ``hooks``."""
+    designates on the console origin, its hook events and team-server reads
+    leaving through ``egress``."""
     return NaappRuntime(
         settings,
         module_name=MIGRATIONS_MODULE,
@@ -123,10 +123,7 @@ def create_runtime(
         awid_transport=awid_transport,
         awid_txt_resolver=awid_txt_resolver,
         awid_domain_verifier=awid_domain_verifier,
-        team_server_transport=team_server_transport,
-        hook_egress=hooks.egress,
-        hook_internal_cidr=hooks.internal_cidr,
-        hook_internal_origins=hooks.internal_origins,
+        egress=egress,
     )
 
 
@@ -136,24 +133,22 @@ def create_app(
     email: EmailSettings,
     awid_transport: httpx.AsyncBaseTransport | None = None,
     awid_txt_resolver: TXTOutcomeResolver | None = None,
-    team_server_transport: httpx.AsyncBaseTransport | None = None,
     resolver: Resolver | None = None,
     awid_domain_verifier: DomainVerifier | None = None,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> OriginApps:
     """logs on its public origin and its console origin. ``email`` sends the
-    enrolment links of designated readers. Hook events leave through the guard
-    the settings configure; ``resolver`` replaces its DNS resolver, and
+    enrolment links of designated readers. Hook events and team-server reads
+    leave through the guard the settings configure; ``resolver`` replaces its
+    DNS resolver, and
     ``awid_domain_verifier`` the DNS check of an AWID domain's authority.
     ``awid_txt_resolver`` answers the ``_awid`` records that name who may move
     a pinned team key (system DNS by default)."""
-    hooks = HookEgress.from_settings(settings, resolver=resolver)
     runtime = create_runtime(
         settings,
-        hooks,
+        OperatorEgress.from_settings(settings, resolver=resolver),
         awid_transport=awid_transport,
         awid_txt_resolver=awid_txt_resolver,
-        team_server_transport=team_server_transport,
         awid_domain_verifier=awid_domain_verifier,
     )
     signer = chain_signer(settings, runtime.manifest)
@@ -183,7 +178,6 @@ def create_app(
     async def lifespan(api: FastAPI) -> AsyncIterator[None]:
         api_routes, console_routes = list(api.routes), list(console.routes)
         try:
-            await hooks.preflight()
             async with runtime.lifespan(api), connected(purges.db):
                 # Before anything is served: a restored content database
                 # holds no content purged after its backup.

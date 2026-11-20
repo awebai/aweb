@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Self
 from urllib.parse import urlsplit
 
-from aweb_naapp.runtime.hook_egress import HookEgressSettings
 from aweb_naapp.runtime.settings import NaappSettings
 from pydantic import Field, model_validator
 from pydantic_settings import SettingsConfigDict
@@ -13,7 +12,7 @@ from pydantic_settings import SettingsConfigDict
 from aweb_logs.ingest import ClientQuota
 
 
-class LogsSettings(NaappSettings, HookEgressSettings):
+class LogsSettings(NaappSettings):
     model_config = SettingsConfigDict(env_prefix="LOGS_", env_file=".env", extra="ignore")
 
     app_id: str = Field(default="logs")
