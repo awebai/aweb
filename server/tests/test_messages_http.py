@@ -5080,7 +5080,7 @@ async def test_receive_old_v1_federated_mail_ignores_deprecated_fields_and_deliv
     assert row["from_did"] == alice.stable_id
     assert row["to_did"] == bob.stable_id
     assert row["from_address"] == alice.address
-    assert row["to_agent_id"] is None
+    assert row["to_agent_id"] == UUID(bob.agent_id)
     assert row["signature"] == payload["signature"]
     assert row["signed_payload"] == envelope["signed_payload"]
     participants = await _conversation_participants(
