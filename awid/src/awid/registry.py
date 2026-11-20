@@ -580,7 +580,7 @@ class RegistryClient:
             )
             return default_registry_url
         except DnsVerificationError as exc:
-            logger.warning("AWID registry discovery refused for %s: %s", domain, exc)
+            logger.warning("AWID registry discovery refused for %s: %r", domain, exc)
             raise RegistryError(
                 f"AWID registry discovery is invalid for {domain}. "
                 "Correct the domain's _awid TXT record and retry.",

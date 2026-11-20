@@ -97,7 +97,8 @@ async def test_sdk_address_absence_is_coded_and_old_negative_cache_is_not_author
             key = client._address_cache_key(
                 domain, "person", registry_url=state["origin"], caller_did_key=None
             )
-            legacy = key.replace(":v3:address:", ":v2:address:")
+            legacy = key.replace(":v4:address:", ":v3:address:")
+            assert legacy != key
             await client._write_cache_entry(
                 legacy, value=None, ttl_seconds=60, encode=lambda value: value
             )
@@ -244,9 +245,10 @@ async def test_revocation_scan_requires_a_complete_success_not_404(
         CachedRegistryClient(state["origin"], redis) if cached else RegistryClient(state["origin"])
     )
     key = client._team_revocations_cache_key(domain, "ops") if cached else None
-    legacy = key.replace(":v2:team_revocations:", ":v1:team_revocations:") if cached else None
+    legacy = key.replace(":v3:team_revocations:", ":v2:team_revocations:") if cached else None
     try:
         if cached:
+            assert legacy != key
             # An old client could stamp an uncoded 404 as a fresh empty set.
             await client._write_cache_entry(legacy, value=set(), ttl_seconds=60, encode=sorted)
         if stage == "first":

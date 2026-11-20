@@ -146,27 +146,31 @@ class ForwardToService(httpx.AsyncBaseTransport):
 
 
 @pytest.mark.asyncio
-async def test_registry_visibility_follows_the_domain_registry(service_client, controller_identity):
+async def test_registry_visibility_pins_the_configured_registry(
+    service_client, controller_identity
+):
     key, _, _ = await _team(service_client, controller_identity)
     domains = []
 
     async def resolve(domain):
         domains.append(domain)
-        return "http://testserver"
+        return "http://foreign-registry.example"
 
     transport = ForwardToService(service_client)
     registry = _registry(
         service_client,
         transport=transport,
-        registry_url="http://home-registry.example",
+        registry_url="http://testserver",
         domain_registry_resolver=resolve,
     )
     try:
         assert (
             await registry.set_team_visibility(DOMAIN, NAME, "public", key)
         ).visibility == "public"
-        assert domains == [DOMAIN]
+        assert domains == []
         assert transport.hosts == ["testserver"]
+        assert await registry.registry_audience(DOMAIN) == "http://foreign-registry.example"
+        assert domains == [DOMAIN]
     finally:
         await registry.aclose()
 
@@ -292,25 +296,27 @@ async def test_registry_delete_requires_namespace_controller(
 
 
 @pytest.mark.asyncio
-async def test_registry_delete_follows_domain_registry(service_client, controller_identity):
+async def test_registry_delete_pins_the_configured_registry(service_client, controller_identity):
     await _team(service_client, controller_identity)
     domains = []
 
     async def resolve(domain):
         domains.append(domain)
-        return "http://testserver"
+        return "http://foreign-registry.example"
 
     transport = ForwardToService(service_client)
     registry = _registry(
         service_client,
         transport=transport,
-        registry_url="http://home-registry.example",
+        registry_url="http://testserver",
         domain_registry_resolver=resolve,
     )
     try:
         assert (await registry.delete_team(DOMAIN, NAME, controller_identity[0]))["deleted"] is True
-        assert domains == [DOMAIN]
+        assert domains == []
         assert transport.hosts == ["testserver"]
+        assert await registry.registry_audience(DOMAIN) == "http://foreign-registry.example"
+        assert domains == [DOMAIN]
     finally:
         await registry.aclose()
 
