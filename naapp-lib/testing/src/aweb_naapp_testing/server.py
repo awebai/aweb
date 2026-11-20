@@ -168,32 +168,73 @@ async def coordination(
 
 
 class Listener:
-    """A local socket, bound now so its origin is known before the app it will
-    serve exists (a service names its own public origin at construction)."""
+    """A local port serving one app over real HTTP.
+
+    The port is bound at construction, so its origin is known before the app
+    exists (a service names its own public origin when it is built).
+    :meth:`down` takes the service off the network for a while, as an outage
+    does, and serves it again on the same port."""
 
     def __init__(self, host: str = "127.0.0.1", *, name: str | None = None) -> None:
-        self._socket = socket.socket()
-        self._socket.bind((host, 0))
-        self.origin = f"http://{name or host}:{self._socket.getsockname()[1]}"
+        self._host = host
+        self._socket: socket.socket | None = self._bind(0)
+        self.port = self._socket.getsockname()[1]
+        self.origin = f"http://{name or host}:{self.port}"
+        self._app: Any = None
+        self._server: uvicorn.Server | None = None
+        self._serving: asyncio.Task[None] | None = None
+
+    def _bind(self, port: int) -> socket.socket:
+        sock = socket.socket()
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind((self._host, port))
+        return sock
+
+    async def _start(self) -> None:
+        if self._socket is None:
+            self._socket = self._bind(self.port)
+        server = uvicorn.Server(
+            uvicorn.Config(self._app, lifespan="off", log_level="error", ws="none")
+        )
+        serving = asyncio.create_task(server.serve(sockets=[self._socket]))
+        for _ in range(250):
+            if server.started or serving.done():
+                break
+            await asyncio.sleep(0.02)
+        if not server.started:
+            if serving.done():
+                serving.result()
+            raise RuntimeError(f"the listener at {self.origin} did not start")
+        self._server, self._serving = server, serving
+
+    async def _stop(self) -> None:
+        if self._server is not None and self._serving is not None:
+            self._server.should_exit = True
+            await asyncio.wait_for(self._serving, 5)
+        self._server = self._serving = None
+        if self._socket is not None:
+            self._socket.close()
+            self._socket = None
 
     @asynccontextmanager
     async def serving(self, app: Any) -> AsyncIterator[str]:
-        """Serves ``app`` over real HTTP on this socket; yields its origin."""
-        server = uvicorn.Server(uvicorn.Config(app, lifespan="off", log_level="error", ws="none"))
-        serving = asyncio.create_task(server.serve(sockets=[self._socket]))
+        """Serves ``app`` on this port until the context exits; yields its origin."""
+        self._app = app
+        await self._start()
         try:
-            for _ in range(250):
-                if server.started or serving.done():
-                    break
-                await asyncio.sleep(0.02)
-            if not server.started:
-                serving.result() if serving.done() else None
-                raise RuntimeError(f"the listener at {self.origin} did not start")
             yield self.origin
         finally:
-            server.should_exit = True
-            await asyncio.wait_for(serving, 5)
-            self._socket.close()
+            await self._stop()
+
+    @asynccontextmanager
+    async def down(self) -> AsyncIterator[None]:
+        """Nothing listens on this port inside the context; afterwards the app
+        is served there again."""
+        await self._stop()
+        try:
+            yield
+        finally:
+            await self._start()
 
 
 @dataclass
@@ -203,6 +244,8 @@ class ListeningCoordination(Coordination):
 
     registry_url: str = ""
     dns: DnsServer | None = None
+    registry_listener: Listener | None = None
+    server_listener: Listener | None = None
 
     async def add_member(self, member: Member) -> None:
         """Registers the member as :meth:`Coordination.add_member` does, and
@@ -263,4 +306,6 @@ async def listening_coordination(
             server_database_url=server_db.config.get_dsn(),
             registry_url=registry_url,
             dns=dns,
+            registry_listener=registry_listener,
+            server_listener=server_listener,
         )

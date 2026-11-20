@@ -13,14 +13,14 @@ from aweb_naapp.runtime.app import NaappRuntime
 from aweb_naapp.runtime.clock import seconds_to_ns
 from playwright.async_api import expect
 from test_live_refresh import live_browser, live_world
-from test_present_privacy import OWNER, assert_private, mint, present_world
+from test_present_privacy import assert_private, mint, present_world
 
 __all__ = ["live_browser", "live_world", "present_world"]
 HEADER = "X-Folio-Edit-Session"
 
 
 async def test_editor_social_card_uses_the_configured_public_origin(present_world, session_http):
-    _, _, settings = present_world
+    settings = present_world.settings
     assert settings.public_origin != "https://folio.aweb.ai"
     link = await mint(present_world)
     response = await session_http.get(urlsplit(link["url"]).path)
@@ -45,7 +45,7 @@ async def exchange(client, link):
 
 @pytest.fixture
 async def session_http(present_world):
-    app, _, _ = present_world
+    app = present_world.app
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://folio.test"
     ) as client:
@@ -69,7 +69,7 @@ async def test_fragment_opener_get_is_inert_and_double_exchange_is_atomic(
         *[session_http.post(path + "/session", json={"opener": opener}) for _ in range(2)]
     )
     assert sorted(r.status_code for r in responses) == [200, 404]
-    _, db, _ = present_world
+    db = present_world.db
     row = await db.fetch_one("SELECT COUNT(*) AS n FROM {{tables.edit_sessions}}")
     assert row["n"] == 1
     winner = next(r.json() for r in responses if r.status_code == 200)
@@ -83,7 +83,7 @@ async def test_fragment_opener_get_is_inert_and_double_exchange_is_atomic(
 async def test_session_outlives_opener_and_revoke_still_ends_it(present_world, session_http):
     link = await mint(present_world)
     path, secret = await exchange(session_http, link)
-    _, db, _ = present_world
+    db = present_world.db
     await db.execute(
         "UPDATE {{tables.presentation_links}} SET created_at=NOW()-interval '340 seconds', expires_at=NOW()-interval '40 seconds' WHERE token=$1",
         link["token"],
@@ -97,7 +97,7 @@ async def test_session_outlives_opener_and_revoke_still_ends_it(present_world, s
     assert saved.status_code == 200
     from folio.repository import revoke_presentation_link
 
-    await revoke_presentation_link(db, principal=OWNER, token=link["token"])
+    await revoke_presentation_link(db, principal=present_world.principal, token=link["token"])
     assert (await session_http.get(path + "/state", headers=headers)).status_code == 404
     assert (
         await session_http.post(
@@ -150,7 +150,7 @@ async def test_session_is_header_only_and_bound_to_document(present_world, sessi
     assert (
         await session_http.get(other_path + "/state", headers={HEADER: secret})
     ).status_code == 404
-    _, db, _ = present_world
+    db = present_world.db
     await db.execute("DELETE FROM {{tables.documents}} WHERE slug='draft'")
     assert (await session_http.get(path + "/state", headers={HEADER: secret})).status_code == 404
 
@@ -170,7 +170,8 @@ async def test_session_preview_sanitizes_and_resume_survives_another_app(
     assert preview.status_code == 200
     assert "<h1>Heading</h1>" in preview.text and "<strong>bold</strong>" in preview.text
     assert "<script" not in preview.text and "alert(" not in preview.text
-    _, db, settings = present_world
+    db = present_world.db
+    settings = present_world.settings
     # A fresh process/runtime would have only this migrated DB, not session memory.
     restarted = create_app(settings)
     for route in restarted.routes:
@@ -210,7 +211,7 @@ async def test_real_server_refusal_and_exception_do_not_log_credentials(
                 path + "/preview", headers={HEADER: secret}, json={"body": "Draft"}
             )
             assert failed.status_code == 500
-            _, db, _ = live_world
+            db = live_world.db
             await db.execute(
                 "UPDATE {{tables.presentation_links}} SET revoked_at=NOW() WHERE token=$1",
                 link["token"],
@@ -256,7 +257,7 @@ async def test_browser_background_reload_and_revoke_keep_the_draft(live_world, l
     await page.evaluate(
         "Object.defineProperty(document, 'hidden', {configurable:true, value:true}); document.dispatchEvent(new Event('visibilitychange'))"
     )
-    _, db, _ = live_world
+    db = live_world.db
     await db.execute(
         "UPDATE {{tables.presentation_links}} SET created_at=NOW()-interval '340 seconds', expires_at=NOW()-interval '40 seconds' WHERE token=$1",
         link["token"],
@@ -283,10 +284,10 @@ async def test_browser_background_reload_and_revoke_keep_the_draft(live_world, l
 
 
 async def test_session_bootstrap_retains_team_theme(present_world, session_http):
-    _, db, _ = present_world
+    db = present_world.db
     await db.execute(
         "INSERT INTO {{tables.themes}} (team_id,tokens,header,footer) VALUES ($1,$2::jsonb,$3,$4)",
-        OWNER.team_id,
+        present_world.principal.team_id,
         '{"colors":{"background":"#123456"}}',
         "Team header",
         "Team footer",
@@ -307,7 +308,7 @@ async def test_phone_bootstrap_reports_wait_and_retry_before_enabling_editor(
     from fastapi import HTTPException
 
     origin, browser = live_browser
-    app, _, _ = live_world
+    app = live_world.app
     link = await mint(live_world)
     parts = urlsplit(link["url"])
     held, release = asyncio.Event(), asyncio.Event()

@@ -13,10 +13,12 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+from collections.abc import Generator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import httpx
 from awid.attestation_records import ATTESTATION_HEADER, encode_attestation_header
 from awid.did import did_from_public_key
 from awid.signing import canonical_json_bytes, sign_message
@@ -33,6 +35,7 @@ __all__ = [
     "REGISTRY_URL",
     "SERVICE_TOKEN",
     "Member",
+    "MemberAuth",
     "RecordingTransport",
     "Registry",
     "attested",
@@ -119,6 +122,30 @@ class Member:
             signed_payload=canonical,
             cert=cert if cert is not None else self.certificate(),
         )
+
+
+class MemberAuth(httpx.Auth):
+    """Signs every request as ``member``, with team-auth v2, for ``audience``:
+    the app's public origin, which the app checks as its own whatever address
+    the request reaches it at. The signed path is the raw request target,
+    query included, as the receiving app reads it."""
+
+    requires_request_body = True
+
+    def __init__(self, member: Member, *, audience: str) -> None:
+        self.member = member
+        self.audience = audience
+
+    def auth_flow(self, request: httpx.Request) -> Generator[httpx.Request, httpx.Response, None]:
+        request.headers.update(
+            self.member.headers(
+                aud=self.audience,
+                method=request.method,
+                path=request.url.raw_path.decode("ascii"),
+                body=request.content,
+            )
+        )
+        yield request
 
 
 def attested(

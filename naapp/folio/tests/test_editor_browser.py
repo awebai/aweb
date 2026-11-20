@@ -16,7 +16,7 @@ from urllib.parse import urlsplit
 import pytest
 import uvicorn
 from playwright.async_api import async_playwright, expect
-from test_present_privacy import OWNER, mint, present_world
+from test_present_privacy import mint, present_world
 
 from folio.presentation import contrast_ratio, theme_contrast_error
 
@@ -31,12 +31,13 @@ __all__ = ["present_world"]
 async def test_editor_uses_default_and_custom_computed_fonts(
     present_world, fonts, body_family, heading_family
 ):
-    app, db, _ = present_world
+    app = present_world.app
+    db = present_world.db
     await db.execute("UPDATE {{tables.document_versions}} SET body=$1", "# Shared heading\n\nDraft text.")
     if fonts:
         await db.execute(
             "INSERT INTO {{tables.themes}} (team_id,tokens) VALUES ($1,$2::jsonb)",
-            OWNER.team_id, json.dumps({"fonts": fonts}),
+            present_world.principal.team_id, json.dumps({"fonts": fonts}),
         )
     link = await mint(present_world)
     with socket.socket() as listener:
@@ -75,14 +76,15 @@ async def test_editor_uses_default_and_custom_computed_fonts(
 
 @pytest.mark.parametrize("scheme", ["light", "dark", "auto"])
 async def test_editor_controls_reflow_and_honour_validated_theme(present_world, scheme):
-    app, db, _ = present_world
+    app = present_world.app
+    db = present_world.db
     tokens = {} if scheme == "light" else {"layout": {"color_scheme": scheme}}
     if scheme != "auto":
         tokens["colors"] = {"text": "#17191c" if scheme == "light" else "#f7f8fb"}
     assert theme_contrast_error(tokens) is None
     await db.execute(
         "INSERT INTO {{tables.themes}} (team_id,tokens) VALUES ($1,$2::jsonb)",
-        OWNER.team_id, json.dumps(tokens),
+        present_world.principal.team_id, json.dumps(tokens),
     )
     link = await mint(present_world)
     with socket.socket() as listener:
@@ -123,7 +125,8 @@ async def test_editor_controls_reflow_and_honour_validated_theme(present_world, 
 
 @pytest.mark.parametrize("failure", ["membership", "revoked"])
 async def test_unavailable_save_preserves_copyable_draft_and_reopen_path(present_world, failure):
-    app, db, _ = present_world
+    app = present_world.app
+    db = present_world.db
     link = await mint(present_world, ttl_seconds=300)
     access = io.StringIO()
     access_handler = logging.StreamHandler(access)

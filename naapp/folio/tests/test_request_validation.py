@@ -1,14 +1,15 @@
 """Request validation on the real Folio routes and a disposable PostgreSQL DB.
 
-Only the authenticated-principal dependency is supplied directly: these checks
-isolate payload handling, not team-auth verification. Repository writes are real.
+Requests are signed by a real AWID member (``MemberAuth``) and verified by
+Folio's own team auth; repository writes are real.
 """
 
 from __future__ import annotations
 
 import httpx
 import pytest
-from test_present_privacy import OWNER, mint, present_world
+from aweb_naapp_testing import MemberAuth
+from test_present_privacy import mint, present_world
 
 __all__ = ["present_world"]
 
@@ -36,12 +37,15 @@ CASES = [
 
 @pytest.fixture
 async def member_world(present_world):
-    app, _, _ = present_world
-    for route in app.routes:
-        for dependency in getattr(getattr(route, "dependant", None), "dependencies", ()):
-            if dependency.name == "actor":
-                app.dependency_overrides[dependency.call] = lambda: OWNER
     return present_world
+
+
+def _member_client(world) -> httpx.AsyncClient:
+    return httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=world.app, raise_app_exceptions=False),
+        base_url=world.settings.public_origin,
+        auth=MemberAuth(world.member, audience=world.settings.public_origin),
+    )
 
 
 async def _counts(db):
@@ -60,14 +64,11 @@ async def _counts(db):
 async def test_invalid_body_returns_standard_422_without_writing(
     member_world, method, path, payload, field
 ):
-    app, db, _ = member_world
+    db = member_world.db
     link = await mint(member_world)
     path = path.format(token=link["token"])
     before = await _counts(db)
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app, raise_app_exceptions=False),
-        base_url="http://folio.test",
-    ) as client:
+    async with _member_client(member_world) as client:
         response = await client.request(method, path, json=payload)
     assert response.status_code == 422, response.text
     detail = response.json()["detail"]
@@ -83,11 +84,9 @@ async def test_invalid_body_returns_standard_422_without_writing(
 
 @pytest.mark.parametrize("length", [208, 240])
 async def test_valid_title_boundary_still_saves(member_world, length):
-    app, db, _ = member_world
+    db = member_world.db
     title = "T" * length
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://folio.test"
-    ) as client:
+    async with _member_client(member_world) as client:
         response = await client.post(
             "/v1/documents", json={"slug": "valid-title", "title": title, "body": "Content"}
         )
@@ -97,12 +96,9 @@ async def test_valid_title_boundary_still_saves(member_world, length):
 
 
 async def test_malformed_json_uses_standard_422(member_world):
-    app, db, _ = member_world
+    db = member_world.db
     before = await _counts(db)
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app, raise_app_exceptions=False),
-        base_url="http://folio.test",
-    ) as client:
+    async with _member_client(member_world) as client:
         response = await client.post(
             "/v1/documents", content='{"title":', headers={"content-type": "application/json"}
         )
