@@ -357,8 +357,9 @@ func TestOATSValidationUsesPublishedCLIWithoutIdentity(t *testing.T) {
 	t.Parallel()
 	bin, dir := buildDoctorBinary(t)
 	for _, test := range []struct{ kind, input, canonical, remedy string }{
-		{kind: "alias", input: " Worker-1 ", canonical: "Worker-1"},
-		{kind: "alias", input: "bad/name", remedy: "Use 1 to 64 letters, digits, underscores or hyphens, starting with a letter or digit."},
+		{kind: "alias", input: " Worker-1 ", canonical: "worker-1"},
+		{kind: "alias", input: "a.b", canonical: "a.b"},
+		{kind: "alias", input: "bad/name", remedy: "Use a nonempty enrollment alias without '/' and retry."},
 		{kind: "team-id", input: "Backend:Example.COM", canonical: "backend:example.com"},
 		{kind: "team-id", input: "missing-colon", remedy: "Use a team ID in name:domain form."},
 		{kind: "team-server-url", input: "https://example.com/aw/api", canonical: "https://example.com/aw/api"},
@@ -389,7 +390,7 @@ func TestOATSValidationUsesPublishedCLIWithoutIdentity(t *testing.T) {
 	}
 }
 
-func TestOATSWakeReadinessReportsUnavailableControlWithoutClaimingReadiness(t *testing.T) {
+func TestOATSWakeReadinessReportsProvenAbsenceWithoutClaimingReadiness(t *testing.T) {
 	t.Parallel()
 	bin, dir := buildDoctorBinary(t)
 	cmd := exec.Command(bin, "wake", "status", "--home", dir, "--min-daemon-version", "1.36.13", "--json")
@@ -401,16 +402,18 @@ func TestOATSWakeReadinessReportsUnavailableControlWithoutClaimingReadiness(t *t
 		t.Fatalf("wake status: %v\n%s\n%s", err, stdout.String(), stderr.String())
 	}
 	var result struct {
-		Readiness struct {
-			Ready bool   `json:"ready"`
-			Code  string `json:"code"`
+		ControlError string `json:"control_error"`
+		Readiness    struct {
+			Ready  bool   `json:"ready"`
+			Code   string `json:"code"`
+			Reason string `json:"reason"`
 		} `json:"readiness"`
 	}
 	if err := json.Unmarshal([]byte(stdout.String()), &result); err != nil {
 		t.Fatal(err)
 	}
-	if result.Readiness.Ready || result.Readiness.Code != "daemon_unavailable" {
-		t.Fatalf("unavailable control readiness: %s", stdout.String())
+	if result.Readiness.Ready || result.Readiness.Code != "daemon_not_running" || result.ControlError == "" || result.Readiness.Reason != "Start the wake service, then rerun aw wake status." {
+		t.Fatalf("proved absence readiness: %s", stdout.String())
 	}
 }
 
@@ -456,24 +459,23 @@ func TestOATSRevokeUnusedLocalInviteAndReportConsumed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("absent cancellation is idempotent: %v\n%s", err, out)
 	}
-	if !strings.Contains(string(out), "absent") || !strings.Contains(string(out), "may already have been used") {
+	var absent inviteCancellationOutput
+	if json.NewDecoder(strings.NewReader(string(out))).Decode(&absent) != nil || absent.Code != "invite_absent" || absent.Status != inviteAbsent || absent.Message != "No pending local invite is stored here; it may already have been used. This does not revoke an issued certificate." {
 		t.Fatalf("absent did not distinguish used: %s", out)
 	}
 	// An existing secret-free tombstone establishes consumption; unlike an
 	// absent legacy record it must never be described as a cancelled invite.
-	data, err := json.Marshal(map[string]any{"invite_id": "used-test-invite", "domain": "example.com", "team_name": "one", "identity_scope": "local", "created_at": invite.CreatedAt, "consumed_at": invite.CreatedAt})
-	if err != nil {
+	used := *invite
+	used.InviteID = "used-test-invite"
+	if err := awconfig.SaveTeamInvite(&used); err != nil {
 		t.Fatal(err)
 	}
-	store, err := awconfig.DefaultTeamInvitesDir()
-	if err != nil {
+	if err := awconfig.ConsumeTeamInvite(awconfig.ConsumeTeamInviteInput{InviteID: used.InviteID, Now: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(store, "used-test-invite.json"), data, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	out, err = run("used-test-invite")
-	if err == nil || !strings.Contains(string(out), "invite_already_used") || !strings.Contains(string(out), "aw id team remove-member") {
+	out, err = run(used.InviteID)
+	var consumed inviteCancellationOutput
+	if err == nil || json.NewDecoder(strings.NewReader(string(out))).Decode(&consumed) != nil || consumed.Code != "invite_already_used" || consumed.Status != inviteAlreadyUsed || !strings.HasPrefix(consumed.NextStep, "aw id team remove-member ") {
 		t.Fatalf("used is not cancelled: %v\n%s", err, out)
 	}
 	childStore := awconfig.IDInvitationFileStore{Dir: awconfig.IdentityInvitationsDir(filepath.Join(dir, "issuer"))}

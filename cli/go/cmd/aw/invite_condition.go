@@ -205,7 +205,7 @@ func issuedInvitePersistenceRefusal(failure issuedInvitePersistenceFailure) erro
 		"--team", failure.Invite.TeamName, "--cert-id", failure.Certificate.CertificateID,
 		"--registry", failure.RegistryURL,
 	})
-	return withErrorCode("certificate_persistence_incomplete", fmt.Errorf("membership certificate %s was issued but could not be saved: %w; retain the recipient key, repair its certificate path, and run `%s` from the same identity home", failure.Certificate.CertificateID, failure.Cause, recovery))
+	return retainIdentityForRecovery(withErrorCode("certificate_persistence_incomplete", fmt.Errorf("membership certificate %s was issued but could not be saved: %w; retain the recipient key, repair its certificate path, and run `%s` from the same identity home", failure.Certificate.CertificateID, failure.Cause, recovery)))
 }
 
 func closeTeamInviteLock(lock io.Closer) {

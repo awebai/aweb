@@ -241,12 +241,15 @@ Four distinct lifecycle stories that must not be conflated:
   `aw workspace delete <your-own-workspace>` retires you; the command reports
   `alias_released` for whether the name is actually reusable, which is a fact
   about the certificate and not about the local delete. For a non-hosted local
-  member, the CLI deletes its own workspace while its member credential is
-  valid, saves an exact local receipt, then revokes with the team's locally held
-  controller key. A failed revocation retains the receipt; retry performs only
-  the controller operation. Missing local controller authority reports the
-  exact command for the key holder and remains incomplete. Other deletes
-  report `alias_released: false` with a reason.
+  member with a local controller key, the CLI saves a prepared receipt before
+  deleting its own workspace while its member credential is valid. After the
+  service confirms cleanup, the CLI records that result and revokes with the
+  team key. A prepared receipt retries the exact workspace cleanup. A confirmed
+  cleanup retries only the controller operation. Without the local controller
+  key, the implicit workspace path keeps workspace-only deletion and reports
+  `alias_released: false` and `alias_released_reason: team_not_hosted`. An external
+  identity home keeps the released `team_not_hosted` refusal before any delete.
+  Other deletes report `alias_released: false` with a reason.
   Retiring a **global** identity is not this story: global identities outlive
   workspaces, and their names are released by team-authorized removal only.
   Retiring another member is also not this story; that requires an explicit

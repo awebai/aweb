@@ -3,7 +3,6 @@ package main
 import (
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/awebai/aw/awid"
 	"github.com/spf13/cobra"
@@ -31,11 +30,11 @@ var validateTeamIDCmd = &cobra.Command{Use: "team-id <name:domain>", Short: "Par
 var validateTeamServerURLCmd = &cobra.Command{Use: "team-server-url <url>", Short: "Query canonical team-server URL and audience spelling", Args: cobra.ExactArgs(1), RunE: runValidateTeamServerURL}
 
 func runValidateAlias(cmd *cobra.Command, args []string) error {
-	canonical := strings.TrimSpace(args[0])
-	out := validationOutput{Kind: validationAlias, Input: args[0], Valid: isValidWorkspaceAlias(args[0]), Canonical: canonical}
+	canonical, err := normalizeIDCreateName(args[0])
+	out := validationOutput{Kind: validationAlias, Input: args[0], Valid: err == nil, Canonical: canonical}
 	outputErr := printJSON(out)
-	if !out.Valid {
-		return errors.Join(withErrorCode("invalid_alias", fmt.Errorf("Use 1 to 64 letters, digits, underscores or hyphens, starting with a letter or digit.")), outputErr)
+	if err != nil {
+		return errors.Join(withErrorCode("invalid_alias", fmt.Errorf("%w. Use a nonempty enrollment alias without '/' and retry.", err)), outputErr)
 	}
 	return outputErr
 }
