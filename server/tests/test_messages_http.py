@@ -5285,14 +5285,10 @@ async def test_receive_old_v1_federated_mail_ignores_deprecated_fields_and_deliv
     participants = await _conversation_participants(
         aweb_cloud_db.aweb_db, envelope["conversation_id"]
     )
-    sender_participant = next(
-        (item for item in participants if item["did"] == alice.stable_id)
-    )
+    sender_participant = next((item for item in participants if item["did"] == alice.stable_id))
     assert sender_participant["address"] == alice.address
     assert sender_participant["delivery_origin"] == world.source.node.origin
-    assert (
-        sender_participant["transport_hint"] == f"federation:{world.source.node.origin}"
-    )
+    assert sender_participant["transport_hint"] == f"federation:{world.source.node.origin}"
 
 
 @pytest.mark.asyncio
