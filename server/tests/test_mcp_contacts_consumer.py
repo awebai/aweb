@@ -9,7 +9,9 @@ from types import SimpleNamespace
 import pytest
 
 from aweb.mcp.auth import AuthContext
-from aweb.mcp import server as mcp_server
+from aweb.mcp.registration import chat as registration_chat
+from aweb.mcp.registration import contacts as registration_contacts
+from aweb.mcp.registration import mail as registration_mail
 from aweb.mcp.server import register_tools
 from aweb.mcp.tools import chat as chat_tools
 from aweb.mcp.tools import contacts as contacts_tools
@@ -279,11 +281,11 @@ async def test_legacy_mcp_tool_aliases_delegate_to_existing_implementations(
         calls.append(("send_message_to_contact", kwargs))
         return json.dumps({"ok": True})
 
-    monkeypatch.setattr(mcp_server, "_check_inbox_impl", fake_check_inbox)
-    monkeypatch.setattr(mcp_server, "_chat_send_impl", fake_chat_send)
-    monkeypatch.setattr(mcp_server, "_chat_pending_impl", fake_chat_pending)
+    monkeypatch.setattr(registration_mail, "_check_inbox_impl", fake_check_inbox)
+    monkeypatch.setattr(registration_chat, "_chat_send_impl", fake_chat_send)
+    monkeypatch.setattr(registration_chat, "_chat_pending_impl", fake_chat_pending)
     monkeypatch.setattr(
-        mcp_server, "_send_message_to_contact_impl", fake_send_message_to_contact
+        registration_contacts, "_send_message_to_contact_impl", fake_send_message_to_contact
     )
     register_tools(
         collector,  # type: ignore[arg-type]
@@ -332,7 +334,7 @@ async def test_send_chat_public_tool_maps_to_unified_recipient_args(monkeypatch)
         calls.append(kwargs)
         return json.dumps({"ok": True})
 
-    monkeypatch.setattr(mcp_server, "_chat_send_impl", fake_chat_send_impl)
+    monkeypatch.setattr(registration_chat, "_chat_send_impl", fake_chat_send_impl)
     register_tools(
         collector,  # type: ignore[arg-type]
         db_infra=object(),  # type: ignore[arg-type]
