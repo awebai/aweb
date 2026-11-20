@@ -65,6 +65,11 @@ class Reason(StrEnum):
     PROVIDER_REJECTED = "provider_rejected"
     LEDGER_UNREADABLE = "ledger_unreadable"
     DESTINATION_CHANGED = "destination_changed"
+    # A replay run refused before any job (replay.py).
+    CONFIG_INVALID = "config_invalid"
+    TOKEN_UNAVAILABLE = "token_unavailable"
+    DESTINATION_MISMATCH = "destination_mismatch"
+    PROVIDER_UNAVAILABLE = "provider_unavailable"
 
 
 class Decision(StrEnum):

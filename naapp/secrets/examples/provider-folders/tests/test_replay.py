@@ -1,0 +1,358 @@
+import json
+import subprocess
+import sys
+import uuid
+from pathlib import Path
+
+import httpx
+import pytest
+
+from replay import ExitCode, RunRefused, load_config, run
+from submit import submit
+from tests.outbox import provision_outbox
+from tests.standin import TOKEN, OneDriveStandIn
+
+HERE = Path(__file__).resolve().parents[1]
+ORIGIN = "https://graph.standin.invalid"
+SEAT = "fictional-seat"
+
+
+@pytest.fixture
+def standin():
+    return OneDriveStandIn()
+
+
+@pytest.fixture
+def outbox_dir(tmp_path):
+    path = tmp_path / "outbox"
+    path.mkdir()
+    provision_outbox(path)
+    return path
+
+
+@pytest.fixture
+def token_file(tmp_path):
+    path = tmp_path / "token"
+    path.write_text(TOKEN + "\n")
+    return path
+
+
+@pytest.fixture
+def config_body(tmp_path, outbox_dir, token_file, standin):
+    return {
+        "seat": SEAT,
+        "state_dir": str(tmp_path / "publisher-state"),
+        "outbox": str(outbox_dir),
+        "max_bytes": 20 * 1024 * 1024,
+        "extensions": ["docx", "md", "pdf", "txt"],
+        "destination": {
+            "drive_id": standin.approot["parentReference"]["driveId"],
+            "folder_id": standin.approot["id"],
+        },
+        "graph_origin": ORIGIN,
+        "token_file": str(token_file),
+        "ca_bundle": None,
+        "output_max_bytes": 65536,
+    }
+
+
+def write_config(tmp_path, body) -> Path:
+    path = tmp_path / "publisher.json"
+    path.write_text(json.dumps(body))
+    return path
+
+
+def replay(tmp_path, body, standin):
+    requests = []
+
+    def handle(request):
+        requests.append(request)
+        return standin.handle(request)
+
+    config = load_config(write_config(tmp_path, body))
+    client = httpx.Client(transport=httpx.MockTransport(handle))
+    code, output = run(config, client)
+    assert len(output) <= config.output_max_bytes
+    return code, json.loads(output), requests
+
+
+def queue(outbox_dir, content=b"# Synthetic brief\n", target="summary.md"):
+    job_id = str(uuid.uuid4())
+    submit(outbox_dir, job_id=job_id, content=content, extension="md", target=target)
+    return job_id
+
+
+def outcomes(report):
+    return {receipt["job_id"]: receipt["outcome"] for receipt in report["receipts"]}
+
+
+def test_a_run_publishes_every_queued_job_and_a_second_run_writes_nothing(
+    tmp_path, config_body, outbox_dir, standin
+):
+    first = queue(outbox_dir, b"# One\n", "one.md")
+    second = queue(outbox_dir, b"# Two\n", "two.md")
+
+    code, report, _ = replay(tmp_path, config_body, standin)
+
+    assert code is ExitCode.OK
+    assert report["outcome"] == "ok" and report["reason"] is None
+    assert outcomes(report) == {first: "published", second: "published"}
+    assert sorted(item["name"] for item in standin.items.values()) == ["one.md", "two.md"]
+
+    code, report, _ = replay(tmp_path, config_body, standin)
+
+    assert code is ExitCode.OK
+    assert outcomes(report) == {first: "already_published", second: "already_published"}
+    assert standin.committed_uploads == 2
+
+
+def test_a_refused_job_with_none_uncertain_exits_refused(
+    tmp_path, config_body, outbox_dir, standin
+):
+    published = queue(outbox_dir, b"# Same\n", "same.md")
+    duplicate = queue(outbox_dir, b"# Same\n", "same.md")
+
+    code, report, _ = replay(tmp_path, config_body, standin)
+
+    assert code is ExitCode.REFUSED
+    assert report["outcome"] == "refused"
+    receipts = {receipt["job_id"]: receipt for receipt in report["receipts"]}
+    assert {receipts[published]["outcome"], receipts[duplicate]["outcome"]} == {
+        "published",
+        "refused",
+    }
+    assert len(standin.items) == 1
+
+
+def test_uncertain_wins_over_refused(tmp_path, config_body, outbox_dir, standin):
+    refused = queue(outbox_dir, b"# Refused\n", "refused.md")
+    manifest = outbox_dir / f"{refused}.json"
+    manifest.write_text(json.dumps({**json.loads(manifest.read_text()), "size": 1}))
+    uncertain = queue(outbox_dir, b"# Lost answer\n", "lost.md")
+    standin.lose_next_commit_response = True
+
+    code, report, _ = replay(tmp_path, config_body, standin)
+
+    assert code is ExitCode.UNCERTAIN
+    assert report["outcome"] == "uncertain"
+    assert outcomes(report) == {refused: "refused", uncertain: "uncertain"}
+
+    code, report, _ = replay(tmp_path, config_body, standin)
+
+    assert code is ExitCode.REFUSED
+    assert outcomes(report) == {refused: "refused", uncertain: "already_published"}
+    assert standin.committed_uploads == 1
+
+
+@pytest.mark.parametrize(
+    "token",
+    [None, b"", b"\n", b"two words", b"x" * 16385],
+    ids=["missing", "empty", "blank", "whitespace", "oversized"],
+)
+def test_an_unusable_token_file_refuses_the_run_before_any_provider_call(
+    tmp_path, config_body, outbox_dir, standin, token_file, token
+):
+    queue(outbox_dir)
+    token_file.unlink()
+    if token is not None:
+        token_file.write_bytes(token)
+
+    code, report, requests = replay(tmp_path, config_body, standin)
+
+    assert code is ExitCode.RUN_REFUSED
+    assert report == {
+        "v": 1,
+        "outcome": "run_refused",
+        "reason": "token_unavailable",
+        "receipts": [],
+    }
+    assert requests == []
+
+
+def test_a_symlinked_token_file_refuses_the_run_before_any_provider_call(
+    tmp_path, config_body, outbox_dir, standin, token_file
+):
+    queue(outbox_dir)
+    link = tmp_path / "token-link"
+    link.symlink_to(token_file)
+
+    code, report, requests = replay(tmp_path, {**config_body, "token_file": str(link)}, standin)
+
+    assert code is ExitCode.RUN_REFUSED
+    assert report["reason"] == "token_unavailable"
+    assert requests == []
+
+
+def test_the_bearer_goes_only_to_the_configured_origin(tmp_path, config_body, outbox_dir, standin):
+    job_id = queue(outbox_dir)
+
+    code, report, requests = replay(tmp_path, config_body, standin)
+
+    assert code is ExitCode.OK
+    assert outcomes(report) == {job_id: "published"}
+    bearer = [request for request in requests if "Authorization" in request.headers]
+    assert bearer and all(
+        f"{request.url.scheme}://{request.url.host}" == ORIGIN for request in bearer
+    )
+    assert any(request.url.host != "graph.standin.invalid" for request in requests)
+
+
+def test_a_destination_other_than_the_configured_one_refuses_the_run_before_any_write(
+    tmp_path, config_body, outbox_dir, standin
+):
+    queue(outbox_dir)
+    body = {**config_body, "destination": {"drive_id": "other-drive", "folder_id": "OTHER"}}
+
+    code, report, requests = replay(tmp_path, body, standin)
+
+    assert code is ExitCode.RUN_REFUSED
+    assert report["reason"] == "destination_mismatch"
+    assert standin.items == {}
+    assert [request.method for request in requests] == ["GET"]
+
+
+def test_an_unreadable_ledger_refuses_the_run(tmp_path, config_body, outbox_dir, standin):
+    queue(outbox_dir)
+    state = Path(config_body["state_dir"])
+    state.mkdir()
+    (state / "ledger.json").write_text("{not json")
+
+    code, report, _ = replay(tmp_path, config_body, standin)
+
+    assert code is ExitCode.RUN_REFUSED
+    assert report["reason"] == "ledger_unreadable"
+    assert standin.items == {}
+
+
+def test_a_denied_token_refuses_the_run(tmp_path, config_body, outbox_dir, standin):
+    queue(outbox_dir)
+    standin.deny_all = True
+
+    code, report, _ = replay(tmp_path, config_body, standin)
+
+    assert code is ExitCode.RUN_REFUSED
+    assert report["reason"] == "provider_denied"
+
+
+def test_an_unavailable_provider_before_any_job_refuses_the_run(
+    tmp_path, config_body, outbox_dir, standin
+):
+    queue(outbox_dir)
+    standin.malformed_next = "approot"
+
+    code, report, _ = replay(tmp_path, config_body, standin)
+
+    assert code is ExitCode.RUN_REFUSED
+    assert report["reason"] == "provider_unavailable"
+    assert standin.items == {}
+
+
+def test_output_over_the_bound_fails_the_run_with_a_summary_never_truncated_json(
+    tmp_path, config_body, outbox_dir, standin
+):
+    jobs = [queue(outbox_dir, f"# Report {n}\n".encode(), f"report-{n}.md") for n in range(8)]
+    body = {**config_body, "output_max_bytes": 512}
+
+    code, report, _ = replay(tmp_path, body, standin)
+
+    assert code is ExitCode.OUTPUT_TOO_LARGE
+    assert report == {
+        "v": 1,
+        "outcome": "output_too_large",
+        "reason": None,
+        "counts": {"published": len(jobs)},
+    }
+    assert len(standin.items) == len(jobs)
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "http://graph.standin.invalid",
+        "https://graph.standin.invalid/v1.0",
+        "https://graph.standin.invalid/",
+        "https://user@graph.standin.invalid",
+        "https://graph.standin.invalid?x=1",
+        "https://graph.standin.invalid#x",
+        "https://graph.standin.invalid:0",
+        "https://graph.standin.invalid:99999",
+        "HTTPS://graph.standin.invalid",
+        "https://",
+        "graph.standin.invalid",
+        7,
+    ],
+)
+def test_the_graph_origin_must_be_a_bare_https_origin(tmp_path, config_body, origin):
+    with pytest.raises(RunRefused, match="config_invalid"):
+        load_config(write_config(tmp_path, {**config_body, "graph_origin": origin}))
+
+
+def test_a_graph_origin_may_name_a_port(tmp_path, config_body):
+    body = {**config_body, "graph_origin": "https://graph.standin.invalid:8443"}
+    assert load_config(write_config(tmp_path, body)).graph_origin == body["graph_origin"]
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"seat": "Not A Slug"},
+        {"state_dir": "relative/state"},
+        {"outbox": "relative/outbox"},
+        {"token_file": "relative/token"},
+        {"ca_bundle": "relative/ca.pem"},
+        {"max_bytes": 0},
+        {"max_bytes": True},
+        {"extensions": "md"},
+        {"extensions": ["md", ".pdf"]},
+        {"destination": {"drive_id": "d"}},
+        {"output_max_bytes": 511},
+        {"unexpected": 1},
+    ],
+)
+def test_an_invalid_config_is_refused(tmp_path, config_body, change):
+    with pytest.raises(RunRefused, match="config_invalid"):
+        load_config(write_config(tmp_path, {**config_body, **change}))
+
+
+def test_a_config_without_a_field_is_refused(tmp_path, config_body):
+    del config_body["ca_bundle"]
+    with pytest.raises(RunRefused, match="config_invalid"):
+        load_config(write_config(tmp_path, config_body))
+
+
+def run_cli(*args):
+    return subprocess.run(
+        [sys.executable, "-I", str(HERE / "replay.py"), *args],
+        capture_output=True,
+        text=True,
+        cwd="/",
+        timeout=60,
+    )
+
+
+def test_the_cli_runs_isolated_and_refuses_a_missing_token_with_exit_5(
+    tmp_path, config_body, token_file
+):
+    token_file.unlink()
+
+    result = run_cli("--config", str(write_config(tmp_path, config_body)))
+
+    assert result.returncode == ExitCode.RUN_REFUSED == 5
+    assert json.loads(result.stdout)["reason"] == "token_unavailable"
+    assert result.stderr == ""
+
+
+def test_the_cli_refuses_an_unreadable_config_with_exit_5(tmp_path):
+    result = run_cli("--config", str(tmp_path / "missing.json"))
+
+    assert result.returncode == 5
+    assert json.loads(result.stdout) == {
+        "v": 1,
+        "outcome": "run_refused",
+        "reason": "config_invalid",
+        "receipts": [],
+    }
+
+
+def test_the_cli_without_a_config_argument_is_a_usage_error():
+    assert run_cli().returncode == 2

@@ -89,14 +89,60 @@ publisher's own state is a cache.
   replacement runs. The single-writer assumption is the operator's, not this
   code's.
 
+## Running a replay (`replay.py`)
+
+The runner job runs one replay of the seat's outbox:
+
+```sh
+/usr/bin/python3 -I replay.py --config /etc/acwd25/publisher.json
+```
+
+`replay.py` puts its own directory and `vendor/` beside it on `sys.path`, so the
+pinned file set is these modules plus a vendored tree of the locked runtime
+dependencies (`httpx` and its dependencies). Python 3.12 or later is required.
+
+The operator configuration is one JSON object with exactly these keys:
+
+| Key | Meaning |
+| --- | --- |
+| `seat` | the source seat, a lowercase slug |
+| `state_dir` | the publisher's own state: ledger and receipts (absolute) |
+| `outbox` | the seat's outbox, read-only to the publisher (absolute) |
+| `max_bytes`, `extensions` | the report bounds (`extensions` without dots) |
+| `destination` | `{"drive_id", "folder_id"}` of the app folder; any other refuses the run |
+| `graph_origin` | a bare `https://host[:port]` origin; the bearer goes to it only |
+| `token_file` | the access token file the runner fills (absolute) |
+| `ca_bundle` | a CA file to verify the origin, or `null` for the system default |
+| `output_max_bytes` | the stdout bound, at least 512 |
+
+The access token is read from `token_file` before any provider call. A missing,
+linked, non-regular, empty, oversized or multi-word token refuses the run. The
+HTTPS client ignores proxy and certificate settings from the environment.
+
+stdout is one JSON object:
+`{"v": 1, "outcome": ..., "reason": ..., "receipts": [{job_id, outcome, reason, item_id, sha256}]}`.
+
+| Exit | Outcome | Meaning |
+| --- | --- | --- |
+| 0 | `ok` | every job published or already published |
+| 3 | `refused` | at least one job refused, none uncertain |
+| 4 | `uncertain` | at least one job uncertain; it wins over refused. Replay again to reconcile |
+| 5 | `run_refused` | refused as a whole, with no job attempted after it: `config_invalid`, `token_unavailable`, `destination_mismatch`, `provider_denied`, `provider_rejected`, `provider_unavailable`, `ledger_unreadable`, `destination_changed` |
+| 6 | `output_too_large` | the report would exceed `output_max_bytes`; stdout carries only `counts` per outcome, never truncated JSON. The per-job receipts are in `state_dir/receipts/` |
+
+1 and 2 remain Python's crash and usage codes.
+
 ## Limits of the current slice
 
 - No provider token is used. Secrets builds Microsoft refresh-token custody
   (`oauth2-refresh`) after the release; until then there is no Microsoft token
   step of any kind.
-- There is no executable entry point, run configuration or job pin yet. Known
-  open items on the runner path: aweb-acgh.18.52, aweb-acgh.18.15, aweb-acwd.4.6, and the HO6/S19
-  dedicated-user evidence.
+- The run configuration, the job pin, the vendored dependency tree and the
+  namespace binding are the deployment's (acwd25-publisher), not this
+  directory's. Known open items on the runner path: aweb-acgh.18.52,
+  aweb-acgh.18.15, aweb-acwd.4.6, and the HO6/S19 dedicated-user evidence.
+- Today Secrets fills no Microsoft token, so a production run refuses with
+  `token_unavailable` before any provider call.
 - Full crash and retry qualification also needs Secrets' reconciliation of
   accepted assignments (aweb-adje.16 11.3).
 - Peers sharing one UID remain one trust group. The outbox is a per-seat
