@@ -12,6 +12,7 @@ from enum import StrEnum
 import httpx
 import pytest
 
+from awid.did import did_from_public_key, generate_keypair
 from awid.registry import CachedRegistryClient, RegistryClient
 from test_registry_audience_dns import (
     AuthorityAnswer,
@@ -217,3 +218,61 @@ async def test_failed_txt_lookup_does_not_overwrite_the_other_registrys_evidence
     finally:
         await client.aclose()
         await dns_reader.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("suffix", ["", "/"], ids=["canonical", "trailing-slash"])
+async def test_team_metadata_write_invalidates_the_same_canonical_origin(peer_factory, suffix):
+    first = peer_factory()
+    seed, public = generate_keypair()
+    value = json.loads(response_for(TeamRead.METADATA, label=did_from_public_key(public)))
+    value["visibility"] = "private"
+    first.response = json.dumps(value).encode()
+    client = CachedRegistryClient(first.origin + suffix, FakeRedis())
+    try:
+        assert (await client.get_team("example.com", "engineering")).visibility == "private"
+        value["visibility"] = "public"
+        first.response = json.dumps(value).encode()
+        assert (
+            await client.set_team_visibility("example.com", "engineering", "public", seed)
+        ).visibility == "public"
+        assert (await client.get_team("example.com", "engineering")).visibility == "public"
+        assert [request[0] for request in first.requests] == ["GET", "POST", "GET"]
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("suffix", ["", "/"], ids=["canonical", "trailing-slash"])
+async def test_id_write_fences_other_clients_using_the_same_canonical_origin(
+    peer_factory,
+    registry_audience_dns,
+    suffix,
+):
+    from awid.id_tree_requests import REGISTER_PATH
+    from test_id_registry_client import EXAMPLE, _bundle, signer_for
+
+    first = peer_factory()
+    first.response = b'{"registry":"before-write"}'
+    first.replies[("POST", REGISTER_PATH)] = (200, json.dumps(EXAMPLE["response"]).encode())
+    redis = ClockedRedis([1_000_000], [0])
+    reader = CachedRegistryClient(first.origin, redis)
+    writer = CachedRegistryClient(first.origin + suffix, redis)
+    try:
+        assert (await reader.id_chain_evidence(BUNDLE, SUBJECT, domain=DOMAIN)).status == {
+            "registry": "before-write"
+        }
+        first.response = b'{"registry":"after-write"}'
+        await writer.register_id_certificate(
+            _bundle("alice", "bob"),
+            signer=signer_for("bob"),
+            expected_head=None,
+            invitation_id=None,
+        )
+        assert (await reader.id_chain_evidence(BUNDLE, SUBJECT, domain=DOMAIN)).status == {
+            "registry": "after-write"
+        }
+        assert len(registry_audience_dns.queries) == 2
+    finally:
+        await reader.aclose()
+        await writer.aclose()

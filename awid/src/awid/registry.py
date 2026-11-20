@@ -3711,7 +3711,7 @@ class CachedRegistryClient(RegistryClient):
         return f"{cache_key}:generation:{token}"
 
     def _id_status_generation_key(self, domain: str, *, registry_url: str | None = None) -> str:
-        origin = registry_url or self.registry_url
+        origin = canonical_server_origin(registry_url or self.registry_url)
         return f"awid:cache_generation:id_status:{origin}:{domain}"
 
     def _address_generation_key(self, domain: str, registry_url: str) -> str:
@@ -3720,7 +3720,7 @@ class CachedRegistryClient(RegistryClient):
     def _team_certificates_generation_key(
         self, domain: str, name: str, *, registry_url: str | None = None
     ) -> str:
-        origin = registry_url or self.registry_url
+        origin = canonical_server_origin(registry_url or self.registry_url)
         return f"awid:cache_generation:team_certificates:{origin}:{domain}/{name}"
 
     async def _redis_get(self, key: str) -> str | None:
@@ -3745,7 +3745,8 @@ class CachedRegistryClient(RegistryClient):
     # They must not be reused as evidence after this cache-owner upgrade.
     def _id_status_route_key(self, request: dict[str, Any]) -> str:
         digest = hashlib.sha256(canonical_json_bytes(request)).hexdigest()
-        return f"awid:registry_route:v1:id_status:{self.registry_url}:{request['domain']}:{digest}"
+        origin = canonical_server_origin(self.registry_url)
+        return f"awid:registry_route:v1:id_status:{origin}:{request['domain']}:{digest}"
 
     def _id_status_cache_key(
         self, request: dict[str, Any], *, registry_url: str | None = None
@@ -3754,7 +3755,7 @@ class CachedRegistryClient(RegistryClient):
         return f"{self._id_status_cache_key_prefix(request['domain'], registry_url=registry_url)}:{digest}"
 
     def _id_status_cache_key_prefix(self, domain: str, *, registry_url: str | None = None) -> str:
-        origin = registry_url or self.registry_url
+        origin = canonical_server_origin(registry_url or self.registry_url)
         return f"awid:registry_cache:v3:id_status:{origin}:{domain}"
 
     def _did_key_cache_key(self, did_aw: str) -> str:
@@ -3791,7 +3792,7 @@ class CachedRegistryClient(RegistryClient):
     def _team_metadata_cache_key(
         self, domain: str, name: str, *, registry_url: str | None = None
     ) -> str:
-        origin = registry_url or self.registry_url
+        origin = canonical_server_origin(registry_url or self.registry_url)
         return f"awid:registry_cache:v3:team:{origin}:{domain}/{name}{self._team_reader_cache_suffix(domain, name)}"
 
     def _team_revocations_cache_key_prefix(self) -> str:
@@ -3801,13 +3802,13 @@ class CachedRegistryClient(RegistryClient):
     def _team_revocations_cache_key(
         self, domain: str, name: str, *, registry_url: str | None = None
     ) -> str:
-        origin = registry_url or self.registry_url
+        origin = canonical_server_origin(registry_url or self.registry_url)
         return f"{self._team_revocations_cache_key_prefix()}{origin}:{domain}/{name}{self._team_reader_cache_suffix(domain, name)}"
 
     def _team_public_key_cache_key(
         self, domain: str, name: str, *, registry_url: str | None = None
     ) -> str:
-        origin = registry_url or self.registry_url
+        origin = canonical_server_origin(registry_url or self.registry_url)
         return f"awid:registry_cache:v2:team_public_key:{origin}:{domain}/{name}{self._team_reader_cache_suffix(domain, name)}"
 
     def _team_certificates_cache_key(
@@ -3828,7 +3829,7 @@ class CachedRegistryClient(RegistryClient):
     def _team_certificates_cache_key_prefix(
         self, domain: str, name: str, *, registry_url: str | None = None
     ) -> str:
-        origin = registry_url or self.registry_url
+        origin = canonical_server_origin(registry_url or self.registry_url)
         return f"awid:registry_cache:v3:team_certificates:{origin}:{domain}/{name}{self._team_reader_cache_suffix(domain, name)}"
 
     def _team_certificates_cache_scope(self, signing_key: bytes | None) -> str:
