@@ -80,10 +80,13 @@ class Case:
     surface: Surface
     selector: Selector = Selector.ALIAS
     global_residence: bool = False
+    superseded_sender: bool = False
 
     @property
     def id(self):
         suffix = "-identity-residence" if self.global_residence else ""
+        if self.superseded_sender:
+            suffix += "-superseded-sender"
         return f"{self.operation}-{self.surface}-{self.selector}{suffix}"
 
 
@@ -94,8 +97,11 @@ CASES = (
         for surface in Surface
         for selector in Selector
         # HTTP mail alone exposes to_agent_id. Neither chat nor MCP adds that API.
-        if selector is not Selector.AGENT_ID
-        or (operation is Operation.MAIL and surface is Surface.HTTP)
+        if selector is not Selector.ADDRESS
+        and (
+            selector is not Selector.AGENT_ID
+            or (operation is Operation.MAIL and surface is Surface.HTTP)
+        )
     ]
     + [
         Case(operation, surface, Selector.ADDRESS, global_residence=True)
@@ -124,6 +130,12 @@ CASES = (
         )
     ]
     + [Case(Operation.HANDLE, Surface.MCP, Selector.ADDRESS)]
+    + [Case(Operation.CHAT, Surface.HTTP, Selector.AGENT_ID)]
+    + [
+        Case(operation, surface, superseded_sender=True)
+        for operation in (Operation.MAIL, Operation.CHAT)
+        for surface in Surface
+    ]
 )
 
 
@@ -175,7 +187,7 @@ async def _admit(env, alias, *, global_identity=False):
             "PATCH",
             "/v1/agents/me/inbound-mode",
             {"inbound_mode": "open"},
-            identity_only=True,
+            identity_only=False,
         )
         assert response.status_code == 200, response.text
     return actor
@@ -248,7 +260,7 @@ async def _http(env, actor, method, path, payload=None, *, identity_only=False):
     )
 
 
-async def _tool(env, actor, name, arguments):
+async def _tool(env, actor, name, arguments, *, identity_only=False):
     body = json.dumps(
         {
             "jsonrpc": "2.0",
@@ -257,11 +269,16 @@ async def _tool(env, actor, name, arguments):
             "params": {"name": name, "arguments": arguments},
         }
     ).encode()
+    headers = (
+        _signed_identity_headers(actor.sk, actor.did, actor.stable, body)
+        if identity_only
+        else _signed_team_headers(actor.sk, actor.did, TEAM, actor.certificate, body)
+    )
     response = await env.client.post(
         "/mcp/",
         content=body,
         headers={
-            **_signed_team_headers(actor.sk, actor.did, TEAM, actor.certificate, body),
+            **headers,
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
         },
@@ -295,7 +312,11 @@ async def _probe(env, case, sender, target, *, phase, team_key):
                 else {"message": "selector"}
             )
             return await _tool(
-                env, sender, "send_mail" if op is Operation.MAIL else "send_chat", args
+                env,
+                sender,
+                "send_mail" if op is Operation.MAIL else "send_chat",
+                args,
+                identity_only=case.superseded_sender,
             )
         key = {
             Selector.ALIAS: "to_alias",
@@ -312,6 +333,15 @@ async def _probe(env, case, sender, target, *, phase, team_key):
                 "POST",
                 "/v1/messages",
                 {key: ref, "subject": "membership", "body": "selector"},
+                identity_only=True,
+            )
+        if case.selector is Selector.AGENT_ID:
+            return await _http(
+                env,
+                sender,
+                "POST",
+                "/v1/chat/sessions",
+                {"to_agent_ids": [ref], "message": "selector"},
                 identity_only=True,
             )
         chat_key = {
@@ -364,7 +394,7 @@ async def _probe(env, case, sender, target, *, phase, team_key):
         )
         return await env.client.get(
             path,
-            headers={"Authorization": "Bearer " + _make_jwt([TEAM])},
+            headers={"X-Dashboard-Token": _make_jwt([TEAM])},
         )
     if op is Operation.STATUS:
         return await _http(env, sender, "GET", "/v1/status")
@@ -417,6 +447,13 @@ def _check(result, case, target, *, current, phase):
     op = case.operation
     data = result if isinstance(result, dict) else result.json()
     context = (case.id, phase, data)
+    if op is Operation.CHAT and case.selector is Selector.AGENT_ID:
+        assert result.status_code == 422, context
+        assert any(
+            item["type"] == "extra_forbidden" and "to_agent_ids" in item["loc"]
+            for item in data["detail"]
+        ), context
+        return
     # These reads reveal only current members; residence is tested separately.
     if op in (
         Operation.ROSTER,
@@ -470,6 +507,7 @@ def _check(result, case, target, *, current, phase):
             status = (
                 422
                 if op is Operation.TASK
+                or case.superseded_sender
                 or (op is Operation.CHAT and case.selector is Selector.DID_AW)
                 else 404
             )
@@ -515,7 +553,7 @@ async def test_selector_and_surface_recheck_membership_after_product_rotation(
         before = await _probe(env, case, sender, target, phase=0, team_key=key)
         _check(before, case, target, current=True, phase=0)
         key = await _change_key(env)
-        await _readmit(env, sender, key)
+        await _readmit(env, target if case.superseded_sender else sender, key)
         counts = await _effect_counts(env)
         after = await _probe(env, case, sender, target, phase=1, team_key=key)
         _check(after, case, target, current=case.global_residence, phase=1)
@@ -526,6 +564,6 @@ async def test_selector_and_surface_recheck_membership_after_product_rotation(
             Operation.CONTROL,
         ):
             assert await _effect_counts(env) == counts
-        await _readmit(env, target, key)
+        await _readmit(env, sender if case.superseded_sender else target, key)
         restored = await _probe(env, case, sender, target, phase=2, team_key=key)
         _check(restored, case, target, current=True, phase=2)
