@@ -5,6 +5,7 @@ Only DNS selects the disposable registry authority, as in the human-kind tests.
 """
 import asyncio
 import json
+from contextlib import asynccontextmanager
 from time import monotonic
 from uuid import UUID, uuid4
 
@@ -23,16 +24,21 @@ class _CountLists(httpx.AsyncHTTPTransport):
     def __init__(self):
         super().__init__()
         self.reads = 0
+        self.point_reads = 0
+        self.point_unavailable = False
 
     async def handle_async_request(self, request):
         if request.method == "GET" and request.url.path.endswith("/certificates"):
             self.reads += 1
+        if request.method == "GET" and "/certificates/" in request.url.path and request.url.path.endswith("/status"):
+            self.point_reads += 1
+            if self.point_unavailable:
+                raise httpx.ConnectError("Test registry point route unavailable", request=request)
         return await super().handle_async_request(request)
 
 
-@pytest.mark.asyncio
-async def test_first_connect_for_members_registered_between_list_reads(privacy_app, monkeypatch):  # noqa: F811
-    env = privacy_app
+@asynccontextmanager
+async def _local_admissions(env, monkeypatch):
     monkeypatch.setenv("AWEB_REQUIRE_REGISTERED_CERTIFICATES", "true")
     transport = _CountLists()
     domain = "example.test"
@@ -50,41 +56,90 @@ async def test_first_connect_for_members_registered_between_list_reads(privacy_a
         try:
             await writer.register_namespace(domain, env.team_did, env.team_sk)
             await cached.list_team_certificates(domain, TEAM_NAME, active_only=False)
-            reads_before = transport.reads
+            transport.reads = 0
             body = b"{}"
 
-            async def register(alias):
+            async def member(alias, *, register=True):
                 seed, _, did = _make_keypair()
                 cert_id = str(uuid4())
                 certificate = _encode_certificate(_make_certificate(
                     env.team_sk, env.team_did, did, team_id=TEAM, alias=alias,
                     identity_scope="local", certificate_id=cert_id,
                 ))
-                await writer.register_team_certificate(
-                    domain, TEAM_NAME, team_controller_signing_key=env.team_sk,
-                    certificate_id=cert_id, member_did_key=did, member_did_aw=None,
-                    member_address=None, alias=alias, identity_scope="local", certificate=certificate,
-                )
+                if register:
+                    await writer.register_team_certificate(
+                        domain, TEAM_NAME, team_controller_signing_key=env.team_sk,
+                        certificate_id=cert_id, member_did_key=did, member_did_aw=None,
+                        member_address=None, alias=alias, identity_scope="local", certificate=certificate,
+                    )
+                return cert_id, seed, did, certificate
+
+            async def connect(credential, *, status=200):
+                cert_id, seed, did, certificate = credential
                 headers = _signed_team_headers(seed, did, TEAM, certificate, body)
-                return cert_id, {**headers, "Content-Type": "application/json"}
+                response = await env.client.post(
+                    "/v1/connect", content=body, headers={**headers, "Content-Type": "application/json"}, timeout=15,
+                )
+                assert response.status_code == status, response.text
+                if status == 200:
+                    row = await env.db.fetch_one(
+                        "SELECT certificate_id FROM {{tables.agents}} WHERE agent_id=$1",
+                        UUID(response.json()["agent_id"]),
+                    )
+                    assert row["certificate_id"] == cert_id
+                return response.json()
 
-            async def connect(member):
-                cert_id, headers = member
-                response = await env.client.post("/v1/connect", content=body, headers=headers, timeout=15)
-                assert response.status_code == 200, response.text
-                row = await env.db.fetch_one("SELECT certificate_id FROM {{tables.agents}} WHERE agent_id=$1",
-                                             UUID(response.json()["agent_id"]))
-                assert row["certificate_id"] == cert_id
-
-            admitted = monotonic()
-            await connect(await register("first-member"))
-            assert transport.reads == reads_before + 1
-            later = await asyncio.gather(register("second-member"), register("third-member"))
-            assert monotonic() - admitted < 1
-            await asyncio.gather(*(connect(member) for member in later))
-            assert transport.reads == reads_before + 2
+            yield member, connect, transport
         finally:
             await cached.aclose()
+
+
+@pytest.mark.asyncio
+async def test_first_connect_for_members_registered_between_list_reads(privacy_app, monkeypatch):  # noqa: F811
+    async with _local_admissions(privacy_app, monkeypatch) as (member, connect, transport):
+        admitted = monotonic()
+        await connect(await member("first-member"))
+        assert transport.reads == 1
+        second, third = await asyncio.gather(member("second-member"), member("third-member"))
+        assert monotonic() - admitted < 1
+        await connect(second)
+        await connect(third)
+        await connect(second)
+        assert monotonic() - admitted < 5
+        assert (transport.reads, transport.point_reads) == (1, 2)
+
+
+@pytest.mark.asyncio
+async def test_unregistered_certificate_reuses_exact_refusal(privacy_app, monkeypatch):  # noqa: F811
+    async with _local_admissions(privacy_app, monkeypatch) as (member, connect, transport):
+        await connect(await member("first-member"))
+        absent = await member("not-registered", register=False)
+        for _ in range(2):
+            assert (await connect(absent, status=401))["detail"] == "unregistered"
+        assert (transport.reads, transport.point_reads) == (1, 1)
+
+
+@pytest.mark.asyncio
+async def test_point_budget_overflow_shares_the_next_list(privacy_app, monkeypatch):  # noqa: F811
+    async with _local_admissions(privacy_app, monkeypatch) as (member, connect, transport):
+        await connect(await member("first-member"))
+        admitted = await asyncio.gather(*(member(f"member-{i}") for i in range(18)))
+        await asyncio.gather(*(connect(credential) for credential in admitted))
+        assert (transport.reads, transport.point_reads) == (2, 16)
+
+
+@pytest.mark.asyncio
+async def test_point_read_outage_is_unavailable(privacy_app, monkeypatch):  # noqa: F811
+    async with _local_admissions(privacy_app, monkeypatch) as (member, connect, transport):
+        await connect(await member("first-member"))
+        second = await member("second-member")
+        transport.point_unavailable = True
+        error = await connect(second, status=503)
+        assert "AWID certificate existence check" in error["detail"]
+        assert (transport.reads, transport.point_reads) == (1, 1)
+        transport.point_unavailable = False
+        await connect(second)
+        assert (transport.reads, transport.point_reads) == (1, 2)
 
 
 @pytest.mark.asyncio
