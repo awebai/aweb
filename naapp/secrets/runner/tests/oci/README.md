@@ -9,18 +9,12 @@ Linux proof must run before any OCI integration is called complete.
 From the runner package directory:
 
 ```sh
-docker build --build-context runner=. --build-context values=../values \
-  --build-context naapp=../../../naapp-lib \
-  -t aweb-secrets-runner-oci-proof tests/oci
-docker run --rm --init --network none --cap-drop ALL \
-  --security-opt no-new-privileges --security-opt seccomp=unconfined \
-  --security-opt systempaths=unconfined --user 10000:10000 \
-  --tmpfs /memory:rw,exec,nosuid,nodev,mode=0700,uid=10000,gid=10000 \
-  --mount "type=bind,source=$(pwd),target=/runner,readonly" \
-  --env PYTHONPATH=/runner/src --env AWEB_SECRETS_OCI_PROOF=1 \
-  aweb-secrets-runner-oci-proof \
-  python3 -m unittest discover -s /runner/tests/oci
+./tests/oci/run-proof.sh
 ```
+
+The script runs the unittest-style cases and pytest worker cases together.
+The proof checks the collected node IDs against `expected-cases.txt` before
+running tests. When a case changes, update the list in the same change.
 
 The image installs Python 3.12 and the runner’s locked dependencies from the
 three explicit package contexts. Only those package sources enter the build;
