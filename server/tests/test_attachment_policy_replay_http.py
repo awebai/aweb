@@ -112,8 +112,9 @@ async def test_accepted_key_only_attachment_retry_keeps_its_protected_recipient(
     ):
         refused = await _request(env, "alice", "POST", path, changed)
         assert refused.status_code == 409, refused.text
-        assert refused.json()["detail"]["code"] == "attachment_conflict"
-        assert refused.json()["detail"]["message"] == (
+        # This is the mail routing owner's selector refusal, not an
+        # attachment/replay conflict (Antares042efe38 item3).
+        assert refused.json()["detail"] == (
             "conversation_id recipient does not match the requested recipient. "
             "Use the stored recipient or start a new conversation."
         )
