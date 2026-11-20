@@ -4,7 +4,7 @@
 set -euo pipefail
 PROJECT="${GRANT_APP_E2E_PROJECT:?}"
 AWID_URL=http://awid:8010
-AWEB_URL=http://127.0.0.1:8000
+AWEB_URL=https://aweb-grant.test:8000
 LIBRARY_URL=https://library-grant.test:8765
 AW_BIN=/usr/local/bin/aw
 export SSL_CERT_FILE=/fixture/tls/ca.pem

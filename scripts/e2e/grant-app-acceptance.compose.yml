@@ -1,7 +1,6 @@
 # Test-only overlay for scripts/e2e-grant-app-tools.sh, layered over
-# docker-compose.e2e.yml. It bounds every service at container creation and
-# lets the disposable AWID accept a loopback http delivery origin. It changes no
-# production defaults or validation.
+# docker-compose.e2e.yml. It bounds every service at container creation. It
+# changes no production defaults or validation.
 services:
   postgres:
     cpus: "1"
@@ -24,20 +23,20 @@ services:
     environment:
       AWID_PUBLIC_REGISTRY_URL: http://awid:8010
       APP_ENV: test
-      AWID_ALLOW_INSECURE_DELIVERY_ORIGIN: "true"
   aweb:
-    command: ["/app/.venv/bin/python", "/fixture/e2e/stack_server.py", "--app-origin", "https://library-grant.test:8765", "--ca-file", "/fixture/tls/ca.pem", "--user-agent", "grant-app-test/1", "--port", "8000"]
+    command: ["/app/.venv/bin/python", "/fixture/e2e/stack_server.py", "--app-origin", "https://library-grant.test:8765", "--ca-file", "/fixture/tls/ca.pem", "--user-agent", "grant-app-test/1", "--port", "8000", "--tls-certfile", "/fixture/tls/server.pem", "--tls-keyfile", "/fixture/tls/server.key"]
     environment:
-      AWEB_PUBLIC_ORIGIN: http://127.0.0.1:8000
+      # Over TLS at its stack name with the stack CA: the team server the
+      # client publishes, which Library reaches through its egress guard.
+      AWEB_PUBLIC_ORIGIN: https://aweb-grant.test:8000
       AWID_PUBLIC_REGISTRY_URL: http://awid:8010
     volumes:
       - fixture:/fixture:ro
-    # Library shares this namespace: its TLS name resolves here, and the team
-    # server URL the client publishes (127.0.0.1:8000) reaches this server from
-    # Library as well as from the client.
+    # Library and the client share this namespace, so Library's TLS name and
+    # the server's own both name this container on the stack's network.
     networks:
       default:
-        aliases: [library-grant.test]
+        aliases: [library-grant.test, aweb-grant.test]
     cpus: "1"
     mem_limit: "1g"
     pids_limit: 512
@@ -58,8 +57,14 @@ services:
     environment:
       LIBRARY_PUBLIC_ORIGIN: https://library-grant.test:8765
       LIBRARY_APP_KEY_FILES: '{"library:grant-read-1": "/fixture/library/grant-read.hex"}'
-      # aweb, in Library's network namespace, is the team server it reads grants from.
-      LIBRARY_TEAM_SERVER_INTERNAL_ORIGINS: '["http://127.0.0.1:8000"]'
+      # The stack's aweb is the team server Library reads grants from: its
+      # operator's own, on the stack's network, reached through Library's
+      # egress guard and trusted through the stack CA.
+      LIBRARY_HOOK_INTERNAL_DESTINATIONS: allowed
+      # Docker's private address pool, whichever network the stack is given.
+      LIBRARY_HOOK_INTERNAL_CIDR: 172.16.0.0/12
+      LIBRARY_TEAM_SERVER_INTERNAL_ORIGINS: '["https://aweb-grant.test:8000"]'
+      LIBRARY_HOOK_CA_FILE: /fixture/tls/ca.pem
     volumes:
       - fixture:/fixture:ro
       # Library's template published from this stack's origin (library_stack_prepare.py).
