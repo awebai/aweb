@@ -35,6 +35,9 @@ from aweb.mcp.tools import mail as mail_tools
 from did_key_fixtures import named_did_key, named_signing_key
 from test_messages_http import _encrypted_mail_envelope
 from team_facts_fixtures import legacy_registry
+from messaging_actor_support import admit_messaging_actor
+from test_dashboard_privacy import TEAM as PRIVACY_TEAM
+from test_dashboard_privacy import privacy_app as privacy_app
 import test_mcp_mutation_hook_parity as proxy_fixtures
 from test_mcp_mutation_hook_parity import TEAM as PROXY_TEAM
 
