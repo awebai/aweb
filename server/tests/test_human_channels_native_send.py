@@ -721,7 +721,11 @@ async def test_legacy_native_policy_retains_forbidden_contract_after_local_refus
     with pytest.raises(ContractError) as refused:
         await NativeMessagingService._policy(None, env.fixture.infra, outsider, recipient)
     assert refused.value.code == "forbidden"
-    assert "reachable only from inside its own team" in refused.value.field
+    assert refused.value.field == (
+        "The recipient is not reachable from outside its team. "
+        "Use a teammate alias from inside its team, or ask the recipient "
+        "for a registered address and retry."
+    )
     member = replace(outsider, did_key=bob.did, did_aw=None, team_id=bob.team,
                      verified_team_id=bob.team)
     await NativeMessagingService._policy(None, env.fixture.infra, member, recipient)
