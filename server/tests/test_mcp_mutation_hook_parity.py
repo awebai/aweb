@@ -22,6 +22,7 @@ from awid.registry import RegistryClient
 from aweb.api import create_app
 from aweb.db import DatabaseInfra
 from tests.real_stack import REGISTRY_URL
+from did_key_fixtures import named_did_key, named_signing_key
 
 from awid.signing import sign_message
 from aweb.coordination import tasks_service
@@ -98,8 +99,12 @@ async def server(real_stack, shared_test_pool, monkeypatch):
     monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
     monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", INTERNAL_SECRET)
     db = real_stack.aweb_db
-    namespace_key, _, namespace_did = _make_keypair()
-    team_key, _, team_did = _make_keypair()
+    # The named team is stable across fixture instances. Do not model an
+    # unrelated controller rotation inside a shared serving-cache lifetime.
+    namespace_key = named_signing_key("mutation-parity-namespace")
+    namespace_did = named_did_key("mutation-parity-namespace")
+    team_key = named_signing_key("mutation-parity-team")
+    team_did = named_did_key("mutation-parity-team")
     async with (
         Redis.from_url(os.environ["REDIS_URL"], decode_responses=True) as redis,
         AsyncExitStack() as cleanup,
