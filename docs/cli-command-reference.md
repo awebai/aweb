@@ -1189,7 +1189,7 @@ Flags:
 - `--body-file string Read request body from a file; safe for Markdown or command examples`
 - `--header stringArray Additional header in 'Name: Value' form`
 - `-h, --help help for request`
-- `--raw Print only the upstream response body`
+- `--raw Print only the upstream response body, byte for byte; the HTTP status line goes to stderr`
 - `--sign string Additional signed fields (requires --team-auth)`
 - `--sign-file string Read additional signed fields from a file (requires --team-auth)`
 - `--team-auth Attach the active team certificate and sign a team-bound request payload`
