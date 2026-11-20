@@ -9042,52 +9042,47 @@ async def test_send_message_global_recipient_null_inbound_mode_fails_migration_r
 
 @pytest.mark.asyncio
 async def test_send_message_to_address_local_ephemeral_without_route_is_not_routable(
-    aweb_cloud_db,
+    registered_mail_actors,
 ):
-    alice_sk, _, alice_did_key = _make_keypair()
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
-        """
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */, NULL, NULL, 'bob', 'local', 'developer', 'open', CASE WHEN NULLIF(NULL, '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */ END)
-        """
-    )
+    from types import SimpleNamespace
+    from aweb.application_state import application_registry_client
+    from test_local_policy_refusal_boundaries import admitted_local_recipient
 
-    registry = AsyncMock()
-    registry.resolve_key = AsyncMock(
-        return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key)
+    env, actors = registered_mail_actors
+    alice = actors["alice"]
+    server = SimpleNamespace(
+        fixture=env, registry=application_registry_client(env.app.state)
     )
-    registry.resolve_address = AsyncMock(return_value=None)
-    registry.list_did_addresses = AsyncMock(return_value=[])
-    registry.list_team_certificates = AsyncMock(return_value=[])
-    app = _build_test_app(
-        aweb_cloud_db.aweb_db,
-        registry,
-        verified_bindings=(("did:aw:alice", alice_did_key, "acme.com/alice"),),
+    bob = await admitted_local_recipient(server, team="eng:otherco.com", alias="bob")
+    body = json.dumps({"to_address": "otherco.com/bob", "subject": "blocked", "body": "hi"}).encode()
+    refused = await env.client.post(
+        "/v1/messages",
+        content=body,
+        headers={
+            **_signed_identity_headers(alice.signing_key, alice.did_key, alice.stable_id, body),
+            "Content-Type": "application/json",
+        },
     )
-
-    payload = {"to_address": "otherco.com/bob", "subject": "blocked", "body": "hi"}
-    body_bytes = json.dumps(payload).encode()
-    headers = {
-        **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body_bytes),
-        "Content-Type": "application/json",
-    }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        # This router-only app has no production exception renderer. Check the
-        # typed refusal here; the real-app journey checks its HTTP JSON body.
-        with pytest.raises(FederationAuthorityError) as refused:
-            await client.post("/v1/messages", content=body_bytes, headers=headers)
-
-    assert refused.value.reason == "local_recipient_route_missing"
-    assert refused.value.http_status == 404
-    assert refused.value.retryable is False
-    assert "Local recipient only accepts" in str(refused.value.__cause__)
-    assert await aweb_cloud_db.aweb_db.fetch_value("SELECT COUNT(*) FROM {{tables.messages}}") == 0
+    assert refused.status_code == 404, refused.text
+    assert refused.json()["reason"] == "local_recipient_route_missing"
+    assert refused.json()["retryable"] is False
+    assert refused.json()["detail"] == (
+        "otherco.com/bob is not a registered address. A local identity has no address and "
+        "is reachable only from inside its own team, by alias; a global identity is "
+        "reachable by address once one is assigned. Check the address or use a teammate alias and retry."
+    )
+    assert await env.db.fetch_value("SELECT count(*) FROM {{tables.messages}}") == 0
+    member_body = json.dumps({"to_alias": "bob", "subject": "same-team", "body": "allowed"}).encode()
+    accepted = await env.client.post(
+        "/v1/messages",
+        content=member_body,
+        headers={
+            **_signed_team_headers(bob.sk, bob.did, bob.team, bob.certificate, member_body),
+            "Content-Type": "application/json",
+        },
+    )
+    assert accepted.status_code == 200, accepted.text
+    assert await env.db.fetch_value("SELECT to_did FROM {{tables.messages}}") == bob.did
 
 
 @pytest.mark.asyncio
