@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, existsSync, writeFileSync, symlinkSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, existsSync, writeFileSync, symlinkSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import test from "node:test";
-import { DiagnosticOutput, kernelSessionSnapshot, preparePassiveKernelLaunch, runKernelLifecycleCommand, runKernelProbeCommand } from "./user_paths_kernel_setup.mjs";
+import { DiagnosticOutput, createProbeAssertions, wakeTimestampIsUnset, kernelSessionSnapshot, preparePassiveKernelLaunch, runKernelLifecycleCommand, runKernelProbeCommand } from "./user_paths_kernel_setup.mjs";
 
 function cleanupPassiveTerminal({ root, tmuxBinary, env }) {
   const stopped = spawnSync(tmuxBinary, ["-L", "oats", "kill-server"], { env, encoding: "utf8", timeout: 10000 });
@@ -191,4 +191,51 @@ test("session evidence retains false fields and withholds unrecognized lifecycle
   const answer = { ok: true, result: { present: false, running: false, state: "stopped", Authorization: "fixture-credential-marker", message: "fixture-credential-marker" } };
   assert.deepEqual(kernelSessionSnapshot(answer), { ok: true, present: false, running: false, state: "stopped" });
   assert.deepEqual(kernelSessionSnapshot({ ok: "fixture-credential-marker", result: { state: "fixture-credential-marker" } }), { ok: null, present: null, running: null, state: null });
+});
+
+
+test("quiet startup accepts Go zero time and refuses recorded or malformed input", () => {
+  // Actual ChannelCoreStatus JSON and the a071 prelaunch receipt use this zero.
+  const wire = JSON.parse('{"last_input_at":"0001-01-01T00:00:00Z"}');
+  for (const value of [undefined, "", wire.last_input_at]) assert.equal(wakeTimestampIsUnset(value), true);
+  for (const value of ["2026-11-20T05:23:24.123Z", "invalid", null, false, 0]) assert.equal(wakeTimestampIsUnset(value), false);
+  const root = mkdtempSync(join(tmpdir(), "kernel-assertion-receipt-"));
+  try {
+    const output = join(root, "receipt.json");
+    const evidence = { wake_fresh: { last_input_at: "2026-11-20T05:23:24.123Z" } };
+    const probe = createProbeAssertions({ evidence, output });
+    assert.throws(() => probe.ok(wakeTimestampIsUnset(evidence.wake_fresh.last_input_at), "startup inspection submits no input"), /Inspect the recorded assertion values/);
+    const saved = JSON.parse(readFileSync(output, "utf8"));
+    assert.equal(saved.wake_fresh.last_input_at, evidence.wake_fresh.last_input_at);
+    assert.equal(saved.assertions["startup inspection submits no input"].actual, false);
+    assert.equal(saved.failed_check, "startup inspection submits no input");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("probe checks persist before verification and withhold private values", () => {
+  const root = mkdtempSync(join(tmpdir(), "kernel-assertion-privacy-"));
+  try {
+    const output = join(root, "receipt.json"), evidence = {};
+    const probe = createProbeAssertions({ evidence, output });
+    // deepEqual invokes this getter while verifying, after persistence.
+    probe.deepEqual({ get type() { return JSON.parse(readFileSync(output, "utf8")).assertions["before verification"].actual.type; } }, { type: "object" }, "before verification");
+    probe.equal("0001-01-01T00:00:00Z", "0001-01-01T00:00:00Z", "public timestamp");
+    probe.match("public", /^public$/, "public match");
+    probe.ok("fixture-credential-marker", "opaque truthy input");
+    for (const [method, actual, expected] of [
+      ["equal", "fixture-credential-marker", "other"],
+      ["deepEqual", { Authorization: "fixture-credential-marker" }, {}],
+      ["match", "fixture-credential-marker", /^public$/],
+    ]) {
+      assert.throws(() => probe[method](actual, expected, `private ${method}`), (error) => {
+        assert.doesNotMatch(error.message, /fixture-credential-marker/);
+        assert.ok(error.cause);
+        return true;
+      });
+    }
+    const saved = readFileSync(output, "utf8");
+    assert.doesNotMatch(saved, /fixture-credential-marker|Authorization/);
+    assert.equal(JSON.parse(saved).assertions["public timestamp"].actual, "0001-01-01T00:00:00Z");
+    assert.equal(JSON.parse(saved).assertions["opaque truthy input"].actual.withheld, true);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

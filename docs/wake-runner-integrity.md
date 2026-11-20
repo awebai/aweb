@@ -54,10 +54,26 @@ kernel session, checks independent terminal liveness after one idle second,
 and retires the home. Actual provider, wake and mail delivery remain the
 user-paths stage's responsibility.
 
-The probe records allowlisted session booleans/state before asserting them,
-and every assertion names its field or boundary. Released plain `retire --json`
-returns a direct receipt, not an `ok` envelope: cleanup requires the exact
-instance, home removal and confirmed provider retirement/alias release.
+Every probe assertion records its named inputs before verification, using one
+receipt owner. Booleans, numbers, public state words, UTC timestamps and file
+modes are retained; opaque strings and objects are withheld. The full public
+wake snapshot is saved before the quiet-start and idle assertions, so a failed
+check retains its actual `last_input_at`. Assertion failures keep their cause
+and identify the check and receipt without printing private compared values.
+
+`ChannelCoreStatus.LastInputAt` is a Go `time.Time`: no broker input can appear
+as the nonempty JSON string `0001-01-01T00:00:00Z`. The probe accepts that zero,
+an omitted field or the child's empty string as absence. It still refuses
+nonzero or malformed values before the controlled mail. The runner updates
+this timestamp only after a submitted `session input`; the startup observer
+only calls `session inspect` (terminal-wake-broker.md:195-200). The released
+kernel's TASK prompt is launch argv, not this broker input receipt. Generation
+zero is omitted by Go JSON too; the probe compares its numeric default and the
+runner's actual start time to retain the same-generation/process check.
+
+Released plain `retire --json` returns a direct receipt, not an `ok` envelope:
+cleanup requires the exact instance, home removal and confirmed provider
+retirement/alias release.
 
 Command failures retain a child label, executable, PID, elapsed time, configured
 deadline and bounded output tails from known non-secret producers. All kernel

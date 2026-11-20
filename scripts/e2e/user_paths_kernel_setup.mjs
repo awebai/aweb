@@ -1,8 +1,52 @@
 import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
+import strictAssert from "node:assert/strict";
 
 export const DiagnosticOutput = Object.freeze({ Public: "public", Credential: "credential" });
+
+const GO_ZERO_TIME = "0001-01-01T00:00:00Z";
+const PUBLIC_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/;
+const PUBLIC_CHECK_TEXT = new Set(["PASSED", "FAILED", "pending", "active", "not-launched", "700", "600"]);
+
+export function wakeTimestampIsUnset(value) {
+  // ChannelCoreStatus uses time.Time: its zero is a nonempty JSON string.
+  return value === undefined || value === "" || value === GO_ZERO_TIME;
+}
+
+function publicAssertionValue(value) {
+  if (value === null || typeof value === "boolean" || typeof value === "number") return value;
+  if (typeof value === "string" && (PUBLIC_TIMESTAMP.test(value) || /^[0-7]{3,4}$/.test(value) || PUBLIC_CHECK_TEXT.has(value))) return value;
+  if (Array.isArray(value)) return value.map(publicAssertionValue);
+  // No arbitrary string/object/message fallback: tokens can reach assert.ok.
+  return { type: typeof value, withheld: true };
+}
+
+export function createProbeAssertions({ evidence, output }) {
+  evidence.assertions = {};
+  const persist = () => {
+    if (!output) return; // Missing --output has no destination for a receipt.
+    mkdirSync(dirname(output), { recursive: true });
+    writeFileSync(output, JSON.stringify(evidence, null, 2) + "\n", { mode: 0o600 });
+  };
+  const check = ({ method, actual, expected, label, verify }) => {
+    // Labels come from fixed probe checks; unrecognized values stay withheld.
+    evidence.assertions[label] = { method, actual: publicAssertionValue(actual), expected: publicAssertionValue(expected) };
+    persist();
+    try { verify(); }
+    catch (error) {
+      evidence.failed_check ??= label;
+      persist();
+      throw new Error(`Probe check failed: ${label}. Inspect the recorded assertion values before retrying.`, { cause: error });
+    }
+  };
+  return {
+    ok(actual, label) { check({ method: "ok", actual, expected: true, label, verify: () => strictAssert.ok(actual, label) }); },
+    equal(actual, expected, label) { check({ method: "equal", actual, expected, label, verify: () => strictAssert.equal(actual, expected, label) }); },
+    deepEqual(actual, expected, label) { check({ method: "deepEqual", actual, expected, label, verify: () => strictAssert.deepEqual(actual, expected, label) }); },
+    match(actual, expected, label) { check({ method: "match", actual, expected, label, verify: () => strictAssert.match(actual, expected, label) }); },
+  };
+}
 
 export function runKernelLifecycleCommand({ kernel, args, cwd, env, timeout = 60000 }) {
   return runKernelProbeCommand({

@@ -2,7 +2,6 @@
 // oats-aweb v1.42.1 test/resident-journey.test.mjs's real local-member workspace.
 // A supported passive launch executable avoids a model call, per OATS's launch
 // configuration contract. Neither the kernel, provider, aw nor broker is faked.
-import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import { chmodSync, copyFileSync, cpSync, mkdirSync, readFileSync, rmSync, statSync, existsSync, symlinkSync, writeFileSync } from "node:fs";
@@ -10,7 +9,7 @@ import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { DiagnosticOutput, kernelSessionSnapshot, prepareKernelProbeDirectories, preparePassiveKernelLaunch, runKernelLifecycleCommand, runKernelProbeCommand } from "./user_paths_kernel_setup.mjs";
+import { DiagnosticOutput, createProbeAssertions, wakeTimestampIsUnset, kernelSessionSnapshot, prepareKernelProbeDirectories, preparePassiveKernelLaunch, runKernelLifecycleCommand, runKernelProbeCommand } from "./user_paths_kernel_setup.mjs";
 
 const KernelBackend = Object.freeze({ Tmux: "tmux" });
 const OWNED_TMUX = ["tmux", "-L", "oats"];
@@ -24,12 +23,14 @@ const { values } = parseArgs({ options: {
   "fixture-home": { type: "string" }, sender: { type: "string" }, team: { type: "string" }, output: { type: "string" },
   "source-commit": { type: "string" },
 } });
+const evidence = {};
+const assert = createProbeAssertions({ evidence, output: values.output });
 for (const option of ["aw", "root", "seat", "sender", "team", "output", "source-commit", "fixture-home"]) {
   assert.ok(values[option], `--${option} is required`);
 }
 const root = resolve(values.root);
 const { home, deployment, source, bin } = prepareKernelProbeDirectories({ root });
-const evidence = { scope: "released OATS kernel -> candidate aw wake path; not the lab image, supervisor or Helm storage", provider: PIN, candidate_source_commit: values["source-commit"], candidate_binary_sha256: createHash("sha256").update(readFileSync(values.aw)).digest("hex"), process_uid: process.geteuid(), process_gid: process.getegid() };
+Object.assign(evidence, { scope: "released OATS kernel -> candidate aw wake path; not the lab image, supervisor or Helm storage", provider: PIN, candidate_source_commit: values["source-commit"], candidate_binary_sha256: createHash("sha256").update(readFileSync(values.aw)).digest("hex"), process_uid: process.geteuid(), process_gid: process.getegid() });
 const env = {
   PATH: `${bin}:${dirname(process.execPath)}:/usr/bin:/bin`, HOME: home,
   TMUX_TMPDIR: join(root, "tmux"), OATS_TMUX_SESSION: "r20-kernel-wake",
@@ -149,12 +150,13 @@ try {
   const wakeStatus = () => parseObject(command({ name: "aw wake status", argv: [join(bin, "aw"), "wake", "status", "--json"], cwd: home }));
   await until({ read: wakeStatus, ready: (status) => status.daemon_running === true && status.daemon_pid === broker.pid, label: "isolated broker" });
   const spawned = parseObject(oats("spawn", "probe", "--name", "r20-wake-probe", "--backend", KernelBackend.Tmux, "--no-launch", "--json"));
+  evidence.kernel_spawn = { ok: spawned.ok, instance: spawned.result?.instance, home: spawned.result?.home };
   assert.equal(spawned.ok, true, "kernel spawn.ok must confirm the no-launch spawn");
   ({ instance, home: instanceHome } = spawned.result);
   assert.ok(instance && instanceHome, "kernel spawn must return its instance and home");
   const beforeLaunch = kernelInstanceStatus();
-  assert.equal(beforeLaunch.row.running, false, "a no-launch instance is recorded without a running session");
   evidence.kernel_status_before = beforeLaunch.status;
+  assert.equal(beforeLaunch.row.running, false, "a no-launch instance is recorded without a running session");
   const runnerReady = (status) => status.daemon_running === true && status.daemon_pid === broker.pid && wakeInstances(status).some((row) => row.home === instanceHome && row.channel_core?.running === true);
   const prelaunchKernel = parseObject(oats("session", "inspect", "--home", instanceHome, "--json"));
   evidence.kernel_prelaunch = kernelSessionSnapshot(prelaunchKernel);
@@ -172,16 +174,19 @@ try {
   assert.equal(liveKernel.result.running, true, "kernel started_idle.running must be true before quiet wake readiness");
   evidence.kernel_status_started_idle = activeKernelStatus();
   const fresh = await until({ read: wakeStatus, ready: (status) => runnerReady(status) && wakeInstances(status).some((row) => row.home === instanceHome && row.phase === "active") && status.readiness?.some((verdict) => verdict.home === instanceHome && verdict.ready === true), label: "quiet startup readiness before any mail" });
-  const freshRow = wakeInstances(fresh).find((row) => row.home === instanceHome);
-  assert.equal(freshRow.channel_core.generation, prelaunchRow.channel_core.generation, "quiet startup must keep the registered runner generation");
-  assert.ok(!freshRow.channel_core.last_input_at, "startup inspection submits no input");
   evidence.wake_fresh = fresh;
+  const freshRow = wakeInstances(fresh).find((row) => row.home === instanceHome);
+  // Go omits generation=0 and serializes time.Time's zero as a nonempty string.
+  assert.equal(freshRow.channel_core.generation ?? 0, prelaunchRow.channel_core.generation ?? 0, "quiet startup must keep the registered runner generation");
+  assert.ok(prelaunchRow.channel_core.last_run_at && !wakeTimestampIsUnset(prelaunchRow.channel_core.last_run_at), "prelaunch runner must have a recorded start time");
+  assert.equal(freshRow.channel_core.last_run_at, prelaunchRow.channel_core.last_run_at, "quiet startup must keep the same runner process start");
+  assert.ok(wakeTimestampIsUnset(freshRow.channel_core.last_input_at), "startup inspection submits no input");
   await sleep(1000);
   const idle = wakeStatus();
+  evidence.wake_idle_after_presence = idle;
   const idleRow = wakeInstances(idle).find((row) => row.home === instanceHome);
   assert.equal(idleRow.last_inspect_at, freshRow.last_inspect_at, "startup observer stops after first live observation");
-  assert.ok(!idleRow.channel_core.last_input_at, "idle startup needs no delivery event");
-  evidence.wake_idle_after_presence = idle;
+  assert.ok(wakeTimestampIsUnset(idleRow.channel_core.last_input_at), "idle startup needs no delivery event");
   evidence.private_execution_fresh = executionPermissions(fresh);
   assert.equal(existsSync(join(cache, "runner.sha256")), false, "candidate removes the legacy stamp");
   assert.equal(readFileSync(join(cache, "runner.mjs"), "utf8"), legacyBytes, "candidate leaves unused legacy bytes alone");
@@ -205,7 +210,7 @@ try {
   const sent = parseObject(aw({ identity: values.sender, args: ["mail", "send", "--to", recipient, "--subject", subject, "--body", "Disposable wake-path qualification; no action.", "--json"] }));
   assert.ok(sent.message_id, "mail send must return its message id");
   evidence.message_id = sent.message_id;
-  evidence.wake_after = await until({ read: wakeStatus, ready: (status) => wakeInstances(status).some((row) => row.home === instanceHome && row.channel_core?.last_input_at && row.channel_core.last_input_at !== wakeInstances(before).find((entry) => entry.home === instanceHome)?.channel_core?.last_input_at), label: "broker input receipt" });
+  evidence.wake_after = await until({ read: wakeStatus, ready: (status) => wakeInstances(status).some((row) => row.home === instanceHome && row.channel_core?.last_input_at && !wakeTimestampIsUnset(row.channel_core.last_input_at) && row.channel_core.last_input_at !== wakeInstances(before).find((entry) => entry.home === instanceHome)?.channel_core?.last_input_at), label: "broker input receipt" });
   const capture = () => {
     const panes = command({ name: "tmux list-panes", argv: [...OWNED_TMUX, "list-panes", "-a", "-F", "#{pane_id}"] }).trim().split("\n");
     assert.ok(panes.length && panes.every((pane) => /^%[0-9]+$/.test(pane)), "owned kernel server reports valid panes");
@@ -245,5 +250,5 @@ try {
   writeFileSync(values.output, JSON.stringify(evidence, null, 2) + "\n");
   rmSync(root, { recursive: true, force: true });
 }
-assert.equal(evidence.result, ProbeOutcome.Passed, `released-kernel-wake result must be PASSED: ${evidence.error || JSON.stringify(cleanupErrors)}`);
+assert.equal(evidence.result, ProbeOutcome.Passed, `released-kernel-wake result must be PASSED: ${evidence.failed_check || "inspect recorded diagnostics"}`);
 console.log("PASS released OATS kernel -> candidate aw wake path");
