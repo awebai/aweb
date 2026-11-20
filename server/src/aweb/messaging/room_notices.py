@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from aweb.member_team_key import current_member_sql
+
 import logging
 from time import monotonic
 from uuid import UUID
@@ -137,7 +139,9 @@ async def count_room_notices(db, actor: TeamIdentity) -> int:
         JOIN {{tables.agents}} a ON a.agent_id=n.recipient_agent_id
           AND a.team_id=r.team_id
         WHERE a.agent_id=$1 AND a.team_id=$2 AND a.did_key=$3
-          AND a.status='active' AND a.deleted_at IS NULL
+          AND """
+            + current_member_sql("a")
+            + """
           AND ($4::uuid IS NULL OR EXISTS (
               SELECT 1 FROM {{tables.identity_session_grants}} g
               WHERE g.grant_id=$4 AND g.subject_agent_id=a.agent_id

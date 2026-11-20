@@ -6,6 +6,8 @@ verified certificate, creates or updates a workspace.
 
 from __future__ import annotations
 
+from aweb.member_team_key import current_member_sql
+
 import uuid
 from typing import Any
 
@@ -579,7 +581,8 @@ async def get_team_info(request: Request, db=Depends(get_db)) -> TeamInfoRespons
         raise HTTPException(status_code=404, detail="Team not found")
 
     count = await aweb_db.fetch_one(
-        "SELECT COUNT(*)::int AS cnt FROM {{tables.agents}} WHERE team_id = $1 AND deleted_at IS NULL",
+        "SELECT COUNT(*)::int AS cnt FROM {{tables.agents}} a WHERE a.team_id = $1 AND "
+        + current_member_sql("a"),
         identity.team_id,
     )
 

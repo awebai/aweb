@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from aweb.member_team_key import current_member_sql
+
 from aweb.identity_binding import IdentityProjectionField, verified_identity_field_sql
 
 from datetime import datetime, timezone
@@ -268,9 +270,9 @@ async def controller_set_status_host(
     async with aweb_db.transaction() as tx:
         agent = await tx.fetch_one(
             """
-            SELECT agent_id FROM {{tables.agents}}
-            WHERE team_id = $1 AND alias = $2 AND deleted_at IS NULL
-            FOR UPDATE
+            SELECT a.agent_id FROM {{tables.agents}} a
+            WHERE a.team_id = $1 AND a.alias = $2 AND """ + current_member_sql("a") + """
+            FOR UPDATE OF a
             """,
             team_id,
             alias,
@@ -355,8 +357,8 @@ async def publish_agent_status(
     aweb_db = db.get_manager("aweb")
     agent = await aweb_db.fetch_one(
         f"""
-        SELECT agent_id, alias, did_key, {verified_identity_field_sql(IdentityProjectionField.STABLE_DID)} AS did_aw FROM {{{{tables.agents}}}}
-        WHERE team_id = $1 AND alias = $2 AND deleted_at IS NULL
+        SELECT agent_id, alias, did_key, {verified_identity_field_sql(IdentityProjectionField.STABLE_DID)} AS did_aw FROM {{{{tables.agents}}}} a
+        WHERE a.team_id = $1 AND a.alias = $2 AND {current_member_sql("a")}
         """,
         identity.team_id,
         alias,

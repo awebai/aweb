@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from aweb.member_team_key import current_member_sql
+
 import logging
 import re
 import hashlib
@@ -731,12 +733,12 @@ async def _resolve_assignee_on(manager, *, team_id: str, assignee_ref: str) -> t
         agent_id = None
     row = await manager.fetch_one(
         f"""
-        SELECT alias, {verified_principal_did_sql()} AS principal_did
-        FROM {{{{tables.agents}}}}
-        WHERE team_id = $1 AND deleted_at IS NULL
-          AND (($2::uuid IS NOT NULL AND agent_id = $2)
-               OR ($2::uuid IS NULL AND alias = $3))
-        FOR SHARE
+        SELECT a.alias, {verified_principal_did_sql(agent="a")} AS principal_did
+        FROM {{{{tables.agents}}}} a
+        WHERE a.team_id = $1 AND {current_member_sql("a")}
+          AND (($2::uuid IS NOT NULL AND a.agent_id = $2)
+               OR ($2::uuid IS NULL AND a.alias = $3))
+        FOR SHARE OF a
         """,
         team_id,
         agent_id,
@@ -753,30 +755,11 @@ async def _resolve_assignee_alias(
     team_id: str,
     assignee_ref: str,
 ) -> str:
-    """Resolve a nondeleted team member, including humans hidden from the roster."""
-    aweb_db = db.get_manager("aweb")
-
-    try:
-        agent_uuid = UUID(assignee_ref)
-        agent_row = await aweb_db.fetch_one(
-            "SELECT alias FROM {{tables.agents}} WHERE agent_id = $1 AND team_id = $2 AND deleted_at IS NULL",
-            agent_uuid,
-            team_id,
-        )
-        if not agent_row:
-            raise ValidationError("Assignee agent not found in this team")
-        return agent_row["alias"]
-    except ValueError:
-        pass
-
-    agent_row = await aweb_db.fetch_one(
-        "SELECT alias FROM {{tables.agents}} WHERE alias = $1 AND team_id = $2 AND deleted_at IS NULL",
-        assignee_ref.strip(),
-        team_id,
+    """Resolve the same current member used by the transaction's assignee check."""
+    alias, _ = await _resolve_assignee_on(
+        db.get_manager("aweb"), team_id=team_id, assignee_ref=assignee_ref
     )
-    if not agent_row:
-        raise ValidationError("Assignee agent not found in this team")
-    return agent_row["alias"]
+    return alias
 
 
 async def get_task(db, *, team_id: str, ref: str) -> dict[str, Any]:

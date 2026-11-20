@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from aweb.member_team_key import current_member_sql
+
 from aweb.identity_binding import IdentityProjectionField, verified_identity_field_sql
 
 from aweb.human_kind import agent_listing_predicate_sql, effective_agent_type
@@ -472,7 +474,7 @@ async def list_agents(
             ORDER BY w.last_seen_at DESC NULLS LAST, w.created_at DESC, w.workspace_id
             LIMIT 1
         ) ctx ON TRUE
-        WHERE a.team_id = $1 AND a.deleted_at IS NULL
+        WHERE a.team_id = $1 AND {current_member_sql("a")}
           AND {agent_listing_predicate_sql("a")}
         ORDER BY a.alias
         """,
@@ -1127,8 +1129,8 @@ async def send_control_signal(
 
     target = await aweb_db.fetch_one(
         """
-        SELECT agent_id FROM {{tables.agents}}
-        WHERE team_id = $1 AND alias = $2 AND deleted_at IS NULL
+        SELECT a.agent_id FROM {{tables.agents}} a
+        WHERE a.team_id = $1 AND a.alias = $2 AND """ + current_member_sql("a") + """
         """,
         identity.team_id,
         alias,

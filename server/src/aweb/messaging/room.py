@@ -360,9 +360,11 @@ async def post_room_message(
             raise ConflictError("Room message ID already used")
         await tx.execute(
             """WITH recipients AS (
-                SELECT agent_id FROM {{tables.agents}}
-                WHERE team_id=$2 AND agent_id<>$3 AND status='active' AND deleted_at IS NULL
-                ORDER BY agent_id FOR SHARE
+                SELECT a.agent_id FROM {{tables.agents}} a
+                WHERE a.team_id=$2 AND a.agent_id<>$3 AND """
+            + current_member_sql("a")
+            + """
+                ORDER BY a.agent_id FOR SHARE OF a
             )
             INSERT INTO {{tables.room_post_notices}} (message_id, recipient_agent_id)
             SELECT $1, agent_id FROM recipients

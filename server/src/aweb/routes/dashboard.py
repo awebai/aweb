@@ -6,6 +6,8 @@ All endpoints are read-only.
 
 from __future__ import annotations
 
+from aweb.member_team_key import current_member_sql
+
 from aweb.application_state import application_registry_client
 from aweb.identity_binding import IdentityProjectionField, verified_identity_field_sql
 
@@ -385,7 +387,7 @@ async def list_team_agents(request: Request, team_id: str, db=Depends(get_db)) -
             ORDER BY last_seen_at DESC NULLS LAST, updated_at DESC NULLS LAST, created_at DESC
             LIMIT 1
         ) w ON TRUE
-        WHERE a.team_id = $1 AND a.deleted_at IS NULL
+        WHERE a.team_id = $1 AND {current_member_sql("a")}
           AND {agent_listing_predicate_sql("a")}
         ORDER BY a.alias
         """,
@@ -454,8 +456,8 @@ async def get_team_agent(request: Request, team_id: str, alias: str, db=Depends(
         f"""
         SELECT agent_id, alias, did_key, {verified_identity_field_sql(IdentityProjectionField.STABLE_DID)} AS did_aw, {verified_identity_field_sql(IdentityProjectionField.ADDRESS)} AS address, role, status, identity_scope,
                human_name, agent_type, human_verified_key, created_at
-        FROM {{{{tables.agents}}}}
-        WHERE team_id = $1 AND alias = $2 AND deleted_at IS NULL
+        FROM {{{{tables.agents}}}} a
+        WHERE a.team_id = $1 AND a.alias = $2 AND {current_member_sql("a")}
           AND {agent_listing_predicate_sql()}
         """,
         team_id,
@@ -657,7 +659,8 @@ async def get_team_status(request: Request, team_id: str, db=Depends(get_db)) ->
     aweb_db = db.get_manager("aweb")
 
     agent_count_row = await aweb_db.fetch_one(
-        "SELECT COUNT(*)::int AS cnt FROM {{tables.agents}} WHERE team_id = $1 AND deleted_at IS NULL",
+        "SELECT COUNT(*)::int AS cnt FROM {{tables.agents}} a WHERE a.team_id = $1 AND "
+        + current_member_sql("a"),
         team_id,
     )
     agent_count = agent_count_row["cnt"] if agent_count_row else 0
@@ -665,9 +668,11 @@ async def get_team_status(request: Request, team_id: str, db=Depends(get_db)) ->
     # Online = workspaces with recent last_seen_at
     online_rows = await aweb_db.fetch_all(
         """
-        SELECT DISTINCT alias FROM {{tables.workspaces}}
-        WHERE team_id = $1 AND deleted_at IS NULL
-          AND last_seen_at > NOW() - INTERVAL '30 minutes'
+        SELECT DISTINCT w.alias FROM {{tables.workspaces}} w
+        JOIN {{tables.agents}} a ON a.agent_id=w.agent_id AND a.team_id=w.team_id
+        WHERE w.team_id = $1 AND w.deleted_at IS NULL
+          AND """ + current_member_sql("a") + """
+          AND w.last_seen_at > NOW() - INTERVAL '30 minutes'
         """,
         team_id,
     )
@@ -740,7 +745,8 @@ async def get_usage(
 
     # Count active agents
     agent_row = await aweb_db.fetch_one(
-        "SELECT COUNT(*)::int AS cnt FROM {{tables.agents}} WHERE team_id = $1 AND deleted_at IS NULL",
+        "SELECT COUNT(*)::int AS cnt FROM {{tables.agents}} a WHERE a.team_id = $1 AND "
+        + current_member_sql("a"),
         team_id,
     )
     active_agents = agent_row["cnt"] if agent_row else 0
