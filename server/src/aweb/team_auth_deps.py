@@ -168,7 +168,12 @@ async def resolve_team_identity(
     # again in that transaction; the earlier row grants no authority.
     read_locks = (
         (MemberReadLock.UPDATE,)
-        if binding.fresh_observation
+        if binding.fresh_observation or (
+            presented_certificate_id and (
+                presented_certificate_id != (row.get("certificate_id") or "").strip()
+                or verified_team_did_key != (row.get("accepted_team_did_key") or "").strip()
+            )
+        )
         else (MemberReadLock.SHARE, MemberReadLock.UPDATE)
     )
     for read_lock in read_locks:
