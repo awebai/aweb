@@ -1,5 +1,10 @@
 # Knowledge log
 
+## 2026-11-08
+* **Harvest**: OKF proposal from seat aweb-protocol-expert-secrets-docs, about the frozen manifest v2 and check order on anonymous signed-act routes.
+* **Create**: [app manifest version 2 cannot gain a field](/aweb-protocol-expert/lessons/manifest-v2-cannot-gain-a-field.md): released aw 1.36.46 to 1.36.56 decode v2 strictly with one field set, so a new declaration is a new manifest version served as a catalog variant.
+* **Update**: [unauthenticated input must not drive remote work](/aweb-protocol-expert/lessons/unauthenticated-input-must-not-drive-remote-work.md) gains "State lookups are not local verification": on an anonymous signed-act route, stateless checks, then the key and signature, then state, proved with forged-act pairs.
+
 ## 2026-11-06
 * **Fix**: review of the db-access proposal on npm gitHead, PubSub release and stream checkouts: hosted specifics in [stream bodies leave the request connection scope](/aweb-protocol-expert/lessons/stream-bodies-leave-the-request-connection-scope.md) and [an npm tarball publish records no gitHead](/aweb-protocol-expert/lessons/npm-tarball-publish-records-no-githead.md) are stated generically or dropped, as the OSS and Cloud boundary requires.
 * **Update**: [SSE cleanup is cancelled on client disconnect](/aweb-protocol-expert/lessons/sse-cleanup-is-cancelled-on-disconnect.md) and [a PubSub release survives any cancellation](/aweb-protocol-expert/decisions/pubsub-release-survives-any-cancellation.md) link each other: the AnyIO shield covers Starlette's disconnect, not native task cancellation.
