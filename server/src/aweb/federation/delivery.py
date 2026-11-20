@@ -292,7 +292,7 @@ async def _lock_current_recipient(
 ) -> _LockedRecipientResidence:
     """Lock exact-DID residence without selecting a membership as its authority.
 
-    docs/identity-messaging-contract.md:272-277 makes independently verified
+    Continuations (docs/identity-messaging-contract.md:311-316) makes independently verified
     address residence independent of current membership and binding markers.
     Row IDs locate storage only; an identity-only ingress stays actor-free.
     """

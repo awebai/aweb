@@ -65,7 +65,7 @@ def grant_status(row: Mapping[str, Any], now: datetime) -> GrantLifetimeState:
 def _stored_grant_validity(row: Mapping[str, Any], *, now: datetime) -> GrantValidityState:
     """Apply lifetime, subject and retained issuer rules before registry reads.
 
-    docs/identity.md:755-779: no default lifetime cap; delegation ends with its
+    Session grants (docs/identity.md:773-811): no default lifetime cap; delegation ends with its
     issuing certificate. Reacceptance does not revive it in this release.
     """
     lifetime = grant_status(row, now)
@@ -90,7 +90,7 @@ async def grant_validity(
 ) -> GrantValidityObservation:
     """Decide grant eligibility once for every native transport and read.
 
-    docs/identity.md:755-779 requires the same subject, issuer and lifetime
+    Session grants (docs/identity.md:773-811) requires the same subject, issuer and lifetime
     rule everywhere. SDK readers own freshness. Invalid authority scope is
     distinct from unavailable evidence; staged registration never waives the
     ordinary issuer revocation check or adds an off-mode refusal.

@@ -341,7 +341,8 @@ async def read_participant_identity_projection(
 ) -> dict[str, Any] | None:
     """Read identity for an already-authorized participant, never a team actor.
 
-    docs/identity-messaging-contract.md:96-116 keeps participation independent
+    Global And Local Identities (docs/identity-messaging-contract.md:122-141)
+    keeps participation independent
     of current membership. A new first-contact lookup must use the member
     selectors or independently verify its address route instead.
     """
@@ -394,7 +395,7 @@ def grant_issuer_current(row) -> bool:
     certificate: the subject is a member under the current key and that
     member's certificate is the one the grant was issued from. A credential
     issued from a superseded certificate does not return: reaccepting the
-    member does not renew an earlier delegation (docs/identity.md:807-811).
+    member does not renew an earlier delegation (Session grants, docs/identity.md:807-811).
     """
     if not member_key_current(row):
         return False
@@ -406,7 +407,7 @@ def grant_issuer_current(row) -> bool:
 def grant_issuer_current_sql(*, agent: str, grant: str) -> str:
     """The SQL form of grant_issuer_current for joined presence readers.
 
-    docs/identity.md:807-811 retains exact issuing-certificate equality after
+    Session grants (docs/identity.md:807-811) retains exact issuing-certificate equality after
     reacceptance. Legacy issuer-ID-less grants keep their existing lifetime.
     Both aliases are source-code identifiers, never request values.
     """
