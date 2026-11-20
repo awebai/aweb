@@ -10,6 +10,7 @@ import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { prepareKernelProbeDirectories } from "./user_paths_kernel_setup.mjs";
 
 const KernelBackend = Object.freeze({ Tmux: "tmux" });
 const OWNED_TMUX = ["tmux", "-L", "oats"];
@@ -27,8 +28,7 @@ for (const option of ["aw", "root", "seat", "sender", "team", "output", "source-
   assert.ok(values[option], `--${option} is required`);
 }
 const root = resolve(values.root);
-const home = join(root, "home"), deployment = join(root, "deploy"), source = join(root, "source"), bin = join(root, "bin");
-for (const path of [home, deployment, source, bin, join(root, "tmux")]) mkdirSync(path, { recursive: true, mode: 0o700 });
+const { home, deployment, source, bin } = prepareKernelProbeDirectories({ root });
 const evidence = { scope: "released OATS kernel -> candidate aw wake path; not the lab image, supervisor or Helm storage", provider: PIN, candidate_source_commit: values["source-commit"], candidate_binary_sha256: createHash("sha256").update(readFileSync(values.aw)).digest("hex"), process_uid: process.geteuid(), process_gid: process.getegid() };
 const env = {
   PATH: `${bin}:${dirname(process.execPath)}:/usr/bin:/bin`, HOME: home,

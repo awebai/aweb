@@ -1,11 +1,151 @@
 """A green direct channel lane cannot hide a missing or failed OATS wake seam."""
 
 from pathlib import Path
+import json
+import os
+import shutil
+import subprocess
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "e2e"))
 from user_paths_kernel_result import add_kernel_wake_result  # noqa: E402
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+class ReleasedKernelBootstrapTest(unittest.TestCase):
+    def test_no_launch_spawn_uses_private_deployment_without_git_identity(self):
+        staged = Path("/opt/user-paths/released-oats")
+        package = staged if staged.is_dir() else ROOT / "candidate-gate/released-oats"
+        kernel = package / "node_modules/@awebai/oats/bin/oats.mjs"
+        self.assertTrue(
+            kernel.is_file(), "Run make prepare-released-kernel-test first."
+        )
+        manifest = json.loads((kernel.parents[1] / "package.json").read_text())
+        self.assertEqual(manifest["version"], "0.69.19")
+        node = shutil.which("node")
+        self.assertIsNotNone(node)
+        with tempfile.TemporaryDirectory(
+            prefix="released-kernel-bootstrap-"
+        ) as temporary:
+            root = Path(temporary).resolve()
+            helper = (ROOT / "scripts/e2e/user_paths_kernel_setup.mjs").as_uri()
+            subprocess.run(
+                [
+                    node,
+                    "--input-type=module",
+                    "-e",
+                    f"import {{prepareKernelProbeDirectories}} from {json.dumps(helper)};"
+                    "prepareKernelProbeDirectories({root:process.argv[1]});",
+                    str(root),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            home, deployment, source = (
+                root / name for name in ("home", "deploy", "source")
+            )
+            env = {
+                "HOME": str(home),
+                "PATH": str(Path(node).parent) + os.pathsep + "/usr/bin:/bin",
+                "GIT_CONFIG_NOSYSTEM": "1",
+                "GIT_CONFIG_GLOBAL": os.devnull,
+                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_KEY_0": "user.useConfigOnly",
+                "GIT_CONFIG_VALUE_0": "true",
+                "OATS_REMOTE_CACHE": str(root / "cache"),
+            }
+            # The real kernel's deployment discovery must not find a parent checkout.
+            parent_repo = subprocess.run(
+                ["git", "rev-parse", "--show-toplevel"],
+                cwd=deployment,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            self.assertNotEqual(parent_repo.returncode, 0)
+            for field in ("user.name", "user.email"):
+                result = subprocess.run(
+                    ["git", "config", "--get", field],
+                    cwd=deployment,
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                self.assertNotEqual(result.returncode, 0)
+            ref = source.as_uri()
+            (source / "oats-workspace.yaml").write_text(
+                f"schemaVersion: 2\nname: wake-probe\nmembers: [{ref}]\nlocalTeams: true\n"
+            )
+            (source / "oats-membership.yaml").write_text(
+                f"schemaVersion: 2\nworkspace: {ref}\n"
+            )
+            soul = source / "souls/probe"
+            soul.mkdir(parents=True)
+            (soul / "soul.yaml").write_text(
+                "schemaVersion: 2\nname: probe\ndescription: passive bootstrap control\n"
+                "work: directory\nlaunch: { harness: claude }\n"
+            )
+            (soul / "AGENTS.md").write_text("Disposable kernel bootstrap control.\n")
+            for args in (
+                ["init", "-q"],
+                ["add", "."],
+                ["commit", "-qm", "wake-probe workspace"],
+            ):
+                subprocess.run(
+                    [
+                        "git",
+                        "-C",
+                        str(source),
+                        "-c",
+                        "user.name=Wake probe",
+                        "-c",
+                        "user.email=probe@example.invalid",
+                        *args,
+                    ],
+                    env=env,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+            (deployment / "oats-local.yaml").write_text(
+                f"schemaVersion: 2\nworkspace: {ref}\n"
+            )
+            # This exercises deployment bootstrap, with no provider or service stand-in.
+            result = subprocess.run(
+                [
+                    node,
+                    str(kernel),
+                    "spawn",
+                    "probe",
+                    "--name",
+                    "r20-wake-probe",
+                    "--backend",
+                    "tmux",
+                    "--no-launch",
+                    "--json",
+                ],
+                cwd=deployment,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            spawned = json.loads(result.stdout)
+            self.assertTrue(spawned["ok"])
+            self.assertFalse(spawned["result"]["launched"])
+            self.assertEqual(
+                Path(spawned["result"]["home"]),
+                deployment / "agents/probe/instances/r20-wake-probe",
+            )
 
 
 class ReleasedKernelAdmissionTest(unittest.TestCase):

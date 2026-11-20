@@ -264,6 +264,7 @@ def prepare_container_inputs() -> None:
         "scripts/e2e/user_paths.py",
         "scripts/e2e/user_paths_receive.mjs",
         "scripts/e2e/user_paths_oats.mjs",
+        "scripts/e2e/user_paths_kernel_setup.mjs",
         "scripts/e2e/user_paths_result.py",
     ):
         shutil.copy2(REPO / source, WORK / Path(source).name)

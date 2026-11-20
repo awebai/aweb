@@ -154,8 +154,13 @@ test: test-egress-controls check-aw-commit-repo-stamp check-cli-go-tidy test-ide
 # Discover the host/script controls together, including generators that import
 # the server's MCP registration. Use the locked server environment rather than
 # whichever Python happens to be installed on the host.
-.PHONY: test-scripts
-test-scripts:
+.PHONY: test-scripts prepare-released-kernel-test
+prepare-released-kernel-test:
+	@if [ ! -f /opt/user-paths/released-oats/node_modules/@awebai/oats/bin/oats.mjs ]; then \
+		npm ci --ignore-scripts --no-audit --no-fund --prefix candidate-gate/released-oats; \
+	fi
+
+test-scripts: prepare-released-kernel-test
 	PYTHONPYCACHEPREFIX=/tmp/pycache uv run --frozen --project server python -m unittest discover -s scripts -p 'test_*.py' -v
 
 # Package configurations own rules; the root owner compares raw findings once.
