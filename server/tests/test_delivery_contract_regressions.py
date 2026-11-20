@@ -163,7 +163,7 @@ async def test_mail_missing_native_recipient_explains_reconnection_and_keeps_liv
     refused = await _send(env, {"to_did": env.actors["carol"].did, "body": "Unavailable identity"})
     assert refused.status_code == 404, refused.text
     assert refused.json()["detail"] == (
-        "Recipient agent not found. Check the recipient or ask them to reconnect, then retry."
+        "Recipient name does not identify a current member of the team. Check the name; if the agent exists, ask it to reconnect with a current team certificate."
     )
     assert await env.db.fetch_value("SELECT count(*) FROM {{tables.messages}}") == 0
     assert await env.db.fetch_value("SELECT count(*) FROM {{tables.conversations}}") == 0

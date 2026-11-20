@@ -1629,7 +1629,7 @@ async def test_receive_old_v1_federated_chat_ignores_deprecated_fields_and_deliv
     by_did = {row["did"]: row for row in participants}
     assert by_did["did:aw:alice"]["delivery_origin"] == "https://sender.example"
     assert by_did["did:aw:alice"]["current_did_key"] == alice_did_key
-    assert by_did["did:aw:bob"]["agent_id"] == bob_agent_id
+    assert by_did["did:aw:bob"]["agent_id"] is None
     assert by_did["did:aw:bob"]["delivery_origin"] is None
     assert by_did["did:aw:bob"]["current_did_key"] == bob_did_key
 
