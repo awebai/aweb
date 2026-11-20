@@ -194,6 +194,9 @@ class World:
         self.operator_secrets = secrets_dir is not None
         self.secrets = secrets_dir if secrets_dir is not None else run_dir / "secrets"
         self.agents_configured = False
+        # Whether Secrets and Logs read the team's server, aweb's own origin
+        # behind the front, inside the services range.
+        self.team_servers_internal = True
         self.oats_source: Path | None = None
         network = ipaddress.ip_network(cidr)
         self.cidr = cidr
@@ -505,6 +508,10 @@ class World:
                 "emailCaFile": f"/run/secrets/{app}/smtp-ca.pem",
                 "egressDeniedNetworks": ["169.254.0.0/16"],
             }
+        # Both read the team's grants and hook bindings from aweb's own origin,
+        # which this world's DNS places at the front, inside the services range.
+        for app in ("secrets", "logs"):
+            config[app]["teamServerInternal"] = self.team_servers_internal
         # Secrets sends its use and governance events to this deployment's Logs.
         config["secrets"]["hookInternalOrigins"] = [origin("logs-api")]
         config["secrets"]["hookCaFile"] = "/run/secrets/secrets/hook-ca.pem"
@@ -558,6 +565,17 @@ class World:
         connect = json.dumps(self.connect(), indent=2)
         (self.run_dir / "connect.json").write_text(connect)
         return result.returncode
+
+    def member_secret_list(self, machine: str) -> dict:
+        """The member's signed read of Secrets' secret list, which Secrets
+        admits only after reading the team's grant from the team's server:
+        aw's status and body, whatever the status."""
+        result = subprocess.run(
+            ["docker", "exec", machine, "aw", "--json", "id", "request", "GET",
+             origin("secrets-api") + "/v1/secrets", "--team-auth"],
+            text=True, capture_output=True, check=False, timeout=300,
+        )
+        return first_json(result.stdout)
 
     def component(self, name: str) -> Path:
         """A component's secrets directory: made here for the run's own
@@ -896,6 +914,31 @@ def main() -> int:
             print("DOWN: nothing of the project is left" if down.returncode == 0 else "DOWN FAILED: see above")
 
 
+def team_server_reach(world: World, holder: Holder) -> None:
+    """Without the operator's opt-in, Secrets refuses to read aweb's own origin
+    at the front's private address, permanently and naming the remedy; with
+    it, the same signed read passes that refusal. Leaves the opt-in on."""
+    world.team_servers_internal = False
+    world.deployment()
+    if world.up() != 0:
+        raise SystemExit("BOUNDARY: the deployment without the team-server opt-in did not come up")
+    refused = world.member_secret_list(holder.container)
+    detail = refused.get("body", {}).get("detail", {}) if isinstance(refused.get("body"), dict) else {}
+    if refused.get("status") != 403 or detail.get("code") != "team_server_not_allowed":
+        raise SystemExit(f"BOUNDARY: without the opt-in Secrets answered {refused!r}")
+    print("TEAM SERVER REFUSED WITHOUT OPT-IN:", json.dumps(detail, sort_keys=True))
+    world.team_servers_internal = True
+    world.deployment()
+    if world.up() != 0:
+        raise SystemExit("BOUNDARY: the deployment with the team-server opt-in did not come up")
+    reached = world.member_secret_list(holder.container)
+    body = reached.get("body") if isinstance(reached.get("body"), dict) else {}
+    code = body.get("detail", {}).get("code") if isinstance(body.get("detail"), dict) else None
+    if code == "team_server_not_allowed":
+        raise SystemExit(f"BOUNDARY: with the opt-in Secrets still refused the team server: {reached!r}")
+    print("TEAM SERVER READ WITH OPT-IN:", json.dumps({"status": reached.get("status"), "code": code}))
+
+
 def journey(world: World, stop_after: str | None = None, agents_only: bool = False) -> int:
     print("=== Setup: the test world")
     world.write_world()
@@ -924,6 +967,7 @@ def journey(world: World, stop_after: str | None = None, agents_only: bool = Fal
     print("UP: aweb, secrets and logs are ready")
     print("FRONT RENEWED:", json.dumps(world.front_renewal(), sort_keys=True))
     connect_requester(site, holder)
+    team_server_reach(world, holder)
     print("LOCAL MEMBERS:", json.dumps(world.local_members(), sort_keys=True))
     print("MEMBER MAIL:", json.dumps(world.member_mail(holder.container), sort_keys=True))
     print("=== Setup: the team owner installs Secrets and Logs from their internal origins")

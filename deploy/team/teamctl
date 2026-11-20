@@ -139,7 +139,8 @@ dc() {
 }
 
 # One line per service that names internal origins (aweb's apps, the apps'
-# hook receivers): the service, the range and the origins' hosts.
+# hook receivers, and aweb's own origin for an app opted in to read its team
+# server inside the range): the service, the range and the origins' hosts.
 internal_hosts() {
   python_in_server - "$deployment" <<'PY'
 import sys
@@ -151,7 +152,10 @@ config = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
 cidr = config["network"]["servicesCidr"]
 named = {"aweb": config["aweb"].get("appInternalOrigins", [])}
 for app in ("secrets", "logs"):
-    named[app] = config.get(app, {}).get("hookInternalOrigins", [])
+    section = config.get(app, {})
+    named[app] = list(section.get("hookInternalOrigins", []))
+    if section.get("teamServerInternal"):
+        named[app].append(config["aweb"]["publicOrigin"])
 for service, origins in named.items():
     if origins:
         print(service, cidr, *sorted({urlsplit(origin).hostname for origin in origins}))
