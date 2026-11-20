@@ -129,7 +129,6 @@ async def test_room_stream_rechecks_global_tree_after_opening(
                 certificate_id="privacy-bob",
             )
         )
-        await admit_room_member(env, alias="bob")
         monkeypatch.setenv("AWID_REGISTRY_URL", origin)
         monkeypatch.setenv("AWEB_DATABASE_URL", "postgresql://unused/test")
         transport = StatusTransport()
@@ -137,6 +136,7 @@ async def test_room_stream_rechecks_global_tree_after_opening(
             env.app, redis=env.redis, transport=transport, domain_verifier=exact_dns
         )
         env.app.state.awid_registry_client = cached
+        await admit_room_member(env, alias="bob")
         subject = {"id": stable, "did_key": actor.did}
         request = env.client.build_request(
             "GET",
@@ -190,7 +190,9 @@ async def test_room_stream_rechecks_global_tree_after_opening(
                     expected_head=receipt["certificate_id"],
                 )
             if tree != "legacy":
-                assert transport.status_calls == 1  # opening admission warmed it
+                assert (
+                    transport.status_calls == 1
+                )  # native admission and stream opening share this evidence
                 transport.status_down = tree == "status_unavailable"
                 # Wall-clock movement does not age Redis's clock. First prove
                 # the still-fresh entry is used, then age that exact entry past
