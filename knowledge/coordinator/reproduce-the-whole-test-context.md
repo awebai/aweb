@@ -27,6 +27,10 @@ services in cleanup even on failure, and distinguish resulting cascades from
 independent defects. Compare stable resource identities, not relative-age display
 strings, when testing isolation.
 
+The same prerequisites, environment and boundaries are checked before a long
+run, not only after it fails: see [read the context before a long
+run](read-the-context-before-a-long-run.md).
+
 ## Provenance
 
 Harvested from the coordinator’s September–October 2026 handover notes: `reproduction-must-preserve-build-state.md`, `retain-negative-control-child-output.md`, `provider-test-fixtures-must-consume-stdin.md`, `subprocess-fakes-must-cover-runner-environment.md`, `outage-tests-must-restore-service-before-asserting.md`, `test-port-overrides-must-cross-docker-boundary.md`, `compose-limits-match-base-services.md`, `generated-resource-names-must-match-consumers.md`, `buildx-contexts-across-runner-boundaries.md`, `buildx-cache-proof-relative-times.md`. The preserved notes and archived sessions retain the detailed incident receipts; this concept records the reusable conclusion, not a current implementation inventory.
