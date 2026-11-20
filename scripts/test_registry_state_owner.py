@@ -66,32 +66,109 @@ def registry_slot_reads(source: str, path: str) -> list[int]:
             "registry_client" in names and resource(mapping_receiver(receiver))
         )
 
-    # Resolve simple name aliases without depending on their spelling or
-    # statement order. Conservative unions also cover conditional assignment.
-    assignments = [node for node in ast.walk(tree) if isinstance(node, (ast.Assign, ast.AnnAssign))]
-    changed = True
-    while changed:
-        changed = False
-        for node in assignments:
-            for target in node.targets if isinstance(node, ast.Assign) else [node.target]:
-                if not isinstance(target, ast.Name):
-                    continue
-                before = len(strings.get(target.id, set())), target.id in resources
-                strings.setdefault(target.id, set()).update(values(node.value))
-                if resource(node.value):
-                    resources.add(target.id)
-                changed |= before != (len(strings[target.id]), target.id in resources)
+    def scope_nodes(nodes):
+        for node in nodes:
+            yield node
+            if not isinstance(
+                node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+            ):
+                yield from scope_nodes(ast.iter_child_nodes(node))
+
+    def infer_aliases(nodes, parameters=()):
+        nonlocal strings, resources
+        local = list(scope_nodes(nodes))
+        bound = {
+            node.id
+            for node in local
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
+        }
+        bound.update(
+            node.name
+            for node in local
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+        )
+        bound.update(parameters)
+        bound.difference_update(
+            name
+            for node in local
+            if isinstance(node, (ast.Global, ast.Nonlocal))
+            for name in node.names
+        )
+        strings = {name: set(names) for name, names in strings.items() if name not in bound}
+        resources = resources - bound
+        assignments = [node for node in local if isinstance(node, (ast.Assign, ast.AnnAssign))]
+        changed = True
+        while changed:
+            changed = False
+            for node in assignments:
+                for target in node.targets if isinstance(node, ast.Assign) else [node.target]:
+                    if not isinstance(target, ast.Name):
+                        continue
+                    before = len(strings.get(target.id, set())), target.id in resources
+                    strings.setdefault(target.id, set()).update(values(node.value))
+                    if resource(node.value):
+                        resources.add(target.id)
+                    changed |= before != (len(strings[target.id]), target.id in resources)
+
+    infer_aliases(tree.body)
 
     class Visitor(ast.NodeVisitor):
         def __init__(self) -> None:
             self.functions: list[str] = []
+            self.class_parents = []
 
         def visit_FunctionDef(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+            nonlocal strings, resources
+            previous = strings, resources
+            for expression in (*node.decorator_list, *node.args.defaults, *node.args.kw_defaults):
+                if expression is not None:
+                    self.visit(expression)
+            if node.returns is not None:
+                self.visit(node.returns)
+            for argument in (
+                *node.args.posonlyargs,
+                *node.args.args,
+                *node.args.kwonlyargs,
+                node.args.vararg,
+                node.args.kwarg,
+            ):
+                if argument is not None and argument.annotation is not None:
+                    self.visit(argument.annotation)
+            # Method bodies close over the enclosing function/module, not the class namespace.
+            if self.class_parents and self.class_parents[-1] is not None:
+                strings, resources = self.class_parents[-1]
+            parameters = [
+                arg.arg for arg in (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs)
+            ]
+            parameters.extend(
+                arg.arg for arg in (node.args.vararg, node.args.kwarg) if arg is not None
+            )
+            infer_aliases(node.body, parameters)
             self.functions.append(node.name)
-            self.generic_visit(node)
+            self.class_parents.append(None)
+            for statement in node.body:
+                self.visit(statement)
+            self.class_parents.pop()
             self.functions.pop()
+            strings, resources = previous
 
         visit_AsyncFunctionDef = visit_FunctionDef
+
+        def visit_ClassDef(self, node: ast.ClassDef) -> None:
+            nonlocal strings, resources
+            previous = strings, resources
+            for expression in (
+                *node.decorator_list,
+                *node.bases,
+                *(keyword.value for keyword in node.keywords),
+            ):
+                self.visit(expression)
+            infer_aliases(node.body)
+            self.class_parents.append(previous)
+            for statement in node.body:
+                self.visit(statement)
+            self.class_parents.pop()
+            strings, resources = previous
 
         def visit(self, node: ast.AST) -> None:
             # These lifecycle functions define, replace and close the native slot.
@@ -178,6 +255,50 @@ class RegistryStateOwnerTests(unittest.TestCase):
         ):
             with self.subTest(source=source):
                 self.assertEqual(registry_slot_reads(source, "aweb/consumer.py"), [line])
+
+    def test_aliases_respect_function_scope_and_shadowing(self) -> None:
+        for source, expected in (
+            (
+                "def native_resources(state):\n    resources = state.native_resources\n"
+                "    return application_registry_client(state)\n\n"
+                "def default_mcp_factory(resources):\n    return resources.registry_client",
+                [],
+            ),
+            (
+                "def reader(state):\n    resources = state.native_resources\n"
+                "    return resources.registry_client\n\n"
+                "def explicit_factory(resources):\n    return resources.registry_client",
+                [3],
+            ),
+            (
+                "key = 'awid_registry_client'\ndef reader(state):\n    return getattr(state, key)",
+                [3],
+            ),
+            (
+                "key = 'awid_registry_client'\ndef reader(state):\n"
+                "    key = 'other'\n    return getattr(state, key)",
+                [],
+            ),
+            (
+                "def outer(state):\n    ref = state.native_resources\n"
+                "    def inner():\n        return ref.registry_client\n    return inner()",
+                [4],
+            ),
+        ):
+            with self.subTest(source=source):
+                self.assertEqual(registry_slot_reads(source, "aweb/consumer.py"), expected)
+
+    def test_scope_headers_still_guard_evaluated_state_reads(self) -> None:
+        for source, expected in (
+            (
+                "key = 'awid_registry_client'\ndef reader(client=getattr(state, key)):\n    pass",
+                [2],
+            ),
+            ("@decorate(state.awid_registry_client)\ndef reader():\n    pass", [1]),
+            ("class Reader(state.awid_registry_client):\n    pass", [1]),
+        ):
+            with self.subTest(source=source):
+                self.assertEqual(registry_slot_reads(source, "aweb/consumer.py"), expected)
 
     def test_explicit_runtime_registry_is_not_an_application_resource_read(self) -> None:
         self.assertEqual(
