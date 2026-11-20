@@ -3,10 +3,26 @@
 These local installed-runtime capability checks are separate from the S19
 operator launcher and release journey. They use only local synthetic credentials
 and grant no server release authority. The focused worker cases compose TLS,
-signed assignments and native OCI with those same fixtures. Normal host tests skip these checks; the explicit
-Linux proof must run before any OCI integration is called complete.
+signed assignments and native OCI with those same fixtures. Normal host tests
+skip these checks. Complete the explicit Linux proof before qualifying an OCI
+integration.
 
-From the runner package directory:
+On a Linux Docker host with AppArmor enabled, the host operator first loads the
+reviewed profile. [Proof profile](aweb-secrets-oci-proof.apparmor)
+
+Load it from the runner package directory on that host.
+
+```sh
+sudo apparmor_parser --add --skip-cache tests/oci/aweb-secrets-oci-proof.apparmor
+```
+
+Docker's default profile denies the mount propagation change that rootless runc
+performs before it can prepare the job root. The proof selects the named
+enforcing profile for its own container. Once the last proof container exits,
+the host operator can remove the profile with
+`sudo apparmor_parser --remove tests/oci/aweb-secrets-oci-proof.apparmor`.
+
+Run the proof from the runner package directory.
 
 ```sh
 ./tests/oci/run-proof.sh
@@ -20,12 +36,12 @@ The image installs Python 3.12 and the runner’s locked dependencies from the
 three explicit package contexts. Only those package sources enter the build;
 instance state and repository metadata are not copied.
 
-The disposable outer container has no capabilities or network, and the runner
-source is mounted read-only. Its syscall/proc restrictions are relaxed solely to
-permit nested rootless user/PID/mount namespaces. Its writable disk-backed
-`/disk` directory supplies a negative storage control. No host users, release
-launcher, privilege policy or deployment settings are provisioned by this test.
-The explicit proof flag is a test switch, not another S19 runner input.
+The disposable outer container has no capabilities or external network, and
+the runner source is mounted read-only. Its syscall and /proc settings permit
+nested rootless user, PID and mount namespaces. Its writable disk-backed
+`/disk` directory supplies a negative storage control. The proof script uses the
+host's existing accounts and policy. The explicit proof flag only enables this
+test suite.
 
 `require_memory_directory` checks actual Linux filesystem type through an opened
 directory descriptor, in addition to runner ownership, mode 0700 and protected
