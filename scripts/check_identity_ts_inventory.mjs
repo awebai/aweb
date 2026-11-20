@@ -23,7 +23,10 @@ function primitiveModule(name) {
  return ['@noble/ed25519', '@noble/curves', 'tweetnacl', 'libsodium-wrappers'].some(prefix=>name.startsWith(prefix)) || /^(?:node:crypto|crypto)(?:$|[./])/.test(name);
 }
 function primitive(name) {return primitiveModule(name);}
-const normalized=name=>name.replace(/^(?:reference:|module-literal:)/,'').replace(/^(?:globalThis|self|window)\.crypto(?=\.|$)/,'crypto');
+const normalized=name=>name
+ .replace(/^(?:reference:|module-literal:)/,'')
+ .replace(/^(?:globalThis|self|window)\.crypto(?=\.|$)/,'crypto')
+ .replace(/^(?:node:crypto|crypto)\.webcrypto\.subtle(?=\.|$)/,'crypto.subtle');
 function rawUse(name) {
  name=normalized(name);
  if(!primitiveModule(name))return false;
@@ -40,7 +43,11 @@ export function scanSource(source, file='fixture.ts') {
  const requireFunctions=new Set(["require"]);
  function moduleValue(node) {
   if(!node)return null;
-  if(ts.isIdentifier(node))return aliases.get(node.text)??null;
+  if(ts.isIdentifier(node)) {
+   if(aliases.has(node.text))return aliases.get(node.text);
+   if(['crypto','globalThis','self','window'].includes(node.text))return node.text;
+   return null;
+  }
   if(ts.isCallExpression(node) && ts.isIdentifier(node.expression) && requireFunctions.has(node.expression.text) && node.arguments.length===1 && ts.isStringLiteral(node.arguments[0]))return node.arguments[0].text;
   if(ts.isPropertyAccessExpression(node)){const base=moduleValue(node.expression);return base?base+'.'+node.name.text:null;}
   return null;

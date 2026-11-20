@@ -41,22 +41,48 @@ type callKey struct {
 func (k callKey) String() string { return k.File + ":" + k.Symbol + ": " + k.Callee }
 
 const strictModule = "cli/go/signaturewire/signature.go"
+const signerSign = "crypto.Signer.Sign"
 
 func excluded(file string) bool {
 	return strings.HasSuffix(file, "_test.go") || strings.Contains("/"+file, "/testdata/") || file == "cli/go/internal/identityinventory/main.go"
 }
 
 func cryptoPrimitive(name string) bool {
+	if name == signerSign {
+		return true
+	}
 	for _, module := range []string{"crypto/ed25519", "golang.org/x/crypto/ed25519", "filippo.io/edwards25519"} {
 		if strings.HasPrefix(name, module+".") {
 			if module == "filippo.io/edwards25519" {
 				return true
 			}
 			operation := strings.TrimPrefix(name, module+".")
-			return operation == "Sign" || operation == "Verify" || operation == "GenerateKey" || operation == "NewKeyFromSeed"
+			switch operation {
+			case "Sign", "Verify", "VerifyWithOptions", "GenerateKey", "NewKeyFromSeed":
+				return true
+			}
+			return false
 		}
 	}
 	return false
+}
+
+// A zero hash option passes the original message to a crypto.Signer.
+func signsUnhashedMessage(call *ast.CallExpr, name func(ast.Node) string) bool {
+	selector, ok := ast.Unparen(call.Fun).(*ast.SelectorExpr)
+	if !ok || selector.Sel.Name != "Sign" || len(call.Args) != 3 {
+		return false
+	}
+	option, ok := ast.Unparen(call.Args[2]).(*ast.CallExpr)
+	if !ok || name(option.Fun) != "crypto.Hash" || len(option.Args) != 1 {
+		return false
+	}
+	literal, ok := ast.Unparen(option.Args[0]).(*ast.BasicLit)
+	if !ok || literal.Kind != token.INT {
+		return false
+	}
+	value, err := strconv.ParseUint(literal.Value, 0, 64)
+	return err == nil && value == 0
 }
 
 func primitiveModule(module string) bool {
@@ -147,6 +173,8 @@ func scanGoSource(source []byte) (map[string]map[string]int, error) {
 				callee := name(n.Fun)
 				if cryptoPrimitive(callee) {
 					record(symbol, callee)
+				} else if signsUnhashedMessage(n, name) {
+					record(symbol, signerSign)
 				}
 			case *ast.SelectorExpr, *ast.Ident:
 				// Definitions, field names and selector receivers are not value loads.

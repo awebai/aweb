@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -88,5 +89,38 @@ func TestPackageAliasesAndCallbackReferences(t *testing.T) {
 	}
 	if len(calls["Check"]) != 2 {
 		t.Fatal(calls)
+	}
+}
+
+func TestEd25519OptionsAndSignerCalls(t *testing.T) {
+	for _, tc := range []struct {
+		name, source string
+		want         []string
+	}{
+		{
+			name:   "verify with options",
+			source: `import ed "crypto/ed25519"; func Check(){ ed.VerifyWithOptions(k, m, s, opts) }`,
+			want:   []string{"raw Go crypto must use the shared verifier: consumer.go:Check: crypto/ed25519.VerifyWithOptions"},
+		},
+		{
+			name:   "hash zero signer",
+			source: `import c "crypto"; func Check(){ priv.Sign(nil, m, c.Hash(0)) }`,
+			want:   []string{"raw Go crypto must use the shared verifier: consumer.go:Check: crypto.Signer.Sign"},
+		},
+		{
+			name:   "hashed signer and standalone hash conversion",
+			source: `import "crypto"; func Check(){ priv.Sign(nil, digest, crypto.SHA256); _ = crypto.Hash(0) }`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls, err := scanGoSource([]byte("package p; " + tc.source))
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := checkPrimitiveUses(map[siteKey]map[string]int{{"consumer.go", "Check"}: calls["Check"]}, nil)
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+		})
 	}
 }

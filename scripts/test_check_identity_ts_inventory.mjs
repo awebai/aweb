@@ -50,3 +50,20 @@ test('references, createRequire and WebCrypto roots are classified as their modu
 test('ordinary hashes are outside the Ed25519 boundary',()=>{
  assert.deepEqual(checkPrimitiveUses(observed("import { createHash } from 'node:crypto'; createHash('sha256').update(p).digest();"),[]),[]);
 });
+
+for (const { label, source, callee } of [
+ { label: 'named Node WebCrypto import', source: "import { webcrypto } from 'node:crypto'; webcrypto.subtle.sign(a,k,m);", callee: 'node:crypto.webcrypto.subtle.sign' },
+ { label: 'SubtleCrypto alias', source: 'const s = crypto.subtle; s.sign(a,k,m);', callee: 'crypto.subtle.sign' },
+ { label: 'destructured SubtleCrypto', source: 'const { subtle } = crypto; subtle.sign(a,k,m);', callee: 'crypto.subtle.sign' },
+]) {
+ test(`raw WebCrypto signing through a ${label} refuses`, () => {
+  assert.deepEqual(checkPrimitiveUses(observed(source), []), [
+   `raw TS crypto must use the shared verifier: pkg/consumer.ts:<module>: ${callee}`,
+  ]);
+ });
+}
+
+test('SubtleCrypto digest and a local signer are outside the Ed25519 boundary', () => {
+ const source = 'const { subtle } = globalThis.crypto; subtle.digest("SHA-256", m); const local = thing.subtle; local.sign(a,k,m);';
+ assert.deepEqual(checkPrimitiveUses(observed(source), []), []);
+});
