@@ -712,31 +712,38 @@ async def test_mcp_refusals_of_an_unknown_chat_recipient_read_as_the_routes_do(
 ):
     server = chat_server
 
-    assert await server.mcp_chat("pilot", to="nobody", message="hello", plaintext=True) == {
+    assert await server.mcp_chat(
+        "pilot", to="nobody", message="hello", plaintext=True
+    ) == {
         "error": "Recipient name does not identify a current member of the team: nobody. "
         "Check the name; if the agent exists, ask it to reconnect with a current team certificate.",
     }
-    assert await server.mcp_chat("pilot", to="did:aw:nobody", message="hello", plaintext=True) == {
+    assert await server.mcp_chat(
+        "pilot", to="did:aw:nobody", message="hello", plaintext=True
+    ) == {
         "error": "Bare did:aw first-contact is unsupported; use to_addresses=domain/name "
         "or continue an existing session",
     }
-    assert await server.mcp_chat("pilot", to="pilot", message="hello", plaintext=True) == {
+    assert await server.mcp_chat(
+        "pilot", to="pilot", message="hello", plaintext=True
+    ) == {
         "error": "Self-chat is not supported. Choose another recipient and retry.",
     }
     assert await server.mcp_chat(
         "pilot", to="acme.com/nobody", message="hello", plaintext=True
     ) == {
-        "error": "Recipient not found. Check the address acme.com/nobody. "
-        "Check the name; if the agent exists, ask it to reconnect with a current team certificate.",
+        "error": unreachable_address_refusal("acme.com/nobody"),
         "reason": "recipient_identity_not_found",
-        "retryable": False,
     }
     assert await server.mcp_chat(
         "pilot", conversation_id=str(uuid4()), message="hello", plaintext=True
     ) == {
         "error": "Session not found",
     }
-    assert await server.db.fetch_all("SELECT message_id FROM {{tables.chat_messages}}") == []
+    assert (
+        await server.db.fetch_all("SELECT message_id FROM {{tables.chat_messages}}")
+        == []
+    )
 
 
 def _sender():
@@ -993,10 +1000,8 @@ NEXT_ACTIONS = [
         LocalRecipientNotFoundError,
         {"address": "example.test/member"},
         {
-            "error": "Recipient not found. Check the address. "
-            "Check the name; if the agent exists, ask it to reconnect with a current team certificate.",
+            "error": unreachable_address_refusal("example.test/member"),
             "reason": "recipient_identity_not_found",
-            "retryable": False,
         },
     ),
     (
