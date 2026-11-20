@@ -25,14 +25,12 @@ from aweb_naapp_testing.deployment import (
     compose,
     configure_app_client,
     connect_team_server,
-    coordination_listener,
     e2e_stack,
     grant_install_admin,
     install_app,
+    installable_deployment,
     provision_team,
     publish_team_server,
-    running_app,
-    running_coordination_server,
     wait_http_ok,
 )
 
@@ -45,6 +43,14 @@ AWID_SERVICE_TOKEN = os.environ.get(
     "FOLIO_E2E_AWID_SERVICE_TOKEN", "folio-e2e-awid-service-token-0123456789abcdef"
 )
 POSTGRES_URL = STACK.postgres_url
+# Folio's own settings the caller's environment must not leak into a deployment.
+_DEPLOYMENT_SETTINGS = (
+    "FOLIO_AWID_SERVICE_TOKEN",
+    "FOLIO_TEAM_SERVER_INTERNAL_ORIGINS",
+    "FOLIO_HOOK_INTERNAL_DESTINATIONS",
+    "FOLIO_HOOK_INTERNAL_CIDR",
+    "FOLIO_HOOK_CA_FILE",
+)
 
 # The names Folio's e2e modules import for a deployment and its aw calls.
 RunningFolio = RunningApp
@@ -61,18 +67,10 @@ def _require_e2e_enabled() -> None:
         pytest.skip("set FOLIO_E2E=1 or run `make e2e` to execute docker-backed e2e tests")
 
 
-@contextmanager
-def _running_folio(
-    *,
-    awid_service_token: str | None,
-    team_server_origin: str,
-    tls_dir: Path,
-    app_id: str = "folio",
-) -> Iterator[RunningFolio]:
-    """Folio behind TLS on this host, with ``team_server_origin`` (this test's own
-    coordination server) as the one team server it reaches outside the egress guard."""
-    _require_e2e_enabled()
-    wait_http_ok(f"{AWID_URL}/health")
+def _folio_settings(
+    *, awid_service_token: str | None, app_id: str
+) -> Callable[[str], dict[str, str]]:
+    """Folio's own settings at a deployment's public origin."""
 
     def settings(origin: str) -> dict[str, str]:
         values = {
@@ -81,20 +79,12 @@ def _running_folio(
             "FOLIO_AUTH_CACHE_TTL_SECONDS": "2",
             "FOLIO_PUBLIC_ORIGIN": origin,
             "FOLIO_APP_ID": app_id,
-            "FOLIO_TEAM_SERVER_INTERNAL_ORIGINS": json.dumps([team_server_origin]),
         }
         if awid_service_token is not None:
             values["FOLIO_AWID_SERVICE_TOKEN"] = awid_service_token
         return values
 
-    with running_app(
-        name="folio",
-        factory="folio.api:create_app",
-        env_for=settings,
-        drop_env=("FOLIO_AWID_SERVICE_TOKEN",),
-        tls_dir=tls_dir,
-    ) as app:
-        yield app
+    return settings
 
 
 @pytest.fixture(scope="module")
@@ -112,27 +102,23 @@ def folio_without_awid_service_token(
 
 
 @contextmanager
-def _installed_deployment(tmp_path: Path, service_token: str | None) -> Iterator[RunningFolio]:
+def _installed_deployment(
+    tmp_path: Path, service_token: str | None, *, app_id: str = "folio-e2e"
+) -> Iterator[RunningFolio]:
     """Folio plus the coordination server its teams install it through."""
-    with (
-        coordination_listener() as (listener, server_origin),
-        _running_folio(
-            awid_service_token=service_token,
-            team_server_origin=server_origin,
-            tls_dir=tmp_path / "tls",
-            app_id="folio-e2e",
-        ) as running,
-    ):
-        assert running.ca_file is not None
-        with running_coordination_server(
-            tmp_path,
-            listener=listener,
-            stack=STACK,
-            awid_service_token=AWID_SERVICE_TOKEN,
-            app_origin=running.origin,
-            ca_file=running.ca_file,
-        ) as server:
-            yield replace(running, server=server)
+    _require_e2e_enabled()
+    wait_http_ok(f"{AWID_URL}/health")
+    with installable_deployment(
+        tmp_path,
+        stack=STACK,
+        name="folio",
+        factory="folio.api:create_app",
+        settings_prefix="FOLIO_",
+        env_for=_folio_settings(awid_service_token=service_token, app_id=app_id),
+        awid_service_token=AWID_SERVICE_TOKEN,
+        drop_env=_DEPLOYMENT_SETTINGS,
+    ) as running:
+        yield running
 
 
 @pytest.fixture(scope="module")
@@ -356,245 +342,227 @@ def test_install_after_mint_uses_replacement_grant(
     instance.mkdir()
     # A reachable TLS deployment has its own identity, never the hosted id.
     app_id = "folio-install"
-    with (
-        coordination_listener() as (listener, origin),
-        _running_folio(
-            awid_service_token=AWID_SERVICE_TOKEN,
-            team_server_origin=origin,
-            tls_dir=tmp_path / "tls",
-            app_id=app_id,
-        ) as folio,
-    ):
-        assert folio.ca_file is not None
-        with running_coordination_server(
-            tmp_path,
-            listener=listener,
-            stack=STACK,
-            awid_service_token=AWID_SERVICE_TOKEN,
-            app_origin=folio.origin,
-            ca_file=folio.ca_file,
-        ) as server:
-            aw_workspace.env["AWEB_URL"] = origin
-            configure_app_client(aw_workspace, folio)
-            _run_aw(
-                aw_workspace, "workspace", "connect", "--service", origin, "--team", team.team_id
+    with _installed_deployment(tmp_path, AWID_SERVICE_TOKEN, app_id=app_id) as folio:
+        server = folio.server
+        assert server is not None
+        origin = server.origin
+        aw_workspace.env["AWEB_URL"] = origin
+        configure_app_client(aw_workspace, folio)
+        _run_aw(aw_workspace, "workspace", "connect", "--service", origin, "--team", team.team_id)
+        publish_team_server(team, origin, awid_url=AWID_URL)
+        grant_install_admin(team, server)
+        with (tmp_path / "custody.log").open("w+") as log:
+            custody = subprocess.Popen(
+                ["aw", "--identity-home", str(resident_home), "custody", "serve"],
+                cwd=aw_workspace.path,
+                env=aw_workspace.env,
+                stdout=log,
+                stderr=log,
             )
-            publish_team_server(team, origin, awid_url=AWID_URL)
-            grant_install_admin(team, server)
-            with (tmp_path / "custody.log").open("w+") as log:
-                custody = subprocess.Popen(
-                    ["aw", "--identity-home", str(resident_home), "custody", "serve"],
-                    cwd=aw_workspace.path,
-                    env=aw_workspace.env,
-                    stdout=log,
-                    stderr=log,
+            try:
+                deadline = time.monotonic() + 30
+                while True:
+                    status = subprocess.run(
+                        [
+                            "aw",
+                            "--identity-home",
+                            str(resident_home),
+                            "--json",
+                            "custody",
+                            "status",
+                        ],
+                        cwd=instance,
+                        env=aw_workspace.env,
+                        text=True,
+                        capture_output=True,
+                        timeout=5,
+                    )
+                    if status.returncode == 0:
+                        break
+                    assert time.monotonic() < deadline, status.stderr
+                    assert custody.poll() is None, "custody exited before readiness"
+                    time.sleep(0.05)
+                minted = _run_aw_json(
+                    aw_workspace,
+                    "id",
+                    "grant",
+                    "mint",
+                    "--bundle",
+                    "normal-agent",
+                    "--ttl",
+                    "30m",
+                    "--custody-socket",
+                    "auto",
+                    "--out",
+                    str(before_home),
                 )
+                assert minted["apps"] == []
+                assert minted["custody_socket_path"] == json.loads(status.stdout)["socket_path"]
+                before_material = {
+                    p.name: hashlib.sha256(p.read_bytes()).digest()
+                    for p in before_home.iterdir()
+                    if p.is_file()
+                }
+                grant_env = dict(aw_workspace.env, AWEB_IDENTITY_HOME=str(before_home))
+                grant = AWWorkspace(path=instance, env=grant_env)
+                manifest = folio.origin
+                refused = subprocess.run(
+                    ["aw", "plugin", "install", manifest],
+                    cwd=instance,
+                    env=grant_env,
+                    text=True,
+                    capture_output=True,
+                    timeout=30,
+                )
+                assert refused.returncode != 0 and "app_management_denied" in refused.stderr
+                installed = _run_aw_json(
+                    aw_workspace,
+                    "--identity-home",
+                    str(resident_home),
+                    "plugin",
+                    "install",
+                    manifest,
+                )
+                assert installed["approved"] and installed["existing_grants_unchanged"]
+                assert installed["identity_home"] == str(resident_home)
+                assert installed["active_grants"] == 1
+                assert installed["grant_restart_command"] == [
+                    "env",
+                    "AWEB_IDENTITY_HOME=<new-grant-home>",
+                    "<agent-command>",
+                ]
+                assert installed["oats_renew_restart_command"] == [
+                    "oats",
+                    "session",
+                    "restart",
+                    "--home",
+                    "<instance-home>",
+                ]
+                updated = _run_aw(aw_workspace, "--json=false", "plugin", "update", app_id)
+                commands = [
+                    shlex.split(line.strip())
+                    for line in updated.stdout.splitlines()
+                    if line.startswith("  ")
+                ]
+                assert installed["grant_refresh_command"] in commands
+                assert installed["grant_restart_command"] in commands
+                assert installed["oats_renew_restart_command"] in commands
+                payload = tmp_path / "document with space.json"
+                payload.write_text(
+                    json.dumps(dict(slug="grant-install", title="Grant install", body="first"))
+                )
+                denied = subprocess.run(
+                    ["aw", app_id, "create", "--body-file", str(payload)],
+                    cwd=instance,
+                    env=grant_env,
+                    text=True,
+                    capture_output=True,
+                    timeout=30,
+                )
+                assert denied.returncode != 0 and "app_tool_denied" in denied.stderr
+                # Follow the machine-readable action; never modify the old grant.
+                action = installed["grant_refresh_command"]
+                assert action[0] == "aw" and action[-1] == "<new-grant-home>"
+                action[-1] = str(replacement_home)
+                ttl_index = action.index("--ttl") + 1
+                assert action[ttl_index] == "<ttl>"
+                action[ttl_index] = "15m"
+                replacement = _run_aw_json(aw_workspace, *action[1:])
+                assert replacement["grant_id"] != minted["grant_id"]
+                assert replacement["custody_socket_path"] == minted["custody_socket_path"]
+                expires = datetime.fromisoformat(replacement["expires_at"].replace("Z", "+00:00"))
+                assert timedelta(0) < expires - datetime.now(UTC) <= timedelta(minutes=15)
+                assert app_id in {app["app_id"] for app in replacement["apps"]}
+                grant = AWWorkspace(
+                    path=instance, env=dict(grant.env, AWEB_IDENTITY_HOME=str(replacement_home))
+                )
+                # Follow the printed shell instructions, replacing the WHOLE
+                # quoted placeholder and preserving the spaced path argument.
+                restart_template = next(
+                    line.strip()
+                    for line in updated.stdout.splitlines()
+                    if line.startswith("  ")
+                    and shlex.split(line.strip()) == installed["grant_restart_command"]
+                )
+                restart_shell = restart_template.replace(
+                    shlex.quote("AWEB_IDENTITY_HOME=<new-grant-home>"),
+                    shlex.quote(f"AWEB_IDENTITY_HOME={replacement_home}"),
+                ).replace(
+                    shlex.quote("<agent-command>"),
+                    shlex.join(["aw", "--json", app_id, "create", "--body-file", str(payload)]),
+                )
+                launched = subprocess.run(
+                    ["sh", "-c", restart_shell],
+                    cwd=instance,
+                    env=grant_env,
+                    text=True,
+                    capture_output=True,
+                    timeout=30,
+                )
+                assert launched.returncode == 0, launched.stderr
+                created = json.loads(launched.stdout)
+                # JSON uses argument elements, never a joined command string.
+                restart_argv = [
+                    installed["grant_restart_command"][0],
+                    f"AWEB_IDENTITY_HOME={replacement_home}",
+                    "aw",
+                    "--json",
+                    app_id,
+                    "show",
+                    "--slug",
+                    "grant-install",
+                ]
+                resumed = subprocess.run(
+                    restart_argv,
+                    cwd=instance,
+                    env=grant_env,
+                    text=True,
+                    capture_output=True,
+                    timeout=30,
+                )
+                assert resumed.returncode == 0, resumed.stderr
+                assert json.loads(resumed.stdout)["body"] == "first"
+                assert created["slug"] == "grant-install" and created["body"] == "first"
+                body = tmp_path / "append.md"
+                body.write_text("second\n")
+                appended = _run_aw_json(
+                    grant,
+                    app_id,
+                    "append",
+                    "--slug",
+                    "grant-install",
+                    "--body-file",
+                    str(body),
+                    "--json=true",
+                )
+                assert appended["current_version"] == 2
+                shown = _run_aw_json(
+                    grant, app_id, "show", "--slug", "grant-install", "--json=false"
+                )
+                assert (
+                    shown["body"] == "second\n"
+                    and shown["latest"]["created_by_did_key"] == team.did_key
+                )
+                _run_aw(aw_workspace, "id", "grant", "revoke", minted["grant_id"])
+                active = _run_aw_json(aw_workspace, "plugin", "update", app_id)
+                assert active["active_grants"] == 1  # revoked grants are excluded
+                _run_aw(aw_workspace, "id", "grant", "revoke", replacement["grant_id"])
+                inactive = _run_aw_json(aw_workspace, "plugin", "update", app_id)
+                assert inactive["active_grants"] == 0
+                assert not (instance / ".aw").exists()
+                assert not (replacement_home / "signing.key").exists()
+                assert before_material == {
+                    p.name: hashlib.sha256(p.read_bytes()).digest()
+                    for p in before_home.iterdir()
+                    if p.is_file()
+                }
+            finally:
+                custody.terminate()
                 try:
-                    deadline = time.monotonic() + 30
-                    while True:
-                        status = subprocess.run(
-                            [
-                                "aw",
-                                "--identity-home",
-                                str(resident_home),
-                                "--json",
-                                "custody",
-                                "status",
-                            ],
-                            cwd=instance,
-                            env=aw_workspace.env,
-                            text=True,
-                            capture_output=True,
-                            timeout=5,
-                        )
-                        if status.returncode == 0:
-                            break
-                        assert time.monotonic() < deadline, status.stderr
-                        assert custody.poll() is None, "custody exited before readiness"
-                        time.sleep(0.05)
-                    minted = _run_aw_json(
-                        aw_workspace,
-                        "id",
-                        "grant",
-                        "mint",
-                        "--bundle",
-                        "normal-agent",
-                        "--ttl",
-                        "30m",
-                        "--custody-socket",
-                        "auto",
-                        "--out",
-                        str(before_home),
-                    )
-                    assert minted["apps"] == []
-                    assert minted["custody_socket_path"] == json.loads(status.stdout)["socket_path"]
-                    before_material = {
-                        p.name: hashlib.sha256(p.read_bytes()).digest()
-                        for p in before_home.iterdir()
-                        if p.is_file()
-                    }
-                    grant_env = dict(aw_workspace.env, AWEB_IDENTITY_HOME=str(before_home))
-                    grant = AWWorkspace(path=instance, env=grant_env)
-                    manifest = folio.origin
-                    refused = subprocess.run(
-                        ["aw", "plugin", "install", manifest],
-                        cwd=instance,
-                        env=grant_env,
-                        text=True,
-                        capture_output=True,
-                        timeout=30,
-                    )
-                    assert refused.returncode != 0 and "app_management_denied" in refused.stderr
-                    installed = _run_aw_json(
-                        aw_workspace,
-                        "--identity-home",
-                        str(resident_home),
-                        "plugin",
-                        "install",
-                        manifest,
-                    )
-                    assert installed["approved"] and installed["existing_grants_unchanged"]
-                    assert installed["identity_home"] == str(resident_home)
-                    assert installed["active_grants"] == 1
-                    assert installed["grant_restart_command"] == [
-                        "env",
-                        "AWEB_IDENTITY_HOME=<new-grant-home>",
-                        "<agent-command>",
-                    ]
-                    assert installed["oats_renew_restart_command"] == [
-                        "oats",
-                        "session",
-                        "restart",
-                        "--home",
-                        "<instance-home>",
-                    ]
-                    updated = _run_aw(aw_workspace, "--json=false", "plugin", "update", app_id)
-                    commands = [
-                        shlex.split(line.strip())
-                        for line in updated.stdout.splitlines()
-                        if line.startswith("  ")
-                    ]
-                    assert installed["grant_refresh_command"] in commands
-                    assert installed["grant_restart_command"] in commands
-                    assert installed["oats_renew_restart_command"] in commands
-                    payload = tmp_path / "document with space.json"
-                    payload.write_text(
-                        json.dumps(dict(slug="grant-install", title="Grant install", body="first"))
-                    )
-                    denied = subprocess.run(
-                        ["aw", app_id, "create", "--body-file", str(payload)],
-                        cwd=instance,
-                        env=grant_env,
-                        text=True,
-                        capture_output=True,
-                        timeout=30,
-                    )
-                    assert denied.returncode != 0 and "app_tool_denied" in denied.stderr
-                    # Follow the machine-readable action; never modify the old grant.
-                    action = installed["grant_refresh_command"]
-                    assert action[0] == "aw" and action[-1] == "<new-grant-home>"
-                    action[-1] = str(replacement_home)
-                    ttl_index = action.index("--ttl") + 1
-                    assert action[ttl_index] == "<ttl>"
-                    action[ttl_index] = "15m"
-                    replacement = _run_aw_json(aw_workspace, *action[1:])
-                    assert replacement["grant_id"] != minted["grant_id"]
-                    assert replacement["custody_socket_path"] == minted["custody_socket_path"]
-                    expires = datetime.fromisoformat(
-                        replacement["expires_at"].replace("Z", "+00:00")
-                    )
-                    assert timedelta(0) < expires - datetime.now(UTC) <= timedelta(minutes=15)
-                    assert app_id in {app["app_id"] for app in replacement["apps"]}
-                    grant = AWWorkspace(
-                        path=instance, env=dict(grant.env, AWEB_IDENTITY_HOME=str(replacement_home))
-                    )
-                    # Follow the printed shell instructions, replacing the WHOLE
-                    # quoted placeholder and preserving the spaced path argument.
-                    restart_template = next(
-                        line.strip()
-                        for line in updated.stdout.splitlines()
-                        if line.startswith("  ")
-                        and shlex.split(line.strip()) == installed["grant_restart_command"]
-                    )
-                    restart_shell = restart_template.replace(
-                        shlex.quote("AWEB_IDENTITY_HOME=<new-grant-home>"),
-                        shlex.quote(f"AWEB_IDENTITY_HOME={replacement_home}"),
-                    ).replace(
-                        shlex.quote("<agent-command>"),
-                        shlex.join(["aw", "--json", app_id, "create", "--body-file", str(payload)]),
-                    )
-                    launched = subprocess.run(
-                        ["sh", "-c", restart_shell],
-                        cwd=instance,
-                        env=grant_env,
-                        text=True,
-                        capture_output=True,
-                        timeout=30,
-                    )
-                    assert launched.returncode == 0, launched.stderr
-                    created = json.loads(launched.stdout)
-                    # JSON uses argument elements, never a joined command string.
-                    restart_argv = [
-                        installed["grant_restart_command"][0],
-                        f"AWEB_IDENTITY_HOME={replacement_home}",
-                        "aw",
-                        "--json",
-                        app_id,
-                        "show",
-                        "--slug",
-                        "grant-install",
-                    ]
-                    resumed = subprocess.run(
-                        restart_argv,
-                        cwd=instance,
-                        env=grant_env,
-                        text=True,
-                        capture_output=True,
-                        timeout=30,
-                    )
-                    assert resumed.returncode == 0, resumed.stderr
-                    assert json.loads(resumed.stdout)["body"] == "first"
-                    assert created["slug"] == "grant-install" and created["body"] == "first"
-                    body = tmp_path / "append.md"
-                    body.write_text("second\n")
-                    appended = _run_aw_json(
-                        grant,
-                        app_id,
-                        "append",
-                        "--slug",
-                        "grant-install",
-                        "--body-file",
-                        str(body),
-                        "--json=true",
-                    )
-                    assert appended["current_version"] == 2
-                    shown = _run_aw_json(
-                        grant, app_id, "show", "--slug", "grant-install", "--json=false"
-                    )
-                    assert (
-                        shown["body"] == "second\n"
-                        and shown["latest"]["created_by_did_key"] == team.did_key
-                    )
-                    _run_aw(aw_workspace, "id", "grant", "revoke", minted["grant_id"])
-                    active = _run_aw_json(aw_workspace, "plugin", "update", app_id)
-                    assert active["active_grants"] == 1  # revoked grants are excluded
-                    _run_aw(aw_workspace, "id", "grant", "revoke", replacement["grant_id"])
-                    inactive = _run_aw_json(aw_workspace, "plugin", "update", app_id)
-                    assert inactive["active_grants"] == 0
-                    assert not (instance / ".aw").exists()
-                    assert not (replacement_home / "signing.key").exists()
-                    assert before_material == {
-                        p.name: hashlib.sha256(p.read_bytes()).digest()
-                        for p in before_home.iterdir()
-                        if p.is_file()
-                    }
-                finally:
-                    custody.terminate()
-                    try:
-                        custody.wait(timeout=10)
-                    except subprocess.TimeoutExpired:
-                        custody.kill()
-                        custody.wait(timeout=10)
+                    custody.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    custody.kill()
+                    custody.wait(timeout=10)
 
 
 def test_document_endpoints_versions_raw_utf8_and_attribution(

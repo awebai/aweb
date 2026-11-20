@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 from aweb_naapp_testing.deployment import (
+    OperatorTeamServer,
     aw_workspace_env,
     candidate_hostname,
     e2e_stack,
@@ -107,3 +108,27 @@ def test_an_app_that_has_to_be_killed_fails_its_deployment() -> None:
             env_for=lambda origin: {"PYTHONPATH": apps},
         ):
             pass
+
+
+def test_the_operator_team_server_settings_are_ones_the_runtime_accepts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # The deployment's settings must pass the app's own validators unchanged.
+    from tests.runtime.test_served_manifest import ExampleSettings
+
+    ca_file = tmp_path / "ca.pem"
+    ca_file.write_text("disposable CA")
+    operator = OperatorTeamServer(
+        origin="https://aweb-candidate-runner-0123456789abcdef.test:41234",
+        subnet="172.30.0.0/16",
+        ca_file=ca_file,
+    )
+    for name, value in operator.settings("EXAMPLE_").items():
+        monkeypatch.setenv(name, value)
+
+    settings = ExampleSettings(_env_file=None)
+
+    assert settings.team_server_internal_origins == frozenset({operator.origin})
+    assert str(settings.hook_internal_cidr) == operator.subnet
+    assert settings.hook_internal_destinations == "allowed"
+    assert settings.hook_ca_file == ca_file

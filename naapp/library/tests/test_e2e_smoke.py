@@ -12,7 +12,6 @@ import secrets
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from dataclasses import replace
 from http import HTTPMethod
 from pathlib import Path
 
@@ -21,21 +20,22 @@ import pytest
 from aweb_naapp_testing.deployment import (
     AWWorkspace,
     E2ETeam,
+    OperatorTeamServer,
     RunningApp,
     assert_aw_status,
     assert_aw_success,
     aw_request,
     aw_workspace_factory,
     connect_team_server,
-    coordination_listener,
     e2e_stack,
     install_app,
+    installable_deployment,
     provision_team,
     run_aw,
     running_app,
-    running_coordination_server,
     wait_http_ok,
 )
+from aweb_naapp_testing.network import local_address, make_certificates
 
 pytestmark = pytest.mark.e2e
 
@@ -61,6 +61,9 @@ _DEPLOYMENT_SETTINGS = (
     "LIBRARY_APP_KEY_FILES",
     "LIBRARY_APP_ID",
     "LIBRARY_TEAM_SERVER_INTERNAL_ORIGINS",
+    "LIBRARY_HOOK_INTERNAL_DESTINATIONS",
+    "LIBRARY_HOOK_INTERNAL_CIDR",
+    "LIBRARY_HOOK_CA_FILE",
 )
 
 
@@ -69,19 +72,12 @@ def require_e2e_enabled() -> None:
         pytest.skip("set LIBRARY_E2E=1 or run `make e2e` to execute docker-backed e2e tests")
 
 
-@contextmanager
-def running_library(
-    directory: Path,
-    *,
-    awid_service_token: str | None,
-    team_server_origin: str,
-    registry_url: str = AWID_URL,
-) -> Iterator[RunningApp]:
-    """Library behind TLS on this host, reading AWID at ``registry_url``, with
-    ``team_server_origin`` as the one team server it reaches outside the egress guard."""
-    require_e2e_enabled()
-    wait_http_ok(f"{registry_url}/health")
-    directory.mkdir(parents=True)
+def library_settings(
+    directory: Path, *, awid_service_token: str | None, registry_url: str = AWID_URL
+) -> Callable[[str], dict[str, str]]:
+    """Library's own settings at a deployment's public origin, reading AWID at
+    ``registry_url`` with an owner-only grant-read key under ``directory``."""
+    directory.mkdir(parents=True, exist_ok=True)
     grant_key = directory / "grant-read.hex"
     grant_key.write_text(secrets.token_hex(32))
     grant_key.chmod(0o600)
@@ -95,18 +91,43 @@ def running_library(
             "LIBRARY_PUBLIC_ORIGIN": origin,
             "LIBRARY_APP_ID": E2E_APP_ID,
             "LIBRARY_APP_KEY_FILES": json.dumps({"library:grant-read-1": str(grant_key)}),
-            "LIBRARY_TEAM_SERVER_INTERNAL_ORIGINS": json.dumps([team_server_origin]),
         }
         if awid_service_token is not None:
             values["LIBRARY_AWID_SERVICE_TOKEN"] = awid_service_token
         return values
+
+    return settings
+
+
+@contextmanager
+def running_library(
+    directory: Path,
+    *,
+    awid_service_token: str | None,
+    operator: OperatorTeamServer,
+    registry_url: str = AWID_URL,
+) -> Iterator[RunningApp]:
+    """A second Library behind TLS, reading AWID at ``registry_url``, that lists
+    an existing deployment's coordination server (``operator``) as its team server."""
+    require_e2e_enabled()
+    wait_http_ok(f"{registry_url}/health")
+    directory.mkdir(parents=True)
+    address = local_address()
+    certificates = make_certificates(directory / "tls", ["library-install.test"], [address])
+    own = library_settings(
+        directory, awid_service_token=awid_service_token, registry_url=registry_url
+    )
+
+    def settings(origin: str) -> dict[str, str]:
+        return {**own(origin), **operator.settings("LIBRARY_")}
 
     with running_app(
         name="library",
         factory="library.api:create_app",
         env_for=settings,
         drop_env=_DEPLOYMENT_SETTINGS,
-        tls_dir=directory / "tls",
+        certificates=certificates,
+        address=address,
     ) as app:
         yield app
 
@@ -114,22 +135,19 @@ def running_library(
 @contextmanager
 def library_deployment(directory: Path, *, awid_service_token: str | None) -> Iterator[RunningApp]:
     """Library plus the coordination server its teams install it through."""
-    with (
-        coordination_listener() as (listener, server_origin),
-        running_library(
-            directory, awid_service_token=awid_service_token, team_server_origin=server_origin
-        ) as app,
-    ):
-        assert app.ca_file is not None
-        with running_coordination_server(
-            directory,
-            listener=listener,
-            stack=STACK,
-            awid_service_token=AWID_SERVICE_TOKEN,
-            app_origin=app.origin,
-            ca_file=app.ca_file,
-        ) as server:
-            yield replace(app, server=server)
+    require_e2e_enabled()
+    wait_http_ok(f"{AWID_URL}/health")
+    with installable_deployment(
+        directory,
+        stack=STACK,
+        name="library",
+        factory="library.api:create_app",
+        settings_prefix="LIBRARY_",
+        env_for=library_settings(directory, awid_service_token=awid_service_token),
+        awid_service_token=AWID_SERVICE_TOKEN,
+        drop_env=_DEPLOYMENT_SETTINGS,
+    ) as app:
+        yield app
 
 
 @pytest.fixture(scope="session")

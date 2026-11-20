@@ -2,16 +2,22 @@
 server and a team that installed the app through the real ``aw`` binary.
 
 The docker-compose stack ``make e2e`` brings up holds AWID, Postgres and Redis.
-The app runs from this checkout under uvicorn behind a TLS recording proxy,
-because the server fetches an app's manifest only over HTTPS. The server runs
-from this checkout's locked ``server`` project with its manifest fetcher pinned
-to exactly the app's origin. A team installs the app as an operator would:
+The tests run on that stack's network, in the gate's runner or in the
+disposable runner ``make e2e`` starts, which joins the network under its
+project-scoped name (:func:`stack_runner`). The app runs from this checkout
+under uvicorn behind a TLS recording proxy, because the server fetches an
+app's manifest only over HTTPS. The server runs from this checkout's locked
+``server`` project, over TLS at the runner's name on the stack network, with
+its manifest fetcher pinned to exactly the app's origin. The app reaches it
+only through its egress guard, as its operator's own team server
+(:class:`OperatorTeamServer`). A team installs the app as an operator would:
 ``aw id team set-server``, ``aweb install-admin grant`` and
 ``aw plugin install``.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import socket
@@ -34,7 +40,7 @@ import httpx
 import pytest
 from awid.signing import load_signing_key_pem
 
-from aweb_naapp_testing.network import local_address, make_certificates
+from aweb_naapp_testing.network import Certificates, local_address, make_certificates
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
 # The locked server source environment runs the stack server, not an installed aweb artifact.
@@ -47,6 +53,7 @@ STOP_TIMEOUT_SECONDS = 10
 
 @dataclass(frozen=True)
 class E2EStack:
+    project: str
     host: str
     awid_url: str
     postgres_url: str
@@ -76,6 +83,7 @@ def e2e_stack(env: Mapping[str, str], *, project: str, database: str) -> E2EStac
     container_network = env.get("NAAPP_E2E_CONTAINER_NETWORK") == "1"
     credentials = f"{database}:{database}"
     return E2EStack(
+        project=project,
         host=host,
         awid_url=(
             f"http://{candidate_hostname(project=project, service='awid')}:8010"
@@ -204,11 +212,75 @@ class _RecordingProxyHandler(BaseHTTPRequestHandler):
 
 
 @dataclass(frozen=True)
+class StackRunner:
+    """The process running the tests, as the stack's network sees it: its
+    project-scoped name there, the address that name answers, and the
+    network's subnet."""
+
+    alias: str
+    address: str
+    subnet: str
+
+
+def stack_runner(stack: E2EStack) -> StackRunner:
+    """This runner on ``stack``'s network, which it joined under
+    ``candidate_hostname(project, "runner")`` (the gate's runner, or the one
+    ``make e2e`` starts)."""
+    alias = candidate_hostname(project=stack.project, service="runner")
+    try:
+        address = socket.gethostbyname(alias)
+    except OSError as exc:
+        raise AssertionError(
+            f"{alias} does not resolve: the e2e tests run on the stack's network, "
+            "in the gate's runner or the one `make e2e` starts"
+        ) from exc
+    network = f"{stack.project}_default"
+    inspected = subprocess.run(
+        ["docker", "network", "inspect", network],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    if inspected.returncode != 0:
+        raise AssertionError(f"docker network inspect {network} failed: {inspected.stderr}")
+    subnets = [
+        config["Subnet"]
+        for config in json.loads(inspected.stdout)[0]["IPAM"]["Config"]
+        if "." in config.get("Subnet", "")
+    ]
+    if len(subnets) != 1:
+        raise AssertionError(f"{network} has IPv4 subnets {subnets}, expected exactly one")
+    return StackRunner(alias=alias, address=address, subnet=subnets[0])
+
+
+@dataclass(frozen=True)
+class OperatorTeamServer:
+    """A team server the app's operator runs on its own network, as the app
+    lists it: the exact origin, the network its address is in, and the CA its
+    certificate chains to. The app reaches it only through its egress guard."""
+
+    origin: str
+    subnet: str
+    ca_file: Path
+
+    def settings(self, prefix: str) -> dict[str, str]:
+        """The app's own settings, under its ``prefix``, for this team server."""
+        return {
+            f"{prefix}HOOK_INTERNAL_DESTINATIONS": "allowed",
+            f"{prefix}HOOK_INTERNAL_CIDR": self.subnet,
+            f"{prefix}TEAM_SERVER_INTERNAL_ORIGINS": json.dumps([self.origin]),
+            f"{prefix}HOOK_CA_FILE": str(self.ca_file),
+        }
+
+
+@dataclass(frozen=True)
 class CoordinationServer:
     """A team's coordination server and the environment its operator CLI runs in."""
 
     origin: str
     env: dict[str, str]
+    operator: OperatorTeamServer
 
 
 @dataclass(frozen=True)
@@ -496,14 +568,16 @@ def running_app(
     factory: str,
     env_for: Callable[[str], Mapping[str, str]],
     drop_env: Sequence[str] = (),
-    tls_dir: Path | None = None,
+    certificates: Certificates | None = None,
+    address: str = "127.0.0.1",
 ) -> Iterator[RunningApp]:
-    """The app's ``factory`` under uvicorn behind a recording proxy.
+    """The app's ``factory`` under uvicorn behind a recording proxy on ``address``.
 
     ``env_for`` receives the proxy's public origin and returns the app's own
-    settings. The app id is the one its served manifest names. With ``tls_dir`` the proxy serves HTTPS on this host's routable
-    address with a disposable CA (the real egress guard never permits
-    loopback), and every resident client in this process trusts that CA.
+    settings. The app id is the one its served manifest names. With
+    ``certificates``, which must name ``address``, the proxy serves HTTPS (the
+    real egress guard never permits loopback), and every resident client in
+    this process trusts their CA.
     """
     with ExitStack() as setup:
         listener = setup.enter_context(socket.socket())
@@ -511,12 +585,6 @@ def running_app(
         listener.listen()
         backend_port = listener.getsockname()[1]
         backend_origin = f"http://127.0.0.1:{backend_port}"
-        address = "127.0.0.1"
-        certificates = None
-        if tls_dir is not None:
-            address = local_address()
-            tls_dir.mkdir()
-            certificates = make_certificates(tls_dir, [f"{name}-install.test"], [address])
         proxy = setup.enter_context(RecordingProxy((address, 0), backend_origin))
         if certificates:
             tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
@@ -618,14 +686,23 @@ def _served_app_id(manifest: object) -> str:
     return app_id
 
 
+def deployment_certificates(directory: Path, *, name: str, runner: StackRunner) -> Certificates:
+    """One disposable CA for a deployment, and a certificate naming the app's
+    host address and the runner's name on the stack network, so the app's
+    proxy and the coordination server both serve it."""
+    directory.mkdir(parents=True)
+    return make_certificates(directory, [f"{name}-install.test", runner.alias], [local_address()])
+
+
 @contextmanager
-def coordination_listener() -> Iterator[tuple[socket.socket, str]]:
-    """The coordination server's listening socket and its loopback origin, bound
-    before the app starts so the app can name that origin as its team server."""
+def coordination_listener(runner: StackRunner) -> Iterator[tuple[socket.socket, str]]:
+    """The coordination server's listening socket on the runner's stack-network
+    address and its origin at the runner's name there, bound before the app
+    starts so the app can list that origin as its team server."""
     with socket.socket() as listener:
-        listener.bind(("127.0.0.1", 0))
+        listener.bind((runner.address, 0))
         listener.listen()
-        yield listener, f"http://127.0.0.1:{listener.getsockname()[1]}"
+        yield listener, f"https://{runner.alias}:{listener.getsockname()[1]}"
 
 
 @contextmanager
@@ -633,13 +710,15 @@ def running_coordination_server(
     tmp_path: Path,
     *,
     listener: socket.socket,
+    operator: OperatorTeamServer,
+    certificates: Certificates,
     stack: E2EStack,
     awid_service_token: str,
     app_origin: str,
-    ca_file: Path,
 ) -> Iterator[CoordinationServer]:
-    """Real aweb on ``listener``, with the real HTTPS fetcher pinned to this test origin."""
-    origin = f"http://127.0.0.1:{listener.getsockname()[1]}"
+    """Real aweb on ``listener`` over TLS at ``operator.origin``, with the real
+    HTTPS fetcher pinned to this test origin."""
+    origin = operator.origin
     redis_url = stack.redis_url
     if redis_url is None:
         redis_port = compose(stack, "port", "redis", "6379").stdout.strip().rsplit(":", 1)[1]
@@ -666,11 +745,15 @@ def running_coordination_server(
                 "--app-origin",
                 app_origin,
                 "--ca-file",
-                str(ca_file),
+                str(certificates.ca_file),
                 "--user-agent",
                 "naapp-install-test/1",
                 "--fd",
                 str(listener.fileno()),
+                "--tls-certfile",
+                str(certificates.cert_file),
+                "--tls-keyfile",
+                str(certificates.key_file),
             ],
             env=env,
             stdout=log,
@@ -679,8 +762,8 @@ def running_coordination_server(
         )
         listener.close()
         try:
-            wait_http_ok(f"{origin}/health")
-            yield CoordinationServer(origin=origin, env=env)
+            wait_http_ok(f"{origin}/health", ca_file=certificates.ca_file)
+            yield CoordinationServer(origin=origin, env=env, operator=operator)
         finally:
             proc.terminate()
             try:
@@ -692,6 +775,55 @@ def running_coordination_server(
             if proc.returncode not in (0, -15, 143, None):
                 log.seek(0)
                 raise AssertionError(f"coordination server exit {proc.returncode}: {log.read()}")
+
+
+@contextmanager
+def installable_deployment(
+    directory: Path,
+    *,
+    stack: E2EStack,
+    name: str,
+    factory: str,
+    settings_prefix: str,
+    env_for: Callable[[str], Mapping[str, str]],
+    awid_service_token: str,
+    drop_env: Sequence[str] = (),
+) -> Iterator[RunningApp]:
+    """The app plus the coordination server its teams install it through.
+
+    The server listens over TLS at the runner's name on the stack network, and
+    the app lists it as its operator's own team server (``settings_prefix``
+    names the app's settings), so the app reaches it only through its egress
+    guard. One CA signs both, and every resident client trusts it.
+    """
+    runner = stack_runner(stack)
+    certificates = deployment_certificates(directory / "tls", name=name, runner=runner)
+    with coordination_listener(runner) as (listener, origin):
+        operator = OperatorTeamServer(
+            origin=origin, subnet=runner.subnet, ca_file=certificates.ca_file
+        )
+
+        def settings(app_origin: str) -> dict[str, str]:
+            return {**env_for(app_origin), **operator.settings(settings_prefix)}
+
+        with running_app(
+            name=name,
+            factory=factory,
+            env_for=settings,
+            drop_env=drop_env,
+            certificates=certificates,
+            address=local_address(),
+        ) as app:
+            with running_coordination_server(
+                directory,
+                listener=listener,
+                operator=operator,
+                certificates=certificates,
+                stack=stack,
+                awid_service_token=awid_service_token,
+                app_origin=app.origin,
+            ) as server:
+                yield dataclasses.replace(app, server=server)
 
 
 def configure_app_client(workspace: AWWorkspace, app: RunningApp) -> None:
