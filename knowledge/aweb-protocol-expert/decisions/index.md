@@ -1,6 +1,7 @@
 # Decisions
 
 * [Team certificates are controller-only](team-certificates-are-controller-only.md) - Registering and revoking a team certificate is authorised by the team controller alone; an issuer column and revoke-broadening were investigated and declined until member-mediated invites exist.
+* [Customer servers use ordinary team membership](customer-servers-use-ordinary-membership.md) - A customer-operated server joins its team with an ordinary member certificate issued by the team controller; a separate server identity kind and an agent-authentication restriction were withdrawn because no named requirement needs authority narrower than membership.
 * [The signed request target is the external path](signed-request-target-is-the-external-path.md) - The team-auth envelope signs the actual external request target including any mount prefix; the verifier reads the raw path and never strips a prefix.
 * [Agent-runtime launch is written once](agent-runtime-launch-written-once.md) - Team up, single add-with-start and remove share one per-agent launch and teardown primitive in the aw CLI.
 * [Home and work isolation in aw team commands](home-and-work-isolation-in-aw-team-commands.md) - An aw-created agent home never hosts git work; every agent gets a worktree, and main is reached only through an explicitly named handle.
