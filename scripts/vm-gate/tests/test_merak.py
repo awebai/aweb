@@ -1,3 +1,5 @@
+import ipaddress
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -7,10 +9,31 @@ from unittest.mock import patch
 from vm_gate.config import select_target
 from vm_gate.errors import Refused
 from vm_gate.merak import endpoint
-from vm_gate import merak_host
+from vm_gate import merak_egress, merak_host
+
+# RFC 7526 deprecated the 6to4 relay anycast prefix. The Merak operator
+# separately denies the entire prefix in addition to the federation ranges.
+DEPRECATED_6TO4_RELAY = ipaddress.IPv4Network("192.88.99.0/24")
 
 
 class MerakTests(unittest.TestCase):
+    def test_installed_egress_helper_matches_federation_ipv4_ranges(self):
+        contract = Path(__file__).resolve().parents[3] / "docs/aweb-sot.md"
+        # The R3 vector exercises addresses. The governing SoT enumerates CIDRs.
+        ipv4 = contract.read_text().split("An IPv4 answer is refused in ", 1)[1]
+        ipv4 = ipv4.split("An IPv6 answer is admitted", 1)[0]
+        ranges = {
+            ipaddress.IPv4Network(cidr)
+            for cidr in re.findall(r"`([0-9.]+/[0-9]+)`", ipv4)
+        }
+        self.assertTrue(ranges)
+        self.assertNotIn(DEPRECATED_6TO4_RELAY, ranges)
+        installed = {
+            ipaddress.IPv4Network(cidr.strip())
+            for cidr in merak_egress.NON_PUBLIC.split(",")
+        }
+        self.assertEqual(installed, ranges | {DEPRECATED_6TO4_RELAY})
+
     def test_dispatch_defaults_and_explicit_machine(self):
         config = {"default_target": "merak"}
         for args, expected in [
