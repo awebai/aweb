@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-13
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-signer-ux (incarnation 2026-11-13).
+* **Creation**: lesson [build on a peer's unlanded branch in a separate tree](/aweb-expert/lessons/build-on-unlanded-peer-work-in-a-separate-tree.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
