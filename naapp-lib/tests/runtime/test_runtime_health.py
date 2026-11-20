@@ -160,6 +160,8 @@ class ClosingRelay:
         self._server: asyncio.AbstractServer | None = None
         self._open: dict[int, asyncio.Event] = {}
         self._writers: list[asyncio.StreamWriter] = []
+        self._handlers: set[asyncio.Task] = set()
+        self._failures: list[BaseException] = []
         self.held_closes = 0
         self._closed = asyncio.Condition()
 
@@ -177,8 +179,28 @@ class ClosingRelay:
     async def _accept(
         self, client_reader: asyncio.StreamReader, client_writer: asyncio.StreamWriter
     ) -> None:
-        upstream_reader, upstream_writer = await asyncio.open_connection(*self._upstream)
-        self._writers += [client_writer, upstream_writer]
+        handler = asyncio.current_task()
+        assert handler is not None
+        self._handlers.add(handler)
+        self._writers.append(client_writer)
+        try:
+            await self._relay(client_reader, client_writer)
+        except Exception as failure:
+            # Reported by close(), in the test, rather than lost in the server.
+            self._failures.append(failure)
+        finally:
+            self._handlers.discard(handler)
+
+    async def _relay(
+        self, client_reader: asyncio.StreamReader, client_writer: asyncio.StreamWriter
+    ) -> None:
+        try:
+            upstream_reader, upstream_writer = await asyncio.open_connection(*self._upstream)
+        except OSError:
+            # The client meets a closed connection, as it would without the relay.
+            client_writer.close()
+            return
+        self._writers.append(upstream_writer)
         port = upstream_writer.get_extra_info("sockname")[1]
         held = self._open[port] = asyncio.Event()
         server_closed = asyncio.Event()
@@ -206,24 +228,34 @@ class ClosingRelay:
                 self._closed.notify_all()
 
         try:
-            await asyncio.gather(to_server(), to_client())
-        except (ConnectionError, OSError):
-            pass
+            # Both directions run to their end: a reset on one side must not
+            # leave the other pumping after the handler returns.
+            outcomes = await asyncio.gather(to_server(), to_client(), return_exceptions=True)
         finally:
             self._open.pop(port, None)
             for writer in (client_writer, upstream_writer):
                 writer.close()
+        for outcome in outcomes:
+            # A reset is how a terminated or closed connection ends.
+            if isinstance(outcome, BaseException) and not isinstance(outcome, OSError):
+                raise outcome
 
     async def wait_for_held_closes(self, count: int) -> None:
         async with self._closed:
             await self._closed.wait_for(lambda: self.held_closes >= count)
 
     async def close(self) -> None:
-        for writer in self._writers:
-            writer.close()
+        """Stop accepting, close every relayed connection, wait for each
+        handler to finish, and raise the first failure a handler met."""
         if self._server is not None:
             self._server.close()
+        for writer in self._writers:
+            writer.close()
+        await asyncio.gather(*self._handlers)
+        if self._server is not None:
             await self._server.wait_closed()
+        if self._failures:
+            raise self._failures[0]
 
 
 # Long enough for the client's event loop to read what the relay already
@@ -252,22 +284,24 @@ async def test_the_lifespan_ends_after_the_database_drops_its_connections_and_a_
     app = FastAPI(lifespan=runtime.lifespan)
     mount_health(app, runtime.settings, checks=runtime.health_checks())
     try:
-        async with AsyncExitStack() as running:
-            await running.enter_async_context(app.router.lifespan_context(app))
+        running = AsyncExitStack()
+        await running.enter_async_context(app.router.lifespan_context(app))
+        try:
             # The app's own backends: the ones connected through the relay.
             held = relay.hold_closes()
+            assert held
             admin = await asyncpg.connect(database_url)
             try:
-                terminated = await admin.fetchval(
-                    "SELECT count(pg_terminate_backend(pid)) FROM pg_stat_activity"
+                terminated = await admin.fetch(
+                    "SELECT pg_terminate_backend(pid) AS terminated FROM pg_stat_activity"
                     " WHERE datname = current_database() AND client_port = ANY($1::int[])",
                     held,
                 )
             finally:
                 await admin.close()
-            assert terminated == len(held) >= 1
+            assert [row["terminated"] for row in terminated] == [True] * len(held)
             async with asyncio.timeout(SHUTDOWN_BOUND_SECONDS):
-                await relay.wait_for_held_closes(terminated)
+                await relay.wait_for_held_closes(len(held))
             await asyncio.sleep(CLIENT_READS_DELIVERED_BYTES_SECONDS)
 
             async with httpx.AsyncClient(
@@ -276,7 +310,9 @@ async def test_the_lifespan_ends_after_the_database_drops_its_connections_and_a_
                 ready = await client.get("/ready")
             assert ready.status_code == 503
             assert ready.json()["checks"]["database"] == "error"
-
+        finally:
+            # Bounded on every path after startup, so a failed step cannot
+            # leave the test waiting on the hang it exists to catch.
             async with asyncio.timeout(SHUTDOWN_BOUND_SECONDS):
                 await running.aclose()
     finally:
