@@ -11,7 +11,8 @@ registry, and a registry front that answers an address lookup with a 503.
 
 from __future__ import annotations
 
-from messaging_actor_support import admit_privacy_actor
+from messaging_actor_support import admit_privacy_actor, messaging_actor_headers
+from aweb.application_state import application_registry_client
 from awid.identity_observation import IdentityKind
 import base64
 
@@ -86,6 +87,17 @@ async def _local_sender_mail(
             custody="hosted_custodial" if human and name == "alice" else "self",
             now=now,
         )
+        raw_assertion = json.dumps(assertion).encode()
+        published = await env.client.put(
+            "/v1/agents/me/encryption-key",
+            content=raw_assertion,
+            headers=messaging_actor_headers(actor.registered, body=raw_assertion),
+        )
+        assert published.status_code == 200, published.text
+        if stable_id:
+            await application_registry_client(env.app.state).publish_encryption_key(
+                stable_id, assertion
+            )
         identities[name] = dict(
             address=address,
             did=actor.did,
@@ -151,13 +163,26 @@ async def _local_sender_mail(
     sent = await _request(env, "alice", "POST", "/v1/messages", body)
     assert sent.status_code == 200, sent.text
     if sender_retired:
-        retired = await env.client.delete(
-            f"/v1/workspaces/{sender_actor.workspace}",
-            headers=_signed_team_headers(
-                sender_actor.sk, sender_actor.did, sender_team, sender_actor.certificate
-            ),
-        )
-        assert retired.status_code == 200, retired.text
+        if human:
+            certificate = json.loads(base64.b64decode(sender_actor.certificate))
+            team_name, domain = sender_team.split(":", 1)
+            await application_registry_client(env.app.state).revoke_team_certificate(
+                domain,
+                team_name,
+                team_controller_signing_key=env.team_sk,
+                certificate_id=certificate["certificate_id"],
+            )
+        else:
+            retired = await env.client.delete(
+                f"/v1/workspaces/{sender_actor.workspace}",
+                headers=_signed_team_headers(
+                    sender_actor.sk,
+                    sender_actor.did,
+                    sender_team,
+                    sender_actor.certificate,
+                ),
+            )
+            assert retired.status_code == 200, retired.text
 
     identity_home = tmp_path / ".aw"
     identity_home.mkdir(mode=0o700)
@@ -688,6 +713,7 @@ async def test_cross_team_local_sender_to_global_grant(
         plaintext=plaintext,
     ) as (message_id, conversation_id, binary, command_dir, command_env, registry):
         if state == "unknown":
+            # unreachable-state: pre-attribution stored message with no sender certificate_id
             await privacy_app.db.execute(
                 "UPDATE {{tables.agents}} SET certificate_id=NULL WHERE agent_id=$1",
                 privacy_app.actors["alice"].id,

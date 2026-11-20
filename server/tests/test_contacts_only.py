@@ -315,11 +315,10 @@ async def test_contacts_only_real_delivery(
                 {"hostname": "policy-test", "workspace_path": str(tmp_path / "joined")},
             )
             assert connected.status_code == 200, connected.text
-            connected_id = connected.json()["agent_id"]
             assert (
                 await env.db.fetch_value(
                     "SELECT inbound_mode FROM {{tables.agents}} WHERE agent_id=$1",
-                    UUID(connected_id),
+                    UUID(connected.json()["agent_id"]),
                 )
                 == mode
             )

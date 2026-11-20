@@ -301,6 +301,7 @@ async def admit_privacy_actor(
     local=False,
     new_identity=False,
     existing_identity=None,
+    member_alias=None,
 ):
     """Port a privacy fixture actor through the existing SDK/native admission builder.
 
@@ -314,7 +315,7 @@ async def admit_privacy_actor(
     await register_messaging_team(env, team_id=team_id)
     registered = await admit_messaging_actor(
         env,
-        alias=alias,
+        alias=member_alias or alias,
         team_id=team_id,
         address=address,
         kind=kind,
