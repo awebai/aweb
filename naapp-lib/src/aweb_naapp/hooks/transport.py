@@ -10,17 +10,10 @@ to the endpoint stored with the delivery, the owner-activated binding's origin
 and path, never anywhere else.
 
 Egress is the guard's: HTTPS only, redirects returned and never followed.
-Every binding is first sent as a public destination. Whether its address is
-internal is a fact about the operator's network, not about the binding, so
-when the guard refuses that attempt because the name resolves to a denied
-address, and only then, a self-hosted operator who both allows internal
-destinations on its egress, names the network here, and independently lists
-the exact binding origin gets exactly one more
-attempt: the same request as an internal destination, which the guard resolves
-afresh and accepts only if every address is inside that network. The guard
-refuses before connecting, so the first attempt sent nothing. A hosted
-deployment does neither, so its first refusal is final, whatever an owner
-configures.
+Every binding is first sent as a public destination; the one further attempt
+inside a self-hosted operator's network, for an exactly listed binding origin,
+follows the rule in :mod:`aweb_naapp.egress.internal`. A hosted deployment
+lists none, so its first refusal is final, whatever an owner configures.
 """
 
 from __future__ import annotations
@@ -28,7 +21,6 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from datetime import UTC, datetime
-from ipaddress import IPv4Network, IPv6Network
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -43,6 +35,7 @@ from aweb_naapp.egress import (
     Response,
     parse_destination,
 )
+from aweb_naapp.egress.internal import InternalReach, send_reaching_internal
 from aweb_naapp.hooks.delivery import SIGNED_PAYLOAD_HEADER, Delivery, sign_delivery
 from aweb_naapp.hooks.producer import Registrations
 from aweb_naapp.hooks.strictjson import Refused
@@ -81,10 +74,9 @@ class HookTransport:
     """The outbox transport for the ``hooks`` channel.
 
     ``seed`` is the producer's key, the one that signs its events.
-    ``internal_cidr`` names the deployment network a self-hosted operator lets
-    hooks reach, as well as the public internet; it requires an egress that
-    allows internal destinations. ``internal_origins`` is the operator's
-    independent exact-origin allowlist; its empty default permits no retry.
+    ``internal_reach`` is the operator's network and the exact binding origins
+    hooks may reach in it; it requires an egress that allows internal
+    destinations, and its ``None`` default permits no second attempt.
     """
 
     def __init__(
@@ -93,20 +85,18 @@ class HookTransport:
         seed: bytes,
         egress: Egress,
         registrations: Registrations,
-        internal_cidr: IPv4Network | IPv6Network | None = None,
-        internal_origins: frozenset[str] = frozenset(),
+        internal_reach: InternalReach | None = None,
         clock: Callable[[], datetime] = _now,
     ) -> None:
         if (
-            internal_cidr is not None
+            internal_reach is not None
             and egress.addresses.internal_destinations is not InternalDestinations.ALLOWED
         ):
             raise ValueError("an internal hook network needs an egress that allows it")
         self._seed = seed
         self._egress = egress
         self._registrations = registrations
-        self._internal_cidr = internal_cidr
-        self._internal_origins = frozenset(internal_origins)
+        self._internal_reach = internal_reach
         self._clock = clock
 
     async def deliver(self, event: StoredEvent, target: Target) -> Outcome:
@@ -143,30 +133,16 @@ class HookTransport:
             return Permanent(f"unsendable:{getattr(refused, 'code', 'refused')}")
 
         try:
-            response = await self._send(delivery, url, public)
+            response = await send_reaching_internal(
+                self._egress,
+                self._destination(origin, method, path),
+                public,
+                url=url,
+                reach=self._internal_reach,
+                send=lambda destination: self._send(delivery, url, destination),
+            )
         except EgressRefused as refused:
-            if (
-                refused.code != "destination_address_denied"
-                or self._internal_cidr is None
-                or origin not in self._internal_origins
-            ):
-                return Permanent(f"egress_refused:{refused.code}")
-            # The one retry: the same request, inside the operator's network.
-            try:
-                internal = self._parse(
-                    {
-                        **self._destination(origin, method, path),
-                        "network": "internal",
-                        "cidr": str(self._internal_cidr),
-                    }
-                )
-                response = await self._send(delivery, url, internal)
-            except EgressRefused as refused_inside:
-                return Permanent(f"egress_refused:{refused_inside.code}")
-            except EgressNotSent:
-                return Retryable("not_sent")
-            except EgressOutcomeUnknown:
-                return Retryable("outcome_unknown")
+            return Permanent(f"egress_refused:{refused.code}")
         except EgressNotSent:
             return Retryable("not_sent")
         except EgressOutcomeUnknown:

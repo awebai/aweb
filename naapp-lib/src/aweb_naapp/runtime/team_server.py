@@ -12,12 +12,12 @@ refreshed, the result is unavailable; an expired answer is never reused.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
 from urllib.parse import quote
 
 import httpx
@@ -28,19 +28,18 @@ from awid.team_server_record import TeamServerRecordError, verify_team_server_re
 from fastapi import HTTPException
 
 from aweb_naapp.egress import (
-    AddressPolicy,
     Bounds,
     Destination,
-    DnsResolver,
     Egress,
     EgressNotSent,
     EgressOutcomeUnknown,
     EgressRefused,
     HeaderRules,
     canonical_url,
-    operator_origin,
 )
-from aweb_naapp.egress.send import CONNECT_TIMEOUT_SECONDS, TOTAL_TIMEOUT_SECONDS
+from aweb_naapp.egress.internal import InternalReach, send_reaching_internal
+from aweb_naapp.egress.send import CONNECT_TIMEOUT_SECONDS, TOTAL_TIMEOUT_SECONDS, Response
+from aweb_naapp.egress.urls import parse_destination
 from aweb_naapp.runtime.app_credentials import AppCredentialSigner
 from aweb_naapp.runtime.clock import MonotonicClock, seconds_to_ns
 from aweb_naapp.runtime.team_auth import AWIDTeamCache
@@ -222,33 +221,17 @@ class TeamServerReach:
     (docs/design/app-team-server-api.md §1, trust chain step 4, "Use").
 
     The server's address comes from the team's own signed record, so the team
-    chooses it. A read goes through the egress guard: https only, every
-    address the name resolves to checked, the connection pinned to a checked
-    address, redirects returned rather than followed. The one exception is a
-    server whose origin the operator listed in ``internal_origins``: the
-    operator's own server, reached directly with redirects off. ``transport``
-    carries only those direct reads.
+    chooses it. Every read goes through the deployment's egress guard: https
+    only, every address the name resolves to checked, the connection pinned
+    to a checked address, redirects returned rather than followed, no proxy
+    from the environment. A server whose exact origin the operator lists as
+    its own (``internal``) is reached inside the operator's network by the
+    one rule hook deliveries follow (:mod:`aweb_naapp.egress.internal`).
     """
 
-    def __init__(
-        self,
-        *,
-        egress: Egress | None = None,
-        internal_origins: frozenset[str] = frozenset(),
-        transport: httpx.AsyncBaseTransport | None = None,
-    ) -> None:
-        """``egress`` defaults to the public policy with the system resolver."""
-        self._egress = egress or Egress(
-            addresses=AddressPolicy(), resolver=DnsResolver(), user_agent="aweb-naapp/team-server"
-        )
-        self._internal_origins = frozenset(operator_origin(origin) for origin in internal_origins)
-        self._transport = transport
-        if self._internal_origins:
-            # Visible in every deployment's log: production lists none.
-            logger.warning(
-                "Team servers reached directly, outside the egress guard: %s",
-                ", ".join(sorted(self._internal_origins)),
-            )
+    def __init__(self, *, egress: Egress, internal: InternalReach | None) -> None:
+        self._egress = egress
+        self._internal = internal
 
     async def get(
         self,
@@ -260,48 +243,47 @@ class TeamServerReach:
         timeout: float,
     ) -> TeamServerAnswer:
         """GET ``path`` under the server's URL, signed by ``signer`` for the
-        server's team over the exact URL sent; ``None`` sends a public read."""
-        url = f"{server.server_url}{path}"
+        server's team over the exact URL sent; ``None`` sends a public read.
+        ``timeout`` bounds the read, both attempts together."""
         read = _Read(server=server, signer=signer, max_bytes=max_bytes, timeout=timeout)
-        if self._is_internal(server):
-            return await self._direct(url, read)
-        return await self._guarded(url, read)
-
-    def _is_internal(self, server: TeamServer) -> bool:
-        # An audience that is not an operator origin cannot equal a listed one.
-        try:
-            return operator_origin(server.audience) in self._internal_origins
-        except EgressRefused:
-            return False
-
-    async def _guarded(self, url: str, read: _Read) -> TeamServerAnswer:
-        server = read.server
-        bounds = Bounds(
-            connect_timeout=min(read.timeout, CONNECT_TIMEOUT_SECONDS),
-            total_timeout=min(read.timeout, TOTAL_TIMEOUT_SECONDS),
-            max_response_bytes=read.max_bytes,
-        )
+        url = f"{server.server_url}{path}"
+        deadline = asyncio.get_running_loop().time() + timeout
         try:
             canonical = canonical_url(url)
             headers = list(read.headers(str(canonical)).items())
-            response = await self._egress.send(
-                "GET",
-                canonical,
-                Destination(
-                    host=canonical.host,
-                    path=canonical.path,
-                    methods=frozenset({"GET"}),
-                    port=canonical.port,
-                ),
-                # Every header is the app credential, injected; the read sends
-                # no caller headers for the credential detector to judge.
-                header_rules=HeaderRules(
-                    injected=[name for name, _ in headers],
-                    amz_allowed=(),
-                    is_credential=lambda value: False,
-                ),
-                injected=headers,
-                bounds=bounds,
+            entry = {
+                "host": canonical.host,
+                "port": canonical.port,
+                "path": canonical.path,
+                "methods": ["GET"],
+            }
+            public = parse_destination(
+                entry, internal_destinations=self._egress.addresses.internal_destinations
+            )
+
+            async def send(destination: Destination) -> Response:
+                remaining = max(deadline - asyncio.get_running_loop().time(), 0.001)
+                return await self._egress.send(
+                    "GET",
+                    canonical,
+                    destination,
+                    # Every header is the app credential, injected; the read
+                    # sends no caller headers for the credential detector to judge.
+                    header_rules=HeaderRules(
+                        injected=[name for name, _ in headers],
+                        amz_allowed=(),
+                        is_credential=lambda value: False,
+                    ),
+                    injected=headers,
+                    bounds=Bounds(
+                        connect_timeout=min(remaining, CONNECT_TIMEOUT_SECONDS),
+                        total_timeout=min(remaining, TOTAL_TIMEOUT_SECONDS),
+                        max_response_bytes=read.max_bytes,
+                    ),
+                )
+
+            response = await send_reaching_internal(
+                self._egress, entry, public, url=url, reach=self._internal, send=send
             )
         except EgressRefused as refused:
             logger.warning(
@@ -314,24 +296,6 @@ class TeamServerReach:
         except (EgressNotSent, EgressOutcomeUnknown) as exc:
             raise TeamServerUnreachable(str(exc)) from exc
         return TeamServerAnswer(response.status, response.body, response.truncated)
-
-    async def _direct(self, url: str, read: _Read) -> TeamServerAnswer:
-        options: dict[str, Any] = {"timeout": read.timeout, "follow_redirects": False}
-        if self._transport is not None:
-            options["transport"] = self._transport
-        content = bytearray()
-        truncated = False
-        try:
-            async with httpx.AsyncClient(**options) as client:
-                async with client.stream("GET", url, headers=read.headers(url)) as response:
-                    async for chunk in response.aiter_bytes():
-                        content.extend(chunk)
-                        if len(content) > read.max_bytes:
-                            truncated = True
-                            break
-        except (httpx.HTTPError, httpx.InvalidURL) as exc:
-            raise TeamServerUnreachable(str(exc) or type(exc).__name__) from exc
-        return TeamServerAnswer(response.status_code, bytes(content[: read.max_bytes]), truncated)
 
 
 @dataclass(frozen=True, kw_only=True)

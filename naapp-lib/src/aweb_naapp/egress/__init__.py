@@ -31,7 +31,6 @@ from .urls import (
     check_destination,
     match_destination,
     operator_base_url,
-    operator_origin,
     parse_destination,
 )
 
@@ -60,6 +59,5 @@ __all__ = [
     "check_injected",
     "match_destination",
     "operator_base_url",
-    "operator_origin",
     "parse_destination",
 ]

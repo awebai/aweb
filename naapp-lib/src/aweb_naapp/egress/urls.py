@@ -114,31 +114,17 @@ def canonical_url(url: str) -> CanonicalURL:
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 
 
-def operator_origin(origin: str) -> str:
-    """An origin the operator configured, in canonical form, or a refusal
-    (docs/design/app-team-server-api.md §1, trust chain step 4: the operator's
-    own team servers, ``TEAM_SERVER_INTERNAL_ORIGINS``).
-
-    An origin is a scheme, a host and a port, and nothing else: https on any
-    host, or plain http only on this machine's loopback (``127.0.0.1``,
-    ``[::1]``, ``localhost``). Its host and port are canonicalized as
-    :func:`canonical_url` canonicalizes them, and the scheme's default port is
-    left out, so two spellings of one origin compare equal.
-    """
-    canonical, path = _operator_url(origin)
-    if path is not None:
-        raise _refuse("origin", "an origin has no path")
-    return canonical
-
-
 def operator_base_url(url: str) -> str:
     """A base URL the operator configured, in canonical form, or a refusal
     (naapp-lib/README.md, the ``APP_EVENTS_ORIGIN`` base-URL rule).
 
-    A base URL is an operator origin (see :func:`operator_origin`) optionally
+    A base URL is an origin, https on any host or plain http only on this
+    machine's loopback (``127.0.0.1``, ``[::1]``, ``localhost``), optionally
     followed by a path prefix, such as the mount point of a service the app
-    appends its own paths to. It has no query, fragment or userinfo, and a
-    trailing slash is dropped.
+    appends its own paths to. Its host and port are canonicalized as
+    :func:`canonical_url` canonicalizes them and the scheme's default port is
+    left out. It has no query, fragment or userinfo, and a trailing slash is
+    dropped.
     """
     canonical, path = _operator_url(url)
     return canonical + (path or "")

@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import timedelta
-from ipaddress import IPv4Network, IPv6Network
 from typing import TYPE_CHECKING, Any, TypedDict
 from uuid import UUID
 
@@ -18,6 +17,7 @@ from aweb_naapp.hooks.catalog import packaged_catalog
 from aweb_naapp.hooks.commitment import CommitmentKey, Purpose, load_commitment_key
 from aweb_naapp.hooks.producer import HOOKS_CHANNEL, HookProducer, ServerProducer, hook_targets
 from aweb_naapp.hooks.resolver import TeamServerRegistrations
+from aweb_naapp.hooks.transport import HookTransport
 from aweb_naapp.manifest import Manifest
 from aweb_naapp.outbox import Resolver, RetryPolicy, Transport
 from aweb_naapp.runtime.app_keys import AppKey, AppKeyError, load_app_key
@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from pgdbm.core import TransactionManager
 
     from aweb_naapp.egress import Egress
+    from aweb_naapp.egress.internal import InternalReach
 
 HOOK_EVENT = "hook-event"
 MANIFEST_HOOK = "post-manifest-command-hook"
@@ -99,9 +100,8 @@ class RuntimeHooks:
         manifest: Manifest,
         *,
         resolver: HookResolver | None,
-        egress: Egress | None,
-        internal_cidr: IPv4Network | IPv6Network | None,
-        internal_origins: frozenset[str],
+        egress: Egress,
+        internal_reach: InternalReach | None,
     ) -> RuntimeHooks:
         productions = _app_productions(manifest)
         policy = RetryPolicy(
@@ -129,26 +129,11 @@ class RuntimeHooks:
                 Purpose.MANIFEST_REQUEST, settings.manifest_request_key_file
             )
         registrations = TeamServerRegistrations(resolver)
-        # These optional dependencies are needed only by a producing runtime.
-        # A no-hooks runtime keeps its existing dependency/import boundary.
-        from aweb_naapp.egress import AddressPolicy, DnsResolver, Egress
-        from aweb_naapp.hooks.transport import HookTransport
-
-        guard = (
-            egress
-            if egress is not None
-            else Egress(
-                addresses=AddressPolicy(),
-                resolver=DnsResolver(),
-                user_agent="aweb-naapp/hooks",
-            )
-        )
         transport = HookTransport(
             seed=bytes(key.signing_key),
-            egress=guard,
+            egress=egress,
             registrations=registrations,
-            internal_cidr=internal_cidr,
-            internal_origins=internal_origins,
+            internal_reach=internal_reach,
         )
         return cls(
             manifest=manifest,

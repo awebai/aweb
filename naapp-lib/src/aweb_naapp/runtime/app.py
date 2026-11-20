@@ -37,7 +37,7 @@ from contextlib import aclosing, asynccontextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import StrEnum
-from ipaddress import IPv4Network, IPv6Network, ip_address
+from ipaddress import ip_address
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
@@ -109,6 +109,7 @@ from aweb_naapp.runtime.installation import (
     InstallationRefused,
 )
 from aweb_naapp.runtime.manifest_hooks import ManifestEvidence, bounded_body, prepare
+from aweb_naapp.runtime.operator_egress import OperatorEgress
 from aweb_naapp.runtime.settings import NaappSettings
 from aweb_naapp.runtime.team_auth import (
     AWIDTeamCache,
@@ -125,7 +126,6 @@ from aweb_naapp.skills import Skills
 if TYPE_CHECKING:
     from pgdbm.core import TransactionManager
 
-    from aweb_naapp.egress import Egress
     from aweb_naapp.runtime.owner_act_delivery import CheckedHumanRoleMember
 
 logger = logging.getLogger(__name__)
@@ -188,13 +188,11 @@ class NaappRuntime:
         awid_transport: httpx.AsyncBaseTransport | None = None,
         awid_txt_resolver: TXTOutcomeResolver | None = None,
         awid_domain_verifier: DomainVerifier | None = None,
-        team_server_transport: httpx.AsyncBaseTransport | None = None,
-        team_server_egress: Egress | None = None,
         stores: Sequence[Store] = (),
-        hook_egress: Egress | None = None,
-        hook_internal_cidr: IPv4Network | IPv6Network | None = None,
-        hook_internal_origins: frozenset[str] = frozenset(),
+        egress: OperatorEgress | None = None,
     ) -> None:
+        """``egress`` is the deployment's one guard; by default it is built
+        from ``settings`` with the system resolver."""
         self.settings = settings
         # The external prefix the server serves the app under (its ASGI root path).
         self.root_path = root_path.rstrip("/")
@@ -230,10 +228,9 @@ class NaappRuntime:
             team_cache=self._team_cache,
             transport=awid_transport,
         )
+        self._egress = egress if egress is not None else OperatorEgress.from_settings(settings)
         team_server_reach = TeamServerReach(
-            egress=team_server_egress,
-            internal_origins=settings.team_server_internal_origins,
-            transport=team_server_transport,
+            egress=self._egress.egress, internal=self._egress.team_servers
         )
         self._installation_fence: InstallationFence | None = None
         self._installation_grants = self._installation_grant_source(settings, team_server_reach)
@@ -242,9 +239,8 @@ class NaappRuntime:
             settings,
             self._manifest,
             resolver=self._hook_resolver,
-            egress=hook_egress,
-            internal_cidr=hook_internal_cidr,
-            internal_origins=hook_internal_origins,
+            egress=self._egress.egress,
+            internal_reach=self._egress.hooks,
         )
         # Each authorized() guard, with the action_kind it was given.
         self._guards: dict[Callable[..., object], ActionKind | None] = {}
@@ -343,6 +339,9 @@ class NaappRuntime:
     @asynccontextmanager
     async def lifespan(self, app: FastAPI) -> AsyncIterator[None]:
         self.check_authorized_routes(app)
+        # Every origin the operator lists as its own must resolve inside its
+        # network before the app serves anything.
+        await self._egress.preflight()
         # A configured member credential AWID does not currently publish is the
         # operator's misconfiguration: refuse to start, naming it.
         await self._team_cache.check_member_credentials()
