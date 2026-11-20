@@ -58,7 +58,7 @@ type LastCheckpoint struct {
 type BundleReport struct {
 	// AttestedEpochs names epochs attested by an accepted receipt or checkpoint
 	// from the bundle or supplied witnesses. Intact alone is structural, and
-	// attestation does not prove the export is complete (docs/logs-chain.md:207-212).
+	// attestation does not prove the export is complete (docs/logs-chain.md, “Verifying a bundle,” lines 378–382).
 	AttestedEpochs        []int64
 	ReceiptKeys           []string
 	CheckpointKeys        []string

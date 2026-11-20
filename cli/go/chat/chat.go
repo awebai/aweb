@@ -1658,7 +1658,9 @@ func OpenConfirmed(ctx context.Context, client *awid.Client, targetAlias string,
 	result.Messages = buildMessages(filteredMessages)
 
 	if ids := DeliveredMessageIDs(messagesResp.Messages); len(ids) > 0 {
-		_ = SaveDeliveredIDs(ids)
+		if err := SaveDeliveredIDsForDir(workingDir, ids); err != nil {
+			result.ReceiptError = err.Error()
+		}
 	}
 
 	presentedIDs := make([]string, 0, len(messagesResp.Messages))
