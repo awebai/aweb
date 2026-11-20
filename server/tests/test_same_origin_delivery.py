@@ -146,7 +146,7 @@ async def same_origin(privacy_app, monkeypatch, same_origin_registry_socket):
         )
         env.app.state.awid_registry_client = cached
 
-        async def verify_human(actor, did_aw, db):
+        async def verify_human(actor, did_aw, db, *, registry_client=None):
             nonlocal human_namespace_registered
             if not human_namespace_registered:
                 await registry.register_namespace(
@@ -171,7 +171,9 @@ async def same_origin(privacy_app, monkeypatch, same_origin_registry_socket):
                 expected_head=None,
                 invitation_id=None,
             )
-            report = await revalidate_human_kind(db, cached, apply=True)
+            report = await revalidate_human_kind(
+                db, registry_client if registry_client is not None else cached, apply=True
+            )
             assert report["unresolved_active"] == 0, report
             assert (
                 await db.fetch_value(
@@ -381,6 +383,8 @@ async def same_origin(privacy_app, monkeypatch, same_origin_registry_socket):
                 target_did=stable,
                 target=target,
                 target_address=address,
+                verify_human=verify_human,
+                domain_authority=exact_dns,
             )
         finally:
             env.app.middleware_stack = stack
