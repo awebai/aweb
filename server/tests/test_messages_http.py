@@ -5462,11 +5462,6 @@ async def test_receive_federated_mail_existing_local_didkey_reply_succeeds(route
         tuple(world.source.node.registry_calls),
         tuple(world.target.node.registry_calls),
     )
-    peer_reads_before = (
-        tuple(world.source.node.registry_calls),
-        tuple(world.target.node.registry_calls),
-    )
-    remote_calls = []
     remote_calls = _record_federation(world.source.node)
     reply_message_id = str(uuid4())
     reply_timestamp = (
@@ -5526,10 +5521,6 @@ async def test_receive_federated_mail_existing_local_didkey_reply_succeeds(route
         )
     assert reply.status_code == 200, reply.text
     assert len(remote_calls) == 1
-    assert (
-        tuple(world.source.node.registry_calls),
-        tuple(world.target.node.registry_calls),
-    ) == peer_reads_before
     assert (
         tuple(world.source.node.registry_calls),
         tuple(world.target.node.registry_calls),
