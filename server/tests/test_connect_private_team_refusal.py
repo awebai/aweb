@@ -85,7 +85,7 @@ async def test_member_of_a_private_team_this_server_does_not_serve_gets_403(
     previous = await _with_registry_client(connect_app, client)
     outside = f"outside-{uuid4().hex[:8]}"
     outside_sk, outside_did = await _add_private_team(connect_app, outside)
-    caplog.set_level(logging.INFO, logger="aweb.team_auth_deps")
+    caplog.set_level(logging.INFO, logger="aweb.team_registry")
     try:
         resp = await _connect(
             connect_app, outside_sk, outside_did, f"{outside}:example.test", "outsider"
@@ -99,7 +99,7 @@ async def test_member_of_a_private_team_this_server_does_not_serve_gets_403(
     assert f"team {outside}:example.test is not served by this server" in detail
     assert "AWID_SERVICE_TOKEN" not in detail
     # A team this server does not serve is not a registry fault.
-    records = [r for r in caplog.records if r.name == "aweb.team_auth_deps"]
+    records = [r for r in caplog.records if r.name == "aweb.team_registry"]
     assert [(r.levelno, r.getMessage()) for r in records] == [
         (
             logging.INFO,

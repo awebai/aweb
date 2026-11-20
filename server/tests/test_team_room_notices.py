@@ -5,7 +5,15 @@ import json
 from uuid import uuid4
 
 import pytest
-from test_team_room import privacy_app, TEAM, headers, metadata, post, post_payload
+from test_team_room import (
+    privacy_app as privacy_app,
+    TEAM,
+    admit_room_member,
+    headers,
+    metadata,
+    post,
+    post_payload,
+)
 
 
 async def pending(env, actor="bob"):
@@ -97,7 +105,16 @@ async def test_room_history_clears_only_returned_posts_and_soft_removal_cleans_n
         )
         == 0
     )
-    assert await snapshot(env, "carol") == []
+    denied_snapshot = await env.client.get(
+        "/v1/events/stream",
+        params={"deadline": (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()},
+        headers=headers(env.actors["carol"]),
+    )
+    assert denied_snapshot.status_code == 403, denied_snapshot.text
+    assert denied_snapshot.json()["detail"] == (
+        "Team membership is no longer current. "
+        "Reconnect with a certificate issued under the team's current key."
+    )
     refused = await env.client.get("/v1/room/notices", headers=headers(env.actors["carol"]))
     assert refused.status_code == 403
     await env.db.execute(
@@ -218,6 +235,7 @@ async def test_live_room_stream_refreshes_authority_without_replaying_opening_ti
     from tests.real_stack import ServiceTransport
 
     env = privacy_app
+    issuer = await admit_room_member(env, alias="bob")
     room = await metadata(env)
     clock = SimpleNamespace(now=datetime.now(timezone.utc), polls=0)
     start = clock.now
@@ -283,13 +301,12 @@ async def test_live_room_stream_refreshes_authority_without_replaying_opening_ti
             sent = await post(env, room)
             assert sent.status_code == 200, sent.text
             if authority == "revoked":
-                await env.registry_db.execute(
-                    """INSERT INTO {{tables.team_certificates}}
-                    (team_uuid,certificate_id,member_did_key,alias,revoked_at)
-                    SELECT team_uuid,'privacy-bob',$2,'bob',now()
-                    FROM {{tables.teams}} WHERE name=$1""",
-                    TEAM.split(":")[0],
-                    env.actors["bob"].did,
+                name, domain = TEAM.split(":", 1)
+                await previous_registry.revoke_team_certificate(
+                    domain,
+                    name,
+                    team_controller_signing_key=env.team_sk,
+                    certificate_id=issuer["certificate_id"],
                 )
             elif authority == "scope_removed":
                 await env.db.execute(

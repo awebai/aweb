@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
@@ -23,6 +24,30 @@ def headers(actor, body=b""):
         **_signed_team_headers(actor.sk, actor.did, TEAM, actor.certificate, body),
         "Content-Type": "application/json",
     }
+
+
+async def admit_room_member(env, *, alias):
+    """Register the actual issuer and let native connect record its accepted certificate."""
+    actor = env.actors[alias]
+    certificate = json.loads(base64.b64decode(actor.certificate))
+    name, domain = TEAM.split(":", 1)
+    sdk = env.app.state.awid_registry_client
+    await sdk.register_team_certificate(
+        domain,
+        name,
+        team_controller_signing_key=env.team_sk,
+        certificate_id=certificate["certificate_id"],
+        member_did_key=actor.did,
+        member_did_aw=certificate.get("member_did_aw"),
+        member_address=certificate.get("member_address"),
+        alias=alias,
+        identity_scope=certificate["identity_scope"],
+        certificate=actor.certificate,
+    )
+    connected = await env.client.post("/v1/connect", content=b"{}", headers=headers(actor, b"{}"))
+    assert connected.status_code == 200, connected.text
+    assert connected.json()["agent_id"] == str(actor.id)
+    return certificate
 
 
 async def metadata(env, actor="alice"):

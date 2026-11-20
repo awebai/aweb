@@ -14,7 +14,14 @@ from awid.dns_verify import DomainAuthority
 from awid.id_certificates import status_request
 from awid_service.deps import get_domain_verifier
 from aweb.api import _build_awid_registry_client
-from test_team_room import privacy_app, TEAM, headers, metadata, post
+from test_team_room import (
+    privacy_app as privacy_app,
+    TEAM,
+    admit_room_member,
+    headers,
+    metadata,
+    post,
+)
 from test_messages_http import _make_certificate, _encode_certificate
 from test_identity_grants import _grant_headers
 from test_cli_never_grants import registry_listener
@@ -122,11 +129,13 @@ async def test_room_stream_rechecks_global_tree_after_opening(
                 certificate_id="privacy-bob",
             )
         )
+        await admit_room_member(env, alias="bob")
         monkeypatch.setenv("AWID_REGISTRY_URL", origin)
         monkeypatch.setenv("AWEB_DATABASE_URL", "postgresql://unused/test")
         transport = StatusTransport()
-        cached = _build_awid_registry_client(env.app, redis=env.redis, transport=transport)
-        object.__setattr__(cached, "_domain_verifier", exact_dns)
+        cached = _build_awid_registry_client(
+            env.app, redis=env.redis, transport=transport, domain_verifier=exact_dns
+        )
         env.app.state.awid_registry_client = cached
         subject = {"id": stable, "did_key": actor.did}
         request = env.client.build_request(
