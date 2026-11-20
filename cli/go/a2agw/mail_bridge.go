@@ -84,6 +84,7 @@ type MailBridge struct {
 	mu      sync.Mutex
 	threads map[string]*mailBridgeThread
 	applier ReplyApplier
+	pollers sync.WaitGroup
 }
 
 type mailBridgeThread struct {
@@ -155,6 +156,21 @@ func (b *MailBridge) SetReplyApplier(applier ReplyApplier) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.applier = applier
+}
+
+// Close cancels retained threads and joins reply workers, including their final
+// audit writes (docs/a2a.md:938-941). Stop accepting sends before calling Close.
+func (b *MailBridge) Close() {
+	b.mu.Lock()
+	taskIDs := make([]string, 0, len(b.threads))
+	for taskID := range b.threads {
+		taskIDs = append(taskIDs, taskID)
+	}
+	b.mu.Unlock()
+	for _, taskID := range taskIDs {
+		b.finishThread(taskID)
+	}
+	b.pollers.Wait()
 }
 
 // SetGatewayIdentity updates the sender identity used for bridge audit context.
@@ -301,11 +317,17 @@ func (b *MailBridge) SendTask(ctx context.Context, task BridgeTask) error {
 	b.mu.Lock()
 	b.threads[task.TaskID] = thread
 	shouldPoll := b.applier != nil
+	if shouldPoll {
+		b.pollers.Add(1)
+	}
 	b.mu.Unlock()
 	context.AfterFunc(thread.RetentionContext, func() { b.finishThread(task.TaskID) })
 	b.recordAudit(AuditEvent{Stage: "bridge_send", RequestID: task.RequestID, RouteID: task.RouteID, TaskID: task.TaskID, CallerScopeClass: callerScopeClass(task.CallerScope), GatewayIdentityHash: auditHash(gatewayIdentity), TargetAddressHash: auditHash(task.Address), Outcome: string(AuditOK), LatencyMS: latencyMS(start), VerificationTier: "unsigned"})
 	if shouldPoll {
-		go b.pollTaskReplies(task.TaskID)
+		go func() {
+			defer b.pollers.Done()
+			b.pollTaskReplies(task.TaskID)
+		}()
 	}
 	return nil
 }

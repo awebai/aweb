@@ -198,8 +198,14 @@ func newMailHTTPFixture(t *testing.T, options mailHTTPOptions) *mailHTTPFixture 
 	f.runtime = runtime
 	f.gateway = gateway
 	f.server = httptest.NewServer(gateway)
+	t.Cleanup(runtime.bridge.Close)
 	t.Cleanup(f.server.Close)
 	return f
+}
+
+func (f *mailHTTPFixture) close() {
+	f.server.Close()
+	f.runtime.bridge.Close()
 }
 
 func (f *mailHTTPFixture) call(input httpRPCInput) (httpRPCResult, error) {
