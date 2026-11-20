@@ -23,7 +23,7 @@ from pgdbm import AsyncDatabaseManager
 from redis.asyncio import Redis
 from policy_inputs import policy_file
 
-pytest_plugins = ("pgdbm.fixtures.conftest",)
+pytest_plugins = ("awid_service.testing_postgres",)
 
 
 @pytest_asyncio.fixture

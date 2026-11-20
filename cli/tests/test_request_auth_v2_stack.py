@@ -17,7 +17,7 @@ from awid.signing import canonical_json_bytes, sign_message
 from test_dashboard_privacy import TEAM, _request, privacy_app  # noqa: F401
 from test_messages_http import _signed_identity_headers
 
-pytest_plugins = ("pgdbm.fixtures.conftest",)
+pytest_plugins = ("awid_service.testing_postgres",)
 ROOT = Path(__file__).resolve().parents[2]
 
 
