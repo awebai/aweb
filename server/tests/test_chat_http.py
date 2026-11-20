@@ -1493,7 +1493,6 @@ async def test_receive_old_v1_federated_chat_ignores_deprecated_fields_and_deliv
     assert by_did[bob.stable_id]["agent_id"] == bob_agent_id
     assert by_did[bob.stable_id]["delivery_origin"] is None
     assert by_did[bob.stable_id]["current_did_key"] == bob_did_key
-    remote_requests = []
     remote_requests = _record_federation(world.target.node)
     sender_key_reads_before = world.source.node.registry_calls.count(
         ("GET", f"/v1/did/{alice.stable_id}/key")
@@ -1919,11 +1918,6 @@ async def test_receive_federated_chat_existing_local_didkey_reply_succeeds(route
         tuple(world.source.node.registry_calls),
         tuple(world.target.node.registry_calls),
     )
-    peer_reads_before = (
-        tuple(world.source.node.registry_calls),
-        tuple(world.target.node.registry_calls),
-    )
-    remote_requests = []
     remote_requests = _record_federation(world.source.node)
     reply_message_id = str(uuid4())
     reply_timestamp = (
@@ -1977,11 +1971,10 @@ async def test_receive_federated_chat_existing_local_didkey_reply_succeeds(route
         tuple(world.source.node.registry_calls),
         tuple(world.target.node.registry_calls),
     ) == peer_reads_before
-    assert (
-        tuple(world.source.node.registry_calls),
-        tuple(world.target.node.registry_calls),
-    ) == peer_reads_before
 
+    envelope = json.loads(remote_requests[0].content)["envelope"]
+    assert envelope["target_current_did_key"] == bob_did_key
+    assert envelope["target_delivery_origin"] == world.target.node.origin
 
 @pytest.mark.asyncio
 async def test_receive_federated_chat_stored_route_rejects_wrong_target_current_key(
