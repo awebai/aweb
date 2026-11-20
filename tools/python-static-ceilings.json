@@ -271,24 +271,6 @@
     },
     {
       "tool": "mypy",
-      "file": "server/src/aweb/human_channels/native.py",
-      "code": "arg-type",
-      "count": 2
-    },
-    {
-      "tool": "mypy",
-      "file": "server/src/aweb/human_channels/native.py",
-      "code": "assignment",
-      "count": 1
-    },
-    {
-      "tool": "mypy",
-      "file": "server/src/aweb/human_channels/native.py",
-      "code": "var-annotated",
-      "count": 1
-    },
-    {
-      "tool": "mypy",
       "file": "server/src/aweb/identity_auth_deps.py",
       "code": "union-attr",
       "count": 2
@@ -1540,30 +1522,6 @@
       "file": "server/tests/test_human_channels_participants.py",
       "code": "F401",
       "count": 2
-    },
-    {
-      "tool": "ruff",
-      "file": "server/tests/test_human_channels_presence.py",
-      "code": "B904",
-      "count": 1
-    },
-    {
-      "tool": "ruff",
-      "file": "server/tests/test_human_channels_presence.py",
-      "code": "E402",
-      "count": 8
-    },
-    {
-      "tool": "ruff",
-      "file": "server/tests/test_human_channels_presence.py",
-      "code": "E702",
-      "count": 2
-    },
-    {
-      "tool": "ruff",
-      "file": "server/tests/test_human_channels_presence.py",
-      "code": "F401",
-      "count": 1
     },
     {
       "tool": "ruff",
