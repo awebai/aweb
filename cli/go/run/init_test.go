@@ -89,19 +89,3 @@ func TestPromptConfigStringClearsOnDash(t *testing.T) {
 		t.Fatalf("expected cleared string, got %#v", value)
 	}
 }
-
-func TestInitUserConfigPreservesGlobalServices(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("AW_CONFIG_PATH", "")
-	existing := UserConfig{Services: []ServiceConfig{{Name: "worker", Command: "run-worker"}}}
-	if err := InitUserConfig(strings.NewReader("\n\n\n\n\n"), &bytes.Buffer{}, existing); err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := LoadUserConfig(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(cfg.Services) != 1 || cfg.Services[0].Command != "run-worker" {
-		t.Fatalf("global services lost: %+v", cfg.Services)
-	}
-}

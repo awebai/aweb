@@ -60,7 +60,7 @@ type materializeProvenance struct {
 
 // MaterializeLocalProfile validates a local blueprint and writes its selected
 // profile into the bounded home layout described in
-// docs/blueprint-materialization-contract.md:200-214.
+// docs/blueprint-materialization-contract.md, “5. Materialization semantics,” lines 200–214.
 func MaterializeLocalProfile(opts MaterializeOptions) (*MaterializeResult, error) {
 	if strings.TrimSpace(opts.ProfileID) == "" {
 		return nil, fmt.Errorf("profile id is required")
@@ -421,7 +421,7 @@ type MaterializeLibraryProfilePayloadOptions struct {
 // ValidateLibraryProfilePayloadDigest verifies the profile shape, per-file
 // hashes and required profile digest without writing files. The result proves
 // byte consistency, not independent publisher authentication
-// (docs/blueprint-materialization-contract.md:168-176).
+// (docs/blueprint-materialization-contract.md, “5. Materialization semantics,” lines 168–176).
 func ValidateLibraryProfilePayloadDigest(opts ValidateLibraryProfilePayloadOptions) (string, error) {
 	if err := validateProfileID("profile_ref", opts.ProfileRef); err != nil {
 		return "", err
@@ -561,7 +561,7 @@ func undeclaredLibraryProfileAssetWarnings(bp *Blueprint, profile Profile) []str
 	return warnings
 }
 
-// validateLibraryProfilePayload implements docs/blueprint-materialization-contract.md:168-176.
+// validateLibraryProfilePayload implements docs/blueprint-materialization-contract.md, “5. Materialization semantics,” lines 168–176.
 // Network payload structure and hashes are checked before any target write.
 func validateLibraryProfilePayload(options ValidateLibraryProfilePayloadOptions) ([]LibraryProfilePayloadFile, string, error) {
 	profileRef := options.ProfileRef
@@ -687,7 +687,7 @@ func writeLibraryProfilePayloadFiles(root, profileDir string, files []LibraryPro
 }
 
 // WriteLibraryHomeFiles preflights every response entry, then writes only the
-// profile layout permitted by docs/blueprint-materialization-contract.md:200-214.
+// profile layout permitted by docs/blueprint-materialization-contract.md, “5. Materialization semantics,” lines 200–214.
 // The released force argument selects collision handling; the internal write
 // plan uses a named policy. No writes occur when preflight rejects any entry.
 func WriteLibraryHomeFiles(targetDir string, files []LibraryHomeFile, force bool) ([]string, error) {
@@ -932,7 +932,7 @@ func rejectSymlinkedExistingSymlinkTarget(targetRoot, baseDir, linkTarget, label
 
 // write carries preflight's collision policy into publication. Exclusive file
 // commits and symlink creation preserve a destination created concurrently
-// (docs/blueprint-materialization-contract.md:200-214).
+// (docs/blueprint-materialization-contract.md, “5. Materialization semantics,” lines 200–214).
 func (plan materializeWritePlan) write() ([]string, error) {
 	written := make([]string, 0, len(plan.Operations))
 	for _, op := range plan.Operations {

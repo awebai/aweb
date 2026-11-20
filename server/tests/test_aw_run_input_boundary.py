@@ -59,7 +59,8 @@ async def test_aw_run_mail_verification_boundary(
         plaintext=True,
     ) as (message_id, _, binary, command_dir, command_env, _):
         if sender_verification is SenderVerification.FAILED:
-            # The service delivered a signed message, then its stored display
+            # Simulate a storage integrity failure after delivery. The signed
+            # message is already admitted by the real send route, then its display
             # body was altered. Its preserved signed payload still names the
             # original bytes, so a real receive check must report failed.
             await privacy_app.db.execute(

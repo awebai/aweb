@@ -6,7 +6,7 @@ import (
 	"github.com/awebai/aw/hookevent"
 )
 
-// logRecordKind is the closed vocabulary in docs/logs-chain.md:269-277.
+// logRecordKind is the closed vocabulary in docs/logs-chain.md, “The bundle,” lines 269–277.
 type logRecordKind string
 
 const (
@@ -16,7 +16,7 @@ const (
 	checkpointRecord logRecordKind = "checkpoint"
 )
 
-// chainFault is the ordered verification vocabulary in docs/logs-chain.md:150-180.
+// chainFault is the ordered verification vocabulary in docs/logs-chain.md, “Verifying a chain,” lines 150–180.
 type chainFault string
 
 const (
@@ -203,7 +203,7 @@ func (s *epochState) add(event StoredEvent) {
 }
 
 // eventVerification checks one stored event in the fault order of
-// docs/logs-chain.md:150-164.
+// docs/logs-chain.md, “Verifying a chain,” lines 150–164.
 type eventVerification struct {
 	Genesis          Genesis
 	Event            StoredEvent

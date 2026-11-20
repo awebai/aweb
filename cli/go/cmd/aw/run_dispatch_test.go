@@ -1600,9 +1600,6 @@ func TestResolveChatWakeForAliasDoesNotSkipPendingFallbackForDifferentAddressHan
 func TestResolveChatWakePropagatesLocalDeliveryMarkFailure(t *testing.T) {
 	deliveredDir := deliveredIDsTestPath(t)
 	deliveredPath := filepath.Join(deliveredDir, ".aw", chat.DeliveredIDsFileName)
-	if err := os.MkdirAll(deliveredPath, 0o700); err != nil {
-		t.Fatal(err)
-	}
 	if err := os.MkdirAll(deliveredPath+".lock", 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -1630,11 +1627,17 @@ func TestResolveChatWakePropagatesLocalDeliveryMarkFailure(t *testing.T) {
 		MessageID: "persist-failure-1",
 		FromAlias: "alice",
 	})
-	if err == nil || !strings.Contains(err.Error(), "Repair the cache directory before retrying") {
-		t.Fatalf("unrecoverable receipt store did not fail before presentation: %+v %v", resolved, err)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if markedRead || resolved.CycleContext != "" {
-		t.Fatal("failed receipt recovery allowed delivery or acknowledgement")
+	if resolved.AfterDelivery == nil {
+		t.Fatal("expected post-delivery acknowledgement")
+	}
+	if err := resolved.AfterDelivery(context.Background()); err == nil {
+		t.Fatal("expected local delivery-mark error")
+	}
+	if !markedRead {
+		t.Fatal("local persistence was attempted before the upstream read acknowledgement")
 	}
 }
 
@@ -1673,7 +1676,7 @@ func TestRunDispatcherDoesNotRepeatRejectedMalformedChatIDs(t *testing.T) {
 	}
 }
 
-func TestResolveChatWakeFailedAckRetriesOnlyTheAck(t *testing.T) {
+func TestResolveChatWakeFailedMarkReadLeavesMessageRetryable(t *testing.T) {
 	tmp := deliveredIDsTestPath(t)
 
 	var markedReadCalls int
@@ -1726,8 +1729,8 @@ func TestResolveChatWakeFailedAckRetriesOnlyTheAck(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := delivered["dedup-msg-1"]; !ok {
-		t.Fatalf("completed provider delivery must suppress message locally: %#v", delivered)
+	if _, ok := delivered["dedup-msg-1"]; ok {
+		t.Fatalf("failed upstream ack must not suppress message locally: %#v", delivered)
 	}
 
 	second, err := resolveChatWake(context.Background(), client, awid.AgentEvent{
@@ -1740,19 +1743,11 @@ func TestResolveChatWakeFailedAckRetriesOnlyTheAck(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !second.Skip {
-		t.Fatalf("failed acknowledgement reran delivered content: %+v", second)
-	}
-	if err := first.AfterDelivery(context.Background()); err == nil {
-		t.Fatal("expected continuing ack error")
-	}
-	if markedReadCalls != 4 {
-		t.Fatalf("ack retries=%d want 4", markedReadCalls)
+	if second.Skip {
+		t.Fatalf("failed acknowledgement made the message non-retryable: %+v", second)
 	}
 }
 
-// The agent acts on what it is handed, so it must be told when nothing
-// establishes who wrote a message.
 func TestSenderVerificationNoteMarksEveryUnverifiedStatusAsUntrusted(t *testing.T) {
 	for _, status := range []awid.VerificationStatus{awid.Failed, awid.IdentityMismatch, awid.Unverified} {
 		note := senderVerificationNote(status)
@@ -1775,7 +1770,7 @@ func TestChatWakeTellsTheAgentWhichMessagesHaveNoVerifiedSender(t *testing.T) {
 		{MessageID: "m1", FromAgent: "alice", Body: "signed and confirmed", VerificationStatus: awid.Verified},
 		{MessageID: "m2", FromAgent: "alice", Body: "text under a signature that does not match", VerificationStatus: awid.Failed},
 	}
-	resolution := chatWakeResolution(nil, "session", messages, awid.AgentEvent{})
+	resolution := chatWakeResolution(nil, "43583126-b052-4bce-97fb-1baa85a90eed", messages, awid.AgentEvent{})
 
 	if !strings.Contains(resolution.CycleContext, "signed and confirmed") {
 		t.Fatal("verified message was withheld")
@@ -1814,33 +1809,4 @@ func TestMailWakeTellsTheAgentWhenTheSenderIsNotVerified(t *testing.T) {
 	if !strings.Contains(result.CycleContext, senderVerificationNote(awid.Unverified)) {
 		t.Fatalf("an unsigned message carries no note: %q", result.CycleContext)
 	}
-}
-
-func resolveChatWake(ctx context.Context, client *aweb.Client, evt awid.AgentEvent) (runWakeResolution, error) {
-	selfAlias := ""
-	if client != nil && client.Client != nil {
-		selfAlias = handleFromAddress(client.Address())
-	}
-	return resolveChatWakeForAlias(ctx, client, selfAlias, evt)
-}
-
-func resolveMailWake(ctx context.Context, client *aweb.Client, evt awid.AgentEvent) (runWakeResolution, error) {
-	selfAlias := ""
-	if client != nil && client.Client != nil {
-		selfAlias = handleFromAddress(client.Address())
-	}
-	return resolveMailWakeForAlias(ctx, client, selfAlias, evt)
-}
-
-func resolveChatWakeForAlias(ctx context.Context, client *aweb.Client, selfAlias string, evt awid.AgentEvent) (runWakeResolution, error) {
-	workingDir, err := os.Getwd()
-	if err != nil {
-		return runWakeResolution{}, err
-	}
-	return resolveChatWakeInDir(ctx, runChatWakeRequest{Client: client, Options: runWakeOptions{SelfAlias: selfAlias, WorkingDir: workingDir}, Event: evt})
-}
-
-func chatWakeResolution(client *aweb.Client, sessionID string, messages []awid.ChatMessage, evt awid.AgentEvent) runWakeResolution {
-	workingDir := "."
-	return (runChatPresentation{Client: client, SessionID: sessionID, Messages: messages, Event: evt, WorkingDir: workingDir}).resolve()
 }

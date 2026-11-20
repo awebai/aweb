@@ -44,31 +44,29 @@ type Loop struct {
 }
 
 type state struct {
-	Run                  int
-	RunPhase             RunPhase
-	CumulativeCostUSD    float64
-	SessionID            string
-	RanOnce              bool
-	RunInterrupted       bool
-	PauseAfterRun        bool
-	PauseNoticeShown     bool
-	StopRequested        bool
-	Paused               bool
-	ExitConfirmPending   bool
-	Autofeed             bool
-	NextPrompt           string
-	NextImagePaths       []string
-	PendingInput         bool
-	InputBuffer          string
-	StructuredOut        bool
-	LastWakeEvent        *awid.AgentEvent
-	RetryWakes           []awid.AgentEvent
-	PendingFinalizations []func(context.Context) error
-	LastRunError         string
-	LastRunUsage         UsageStats
-	HasRunUsage          bool
-	ProviderInput        *providerInputState
-	ClaimedTaskRef       string
+	Run                int
+	RunPhase           RunPhase
+	CumulativeCostUSD  float64
+	SessionID          string
+	RanOnce            bool
+	RunInterrupted     bool
+	PauseAfterRun      bool
+	PauseNoticeShown   bool
+	StopRequested      bool
+	Paused             bool
+	ExitConfirmPending bool
+	Autofeed           bool
+	NextPrompt         string
+	NextImagePaths     []string
+	PendingInput       bool
+	InputBuffer        string
+	StructuredOut      bool
+	LastWakeEvent      *awid.AgentEvent
+	LastRunError       string
+	LastRunUsage       UsageStats
+	HasRunUsage        bool
+	ProviderInput      *providerInputState
+	ClaimedTaskRef     string
 }
 
 type providerInputState struct {
@@ -214,7 +212,6 @@ func (l *Loop) Run(ctx context.Context, opts LoopOptions) error {
 	l.showStartupGreeting(opts, state)
 
 	for {
-		l.retryFinalizations(ctx, state)
 		decision, err := l.nextPrompt(ctx, opts, state)
 		if err != nil {
 			return err
@@ -254,8 +251,7 @@ func (l *Loop) Run(ctx context.Context, opts LoopOptions) error {
 		}
 		if !interrupted && decision.AfterDelivery != nil {
 			if err := decision.AfterDelivery(ctx); err != nil {
-				l.printf("aweb: post-delivery acknowledgement failed: %v. The message was delivered; acknowledgement will be retried without running it again.\n", err)
-				state.PendingFinalizations = append(state.PendingFinalizations, decision.AfterDelivery)
+				return fmt.Errorf("post-delivery finalization failed: %w", err)
 			}
 		}
 		if state.ExitConfirmPending {
@@ -275,16 +271,6 @@ func (l *Loop) Run(ctx context.Context, opts LoopOptions) error {
 				return nil
 			}
 			return err
-		}
-	}
-}
-
-func (l *Loop) retryFinalizations(ctx context.Context, st *state) {
-	pending := st.PendingFinalizations
-	st.PendingFinalizations = nil
-	for _, finalize := range pending {
-		if err := finalize(ctx); err != nil {
-			st.PendingFinalizations = append(st.PendingFinalizations, finalize)
 		}
 	}
 }
@@ -315,21 +301,12 @@ func (l *Loop) nextPrompt(ctx context.Context, opts LoopOptions, st *state) (Dis
 		return DispatchDecision{WaitSeconds: opts.WaitSeconds, Skip: true}, nil
 	}
 	if l.Dispatch != nil {
-		if st.LastWakeEvent == nil && len(st.RetryWakes) > 0 {
-			evt := st.RetryWakes[0]
-			st.RetryWakes = st.RetryWakes[1:]
-			st.LastWakeEvent = &evt
-		}
 		wakeEvent := st.LastWakeEvent
 		decision, err := l.Dispatch.Next(ctx, st.Autofeed, wakeEvent)
 		if err != nil {
-			if wakeEvent != nil {
-				st.RetryWakes = append(st.RetryWakes, *wakeEvent)
-				st.LastWakeEvent = nil
-			}
 			l.printf("info: dispatch failed: %v\n", err)
 			l.println("info: waiting for dispatch recovery before starting a run.")
-			return DispatchDecision{WaitSeconds: max(1, opts.IdleWaitSeconds), Skip: true}, nil
+			return DispatchDecision{WaitSeconds: opts.IdleWaitSeconds, Skip: true}, nil
 		}
 		if decision.Skip && decision.WaitSeconds <= 0 {
 			decision.WaitSeconds = opts.WaitSeconds

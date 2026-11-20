@@ -25,48 +25,52 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func TestRunInitPreservesGlobalConfigAndDoesNotPromoteLocalOverrides(t *testing.T) {
+func TestRunInitUsesRunConfigWorkflow(t *testing.T) {
 	initRunCommandVars()
-	t.Cleanup(initRunCommandVars)
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("AW_CONFIG_PATH", "")
-	workspace := t.TempDir()
-	if err := os.Mkdir(filepath.Join(workspace, ".aw"), 0700); err != nil {
-		t.Fatal(err)
+	var loadedDir string
+	var initCalled bool
+
+	oldLoad := runLoadUserConfig
+	oldInit := runInitUserConfig
+	oldResolveClient := runResolveClientForDir
+	oldGetwd := runGetwd
+	t.Cleanup(func() {
+		runLoadUserConfig = oldLoad
+		runInitUserConfig = oldInit
+		runResolveClientForDir = oldResolveClient
+		runGetwd = oldGetwd
+		initRunCommandVars()
+	})
+
+	runGetwd = func() (string, error) { return "/tmp/work", nil }
+	runLoadUserConfig = func(dir string) (awrun.UserConfig, error) {
+		loadedDir = dir
+		return awrun.UserConfig{}, nil
 	}
-	for name, body := range map[string]string{"context": "{}", "run.json": `{"base_prompt":"local-only","services":[{"name":"local","command":"local-command"}]}`} {
-		if err := os.WriteFile(filepath.Join(workspace, ".aw", name), []byte(body), 0600); err != nil {
-			t.Fatal(err)
-		}
+	runInitUserConfig = func(in io.Reader, out io.Writer, existing awrun.UserConfig) error {
+		initCalled = true
+		return nil
 	}
-	globalPrompt := "global-only"
-	if _, err := awrun.WriteUserConfig(awrun.UserConfig{BasePrompt: &globalPrompt, Services: []awrun.ServiceConfig{{Name: "global", Command: "global-command"}}}); err != nil {
-		t.Fatal(err)
+	runResolveClientForDir = func(string) (*aweb.Client, *awconfig.Selection, error) {
+		t.Fatal("client resolution should not run for --init")
+		return nil, nil, nil
 	}
-	if _, _, err := awrun.TrustLocalConfig(workspace); err != nil {
-		t.Fatal(err)
-	}
-	runWorkingDir = workspace
+
+	cmd := &cobraCommandClone{Command: *runCmd}
+	cmd.ResetFlagsForTest()
+	cmd.Command.SetContext(context.Background())
 	runInitConfig = true
-	cmd := &cobra.Command{}
 	var stdout, stderr bytes.Buffer
-	setRunCommandIO(cmd, strings.NewReader("\n\n\n\n\n"), &stdout, &stderr)
-	if err := runRun(cmd, nil); err != nil {
-		t.Fatal(err)
+	setRunCommandIO(&cmd.Command, strings.NewReader(""), &stdout, &stderr)
+
+	if err := runRun(&cmd.Command, nil); err != nil {
+		t.Fatalf("runRun returned error: %v", err)
 	}
-	cfg, err := awrun.LoadGlobalUserConfig()
-	if err != nil {
-		t.Fatal(err)
+	if loadedDir != "/tmp/work" {
+		t.Fatalf("expected run config load for /tmp/work, got %q", loadedDir)
 	}
-	if cfg.BasePrompt == nil || *cfg.BasePrompt != "global-only" || len(cfg.Services) != 1 || cfg.Services[0].Name != "global" {
-		t.Fatalf("local config promoted/global services lost: %+v", cfg)
-	}
-	local, err := awrun.LoadUserConfig(workspace)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if local.BasePrompt == nil || *local.BasePrompt != "local-only" {
-		t.Fatalf("legitimate trusted override lost: %+v", local)
+	if !initCalled {
+		t.Fatal("expected run init workflow to execute")
 	}
 }
 

@@ -15,6 +15,18 @@ func TestFormatVerificationTagDistinguishesStaleVerifierFromMismatch(t *testing.
 	if got := formatVerificationTag(awid.IdentityMismatch); got != " [IDENTITY MISMATCH]" {
 		t.Fatalf("mismatch tag=%q", got)
 	}
+	for _, status := range []awid.VerificationStatus{"", "future_status"} {
+		if got := formatVerificationTag(status); got != " [unverified]" {
+			t.Fatalf("tag for %q = %q", status, got)
+		}
+	}
+}
+
+func TestFormatChatOpenReportsReceiptFailure(t *testing.T) {
+	result := &chat.OpenResult{ReceiptError: "cache lock unavailable", UnreadWasEmpty: true}
+	if got := formatChatOpen(result); !strings.Contains(got, "Check the workspace cache; messages may repeat.") {
+		t.Fatalf("missing receipt warning: %s", got)
+	}
 }
 
 func TestFormatChatSendUsesReplyMessageTagsNotReadReceipt(t *testing.T) {
