@@ -76,6 +76,7 @@ class Report:
     writes: list[Write]
     excluded: list[dict[str, object]]
     unresolved_calls: list[dict[str, object]]
+    nonliteral_by_file: dict[str, int]
     schema_version: int = 1
     scope: str = "Python test/helper ASTs; execute/fetch literal SQL INSERT/UPDATE/DELETE statement sites"
 
@@ -204,19 +205,35 @@ def inventory(root: Path, paths: list[Path]) -> dict[str, set[str]]:
 def bindings(scope: ast.AST) -> dict[str, ast.expr | None]:
     result: dict[str, ast.expr | None] = {}
 
+    def bind(name: str, value: ast.expr | None) -> None:
+        result[name] = None if name in result else value
+
     def visit(node: ast.AST) -> None:
         if node is not scope and isinstance(
             node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
         ):
+            if not isinstance(node, ast.Lambda):
+                bind(node.name, None)
             return
-        pairs: list[tuple[ast.expr, ast.expr | None]] = []
-        if isinstance(node, ast.Assign):
-            pairs = [(item, node.value) for item in node.targets]
-        elif isinstance(node, ast.AnnAssign):
-            pairs = [(node.target, node.value)]
-        for name, value in pairs:
-            if isinstance(name, ast.Name):
-                result[name.id] = None if name.id in result else value
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for target_node in targets:
+                if isinstance(target_node, ast.Name):
+                    bind(target_node.id, node.value)
+                else:
+                    visit(target_node)
+            if node.value is not None:
+                visit(node.value)
+            return
+        # Any other store/delete (loop, +=, with, walrus, unpacking, comprehension)
+        # shadows an outer literal. Do not mistake a stale SELECT for resolved SQL.
+        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            bind(node.id, None)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                bind(alias.asname or alias.name.split(".")[0], None)
+        elif isinstance(node, ast.ExceptHandler) and node.name is not None:
+            bind(node.name, None)
         for child in ast.iter_child_nodes(node):
             visit(child)
 
@@ -413,33 +430,44 @@ def scan(root: Path) -> Report:
         writes=sorted(writes, key=lambda w: (w.file, w.line, w.table)),
         excluded=excluded,
         unresolved_calls=unresolved,
+        nonliteral_by_file=dict(
+            sorted(Counter(str(row["file"]) for row in unresolved).items())
+        ),
     )
 
 
-def ceilings(raw: str) -> dict[str, int]:
+class Budget(TypedDict):
+    files: dict[str, int]
+    nonliteral_files: dict[str, int]
+
+
+def ceilings(raw: str) -> Budget:
     value = json.loads(raw)
     if (
         not isinstance(value, dict)
-        or set(value) != {"schema_version", "files"}
+        or set(value) != {"schema_version", "files", "nonliteral_files"}
+        or type(value["schema_version"]) is not int
         or value["schema_version"] != 1
-        or not isinstance(value["files"], dict)
     ):
         raise ScanError(
             "invalid product-write ceiling shape; restore the reviewed manifest"
         )
-    for file, count in value["files"].items():
-        if (
-            not isinstance(file, str)
-            or not test_file(Path(file))
-            or Path(file).is_absolute()
-            or ".." in Path(file).parts
-            or type(count) is not int
-            or count < 1
-        ):
-            raise ScanError(
-                "ceilings require relative test paths and positive integer counts; remove cleared entries"
-            )
-    return value["files"]
+    for group in ("files", "nonliteral_files"):
+        if not isinstance(value[group], dict):
+            raise ScanError(f"{group} ceilings must map files to positive counts")
+        for file, count in value[group].items():
+            if (
+                not isinstance(file, str)
+                or not test_file(Path(file))
+                or Path(file).is_absolute()
+                or ".." in Path(file).parts
+                or type(count) is not int
+                or count < 1
+            ):
+                raise ScanError(
+                    "ceilings require relative test paths and positive integer counts; remove cleared entries"
+                )
+    return Budget(files=value["files"], nonliteral_files=value["nonliteral_files"])
 
 
 def violations(root: Path, report: Report) -> list[str]:
@@ -454,18 +482,31 @@ def violations(root: Path, report: Report) -> list[str]:
         else None
     )
     errors: list[str] = []
-    if reviewed is not None:
-        errors.extend(
-            f"{file}: ceiling {count} > reviewed {reviewed.get(file, 0)}"
-            for file, count in candidate.items()
-            if count > reviewed.get(file, 0)
-        )
-    actual = Counter(w.file for w in report.writes if w.reason is None)
-    errors.extend(
-        f"{file}: unmarked writes {count} > {candidate.get(file, 0)}"
-        for file, count in sorted(actual.items())
-        if count > candidate.get(file, 0)
+    actual_writes = Counter(w.file for w in report.writes if w.reason is None)
+    groups: tuple[
+        tuple[Literal["files", "nonliteral_files"], str, dict[str, int]], ...
+    ] = (
+        ("files", "unmarked writes", dict(actual_writes)),
+        ("nonliteral_files", "nonliteral calls", report.nonliteral_by_file),
     )
+    for key, label, actual in groups:
+        limits = candidate[key]
+        if reviewed is not None:
+            errors.extend(
+                f"{file}: {label} ceiling {count} > reviewed {reviewed[key].get(file, 0)}"
+                for file, count in limits.items()
+                if count > reviewed[key].get(file, 0)
+            )
+        errors.extend(
+            f"{file}: {label} {count} > {limits.get(file, 0)}"
+            for file, count in sorted(actual.items())
+            if count > limits.get(file, 0)
+        )
+        errors.extend(
+            f"{label}: lower {file} to {actual.get(file, 0)} in {CEILINGS} ({key}); remove the entry at zero"
+            for file, count in sorted(limits.items())
+            if count > actual.get(file, 0)
+        )
     return errors
 
 

@@ -25,7 +25,7 @@ class ProductTableWrites(unittest.TestCase):
         )
         self.write(
             "tools/product-table-write-ceilings.json",
-            '{"schema_version":1,"files":{}}\n',
+            '{"schema_version":1,"nonliteral_files":{},"files":{}}\n',
         )
         self.git("add", ".")
         self.git(
@@ -122,7 +122,7 @@ async def f(db, schema):
         self.assertEqual(result.returncode, 1)
         self.write(
             "tools/product-table-write-ceilings.json",
-            '{"schema_version":1,"files":{"server/tests/test_world.py":1}}',
+            '{"schema_version":1,"nonliteral_files":{},"files":{"server/tests/test_world.py":1}}',
         )
         result = self.run_check()
         self.assertEqual(result.returncode, 1)
@@ -137,14 +137,15 @@ async def f(db, schema):
             'async def f(product):\n    await product.register_actor("neighbor")\n',
         )
         self.write(
-            "tools/product-table-write-ceilings.json", '{"schema_version":1,"files":{}}'
+            "tools/product-table-write-ceilings.json",
+            '{"schema_version":1,"nonliteral_files":{},"files":{}}',
         )
         self.assertEqual(self.run_check().returncode, 0)
 
     def test_existing_allowance_can_only_decrease_new_files_get_zero(self):
         self.write(
             "tools/product-table-write-ceilings.json",
-            '{"schema_version":1,"files":{"server/tests/test_world.py":2}}',
+            '{"schema_version":1,"nonliteral_files":{},"files":{"server/tests/test_world.py":2}}',
         )
         self.git("add", ".")
         self.git(
@@ -163,7 +164,7 @@ async def f(db, schema):
         )
         self.write(
             "tools/product-table-write-ceilings.json",
-            '{"schema_version":1,"files":{"server/tests/test_world.py":1}}',
+            '{"schema_version":1,"nonliteral_files":{},"files":{"server/tests/test_world.py":1}}',
         )
         self.assertEqual(self.run_check().returncode, 0)
         self.write(
@@ -234,6 +235,120 @@ async def f(db, schema):
         )
         self.assertEqual(report["unmarked"], 0)
         self.assertEqual(len(report["unresolved_calls"]), 1)
+
+    def test_unsupported_rebinding_is_visible_not_a_stale_read(self):
+        cases = (
+            'SQL = "SELECT 1"\nasync def f(db):\n    for SQL in ["DELETE FROM agents"]:\n        await db.execute(SQL)\n',
+            'async def f(db):\n    SQL = "SELECT 1;"\n    SQL += "DELETE FROM agents"\n    await db.execute(SQL)\n',
+        )
+        for source in cases:
+            with self.subTest(source=source):
+                report = self.report(source)
+                self.assertEqual(report["unmarked"], 0)
+                self.assertEqual(len(report["unresolved_calls"]), 1)
+        report = self.report(
+            'SQL = "DELETE FROM agents"\nasync def f(db):\n    await db.execute(SQL)\n'
+        )
+        self.assertEqual(report["unmarked"], 1)
+        self.assertEqual(report["unresolved_calls"], [])
+
+    def test_ratchet_requires_lowering_stale_and_deleted_allowances(self):
+        self.write(
+            "tools/product-table-write-ceilings.json",
+            '{"schema_version":1,"nonliteral_files":{},"files":{"server/tests/test_world.py":2}}',
+        )
+        self.git("add", ".")
+        self.git(
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "-qm",
+            "reviewed debt",
+        )
+        self.git("update-ref", "refs/remotes/origin/main", "HEAD")
+        self.write(
+            "server/tests/test_world.py",
+            'async def f(db):\n    await db.execute("DELETE FROM agents")\n',
+        )
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("lower server/tests/test_world.py to 1", result.stdout)
+        self.write(
+            "tools/product-table-write-ceilings.json",
+            '{"schema_version":1,"nonliteral_files":{},"files":{"server/tests/test_world.py":1}}',
+        )
+        self.assertEqual(self.run_check().returncode, 0)
+        (self.root / "server/tests/test_world.py").unlink()
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("lower server/tests/test_world.py to 0", result.stdout)
+        self.write(
+            "tools/product-table-write-ceilings.json",
+            '{"schema_version":1,"nonliteral_files":{},"files":{}}',
+        )
+        self.assertEqual(self.run_check().returncode, 0)
+
+    def test_nonliteral_budget_is_reviewed_and_ratchets_after_resolution(self):
+        self.write(
+            "tools/product-table-write-ceilings.json",
+            '{"schema_version":1,"nonliteral_files":{"server/tests/test_world.py":1},"files":{}}',
+        )
+        self.git("add", ".")
+        self.git(
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "-qm",
+            "reviewed nonliteral debt",
+        )
+        self.git("update-ref", "refs/remotes/origin/main", "HEAD")
+        self.write(
+            "server/tests/test_world.py",
+            "async def f(db, query):\n    await db.execute(query)\n",
+        )
+        self.assertEqual(self.run_check().returncode, 0)
+        self.write(
+            "server/tests/test_world.py",
+            'async def f(db):\n    await db.execute("SELECT 1")\n',
+        )
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            "nonliteral calls: lower server/tests/test_world.py to 0", result.stdout
+        )
+        self.write(
+            "tools/product-table-write-ceilings.json",
+            '{"schema_version":1,"nonliteral_files":{},"files":{}}',
+        )
+        self.assertEqual(self.run_check().returncode, 0)
+        self.write(
+            "server/tests/test_new.py",
+            "async def f(db, query):\n    await db.execute(query)\n",
+        )
+        self.write(
+            "tools/product-table-write-ceilings.json",
+            '{"schema_version":1,"nonliteral_files":{"server/tests/test_new.py":1},"files":{}}',
+        )
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("ceiling 1 > reviewed 0", result.stdout)
+
+    def test_nonliteral_new_file_refuses_and_trailing_marker_does_not_exempt(self):
+        self.write(
+            "server/tests/test_world.py",
+            "async def f(db, query):\n    await db.execute(query)\n",
+        )
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("nonliteral calls 1 > 0", result.stdout)
+        report = self.report(
+            'async def f(db):\n    x = 1  # unreachable-state: corrupt row\n    await db.execute("DELETE FROM agents")\n'
+        )
+        self.assertEqual((report["unmarked"], report["marked"]), (1, 0))
 
     def test_parse_errors_and_empty_marker_refuse(self):
         self.write("server/tests/test_world.py", "def broken(:\n")
