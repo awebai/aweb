@@ -266,7 +266,7 @@ async def _local_envelope_recipient(
 ) -> Recipient:
     """Residence for a validated address or an already-authorized participant.
 
-    Continuations (docs/identity-messaging-contract.md:311-316) makes exact-DID residence
+    Continuations (docs/identity-messaging-contract.md:313-318) makes exact-DID residence
     independent of team membership. Neither read grants a team actor.
     """
     if address_binding is not None:

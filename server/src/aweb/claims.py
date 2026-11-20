@@ -369,7 +369,7 @@ async def release_noncurrent_task_claims_on(tx, *, team_id: str, task_ref: str) 
             SELECT 1 FROM {{{{tables.workspaces}}}} w
             JOIN {{{{tables.agents}}}} a ON a.agent_id=w.agent_id AND a.team_id=w.team_id
             WHERE w.workspace_id=c.workspace_id AND w.team_id=c.team_id
-              AND w.deleted_at IS NULL AND {current_member_sql("a")}
+              AND {current_member_sql("a")}
         )
         ORDER BY c.workspace_id FOR UPDATE OF c
         """,

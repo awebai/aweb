@@ -341,7 +341,7 @@ async def read_participant_identity_projection(
 ) -> dict[str, Any] | None:
     """Read identity for an already-authorized participant, never a team actor.
 
-    Global And Local Identities (docs/identity-messaging-contract.md:122-141)
+    Global And Local Identities (docs/identity-messaging-contract.md:124-144)
     keeps participation independent
     of current membership. A new first-contact lookup must use the member
     selectors or independently verify its address route instead.
