@@ -353,6 +353,7 @@
     "naapp/secrets/tests/test_containment_retirement_entry.py": 1,
     "naapp/secrets/tests/test_credential_audit.py": 2,
     "naapp/secrets/tests/test_handoff_authority_refusals.py": 1,
+    "naapp/secrets/tests/test_handoff_direct_child.py": 1,
     "naapp/secrets/tests/test_handoff_page.py": 1,
     "naapp/secrets/tests/test_handoff_sessions.py": 1,
     "naapp/secrets/tests/test_hook_lifecycle.py": 2,

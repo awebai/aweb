@@ -208,7 +208,7 @@ def bindings(scope: ast.AST) -> dict[str, ast.expr | None]:
     def bind(name: str, value: ast.expr | None) -> None:
         result[name] = None if name in result else value
 
-    def visit(node: ast.AST) -> None:
+    def visit(node: ast.AST, *, dynamic: bool = False) -> None:
         if node is not scope and isinstance(
             node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
         ):
@@ -218,12 +218,12 @@ def bindings(scope: ast.AST) -> dict[str, ast.expr | None]:
         if isinstance(node, (ast.Assign, ast.AnnAssign)):
             targets = node.targets if isinstance(node, ast.Assign) else [node.target]
             for target_node in targets:
-                if isinstance(target_node, ast.Name):
-                    bind(target_node.id, node.value)
+                if len(targets) == 1 and isinstance(target_node, ast.Name):
+                    bind(target_node.id, None if dynamic else node.value)
                 else:
-                    visit(target_node)
+                    visit(target_node, dynamic=True)
             if node.value is not None:
-                visit(node.value)
+                visit(node.value, dynamic=dynamic)
             return
         # Any other store/delete (loop, +=, with, walrus, unpacking, comprehension)
         # shadows an outer literal. Do not mistake a stale SELECT for resolved SQL.
@@ -232,10 +232,21 @@ def bindings(scope: ast.AST) -> dict[str, ast.expr | None]:
         elif isinstance(node, (ast.Import, ast.ImportFrom)):
             for alias in node.names:
                 bind(alias.asname or alias.name.split(".")[0], None)
-        elif isinstance(node, ast.ExceptHandler) and node.name is not None:
+        elif (
+            isinstance(node, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar))
+            and node.name is not None
+        ):
             bind(node.name, None)
+        elif isinstance(node, ast.MatchMapping) and node.rest is not None:
+            bind(node.rest, None)
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            for name in node.names:
+                bind(name, None)
         for child in ast.iter_child_nodes(node):
-            visit(child)
+            visit(
+                child,
+                dynamic=dynamic or isinstance(node, (ast.For, ast.AsyncFor, ast.While)),
+            )
 
     visit(scope)
     if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -318,15 +329,37 @@ def scan_file(
             continue
         node: ast.AST = call
         statement: ast.stmt | None = None
-        scope: ast.Module | ast.FunctionDef | ast.AsyncFunctionDef = tree
+        scope_chain: list[ast.AST] = []
+        function_header = False
         while node in parents:
-            node = parents[node]
+            child, node = node, parents[node]
             if statement is None and isinstance(node, ast.stmt):
                 statement = node
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                scope = node
-                break
-        names = scopes[tree] | scopes[scope]
+                scope_chain.append(node)
+                function_header |= child not in node.body
+            elif isinstance(
+                node,
+                (
+                    ast.Lambda,
+                    ast.ClassDef,
+                    ast.ListComp,
+                    ast.SetComp,
+                    ast.DictComp,
+                    ast.GeneratorExp,
+                ),
+            ):
+                scope_chain.append(node)
+        # Only module and ordinary function bindings are modeled. Never borrow
+        # an outer literal through a lambda/class/comprehension or closure.
+        names: dict[str, ast.expr | None] = {}
+        if not function_header:
+            if not scope_chain:
+                names = scopes[tree]
+            elif isinstance(scope_chain[0], (ast.FunctionDef, ast.AsyncFunctionDef)):
+                names = scopes[scope_chain[0]]
+                if len(scope_chain) == 1:
+                    names = scopes[tree] | names
         sql = literal(expression, names)
         if sql is None:
             unresolved.append(
