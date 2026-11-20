@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from contextlib import contextmanager
 import json
 from typing import Protocol
+from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 from fastapi import FastAPI
@@ -15,7 +16,11 @@ from awid.identity_observation import IdentityKind
 from awid_service.testing import Registry
 from aweb.application_state import application_registry_client
 from aweb.routes.connect import ConnectResponse
-from test_messages_http import _encode_certificate, _make_certificate, _signed_team_headers
+from test_messages_http import (
+    _encode_certificate,
+    _make_certificate,
+    _signed_team_headers,
+)
 
 
 class MessagingFixture(Protocol):
@@ -35,6 +40,7 @@ class RegisteredMessagingActor:
     team_id: str
     agent_id: str
     certificate: str
+    workspace_id: str = ""
 
 
 async def register_messaging_team(env: MessagingFixture, *, team_id: str) -> None:
@@ -181,6 +187,7 @@ async def admit_messaging_actor(
         address=address,
         team_id=team_id,
         agent_id=str(UUID(connected.agent_id)),
+        workspace_id=str(UUID(connected.workspace_id)),
         certificate=certificate,
     )
 
@@ -188,7 +195,9 @@ async def admit_messaging_actor(
 @contextmanager
 def record_registry_requests(env):
     """Observe HTTP at the actual registry app and forward every request unchanged."""
-    original = env.registry_app.middleware_stack or env.registry_app.build_middleware_stack()
+    original = (
+        env.registry_app.middleware_stack or env.registry_app.build_middleware_stack()
+    )
     requests: list[tuple[str, str]] = []
 
     async def record(scope, receive, send):
@@ -277,3 +286,48 @@ async def send_messaging_mail(env, sender, *, payload):
     )
     assert response.status_code == 200, response.text
     return response
+
+
+async def admit_privacy_actor(
+    env,
+    alias,
+    *,
+    team_id=None,
+    address="",
+    kind=IdentityKind.UNKNOWN,
+    local=False,
+    new_identity=False,
+    existing_identity=None,
+):
+    """Port a privacy fixture actor through the existing SDK/native admission builder.
+
+    The returned compatibility view contains only the actual connect response
+    and the registered actor's custody; no database or proof projection is seeded.
+    """
+    from test_dashboard_privacy import TEAM
+
+    original = env.actors[alias]
+    team_id = team_id or TEAM
+    await register_messaging_team(env, team_id=team_id)
+    registered = await admit_messaging_actor(
+        env,
+        alias=alias,
+        team_id=team_id,
+        address=address,
+        kind=kind,
+        local=local,
+        signing_key=None if new_identity else original.sk,
+        existing_identity=existing_identity,
+    )
+    env.actors[alias] = SimpleNamespace(
+        sk=registered.signing_key,
+        did=registered.did_key,
+        id=UUID(registered.agent_id),
+        workspace=UUID(registered.workspace_id),
+        certificate=registered.certificate,
+        stable_id=registered.stable_id,
+        address=registered.address,
+        team_id=registered.team_id,
+        registered=registered,
+    )
+    return env.actors[alias]
