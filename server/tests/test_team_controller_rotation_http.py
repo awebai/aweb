@@ -105,15 +105,10 @@ async def test_awid_rotation_replaces_oss_controller_authority(
     env = rotation_app
     clock = [1_000_000]
     monkeypatch.setattr(registry_module, "_cache_now", lambda: clock[0])
-    namespace_sk, _, namespace_did = _make_keypair()
+    namespace_sk, namespace_did = env.namespace_sk, env.namespace_did
     next_sk, _, next_did = _make_keypair()
     # DNS names the namespace controller whose rotation act moves the pin.
     env.app.state.awid_txt_resolver = TXTAnswers({"_awid.example.test": namespace_did})
-    await env.registry_db.execute(
-        "INSERT INTO {{tables.dns_namespaces}} (domain, controller_did, verification_status) "
-        "VALUES ('example.test', $1, 'verified')",
-        namespace_did,
-    )
 
     # The controller has working authority before rotation; a member does not.
     member = env.actors["bob"]

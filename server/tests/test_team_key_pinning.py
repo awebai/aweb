@@ -33,11 +33,10 @@ def _controller_headers(sk, did, payload):
 
 
 async def register_namespace_controller(env, did: str) -> None:
-    await env.registry_db.execute(
-        "INSERT INTO {{tables.dns_namespaces}} (domain, controller_did, verification_status) "
-        "VALUES ('example.test', $1, 'verified')",
-        did,
-    )
+    """Reuse the independent namespace controller retained by the producer."""
+    controller = await env.registry.ensure_namespace(domain="example.test")
+    assert bytes(controller) == env.namespace_sk
+    assert did == env.namespace_did
 
 
 async def rotate_team_key(env, controller_sk, controller_did, new_team_did: str) -> None:
@@ -121,7 +120,6 @@ async def _pin(env):
 def pinning(privacy_app, monkeypatch):
     monkeypatch.setenv("AWEB_ENFORCE_TEAM_KEY_PINS", "true")
     env = privacy_app
-    env.namespace_sk, _, env.namespace_did = _make_keypair()
     env.dns = TXTAnswers({"_awid.example.test": env.namespace_did})
     env.app.state.awid_txt_resolver = env.dns
     return env
@@ -186,7 +184,11 @@ async def test_rotation_by_a_controller_dns_does_not_name_is_refused(pinning):
     env = pinning
     # The registry's own namespace row names a controller DNS does not.
     registry_sk, _, registry_did = _make_keypair()
-    await register_namespace_controller(env, registry_did)
+    # Model a dishonest registry row while independent DNS retains the actual controller.
+    await env.registry_db.execute(
+        "UPDATE {{tables.dns_namespaces}} SET controller_did=$1 WHERE domain='example.test'",
+        registry_did,
+    )
     next_sk, _, next_did = _make_keypair()
     await rotate_team_key(env, registry_sk, registry_did, next_did)
 

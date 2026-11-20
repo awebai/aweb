@@ -12,6 +12,7 @@ import json
 import os
 
 import pytest
+from nacl.signing import SigningKey
 
 from aweb.federation.activation import FederationAuthorityActivation
 from aweb.federation.authority import AuthorityClaim, FederationAuthorityCore
@@ -52,24 +53,23 @@ async def test_delegated_namespace_authority(
     address = domain + "/carol"
     child_sk, _, child_key = _make_keypair()
     if case == "inherited_same_key":
-        child_sk, child_key = env.team_sk, env.team_did
+        child_sk, child_key = env.namespace_sk, env.namespace_did
     exact = case in {"exact", "exact_mismatch"}
     actor = env.actors["bob"]
     target = env.actors["carol"]
     async with registry_listener(env) as (registry, registry_origin):
         owner_did = await register_global_identity(env, actor, "example.test/bob")
-        await env.registry_db.execute(
-            "INSERT INTO {{tables.dns_namespaces}} (domain, controller_did, verification_status) "
-            "VALUES ('example.com', $1, 'verified')",
-            env.team_did,
+        await env.registry.ensure_namespace(
+            domain="example.com", controller=SigningKey(env.namespace_sk)
         )
         await registry.register_namespace(
             domain,
             child_key,
             child_sk,
-            parent_signing_key=env.team_sk,
+            parent_signing_key=env.namespace_sk,
             default_delivery_origin="https://sender.example.test",
         )
+        await env.registry.ensure_namespace(domain=domain, controller=SigningKey(child_sk))
         target_did = await register_global_identity(env, target, address)
         await env.db.execute(
             "UPDATE {{tables.agents}} SET did_aw=$1, did_aw_verified_key=did_key, "
@@ -87,7 +87,7 @@ async def test_delegated_namespace_authority(
 
         dns = DNS(
             domain if exact else "example.com",
-            child_key if case == "exact" else env.team_did,
+            child_key if case == "exact" else env.namespace_did,
             registry_origin,
         )
         resolver = StrictExternalRegistry(
@@ -111,7 +111,7 @@ async def test_delegated_namespace_authority(
                 if path == "/v1/namespaces/" + domain:
                     assert value["delegation"] == {
                         "parent_domain": "example.com",
-                        "parent_controller_key": env.team_did,
+                        "parent_controller_key": env.namespace_did,
                         "controller_key": child_key,
                     }
                     if case in {"missing", "inherited_same_key"}:
@@ -119,7 +119,7 @@ async def test_delegated_namespace_authority(
                     elif case == "wrong_parent_key":
                         value["delegation"]["parent_controller_key"] = child_key
                     elif case == "wrong_child_key":
-                        value["delegation"]["controller_key"] = env.team_did
+                        value["delegation"]["controller_key"] = env.namespace_did
                     elif case in {"wrong_ancestor", "non_ancestor"}:
                         value["delegation"]["parent_domain"] = (
                             "com" if case == "wrong_ancestor" else "other.com"
