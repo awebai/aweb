@@ -2,9 +2,7 @@
   "files": {
     "awid/src/awid_service/testing.py": 5,
     "awid/tests/test_a2a_publication_route.py": 4,
-    "awid/tests/test_attestation_record_routes.py": 1,
     "awid/tests/test_certificate_lifecycle.py": 2,
-    "awid/tests/test_certificate_rotation_race.py": 1,
     "awid/tests/test_certificate_status.py": 3,
     "awid/tests/test_certificates.py": 2,
     "awid/tests/test_controller_request_v2_http.py": 2,
@@ -192,6 +190,7 @@
     "server/tests/test_app_registry_http.py": 2,
     "server/tests/test_app_task_requests.py": 15,
     "server/tests/test_attachments_http.py": 3,
+    "server/tests/test_aw_run_input_boundary.py": 1,
     "server/tests/test_awid_transport.py": 1,
     "server/tests/test_c2_vectors.py": 1,
     "server/tests/test_chat_http.py": 242,
