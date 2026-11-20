@@ -23,7 +23,6 @@ from pgdbm import AsyncMigrationManager
 from library import auth
 from library.config import Settings
 
-pytest_plugins = ("aweb_naapp_testing.postgres",)
 TEAM_ID = "backend:example.com"
 ORIGIN = "https://app.example.com"
 

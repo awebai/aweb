@@ -7,7 +7,7 @@ from pathlib import Path
 import asyncpg
 import pytest
 import pytest_asyncio
-from aweb_naapp_testing.databases import selected_test_database_config
+from awid_service.testing import selected_test_database_config
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager, DatabaseConfig
 from pgdbm.errors import MigrationError
 from pgdbm.testing import AsyncTestDatabase
