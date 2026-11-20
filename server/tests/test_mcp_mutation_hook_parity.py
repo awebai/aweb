@@ -92,10 +92,12 @@ class _RecordingWakes:
 
 
 @pytest_asyncio.fixture
-async def server(real_stack, shared_test_pool, monkeypatch):
+async def server(real_stack, shared_test_database, monkeypatch):
     """Actual registry admission, HTTP/MCP auth and Redis publications."""
+    # The VM uses pgdbm's configured fixture, without this local-runner marker.
+    monkeypatch.delenv("TEST_DATABASE_URL", raising=False)
     monkeypatch.setenv("AWID_REGISTRY_URL", REGISTRY_URL)
-    monkeypatch.setenv("AWEB_DATABASE_URL", os.environ["TEST_DATABASE_URL"])
+    monkeypatch.setenv("AWEB_DATABASE_URL", shared_test_database.dsn)
     monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
     monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", INTERNAL_SECRET)
     db = real_stack.aweb_db
@@ -110,7 +112,7 @@ async def server(real_stack, shared_test_pool, monkeypatch):
         AsyncExitStack() as cleanup,
     ):
         infra = DatabaseInfra()
-        await infra.initialize(shared_pool=shared_test_pool)
+        await infra.initialize(shared_pool=shared_test_database.pool)
         cleanup.push_async_callback(infra.close)
         app = create_app(
             db_infra=infra,

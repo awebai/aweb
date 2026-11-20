@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from aweb.federation.activation import FederationAuthorityActivation
 
 from aweb.agent_wake import AgentWakePublisher, agent_wake_publisher
+from aweb.application_state import RegistryClientUnavailable, application_registry_client
 from aweb.config import get_public_origin
 from aweb.federation.origins import application_public_origins
 from aweb.federation.transport import delivery_transport
@@ -41,10 +42,19 @@ class MessagingRuntime:
 
 
 def messaging_runtime(app_state: State) -> MessagingRuntime:
-    """The messaging runtime of the application that owns ``app_state``."""
+    """The messaging runtime of the application that owns ``app_state``.
+
+    Registry-independent local sends retain an optional registry. Binding and
+    routing owners refuse operations that require an unavailable client.
+    Select before any native-state projection so a resource wins over shadows.
+    """
+    try:
+        registry_client = application_registry_client(app_state)
+    except RegistryClientUnavailable:
+        registry_client = None
     federation_authority = getattr(app_state, "federation_authority", None)
     return MessagingRuntime(
-        registry_client=getattr(app_state, "awid_registry_client", None),
+        registry_client=registry_client,
         federation_authority=federation_authority,
         mail_transport=delivery_transport(
             federation_authority,
