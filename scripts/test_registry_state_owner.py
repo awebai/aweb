@@ -39,6 +39,13 @@ def registry_slot_reads(source: str, path: str) -> list[int]:
             and node.func.id == "getattr"
             and len(node.args) >= 2
             and "native_resources" in values(node.args[1])
+            or isinstance(node, ast.Subscript)
+            and "native_resources" in values(node.slice)
+            or isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in ("get", "__getitem__")
+            and bool(node.args)
+            and "native_resources" in values(node.args[0])
         )
 
     def mapping_receiver(node: ast.AST) -> ast.AST:
@@ -61,12 +68,12 @@ def registry_slot_reads(source: str, path: str) -> list[int]:
 
     # Resolve simple name aliases without depending on their spelling or
     # statement order. Conservative unions also cover conditional assignment.
-    assignments = [node for node in ast.walk(tree) if isinstance(node, ast.Assign)]
+    assignments = [node for node in ast.walk(tree) if isinstance(node, (ast.Assign, ast.AnnAssign))]
     changed = True
     while changed:
         changed = False
         for node in assignments:
-            for target in node.targets:
+            for target in node.targets if isinstance(node, ast.Assign) else [node.target]:
                 if not isinstance(target, ast.Name):
                     continue
                 before = len(strings.get(target.id, set())), target.id in resources
@@ -154,6 +161,9 @@ class RegistryStateOwnerTests(unittest.TestCase):
     def test_indirect_state_and_resource_reads_cannot_bypass_the_owner(self) -> None:
         for source, line in (
             ("key = 'awid_registry_client'\nx = getattr(state, key)", 2),
+            ("key: str = 'awid_registry_client'\nx = getattr(state, key)", 2),
+            ("ref = vars(state)['native_resources']\nx = ref.registry_client", 2),
+            ("ref = state.__dict__.get('native_resources')\nx = ref.registry_client", 2),
             ("key = 'awid_registry_client'\nx = vars(state)[key]", 2),
             ("x = state.__dict__.get('awid_registry_client')", 1),
             ("x = state.__dict__['awid_registry_client']", 1),
