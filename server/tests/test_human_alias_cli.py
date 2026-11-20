@@ -64,7 +64,12 @@ async def test_cli_first_contact_human_alias_with_signed_key(
                 custody="hosted_custodial",
                 now=previous["assertion_created_at"],
             )
-            if assertion["encryption_key_id"] < previous["encryption_key_id"]:
+            selected_key = await env.db.fetch_value(
+                "SELECT key_id FROM unnest($1::text[]) AS keys(key_id) "
+                "ORDER BY key_id DESC LIMIT 1",
+                [assertion["encryption_key_id"], previous["encryption_key_id"]],
+            )
+            if selected_key == previous["encryption_key_id"]:
                 break
         else:
             raise AssertionError("Could not arrange the observed key ordering")
