@@ -58,11 +58,13 @@ def _signed_request(agent_sk, agent_did_key, team_id, body_bytes=b""):
 
     timestamp = datetime.now(timezone.utc).isoformat()
     body_sha256 = hashlib.sha256(body_bytes).hexdigest()
-    payload_bytes = canonical_json_bytes({
-        "body_sha256": body_sha256,
-        "team_id": team_id,
-        "timestamp": timestamp,
-    })
+    payload_bytes = canonical_json_bytes(
+        {
+            "body_sha256": body_sha256,
+            "team_id": team_id,
+            "timestamp": timestamp,
+        }
+    )
     sig = sign_message(agent_sk, payload_bytes)
     return {
         "Authorization": f"DIDKey {agent_did_key} {sig}",
@@ -103,7 +105,9 @@ def _build_test_app(aweb_db, team_did_key):
                 message = await original_receive()
                 if message["type"] == "http.disconnect":
                     return message
-                if message["type"] == "http.request" and not message.get("more_body", False):
+                if message["type"] == "http.request" and not message.get(
+                    "more_body", False
+                ):
                     continue
                 return message
 
@@ -136,7 +140,8 @@ async def _create_test_event_recipient(aweb_db):
         agent_id,
     )
     await aweb_db.execute(
-        "UPDATE {{tables.agents}} SET did_aw_verified_key=did_key WHERE agent_id=$1", agent_id,
+        "UPDATE {{tables.agents}} SET did_aw_verified_key=did_key WHERE agent_id=$1",
+        agent_id,
     )
     return agent_id
 
@@ -243,7 +248,8 @@ async def test_events_stream_includes_existing_unread_mail(aweb_cloud_db):
     )
 
     await aweb_cloud_db.aweb_db.execute(
-        "UPDATE {{tables.agents}} SET did_aw_verified_key=did_key WHERE agent_id=$1", alice["agent_id"],
+        "UPDATE {{tables.agents}} SET did_aw_verified_key=did_key WHERE agent_id=$1",
+        alice["agent_id"],
     )
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
     seed_verified_bindings(app, ("did:aw:bob", bob_did_key, ""))
@@ -251,8 +257,12 @@ async def test_events_stream_includes_existing_unread_mail(aweb_cloud_db):
     headers = _signed_request(bob_sk, bob_did_key, "backend:acme.com")
     headers["X-AWID-Team-Certificate"] = cert_header
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.get("/v1/events/stream", params={"deadline": deadline}, headers=headers)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get(
+            "/v1/events/stream", params={"deadline": deadline}, headers=headers
+        )
 
     assert resp.status_code == 200
     assert "event: connected" in resp.text
@@ -307,8 +317,12 @@ async def test_events_stream_sends_idle_heartbeats(aweb_cloud_db, monkeypatch):
     headers = _signed_request(bob_sk, bob_did_key, "backend:acme.com")
     headers["X-AWID-Team-Certificate"] = cert_header
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.get("/v1/events/stream", params={"deadline": deadline}, headers=headers)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get(
+            "/v1/events/stream", params={"deadline": deadline}, headers=headers
+        )
 
     assert resp.status_code == 200
     assert resp.text.count(": keepalive") >= 2
@@ -380,7 +394,8 @@ async def test_events_stream_matches_unread_mail_across_viewer_dids(aweb_cloud_d
     )
 
     await aweb_cloud_db.aweb_db.execute(
-        "UPDATE {{tables.agents}} SET did_aw_verified_key=did_key WHERE agent_id=$1", alice["agent_id"],
+        "UPDATE {{tables.agents}} SET did_aw_verified_key=did_key WHERE agent_id=$1",
+        alice["agent_id"],
     )
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
     seed_verified_bindings(app, ("did:aw:bob", bob_did_key, ""))
@@ -388,8 +403,12 @@ async def test_events_stream_matches_unread_mail_across_viewer_dids(aweb_cloud_d
     headers = _signed_request(bob_sk, bob_did_key, "backend:acme.com")
     headers["X-AWID-Team-Certificate"] = cert_header
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.get("/v1/events/stream", params={"deadline": deadline}, headers=headers)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get(
+            "/v1/events/stream", params={"deadline": deadline}, headers=headers
+        )
 
     assert resp.status_code == 200
     assert "event: actionable_mail" in resp.text
@@ -398,7 +417,9 @@ async def test_events_stream_matches_unread_mail_across_viewer_dids(aweb_cloud_d
 
 
 @pytest.mark.asyncio
-async def test_current_actionable_mail_includes_from_stable_id_for_current_sender_key(aweb_cloud_db):
+async def test_current_actionable_mail_includes_from_stable_id_for_current_sender_key(
+    aweb_cloud_db,
+):
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
@@ -445,7 +466,9 @@ async def test_current_actionable_mail_includes_from_stable_id_for_current_sende
 
 
 @pytest.mark.asyncio
-async def test_current_actionable_mail_prefers_stored_sender_address_without_local_metadata(aweb_cloud_db):
+async def test_current_actionable_mail_prefers_stored_sender_address_without_local_metadata(
+    aweb_cloud_db,
+):
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.messages}}
@@ -591,7 +614,8 @@ async def test_events_stream_matches_pending_chat_across_viewer_dids(aweb_cloud_
     )
 
     await aweb_cloud_db.aweb_db.execute(
-        "UPDATE {{tables.agents}} SET did_aw_verified_key=did_key WHERE agent_id=$1", alice["agent_id"],
+        "UPDATE {{tables.agents}} SET did_aw_verified_key=did_key WHERE agent_id=$1",
+        alice["agent_id"],
     )
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
     seed_verified_bindings(app, ("did:aw:bob", bob_did_key, ""))
@@ -599,8 +623,12 @@ async def test_events_stream_matches_pending_chat_across_viewer_dids(aweb_cloud_
     headers = _signed_request(bob_sk, bob_did_key, "backend:acme.com")
     headers["X-AWID-Team-Certificate"] = cert_header
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.get("/v1/events/stream", params={"deadline": deadline}, headers=headers)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get(
+            "/v1/events/stream", params={"deadline": deadline}, headers=headers
+        )
 
     assert resp.status_code == 200
     assert "event: actionable_chat" in resp.text
@@ -611,7 +639,9 @@ async def test_events_stream_matches_pending_chat_across_viewer_dids(aweb_cloud_
 
 
 @pytest.mark.asyncio
-async def test_current_actionable_chat_uses_per_session_participant_lists(aweb_cloud_db, monkeypatch):
+async def test_current_actionable_chat_uses_per_session_participant_lists(
+    aweb_cloud_db, monkeypatch
+):
     class _DbShim:
         def __init__(self, aweb_db):
             self._aweb_db = aweb_db
@@ -669,7 +699,9 @@ async def test_current_actionable_chat_uses_per_session_participant_lists(aweb_c
 
     seen: dict[str, list[str]] = {}
 
-    async def _fake_get_waiting_agents(_redis, session_id: str, participant_dids: list[str]):
+    async def _fake_get_waiting_agents(
+        _redis, session_id: str, participant_dids: list[str]
+    ):
         seen[session_id] = list(participant_dids)
         return list(participant_dids)
 
@@ -699,18 +731,26 @@ async def test_current_actionable_chat_uses_per_session_participant_lists(aweb_c
     }
     assert all(item["sender_waiting"] is True for item in actionable)
     by_session = {item["session_id"]: item for item in actionable}
-    assert by_session["11111111-1111-4111-8111-111111111111"]["from_address"] == "acme.com/alice"
-    assert by_session["11111111-1111-4111-8111-111111111111"]["participant_addresses"] == [
-        "acme.com/alice"
-    ]
-    assert by_session["22222222-2222-4222-8222-222222222222"]["from_address"] == "frontend~carol"
-    assert by_session["22222222-2222-4222-8222-222222222222"]["participant_addresses"] == [
-        "frontend~carol"
-    ]
+    assert (
+        by_session["11111111-1111-4111-8111-111111111111"]["from_address"]
+        == "acme.com/alice"
+    )
+    assert by_session["11111111-1111-4111-8111-111111111111"][
+        "participant_addresses"
+    ] == ["acme.com/alice"]
+    assert (
+        by_session["22222222-2222-4222-8222-222222222222"]["from_address"]
+        == "frontend~carol"
+    )
+    assert by_session["22222222-2222-4222-8222-222222222222"][
+        "participant_addresses"
+    ] == ["frontend~carol"]
 
 
 @pytest.mark.asyncio
-async def test_current_actionable_chat_includes_from_stable_id_for_current_sender_key(aweb_cloud_db, monkeypatch):
+async def test_current_actionable_chat_includes_from_stable_id_for_current_sender_key(
+    aweb_cloud_db, monkeypatch
+):
     class _DbShim:
         def __init__(self, aweb_db):
             self._aweb_db = aweb_db
@@ -753,7 +793,9 @@ async def test_current_actionable_chat_includes_from_stable_id_for_current_sende
         uuid4(),
     )
 
-    async def _fake_get_waiting_agents(_redis, _session_id: str, participant_dids: list[str]):
+    async def _fake_get_waiting_agents(
+        _redis, _session_id: str, participant_dids: list[str]
+    ):
         return list(participant_dids)
 
     monkeypatch.setattr(events_module, "get_waiting_agents", _fake_get_waiting_agents)
@@ -1025,22 +1067,27 @@ async def test_events_stream_defers_recipient_wait_until_next_poll(
             """
             INSERT INTO {{tables.chat_sessions}} (session_id, team_id, created_by)
             VALUES ($1, 'backend:acme.com', 'did:aw:alice')
-            """, session_id,
+            """,
+            session_id,
         )
         await db.execute(
             """
             INSERT INTO {{tables.chat_participants}} (session_id, did, alias)
             VALUES ($1, 'did:aw:bob', 'bob'), ($1, 'did:aw:alice', 'alice')
-            """, session_id,
+            """,
+            session_id,
         )
         await db.execute(
             """
             INSERT INTO {{tables.chat_messages}} (session_id, from_did, from_alias, body)
             VALUES ($1, 'did:aw:alice', 'alice', 'unread message')
-            """, session_id,
+            """,
+            session_id,
         )
         if sender_waiting:
-            await waiting_module.register_waiting(redis, str(session_id), "did:aw:alice")
+            await waiting_module.register_waiting(
+                redis, str(session_id), "did:aw:alice"
+            )
     await waiting_module.register_waiting(redis, str(engaged), recipient_did)
     stream = await _open_test_event_stream(db, agent_id, monkeypatch, redis=redis)
     try:
@@ -1055,7 +1102,9 @@ async def test_events_stream_defers_recipient_wait_until_next_poll(
                 initial_chat.append(json.loads(chunk.split("data: ", 1)[1]))
         assert [e["session_id"] for e in initial_chat] == [str(other)]
         assert initial_chat[0]["sender_waiting"] is sender_waiting
-        assert initial_chat[0]["wake_mode"] == ("interrupt" if sender_waiting else "prompt")
+        assert initial_chat[0]["wake_mode"] == (
+            "interrupt" if sender_waiting else "prompt"
+        )
 
         if release_wait == "unregister":
             await waiting_module.unregister_waiting(redis, str(engaged), recipient_did)
@@ -1063,7 +1112,9 @@ async def test_events_stream_defers_recipient_wait_until_next_poll(
             now[0] += 91  # Beyond the real helper's freshness window, no sleep.
             if sender_waiting:
                 for session_id in (engaged, other):
-                    await waiting_module.register_waiting(redis, str(session_id), "did:aw:alice")
+                    await waiting_module.register_waiting(
+                        redis, str(session_id), "did:aw:alice"
+                    )
 
         resumed = json.loads((await anext(stream)).split("data: ", 1)[1])
         assert resumed["type"] == "actionable_chat"

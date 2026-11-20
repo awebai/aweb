@@ -316,7 +316,9 @@ async def test_list_agents(aweb_cloud_db):
     )
     token = _make_jwt(["backend:acme.com"])
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.get(
             "/v1/teams/backend:acme.com/agents",
             headers={"X-Dashboard-Token": token},
@@ -340,7 +342,9 @@ async def test_list_agents(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
-async def test_list_agents_prefers_active_workspace_over_newer_deleted_workspace(aweb_cloud_db):
+async def test_list_agents_prefers_active_workspace_over_newer_deleted_workspace(
+    aweb_cloud_db,
+):
     app = _build_app(aweb_cloud_db.aweb_db)
     alice_id, bob_id = await _seed(aweb_cloud_db.aweb_db)
     await aweb_cloud_db.aweb_db.execute(
@@ -374,7 +378,9 @@ async def test_list_agents_prefers_active_workspace_over_newer_deleted_workspace
     )
     token = _make_jwt(["backend:acme.com"])
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.get(
             "/v1/teams/backend:acme.com/agents",
             headers={"X-Dashboard-Token": token},
@@ -415,7 +421,9 @@ async def test_list_agents_excludes_human_typed_action_attribution_rows(aweb_clo
     )
     token = _make_jwt(["backend:acme.com"])
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.get(
             "/v1/teams/backend:acme.com/agents",
             headers={"X-Dashboard-Token": token},
@@ -435,7 +443,9 @@ async def test_agent_detail(aweb_cloud_db):
     await _seed(aweb_cloud_db.aweb_db)
     token = _make_jwt(["backend:acme.com"])
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.get(
             "/v1/teams/backend:acme.com/agents/alice",
             headers={"X-Dashboard-Token": token},
@@ -511,7 +521,9 @@ async def test_claims_missing_token_returns_401(aweb_cloud_db):
     app = _build_app(aweb_cloud_db.aweb_db)
     await _seed(aweb_cloud_db.aweb_db)
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.get("/v1/teams/backend:acme.com/claims")
 
     assert resp.status_code == 401
@@ -523,7 +535,9 @@ async def test_dashboard_messages_route_is_removed(aweb_cloud_db):
     await _seed(aweb_cloud_db.aweb_db)
     token = _make_jwt(["backend:acme.com"])
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.get(
             "/v1/teams/backend:acme.com/messages",
             headers={"X-Dashboard-Token": token},
@@ -705,9 +719,15 @@ async def test_tasks_filters_in_isolation(dashboard_stack):
         headers={"X-Dashboard-Token": token},
     )
 
-    assert [task["title"] for task in status_resp.json()["tasks"]] == ["Build dashboard"]
-    assert [task["title"] for task in assignee_resp.json()["tasks"]] == ["Build dashboard"]
-    assert [task["title"] for task in priority_resp.json()["tasks"]] == ["Build dashboard"]
+    assert [task["title"] for task in status_resp.json()["tasks"]] == [
+        "Build dashboard"
+    ]
+    assert [task["title"] for task in assignee_resp.json()["tasks"]] == [
+        "Build dashboard"
+    ]
+    assert [task["title"] for task in priority_resp.json()["tasks"]] == [
+        "Build dashboard"
+    ]
     assert [task["title"] for task in q_resp.json()["tasks"]] == ["Document claims"]
 
 
@@ -827,7 +847,9 @@ async def test_events_stream_emits_snapshot_and_team_events(aweb_cloud_db):
         ),
     )
 
-    event_name, payload = _parse_sse_chunk(await asyncio.wait_for(anext(stream), timeout=1))
+    event_name, payload = _parse_sse_chunk(
+        await asyncio.wait_for(anext(stream), timeout=1)
+    )
     assert event_name == "task.created"
     assert payload == {
         "type": "task.created",
@@ -868,7 +890,9 @@ async def test_events_stream_emits_presence_diffs(aweb_cloud_db, monkeypatch):
         team_id="backend:acme.com",
     )
 
-    event_name, payload = _parse_sse_chunk(await asyncio.wait_for(anext(stream), timeout=1))
+    event_name, payload = _parse_sse_chunk(
+        await asyncio.wait_for(anext(stream), timeout=1)
+    )
     assert event_name == "agent.online"
     assert payload == {
         "type": "agent.online",
@@ -879,7 +903,9 @@ async def test_events_stream_emits_presence_diffs(aweb_cloud_db, monkeypatch):
 
     await redis.delete(f"presence:{workspace_id}")
 
-    event_name, payload = _parse_sse_chunk(await asyncio.wait_for(anext(stream), timeout=1))
+    event_name, payload = _parse_sse_chunk(
+        await asyncio.wait_for(anext(stream), timeout=1)
+    )
     assert event_name == "agent.offline"
     assert payload == {
         "type": "agent.offline",
@@ -907,7 +933,9 @@ async def test_team_presence_events_publish_to_shared_channel(aweb_cloud_db):
         redis,
         TeamAgentOnlineEvent(team_id="backend:acme.com", alias="alice"),
     )
-    event_name, payload = _parse_sse_chunk(await asyncio.wait_for(anext(stream), timeout=1))
+    event_name, payload = _parse_sse_chunk(
+        await asyncio.wait_for(anext(stream), timeout=1)
+    )
     assert event_name == "agent.online"
     assert payload == {
         "type": "agent.online",
@@ -920,7 +948,9 @@ async def test_team_presence_events_publish_to_shared_channel(aweb_cloud_db):
         redis,
         TeamAgentOfflineEvent(team_id="backend:acme.com", alias="alice"),
     )
-    event_name, payload = _parse_sse_chunk(await asyncio.wait_for(anext(stream), timeout=1))
+    event_name, payload = _parse_sse_chunk(
+        await asyncio.wait_for(anext(stream), timeout=1)
+    )
     assert event_name == "agent.offline"
     assert payload == {
         "type": "agent.offline",
@@ -936,7 +966,9 @@ async def test_events_stream_missing_token_returns_401(aweb_cloud_db):
     app = _build_app(aweb_cloud_db.aweb_db, redis=_FakeRedis())
     await _seed(aweb_cloud_db.aweb_db)
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.get("/v1/teams/backend:acme.com/events/stream")
 
     assert resp.status_code == 401
@@ -948,7 +980,9 @@ async def test_events_stream_unauthorized_team_returns_403(aweb_cloud_db):
     await _seed(aweb_cloud_db.aweb_db)
     token = _make_jwt(["team:other.com"])
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.get(
             "/v1/teams/backend:acme.com/events/stream",
             headers={"X-Dashboard-Token": token},
@@ -974,7 +1008,9 @@ async def test_unauthorized_team_returns_403(dashboard_stack):
 async def test_missing_token_returns_401(aweb_cloud_db):
     app = _build_app(aweb_cloud_db.aweb_db)
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.get("/v1/teams/backend:acme.com/agents")
 
     assert resp.status_code == 401
@@ -986,7 +1022,9 @@ async def test_public_team_allows_anonymous_dashboard_reads(aweb_cloud_db):
     app = _build_app(aweb_cloud_db.aweb_db, registry_client=registry_client)
     await _seed(aweb_cloud_db.aweb_db)
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.get("/v1/teams/backend:acme.com/agents")
 
     assert resp.status_code == 200
@@ -995,7 +1033,9 @@ async def test_public_team_allows_anonymous_dashboard_reads(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
-async def test_anonymous_request_reports_upstream_registry_connect_errors_as_503(dashboard_stack):
+async def test_anonymous_request_reports_upstream_registry_connect_errors_as_503(
+    dashboard_stack,
+):
     env = dashboard_stack
     await _seed_dashboard_stack(env)
     with socket.socket() as unused:
@@ -1017,12 +1057,16 @@ async def test_anonymous_request_reports_upstream_registry_connect_errors_as_503
 
 
 @pytest.mark.asyncio
-async def test_private_team_with_valid_jwt_does_not_fail_on_registry_lookup_error(aweb_cloud_db):
+async def test_private_team_with_valid_jwt_does_not_fail_on_registry_lookup_error(
+    aweb_cloud_db,
+):
     app = _build_app(aweb_cloud_db.aweb_db, registry_client=_FailingRegistryClient())
     await _seed(aweb_cloud_db.aweb_db)
     token = _make_jwt(["backend:acme.com"])
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.get(
             "/v1/teams/backend:acme.com/agents",
             headers={"X-Dashboard-Token": token},
@@ -1087,7 +1131,9 @@ async def test_authenticated_request_succeeds_during_partial_init_without_regist
     await _seed(aweb_cloud_db.aweb_db)
     token = _make_jwt(["backend:acme.com"])
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.get(
             "/v1/teams/backend:acme.com/agents",
             headers={"X-Dashboard-Token": token},
@@ -1103,7 +1149,9 @@ async def test_usage_endpoint(aweb_cloud_db):
     await _seed(aweb_cloud_db.aweb_db)
     token = _make_jwt(["backend:acme.com"])
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.get(
             "/v1/usage",
             params={"team_id": "backend:acme.com"},
@@ -1123,7 +1171,9 @@ async def test_status_endpoint(aweb_cloud_db):
     await _seed(aweb_cloud_db.aweb_db)
     token = _make_jwt(["backend:acme.com"])
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.get(
             "/v1/teams/backend:acme.com/status",
             headers={"X-Dashboard-Token": token},

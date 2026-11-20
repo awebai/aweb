@@ -101,7 +101,9 @@ def _build_test_app(aweb_db, team_did_key, redis=None):
                 message = await original_receive()
                 if message["type"] == "http.disconnect":
                     return message
-                if message["type"] == "http.request" and not message.get("more_body", False):
+                if message["type"] == "http.request" and not message.get(
+                    "more_body", False
+                ):
                     continue
                 return message
 
@@ -198,16 +200,20 @@ class _FakeRedis:
         self.cleaned_presence_ids.append(workspace_id)
         self.presence.pop(primary_key, None)
         self.presence.pop(coordinates_key, None)
-        self.pipeline_actions.extend([
-            ("srem", all_index_key, workspace_id),
-            ("delete", primary_key),
-            ("delete", coordinates_key),
-        ])
+        self.pipeline_actions.extend(
+            [
+                ("srem", all_index_key, workspace_id),
+                ("delete", primary_key),
+                ("delete", coordinates_key),
+            ]
+        )
         return 1
 
 
 @pytest.mark.asyncio
-async def test_team_roster_prioritizes_live_presence_and_reports_truncation(aweb_cloud_db):
+async def test_team_roster_prioritizes_live_presence_and_reports_truncation(
+    aweb_cloud_db,
+):
     team_sk, _, team_did_key = _make_keypair()
     agent_sk, _, agent_did_key = _make_keypair()
     team_id = "backend:acme.com"
@@ -317,7 +323,9 @@ async def test_team_roster_prioritizes_live_presence_and_reports_truncation(aweb
         )
 
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key, redis=redis)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         response = await client.get(
             "/v1/workspaces/team",
             params={
@@ -350,7 +358,9 @@ async def test_team_roster_prioritizes_live_presence_and_reports_truncation(aweb
 
 
 @pytest.mark.asyncio
-async def test_team_roster_keeps_live_presence_outside_sql_candidate_window(aweb_cloud_db):
+async def test_team_roster_keeps_live_presence_outside_sql_candidate_window(
+    aweb_cloud_db,
+):
     team_sk, _, team_did_key = _make_keypair()
     agent_sk, _, agent_did_key = _make_keypair()
     team_id = "backend:acme.com"
@@ -440,7 +450,9 @@ async def test_team_roster_keeps_live_presence_outside_sql_candidate_window(aweb
         )
 
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key, redis=redis)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         response = await client.get(
             "/v1/workspaces/team",
             params={
@@ -459,7 +471,9 @@ async def test_team_roster_keeps_live_presence_outside_sql_candidate_window(aweb
 
 
 @pytest.mark.asyncio
-async def test_delete_workspace_recovers_post_commit_presence_failure(aweb_cloud_db, monkeypatch):
+async def test_delete_workspace_recovers_post_commit_presence_failure(
+    aweb_cloud_db, monkeypatch
+):
     team_sk, _, team_did_key = _make_keypair()
     agent_sk, _, agent_did_key = _make_keypair()
     _, _, target_did_key = _make_keypair()
@@ -685,7 +699,9 @@ async def test_delete_workspace_rejects_persistent_identity(aweb_cloud_db):
     )
 
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
-    seed_verified_bindings(app, ("did:aw:maintainer", agent_did_key, "acme.com/maintainer"))
+    seed_verified_bindings(
+        app, ("did:aw:maintainer", agent_did_key, "acme.com/maintainer")
+    )
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
@@ -828,7 +844,9 @@ async def test_delete_workspace_unknown_identity_scope_fails_closed(aweb_cloud_d
     assert claims_row["count"] == 1
 
 
-async def _seed_local_member(aweb_cloud_db, *, team_id, team_did_key, agent_did_key, alias, last_seen_at):
+async def _seed_local_member(
+    aweb_cloud_db, *, team_id, team_did_key, agent_did_key, alias, last_seen_at
+):
     """One live local member: agent row plus its workspace, seen at last_seen_at."""
     agent_id = uuid4()
     workspace_id = uuid4()
@@ -860,7 +878,9 @@ async def _seed_local_member(aweb_cloud_db, *, team_id, team_did_key, agent_did_
 
 
 @pytest.mark.asyncio
-async def test_delete_workspace_rejects_recent_ephemeral_workspace_of_another_agent(aweb_cloud_db):
+async def test_delete_workspace_rejects_recent_ephemeral_workspace_of_another_agent(
+    aweb_cloud_db,
+):
     """A live teammate cannot be removed out from under its session.
 
     This test previously used ONE agent for both the caller and the workspace,
@@ -918,7 +938,9 @@ async def test_delete_workspace_rejects_recent_ephemeral_workspace_of_another_ag
         transport=ASGITransport(app=app),
         base_url="http://test",
     ) as client:
-        resp = await client.delete(f"/v1/workspaces/{victim_workspace_id}", headers=headers)
+        resp = await client.delete(
+            f"/v1/workspaces/{victim_workspace_id}", headers=headers
+        )
 
     assert resp.status_code == 409
     assert resp.json()["detail"]["code"] == "local_workspace_still_active"
@@ -942,7 +964,9 @@ async def test_delete_workspace_rejects_recent_ephemeral_workspace_of_another_ag
 
 
 @pytest.mark.asyncio
-async def test_delete_workspace_allows_agent_to_delete_its_own_recent_workspace(aweb_cloud_db):
+async def test_delete_workspace_allows_agent_to_delete_its_own_recent_workspace(
+    aweb_cloud_db,
+):
     """A member retiring itself deletes promptly (aweb-aaqg).
 
     The presence TTL exists so a live teammate is not removed out from under its
@@ -1228,7 +1252,9 @@ async def test_delete_workspace_reports_the_claims_it_released(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
-async def test_delete_workspace_reports_zero_claims_when_it_released_none(aweb_cloud_db):
+async def test_delete_workspace_reports_zero_claims_when_it_released_none(
+    aweb_cloud_db,
+):
     team_sk, _, team_did_key = _make_keypair()
     agent_sk, _, agent_did_key = _make_keypair()
     _, _, workspace_id, headers = await _seed_local_workspace_with_claims(
@@ -1299,7 +1325,13 @@ async def _seed_two_members_for_ownership(aweb_cloud_db):
         headers["Content-Type"] = "application/json"
         return headers
 
-    return team_did_key, caller_workspace_id, owner_workspace_id, seen_at, caller_headers
+    return (
+        team_did_key,
+        caller_workspace_id,
+        owner_workspace_id,
+        seen_at,
+        caller_headers,
+    )
 
 
 async def _workspace_row(aweb_cloud_db, workspace_id):
@@ -1327,98 +1359,158 @@ def _record_presence_updates(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_workspace_heartbeat_refuses_another_members_workspace(aweb_cloud_db, monkeypatch, caplog):
+async def test_workspace_heartbeat_refuses_another_members_workspace(
+    aweb_cloud_db, monkeypatch, caplog
+):
     """A certified member cannot keep another member's seat looking alive."""
-    team_did_key, _, owner_workspace_id, seen_at, caller_headers = await _seed_two_members_for_ownership(
-        aweb_cloud_db
-    )
+    (
+        team_did_key,
+        _,
+        owner_workspace_id,
+        seen_at,
+        caller_headers,
+    ) = await _seed_two_members_for_ownership(aweb_cloud_db)
     monkeypatch.setenv("AWEB_DATABASE_URL", "postgresql://unused/test")
     presence_updates = _record_presence_updates(monkeypatch)
     body = json.dumps(
-        {"workspace_id": str(owner_workspace_id), "alias": "bot", "hostname": "attacker-host"},
+        {
+            "workspace_id": str(owner_workspace_id),
+            "alias": "bot",
+            "hostname": "attacker-host",
+        },
         separators=(",", ":"),
     ).encode()
 
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.post("/v1/workspaces/heartbeat", content=body, headers=caller_headers(body))
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.post(
+            "/v1/workspaces/heartbeat", content=body, headers=caller_headers(body)
+        )
 
     assert resp.status_code == 403, resp.text
-    assert resp.json()["detail"] == f"Workspace {owner_workspace_id} belongs to another agent."
+    assert (
+        resp.json()["detail"]
+        == f"Workspace {owner_workspace_id} belongs to another agent."
+    )
     row = await _workspace_row(aweb_cloud_db, owner_workspace_id)
     assert row["hostname"] is None
     assert row["last_seen_at"] == seen_at
     assert presence_updates == []
-    assert [record.getMessage() for record in caplog.records if record.levelname == "WARNING"] == [
-        "Workspace heartbeat refused: workspace belongs to another agent"
-    ]
+    assert [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelname == "WARNING"
+    ] == ["Workspace heartbeat refused: workspace belongs to another agent"]
 
 
 @pytest.mark.asyncio
-async def test_workspace_heartbeat_refreshes_the_callers_own_workspace(aweb_cloud_db, monkeypatch):
-    team_did_key, caller_workspace_id, _, seen_at, caller_headers = await _seed_two_members_for_ownership(
-        aweb_cloud_db
-    )
+async def test_workspace_heartbeat_refreshes_the_callers_own_workspace(
+    aweb_cloud_db, monkeypatch
+):
+    (
+        team_did_key,
+        caller_workspace_id,
+        _,
+        seen_at,
+        caller_headers,
+    ) = await _seed_two_members_for_ownership(aweb_cloud_db)
     monkeypatch.setenv("AWEB_DATABASE_URL", "postgresql://unused/test")
     presence_updates = _record_presence_updates(monkeypatch)
     body = json.dumps(
-        {"workspace_id": str(caller_workspace_id), "alias": "caller", "hostname": "caller-host"},
+        {
+            "workspace_id": str(caller_workspace_id),
+            "alias": "caller",
+            "hostname": "caller-host",
+        },
         separators=(",", ":"),
     ).encode()
 
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.post("/v1/workspaces/heartbeat", content=body, headers=caller_headers(body))
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.post(
+            "/v1/workspaces/heartbeat", content=body, headers=caller_headers(body)
+        )
 
     assert resp.status_code == 200, resp.text
     row = await _workspace_row(aweb_cloud_db, caller_workspace_id)
     assert row["hostname"] == "caller-host"
     assert row["last_seen_at"] > seen_at
-    assert [call["workspace_id"] for call in presence_updates] == [str(caller_workspace_id)]
+    assert [call["workspace_id"] for call in presence_updates] == [
+        str(caller_workspace_id)
+    ]
 
 
 @pytest.mark.asyncio
 async def test_workspace_patch_refuses_another_members_workspace(aweb_cloud_db, caplog):
     """A certified member cannot overwrite another member's seat metadata."""
-    team_did_key, _, owner_workspace_id, _, caller_headers = await _seed_two_members_for_ownership(
-        aweb_cloud_db
-    )
+    (
+        team_did_key,
+        _,
+        owner_workspace_id,
+        _,
+        caller_headers,
+    ) = await _seed_two_members_for_ownership(aweb_cloud_db)
     body = json.dumps(
-        {"hostname": "attacker-host", "workspace_path": "/tmp/elsewhere", "focus_task_ref": "backend-x"},
+        {
+            "hostname": "attacker-host",
+            "workspace_path": "/tmp/elsewhere",
+            "focus_task_ref": "backend-x",
+        },
         separators=(",", ":"),
     ).encode()
 
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.patch(
-            f"/v1/workspaces/{owner_workspace_id}", content=body, headers=caller_headers(body)
+            f"/v1/workspaces/{owner_workspace_id}",
+            content=body,
+            headers=caller_headers(body),
         )
 
     assert resp.status_code == 403, resp.text
-    assert resp.json()["detail"] == f"Workspace {owner_workspace_id} belongs to another agent."
+    assert (
+        resp.json()["detail"]
+        == f"Workspace {owner_workspace_id} belongs to another agent."
+    )
     row = await _workspace_row(aweb_cloud_db, owner_workspace_id)
     assert row["hostname"] is None
     assert row["workspace_path"] == "/tmp/bot-worktree"
     assert row["focus_task_ref"] is None
-    assert [record.getMessage() for record in caplog.records if record.levelname == "WARNING"] == [
-        "Workspace update refused: workspace belongs to another agent"
-    ]
+    assert [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelname == "WARNING"
+    ] == ["Workspace update refused: workspace belongs to another agent"]
 
 
 @pytest.mark.asyncio
 async def test_workspace_patch_updates_the_callers_own_workspace(aweb_cloud_db):
-    team_did_key, caller_workspace_id, _, _, caller_headers = await _seed_two_members_for_ownership(
-        aweb_cloud_db
-    )
+    (
+        team_did_key,
+        caller_workspace_id,
+        _,
+        _,
+        caller_headers,
+    ) = await _seed_two_members_for_ownership(aweb_cloud_db)
     body = json.dumps(
         {"hostname": "caller-host", "focus_task_ref": "backend-y"},
         separators=(",", ":"),
     ).encode()
 
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.patch(
-            f"/v1/workspaces/{caller_workspace_id}", content=body, headers=caller_headers(body)
+            f"/v1/workspaces/{caller_workspace_id}",
+            content=body,
+            headers=caller_headers(body),
         )
 
     assert resp.status_code == 200, resp.text

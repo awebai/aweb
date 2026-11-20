@@ -42,7 +42,9 @@ def _app(aweb_db, controller_did_key: str) -> FastAPI:
     return app
 
 
-async def _seed_local_agent(aweb_db, *, team_did_key: str, did_key: str, alias: str = "alice") -> str:
+async def _seed_local_agent(
+    aweb_db, *, team_did_key: str, did_key: str, alias: str = "alice"
+) -> str:
     await aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
@@ -114,11 +116,16 @@ async def test_controller_replaces_local_agent_key_and_writes_audit(aweb_cloud_d
     )
     payload = _payload(old_did_key=old_did, new_did_key=new_did)
 
-    async with AsyncClient(transport=ASGITransport(app=_app(aweb_cloud_db.aweb_db, controller_did)), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=_app(aweb_cloud_db.aweb_db, controller_did)),
+        base_url="http://test",
+    ) as client:
         response = await client.post(
             "/v1/agents/alice/replace-key",
             json=payload,
-            headers=_controller_headers(controller_sk, controller_did, alias="alice", payload=payload),
+            headers=_controller_headers(
+                controller_sk, controller_did, alias="alice", payload=payload
+            ),
         )
 
     assert response.status_code == 200, response.text
@@ -169,59 +176,85 @@ async def test_exact_controller_replay_returns_the_original_audit_result(aweb_cl
     controller_sk, controller_did = _keypair()
     _, old_did = _keypair()
     _, new_did = _keypair()
-    await _seed_local_agent(aweb_cloud_db.aweb_db, team_did_key=controller_did, did_key=old_did)
+    await _seed_local_agent(
+        aweb_cloud_db.aweb_db, team_did_key=controller_did, did_key=old_did
+    )
     payload = _payload(old_did_key=old_did, new_did_key=new_did)
 
-    async with AsyncClient(transport=ASGITransport(app=_app(aweb_cloud_db.aweb_db, controller_did)), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=_app(aweb_cloud_db.aweb_db, controller_did)),
+        base_url="http://test",
+    ) as client:
         first = await client.post(
             "/v1/agents/alice/replace-key",
             json=payload,
-            headers=_controller_headers(controller_sk, controller_did, alias="alice", payload=payload),
+            headers=_controller_headers(
+                controller_sk, controller_did, alias="alice", payload=payload
+            ),
         )
         replay = await client.post(
             "/v1/agents/alice/replace-key",
             json=payload,
-            headers=_controller_headers(controller_sk, controller_did, alias="alice", payload=payload),
+            headers=_controller_headers(
+                controller_sk, controller_did, alias="alice", payload=payload
+            ),
         )
 
     assert first.status_code == 200
     assert replay.status_code == 200
     assert replay.json() == first.json()
-    assert await aweb_cloud_db.aweb_db.fetch_value(
-        "SELECT COUNT(*) FROM {{tables.audit_log}} WHERE team_id = $1",
-        TEAM_ID,
-    ) == 1
+    assert (
+        await aweb_cloud_db.aweb_db.fetch_value(
+            "SELECT COUNT(*) FROM {{tables.audit_log}} WHERE team_id = $1",
+            TEAM_ID,
+        )
+        == 1
+    )
 
 
 @pytest.mark.asyncio
-async def test_new_key_with_different_certificate_ids_is_not_treated_as_replay(aweb_cloud_db):
+async def test_new_key_with_different_certificate_ids_is_not_treated_as_replay(
+    aweb_cloud_db,
+):
     controller_sk, controller_did = _keypair()
     _, old_did = _keypair()
     _, new_did = _keypair()
-    await _seed_local_agent(aweb_cloud_db.aweb_db, team_did_key=controller_did, did_key=old_did)
+    await _seed_local_agent(
+        aweb_cloud_db.aweb_db, team_did_key=controller_did, did_key=old_did
+    )
     payload = _payload(old_did_key=old_did, new_did_key=new_did)
 
-    async with AsyncClient(transport=ASGITransport(app=_app(aweb_cloud_db.aweb_db, controller_did)), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=_app(aweb_cloud_db.aweb_db, controller_did)),
+        base_url="http://test",
+    ) as client:
         first = await client.post(
             "/v1/agents/alice/replace-key",
             json=payload,
-            headers=_controller_headers(controller_sk, controller_did, alias="alice", payload=payload),
+            headers=_controller_headers(
+                controller_sk, controller_did, alias="alice", payload=payload
+            ),
         )
         changed = dict(payload)
         changed["new_certificate_id"] = "different-cert"
         response = await client.post(
             "/v1/agents/alice/replace-key",
             json=changed,
-            headers=_controller_headers(controller_sk, controller_did, alias="alice", payload=changed),
+            headers=_controller_headers(
+                controller_sk, controller_did, alias="alice", payload=changed
+            ),
         )
 
     assert first.status_code == 200
     assert response.status_code == 409
     assert response.json()["detail"]["code"] == "identity_key_changed"
-    assert await aweb_cloud_db.aweb_db.fetch_value(
-        "SELECT COUNT(*) FROM {{tables.audit_log}} WHERE team_id = $1",
-        TEAM_ID,
-    ) == 1
+    assert (
+        await aweb_cloud_db.aweb_db.fetch_value(
+            "SELECT COUNT(*) FROM {{tables.audit_log}} WHERE team_id = $1",
+            TEAM_ID,
+        )
+        == 1
+    )
 
 
 @pytest.mark.asyncio
@@ -229,14 +262,21 @@ async def test_member_key_cannot_authorize_local_key_replacement(aweb_cloud_db):
     _, controller_did = _keypair()
     old_sk, old_did = _keypair()
     _, new_did = _keypair()
-    await _seed_local_agent(aweb_cloud_db.aweb_db, team_did_key=controller_did, did_key=old_did)
+    await _seed_local_agent(
+        aweb_cloud_db.aweb_db, team_did_key=controller_did, did_key=old_did
+    )
     payload = _payload(old_did_key=old_did, new_did_key=new_did)
 
-    async with AsyncClient(transport=ASGITransport(app=_app(aweb_cloud_db.aweb_db, controller_did)), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=_app(aweb_cloud_db.aweb_db, controller_did)),
+        base_url="http://test",
+    ) as client:
         response = await client.post(
             "/v1/agents/alice/replace-key",
             json=payload,
-            headers=_controller_headers(old_sk, old_did, alias="alice", payload=payload),
+            headers=_controller_headers(
+                old_sk, old_did, alias="alice", payload=payload
+            ),
         )
 
     assert response.status_code == 403
@@ -246,10 +286,13 @@ async def test_member_key_cannot_authorize_local_key_replacement(aweb_cloud_db):
         TEAM_ID,
     )
     assert row["did_key"] == old_did
-    assert await aweb_cloud_db.aweb_db.fetch_value(
-        "SELECT COUNT(*) FROM {{tables.audit_log}} WHERE team_id = $1",
-        TEAM_ID,
-    ) == 0
+    assert (
+        await aweb_cloud_db.aweb_db.fetch_value(
+            "SELECT COUNT(*) FROM {{tables.audit_log}} WHERE team_id = $1",
+            TEAM_ID,
+        )
+        == 0
+    )
 
 
 @pytest.mark.asyncio
@@ -257,13 +300,20 @@ async def test_controller_signature_binds_the_exact_replacement(aweb_cloud_db):
     controller_sk, controller_did = _keypair()
     _, old_did = _keypair()
     _, new_did = _keypair()
-    await _seed_local_agent(aweb_cloud_db.aweb_db, team_did_key=controller_did, did_key=old_did)
+    await _seed_local_agent(
+        aweb_cloud_db.aweb_db, team_did_key=controller_did, did_key=old_did
+    )
     signed = _payload(old_did_key=old_did, new_did_key=new_did)
-    headers = _controller_headers(controller_sk, controller_did, alias="alice", payload=signed)
+    headers = _controller_headers(
+        controller_sk, controller_did, alias="alice", payload=signed
+    )
     tampered = dict(signed)
     tampered["new_certificate_id"] = "attacker-certificate"
 
-    async with AsyncClient(transport=ASGITransport(app=_app(aweb_cloud_db.aweb_db, controller_did)), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=_app(aweb_cloud_db.aweb_db, controller_did)),
+        base_url="http://test",
+    ) as client:
         response = await client.post(
             "/v1/agents/alice/replace-key",
             json=tampered,
@@ -276,19 +326,26 @@ async def test_controller_signature_binds_the_exact_replacement(aweb_cloud_db):
         TEAM_ID,
     )
     assert row["did_key"] == old_did
-    assert await aweb_cloud_db.aweb_db.fetch_value(
-        "SELECT COUNT(*) FROM {{tables.audit_log}} WHERE team_id = $1",
-        TEAM_ID,
-    ) == 0
+    assert (
+        await aweb_cloud_db.aweb_db.fetch_value(
+            "SELECT COUNT(*) FROM {{tables.audit_log}} WHERE team_id = $1",
+            TEAM_ID,
+        )
+        == 0
+    )
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("case", ["stale_old_key", "global_identity", "new_key_collision"])
+@pytest.mark.parametrize(
+    "case", ["stale_old_key", "global_identity", "new_key_collision"]
+)
 async def test_replacement_preconditions_fail_without_audit(aweb_cloud_db, case: str):
     controller_sk, controller_did = _keypair()
     _, old_did = _keypair()
     _, new_did = _keypair()
-    await _seed_local_agent(aweb_cloud_db.aweb_db, team_did_key=controller_did, did_key=old_did)
+    await _seed_local_agent(
+        aweb_cloud_db.aweb_db, team_did_key=controller_did, did_key=old_did
+    )
     payload = _payload(old_did_key=old_did, new_did_key=new_did)
     expected_status = 409
     if case == "stale_old_key":
@@ -312,32 +369,47 @@ async def test_replacement_preconditions_fail_without_audit(aweb_cloud_db, case:
             new_did,
         )
 
-    async with AsyncClient(transport=ASGITransport(app=_app(aweb_cloud_db.aweb_db, controller_did)), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=_app(aweb_cloud_db.aweb_db, controller_did)),
+        base_url="http://test",
+    ) as client:
         response = await client.post(
             "/v1/agents/alice/replace-key",
             json=payload,
-            headers=_controller_headers(controller_sk, controller_did, alias="alice", payload=payload),
+            headers=_controller_headers(
+                controller_sk, controller_did, alias="alice", payload=payload
+            ),
         )
 
     assert response.status_code == expected_status, response.text
-    assert await aweb_cloud_db.aweb_db.fetch_value(
-        "SELECT COUNT(*) FROM {{tables.audit_log}} WHERE team_id = $1",
-        TEAM_ID,
-    ) == 0
+    assert (
+        await aweb_cloud_db.aweb_db.fetch_value(
+            "SELECT COUNT(*) FROM {{tables.audit_log}} WHERE team_id = $1",
+            TEAM_ID,
+        )
+        == 0
+    )
 
 
 @pytest.mark.asyncio
 async def test_replacement_rejects_same_or_invalid_did_keys(aweb_cloud_db):
     controller_sk, controller_did = _keypair()
     _, old_did = _keypair()
-    await _seed_local_agent(aweb_cloud_db.aweb_db, team_did_key=controller_did, did_key=old_did)
+    await _seed_local_agent(
+        aweb_cloud_db.aweb_db, team_did_key=controller_did, did_key=old_did
+    )
 
-    async with AsyncClient(transport=ASGITransport(app=_app(aweb_cloud_db.aweb_db, controller_did)), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=_app(aweb_cloud_db.aweb_db, controller_did)),
+        base_url="http://test",
+    ) as client:
         same = _payload(old_did_key=old_did, new_did_key=old_did)
         response = await client.post(
             "/v1/agents/alice/replace-key",
             json=same,
-            headers=_controller_headers(controller_sk, controller_did, alias="alice", payload=same),
+            headers=_controller_headers(
+                controller_sk, controller_did, alias="alice", payload=same
+            ),
         )
         assert response.status_code == 422
 
@@ -345,6 +417,8 @@ async def test_replacement_rejects_same_or_invalid_did_keys(aweb_cloud_db):
         response = await client.post(
             "/v1/agents/alice/replace-key",
             json=invalid,
-            headers=_controller_headers(controller_sk, controller_did, alias="alice", payload=invalid),
+            headers=_controller_headers(
+                controller_sk, controller_did, alias="alice", payload=invalid
+            ),
         )
         assert response.status_code == 422

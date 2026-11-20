@@ -98,11 +98,13 @@ def _signed_request(agent_sk, agent_did_key, team_id, body_bytes=b""):
 
     timestamp = datetime.now(timezone.utc).isoformat()
     body_sha256 = hashlib.sha256(body_bytes).hexdigest()
-    payload_bytes = canonical_json_bytes({
-        "body_sha256": body_sha256,
-        "team_id": team_id,
-        "timestamp": timestamp,
-    })
+    payload_bytes = canonical_json_bytes(
+        {
+            "body_sha256": body_sha256,
+            "team_id": team_id,
+            "timestamp": timestamp,
+        }
+    )
     sig = sign_message(agent_sk, payload_bytes)
     return {
         "Authorization": f"DIDKey {agent_did_key} {sig}",
@@ -159,7 +161,9 @@ def _build_test_app(aweb_db, team_did_key):
                 message = await original_receive()
                 if message["type"] == "http.disconnect":
                     return message
-                if message["type"] == "http.request" and not message.get("more_body", False):
+                if message["type"] == "http.request" and not message.get(
+                    "more_body", False
+                ):
                     continue
                 return message
 
@@ -251,7 +255,9 @@ async def test_suggest_alias_prefix_returns_next_available_name(aweb_cloud_db):
     headers["X-AWID-Team-Certificate"] = cert_header
 
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post(
             "/v1/agents/suggest-alias-prefix",
             content=body_bytes,
@@ -298,7 +304,9 @@ async def test_suggest_alias_prefix_no_body_keeps_legacy_response_shape(aweb_clo
     headers["X-AWID-Team-Certificate"] = cert_header
 
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post(
             "/v1/agents/suggest-alias-prefix",
             content=body_bytes,
@@ -313,7 +321,9 @@ async def test_suggest_alias_prefix_no_body_keeps_legacy_response_shape(aweb_clo
 
 
 @pytest.mark.asyncio
-async def test_suggest_alias_prefix_uses_agent_aliases_without_workspace_rows(aweb_cloud_db):
+async def test_suggest_alias_prefix_uses_agent_aliases_without_workspace_rows(
+    aweb_cloud_db,
+):
     team_sk, _, team_did_key = _make_keypair()
     agent_sk, _, agent_did_key = _make_keypair()
 
@@ -344,7 +354,9 @@ async def test_suggest_alias_prefix_uses_agent_aliases_without_workspace_rows(aw
     headers["X-AWID-Team-Certificate"] = cert_header
 
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post(
             "/v1/agents/suggest-alias-prefix",
             content=body_bytes,
@@ -389,12 +401,16 @@ async def test_suggest_alias_prefix_count_and_exclude_are_ordered(aweb_cloud_db)
         "did:key:z6Mkbob",
     )
 
-    body_bytes = json.dumps({"scope": "local", "exclude": ["charlie"], "count": 3}, separators=(",", ":")).encode()
+    body_bytes = json.dumps(
+        {"scope": "local", "exclude": ["charlie"], "count": 3}, separators=(",", ":")
+    ).encode()
     headers = _signed_request(agent_sk, agent_did_key, "backend:acme.com", body_bytes)
     headers["X-AWID-Team-Certificate"] = cert_header
 
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post(
             "/v1/agents/suggest-alias-prefix",
             content=body_bytes,
@@ -410,7 +426,9 @@ async def test_suggest_alias_prefix_count_and_exclude_are_ordered(aweb_cloud_db)
 
 
 @pytest.mark.asyncio
-async def test_suggest_alias_prefix_global_uses_namespace_names_and_user_prefix(aweb_cloud_db):
+async def test_suggest_alias_prefix_global_uses_namespace_names_and_user_prefix(
+    aweb_cloud_db,
+):
     team_sk, _, team_did_key = _make_keypair()
     other_team_sk, _, other_team_did_key = _make_keypair()
     agent_sk, _, agent_did_key = _make_keypair()
@@ -472,7 +490,9 @@ async def test_suggest_alias_prefix_global_uses_namespace_names_and_user_prefix(
             SimpleNamespace(domain="other.com", name="maria-charlie"),
         ]
     )
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post(
             "/v1/agents/suggest-alias-prefix",
             content=body_bytes,
@@ -531,7 +551,9 @@ async def test_patch_agent_workspace_accepts_canonical_role_name(aweb_cloud_db):
     headers["X-AWID-Team-Certificate"] = cert_header
 
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.patch(
             "/v1/agents/me",
             content=body_bytes,
@@ -556,7 +578,9 @@ async def test_patch_agent_workspace_accepts_canonical_role_name(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
-async def test_patch_agent_workspace_omission_preserves_concurrent_repo_binding(aweb_cloud_db):
+async def test_patch_agent_workspace_omission_preserves_concurrent_repo_binding(
+    aweb_cloud_db,
+):
     team_sk, _, team_did_key = _make_keypair()
     agent_sk, _, agent_did_key = _make_keypair()
 
@@ -594,21 +618,29 @@ async def test_patch_agent_workspace_omission_preserves_concurrent_repo_binding(
     )
 
     role_body = json.dumps({"role_name": "Reviewer"}, separators=(",", ":")).encode()
-    role_headers = _signed_request(agent_sk, agent_did_key, "backend:acme.com", role_body)
+    role_headers = _signed_request(
+        agent_sk, agent_did_key, "backend:acme.com", role_body
+    )
     role_headers["X-AWID-Team-Certificate"] = cert_header
     repair_body = json.dumps(
         {"repo_origin": "https://github.com/acme/backend.git"},
         separators=(",", ":"),
     ).encode()
-    repair_headers = _signed_request(agent_sk, agent_did_key, "backend:acme.com", repair_body)
+    repair_headers = _signed_request(
+        agent_sk, agent_did_key, "backend:acme.com", repair_body
+    )
     repair_headers["X-AWID-Team-Certificate"] = cert_header
 
     paused_db = _PauseAfterWorkspaceRead(aweb_cloud_db.aweb_db)
     role_app = _build_test_app(paused_db, team_did_key)
     repair_app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
     async with (
-        AsyncClient(transport=ASGITransport(app=role_app), base_url="http://test") as role_client,
-        AsyncClient(transport=ASGITransport(app=repair_app), base_url="http://test") as repair_client,
+        AsyncClient(
+            transport=ASGITransport(app=role_app), base_url="http://test"
+        ) as role_client,
+        AsyncClient(
+            transport=ASGITransport(app=repair_app), base_url="http://test"
+        ) as repair_client,
     ):
         role_request = asyncio.create_task(
             role_client.patch(
@@ -689,7 +721,9 @@ async def test_patch_agent_workspace_repairs_ssh_over_443_repo_binding(aweb_clou
     headers["X-AWID-Team-Certificate"] = cert_header
 
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         first = await client.patch(
             "/v1/agents/me",
             content=body_bytes,
@@ -753,7 +787,9 @@ async def test_get_my_inbound_mode_returns_current_global_agent_policy(aweb_clou
     headers["X-AWID-Team-Certificate"] = cert_header
 
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.get("/v1/agents/me/inbound-mode", headers=headers)
 
     assert resp.status_code == 200, resp.text
@@ -804,8 +840,11 @@ async def test_patch_my_inbound_mode_updates_global_agent_policy(aweb_cloud_db, 
 
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
     from identity_binding_support import seed_verified_bindings
+
     seed_verified_bindings(app, ("did:aw:alice", agent_did_key, ""))
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.patch(
             "/v1/agents/me/inbound-mode",
             content=body_bytes,
@@ -849,12 +888,16 @@ async def test_patch_my_inbound_mode_rejects_local_agent(aweb_cloud_db):
         "alice",
     )
 
-    body_bytes = json.dumps({"inbound_mode": "team_and_contacts"}, separators=(",", ":")).encode()
+    body_bytes = json.dumps(
+        {"inbound_mode": "team_and_contacts"}, separators=(",", ":")
+    ).encode()
     headers = _signed_request(agent_sk, agent_did_key, "backend:acme.com", body_bytes)
     headers["X-AWID-Team-Certificate"] = cert_header
 
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.patch(
             "/v1/agents/me/inbound-mode",
             content=body_bytes,
@@ -866,7 +909,9 @@ async def test_patch_my_inbound_mode_rejects_local_agent(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
-async def test_publish_my_encryption_key_for_local_agent_and_list_returns_verified_key(aweb_cloud_db):
+async def test_publish_my_encryption_key_for_local_agent_and_list_returns_verified_key(
+    aweb_cloud_db,
+):
     team_sk, _, team_did_key = _make_keypair()
     agent_sk, _, agent_did_key = _make_keypair()
 
@@ -900,25 +945,35 @@ async def test_publish_my_encryption_key_for_local_agent_and_list_returns_verifi
     headers["X-AWID-Team-Certificate"] = cert_header
 
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         publish = await client.put(
             "/v1/agents/me/encryption-key",
             content=body_bytes,
             headers={**headers, "Content-Type": "application/json"},
         )
-        listed = await client.get("/v1/agents", headers={
-            **_signed_request(agent_sk, agent_did_key, "backend:acme.com"),
-            "X-AWID-Team-Certificate": cert_header,
-        })
+        listed = await client.get(
+            "/v1/agents",
+            headers={
+                **_signed_request(agent_sk, agent_did_key, "backend:acme.com"),
+                "X-AWID-Team-Certificate": cert_header,
+            },
+        )
 
     assert publish.status_code == 200, publish.text
-    assert publish.json()["encryption_key"]["encryption_key_id"] == assertion["encryption_key_id"]
+    assert (
+        publish.json()["encryption_key"]["encryption_key_id"]
+        == assertion["encryption_key_id"]
+    )
     assert "identity_stable_id" not in publish.json()["encryption_key"]
     assert listed.status_code == 200, listed.text
     [agent] = listed.json()["agents"]
     assert agent["agent_id"] == str(agent_id)
     assert agent["repo"] is None
-    assert agent["encryption_key"]["encryption_key_id"] == assertion["encryption_key_id"]
+    assert (
+        agent["encryption_key"]["encryption_key_id"] == assertion["encryption_key_id"]
+    )
     assert "identity_stable_id" not in agent["encryption_key"]
 
 
@@ -951,22 +1006,29 @@ async def test_publish_my_encryption_key_preserves_signed_custody(aweb_cloud_db)
         "alice",
     )
 
-    assertion = _make_encryption_assertion(agent_sk, did_key=agent_did_key, custody="self")
+    assertion = _make_encryption_assertion(
+        agent_sk, did_key=agent_did_key, custody="self"
+    )
     body_bytes = json.dumps(assertion, separators=(",", ":")).encode()
     headers = _signed_request(agent_sk, agent_did_key, "backend:acme.com", body_bytes)
     headers["X-AWID-Team-Certificate"] = cert_header
 
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         publish = await client.put(
             "/v1/agents/me/encryption-key",
             content=body_bytes,
             headers={**headers, "Content-Type": "application/json"},
         )
-        listed = await client.get("/v1/agents", headers={
-            **_signed_request(agent_sk, agent_did_key, "backend:acme.com"),
-            "X-AWID-Team-Certificate": cert_header,
-        })
+        listed = await client.get(
+            "/v1/agents",
+            headers={
+                **_signed_request(agent_sk, agent_did_key, "backend:acme.com"),
+                "X-AWID-Team-Certificate": cert_header,
+            },
+        )
 
     assert publish.status_code == 200, publish.text
     assert publish.json()["encryption_key"]["custody"] == "self"
@@ -977,7 +1039,9 @@ async def test_publish_my_encryption_key_preserves_signed_custody(aweb_cloud_db)
 
 
 @pytest.mark.asyncio
-async def test_publish_my_encryption_key_rejects_unsigned_custody_mutation(aweb_cloud_db):
+async def test_publish_my_encryption_key_rejects_unsigned_custody_mutation(
+    aweb_cloud_db,
+):
     team_sk, _, team_did_key = _make_keypair()
     agent_sk, _, agent_did_key = _make_keypair()
 
@@ -1010,7 +1074,9 @@ async def test_publish_my_encryption_key_rejects_unsigned_custody_mutation(aweb_
     headers["X-AWID-Team-Certificate"] = cert_header
 
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.put(
             "/v1/agents/me/encryption-key",
             content=body_bytes,
@@ -1022,7 +1088,9 @@ async def test_publish_my_encryption_key_rejects_unsigned_custody_mutation(aweb_
 
 
 @pytest.mark.asyncio
-async def test_replayed_older_local_encryption_key_does_not_roll_back_listed_key(aweb_cloud_db):
+async def test_replayed_older_local_encryption_key_does_not_roll_back_listed_key(
+    aweb_cloud_db,
+):
     team_sk, _, team_did_key = _make_keypair()
     agent_sk, _, agent_did_key = _make_keypair()
 
@@ -1064,7 +1132,9 @@ async def test_replayed_older_local_encryption_key_does_not_roll_back_listed_key
     )
 
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         for assertion in (older, newer, older):
             body = json.dumps(assertion, separators=(",", ":")).encode()
             headers = _signed_request(agent_sk, agent_did_key, "backend:acme.com", body)
@@ -1076,10 +1146,13 @@ async def test_replayed_older_local_encryption_key_does_not_roll_back_listed_key
             )
             assert resp.status_code == 200, resp.text
 
-        listed = await client.get("/v1/agents", headers={
-            **_signed_request(agent_sk, agent_did_key, "backend:acme.com"),
-            "X-AWID-Team-Certificate": cert_header,
-        })
+        listed = await client.get(
+            "/v1/agents",
+            headers={
+                **_signed_request(agent_sk, agent_did_key, "backend:acme.com"),
+                "X-AWID-Team-Certificate": cert_header,
+            },
+        )
 
     assert listed.status_code == 200, listed.text
     [agent] = listed.json()["agents"]
@@ -1087,7 +1160,9 @@ async def test_replayed_older_local_encryption_key_does_not_roll_back_listed_key
 
 
 @pytest.mark.asyncio
-async def test_publish_my_encryption_key_rejects_team_controller_substitution(aweb_cloud_db):
+async def test_publish_my_encryption_key_rejects_team_controller_substitution(
+    aweb_cloud_db,
+):
     team_sk, _, team_did_key = _make_keypair()
     agent_sk, _, agent_did_key = _make_keypair()
 
@@ -1119,7 +1194,9 @@ async def test_publish_my_encryption_key_rejects_team_controller_substitution(aw
     headers["X-AWID-Team-Certificate"] = cert_header
 
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.put(
             "/v1/agents/me/encryption-key",
             content=body_bytes,
@@ -1132,7 +1209,9 @@ async def test_publish_my_encryption_key_rejects_team_controller_substitution(aw
 
 
 @pytest.mark.asyncio
-async def test_publish_my_encryption_key_rejects_empty_local_stable_id_field(aweb_cloud_db):
+async def test_publish_my_encryption_key_rejects_empty_local_stable_id_field(
+    aweb_cloud_db,
+):
     team_sk, _, team_did_key = _make_keypair()
     agent_sk, _, agent_did_key = _make_keypair()
 
@@ -1169,7 +1248,9 @@ async def test_publish_my_encryption_key_rejects_empty_local_stable_id_field(awe
     headers["X-AWID-Team-Certificate"] = cert_header
 
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.put(
             "/v1/agents/me/encryption-key",
             content=body_bytes,
@@ -1221,7 +1302,9 @@ async def test_publish_my_encryption_key_requires_global_stable_id(aweb_cloud_db
 
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
     seed_verified_bindings(app, (stable_id, agent_did_key, ""))
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         missing = await client.put(
             "/v1/agents/me/encryption-key",
             content=body_bytes,
@@ -1235,7 +1318,9 @@ async def test_publish_my_encryption_key_requires_global_stable_id(aweb_cloud_db
             raw_public_key=b"\x02" * 32,
         )
         good_body = json.dumps(good_assertion, separators=(",", ":")).encode()
-        good_headers = _signed_request(agent_sk, agent_did_key, "backend:acme.com", good_body)
+        good_headers = _signed_request(
+            agent_sk, agent_did_key, "backend:acme.com", good_body
+        )
         good_headers["X-AWID-Team-Certificate"] = cert_header
         ok = await client.put(
             "/v1/agents/me/encryption-key",
