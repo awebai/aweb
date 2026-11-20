@@ -119,6 +119,7 @@ def replace_exact(path: Path, old: str, new: str) -> None:
         raise SystemExit(
             f"expected one mutation target in {path}, found {source.count(old)}"
         )
+    print(f"Mutation target: {path}: {old.splitlines()[0].strip()}", flush=True)
     path.write_text(source.replace(old, new), encoding="utf-8")
 
 
@@ -575,16 +576,26 @@ def main() -> None:
         )
         chat_service.write_text(original_chat_service, encoding="utf-8")
 
+        # A missing current-route flag now just repeats valid strict authority.
+        # Mutate the actual dispatch boundary instead: substituting the configured
+        # registry origin for the admitted recipient origin violates
+        # docs/identity-messaging-contract.md:150-161,175-177.
         replace_exact(
-            recipients,
-            '                    "_authority_route_current": home_namespace or authority is not None,\n',
-            "",
+            chat_send,
+            '            "delivery_origin": _target_delivery_origin(recipient),\n',
+            '            "delivery_origin": registry_client.registry_url,\n',
         )
+        result = run_server_tests(checkout, activation_nodes[15])
         require_killed(
-            run_server_tests(checkout, activation_nodes[15]),
+            result,
             "test_chat_to_external_address_posts_federated_chat_and_projects_locally",
         )
-        recipients.write_text(original_recipients, encoding="utf-8")
+        if "assert 404 == 200" not in result.stdout:
+            raise SystemExit(
+                "recipient-origin mutation failed for the wrong reason:\n"
+                f"{result.stdout}"
+            )
+        chat_send.write_text(original_chat_send, encoding="utf-8")
 
         replace_exact(
             chat_send,
