@@ -1580,7 +1580,10 @@ async def _resolve_new_mail_target(
 
     if payload.to_address is None and payload.to_stable_id is not None:
         recipient_did = payload.to_stable_id.strip()
-        recipient = await resolve_agent_by_did(db, recipient_did)
+        recipient = await resolve_agent_by_did(
+            db, recipient_did,
+            team_id=auth.team_id if recipient_did.startswith("did:key:") else None,
+        )
         if recipient is not None:
             recipient = identity_recipient(recipient)
         if recipient is None:
@@ -1588,7 +1591,10 @@ async def _resolve_new_mail_target(
                 _raise_bare_did_first_contact_unsupported()
             raise recipient_not_found()
         if payload.to_did is not None and payload.to_did.strip():
-            bound_recipient = await resolve_agent_by_did(db, payload.to_did.strip())
+            bound_recipient = await resolve_agent_by_did(
+                db, payload.to_did.strip(),
+                team_id=auth.team_id if payload.to_did.strip().startswith("did:key:") else None,
+            )
             if not _recipient_identity_matches(bound_recipient, recipient):
                 raise recipient_selector_mismatch(
                     supplied=RecipientSelectorField.DID,
@@ -1607,7 +1613,10 @@ async def _resolve_new_mail_target(
         to_alias = recipient.get("alias")
     elif payload.to_address is None and payload.to_did is not None:
         requested_recipient_did = payload.to_did.strip()
-        recipient = await resolve_agent_by_did(db, requested_recipient_did)
+        recipient = await resolve_agent_by_did(
+            db, requested_recipient_did,
+            team_id=auth.team_id if requested_recipient_did.startswith("did:key:") else None,
+        )
         if recipient is not None:
             recipient = identity_recipient(recipient)
         if recipient is None:

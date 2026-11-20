@@ -1158,7 +1158,9 @@ async def _resolve_named_recipients(
                 resolved[target_did] = row
 
     for did in to_dids:
-        row = await resolve_agent_by_did(db, did)
+        row = await resolve_agent_by_did(
+            db, did, team_id=auth.team_id if did.startswith("did:key:") else None
+        )
         if row is None and did.startswith("did:aw:"):
             _raise_bare_did_chat_first_contact_unsupported()
         if row is None:
