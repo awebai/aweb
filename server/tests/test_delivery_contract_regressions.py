@@ -30,9 +30,7 @@ async def _send(env, payload):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("selector", ["to_did", "to_stable_id", "to_address"])
-async def test_matching_agent_selector_preserves_identity_participant(
-    privacy_app, selector
-):
+async def test_matching_agent_selector_preserves_identity_participant(privacy_app, selector):
     env = privacy_app
     bob = env.actors["bob"]
     if selector == "to_stable_id":
@@ -112,9 +110,7 @@ async def test_mail_selector_disagreement_is_actionable_without_affecting_matchi
         f"{supplied} must match the {resolved} recipient. Check the recipient and try again."
     )
     assert await env.db.fetch_value("SELECT count(*) FROM {{tables.messages}}") == 1
-    assert (
-        await env.db.fetch_value("SELECT count(*) FROM {{tables.conversations}}") == 1
-    )
+    assert await env.db.fetch_value("SELECT count(*) FROM {{tables.conversations}}") == 1
 
 
 @pytest.mark.asyncio
@@ -126,9 +122,7 @@ async def test_mail_without_recipient_names_a_recovery_action(privacy_app):
         "Must provide to_did, to_address, to_agent_id, or to_alias. Choose a recipient and retry."
     )
     assert await env.db.fetch_value("SELECT count(*) FROM {{tables.messages}}") == 0
-    assert (
-        await env.db.fetch_value("SELECT count(*) FROM {{tables.conversations}}") == 0
-    )
+    assert await env.db.fetch_value("SELECT count(*) FROM {{tables.conversations}}") == 0
 
 
 @pytest.mark.asyncio
@@ -151,9 +145,7 @@ async def test_mail_continuation_mismatch_explains_how_to_keep_or_change_the_thr
     assert refused.json()["detail"] == (
         "conversation_id recipient does not match the requested recipient. Use the stored recipient or start a new conversation."
     )
-    continued = await _send(
-        env, {"conversation_id": conversation_id, "body": "Same participant"}
-    )
+    continued = await _send(env, {"conversation_id": conversation_id, "body": "Same participant"})
     assert continued.status_code == 200, continued.text
     assert continued.json()["conversation_id"] == conversation_id
     assert await env.db.fetch_value("SELECT count(*) FROM {{tables.messages}}") == 2
@@ -168,17 +160,13 @@ async def test_mail_missing_native_recipient_explains_reconnection_and_keeps_liv
         "UPDATE {{tables.agents}} SET deleted_at=NOW() WHERE agent_id=$1",
         env.actors["carol"].id,
     )
-    refused = await _send(
-        env, {"to_did": env.actors["carol"].did, "body": "Unavailable identity"}
-    )
+    refused = await _send(env, {"to_did": env.actors["carol"].did, "body": "Unavailable identity"})
     assert refused.status_code == 404, refused.text
     assert refused.json()["detail"] == (
         "Recipient agent not found. Check the recipient or ask them to reconnect, then retry."
     )
     assert await env.db.fetch_value("SELECT count(*) FROM {{tables.messages}}") == 0
-    assert (
-        await env.db.fetch_value("SELECT count(*) FROM {{tables.conversations}}") == 0
-    )
+    assert await env.db.fetch_value("SELECT count(*) FROM {{tables.conversations}}") == 0
     live = await _send(env, {"to_did": env.actors["bob"].did, "body": "Live neighbour"})
     assert live.status_code == 200, live.text
 
@@ -245,12 +233,7 @@ async def test_plaintext_send_verifies_signature_before_any_effect(
     env = privacy_app
     alice, bob, carol = (env.actors[name] for name in ("alice", "bob", "carol"))
     message_id, conversation_id = str(uuid4()), str(uuid4())
-    timestamp = (
-        datetime.now(timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     signed = {
         "type": "mail",
         "from": "alice",
@@ -274,9 +257,7 @@ async def test_plaintext_send_verifies_signature_before_any_effect(
             "conversation_id": conversation_id,
             "timestamp": timestamp,
             "signed_payload": original,
-            "signature": sign_message(
-                alice.sk if valid else carol.sk, original.encode()
-            ),
+            "signature": sign_message(alice.sk if valid else carol.sk, original.encode()),
         },
     )
     if valid:
@@ -298,12 +279,7 @@ async def test_plaintext_send_verifies_signature_before_any_effect(
             "conversation_participants",
             "message_ingress_receipts",
         ):
-            assert (
-                await env.db.fetch_value(
-                    "SELECT count(*) FROM {{tables." + table + "}}"
-                )
-                == 0
-            )
+            assert await env.db.fetch_value("SELECT count(*) FROM {{tables." + table + "}}") == 0
 
 
 @pytest.mark.asyncio

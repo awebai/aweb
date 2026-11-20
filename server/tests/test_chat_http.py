@@ -2953,7 +2953,9 @@ async def test_encrypted_group_chat_excludes_left_participant_from_future_wraps(
 @pytest.mark.asyncio
 async def test_create_chat_session_accepts_cross_team_to_address(shared_test_pool, monkeypatch):
     from messaging_actor_support import (
-        admit_messaging_actor, register_messaging_team, record_registry_requests,
+        admit_messaging_actor,
+        register_messaging_team,
+        record_registry_requests,
     )
     from test_dashboard_privacy import privacy_stack
 
@@ -2973,7 +2975,9 @@ async def test_create_chat_session_accepts_cross_team_to_address(shared_test_poo
                 "/v1/chat/sessions",
                 content=raw,
                 headers={
-                    **_signed_identity_headers(alice.signing_key, alice.did_key, alice.stable_id, raw),
+                    **_signed_identity_headers(
+                        alice.signing_key, alice.did_key, alice.stable_id, raw
+                    ),
                     "Content-Type": "application/json",
                 },
             )
@@ -3002,7 +3006,9 @@ async def test_cross_team_same_registry_chat_creates_bound_contact_from_resolved
     monkeypatch,
 ):
     from messaging_actor_support import (
-        admit_messaging_actor, register_messaging_team, record_registry_requests,
+        admit_messaging_actor,
+        register_messaging_team,
+        record_registry_requests,
     )
     from test_dashboard_privacy import privacy_stack
 
@@ -3052,7 +3058,9 @@ async def test_cross_team_same_registry_chat_creates_bound_contact_from_resolved
                 "/v1/chat/sessions",
                 content=raw,
                 headers={
-                    **_signed_identity_headers(alice.signing_key, alice.did_key, alice.stable_id, raw),
+                    **_signed_identity_headers(
+                        alice.signing_key, alice.did_key, alice.stable_id, raw
+                    ),
                     "Content-Type": "application/json",
                 },
             )
@@ -3130,7 +3138,9 @@ async def test_create_chat_session_hosted_handle_without_delivery_origin_fails_c
     shared_test_pool, monkeypatch
 ):
     from messaging_actor_support import (
-        admit_messaging_actor, register_messaging_team, record_registry_requests,
+        admit_messaging_actor,
+        register_messaging_team,
+        record_registry_requests,
     )
     from test_dashboard_privacy import privacy_stack
 
@@ -3155,7 +3165,9 @@ async def test_create_chat_session_hosted_handle_without_delivery_origin_fails_c
                 "/v1/chat/sessions",
                 content=raw,
                 headers={
-                    **_signed_identity_headers(alice.signing_key, alice.did_key, alice.stable_id, raw),
+                    **_signed_identity_headers(
+                        alice.signing_key, alice.did_key, alice.stable_id, raw
+                    ),
                     "Content-Type": "application/json",
                 },
             )

@@ -9,9 +9,7 @@ from test_team_room import privacy_app, TEAM, headers, metadata, post, post_payl
 
 
 async def pending(env, actor="bob"):
-    response = await env.client.get(
-        "/v1/room/notices", headers=headers(env.actors[actor])
-    )
+    response = await env.client.get("/v1/room/notices", headers=headers(env.actors[actor]))
     assert response.status_code == 200, response.text
     return response.json()
 
@@ -33,8 +31,7 @@ async def snapshot(env, actor="bob", extra_headers=None):
     return [
         json.loads(line[6:])
         for line in response.text.splitlines()
-        if line.startswith("data: ")
-        and json.loads(line[6:]).get("type") == "actionable_room_post"
+        if line.startswith("data: ") and json.loads(line[6:]).get("type") == "actionable_room_post"
     ]
 
 
@@ -50,9 +47,7 @@ async def test_room_notices_commit_once_and_ack_only_the_recipient(privacy_app):
     assert (await pending(env, "bob"))["pending_count"] == 1
     assert (await pending(env, "carol"))["pending_count"] == 1
     assert (await post(env, room, payload=payload)).json() == sent.json()
-    assert (
-        await env.db.fetch_val("SELECT count(*) FROM {{tables.room_post_notices}}") == 2
-    )
+    assert await env.db.fetch_val("SELECT count(*) FROM {{tables.room_post_notices}}") == 2
     notices = await snapshot(env)
     assert len(notices) == 1
     assert notices[0]["message_id"] == message_id
@@ -61,9 +56,7 @@ async def test_room_notices_commit_once_and_ack_only_the_recipient(privacy_app):
     assert notices[0]["subject"] == "Update"
     assert "body" not in notices[0]
     # Snapshot/exact verification do not acknowledge before accepted presentation.
-    await env.client.get(
-        "/v1/room/messages/" + message_id, headers=headers(env.actors["bob"])
-    )
+    await env.client.get("/v1/room/messages/" + message_id, headers=headers(env.actors["bob"]))
     assert len(await snapshot(env)) == 1
     path = "/v1/room/notices/" + message_id + "/ack"
     for _ in range(2):
@@ -88,9 +81,7 @@ async def test_room_history_clears_only_returned_posts_and_soft_removal_cleans_n
     first = await post(env, room)
     await post(env, room, text="second")
     assert (await pending(env))["pending_count"] == 2
-    page = await env.client.get(
-        "/v1/room/messages?limit=1", headers=headers(env.actors["bob"])
-    )
+    page = await env.client.get("/v1/room/messages?limit=1", headers=headers(env.actors["bob"]))
     assert page.status_code == 200
     assert page.json()["messages"][0]["message_id"] == first.json()["message_id"]
     assert (await pending(env))["pending_count"] == 1
@@ -107,9 +98,7 @@ async def test_room_history_clears_only_returned_posts_and_soft_removal_cleans_n
         == 0
     )
     assert await snapshot(env, "carol") == []
-    refused = await env.client.get(
-        "/v1/room/notices", headers=headers(env.actors["carol"])
-    )
+    refused = await env.client.get("/v1/room/notices", headers=headers(env.actors["carol"]))
     assert refused.status_code == 403
     await env.db.execute(
         "UPDATE {{tables.agents}} SET status='active' WHERE agent_id=$1",
@@ -177,8 +166,7 @@ async def test_room_notice_snapshot_uses_current_certificate_and_chat_scope(
             "method": "GET",
             "path": "/v1/events/stream",
             "headers": [
-                (k.lower().encode(), v.encode())
-                for k, v in headers(env.actors["bob"]).items()
+                (k.lower().encode(), v.encode()) for k, v in headers(env.actors["bob"]).items()
             ],
             "app": env.app,
         }
@@ -328,9 +316,7 @@ async def test_live_room_stream_refreshes_authority_without_replaying_opening_ti
     monkeypatch.setattr(grant_streams, "datetime", StreamClock)
     monkeypatch.setattr(events_routes, "asyncio", SimpleNamespace(sleep=advance_poll))
     # The stream schedules its reconcile on the monotonic clock.
-    monkeypatch.setattr(
-        events_routes, "monotonic", lambda: (clock.now - start).total_seconds()
-    )
+    monkeypatch.setattr(events_routes, "monotonic", lambda: (clock.now - start).total_seconds())
     try:
         response = await env.client.send(request)
         assert response.status_code == 200, response.text
@@ -345,9 +331,7 @@ async def test_live_room_stream_refreshes_authority_without_replaying_opening_ti
         if notices:
             assert notices[0]["agent_id"] == str(env.actors["bob"].id)
             assert notices[0]["room_id"] == room["room_id"]
-        assert (
-            await env.db.fetch_val("SELECT count(*) FROM {{tables.room_post_notices}}")
-        ) == 2
+        assert (await env.db.fetch_val("SELECT count(*) FROM {{tables.room_post_notices}}")) == 2
     finally:
         env.app.state.awid_registry_client = previous_registry
         if unavailable:
