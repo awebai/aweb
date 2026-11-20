@@ -3,7 +3,7 @@ type: Lesson
 title: Elapsed time is a test input
 description: Vary how long a failure takes, not only what it returns: a fast failure hid a retry storm that a realistic ten-second failure exposed, and a fixed wall-clock barrier failed only on slow hosts; inject latency into the test's own stub to reproduce, then wait on progress with a stall bound and a cap.
 tags: [lesson, testing, timing, retries, flaky-tests]
-timestamp: 2026-10-22
+timestamp: 2026-11-13
 ---
 
 Two investigations where duration, not response, decided the outcome.
@@ -33,6 +33,16 @@ Two investigations where duration, not response, decided the outcome.
 - Injected latency proves the particular premature barrier it removes. Fifty
   isolated passes do not clear a failure seen in a full repeated matrix, and do
   not explain every later timeout.
+- A test that holds a lock across a fixed "is the other side still waiting?"
+  sleep also races the waiter's server-side timeouts, which the test never
+  names. The aweb test database pool runs with a 5000 ms `lock_timeout` (awid's
+  database configuration defaults), so a host stall during the hold made
+  Postgres cancel the waiter (`LockNotAvailableError`) and the probe failed.
+  Prove the block in the database, not by elapsed time: wait until
+  `pg_blocking_pids(waiter)` contains the holder, release at once, and run the
+  waiter with `SET LOCAL lock_timeout = 0` so only the test's named bounds
+  decide. When a database test fails once under load, look for server-side
+  timeouts on the blocked side.
 
 Related: [acceptance must exercise the claimed operation](/coordinator/acceptance-must-exercise-the-claimed-operation.md).
 
@@ -41,3 +51,11 @@ Related: [acceptance must exercise the claimed operation](/coordinator/acceptanc
 Harvested 2026-10-25 from seat `aweb-expert-pages-data` (note
 `failure-latency-is-a-test-input.md`; verify NACK decb0233) and seat
 `aweb-protocol-expert-agent-activity` (note `flake-repro-by-injected-latency.md`).
+
+Evidence: OKF proposal from aweb-expert/aweb-expert-wake-fixes, 2026-11-13;
+notes/lock-hold-probe-races-the-waiters-lock-timeout.md. A loaded
+session-sequence test failed once. Sixty loaded runs never reproduced it; a
+deterministic 5.5 s event-loop stall during the hold did, and the fixed test
+passes that stall and 60/60 loaded runs. The original traceback was not kept,
+so the mechanism is the reproduced one consistent with the failure, not a
+captured trace of it.
