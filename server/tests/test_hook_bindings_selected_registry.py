@@ -34,7 +34,9 @@ from test_team_room import headers
 @pytest_asyncio.fixture
 async def admitted_world(shared_test_pool, monkeypatch, tmp_path_factory):
     host = local_address()
-    certificates = make_certificates(tmp_path_factory.mktemp("hook-root-tls"), [], [host])
+    certificates = make_certificates(
+        tmp_path_factory.mktemp("hook-root-tls"), ["hook-root.test"], [host]
+    )
     async with privacy_stack(shared_test_pool, monkeypatch, tls=(host, certificates)) as env:
         actor = env.actors["alice"]
         certificate = decode_team_certificate(actor.certificate)
