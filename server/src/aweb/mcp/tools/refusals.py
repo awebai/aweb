@@ -17,6 +17,7 @@ from aweb.messaging.delivery_policy import DeliveryPolicyRefused
 
 from awid.federation_errors import FederationAuthorityError
 from aweb.messaging.refusals import (
+    DeliveryRefusalCode,
     ContactIdentityBindingRequired,
     MailConversationExists,
     RecipientAddressNotFound,
@@ -29,7 +30,9 @@ from aweb.messaging.chat_send import LOCAL_DID_KEY_RECIPIENT_UNREACHABLE
 REGISTRY_CANNOT_CONFIRM_ADDRESS = (
     "the registry can't confirm {address} right now; try again, or check the address"
 )
-SENDER_KEY_NOT_PUBLISHED = "your encryption key isn't published yet; try again shortly, and if it persists contact support"
+SENDER_KEY_NOT_PUBLISHED = (
+    "your encryption key isn't published yet; try again shortly, and if it persists contact support"
+)
 SENDER_KEY_NOT_VERIFIABLE = (
     "your published encryption key can't be verified right now; try again shortly, "
     "and if it persists contact support"
@@ -39,7 +42,9 @@ RECIPIENT_ENCRYPTION_KEY_NOT_VERIFIABLE = (
     "and if it persists contact support"
 )
 RECIPIENT_KEY_CHANGED = "this recipient's key changed; resend the message"
-RECIPIENT_NOT_AS_REGISTERED = "this recipient's identity or key no longer matches the registry; check the address and resend"
+RECIPIENT_NOT_AS_REGISTERED = (
+    "this recipient's identity or key no longer matches the registry; check the address and resend"
+)
 REGISTRY_CANNOT_CONFIRM_RECIPIENT_KEY = (
     "the registry can't confirm this recipient's key right now; try again shortly"
 )
@@ -97,6 +102,14 @@ def send_refusal(
     """
     require_send_refusal_mode(mode)
     if isinstance(exc, DeliveryPolicyRefused):
+        if address and exc.code is DeliveryRefusalCode.LOCAL_RECIPIENT_ROUTE_MISSING:
+            # MCP's released address refusal does not disclose a local identity.
+            return json.dumps(
+                {
+                    "error": unreachable_address_refusal(address),
+                    "reason": DeliveryRefusalCode.RECIPIENT_IDENTITY_NOT_FOUND.value,
+                }
+            )
         return json.dumps({"error": exc.detail, "reason": exc.code.value})
     if isinstance(exc, (IdentityBindingError, RegistryClientUnavailable)):
         return json.dumps({"error": exc.message, "reason": exc.code})
@@ -107,15 +120,16 @@ def send_refusal(
     if isinstance(exc, ContactIdentityBindingRequired):
         return json.dumps({"error": exc.detail, "reason": exc.code.value})
     if isinstance(exc, RecipientNotResidentError):
-        return json.dumps(
-            {"error": exc.detail, "reason": exc.reason, "retryable": exc.retryable}
-        )
+        return json.dumps({"error": exc.detail, "reason": exc.reason, "retryable": exc.retryable})
     if isinstance(exc, FederationAuthorityError):
         if exc.reason in (
             "recipient_identity_not_found",
             "local_recipient_route_missing",
         ):
-            return json.dumps({"error": unreachable_address_refusal(address), "reason": exc.reason})
+            reason = (
+                DeliveryRefusalCode.RECIPIENT_IDENTITY_NOT_FOUND.value if address else exc.reason
+            )
+            return json.dumps({"error": unreachable_address_refusal(address), "reason": reason})
         next_action = None
         if address and exc.reason == "sender_registry_unavailable":
             next_action = REGISTRY_CANNOT_CONFIRM_ADDRESS.format(address=address)
@@ -139,9 +153,7 @@ def send_refusal(
         and isinstance(detail, dict)
         and detail.get("code") == "address_evidence_unavailable"
     ):
-        return json.dumps(
-            {"error": detail["message"], "reason": detail["code"], "retryable": True}
-        )
+        return json.dumps({"error": detail["message"], "reason": detail["code"], "retryable": True})
     if isinstance(exc.__cause__, E2EERecipientKeyMismatch):
         return json.dumps({"error": RECIPIENT_KEY_CHANGED})
     if (
@@ -149,11 +161,7 @@ def send_refusal(
         and isinstance(detail, str)
         and detail in _IDENTITY_BINDING_NEXT_ACTIONS
     ):
-        return json.dumps(
-            {"error": _IDENTITY_BINDING_NEXT_ACTIONS[detail], "reason": detail}
-        )
+        return json.dumps({"error": _IDENTITY_BINDING_NEXT_ACTIONS[detail], "reason": detail})
     if detail == LOCAL_DID_KEY_RECIPIENT_UNREACHABLE:
         return json.dumps({"error": RECIPIENT_UNREACHABLE_IN_CONVERSATION})
-    return json.dumps(
-        {"error": detail if detail is not None else INTERNAL_SERVICE_ERROR_MESSAGE}
-    )
+    return json.dumps({"error": detail if detail is not None else INTERNAL_SERVICE_ERROR_MESSAGE})

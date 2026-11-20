@@ -22,6 +22,7 @@ class DeliveryRefusalCode(StrEnum):
     CONTACT_IDENTITY_BINDING_REQUIRED = "contact_identity_binding_required"
     CONVERSATION_EXISTS = "conversation_exists"
     RECIPIENT_IDENTITY_NOT_FOUND = "recipient_identity_not_found"
+    REQUEST_INVALID = "request_invalid"
 
 
 CONTACT_REBIND_ACTION = "This address now belongs to a different identity. Check the contact and explicitly bind it again before sending."
@@ -160,6 +161,7 @@ def encrypted_message_refusal(*, detail: str) -> DeliveryRefusal:
     """An encrypted artifact refusal never tells a timeout retry to duplicate it."""
     return DeliveryRefusal(
         status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+        code=DeliveryRefusalCode.REQUEST_INVALID,
         detail=detail.rstrip(".")
         + ". Check whether the original message was delivered before preparing a new encrypted message.",
     )
@@ -167,9 +169,14 @@ def encrypted_message_refusal(*, detail: str) -> DeliveryRefusal:
 
 def unreachable_address_refusal(address: str) -> str:
     """One not-routable action for address and other local-only selectors."""
-    target = address or "The recipient"
+    if not address:
+        return (
+            "The recipient is not reachable from outside its team. "
+            "Use a teammate alias from inside its team, or ask the recipient "
+            "for a registered address and retry."
+        )
     return (
-        f"{target} is not a registered address. A local identity has no address and "
+        f"{address} is not a registered address. A local identity has no address and "
         "is reachable only from inside its own team, by alias; a global identity is "
         "reachable by address once one is assigned. Check the address or use a teammate alias and retry."
     )

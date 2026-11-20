@@ -24,7 +24,7 @@ from dataclasses import dataclass, replace
 from enum import Enum, auto
 from aweb.messaging.recipient import Recipient
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, NoReturn
+from typing import Any, NoReturn
 from uuid import UUID
 
 import asyncpg.exceptions
@@ -94,6 +94,7 @@ from aweb.messaging.contacts import (
     resolve_local_namespace_controller_did,
     upsert_successful_identity_contact,
 )
+from aweb.messaging.chat_models import CreateSessionRequest, SendMessageRequest
 from aweb.messaging.conversations import close_conversation
 from aweb.messaging.encryption_custody import require_non_custodial_recipients
 from aweb.messaging.mail_routing import _require_live_mail_participant
@@ -125,9 +126,6 @@ from aweb.service_errors import (
     NotFoundError,
     ValidationError,
 )
-
-if TYPE_CHECKING:
-    from aweb.messaging.chat_models import CreateSessionRequest, SendMessageRequest
 
 logger = logging.getLogger(__name__)
 
@@ -737,8 +735,6 @@ async def _stored_exact_chat_send(
     from age only. The shared owner decides sameness; this adapter retains chat
     request binding, current sender key and encrypted expiry checks.
     """
-    from aweb.messaging.chat_models import SendMessageRequest
-
     if payload.message_id is None:
         return None
     lookup = await read_stored_message(
@@ -1632,8 +1628,6 @@ async def _dispatch_chat(
     payload: CreateSessionRequest | SendMessageRequest,
     runtime: MessagingRuntime,
 ) -> SentChat:
-    from aweb.messaging.chat_models import CreateSessionRequest, SendMessageRequest
-
     if target.session_id is not None:
         if not isinstance(payload, SendMessageRequest):
             raise TypeError("A continued chat target requires SendMessageRequest")
@@ -2400,9 +2394,7 @@ async def _send_in_continued_session(
     id_chain = auth.id_chain
     actor_dids = participant_dids(auth)
     actor_agent = await resolve_actor_agent(db, actor_dids)
-    actor_agent_id = auth.agent_id or (
-        str(actor_agent["agent_id"]) if actor_agent else None
-    )
+    actor_agent_id = auth.agent_id or (str(actor_agent["agent_id"]) if actor_agent else None)
     sender_address = _sender_address(auth)
     session_uuid = target.session_id
     if session_uuid is None:
@@ -2412,11 +2404,30 @@ async def _send_in_continued_session(
 
     encrypted = _payload_is_encrypted(payload)
     replay_recipients = (
-        target.recorded_recipients
-        if not encrypted and target.recorded_recipients is not None
-        else recipient_rows
+        target.recorded_recipients if target.recorded_recipients is not None else recipient_rows
     )
-    # Encrypted integrity/freshness remains ahead of the stored lookup.
+    validation_recipients = recipient_rows
+    # An exact artifact can retain departed parties for validation of its
+    # receipt, never for a new send. The canonical owner alone compares bytes;
+    # ordinary encryption/custody/freshness still precede the stored answer.
+    if encrypted and payload.message_id is not None:
+        candidate = await read_stored_message(
+            db,
+            claim=StoredMessageClaim(
+                kind=MessageKind.CHAT,
+                message_id=UUID(payload.message_id),
+                sender_did=actor_dids[0],
+                conversation_id=session_uuid,
+                artifact=replay_artifact(
+                    content_mode=payload.content_mode,
+                    encrypted_envelope=payload.encrypted_envelope,
+                    signature=payload.signature,
+                    signed_payload=payload.signed_payload,
+                ),
+            ),
+        )
+        if candidate.state is StoredMessageState.EXACT:
+            validation_recipients = replay_recipients
     if encrypted:
         pre_message_id, encrypted_metadata = await _validate_continued_chat_attestation(
             db,
@@ -2425,7 +2436,7 @@ async def _send_in_continued_session(
             actor_did=actor_did,
             sender_address=sender_address,
             session_uuid=session_uuid,
-            recipient_rows=recipient_rows,
+            recipient_rows=validation_recipients,
         )
 
     existing_message = await _stored_exact_chat_send(
@@ -2438,6 +2449,18 @@ async def _send_in_continued_session(
     )
     if existing_message is not None:
         return SentChat(session_id=session_uuid, message=dict(existing_message))
+    if encrypted and validation_recipients is not recipient_rows:
+        # If the candidate disappeared before the final read, no receipt is
+        # returned. Revalidate active recipients before any new-message effect.
+        pre_message_id, encrypted_metadata = await _validate_continued_chat_attestation(
+            db,
+            auth,
+            payload=payload,
+            actor_did=actor_did,
+            sender_address=sender_address,
+            session_uuid=session_uuid,
+            recipient_rows=recipient_rows,
+        )
     if not encrypted:
         pre_message_id, encrypted_metadata = await _validate_continued_chat_attestation(
             db,
@@ -2531,9 +2554,7 @@ async def _send_in_continued_session(
                 sender_agent_id=actor_agent_id,
                 sender_address=sender_address,
                 body=payload.body,
-                reply_to=uuid_mod.UUID(payload.reply_to)
-                if payload.reply_to is not None
-                else None,
+                reply_to=uuid_mod.UUID(payload.reply_to) if payload.reply_to is not None else None,
                 leaving=payload.leaving,
                 hang_on=payload.hang_on,
                 signature=payload.signature,
@@ -2559,9 +2580,7 @@ async def _send_in_continued_session(
             raise
         return SentChat(session_id=session_uuid, message=dict(stored))
     if msg_row is None:
-        raise DeliveryRefusal(
-            status_code=HTTPStatus.NOT_FOUND, detail=SENDER_NOT_IN_SESSION
-        )
+        raise DeliveryRefusal(status_code=HTTPStatus.NOT_FOUND, detail=SENDER_NOT_IN_SESSION)
     if remote_recipients:
         await _record_successful_chat_contacts(
             db,

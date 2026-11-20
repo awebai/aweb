@@ -102,6 +102,10 @@ class StoredMessageState(Enum):
     PARTICIPANTS_CHANGED = auto()
 
 
+class StoredMessageConflict(ConflictError):
+    """Only the canonical replay owner refused reuse of an accepted message ID."""
+
+
 @dataclass(frozen=True, kw_only=True)
 class StoredMessageLookup:
     state: StoredMessageState
@@ -109,11 +113,11 @@ class StoredMessageLookup:
 
     def refuse_conflicting_message_id(self) -> None:
         if self.state is StoredMessageState.PARTICIPANTS_CHANGED:
-            raise ConflictError(
+            raise StoredMessageConflict(
                 "The stored chat participants differ from the resolved recipients. Retry the original conversation and recipient identities unchanged."
             )
         if self.state is StoredMessageState.CONFLICT:
-            raise ConflictError(
+            raise StoredMessageConflict(
                 "message_id already exists for a different signed message. Retry the original request unchanged; choose a new message_id only if you intend to send a different message."
             )
 
