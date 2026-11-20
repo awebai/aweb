@@ -16,8 +16,34 @@ from pathlib import Path
 from typing import Any
 
 from pgdbm import AsyncDatabaseManager
+from pgdbm.testing import DatabaseTestConfig
 
 TEST_SCHEMA = "naapp_test"
+
+# The Postgres server a run names for its test databases (pgdbm's own names).
+_SELECTION = ("TEST_DB_HOST", "TEST_DB_PORT")
+
+
+class PostgresNotSelected(RuntimeError):
+    """A test database was requested, but the run names no Postgres server for it."""
+
+
+def selected_test_database_config() -> DatabaseTestConfig:
+    """pgdbm's test database settings, for the Postgres server the run names.
+
+    Without TEST_DB_HOST and TEST_DB_PORT, pgdbm falls back to localhost:5432,
+    which on a workstation is the host's own shared Postgres. Every naapp test
+    database is refused there (aweb-admf).
+    """
+    missing = [name for name in _SELECTION if not os.environ.get(name)]
+    if missing:
+        raise PostgresNotSelected(
+            f"{' and '.join(missing)} unset: naapp tests create databases only on a "
+            "Postgres server the run names, never the host's localhost:5432. Run the "
+            "database tests on a gate-vms lease, or point TEST_DB_HOST and TEST_DB_PORT "
+            "at a disposable Postgres you started for this run."
+        )
+    return DatabaseTestConfig.from_env()
 
 
 class SchemaDatabases:
