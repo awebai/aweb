@@ -18,7 +18,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from awid.attestation_records import ATTESTATION_HEADER, encode_attestation_header
-from awid.did import did_from_public_key
+from awid.did import did_key_from_signing_key
 from awid.signing import canonical_json_bytes, sign_message
 
 # Published compatibility names; AWID has one implementation in awid_service.testing.
@@ -44,7 +44,7 @@ __all__ = [
 
 
 def did_key(key: SigningKey) -> str:
-    return did_from_public_key(bytes(key.verify_key))
+    return did_key_from_signing_key(bytes(key))
 
 
 def _fixture_signing_key() -> SigningKey:

@@ -168,6 +168,49 @@ def sign_request(k: Private, payload):
         )
         self.assertEqual({prefix + "Ed25519PrivateKey.sign": 1}, calls["sign_request"])
 
+    def test_typed_instance_attributes_resolve_to_raw_signs(self):
+        for fields in (
+            "    key: Key",
+            "    def __init__(self, key: Key): self.key = key",
+            "    def __init__(self, seed): self.key = Key(seed)",
+        ):
+            source = f"""from nacl.signing import SigningKey as Key
+class Owner:
+    def sign(self, message): return self.key.sign(message)
+{fields}
+"""
+            with self.subTest(fields=fields):
+                errors = self.check("pkg/consumer.py", source)
+                self.assertTrue(
+                    any(
+                        "Owner.sign:nacl.signing.SigningKey.sign" in error
+                        for error in errors
+                    ),
+                    errors,
+                )
+
+    def test_verify_key_projection_is_detected_on_keys(self):
+        source = """from nacl.signing import SigningKey as Key
+from awid.did import did_from_public_key
+def key_from_file() -> Key: ...
+class Owner:
+    key: Key
+    def did(self): return did_from_public_key(bytes(self.key.verify_key))
+def from_helper(): return did_from_public_key(bytes(key_from_file().verify_key))
+def from_parameter(key: Key): return did_from_public_key(bytes(key.verify_key))
+def verify(key: Key, payload, sig): return key.verify_key.verify(payload, sig)
+def with_non_key(config): return config.verify_key
+"""
+        calls = guard.scan_python_source(source)
+        projection = "reference:nacl.signing.SigningKey.verify_key"
+        for symbol in ("Owner.did", "from_helper", "from_parameter", "verify"):
+            with self.subTest(symbol=symbol):
+                self.assertEqual(1, calls.get(symbol, {}).get(projection, 0), calls)
+        self.assertEqual(
+            1, calls.get("verify", {}).get("nacl.signing.VerifyKey.verify", 0)
+        )
+        self.assertNotIn("with_non_key", calls)
+
     def test_primitive_reference_and_relative_import_are_seen(self):
         for source in [
             "from nacl import signing as s\ncallback = s.VerifyKey\n",

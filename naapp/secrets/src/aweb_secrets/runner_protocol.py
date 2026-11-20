@@ -23,7 +23,7 @@ from aweb_naapp.hooks.strictjson import (
     encode_base64url,
 )
 from aweb_naapp.runtime.approvals.request import RequestNotCanonical, parse_request_json
-from awid.did import did_from_public_key, public_key_from_did
+from awid.did import did_key_from_signing_key, public_key_from_did
 from awid.signature_wire import sign_bytes, verify_bytes
 from awid.signing import canonical_json_bytes
 from nacl.exceptions import BadSignatureError
@@ -260,7 +260,7 @@ def sign_assignment(
         "v": 1,
         "type": ASSIGNMENT_TYPE,
         "origin": origin,
-        "service_kid": did_from_public_key(bytes(key.verify_key)),
+        "service_kid": did_key_from_signing_key(bytes(key)),
         "runner_id": runner_id,
         "dispatch_id": dispatch_id,
         "job_id": job_id,

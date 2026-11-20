@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Refuse raw Ed25519 uses outside shared implementations and named call sites.
 
-Syntactic source check only; reflection and dynamic dispatch are outside scope.
+This syntactic check follows local key bindings and direct ``self`` fields with
+class annotations or recognizable assignments. It does not infer fields on
+other objects, inherited fields, method results, cross-module return types,
+or reflective and computed access.
 Identity creation coverage is documentation, not a call-count catalog.
 """
 
@@ -23,10 +26,12 @@ PRIMITIVE_MODULES = (
     "nacl.bindings.",
     "cryptography.hazmat.primitives.asymmetric.ed25519.",
 )
+NACL_SIGNING_KEY = "nacl.signing.SigningKey"
+NACL_VERIFY_KEY = "nacl.signing.VerifyKey"
 KEY_TYPES = frozenset(
     {
-        "nacl.signing.SigningKey",
-        "nacl.signing.VerifyKey",
+        NACL_SIGNING_KEY,
+        NACL_VERIFY_KEY,
         "cryptography.hazmat.primitives.asymmetric.ed25519.Ed25519PrivateKey",
         "cryptography.hazmat.primitives.asymmetric.ed25519.Ed25519PublicKey",
     }
@@ -151,21 +156,72 @@ def scan_python_source(
         def __init__(self):
             self.scope = []
             self.key_bindings = [{}]
+            self.instance_keys = []
 
         def scoped(self, node):
             self.scope.append(node.name)
             self.key_bindings.append({})
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                for argument in ast.iter_child_nodes(node.args):
-                    if isinstance(argument, ast.arg):
-                        self.bind(argument.arg, called_name(argument.annotation))
+            for argument in ast.iter_child_nodes(node.args):
+                if isinstance(argument, ast.arg):
+                    self.bind(argument.arg, called_name(argument.annotation))
             self.generic_visit(node)
             self.key_bindings.pop()
             self.scope.pop()
 
-        visit_ClassDef = scoped
         visit_FunctionDef = scoped
         visit_AsyncFunctionDef = scoped
+
+        def visit_ClassDef(self, node):
+            self.scope.append(node.name)
+            self.key_bindings.append({})
+            self.instance_keys.append(
+                {
+                    field.target.id: called_name(field.annotation)
+                    for field in node.body
+                    if isinstance(field, ast.AnnAssign)
+                    and isinstance(field.target, ast.Name)
+                    and called_name(field.annotation) in KEY_TYPES
+                }
+            )
+            # The constructor establishes fields even when it follows a reader
+            # in the source. Scan it exactly once.
+            constructor = next(
+                (
+                    member
+                    for member in node.body
+                    if isinstance(member, ast.FunctionDef) and member.name == "__init__"
+                ),
+                None,
+            )
+            if constructor is not None:
+                self.visit(constructor)
+            for child in ast.iter_child_nodes(node):
+                if child is not constructor:
+                    self.visit(child)
+            self.instance_keys.pop()
+            self.key_bindings.pop()
+            self.scope.pop()
+
+        def instance_field(self, node):
+            return (
+                self.instance_keys
+                and isinstance(node, ast.Attribute)
+                and isinstance(node.value, ast.Name)
+                and node.value.id == "self"
+            )
+
+        def bind_target(self, target, key_type):
+            if isinstance(target, ast.Name):
+                self.bind(target.id, key_type)
+            elif self.instance_field(target) and key_type in KEY_TYPES:
+                self.instance_keys[-1][target.attr] = key_type
+
+        def verification_key_projection(self, node):
+            return (
+                isinstance(node, ast.Attribute)
+                and node.attr == "verify_key"
+                and self.key_type(node.value) == NACL_SIGNING_KEY
+            )
 
         def bind(self, name, key_type):
             self.key_bindings[-1][name] = key_type if key_type in KEY_TYPES else None
@@ -175,6 +231,10 @@ def scan_python_source(
                 for frame in reversed(self.key_bindings):
                     if node.id in frame:
                         return frame[node.id]
+            if self.verification_key_projection(node):
+                return NACL_VERIFY_KEY
+            if self.instance_field(node):
+                return self.instance_keys[-1].get(node.attr)
             if isinstance(node, ast.Call):
                 callee = called_name(node.func)
                 if callee in returns_key:
@@ -192,14 +252,13 @@ def scan_python_source(
 
         def visit_Assign(self, node):
             self.generic_visit(node)
+            key_type = self.key_type(node.value)
             for target in node.targets:
-                if isinstance(target, ast.Name):
-                    self.bind(target.id, self.key_type(node.value))
+                self.bind_target(target, key_type)
 
         def visit_AnnAssign(self, node):
             self.generic_visit(node)
-            if isinstance(node.target, ast.Name):
-                self.bind(node.target.id, called_name(node.annotation))
+            self.bind_target(node.target, called_name(node.annotation))
 
         def resolved_name(self, node):
             if isinstance(node, ast.Attribute) and node.attr in {"sign", "verify"}:
@@ -229,6 +288,12 @@ def scan_python_source(
                 and called_name(node) in KEY_TYPES
             )
             if (
+                isinstance(node.ctx, ast.Load)
+                and id(node) not in annotations
+                and self.verification_key_projection(node)
+            ):
+                self.record(f"reference:{NACL_SIGNING_KEY}.verify_key")
+            elif (
                 isinstance(node.ctx, ast.Load)
                 and id(node) not in annotations
                 and not is_callee

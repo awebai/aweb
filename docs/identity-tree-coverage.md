@@ -28,10 +28,12 @@ owner. Calling the shared owner requires no inventory entry.
 
 The parser resolves ordinary imports/aliases, callback references and CommonJS
 loaders. The JS check classifies WebCrypto roots consistently; ordinary hashing
-and randomness are outside the Ed25519 boundary. Python also resolves typed key
-arguments and locally defined key-returning helpers when it checks sign and
-verify calls. It does not prove dynamic
-control flow or identify every possible crypto package. In particular `jose`
+and randomness are outside the Ed25519 boundary. For sign and verify calls and
+`SigningKey.verify_key` reads, Python follows local key bindings, annotated
+parameters, same-file function results, and direct `self` fields it can type
+from class annotations or assignments. The check has no dynamic control-flow
+analysis, and Python method results, inherited fields and cross-module return
+types are outside its inference. In particular `jose`
 is a known package-discovery limit; this check is not an adversarial repository
 sandbox. Reviews and real journey tests establish the behavior that ships.
 
