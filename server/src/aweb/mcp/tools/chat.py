@@ -591,7 +591,7 @@ async def chat_pending(
 ) -> str:
     auth = get_auth()
     actor_dids = _actor_dids()
-    actor_agent = await resolve_actor_agent(db_infra, actor_dids)
+    actor_agent = await resolve_actor_agent(db_infra, actor_dids, team_id=auth.team_id)
     actor_agent_id = auth.agent_id or (str(actor_agent["agent_id"]) if actor_agent else None)
 
     conversations_by_session: dict[str, dict] = {}
