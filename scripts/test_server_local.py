@@ -470,6 +470,57 @@ def local_services(
                     signal.signal(sig, handler)
 
 
+def run_logged_suite(
+    command: list[str], *, environ: dict[str, str], log: Path
+) -> subprocess.CompletedProcess[bytes]:
+    """Drain inherited output through EOF before service cleanup (docs/local-server-tests.md)."""
+    descriptor = os.open(
+        log, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC, 0o600
+    )
+    with (
+        os.fdopen(descriptor, "wb") as output,
+        subprocess.Popen(
+            command,
+            cwd=ROOT,
+            env=environ,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        ) as child,
+    ):
+        assert child.stdout is not None
+        try:
+            while chunk := os.read(child.stdout.fileno(), 65536):
+                output.write(chunk)
+                output.flush()
+            child.wait()
+        except BaseException:
+            # Make/egress wrappers may exit before pytest; communicate waits for
+            # every inherited pipe writer so pytest can finalize its own JUnit.
+            previous = {
+                sig: signal.signal(sig, signal.SIG_IGN)
+                for sig in (signal.SIGINT, signal.SIGTERM)
+            }
+            try:
+                try:
+                    os.killpg(child.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    # No owned group remains; still drain output buffered in its pipe.
+                    if child.poll() is None:
+                        raise
+                try:
+                    tail, _stderr = child.communicate(timeout=10)
+                except subprocess.TimeoutExpired:
+                    os.killpg(child.pid, signal.SIGKILL)
+                    tail, _stderr = child.communicate()
+                output.write(tail or b"")
+            finally:
+                for sig, handler in previous.items():
+                    signal.signal(sig, handler)
+            raise
+    return subprocess.CompletedProcess(command, child.returncode)
+
+
 def run_suites(
     *, suite: Suite, workers: int, arguments: list[str], environ: dict[str, str]
 ) -> int:
@@ -487,18 +538,64 @@ def run_suites(
                 file=sys.stderr,
             )
             return prepared.returncode
+    reports = (
+        Path(
+            environ.get(
+                "LOCAL_TEST_REPORT_DIR",
+                str(ROOT / "test-results" / ("server-local-" + uuid.uuid4().hex[:12])),
+            )
+        )
+        .expanduser()
+        .resolve()
+    )
+    reports.mkdir(parents=True, mode=0o700, exist_ok=False)
     for item in selected:
+        directory = reports / item.value
+        directory.mkdir(mode=0o700)
         target = "test-server" if item is Suite.SERVER else "test-awid"
-        env = dict(environ, PYTEST_ADDOPTS=shlex.join(arguments))
-        result = invoke(
-            [
-                "make",
-                target,
-                f"SERVER_TEST_WORKERS={workers if item is Suite.SERVER else 0}",
-            ],
-            env=env,
-            stdout=None,
-            timeout=None,
+        options = [
+            *arguments,
+            "-p",
+            "local_pytest_progress",
+            "--junitxml=" + str(directory / "cases.xml"),
+            "--durations=0",
+            "--durations-min=0",
+        ]
+        env = dict(
+            environ,
+            PYTEST_ADDOPTS=shlex.join(options),
+            PYTHONPATH=os.pathsep.join(
+                filter(
+                    None,
+                    (str(Path(__file__).resolve().parent), environ.get("PYTHONPATH")),
+                )
+            ),
+            PYTHONUNBUFFERED="1",
+            AWEB_LOCAL_PROGRESS_DIR=str(directory),
+        )
+        print(
+            f"Local {item.value} live output: {directory / 'pytest.log'}; worker state: {directory / 'worker-*.json'}; JUnit: {directory / 'cases.xml'}",
+            flush=True,
+        )
+        try:
+            result = run_logged_suite(
+                [
+                    "make",
+                    target,
+                    f"SERVER_TEST_WORKERS={workers if item is Suite.SERVER else 0}",
+                ],
+                environ=env,
+                log=directory / "pytest.log",
+            )
+        except Interrupted as exc:
+            print(
+                f"Local {item.value} interrupted ({exc.number}); retained evidence: {directory}",
+                flush=True,
+            )
+            raise
+        print(
+            f"Local {item.value} exit={result.returncode}; evidence: {directory}",
+            flush=True,
         )
         if result.returncode:
             return result.returncode
