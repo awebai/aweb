@@ -1567,18 +1567,6 @@
     },
     {
       "tool": "ruff",
-      "file": "server/tests/test_team_room_notices.py",
-      "code": "F401",
-      "count": 1
-    },
-    {
-      "tool": "ruff",
-      "file": "server/tests/test_team_room_tree_stream.py",
-      "code": "F401",
-      "count": 1
-    },
-    {
-      "tool": "ruff",
       "file": "server/tests/test_user_signature_separation.py",
       "code": "F401",
       "count": 1
