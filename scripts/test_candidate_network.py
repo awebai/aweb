@@ -811,6 +811,63 @@ exit 0
 """
 
 
+PREPARE_STUB = r"""#!/usr/bin/env bash
+# Answers prepare's docker reads for one owned network and records every call.
+echo "$*" >> "$CALLS"
+label="$AWEB_CANDIDATE_RESOURCE_LABEL"
+case "$1 $2" in
+  "inspect $CANDIDATE_RUNNER_NAME")
+    printf '[{"Config":{"Labels":{"aweb.candidate-gate":"%s"}},"NetworkSettings":{"Networks":{}}}]' "$label" ;;
+  "network ls") echo "$NETWORK" ;;
+  "network inspect")
+    printf '[{"Labels":{"aweb.candidate-gate":"%s","com.docker.compose.project":"%s","com.docker.compose.network":"default"}}]' "$label" "$PROJECT" ;;
+esac
+exit 0
+"""
+
+
+class PrepareTests(unittest.TestCase):
+    def test_the_runner_joins_each_stack_network_under_its_scoped_runner_name(self):
+        # An app on the stack network reaches the runner's own services by name (aweb-acgh.5).
+        project = "aweb-candidate-08f4f622d1ec-780cad-naapp-library"
+        with tempfile.TemporaryDirectory() as tmp:
+            stub = Path(tmp) / "docker"
+            stub.write_text(PREPARE_STUB)
+            stub.chmod(0o755)
+            calls = Path(tmp) / "calls"
+            result = subprocess.run(
+                [sys.executable, str(ROOT / "scripts/candidate-network.py"), "prepare"],
+                input=json.dumps(
+                    {"name": project, "services": {}, "networks": {"default": {}}}
+                ),
+                capture_output=True,
+                text=True,
+                timeout=30,
+                env={
+                    **os.environ,
+                    "AWEB_CANDIDATE_REAL_DOCKER": str(stub),
+                    "CALLS": str(calls),
+                    "CANDIDATE_RUNNER_NAME": "the-runner",
+                    "AWEB_CANDIDATE_RESOURCE_LABEL": "run-label",
+                    "NETWORK": project + "_default",
+                    "PROJECT": project,
+                },
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            connects = [
+                c
+                for c in calls.read_text().splitlines()
+                if c.startswith("network connect")
+            ]
+        self.assertEqual(
+            connects,
+            [
+                f"network connect --alias {network.hostname(project, 'runner')} "
+                f"{project}_default the-runner"
+            ],
+        )
+
+
 class NetworkLinkGuardTests(unittest.TestCase):
     """Under a gate run, the shim links only this run's containers to this run's networks."""
 

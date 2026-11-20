@@ -137,7 +137,17 @@ def prepare(config: dict) -> None:
         ):
             raise ValueError(f"candidate network ownership mismatch: {name}")
         if name not in info["NetworkSettings"]["Networks"]:
-            run("network", "connect", name, runner)
+            # The runner's project-scoped name on the stack network, so an app
+            # there reaches services the runner serves (the e2e coordination
+            # server) at a name its certificate names.
+            run(
+                "network",
+                "connect",
+                "--alias",
+                hostname(project, "runner"),
+                name,
+                runner,
+            )
 
 
 def disconnect(project: str) -> None:
