@@ -20,7 +20,7 @@ from test_current_member_selector_surfaces import (
 from test_dashboard_privacy import TEAM
 from test_dashboard_privacy import privacy_app as privacy_app
 from test_member_team_key import _change_key
-from test_messages_http import _signed_team_headers
+from test_messages_http import _signed_identity_headers, _signed_team_headers
 from test_team_key_pinning import pinning as pinning
 
 
@@ -193,3 +193,27 @@ async def test_identity_context_filters_members_before_projection_writes(pinning
             ) is None
             assert await tx.fetch_value("SELECT 1") == 1
     assert not [q for q in queries if "UPDATE" in q and "agents" in q], queries
+
+
+@pytest.mark.asyncio
+async def test_address_discovery_programming_error_is_not_stored_binding_authority(
+    pinning, monkeypatch
+):
+    from aweb.identity_auth_deps import resolve_identity_auth
+
+    env = pinning
+    actor = await _admit(env, "discoveryerror", global_identity=True)
+    headers = _signed_identity_headers(actor.sk, actor.did, actor.stable)
+    request = Request({
+        **_request(env, actor).scope,
+        "headers": [(key.lower().encode(), value.encode()) for key, value in headers.items()],
+    })
+
+    async def invalid_dependency_call(_did):
+        # Fault injection only: request signature and binding verification run
+        # normally. A programming error is not a registry-outage observation.
+        raise TypeError("invalid discovery call")
+
+    monkeypatch.setattr(env.app.state.awid_registry_client, "list_did_addresses", invalid_dependency_call)
+    with pytest.raises(TypeError, match="invalid discovery call"):
+        await resolve_identity_auth(request)

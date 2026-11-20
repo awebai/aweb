@@ -181,6 +181,13 @@ async def lookup_identity_agent_context(
     )
     if not rows:
         return None
+    registry = application_registry_client(request.app.state)
+    eligible = []
+    for row in rows:
+        member = await current_membership(registry, row, request=request)
+        if member and member.get("team_id"):
+            eligible.append(member)
+    rows = eligible
     prior_resolution = getattr(request.state, "identity_address_resolution", None)
     if (
         prior_resolution is not None
@@ -209,13 +216,6 @@ async def lookup_identity_agent_context(
             )
         rows = [{**dict(row), "did_aw_verified_key": did_key} for row in rows]
     rows = [verified_projection(row) for row in rows]
-    registry = application_registry_client(request.app.state)
-    eligible = []
-    for row in rows:
-        member = await current_membership(registry, row, request=request)
-        if member and member.get("team_id"):
-            eligible.append(member)
-    rows = eligible
     outcome = getattr(request.state, "identity_address_resolution", AddressResolution())
     if len(rows) > 1:
         if did_aw_value and outcome.state is AddressResolutionState.VERIFIED:

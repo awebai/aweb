@@ -16,6 +16,7 @@ from awid.team_ids import team_slug
 from ..claims import (
     claim_focus_task_ref,
     release_task_claims_on,
+    release_noncurrent_task_claims_on,
     resolve_task_claim_apex_on,
 )
 from ..hooks import MutationCallback, fire_mutation_callback
@@ -1466,6 +1467,11 @@ async def update_task(
                     team_id,
                 )
                 if workspace is not None:
+                    released_claim_workspace_ids.extend(
+                        await release_noncurrent_task_claims_on(
+                            tx, team_id=team_id, task_ref=task_ref
+                        )
+                    )
                     conflicting_claim = await tx.fetch_one(
                         """
                         SELECT workspace_id, alias

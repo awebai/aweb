@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Optional
 from uuid import UUID
 
 from awid.team_ids import team_slug
+from aweb.member_team_key import current_member_sql
 
 if TYPE_CHECKING:
     from .db import DatabaseInfra
@@ -201,6 +202,7 @@ async def upsert_claim(
     apex_task_ref = await resolve_task_claim_apex(db_infra, team_id, task_ref)
 
     async with aweb_db.transaction() as tx:
+        await release_noncurrent_task_claims_on(tx, team_id=team_id, task_ref=task_ref)
         # Check if another workspace already holds this claim.
         existing = await tx.fetch_one(
             """
@@ -352,3 +354,30 @@ async def release_task_claims_on(tx, *, team_id: str, task_ref: str, workspace_i
         )
 
     return [str(ws_id) for ws_id in affected_ws_ids]
+
+
+async def release_noncurrent_task_claims_on(tx, *, team_id: str, task_ref: str) -> list[str]:
+    """Reclaim only this task's stale holders through the claim/focus owner.
+
+    Current members retain their conflicts. Key rotation does not sweep claims;
+    a new claim request rechecks its competing holders in its own transaction.
+    """
+    stale = await tx.fetch_all(
+        f"""
+        SELECT c.workspace_id FROM {{{{tables.task_claims}}}} c
+        WHERE c.team_id=$1 AND c.task_ref=$2 AND NOT EXISTS (
+            SELECT 1 FROM {{{{tables.workspaces}}}} w
+            JOIN {{{{tables.agents}}}} a ON a.agent_id=w.agent_id AND a.team_id=w.team_id
+            WHERE w.workspace_id=c.workspace_id AND w.team_id=c.team_id
+              AND w.deleted_at IS NULL AND {current_member_sql("a")}
+        )
+        ORDER BY c.workspace_id FOR UPDATE OF c
+        """,
+        team_id, task_ref,
+    )
+    released = []
+    for row in stale:
+        released.extend(await release_task_claims_on(
+            tx, team_id=team_id, task_ref=task_ref, workspace_id=str(row["workspace_id"]),
+        ))
+    return released
