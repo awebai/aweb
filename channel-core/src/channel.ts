@@ -15,11 +15,13 @@ import { ackMessage, fetchInbox, type InboxMessage } from "./api/mail.js";
 import { fetchHistory, markRead, type ChatMessage } from "./api/chat.js";
 import { fetchRoomMessage, ackRoomNotice } from "./api/room.js";
 import { terminalInputSafeText } from "./terminal.js";
+import { presentMessageAwakening } from "./message_presentation.js";
 import { PinStore, type PinStoreWriter } from "./identity/pinstore.js";
 import { RegistryResolver, type ResolveTxt } from "./identity/registry.js";
 import { SenderTrustManager } from "./identity/trust.js";
 import { isEncryptedMessage, verifyDecryptedMessage } from "./identity/encrypted.js";
-import type { VerificationStatus } from "./identity/signing.js";
+import { isTrustedVerificationStatus, type VerificationStatus } from "./identity/signing.js";
+export { isTrustedVerificationStatus } from "./identity/signing.js";
 import {
   createLocalAWDecryptProvider,
   createLocalAWPinStoreWriter,
@@ -883,12 +885,12 @@ async function dispatchMailEvent(
     if (msg.priority && msg.priority !== "normal") meta.priority = msg.priority;
 
     emitTrace(options, "notification_started", messageEvent, "mail");
-    await deliverAwakening(options, {
+    await deliverAwakening(options, presentMessageAwakening({
       kind: "mail",
       content: msg.body,
       meta,
       deliveryIntent: "wake",
-    });
+    }));
     emitTrace(options, "notification_accepted", messageEvent, "mail");
     await persistDeliveryMark(options, dispatched, key, messageEvent, "mail");
     if (options.mailAcknowledgment !== "manual") {
@@ -1006,12 +1008,12 @@ async function dispatchChatEvent(
 
     emitTrace(options, "notification_started", messageEvent, lane);
     options.onChatPresented?.(event.session_id, { encrypted });
-    await deliverAwakening(options, {
+    await deliverAwakening(options, presentMessageAwakening({
       kind: "chat",
       content: msg.body,
       meta,
       deliveryIntent: event.sender_waiting ? "steer" : "wake",
-    });
+    }));
     emitTrace(options, "notification_accepted", messageEvent, lane);
     await persistDeliveryMark(options, dispatched, key, messageEvent, lane);
     presentedMessageIds.push(msg.message_id);
@@ -1228,10 +1230,6 @@ function encryptedDeliveryFailureMeta(
   return meta;
 }
 
-export function isTrustedVerificationStatus(status: VerificationStatus | undefined): boolean {
-  return status === "verified" || status === "verified_custodial";
-}
-
 export function trustWarningLine(status: VerificationStatus | undefined): string {
   if (isTrustedVerificationStatus(status)) return "";
   if (status === "verification_stale") {
@@ -1261,7 +1259,8 @@ export function formatAwakeningForAgent(awakening: ChannelAwakening): string {
   const rawType = awakening.meta.type || awakening.kind;
   const type = awakening.kind === "app" ? sanitizeSummaryComponent(rawType) || "app" : rawType;
   const lines: string[] = [`aweb ${type} event received.`];
-  const warning = Object.prototype.hasOwnProperty.call(awakening.meta, "trust_status")
+  const withheld = awakening.meta.content_withheld === "true";
+  const warning = !withheld && Object.prototype.hasOwnProperty.call(awakening.meta, "trust_status")
     ? trustWarningLine(awakening.meta.trust_status as VerificationStatus | undefined)
     : "";
   if (warning) lines.push("", warning);
@@ -1273,10 +1272,12 @@ export function formatAwakeningForAgent(awakening: ChannelAwakening): string {
   if (awakening.kind === "app") {
     const summary = sanitizeSummaryComponent(awakening.content) || formatAppEventMetaSummary(awakening.meta);
     if (summary) lines.push("", "App event:", summary);
+  } else if (withheld) {
+    lines.push("", awakening.content);
   } else if (awakening.content) {
     lines.push("", "Message:", awakening.content);
   }
-  lines.push("", awakeningClosingLine(awakening.kind));
+  if (!withheld) lines.push("", awakeningClosingLine(awakening.kind));
   return lines.join("\n");
 }
 

@@ -15,6 +15,11 @@ func TestFormatVerificationTagDistinguishesStaleVerifierFromMismatch(t *testing.
 	if got := formatVerificationTag(awid.IdentityMismatch); got != " [IDENTITY MISMATCH]" {
 		t.Fatalf("mismatch tag=%q", got)
 	}
+	for _, status := range []awid.VerificationStatus{"", "future_status"} {
+		if got := formatVerificationTag(status); got != " [unverified]" {
+			t.Fatalf("tag for %q = %q", status, got)
+		}
+	}
 }
 
 func TestFormatChatSendUsesReplyMessageTagsNotReadReceipt(t *testing.T) {

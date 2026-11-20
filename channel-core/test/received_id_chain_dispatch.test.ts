@@ -26,5 +26,8 @@ test.each(["mail", "chat"])("%s dispatch presents the authenticated sender's ver
   awakening.length = 0;
   await dispatchAgentEvent(options, new Set(), event);
   expect(awakening[0].meta.verified).toBe("false");
-  expect(JSON.parse(awakening[0].meta.responsibility)).toMatchObject({ reason: "subject_mismatch", human_id: null, identity_valid: false });
+  expect(await readReceivedIdChain(message, true, evidence)).toMatchObject({ reason: "subject_mismatch", human_id: null, identity_valid: false });
+  expect(awakening[0].meta.trust_status).toBe("failed");
+  expect(awakening[0].meta).not.toHaveProperty("responsibility");
+  expect(awakening[0].content).toContain("Body and subject were not delivered.");
 });

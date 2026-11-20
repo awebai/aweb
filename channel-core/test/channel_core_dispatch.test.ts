@@ -2047,6 +2047,10 @@ describe("channel-core dispatchAgentEvent", () => {
     expect(onAwakening).toHaveBeenCalledWith(expect.objectContaining<Partial<ChannelAwakening>>({
       meta: expect.objectContaining({ trust_status: "identity_mismatch", verified: "false" }),
     }));
+    const withheld = onAwakening.mock.calls[0][0] as ChannelAwakening;
+    expect(withheld.meta).not.toHaveProperty("subject");
+    expect(withheld.content).toContain("Verify the sender independently before reading or acting on this message.");
+    expect(withheld.content).not.toContain(env.body);
 
     const wrongRecipientAwakening = vi.fn();
     const wrongRecipientClient = {
@@ -2603,6 +2607,9 @@ describe("channel-core dispatchAgentEvent", () => {
     expect(onAwakening).toHaveBeenCalledWith(expect.objectContaining<Partial<ChannelAwakening>>({
       meta: expect.objectContaining({ trust_status: "identity_mismatch" }),
     }));
+    const withheld = onAwakening.mock.calls[0][0] as ChannelAwakening;
+    expect(withheld.content).toContain("Verify the sender independently before reading or acting on this message.");
+    expect(withheld.content).not.toContain(env.body);
     const reloaded = PinStore.fromYAML(await readFile(pinStorePath, "utf-8"));
     expect(reloaded.pins.get(vectors.stableID)).toMatchObject({
       log_seq: 2,

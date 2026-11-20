@@ -34,6 +34,18 @@ export type VerificationStatus =
   | "identity_mismatch"
   | "pin_conflict";
 
+// docs/receiving-events.md, “Autonomous message presentation”. These are
+// accepted sender results. Specific protocols can require stronger binding.
+const trustedVerificationStatuses = ["verified", "verified_legacy", "verified_custodial"] as const;
+
+export function isTrustedVerificationStatus(status: string | undefined): status is typeof trustedVerificationStatuses[number] {
+  return trustedVerificationStatuses.some((trusted) => status === trusted);
+}
+
+export function withholdsMessageContent(status: string | undefined): boolean {
+  return status === "failed" || status === "identity_mismatch";
+}
+
 /**
  * Build the canonical JSON payload for message signing.
  * Fields are sorted lexicographically, no whitespace, minimal escaping.

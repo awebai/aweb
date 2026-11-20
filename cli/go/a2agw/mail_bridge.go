@@ -405,12 +405,10 @@ func (b *MailBridge) verifyReplyMessage(msg awid.InboxMessage) error {
 	if !b.requireVerifiedReplies || b.allowUnverifiedLocalReply {
 		return nil
 	}
-	switch msg.VerificationStatus {
-	case awid.Verified, awid.VerifiedCustodial, awid.VerifiedLegacy:
-		return nil
-	default:
+	if !msg.VerificationStatus.Trusted() {
 		return fmt.Errorf("a2a reply message verification status %q is not accepted", msg.VerificationStatus)
 	}
+	return nil
 }
 
 func (b *MailBridge) recordAudit(event AuditEvent) {

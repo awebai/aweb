@@ -889,12 +889,12 @@ func (c *Client) NormalizeSenderTrust(ctx context.Context, status VerificationSt
 	}
 	trustAddress := c.canonicalTrustAddress(rawAddress)
 	localTeamReference := c.isCurrentTeamRosterReference(trustAddress)
-	if status != Verified && status != VerifiedLegacy && status != VerifiedCustodial &&
+	if !status.Trusted() &&
 		localTeamReference && strings.TrimSpace(fromStableID) == "" {
 		return status, isContact
 	}
 	var meta *agentMeta
-	acceptedSignature := status == Verified || status == VerifiedLegacy || status == VerifiedCustodial
+	acceptedSignature := status.Trusted()
 	// A local sender is verified only through the live team roster. A bare
 	// alias that cannot be formed into a roster reference fails closed.
 	if acceptedSignature && !recipientBindingMismatch && !localTeamReference && strings.TrimSpace(fromStableID) == "" &&
@@ -1363,7 +1363,7 @@ func (c *Client) commitRefresh(status VerificationStatus) VerificationStatus {
 // A matching stable binding is sufficient across local key rotation; otherwise
 // we fall back to the current did:key binding.
 func (c *Client) checkRecipientBinding(status VerificationStatus, toDID string, toStableID string) VerificationStatus {
-	if status != Verified && status != VerifiedLegacy && status != VerifiedCustodial {
+	if !status.Trusted() {
 		return status
 	}
 	if stableID := strings.TrimSpace(c.stableID); stableID != "" && strings.TrimSpace(toStableID) != "" {
