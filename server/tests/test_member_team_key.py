@@ -16,6 +16,7 @@ import pytest
 from starlette.requests import Request
 from aweb.member_team_key import read_member_projection
 
+from aweb.application_state import application_registry_client
 from aweb.identity_auth_deps import current_membership
 from aweb.messaging.delivery_policy import has_current_shared_team
 from aweb.messaging.participants import messaging_participants_by_aliases
@@ -378,6 +379,7 @@ async def test_same_team_delivery_needs_the_sender_under_the_current_key(pinning
     async def same_team():
         return await has_current_shared_team(
             env.infra,
+            registry_client=application_registry_client(env.app.state),
             recipient={"did_key": recipient[1]},
             sender_dids=[sender[1]],
         )
