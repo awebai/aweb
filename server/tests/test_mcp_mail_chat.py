@@ -3558,8 +3558,6 @@ async def test_mcp_full_address_to_another_teams_local_identity_is_refused_witho
     assert await env.db.fetch_value(
         "SELECT address FROM {{tables.agents}} WHERE agent_id=$1", UUID(bob.id)
     ) is None
-    name = "send_mail" if tool == "mail" else "send_chat"
-    content = {"subject": "cross team local", "body": "hello bob"} if tool == "mail" else {"message": "hello bob"}
     result = await env.mcp_call(name, to="otherco.com/bob", plaintext=True, **content)
     assert result == missing == {
         "error": "otherco.com/bob is not a registered address. A local identity has no address and is reachable only from inside its own team, by alias; a global identity is reachable by address once one is assigned. Check the address or use a teammate alias and retry.",
