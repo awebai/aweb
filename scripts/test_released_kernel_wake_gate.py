@@ -27,7 +27,8 @@ class ReleasedKernelBootstrapTest(unittest.TestCase):
             check=True,
             capture_output=True,
             text=True,
-            timeout=15,
+            # Includes real tmux start/stop/retire, not just launch planning.
+            timeout=60,
         )
 
     def test_no_launch_spawn_uses_private_deployment_without_git_identity(self):

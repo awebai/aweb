@@ -14,9 +14,22 @@ export function runKernelLifecycleCommand({ kernel, args, cwd, env, timeout = 60
 
 export function preparePassiveKernelLaunch({ bin, node }) {
   const program = join(bin, "passive-session.mjs");
-  writeFileSync(program, "setInterval(() => {}, 1000);\n", { mode: 0o600 });
-  // Session delivery needs a terminal, not Claude's package-discovery protocol.
-  return { harness: "codex", executable: node, args: [program] };
+  // Execute the Node program itself: the kernel's Codex flags must become
+  // script argv, never options to the Node interpreter. This is an explicitly
+  // configured passive terminal, with no Codex binary or model claim.
+  writeFileSync(program, `#!${node}\nprocess.stdout.write("R26 passive terminal ready\\n");\nsetInterval(() => {}, 1000);\n`, { mode: 0o700 });
+  return { harness: "codex", executable: program };
+}
+
+export function kernelSessionSnapshot(answer) {
+  const boolean = (value) => typeof value === "boolean" ? value : null;
+  const state = answer?.result?.state;
+  return {
+    ok: boolean(answer?.ok),
+    present: boolean(answer?.result?.present),
+    running: boolean(answer?.result?.running),
+    state: ["not-launched", "stopped", "shell", "unknown"].includes(state) ? state : null,
+  };
 }
 
 function diagnosticTail(output, policy) {

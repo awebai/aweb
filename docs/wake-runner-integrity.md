@@ -43,12 +43,21 @@ It then selects the installed Node executable through a local launch
 configuration: the released kernel validates a future launch even when no
 process is started. No placeholder harness executable is installed.
 
-The wake journey selects a passive Codex launch backed by Node and an idle
-script. Declaring it as Claude would make the released kernel call it with
-`plugin list --json`; an idle executable cannot answer that discovery request.
-The control exercises the released kernel's real launch planner with the
-provider's conditional package requirement. Actual wake and terminal delivery
-remain the user-paths stage's responsibility.
+The wake journey explicitly configures a passive Node program as its terminal
+executable, with Codex session delivery. The program has a shebang naming the
+installed Node interpreter; kernel-inserted Codex arguments become script argv.
+Naming Node itself as the executable would make those arguments interpreter
+options (`-c` requests a syntax check) and terminate the terminal instead.
+No executable named `codex` or `claude` is installed or impersonated, and this
+fixture does not certify model execution. The control starts the real released
+kernel session, checks independent terminal liveness after one idle second,
+and retires the home. Actual provider, wake and mail delivery remain the
+user-paths stage's responsibility.
+
+The probe records allowlisted session booleans/state before asserting them,
+and every assertion names its field or boundary. Released plain `retire --json`
+returns a direct receipt, not an `ok` envelope: cleanup requires the exact
+instance, home removal and confirmed provider retirement/alias release.
 
 Command failures retain a child label, executable, PID, elapsed time, configured
 deadline and bounded output tails from known non-secret producers. All kernel

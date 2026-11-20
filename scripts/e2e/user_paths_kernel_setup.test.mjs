@@ -1,10 +1,65 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, existsSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, existsSync, writeFileSync, symlinkSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { pathToFileURL, fileURLToPath } from "node:url";
 import test from "node:test";
-import { DiagnosticOutput, preparePassiveKernelLaunch, runKernelLifecycleCommand, runKernelProbeCommand } from "./user_paths_kernel_setup.mjs";
+import { DiagnosticOutput, kernelSessionSnapshot, preparePassiveKernelLaunch, runKernelLifecycleCommand, runKernelProbeCommand } from "./user_paths_kernel_setup.mjs";
+
+test("released kernel starts, inspects and retires the actual passive terminal", () => {
+  const root = mkdtempSync("/tmp/kpr-");
+  const home = join(root, "home"), deployment = join(root, "deploy"), source = join(root, "source"), bin = join(root, "bin"), tmux = join(root, "tmux");
+  for (const directory of [home, deployment, join(deployment, "agents"), source, bin, tmux]) mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const staged = "/opt/user-paths/released-oats/node_modules/@awebai/oats/bin/oats.mjs";
+  const kernel = existsSync(staged) ? staged : fileURLToPath(new URL("../../candidate-gate/released-oats/node_modules/@awebai/oats/bin/oats.mjs", import.meta.url));
+  // Both tools are real installed programs; the owned PATH excludes harnesses.
+  const tmuxBinary = spawnSync("/usr/bin/which", ["tmux"], { encoding: "utf8" }).stdout.trim();
+  assert.ok(tmuxBinary, "the released terminal lifecycle control requires installed tmux");
+  symlinkSync(tmuxBinary, join(bin, "tmux"));
+  const env = { HOME: home, PATH: `${bin}:${dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin`, TMUX_TMPDIR: tmux, OATS_TMUX_SESSION: "passive-control", OATS_REMOTE_CACHE: join(root, "cache"), GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" };
+  const launch = preparePassiveKernelLaunch({ bin, node: process.execPath });
+  let instance;
+  const oats = (...args) => JSON.parse(runKernelLifecycleCommand({ kernel, args, cwd: deployment, env }));
+  try {
+    const ref = pathToFileURL(source).href;
+    writeFileSync(join(source, "oats-workspace.yaml"), `schemaVersion: 2\nname: passive-control\nmembers: [${ref}]\nlocalTeams: true\n`);
+    writeFileSync(join(source, "oats-membership.yaml"), `schemaVersion: 2\nworkspace: ${ref}\n`);
+    const soul = join(source, "souls/probe");
+    mkdirSync(soul, { recursive: true });
+    writeFileSync(join(soul, "soul.yaml"), `schemaVersion: 2\nname: probe\ndescription: passive terminal control\nwork: directory\nlaunch: { harness: ${launch.harness} }\n`);
+    writeFileSync(join(soul, "AGENTS.md"), "Disposable passive terminal control.\n");
+    for (const args of [["init", "-q"], ["add", "."], ["commit", "-qm", "passive control"]]) {
+      const result = spawnSync("git", ["-C", source, "-c", "user.name=Wake probe", "-c", "user.email=probe@example.invalid", ...args], { env, encoding: "utf8" });
+      assert.equal(result.status, 0, `fixture git ${args[0]} completes`);
+    }
+    writeFileSync(join(deployment, "oats-local.yaml"), `schemaVersion: 2\nworkspace: ${ref}\nlaunch-configs:\n  passive: ${JSON.stringify(launch)}\nsouls:\n  launch:\n    '*': passive\n`);
+    const spawned = oats("spawn", "probe", "--name", "passive-control", "--backend", "tmux", "--no-launch", "--json");
+    assert.equal(spawned.ok, true, "passive spawn succeeds");
+    instance = spawned.result.instance;
+    const targetHome = spawned.result.home;
+    assert.equal(oats("session", "inspect", "--home", targetHome, "--json").result.state, "not-launched", "the terminal starts with no process");
+    assert.equal(oats("session", "start", "--home", targetHome, "--json").ok, true, "session start confirms its launch");
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1000);
+    const observed = oats("session", "inspect", "--home", targetHome, "--json").result;
+    // Capture only this control's own generated launch output for causal evidence.
+    const pane = spawnSync(tmuxBinary, ["-L", "oats", "capture-pane", "-p", "-S", "-100", "-t", "=passive-control:=passive-control"], { env, encoding: "utf8" });
+    assert.equal(observed.present, true, `started terminal present; state=${observed.state}; fixture pane=${pane.stdout.trim()}`);
+    assert.equal(observed.running, true, `started terminal running; state=${observed.state}; fixture pane=${pane.stdout.trim()}; capture error=${pane.stderr}`);
+    assert.match(pane.stdout, /R26 passive terminal ready/, "the actual idle program ran, not just the kernel launch recorder");
+    const retired = oats("retire", instance, "--json");
+    assert.equal(retired.retired, instance, "released retirement names this instance directly, without an ok envelope");
+    assert.equal(retired.removedDir, true, "released retirement removes this owned home");
+    assert.equal(existsSync(targetHome), false, "retired home is absent");
+    instance = undefined;
+  } finally {
+    try { if (instance) oats("retire", instance, "--json"); }
+    finally {
+      spawnSync(tmuxBinary, ["-L", "oats", "kill-server"], { env, encoding: "utf8", timeout: 10000 });
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+});
 
 for (const [name, payload] of [
   ["Authorization", JSON.stringify({ headers: { Authorization: "Bearer fixture-credential-marker" } })],
@@ -68,7 +123,7 @@ test("credential failures withhold both streams and normal success preserves out
   assert.equal(runKernelProbeCommand({ ...request, argv: [process.execPath, "-e", "process.stdout.write('complete')"] }), "complete");
 });
 
-test("released kernel plans the passive session without a Claude plugin probe", async () => {
+test("released kernel plans the passive terminal without a Claude plugin probe", async () => {
   const root = mkdtempSync(join(tmpdir(), "kernel-passive-plan-"));
   try {
     const home = join(root, "home"), bin = join(root, "bin");
@@ -91,9 +146,15 @@ test("released kernel plans the passive session without a Claude plugin probe", 
       env: { HOME: home, PATH: `${dirname(process.execPath)}:/usr/bin:/bin` },
     });
     assert.equal(plan.harness, "codex");
-    assert.equal(plan.recipe.executable, process.execPath);
-    assert.ok(plan.command.includes(launch.args[0]));
+    assert.equal(plan.recipe.executable, launch.executable);
+    assert.ok(plan.command.includes(launch.executable));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("session evidence retains false fields and withholds unrecognized lifecycle data", () => {
+  const answer = { ok: true, result: { present: false, running: false, state: "stopped", Authorization: "fixture-credential-marker", message: "fixture-credential-marker" } };
+  assert.deepEqual(kernelSessionSnapshot(answer), { ok: true, present: false, running: false, state: "stopped" });
+  assert.deepEqual(kernelSessionSnapshot({ ok: "fixture-credential-marker", result: { state: "fixture-credential-marker" } }), { ok: null, present: null, running: null, state: null });
 });

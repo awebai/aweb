@@ -10,7 +10,7 @@ import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { DiagnosticOutput, prepareKernelProbeDirectories, preparePassiveKernelLaunch, runKernelLifecycleCommand, runKernelProbeCommand } from "./user_paths_kernel_setup.mjs";
+import { DiagnosticOutput, kernelSessionSnapshot, prepareKernelProbeDirectories, preparePassiveKernelLaunch, runKernelLifecycleCommand, runKernelProbeCommand } from "./user_paths_kernel_setup.mjs";
 
 const KernelBackend = Object.freeze({ Tmux: "tmux" });
 const OWNED_TMUX = ["tmux", "-L", "oats"];
@@ -70,7 +70,7 @@ function executionPermissions(status) {
   const executable = wakeInstances(status).find((row) => row.home === instanceHome)?.channel_core?.bundle_path;
   assert.ok(typeof executable === "string" && executable, "runner reports its actual execution path");
   const entries = [permission(dirname(executable)), permission(executable)];
-  assert.deepEqual(entries.map((entry) => entry.mode), ["700", "600"]);
+  assert.deepEqual(entries.map((entry) => entry.mode), ["700", "600"], "execution directory/file modes must be 0700/0600");
   assert.ok(entries.every((entry) => entry.uid === process.geteuid()), "execution snapshot belongs to runtime UID");
   return entries;
 }
@@ -79,7 +79,7 @@ function executionPermissions(status) {
 function prepareMintAuthority({ seat, fixtureHome, team }) {
   const match = /^([a-z0-9-]+):([a-z0-9.-]+\.test)$/.exec(team);
   assert.ok(match, "mint preflight requires the disposable fixture team");
-  assert.equal(resolve(fixtureHome), join(dirname(resolve(seat)), "home"));
+  assert.equal(resolve(fixtureHome), join(dirname(resolve(seat)), "home"), "mint authority comes from the disposable fixture user home");
   const workspace = createRequire(KERNEL)("yaml").parse(readFileSync(join(seat, ".aw/workspace.yaml"), "utf8"));
   assert.equal(workspace?.aweb_url, env.AWEB_URL, "seat records the local service independently of ambient routing");
   const relativeKey = join(".awid/team-keys", match[2], `${match[1]}.key`);
@@ -94,7 +94,7 @@ function prepareMintAuthority({ seat, fixtureHome, team }) {
 function kernelInstanceStatus() {
   const status = parseObject(oats("status", "--json"));
   assert.ok(Array.isArray(status.agents), "kernel status must list agents");
-  const rows = status.agents.flatMap((agent) => { assert.ok(Array.isArray(agent.instances)); return agent.instances; });
+  const rows = status.agents.flatMap((agent) => { assert.ok(Array.isArray(agent.instances), "each kernel agent must list its instances"); return agent.instances; });
   const row = rows.find((row) => row.home === instanceHome && row.instance === instance);
   assert.ok(row, "kernel must record the probe instance");
   return { status, row };
@@ -113,12 +113,12 @@ let brokerErrors = "";
 const cleanupErrors = [];
 try {
   evidence.kernel = parseObject(oats("--version", "--json"));
-  assert.equal(JSON.parse(readFileSync(join(STAGED, "node_modules/@awebai/oats/package.json"), "utf8")).version, "0.69.19");
+  assert.equal(JSON.parse(readFileSync(join(STAGED, "node_modules/@awebai/oats/package.json"), "utf8")).version, "0.69.19", "released kernel version must match the locked 0.69.19");
   evidence.kernel_integrity = JSON.parse(readFileSync(join(STAGED, "package-lock.json"), "utf8")).packages["node_modules/@awebai/oats"].integrity;
   evidence.node = process.version;
   evidence.aw = command({ name: "aw version", argv: [join(bin, "aw"), "version"], output: DiagnosticOutput.Public });
   assert.match(evidence.aw, new RegExp(`commit: ${values["source-commit"]} `), "candidate aw identifies the requested source SHA");
-  assert.equal(JSON.parse(readFileSync(join(PROVIDER, "oats.json"), "utf8")).version, PIN.version);
+  assert.equal(JSON.parse(readFileSync(join(PROVIDER, "oats.json"), "utf8")).version, PIN.version, "provider version must match its locked pin");
   const ref = pathToFileURL(source).href;
   mkdirSync(join(source, "souls/probe"), { recursive: true });
   cpSync(PROVIDER, join(source, "capabilities/oats-aweb"), { recursive: true });
@@ -149,7 +149,7 @@ try {
   const wakeStatus = () => parseObject(command({ name: "aw wake status", argv: [join(bin, "aw"), "wake", "status", "--json"], cwd: home }));
   await until({ read: wakeStatus, ready: (status) => status.daemon_running === true && status.daemon_pid === broker.pid, label: "isolated broker" });
   const spawned = parseObject(oats("spawn", "probe", "--name", "r20-wake-probe", "--backend", KernelBackend.Tmux, "--no-launch", "--json"));
-  assert.equal(spawned.ok, true);
+  assert.equal(spawned.ok, true, "kernel spawn.ok must confirm the no-launch spawn");
   ({ instance, home: instanceHome } = spawned.result);
   assert.ok(instance && instanceHome, "kernel spawn must return its instance and home");
   const beforeLaunch = kernelInstanceStatus();
@@ -157,22 +157,23 @@ try {
   evidence.kernel_status_before = beforeLaunch.status;
   const runnerReady = (status) => status.daemon_running === true && status.daemon_pid === broker.pid && wakeInstances(status).some((row) => row.home === instanceHome && row.channel_core?.running === true);
   const prelaunchKernel = parseObject(oats("session", "inspect", "--home", instanceHome, "--json"));
-  assert.equal(prelaunchKernel.result.state, "not-launched");
-  evidence.kernel_prelaunch = prelaunchKernel;
+  evidence.kernel_prelaunch = kernelSessionSnapshot(prelaunchKernel);
+  assert.equal(prelaunchKernel.result.state, "not-launched", "kernel prelaunch.state must be not-launched");
   const prelaunch = await until({ read: wakeStatus, ready: (status) => runnerReady(status) && wakeInstances(status).some((row) => row.home === instanceHome && row.last_state === "not-launched" && row.channel_core.readiness_state === "not-launched"), label: "prelaunch observation and ready handshake before process creation" });
   evidence.wake_prelaunch = prelaunch;
   const prelaunchRow = wakeInstances(prelaunch).find((row) => row.home === instanceHome);
-  assert.equal(prelaunchRow.phase, "pending");
+  assert.equal(prelaunchRow.phase, "pending", "wake prelaunch.phase must be pending before session creation");
   const started = parseObject(oats("session", "start", "--home", instanceHome, "--json"));
-  assert.equal(started.ok, true);
+  evidence.kernel_start = { ok: typeof started.ok === "boolean" ? started.ok : null };
+  assert.equal(started.ok, true, "kernel session start.ok must confirm launch");
   const liveKernel = parseObject(oats("session", "inspect", "--home", instanceHome, "--json"));
-  assert.equal(liveKernel.result.present, true);
-  assert.equal(liveKernel.result.running, true);
-  evidence.kernel_started_idle = liveKernel;
+  evidence.kernel_started_idle = kernelSessionSnapshot(liveKernel);
+  assert.equal(liveKernel.result.present, true, "kernel started_idle.present must be true before quiet wake readiness");
+  assert.equal(liveKernel.result.running, true, "kernel started_idle.running must be true before quiet wake readiness");
   evidence.kernel_status_started_idle = activeKernelStatus();
   const fresh = await until({ read: wakeStatus, ready: (status) => runnerReady(status) && wakeInstances(status).some((row) => row.home === instanceHome && row.phase === "active") && status.readiness?.some((verdict) => verdict.home === instanceHome && verdict.ready === true), label: "quiet startup readiness before any mail" });
   const freshRow = wakeInstances(fresh).find((row) => row.home === instanceHome);
-  assert.equal(freshRow.channel_core.generation, prelaunchRow.channel_core.generation);
+  assert.equal(freshRow.channel_core.generation, prelaunchRow.channel_core.generation, "quiet startup must keep the registered runner generation");
   assert.ok(!freshRow.channel_core.last_input_at, "startup inspection submits no input");
   evidence.wake_fresh = fresh;
   await sleep(1000);
@@ -221,7 +222,19 @@ try {
   if (error.diagnostic) evidence.failed_command = error.diagnostic;
   process.exitCode = 1;
 } finally {
-  if (instance) { try { evidence.retire = parseObject(oats("retire", instance, "--json")); assert.equal(evidence.retire.ok, true, "released provider retire must complete successfully"); } catch (error) { cleanupErrors.push(String(error)); } }
+  if (instance) {
+    try {
+      // Plain retire --json in released 0.69.19 returns the receipt directly.
+      evidence.retire = parseObject(oats("retire", instance, "--json"));
+      assert.equal(evidence.retire.retired, instance, "retire.retired must name the owned instance");
+      assert.equal(evidence.retire.removedDir, true, "retire.removedDir must confirm home removal");
+      assert.ok(!evidence.retire.rollbackIncomplete, "retire must not leave rollback incomplete");
+      assert.ok(!evidence.retire.forcedIncomplete, "retire must not force past incomplete cleanup");
+      assert.equal(evidence.retire.capabilityMeta?.["oats.aweb"]?.retired, true, "provider retirement must confirm completed coordination and revocation");
+      assert.equal(evidence.retire.capabilityMeta?.["oats.aweb"]?.aliasReusable, true, "provider retirement must confirm the alias is reusable");
+      assert.equal(existsSync(instanceHome), false, "retired instance home must be absent");
+    } catch (error) { cleanupErrors.push(String(error)); }
+  }
   await stopOwnedBroker(broker);
   const stopped = spawnSync(OWNED_TMUX[0], [...OWNED_TMUX.slice(1), "kill-server"], { cwd: deployment, env, encoding: "utf8" });
   if (stopped.error || (stopped.status !== 0 && !/no server running|No such file or directory/.test(stopped.stderr))) cleanupErrors.push(String(stopped.error || stopped.stderr));
@@ -232,5 +245,5 @@ try {
   writeFileSync(values.output, JSON.stringify(evidence, null, 2) + "\n");
   rmSync(root, { recursive: true, force: true });
 }
-assert.equal(evidence.result, ProbeOutcome.Passed, evidence.error || JSON.stringify(cleanupErrors));
+assert.equal(evidence.result, ProbeOutcome.Passed, `released-kernel-wake result must be PASSED: ${evidence.error || JSON.stringify(cleanupErrors)}`);
 console.log("PASS released OATS kernel -> candidate aw wake path");
