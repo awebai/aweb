@@ -373,12 +373,6 @@
     },
     {
       "tool": "mypy",
-      "file": "server/src/aweb/messaging/address_auth.py",
-      "code": "arg-type",
-      "count": 1
-    },
-    {
-      "tool": "mypy",
       "file": "server/src/aweb/messaging/chat_send.py",
       "code": "arg-type",
       "count": 1
