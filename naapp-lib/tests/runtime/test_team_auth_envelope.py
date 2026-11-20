@@ -14,7 +14,7 @@ from aweb_naapp_testing import Member, did_key, envelope_headers, utc_timestamp
 from awid.signing import canonical_json_bytes, sign_message
 from nacl.signing import SigningKey
 
-from tests.runtime.conftest import relying_app
+from tests.runtime.conftest import register_member_address, relying_app
 
 ORIGIN = "https://app.example.com"
 TEAM_ID = "backend:example.com"
@@ -28,6 +28,7 @@ async def member(registry) -> Member:
         "member_address": "example.com/alice",
     }
     await registry.add_team(TEAM_ID, member.team_did_key, visibility="private")
+    await register_member_address(registry, member, address="example.com/alice")
     await registry.add_certificate(member.certificate(), team_key=member.team_key)
     return member
 
@@ -278,6 +279,7 @@ async def test_certificate_signature_must_be_the_current_team_key(registry, memb
 
 
 async def test_team_key_rotation_invalidates_old_certificates(registry, member):
+    # unreachable-state: operator-corrupted registry key has no controller act; old certificates must refuse.
     await registry.rotate_team_key(TEAM_ID, did_key(SigningKey.generate()))
     async with relying_app(registry, public_origin=ORIGIN) as (client, _):
         response = await client.get(
