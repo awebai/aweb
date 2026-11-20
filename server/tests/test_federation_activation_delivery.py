@@ -1334,13 +1334,13 @@ async def test_phase_b_shared_team_delivery_requires_both_current_admissions(
     # Same-team policy requires actual controller certificates and native
     # admission for BOTH identities (identity-messaging-contract.md:81-99).
     world = await _registered_routing_pair(route_pair)
-    alice, bob = world.source.actor, world.target.actor
+    bob = world.target.actor
     target = world.target.node
-    shared_sender = await admit_messaging_actor(
+    alice = await admit_messaging_actor(
         world.target.env,
         alias="shared-sender",
         team_id=bob.team_id,
-        existing_identity=alice,
+        address=bob.address.rsplit("/", 1)[0] + "/shared-sender",
     )
     await set_messaging_inbound_mode(world.target.env, bob, mode="team_and_contacts")
     if _AdmissionKey.SUPERSEDED in (sender_key, recipient_key):
@@ -1366,7 +1366,7 @@ async def test_phase_b_shared_team_delivery_requires_both_current_admissions(
         )
         for alias, actor, key_state in (
             ("bob", bob, recipient_key),
-            ("shared-sender", shared_sender, sender_key),
+            ("shared-sender", alice, sender_key),
         ):
             if key_state is _AdmissionKey.CURRENT:
                 previous = json.loads(base64.b64decode(actor.certificate))
@@ -1383,7 +1383,7 @@ async def test_phase_b_shared_team_delivery_requires_both_current_admissions(
                     existing_identity=actor,
                 )
                 assert readmitted.agent_id == actor.agent_id
-    for actor, key_state in ((shared_sender, sender_key), (bob, recipient_key)):
+    for actor, key_state in ((alice, sender_key), (bob, recipient_key)):
         row = await target.db.fetch_one(
             "SELECT a.accepted_team_did_key, t.team_did_key FROM {{tables.agents}} a "
             "JOIN {{tables.teams}} t ON t.team_id=a.team_id WHERE a.agent_id=$1",
@@ -1397,7 +1397,7 @@ async def test_phase_b_shared_team_delivery_requires_both_current_admissions(
         sender_did_key=alice.did_key,
         sender_did_aw=alice.stable_id,
         sender_address=alice.address,
-        sender_delivery_origin=world.source.node.origin,
+        sender_delivery_origin=target.origin,
         target_address=bob.address,
         target_did_aw=bob.stable_id,
         target_did_key=bob.did_key,
@@ -1421,7 +1421,7 @@ async def test_phase_b_shared_team_delivery_requires_both_current_admissions(
         )
     else:
         assert response.status_code == 403, response.text
-        assert response.json()["detail"]["reason"] == "recipient_policy_rejected"
+        assert response.json()["reason"] == "recipient_policy_rejected"
         for table in (
             "messages",
             "message_ingress_receipts",
