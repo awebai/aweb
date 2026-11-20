@@ -143,7 +143,7 @@ def _prove_uninstall(*, aw, data, get, folio_request, run, compose, team, other_
     assert sql("SELECT count(*) FROM public.presentation_links WHERE token IN ('" + readonly['token'] + "','" + editable['token'] + "') AND installation_id='" + first['installation_id'] + "'") == '2'
     assert sql("SELECT installation_id FROM public.edit_sessions WHERE link_id='" + editable['token'] + "'") == first['installation_id']
     # An identical fetched pin still advances the generation and keeps the ID.
-    repin = data('alice', 'id', 'request', 'POST', 'http://127.0.0.1:38000/v1/apps/install', '--team-auth', '--raw',
+    repin = data('alice', 'id', 'request', 'POST', 'https://folio-wakes.test:38000/v1/apps/install', '--team-auth', '--raw',
                  '--header', 'Content-Type: application/json', '--body', json.dumps({
                      'app_id': 'folio', 'origin': origin, 'digest': first['digest'],
                      'granted_scopes': active['granted_scopes'], 'expected_generation': first['generation']}))

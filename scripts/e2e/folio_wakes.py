@@ -18,7 +18,7 @@ import uuid
 ROOT = Path(__file__).resolve().parents[2]
 AW = Path(os.environ['AW_BIN']).resolve()
 REGISTRY = 'http://awid:8010'
-SERVER = 'http://127.0.0.1:38000'
+SERVER = 'https://folio-wakes.test:38000'
 FOLIO = os.environ['FOLIO_WAKES_ORIGIN']
 PROJECT = os.environ.get('FOLIO_WAKES_PROJECT', 'abrm-folio')
 COMPOSE = ['docker', 'compose', '-p', PROJECT, '--project-directory', str(ROOT), '-f', str(ROOT / 'scripts/e2e/folio-wakes.compose.yml')]
@@ -308,7 +308,7 @@ with tempfile.TemporaryDirectory(prefix='awfw-', dir='/tmp') as td:
         code = '''import json, urllib.error, urllib.request
 from datetime import UTC, datetime
 from aweb_naapp.runtime.app_emit import sign_app_emit_credential
-target = "http://127.0.0.1:38000/v1/events/app"
+target = "https://folio-wakes.test:38000/v1/events/app"
 body = json.dumps({"type": "folio/doc.changed", "resource_ref": "wake-proof", "payload": {}}).encode()
 cred = sign_app_emit_credential(private_key=bytes.fromhex(SEED), method="POST", target=target, team_id=TEAM, app_id="folio", key_id=KID, body=body, timestamp=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"))
 request = urllib.request.Request(target, data=body, method="POST", headers={**cred.headers, "Content-Type": "application/json"})

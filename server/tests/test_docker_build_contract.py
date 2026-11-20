@@ -61,7 +61,7 @@ def test_service_image_runs_as_numeric_non_root_user(path):
     assert re.fullmatch(r"[1-9][0-9]*:[1-9][0-9]*", user), f"{path}: USER {user}"
 
 def healthcheck_probes(text: str, port: int) -> list[str]:
-    return re.findall(rf"http://localhost:{port}(/[a-z/]*)", text)
+    return re.findall(rf"https?://[a-z0-9.-]+:{port}(/[a-z/]*)", text)
 
 
 def test_image_healthchecks_probe_liveness():

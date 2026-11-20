@@ -12,7 +12,7 @@ from aweb_naapp.runtime.app_keys import AppKey
 key = SigningKey(bytes.fromhex(Path('/fixture/tls/grant-read.key').read_text().strip()))
 signer = AppCredentialSigner(app_id='folio', purpose='app-grant-read', key=AppKey(
     kid='folio:grant-read-1', did_key=did_from_public_key(bytes(key.verify_key)), signing_key=key))
-target = 'http://127.0.0.1:38000/v1/apps/self/grant'
+target = 'https://folio-wakes.test:38000/v1/apps/self/grant'
 request = urllib.request.Request(target, headers=signer.sign(method='GET', target=target, team_id=sys.argv[1]).headers)
 with urllib.request.urlopen(request, timeout=10) as response:
     body = json.load(response)

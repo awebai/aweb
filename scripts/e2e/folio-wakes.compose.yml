@@ -63,7 +63,7 @@ services:
       retries: 30
 
   aweb:
-    command: ["/app/.venv/bin/python", "/fixture/e2e/stack_server.py", "--app-origin", "https://folio-wakes.test:8765", "--ca-file", "/fixture/tls/ca.pem", "--user-agent", "folio-wakes-test/1", "--port", "38000"]
+    command: ["/app/.venv/bin/python", "/fixture/e2e/stack_server.py", "--app-origin", "https://folio-wakes.test:8765", "--ca-file", "/fixture/tls/ca.pem", "--user-agent", "folio-wakes-test/1", "--port", "38000", "--tls-certfile", "/fixture/tls/server.pem", "--tls-keyfile", "/fixture/tls/server.key"]
     cpus: "1"
     mem_limit: "1g"
     pids_limit: 512
@@ -75,7 +75,9 @@ services:
       AWEB_REDIS_URL: redis://redis:6379/0
       AWEB_HOST: 0.0.0.0
       AWEB_PORT: 38000
-      AWEB_PUBLIC_ORIGIN: http://127.0.0.1:38000
+      # Over TLS with the fixture's folio-wakes.test certificate: the team's
+      # server, which Folio reaches through its egress guard.
+      AWEB_PUBLIC_ORIGIN: https://folio-wakes.test:38000
       APP_ENV: development
       AWEB_LOG_JSON: "false"
       AWID_REGISTRY_URL: http://awid:8010
@@ -94,7 +96,7 @@ services:
       awid:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:38000/ready"]
+      test: ["CMD", "curl", "-f", "--cacert", "/fixture/tls/ca.pem", "https://folio-wakes.test:38000/ready"]
       interval: 2s
       timeout: 5s
       start_period: 5s
@@ -115,10 +117,18 @@ services:
       FOLIO_AWID_REGISTRY_URL: http://awid:8010
       FOLIO_AWID_SERVICE_TOKEN: library-e2e-service-token-with-at-least-32-bytes
       FOLIO_PUBLIC_ORIGIN: ${FOLIO_WAKES_ORIGIN:?set by wakes runner}
-      FOLIO_APP_EVENTS_ORIGIN: http://127.0.0.1:38000
-      # The team server folio_wakes.py publishes: this stack's own aweb, reached
-      # directly rather than through the egress guard.
-      FOLIO_TEAM_SERVER_INTERNAL_ORIGINS: '["http://127.0.0.1:38000"]'
+      FOLIO_APP_EVENTS_ORIGIN: https://folio-wakes.test:38000
+      # The team server folio_wakes.py publishes: this stack's own aweb, the
+      # operator's own on the stack's network, reached through Folio's egress
+      # guard and trusted through the fixture's CA.
+      FOLIO_HOOK_INTERNAL_DESTINATIONS: allowed
+      # Docker's private address pool, whichever network the stack is given
+      # (the candidate gate puts it on its own).
+      FOLIO_HOOK_INTERNAL_CIDR: 172.16.0.0/12
+      FOLIO_TEAM_SERVER_INTERNAL_ORIGINS: '["https://folio-wakes.test:38000"]'
+      FOLIO_HOOK_CA_FILE: /fixture/tls/ca.pem
+      # App events go to aweb over the same TLS origin.
+      SSL_CERT_FILE: /fixture/tls/ca.pem
       FOLIO_APP_EMIT_KID: folio:emit-test
       FOLIO_APP_EMIT_KEY_SEED_HEX: '0101010101010101010101010101010101010101010101010101010101010101'
       FOLIO_APP_KEY_FILES: ${FOLIO_WAKES_APP_KEY_FILES:?set by wakes runner}
