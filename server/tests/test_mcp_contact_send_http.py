@@ -128,7 +128,7 @@ async def test_mounted_mcp_send_to_saved_contact(
                     env.actors["carol"].id,
                 )
                 await registry.reassign_address(
-                    "example.test", "bob", carol_did, env.team_sk
+                    "example.test", "bob", carol_did, env.namespace_sk
                 )
                 refused = await call(
                     "send_message_to_contact",

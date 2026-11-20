@@ -1,9 +1,12 @@
 """Malformed retry metadata remains a request refusal after a real acceptance."""
 
 import json
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 import pytest
+from nacl.signing import SigningKey
+from awid.signing import canonical_json_bytes, sign_message
 
 from test_mcp_chat_send_parity import chat_server as chat_server
 from test_mcp_mail_conversation_parity import mail_server as mail_server
@@ -73,6 +76,61 @@ def _accepted_plaintext_request(row):
         "signature": row["signature"],
         "signed_payload": row["signed_payload"],
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("valid_signature", [False, True])
+async def test_changed_continued_chat_proof_verifies_before_the_age_only_refusal(
+    chat_server, valid_signature
+):
+    env = chat_server
+    session_id, _ = await env.first_chat("mcp", "pilot", "opened", to_alias="bob")
+    message_id = await env.continued_chat("mcp", "pilot", session_id, "accepted original")
+    row = await env.db.fetch_one(
+        "SELECT * FROM {{tables.chat_messages}} WHERE message_id=$1", UUID(message_id)
+    )
+    signed = json.loads(row["signed_payload"])
+    signed["timestamp"] = (
+        (datetime.now(timezone.utc) - timedelta(minutes=6)).replace(microsecond=0).isoformat()
+    )
+    changed_bytes = canonical_json_bytes(signed)
+    sender_key, sender_did = env.keys["pilot"]
+    signer = sender_key if valid_signature else bytes(SigningKey.generate())
+    changed = _accepted_plaintext_request(
+        {
+            **dict(row),
+            "signed_payload": changed_bytes.decode(),
+            "signature": sign_message(signer, changed_bytes),
+        }
+    )
+    before = list(env.mutations)
+
+    async def post(payload):
+        raw = json.dumps(payload).encode()
+        return await env.client.post(
+            f"/v1/chat/sessions/{session_id}/messages",
+            content=raw,
+            headers={
+                **_signed_identity_headers(sender_key, sender_did, env.dids["pilot"], raw),
+                "Content-Type": "application/json",
+            },
+        )
+
+    refused = await post(changed)
+    assert refused.status_code == 422, refused.text
+    if valid_signature:
+        assert refused.headers["X-AWEB-Error-Code"] == "message_timestamp_outside_skew"
+    else:
+        assert "X-AWEB-Error-Code" not in refused.headers
+        assert refused.json()["detail"] == (
+            "The message signature does not verify. Sign the message again with "
+            "the authenticated sender's key and resend it."
+        )
+    repeated = await post(_accepted_plaintext_request(row))
+    assert repeated.status_code == 200, repeated.text
+    assert repeated.json()["message_id"] == message_id
+    assert await env.db.fetch_value("SELECT count(*) FROM {{tables.chat_messages}}") == 2
+    assert env.mutations == before
 
 
 @pytest.mark.asyncio

@@ -70,6 +70,7 @@ async def test_newly_admitted_global_human_connects_behind_warm_strict_list(
                 expected_head=None,
                 invitation_id=None,
             )
+            # The shared producer already enrolled the independent example.test namespace.
             before = await cached.list_team_certificates(
                 "example.test", TEAM_NAME, active_only=False
             )

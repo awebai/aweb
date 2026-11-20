@@ -1408,6 +1408,67 @@ async def resolve_mail_target(
     )
 
 
+async def _accepted_encrypted_mail_target_matches_participant(
+    db,
+    *,
+    payload: SendMessageRequest,
+    sender_did: str,
+    participant: Mapping[str, Any],
+) -> bool:
+    """Locate an accepted key-only target, without answering or admitting a send.
+
+    Released encrypted attachment retries can omit the outer stable selector.
+    Their exact accepted artifact and protected stable binding identify only
+    the same recorded party. Ordinary crypto, freshness and current policy
+    still run before the stored answer; a new artifact gains no selector.
+    """
+    if (
+        payload.content_mode != ContentMode.ENCRYPTED
+        or payload.encrypted_envelope is None
+        or payload.to_did is None
+        or payload.message_id is None
+        or payload.conversation_id is None
+        or any(value is not None for value in (
+            payload.to_agent_id, payload.to_alias, payload.to_address, payload.to_stable_id
+        ))
+    ):
+        return False
+    routing = payload.encrypted_envelope.get("routing")
+    stable_did = str(participant.get("did") or "")
+    if (
+        not isinstance(routing, Mapping)
+        or not stable_did.startswith("did:aw:")
+        or routing.get("to_stable_id") != stable_did
+        or routing.get("to_did") != payload.to_did.strip()
+    ):
+        return False
+    try:
+        message_id = UUID(payload.message_id)
+        conversation_id = UUID(payload.conversation_id)
+    except ValueError:
+        return False
+    accepted = await read_stored_message(
+        db,
+        claim=StoredMessageClaim(
+            kind=MessageKind.MAIL,
+            message_id=message_id,
+            sender_did=sender_did,
+            conversation_id=conversation_id,
+            artifact=replay_artifact(
+                content_mode=payload.content_mode,
+                encrypted_envelope=payload.encrypted_envelope,
+                signature=payload.signature,
+                signed_payload=payload.signed_payload,
+            ),
+        ),
+    )
+    return (
+        accepted.state is StoredMessageState.EXACT
+        and accepted.message is not None
+        and accepted.message.get("to_did") == stable_did
+    )
+
+
 async def _resolve_requested_mail_continuation(
     db,
     *,
@@ -1455,6 +1516,13 @@ async def _resolve_requested_mail_continuation(
                 to_stable_id=payload.to_stable_id,
                 to_address=payload.to_address,
             )
+            if not target_matches:
+                target_matches = await _accepted_encrypted_mail_target_matches_participant(
+                    db,
+                    payload=payload,
+                    sender_did=sender_did,
+                    participant=requested_continuation.recipient_participant,
+                )
             if (
                 not target_matches
                 and payload.encrypted_envelope is None
