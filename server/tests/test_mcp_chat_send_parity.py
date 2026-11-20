@@ -732,10 +732,8 @@ async def test_mcp_refusals_of_an_unknown_chat_recipient_read_as_the_routes_do(
     assert await server.mcp_chat(
         "pilot", to="acme.com/nobody", message="hello", plaintext=True
     ) == {
-        "error": "Recipient not found. Check the address acme.com/nobody. "
-        "Check the name; if the agent exists, ask it to reconnect with a current team certificate.",
+        "error": unreachable_address_refusal("acme.com/nobody"),
         "reason": "recipient_identity_not_found",
-        "retryable": False,
     }
     assert await server.mcp_chat(
         "pilot", conversation_id=str(uuid4()), message="hello", plaintext=True
@@ -1002,10 +1000,8 @@ NEXT_ACTIONS = [
         LocalRecipientNotFoundError,
         {"address": "example.test/member"},
         {
-            "error": "Recipient not found. Check the address. "
-            "Check the name; if the agent exists, ask it to reconnect with a current team certificate.",
+            "error": unreachable_address_refusal("example.test/member"),
             "reason": "recipient_identity_not_found",
-            "retryable": False,
         },
     ),
     (

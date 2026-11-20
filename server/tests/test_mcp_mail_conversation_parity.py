@@ -945,10 +945,8 @@ NEXT_ACTIONS = [
         LocalRecipientNotFoundError,
         {"address": "example.test/member"},
         {
-            "error": "Recipient not found. Check the address. "
-            "Check the name; if the agent exists, ask it to reconnect with a current team certificate.",
+            "error": unreachable_address_refusal("example.test/member"),
             "reason": "recipient_identity_not_found",
-            "retryable": False,
         },
     ),
     (
