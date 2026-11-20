@@ -668,6 +668,7 @@ func TestAwDoctorFixTargetNotFound(t *testing.T) {
 }
 
 type fakeDoctorFixHandler struct {
+	scopeOwner  doctorFixHandler
 	id          string
 	plan        doctorFixPlan
 	planErr     error
@@ -679,7 +680,10 @@ func (h *fakeDoctorFixHandler) CheckID() string {
 	return h.id
 }
 
-func (h *fakeDoctorFixHandler) doctorMutationScope(doctorFixContext) (doctorMutationScope, error) {
+func (h *fakeDoctorFixHandler) doctorMutationScope(ctx doctorFixContext) (doctorMutationScope, error) {
+	if h.scopeOwner != nil {
+		return h.scopeOwner.doctorMutationScope(ctx)
+	}
 	return doctorMutationScope{CheckID: h.id, Refusal: doctorFixAuthority}, nil
 }
 
