@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-09
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-owner-acts.
+* **Update**: [review a change against its existing consumers](/aweb-expert/lessons/review-a-change-against-its-existing-consumers.md) gains cross-rootdir fixture importers: a shared test fixture's consumer search is repository-wide, and a variant goes in a helper wrapped by a module-local fixture.
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
