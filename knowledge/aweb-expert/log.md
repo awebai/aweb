@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-20
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-testing-servers.
+* **Creation**: lessons [a red must keep its cause](/aweb-expert/lessons/a-red-must-keep-its-cause.md) and [a stop-safe hold loops until it returns cleanly](/aweb-expert/lessons/a-stop-safe-hold-loops-until-clean.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
