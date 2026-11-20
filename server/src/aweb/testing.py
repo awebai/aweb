@@ -30,7 +30,7 @@ from pgdbm import AsyncDatabaseManager
 from redis.asyncio import Redis
 
 from .api import create_app
-from .db import DatabaseInfra
+from .db import DatabaseInfra, close_owned_pool
 
 SERVER_URL = "https://aweb.example"
 
@@ -77,4 +77,4 @@ async def running_server(
             yield Server(app=app, db=infra, transport=ServiceTransport(app), url=public_origin)
     finally:
         await infra.close()
-        await pool.close()
+        await close_owned_pool(pool)

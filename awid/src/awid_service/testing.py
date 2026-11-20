@@ -34,7 +34,7 @@ from awid.registry import RegistryClient
 from awid.signing import canonical_json_bytes, sign_message
 from awid.team_server_record import record_signing_bytes
 
-from .db import AwidDatabaseInfra
+from .db import AwidDatabaseInfra, close_owned_pool
 from .main import mount_registry
 
 REGISTRY_URL = "https://registry.example"
@@ -245,4 +245,4 @@ async def running_registry(
         yield Registry(app=app, db=infra.get_manager("aweb"), transport=ServiceTransport(app))
     finally:
         await infra.close()
-        await pool.close()
+        await close_owned_pool(pool)

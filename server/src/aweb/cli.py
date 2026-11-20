@@ -292,6 +292,7 @@ def revalidate_human_kind_command(
     from pgdbm import AsyncDatabaseManager
     from redis.asyncio import Redis
     from .connection_scope import DatabaseManager
+    from .db import close_owned_pool
     from .human_kind_revalidation import revalidate_human_kind
 
     if not schema.isascii() or not schema.isidentifier():
@@ -315,7 +316,7 @@ def revalidate_human_kind_command(
         finally:
             await registry.aclose()
             await redis.aclose()
-            await pool.close()
+            await close_owned_pool(pool)
 
     report = asyncio.run(run())
     typer.echo(json.dumps(report, sort_keys=True))

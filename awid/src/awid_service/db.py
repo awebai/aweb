@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from pathlib import Path
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from pgdbm import AsyncDatabaseManager, DatabaseConfig
 from pgdbm.migrations import AsyncMigrationManager
@@ -10,6 +11,26 @@ from pgdbm.migrations import AsyncMigrationManager
 from awid.db_config import build_database_config
 
 from .config import get_settings
+
+if TYPE_CHECKING:
+    from asyncpg.pool import Pool
+
+logger = logging.getLogger(__name__)
+SHARED_POOL_CLOSE_TIMEOUT_SECONDS = 5.0
+
+
+async def close_owned_pool(pool: Pool) -> None:
+    """Give checked-out connections time to return, then terminate the pool."""
+    deadline = asyncio.timeout(SHARED_POOL_CLOSE_TIMEOUT_SECONDS)
+    try:
+        async with deadline:
+            await pool.close()
+    except TimeoutError:
+        if not deadline.expired():
+            raise
+        pool.terminate()
+        logger.warning("PostgreSQL pool close timed out. Remaining connections were terminated.")
+
 
 # The pgdbm protections that travel as startup parameters besides the search_path
 # pin, which pgdbm verifies itself.
@@ -231,7 +252,7 @@ class AwidDatabaseInfra:
                             ),
                         )
                     except BaseException:
-                        await shared_pool.close()
+                        await close_owned_pool(shared_pool)
                         raise
                 self._owns_pool = True
             else:
@@ -259,7 +280,7 @@ class AwidDatabaseInfra:
 
     async def close(self) -> None:
         if self._shared_pool is not None and self._owns_pool:
-            await self._shared_pool.close()
+            await close_owned_pool(self._shared_pool)
 
         self._shared_pool = None
         self._manager = None

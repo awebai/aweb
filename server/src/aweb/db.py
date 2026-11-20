@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from pathlib import Path
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from fastapi import Request
 from pgdbm import AsyncDatabaseManager
@@ -13,6 +14,26 @@ from aweb_naapp.hooks.owner_act_nonces import apply_owner_act_migrations
 from .config import get_settings
 from .connection_scope import DatabaseManager
 from awid.db_config import build_database_config
+
+if TYPE_CHECKING:
+    from asyncpg.pool import Pool
+
+logger = logging.getLogger(__name__)
+SHARED_POOL_CLOSE_TIMEOUT_SECONDS = 5.0
+
+
+async def close_owned_pool(pool: Pool) -> None:
+    """Give checked-out connections time to return, then terminate the pool."""
+    deadline = asyncio.timeout(SHARED_POOL_CLOSE_TIMEOUT_SECONDS)
+    try:
+        async with deadline:
+            await pool.close()
+    except TimeoutError:
+        if not deadline.expired():
+            raise
+        pool.terminate()
+        logger.warning("PostgreSQL pool close timed out. Remaining connections were terminated.")
+
 
 class DatabaseInfra:
     """
@@ -90,7 +111,7 @@ class DatabaseInfra:
 
     async def close(self) -> None:
         if self._shared_pool is not None and self._owns_pool:
-            await self._shared_pool.close()
+            await close_owned_pool(self._shared_pool)
 
         self._manager = None
         self._shared_pool = None
