@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
+import base64
 import json
 from uuid import UUID, uuid4
 
@@ -147,7 +148,7 @@ async def _admit(env, alias, *, global_identity=False):
         await application_registry_client(
             env.app.state
         ).update_namespace_delivery_origin(
-            "example.test", bytes(env.namespace_sk), env.app.state.public_origin
+            "example.test", bytes(env.namespace_sk), "https://matrix.example.test"
         )
     actual = await admit_messaging_actor(
         env,
@@ -195,7 +196,15 @@ async def _readmit(env, actor, team_key):
     )
     certificate = _encode_certificate(fields)
     name, domain = TEAM.split(":", 1)
-    await application_registry_client(env.app.state).register_team_certificate(
+    registry = application_registry_client(env.app.state)
+    previous = json.loads(base64.b64decode(actor.certificate))
+    await registry.revoke_team_certificate(
+        domain,
+        name,
+        team_controller_signing_key=sk,
+        certificate_id=previous["certificate_id"],
+    )
+    await registry.register_team_certificate(
         domain,
         name,
         team_controller_signing_key=sk,
@@ -348,8 +357,13 @@ async def _probe(env, case, sender, target, *, phase, team_key):
             Operation.DASHBOARD_COUNT: "status",
             Operation.USAGE_COUNT: "usage",
         }[op]
+        path = (
+            f"/v1/usage?team_id={TEAM}"
+            if op is Operation.USAGE_COUNT
+            else f"/v1/teams/{TEAM}/{suffix}"
+        )
         return await env.client.get(
-            f"/v1/teams/{TEAM}/{suffix}",
+            path,
             headers={"Authorization": "Bearer " + _make_jwt([TEAM])},
         )
     if op is Operation.STATUS:
