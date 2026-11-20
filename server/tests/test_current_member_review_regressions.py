@@ -217,3 +217,36 @@ async def test_address_discovery_programming_error_is_not_stored_binding_authori
     monkeypatch.setattr(type(env.app.state.awid_registry_client), "list_did_addresses", invalid_dependency_call)
     with pytest.raises(TypeError, match="invalid discovery call"):
         await resolve_identity_auth(request)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["rotation", "rotation-and-readmission", "revocation", "inactive", "unchanged"])
+async def test_certificate_stream_rechecks_its_original_authority_on_grant_cadence(
+    pinning, change
+):
+    from aweb.grant_streams import GRANT_STREAM_RECHECK_SECONDS, NeverGrantStreamGuard
+    from aweb.team_auth_deps import get_team_identity
+
+    env = pinning
+    actor = await _admit(env, "streamoriginal")
+    request = _request(env, actor)
+    identity = await get_team_identity(request, env.infra)
+    guard = NeverGrantStreamGuard(request, env.infra, identity)
+    assert await guard.reason() is None
+    if change.startswith("rotation"):
+        key = await _change_key(env)
+        if change == "rotation-and-readmission":
+            await _readmit(env, actor, key)
+    elif change == "revocation":
+        from aweb.application_state import application_registry_client
+
+        name, domain = TEAM.split(":", 1)
+        await application_registry_client(env.app.state).revoke_team_certificate(
+            domain, name, team_controller_signing_key=env.team_sk,
+            certificate_id=identity.certificate_id,
+        )
+    elif change == "inactive":
+        await env.db.execute("UPDATE {{tables.agents}} SET status='retired' WHERE agent_id=$1", actor.id)
+    # Advance only the cadence boundary, never authority or dependency results.
+    guard.checked_at -= GRANT_STREAM_RECHECK_SECONDS + 1
+    assert await guard.reason() == (None if change == "unchanged" else "team_membership_not_current")
