@@ -350,3 +350,46 @@ async def test_an_open_certificate_event_stream_stops_after_rotation(pinning, mo
         assert not any("event: actionable_" in frame for frame in frames), frames
     finally:
         await stream.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["mail", "chat"])
+async def test_local_key_recipient_uses_the_authenticated_senders_team(pinning, kind):
+    from messaging_actor_support import admit_messaging_actor, register_messaging_team
+    from aweb.messaging.recipient_lookup import resolve_agent_by_did
+    from aweb.service_errors import ConflictError
+
+    env = pinning
+    sender = await _admit(env, "selectedteamsender")
+    recipient = await _admit(env, "selectedteamrecipient")
+    other_team = "elsewhere:example.test"
+    await register_messaging_team(env, team_id=other_team)
+    other = await admit_messaging_actor(
+        env, alias="otherteamrecipient", team_id=other_team,
+        signing_key=recipient.sk, local=True,
+    )
+    assert other.did_key == recipient.did and other.agent_id != str(recipient.id)
+    # Without any team selection the identity remains ambiguous.
+    with pytest.raises(ConflictError):
+        await resolve_agent_by_did(env.infra, recipient.did)
+    path, payload = (
+        ("/v1/messages", {"to_did": recipient.did, "body": "selected team"})
+        if kind == "mail"
+        else ("/v1/chat/sessions", {"to_dids": [recipient.did], "message": "selected team"})
+    )
+    response = await _http(env, sender, "POST", path, payload)
+    assert response.status_code == 200, response.text
+    if kind == "mail":
+        row = await env.db.fetch_one(
+            "SELECT to_did, to_alias, team_id, body FROM {{tables.messages}} WHERE message_id=$1",
+            UUID(response.json()["message_id"]),
+        )
+        assert (row["to_did"], row["to_alias"], row["team_id"], row["body"]) == (
+            recipient.did, recipient.alias, TEAM, "selected team",
+        )
+    else:
+        row = await env.db.fetch_one(
+            "SELECT did, alias FROM {{tables.chat_participants}} WHERE session_id=$1 AND did=$2",
+            UUID(response.json()["session_id"]), recipient.did,
+        )
+        assert (row["did"], row["alias"]) == (recipient.did, recipient.alias)
