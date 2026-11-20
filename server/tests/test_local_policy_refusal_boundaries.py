@@ -27,26 +27,45 @@ async def admitted_local_recipient(server, *, team="eng:acme.com"):
     await register_messaging_team(env, team_id=team)
     sk, _, did = _make_keypair()
     fields = _make_certificate(
-        env.team_sk, env.team_did, did, team_id=team, alias="local-bob",
-        identity_scope="local", certificate_id=f"local-policy-{uuid4()}",
+        env.team_sk,
+        env.team_did,
+        did,
+        team_id=team,
+        alias="local-bob",
+        identity_scope="local",
+        certificate_id=f"local-policy-{uuid4()}",
     )
     certificate = _encode_certificate(fields)
     await server.registry.register_team_certificate(
-        "acme.com", team.split(":")[0], team_controller_signing_key=env.team_sk,
-        certificate_id=fields["certificate_id"], member_did_key=did,
-        member_did_aw=None, member_address=None, alias="local-bob",
-        identity_scope="local", certificate=certificate,
+        "acme.com",
+        team.split(":")[0],
+        team_controller_signing_key=env.team_sk,
+        certificate_id=fields["certificate_id"],
+        member_did_key=did,
+        member_did_aw=None,
+        member_address=None,
+        alias="local-bob",
+        identity_scope="local",
+        certificate=certificate,
     )
     body = b'{"agent_type":"agent"}'
     connected = await env.client.post(
-        "/v1/connect", content=body,
-        headers={**_signed_team_headers(sk, did, team, certificate, body),
-                 "Content-Type": "application/json"},
+        "/v1/connect",
+        content=body,
+        headers={
+            **_signed_team_headers(sk, did, team, certificate, body),
+            "Content-Type": "application/json",
+        },
     )
     assert connected.status_code == 200, connected.text
     return SimpleNamespace(
-        sk=sk, did=did, id=connected.json()["agent_id"], team=team,
-        alias="local-bob", certificate=certificate, certificate_id=fields["certificate_id"],
+        sk=sk,
+        did=did,
+        id=connected.json()["agent_id"],
+        team=team,
+        alias="local-bob",
+        certificate=certificate,
+        certificate_id=fields["certificate_id"],
     )
 
 
@@ -76,9 +95,13 @@ async def test_http_local_agent_id_keeps_team_scoped_404_and_member_neighbor(mai
     bob = await admitted_local_recipient(env)
     body = json.dumps({"to_agent_id": bob.id, "body": "refused mail"}).encode()
     refused = await env.client.post(
-        "/v1/messages", content=body,
-        headers={**_signed_identity_headers(env.pilot_key, env.pilot_did, env.pilot_stable, body),
-                 "X-Team-ID": bob.team, "Content-Type": "application/json"},
+        "/v1/messages",
+        content=body,
+        headers={
+            **_signed_identity_headers(env.pilot_key, env.pilot_did, env.pilot_stable, body),
+            "X-Team-ID": bob.team,
+            "Content-Type": "application/json",
+        },
     )
     assert refused.status_code == 404, refused.text
     assert refused.json() == {
@@ -86,9 +109,13 @@ async def test_http_local_agent_id_keeps_team_scoped_404_and_member_neighbor(mai
     }
     assert await env.db.fetch_value("SELECT count(*) FROM {{tables.messages}}") == 0
     accepted = await env.client.post(
-        "/v1/messages", content=body,
-        headers={**_signed_identity_headers(bob.sk, bob.did, "", body),
-                 "X-Team-ID": bob.team, "Content-Type": "application/json"},
+        "/v1/messages",
+        content=body,
+        headers={
+            **_signed_identity_headers(bob.sk, bob.did, "", body),
+            "X-Team-ID": bob.team,
+            "Content-Type": "application/json",
+        },
     )
     assert accepted.status_code == 200, accepted.text
     assert await env.db.fetch_value("SELECT count(*) FROM {{tables.messages}}") == 1
@@ -101,8 +128,11 @@ async def test_participant_discovery_retains_legacy_403_and_member_neighbor(mail
     request = Request({"type": "http", "app": env.fixture.app, "headers": []})
     # Component boundary: selected-team context is not verified team membership.
     outsider = MessagingAuth(
-        did_key=env.pilot_did, did_aw=env.pilot_stable, address=None,
-        team_id=bob.team, verified_team_id="ops:acme.com",
+        did_key=env.pilot_did,
+        did_aw=env.pilot_stable,
+        address=None,
+        team_id=bob.team,
+        verified_team_id="ops:acme.com",
     )
     with pytest.raises(HTTPException) as refused:
         await participant(bob.alias, request, db=env.fixture.infra, auth=outsider)
