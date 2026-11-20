@@ -6,7 +6,6 @@ import asyncio
 import base64
 import hashlib
 import inspect
-import ipaddress
 import json
 import logging
 from json import loads as json_loads
@@ -18,7 +17,7 @@ from email.utils import parsedate_to_datetime
 from enum import StrEnum
 from types import MappingProxyType
 from typing import Any, Awaitable, Callable, TypedDict
-from urllib.parse import quote, urlparse
+from urllib.parse import quote
 from uuid import UUID, uuid4
 
 from awid import revocation_cache
@@ -30,7 +29,12 @@ from redis.exceptions import RedisError
 
 from awid.contract import normalize_identity_scope
 from awid.did import did_key_from_signing_key
-from awid.dns_verify import DnsVerificationError, DomainVerifier
+from awid.dns_verify import (
+    DEFAULT_AWID_REGISTRY_URL,
+    DnsLookupError,
+    DnsVerificationError,
+    DomainVerifier,
+)
 from awid.external_authority import OriginContext
 from awid.id_certificates import (
     IDCertificateError,
@@ -195,17 +199,6 @@ _CACHE_GENERATION_TTL_SECONDS = 3600
 # Entries are stamped in whole seconds of the Redis clock and aged against its
 # microseconds.
 _MICROSECONDS = 1_000_000
-
-
-def _is_local_registry_origin(registry_url: str) -> bool:
-    host = (urlparse(canonical_server_origin(registry_url)).hostname or "").lower()
-    if host == "localhost" or host.endswith(".localhost"):
-        return True
-    try:
-        ip = ipaddress.ip_address(host)
-    except ValueError:
-        return False
-    return ip.is_loopback or ip.is_unspecified
 
 
 class _CertificateListView(StrEnum):
@@ -555,26 +548,26 @@ class RegistryClient:
             },
         }
 
-    async def _registry_url_for_domain(self, domain: str) -> str:
-        if self.domain_registry_resolver is not None:
-            return canonical_server_origin(await self.domain_registry_resolver(domain))
-        if self.transport is not None:
-            return canonical_server_origin(self.registry_url)
-        default_registry_url = canonical_server_origin(self.registry_url)
-        if _is_local_registry_origin(default_registry_url):
-            return default_registry_url
-        from awid.dns_verify import (
-            DEFAULT_AWID_REGISTRY_URL,
-            DnsLookupError,
-            discover_registry_override,
+    def _uses_dns_registry_discovery(self) -> bool:
+        return (
+            self.domain_registry_resolver is None
+            and self.transport is None
+            and canonical_server_origin(self.registry_url) == DEFAULT_AWID_REGISTRY_URL
         )
 
-        if default_registry_url != canonical_server_origin(DEFAULT_AWID_REGISTRY_URL):
+    async def _registry_url_for_domain(self, domain: str, *, fallback_on_dns_error: bool = True) -> str:
+        if self.domain_registry_resolver is not None:
+            return canonical_server_origin(await self.domain_registry_resolver(domain))
+        default_registry_url = canonical_server_origin(self.registry_url)
+        if not self._uses_dns_registry_discovery():
             return default_registry_url
+        from awid.dns_verify import discover_registry_override
 
         try:
             registry_override = await discover_registry_override(domain)
         except DnsLookupError:
+            if not fallback_on_dns_error:
+                raise
             logger.debug(
                 "AWID registry override lookup failed for %s; using configured registry %s",
                 domain,
@@ -2151,8 +2144,8 @@ class RegistryClient:
 
 
 @dataclass(frozen=True, kw_only=True)
-class _IDStatusCacheRoute:
-    """A bounded locator; only the pointed-to evidence can authorize a status."""
+class _RegistryCacheRoute:
+    """A bounded locator; only the answering origin's entry supplies evidence."""
 
     registry_url: str
     fetched_at: int
@@ -2271,7 +2264,7 @@ class CachedRegistryClient(RegistryClient):
         route_key = await self._generation_cache_key(
             self._id_status_route_key(request), self._id_status_generation_key(domain)
         )
-        route_now, route = await self._read_id_status_route(route_key)
+        route_now, route = await self._read_registry_cache_route(route_key)
         if route is not None and route_now >= route.fetched_at * _MICROSECONDS:
             route_age = _whole_seconds_up((route_now - route.fetched_at * _MICROSECONDS) * 1_000)
             if route_age <= _ID_STATUS_FRESH_SECONDS:
@@ -2343,10 +2336,8 @@ class CachedRegistryClient(RegistryClient):
                 json.dumps(entry, separators=(",", ":"), sort_keys=True),
                 ex=_ID_STATUS_FRESH_SECONDS,
             )
-            await self._redis_set(
-                route_key,
-                json.dumps({"registry_url": registry_url, "fetched_at": fetched_at}),
-                ex=_ID_STATUS_FRESH_SECONDS,
+            await self._write_registry_cache_route(
+                route_key, registry_url, fetched_at=fetched_at, retention_seconds=_ID_STATUS_FRESH_SECONDS
             )
         return _IDStatusRefresh(entry=entry, age=_whole_seconds_up(_monotonic_ns() - started_ns))
 
@@ -2362,7 +2353,7 @@ class CachedRegistryClient(RegistryClient):
             return None
         return int(seconds)
 
-    async def _read_id_status_payload(self, cache_key: str) -> tuple[int, dict[str, Any] | None]:
+    async def _read_registry_cache_payload(self, cache_key: str) -> tuple[int, dict[str, Any] | None]:
         """Read a JSON object and Redis clock in one pipelined round trip."""
         try:
             async with self.redis_client.pipeline(transaction=False) as pipe:
@@ -2386,7 +2377,7 @@ class CachedRegistryClient(RegistryClient):
         return redis_now, entry
 
     async def _read_id_status_entry(self, cache_key: str) -> tuple[int, dict[str, Any] | None]:
-        redis_now, entry = await self._read_id_status_payload(cache_key)
+        redis_now, entry = await self._read_registry_cache_payload(cache_key)
         if entry is not None and (
             type(entry.get("fetched_at")) is not int
             or not isinstance(entry.get("status"), dict)
@@ -2397,23 +2388,73 @@ class CachedRegistryClient(RegistryClient):
             return redis_now, None
         return redis_now, entry
 
-    async def _read_id_status_route(self, route_key: str) -> tuple[int, _IDStatusCacheRoute | None]:
-        redis_now, entry = await self._read_id_status_payload(route_key)
+    async def _read_registry_cache_route(self, route_key: str) -> tuple[int, _RegistryCacheRoute | None]:
+        redis_now, entry = await self._read_registry_cache_payload(route_key)
         if entry is None:
             return redis_now, None
         origin, fetched_at = entry.get("registry_url"), entry.get("fetched_at")
         if isinstance(origin, str) and type(fetched_at) is int:
             try:
                 if canonical_server_origin(origin) == origin:
-                    return redis_now, _IDStatusCacheRoute(
+                    return redis_now, _RegistryCacheRoute(
                         registry_url=origin, fetched_at=fetched_at
                     )
             except ValueError:
                 logger.warning(
-                    "Invalid AWID status origin locator for %s", route_key, exc_info=True
+                    "Invalid AWID origin locator for %s", route_key, exc_info=True
                 )
         await self._invalidate_keys(route_key)
         return redis_now, None
+
+    async def _write_registry_cache_route(
+        self, route_key: str, registry_url: str, *, fetched_at: int, retention_seconds: int
+    ) -> None:
+        await self._redis_set(
+            route_key,
+            json.dumps({"registry_url": registry_url, "fetched_at": fetched_at}),
+            ex=retention_seconds,
+        )
+
+    async def _team_read_origin(
+        self, domain: str, name: str, *, fresh_seconds: int, outage_grace_seconds: int = 0
+    ) -> tuple[str, RegistryError | None]:
+        """Locate origin-scoped evidence without renewing its freshness or grace.
+
+        DNS recovery may change the origin. A lookup outage can point the key
+        and CRL readers back to the last origin only to check their own grace.
+        Explicit resolver/transport policies keep their original selection.
+        """
+        if not self._uses_dns_registry_discovery() or self.registry_origin_context is not None:
+            return await self._registry_url_for_domain(domain), None
+
+        route_key = self._registry_route_key("team", build_team_id(domain, name))
+        _, route = await self._read_registry_cache_route(route_key)
+        started_at = _cache_now()
+        if route is not None and 0 <= started_at - route.fetched_at < fresh_seconds:
+            return route.registry_url, None
+
+        try:
+            origin = await self._registry_url_for_domain(domain, fallback_on_dns_error=False)
+        except DnsLookupError as exc:
+            if (
+                route is not None
+                and outage_grace_seconds
+                and 0 <= _cache_now() - route.fetched_at <= outage_grace_seconds
+            ):
+                error = RegistryError(str(exc), status_code=503, code="unavailable")
+                error.__cause__ = exc
+                return route.registry_url, error
+            # A DNS outage can select the configured fallback for this read,
+            # but cannot install it as the newly discovered owner.
+            return canonical_server_origin(self.registry_url), None
+
+        await self._write_registry_cache_route(
+            route_key,
+            origin,
+            fetched_at=started_at,
+            retention_seconds=_TEAM_REVOCATIONS_OUTAGE_GRACE_SECONDS,
+        )
+        return origin, None
 
     async def resolve_key(self, did_aw: str) -> KeyResolution:
         return await self._cached_read(
@@ -2560,19 +2601,24 @@ class CachedRegistryClient(RegistryClient):
         Refresh synchronously after freshness expires. Team metadata's longer
         TTL and stale-while-revalidate path must never authorize a controller.
         """
-        registry_url = await self._registry_url_for_domain(domain)
-        cache_key = self._team_public_key_cache_key(domain, name, registry_url=registry_url)
         ttl_seconds = _TEAM_REVOCATIONS_CACHE_TTL_SECONDS
         grace_seconds = _TEAM_REVOCATIONS_OUTAGE_GRACE_SECONDS
+        registry_url, lookup_error = await self._team_read_origin(
+            domain, name, fresh_seconds=ttl_seconds, outage_grace_seconds=grace_seconds
+        )
+        cache_key = self._team_public_key_cache_key(domain, name, registry_url=registry_url)
         cached = await self._read_cache_entry(cache_key, decode=lambda value: value)
         fetched_at = _cache_entry_fetched_at(cached, ttl_seconds) if cached is not None else None
         if (
-            cached is not None
+            lookup_error is None
+            and cached is not None
             and fetched_at is not None
             and max(0, _cache_now() - fetched_at) < ttl_seconds
         ):
             return cached["value"]
         try:
+            if lookup_error is not None:
+                raise lookup_error
             # Bind to HTTP, bypassing get_team's metadata cache entirely.
             team = await self._get_team_at_origin(
                 domain=domain, name=name, registry_url=registry_url
@@ -2624,7 +2670,9 @@ class CachedRegistryClient(RegistryClient):
         even if the attempt outlasts that window. An unchanged or failed read
         never renews the old key's fact age.
         """
-        registry_url = await self._registry_url_for_domain(domain)
+        registry_url, _ = await self._team_read_origin(
+            domain, name, fresh_seconds=_TEAM_REVOCATIONS_CACHE_TTL_SECONDS
+        )
         cache_key = self._team_public_key_cache_key(domain, name, registry_url=registry_url)
         task = self._team_key_signature_refreshes.get(cache_key)
         if task is None:
@@ -2688,7 +2736,9 @@ class CachedRegistryClient(RegistryClient):
         return None
 
     async def get_team(self, domain: str, name: str) -> Team | None:
-        registry_url = await self._registry_url_for_domain(domain)
+        registry_url, _ = await self._team_read_origin(
+            domain, name, fresh_seconds=_TEAM_METADATA_CACHE_TTL_SECONDS
+        )
         return await self._cached_read(
             cache_key=self._team_metadata_cache_key(domain, name, registry_url=registry_url),
             ttl_seconds=_TEAM_METADATA_CACHE_TTL_SECONDS,
@@ -2747,10 +2797,13 @@ class CachedRegistryClient(RegistryClient):
         # _TEAM_REVOCATIONS_OUTAGE_GRACE_SECONDS). Freshness, staleness, and
         # grace are all decided on the age of the cached data (its stored fetch
         # timestamp), never on Redis expiry alone.
-        registry_url = await self._registry_url_for_domain(domain)
-        cache_key = self._team_revocations_cache_key(domain, name, registry_url=registry_url)
         ttl_seconds = _TEAM_REVOCATIONS_CACHE_TTL_SECONDS
-        retention_seconds = ttl_seconds + _TEAM_REVOCATIONS_OUTAGE_GRACE_SECONDS
+        grace_seconds = _TEAM_REVOCATIONS_OUTAGE_GRACE_SECONDS
+        registry_url, lookup_error = await self._team_read_origin(
+            domain, name, fresh_seconds=ttl_seconds, outage_grace_seconds=grace_seconds
+        )
+        cache_key = self._team_revocations_cache_key(domain, name, registry_url=registry_url)
+        retention_seconds = ttl_seconds + grace_seconds
 
         cached = None
         if certificate_ids is not None:
@@ -2793,9 +2846,9 @@ class CachedRegistryClient(RegistryClient):
         if cached is not None:
             fetched_at = _cache_entry_fetched_at(cached, ttl_seconds)
             cached_age = max(0, _cache_now() - fetched_at)
-            if cached["fresh"]:
+            if lookup_error is None and cached["fresh"]:
                 return project(cached["value"])
-            if cached_age <= ttl_seconds * _STALE_MULTIPLIER:
+            if lookup_error is None and cached_age <= ttl_seconds * _STALE_MULTIPLIER:
                 # Serve bounded stale evidence while refreshing; record an
                 # unsuccessful background refresh with the retained evidence age.
                 def _on_refresh_failure(exc: BaseException) -> None:
@@ -2821,6 +2874,8 @@ class CachedRegistryClient(RegistryClient):
                     return project(cached["value"])
 
         try:
+            if lookup_error is not None:
+                raise lookup_error
             fresh_value = await fetch_revocations()
         except Exception as exc:
             if isinstance(exc, RegistryError) and exc.status_code in (401, 403):
@@ -2877,7 +2932,9 @@ class CachedRegistryClient(RegistryClient):
         Both a waiter and the shared producer retain the client's total bound;
         cancelling a waiter does not cancel another waiter's bounded producer.
         """
-        registry_url = await self._registry_url_for_domain(domain)
+        registry_url, _ = await self._team_read_origin(
+            domain, name, fresh_seconds=_TEAM_CERTIFICATES_CACHE_TTL_SECONDS
+        )
         cache_key = await self._generation_cache_key(
             self._team_certificates_cache_key(
                 domain, name, active_only=False, registry_url=registry_url
@@ -3009,7 +3066,9 @@ class CachedRegistryClient(RegistryClient):
         # enforcement input exactly as a failed revocation refresh does, and is
         # logged as loudly. Retention is unchanged: no grace, no widened TTL —
         # this is a logging-parity change only.
-        registry_url = await self._registry_url_for_domain(domain)
+        registry_url, _ = await self._team_read_origin(
+            domain, name, fresh_seconds=_TEAM_CERTIFICATES_CACHE_TTL_SECONDS
+        )
 
         def _on_refresh_failure(exc: BaseException, age_seconds: int) -> None:
             logger.warning(
@@ -3748,8 +3807,11 @@ class CachedRegistryClient(RegistryClient):
     # They must not be reused as evidence after this cache-owner upgrade.
     def _id_status_route_key(self, request: dict[str, Any]) -> str:
         digest = hashlib.sha256(canonical_json_bytes(request)).hexdigest()
+        return self._registry_route_key("id_status", f"{request['domain']}:{digest}")
+
+    def _registry_route_key(self, kind: str, scope: str) -> str:
         origin = canonical_server_origin(self.registry_url)
-        return f"awid:registry_route:v1:id_status:{origin}:{request['domain']}:{digest}"
+        return f"awid:registry_route:v1:{kind}:{origin}:{scope}"
 
     def _id_status_cache_key(
         self, request: dict[str, Any], *, registry_url: str | None = None
