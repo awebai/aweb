@@ -15,6 +15,7 @@ repository, moved from this repository at `07b554c1f`.
 
 ## Decisions about coordination
 
+* [Deployment attribution uses ordinary endorsement](deployment-attribution-uses-ordinary-endorsement.md) — A human endorses one ordinary registered deployment root once, through existing issuance and adoption, and that root signs its unattended descendants; protected-resource confirmation is required only where a resource's own policy requires it, never as a prerequisite of ordinary attribution.
 * [Harvest before retire](harvest-before-retire.md) — Every seat, coordinators included, is harvested before it is retired; open-framework knowledge goes to the public OSS base and hosted knowledge to the private hosted base, and turning harvest on in configuration covers only future spawns, so existing seats need an explicit harvest.
 * [Lane trains share main](lane-trains-share-main.md) — A lane whose work is decoupled from the server builds and lands its own train instead of queueing behind the repository train; it pushes only after the repository-train owner OKs the slot, runs the full candidate gate whenever the train touches the shared naapp library, and never re-gates a tree that already failed.
 * [Migration number collisions](migration-number-collisions.md) — When unlanded branches pick the same migration numbers, the first to land keeps them and the later branch renumbers as a reviewed rename-only delta; no lower number lands after a higher one, the landing coordinator assigns ranges when lanes overlap, and authors re-check numbers at every main merge.

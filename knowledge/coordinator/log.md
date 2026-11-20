@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-11
+* **Harvest**: one proposal from the `servers` coordinator seat.
+* **Creation**: decision [deployment attribution uses ordinary endorsement](deployment-attribution-uses-ordinary-endorsement.md) — operator-accepted direction (source-reported relay): one ordinary deployment root endorsed once signs unattended descendants, with no steward design or blanket pause, protected-resource confirmation only where resource policy requires it, and stated limits on root revocation.
+
 ## 2026-11-10
 * **Update**: [operating-continuity](operating-continuity.md) and index — the historical coordinator record (decisions, docs and memory) is named at its location in the private ac repository, under `aweb-team-records/agents/coordinator/`, moved from this repository at `07b554c1f`.
 
