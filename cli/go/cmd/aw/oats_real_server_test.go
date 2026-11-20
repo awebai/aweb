@@ -119,11 +119,6 @@ func TestOATSRealExplicitHomeJoinFrom(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The preceding fresh member spent the registry client's per-team
-	// certificate-miss refresh budget. Respect its five-second admission
-	// window (awid/registry.py:refresh_team_certificates_after_miss) before
-	// another fresh credential, so this checks join rather than suppression.
-	time.Sleep(5 * time.Second)
 	nativeTarget := filepath.Join(filepath.Dir(target), "native-identity")
 	world.requireCommand(t, nativeTarget, "team", "join", changedToken, "--name", "native-worker")
 	nativeStatus := world.requireCommand(t, nativeTarget, "id", "status", "--team", world.TeamID)
@@ -143,8 +138,6 @@ func TestOATSRealExplicitHomeJoinFrom(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The token-taking join likewise consumed the same real refresh budget.
-	time.Sleep(5 * time.Second)
 	neighborTarget := filepath.Join(filepath.Dir(target), "named-with-checkout-principal")
 	world.requireCommand(t, neighborTarget, "init", "--join-from", source.Home, "--join-team", world.TeamID, "--name", "neighbor-worker", "--do-not-touch-agents-md")
 	neighborJSON := world.requireCommand(t, neighborTarget, "id", "status", "--team", world.TeamID)
