@@ -178,10 +178,12 @@ async def read_certificate_registration(
 
     member_team_scope(team_id)
     try:
-        # Every production caller has already excluded revoked certificates.
-        # The SDK's active list keeps that observation independent of revoked
-        # history size; the complete CRL remains the revocation authority.
-        registered = await registered_certificates(registry_client, team_id, active_only=True)
+        # OFF measurement follows revocation verification, so the SDK active
+        # view avoids scanning that history. REQUIRED keeps the complete-list
+        # cache shared with signature-verified miss refreshes.
+        registered = await registered_certificates(
+            registry_client, team_id, active_only=mode is RegistrationMode.NOT_REQUIRED
+        )
     except HTTPException as exc:
         if exc.status_code < 500:
             raise
