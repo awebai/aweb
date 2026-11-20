@@ -170,9 +170,10 @@ const (
 )
 
 type managedHTTPReplyOptions struct {
-	UnverifiedReplies  bool
-	Receipt            managedReceiptIdentity
-	ReusedConversation string
+	UnverifiedReplies      bool
+	Receipt                managedReceiptIdentity
+	ReusedConversation     string
+	BeforeConversationRead func(context.Context)
 }
 
 // The generic managed transport talks to a controlled provider over HTTP. Its
@@ -243,6 +244,12 @@ func newManagedHTTPReplyFixture(t *testing.T, options managedHTTPReplyOptions) *
 			}
 			write(response)
 		case strings.HasPrefix(r.URL.Path, "/runtime/bridge/gw/conversations/"):
+			if options.BeforeConversationRead != nil {
+				options.BeforeConversationRead(r.Context())
+				if r.Context().Err() != nil {
+					return
+				}
+			}
 			conversation := strings.TrimPrefix(r.URL.Path, "/runtime/bridge/gw/conversations/")
 			f.mu.Lock()
 			messages := append([]awid.InboxMessage(nil), f.inbox[conversation]...)
@@ -574,10 +581,46 @@ func assertQuestionText(t *testing.T, task a2agw.Task) {
 }
 
 func TestHTTPManagedUnverifiedQuestionRefusesAmbiguousTask(t *testing.T) {
-	f := newManagedHTTPReplyFixture(t, managedHTTPReplyOptions{ReusedConversation: "unverified-shared", UnverifiedReplies: true})
+	firstRead, secondRead := make(chan struct{}), make(chan struct{})
+	releaseFirst, secondCanceled := make(chan struct{}), make(chan struct{})
+	var reads atomic.Int32
+	var release sync.Once
+	unblockFirst := func() { release.Do(func() { close(releaseFirst) }) }
+	defer unblockFirst()
+	f := newManagedHTTPReplyFixture(t, managedHTTPReplyOptions{
+		ReusedConversation: "unverified-shared",
+		UnverifiedReplies:  true,
+		BeforeConversationRead: func(ctx context.Context) {
+			switch reads.Add(1) {
+			case 1:
+				close(firstRead)
+				select {
+				case <-releaseFirst:
+				case <-ctx.Done():
+				}
+			case 2:
+				close(secondRead)
+				<-ctx.Done()
+				close(secondCanceled)
+			}
+		},
+	})
+	waitForRead := func(stage string, done <-chan struct{}) {
+		t.Helper()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("provider did not observe %s", stage)
+		}
+	}
+	// Park the first read before sending the second task, so each in-flight
+	// request belongs to a known poller even though they share a conversation.
 	first := sentHTTPTask(t, f.callOK(t, sendHTTPInput("first-unverified-task")))
+	waitForRead("the first task's poll", firstRead)
 	second := sentHTTPTask(t, f.callOK(t, sendHTTPInput("second-unverified-task")))
+	waitForRead("the second task's poll", secondRead)
 	f.injectSignedReply(t, signedHTTPReply{Task: first, Body: "QUESTION: Which order?", Binding: conversationUnsigned})
+	unblockFirst()
 	deadline := time.Now().Add(2 * time.Second)
 	var notice awid.SendMessageRequest
 	for {
@@ -614,6 +657,9 @@ func TestHTTPManagedUnverifiedQuestionRefusesAmbiguousTask(t *testing.T) {
 		t.Fatalf("task-named question changed its neighbor: %#v", got)
 	}
 	f.waitForAppliedTransition(t, second.ID)
+	// Only the first poller read the fenced question. Applying it must cancel
+	// the second poller and still leave the first to read the next question.
+	waitForRead("cancellation of the second task's in-flight poll", secondCanceled)
 	f.injectSignedReply(t, signedHTTPReply{Task: first, Body: "QUESTION: Which shipment?", Binding: conversationUnsigned})
 	if got := f.waitForTaskReply(t, first); got.Status.State != a2agw.TaskStateInputRequired || got.Status.Message == nil || len(got.Status.Message.Parts) != 1 || got.Status.Message.Parts[0].Text != "Which shipment?" {
 		t.Fatalf("retained, interrupted task blocked a question for its working neighbor: %#v", got.Status)

@@ -561,12 +561,14 @@ func (b *MailBridge) pollTaskReplies(taskID string) {
 		}
 		if err == nil && resp != nil {
 			for _, msg := range resp.Messages {
-				_, applied, err := b.IngestInboxMessage(thread.PollContext, msg)
+				// A shared conversation can carry replies for other tasks. Only
+				// this task's poll context controls the lifetime of its reader.
+				if thread.PollContext.Err() != nil {
+					return
+				}
+				_, _, err := b.IngestInboxMessage(thread.PollContext, msg)
 				if err != nil {
 					log.Printf("aweb-a2a-gw: reply rejected task=%s: %v", taskID, err)
-				}
-				if applied {
-					return
 				}
 			}
 		}
