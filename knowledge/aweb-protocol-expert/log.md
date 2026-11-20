@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-09
+* **Harvest**: OKF proposal from seat aweb-protocol-expert-human-kind with backing note tmpfs-launcher-landed-status.md; the landing is source-reported by the OSS coordinator and verified against main at cfdc06255e2a.
+* **Fix**: [test databases run on tmpfs](/aweb-protocol-expert/decisions/test-databases-run-on-tmpfs.md) records its verified status: the shared candidate test launcher keeps PostgreSQL data and WAL on verified tmpfs with swap disabled since 027e97b5; the 2026-10-25 status (launcher still on disk) is obsolete. Other launchers are not claimed audited; the decision and its rationale are unchanged.
+
 ## 2026-11-06
 * **Fix**: review of the db-access proposal on npm gitHead, PubSub release and stream checkouts: hosted specifics in [stream bodies leave the request connection scope](/aweb-protocol-expert/lessons/stream-bodies-leave-the-request-connection-scope.md) and [an npm tarball publish records no gitHead](/aweb-protocol-expert/lessons/npm-tarball-publish-records-no-githead.md) are stated generically or dropped, as the OSS and Cloud boundary requires.
 * **Update**: [SSE cleanup is cancelled on client disconnect](/aweb-protocol-expert/lessons/sse-cleanup-is-cancelled-on-disconnect.md) and [a PubSub release survives any cancellation](/aweb-protocol-expert/decisions/pubsub-release-survives-any-cancellation.md) link each other: the AnyIO shield covers Starlette's disconnect, not native task cancellation.
