@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-14
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-owner-acts (task aweb-adbb).
+* **Creation**: lesson [Compose checks every service's env_file when any service starts](/aweb-expert/lessons/compose-checks-every-env-file.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
