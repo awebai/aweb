@@ -28,6 +28,17 @@ def notify(**fields):
     print(json.dumps(fields), flush=True)
 
 
+def firewall(action, run):
+    result = subprocess.run(
+        ["sudo", "-n", "/usr/local/sbin/aweb-merak-egress", action, run],
+        check=True, capture_output=True, text=True, timeout=30,
+    )
+    receipt = json.loads(result.stdout)
+    if receipt["run"] != run or receipt["present"] is not (action == "add"):
+        raise RuntimeError("unexpected Merak firewall receipt")
+    return receipt
+
+
 def observe_guest(job, duration):
     """Observe physical host pressure while waiting for close, EOF or expiry."""
     start = time.monotonic()
@@ -79,9 +90,14 @@ def remove_guest(job):
     if remaining or existing.intersection(ids):
         raise RuntimeError("guest container still present")
     volumes = docker("volume", "ls", "-q", "--filter", selector)
-    networks = docker("network", "ls", "-q", "--filter", selector)
-    if volumes or networks:
+    networks = docker("network", "ls", "--no-trunc", "-q", "--filter", selector).splitlines()
+    for network in networks:
+        docker("network", "rm", network)
+    if volumes or docker("network", "ls", "-q", "--filter", selector):
         raise RuntimeError("run-labelled launcher volumes or networks remain")
+    # The host helper independently refuses to remove the rules while the
+    # corresponding bridge still exists. Keep the ownership file on failure.
+    egress = firewall("remove", job.name)
     if job.exists():
         shutil.rmtree(job)
     return {
@@ -91,6 +107,8 @@ def remove_guest(job):
         "labels_absent": not remaining,
         "host_volumes_remaining": [],
         "host_networks_remaining": [],
+        "removed_network_ids": networks,
+        "egress": egress,
         "guest_disk_and_checkout_absent": not job.exists(),
         "disk_free_after": shutil.disk_usage(ROOT).free,
     }
@@ -134,6 +152,20 @@ def serve(spec):
         (job / "owner").write_text(run)
         metrics = {}
         try:
+            egress = firewall("add", run)
+            if egress["helper_sha256"] != spec["firewall_sha256"]:
+                raise ValueError("installed Merak egress helper differs from controller")
+            network = "aweb-" + run
+            network_id = docker(
+                "network", "create", "--driver", "bridge", "--ipv6=false",
+                "--label", f"{LABEL}={run}",
+                "--opt", "com.docker.network.bridge.name=" + egress["bridge"],
+                "--opt", "com.docker.network.bridge.enable_icc=false", network,
+            )
+            # Docker's embedded resolver otherwise hides the actual DNS target.
+            # QEMU reads these numeric nameservers directly inside the launcher.
+            dns = egress["dns"]
+            (job / "resolv.conf").write_text("".join("nameserver " + ip + "\n" for ip in dns))
             (job / "user-data").write_text("#cloud-config\n" + json.dumps(spec["seed"]))
             (job / "meta-data").write_text(
                 json.dumps({"instance-id": run, "local-hostname": run})
@@ -160,6 +192,10 @@ def serve(spec):
                 "--label",
                 f"{LABEL}={run}",
                 "--device=/dev/kvm",
+                "--network", network_id,
+                "--sysctl", "net.ipv6.conf.all.disable_ipv6=1",
+                "--dns", dns[0], "--dns", dns[1],
+                "--mount", f"type=bind,src={job}/resolv.conf,dst=/etc/resolv.conf,readonly",
                 "--user",
                 f"{os.getuid()}:{os.getgid()}",
                 "--cap-drop=ALL",
@@ -181,6 +217,8 @@ def serve(spec):
                 ready=True,
                 run=run,
                 container=identifier,
+                network_id=network_id,
+                egress=egress,
                 base=spec["base"],
                 disk_free_before=before,
             )

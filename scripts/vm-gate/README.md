@@ -301,3 +301,12 @@ The Merak closure includes sampled physical host memory use, minimum host
 filesystem free space, peak allocated overlay bytes and the launcher's cgroup
 memory peak when readable. Use those figures with the native stage times and
 total elapsed time to assess capacity.
+
+A Merak host administrator installs the reviewed helper once with
+`sudo ./merak_egress.py install` from `scripts/vm-gate/vm_gate`. The installer
+checks the nftables policy in a fresh network namespace and validates the
+restricted sudo grant. The controller verifies the installed helper digest at
+admission. Each run creates its own IPv4 bridge and nftables table before
+booting its launcher. The table filters both original and translated destinations,
+restricts forwarding to the physical public uplink and pins DNS to 1.1.1.1
+and 9.9.9.9. Closure removes the launcher, bridge and table in that order.

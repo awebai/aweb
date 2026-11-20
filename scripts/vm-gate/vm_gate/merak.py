@@ -101,6 +101,9 @@ def run_guest(runtime, remote):
         "run": run,
         "base": base,
         "launcher": launcher,
+        "firewall_sha256": hashlib.sha256(
+            Path(__file__).with_name("merak_egress.py").read_bytes()
+        ).hexdigest(),
         "duration": int(sum(budget.steps.values()) + 1),
         "seed": {
             "disable_root": False,
@@ -156,6 +159,10 @@ def run_guest(runtime, remote):
                 or admission.get("run") != run
                 or admission.get("base") != base
                 or not re.fullmatch(r"[a-f0-9]{64}", admission.get("container", ""))
+                or not re.fullmatch(r"[a-f0-9]{64}", admission.get("network_id", ""))
+                or admission.get("egress", {}).get("present") is not True
+                or admission["egress"].get("run") != run
+                or admission["egress"].get("helper_sha256") != spec["firewall_sha256"]
             ):
                 raise Infrastructure("Merak guest admission differs from the dispatch")
             budget = CompletionBudget(time.time(), runtime.args.timeout, **durations)
@@ -227,6 +234,11 @@ def run_guest(runtime, remote):
                         raise Infrastructure(
                             "Merak closure lacks admitted container ID"
                         )
+                    network = summary.get("admission", {}).get("network_id")
+                    if network and network not in closure.get("removed_network_ids", []):
+                        raise Infrastructure("Merak closure lacks admitted network ID")
+                    if closure.get("egress", {}).get("present") is not False:
+                        raise Infrastructure("Merak closure lacks firewall removal")
                     summary.update(state="closed", cleanup=closure)
                 except (
                     ValueError,
