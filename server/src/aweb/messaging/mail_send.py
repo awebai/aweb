@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from aweb.messaging.refusals import RecipientIdentityBindingError
+
 import json
 import logging
 from collections.abc import Mapping, Sequence
@@ -955,18 +957,18 @@ async def _continuation_signature_recipient(
     if not signed_stable and isinstance(signed_to, str) and signed_to.startswith("did:aw:"):
         signed_stable = signed_to
     if not stable.startswith("did:aw:") or signed_stable != stable:
-        raise IdentityBindingError(IdentityBindingCode.MISMATCH)
+        raise RecipientIdentityBindingError(IdentityBindingCode.MISMATCH)
     address = str(participant.get("address") or "")
     signed_address = signed_to if isinstance(signed_to, str) and "/" in signed_to else ""
     if signed_address and signed_address != address:
-        raise IdentityBindingError(IdentityBindingCode.MISMATCH)
+        raise RecipientIdentityBindingError(IdentityBindingCode.MISMATCH)
     if not signed_key and isinstance(signed_to, str) and signed_to.startswith("did:key:"):
         signed_key = signed_to
     if not signed_key:
         # Released clients may sign only the stable DID on a stored route.
         # Discover its current key solely for validation, never for delivery.
         if runtime.registry_client is None:
-            raise IdentityBindingError(IdentityBindingCode.UNAVAILABLE)
+            raise RecipientIdentityBindingError(IdentityBindingCode.UNAVAILABLE)
         try:
             resolved = await runtime.registry_client.resolve_key_fresh(stable)
             signed_key = resolved.current_did_key
@@ -981,22 +983,25 @@ async def _continuation_signature_recipient(
                 if exc.status_code == 404
                 else IdentityBindingCode.UNAVAILABLE
             )
-            raise IdentityBindingError(code) from exc
+            raise RecipientIdentityBindingError(code) from exc
         except AWID_DEPENDENCY_ERRORS as exc:
             logging.getLogger(__name__).warning(
                 "Stored mail signature binding dependency failed failure_type=%s",
                 type(exc).__name__,
             )
-            raise IdentityBindingError(IdentityBindingCode.UNAVAILABLE) from exc
+            raise RecipientIdentityBindingError(IdentityBindingCode.UNAVAILABLE) from exc
     if not isinstance(signed_key, str) or not signed_key.startswith("did:key:"):
-        raise IdentityBindingError(IdentityBindingCode.MISMATCH)
-    await observe_current_identity_binding(
-        runtime.registry_client,
-        runtime.identity_binding_cache,
-        did_key=signed_key,
-        did_aw=stable,
-        address=signed_address,
-    )
+        raise RecipientIdentityBindingError(IdentityBindingCode.MISMATCH)
+    try:
+        await observe_current_identity_binding(
+            runtime.registry_client,
+            runtime.identity_binding_cache,
+            did_key=signed_key,
+            did_aw=stable,
+            address=signed_address,
+        )
+    except IdentityBindingError as exc:
+        raise RecipientIdentityBindingError(exc.code, headers=exc.headers) from exc
     # This copy is passed only to the payload validator. The original recipient,
     # participant agent_id, policy rows and all projection markers stay intact.
     return {**recipient, "did_aw": stable, "did_key": signed_key, "address": address}

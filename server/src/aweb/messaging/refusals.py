@@ -4,11 +4,15 @@ from enum import StrEnum
 from http import HTTPStatus
 import logging
 
-from aweb.service_errors import ServiceError, ValidationError
+from aweb.service_errors import IdentityBindingError, ServiceError, ValidationError
 from aweb.messaging.kinds import MessageKind
 from aweb.messaging.recipient_bindings import RecipientSelectorField
 
 logger = logging.getLogger(__name__)
+
+
+class RecipientIdentityBindingError(IdentityBindingError):
+    """The recipient binding failed; sender authentication remains separate."""
 
 
 class DeliveryRefusalCode(StrEnum):
@@ -131,9 +135,7 @@ def registry_dependency_refusal(exc: Exception, *, operation: str) -> DeliveryRe
     classification = classify_awid_dependency_error(exc, operation=operation)
     status_code = classification[0]
     logger.log(
-        logging.ERROR
-        if status_code == HTTPStatus.INTERNAL_SERVER_ERROR
-        else logging.WARNING,
+        logging.ERROR if status_code == HTTPStatus.INTERNAL_SERVER_ERROR else logging.WARNING,
         "delivery_registry_dependency_failed failure_type=%s status=%d",
         type(exc).__name__,
         status_code,
@@ -152,8 +154,7 @@ def signed_chat_payload_refusal(*, detail: str) -> DeliveryRefusal:
     """
     return DeliveryRefusal(
         status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
-        detail=detail.rstrip(".")
-        + ". Check the chat fields and sign the message again.",
+        detail=detail.rstrip(".") + ". Check the chat fields and sign the message again.",
     )
 
 

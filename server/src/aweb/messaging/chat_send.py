@@ -125,10 +125,10 @@ from aweb.messaging.signatures import (
     require_verified_message_signature,
 )
 from aweb.messaging.verification import require_conversation_not_legacy_bound
+from aweb.messaging.refusals import RecipientIdentityBindingError
 from aweb.service_errors import (
     ConflictError,
     IdentityBindingCode,
-    IdentityBindingError,
     ForbiddenError,
     NotFoundError,
     ValidationError,
@@ -428,7 +428,7 @@ async def deliver_federated_chat(
     local = await local_recipient_for_own_route(db, route, runtime)
     if local is not None:
         if envelope.target_current_did_key != local.get("did_key"):
-            raise IdentityBindingError(IdentityBindingCode.MISMATCH)
+            raise RecipientIdentityBindingError(IdentityBindingCode.MISMATCH)
         await require_agent_chat(db, [local])
         await authorize_message_delivery(
             db,

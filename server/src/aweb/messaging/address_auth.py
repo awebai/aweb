@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from aweb.messaging.refusals import RecipientIdentityBindingError
+
 from aweb.messaging.refusals import unreachable_address_refusal as unreachable_address_refusal
 
 import json
@@ -136,7 +138,7 @@ async def local_recipient_for_own_route(
         # through the existing binding authority, outside database transactions.
         # This validation context never repairs a participant or agent marker.
         if runtime.registry_client is None:
-            raise IdentityBindingError(IdentityBindingCode.UNAVAILABLE)
+            raise RecipientIdentityBindingError(IdentityBindingCode.UNAVAILABLE)
         try:
             resolution = await runtime.registry_client.resolve_key_fresh(did)
         except AWID_DEPENDENCY_ERRORS as exc:
@@ -146,17 +148,20 @@ async def local_recipient_for_own_route(
                     "Own-route recipient binding unavailable failure_type=%s",
                     type(exc).__name__,
                 )
-            raise IdentityBindingError(
+            raise RecipientIdentityBindingError(
                 IdentityBindingCode.MISMATCH if mismatch else IdentityBindingCode.UNAVAILABLE
             ) from exc
         address = str(route.get("address") or "")
-        binding = await observe_current_identity_binding(
-            runtime.registry_client,
-            runtime.identity_binding_cache,
-            did_key=resolution.current_did_key,
-            did_aw=did,
-            address=address if "/" in address else "",
-        )
+        try:
+            binding = await observe_current_identity_binding(
+                runtime.registry_client,
+                runtime.identity_binding_cache,
+                did_key=resolution.current_did_key,
+                did_aw=did,
+                address=address if "/" in address else "",
+            )
+        except IdentityBindingError as exc:
+            raise RecipientIdentityBindingError(exc.code, headers=exc.headers) from exc
         recipient = replace(recipient, did_key=binding.did_key)
     return recipient
 

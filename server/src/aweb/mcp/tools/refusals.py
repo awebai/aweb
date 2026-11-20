@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from aweb.service_errors import (
     ServiceError,
     IdentityBindingError,
+    IdentityBindingCode,
     INTERNAL_SERVICE_ERROR_MESSAGE,
 )
 from aweb.application_state import RegistryClientUnavailable
@@ -17,6 +18,7 @@ from aweb.messaging.delivery_policy import DeliveryPolicyRefused
 from awid.federation_errors import FederationAuthorityError
 from aweb.messaging.refusals import (
     DeliveryRefusalCode,
+    RecipientIdentityBindingError,
     ContactIdentityBindingRequired,
     MailConversationExists,
     RecipientAddressNotFound,
@@ -98,6 +100,8 @@ def send_refusal(
                 }
             )
         return json.dumps({"error": exc.detail, "reason": exc.code.value})
+    if isinstance(exc, RecipientIdentityBindingError) and exc.code is IdentityBindingCode.MISMATCH:
+        return json.dumps({"error": RECIPIENT_KEY_CHANGED, "reason": exc.code})
     if isinstance(exc, (IdentityBindingError, RegistryClientUnavailable)):
         return json.dumps({"error": exc.message, "reason": exc.code})
     if isinstance(exc, RecipientAddressNotFound) and address:
@@ -115,10 +119,12 @@ def send_refusal(
         # Normalize before local-miss subtype details (including R2's typed
         # local recipient refusal). A registered global nonresident retains
         # its distinct operator action; registry selection already found it.
-        return json.dumps({
-            "error": unreachable_address_refusal(address),
-            "reason": DeliveryRefusalCode.RECIPIENT_IDENTITY_NOT_FOUND.value,
-        })
+        return json.dumps(
+            {
+                "error": unreachable_address_refusal(address),
+                "reason": DeliveryRefusalCode.RECIPIENT_IDENTITY_NOT_FOUND.value,
+            }
+        )
     if isinstance(exc, (RecipientNotResidentError, LocalRecipientNotFoundError)):
         return json.dumps({"error": exc.detail, "reason": exc.reason, "retryable": exc.retryable})
     if isinstance(exc, FederationAuthorityError):

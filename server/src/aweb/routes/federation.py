@@ -12,6 +12,7 @@ from uuid import UUID, uuid4
 from awid.federation_errors import FederationAuthorityError
 from awid.log import canonical_server_origin
 from awid.registry import Address
+from aweb.service_errors import ConflictError
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
@@ -276,9 +277,12 @@ async def _local_envelope_recipient(
             address=envelope.target_address,
         )
     else:
-        projection = await read_participant_identity_projection(
-            db, participant_did=envelope.target_did_aw
-        )
+        try:
+            projection = await read_participant_identity_projection(
+                db, participant_did=envelope.target_did_aw
+            )
+        except ConflictError as exc:
+            raise FederationAuthorityError("federation_conversation_invalid") from exc
         recipient = Recipient.from_local_projection(projection) if projection is not None else None
     if recipient is None:
         raise FederationAuthorityError("recipient_identity_not_found")
