@@ -3,8 +3,11 @@
 AWID (``awid_service.testing``) and the aweb server (``aweb.testing``) run
 in-process on their own test databases and the Redis at ``REDIS_URL``. A naapp
 finds the server as it does in production, through the team's AWID
-``aweb.team-server/1`` record, and reaches each service through its recording
-transport.
+``aweb.team-server/1`` record, and reaches it as an operator's own team
+server: a real TLS listener on this host's private address
+(:mod:`aweb_naapp_testing.team_server_site`), through the app's egress guard
+with ``coordination.site``'s settings and resolver. AWID is reached through
+its recording transport.
 
 Load it as a pytest plugin next to pgdbm's fixtures::
 
@@ -39,6 +42,7 @@ from redis.asyncio import Redis
 from aweb_naapp.runtime.team_auth import AWIDTeamCache
 from aweb_naapp.runtime.team_server import TeamServerDirectory
 from aweb_naapp_testing import Member
+from aweb_naapp_testing.team_server_site import TeamServerSite, team_server_site
 
 
 @dataclass
@@ -47,6 +51,8 @@ class Coordination:
 
     registry: Registry
     server: Server
+    # Where the server listens: its public origin, its DNS and its CA.
+    site: TeamServerSite
 
     async def add_member(self, member: Member) -> None:
         """Registers the member's team, if new, and its certificate in AWID."""
@@ -127,7 +133,7 @@ async def coordination_registry(test_db_factory) -> AsyncIterator[Registry]:
 
 @pytest_asyncio.fixture
 async def coordination(
-    test_db_factory, monkeypatch, coordination_registry
+    test_db_factory, monkeypatch, coordination_registry, tmp_path_factory
 ) -> AsyncIterator[Coordination]:
     monkeypatch.setenv("AWEB_DATABASE_URL", "postgresql://unused/aweb")
     monkeypatch.setenv("AWID_SERVICE_TOKEN", SERVICE_TOKEN)
@@ -136,10 +142,15 @@ async def coordination(
     async with Redis.from_url(
         os.environ.get("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True
     ) as redis:
-        async with running_server(
-            server_db.config.get_dsn(),
-            redis,
-            awid_transport=coordination_registry.transport,
-            domain_verifier=awid_dns(coordination_registry),
-        ) as server:
-            yield Coordination(registry=coordination_registry, server=server)
+        async with (
+            team_server_site(tmp_path_factory.mktemp("coordination-site")) as site,
+            running_server(
+                server_db.config.get_dsn(),
+                redis,
+                awid_transport=coordination_registry.transport,
+                domain_verifier=awid_dns(coordination_registry),
+                public_origin=site.origin,
+            ) as server,
+        ):
+            site.serve(server.app)
+            yield Coordination(registry=coordination_registry, server=server, site=site)

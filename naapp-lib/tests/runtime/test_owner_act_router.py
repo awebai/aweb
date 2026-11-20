@@ -246,17 +246,18 @@ async def world(tmp_path, human, coordination, test_db_factory):
     manifest.write_bytes(canonical_bytes(template))
     migrations = tmp_path / "migrations"
     migrations.mkdir()
+    settings = ExampleSettings(
+        _env_file=None,
+        database_url=db.config.get_dsn(),
+        db_schema=db.config.schema_name,
+        app_key_files={"grant-read": key_path},
+        awid_registry_url=REGISTRY_URL,
+        awid_service_token=SERVICE_TOKEN,
+        auth_cache_ttl_seconds=2,
+        **coordination.site.settings(),
+    )
     runtime = NaappRuntime(
-        ExampleSettings(
-            _env_file=None,
-            database_url=db.config.get_dsn(),
-            db_schema=db.config.schema_name,
-            app_key_files={"grant-read": key_path},
-            awid_registry_url=REGISTRY_URL,
-            awid_service_token=SERVICE_TOKEN,
-            team_server_internal_origins=[coordination.server.url],
-            auth_cache_ttl_seconds=2,
-        ),
+        settings,
         module_name="example",
         migrations_path=migrations,
         manifest_path=manifest,
@@ -277,7 +278,7 @@ async def world(tmp_path, human, coordination, test_db_factory):
             apply_ratelimit_migrations,
         ),
         awid_transport=coordination.registry.transport,
-        team_server_transport=coordination.server.transport,
+        egress=coordination.site.egress(settings),
     )
 
     # Explicitly select this test's real registry instead of external DNS discovery.

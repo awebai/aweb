@@ -66,6 +66,11 @@ class TeamServerSite:
         """The app's guard, as its production factory builds it from ``settings``."""
         return OperatorEgress.from_settings(settings, resolver=self.resolver())
 
+    def serve(self, app: Any) -> None:
+        """Answer every request with ``app``: a server whose public origin is
+        this site's, so it can only be built once the site listens."""
+        self.tls.respond = asgi_reply(app)
+
 
 def asgi_reply(app: Any) -> Any:
     """Answer each request the listener reads with ``app``'s response to it."""
@@ -93,9 +98,10 @@ def asgi_reply(app: Any) -> Any:
 
 @asynccontextmanager
 async def team_server_site(
-    directory: Path, app: Any, *, name: str = SITE_NAME
+    directory: Path, app: Any = None, *, name: str = SITE_NAME
 ) -> AsyncIterator[TeamServerSite]:
-    """``app`` served at ``https://<name>:<port>`` until the context ends."""
+    """``app`` served at ``https://<name>:<port>`` until the context ends;
+    without ``app``, whatever :meth:`TeamServerSite.serve` is given."""
     host = local_address()
     # The refusals mean something only for an address the public policy denies.
     if not ipaddress.ip_address(host).is_private:
@@ -103,11 +109,13 @@ async def team_server_site(
     certificates = make_certificates(directory, [name], [host])
     dns = DnsServer(records={(name, "A"): [host]})
     tls = TlsServer(certificates, host)
-    tls.respond = asgi_reply(app)
+    site = TeamServerSite(name, host, tls, dns, certificates.ca_file)
+    if app is not None:
+        site.serve(app)
     await dns.start()
     await tls.start()
     try:
-        yield TeamServerSite(name, host, tls, dns, certificates.ca_file)
+        yield site
     finally:
         dns.close()
         await tls.close()

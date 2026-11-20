@@ -3,7 +3,6 @@
 import hashlib
 from datetime import UTC, datetime, timedelta
 
-import httpx
 import pytest
 from aweb_naapp_testing import REGISTRY_URL, SERVICE_TOKEN, Member, did_key
 from fastapi import Depends, FastAPI, HTTPException
@@ -13,6 +12,7 @@ from aweb_naapp.runtime import team_auth
 from aweb_naapp.runtime.app import NaappRuntime
 from aweb_naapp.runtime.app_credentials import APP_GRANT_READ, HOOK_RESOLVE, AppCredentialSigner
 from aweb_naapp.runtime.app_keys import AppKeyError, load_app_key
+from aweb_naapp.runtime.operator_egress import OperatorEgress
 from aweb_naapp.runtime.team_grants import AppIdentity, TeamGrantSource
 from aweb_naapp.runtime.team_server import TeamServerReach
 from tests.runtime.conftest import relying_app
@@ -21,7 +21,7 @@ from tests.runtime.test_served_manifest import ExampleSettings, _key_file, _v2_t
 from tests.runtime.test_team_server_directory import SERVER_URL, TEAM_ID
 
 
-def _runtime(tmp_path, *, keys=(), registry=None, team_server_transport=None, **settings):
+def _runtime(tmp_path, *, keys=(), registry=None, **settings):
     from aweb_naapp.manifest import canonical_bytes
 
     files = {kid: _key_file(tmp_path, kid, bytes(SigningKey.generate()).hex()) for kid, _ in keys}
@@ -41,7 +41,6 @@ def _runtime(tmp_path, *, keys=(), registry=None, team_server_transport=None, **
         migrations_path=migrations,
         manifest_path=manifest,
         awid_transport=registry.transport if registry else None,
-        team_server_transport=team_server_transport,
     )
 
 
@@ -72,7 +71,9 @@ async def test_one_directory_can_be_wired_before_startup_and_resolves_real_awid(
             purpose=APP_GRANT_READ,
         ),
         discovery=directory,
-        reach=TeamServerReach(),
+        reach=TeamServerReach(
+            egress=OperatorEgress.from_settings(runtime.settings).egress, internal=None
+        ),
     )
     # Registering guards must precede the existing lifespan route validation.
     guard = runtime.authorized(grants=source, policy=allow_all)
@@ -109,12 +110,10 @@ async def test_one_directory_can_be_wired_before_startup_and_resolves_real_awid(
 
 
 def test_hook_key_is_loaded_at_construction_and_resolver_is_cached(tmp_path):
-    transport = httpx.ASGITransport(app=FastAPI())
-    runtime = _runtime(tmp_path, keys=(("hooks", [HOOK_RESOLVE]),), team_server_transport=transport)
+    runtime = _runtime(tmp_path, keys=(("hooks", [HOOK_RESOLVE]),))
     runtime.settings.app_key_files["hooks"].unlink()
     resolver = runtime.hook_resolver()
     assert resolver is runtime.hook_resolver()
-    assert resolver._reach._transport is transport
     assert resolver._directory._transport is None
     assert resolver._signer.purpose == HOOK_RESOLVE
     credential = resolver._signer.sign(method="GET", target=SERVER_URL, team_id=TEAM_ID)
