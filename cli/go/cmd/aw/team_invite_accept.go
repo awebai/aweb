@@ -451,13 +451,15 @@ func completeHostedInviteAcceptance(ctx context.Context, request hostedInviteAcc
 	}
 
 	req := &awid.SpawnAcceptInviteRequest{
-		IDChain:       creation.MembershipChain,
 		IDTree:        treeRequest,
 		Token:         strings.TrimSpace(token),
 		DID:           didKey,
 		PublicKey:     base64.StdEncoding.EncodeToString(pub),
 		Custody:       awid.CustodySelf,
 		IdentityScope: awid.IdentityModeLocal,
+	}
+	if len(creation.MembershipChain) != 0 {
+		req.IDChain = &creation.MembershipChain
 	}
 	if scope == awid.IdentityModeGlobal {
 		req.Name = alias
