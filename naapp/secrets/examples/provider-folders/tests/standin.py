@@ -28,11 +28,24 @@ def reference_quick_xor(data: bytes) -> str:
 
 
 class OneDriveStandIn:
-    """In-memory app folder with Graph-shaped requests, responses and faults."""
+    """In-memory app folder with Graph-shaped requests, responses and faults.
+
+    It answers on three origins: Graph (graph, the /v1.0 base), the upload
+    sessions' and the downloads'. A request is routed by its exact origin, so
+    the same stand-in serves the in-memory fixtures and the TLS drill.
+    """
 
     PAGE_SIZE = 2
 
-    def __init__(self):
+    def __init__(
+        self,
+        graph: str = GRAPH,
+        upload_origin: str = f"https://{UPLOAD_HOST}",
+        download_origin: str = f"https://{DOWNLOAD_HOST}",
+    ):
+        self.graph = graph
+        self.upload_origin = upload_origin
+        self.download_origin = download_origin
         self.items: dict[str, dict] = {}
         self.sessions: dict[str, dict] = {}
         self.committed_uploads = 0
@@ -82,9 +95,10 @@ class OneDriveStandIn:
 
     def handle(self, request: httpx.Request) -> httpx.Response:
         url = urlsplit(str(request.url))
-        if url.hostname == UPLOAD_HOST:
+        origin = f"{url.scheme}://{url.netloc}"
+        if origin == self.upload_origin:
             return self._upload_range(request, url)
-        if url.hostname == DOWNLOAD_HOST:
+        if origin == self.download_origin:
             return self._download(request, url)
         if request.headers.get("Authorization") != f"Bearer {TOKEN}":
             return _error(401, "InvalidAuthenticationToken")
@@ -119,7 +133,7 @@ class OneDriveStandIn:
         body: dict[str, object] = {"value": [_public(item) for item in page]}
         if start + self.PAGE_SIZE < len(ordered):
             body["@odata.nextLink"] = self.foreign_next_link or (
-                f"{GRAPH}/me/drive/special/approot/children?skiptoken={start + self.PAGE_SIZE}"
+                f"{self.graph}/me/drive/special/approot/children?skiptoken={start + self.PAGE_SIZE}"
             )
         return httpx.Response(200, json=body)
 
@@ -144,9 +158,7 @@ class OneDriveStandIn:
             return _error(409, "nameAlreadyExists")
         session_id = uuid.uuid4().hex
         self.sessions[session_id] = {"name": name, "description": item.get("description")}
-        return httpx.Response(
-            200, json={"uploadUrl": f"https://{UPLOAD_HOST}/session/{session_id}"}
-        )
+        return httpx.Response(200, json={"uploadUrl": f"{self.upload_origin}/session/{session_id}"})
 
     def _upload_range(self, request: httpx.Request, url) -> httpx.Response:
         if "Authorization" in request.headers:
@@ -182,7 +194,7 @@ class OneDriveStandIn:
     def _content_redirect(self, item_id: str) -> httpx.Response:
         if item_id not in self.items:
             return _error(404, "itemNotFound")
-        return httpx.Response(302, headers={"Location": f"https://{DOWNLOAD_HOST}/{item_id}"})
+        return httpx.Response(302, headers={"Location": f"{self.download_origin}/{item_id}"})
 
     def _download(self, request: httpx.Request, url) -> httpx.Response:
         if "Authorization" in request.headers:
