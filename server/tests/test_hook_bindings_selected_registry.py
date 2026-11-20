@@ -47,6 +47,8 @@ async def admitted_world(shared_test_pool, monkeypatch, tmp_path_factory):
             team_controller_signing_key=env.team_sk,
             certificate_id=certificate["certificate_id"],
             member_did_key=actor.did,
+            member_did_aw=certificate.get("member_did_aw"),
+            member_address=certificate.get("member_address"),
             alias="alice",
             identity_scope="local",
             certificate=actor.certificate,
