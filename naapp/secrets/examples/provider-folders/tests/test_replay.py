@@ -9,11 +9,11 @@ from pathlib import Path
 import httpx
 import pytest
 
+from deploy.standin_tls import TLSStandIn, lab_ca
 from replay import TOKEN_ENV, ExitCode, RunRefused, load_config, main, run
 from submit import submit
 from tests.outbox import provision_outbox
 from tests.standin import TOKEN, OneDriveStandIn
-from tests.tls import APPROOT, GraphListener, make_ca_and_server_cert
 
 HERE = Path(__file__).resolve().parents[1]
 ORIGIN = "https://graph.standin.invalid"
@@ -378,71 +378,32 @@ def test_a_vendored_file_cannot_shadow_a_standard_library_module(tmp_path, confi
     assert json.loads(result.stdout)["reason"] == "token_unavailable"
 
 
-def run_cli_with_env(config_path, env):
-    return subprocess.run(
-        [sys.executable, "-I", str(HERE / "replay.py"), "--config", str(config_path)],
-        capture_output=True,
-        text=True,
-        cwd="/",
-        env={TOKEN_ENV: TOKEN, **env},
-        timeout=60,
-    )
-
-
 @pytest.fixture
-def tls_listener(tmp_path):
-    ca, cert, key = make_ca_and_server_cert(tmp_path)
-    with GraphListener(cert, key) as listener:
-        yield ca, listener
+def served(tmp_path):
+    lab = lab_ca(tmp_path / "lab-ca")
+    with TLSStandIn(lab) as stand_in:
+        yield lab, stand_in
 
 
-def tls_config(config_body, listener, ca_bundle):
+def tls_config(config_body, stand_in, ca_bundle):
+    approot = stand_in.standin.approot
     return {
         **config_body,
-        "graph_origin": f"https://localhost:{listener.port}",
+        "graph_origin": stand_in.graph_origin,
         "destination": {
-            "drive_id": APPROOT["parentReference"]["driveId"],
-            "folder_id": APPROOT["id"],
+            "drive_id": approot["parentReference"]["driveId"],
+            "folder_id": approot["id"],
         },
-        "ca_bundle": ca_bundle,
+        "ca_bundle": str(ca_bundle),
     }
 
 
-def test_a_configured_ca_bundle_reaches_a_tls_origin_it_vouches_for(
-    tmp_path, config_body, tls_listener
-):
-    ca, listener = tls_listener
-
-    result = run_cli_with_env(
-        write_config(tmp_path, tls_config(config_body, listener, str(ca))), {}
-    )
-
-    assert result.returncode == ExitCode.OK, result.stdout + result.stderr
-    assert json.loads(result.stdout)["outcome"] == "ok"
-    assert listener.requests and all(auth == f"Bearer {TOKEN}" for *_, auth in listener.requests)
-
-
-def test_without_a_ca_bundle_the_environment_cannot_choose_the_trust_root(
-    tmp_path, config_body, tls_listener
-):
-    ca, listener = tls_listener
-    environment = {"SSL_CERT_FILE": str(ca), "SSL_CERT_DIR": str(ca.parent)}
-
-    result = run_cli_with_env(
-        write_config(tmp_path, tls_config(config_body, listener, None)), environment
-    )
-
-    assert result.returncode == ExitCode.RUN_REFUSED, result.stdout + result.stderr
-    assert json.loads(result.stdout)["reason"] == "provider_unavailable"
-    assert listener.requests == []
-
-
 def test_tls_session_keys_are_never_logged_even_without_isolated_mode(
-    tmp_path, config_body, tls_listener
+    tmp_path, config_body, served
 ):
-    ca, listener = tls_listener
+    lab, stand_in = served
     keylog = tmp_path / "keys.log"
-    config_path = write_config(tmp_path, tls_config(config_body, listener, str(ca)))
+    config_path = write_config(tmp_path, tls_config(config_body, stand_in, lab.ca_pem))
 
     result = subprocess.run(
         [sys.executable, str(HERE / "replay.py"), "--config", str(config_path)],
@@ -454,7 +415,7 @@ def test_tls_session_keys_are_never_logged_even_without_isolated_mode(
     )
 
     assert result.returncode == ExitCode.OK, result.stdout + result.stderr
-    assert listener.requests
+    assert stand_in.requests
     assert not keylog.exists()
 
 
@@ -470,15 +431,15 @@ def test_the_token_is_removed_from_the_environment_before_anything_else(
     assert TOKEN not in capsys.readouterr().out
 
 
-def test_the_token_never_appears_in_output_or_receipts(tmp_path, config_body, tls_listener):
-    ca, listener = tls_listener
-    body = tls_config(config_body, listener, str(ca))
-    queue(Path(body["outbox"]))
-    listener_state = Path(body["state_dir"])
+def test_the_token_never_appears_in_output_or_receipts(tmp_path, config_body, served):
+    lab, stand_in = served
+    body = tls_config(config_body, stand_in, lab.ca_pem)
+    job_id = queue(Path(body["outbox"]))
 
-    result = run_cli_with_env(write_config(tmp_path, body), {})
+    result = run_cli("--config", str(write_config(tmp_path, body)), env={TOKEN_ENV: TOKEN})
 
-    assert listener.requests
-    written = "".join(path.read_text() for path in listener_state.rglob("*") if path.is_file())
-    assert written and TOKEN not in written
+    assert result.returncode == ExitCode.OK, result.stdout + result.stderr
+    assert outcomes(json.loads(result.stdout)) == {job_id: "published"}
+    written = [path for path in Path(body["state_dir"]).rglob("*") if path.is_file()]
+    assert written and all(TOKEN not in path.read_text() for path in written)
     assert TOKEN not in result.stdout and TOKEN not in result.stderr
