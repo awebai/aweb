@@ -61,7 +61,14 @@ func chatSend(ctx context.Context, toAlias, message string, opts chat.SendOption
 		// created by the alias, which the server resolves in the team.
 		opts.RecipientDID = did
 	case chatAliasFromLiveRoster:
-		target = did
+		if strings.HasPrefix(did, "did:aw:") {
+			// The roster confirms session identity. A new global recipient
+			// is still selected by its team alias; a bare did:aw supplies
+			// no first-contact route.
+			opts.RecipientDID = did
+		} else {
+			target = did
+		}
 	}
 	r, err := chat.Send(ctx, c.Client, sel.Alias, []string{target}, message, opts, chatStderrCallback)
 	return r, sel, err
