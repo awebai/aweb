@@ -225,7 +225,6 @@ class TeamCertificateStanding(StrEnum):
     ACTIVE = "active"
     REVOKED = "revoked"
     UNREGISTERED = "unregistered"
-    TEAM_KEY_NOT_CURRENT = "team_key_not_current"
 
 
 @dataclass(frozen=True)
@@ -2430,7 +2429,7 @@ class CachedRegistryClient(RegistryClient):
         return project(set(fresh_value))
 
     async def refresh_team_certificates_after_miss(
-        self, domain: str, name: str, *, certificate_id: str, team_did_key: str,
+        self, domain: str, name: str, *, certificate_id: str,
     ) -> TeamCertificateStanding:
         """Establish the standing of a signature-verified certificate omitted by the cache."""
         if not isinstance(certificate_id, str) or not certificate_id.strip():
@@ -2451,7 +2450,7 @@ class CachedRegistryClient(RegistryClient):
                 generation = cache_key.rsplit(":", 1)[-1]
                 observation_key = f"{window_key}:observation:{origin_digest}:generation:{generation}"
                 digest = hashlib.sha256(canonical_json_bytes({
-                    "origin": registry_url, "certificate_id": certificate_id, "team_did_key": team_did_key,
+                    "origin": registry_url, "certificate_id": certificate_id,
                 })).hexdigest()
                 point_key = f"{cache_key}:point:{digest}"
                 seconds, micros = await self.redis_client.time()
@@ -2472,7 +2471,7 @@ class CachedRegistryClient(RegistryClient):
                         admission = await self._admit_team_certificate_read(window_key, allow_point=True)
                         if admission == 0:
                             return await self._cache_exact_team_certificate_standing(
-                                domain, name, certificate_id=certificate_id, team_did_key=team_did_key,
+                                domain, name, certificate_id=certificate_id,
                                 registry_url=registry_url, cache_key=point_key,
                             )
                         refresh = self._team_certificate_miss_refreshes.get(observation_key)
@@ -2569,7 +2568,7 @@ class CachedRegistryClient(RegistryClient):
             return observation
 
     async def _cache_exact_team_certificate_standing(
-        self, domain: str, name: str, *, certificate_id: str, team_did_key: str,
+        self, domain: str, name: str, *, certificate_id: str,
         registry_url: str, cache_key: str,
     ) -> TeamCertificateStanding:
         try:
@@ -2588,20 +2587,16 @@ class CachedRegistryClient(RegistryClient):
         else:
             if not isinstance(status, dict):
                 raise RegistryError("Invalid AWID certificate status response", status_code=502)
-            current_key, state, revoked_at = status.get("team_did_key"), status.get("status"), status.get("revoked_at")
+            state, revoked_at = status.get("status"), status.get("revoked_at")
+            reported_team_key = status.get("team_did_key")
             if (
                 status.get("team_id") != build_team_id(domain, name)
-                or not isinstance(current_key, str) or not current_key
+                or not isinstance(reported_team_key, str) or not reported_team_key
                 or (state, revoked_at is None) not in (("active", True), ("revoked", False))
                 or (revoked_at is not None and not isinstance(revoked_at, str))
             ):
                 raise RegistryError("Invalid AWID certificate status response", status_code=502)
-            if state == "revoked":
-                standing = TeamCertificateStanding.REVOKED
-            elif current_key != team_did_key:
-                return TeamCertificateStanding.TEAM_KEY_NOT_CURRENT
-            else:
-                standing = TeamCertificateStanding.ACTIVE
+            standing = TeamCertificateStanding.REVOKED if state == "revoked" else TeamCertificateStanding.ACTIVE
             ttl = _TEAM_CERTIFICATES_POINT_TTL_SECONDS
         # A point observation never changes the age or completeness of a list.
         await self._write_cache_entry(

@@ -530,8 +530,10 @@ complete list. During that window, up to 16 additional misses per registry
 and team can look up the exact certificate's status. A successful point read
 is cached separately within the team and reader's cache partition for at
 most 60 seconds. A definitive absence answers 401 `unregistered` and is
-cached for two seconds. A revoked certificate is refused as revoked. Point
-reads do not refresh the complete list or authorize a different team key.
+cached for two seconds. A revoked certificate is refused as revoked. An
+active result from either read goes through the same check of the server's
+admitted team key before verification continues. Point reads do not change
+the age or completeness of the list.
 
 Once all 16 point slots are spent, remaining misses can share the next
 complete-list refresh within the original request. An earlier list can

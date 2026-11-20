@@ -12,8 +12,10 @@ from uuid import UUID, uuid4
 import httpx
 import pytest
 from aweb.api import _build_awid_registry_client
+from aweb.team_key_pins import pinned_team_key
 from awid.dns_verify import DomainAuthority
 from awid_service.deps import get_domain_verifier
+from awid_service.testing import TXTAnswers
 from test_cli_never_grants import registry_listener
 from test_dashboard_privacy import TEAM, TEAM_NAME, privacy_app  # noqa: F401
 from test_id_chain_request_auth import ALICE, ROOT, _fixture_signer, _signed_fixture_certificate
@@ -27,11 +29,19 @@ class _CountLists(httpx.AsyncHTTPTransport):
         self.point_reads = 0
         self.point_unavailable = False
         self.point_throttled = False
+        self.before_standing_read = None
 
     async def handle_async_request(self, request):
-        if request.method == "GET" and request.url.path.endswith("/certificates"):
+        path = request.url.path
+        list_read = request.method == "GET" and path.endswith("/certificates")
+        point_read = request.method == "GET" and "/certificates/" in path and path.endswith("/status")
+        if list_read or point_read:
+            if self.before_standing_read is not None:
+                before_read, self.before_standing_read = self.before_standing_read, None
+                await before_read()
+        if list_read:
             self.reads += 1
-        if request.method == "GET" and "/certificates/" in request.url.path and request.url.path.endswith("/status"):
+        if point_read:
             self.point_reads += 1
             if self.point_unavailable:
                 raise httpx.ConnectError("Test registry point route unavailable", request=request)
@@ -98,14 +108,25 @@ async def _local_admissions(env, monkeypatch):
                     certificate_id=credential[0],
                 )
 
-            yield member, connect, revoke, transport
+            async def rotate():
+                next_key = _make_keypair()[2]
+                await writer.rotate_team_key(
+                    domain, TEAM_NAME, new_team_did_key=next_key,
+                    namespace_controller_signing_key=env.team_sk,
+                )
+                assert await pinned_team_key(
+                    db=env.db, registry_client=writer, team_id=TEAM, served_key=next_key,
+                    txt_resolver=TXTAnswers({"_awid.example.test": env.team_did}),
+                ) == next_key
+
+            yield member, connect, revoke, rotate, transport
         finally:
             await cached.aclose()
 
 
 @pytest.mark.asyncio
 async def test_first_connect_for_members_registered_between_list_reads(privacy_app, monkeypatch):  # noqa: F811
-    async with _local_admissions(privacy_app, monkeypatch) as (member, connect, _, transport):
+    async with _local_admissions(privacy_app, monkeypatch) as (member, connect, _, _, transport):
         admitted = monotonic()
         await connect(await member("first-member"))
         assert transport.reads == 1
@@ -120,7 +141,7 @@ async def test_first_connect_for_members_registered_between_list_reads(privacy_a
 
 @pytest.mark.asyncio
 async def test_unregistered_certificate_reuses_exact_refusal(privacy_app, monkeypatch):  # noqa: F811
-    async with _local_admissions(privacy_app, monkeypatch) as (member, connect, revoke, transport):
+    async with _local_admissions(privacy_app, monkeypatch) as (member, connect, revoke, _, transport):
         await connect(await member("first-member"))
         absent = await member("not-registered", register=False)
         for _ in range(2):
@@ -134,7 +155,7 @@ async def test_unregistered_certificate_reuses_exact_refusal(privacy_app, monkey
 
 @pytest.mark.asyncio
 async def test_point_budget_overflow_shares_the_next_list(privacy_app, monkeypatch):  # noqa: F811
-    async with _local_admissions(privacy_app, monkeypatch) as (member, connect, _, transport):
+    async with _local_admissions(privacy_app, monkeypatch) as (member, connect, _, _, transport):
         await connect(await member("first-member"))
         admitted = await asyncio.gather(*(member(f"member-{i}") for i in range(18)))
         await asyncio.gather(*(connect(credential) for credential in admitted))
@@ -143,7 +164,7 @@ async def test_point_budget_overflow_shares_the_next_list(privacy_app, monkeypat
 
 @pytest.mark.asyncio
 async def test_point_read_outage_is_unavailable(privacy_app, monkeypatch):  # noqa: F811
-    async with _local_admissions(privacy_app, monkeypatch) as (member, connect, _, transport):
+    async with _local_admissions(privacy_app, monkeypatch) as (member, connect, _, _, transport):
         await connect(await member("first-member"))
         second = await member("second-member")
         transport.point_unavailable = True
@@ -158,6 +179,36 @@ async def test_point_read_outage_is_unavailable(privacy_app, monkeypatch):  # no
         transport.point_throttled = False
         await connect(second)
         assert (transport.reads, transport.point_reads) == (1, 3)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("slot", ["list", "point"])
+@pytest.mark.parametrize("path", ["/v1/connect", "/v1/agents"])
+async def test_key_rotation_during_certificate_miss_refuses_both_slots(privacy_app, monkeypatch, path, slot):  # noqa: F811
+    monkeypatch.setenv("AWEB_ENFORCE_TEAM_KEY_PINS", "true")
+    env = privacy_app
+    async with _local_admissions(env, monkeypatch) as (member, connect, _, rotate, transport):
+        if slot == "point":
+            await connect(await member("initial"))
+        previous = await member("rotation-pending")
+        before = transport.reads, transport.point_reads
+        # Move the pin through the signed controller act while the request
+        # that already verified the certificate is waiting for standing.
+        transport.before_standing_read = rotate
+        if path == "/v1/connect":
+            error = await connect(previous, status=401)
+        else:
+            _, seed, did, certificate = previous
+            response = await env.client.get(path, headers=_signed_team_headers(seed, did, TEAM, certificate))
+            assert response.status_code == 401, response.text
+            error = response.json()
+        assert error["detail"]["code"] == "team_key_not_current"
+        assert (transport.reads - before[0], transport.point_reads - before[1]) == (
+            (1, 0) if slot == "list" else (0, 1)
+        )
+        assert await env.db.fetch_value(
+            "SELECT count(*) FROM {{tables.agents}} WHERE team_id = $1 AND did_key = $2", TEAM, previous[2],
+        ) == 0
 
 
 @pytest.mark.asyncio
