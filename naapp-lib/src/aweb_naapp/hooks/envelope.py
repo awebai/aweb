@@ -15,10 +15,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from awid.did import did_from_public_key, public_key_from_did
+from awid.did import did_key_from_signing_key, public_key_from_did
 from awid.signature_wire import sign_bytes, verify_bytes
 from nacl.exceptions import BadSignatureError
-from nacl.signing import SigningKey
 
 from aweb_naapp.hooks.strictjson import (
     Refused,
@@ -106,10 +105,9 @@ def sign(seed: bytes, envelope: dict[str, Any]) -> tuple[bytes, str]:
     """Return an envelope's signing bytes and detached signature. ``seed`` is
     the producer's Ed25519 seed; its key must be the envelope's producer key."""
     signing = signing_bytes(envelope)
-    key = SigningKey(seed)
-    if envelope["producer"]["did_key"] != did_from_public_key(bytes(key.verify_key)):
+    if envelope["producer"]["did_key"] != did_key_from_signing_key(seed):
         raise Refused("signer_mismatch", "the key is not the producer's did_key")
-    return signing, encode_signature(sign_bytes(key=key, payload=signing))
+    return signing, encode_signature(sign_bytes(key=seed, payload=signing))
 
 
 def verify(signing: bytes, signature: str, *, team_id: str) -> Envelope:

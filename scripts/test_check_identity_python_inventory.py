@@ -1,4 +1,4 @@
-"""The primitive guard covers source boundaries, not call counts."""
+"""The Python guard matches each reviewed exemption to one real call."""
 
 import importlib.util
 import tempfile
@@ -15,7 +15,7 @@ spec.loader.exec_module(guard)
 
 
 class PrimitiveGuardTests(unittest.TestCase):
-    def check(self, file, source, legacy=()):
+    def check(self, file, source, exemptions=(), creation_paths=()):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             init_fixture_repo(root)
@@ -23,7 +23,11 @@ class PrimitiveGuardTests(unittest.TestCase):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(source)
             return guard.check_inventory(
-                root, {"primitive_guard": {"legacy_files": list(legacy)}}
+                root,
+                {
+                    "creation_paths": creation_paths,
+                    "primitive_guard": {"exempt_calls": list(exemptions)},
+                },
             )
 
     def test_new_raw_crypto_is_refused(self):
@@ -75,27 +79,94 @@ class PrimitiveGuardTests(unittest.TestCase):
         errors = self.check("pkg/consumer.py", raw)
         self.assertTrue(any("shared verifier" in e for e in errors), errors)
 
-    def test_legacy_reason_allows_repeated_uses_without_count_catalog(self):
-        source = "from nacl.signing import SigningKey\ndef sign(k,p): return SigningKey(k).sign(p)\n"
-        legacy = [
-            {
-                "file": "pkg/legacy.py",
-                "reason": "Existing released message signature family.",
-            }
-        ]
-        self.assertEqual(
-            [],
-            self.check(
-                "pkg/legacy.py",
-                source + "def again(k,p): return SigningKey(k).sign(p)\n",
-                legacy,
+    def test_exemption_needs_exactly_one_call(self):
+        file = "pkg/legacy.py"
+        source = "from nacl.signing import SigningKey\ndef make(seed): return SigningKey(seed)\n"
+        exemption = {
+            "file": file,
+            "symbol": "make",
+            "callee": "nacl.signing.SigningKey",
+            "reason": "Restores a typed signing key for the independent fixture.",
+        }
+        self.assertEqual([], self.check(file, source, [exemption]))
+        repeated = source.replace(
+            "return SigningKey(seed)", "return SigningKey(seed), SigningKey(seed)"
+        )
+        cases = [
+            (source, [exemption, exemption], "duplicate primitive exemption"),
+            (
+                source.replace("def make", "def moved"),
+                [exemption],
+                "unused primitive exemption",
             ),
+            (repeated, [exemption], "matches 2 calls"),
+            (
+                source,
+                [{**exemption, "reason": " "}],
+                "requires file, symbol, callee and reason",
+            ),
+            (
+                source,
+                [{**exemption, "file": "pkg/missing.py"}],
+                "listed source file pkg/missing.py is missing",
+            ),
+            (
+                source,
+                [{**exemption, "callee": "reference:nacl.signing.SigningKey"}],
+                "must name a call",
+            ),
+        ]
+        for fixture, exemptions, expected in cases:
+            with self.subTest(expected=expected):
+                errors = self.check(file, fixture, exemptions)
+                self.assertTrue(any(expected in error for error in errors), errors)
+
+    def test_named_call_does_not_allow_a_neighboring_symbol_or_reference(self):
+        file = "pkg/legacy.py"
+        source = """from nacl.signing import SigningKey
+def make(seed): return SigningKey(seed)
+def neighbor(seed): return SigningKey(seed)
+def reference(): return SigningKey
+"""
+        exemption = {
+            "file": file,
+            "symbol": "make",
+            "callee": "nacl.signing.SigningKey",
+            "reason": "Restores a typed signing key for the independent fixture.",
+        }
+        errors = self.check(file, source, [exemption])
+        self.assertEqual(2, len(errors), errors)
+        self.assertTrue(any(":neighbor:" in error for error in errors), errors)
+        self.assertTrue(
+            any(":reference:reference:" in error for error in errors), errors
         )
 
-    def test_legacy_entry_requires_a_reason(self):
-        self.assertTrue(
-            self.check("pkg/legacy.py", "", [{"file": "pkg/legacy.py", "reason": ""}])
+    def test_local_creation_path_must_exist(self):
+        errors = self.check(
+            "pkg/existing.py",
+            "",
+            creation_paths=[{"repo": "aweb", "files": ["pkg/deleted.py"]}],
         )
+        self.assertTrue(
+            any("pkg/deleted.py is missing" in error for error in errors), errors
+        )
+
+    def test_typed_key_helpers_and_parameters_resolve_to_raw_calls(self):
+        source = """
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey as Public
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey as Private
+def public_key(k) -> Public: return Public.from_public_bytes(k)
+def verify_assignment(k, signature, payload): public_key(k).verify(signature, payload)
+def sign_request(k: Private, payload):
+    selected = k
+    return selected.sign(payload)
+"""
+        calls = guard.scan_python_source(source)
+        prefix = "cryptography.hazmat.primitives.asymmetric.ed25519."
+        self.assertEqual(
+            {prefix + "Ed25519PublicKey.verify": 1}, calls["verify_assignment"]
+        )
+        self.assertEqual({prefix + "Ed25519PrivateKey.sign": 1}, calls["sign_request"])
 
     def test_primitive_reference_and_relative_import_are_seen(self):
         for source in [

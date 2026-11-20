@@ -9,12 +9,6 @@ import (
 
 const privateKeyPermissionMode os.FileMode = 0o600
 
-// A registered owner describes its allowed local effects independently of the
-// prose shown to operators (docs/signature-primitives.md:116-121).
-type doctorFixMutationOwner interface {
-	doctorMutationScope(doctorFixContext) (doctorMutationScope, error)
-}
-
 type doctorMetadataMutation struct {
 	Operation  doctorFixOperation
 	Path       string

@@ -19,7 +19,7 @@ and fixture paths are excluded; production test-like names under `src/` stay
 included. The shared verifier and point predicate are named exceptions. Python's
 shared key generator is also named; creating keys is separate from verifying
 certificates. Each `primitive_guard.exempt_calls` entry names a repository-relative
-`file`, enclosing `symbol`, resolved `callee`, and nonblank `reason`. The Go and
+`file`, enclosing `symbol`, resolved `callee`, and nonblank `reason`. The Python, Go and
 TypeScript/JavaScript guards select their entries by source extension, check that
 listed local source files exist, and require each exemption to match exactly one
 raw call. Duplicate, unused and multiply matching entries fail the check. A
@@ -28,7 +28,9 @@ owner. Calling the shared owner requires no inventory entry.
 
 The parser resolves ordinary imports/aliases, callback references and CommonJS
 loaders. The JS check classifies WebCrypto roots consistently; ordinary hashing
-and randomness are outside the Ed25519 boundary. It does not prove dynamic
+and randomness are outside the Ed25519 boundary. Python also resolves typed key
+arguments and locally defined key-returning helpers when it checks sign and
+verify calls. It does not prove dynamic
 control flow or identify every possible crypto package. In particular `jose`
 is a known package-discovery limit; this check is not an adversarial repository
 sandbox. Reviews and real journey tests establish the behavior that ships.

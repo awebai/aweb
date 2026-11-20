@@ -4,7 +4,6 @@ import (
 	"context"
 	"log"
 	"os"
-	"path/filepath"
 	"strings"
 )
 
@@ -45,26 +44,15 @@ const (
 	doctorFixRewriteIdentityMetadata  doctorFixOperation = "rewrite_identity_metadata"
 )
 
-type doctorFixSubject uint8
-
-const (
-	_ doctorFixSubject = iota
-	doctorFixPrivateKeySubject
-	doctorFixCoordinationSubject
-	doctorFixIdentitySubject
-)
-
 type doctorFixSafetyReason string
 
 const (
-	doctorFixUnsafe              doctorFixSafetyReason = "unsafe"
-	doctorFixAuthority           doctorFixSafetyReason = "authority"
-	doctorFixReasonPrecondition  doctorFixSafetyReason = "precondition"
-	doctorFixNotAdvertised       doctorFixSafetyReason = "fix_not_advertised"
-	doctorFixHighImpact          doctorFixSafetyReason = "high_impact"
-	doctorFixPrivateKeyMaterial                        = "private_key_material"
-	doctorFixCoordinationCleanup doctorFixSafetyReason = "coordination_cleanup"
-	doctorFixIdentityLifecycle   doctorFixSafetyReason = "global_identity_lifecycle"
+	doctorFixUnsafe             doctorFixSafetyReason = "unsafe"
+	doctorFixAuthority          doctorFixSafetyReason = "authority"
+	doctorFixReasonPrecondition doctorFixSafetyReason = "precondition"
+	doctorFixNotAdvertised      doctorFixSafetyReason = "fix_not_advertised"
+	doctorFixHighImpact         doctorFixSafetyReason = "high_impact"
+	doctorFixPrivateKeyMaterial doctorFixSafetyReason = "private_key_material"
 )
 
 type doctorFixMetadataField string
@@ -81,7 +69,6 @@ type doctorFixMutation struct {
 	// permissionMode is an internal constraint for mode-only repairs. Doctor
 	// exports a description; serialized plans are not an execution capability.
 	permissionMode os.FileMode
-	subject        doctorFixSubject
 	Operation      doctorFixOperation     `json:"operation"`
 	Description    string                 `json:"description,omitempty"`
 	Target         *doctorTarget          `json:"target,omitempty"`
@@ -108,6 +95,9 @@ type doctorFixContext struct {
 
 type doctorFixHandler interface {
 	CheckID() string
+	// Every registered repair names its allowed local effects independently
+	// of the user-facing plan (docs/signature-primitives.md).
+	doctorMutationScope(doctorFixContext) (doctorMutationScope, error)
 	Plan(context.Context, doctorFixContext, doctorCheck) (doctorFixPlan, error)
 	Apply(context.Context, doctorFixContext, doctorFixPlan) (doctorFixPlan, error)
 }
@@ -243,19 +233,7 @@ func validateDoctorFixPlan(ctx doctorFixContext, check doctorCheck, plan doctorF
 	if !registered || handler == nil || handler.CheckID() != check.ID || plan.CheckID != check.ID || plan.Source != check.Source {
 		return doctorFixAuthority
 	}
-	owner, owned := handler.(doctorFixMutationOwner)
-	if !owned {
-		for _, mutation := range plan.PlannedMutations {
-			if reason := prohibitedDoctorFixMutation(mutation); reason != "" {
-				return reason
-			}
-		}
-		if len(plan.PlannedMutations) != 0 {
-			return doctorFixAuthority
-		}
-		return ""
-	}
-	scope, err := owner.doctorMutationScope(ctx)
+	scope, err := handler.doctorMutationScope(ctx)
 	if err != nil {
 		log.Printf("aw doctor: cannot inspect the registered repair scope: %v. Inspect the selected local state and retry.", err)
 		return doctorFixReasonPrecondition
@@ -269,23 +247,6 @@ func validateDoctorFixPlan(ctx doctorFixContext, check doctorCheck, plan doctorF
 		}
 	}
 	return ""
-}
-
-// Sensitive effects are identified by typed subject or actual path, never by
-// an operator-facing description. Unowned or unknown effects are refused.
-func prohibitedDoctorFixMutation(mutation doctorFixMutation) doctorFixSafetyReason {
-	extension := strings.ToLower(filepath.Ext(mutation.Path))
-	if mutation.subject == doctorFixPrivateKeySubject || extension == ".key" || extension == ".pem" {
-		return doctorFixPrivateKeyMaterial
-	}
-	switch mutation.subject {
-	case doctorFixCoordinationSubject:
-		return doctorFixCoordinationCleanup
-	case doctorFixIdentitySubject:
-		return doctorFixIdentityLifecycle
-	default:
-		return ""
-	}
 }
 
 func refusedDoctorFixPlan(checkID string, check *doctorCheck, reason, detail, message string) doctorFixPlan {

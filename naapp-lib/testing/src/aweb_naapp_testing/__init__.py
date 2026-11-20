@@ -47,6 +47,10 @@ def did_key(key: SigningKey) -> str:
     return did_from_public_key(bytes(key.verify_key))
 
 
+def _fixture_signing_key() -> SigningKey:
+    return SigningKey.generate()
+
+
 def utc_timestamp(moment: datetime) -> str:
     return moment.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
@@ -56,8 +60,8 @@ class Member:
     """A team key and one member certificate signed by it."""
 
     team_id: str
-    team_key: SigningKey = field(default_factory=SigningKey.generate)
-    member_key: SigningKey = field(default_factory=SigningKey.generate)
+    team_key: SigningKey = field(default_factory=_fixture_signing_key)
+    member_key: SigningKey = field(default_factory=_fixture_signing_key)
     certificate_id: str = "cert-1"
     alias: str = "alice"
     extra_cert_fields: dict[str, Any] = field(default_factory=dict)

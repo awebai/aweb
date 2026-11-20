@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Refuse raw Ed25519 uses outside shared implementations and named legacy files.
+"""Refuse raw Ed25519 uses outside shared implementations and named call sites.
 
 Syntactic source check only; reflection and dynamic dispatch are outside scope.
 Identity creation coverage is documentation, not a call-count catalog.
@@ -11,7 +11,7 @@ import ast
 import json
 import subprocess
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path, PurePosixPath
 
 # Everything tracked (and new nonignored source awaiting git add) is scanned.
@@ -22,6 +22,14 @@ PRIMITIVE_MODULES = (
     "nacl.signing.",
     "nacl.bindings.",
     "cryptography.hazmat.primitives.asymmetric.ed25519.",
+)
+KEY_TYPES = frozenset(
+    {
+        "nacl.signing.SigningKey",
+        "nacl.signing.VerifyKey",
+        "cryptography.hazmat.primitives.asymmetric.ed25519.Ed25519PrivateKey",
+        "cryptography.hazmat.primitives.asymmetric.ed25519.Ed25519PublicKey",
+    }
 )
 SHARED_SITES = {
     ("awid/src/awid/signature_wire.py", "verify_bytes"),
@@ -80,7 +88,7 @@ def module_name(file: str) -> str:
 
 def scan_python_source(
     source: str, *, module: str = "fixture", package: bool = False
-) -> dict[str, set[str]]:
+) -> dict[str, Counter[str]]:
     tree = ast.parse(source)
     aliases = {}
     for node in ast.walk(tree):
@@ -116,34 +124,95 @@ def scan_python_source(
             return called_name(node.func) + "()"
         return "<expression>"
 
-    calls = defaultdict(set)
+    calls = defaultdict(Counter)
     parents = {
         id(child): parent
         for parent in ast.walk(tree)
         for child in ast.iter_child_nodes(parent)
     }
-
-    def primitive(name):
-        return name.startswith(PRIMITIVE_MODULES)
+    annotations = {
+        id(child)
+        for node in ast.walk(tree)
+        for annotation in (
+            getattr(node, "annotation", None),
+            getattr(node, "returns", None),
+        )
+        if annotation is not None
+        for child in ast.walk(annotation)
+    }
+    returns_key = {
+        node.name: called_name(node.returns)
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and called_name(node.returns) in KEY_TYPES
+    }
 
     class Visitor(ast.NodeVisitor):
         def __init__(self):
             self.scope = []
+            self.key_bindings = [{}]
 
         def scoped(self, node):
             self.scope.append(node.name)
+            self.key_bindings.append({})
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                for argument in ast.iter_child_nodes(node.args):
+                    if isinstance(argument, ast.arg):
+                        self.bind(argument.arg, called_name(argument.annotation))
             self.generic_visit(node)
+            self.key_bindings.pop()
             self.scope.pop()
 
         visit_ClassDef = scoped
         visit_FunctionDef = scoped
         visit_AsyncFunctionDef = scoped
 
+        def bind(self, name, key_type):
+            self.key_bindings[-1][name] = key_type if key_type in KEY_TYPES else None
+
+        def key_type(self, node):
+            if isinstance(node, ast.Name):
+                for frame in reversed(self.key_bindings):
+                    if node.id in frame:
+                        return frame[node.id]
+            if isinstance(node, ast.Call):
+                callee = called_name(node.func)
+                if callee in returns_key:
+                    return returns_key[callee]
+                if callee in KEY_TYPES:
+                    return callee
+                owner, _, operation = callee.rpartition(".")
+                if owner in KEY_TYPES and operation in {
+                    "generate",
+                    "from_private_bytes",
+                    "from_public_bytes",
+                }:
+                    return owner
+            return None
+
+        def visit_Assign(self, node):
+            self.generic_visit(node)
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    self.bind(target.id, self.key_type(node.value))
+
+        def visit_AnnAssign(self, node):
+            self.generic_visit(node)
+            if isinstance(node.target, ast.Name):
+                self.bind(node.target.id, called_name(node.annotation))
+
+        def resolved_name(self, node):
+            if isinstance(node, ast.Attribute) and node.attr in {"sign", "verify"}:
+                owner = self.key_type(node.value)
+                if owner is not None:
+                    return f"{owner}.{node.attr}"
+            return called_name(node)
+
         def record(self, name):
-            calls[".".join(self.scope) or "<module>"].add(name)
+            calls[".".join(self.scope) or "<module>"][name] += 1
 
         def visit_Call(self, node):
-            name = called_name(node.func)
+            name = self.resolved_name(node.func)
             if primitive(name):
                 self.record(name)
             self.generic_visit(node)
@@ -152,8 +221,21 @@ def scan_python_source(
             parent = parents.get(id(node))
             is_callee = isinstance(parent, ast.Call) and parent.func is node
             is_receiver = isinstance(parent, ast.Attribute) and parent.value is node
-            if isinstance(node.ctx, ast.Load) and not is_callee and not is_receiver:
-                name = called_name(node)
+            is_type_check = (
+                isinstance(parent, ast.Call)
+                and called_name(parent.func) in {"isinstance", "issubclass"}
+                and len(parent.args) == 2
+                and parent.args[1] is node
+                and called_name(node) in KEY_TYPES
+            )
+            if (
+                isinstance(node.ctx, ast.Load)
+                and id(node) not in annotations
+                and not is_callee
+                and not is_receiver
+                and not is_type_check
+            ):
+                name = self.resolved_name(node)
                 if primitive(name):
                     self.record("reference:" + name)
             self.generic_visit(node)
@@ -165,18 +247,74 @@ def scan_python_source(
     return dict(calls)
 
 
+def primitive(name: str) -> bool:
+    return name.startswith(PRIMITIVE_MODULES)
+
+
+def listed_file_error(root: Path, file: str) -> str | None:
+    path = PurePosixPath(file)
+    if path.is_absolute() or path.as_posix() != file or ".." in path.parts:
+        return f"listed source file must be a repository-relative path: {file}"
+    resolved = root / file
+    if not resolved.is_file():
+        return f"listed source file {file} is missing or is not a regular file"
+    return None
+
+
 def check_inventory(root: Path, inventory: dict) -> list[str]:
     errors = []
-    legacy = {}
-    for entry in inventory["primitive_guard"]["legacy_files"]:
-        if (
-            not entry.get("file")
-            or not isinstance(entry.get("reason"), str)
-            or not entry["reason"].strip()
+    guard = inventory["primitive_guard"]
+    if "legacy_files" in guard:
+        errors.append("legacy_files is replaced by primitive_guard.exempt_calls")
+    matches: dict[tuple[str, str, str], int] = {}
+    listed_files = {
+        file
+        for path in inventory.get("creation_paths", ())
+        if path.get("repo") == "aweb"
+        for file in path.get("files", ())
+        if file.endswith(".py")
+    }
+    exemptions = guard.get("exempt_calls")
+    if not isinstance(exemptions, list):
+        return [*errors, "primitive_guard.exempt_calls must be an array"]
+    for entry in exemptions:
+        if not isinstance(entry, dict):
+            errors.append(
+                "primitive exemption requires file, symbol, callee and reason"
+            )
+            continue
+        file, symbol, callee, reason = (
+            entry.get(key) for key in ("file", "symbol", "callee", "reason")
+        )
+        if not isinstance(file, str) or not file.strip():
+            errors.append(
+                "primitive exemption requires file, symbol, callee and reason"
+            )
+            continue
+        if not file.endswith(".py"):
+            continue
+        listed_files.add(file)
+        if not all(
+            isinstance(value, str) and value.strip()
+            for value in (symbol, callee, reason)
         ):
-            errors.append("legacy primitive file requires a reason")
+            errors.append(
+                "primitive exemption requires file, symbol, callee and reason"
+            )
+            continue
+        key = (file, symbol, callee)
+        site = ":".join(key)
+        if not primitive(callee):
+            errors.append(f"primitive exemption must name a call: {site}")
+        elif key in matches:
+            errors.append(f"duplicate primitive exemption: {site}")
         else:
-            legacy[entry["file"]] = entry["reason"]
+            matches[key] = 0
+    for file in sorted(listed_files):
+        error = listed_file_error(root, file)
+        if error is not None:
+            errors.append(error)
+
     for path in source_files(root):
         file = path.relative_to(root).as_posix()
         try:
@@ -188,12 +326,25 @@ def check_inventory(root: Path, inventory: dict) -> list[str]:
         except (SyntaxError, UnicodeError, ValueError) as exc:
             errors.append(f"cannot scan {file}: {exc}")
             continue
-        for symbol in uses:
-            if (file, symbol) not in SHARED_SITES and file not in legacy:
-                errors.append(
-                    f"raw Python crypto must use the shared verifier: {file}:{symbol}"
-                )
-    return errors
+        for symbol, calls in uses.items():
+            if (file, symbol) in SHARED_SITES:
+                continue
+            for callee, count in calls.items():
+                key = (file, symbol, callee)
+                if key in matches:
+                    matches[key] += count
+                else:
+                    errors.append(
+                        "raw Python crypto must use the shared verifier: "
+                        + ":".join(key)
+                    )
+    for key, count in matches.items():
+        site = ":".join(key)
+        if count == 0:
+            errors.append(f"unused primitive exemption: {site}")
+        elif count != 1:
+            errors.append(f"primitive exemption matches {count} calls: {site}")
+    return sorted(errors)
 
 
 def main() -> int:

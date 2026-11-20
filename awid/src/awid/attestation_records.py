@@ -16,7 +16,6 @@ from datetime import datetime
 from typing import Any
 
 from nacl.exceptions import BadSignatureError
-from nacl.signing import SigningKey
 
 from awid.did import public_key_from_did
 from awid.signature_wire import (
@@ -79,7 +78,7 @@ def _from_b64url(value: str, error: type[ValueError]) -> bytes:
 def sign_record(signing_key: bytes, payload: dict[str, Any]) -> str:
     """Sign a record or attestation payload; returns base64url without padding."""
     return _b64url(
-        sign_bytes(key=SigningKey(signing_key), payload=signing_bytes(payload))
+        sign_bytes(key=signing_key, payload=signing_bytes(payload))
     )
 
 
@@ -314,7 +313,7 @@ def _strict_object(raw: bytes) -> dict[str, Any]:
 def encode_attestation_header(issuer_key: bytes, payload: dict[str, Any]) -> str:
     """Build the header value ``base64url(payload).base64url(signature)``."""
     validate_attestation(payload)
-    signature = sign_bytes(key=SigningKey(issuer_key), payload=signing_bytes(payload))
+    signature = sign_bytes(key=issuer_key, payload=signing_bytes(payload))
     return f"{_b64url(canonical_json_bytes(payload))}.{_b64url(signature)}"
 
 
