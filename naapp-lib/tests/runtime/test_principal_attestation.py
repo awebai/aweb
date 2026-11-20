@@ -162,12 +162,13 @@ async def _verify_valid(records, now=None):
 async def test_real_awid_records_verify_and_are_cached(registry):
     await _publish_vector_state(registry)
     records = _records(registry)
+    setup_reads = len(registry.transport.calls)
     result = await _verify_valid(records)
     assert result.channel == "mcp_l2"
-    reads = len(registry.transport.calls)
+    reads = len(registry.transport.calls) - setup_reads
     assert reads == 2
     await _verify_valid(records)
-    assert len(registry.transport.calls) == reads
+    assert len(registry.transport.calls) == setup_reads + reads
 
 
 async def test_a_registry_failure_after_expiry_is_authority_unavailable(registry):

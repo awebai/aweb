@@ -30,11 +30,9 @@ from aweb_naapp.runtime.team_auth import AWIDTeamCache, authenticate_request
 from aweb_naapp_testing import REGISTRY_URL, SERVICE_TOKEN, Member, did_key
 from aweb_naapp_testing.owner_acts import INSTALLATION_ID, TEAM_ID
 from aweb_naapp_testing.webauthn import SoftAuthenticator
-from awid.dns_verify import DomainAuthority
 from awid.id_certificates import id_certificate_signing_bytes
 from awid.registry import RegistryClient
 from awid.signing import canonical_json_bytes
-from awid_service.deps import get_domain_verifier
 from fastapi import APIRouter, FastAPI, Request
 from nacl.signing import SigningKey
 
@@ -214,23 +212,17 @@ async def aw(world: World) -> AsyncIterator[Aw]:
     reader sessions: the public origin starts handoffs, the console origin
     approves them and serves the reads."""
     await apply_console_migrations(world.db)
-    root = SigningKey.generate()
+    root = await world.registry.ensure_namespace(domain="example.com")
 
-    async def dns(domain: str) -> DomainAuthority:
-        assert domain == "example.com"
-        return DomainAuthority(did_key(root), REGISTRY_URL, "_awid.example.com")
-
-    world.registry.app.dependency_overrides[get_domain_verifier] = lambda: dns
     world.registry.app.state.awid_public_origins = (REGISTRY_URL,)
     async with aclosing(
         RegistryClient(
             REGISTRY_URL,
             transport=world.registry.transport,
             service_token=SERVICE_TOKEN,
-            domain_verifier=dns,
+            domain_verifier=world.registry.namespace_authority,
         )
     ) as registry:
-        await registry.register_namespace("example.com", did_key(root), bytes(root))
         member, principal = await registered_human(registry, world, root, "reader")
         outsider = await registered_human(registry, world, root, "outsider")
         scope, _ = await held_reader(world, principal)
