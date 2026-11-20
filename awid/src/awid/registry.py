@@ -226,16 +226,19 @@ class _RevocationScan:
     entries_all_timestamped: bool
 
 
-def _revocation_page_entries(data: dict[str, Any], *, team_id: str) -> list[dict[str, Any]]:
+def _revocation_page_entries(data: object, *, team_id: str) -> list[dict[str, Any]]:
     """Validate CRL rows and pagination together (docs/awid-sot.md:1411-1423)."""
-    entries = data.get("revocations")
-    has_more = data.get("has_more")
-    next_cursor = data.get("next_cursor")
-    valid_pagination = (
-        ("has_more" not in data and "next_cursor" not in data)
-        or (has_more is False and next_cursor is None)
-        or (has_more is True and isinstance(next_cursor, str) and bool(next_cursor.strip()))
-    )
+    entries = None
+    valid_pagination = False
+    if isinstance(data, dict):
+        entries = data.get("revocations")
+        has_more = data.get("has_more")
+        next_cursor = data.get("next_cursor")
+        valid_pagination = (
+            ("has_more" not in data and "next_cursor" not in data)
+            or (has_more is False and next_cursor is None)
+            or (has_more is True and isinstance(next_cursor, str) and bool(next_cursor.strip()))
+        )
     if (
         not isinstance(entries, list)
         or not all(

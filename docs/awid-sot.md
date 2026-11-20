@@ -1408,8 +1408,8 @@ it contains no status or namespace authority. The pointed-to origin-specific
 entry must independently pass the existing Redis-clock age and generation
 checks. A locator miss, corruption or expiry requires a new bounded acquisition.
 
-A successful revocation response must contain an explicit list of rows with
-nonempty string certificate IDs. An explicit empty list remains valid, including
+A successful revocation response must be a JSON object containing an explicit
+list of rows with nonempty string certificate IDs. An explicit empty list remains valid, including
 released legacy responses without pagination fields. If pagination fields are
 present, `has_more` is boolean. A nonterminal page has a nonempty string
 cursor; a terminal page omits its cursor or sets it to null. A cursor without

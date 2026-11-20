@@ -17,7 +17,7 @@ import pytest
 
 from awid.did import did_from_public_key, generate_keypair
 from awid.id_tree_requests import covering_payload
-from awid.registry import CachedRegistryClient, RegistryError
+from awid.registry import CachedRegistryClient, RegistryClient, RegistryError
 from awid.signing import canonical_json_bytes, sign_message
 from test_registry_client import FakeRedis
 
@@ -87,11 +87,16 @@ def peer(peer_factory):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("client_type", [RegistryClient, CachedRegistryClient])
 @pytest.mark.parametrize(
     "wire",
     [
         b"",
         b"{}",
+        b"[]",
+        b"null",
+        b"17",
+        b"false",
         b'{"revocations":null}',
         b'{"revocations":{}}',
         b'{"revocations":"none"}',
@@ -112,10 +117,10 @@ def peer(peer_factory):
         b'{"revocations":[],"has_more":true,"next_cursor":"   "}',
     ],
 )
-async def test_malformed_revocations_never_become_cached_absence(peer, wire):
-    redis = FakeRedis()
+async def test_malformed_revocations_never_become_cached_absence(peer, wire, client_type):
+    redis = FakeRedis() if client_type is CachedRegistryClient else None
     peer.response = wire
-    client = CachedRegistryClient(peer.origin, redis)
+    client = client_type(peer.origin, redis) if redis is not None else client_type(peer.origin)
     try:
         with pytest.raises(RegistryError) as refused:
             await client.get_team_revocations(DOMAIN, TEAM)
@@ -124,7 +129,8 @@ async def test_malformed_revocations_never_become_cached_absence(peer, wire):
             "AWID revocation response is malformed for engineering:customer.example. "
             "Retry against a registry that returns a complete revocations list."
         )
-        assert redis.values == {}
+        if redis is not None:
+            assert redis.values == {}
         peer.response = b'{"revocations":[{"certificate_id":"revoked"}],"has_more":false}'
         assert await client.get_team_revocations(DOMAIN, TEAM) == {"revoked"}
         assert len(peer.requests) == 2
@@ -133,6 +139,7 @@ async def test_malformed_revocations_never_become_cached_absence(peer, wire):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("client_type", [RegistryClient, CachedRegistryClient])
 @pytest.mark.parametrize(
     "wire",
     [
@@ -141,14 +148,17 @@ async def test_malformed_revocations_never_become_cached_absence(peer, wire):
         b'{"revocations":[],"has_more":false,"next_cursor":null}',
     ],
 )
-async def test_explicit_empty_revocations_remain_a_cacheable_complete_answer(peer, wire):
+async def test_explicit_empty_revocations_remain_a_cacheable_complete_answer(
+    peer, wire, client_type
+):
     peer.response = wire
-    redis = FakeRedis()
-    client = CachedRegistryClient(peer.origin, redis)
+    redis = FakeRedis() if client_type is CachedRegistryClient else None
+    client = client_type(peer.origin, redis) if redis is not None else client_type(peer.origin)
     try:
         assert await client.get_team_revocations(DOMAIN, TEAM) == set()
-        peer.response = b"{}"
-        assert await client.get_team_revocations(DOMAIN, TEAM) == set()
+        if redis is not None:
+            peer.response = b"{}"
+            assert await client.get_team_revocations(DOMAIN, TEAM) == set()
         assert len(peer.requests) == 1
     finally:
         await client.aclose()
