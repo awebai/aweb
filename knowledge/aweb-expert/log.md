@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-20
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-deploy-team.
+* **Creation**: decision [a stop-safe boundary decides in its signal handler and fails closed](/aweb-expert/decisions/a-stop-safe-boundary-decides-in-its-signal-handler.md) and lesson [a run's durable verdict is written after every downgrade](/aweb-expert/lessons/a-durable-verdict-is-written-after-every-downgrade.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
