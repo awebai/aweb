@@ -37,3 +37,8 @@ the released kernel. Its bootstrap control runs OATS 0.69.19 with an empty HOME,
 no global Git identity and no parent checkout, so deployment discovery cannot
 borrow the developer's environment. Failed kernel commands retain the JSON
 error code while leaving private stdout out of diagnostics.
+The control excludes Claude from PATH and checks that an unconfigured
+`--no-launch` spawn refuses its unavailable harness before creating a home.
+It then selects the installed Node executable through a local launch
+configuration: the released kernel validates a future launch even when no
+process is started. No placeholder harness executable is installed.

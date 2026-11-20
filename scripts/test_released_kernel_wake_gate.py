@@ -32,6 +32,7 @@ class ReleasedKernelBootstrapTest(unittest.TestCase):
             prefix="released-kernel-bootstrap-"
         ) as temporary:
             root = Path(temporary).resolve()
+            self.assertFalse((root / "deploy/agents").exists())
             helper = (ROOT / "scripts/e2e/user_paths_kernel_setup.mjs").as_uri()
             subprocess.run(
                 [
@@ -50,9 +51,10 @@ class ReleasedKernelBootstrapTest(unittest.TestCase):
             home, deployment, source = (
                 root / name for name in ("home", "deploy", "source")
             )
+            (root / "bin/node").symlink_to(node)
             env = {
                 "HOME": str(home),
-                "PATH": str(Path(node).parent) + os.pathsep + "/usr/bin:/bin",
+                "PATH": str(root / "bin") + os.pathsep + "/usr/bin:/bin",
                 "GIT_CONFIG_NOSYSTEM": "1",
                 "GIT_CONFIG_GLOBAL": os.devnull,
                 "GIT_CONFIG_COUNT": "1",
@@ -60,6 +62,7 @@ class ReleasedKernelBootstrapTest(unittest.TestCase):
                 "GIT_CONFIG_VALUE_0": "true",
                 "OATS_REMOTE_CACHE": str(root / "cache"),
             }
+            self.assertIsNone(shutil.which("claude", path=env["PATH"]))
             # The real kernel's deployment discovery must not find a parent checkout.
             parent_repo = subprocess.run(
                 ["git", "rev-parse", "--show-toplevel"],
@@ -120,19 +123,43 @@ class ReleasedKernelBootstrapTest(unittest.TestCase):
                 f"schemaVersion: 2\nworkspace: {ref}\n"
             )
             # This exercises deployment bootstrap, with no provider or service stand-in.
+            command = [
+                node,
+                str(kernel),
+                "spawn",
+                "probe",
+                "--name",
+                "r20-wake-probe",
+                "--backend",
+                "tmux",
+                "--no-launch",
+                "--json",
+            ]
             result = subprocess.run(
-                [
-                    node,
-                    str(kernel),
-                    "spawn",
-                    "probe",
-                    "--name",
-                    "r20-wake-probe",
-                    "--backend",
-                    "tmux",
-                    "--no-launch",
-                    "--json",
-                ],
+                command,
+                cwd=deployment,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertEqual(
+                json.loads(result.stdout)["error"]["code"], "E_HARNESS_UNAVAILABLE"
+            )
+            self.assertFalse(
+                (deployment / "agents/probe/instances/r20-wake-probe").exists()
+            )
+            # A no-launch spawn still validates its future executable. Select a
+            # real installed program explicitly, as the passive wake probe does.
+            (deployment / "oats-local.yaml").write_text(
+                f"schemaVersion: 2\nworkspace: {ref}\n"
+                "launch-configs:\n  passive:\n    harness: claude\n"
+                f"    executable: {json.dumps(str(Path(node).resolve()))}\n"
+                "souls:\n  launch:\n    '*': passive\n"
+            )
+            result = subprocess.run(
+                command,
                 cwd=deployment,
                 env=env,
                 capture_output=True,
