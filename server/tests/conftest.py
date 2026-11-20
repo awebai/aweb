@@ -8,6 +8,10 @@ import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from asyncpg import Pool
 
 # xdist sets its worker identity before conftest imports. Bind services before
 # pgdbm/plugin imports and test modules can capture a parent endpoint.
@@ -19,7 +23,6 @@ runpy.run_path(str(Path(__file__).with_name("worker_services.py")))[
 
 import pytest  # noqa: E402
 import pytest_asyncio  # noqa: E402
-from asyncpg import Pool  # noqa: E402
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager, DatabaseConfig  # noqa: E402
 
 from awid.db_config import build_database_config  # noqa: E402
