@@ -125,7 +125,14 @@ def _content_url(folio: RunningFolio, asset_id: str) -> str:
     return f"{folio.origin}/v1/assets/{asset_id}/content"
 
 
-def _wait_until_refused(url: str, *, bound_seconds: float = 30.0) -> None:
+# A naapp may reuse its team server's installation answer for the grant's max
+# age: the aweb server's AWEB_APP_GRANT_MAX_AGE_SECONDS, at most and by default
+# 60 s (server/src/aweb/config.py), which the e2e server does not lower. An
+# uninstall therefore reaches Folio within that time, not at once.
+GRANT_MAX_AGE_SECONDS = 60
+
+
+def _wait_until_refused(url: str, *, bound_seconds: float) -> None:
     deadline = time.monotonic() + bound_seconds
     while True:
         status = httpx.get(url, timeout=10.0).status_code
@@ -246,7 +253,7 @@ def test_uninstall_ends_presented_images_and_member_reads(
     _run_aw(team.workspace, "plugin", "uninstall", folio.app_id)
 
     # The unrevoked link's page ends once Folio observes the uninstall.
-    _wait_until_refused(link["url"])
+    _wait_until_refused(link["url"], bound_seconds=GRANT_MAX_AGE_SECONDS + 10)
     assert _refused(httpx.get(image_url, timeout=10.0), image)
     after = _member_read(team, _content_url(folio, asset_id))
     assert after.returncode != 0
