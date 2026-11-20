@@ -31,6 +31,7 @@ class MemberReadLock(Enum):
 
     NONE = auto()
     SHARE = auto()
+    UPDATE = auto()
 
 
 RECIPIENT_RECONNECT_DETAIL = (
@@ -77,7 +78,7 @@ _MEMBER_COLUMNS = (
 )
 
 
-def member_projection_columns_sql(agent: str) -> str:
+def member_projection_columns_sql(agent: str, *, team: str | None = None) -> str:
     """Canonical native member columns for a SELECT, including a host's JOIN.
 
     The alias is a source-code SQL identifier, never request input. Hosts keep
@@ -85,8 +86,11 @@ def member_projection_columns_sql(agent: str) -> str:
     """
     if not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", agent):
         raise ValueError("Invalid member projection SQL alias")
+    if team is not None and not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", team):
+        raise ValueError("Invalid team projection SQL alias")
     columns = ", ".join(f"{agent}.{column}" for column in _MEMBER_COLUMNS)
-    return f"{columns}, {current_team_key_sql(agent)} AS current_team_did_key"
+    current_key = f"{team}.team_did_key" if team else current_team_key_sql(agent)
+    return f"{columns}, {current_key} AS current_team_did_key"
 
 
 @dataclass(frozen=True)
@@ -152,6 +156,7 @@ async def read_member_projection(
     team_id: str | None = None,
     did_key: str | None = None,
     agent_id: str | UUID | None = None,
+    read_lock: MemberReadLock = MemberReadLock.NONE,
 ) -> MemberProjection | None:
     """Read the same native row an embedding host can include in its snapshot.
 
@@ -163,16 +168,30 @@ async def read_member_projection(
     """
     if (did_key is None) == (agent_id is None) or (did_key is not None and not team_id):
         raise ValueError("Select a native member by team and did_key, or by agent_id")
+    if not isinstance(read_lock, MemberReadLock):
+        raise TypeError("Member reads require a named MemberReadLock")
+    locked = read_lock is not MemberReadLock.NONE
+    join_sql = " JOIN {{tables.teams}} t ON t.team_id=a.team_id" if locked else ""
+    lock_sql = ""
+    if locked:
+        lock_sql = (
+            " FOR SHARE OF t FOR UPDATE OF a"
+            if read_lock is MemberReadLock.UPDATE
+            else " FOR SHARE OF t, a"
+        )
     selector = "a.agent_id=$1::uuid" if agent_id is not None else "a.did_key=$1"
     selected = UUID(str(agent_id)) if agent_id is not None else did_key
     row = await db.fetch_one(
         "SELECT "
-        + member_projection_columns_sql("a")
+        + member_projection_columns_sql("a", team="t" if locked else None)
         + """
         FROM {{tables.agents}} a
-        WHERE """
+        """
+        + join_sql
+        + " WHERE "
         + selector
-        + " AND ($2::text IS NULL OR a.team_id=$2)",
+        + " AND ($2::text IS NULL OR a.team_id=$2)"
+        + lock_sql,
         selected,
         team_id,
     )
@@ -272,7 +291,11 @@ async def current_member_projections(
 
     if not isinstance(read_lock, MemberReadLock):
         raise TypeError("Member reads require a named MemberReadLock")
-    lock_sql = " FOR SHARE OF a" if read_lock is MemberReadLock.SHARE else ""
+    lock_sql = {
+        MemberReadLock.NONE: "",
+        MemberReadLock.SHARE: " FOR SHARE OF a",
+        MemberReadLock.UPDATE: " FOR UPDATE OF a",
+    }[read_lock]
     if all(value is None for value in (agent_id, team_id, aliases, dids, namespace)):
         raise ValueError("Select a current member by identity, team, name or namespace")
     manager = db.get_manager("aweb") if hasattr(db, "get_manager") else db

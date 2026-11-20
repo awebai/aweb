@@ -23,7 +23,7 @@ from aweb.hooks import MutationCallback, fire_mutation_callback
 from aweb.message_events import RoomMessageSentContext
 from aweb.id_chain_auth import stored_id_chain
 from aweb.identity_address import require_address_evidence
-from aweb.member_team_key import CURRENT_MEMBERSHIP_REQUIRED_DETAIL, current_member_sql
+from aweb.member_team_key import current_member_sql
 from aweb.messaging.sender_membership import sender_memberships
 from aweb.service_errors import (
     ConflictError,
@@ -92,7 +92,8 @@ async def _active_member(tx, actor):
     )
     if not row:
         logger.warning("Room access refused: actor is not an active team member")
-        raise ForbiddenError(CURRENT_MEMBERSHIP_REQUIRED_DETAIL)
+        # Released aw 1.36.x recognizes this exact refusal (cmd/aw/room.go).
+        raise ForbiddenError("Room requires current team membership")
 
 
 async def _ensure_room(tx, team_id):

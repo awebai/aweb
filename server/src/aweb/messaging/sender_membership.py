@@ -14,7 +14,7 @@ from aweb.certificate_registration import (
     configured_registration_mode,
     read_certificate_registration,
 )
-from aweb.application_state import application_registry_client
+from aweb.application_state import RegistryClientUnavailable, application_registry_client
 from aweb.team_registry import request_revoked_certificates
 
 
@@ -96,7 +96,7 @@ async def sender_memberships(
                 revocations[team] = await request_revoked_certificates(
                     request, team, certificate_ids=team_certificates[team]
                 )
-            except HTTPException:
+            except (HTTPException, RegistryClientUnavailable):
                 logger.warning("Sender certificate revocations unavailable", exc_info=True)
                 revocations[team] = None
         revoked = revocations[team]

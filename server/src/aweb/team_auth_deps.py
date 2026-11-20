@@ -40,6 +40,8 @@ from aweb.identity_scope import normalize_identity_scope
 from aweb.member_team_key import (
     CURRENT_MEMBERSHIP_REQUIRED_DETAIL,
     MemberProjection,
+    MemberReadLock,
+    current_member,
     member_row_active,
     read_member_projection,
 )
@@ -127,6 +129,12 @@ async def resolve_team_identity(
     if not member_row_active(row):
         raise ValueError(CURRENT_MEMBERSHIP_REQUIRED_DETAIL)
 
+    # Only the key checked by the certificate verifier may reaccept a member.
+    # A stored accepted key is attribution, not a substitute for that proof.
+    verified_team_did_key = str(cert_info.get("verified_team_did_key") or "").strip()
+    if not verified_team_did_key:
+        raise ValueError(CURRENT_MEMBERSHIP_REQUIRED_DETAIL)
+
     binding = cert_info.get("identity_binding")
     if not isinstance(binding, IdentityBinding):
         binding = IdentityBinding()
@@ -146,26 +154,31 @@ async def resolve_team_identity(
             did_aw=row.get("did_aw") or "",
             address=row.get("address") or "",
         )
-    await refresh_projection_binding(db, agent_id=row["agent_id"], did_key=did_key, binding=binding)
-
     # identity.md:807-811: later grants must retain the exact certificate that
     # this verified request makes current for its subject.
     presented_certificate_id = (cert_info.get("certificate_id") or "").strip()
-    # The request verifier supplies its checked key. Direct parser consumers
-    # retain an already admitted key instead of clearing that evidence.
-    verified_team_did_key = (
-        cert_info.get("verified_team_did_key") or row.get("accepted_team_did_key") or ""
-    ).strip()
-    if presented_certificate_id and (
-        presented_certificate_id != (row.get("certificate_id") or "").strip()
-        or verified_team_did_key != (row.get("accepted_team_did_key") or "").strip()
-    ):
-        await db.execute(
-            "UPDATE {{tables.agents}} SET certificate_id = $2, accepted_team_did_key = $3 WHERE agent_id = $1",
-            row["agent_id"],
-            presented_certificate_id,
-            verified_team_did_key or None,
+    # A worker may still hold a verified old key in its memo, or a host may
+    # have read its snapshot before rotation. Recheck under the same locks
+    # that protect acceptance and binding writes; no registry read occurs here.
+    async with db.transaction() as tx:
+        row = await read_member_projection(
+            tx, team_id=team_id, did_key=did_key, read_lock=MemberReadLock.UPDATE
         )
+        if not row or not current_member({
+            **dict(row), "accepted_team_did_key": verified_team_did_key,
+        }):
+            raise ValueError(CURRENT_MEMBERSHIP_REQUIRED_DETAIL)
+        await refresh_projection_binding(
+            tx, agent_id=row["agent_id"], did_key=did_key, binding=binding
+        )
+        if presented_certificate_id and (
+            presented_certificate_id != (row.get("certificate_id") or "").strip()
+            or verified_team_did_key != (row.get("accepted_team_did_key") or "").strip()
+        ):
+            await tx.execute(
+                "UPDATE {{tables.agents}} SET certificate_id = $2, accepted_team_did_key = $3 WHERE agent_id = $1",
+                row["agent_id"], presented_certificate_id, verified_team_did_key,
+            )
 
     return TeamIdentity(
         team_id=team_id,
