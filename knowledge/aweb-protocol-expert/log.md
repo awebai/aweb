@@ -1,5 +1,10 @@
 # Knowledge log
 
+## 2026-11-08
+* **Harvest**: OKF proposal from seat aweb-protocol-expert-human-kind with one backing note; the operator's ruling and the coordinator's approvals are source-reported, and the implementation is on a review branch at 4ee3ddfca, not on main. Coordinator message identifiers are omitted.
+* **Creation**: decision [human treatment requires the subject's own verified kind](/aweb-protocol-expert/decisions/human-treatment-requires-verified-subject-kind.md), with the bounded legacy-label uses for owner-checked predecessor recovery and display exclusion.
+* **Update**: [humans use mail; recipient kind is authoritative](/aweb-protocol-expert/decisions/humans-use-mail.md) is superseded in part: a raw team row typed human is no longer authoritative human evidence; the rest of D8 stands.
+
 ## 2026-11-06
 * **Fix**: review of the db-access proposal on npm gitHead, PubSub release and stream checkouts: hosted specifics in [stream bodies leave the request connection scope](/aweb-protocol-expert/lessons/stream-bodies-leave-the-request-connection-scope.md) and [an npm tarball publish records no gitHead](/aweb-protocol-expert/lessons/npm-tarball-publish-records-no-githead.md) are stated generically or dropped, as the OSS and Cloud boundary requires.
 * **Update**: [SSE cleanup is cancelled on client disconnect](/aweb-protocol-expert/lessons/sse-cleanup-is-cancelled-on-disconnect.md) and [a PubSub release survives any cancellation](/aweb-protocol-expert/decisions/pubsub-release-survives-any-cancellation.md) link each other: the AnyIO shield covers Starlette's disconnect, not native task cancellation.
