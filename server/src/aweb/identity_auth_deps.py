@@ -160,9 +160,10 @@ async def lookup_identity_agent_context(
 ) -> dict | None:
     """Select one current member context, preserving identity-only reads on ambiguity.
 
-    trust-model.md:186-191 permits a unique current row to supply its exact
-    verified address; address-dependent effects require an explicit credential
-    when several rows remain. No newest-row winner establishes authority.
+    A verified identity address does not select a team membership. Preserve it
+    when several memberships remain, without choosing a row or actor. Otherwise
+    unresolved sender contexts still require an explicit credential; no
+    newest-row winner establishes authority (trust-model.md:186-191).
     """
     did_aw_value = (did_aw or "").strip()
     aweb_db = native_database_manager(db)
@@ -217,6 +218,8 @@ async def lookup_identity_agent_context(
     rows = eligible
     outcome = getattr(request.state, "identity_address_resolution", AddressResolution())
     if len(rows) > 1:
+        if did_aw_value and outcome.state is AddressResolutionState.VERIFIED:
+            return None
         request.state.identity_address_resolution = replace(
             outcome,
             state=AddressResolutionState.CONTEXT_REQUIRED,
