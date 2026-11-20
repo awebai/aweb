@@ -39,7 +39,7 @@ async def resolve_agent_by_did(db, did: str, *, team_id: str | None = None) -> R
     """
     local_key = did.startswith("did:key:")
     rows = await current_member_projections(db, dids=[did], team_id=None if local_key else team_id)
-    if local_key and team_id and rows:
+    if local_key and team_id and len(rows) > 1:
         identities = {(row.verified_identity().get("did_aw"), row["did_key"]) for row in rows}
         global_identity = len(identities) == 1 and bool(next(iter(identities))[0])
         if not global_identity:
