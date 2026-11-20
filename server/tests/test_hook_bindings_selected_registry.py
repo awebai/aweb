@@ -25,7 +25,7 @@ from aweb.api import RequestBodyCacheMiddleware
 from aweb.hook_bindings import list_app_bindings
 from aweb.routes.hook_bindings import router
 from aweb_naapp.hooks.owner_act import hook_binding_subject, owner_act_signing_bytes
-from aweb_naapp_testing.network import local_address, make_certificates
+from aweb_naapp_testing.network import make_certificates
 from test_hook_binding_activation import _bindings, _install
 from test_dashboard_privacy import TEAM, privacy_stack
 from test_team_room import headers
@@ -33,7 +33,7 @@ from test_team_room import headers
 
 @pytest_asyncio.fixture
 async def admitted_world(shared_test_pool, monkeypatch, tmp_path_factory):
-    host = local_address()
+    host = "127.0.0.1"
     certificates = make_certificates(
         tmp_path_factory.mktemp("hook-root-tls"), ["hook-root.test"], [host]
     )
