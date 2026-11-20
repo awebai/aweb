@@ -181,6 +181,8 @@ async def test_certificate_authenticated_request_refreshes_recorded_certificate(
         "did_key": "did:key:z6MkRefresher",
         "identity_scope": "local",
         "certificate_id": "cert-old",
+        # Unit owner input: the key the certificate verifier checked.
+        "verified_team_did_key": "did:key:zTeam",
     }
     await connect_agent(
         db=db,

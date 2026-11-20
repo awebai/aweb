@@ -1,5 +1,6 @@
 """Registered members connect back to back through real registry/native routes."""
 
+import asyncio
 from contextlib import aclosing
 from uuid import uuid4
 
@@ -19,11 +20,11 @@ from test_messages_http import (
 
 
 @pytest.mark.asyncio
-async def test_three_registered_members_connect_back_to_back_without_sleep(
+async def test_three_registered_members_connect_with_the_bounded_team_miss_retry(
     privacy_app, monkeypatch
 ):
-    # The cache must discover every newly registered, signature-verified member
-    # without making their joins spend one shared team cooldown (aweb-adjw).
+    # B7 bounds signature-verified misses by team, including independent IDs.
+    # A suppressed member retries after the actual Redis window; no absence is cached.
     env = privacy_app
     monkeypatch.setenv("AWEB_REQUIRE_REGISTERED_CERTIFICATES", "true")
     async with registry_listener(env) as (writer, origin):
@@ -55,6 +56,25 @@ async def test_three_registered_members_connect_back_to_back_without_sleep(
             assert (
                 await reader.list_team_certificates("example.test", name, active_only=False) == []
             )
+
+            async def connect_after_miss_window(signing_key, did_key, header):
+                body = b"{}"
+                headers = {
+                    **_signed_team_headers(signing_key, did_key, team_id, header, body),
+                    "Content-Type": "application/json",
+                }
+                response = await env.client.post("/v1/connect", content=body, headers=headers)
+                if response.status_code == 503:
+                    assert "Retry after five seconds" in response.text
+                    assert not await env.db.fetch_value(
+                        "SELECT EXISTS(SELECT 1 FROM {{tables.agents}} WHERE team_id=$1 AND did_key=$2)",
+                        team_id,
+                        did_key,
+                    )
+                    await asyncio.sleep(5)
+                    response = await env.client.post("/v1/connect", content=body, headers=headers)
+                return response
+
             connected_ids = []
             try:
                 for alias in ("alice", "bob", "carol"):
@@ -81,15 +101,7 @@ async def test_three_registered_members_connect_back_to_back_without_sleep(
                         identity_scope="local",
                         certificate=header,
                     )
-                    body = b"{}"
-                    response = await env.client.post(
-                        "/v1/connect",
-                        content=body,
-                        headers={
-                            **_signed_team_headers(signing_key, did_key, team_id, header, body),
-                            "Content-Type": "application/json",
-                        },
-                    )
+                    response = await connect_after_miss_window(signing_key, did_key, header)
                     assert response.status_code == 200, response.text
                     connected_ids.append(cert["certificate_id"])
                     row = await env.db.fetch_one(
@@ -121,14 +133,7 @@ async def test_three_registered_members_connect_back_to_back_without_sleep(
                     certificate_id="unregistered-" + uuid4().hex,
                 )
                 header = _encode_certificate(cert)
-                refused = await env.client.post(
-                    "/v1/connect",
-                    content=b"{}",
-                    headers={
-                        **_signed_team_headers(signing_key, did_key, team_id, header, b"{}"),
-                        "Content-Type": "application/json",
-                    },
-                )
+                refused = await connect_after_miss_window(signing_key, did_key, header)
                 assert refused.status_code == 401, refused.text
                 assert refused.json()["detail"] == "unregistered"
                 assert not await env.db.fetch_value(

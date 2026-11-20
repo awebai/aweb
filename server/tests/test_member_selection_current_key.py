@@ -209,10 +209,7 @@ async def test_room_rechecks_current_membership_after_request_authentication(pin
     next_sk, next_did = await _change_key(env)
     with pytest.raises(ForbiddenError) as refused:
         await room_metadata(env.infra, actor)
-    assert refused.value.detail == (
-        "Team membership is no longer current. "
-        "Reconnect with a certificate issued under the team's current key."
-    )
+    assert refused.value.detail == "Room requires current team membership"
     assert (
         await _connect(env, member, _certificate(next_sk, next_did, member, "room-after"))
     ).status_code == 200

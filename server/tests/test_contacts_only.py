@@ -15,10 +15,21 @@ from uuid import UUID
 import pytest
 
 from identity_binding_support import register_global_identity
+from messaging_actor_support import (
+    admit_privacy_actor,
+    admit_messaging_actor,
+    register_messaging_team,
+    add_messaging_contact,
+    set_messaging_inbound_mode,
+)
 from test_cli_human_reply import _pem
 from test_cli_never_grants import registry_listener
 from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
-from test_messages_http import _make_certificate, _encode_certificate, _signed_team_headers
+from test_messages_http import (
+    _make_certificate,
+    _encode_certificate,
+    _signed_team_headers,
+)
 
 
 @pytest.mark.asyncio
@@ -35,62 +46,24 @@ from test_messages_http import _make_certificate, _encode_certificate, _signed_t
         ("team_and_contacts", True, "after_removal"),
     ],
 )
-async def test_contacts_only_real_delivery(privacy_app, tmp_path, mode, outside, multiple):
+async def test_contacts_only_real_delivery(
+    privacy_app, tmp_path, mode, outside, multiple
+):
     env = privacy_app
-    sender, recipient = env.actors["alice"], env.actors["bob"]
     sender_team = "outside:example.test" if outside else TEAM
-    if outside:
-        await env.db.execute(
-            """
-            INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-            VALUES ($1, 'example.test', 'outside', $2)
-        """,
-            sender_team,
-            env.team_did,
-        )
-        await env.registry_db.execute(
-            """
-            INSERT INTO {{tables.teams}} (domain, name, team_did_key, visibility)
-            VALUES ('example.test', 'outside', $1, 'public')
-        """,
-            env.team_did,
-        )
-        await env.db.execute(
-            "UPDATE {{tables.agents}} SET team_id=$1 WHERE agent_id=$2", sender_team, sender.id
-        )
-        await env.db.execute(
-            "UPDATE {{tables.workspaces}} SET team_id=$1 WHERE workspace_id=$2",
-            sender_team,
-            sender.workspace,
-        )
-
+    sender = await admit_privacy_actor(
+        env,
+        "alice",
+        team_id=sender_team,
+        address="example.test/alice",
+        new_identity=outside,
+    )
+    recipient = await admit_privacy_actor(env, "bob", address="example.test/bob")
     async with registry_listener(env) as (_registry, registry_origin):
-        identities = {}
-        for name, actor, team in (("alice", sender, sender_team), ("bob", recipient, TEAM)):
-            address = f"example.test/{name}"
-            stable_id = await register_global_identity(env, actor, address)
-            identities[name] = stable_id
-            await env.db.execute(
-                """
-                UPDATE {{tables.agents}} SET identity_scope='global', did_aw=$1, address=$2
-                WHERE agent_id=$3
-            """,
-                stable_id,
-                address,
-                actor.id,
-            )
-            certificate = _make_certificate(
-                env.team_sk,
-                env.team_did,
-                actor.did,
-                team_id=team,
-                alias=name,
-                identity_scope="global",
-                member_did_aw=stable_id,
-                member_address=address,
-                certificate_id=f"strict-{name}",
-            )
-            actor.certificate = _encode_certificate(certificate)
+        identities = {"alice": sender.stable_id, "bob": recipient.stable_id}
+        for name, actor in (("alice", sender), ("bob", recipient)):
+            address, stable_id = actor.address, actor.stable_id
+            certificate = json.loads(base64.b64decode(actor.certificate))
             if name == "bob":
                 home = tmp_path / ".aw"
                 home.mkdir(mode=0o700)
@@ -107,7 +80,9 @@ async def test_contacts_only_real_delivery(privacy_app, tmp_path, mode, outside,
                     )
                 )
                 (home / "certificate.json").write_text(json.dumps(certificate))
-                membership = dict(team_id=TEAM, alias=name, cert_path="certificate.json")
+                membership = dict(
+                    team_id=TEAM, alias=name, cert_path="certificate.json"
+                )
                 (home / "teams.yaml").write_text(
                     json.dumps(dict(active_team=TEAM, memberships=[membership]))
                 )
@@ -115,7 +90,9 @@ async def test_contacts_only_real_delivery(privacy_app, tmp_path, mode, outside,
                     json.dumps(
                         dict(
                             aweb_url=str(env.client.base_url),
-                            memberships=[dict(membership, workspace_id=str(actor.workspace))],
+                            memberships=[
+                                dict(membership, workspace_id=str(actor.workspace))
+                            ],
                         )
                     )
                 )
@@ -148,29 +125,20 @@ async def test_contacts_only_real_delivery(privacy_app, tmp_path, mode, outside,
         assert json.loads(output)["inbound_mode"] == mode
         assert (
             json.loads(output)["label"]
-            == {"contacts_only": "Contacts only", "team_and_contacts": "Team and contacts"}[mode]
+            == {
+                "contacts_only": "Contacts only",
+                "team_and_contacts": "Team and contacts",
+            }[mode]
         )
 
         async def add_membership(name):
             team = f"{name}:example.test"
-            await env.db.execute(
-                """
-                INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-                VALUES ($1, 'example.test', $2, $3)
-            """,
-                team,
-                name,
-                env.team_did,
-            )
-            await env.db.execute(
-                """
-                INSERT INTO {{tables.agents}} (team_id, alias, did_key, did_aw, address, identity_scope, inbound_mode, did_aw_verified_key)
-                VALUES ($1, $2, $3, $4, 'example.test/bob', 'global', 'open', $3)
-            """,
-                team,
-                name,
-                recipient.did,
-                identities["bob"],
+            await register_messaging_team(env, team_id=team)
+            await admit_messaging_actor(
+                env,
+                alias=name,
+                team_id=team,
+                existing_identity=recipient.registered,
             )
 
         if multiple == "initial":
@@ -178,9 +146,14 @@ async def test_contacts_only_real_delivery(privacy_app, tmp_path, mode, outside,
 
         async def request(actor, team, method, path, payload=None):
             body = json.dumps(payload).encode() if payload is not None else b""
-            headers = _signed_team_headers(actor.sk, actor.did, team, actor.certificate, body)
+            headers = _signed_team_headers(
+                actor.sk, actor.did, team, actor.certificate, body
+            )
             return await env.client.request(
-                method, path, content=body, headers={**headers, "Content-Type": "application/json"}
+                method,
+                path,
+                content=body,
+                headers={**headers, "Content-Type": "application/json"},
             )
 
         async def send_both(expected):
@@ -216,23 +189,25 @@ async def test_contacts_only_real_delivery(privacy_app, tmp_path, mode, outside,
 
         await send_both(403)
         assert await env.db.fetch_value("SELECT COUNT(*) FROM {{tables.messages}}") == 0
-        assert await env.db.fetch_value("SELECT COUNT(*) FROM {{tables.chat_sessions}}") == 0
+        assert (
+            await env.db.fetch_value("SELECT COUNT(*) FROM {{tables.chat_sessions}}")
+            == 0
+        )
         # An active identity-bound contact is fixture authority, not a domain,
         # address-only legacy binding, pending row, or team membership.
-        row = await env.db.fetch_one(
-            """
-            INSERT INTO {{tables.contacts}} (
-                owner_did, contact_address, contact_did_aw, binding_controller_did, binding_accepted_at, status
-            ) VALUES ($1, 'example.test/alice', $2, $3, clock_timestamp(), 'pending')
-            RETURNING contact_id
-        """,
-            identities["bob"],
-            identities["alice"],
-            env.namespace_did,
+        row = await add_messaging_contact(
+            env,
+            recipient.registered,
+            address=sender.address,
+            status="pending",
         )
         await send_both(403)
-        await env.db.execute(
-            "UPDATE {{tables.contacts}} SET status='active' WHERE contact_id=$1", row["contact_id"]
+        pending_removed = await request(
+            recipient, TEAM, "DELETE", f"/v1/contacts/{row['contact_id']}"
+        )
+        assert pending_removed.status_code in (200, 204), pending_removed.text
+        row = await add_messaging_contact(
+            env, recipient.registered, address=sender.address
         )
         mail, chat = await send_both(200)
         mail_id, session_id = mail.json()["message_id"], chat.json()["session_id"]
@@ -241,7 +216,9 @@ async def test_contacts_only_real_delivery(privacy_app, tmp_path, mode, outside,
         assert delivered.json()["body"] == "contact test"
         # Removal through the recipient's real signed API revokes future sends,
         # including already established chat routes.
-        removed = await request(recipient, TEAM, "DELETE", f"/v1/contacts/{row['contact_id']}")
+        removed = await request(
+            recipient, TEAM, "DELETE", f"/v1/contacts/{row['contact_id']}"
+        )
         assert removed.status_code in (200, 204), removed.text
         await send_both(403)
         if multiple:
@@ -264,7 +241,10 @@ async def test_contacts_only_real_delivery(privacy_app, tmp_path, mode, outside,
                 "body": "after removal",
             },
         )
-        assert (continuation.status_code, mail_continuation.status_code) == (403, 403), (
+        assert (continuation.status_code, mail_continuation.status_code) == (
+            403,
+            403,
+        ), (
             continuation.text,
             mail_continuation.text,
         )
@@ -272,7 +252,8 @@ async def test_contacts_only_real_delivery(privacy_app, tmp_path, mode, outside,
         assert "exact active contacts" in mail_continuation.text
         assert (
             await env.db.fetch_value(
-                "SELECT COUNT(*) FROM {{tables.messages}} WHERE message_id=$1", UUID(mail_id)
+                "SELECT COUNT(*) FROM {{tables.messages}} WHERE message_id=$1",
+                UUID(mail_id),
             )
             == 1
         )
@@ -289,7 +270,11 @@ async def test_contacts_only_real_delivery(privacy_app, tmp_path, mode, outside,
 
         if multiple:
             unified = await request(
-                recipient, TEAM, "PATCH", "/v1/agents/me/inbound-mode", {"inbound_mode": mode}
+                recipient,
+                TEAM,
+                "PATCH",
+                "/v1/agents/me/inbound-mode",
+                {"inbound_mode": mode},
             )
             assert unified.status_code == 200, unified.text
             modes = await env.db.fetch_all(
@@ -301,31 +286,26 @@ async def test_contacts_only_real_delivery(privacy_app, tmp_path, mode, outside,
             # A fresh signed connect joins another team AFTER the mode is set.
             # The production membership INSERT must inherit policy, not open it.
             joined_team = "newjoin:example.test"
-            await env.registry_db.execute(
-                """
-                INSERT INTO {{tables.teams}} (domain, name, team_did_key, visibility)
-                VALUES ('example.test', 'newjoin', $1, 'public')
-            """,
-                env.team_did,
+            await register_messaging_team(env, team_id=joined_team)
+            joined_actor = await admit_messaging_actor(
+                env,
+                alias="bob",
+                team_id=joined_team,
+                existing_identity=recipient.registered,
             )
             from types import SimpleNamespace
 
+            assert (
+                await env.db.fetch_value(
+                    "SELECT inbound_mode FROM {{tables.agents}} WHERE agent_id=$1",
+                    UUID(joined_actor.agent_id),
+                )
+                == mode
+            )
             joined = SimpleNamespace(
-                sk=recipient.sk,
-                did=recipient.did,
-                certificate=_encode_certificate(
-                    _make_certificate(
-                        env.team_sk,
-                        env.team_did,
-                        recipient.did,
-                        team_id=joined_team,
-                        alias="bob",
-                        identity_scope="global",
-                        member_did_aw=identities["bob"],
-                        member_address="example.test/bob",
-                        certificate_id="newjoin-bob",
-                    )
-                ),
+                sk=joined_actor.signing_key,
+                did=joined_actor.did_key,
+                certificate=joined_actor.certificate,
             )
             connected = await request(
                 joined,
@@ -347,7 +327,9 @@ async def test_contacts_only_real_delivery(privacy_app, tmp_path, mode, outside,
 @pytest.mark.asyncio
 @pytest.mark.parametrize("raw_did", [True, False])
 @pytest.mark.parametrize("mode", ["contacts_only", None])
-async def test_unmarked_global_recipient_keeps_strict_policy(privacy_app, raw_did, mode):
+async def test_unmarked_global_recipient_keeps_strict_policy(
+    privacy_app, raw_did, mode
+):
     from aweb.messaging.messages import resolve_agent_by_did
 
     env = privacy_app
@@ -384,14 +366,25 @@ async def test_unmarked_global_recipient_keeps_strict_policy(privacy_app, raw_di
         for path, payload in (
             (
                 "/v1/messages",
-                {"to_did": recipient.did, "subject": "raw policy", "body": "policy check"},
+                {
+                    "to_did": recipient.did,
+                    "subject": "raw policy",
+                    "body": "policy check",
+                },
             ),
-            ("/v1/chat/sessions", {"to_dids": [recipient.did], "message": "policy check"}),
+            (
+                "/v1/chat/sessions",
+                {"to_dids": [recipient.did], "message": "policy check"},
+            ),
         ):
             body = json.dumps(payload).encode()
-            headers = _signed_team_headers(sender.sk, sender.did, TEAM, sender.certificate, body)
+            headers = _signed_team_headers(
+                sender.sk, sender.did, TEAM, sender.certificate, body
+            )
             response = await env.client.post(
-                path, content=body, headers={**headers, "Content-Type": "application/json"}
+                path,
+                content=body,
+                headers={**headers, "Content-Type": "application/json"},
             )
             assert response.status_code == expected, response.text
             if mode is None:
@@ -419,7 +412,8 @@ async def test_unmarked_global_recipient_keeps_strict_policy(privacy_app, raw_di
     await send_both(200)
     assert (
         await env.db.fetch_value(
-            "SELECT did_aw_verified_key FROM {{tables.agents}} WHERE agent_id=$1", recipient.id
+            "SELECT did_aw_verified_key FROM {{tables.agents}} WHERE agent_id=$1",
+            recipient.id,
         )
         is None
     )
@@ -430,7 +424,11 @@ async def test_unverified_caller_cannot_change_another_identity_policy(privacy_a
     from test_messages_http import _make_keypair
 
     env = privacy_app
-    attacker, recipient, sender = env.actors["carol"], env.actors["bob"], env.actors["alice"]
+    attacker, recipient, sender = (
+        env.actors["carol"],
+        env.actors["bob"],
+        env.actors["alice"],
+    )
     victim_id = await register_global_identity(env, recipient)
     await env.db.execute(
         """
@@ -466,7 +464,10 @@ async def test_unverified_caller_cannot_change_another_identity_policy(privacy_a
         body = json.dumps(payload).encode()
         headers = _signed_team_headers(actor.sk, actor.did, team, certificate, body)
         return await env.client.request(
-            method, path, content=body, headers={**headers, "Content-Type": "application/json"}
+            method,
+            path,
+            content=body,
+            headers={**headers, "Content-Type": "application/json"},
         )
 
     refused = await request(attacker, evil_team, forged, "POST", "/v1/connect", {})
@@ -495,7 +496,12 @@ async def test_unverified_caller_cannot_change_another_identity_policy(privacy_a
         victim_id,
     )
     refused = await request(
-        attacker, evil_team, forged, "PATCH", "/v1/agents/me/inbound-mode", {"inbound_mode": "open"}
+        attacker,
+        evil_team,
+        forged,
+        "PATCH",
+        "/v1/agents/me/inbound-mode",
+        {"inbound_mode": "open"},
     )
     assert refused.status_code == 403, refused.text
     assert "identity_binding_mismatch" in refused.text
@@ -506,7 +512,10 @@ async def test_unverified_caller_cannot_change_another_identity_policy(privacy_a
         == "contacts_only"
     )
     for path, payload in (
-        ("/v1/messages", {"to_did": recipient.did, "subject": "still strict", "body": "denied"}),
+        (
+            "/v1/messages",
+            {"to_did": recipient.did, "subject": "still strict", "body": "denied"},
+        ),
         ("/v1/chat/sessions", {"to_dids": [recipient.did], "message": "denied"}),
     ):
         refused = await request(sender, TEAM, sender.certificate, "POST", path, payload)
@@ -527,68 +536,32 @@ async def test_contact_creation_paths_bind_identity_before_delivery(
     from uuid import uuid4
 
     env = privacy_app
-    alice, bob = env.actors["alice"], env.actors["bob"]
     outside = "contacts:example.test"
-    await env.db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ($1, 'example.test', 'contacts', $2)
-    """,
-        outside,
-        env.team_did,
+    alice = await admit_privacy_actor(
+        env,
+        "alice",
+        team_id=outside,
+        address="example.test/alice",
+        new_identity=True,
     )
-    await env.registry_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (domain, name, team_did_key, visibility)
-        VALUES ('example.test', 'contacts', $1, 'public')
-    """,
-        env.team_did,
-    )
-    await env.db.execute(
-        "UPDATE {{tables.agents}} SET team_id=$1 WHERE agent_id=$2", outside, alice.id
-    )
-    await env.db.execute(
-        "UPDATE {{tables.workspaces}} SET team_id=$1 WHERE workspace_id=$2",
-        outside,
-        alice.workspace,
-    )
+    bob = await admit_privacy_actor(env, "bob", address="example.test/bob")
+    await set_messaging_inbound_mode(env, bob.registered, mode=mode)
     async with registry_listener(env) as (registry, registry_origin):
-        identities = {}
-        for name, actor, team in (("alice", alice, outside), ("bob", bob, TEAM)):
-            stable = await register_global_identity(env, actor, f"example.test/{name}")
-            identities[name] = stable
-            await env.db.execute(
-                """
-                UPDATE {{tables.agents}} SET did_aw=$1, address=$2, identity_scope='global',
-                    did_aw_verified_key=did_key WHERE agent_id=$3
-            """,
-                stable,
-                f"example.test/{name}",
-                actor.id,
-            )
-            actor.certificate = _encode_certificate(
-                _make_certificate(
-                    env.team_sk,
-                    env.team_did,
-                    actor.did,
-                    team_id=team,
-                    alias=name,
-                    identity_scope="global",
-                    member_did_aw=stable,
-                    member_address=f"example.test/{name}",
-                )
-            )
-        await env.db.execute(
-            "UPDATE {{tables.agents}} SET inbound_mode=$1 WHERE agent_id=$2", mode, bob.id
-        )
-        await env.registry_db.execute(
-            "UPDATE {{tables.dns_namespaces}} SET default_delivery_origin=$1",
-            str(env.client.base_url).rstrip("/"),
-        )
+        identities = {"alice": alice.stable_id, "bob": bob.stable_id}
+        # Publish the hosted route through the namespace controller's SDK writer.
+        from aweb.application_state import application_registry_client
+
+        namespace_registry = application_registry_client(env.app.state)
         monkeypatch.setenv("APP_ENV", "development")
+        monkeypatch.setenv("AWID_ALLOW_INSECURE_DELIVERY_ORIGIN", "1")
         monkeypatch.setenv("AWEB_FEDERATION_TEST", "1")
         monkeypatch.setenv("AWEB_FEDERATION_TEST_DEFAULT_REGISTRY", "1")
         monkeypatch.setenv("AWID_REGISTRY_URL", registry_origin)
+        await namespace_registry.update_namespace_delivery_origin(
+            "example.test",
+            env.namespace_sk,
+            default_delivery_origin=str(env.client.base_url).rstrip("/"),
+        )
         authority = build_federation_authority_activation(
             env.infra, public_origin=str(env.client.base_url).rstrip("/")
         )
@@ -596,14 +569,21 @@ async def test_contact_creation_paths_bind_identity_before_delivery(
 
         async def request(actor, team, path, payload):
             body = json.dumps(payload).encode()
-            headers = _signed_team_headers(actor.sk, actor.did, team, actor.certificate, body)
+            headers = _signed_team_headers(
+                actor.sk, actor.did, team, actor.certificate, body
+            )
             return await env.client.post(
-                path, content=body, headers={**headers, "Content-Type": "application/json"}
+                path,
+                content=body,
+                headers={**headers, "Content-Type": "application/json"},
             )
 
         async def send_both(expected):
             for path, payload in (
-                ("/v1/messages", {"to_did": bob.did, "subject": "bound contact", "body": "mail"}),
+                (
+                    "/v1/messages",
+                    {"to_did": bob.did, "subject": "bound contact", "body": "mail"},
+                ),
                 ("/v1/chat/sessions", {"to_dids": [bob.did], "message": "chat"}),
             ):
                 response = await request(alice, outside, path, payload)
@@ -681,7 +661,9 @@ async def test_contact_creation_paths_bind_identity_before_delivery(
                 (home / "certificate.json").write_text(
                     json.dumps(json.loads(base64.b64decode(bob.certificate)))
                 )
-                membership = dict(team_id=TEAM, alias="bob", cert_path="certificate.json")
+                membership = dict(
+                    team_id=TEAM, alias="bob", cert_path="certificate.json"
+                )
                 (home / "teams.yaml").write_text(
                     json.dumps(dict(active_team=TEAM, memberships=[membership]))
                 )
@@ -689,7 +671,9 @@ async def test_contact_creation_paths_bind_identity_before_delivery(
                     json.dumps(
                         dict(
                             aweb_url=str(env.client.base_url),
-                            memberships=[dict(membership, workspace_id=str(bob.workspace))],
+                            memberships=[
+                                dict(membership, workspace_id=str(bob.workspace))
+                            ],
                         )
                     )
                 )
@@ -720,7 +704,8 @@ async def test_contact_creation_paths_bind_identity_before_delivery(
                 output, error = await asyncio.wait_for(command.communicate(), 30)
                 assert command.returncode == 0, (output.decode(), error.decode())
             row = await env.db.fetch_one(
-                "SELECT * FROM {{tables.contacts}} WHERE owner_did=$1", identities["bob"]
+                "SELECT * FROM {{tables.contacts}} WHERE owner_did=$1",
+                identities["bob"],
             )
             assert row["contact_did_aw"] == identities["alice"]
             assert row["binding_controller_did"] == env.namespace_did

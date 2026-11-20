@@ -539,3 +539,123 @@ async def test_mcp_recipient_binding_mismatch_describes_the_recipient(pinning):
         )
         == 1
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind,stable_selector", [("mail", False), ("mail", True), ("chat", False)])
+async def test_a_verified_global_key_is_not_scoped_to_the_senders_team(
+    pinning, kind, stable_selector
+):
+    from messaging_actor_support import (
+        admit_messaging_actor,
+        register_messaging_team,
+        set_messaging_inbound_mode,
+    )
+
+    env = pinning
+    sender = await _admit(env, "globalkeysender")
+    other_team = "globalkeyrecipient:example.test"
+    await register_messaging_team(env, team_id=other_team)
+    target = await admit_messaging_actor(
+        env,
+        alias="globalkeytarget",
+        team_id=other_team,
+        address="example.test/globalkeytarget",
+    )
+    await set_messaging_inbound_mode(env, target, mode="open")
+    if kind == "mail":
+        payload = {"to_did": target.did_key, "body": "global key route"}
+        if stable_selector:
+            payload["to_stable_id"] = target.stable_id
+        response = await _http(env, sender, "POST", "/v1/messages", payload)
+    else:
+        response = await _http(
+            env,
+            sender,
+            "POST",
+            "/v1/chat/sessions",
+            {
+                "to_dids": [target.did_key],
+                "message": "global key route",
+            },
+        )
+    assert response.status_code == 200, response.text
+    if kind == "mail":
+        row = await env.db.fetch_one(
+            "SELECT from_did, to_did, body FROM {{tables.messages}} WHERE message_id=$1",
+            UUID(response.json()["message_id"]),
+        )
+        assert (row["from_did"], row["to_did"], row["body"]) == (
+            sender.did,
+            target.stable_id,
+            "global key route",
+        )
+    else:
+        rows = await env.db.fetch_all(
+            "SELECT did FROM {{tables.chat_participants}} WHERE session_id=$1",
+            UUID(response.json()["session_id"]),
+        )
+        assert {row["did"] for row in rows} == {sender.did, target.stable_id}
+
+
+@pytest.mark.asyncio
+async def test_deleting_a_workspace_does_not_make_its_current_member_claim_stale(pinning):
+    from aweb.claims import release_noncurrent_task_claims_on
+
+    env = pinning
+    holder = await _admit(env, "retainedclaimholder")
+    created = await _http(env, holder, "POST", "/v1/tasks", {"title": "retained claim"})
+    assert created.status_code == 200, created.text
+    ref = created.json()["task_ref"]
+    claimed = await _http(env, holder, "PATCH", "/v1/tasks/" + ref, {"status": "in_progress"})
+    assert claimed.status_code == 200, claimed.text
+    claim = await env.db.fetch_one(
+        "SELECT * FROM {{tables.task_claims}} WHERE team_id=$1 AND task_ref=$2",
+        TEAM,
+        ref,
+    )
+    await env.db.execute(
+        "UPDATE {{tables.workspaces}} SET deleted_at=NOW() WHERE workspace_id=$1",
+        claim["workspace_id"],
+    )
+    async with env.db.transaction() as tx:
+        released = await release_noncurrent_task_claims_on(tx, team_id=TEAM, task_ref=ref)
+    assert released == []
+    assert (
+        await env.db.fetch_one(
+            "SELECT * FROM {{tables.task_claims}} WHERE team_id=$1 AND task_ref=$2",
+            TEAM,
+            ref,
+        )
+        == claim
+    )
+
+
+@pytest.mark.asyncio
+async def test_warm_certificate_authentication_can_read_a_delivery_locked_member(pinning):
+    """A7's locked recheck must not serialize an unchanged reader with delivery."""
+    import asyncio
+
+    env = pinning
+    actor = await _admit(env, "concurrentreader")
+    warm = await _http(env, actor, "GET", "/v1/agents")
+    assert warm.status_code == 200, warm.text
+    before = await env.db.fetch_one(
+        "SELECT certificate_id, accepted_team_did_key FROM {{tables.agents}} WHERE agent_id=$1",
+        actor.id,
+    )
+    # Phase B holds precisely this SHARE lock through commit. Keep it held
+    # while a real certificate-signed request authenticates, as when opening
+    # an event stream before the delivery's commit/wake.
+    async with env.db.transaction() as tx:
+        await tx.fetch_value(
+            "SELECT agent_id FROM {{tables.agents}} WHERE agent_id=$1 FOR SHARE", actor.id,
+        )
+        async with asyncio.timeout(6):
+            response = await _http(env, actor, "GET", "/v1/agents")
+        assert response.status_code == 200, response.text
+    after = await env.db.fetch_one(
+        "SELECT certificate_id, accepted_team_did_key FROM {{tables.agents}} WHERE agent_id=$1",
+        actor.id,
+    )
+    assert dict(after) == dict(before)

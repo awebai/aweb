@@ -1,4 +1,4 @@
-"""Federation delivers to an exact resident identity without granting a team actor."""
+"""Identity residence retains attribution without granting membership authority."""
 
 from __future__ import annotations
 
@@ -112,7 +112,7 @@ async def test_federation_first_contact_and_new_continuation_keep_identity_resid
     kind,
     admission,
 ):
-    # identity-messaging-contract.md:262-277: the registry address supplies
+    # identity-messaging-contract.md, Continuations:313-318: the registry address supplies
     # canonical DID/key/route; residence does not require current membership.
     monkeypatch.setenv("AWEB_ENFORCE_TEAM_KEY_PINS", "true")
     if admission is ResidenceAdmission.SUPERSEDED_MEMBER:
@@ -136,7 +136,7 @@ async def test_federation_first_contact_and_new_continuation_keep_identity_resid
         same_origin.target_did,
     )
     assert len(participants) == 1
-    assert participants[0]["agent_id"] is None
+    assert participants[0]["agent_id"] == same_origin.target.id
     await _require_identity_wakes(same_origin, kind=kind)
 
 
