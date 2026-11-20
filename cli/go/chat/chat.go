@@ -1664,22 +1664,26 @@ type ExtendWaitOptions struct {
 // end-to-end encrypted: --e2ee and --plaintext decide alone, and otherwise
 // the session's own encryption carries over. --plaintext into an encrypted
 // session is announced through status. The session's encryption is read
-// from its stored rows; a failed read refuses the send.
+// from its stored rows; a failed read, or one that cannot establish it,
+// refuses the default send (*awid.UnknownConversationEncryptionError).
 func ContinuationEncrypted(ctx context.Context, client *awid.Client, sessionID string, choice E2EEChoice, status StatusCallback) (bool, error) {
 	if choice == E2EERequired {
 		return true, nil
 	}
-	encrypted, err := client.ChatSessionEncrypted(ctx, sessionID)
+	reading, err := client.ChatSessionEncryption(ctx, sessionID)
 	if err != nil {
 		return false, fmt.Errorf("reading whether the conversation is end-to-end encrypted: %w", err)
 	}
 	if choice == E2EEPlaintext {
-		if encrypted && status != nil {
+		if reading.State == awid.ConversationEncrypted && status != nil {
 			status("plaintext", awid.PlaintextIntoEncryptedNotice)
 		}
 		return false, nil
 	}
-	return encrypted, nil
+	if reading.State == awid.ConversationEncryptionUnknown {
+		return false, &awid.UnknownConversationEncryptionError{Reason: reading.Reason}
+	}
+	return reading.State == awid.ConversationEncrypted, nil
 }
 
 func ExtendWaitWithOptions(ctx context.Context, client *awid.Client, targetAlias string, message string, opts ExtendWaitOptions) (*ExtendWaitResult, error) {

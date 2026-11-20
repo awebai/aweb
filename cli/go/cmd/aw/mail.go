@@ -171,11 +171,14 @@ var mailSendCmd = &cobra.Command{
 			if err != nil {
 				return err
 			}
-			conversationEncrypted, err := c.MailConversationEncrypted(ctx, req.ConversationID)
+			conversation, err := c.MailConversationEncryption(ctx, req.ConversationID)
 			if err != nil {
 				return fmt.Errorf("reading whether the conversation is end-to-end encrypted: %w", err)
 			}
-			sendEncryptE2EE, inheritedE2EE = mailContinuationEncrypted(cmd, conversationEncrypted, mailSendE2EE, mailSendPlaintext || mailSendLegacyPlaintext)
+			sendEncryptE2EE, inheritedE2EE, err = mailContinuationEncrypted(cmd, conversation, mailSendE2EE, mailSendPlaintext || mailSendLegacyPlaintext)
+			if err != nil {
+				return err
+			}
 		case "alias":
 			if activeHuman != nil {
 				c, sel, err = activeHuman.client(teamFlag, "")
@@ -374,8 +377,14 @@ var mailReplyCmd = &cobra.Command{
 			return mailReplySourceMissingError(ctx, c, messageID)
 		}
 		source := inbox.Messages[0]
-		sourceEncrypted := source.ContentMode == awid.ContentModeEncryptedV2 || source.MessageVersion == awid.E2EEMessageVersion || source.Encrypted != nil
-		encryptReply, _ := mailContinuationEncrypted(cmd, sourceEncrypted, mailReplyE2EE, mailReplyPlaintext || mailReplyLegacyPlaintext)
+		sourceEncryption := awid.ConversationEncryptionReading{State: awid.ConversationPlaintext}
+		if awid.StoredRowEncrypted(source.ContentMode, source.MessageVersion, source.Encrypted) {
+			sourceEncryption.State = awid.ConversationEncrypted
+		}
+		encryptReply, _, err := mailContinuationEncrypted(cmd, sourceEncryption, mailReplyE2EE, mailReplyPlaintext || mailReplyLegacyPlaintext)
+		if err != nil {
+			return err
+		}
 		if encryptReply {
 			if err := configureClientE2EE(ctx, c, sel, true); err != nil {
 				return err
@@ -531,20 +540,27 @@ func (e *e2eeDecryptionUnavailableError) Error() string {
 
 // mailContinuationEncrypted decides whether a mail into an existing
 // conversation is end-to-end encrypted: --e2ee and --plaintext decide alone,
-// and with neither the conversation's encryption carries over (inherited).
-// --plaintext into an encrypted conversation is announced on stderr.
-func mailContinuationEncrypted(cmd *cobra.Command, conversationEncrypted, e2ee, plaintext bool) (encrypt bool, inherited bool) {
+// and otherwise the conversation's encryption carries over (inherited).
+// --plaintext into an encrypted conversation is announced; a default
+// continuation whose conversation's encryption is unknown is refused.
+func mailContinuationEncrypted(cmd *cobra.Command, conversation awid.ConversationEncryptionReading, e2ee, plaintext bool) (encrypt bool, inherited bool, err error) {
 	explicitPlaintext := plaintext || (cmd.Flags().Changed("e2ee") && !e2ee)
 	if explicitPlaintext {
-		if conversationEncrypted {
+		if conversation.State == awid.ConversationEncrypted {
 			fmt.Fprintf(cmd.ErrOrStderr(), "Note: %s\n", awid.PlaintextIntoEncryptedNotice)
 		}
-		return false, false
+		return false, false, nil
 	}
 	if cmd.Flags().Changed("e2ee") {
-		return true, false
+		return true, false, nil
 	}
-	return conversationEncrypted, conversationEncrypted
+	switch conversation.State {
+	case awid.ConversationEncrypted:
+		return true, true, nil
+	case awid.ConversationPlaintext:
+		return false, false, nil
+	}
+	return false, false, &awid.UnknownConversationEncryptionError{Reason: conversation.Reason}
 }
 
 func configureClientE2EEForRead(cmd *cobra.Command, ctx context.Context, c *aweb.Client, sel *awconfig.Selection) error {
@@ -1014,7 +1030,7 @@ func init() {
 	mailSendCmd.Flags().StringVar(&mailSendBodyFile, "body-file", "", safeFileInputHelp("message body"))
 	mailSendCmd.Flags().StringVar(&mailSendPriority, "priority", "normal", "Priority: low|normal|high|urgent")
 	mailSendCmd.Flags().StringVar(&mailSendConversationID, "conversation-id", "", "Existing mail conversation to continue (no recipient or --subject)")
-	mailSendCmd.Flags().BoolVar(&mailSendPlaintext, "plaintext", false, "Send explicit server-readable plaintext mail (the default for a new conversation; --conversation-id inherits its conversation's encryption)")
+	mailSendCmd.Flags().BoolVar(&mailSendPlaintext, "plaintext", false, "Send explicit server-readable plaintext mail (the default for a new conversation; --conversation-id inherits its conversation's encryption, and needs --e2ee or --plaintext when that cannot be read)")
 	mailSendCmd.Flags().BoolVar(&mailSendE2EE, "e2ee", false, "Send E2E encrypted mail; fails closed if encryption keys are missing")
 	mailSendCmd.Flags().BoolVar(&mailSendLegacyPlaintext, "legacy-plaintext", false, "Deprecated alias for --plaintext")
 	_ = mailSendCmd.Flags().MarkHidden("legacy-plaintext")

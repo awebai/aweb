@@ -105,8 +105,11 @@ func TestAwMailSendToStartsANewThread(t *testing.T) {
 					_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 				case "/v1/messages/conversations/" + old:
 					// A continuation reads its own conversation to sign its
-					// recipient; this fixture has none on record.
-					http.NotFound(w, r)
+					// recipient and to inherit its encryption. This server
+					// answers as one without the conversation route does
+					// (before server-v1.19.0): nothing on record, plaintext.
+					w.WriteHeader(http.StatusNotFound)
+					_, _ = w.Write([]byte(`{"detail":"Not Found"}`))
 				default:
 					t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 					http.NotFound(w, r)

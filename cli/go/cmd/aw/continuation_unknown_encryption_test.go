@@ -57,9 +57,12 @@ func newContinuationFixture(t *testing.T, ctx context.Context) *continuationFixt
 			_, _ = w.Write([]byte(`{}`))
 			return
 		}
-		requireCertificateAuthForTest(t, r)
 		historyPath := r.URL.Path == "/v1/chat/sessions/"+continuationTestSession+"/messages" ||
 			r.URL.Path == "/v1/messages/conversations/"+continuationTestConversation
+		postPath := r.Method == http.MethodPost && (r.URL.Path == "/v1/chat/sessions/"+continuationTestSession+"/messages" || r.URL.Path == "/v1/messages")
+		if historyPath || postPath {
+			requireCertificateAuthForTest(t, r)
+		}
 		switch {
 		case historyPath && r.Method == http.MethodGet:
 			f.limits = append(f.limits, r.URL.Query().Get("limit"))
@@ -73,7 +76,7 @@ func newContinuationFixture(t *testing.T, ctx context.Context) *continuationFixt
 				rows = append(rows, map[string]any{"message_id": "plain-" + strconv.Itoa(i), "content_mode": "plaintext", "message_version": 1, "from_agent": "t2", "body": "readable"})
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"messages": rows})
-		case r.Method == http.MethodPost && (r.URL.Path == "/v1/chat/sessions/"+continuationTestSession+"/messages" || r.URL.Path == "/v1/messages"):
+		case postPath:
 			var body map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			f.posted = append(f.posted, body)
