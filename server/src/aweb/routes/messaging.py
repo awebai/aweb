@@ -14,6 +14,7 @@ from awid.e2ee_keys import validate_encryption_key_assertion
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from aweb.deps import get_db
+from aweb.application_state import application_registry_client
 from aweb.identity_auth_deps import MessagingAuth, auth_dids, get_messaging_auth
 from aweb.messaging.messages import authorize_message_delivery
 from aweb.messaging.delivery_policy import DeliveryPolicyRefused
@@ -45,7 +46,7 @@ async def participant(
         team_id=auth.team_id,
         alias=alias,
         selected_team_id=auth.team_id,
-        registry_client=getattr(request.app.state, "awid_registry_client", None),
+        registry_client=application_registry_client(request.app.state),
     )
     if not row or row.get("status") != "active":
         raise HTTPException(404, detail="Recipient not found")
@@ -78,9 +79,7 @@ async def participant(
     if assertion:
         try:
             if row.get("did_aw"):
-                registry = getattr(request.app.state, "awid_registry_client", None)
-                if registry is None:
-                    raise HTTPException(503, detail={"code": "authority_unavailable"})
+                registry = application_registry_client(request.app.state)
                 resolution = await registry.resolve_key_fresh(row["did_aw"])
                 if (
                     not resolution
