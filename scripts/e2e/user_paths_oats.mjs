@@ -10,7 +10,7 @@ import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { kernelCommandErrorCode, prepareKernelProbeDirectories } from "./user_paths_kernel_setup.mjs";
+import { DiagnosticOutput, prepareKernelProbeDirectories, preparePassiveKernelLaunch, runKernelProbeCommand } from "./user_paths_kernel_setup.mjs";
 
 const KernelBackend = Object.freeze({ Tmux: "tmux" });
 const OWNED_TMUX = ["tmux", "-L", "oats"];
@@ -40,16 +40,12 @@ const env = {
 };
 symlinkSync(resolve(values.aw), join(bin, "aw"));
 writeFileSync(join(bin, "oats"), `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(KERNEL)} "$@"\n`, { mode: 0o700 });
-writeFileSync(join(bin, "passive-session"), "#!/bin/sh\nexec sleep infinity\n", { mode: 0o700 });
-function command({ argv, cwd = deployment, timeout = 60000 }) {
-  const result = spawnSync(argv[0], argv.slice(1), { cwd, env, encoding: "utf8", timeout });
-  if (result.error) throw result.error;
-  const code = result.status === 0 ? null : kernelCommandErrorCode(result.stdout);
-  assert.equal(result.status, 0, `${argv.slice(0, 3).join(" ")}: exit=${result.status}${code ? ` code=${code}` : ""}: ${result.stderr}`);
-  return result.stdout;
+const passiveLaunch = preparePassiveKernelLaunch({ bin, node: process.execPath });
+function command({ name, argv, cwd = deployment, timeout = 60000, output = DiagnosticOutput.Credential }) {
+  return runKernelProbeCommand({ name, argv, cwd, env, timeout, output });
 }
-const oats = (...argv) => command({ argv: [process.execPath, KERNEL, ...argv] });
-const aw = ({ identity, args }) => command({ argv: [join(bin, "aw"), "--identity-home", join(identity, ".aw"), ...args], cwd: identity });
+const oats = (...argv) => command({ name: `oats ${argv.slice(0, 2).join(" ")}`, argv: [process.execPath, KERNEL, ...argv], output: DiagnosticOutput.Public });
+const aw = ({ identity, args }) => command({ name: `aw ${args.slice(0, 3).join(" ")}`, argv: [join(bin, "aw"), "--identity-home", join(identity, ".aw"), ...args], cwd: identity });
 const parseObject = (raw) => { const value = JSON.parse(raw); assert.ok(value && typeof value === "object" && !Array.isArray(value), "expected command JSON object"); return value; };
 function wakeInstances(status) {
   const rows = status.instances ?? [];
@@ -120,7 +116,7 @@ try {
   assert.equal(JSON.parse(readFileSync(join(STAGED, "node_modules/@awebai/oats/package.json"), "utf8")).version, "0.69.19");
   evidence.kernel_integrity = JSON.parse(readFileSync(join(STAGED, "package-lock.json"), "utf8")).packages["node_modules/@awebai/oats"].integrity;
   evidence.node = process.version;
-  evidence.aw = command({ argv: [join(bin, "aw"), "version"] });
+  evidence.aw = command({ name: "aw version", argv: [join(bin, "aw"), "version"], output: DiagnosticOutput.Public });
   assert.match(evidence.aw, new RegExp(`commit: ${values["source-commit"]} `), "candidate aw identifies the requested source SHA");
   assert.equal(JSON.parse(readFileSync(join(PROVIDER, "oats.json"), "utf8")).version, PIN.version);
   const ref = pathToFileURL(source).href;
@@ -128,12 +124,12 @@ try {
   cpSync(PROVIDER, join(source, "capabilities/oats-aweb"), { recursive: true });
   writeFileSync(join(source, "oats-workspace.yaml"), `schemaVersion: 2\nname: wake-probe\nmembers:\n  - ${ref}\nlocalTeams: true\ndefaults:\n  messaging:\n    oats.aweb: { from: local/${source} }\n`);
   writeFileSync(join(source, "oats-membership.yaml"), `schemaVersion: 2\nworkspace: ${ref}\n`);
-  writeFileSync(join(source, "souls/probe/soul.yaml"), "schemaVersion: 2\nname: probe\ndescription: released kernel wake probe\nwork: directory\nlaunch: { harness: claude }\n");
+  writeFileSync(join(source, "souls/probe/soul.yaml"), `schemaVersion: 2\nname: probe\ndescription: released kernel wake probe\nwork: directory\nlaunch: { harness: ${passiveLaunch.harness} }\n`);
   writeFileSync(join(source, "souls/probe/AGENTS.md"), "Disposable passive wake probe.\n");
   for (const args of [["init", "-q"], ["add", "."], ["commit", "-qm", "owned wake-probe workspace"]]) {
-    command({ argv: ["git", "-C", source, "-c", "user.name=Wake probe", "-c", "user.email=probe@example.invalid", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", ...args] });
+    command({ name: `git ${args[0]}`, argv: ["git", "-C", source, "-c", "user.name=Wake probe", "-c", "user.email=probe@example.invalid", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", ...args], output: DiagnosticOutput.Public });
   }
-  writeFileSync(join(deployment, "oats-local.yaml"), `schemaVersion: 2\nworkspace: ${ref}\nteams:\n  default: { team: ${JSON.stringify(values.team)} }\ndefaultTeam: default\nsettings:\n  oats.aweb:\n    delivery: session\n    root: ${JSON.stringify(resolve(values.seat))}\nlaunch-configs:\n  passive:\n    harness: claude\n    executable: ${JSON.stringify(join(bin, "passive-session"))}\nsouls:\n  launch:\n    '*': passive\n`);
+  writeFileSync(join(deployment, "oats-local.yaml"), `schemaVersion: 2\nworkspace: ${ref}\nteams:\n  default: { team: ${JSON.stringify(values.team)} }\ndefaultTeam: default\nsettings:\n  oats.aweb:\n    delivery: session\n    root: ${JSON.stringify(resolve(values.seat))}\nlaunch-configs:\n  passive: ${JSON.stringify(passiveLaunch)}\nsouls:\n  launch:\n    '*': passive\n`);
   evidence.mint_preflight = prepareMintAuthority({ seat: values.seat, fixtureHome: values["fixture-home"], team: values.team });
   // Capture bounded public failure text; credentials remain in the owned volume.
   const startOwnedBroker = () => {
@@ -150,7 +146,7 @@ try {
   writeFileSync(join(cache, "runner.mjs"), legacyBytes, { mode: 0o600 });
   writeFileSync(join(cache, "runner.sha256"), "old success stamp\n", { mode: 0o600 });
   broker = startOwnedBroker();
-  const wakeStatus = () => parseObject(command({ argv: [join(bin, "aw"), "wake", "status", "--json"], cwd: home }));
+  const wakeStatus = () => parseObject(command({ name: "aw wake status", argv: [join(bin, "aw"), "wake", "status", "--json"], cwd: home, output: DiagnosticOutput.Public }));
   await until({ read: wakeStatus, ready: (status) => status.daemon_running === true && status.daemon_pid === broker.pid, label: "isolated broker" });
   const spawned = parseObject(oats("spawn", "probe", "--name", "r20-wake-probe", "--backend", KernelBackend.Tmux, "--no-launch", "--json"));
   assert.equal(spawned.ok, true);
@@ -210,9 +206,9 @@ try {
   evidence.message_id = sent.message_id;
   evidence.wake_after = await until({ read: wakeStatus, ready: (status) => wakeInstances(status).some((row) => row.home === instanceHome && row.channel_core?.last_input_at && row.channel_core.last_input_at !== wakeInstances(before).find((entry) => entry.home === instanceHome)?.channel_core?.last_input_at), label: "broker input receipt" });
   const capture = () => {
-    const panes = command({ argv: [...OWNED_TMUX, "list-panes", "-a", "-F", "#{pane_id}"] }).trim().split("\n");
+    const panes = command({ name: "tmux list-panes", argv: [...OWNED_TMUX, "list-panes", "-a", "-F", "#{pane_id}"] }).trim().split("\n");
     assert.ok(panes.length && panes.every((pane) => /^%[0-9]+$/.test(pane)), "owned kernel server reports valid panes");
-    return panes.map((pane) => command({ argv: [...OWNED_TMUX, "capture-pane", "-p", "-S", "-400", "-t", pane] })).join("\n");
+    return panes.map((pane) => command({ name: "tmux capture-pane", argv: [...OWNED_TMUX, "capture-pane", "-p", "-S", "-400", "-t", pane] })).join("\n");
   };
   evidence.presented_wake = await until({ read: capture, ready: (text) => text.includes(sent.message_id) && text.includes(subject), label: "fresh wake in the isolated kernel session" });
   evidence.permissions_after = [join(home, ".config/aw"), state, cache].map(permission);
@@ -222,6 +218,7 @@ try {
 } catch (error) {
   evidence.result = ProbeOutcome.Failed;
   evidence.error = String(error);
+  if (error.diagnostic) evidence.failed_command = error.diagnostic;
   process.exitCode = 1;
 } finally {
   if (instance) { try { evidence.retire = parseObject(oats("retire", instance, "--json")); assert.equal(evidence.retire.ok, true, "released provider retire must complete successfully"); } catch (error) { cleanupErrors.push(String(error)); } }

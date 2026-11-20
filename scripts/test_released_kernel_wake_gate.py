@@ -17,6 +17,19 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ReleasedKernelBootstrapTest(unittest.TestCase):
+    def test_passive_kernel_preflight_and_command_diagnostics(self):
+        subprocess.run(
+            [
+                "node",
+                "--test",
+                str(ROOT / "scripts/e2e/user_paths_kernel_setup.test.mjs"),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+
     def test_no_launch_spawn_uses_private_deployment_without_git_identity(self):
         staged = Path("/opt/user-paths/released-oats")
         package = staged if staged.is_dir() else ROOT / "candidate-gate/released-oats"

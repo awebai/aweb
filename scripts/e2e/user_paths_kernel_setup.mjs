@@ -1,5 +1,48 @@
-import { mkdirSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { spawnSync } from "node:child_process";
+
+export const DiagnosticOutput = Object.freeze({ Public: "public", Credential: "credential" });
+
+export function preparePassiveKernelLaunch({ bin, node }) {
+  const program = join(bin, "passive-session.mjs");
+  writeFileSync(program, "setInterval(() => {}, 1000);\n", { mode: 0o600 });
+  // Session delivery needs a terminal, not Claude's package-discovery protocol.
+  return { harness: "codex", executable: node, args: [program] };
+}
+
+function diagnosticTail(output, policy) {
+  if (policy === DiagnosticOutput.Credential) return "<credential output withheld>";
+  const text = String(output ?? "");
+  try {
+    const value = JSON.parse(text);
+    return JSON.stringify(value, (key, field) =>
+      /token|secret|password|credential|private|seed|api.?key|signing.?key/i.test(key) ? "<redacted>" : field
+    ).slice(-4096);
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    return text.slice(-4096);
+  }
+}
+
+export function runKernelProbeCommand({ name, argv, cwd, env, timeout = 60000, output = DiagnosticOutput.Credential }) {
+  if (!Object.values(DiagnosticOutput).includes(output)) throw new Error("Unknown probe diagnostic output policy");
+  const started = performance.now();
+  const result = spawnSync(argv[0], argv.slice(1), { cwd, env, encoding: "utf8", timeout });
+  if (result.error || result.status !== 0) {
+    const diagnostic = {
+      command: name, executable: argv[0], pid: result.pid,
+      elapsed_ms: Math.round(performance.now() - started), timeout_ms: timeout,
+      status: result.status, signal: result.signal,
+      error_code: result.error?.code ?? kernelCommandErrorCode(result.stdout),
+      stdout_tail: diagnosticTail(result.stdout, output), stderr_tail: diagnosticTail(result.stderr, output),
+    };
+    const error = new Error(`${JSON.stringify(diagnostic)}. Inspect this child's diagnostics before rerunning the user-paths stage.`, { cause: result.error });
+    error.diagnostic = diagnostic;
+    throw error;
+  }
+  return result.stdout;
+}
 
 export function prepareKernelProbeDirectories({ root }) {
   const home = join(root, "home"), deployment = join(root, "deploy");

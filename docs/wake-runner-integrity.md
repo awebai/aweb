@@ -42,3 +42,16 @@ The control excludes Claude from PATH and checks that an unconfigured
 It then selects the installed Node executable through a local launch
 configuration: the released kernel validates a future launch even when no
 process is started. No placeholder harness executable is installed.
+
+The wake journey selects a passive Codex launch backed by Node and an idle
+script. Declaring it as Claude would make the released kernel call it with
+`plugin list --json`; an idle executable cannot answer that discovery request.
+The control exercises the released kernel's real launch planner with the
+provider's conditional package requirement. Actual wake and terminal delivery
+remain the user-paths stage's responsibility.
+
+Command failures retain a child label, executable, PID, elapsed time, configured
+deadline and bounded output tails. Credential-bearing aw calls withhold both
+streams; lifecycle JSON diagnostics redact credential fields. The command
+deadline remains 60 seconds. Diagnostics identify a failure without certifying
+its underlying cause.
