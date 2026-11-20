@@ -113,14 +113,20 @@ The operator configuration is one JSON object with exactly these keys:
 | `destination` | `{"drive_id", "folder_id"}` of the app folder; any other refuses the run |
 | `graph_origin` | a bare `https://host[:port]` origin; the bearer goes to it only |
 | `token_file` | the access token file the runner fills (absolute) |
-| `ca_bundle` | a CA file to verify the origin, or `null` for the system default |
+| `ca_bundle` | the only CA file trusted for the origin, or `null` for the pinned certifi bundle |
 | `output_max_bytes` | the stdout bound, at least 512 |
 
 The access token is read from `token_file` before any provider call. A missing,
 linked, non-regular, empty or oversized token, or one with any character outside
 the RFC 6750 `b64token` set, refuses the run. An unreadable `ca_bundle` is
-`config_invalid`. The
-HTTPS client ignores proxy and certificate settings from the environment.
+`config_invalid`.
+
+The trust root comes from `ca_bundle` or certifi alone. The TLS context is built
+without `ssl.create_default_context`, so `SSL_CERT_FILE` and `SSL_CERT_DIR`
+cannot add a root and `SSLKEYLOGFILE` cannot record session keys. The HTTPS
+client runs with `trust_env=False`, so proxy and netrc settings are ignored.
+OpenSSL itself still reads `OPENSSL_CONF`, `OPENSSL_MODULES` and
+`OPENSSL_ENGINES` when it loads; the job's environment must not set them.
 
 stdout is one JSON object:
 `{"v": 1, "outcome": ..., "reason": ..., "receipts": [{job_id, outcome, reason, item_id, sha256}]}`.

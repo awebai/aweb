@@ -12,6 +12,7 @@ from replay import ExitCode, RunRefused, load_config, run
 from submit import submit
 from tests.outbox import provision_outbox
 from tests.standin import TOKEN, OneDriveStandIn
+from tests.tls import APPROOT, GraphListener, make_ca_and_server_cert
 
 HERE = Path(__file__).resolve().parents[1]
 ORIGIN = "https://graph.standin.invalid"
@@ -394,3 +395,83 @@ def test_a_vendored_file_cannot_shadow_a_standard_library_module(tmp_path, confi
 
     assert result.returncode == ExitCode.RUN_REFUSED
     assert json.loads(result.stdout)["reason"] == "token_unavailable"
+
+
+def run_cli_with_env(config_path, env):
+    return subprocess.run(
+        [sys.executable, "-I", str(HERE / "replay.py"), "--config", str(config_path)],
+        capture_output=True,
+        text=True,
+        cwd="/",
+        env=env,
+        timeout=60,
+    )
+
+
+@pytest.fixture
+def tls_listener(tmp_path):
+    ca, cert, key = make_ca_and_server_cert(tmp_path)
+    with GraphListener(cert, key) as listener:
+        yield ca, listener
+
+
+def tls_config(config_body, listener, ca_bundle):
+    return {
+        **config_body,
+        "graph_origin": f"https://localhost:{listener.port}",
+        "destination": {
+            "drive_id": APPROOT["parentReference"]["driveId"],
+            "folder_id": APPROOT["id"],
+        },
+        "ca_bundle": ca_bundle,
+    }
+
+
+def test_a_configured_ca_bundle_reaches_a_tls_origin_it_vouches_for(
+    tmp_path, config_body, tls_listener
+):
+    ca, listener = tls_listener
+
+    result = run_cli_with_env(
+        write_config(tmp_path, tls_config(config_body, listener, str(ca))), {}
+    )
+
+    assert result.returncode == ExitCode.OK, result.stdout + result.stderr
+    assert json.loads(result.stdout)["outcome"] == "ok"
+    assert listener.requests and all(auth == f"Bearer {TOKEN}" for *_, auth in listener.requests)
+
+
+def test_without_a_ca_bundle_the_environment_cannot_choose_the_trust_root(
+    tmp_path, config_body, tls_listener
+):
+    ca, listener = tls_listener
+    environment = {"SSL_CERT_FILE": str(ca), "SSL_CERT_DIR": str(ca.parent)}
+
+    result = run_cli_with_env(
+        write_config(tmp_path, tls_config(config_body, listener, None)), environment
+    )
+
+    assert result.returncode == ExitCode.RUN_REFUSED, result.stdout + result.stderr
+    assert json.loads(result.stdout)["reason"] == "provider_unavailable"
+    assert listener.requests == []
+
+
+def test_tls_session_keys_are_never_logged_even_without_isolated_mode(
+    tmp_path, config_body, tls_listener
+):
+    ca, listener = tls_listener
+    keylog = tmp_path / "keys.log"
+    config_path = write_config(tmp_path, tls_config(config_body, listener, str(ca)))
+
+    result = subprocess.run(
+        [sys.executable, str(HERE / "replay.py"), "--config", str(config_path)],
+        capture_output=True,
+        text=True,
+        cwd="/",
+        env={"SSLKEYLOGFILE": str(keylog)},
+        timeout=60,
+    )
+
+    assert result.returncode == ExitCode.OK, result.stdout + result.stderr
+    assert listener.requests
+    assert not keylog.exists()

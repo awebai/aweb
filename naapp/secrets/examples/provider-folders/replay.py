@@ -27,6 +27,7 @@ from dataclasses import asdict, dataclass  # noqa: E402
 from enum import IntEnum  # noqa: E402
 from urllib.parse import urlsplit  # noqa: E402
 
+import certifi  # noqa: E402
 import httpx  # noqa: E402
 
 from onedrive import (  # noqa: E402
@@ -208,10 +209,21 @@ def main(argv: list[str]) -> int:
 
 
 def _tls_context(ca_bundle: Path | None) -> ssl.SSLContext:
+    """Trust only the configured CA file, or the pinned certifi bundle.
+
+    The context is built directly rather than by ssl.create_default_context,
+    which consults the environment: SSL_CERT_FILE and SSL_CERT_DIR through
+    OpenSSL's default verify paths, and SSLKEYLOGFILE for session keys.
+    """
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.verify_flags |= ssl.VERIFY_X509_STRICT | ssl.VERIFY_X509_PARTIAL_CHAIN
     try:
-        return ssl.create_default_context(cafile=None if ca_bundle is None else str(ca_bundle))
+        context.load_verify_locations(
+            cafile=certifi.where() if ca_bundle is None else str(ca_bundle)
+        )
     except (OSError, ssl.SSLError):
         raise RunRefused(Reason.CONFIG_INVALID) from None
+    return context
 
 
 def _destination(folder: GraphAppFolder) -> Destination:
