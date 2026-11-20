@@ -271,14 +271,18 @@ async def _current_grant(
             principal.team_id,
             refused.server_url,
         )
-        # Not transient, so not a 503: only the team's controller can fix it
-        # (docs/design/app-team-server-api.md §1, trust chain step 4).
+        # Not transient, so not a 503 and never cached: the deployment's
+        # operator or the team's controller fixes it, and the next read after
+        # that succeeds (docs/design/app-team-server-api.md §1, trust chain step 4).
         raise _refuse(
             403,
             "team_server_not_allowed",
-            f"This team's coordination server, {refused.server_url}, is not an address this app "
-            "may reach. The team's controller must publish a public https address with "
-            "`aw id team set-server` before this app can serve the team.",
+            f"This team's coordination server, {refused.server_url}, is refused by this "
+            "deployment's egress policy. If it is this deployment's own https server, the "
+            "operator lists its origin in the app's TEAM_SERVER_INTERNAL_ORIGINS, with the "
+            "operator network (HOOK_INTERNAL_DESTINATIONS and HOOK_INTERNAL_CIDR), and "
+            "restarts the app. Otherwise the team's controller publishes a public https "
+            "address with `aw id team set-server`.",
         ) from None
     except GrantUnavailable:
         logger.exception("Grant authority unavailable for team %s", principal.team_id)

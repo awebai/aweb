@@ -115,8 +115,9 @@ class HookResolutionUnavailable(Exception):
 
 
 class HookTeamServerNotAllowed(HookResolutionUnavailable):
-    """The team's published server is not one this app may reach. Not
-    transient: only the team's controller can fix it
+    """The team's published server is refused by this deployment's egress
+    policy. Not transient: the deployment's operator lists its own server, or
+    the team's controller publishes a reachable one
     (docs/design/app-team-server-api.md §1, trust chain step 4)."""
 
     def __init__(self, server_url: str) -> None:

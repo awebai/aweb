@@ -426,8 +426,9 @@ class Lookup(StrEnum):
 
 def _unresolved(exc: HookResolutionUnavailable, lookup: Lookup) -> IngestRefused:
     """The refusal for a hook read the team's server did not answer: permanent
-    when the egress rule refuses that server, which only the team's controller
-    can fix (docs/design/app-team-server-api.md §1, trust chain step 4), and
+    when this deployment's egress policy refuses that server, which the
+    deployment's operator or the team's controller fixes
+    (docs/design/app-team-server-api.md §1, trust chain step 4), and
     otherwise the lookup's own code, which the sender retries."""
     if isinstance(exc, HookTeamServerNotAllowed):
         return IngestRefused(403, "team_server_not_allowed")
