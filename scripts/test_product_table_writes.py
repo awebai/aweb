@@ -273,6 +273,31 @@ async def f(db, schema):
         self.assertEqual(report["unmarked"], 1)
         self.assertEqual(report["unresolved_calls"], [])
 
+    def test_late_bound_free_names_remain_budgeted(self):
+        cases = {
+            "nested function": (
+                'def outer(db):\n    SQL = "SELECT 1"\n    def inner():\n'
+                '        db.execute(SQL)\n    SQL = "DELETE FROM agents"\n    inner()\n'
+            ),
+            "module global": (
+                'SQL = "SELECT 1"\ndef run(db):\n    db.execute(SQL)\n'
+                'SQL = "DELETE FROM agents"\nrun(db)\n'
+            ),
+        }
+        for name, source in cases.items():
+            with self.subTest(binding=name):
+                report = self.report(source)
+                self.assertEqual(report["unmarked"], 0)
+                self.assertEqual(len(report["unresolved_calls"]), 1)
+                result = self.run_check()
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("nonliteral calls 1 > 0", result.stdout)
+        report = self.report(
+            'SQL = "DELETE FROM agents"\ndef run(db):\n    db.execute(SQL)\n'
+        )
+        self.assertEqual(report["unmarked"], 1)
+        self.assertEqual(report["unresolved_calls"], [])
+
     def test_nine_non_simple_binding_forms_never_hide_writes(self):
         cases = {
             "lambda": ('sql="SELECT 1"\nf=lambda sql: db.execute(sql)\n', 0, 1),
