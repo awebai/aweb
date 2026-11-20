@@ -168,12 +168,18 @@ async def test_a_superseded_claim_is_released_when_a_current_member_claims(pinni
 @pytest.mark.parametrize("change", ["superseded", "inactive"])
 async def test_identity_context_filters_members_before_projection_writes(pinning, change):
     from aweb.identity_auth_deps import lookup_identity_agent_context
+    from aweb.identity_binding import verify_identity_binding
 
     env = pinning
     actor = await _admit(env, "projectiontarget", global_identity=True)
     request = _request(env, actor)
     # Acquire actual verified binding evidence on the original signed request.
     await verify_request_certificate(request, env.infra)
+    binding = await verify_identity_binding(
+        request, did_key=actor.did, did_aw=actor.stable,
+        address=actor.address, fresh=True,
+    )
+    assert binding.fresh_observation
     if change == "superseded":
         await _change_key(env)
     else:
