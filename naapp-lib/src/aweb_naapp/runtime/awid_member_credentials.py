@@ -17,6 +17,7 @@ from aweb_naapp.key_file import KeyFileError, read_key_file
 from aweb_naapp.runtime.settings import AWIDMemberCredentialFiles
 from aweb_naapp.runtime.team_auth import AWIDMemberCredential
 
+
 def read_member_credential(team_id: str, files: AWIDMemberCredentialFiles) -> AWIDMemberCredential:
     """The credential ``files`` hold for ``team_id``; ValueError naming the team."""
     try:
