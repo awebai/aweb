@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"regexp"
@@ -57,61 +57,52 @@ var teamInviteInspectCmd = &cobra.Command{
 		"scope is unknown, status is unverified, and expiry/validity are not established.\n" +
 		"Inspection creates no identity, membership or workspace. External identity homes\n" +
 		"follow the shared identity selector. Cloud must support /api/v1/spawn/invite-preview.",
-	Args: func(cmd *cobra.Command, args []string) error {
+	Args: func(_ *cobra.Command, args []string) error {
 		if len(args) != 0 {
-			return reportInviteInspectError(cmd, nil, &inviteInspectError{"malformed_token", "Pass the invite token on stdin, not as an argument.", 2})
+			return &inviteInspectError{"malformed_token", "Pass the invite token on stdin, not as an argument.", 2}
 		}
 		return nil
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		token, err := readInspectToken(cmd.InOrStdin())
 		if err != nil {
-			return reportInviteInspectError(cmd, nil, err)
+			return err
 		}
 		result, inspectErr := inspectInvite(cmd.Context(), token)
 		if inspectErr != nil {
-			return reportInviteInspectError(cmd, result, inspectErr)
+			return &inviteInspectionFailure{inviteInspectError: inspectErr, invite: result}
 		}
 		if jsonFlag {
 			return json.NewEncoder(cmd.OutOrStdout()).Encode(result)
 		}
-		return formatInviteInspection(cmd, result)
+		return formatInviteInspection(cmd.OutOrStdout(), result)
 	},
 }
 
 func init() {
 	teamInviteInspectCmd.Flags().Bool("token-stdin", false, "Read the token from stdin (the default)")
-	teamInviteInspectCmd.SetFlagErrorFunc(func(cmd *cobra.Command, _ error) error {
-		return reportInviteInspectError(cmd, nil, &inviteInspectError{"malformed_token", "Invalid inspect flags; use aw team invite inspect --help.", 2})
+	setCLIFlagErrorFunc(teamInviteInspectCmd, func(_ *cobra.Command, _ error) error {
+		return &inviteInspectError{"malformed_token", "Invalid inspect flags; use aw team invite inspect --help.", 2}
 	})
 	teamHumanInviteCmd.AddCommand(teamInviteInspectCmd)
 }
 
-func reportInviteInspectError(cmd *cobra.Command, result *inviteInspection, err *inviteInspectError) error {
-	var writeErr error
-	if jsonFlag {
-		writeErr = json.NewEncoder(cmd.OutOrStdout()).Encode(struct {
-			Error  *inviteInspectError `json:"error"`
-			Invite *inviteInspection   `json:"invite,omitempty"`
-		}{err, result})
-	} else if result != nil {
-		writeErr = formatInviteInspection(cmd, result)
-	}
-	if writeErr != nil {
-		return errors.Join(err, fmt.Errorf("write invite inspection: %w; check the output destination and retry", writeErr))
-	}
-	return err
+type inviteInspectionFailure struct {
+	*inviteInspectError
+	invite *inviteInspection
 }
 
-func formatInviteInspection(cmd *cobra.Command, result *inviteInspection) error {
-	_, err := fmt.Fprintf(cmd.OutOrStdout(), "Kind: %s\nTeam: %s\nIdentity scope: %s\nServer: %s\nStatus: %s\n", result.Kind, result.CanonicalTeamID, result.IdentityScope, result.ServerURL, result.Status)
+func (e *inviteInspectionFailure) Unwrap() error { return e.inviteInspectError }
+
+func formatInviteInspection(w io.Writer, result *inviteInspection) error {
+	_, err := fmt.Fprintf(w, "Kind: %s\nTeam: %s\nIdentity scope: %s\nServer: %s\nStatus: %s\n", result.Kind, result.CanonicalTeamID, result.IdentityScope, result.ServerURL, result.Status)
 	if err != nil {
 		return err
 	}
 	if result.Kind == inviteAuthorityController {
-		_, err = fmt.Fprintln(cmd.OutOrStdout(), "Locally decoded metadata only; scope, expiry and validity are unknown until acceptance.")
+		_, err = fmt.Fprintln(w, "Locally decoded metadata only; scope, expiry and validity are unknown until acceptance.")
 	} else {
-		_, err = fmt.Fprintln(cmd.OutOrStdout(), "Status reported by the invite's service; no invite was redeemed. The unsigned envelope does not authenticate that service.")
+		_, err = fmt.Fprintln(w, "Status reported by the invite's service; no invite was redeemed. The unsigned envelope does not authenticate that service.")
 	}
 	return err
 }
