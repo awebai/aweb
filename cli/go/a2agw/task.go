@@ -3,6 +3,7 @@ package a2agw
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -339,7 +340,7 @@ func (s *taskStore) applyReply(reply BridgeReply) (*taskRecord, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	record, ok := s.tasks[reply.TaskID]
-	if !ok || s.expiredLocked(record) || record.Terminal {
+	if !ok || s.expiredLocked(record) || record.Terminal || isInterruptedState(taskState(record.Status.State)) {
 		return nil, false, nil
 	}
 	if record.ContextID != "" && reply.ContextID != record.ContextID {
@@ -439,7 +440,7 @@ func (s *taskStore) pruneExpiredLocked() {
 }
 
 func (r *taskRecord) visibleTo(callerScope, token string) bool {
-	if token != "" && token == r.TaskToken {
+	if token != "" && subtle.ConstantTimeCompare([]byte(token), []byte(r.TaskToken)) == 1 {
 		return true
 	}
 	return callerScope != "" && callerScope == r.CallerScope && callerScope != "anonymous:unscoped"

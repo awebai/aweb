@@ -2,6 +2,8 @@ package a2agw
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -90,6 +92,7 @@ type MailBridge struct {
 type mailBridgeThread struct {
 	TaskID           string
 	ContextID        string
+	CallerContextID  string
 	RequestID        string
 	RouteID          string
 	TargetAddress    string
@@ -104,6 +107,7 @@ type mailBridgeThread struct {
 	StopPolling      context.CancelFunc
 	RetentionContext context.Context
 	StopRetention    context.CancelFunc
+	AwaitingInput    bool
 }
 
 type a2aTaskEnvelope struct {
@@ -258,9 +262,10 @@ func requirePublicA2ATarget(identity *awid.ResolvedIdentity) error {
 func (b *MailBridge) SendTask(ctx context.Context, task BridgeTask) error {
 	start := time.Now()
 	gatewayIdentity := b.gatewayIdentitySnapshot()
+	contextID := mailContextID(task.ContextID)
 	body, err := FormatA2ATaskMessage(a2aTaskEnvelope{
 		TaskID:          task.TaskID,
-		ContextID:       task.ContextID,
+		ContextID:       contextID,
 		RouteID:         task.RouteID,
 		TargetAddress:   task.Address,
 		GatewayIdentity: gatewayIdentity,
@@ -298,18 +303,19 @@ func (b *MailBridge) SendTask(ctx context.Context, task BridgeTask) error {
 	recipient = validatedRecipient
 
 	thread := &mailBridgeThread{
-		TaskID:         task.TaskID,
-		ContextID:      task.ContextID,
-		RequestID:      task.RequestID,
-		RouteID:        task.RouteID,
-		TargetAddress:  task.Address,
-		TargetDID:      recipient.DID,
-		TargetStableID: recipient.StableID,
-		CallerScope:    task.CallerScope,
-		ConversationID: strings.TrimSpace(resp.ConversationID),
-		SeenMessages:   map[string]bool{strings.TrimSpace(resp.MessageID): true},
-		CreatedAt:      time.Now(),
-		ReplyDeadline:  replyDeadline(time.Now(), task.TaskTTL, b.pollTimeout),
+		TaskID:          task.TaskID,
+		ContextID:       contextID,
+		CallerContextID: task.ContextID,
+		RequestID:       task.RequestID,
+		RouteID:         task.RouteID,
+		TargetAddress:   task.Address,
+		TargetDID:       recipient.DID,
+		TargetStableID:  recipient.StableID,
+		CallerScope:     task.CallerScope,
+		ConversationID:  strings.TrimSpace(resp.ConversationID),
+		SeenMessages:    map[string]bool{strings.TrimSpace(resp.MessageID): true},
+		CreatedAt:       time.Now(),
+		ReplyDeadline:   replyDeadline(time.Now(), task.TaskTTL, b.pollTimeout),
 	}
 
 	thread.RetentionContext, thread.StopRetention = context.WithDeadline(context.Background(), replyDeadline(thread.CreatedAt, task.TaskTTL, 0))
@@ -337,28 +343,29 @@ func (b *MailBridge) SendTask(ctx context.Context, task BridgeTask) error {
 func (b *MailBridge) CancelTask(ctx context.Context, cancel BridgeCancel) error {
 	start := time.Now()
 	gatewayIdentity := b.gatewayIdentitySnapshot()
-	thread := b.thread(cancel.TaskID)
-	b.finishThread(cancel.TaskID)
-	body := FormatA2ACancelMessage(cancel.TaskID, cancel.ContextID, cancel.RequestID)
-	req := &awid.SendMessageRequest{
-		ConversationID: cancel.ContextID,
-		ToAddress:      cancel.Address,
-		Subject:        "A2A task canceled " + cancel.TaskID,
-		Body:           body,
-		ContentMode:    awid.ContentModeLegacyPlaintextV1,
-		Priority:       awid.PriorityNormal,
-	}
-	if thread != nil && thread.ConversationID != "" {
-		req.ConversationID = thread.ConversationID
-	}
-	_, err := b.sendForRoute(ctx, cancel.RouteID, cancel.Address, req)
+	thread := b.finishThread(cancel.TaskID)
+	var err error
 	outcome := AuditOK
 	code := ""
-	if err != nil {
-		outcome = AuditError
-		code = "cancel_send_failed"
+	address, routeID := cancel.Address, cancel.RouteID
+	if thread == nil || thread.ConversationID == "" {
+		err = errors.New("No retained mail conversation for this A2A task. Contact the target agent with this task ID to confirm cancellation.")
+		outcome, code = AuditError, "cancel_binding_missing"
+	} else {
+		address, routeID = thread.TargetAddress, thread.RouteID
+		request := &awid.SendMessageRequest{
+			ConversationID: thread.ConversationID,
+			ToAddress:      address,
+			Subject:        "A2A task canceled " + thread.TaskID,
+			Body:           FormatA2ACancelMessage(thread.TaskID, thread.ContextID, cancel.RequestID),
+			ContentMode:    awid.ContentModeLegacyPlaintextV1,
+			Priority:       awid.PriorityNormal,
+		}
+		if _, err = b.sendForRoute(ctx, routeID, address, request); err != nil {
+			outcome, code = AuditError, "cancel_send_failed"
+		}
 	}
-	b.recordAudit(AuditEvent{Stage: "bridge_cancel", RequestID: cancel.RequestID, RouteID: cancel.RouteID, TaskID: cancel.TaskID, GatewayIdentityHash: auditHash(gatewayIdentity), TargetAddressHash: auditHash(cancel.Address), Outcome: string(outcome), Code: code, LatencyMS: latencyMS(start), VerificationTier: "unsigned"})
+	b.recordAudit(AuditEvent{Stage: "bridge_cancel", RequestID: cancel.RequestID, RouteID: routeID, TaskID: cancel.TaskID, GatewayIdentityHash: auditHash(gatewayIdentity), TargetAddressHash: auditHash(address), Outcome: string(outcome), Code: code, LatencyMS: latencyMS(start), VerificationTier: "unsigned"})
 	return err
 }
 
@@ -426,6 +433,9 @@ func (b *MailBridge) IngestInboxMessage(ctx context.Context, msg awid.InboxMessa
 		return Task{}, false, nil
 	}
 	start := time.Now()
+	if thread.ContextID != thread.CallerContextID {
+		reply.ContextID = thread.CallerContextID
+	}
 	task, ok, err := applier.ApplyBridgeReply(reply)
 	if err != nil && msg.MessageID != "" {
 		// The task store reports errors before changing the task. Release the
@@ -437,7 +447,13 @@ func (b *MailBridge) IngestInboxMessage(ctx context.Context, msg awid.InboxMessa
 		b.mu.Unlock()
 	}
 	if ok {
-		b.finishThread(thread.TaskID)
+		state := taskState(task.Status.State)
+		switch {
+		case isInterruptedState(state):
+			b.interruptThread(thread.TaskID)
+		case isTerminalState(state):
+			b.finishThread(thread.TaskID)
+		}
 	}
 	outcome := AuditOK
 	code := ""
@@ -500,9 +516,22 @@ func (b *MailBridge) markSeenLocked(taskID, messageID string) {
 	thread.SeenMessages[messageID] = true
 }
 
-// finishThread ends both the in-flight read and retained bridge state
-// (docs/a2a.md:938-939).
-func (b *MailBridge) finishThread(taskID string) {
+// interruptThread removes the thread from reply admission and stops its poller,
+// leaving its original mail binding available for cancellation (docs/a2a.md:938).
+func (b *MailBridge) interruptThread(taskID string) {
+	b.mu.Lock()
+	thread := b.threads[taskID]
+	if thread != nil {
+		thread.AwaitingInput = true
+	}
+	b.mu.Unlock()
+	if thread != nil && thread.StopPolling != nil {
+		thread.StopPolling()
+	}
+}
+
+// finishThread ends polling and returns the binding it removed from retention.
+func (b *MailBridge) finishThread(taskID string) *mailBridgeThread {
 	b.mu.Lock()
 	thread := b.threads[taskID]
 	delete(b.threads, taskID)
@@ -513,6 +542,7 @@ func (b *MailBridge) finishThread(taskID string) {
 	if thread != nil && thread.StopRetention != nil {
 		thread.StopRetention()
 	}
+	return thread
 }
 
 func (b *MailBridge) pollTaskReplies(taskID string) {
@@ -548,6 +578,18 @@ func (b *MailBridge) pollTaskReplies(taskID string) {
 		case <-timer.C:
 		}
 	}
+}
+
+// mailContextID preserves ordinary correlation tokens and gives arbitrary RPC
+// context values a bounded representation in signed agent-facing blocks.
+func mailContextID(value string) string {
+	if len(value) <= 128 && !strings.ContainsFunc(value, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("._:-", r))
+	}) {
+		return value
+	}
+	digest := sha256.Sum256([]byte(value))
+	return "ctx_" + hex.EncodeToString(digest[:])
 }
 
 // replyDeadline bounds reply polling by the task TTL (default one hour) and,

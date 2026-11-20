@@ -42,6 +42,7 @@ type mailHTTPFixture struct {
 	mu           sync.Mutex
 	mailTasks    map[string]string
 	taskMessages map[string]string
+	lastNotice   string
 	inbox        map[string][]awid.InboxMessage
 	corrections  []awid.SendMessageRequest
 	targetKey    ed25519.PrivateKey
@@ -139,6 +140,9 @@ func newMailHTTPFixture(t *testing.T, options mailHTTPOptions) *mailHTTPFixture 
 					http.Error(w, "cancellation notice refused", 403)
 					return
 				}
+				f.mu.Lock()
+				f.lastNotice = envelope.Body
+				f.mu.Unlock()
 			} else if mail.Subject == "A2A reply needs binding" {
 				f.mu.Lock()
 				f.corrections = append(f.corrections, mail)
@@ -376,12 +380,34 @@ func TestHTTPMailBridgeTaskTokenAccess(t *testing.T) {
 		}
 	}
 	headers := tokenHeaders(t, task)
+	issued := headers["X-A2A-Task-Token"]
+	wrong := "0" + issued[1:]
+	if wrong == issued {
+		wrong = "1" + issued[1:]
+	}
+	for _, method := range []string{"GetTask", "CancelTask"} {
+		got := f.callOK(t, httpRPCInput{Method: method, Params: map[string]string{"id": task.ID}, Headers: map[string]string{"X-A2A-Task-Token": wrong}})
+		if got.Error == nil || got.Error.Data.Code != "task_not_found" {
+			t.Fatalf("wrong same-length task token admitted %s: %#v", method, got)
+		}
+	}
 	if got := f.callOK(t, httpRPCInput{Method: "GetTask", Params: map[string]string{"id": task.ID}, Headers: headers}); got.Error != nil {
 		t.Fatalf("issued token refused: %#v", got)
 	}
 	got := f.callOK(t, httpRPCInput{Method: "CancelTask", Params: map[string]string{"id": task.ID}, Headers: headers})
 	if got.Error != nil {
 		t.Fatalf("token cancellation refused: %#v", got.Error)
+	}
+}
+
+func TestHTTPMailBridgeCancelWithoutBindingDoesNotSend(t *testing.T) {
+	f := newMailHTTPFixture(t, mailHTTPOptions{})
+	err := f.runtime.bridge.CancelTask(t.Context(), a2agw.BridgeCancel{TaskID: "unknown-task", ContextID: "caller-context", Address: "a2a.aweb.ai/personal", RouteID: "r_personal"})
+	if err == nil || !strings.Contains(err.Error(), "Contact the target agent with this task ID") {
+		t.Fatalf("missing mail binding did not give recovery guidance: %v", err)
+	}
+	if f.notices.Load() != 0 {
+		t.Fatal("missing mail binding attempted a cancellation notice")
 	}
 }
 

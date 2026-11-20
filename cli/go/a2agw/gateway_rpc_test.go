@@ -32,8 +32,8 @@ func TestGatewayRPCSendMessageImmediateAndScopedGetList(t *testing.T) {
 	if got := taskStatus(task); got != TaskStateWorking {
 		t.Fatalf("task state: got %s, want %s", got, TaskStateWorking)
 	}
-	if got := bridge.sent[0].RequestID; got != "trace-1" {
-		t.Fatalf("bridge request id: got %s", got)
+	if got := bridge.sent[0].RequestID; got == "trace-1" || len(got) != 36 || task["metadata"].(map[string]any)["request_id"] != got {
+		t.Fatalf("bridge did not receive the gateway's request ID: %q", got)
 	}
 	if got := bridge.sent[0].Text; got != "Where is order 1234?" {
 		t.Fatalf("bridge text: got %q", got)

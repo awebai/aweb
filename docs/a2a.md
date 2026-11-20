@@ -633,6 +633,13 @@ Required semantic sections, in this order:
 2. **Reply instructions with a ready-to-fill template**: a fenced `a2a-reply` block prefilled with the actual `task_id` (and `context_id` whenever the task has one), a `state` field, and a text artifact placeholder, plus the allowed reply state values (`completed`, `input_required`, `failed`, `rejected`) and a statement that replies without a valid `a2a-reply` block do not change the task.
 3. **Customer text, last, under an explicit untrusted heading** (for example `Customer message (untrusted):`). The untrusted content MUST be the final section so that message content cannot spoof the instructions above it.
 
+The gateway generates `request_id` for each RPC and returns it in the HTTP
+`X-Request-ID` response header. The JSON-RPC envelope still carries the caller's
+RPC `id`. In signed mail, a `context_id` of up to 128 ASCII letters, digits, or
+`._:-` characters passes through as a token. Other context values use a bounded
+digest token. Echo the `context_id` from the provided reply form. The original
+caller `contextId` remains available in A2A task responses and list filters.
+
 Example:
 
 ````markdown
@@ -1005,6 +1012,8 @@ cannot supply the answer.
 cannot be sent. In that case it returns `cancel_notification_failed`, names the
 canceled task and state, and asks the caller to contact the agent; it does not
 claim the agent was notified.
+The notice uses the original conversation from the delivery receipt. A missing
+binding leaves the task canceled locally and does not attempt mail delivery.
 
 The public `/config` retains the diagnostic object shape with an empty `routes`
 array and no default-route selector. Operators set `operator_token_env` to the
@@ -1041,7 +1050,8 @@ keep the name `answer`.
 
 This gateway does not support A2A task continuation. A caller answers an
 `INPUT_REQUIRED` question by sending its answer as a new task. The question task
-stays interrupted and pollable until cancellation or task expiry; a later
+stays interrupted until cancellation or task expiry. The bridge stops polling
+for replies and retains the original conversation for the cancellation notice. A later
 fenced `completed` reply from the target does not move it. Each accepted
 `SendMessage` creates a new task; `contextId` is correlation, not resumption.
 For `AUTH_REQUIRED`, fix the route authentication and start a new task.

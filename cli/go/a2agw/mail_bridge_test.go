@@ -29,7 +29,8 @@ func TestMailBridgeSendIngestReplyAndGetCompletedTask(t *testing.T) {
 		t.Fatalf("sent=%d, want 1", len(transport.sent))
 	}
 	body := transport.sent[0].Body
-	for _, want := range []string{"```a2a-task", `"task_id": "` + taskID + `"`, `"request_id": "trace-1"`, "Customer message (untrusted):", "Where is order 1234?"} {
+	requestID := sentTask["metadata"].(map[string]any)["request_id"].(string)
+	for _, want := range []string{"```a2a-task", `"task_id": "` + taskID + `"`, `"request_id": "` + requestID + `"`, "Customer message (untrusted):", "Where is order 1234?"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("bridge body missing %q:\n%s", want, body)
 		}

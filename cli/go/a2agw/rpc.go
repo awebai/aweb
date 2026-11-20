@@ -68,7 +68,7 @@ type cancelTaskParams struct {
 
 func (g *Gateway) serveRPC(w http.ResponseWriter, r *http.Request, routeID string) {
 	start := time.Now()
-	requestID, err := requestIDFromHeader(r)
+	requestID, err := newUUIDv4()
 	if err != nil {
 		log.Printf("aweb-a2a-gw: request id generation failed: %v", err)
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "request_id_unavailable", "message": "The gateway could not create a request identifier. Restore the host random source and retry."})
@@ -400,13 +400,6 @@ func (g *Gateway) rateLimitAllows(route runtimeRoute, caller callerScope) bool {
 func isJSONContentType(value string) bool {
 	value = strings.ToLower(strings.TrimSpace(strings.Split(value, ";")[0]))
 	return value == "application/json"
-}
-
-func requestIDFromHeader(r *http.Request) (string, error) {
-	if value := strings.TrimSpace(r.Header.Get("X-Request-ID")); value != "" {
-		return value, nil
-	}
-	return newUUIDv4()
 }
 
 func taskIdentifierFailure(requestID string, err error) *rpcError {
