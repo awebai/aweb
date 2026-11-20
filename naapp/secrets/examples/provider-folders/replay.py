@@ -11,13 +11,16 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-# -I leaves the script's directory off sys.path; the modules and the vendored
-# dependency tree are found here and nowhere else.
-sys.path[:0] = [str(HERE), str(HERE / "vendor")]
+# -I leaves the script's directory off sys.path. The package modules come
+# first; the vendored dependency tree comes after the standard library, so no
+# file in it can shadow a standard module.
+sys.path.insert(0, str(HERE))
+sys.path.append(str(HERE / "vendor"))
 
 import argparse  # noqa: E402
 import json  # noqa: E402
 import os  # noqa: E402
+import re  # noqa: E402
 import ssl  # noqa: E402
 import stat  # noqa: E402
 from dataclasses import asdict, dataclass  # noqa: E402
@@ -47,6 +50,8 @@ from publisher import (  # noqa: E402
 CONFIG_MAX_BYTES = 65536
 TOKEN_MAX_BYTES = 16384
 OUTPUT_MIN_BYTES = 512
+# RFC 6750 b64token: the only characters a bearer token may carry.
+BEARER_TOKEN = re.compile(rb"[A-Za-z0-9\-._~+/]+=*")
 CONFIG_FIELDS = frozenset(
     {
         "seat",
@@ -150,7 +155,7 @@ def read_token(path: Path) -> str:
     finally:
         os.close(handle)
     token = raw.removesuffix(b"\n")
-    if len(raw) > TOKEN_MAX_BYTES or not token.isascii() or token.split() != [token]:
+    if len(raw) > TOKEN_MAX_BYTES or not BEARER_TOKEN.fullmatch(token):
         raise RunRefused(Reason.TOKEN_UNAVAILABLE)
     return token.decode("ascii")
 
@@ -190,18 +195,23 @@ def main(argv: list[str]) -> int:
     arguments = parser.parse_args(argv)
     try:
         config = load_config(arguments.config)
+        verify = _tls_context(config.ca_bundle)
     except RunRefused as refusal:
         code, output = ExitCode.RUN_REFUSED, _render("run_refused", refusal.reason, [])
     else:
-        verify = ssl.create_default_context(
-            cafile=None if config.ca_bundle is None else str(config.ca_bundle)
-        )
         # trust_env=False: no proxy, certificate or netrc setting from the
         # environment can redirect the bearer away from the configured origin.
         with httpx.Client(verify=verify, trust_env=False) as client:
             code, output = run(config, client)
     sys.stdout.buffer.write(output + b"\n")
     return code
+
+
+def _tls_context(ca_bundle: Path | None) -> ssl.SSLContext:
+    try:
+        return ssl.create_default_context(cafile=None if ca_bundle is None else str(ca_bundle))
+    except (OSError, ssl.SSLError):
+        raise RunRefused(Reason.CONFIG_INVALID) from None
 
 
 def _destination(folder: GraphAppFolder) -> Destination:

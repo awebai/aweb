@@ -97,7 +97,8 @@ The runner job runs one replay of the seat's outbox:
 /usr/bin/python3 -I replay.py --config /etc/acwd25/publisher.json
 ```
 
-`replay.py` puts its own directory and `vendor/` beside it on `sys.path`, so the
+`replay.py` puts its own directory first on `sys.path` and `vendor/` beside it
+last, after the standard library, so the
 pinned file set is these modules plus a vendored tree of the locked runtime
 dependencies (`httpx` and its dependencies). Python 3.12 or later is required.
 
@@ -116,7 +117,9 @@ The operator configuration is one JSON object with exactly these keys:
 | `output_max_bytes` | the stdout bound, at least 512 |
 
 The access token is read from `token_file` before any provider call. A missing,
-linked, non-regular, empty, oversized or multi-word token refuses the run. The
+linked, non-regular, empty or oversized token, or one with any character outside
+the RFC 6750 `b64token` set, refuses the run. An unreadable `ca_bundle` is
+`config_invalid`. The
 HTTPS client ignores proxy and certificate settings from the environment.
 
 stdout is one JSON object:
@@ -128,7 +131,7 @@ stdout is one JSON object:
 | 3 | `refused` | at least one job refused, none uncertain |
 | 4 | `uncertain` | at least one job uncertain; it wins over refused. Replay again to reconcile |
 | 5 | `run_refused` | refused as a whole, with no job attempted after it: `config_invalid`, `token_unavailable`, `destination_mismatch`, `provider_denied`, `provider_rejected`, `provider_unavailable`, `ledger_unreadable`, `destination_changed` |
-| 6 | `output_too_large` | the report would exceed `output_max_bytes`; stdout carries only `counts` per outcome, never truncated JSON. The per-job receipts are in `state_dir/receipts/` |
+| 6 | `output_too_large` | the report would exceed `output_max_bytes`; stdout carries only `counts` per outcome, never truncated JSON. Exit 6 hides whether any job was uncertain or refused: read `counts`, and replay again when they include `uncertain`. The per-job receipts are in `state_dir/receipts/` |
 
 1 and 2 remain Python's crash and usage codes.
 

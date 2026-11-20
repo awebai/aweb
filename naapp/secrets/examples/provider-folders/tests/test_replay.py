@@ -1,4 +1,5 @@
 import json
+import shutil
 import subprocess
 import sys
 import uuid
@@ -146,8 +147,8 @@ def test_uncertain_wins_over_refused(tmp_path, config_body, outbox_dir, standin)
 
 @pytest.mark.parametrize(
     "token",
-    [None, b"", b"\n", b"two words", b"x" * 16385],
-    ids=["missing", "empty", "blank", "whitespace", "oversized"],
+    [None, b"", b"\n", b"two words", b"x" * 16385, b"tok\x01en", b"tok@en", b"to=ken"],
+    ids=["missing", "empty", "blank", "whitespace", "oversized", "control", "symbol", "inner-pad"],
 )
 def test_an_unusable_token_file_refuses_the_run_before_any_provider_call(
     tmp_path, config_body, outbox_dir, standin, token_file, token
@@ -356,3 +357,40 @@ def test_the_cli_refuses_an_unreadable_config_with_exit_5(tmp_path):
 
 def test_the_cli_without_a_config_argument_is_a_usage_error():
     assert run_cli().returncode == 2
+
+
+def test_the_cli_refuses_an_unreadable_ca_bundle_with_exit_5(tmp_path, config_body):
+    body = {**config_body, "ca_bundle": str(tmp_path / "missing-ca.pem")}
+
+    result = run_cli("--config", str(write_config(tmp_path, body)))
+
+    assert result.returncode == ExitCode.RUN_REFUSED
+    assert json.loads(result.stdout)["reason"] == "config_invalid"
+    assert result.stderr == ""
+
+
+def test_a_vendored_file_cannot_shadow_a_standard_library_module(tmp_path, config_body, token_file):
+    install = tmp_path / "install"
+    install.mkdir()
+    for name in ("replay.py", "publisher.py", "onedrive.py", "hashes.py"):
+        shutil.copy2(HERE / name, install / name)
+    (install / "vendor").mkdir()
+    (install / "vendor" / "json.py").write_text("raise SystemExit(97)\n")
+    token_file.unlink()
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            str(install / "replay.py"),
+            "--config",
+            str(write_config(tmp_path, config_body)),
+        ],
+        capture_output=True,
+        text=True,
+        cwd="/",
+        timeout=60,
+    )
+
+    assert result.returncode == ExitCode.RUN_REFUSED
+    assert json.loads(result.stdout)["reason"] == "token_unavailable"
