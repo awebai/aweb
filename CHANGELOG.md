@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+- AWID keeps a team's revoked certificates when the team or its namespace is
+  deleted, and a team's revocation list covers every team created under that
+  domain and name. Deleting a team and creating it again, with the same key or
+  another, no longer makes a revoked certificate valid again. This defensive
+  fix needs no data repair: the production census (read-only) found 30 deleted
+  teams and none created again. Revocations removed by deletions before this
+  release cannot be recovered.
+
+- `aw chat send-and-wait` and `aw chat listen` show a streamed reply as
+  verified only when its body, message id, conversation and DIDs are the ones
+  its signed payload carries, as `aw chat history` already required. A reply
+  whose payload signs a recipient shows as failed when the server is older than
+  server-v1.27.35, as it already did in chat history.
+
+- `aw id team create` saves a new team key before the registry pins the team
+  to it, so a run interrupted after the registry accepted the team completes on
+  retry with the same key. When the team name is already pinned to another key,
+  the key the run generated is removed, and the refusal says to choose another
+  team name or run on the machine that holds that team's key.
+
 - `aw` reports JSON error code `alias_conflict` for HTTP 409 `alias_taken`, preserving the server's `reason` and `detail`.
 - AWID cache invalidation for identity-tree, address and team-certificate
   writes no longer scans unrelated Redis keys. Random cache generations keep
