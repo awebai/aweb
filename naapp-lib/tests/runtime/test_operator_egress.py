@@ -105,3 +105,10 @@ def test_nothing_is_logged_when_no_origin_is_listed(caplog) -> None:
     with caplog.at_level(logging.WARNING, logger="aweb_naapp.runtime.operator_egress"):
         OperatorEgress.from_settings(OperatorNetworkSettings())
     assert caplog.records == []
+
+
+def test_the_guard_denies_the_operators_denied_networks() -> None:
+    egress = OperatorEgress.from_settings(
+        OperatorNetworkSettings(egress_denied_networks=["198.51.100.0/24"])
+    )
+    assert egress.egress.addresses.denied == (ip_network("198.51.100.0/24"),)

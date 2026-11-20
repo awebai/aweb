@@ -210,6 +210,19 @@ class Seen:
     # The listener's own address the connection was accepted on.
     local: str | None = None
 
+    @property
+    def method(self) -> str:
+        return self.request_line.split(" ")[0]
+
+    @property
+    def target(self) -> str:
+        """The request target as received: path and query."""
+        return self.request_line.split(" ")[1]
+
+    @property
+    def path(self) -> str:
+        return self.target.split("?")[0]
+
 
 Reply = tuple[int, bytes, list[tuple[str, str]]]
 

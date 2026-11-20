@@ -381,7 +381,7 @@ async def test_binding_precedes_producer_authority_and_schema(world):
     )
     assert (response.status_code, _code(response)) == (403, "binding_required")
     assert not any(
-        _read_path(seen) == "/v1/hooks/producer-keys" for seen in world.coordination.site.tls.seen
+        seen.path == "/v1/hooks/producer-keys" for seen in world.coordination.site.tls.seen
     )
 
 
@@ -446,10 +446,8 @@ async def test_a_core_key_cannot_assert_an_unanchored_origin(world):
         world.delivery("core", producer={"origin": "https://forged.example"})
     )
     assert (response.status_code, _code(response)) == (403, "provenance_core_key")
-    assert not any(
-        dict(seen.headers).get("Host", "").startswith("forged.example")
-        for seen in world.coordination.site.tls.seen
-    )
+    # Logs never even looked the forged origin up.
+    assert not any(name == "forged.example" for name, _ in world.coordination.site.dns.queries)
 
 
 async def test_a_core_key_is_checked_at_the_events_occurrence(world, monkeypatch):
@@ -726,6 +724,3 @@ def test_each_lookup_refuses_permanently_when_the_team_server_is_refused(lookup)
     unavailable = unresolved_refusal(HookResolutionUnavailable("authority_unavailable"), lookup)
     assert (unavailable.status, unavailable.code) == (503, lookup.value)
 
-
-def _read_path(seen) -> str:
-    return seen.request_line.split(" ")[1].split("?")[0]

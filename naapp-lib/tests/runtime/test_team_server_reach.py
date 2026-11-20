@@ -160,3 +160,15 @@ async def test_a_hook_origin_grants_a_team_server_no_internal_reach(
         )
     assert site.tls.seen == []
     assert site.tls.connections == 0
+
+
+async def test_a_denied_network_refuses_even_a_listed_team_server(site: TeamServerSite) -> None:
+    # The attempt inside the operator's network still meets the operator's
+    # denied networks, as every attempt does.
+    settings = {**site.settings(), "egress_denied_networks": [f"{site.host}/32"]}
+    with pytest.raises(TeamServerRefused):
+        await _reach(site, **settings).get(
+            _server(site), PATH, signer=None, max_bytes=4096, timeout=5
+        )
+    assert site.tls.seen == []
+    assert site.tls.connections == 0

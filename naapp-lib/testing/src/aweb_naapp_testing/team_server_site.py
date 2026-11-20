@@ -22,6 +22,7 @@ import httpx
 from aweb_naapp.egress import DnsResolver
 from aweb_naapp.runtime.operator_egress import OperatorEgress, OperatorNetworkSettings
 from aweb_naapp_testing.network import (
+    Certificates,
     DnsServer,
     Reply,
     Seen,
@@ -41,7 +42,13 @@ class TeamServerSite:
     host: str
     tls: TlsServer
     dns: DnsServer
-    ca_file: Path
+    # Its certificate also names the ``also_names`` of team_server_site, so
+    # another of the app's destinations on this host can share the one CA.
+    certificates: Certificates
+
+    @property
+    def ca_file(self) -> Path:
+        return self.certificates.ca_file
 
     @property
     def origin(self) -> str:
@@ -52,10 +59,11 @@ class TeamServerSite:
         server, inside a network of exactly its address, or not listed."""
         if not listed:
             return {"hook_ca_file": self.ca_file}
+        # Typed as the settings hold them, so a settings copy can take them too.
         return {
             "hook_internal_destinations": "allowed",
-            "hook_internal_cidr": f"{self.host}/32",
-            "team_server_internal_origins": [self.origin],
+            "hook_internal_cidr": ipaddress.ip_network(f"{self.host}/32"),
+            "team_server_internal_origins": frozenset({self.origin}),
             "hook_ca_file": self.ca_file,
         }
 
@@ -86,12 +94,11 @@ def asgi_reply(app: Any) -> Any:
     transport = httpx.ASGITransport(app=app)
 
     async def respond(seen: Seen) -> Reply:
-        method, target, _ = seen.request_line.split(" ")
         host = next(value for name, value in seen.headers if name.lower() == "host")
         async with httpx.AsyncClient(transport=transport, base_url=f"https://{host}") as client:
             response = await client.request(
-                method,
-                target,
+                seen.method,
+                seen.target,
                 headers=[(name, value) for name, value in seen.headers if name.lower() != "host"],
                 content=seen.body,
             )
@@ -107,18 +114,19 @@ def asgi_reply(app: Any) -> Any:
 
 @asynccontextmanager
 async def team_server_site(
-    directory: Path, app: Any = None, *, name: str = SITE_NAME
+    directory: Path, app: Any = None, *, name: str = SITE_NAME, also_names: tuple[str, ...] = ()
 ) -> AsyncIterator[TeamServerSite]:
     """``app`` served at ``https://<name>:<port>`` until the context ends;
-    without ``app``, whatever :meth:`TeamServerSite.serve` is given."""
+    without ``app``, whatever :meth:`TeamServerSite.serve` is given. Each of
+    ``also_names`` resolves to the same address and is on the certificate."""
     host = local_address()
     # The refusals mean something only for an address the public policy denies.
     if not ipaddress.ip_address(host).is_private:
         raise RuntimeError(f"the team-server site needs a private address on this host, not {host}")
-    certificates = make_certificates(directory, [name], [host])
-    dns = DnsServer(records={(name, "A"): [host]})
+    certificates = make_certificates(directory, [name, *also_names], [host])
+    dns = DnsServer(records={(each, "A"): [host] for each in (name, *also_names)})
     tls = TlsServer(certificates, host)
-    site = TeamServerSite(name, host, tls, dns, certificates.ca_file)
+    site = TeamServerSite(name, host, tls, dns, certificates)
     if app is not None:
         site.serve(app)
     await dns.start()
