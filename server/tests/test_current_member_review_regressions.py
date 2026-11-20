@@ -25,16 +25,21 @@ from test_team_key_pinning import pinning as pinning
 
 
 def _request(env, actor):
-    return Request({
-        "type": "http", "method": "GET", "path": "/v1/agents",
-        "query_string": b"", "app": env.app,
-        "headers": [
-            (key.lower().encode(), value.encode())
-            for key, value in _signed_team_headers(
-                actor.sk, actor.did, TEAM, actor.certificate
-            ).items()
-        ],
-    })
+    return Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/v1/agents",
+            "query_string": b"",
+            "app": env.app,
+            "headers": [
+                (key.lower().encode(), value.encode())
+                for key, value in _signed_team_headers(
+                    actor.sk, actor.did, TEAM, actor.certificate
+                ).items()
+            ],
+        }
+    )
 
 
 @pytest.mark.asyncio
@@ -43,23 +48,40 @@ async def test_mail_continuation_keeps_agent_and_current_key_binding(pinning, se
     env = pinning
     sender = await _admit(env, "continuationsender")
     target = await _admit(env, "continuationtarget", global_identity=True)
-    first = await _http(env, sender, "POST", "/v1/messages", {
-        selector: target.alias if selector == "to_alias" else target.address,
-        "subject": "thread", "body": "first",
-    })
+    first = await _http(
+        env,
+        sender,
+        "POST",
+        "/v1/messages",
+        {
+            selector: target.alias if selector == "to_alias" else target.address,
+            "subject": "thread",
+            "body": "first",
+        },
+    )
     assert first.status_code == 200, first.text
-    continuation = await _http(env, sender, "POST", "/v1/messages", {
-        "conversation_id": first.json()["conversation_id"],
-        "to_agent_id": str(target.id), "to_did": target.did,
-        "subject": "thread", "body": "second",
-    })
+    continuation = await _http(
+        env,
+        sender,
+        "POST",
+        "/v1/messages",
+        {
+            "conversation_id": first.json()["conversation_id"],
+            "to_agent_id": str(target.id),
+            "to_did": target.did,
+            "subject": "thread",
+            "body": "second",
+        },
+    )
     assert continuation.status_code == 200, continuation.text
     row = await env.db.fetch_one(
         "SELECT conversation_id, to_did, body FROM {{tables.messages}} WHERE message_id=$1",
         UUID(continuation.json()["message_id"]),
     )
     assert (str(row["conversation_id"]), row["to_did"], row["body"]) == (
-        first.json()["conversation_id"], target.stable, "second",
+        first.json()["conversation_id"],
+        target.stable,
+        "second",
     )
 
 
@@ -68,9 +90,16 @@ async def test_sender_membership_configuration_absence_is_unknown(pinning):
     env = pinning
     sender = await _admit(env, "membershipsourcer")
     recipient = await _admit(env, "membershipreader")
-    sent = await _http(env, sender, "POST", "/v1/messages", {
-        "to_alias": recipient.alias, "body": "stored provenance",
-    })
+    sent = await _http(
+        env,
+        sender,
+        "POST",
+        "/v1/messages",
+        {
+            "to_alias": recipient.alias,
+            "body": "stored provenance",
+        },
+    )
     assert sent.status_code == 200, sent.text
     row = await env.db.fetch_one(
         "SELECT team_id, from_agent_id FROM {{tables.messages}} WHERE message_id=$1",
@@ -107,7 +136,8 @@ async def test_room_membership_refusal_keeps_the_released_client_sentence(pinnin
     with pytest.raises(ForbiddenError) as refused:
         await room_metadata(env.infra, identity)
     assert (refused.value.status_code, refused.value.detail) == (
-        403, "Room requires current team membership",
+        403,
+        "Room requires current team membership",
     )
 
 
@@ -128,14 +158,19 @@ async def test_certificate_acceptance_rechecks_current_member_after_verification
         await _change_key(env)
     before = await env.db.fetch_one(
         "SELECT certificate_id, accepted_team_did_key, did_aw_verified_key "
-        "FROM {{tables.agents}} WHERE agent_id=$1", actor.id,
+        "FROM {{tables.agents}} WHERE agent_id=$1",
+        actor.id,
     )
     with pytest.raises(ValueError):
         await resolve_team_identity(env.db, info, request=request)
-    assert await env.db.fetch_one(
-        "SELECT certificate_id, accepted_team_did_key, did_aw_verified_key "
-        "FROM {{tables.agents}} WHERE agent_id=$1", actor.id,
-    ) == before
+    assert (
+        await env.db.fetch_one(
+            "SELECT certificate_id, accepted_team_did_key, did_aw_verified_key "
+            "FROM {{tables.agents}} WHERE agent_id=$1",
+            actor.id,
+        )
+        == before
+    )
 
 
 @pytest.mark.asyncio
@@ -158,7 +193,9 @@ async def test_a_superseded_claim_is_released_when_a_current_member_claims(pinni
     claims = await env.db.fetch_all(
         "SELECT c.alias, w.agent_id FROM {{tables.task_claims}} c "
         "JOIN {{tables.workspaces}} w ON w.workspace_id=c.workspace_id "
-        "WHERE c.team_id=$1 AND c.task_ref=$2", TEAM, ref,
+        "WHERE c.team_id=$1 AND c.task_ref=$2",
+        TEAM,
+        ref,
     )
     assert [(c["alias"], c["agent_id"]) for c in claims] == [(contender.alias, contender.id)]
     assert claimed.json()["assignee_alias"] == contender.alias
@@ -176,21 +213,32 @@ async def test_identity_context_filters_members_before_projection_writes(pinning
     # Acquire actual verified binding evidence on the original signed request.
     await verify_request_certificate(request, env.infra)
     binding = await verify_identity_binding(
-        request, did_key=actor.did, did_aw=actor.stable,
-        address=actor.address, fresh=True,
+        request,
+        did_key=actor.did,
+        did_aw=actor.stable,
+        address=actor.address,
+        fresh=True,
     )
     assert binding.fresh_observation
     if change == "superseded":
         await _change_key(env)
     else:
         # Negative native row state; this cannot manufacture member authority.
-        await env.db.execute("UPDATE {{tables.agents}} SET status='retired' WHERE agent_id=$1", actor.id)
+        await env.db.execute(
+            "UPDATE {{tables.agents}} SET status='retired' WHERE agent_id=$1", actor.id
+        )
     queries = []
     async with env.db.transaction() as tx:
         with tx.connection.query_logger(lambda event: queries.append(event.query)):
-            assert await lookup_identity_agent_context(
-                tx, did_key=actor.did, did_aw=actor.stable, request=request,
-            ) is None
+            assert (
+                await lookup_identity_agent_context(
+                    tx,
+                    did_key=actor.did,
+                    did_aw=actor.stable,
+                    request=request,
+                )
+                is None
+            )
             assert await tx.fetch_value("SELECT 1") == 1
     assert not [q for q in queries if "UPDATE" in q and "agents" in q], queries
 
@@ -204,26 +252,30 @@ async def test_address_discovery_programming_error_is_not_stored_binding_authori
     env = pinning
     actor = await _admit(env, "discoveryerror", global_identity=True)
     headers = _signed_identity_headers(actor.sk, actor.did, actor.stable)
-    request = Request({
-        **_request(env, actor).scope,
-        "headers": [(key.lower().encode(), value.encode()) for key, value in headers.items()],
-    })
+    request = Request(
+        {
+            **_request(env, actor).scope,
+            "headers": [(key.lower().encode(), value.encode()) for key, value in headers.items()],
+        }
+    )
 
     async def invalid_dependency_call(_client, _did):
         # Fault injection only: request signature and binding verification run
         # normally. A programming error is not a registry-outage observation.
         raise TypeError("invalid discovery call")
 
-    monkeypatch.setattr(type(env.app.state.awid_registry_client), "list_did_addresses", invalid_dependency_call)
+    monkeypatch.setattr(
+        type(env.app.state.awid_registry_client), "list_did_addresses", invalid_dependency_call
+    )
     with pytest.raises(TypeError, match="invalid discovery call"):
         await resolve_identity_auth(request)
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("change", ["rotation", "rotation-and-readmission", "revocation", "inactive", "unchanged"])
-async def test_certificate_stream_rechecks_its_original_authority_on_grant_cadence(
-    pinning, change
-):
+@pytest.mark.parametrize(
+    "change", ["rotation", "rotation-and-readmission", "revocation", "inactive", "unchanged"]
+)
+async def test_certificate_stream_rechecks_its_original_authority_on_grant_cadence(pinning, change):
     from aweb.grant_streams import GRANT_STREAM_RECHECK_SECONDS, NeverGrantStreamGuard
     from aweb.team_auth_deps import get_team_identity
 
@@ -242,14 +294,20 @@ async def test_certificate_stream_rechecks_its_original_authority_on_grant_caden
 
         name, domain = TEAM.split(":", 1)
         await application_registry_client(env.app.state).revoke_team_certificate(
-            domain, name, team_controller_signing_key=env.team_sk,
+            domain,
+            name,
+            team_controller_signing_key=env.team_sk,
             certificate_id=identity.certificate_id,
         )
     elif change == "inactive":
-        await env.db.execute("UPDATE {{tables.agents}} SET status='retired' WHERE agent_id=$1", actor.id)
+        await env.db.execute(
+            "UPDATE {{tables.agents}} SET status='retired' WHERE agent_id=$1", actor.id
+        )
     # Advance only the cadence boundary, never authority or dependency results.
     guard.checked_at -= GRANT_STREAM_RECHECK_SECONDS + 1
-    assert await guard.reason() == (None if change == "unchanged" else "team_membership_not_current")
+    assert await guard.reason() == (
+        None if change == "unchanged" else "team_membership_not_current"
+    )
 
 
 @pytest.mark.asyncio
@@ -272,8 +330,12 @@ async def test_an_open_certificate_event_stream_stops_after_rotation(pinning, mo
     monkeypatch.setattr(grant_streams, "GRANT_STREAM_RECHECK_SECONDS", 0.05)
     monkeypatch.setattr(events, "GRANT_STREAM_RECHECK_SECONDS", 0.05)
     stream = events._sse_agent_events(
-        request=request, db=env.infra, redis=env.redis,
-        team_id=TEAM, agent_id=str(actor.id), identity=identity,
+        request=request,
+        db=env.infra,
+        redis=env.redis,
+        team_id=TEAM,
+        agent_id=str(actor.id),
+        identity=identity,
         deadline=datetime.now(timezone.utc) + timedelta(seconds=3),
     )
     try:

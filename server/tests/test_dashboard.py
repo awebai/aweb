@@ -1045,9 +1045,7 @@ async def test_anonymous_request_returns_503_during_partial_init_without_registr
     assert resp.status_code == 503
     detail = resp.json()["detail"]
     assert detail["code"] == "registry_client_unavailable"
-    assert detail["message"].endswith(
-        "Configure the serving registry client and start the application before retrying."
-    )
+    assert detail["message"] == 'Registry client is unavailable. Configure the serving registry client and start the application before retrying.'
 
 
 @pytest.mark.asyncio
@@ -1063,9 +1061,7 @@ async def test_authenticated_presence_read_refuses_a_missing_serving_client(
     )
     assert resp.status_code == 503, resp.text
     assert resp.json()["detail"]["code"] == "registry_client_unavailable"
-    assert resp.json()["detail"]["message"].endswith(
-        "Configure the serving registry client and start the application before retrying."
-    )
+    assert resp.json()["detail"]["message"] == 'Registry client is unavailable. Configure the serving registry client and start the application before retrying.'
 
 
 @pytest.mark.asyncio

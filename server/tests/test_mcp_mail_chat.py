@@ -301,55 +301,24 @@ async def test_mcp_auth_accepts_raw_manager(aweb_cloud_db, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_mcp_auth_retains_the_shared_identity_member_context(aweb_cloud_db, monkeypatch):
-    team_id = "ops:gsk.aweb.ai"
-    agent_id = uuid4()
-    did_key = named_did_key("z6MkGsk")
+async def test_mcp_auth_retains_the_shared_identity_member_context(privacy_app):
+    from test_messages_http import _signed_identity_headers
 
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ($1, 'gsk.aweb.ai', 'ops', 'did:key:z6MkkopcdRMf2qPVBdcugyhrVQorfEfz2uUigTwZDvZ15poA' /* z6MkTeam */)
-        """,
-        team_id,
+    env = privacy_app
+    actor = await admit_messaging_actor(
+        env, alias="shared-context", team_id=PRIVACY_TEAM, local=True,
     )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, alias, identity_scope, status)
-        VALUES ($1, $2, $3, 'gsk', 'local', 'active')
-        """,
-        agent_id,
-        team_id,
-        did_key,
+    request = _request_with_headers(
+        _signed_identity_headers(actor.signing_key, actor.did_key, "")
     )
-
-    async def _fake_get_messaging_auth(_request, _db_infra):
-        return MessagingAuth(
-            did_key=did_key,
-            did_aw=None,
-            address=None,
-            team_id=team_id,
-            agent_id=str(agent_id),
-            alias="gsk",
-            identity_scope="local",
-        )
-
-    monkeypatch.setattr(mcp_auth, "get_messaging_auth", _fake_get_messaging_auth)
-
-    middleware = mcp_auth.MCPAuthMiddleware(
-        app=lambda *_args, **_kwargs: None, db_infra=DBInfra(aweb_cloud_db.aweb_db)
-    )
-    ctx = await middleware._resolve_auth(
-        _request_with_headers({"Authorization": f"DIDKey {did_key} signature"})
-    )
+    request.scope["app"] = env.app
+    middleware = mcp_auth.MCPAuthMiddleware(app=env.app, db_infra=env.infra)
+    ctx = await middleware._resolve_auth(request)
 
     assert ctx is not None
-    assert ctx.did_key == did_key
-    assert ctx.team_id == team_id
-    assert ctx.agent_id == str(agent_id)
-    assert ctx.alias == "gsk"
-    assert ctx.certificate_id is None
+    assert (ctx.did_key, ctx.team_id, ctx.agent_id, ctx.alias, ctx.certificate_id) == (
+        actor.did_key, PRIVACY_TEAM, actor.agent_id, "shared-context", None,
+    )
 
 
 @pytest.mark.asyncio

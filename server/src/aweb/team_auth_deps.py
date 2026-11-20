@@ -330,7 +330,7 @@ async def _verify_admitting_certificate(
     revoked_certs = await _get_revoked_certificates(
         request, cert_team_id, certificate_ids=selected_certificate_ids
     )
-    # hosted-certificate-anchoring.md:286-294: enforcement and measurement
+    # docs/aweb-sot.md, Staged certificate-registration observations: enforcement and measurement
     # share a registration decision. OFF measurement follows artifact checks.
     registered_certs = (
         await _get_registered_certificates(request, cert_team_id)

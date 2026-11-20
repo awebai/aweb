@@ -288,6 +288,11 @@ async def test_patch_agent_workspace_repairs_ssh_over_443_repo_binding(privacy_a
 async def test_get_my_inbound_mode_returns_current_global_agent_policy(privacy_app):
     env = privacy_app
     await _global_actor(env)
+    changed = await request_as(
+        env, alias="alice", method="PATCH", path="/v1/agents/me/inbound-mode",
+        payload={"inbound_mode": "contacts_only"},
+    )
+    assert changed.status_code == 200, changed.text
     response = await request_as(
         env, alias="alice", method="GET", path="/v1/agents/me/inbound-mode"
     )
@@ -297,7 +302,7 @@ async def test_get_my_inbound_mode_returns_current_global_agent_policy(privacy_a
         "team_id": TEAM,
         "alias": "alice",
         "identity_scope": "global",
-        "inbound_mode": "open",
+        "inbound_mode": "contacts_only",
         "configurable": True,
     }
 
