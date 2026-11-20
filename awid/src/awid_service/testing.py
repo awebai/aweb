@@ -37,7 +37,7 @@ from awid.attestation_records import (
 from awid.did import did_from_public_key
 from awid.external_authority import DNSLookup
 from awid.id_tree_requests import covering_payload
-from awid.dns_verify import DomainAuthority, DnsVerificationError
+from awid.dns_verify import DomainAuthority, DnsVerificationError, DomainVerifier
 from awid.contract import normalize_identity_scope
 from awid.ratelimit import NoOpRateLimiter
 from awid.registry import RegistryClient
@@ -173,7 +173,10 @@ class Registry:
             key = SigningKey.generate()
         self._namespace_keys[domain] = key
         if get_domain_verifier not in self.app.dependency_overrides:
-            self.app.dependency_overrides[get_domain_verifier] = lambda: self.namespace_authority
+            async def get_namespace_verifier() -> DomainVerifier:
+                return self.namespace_authority
+
+            self.app.dependency_overrides[get_domain_verifier] = get_namespace_verifier
         try:
             await client.register_namespace(domain, _did_key(key), bytes(key))
         except Exception:
