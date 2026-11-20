@@ -1,5 +1,10 @@
 # Knowledge log
 
+## 2026-11-14
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-deploy-team (release image rules, signer lane, cross-store backups).
+* **Creation**: decisions [only a final's own tag push moves an image's latest](/aweb-expert/decisions/only-a-finals-own-tag-push-moves-latest.md) and [every service the team bundle runs ships a published, digest-pinned image](/aweb-expert/decisions/every-bundled-service-ships-a-pinned-image.md).
+* **Creation**: lessons [a backup across several PostgreSQL servers needs a detection fence](/aweb-expert/lessons/a-cross-server-backup-needs-a-detection-fence.md) and [a kept test world's registry lives in RAM](/aweb-expert/lessons/a-kept-test-worlds-registry-lives-in-ram.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
