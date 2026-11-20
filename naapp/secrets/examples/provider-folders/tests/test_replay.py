@@ -1,6 +1,7 @@
 import json
 import os
 import shutil
+import ssl
 import subprocess
 import sys
 import uuid
@@ -10,7 +11,7 @@ import httpx
 import pytest
 
 from deploy.standin_tls import TLSStandIn, lab_ca
-from replay import TOKEN_ENV, ExitCode, RunRefused, load_config, main, run
+from replay import TOKEN_ENV, ExitCode, RunRefused, _tls_context, load_config, main, run
 from submit import submit
 from tests.outbox import provision_outbox
 from tests.standin import TOKEN, OneDriveStandIn
@@ -443,3 +444,11 @@ def test_the_token_never_appears_in_output_or_receipts(tmp_path, config_body, se
     written = [path for path in Path(body["state_dir"]).rglob("*") if path.is_file()]
     assert written and all(TOKEN not in path.read_text() for path in written)
     assert TOKEN not in result.stdout and TOKEN not in result.stderr
+
+
+@pytest.mark.parametrize("ca_bundle", ["configured", None])
+def test_the_tls_floor_is_tls_1_2_whatever_the_platform_default(served, ca_bundle):
+    lab, _ = served
+    context = _tls_context(lab.ca_pem if ca_bundle else None)
+
+    assert context.minimum_version is ssl.TLSVersion.TLSv1_2

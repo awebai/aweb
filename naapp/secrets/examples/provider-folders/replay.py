@@ -207,6 +207,8 @@ def _tls_context(ca_bundle: Path | None) -> ssl.SSLContext:
     """
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     context.verify_flags |= ssl.VERIFY_X509_STRICT | ssl.VERIFY_X509_PARTIAL_CHAIN
+    # Explicit, so the floor does not depend on the platform OpenSSL's policy.
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
     try:
         context.load_verify_locations(
             cafile=certifi.where() if ca_bundle is None else str(ca_bundle)
