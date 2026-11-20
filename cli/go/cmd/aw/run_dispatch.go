@@ -97,28 +97,17 @@ func (d runDispatcher) Next(ctx context.Context, autofeed bool, wakeEvent *awid.
 	}
 }
 
-type runWakeOptions struct {
-	SelfAlias  string
-	WorkingDir string
-}
-
-type runChatWakeRequest struct {
-	Client  *aweb.Client
-	Options runWakeOptions
-	Event   awid.AgentEvent
-}
-
-func newRunWakeValidator(client *aweb.Client, options runWakeOptions) runWakeResolver {
+func newRunWakeValidator(client *aweb.Client, selfAlias string) runWakeResolver {
 	if client == nil || client.Client == nil {
 		return nil
 	}
-	options.SelfAlias = strings.TrimSpace(options.SelfAlias)
+	selfAlias = strings.TrimSpace(selfAlias)
 	return func(ctx context.Context, evt awid.AgentEvent) (runWakeResolution, error) {
 		switch evt.Type {
 		case awid.AgentEventActionableChat:
-			return resolveChatWakeInDir(ctx, runChatWakeRequest{Client: client, Options: options, Event: evt})
+			return resolveChatWakeForAlias(ctx, client, selfAlias, evt)
 		case awid.AgentEventActionableMail:
-			return resolveMailWakeForAlias(ctx, client, options.SelfAlias, evt)
+			return resolveMailWakeForAlias(ctx, client, selfAlias, evt)
 		case awid.AgentEventWorkAvailable, awid.AgentEventClaimUpdate, awid.AgentEventClaimRemoved:
 			return runWakeResolution{CycleContext: formatWorkWakePrompt(evt)}, nil
 		default:
@@ -127,18 +116,29 @@ func newRunWakeValidator(client *aweb.Client, options runWakeOptions) runWakeRes
 	}
 }
 
-// resolveChatWakeInDir fetches durable history, never a pending preview.
-// docs/receiving-events.md:16-18 and docs/aw-run.md, Messages whose sender is not verified.
-func resolveChatWakeInDir(ctx context.Context, request runChatWakeRequest) (runWakeResolution, error) {
-	client, evt := request.Client, request.Event
-	selfAlias, workingDir := request.Options.SelfAlias, request.Options.WorkingDir
+func resolveChatWake(ctx context.Context, client *aweb.Client, evt awid.AgentEvent) (runWakeResolution, error) {
+	selfAlias := ""
+	if client != nil && client.Client != nil {
+		selfAlias = handleFromAddress(client.Address())
+	}
+	return resolveChatWakeForAlias(ctx, client, selfAlias, evt)
+}
+
+func resolveMailWake(ctx context.Context, client *aweb.Client, evt awid.AgentEvent) (runWakeResolution, error) {
+	selfAlias := ""
+	if client != nil && client.Client != nil {
+		selfAlias = handleFromAddress(client.Address())
+	}
+	return resolveMailWakeForAlias(ctx, client, selfAlias, evt)
+}
+
+func resolveChatWakeForAlias(ctx context.Context, client *aweb.Client, selfAlias string, evt awid.AgentEvent) (runWakeResolution, error) {
 	sessionID := strings.TrimSpace(evt.SessionID)
 	if sessionID == "" {
 		return runWakeResolution{CycleContext: formatFallbackCommsContext(evt)}, nil
 	}
 	messageID := strings.TrimSpace(evt.MessageID)
 	var incompleteHistoryErr error
-	var historyReadErr error
 	if messageID != "" {
 		limit, err := unreadChatHistoryLimit(evt.UnreadCount)
 		if err != nil {
@@ -149,20 +149,14 @@ func resolveChatWakeInDir(ctx context.Context, request runChatWakeRequest) (runW
 			UnreadOnly: true,
 			Limit:      limit,
 		})
-		if err != nil {
-			historyReadErr = err
-		}
 		if err == nil {
 			if completeErr := requireCompleteUnreadChatHistory(evt.UnreadCount, limit, len(history.Messages)); completeErr != nil {
 				incompleteHistoryErr = completeErr
 			} else {
-				filtered, filterErr := chat.FilterDeliveredMessagesForDir(workingDir, history.Messages)
-				if filterErr != nil {
-					return runWakeResolution{}, filterErr
-				}
+				filtered := chat.FilterDeliveredMessages(history.Messages)
 				presented := incomingChatMessages(filtered, selfAlias, selfIdentityDIDs(client)...)
 				if len(presented) > 0 {
-					return (runChatPresentation{Client: client, SessionID: sessionID, Messages: presented, Event: evt, WorkingDir: workingDir}).resolve(), nil
+					return chatWakeResolution(client, sessionID, presented, evt), nil
 				}
 				if len(history.Messages) > 0 {
 					return runWakeResolution{Skip: true}, nil
@@ -191,20 +185,14 @@ func resolveChatWakeInDir(ctx context.Context, request runChatWakeRequest) (runW
 			UnreadOnly: true,
 			Limit:      limit,
 		})
-		if historyErr != nil {
-			historyReadErr = historyErr
-		}
 		if historyErr == nil && histResp != nil {
 			if completeErr := requireCompleteUnreadChatHistory(pending.UnreadCount, limit, len(histResp.Messages)); completeErr != nil {
 				incompleteHistoryErr = completeErr
 			} else {
-				filtered, filterErr := chat.FilterDeliveredMessagesForDir(workingDir, histResp.Messages)
-				if filterErr != nil {
-					return runWakeResolution{}, filterErr
-				}
+				filtered := chat.FilterDeliveredMessages(histResp.Messages)
 				presented := incomingChatMessages(filtered, selfAlias, selfIdentityDIDs(client)...)
 				if len(presented) > 0 {
-					return (runChatPresentation{Client: client, SessionID: sessionID, Messages: presented, Event: evt, WorkingDir: workingDir}).resolve(), nil
+					return chatWakeResolution(client, sessionID, presented, evt), nil
 				}
 				if len(histResp.Messages) > 0 {
 					return runWakeResolution{Skip: true}, nil
@@ -234,16 +222,15 @@ func resolveChatWakeInDir(ctx context.Context, request runChatWakeRequest) (runW
 		if pendingChatSenderFromSelf(derivedPending, selfAlias, client.Address(), selfIdentityDIDs(client)...) {
 			return runWakeResolution{Skip: true}, nil
 		}
-		if historyReadErr == nil {
-			historyReadErr = fmt.Errorf("no durable unread chat messages returned")
+		// Pending previews are unsigned. Leave the message unread for a deliberate fetch.
+		const action = "Retry with aw chat history --session-id <session-id>, or find the conversation with aw chat pending."
+		if historyErr != nil {
+			return runWakeResolution{}, fmt.Errorf("chat history could not be read: %s. %s", termtext.Line(historyErr.Error()), action)
 		}
-		return runWakeResolution{}, fmt.Errorf("load chat history for wake %s: %w. Retry with aw chat history --session-id %s", sessionID, historyReadErr, shellQuote(sessionID))
+		return runWakeResolution{}, fmt.Errorf("chat history did not contain the pending message. %s", action)
 	}
 	if incompleteHistoryErr != nil {
 		return runWakeResolution{}, fmt.Errorf("load complete unread chat history for wake %s: %w", sessionID, incompleteHistoryErr)
-	}
-	if historyReadErr != nil {
-		return runWakeResolution{}, fmt.Errorf("load chat history for wake %s: %w. Retry with aw chat history --session-id %s", sessionID, historyReadErr, shellQuote(sessionID))
 	}
 	return runWakeResolution{Skip: true}, nil
 }
@@ -347,51 +334,51 @@ func incomingChatMessages(messages []awid.ChatMessage, selfAlias string, selfDID
 	return incoming
 }
 
-type runChatPresentation struct {
-	Client     *aweb.Client
-	SessionID  string
-	Messages   []awid.ChatMessage
-	Event      awid.AgentEvent
-	WorkingDir string
-}
-
-func (batch runChatPresentation) resolve() runWakeResolution {
-	client := batch.Client
-	sessionID := batch.SessionID
-	messages := batch.Messages
-	evt := batch.Event
-	workingDir := batch.WorkingDir
+func chatWakeResolution(client *aweb.Client, sessionID string, messages []awid.ChatMessage, evt awid.AgentEvent) runWakeResolution {
 	contexts := make([]string, 0, len(messages))
-	accepted := make([]awid.ChatMessage, 0, len(messages))
+	presented := make([]awid.ChatMessage, 0, len(messages))
 	for _, message := range messages {
-		label := preferredIdentityDisplayLabel(message.FromAgent, message.FromAddress, message.FromStableID, message.FromDID, preferredIdentityDisplayLabel(evt.FromAlias, evt.FromAddress, evt.FromStableID, evt.FromDID, "unknown"))
-		presentation := (runMessageInput{Kind: runChatMessage, Status: message.VerificationStatus, MessageID: message.MessageID, SessionID: sessionID, ClaimedSender: label, Body: message.Body}).presentation()
+		label := preferredIdentityDisplayLabel(
+			strings.TrimSpace(message.FromAgent),
+			strings.TrimSpace(message.FromAddress),
+			strings.TrimSpace(message.FromStableID),
+			strings.TrimSpace(message.FromDID),
+			preferredIdentityDisplayLabel(
+				strings.TrimSpace(evt.FromAlias),
+				strings.TrimSpace(evt.FromAddress),
+				strings.TrimSpace(evt.FromStableID),
+				strings.TrimSpace(evt.FromDID),
+				"",
+			),
+		)
+		input := runMessageInput{Kind: runChatMessage, Status: message.VerificationStatus, SessionID: sessionID, ClaimedSender: label, Body: message.Body}
+		presentation := input.presentation()
 		contexts = append(contexts, presentation.Context)
 		if presentation.Disposition == runContentPresented {
-			accepted = append(accepted, message)
+			presented = append(presented, message)
 		}
 	}
 
 	resolution := runWakeResolution{CycleContext: joinPromptSections(contexts...)}
-	presentedIDs := chat.DeliveredMessageIDs(accepted)
+	presentedIDs := chat.DeliveredMessageIDs(presented)
 	if len(presentedIDs) == 0 {
 		return resolution
 	}
 	resolution.AfterDelivery = func(deliveryCtx context.Context) error {
-		// The provider has already accepted this batch. Record presentation before
-		// remote read acknowledgement, so an ack outage cannot run its content again.
-		if err := chat.SaveDeliveredIDsForDir(workingDir, presentedIDs); err != nil {
+		// A failed server acknowledgement must leave local suppression untouched
+		// so the unread batch remains retryable. Reversing this order recreates
+		// the permanent-loss bug this transaction prevents.
+		if err := markChatMessagesRead(deliveryCtx, client, sessionID, presentedIDs); err != nil {
 			return err
 		}
-		return markChatMessagesRead(deliveryCtx, client, sessionID, presentedIDs)
+		return chat.SaveDeliveredIDs(presentedIDs)
 	}
-
 	return resolution
 }
 
 func resolveMailWakeForAlias(ctx context.Context, client *aweb.Client, selfAlias string, evt awid.AgentEvent) (runWakeResolution, error) {
 	messageID := strings.TrimSpace(evt.MessageID)
-	resp, err := client.Inbox(ctx, awid.InboxParams{UnreadOnly: messageID == "", MessageID: messageID})
+	resp, err := client.Inbox(ctx, awid.InboxParams{UnreadOnly: true})
 	if err != nil {
 		return runWakeResolution{}, fmt.Errorf("check unread mail for wake %s: %w", messageID, err)
 	}
@@ -399,14 +386,9 @@ func resolveMailWakeForAlias(ctx context.Context, client *aweb.Client, selfAlias
 		if messageID != "" && strings.TrimSpace(msg.MessageID) != messageID {
 			continue
 		}
-		if msg.ReadAt != nil {
-			return runWakeResolution{Skip: true}, nil
-		}
 		if mailMessageFromSelf(msg, selfAlias, selfIdentityDIDs(client)...) {
 			if msg.MessageID != "" {
-				if _, err := client.AckMessage(ctx, msg.MessageID); err != nil {
-					return runWakeResolution{}, fmt.Errorf("acknowledge self-authored mail: %w. Retry with aw mail ack %s", err, shellQuote(msg.MessageID))
-				}
+				_, _ = client.AckMessage(ctx, msg.MessageID)
 			}
 			return runWakeResolution{Skip: true}, nil
 		}
@@ -424,9 +406,7 @@ func resolveMailWakeForAlias(ctx context.Context, client *aweb.Client, selfAlias
 				selfIdentityDIDs(client)...,
 			) {
 			if msg.MessageID != "" {
-				if _, err := client.AckMessage(ctx, msg.MessageID); err != nil {
-					return runWakeResolution{}, fmt.Errorf("acknowledge self-authored mail: %w. Retry with aw mail ack %s", err, shellQuote(msg.MessageID))
-				}
+				_, _ = client.AckMessage(ctx, msg.MessageID)
 			}
 			return runWakeResolution{Skip: true}, nil
 		}
@@ -443,12 +423,12 @@ func resolveMailWakeForAlias(ctx context.Context, client *aweb.Client, selfAlias
 				"",
 			),
 		)
-		presentation := (runMessageInput{Kind: runMailMessage, Status: msg.VerificationStatus, MessageID: msg.MessageID, ClaimedSender: fromLabel, Subject: msg.Subject, Body: msg.Body}).presentation()
-		contextText := presentation.Context
+		input := runMessageInput{Kind: runMailMessage, Status: msg.VerificationStatus, MessageID: msg.MessageID, ClaimedSender: fromLabel, Subject: msg.Subject, Body: msg.Body}
+		presentation := input.presentation()
 		if presentation.Disposition == runContentWithheld {
-			return runWakeResolution{CycleContext: contextText}, nil
+			return runWakeResolution{CycleContext: presentation.Context}, nil
 		}
-
+		contextText := presentation.Context
 		if strings.TrimSpace(msg.MessageID) != "" && strings.TrimSpace(msg.ConversationID) != "" {
 			contextText = joinPromptSections(
 				contextText,
@@ -467,7 +447,7 @@ func resolveMailWakeForAlias(ctx context.Context, client *aweb.Client, selfAlias
 	if messageID == "" {
 		return runWakeResolution{CycleContext: formatFallbackCommsContext(evt)}, nil
 	}
-	return runWakeResolution{}, fmt.Errorf("mail wake %s was not returned by the server. Retry with aw mail show --message-id %s", messageID, shellQuote(messageID))
+	return runWakeResolution{Skip: true}, nil
 }
 
 func mailMessageFromSelf(msg awid.InboxMessage, selfAlias string, selfDIDs ...string) bool {

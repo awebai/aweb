@@ -211,15 +211,10 @@ async def _local_sender_mail(
     sent = await _request(env, "alice", "POST", "/v1/messages", body)
     assert sent.status_code == 200, sent.text
     if sender_retired:
-        # Team lifecycle removal of a local member after it sent.
-        await env.db.execute(
-            "UPDATE {{tables.workspaces}} SET deleted_at = NOW() WHERE workspace_id = $1",
-            env.actors["alice"].workspace,
+        retired = await _request(
+            env, "alice", "DELETE", f"/v1/workspaces/{env.actors['alice'].workspace}"
         )
-        await env.db.execute(
-            "UPDATE {{tables.agents}} SET deleted_at = NOW(), status = 'deleted' WHERE agent_id = $1",
-            env.actors["alice"].id,
-        )
+        assert retired.status_code == 200, retired.text
 
     identity_home = tmp_path / ".aw"
     identity_home.mkdir(mode=0o700)

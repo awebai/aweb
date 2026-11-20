@@ -139,20 +139,10 @@ Unsigned, stale, missing and unknown verification results keep a warning next
 to the content. A warning does not establish authorship; retry verification
 before sensitive work. Verified messages keep their normal reply flow.
 
-A failed history read is reported and retried; a pending conversation's unsigned
-`last_message` preview never replaces durable history in the prompt. Event hints
-without a durable reference provide a command to inspect pending messages.
-
-The launcher acknowledges messages after the provider accepts their prompt.
-If acknowledgement fails, it reports the error and retries acknowledgement
-without rerunning the delivered prompt. Chat delivery receipts belong to the
-working directory selected by `--dir`. An unreadable receipt store stops chat
-presentation and names the file to repair. After a process restart, an
-unacknowledged message can be presented again; delivery is not exactly once.
-
-`aw run --init` edits the user's global configuration and preserves configured
-services. A trusted directory's overrides apply to runs there and are never
-copied into the global file by initialization.
+A failed history read is reported with a command to fetch the conversation.
+An unsigned `last_message` preview from a pending conversation never replaces
+that history in the prompt. A wake without a durable reference supplies only
+a command to inspect pending messages.
 
 ## In-Session Controls
 
