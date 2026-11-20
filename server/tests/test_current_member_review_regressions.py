@@ -365,8 +365,11 @@ async def test_local_key_recipient_uses_the_authenticated_senders_team(pinning, 
     other_team = "elsewhere:example.test"
     await register_messaging_team(env, team_id=other_team)
     other = await admit_messaging_actor(
-        env, alias="otherteamrecipient", team_id=other_team,
-        signing_key=recipient.sk, local=True,
+        env,
+        alias="otherteamrecipient",
+        team_id=other_team,
+        signing_key=recipient.sk,
+        local=True,
     )
     assert other.did_key == recipient.did and other.agent_id != str(recipient.id)
     # Without any team selection the identity remains ambiguous.
@@ -385,11 +388,154 @@ async def test_local_key_recipient_uses_the_authenticated_senders_team(pinning, 
             UUID(response.json()["message_id"]),
         )
         assert (row["to_did"], row["to_alias"], row["team_id"], row["body"]) == (
-            recipient.did, recipient.alias, TEAM, "selected team",
+            recipient.did,
+            recipient.alias,
+            TEAM,
+            "selected team",
         )
     else:
         row = await env.db.fetch_one(
             "SELECT did, alias FROM {{tables.chat_participants}} WHERE session_id=$1 AND did=$2",
-            UUID(response.json()["session_id"]), recipient.did,
+            UUID(response.json()["session_id"]),
+            recipient.did,
         )
         assert (row["did"], row["alias"]) == (recipient.did, recipient.alias)
+
+
+@pytest.mark.asyncio
+async def test_federation_participant_conflict_uses_the_federation_refusal_owner(pinning):
+    from aweb.federation.envelope import verify_federation_envelope_integrity
+    from awid.federation_errors import FederationAuthorityError
+    from aweb.federation.errors import authority_error_body
+    from aweb.routes.federation import _local_envelope_recipient
+    from messaging_actor_support import admit_messaging_actor, register_messaging_team
+    from test_messages_http import _federated_mail_payload
+
+    env = pinning
+    sender = await _admit(env, "conflictsender", global_identity=True)
+    target = await _admit(env, "conflictlocal")
+    data = _federated_mail_payload(
+        sender_sk=sender.sk,
+        sender_did_key=sender.did,
+        sender_did_aw=sender.stable,
+        sender_address=sender.address,
+        target_did_aw=target.did,
+        target_did_key=target.did,
+        target_address="example.test/conflictlocal",
+    )
+    envelope = verify_federation_envelope_integrity(data["envelope"], data["signature"])
+    # Consumer boundary only: the integrity-checked artifact and actual native
+    # projections do not claim first-contact or stored-route authorization.
+    valid = await _local_envelope_recipient(env.infra, envelope=envelope, address_binding=None)
+    assert valid["did_key"] == target.did
+    other_team = "conflicting:example.test"
+    await register_messaging_team(env, team_id=other_team)
+    other = await admit_messaging_actor(
+        env,
+        alias="conflictglobal",
+        team_id=other_team,
+        signing_key=target.sk,
+        address="example.test/conflictglobal",
+    )
+    assert other.did_key == target.did and other.stable_id
+    before = await env.db.fetch_value("SELECT COUNT(*) FROM {{tables.messages}}")
+    with pytest.raises(FederationAuthorityError) as refused:
+        await _local_envelope_recipient(env.infra, envelope=envelope, address_binding=None)
+    assert refused.value.http_status == 409
+    assert authority_error_body(refused.value, correlation_id="conflict")["reason"] == (
+        "federation_conversation_invalid"
+    )
+    assert await env.db.fetch_value("SELECT COUNT(*) FROM {{tables.messages}}") == before
+
+
+@pytest.mark.asyncio
+async def test_mcp_recipient_binding_mismatch_describes_the_recipient(pinning):
+    import json
+    from aweb.messaging.mail_send import _continuation_signature_recipient
+    from aweb.messaging.mail_models import SendMessageRequest
+    from aweb.messaging.runtime import messaging_runtime
+    from aweb.mcp.tools.refusals import send_refusal
+    from aweb.service_errors import IdentityBindingCode, IdentityBindingError
+    from test_messages_http import _federated_mail_payload
+
+    env = pinning
+    sender = await _admit(env, "bindingsender", global_identity=True)
+    target = await _admit(env, "bindingrecipient", global_identity=True)
+    wrong = await _admit(env, "differentrecipient", global_identity=True)
+    first = await _http(
+        env,
+        sender,
+        "POST",
+        "/v1/messages",
+        {
+            "to_address": target.address,
+            "body": "original signed thread",
+        },
+        identity_only=True,
+    )
+    assert first.status_code == 200, first.text
+    participant = dict(
+        await env.db.fetch_one(
+            "SELECT * FROM {{tables.conversation_participants}} WHERE conversation_id=$1 AND did=$2",
+            UUID(first.json()["conversation_id"]),
+            target.stable,
+        )
+    )
+    recipient = dict(
+        await env.db.fetch_one(
+            "SELECT * FROM {{tables.agents}} WHERE agent_id=$1",
+            target.id,
+        )
+    )
+    runtime = messaging_runtime(env.app.state)
+    for signed_key in (target.did, wrong.did):
+        data = _federated_mail_payload(
+            sender_sk=sender.sk,
+            sender_did_key=sender.did,
+            sender_did_aw=sender.stable,
+            sender_address=sender.address,
+            target_address=target.address,
+            target_did_aw=target.stable,
+            target_did_key=signed_key,
+            conversation_id=first.json()["conversation_id"],
+        )
+        payload = SendMessageRequest(
+            body=data["envelope"]["body"],
+            signed_payload=data["envelope"]["signed_payload"],
+            signature=data["signature"],
+        )
+        if signed_key == target.did:
+            selected = await _continuation_signature_recipient(
+                runtime,
+                participant=participant,
+                recipient=recipient,
+                payload=payload,
+                sender_did_key=sender.did,
+            )
+            assert (selected["did_aw"], selected["did_key"]) == (target.stable, target.did)
+        else:
+            with pytest.raises(IdentityBindingError) as refused:
+                await _continuation_signature_recipient(
+                    runtime,
+                    participant=participant,
+                    recipient=recipient,
+                    payload=payload,
+                    sender_did_key=sender.did,
+                )
+            assert json.loads(send_refusal(refused.value)) == {
+                "error": "this recipient's key changed; resend the message",
+                "reason": "identity_binding_mismatch",
+            }
+    # The original authentication mismatch keeps its sender/request instruction.
+    assert json.loads(send_refusal(IdentityBindingError(IdentityBindingCode.MISMATCH))) == {
+        "error": "The claimed identity and signing key do not match. "
+        "Check the identity and its current public-key binding, then correct the request and retry.",
+        "reason": "identity_binding_mismatch",
+    }
+    assert (
+        await env.db.fetch_value(
+            "SELECT COUNT(*) FROM {{tables.messages}} WHERE conversation_id=$1",
+            UUID(first.json()["conversation_id"]),
+        )
+        == 1
+    )
