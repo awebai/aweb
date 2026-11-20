@@ -304,14 +304,39 @@ touch "$DISK_USED"
         for name in (
             "test_user_paths_local.py",
             "test_server_local.py",
+            "local_suite_slots.py",
             "fetch_released_aw.py",
         ):
             shutil.copy2(local.ROOT / "scripts" / name, scripts / name)
         (scripts / "candidate-docker-gate.sh").write_text(
             "echo disk-floor-refusal; exit 41\n"
         )
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True)
+        subprocess.run(["git", "-C", str(self.root), "add", "scripts"], check=True)
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(self.root),
+                "-c",
+                "user.name=Fixture",
+                "-c",
+                "user.email=fixture@example.test",
+                "commit",
+                "-qm",
+                "fixture",
+            ],
+            check=True,
+        )
         result = subprocess.run(
-            [sys.executable, str(scripts / "test_user_paths_local.py")],
+            [
+                sys.executable,
+                "-c",
+                "import sys; from pathlib import Path; sys.path.insert(0, sys.argv[1]); "
+                "import local_suite_slots; local_suite_slots.SLOT_DIRECTORY=Path(sys.argv[1]).parent/'slots'; "
+                "import test_user_paths_local; sys.exit(test_user_paths_local.main())",
+                str(scripts),
+            ],
             env={
                 key: value
                 for key, value in dict(
