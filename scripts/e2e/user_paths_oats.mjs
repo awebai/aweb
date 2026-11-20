@@ -10,7 +10,7 @@ import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { prepareKernelProbeDirectories } from "./user_paths_kernel_setup.mjs";
+import { kernelCommandErrorCode, prepareKernelProbeDirectories } from "./user_paths_kernel_setup.mjs";
 
 const KernelBackend = Object.freeze({ Tmux: "tmux" });
 const OWNED_TMUX = ["tmux", "-L", "oats"];
@@ -44,7 +44,8 @@ writeFileSync(join(bin, "passive-session"), "#!/bin/sh\nexec sleep infinity\n", 
 function command({ argv, cwd = deployment, timeout = 60000 }) {
   const result = spawnSync(argv[0], argv.slice(1), { cwd, env, encoding: "utf8", timeout });
   if (result.error) throw result.error;
-  assert.equal(result.status, 0, `${argv.slice(0, 3).join(" ")}: exit=${result.status}: ${result.stderr}`);
+  const code = result.status === 0 ? null : kernelCommandErrorCode(result.stdout);
+  assert.equal(result.status, 0, `${argv.slice(0, 3).join(" ")}: exit=${result.status}${code ? ` code=${code}` : ""}: ${result.stderr}`);
   return result.stdout;
 }
 const oats = (...argv) => command({ argv: [process.execPath, KERNEL, ...argv] });

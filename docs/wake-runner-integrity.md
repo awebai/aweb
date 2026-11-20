@@ -31,3 +31,9 @@ The user-paths gate qualifies the released OATS kernel against candidate aw usin
 the real provider and an isolated passive tmux session. Its kernel wake receipt
 is required; direct channel-core delivery alone does not qualify this seam. This
 does not qualify a deployed image or Helm storage.
+
+The probe creates its private deployment's `agents/` directory before calling
+the released kernel. Its bootstrap control runs OATS 0.69.19 with an empty HOME,
+no global Git identity and no parent checkout, so deployment discovery cannot
+borrow the developer's environment. Failed kernel commands retain the JSON
+error code while leaving private stdout out of diagnostics.

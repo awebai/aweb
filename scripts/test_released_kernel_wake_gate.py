@@ -4,6 +4,7 @@ from pathlib import Path
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -146,6 +147,46 @@ class ReleasedKernelBootstrapTest(unittest.TestCase):
                 Path(spawned["result"]["home"]),
                 deployment / "agents/probe/instances/r20-wake-probe",
             )
+            self.assertEqual(
+                stat.S_IMODE((deployment / "agents").stat().st_mode), 0o700
+            )
+
+    def test_kernel_command_diagnostics_keep_codes_without_private_output(self):
+        helper = (ROOT / "scripts/e2e/user_paths_kernel_setup.mjs").as_uri()
+        result = subprocess.run(
+            [
+                "node",
+                "--input-type=module",
+                "-e",
+                f"import {{kernelCommandErrorCode}} from {json.dumps(helper)};"
+                "let input='';for await(const part of process.stdin)input+=part;"
+                "console.log(JSON.stringify(JSON.parse(input).map(kernelCommandErrorCode)));",
+            ],
+            input=json.dumps(
+                [
+                    json.dumps(
+                        {
+                            "error": {
+                                "code": "E_NO_DEPLOYMENT",
+                                "message": "private result",
+                            }
+                        }
+                    ),
+                    json.dumps({"error": {"code": "private result"}}),
+                    "unstructured private result",
+                    "null",
+                    "[]",
+                ]
+            ),
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+        )
+        self.assertEqual(
+            json.loads(result.stdout), ["E_NO_DEPLOYMENT", None, None, None, None]
+        )
+        self.assertNotIn("private result", result.stdout)
 
 
 class ReleasedKernelAdmissionTest(unittest.TestCase):
