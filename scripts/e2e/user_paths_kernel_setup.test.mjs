@@ -7,6 +7,41 @@ import { pathToFileURL, fileURLToPath } from "node:url";
 import test from "node:test";
 import { DiagnosticOutput, kernelSessionSnapshot, preparePassiveKernelLaunch, runKernelLifecycleCommand, runKernelProbeCommand } from "./user_paths_kernel_setup.mjs";
 
+function cleanupPassiveTerminal({ root, tmuxBinary, env }) {
+  const stopped = spawnSync(tmuxBinary, ["-L", "oats", "kill-server"], { env, encoding: "utf8", timeout: 10000 });
+  const noServer = stopped.status === 1 && /^(?:no server running on [^\r\n]+|error connecting to [^\r\n]+ \(No such file or directory\))\s*$/.test(stopped.stderr);
+  if (stopped.error || stopped.signal || (stopped.status !== 0 && !noServer)) {
+    throw new Error(`Owned tmux cleanup failed (status=${stopped.status}, signal=${stopped.signal}, code=${stopped.error?.code ?? "none"}); socket root retained at ${root}. Inspect the owned server before removing that directory.`, { cause: stopped.error });
+  }
+  rmSync(root, { recursive: true, force: true });
+}
+
+const CleanupCase = Object.freeze({ NoServer: "no-server", ExitFailure: "exit-failure", SpawnError: "spawn-error", Signal: "signal" });
+
+test("passive terminal cleanup retains its socket root on child failure", () => {
+  for (const outcome of Object.values(CleanupCase)) {
+    const root = mkdtempSync("/tmp/kpc-");
+    try {
+      const env = { HOME: root, TMUX_TMPDIR: root, PATH: process.env.PATH };
+      let tmuxBinary;
+      if (outcome === CleanupCase.NoServer) tmuxBinary = spawnSync("/usr/bin/which", ["tmux"], { encoding: "utf8" }).stdout.trim();
+      else if (outcome === CleanupCase.ExitFailure) tmuxBinary = "/usr/bin/false";
+      else if (outcome === CleanupCase.SpawnError) tmuxBinary = join(root, "missing-executable");
+      else {
+        tmuxBinary = join(root, "signalled-child.mjs");
+        writeFileSync(tmuxBinary, `#!${process.execPath}\nprocess.kill(process.pid, "SIGTERM");\n`, { mode: 0o700 });
+      }
+      if (outcome === CleanupCase.NoServer) {
+        cleanupPassiveTerminal({ root, tmuxBinary, env });
+        assert.equal(existsSync(root), false, "confirmed no-server cleanup removes its root");
+      } else {
+        assert.throws(() => cleanupPassiveTerminal({ root, tmuxBinary, env }), /Owned tmux cleanup failed.*socket root retained/, outcome);
+        assert.equal(existsSync(root), true, `${outcome} preserves the socket root for inspection`);
+      }
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  }
+});
+
 test("released kernel starts, inspects and retires the actual passive terminal", () => {
   const root = mkdtempSync("/tmp/kpr-");
   const home = join(root, "home"), deployment = join(root, "deploy"), source = join(root, "source"), bin = join(root, "bin"), tmux = join(root, "tmux");
@@ -55,8 +90,7 @@ test("released kernel starts, inspects and retires the actual passive terminal",
   } finally {
     try { if (instance) oats("retire", instance, "--json"); }
     finally {
-      spawnSync(tmuxBinary, ["-L", "oats", "kill-server"], { env, encoding: "utf8", timeout: 10000 });
-      rmSync(root, { recursive: true, force: true });
+      cleanupPassiveTerminal({ root, tmuxBinary, env });
     }
   }
 });
