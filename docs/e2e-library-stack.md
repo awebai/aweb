@@ -35,8 +35,11 @@ host:
   certificate from a disposable stack CA, and aweb runs
   `scripts/e2e/stack_server.py` pinned to that origin;
 - teams publish the stack's server as their team server, and `aw` accepts only
-  an HTTPS team server outside loopback, so aweb serves TLS from the same CA
-  and Library trusts that CA when it reads a team's grant;
+  an HTTPS team server outside loopback, so aweb serves TLS from the same CA.
+  Library reads a team's grant from it only through its egress guard, as its
+  operator's own listed team server on the stack's network
+  (`LIBRARY_TEAM_SERVER_INTERNAL_ORIGINS`, `LIBRARY_HOOK_INTERNAL_CIDR`), and
+  trusts that CA (`LIBRARY_HOOK_CA_FILE`);
 - Library admits a member request only for a team that installed it and
   granted the operation's scopes, so every journey team publishes the stack's
   server as its team server, is made an install admin there, and runs the real
