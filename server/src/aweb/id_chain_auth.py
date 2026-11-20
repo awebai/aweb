@@ -13,6 +13,7 @@ from awid.id_certificates import (
 )
 from fastapi import HTTPException, Request
 
+from aweb.application_state import application_registry_client
 from aweb.identity_binding import IdentityBinding
 from aweb.human_kind import observe_identity_kind, unverified_kind
 
@@ -38,7 +39,7 @@ async def authenticate_id_chain(
         client = (
             registry_client
             if registry_client is not None
-            else getattr(request.app.state, "awid_registry_client", None)
+            else application_registry_client(request.app.state)
         )
         observation = await observe_identity_kind(client, binding, bundle)
         request.state.identity_kind = observation

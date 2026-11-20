@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from fastapi import HTTPException, Request
 
 from awid.team_ids import parse_team_id
+from aweb.application_state import application_registry_client
 from aweb.app_credentials import APP_REQUEST, PURPOSES, AppCredential, verify_app_credential
 from aweb.claims import release_task_claims_on
 from aweb.service_errors import ConflictError, ForbiddenError, NotFoundError, ValidationError
@@ -58,11 +59,9 @@ async def app_request_transport_on(request: Request, tx) -> tuple[AppCredential,
 
 
 async def _current_certificates(request, team_id):
-    registry = getattr(request.app.state, "awid_registry_client", None)
     try:
         domain, name = parse_team_id(team_id)
-        if registry is None:
-            raise RuntimeError("registry absent")
+        registry = application_registry_client(request.app.state)
         return await registry.list_team_certificates_fresh(domain, name, active_only=True)
     except Exception as exc:
         raise HTTPException(status_code=503, detail="authority_unavailable") from exc
@@ -81,7 +80,7 @@ async def verify_authorization_certificate(request, authorization):
     payload = authorization["payload"]
     try:
         domain, name = parse_team_id(payload["team_id"])
-        registry = request.app.state.awid_registry_client
+        registry = application_registry_client(request.app.state)
         # C2 requires live authority even when the app otherwise uses a
         # CachedRegistryClient. Never use its stale/outage-grace reads here.
         team_key = await registry.get_team_public_key_fresh(domain, name)
