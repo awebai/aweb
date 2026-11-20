@@ -3800,14 +3800,16 @@ async def test_create_chat_session_to_address_local_ephemeral_without_route_is_n
         "Content-Type": "application/json",
     }
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        # This router-only app omits the production exception renderer.
-        with pytest.raises(FederationAuthorityError) as refused:
-            await client.post("/v1/chat/sessions", content=body, headers=headers)
+        refused = await client.post("/v1/chat/sessions", content=body, headers=headers)
 
-    assert refused.value.reason == "local_recipient_route_missing"
-    assert refused.value.http_status == 404
-    assert refused.value.retryable is False
-    assert "Local recipient only accepts" in str(refused.value.__cause__)
+    assert refused.status_code == 404, refused.text
+    assert refused.json()["reason"] == "local_recipient_route_missing"
+    assert refused.json()["retryable"] is False
+    assert refused.json()["detail"] == (
+        "otherco.com/bob is not a registered address. A local identity has no address and "
+        "is reachable only from inside its own team, by alias; a global identity is "
+        "reachable by address once one is assigned. Check the address or use a teammate alias and retry."
+    )
     assert (
         await aweb_cloud_db.aweb_db.fetch_value("SELECT COUNT(*) FROM {{tables.chat_messages}}")
         == 0

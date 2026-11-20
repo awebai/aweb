@@ -228,6 +228,9 @@ async def managed_fixture(env, kind="mail", *, created_at: datetime | None = Non
         wire.update(
             to_did=env.actors["bob"].did, conversation_id=cid, new_conversation=True
         )
+        if keys["bob"]["stable_id"]:
+            # The same wire must also identify its stable party on continuation.
+            wire["to_stable_id"] = keys["bob"]["stable_id"]
     return backend, d, wire, cid
 
 
