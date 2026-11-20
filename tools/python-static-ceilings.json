@@ -811,6 +811,12 @@
     },
     {
       "tool": "ruff",
+      "file": "server/src/aweb/message_vocabulary.py",
+      "code": "BLE001",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
       "file": "server/src/aweb/messaging/address_auth.py",
       "code": "BLE001",
       "count": 1
@@ -1389,7 +1395,7 @@
       "tool": "ruff",
       "file": "server/tests/test_mail_unread_count.py",
       "code": "F401",
-      "count": 3
+      "count": 1
     },
     {
       "tool": "ruff",
@@ -1437,7 +1443,7 @@
       "tool": "ruff",
       "file": "server/tests/test_participant_identity_authority.py",
       "code": "F401",
-      "count": 4
+      "count": 3
     },
     {
       "tool": "ruff",

@@ -160,8 +160,8 @@ async def authorize_delivery(
             + _POLICY_ACTION
         )
     if not global_recipient:
-        # docs/federation-error-reference.md:40: an outsider gets no evidence
-        # that a local identity exists. The owner retains the released 404.
+        # Preserve the published local-only 404 (federation-error-reference.md:40).
+        # Missing identities retain their distinct released error code.
         code = DeliveryRefusalCode.LOCAL_RECIPIENT_ROUTE_MISSING
         logger.warning("delivery_policy_refused reason=%s", code.value)
         raise FederationAuthorityError(code.value) from ForbiddenError(detail)
