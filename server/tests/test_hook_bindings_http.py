@@ -231,8 +231,12 @@ async def test_a_server_without_a_registry_client_refuses_without_changing_anyth
         response = await client.post(
             f"/v1/apps/hook-bindings/{registration.binding_id}/activate", json=_body(signing, signature),
         )
-    assert response.status_code == 500
-    assert "registry client not configured" in response.json()["detail"]
+    assert response.status_code == 503
+    detail = response.json()["detail"]
+    assert detail["code"] == "registry_client_unavailable"
+    assert detail["message"].endswith(
+        "Configure the serving registry client and start the application before retrying."
+    )
     assert await env.db.fetch_value("SELECT COUNT(*) FROM {{tables.owner_act_nonces}}") == 0
 
 
