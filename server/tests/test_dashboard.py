@@ -294,10 +294,10 @@ async def test_list_agents(dashboard_stack):
         alice.workspace,
     )
     await env.db.execute(
-        "UPDATE {{tables.workspaces}} SET workspace_path='/Users/bob/stale',last_seen_at=$1,deleted_at=$2 WHERE workspace_id=$3",
+        "UPDATE {{tables.workspaces}} SET workspace_path='/Users/bob/stale',last_seen_at=$1,deleted_at=$2 WHERE agent_id=$3",
         datetime(2026, 4, 8, 13, 0, tzinfo=timezone.utc),
         datetime(2026, 4, 8, 13, 5, tzinfo=timezone.utc),
-        bob.workspace,
+        bob.id,
     )
     resp = await env.client.get(
         f"/v1/teams/{env.team_id}/agents",
@@ -1184,6 +1184,17 @@ async def dashboard_stack(shared_test_pool, monkeypatch):
 
     async with privacy_stack(shared_test_pool, monkeypatch) as env:
         env.team_id, env.team_name = TEAM, TEAM_NAME
+        # These directory fixtures deliberately contain two live members.
+        await env.db.execute(
+            "UPDATE {{tables.workspaces}} SET deleted_at=NOW() "
+            "WHERE team_id=$1 AND alias NOT IN ('alice','bob')",
+            TEAM,
+        )
+        await env.db.execute(
+            "UPDATE {{tables.agents}} SET deleted_at=NOW() "
+            "WHERE team_id=$1 AND alias NOT IN ('alice','bob')",
+            TEAM,
+        )
         await env.registry_db.execute(
             "UPDATE {{tables.teams}} SET visibility='private' WHERE domain='example.test' AND name=$1",
             TEAM_NAME,
@@ -1222,7 +1233,7 @@ async def _seed_dashboard_directory(env):
     await _seed_dashboard_stack(env)
     await _global_actor(env, "alice", address="example.test/alice")
     await env.db.execute(
-        "UPDATE {{tables.agents}} SET human_name='Alice',agent_type='coder' WHERE agent_id=$1",
+        "UPDATE {{tables.agents}} SET human_name='Alice',role='developer',agent_type='coder' WHERE agent_id=$1",
         env.actors["alice"].id,
     )
     await env.db.execute(
