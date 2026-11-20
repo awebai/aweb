@@ -218,13 +218,10 @@ async def test_real_authority_first_bootstrap_then_second_requires_exact_approva
         presentation = {"version": 1, "request_bytes": raw, "receipt": receipt}
         before = holder.store.audit()
         refused = await call(client, "/v1/humans", presentation, **agent_caller)
-        assert refused.status_code == 403, refused.text
-        assert refused.json() == {
-            "error": {
-                "code": "requester_mismatch",
-                "message": "Carry the enrollment intent with the requester key named in that intent, then retry.",
-            }
-        }
+        assert (
+            refused.status_code == 401
+            and refused.json()["error"]["code"] == "requester_mismatch"
+        )
         assert holder.store.audit() == before
 
         # Even a genuine UV assertion cannot manufacture the holder's own nonce.

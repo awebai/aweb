@@ -56,7 +56,7 @@ async def test_own_person_refreshes_only_the_held_active_binding(native_holder):
                 "type": "aweb.id-certificate",
                 "id": other_id,
                 "domain": holder.store.descriptor().domain,
-                "parent": {"kind": "identity", "id": own["identity"]},
+                "parent": {"kind": "human", "id": own["identity"]},
                 "kind": "human",
                 "issuer_key": own["key"],
                 "issued_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
