@@ -88,20 +88,36 @@ class TeamServerSite:
         this site's, so it can only be built once the site listens."""
         self.tls.respond = asgi_reply(app)
 
+    def serve_transport(self, transport: httpx.AsyncBaseTransport) -> None:
+        """Answer every request through ``transport``, see :func:`transport_reply`."""
+        self.tls.respond = transport_reply(transport)
+
 
 def asgi_reply(app: Any) -> Any:
     """Answer each request the listener reads with ``app``'s response to it."""
-    transport = httpx.ASGITransport(app=app)
+    return transport_reply(httpx.ASGITransport(app=app))
+
+
+def transport_reply(transport: httpx.AsyncBaseTransport) -> Any:
+    """Answer each request the listener reads with ``transport``'s response:
+    a recording or faulting transport in front of a real app keeps its
+    behaviour behind the TLS listener. A transport that cannot answer closes
+    the connection without a response, as a server that is down does."""
 
     async def respond(seen: Seen) -> Reply:
         host = next(value for name, value in seen.headers if name.lower() == "host")
-        async with httpx.AsyncClient(transport=transport, base_url=f"https://{host}") as client:
-            response = await client.request(
-                seen.method,
-                seen.target,
-                headers=[(name, value) for name, value in seen.headers if name.lower() != "host"],
-                content=seen.body,
-            )
+        try:
+            async with httpx.AsyncClient(transport=transport, base_url=f"https://{host}") as client:
+                response = await client.request(
+                    seen.method,
+                    seen.target,
+                    headers=[
+                        (name, value) for name, value in seen.headers if name.lower() != "host"
+                    ],
+                    content=seen.body,
+                )
+        except httpx.TransportError as unanswered:
+            raise ConnectionResetError(str(unanswered)) from unanswered
         headers = [
             (name, value)
             for name, value in response.headers.items()
