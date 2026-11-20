@@ -1,9 +1,8 @@
 # vm-gate
 
 Dispatch aweb's test-only candidate gate, or a focused command, to a disposable
-Hetzner VM. The caller stays on the Mac; the gate executes as UID 1000 on Linux.
-Each invocation keeps an independent VM and evidence directory. This increment
-supports aweb; Cloud and warm caches are separate work.
+Linux VM on Hetzner or Merak. The Mac controller stages each invocation in
+its own guest and evidence directory. The gate executes as UID 1000.
 
 ## Install and configure
 
