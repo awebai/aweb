@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from contextlib import aclosing
 from uuid import uuid4
@@ -169,3 +170,55 @@ async def test_failed_registry_read_does_not_install_a_warm_origin(
     assert await client.get_team_public_key(DOMAIN, name) == keys["second"]
     assert len(first.transport.calls) == len(second.transport.calls) == 1
     assert len(registry_audience_dns.queries) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("new_origin_available", [True, False])
+async def test_delayed_registry_response_cannot_restore_a_displaced_origin(
+    team_registries, registry_audience_dns, monkeypatch, new_origin_available
+):
+    client, first, second, keys, name = team_registries
+    first_answered = asyncio.Event()
+    release_first = asyncio.Event()
+    handle_first = first.transport.handle_async_request
+
+    async def delay_first_response(request):
+        response = await handle_first(request)
+        first_answered.set()
+        await release_first.wait()
+        return response
+
+    monkeypatch.setattr(first.transport, "handle_async_request", delay_first_response)
+    async with aclosing(CachedRegistryClient(DEFAULT, client.redis_client)) as other:
+        read_from_first = asyncio.create_task(client.get_team_public_key(DOMAIN, name))
+        try:
+            # Registry A has answered, but the SDK has yet to receive the reply.
+            await asyncio.wait_for(first_answered.wait(), timeout=5)
+            registry_audience_dns.answer = AuthorityAnswer.PUBLIC_DEFAULT
+            second.transport.down = not new_origin_available
+            if new_origin_available:
+                assert await other.get_team_public_key(DOMAIN, name) == keys["second"]
+            else:
+                with pytest.raises(RegistryError) as unavailable:
+                    await other.get_team_public_key(DOMAIN, name)
+                assert unavailable.value.status_code == 503
+                second.transport.down = False
+        finally:
+            release_first.set()
+            first_key = await read_from_first
+        assert first_key == keys["first"]
+        assert len(registry_audience_dns.queries) == 2
+        assert len(first.transport.calls) == len(second.transport.calls) == 1
+
+        # A delayed response must never restore the old locator, even if the
+        # newly discovered registry needed a retry before it could answer.
+        assert await other.get_team_public_key(DOMAIN, name) == keys["second"]
+        expected_reads = 1 if new_origin_available else 2
+        assert len(second.transport.calls) == expected_reads
+        assert len(registry_audience_dns.queries) == expected_reads + 1
+
+        # The current origin's response still warms the shared cache for a peer.
+        assert await client.get_team_public_key(DOMAIN, name) == keys["second"]
+        assert len(first.transport.calls) == 1
+        assert len(second.transport.calls) == expected_reads
+        assert len(registry_audience_dns.queries) == expected_reads + 1
