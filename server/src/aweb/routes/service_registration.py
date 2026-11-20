@@ -183,7 +183,10 @@ async def register_team_with_service(
     except ValueError as exc:
         raise HTTPException(
             status_code=422,
-            detail={"code": "validation_error", "message": "awid_team_id must be formatted as <team>:<domain>."},
+            detail={
+                "code": "validation_error",
+                "message": "awid_team_id must be formatted as <team>:<domain>.",
+            },
         ) from exc
 
     service_url = body.service_url.strip().rstrip("/")
@@ -210,7 +213,9 @@ async def register_team_with_service(
             detail={"code": "awid_team_not_found", "message": "AWID team was not found."},
         )
     aweb_db = db.get_manager("aweb")
-    team_controller_did = await pinned_team_key_for_request(request, canonical_team_id, registry_key, db=aweb_db)
+    team_controller_did = await pinned_team_key_for_request(
+        request, canonical_team_id, registry_key, db=aweb_db
+    )
 
     try:
         enforce_timestamp_skew(body.timestamp)
@@ -231,7 +236,10 @@ async def register_team_with_service(
     except ValueError as exc:
         raise HTTPException(
             status_code=422,
-            detail={"code": "invalid_controller_signature", "message": "Team controller signature did not verify."},
+            detail={
+                "code": "invalid_controller_signature",
+                "message": "Team controller signature did not verify.",
+            },
         ) from exc
 
     team_created = await _ensure_service_registered_team(
