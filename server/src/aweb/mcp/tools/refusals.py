@@ -16,6 +16,7 @@ from aweb.messaging.delivery_policy import DeliveryPolicyRefused
 
 from awid.federation_errors import FederationAuthorityError
 from aweb.messaging.refusals import (
+    DeliveryRefusalCode,
     ContactIdentityBindingRequired,
     MailConversationExists,
     RecipientAddressNotFound,
@@ -88,6 +89,14 @@ def send_refusal(
     """
     require_send_refusal_mode(mode)
     if isinstance(exc, DeliveryPolicyRefused):
+        if address and exc.code is DeliveryRefusalCode.LOCAL_RECIPIENT_ROUTE_MISSING:
+            # MCP's released address refusal does not disclose a local identity.
+            return json.dumps(
+                {
+                    "error": unreachable_address_refusal(address),
+                    "reason": DeliveryRefusalCode.RECIPIENT_IDENTITY_NOT_FOUND.value,
+                }
+            )
         return json.dumps({"error": exc.detail, "reason": exc.code.value})
     if isinstance(exc, (IdentityBindingError, RegistryClientUnavailable)):
         return json.dumps({"error": exc.message, "reason": exc.code})
@@ -97,6 +106,19 @@ def send_refusal(
         return json.dumps({"error": exc.recovery_action, "reason": exc.code.value})
     if isinstance(exc, ContactIdentityBindingRequired):
         return json.dumps({"error": exc.detail, "reason": exc.code.value})
+    if (
+        address
+        and isinstance(exc, FederationAuthorityError)
+        and not isinstance(exc, RecipientNotResidentError)
+        and exc.reason in ("recipient_identity_not_found", "local_recipient_route_missing")
+    ):
+        # Normalize before local-miss subtype details (including R2's typed
+        # local recipient refusal). A registered global nonresident retains
+        # its distinct operator action; registry selection already found it.
+        return json.dumps({
+            "error": unreachable_address_refusal(address),
+            "reason": DeliveryRefusalCode.RECIPIENT_IDENTITY_NOT_FOUND.value,
+        })
     if isinstance(exc, (RecipientNotResidentError, LocalRecipientNotFoundError)):
         return json.dumps({"error": exc.detail, "reason": exc.reason, "retryable": exc.retryable})
     if isinstance(exc, FederationAuthorityError):
@@ -104,7 +126,10 @@ def send_refusal(
             "recipient_identity_not_found",
             "local_recipient_route_missing",
         ):
-            return json.dumps({"error": unreachable_address_refusal(address), "reason": exc.reason})
+            reason = (
+                DeliveryRefusalCode.RECIPIENT_IDENTITY_NOT_FOUND.value if address else exc.reason
+            )
+            return json.dumps({"error": unreachable_address_refusal(address), "reason": reason})
         next_action = None
         if address and exc.reason == "sender_registry_unavailable":
             next_action = REGISTRY_CANNOT_CONFIRM_ADDRESS.format(address=address)

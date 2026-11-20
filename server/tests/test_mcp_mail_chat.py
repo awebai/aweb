@@ -3417,31 +3417,26 @@ async def test_mcp_same_team_contacts_only(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("tool", ["mail", "chat"])
-async def test_mcp_full_address_to_another_teams_local_identity_keeps_detail_and_reason(
+async def test_mcp_full_address_to_another_teams_local_identity_is_refused_without_confirming_it(
     mail_server, tool
 ):
     from test_local_policy_refusal_boundaries import admitted_local_recipient
 
+    from messaging_actor_support import register_messaging_team
+
     env = mail_server
-    bob = await admitted_local_recipient(env, team="eng:otherco.com", alias="bob")
-    assert (
-        await env.db.fetch_value(
-            "SELECT address FROM {{tables.agents}} WHERE agent_id=$1", UUID(bob.id)
-        )
-        is None
-    )
+    await register_messaging_team(env.fixture, team_id="eng:otherco.com")
     name = "send_mail" if tool == "mail" else "send_chat"
-    content = (
-        {"subject": "cross team local", "body": "hello bob"}
-        if tool == "mail"
-        else {"message": "hello bob"}
-    )
+    content = {"subject": "cross team local", "body": "hello bob"} if tool == "mail" else {"message": "hello bob"}
+    missing = await env.mcp_call(name, to="otherco.com/bob", plaintext=True, **content)
+    bob = await admitted_local_recipient(env, team="eng:otherco.com", alias="bob")
+    assert await env.db.fetch_value(
+        "SELECT address FROM {{tables.agents}} WHERE agent_id=$1", UUID(bob.id)
+    ) is None
     result = await env.mcp_call(name, to="otherco.com/bob", plaintext=True, **content)
-    # Preserve the canonical published reason beside the existing human detail.
-    # Distinct missing/local-only reasons are not an indistinguishability claim.
-    assert result == {
+    assert result == missing == {
         "error": "otherco.com/bob is not a registered address. A local identity has no address and is reachable only from inside its own team, by alias; a global identity is reachable by address once one is assigned. Check the address or use a teammate alias and retry.",
-        "reason": "local_recipient_route_missing",
+        "reason": "recipient_identity_not_found",
     }
     assert await env.db.fetch_value("SELECT count(*) FROM {{tables.messages}}") == 0
     assert await env.db.fetch_value("SELECT count(*) FROM {{tables.chat_messages}}") == 0

@@ -29,10 +29,10 @@ from aweb.attachments import (
 from aweb.deps import get_db
 from aweb.identity_auth_deps import MessagingAuth, auth_dids, get_messaging_auth
 from aweb.messaging.kinds import MessageKind
-from aweb.messaging.refusals import DeliveryRefusal
-from aweb.service_errors import ServiceError
+from aweb.messaging.refusals import DeliveryRefusal, DeliveryRefusalCode
 from aweb.messaging.message_replay import (
     StoredMessageClaim,
+    StoredMessageConflict,
     EncryptedReplayArtifact,
     stored_message_matches,
 )
@@ -61,19 +61,25 @@ def _send_context(context):
         yield
         if not context.bound:
             raise AttachmentError("attachment_conflict").http()
-    except ServiceError as exc:
-        if exc.status_code not in (409, 422) or isinstance(exc.detail, dict):
+    except (StoredMessageConflict, DeliveryRefusal) as exc:
+        if isinstance(exc, StoredMessageConflict):
+            code = "attachment_conflict"
+            delivery_code = None
+        elif exc.code is DeliveryRefusalCode.REQUEST_INVALID:
+            # Carry the validation owner's declared request code, not a new
+            # classification of arbitrary signed-recipient or routing errors.
+            code = exc.code.value
+            delivery_code = exc.code
+        else:
             raise
-        # Managed sends keep the released attachment code alongside the safe
-        # message from ordinary validation or the shared replay owner.
         raise DeliveryRefusal(
             status_code=exc.status_code,
             detail={
-                "code": "attachment_conflict" if exc.status_code == 409 else "request_invalid",
+                "code": code,
                 "message": exc.detail,
             },
             headers=exc.headers,
-            code=exc.code if isinstance(exc, DeliveryRefusal) else None,
+            code=delivery_code,
         ) from exc
     finally:
         _current.reset(token)

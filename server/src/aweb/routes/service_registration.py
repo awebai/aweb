@@ -14,6 +14,7 @@ from awid.dns_auth import enforce_timestamp_skew
 from awid.log import canonical_server_origin
 from awid.signing import canonical_json_bytes, verify_did_key_signature
 from awid.team_ids import parse_team_id
+from aweb.application_state import RegistryClientUnavailable, application_registry_client
 from aweb.config import get_settings
 from aweb.deps import get_db
 from aweb.team_admission import admit_team
@@ -168,7 +169,10 @@ async def register_team_with_service(
     except ValueError as exc:
         raise HTTPException(
             status_code=422,
-            detail={"code": "validation_error", "message": "awid_team_id must be formatted as <team>:<domain>."},
+            detail={
+                "code": "validation_error",
+                "message": "awid_team_id must be formatted as <team>:<domain>.",
+            },
         ) from exc
 
     service_url = body.service_url.strip().rstrip("/")
@@ -182,9 +186,12 @@ async def register_team_with_service(
             },
         )
 
-    registry_client = getattr(request.app.state, "awid_registry_client", None)
-    if registry_client is None:
-        raise HTTPException(status_code=503, detail="AWID registry client is not configured")
+    try:
+        registry_client = application_registry_client(request.app.state)
+    except RegistryClientUnavailable as exc:
+        raise HTTPException(
+            status_code=503, detail="AWID registry client is not configured"
+        ) from exc
 
     # The team's key as this server holds it: the registry's answer, moved
     # from an admitted key only by the namespace controller's act.
@@ -195,7 +202,9 @@ async def register_team_with_service(
             detail={"code": "awid_team_not_found", "message": "AWID team was not found."},
         )
     aweb_db = db.get_manager("aweb")
-    team_controller_did = await pinned_team_key_for_request(request, canonical_team_id, registry_key, db=aweb_db)
+    team_controller_did = await pinned_team_key_for_request(
+        request, canonical_team_id, registry_key, db=aweb_db
+    )
 
     try:
         enforce_timestamp_skew(body.timestamp)
@@ -216,7 +225,10 @@ async def register_team_with_service(
     except ValueError as exc:
         raise HTTPException(
             status_code=422,
-            detail={"code": "invalid_controller_signature", "message": "Team controller signature did not verify."},
+            detail={
+                "code": "invalid_controller_signature",
+                "message": "Team controller signature did not verify.",
+            },
         ) from exc
 
     team_created = await _ensure_service_registered_team(
