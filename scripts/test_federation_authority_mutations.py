@@ -50,6 +50,7 @@ def copy_checkout(destination: Path) -> None:
             "awid/tests/test_external_authority.py",
             "awid/tests/test_external_registry.py",
             "server/tests/test_contacts_http.py",
+            "server/tests/test_id_tree_contact_replacement.py",
             "server/tests/test_federation_activation_contacts.py",
             "server/tests/test_federation_activation_delivery.py",
             "server/tests/test_federation_envelope.py",

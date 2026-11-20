@@ -209,11 +209,11 @@ async def test_address_discovery_programming_error_is_not_stored_binding_authori
         "headers": [(key.lower().encode(), value.encode()) for key, value in headers.items()],
     })
 
-    async def invalid_dependency_call(_did):
+    async def invalid_dependency_call(_client, _did):
         # Fault injection only: request signature and binding verification run
         # normally. A programming error is not a registry-outage observation.
         raise TypeError("invalid discovery call")
 
-    monkeypatch.setattr(env.app.state.awid_registry_client, "list_did_addresses", invalid_dependency_call)
+    monkeypatch.setattr(type(env.app.state.awid_registry_client), "list_did_addresses", invalid_dependency_call)
     with pytest.raises(TypeError, match="invalid discovery call"):
         await resolve_identity_auth(request)
