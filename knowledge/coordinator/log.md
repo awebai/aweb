@@ -1,6 +1,8 @@
 # Knowledge log
 
 ## 2026-11-10
+* **Harvest**: one proposal from the `servers` coordinator seat.
+* **Creation**: decision [security designs must be intelligible](security-designs-must-be-intelligible.md), refining how [scope belongs to the operator](scope-belongs-to-the-operator.md) is applied.
 * **Update**: [operating-continuity](operating-continuity.md) and index — the historical coordinator record (decisions, docs and memory) is named at its location in the private ac repository, under `aweb-team-records/agents/coordinator/`, moved from this repository at `07b554c1f`.
 
 ## 2026-10-25
