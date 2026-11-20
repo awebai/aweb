@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import tempfile
@@ -9,10 +10,11 @@ from typing import Any
 
 import pytest
 import pytest_asyncio
+from aweb_naapp.runtime.team_auth import Principal, record_observed_principal
 from aweb_naapp_testing.databases import TEST_SCHEMA, SchemaDatabases
 from fastapi.testclient import TestClient
 from manifest_config import TEST_GRANT_SEED_HEX
-from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
+from pgdbm import AsyncDatabaseManager, AsyncMigrationManager, DatabaseConfig
 from pgdbm.testing import AsyncTestDatabase, DatabaseTestConfig
 from test_e2e_smoke import (  # noqa: F401
     aw_workspace,
@@ -107,3 +109,39 @@ def pytest_configure(config: pytest.Config) -> None:
     env.setenv("LIBRARY_APP_KEY_FILES", json.dumps({"library:grant-read-1": str(grant)}))
     config.add_cleanup(directory.cleanup)
     config.add_cleanup(env.undo)
+
+
+_ENGINEERING = Path(__file__).parent / "vectors" / "blueprints" / "engineering" / "source"
+_PUBLISHER = Principal(
+    team_id="default:publisher.example",
+    did_key="did:key:z6MkPublisherMember",
+    did_aw=None,
+    address=None,
+    alias="publisher",
+    certificate_id="cert-publisher",
+    team_did_key="did:key:z6MkPublisherTeam",
+)
+
+
+@pytest.fixture
+def published_engineering(library_client: TestClient, database_url: str) -> TestClient:
+    """Library with the engineering vector blueprint published by a team, through
+    the product's own writers: the team is recorded as the runtime records an
+    admitted member, then the blueprint is published as the import route does."""
+    from library.digest import BLUEPRINT_PAYLOAD_SCHEMA, collect_files
+    from library.repository import publish_blueprint
+
+    async def publish() -> None:
+        db = AsyncDatabaseManager(
+            DatabaseConfig(connection_string=database_url, schema=TEST_SCHEMA)
+        )
+        await db.connect()
+        try:
+            await record_observed_principal(db, _PUBLISHER)
+            payload = {"files": collect_files(_ENGINEERING), "schema": BLUEPRINT_PAYLOAD_SCHEMA}
+            await publish_blueprint(db, principal=_PUBLISHER, payload=payload)
+        finally:
+            await db.disconnect()
+
+    asyncio.run(publish())
+    return library_client

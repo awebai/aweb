@@ -258,31 +258,14 @@ def test_landing_route_teaser_degrades_when_catalog_read_fails(
     assert "landing catalog read failed" in caplog.text
 
 
-def test_landing_route_teaser_renders_catalog_read_success(
-    monkeypatch, library_client: TestClient
+def test_the_landing_teaser_shows_a_published_blueprint(
+    published_engineering: TestClient,
 ) -> None:
-    """Route-level success counterpart: catalog summaries from the live-read path
-    are passed into the teaser renderer."""
-
-    async def fake_catalog_view(_db):
-        return [
-            {
-                "blueprint_ref": "aweb.team",
-                "name": "aweb AI Team",
-                "summary": "A complete AI team — coordinator, developers, reviewer.",
-                "profiles": [{"profile_ref": "coordinator"}, {"profile_ref": "developer"}],
-            }
-        ]
-
-    monkeypatch.setattr(library_api.browse_views, "catalog_view", fake_catalog_view)
-
-    response = library_client.get("/")
+    response = published_engineering.get("/")
 
     assert response.status_code == 200
     assert 'id="catalog"' in response.text
-    assert "aweb AI Team" in response.text
-    assert "A complete AI team" in response.text
-    assert 'href="/blueprints/aweb.team"' in response.text
+    assert 'href="/blueprints/aweb.engineering"' in response.text
 
 
 def test_rendered_pages_use_monochrome_wordmark_and_incoming_symbol() -> None:
