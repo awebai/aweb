@@ -83,6 +83,11 @@ async def test_remote_human_refusal_keeps_typed_body_through_source(
 
     # A delegating observation of the actual SDK, never replacement authority.
     monkeypatch.setattr(source_registry, "resolve_key_fresh", observe_source_kind)
+    initial = await source_registry.resolve_key_fresh(bob.stable_id)
+    assert initial.current_did_key == bob.did_key
+    assert initial.id_tree is None or not initial.id_tree.enrolled
+    assert kind_lookups == [bob.stable_id]
+    kind_lookups.clear()
 
     async def signer(**kwargs):
         payload = canonical_signed_payload(kwargs["payload"])
@@ -103,6 +108,7 @@ async def test_remote_human_refusal_keeps_typed_body_through_source(
     )
     env.app.mount("/human-refusal-mcp", mcp)
     await mcp.startup()
+    principal = str(uuid4())
 
     async def send(cid, *, continuation=False):
         if adapter == "mcp":
@@ -163,13 +169,13 @@ async def test_remote_human_refusal_keeps_typed_body_through_source(
                 "Accept": "application/json, text/event-stream",
                 **(
                     {
-                        "X-User-ID": "test-host-principal",
+                        "X-User-ID": principal,
                         "X-AWEB-Actor-ID": alice.agent_id,
                         "X-AWEB-Auth": build_internal_auth_header_value(
                             secret=PROXY_SECRET,
                             team_id=TEAM,
                             principal_type="u",
-                            principal_id="test-host-principal",
+                            principal_id=principal,
                             actor_id=alice.agent_id,
                         ),
                     }
