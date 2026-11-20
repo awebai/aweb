@@ -119,6 +119,19 @@ def send_refusal(
         return json.dumps({"error": exc.recovery_action, "reason": exc.code.value})
     if isinstance(exc, ContactIdentityBindingRequired):
         return json.dumps({"error": exc.detail, "reason": exc.code.value})
+    if (
+        address
+        and isinstance(exc, FederationAuthorityError)
+        and not isinstance(exc, RecipientNotResidentError)
+        and exc.reason in ("recipient_identity_not_found", "local_recipient_route_missing")
+    ):
+        # Normalize before local-miss subtype details (including R2's typed
+        # local recipient refusal). A registered global nonresident retains
+        # its distinct operator action; registry selection already found it.
+        return json.dumps({
+            "error": unreachable_address_refusal(address),
+            "reason": DeliveryRefusalCode.RECIPIENT_IDENTITY_NOT_FOUND.value,
+        })
     if isinstance(exc, RecipientNotResidentError):
         return json.dumps({"error": exc.detail, "reason": exc.reason, "retryable": exc.retryable})
     if isinstance(exc, FederationAuthorityError):
