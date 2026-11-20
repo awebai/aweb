@@ -15,8 +15,9 @@ from collections.abc import Mapping
 from dataclasses import InitVar, asdict, dataclass, field
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
+from enum import StrEnum
 from types import MappingProxyType
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, cast
 from urllib.parse import quote, urlparse
 from uuid import UUID, uuid4
 
@@ -157,6 +158,30 @@ _TEAM_METADATA_CACHE_TTL_SECONDS = 10 * 60  # 10 minutes
 # and survives process restarts, so the TTL is the only bound.
 _TEAM_REVOCATIONS_CACHE_TTL_SECONDS = 60
 _TEAM_KEY_SIGNATURE_REFRESH_COOLDOWN_SECONDS = 5
+_TEAM_CERTIFICATES_MISS_WINDOW_SECONDS = 5
+_TEAM_CERTIFICATES_POINT_LIMIT = 16
+_TEAM_CERTIFICATES_POINT_TTL_SECONDS = 60
+_TEAM_CERTIFICATES_NEGATIVE_TTL_SECONDS = 2
+
+# The existing per-team lease also holds the number of point reads. Claiming
+# a list window and spending a point slot are serialized across workers.
+_TEAM_CERTIFICATE_READ_ADMISSION = """
+local used = redis.call('GET', KEYS[1])
+if not used then
+    redis.call('SET', KEYS[1], 0, 'EX', ARGV[1])
+    return -1
+end
+local ttl = redis.call('PTTL', KEYS[1])
+if ttl < 0 then
+    return redis.error_reply('certificate refresh window has no expiry')
+end
+if ARGV[3] == '1' and tonumber(used) < tonumber(ARGV[2]) then
+    redis.call('INCR', KEYS[1])
+    return 0
+end
+return ttl + 1
+"""
+
 # Team-controller keys share this freshness bound, with synchronous refresh.
 # Registry-outage grace adopted for revocations (Juan 2026-08-17; see
 # trust-model.md "Registry availability posture"); team-controller keys share
@@ -194,6 +219,31 @@ def _is_local_registry_origin(registry_url: str) -> bool:
     except ValueError:
         return False
     return ip.is_loopback or ip.is_unspecified
+
+
+class TeamCertificateStanding(StrEnum):
+    ACTIVE = "active"
+    REVOKED = "revoked"
+    UNREGISTERED = "unregistered"
+    TEAM_KEY_NOT_CURRENT = "team_key_not_current"
+
+
+@dataclass(frozen=True)
+class _TeamCertificateObservation:
+    started_us: int
+    revoked_by_id: dict[str, bool]
+
+    def standing(self, certificate_id: str) -> TeamCertificateStanding:
+        revoked = self.revoked_by_id.get(certificate_id)
+        if revoked is None:
+            return TeamCertificateStanding.UNREGISTERED
+        return TeamCertificateStanding.REVOKED if revoked else TeamCertificateStanding.ACTIVE
+
+
+@dataclass(frozen=True)
+class _TeamCertificateMissRefresh:
+    task: asyncio.Task[_TeamCertificateObservation]
+    waits_for_window: bool
 
 
 @dataclass(frozen=True)
@@ -570,6 +620,7 @@ class RegistryClient:
         json: dict[str, Any] | None = None,
         content: bytes | None = None,
         registry_url: str | None = None,
+        retry_throttled: bool = True,
     ) -> dict[str, Any]:
         method = method.upper()
         supplied_headers = {
@@ -579,12 +630,13 @@ class RegistryClient:
         }
         # The SDK can refresh its own member path signatures. A signature
         # supplied by a caller has no signing capability here: do not replay
-        # such a request with an aging proof. All mutations are one attempt.
+        # such a request with an aging proof. Mutations and reads that have
+        # spent a certificate point slot are one attempt.
         caller_proof = any(name.lower() in {
             "authorization", "x-aweb-signed-payload", "x-aweb-timestamp"
         } for name in supplied_headers)
         read_request = method in {"GET", "HEAD"} and json is None and not content
-        replayable = read_request and not caller_proof
+        replayable = read_request and not caller_proof and retry_throttled
         home_registry = (
             registry_url is None
             or canonical_server_origin(registry_url) == canonical_server_origin(self.registry_url)
@@ -1524,10 +1576,23 @@ class RegistryClient:
             cursor = None
         raise RegistryError(f"AWID revocations pagination exceeded {MAX_REGISTRY_PAGES} pages", status_code=502)
 
-    async def get_team_certificate_status_fresh(self, domain, name, certificate_id):
+    async def get_team_certificate_status_fresh(
+        self, domain: str, name: str, certificate_id: str, *,
+        registry_url: str | None = None, budgeted: bool = False,
+    ) -> dict[str, Any] | None:
         """Uncached public exact-certificate status, including private teams."""
         path = f"/v1/namespaces/{quote(domain, safe='')}/teams/{quote(name, safe='')}/certificates/{quote(certificate_id, safe='')}/status"
-        return await self._request_optional_json("GET", path, registry_url=await self._registry_url_for_domain(domain))
+        try:
+            return await self._request_json(
+                "GET", path, registry_url=registry_url or await self._registry_url_for_domain(domain),
+                retry_throttled=not budgeted,
+            )
+        except RegistryError as exc:
+            if exc.status_code == 404 and (
+                not budgeted or exc.body == {"detail": "Certificate not found"}
+            ):
+                return None
+            raise
 
     async def list_team_certificates(
         self,
@@ -1537,9 +1602,17 @@ class RegistryClient:
         active_only: bool = True,
         signing_key: bytes | None = None,
     ) -> list[TeamCertificate]:
+        return await self._list_team_certificates_at_origin(
+            domain, name, active_only=active_only, signing_key=signing_key,
+            registry_url=await self._registry_url_for_domain(domain),
+        )
+
+    async def _list_team_certificates_at_origin(
+        self, domain: str, name: str, *, active_only: bool, signing_key: bytes | None,
+        registry_url: str,
+    ) -> list[TeamCertificate]:
         active_only_value = "true" if active_only else "false"
         base_path = f"/v1/namespaces/{domain}/teams/{name}/certificates"
-        registry_url = await self._registry_url_for_domain(domain)
         headers = (
             path_signature_headers("GET", base_path, signing_key)
             if signing_key is not None
@@ -1560,10 +1633,12 @@ class RegistryClient:
         *,
         active_only: bool = True,
         signing_key: bytes | None = None,
+        registry_url: str | None = None,
     ) -> list[TeamCertificate]:
         """Read current certificates without stale fallback, on cached clients too."""
-        return await RegistryClient.list_team_certificates(
-            self, domain, name, active_only=active_only, signing_key=signing_key,
+        return await self._list_team_certificates_at_origin(
+            domain, name, active_only=active_only, signing_key=signing_key,
+            registry_url=registry_url or await self._registry_url_for_domain(domain),
         )
 
     async def register_team_certificate(
@@ -1807,7 +1882,7 @@ class CachedRegistryClient(RegistryClient):
     _domain_verifier: DomainVerifier | None
     _id_status_refreshes: dict[str, asyncio.Task[_IDStatusRefresh]]
     _team_key_signature_refreshes: dict[str, asyncio.Task[str | None]]
-    _team_certificate_miss_refreshes: dict[str, asyncio.Task[list[TeamCertificate]]]
+    _team_certificate_miss_refreshes: dict[str, _TeamCertificateMissRefresh]
 
     async def _invalidate_controller_request(self, request, registry_origin: str) -> None:
         op, domain, parameters = request.operation, request.domain, request.parameters
@@ -2355,57 +2430,185 @@ class CachedRegistryClient(RegistryClient):
         return project(set(fresh_value))
 
     async def refresh_team_certificates_after_miss(
-        self, domain: str, name: str,
-    ) -> list[TeamCertificate]:
-        """Recheck a verified certificate's omission, once per team per five seconds.
+        self, domain: str, name: str, *, certificate_id: str, team_did_key: str,
+    ) -> TeamCertificateStanding:
+        """Establish the standing of a signature-verified certificate omitted by the cache."""
+        if not isinstance(certificate_id, str) or not certificate_id.strip():
+            raise ValueError("The presented certificate ID is required on a registration miss.")
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        try:
+            async with asyncio.timeout(self.timeout_seconds) as deadline:
+                registry_url = await self._registry_url_for_domain(domain)
+                generation_key = self._team_certificates_generation_key(domain, name)
+                cache_key = await self._generation_cache_key(
+                    self._team_certificates_cache_key(domain, name, active_only=False),
+                    generation_key,
+                )
+                window_key = f"awid:team_certificates_miss_refresh:{self.registry_url}:{domain}/{name}"
+                origin_digest = hashlib.sha256(registry_url.encode()).hexdigest()
+                # Both writes must use the same captured generation.
+                generation = cache_key.rsplit(":", 1)[-1]
+                observation_key = f"{window_key}:observation:{origin_digest}:generation:{generation}"
+                digest = hashlib.sha256(canonical_json_bytes({
+                    "origin": registry_url, "certificate_id": certificate_id, "team_did_key": team_did_key,
+                })).hexdigest()
+                point_key = f"{cache_key}:point:{digest}"
+                seconds, micros = await self.redis_client.time()
+                request_time = seconds * _MICROSECONDS + micros
+                while True:
+                    point = await self._read_cache_entry(point_key, decode=TeamCertificateStanding)
+                    if point is not None and point["fresh"]:
+                        return point["value"]
 
-        Call only after the presented certificate's signature and revocation
-        checks. Suppression is unavailable authority, never proof of absence.
-        Both a waiter and the shared producer retain the client's total bound;
-        cancelling a waiter does not cancel another waiter's bounded producer.
-        """
-        cache_key = await self._generation_cache_key(
-            self._team_certificates_cache_key(domain, name, active_only=False),
-            self._team_certificates_generation_key(domain, name),
+                    observation = await self._read_team_certificate_observation(observation_key)
+                    if observation is not None:
+                        standing = observation.standing(certificate_id)
+                        if standing != TeamCertificateStanding.UNREGISTERED or observation.started_us >= request_time:
+                            return standing
+
+                    refresh = self._team_certificate_miss_refreshes.get(observation_key)
+                    if refresh is None or refresh.task.done():
+                        admission = await self._admit_team_certificate_read(window_key, allow_point=True)
+                        if admission == 0:
+                            return await self._cache_exact_team_certificate_standing(
+                                domain, name, certificate_id=certificate_id, team_did_key=team_did_key,
+                                registry_url=registry_url, cache_key=point_key,
+                            )
+                        refresh = self._team_certificate_miss_refreshes.get(observation_key)
+                        if admission < 0 or refresh is None or refresh.task.done():
+                            task = asyncio.create_task(self._refresh_missing_team_certificate(
+                                domain, name, registry_url=registry_url, cache_key=cache_key,
+                                observation_key=observation_key, window_key=window_key,
+                                wait_ms=max(admission, 0), requested_at=request_time,
+                            ))
+                            refresh = _TeamCertificateMissRefresh(task, waits_for_window=admission > 0)
+                            self._team_certificate_miss_refreshes[observation_key] = refresh
+                            task.add_done_callback(
+                                lambda done: self._finish_team_certificate_miss_refresh(observation_key, done)
+                            )
+                    if refresh.waits_for_window:
+                        deadline.reschedule(started + self.timeout_seconds + _TEAM_CERTIFICATES_MISS_WINDOW_SECONDS)
+                    observation = await asyncio.shield(refresh.task)
+                    standing = observation.standing(certificate_id)
+                    if standing != TeamCertificateStanding.UNREGISTERED or observation.started_us >= request_time:
+                        return standing
+        except (RedisError, OSError) as exc:
+            raise RegistryError("AWID certificate existence refresh unavailable", status_code=503) from exc
+
+    def _finish_team_certificate_miss_refresh(
+        self, cache_key: str, task: asyncio.Task[_TeamCertificateObservation],
+    ) -> None:
+        refresh = self._team_certificate_miss_refreshes.get(cache_key)
+        if refresh is not None and refresh.task is task:
+            self._team_certificate_miss_refreshes.pop(cache_key)
+        if not task.cancelled():
+            task.exception()  # Observe failures after every waiter was cancelled.
+
+    async def _read_team_certificate_observation(self, cache_key: str) -> _TeamCertificateObservation | None:
+        cached = await self._read_cache_entry(
+            cache_key, decode=lambda value: _TeamCertificateObservation(**value),
         )
-        async with asyncio.timeout(self.timeout_seconds):
-            task = self._team_certificate_miss_refreshes.get(cache_key)
-            if task is None:
-                task = asyncio.create_task(self._refresh_missing_team_certificate(
-                    domain, name, cache_key=cache_key,
-                ))
-                self._team_certificate_miss_refreshes[cache_key] = task
+        return cached["value"] if cached is not None and cached["fresh"] else None
 
-                def finished(done: asyncio.Task[list[TeamCertificate]]) -> None:
-                    self._team_certificate_miss_refreshes.pop(cache_key, None)
-                    if not done.cancelled():
-                        done.exception()  # Observe failures after every waiter was cancelled.
-
-                task.add_done_callback(finished)
-            try:
-                return await asyncio.shield(task)
-            except (RedisError, OSError) as exc:
-                raise RegistryError("AWID certificate existence refresh unavailable", status_code=503) from exc
+    async def _admit_team_certificate_read(self, window_key: str, *, allow_point: bool) -> int:
+        """Return -1 for a list slot, 0 for a point slot, or the wait in milliseconds."""
+        return await cast(Awaitable[int], self.redis_client.eval(
+            _TEAM_CERTIFICATE_READ_ADMISSION, 1, window_key,
+            _TEAM_CERTIFICATES_MISS_WINDOW_SECONDS, _TEAM_CERTIFICATES_POINT_LIMIT, int(allow_point),
+        ))
 
     async def _refresh_missing_team_certificate(
-        self, domain: str, name: str, *, cache_key: str,
-    ) -> list[TeamCertificate]:
-        async with asyncio.timeout(self.timeout_seconds):
-            # Forged certificates spend only the separate signature bucket.
-            admitted = await self.redis_client.set(
-                f"awid:team_certificates_miss_refresh:{self.registry_url}:{domain}/{name}",
-                "1", nx=True, ex=_TEAM_KEY_SIGNATURE_REFRESH_COOLDOWN_SECONDS,
+        self, domain: str, name: str, *, registry_url: str, cache_key: str,
+        observation_key: str, window_key: str, wait_ms: int, requested_at: int,
+    ) -> _TeamCertificateObservation:
+        wait_allowance = _TEAM_CERTIFICATES_MISS_WINDOW_SECONDS if wait_ms else 0
+        async with asyncio.timeout(self.timeout_seconds + wait_allowance):
+            while wait_ms > 0:
+                # Only this worker's shared producer probes Redis. A peer
+                # worker may finish and publish before its window expires.
+                await asyncio.sleep(min(wait_ms / 1000, 0.1))
+                observation = await self._read_team_certificate_observation(observation_key)
+                if observation is not None and observation.started_us >= requested_at:
+                    return observation
+                wait_ms = await self._admit_team_certificate_read(window_key, allow_point=False)
+            return await self._fetch_team_certificate_miss_list(
+                domain, name, registry_url=registry_url, cache_key=cache_key, observation_key=observation_key,
             )
-            if not admitted:
-                raise RegistryError("AWID certificate existence refresh suppressed", status_code=503)
-            certificates = await self.list_team_certificates_fresh(domain, name, active_only=False)
+
+    async def _fetch_team_certificate_miss_list(
+        self, domain: str, name: str, *, registry_url: str, cache_key: str, observation_key: str,
+    ) -> _TeamCertificateObservation:
+        async with asyncio.timeout(self.timeout_seconds):
+            seconds, micros = await self.redis_client.time()
+            observed = seconds * _MICROSECONDS + micros
+            try:
+                certificates = await self.list_team_certificates_fresh(
+                    domain, name, active_only=False, registry_url=registry_url,
+                )
+            except RegistryError as exc:
+                if not is_team_not_found(exc.status_code, exc.body):
+                    raise
+                certificates = []
             await self._write_cache_entry(
                 cache_key, value=certificates,
                 ttl_seconds=_TEAM_CERTIFICATES_CACHE_TTL_SECONDS,
                 encode=lambda value: [_team_certificate_to_json(item) for item in value],
                 require_write=True,
             )
-            return certificates
+            observation = _TeamCertificateObservation(observed, {
+                cert.certificate_id: bool(cert.revoked_at) for cert in certificates if cert.certificate_id
+            })
+            # Only exact standing is shared across credential partitions. The
+            # list with member metadata stays in the reader's authorized cache.
+            await self._write_cache_entry(
+                observation_key, value=observation, encode=asdict, require_write=True,
+                ttl_seconds=_TEAM_CERTIFICATES_MISS_WINDOW_SECONDS,
+                retention_seconds=_TEAM_CERTIFICATES_MISS_WINDOW_SECONDS,
+            )
+            return observation
+
+    async def _cache_exact_team_certificate_standing(
+        self, domain: str, name: str, *, certificate_id: str, team_did_key: str,
+        registry_url: str, cache_key: str,
+    ) -> TeamCertificateStanding:
+        try:
+            status = await self.get_team_certificate_status_fresh(
+                domain, name, certificate_id, registry_url=registry_url, budgeted=True,
+            )
+        except RegistryError as exc:
+            if 400 <= exc.status_code < 500 and exc.status_code != 429:
+                raise RegistryError("AWID certificate status unavailable", status_code=503) from exc
+            raise
+        except ValueError as exc:
+            raise RegistryError("Invalid AWID certificate status response", status_code=502) from exc
+        if status is None:
+            standing = TeamCertificateStanding.UNREGISTERED
+            ttl = _TEAM_CERTIFICATES_NEGATIVE_TTL_SECONDS
+        else:
+            if not isinstance(status, dict):
+                raise RegistryError("Invalid AWID certificate status response", status_code=502)
+            current_key, state, revoked_at = status.get("team_did_key"), status.get("status"), status.get("revoked_at")
+            if (
+                status.get("team_id") != build_team_id(domain, name)
+                or not isinstance(current_key, str) or not current_key
+                or (state, revoked_at is None) not in (("active", True), ("revoked", False))
+                or (revoked_at is not None and not isinstance(revoked_at, str))
+            ):
+                raise RegistryError("Invalid AWID certificate status response", status_code=502)
+            if state == "revoked":
+                standing = TeamCertificateStanding.REVOKED
+            elif current_key != team_did_key:
+                return TeamCertificateStanding.TEAM_KEY_NOT_CURRENT
+            else:
+                standing = TeamCertificateStanding.ACTIVE
+            ttl = _TEAM_CERTIFICATES_POINT_TTL_SECONDS
+        # A point observation never changes the age or completeness of a list.
+        await self._write_cache_entry(
+            cache_key, value=standing, ttl_seconds=ttl, retention_seconds=ttl,
+            encode=lambda value: value, require_write=True,
+        )
+        return standing
 
     async def list_team_certificates(
         self,

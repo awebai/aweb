@@ -26,6 +26,7 @@ class _CountLists(httpx.AsyncHTTPTransport):
         self.reads = 0
         self.point_reads = 0
         self.point_unavailable = False
+        self.point_throttled = False
 
     async def handle_async_request(self, request):
         if request.method == "GET" and request.url.path.endswith("/certificates"):
@@ -34,6 +35,8 @@ class _CountLists(httpx.AsyncHTTPTransport):
             self.point_reads += 1
             if self.point_unavailable:
                 raise httpx.ConnectError("Test registry point route unavailable", request=request)
+            if self.point_throttled:
+                return httpx.Response(429, headers={"Retry-After": "0"})
         return await super().handle_async_request(request)
 
 
@@ -89,14 +92,20 @@ async def _local_admissions(env, monkeypatch):
                     assert row["certificate_id"] == cert_id
                 return response.json()
 
-            yield member, connect, transport
+            async def revoke(credential):
+                await writer.revoke_team_certificate(
+                    domain, TEAM_NAME, team_controller_signing_key=env.team_sk,
+                    certificate_id=credential[0],
+                )
+
+            yield member, connect, revoke, transport
         finally:
             await cached.aclose()
 
 
 @pytest.mark.asyncio
 async def test_first_connect_for_members_registered_between_list_reads(privacy_app, monkeypatch):  # noqa: F811
-    async with _local_admissions(privacy_app, monkeypatch) as (member, connect, transport):
+    async with _local_admissions(privacy_app, monkeypatch) as (member, connect, _, transport):
         admitted = monotonic()
         await connect(await member("first-member"))
         assert transport.reads == 1
@@ -111,17 +120,21 @@ async def test_first_connect_for_members_registered_between_list_reads(privacy_a
 
 @pytest.mark.asyncio
 async def test_unregistered_certificate_reuses_exact_refusal(privacy_app, monkeypatch):  # noqa: F811
-    async with _local_admissions(privacy_app, monkeypatch) as (member, connect, transport):
+    async with _local_admissions(privacy_app, monkeypatch) as (member, connect, revoke, transport):
         await connect(await member("first-member"))
         absent = await member("not-registered", register=False)
         for _ in range(2):
             assert (await connect(absent, status=401))["detail"] == "unregistered"
         assert (transport.reads, transport.point_reads) == (1, 1)
+        revoked = await member("revoked")
+        await revoke(revoked)
+        assert (await connect(revoked, status=401))["detail"] == "revoked"
+        assert (transport.reads, transport.point_reads) == (1, 2)
 
 
 @pytest.mark.asyncio
 async def test_point_budget_overflow_shares_the_next_list(privacy_app, monkeypatch):  # noqa: F811
-    async with _local_admissions(privacy_app, monkeypatch) as (member, connect, transport):
+    async with _local_admissions(privacy_app, monkeypatch) as (member, connect, _, transport):
         await connect(await member("first-member"))
         admitted = await asyncio.gather(*(member(f"member-{i}") for i in range(18)))
         await asyncio.gather(*(connect(credential) for credential in admitted))
@@ -130,7 +143,7 @@ async def test_point_budget_overflow_shares_the_next_list(privacy_app, monkeypat
 
 @pytest.mark.asyncio
 async def test_point_read_outage_is_unavailable(privacy_app, monkeypatch):  # noqa: F811
-    async with _local_admissions(privacy_app, monkeypatch) as (member, connect, transport):
+    async with _local_admissions(privacy_app, monkeypatch) as (member, connect, _, transport):
         await connect(await member("first-member"))
         second = await member("second-member")
         transport.point_unavailable = True
@@ -138,8 +151,13 @@ async def test_point_read_outage_is_unavailable(privacy_app, monkeypatch):  # no
         assert "AWID certificate existence check" in error["detail"]
         assert (transport.reads, transport.point_reads) == (1, 1)
         transport.point_unavailable = False
-        await connect(second)
+        transport.point_throttled = True
+        error = await connect(second, status=503)
+        assert "upstream rate limited" in error["detail"]
         assert (transport.reads, transport.point_reads) == (1, 2)
+        transport.point_throttled = False
+        await connect(second)
+        assert (transport.reads, transport.point_reads) == (1, 3)
 
 
 @pytest.mark.asyncio

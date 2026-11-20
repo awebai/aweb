@@ -524,19 +524,26 @@ rate limiter here. Hosted proxy admission is deployment policy.
 
 **Registered-certificate cache misses.** In strict registration mode, a
 correctly signed, unrevoked presented certificate absent from the cached
-all-certificates list gets one fresh list read and one verification retry.
-A completed read that still omits it answers 401 `unregistered`. Suppressed
-admission, Redis failure, timeout or failed fresh authority answers transient
-503; the old cached omission is not current proof of absence. The successful
-read replaces only the existing registry/team/reader cache partition, with
-its ordinary TTL and retention. Already registered certificates take the
-existing path without a new admission check.
+all-certificates list gets a fresh registry check before verification
+continues. The first miss opens a five-second window and refreshes the
+complete list. During that window, up to 16 additional misses per registry
+and team can look up the exact certificate's status. A successful point read
+is cached separately within the team and reader's cache partition for at
+most 60 seconds. A definitive absence answers 401 `unregistered` and is
+cached for two seconds. A revoked certificate is refused as revoked. Point
+reads do not refresh the complete list or authorize a different team key.
 
-The fresh-list producer and its waiters each retain the registry client's
-total timeout; cancellation of a waiter propagates immediately and cannot
-extend the bounded producer. Concurrent callers in one client share that
-producer. Across clients, a separate five-second per-registry/team Redis
-`SET NX` window bounds added list refreshes to 12 attempts per minute.
+Once all 16 point slots are spent, remaining misses can share the next
+complete-list refresh within the original request. An earlier list can
+confirm presence. Its omission can establish absence only if the list read
+began after the miss reached Redis. Workers share only an exact certificate's
+standing from this refresh. The complete list remains in the authorized
+reader's cache. One Redis admission counter bounds list and point reads
+across workers. Each list producer has the registry
+client's timeout, and requests can wait up to one additional window when the
+point budget is spent. Redis failure, timeout or failed fresh authority
+answers transient 503. Already registered certificates in the normal list
+take the existing path without a new admission check.
 Bad request signatures spend neither refresh budget; bad certificate
 signatures spend only the existing key-refresh budget. A newly valid
 certificate after key rotation still requires fresh revocations, including

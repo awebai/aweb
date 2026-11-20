@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from awid.dns_auth import enforce_timestamp_skew, parse_didkey_auth, require_timestamp
+from awid.registry import TeamCertificateStanding
 from awid.signing import verify_did_key_signature
 from awid.team_certificate import TeamCertificateError, decode_team_certificate
 from awid.team_ids import build_team_id, parse_team_id
@@ -297,10 +298,29 @@ async def verify_request_certificate(request: Request, db, *, fresh: bool = Fals
                 if cert_data["certificate_id"] in revoked_certs:
                     raise TeamCertificateError("revoked") from None
             registry = getattr(request.app.state, "awid_registry_client", None)
-            if not callable(getattr(registry, "refresh_team_certificates_after_miss", None)):
+            refresh = getattr(registry, "refresh_team_certificates_after_miss", None)
+            if not callable(refresh):
                 # An uncached registry client's initial list was already live.
                 raise
-            registered_certs = await registered_certificates(registry, cert_team_id, after_miss=True)
+            domain, team_name = parse_team_id(cert_team_id)
+            certificate_id = cert_data["certificate_id"]
+            try:
+                standing = await refresh(domain, team_name, certificate_id=certificate_id, team_did_key=team_key)
+            except AWID_DEPENDENCY_ERRORS as read_error:
+                raise _team_read_failure(
+                    read_error, registry, cert_team_id,
+                    operation="AWID certificate existence check", reading="certificate existence check",
+                ) from read_error
+            if standing == TeamCertificateStanding.REVOKED:
+                raise TeamCertificateError("revoked") from None
+            if standing == TeamCertificateStanding.TEAM_KEY_NOT_CURRENT:
+                raise HTTPException(
+                    status_code=401,
+                    detail={"code": "team_key_not_current", "message": "The team certificate is under a superseded team key"},
+                ) from None
+            if standing != TeamCertificateStanding.ACTIVE:
+                raise
+            registered_certs = {certificate_id}
             result = check_certificate(team_key)
         else:
             if refresh_revocations:
@@ -538,7 +558,7 @@ async def _get_registered_certificates(request: Request, team_id: str) -> set[st
     return await registered_certificates(getattr(request.app.state, "awid_registry_client", None), team_id)
 
 
-async def registered_certificates(registry_client, team_id: str, *, after_miss: bool = False) -> set[str]:
+async def registered_certificates(registry_client, team_id: str) -> set[str]:
     """The certificate IDs the AWID registry knows for a team, read through this registry client."""
     try:
         domain, team_name = parse_team_id(team_id)
@@ -549,12 +569,7 @@ async def registered_certificates(registry_client, team_id: str, *, after_miss: 
         raise awid_registry_not_configured_exception(operation="AWID certificate existence check")
 
     try:
-        if after_miss:
-            certificates = await registry_client.refresh_team_certificates_after_miss(domain, team_name)
-        else:
-            certificates = await registry_client.list_team_certificates(
-                domain, team_name, active_only=False
-            )
+        certificates = await registry_client.list_team_certificates(domain, team_name, active_only=False)
     except AWID_DEPENDENCY_ERRORS as exc:
         status_code = getattr(exc, "status_code", None)
         if status_code == 404:
