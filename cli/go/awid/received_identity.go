@@ -63,9 +63,21 @@ type ReceivedSender struct {
 	Binding *ReceivedSenderBinding
 }
 
-// NormalizeReceivedSenderTrust keeps display labels out of cross-team local
+// NormalizeReceivedSenderTrust is the released form of
+// NormalizeReceivedSender (aw-v1.36.58), kept for Go callers of this public
+// package: binding, when given, is the receiver-side sender binding.
+func (c *Client) NormalizeReceivedSenderTrust(ctx context.Context, status VerificationStatus, address, alias, did, stableID string, membership *SenderMembership, ra *RotationAnnouncement, repl *ReplacementAnnouncement, contact *bool, binding ...ReceivedSenderBinding) (VerificationStatus, *bool) {
+	sender := ReceivedSender{Address: address, Alias: alias, DID: did, StableID: stableID, Membership: membership,
+		Rotation: ra, Replacement: repl, IsContact: contact}
+	if len(binding) > 0 {
+		sender.Binding = &binding[0]
+	}
+	return c.NormalizeReceivedSender(ctx, status, sender)
+}
+
+// NormalizeReceivedSender keeps display labels out of cross-team local
 // and no-address global verification. It cannot promote a failed signature or recipient mismatch.
-func (c *Client) NormalizeReceivedSenderTrust(ctx context.Context, status VerificationStatus, sender ReceivedSender) (VerificationStatus, *bool) {
+func (c *Client) NormalizeReceivedSender(ctx context.Context, status VerificationStatus, sender ReceivedSender) (VerificationStatus, *bool) {
 	address, alias, did, stableID := sender.Address, sender.Alias, sender.DID, sender.StableID
 	membership := sender.Membership
 	if sender.Binding != nil && strings.TrimSpace(stableID) == "" {
@@ -107,7 +119,7 @@ func (c *Client) NormalizeReceivedSenderTrust(ctx context.Context, status Verifi
 	if err != nil {
 		return VerificationStale, nil
 	}
-	registry.SeedVerifiedHead(registryURL, stableID, checkpoint)
+	registry.SeedVerifiedHeadAt(registryURL, stableID, checkpoint)
 	result := registry.verifyStableIdentityAtRegistry(ctx, registryURL, stableID, did, true)
 	if result == nil {
 		return VerificationStale, nil

@@ -325,7 +325,7 @@ func (r *RegistryResolver) resolve(ctx context.Context, identifier string, force
 		return nil, fmt.Errorf("RegistryResolver: address/key mismatch for %s", identifier)
 	}
 	r.mu.Lock()
-	cachedHead := r.headCache[headCacheKey(address.authority.RegistryURL, address.response.DIDAW)]
+	cachedHead := r.anchorFor(address.authority.RegistryURL, address.response.DIDAW)
 	r.mu.Unlock()
 	outcome, nextHead, verifyErr := VerifyDidKeyResolution(keyRes, cachedHead, r.now())
 	if outcome == StableIdentityVerified && nextHead != nil {
@@ -461,7 +461,7 @@ func (r *RegistryResolver) verifyStableIdentityAtRegistry(ctx context.Context, r
 	}
 
 	r.mu.Lock()
-	cachedHead := r.headCache[headCacheKey(registryURL, stableID)]
+	cachedHead := r.anchorFor(registryURL, stableID)
 	r.mu.Unlock()
 
 	if cachedHead == nil {
@@ -498,18 +498,43 @@ func headCacheKey(registryURL, stableID string) string {
 	return strings.TrimRight(strings.TrimSpace(registryURL), "/") + "|" + strings.TrimSpace(stableID)
 }
 
-// SeedVerifiedHead installs a previously verified log head as the anti-rollback
-// anchor for stableID at registryURL. Callers restore it from the persisted
-// checkpoint so a restart does not forget which sequence was already verified
-// — without it a registry can serve a valid truncated prefix and roll a rotated
-// identity back to a retired key (default-aajc.8). Seeding never moves the
-// anchor backwards: a lower or equal sequence is ignored.
-func (r *RegistryResolver) SeedVerifiedHead(registryURL, stableID string, head *VerifiedLogHead) {
-	stableID = strings.TrimSpace(stableID)
-	if stableID == "" || head == nil || head.Seq < 1 || !isLowerHex(strings.TrimSpace(head.EntryHash)) {
+// anyRegistryAnchor is the key of an anchor seeded without a registry, through
+// the released SeedVerifiedHead.
+func anyRegistryAnchor(stableID string) string {
+	return headCacheKey("*", stableID)
+}
+
+// anchorFor is the anti-rollback anchor for stableID at registryURL: the one
+// verified or seeded there, else one seeded without a registry.
+func (r *RegistryResolver) anchorFor(registryURL, stableID string) *VerifiedLogHead {
+	if head := r.headCache[headCacheKey(registryURL, stableID)]; head != nil {
+		return head
+	}
+	return r.headCache[anyRegistryAnchor(stableID)]
+}
+
+// SeedVerifiedHeadAt installs a previously verified log head as the
+// anti-rollback anchor for stableID at registryURL. Callers restore it from the
+// persisted checkpoint so a restart does not forget which sequence was already
+// verified — without it a registry can serve a valid truncated prefix and roll
+// a rotated identity back to a retired key (default-aajc.8). Seeding never
+// moves the anchor backwards: a lower or equal sequence is ignored.
+func (r *RegistryResolver) SeedVerifiedHeadAt(registryURL, stableID string, head *VerifiedLogHead) {
+	r.seedAnchor(headCacheKey(registryURL, stableID), stableID, head)
+}
+
+// SeedVerifiedHead is the released form (aw-v1.36.58), kept for Go callers of
+// this public package: it seeds an anchor for stableID at every registry that
+// has none of its own, which is what the anchor meant before anchors were
+// kept per registry.
+func (r *RegistryResolver) SeedVerifiedHead(stableID string, head *VerifiedLogHead) {
+	r.seedAnchor(anyRegistryAnchor(stableID), stableID, head)
+}
+
+func (r *RegistryResolver) seedAnchor(key, stableID string, head *VerifiedLogHead) {
+	if strings.TrimSpace(stableID) == "" || head == nil || head.Seq < 1 || !isLowerHex(strings.TrimSpace(head.EntryHash)) {
 		return
 	}
-	key := headCacheKey(registryURL, stableID)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if existing := r.headCache[key]; existing != nil && existing.Seq >= head.Seq {
@@ -531,7 +556,7 @@ func (r *RegistryResolver) seedCheckpoint(registryURL, stableID string, checkpoi
 	if head == nil {
 		return true
 	}
-	r.SeedVerifiedHead(registryURL, stableID, head)
+	r.SeedVerifiedHeadAt(registryURL, stableID, head)
 	return false
 }
 
@@ -572,7 +597,7 @@ func (r *RegistryResolver) verifyStableIdentityViaFullLog(ctx context.Context, r
 	// retired key) or a valid fork that never included our entry
 	// (default-aajc.8).
 	r.mu.Lock()
-	checkpoint := r.headCache[headCacheKey(registryURL, stableID)]
+	checkpoint := r.anchorFor(registryURL, stableID)
 	r.mu.Unlock()
 	if checkpoint != nil {
 		if head.Seq < checkpoint.Seq {

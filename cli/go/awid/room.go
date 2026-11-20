@@ -180,7 +180,7 @@ func (c *Client) verifyRoomMessage(ctx context.Context, m *RoomMessage, team, ro
 	if strings.Contains(env.From, "/") {
 		address = env.From
 	}
-	m.VerificationStatus, _ = c.NormalizeReceivedSenderTrust(ctx, status, ReceivedSender{
+	m.VerificationStatus, _ = c.NormalizeReceivedSender(ctx, status, ReceivedSender{
 		Address: address, Alias: env.From, DID: m.FromDID, StableID: m.FromStableID,
 		Membership: m.SenderMembership, Binding: &ReceivedSenderBinding{TeamID: team, ProjectedDID: m.FromDID},
 	})

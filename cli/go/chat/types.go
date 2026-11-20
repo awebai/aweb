@@ -12,7 +12,7 @@ type Event struct {
 	Attachments          []awid.AttachmentDescriptor `json:"attachments,omitempty"`
 	AttachmentsAvailable bool                        `json:"attachments_available"`
 	SenderMembership     *awid.SenderMembership      `json:"sender_membership,omitempty"`
-	Type                 EventType                   `json:"type"`
+	Type                 string                      `json:"type"`
 	Seq                  int64                       `json:"seq,omitempty"`
 	Agent                string                      `json:"agent,omitempty"`
 	SessionID            string                      `json:"session_id,omitempty"`
@@ -47,45 +47,41 @@ type Event struct {
 	IsContact               *bool                         `json:"is_contact,omitempty"`
 }
 
-// SendStatus is how a chat send ended.
-type SendStatus string
-
+// How a chat send ended: the values of SendResult.Status.
 const (
 	// SendSent: delivered, with no wait for a reply.
-	SendSent SendStatus = "sent"
+	SendSent = "sent"
 	// SendReplied: the target replied.
-	SendReplied SendStatus = "replied"
+	SendReplied = "replied"
 	// SendSenderLeft: the target replied and left the conversation.
-	SendSenderLeft SendStatus = "sender_left"
+	SendSenderLeft = "sender_left"
 	// SendPending: an unread message is waiting in the conversation.
-	SendPending SendStatus = "pending"
+	SendPending = "pending"
 	// SendTargetsLeft: the target had already left, so nothing waited.
-	SendTargetsLeft SendStatus = "targets_left"
+	SendTargetsLeft = "targets_left"
 	// SendTimeout: the wait ended with no reply.
-	SendTimeout SendStatus = "timeout"
+	SendTimeout = "timeout"
 )
 
-// EventType is the kind of a chat stream event.
-type EventType string
-
+// Kinds of chat stream event named by this package: values of Event.Type.
 const (
-	EventMessage                 EventType = "message"
-	EventReadReceipt             EventType = "read_receipt"
-	EventVerificationUnavailable EventType = "verification_unavailable"
+	EventMessage                 = "message"
+	EventReadReceipt             = "read_receipt"
+	EventVerificationUnavailable = "verification_unavailable"
 )
 
 // SendResult is the result of sending a message and optionally waiting for a reply.
 type SendResult struct {
-	SessionID          string     `json:"session_id"`
-	MessageID          string     `json:"message_id,omitempty"`
-	Status             SendStatus `json:"status"`
-	TargetAgent        string     `json:"target_agent,omitempty"`
-	Reply              string     `json:"reply,omitempty"`
-	Events             []Event    `json:"events"`
-	Error              string     `json:"error,omitempty"`
-	TargetNotConnected bool       `json:"target_not_connected,omitempty"`
-	SenderWaiting      bool       `json:"sender_waiting,omitempty"`
-	WaitedSeconds      int        `json:"waited_seconds,omitempty"`
+	SessionID          string  `json:"session_id"`
+	MessageID          string  `json:"message_id,omitempty"`
+	Status             string  `json:"status"`
+	TargetAgent        string  `json:"target_agent,omitempty"`
+	Reply              string  `json:"reply,omitempty"`
+	Events             []Event `json:"events"`
+	Error              string  `json:"error,omitempty"`
+	TargetNotConnected bool    `json:"target_not_connected,omitempty"`
+	SenderWaiting      bool    `json:"sender_waiting,omitempty"`
+	WaitedSeconds      int     `json:"waited_seconds,omitempty"`
 }
 
 // OpenResult is the result of opening unread messages for a conversation.
@@ -140,7 +136,6 @@ type ExtendWaitResult struct {
 	ExtendsWaitSeconds int    `json:"extends_wait_seconds"`
 }
 
-// SendOptions configures message sending behavior.
 // E2EEChoice is how a chat send chooses end-to-end encryption.
 type E2EEChoice int
 
@@ -154,18 +149,34 @@ const (
 	E2EEPlaintext
 )
 
+// SendOptions configures message sending behavior.
 type SendOptions struct {
 	Wait              int        // Seconds to wait for reply (0 = no wait)
 	WaitExplicit      bool       // true if caller explicitly set Wait
 	Leaving           bool       // Sender is leaving the conversation
 	StartConversation bool       // Ignore targets_left, use 5min default wait
 	E2EE              E2EEChoice // How the message chooses end-to-end encryption
+	// EncryptE2EE is the released (aw-v1.36.58) way to require encryption;
+	// true is E2EE: E2EERequired, whatever E2EE says.
+	EncryptE2EE bool
 	// RecipientDID is the DID the caller confirmed for its one target. An
 	// existing session is then selected by this strong identity only.
 	RecipientDID string
 	// ConfirmedRecipient is what the caller's team roster names for its one
 	// alias target; a new session signs it as the recipient binding.
 	ConfirmedRecipient *awid.ConfirmedRecipient
+}
+
+// Encryption is the end-to-end encryption choice the options make.
+func (o SendOptions) Encryption() E2EEChoice {
+	return encryptionChoice(o.EncryptE2EE, o.E2EE)
+}
+
+func encryptionChoice(encryptE2EE bool, choice E2EEChoice) E2EEChoice {
+	if encryptE2EE {
+		return E2EERequired
+	}
+	return choice
 }
 
 // StatusCallback receives protocol status updates.

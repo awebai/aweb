@@ -45,7 +45,7 @@ func TestReceivedSenderOtherTeamIsUnproven(t *testing.T) {
 		{"different member", "selected:example.test", "active", "did:aw:other", IdentityMismatch},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, _ := c.NormalizeReceivedSenderTrust(context.Background(), Verified, ReceivedSender{Alias: "sender", DID: "did:key:sender", StableID: "did:aw:sender", Membership: &SenderMembership{TeamID: tc.team, State: tc.state, MemberDIDAW: tc.stable}})
+			got, _ := c.NormalizeReceivedSender(context.Background(), Verified, ReceivedSender{Alias: "sender", DID: "did:key:sender", StableID: "did:aw:sender", Membership: &SenderMembership{TeamID: tc.team, State: tc.state, MemberDIDAW: tc.stable}})
 			if got != tc.want {
 				t.Fatalf("status = %s, want %s", got, tc.want)
 			}
@@ -102,7 +102,7 @@ func TestReceivedLocalSenderMatrix(t *testing.T) {
 				address = "outbound:sender.test/alice"
 				binding.TeamID = ""
 			}
-			got, contact := c.NormalizeReceivedSenderTrust(context.Background(), status, ReceivedSender{Address: address, Alias: "alice", DID: key, Membership: member, Binding: &binding})
+			got, contact := c.NormalizeReceivedSender(context.Background(), status, ReceivedSender{Address: address, Alias: "alice", DID: key, Membership: member, Binding: &binding})
 			if got != tc.want || contact != nil {
 				t.Fatalf("got %s, want %s", got, tc.want)
 			}

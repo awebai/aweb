@@ -88,8 +88,8 @@ func streamToChannel(ctx context.Context, stream *awid.SSEStream) (<-chan sseRes
 }
 
 // isGrantTerminalEvent identifies stream events that end the session grant.
-func isGrantTerminalEvent(eventType EventType) bool {
-	switch strings.TrimSpace(string(eventType)) {
+func isGrantTerminalEvent(eventType string) bool {
+	switch strings.TrimSpace(eventType) {
 	case "grant_expired", "grant_revoked", "grant_subject_inactive", "grant_issuer_revoked", "verification_unavailable":
 		return true
 	default:
@@ -100,7 +100,7 @@ func isGrantTerminalEvent(eventType EventType) bool {
 // parseSSEEvent converts an SSE event to a chat Event.
 func parseSSEEvent(sseEvent *awid.SSEEvent) Event {
 	ev := Event{
-		Type: EventType(sseEvent.Event),
+		Type: sseEvent.Event,
 	}
 	var data map[string]any
 	if err := json.Unmarshal([]byte(sseEvent.Data), &data); err != nil {
@@ -1177,7 +1177,7 @@ func waitForMessage(ctx context.Context, client *awid.Client, openStream streamO
 					detail = strings.TrimSpace(chatEvent.Body)
 				}
 				if detail == "" {
-					detail = string(chatEvent.Type)
+					detail = chatEvent.Type
 				}
 				if chatEvent.Type == EventVerificationUnavailable {
 					detail = "identity grant verification unavailable; retry"
@@ -1283,7 +1283,7 @@ func Send(ctx context.Context, client *awid.Client, myAlias string, targets []st
 		ToAddresses:        addresses,
 		Message:            message,
 		Leaving:            opts.Leaving,
-		EncryptE2EE:        opts.E2EE == E2EERequired,
+		EncryptE2EE:        opts.Encryption() == E2EERequired,
 		ConfirmedRecipient: opts.ConfirmedRecipient,
 	}
 	if waitSeconds > 0 {
@@ -1291,7 +1291,7 @@ func Send(ctx context.Context, client *awid.Client, myAlias string, targets []st
 	}
 	if len(targets) == 1 && !opts.StartConversation && shouldProbeExistingSession(targets[0]) {
 		if sessionID, _, findErr := lookupSession(ctx, client, targets[0], opts.RecipientDID, latestSession); findErr == nil && sessionID != "" {
-			encrypt, err := ContinuationEncrypted(ctx, client, sessionID, opts.E2EE, callback)
+			encrypt, err := ContinuationEncrypted(ctx, client, sessionID, opts.Encryption(), callback)
 			if err != nil {
 				return nil, err
 			}
@@ -1651,13 +1651,26 @@ func Pending(ctx context.Context, client *awid.Client) (*PendingResult, error) {
 
 // ExtendWaitOptions configures ExtendWaitWithOptions.
 type ExtendWaitOptions struct {
-	// E2EE is how the message chooses end-to-end encryption.
-	E2EE E2EEChoice
+	// EncryptE2EE is the released (aw-v1.36.58) way to require encryption;
+	// true is E2EE: E2EERequired, whatever E2EE says.
+	EncryptE2EE bool
 	// RecipientDID is the DID the caller confirmed for targetAlias; the
 	// session is then selected by this strong identity only.
 	RecipientDID string
-	// Status receives status lines, such as the --plaintext notice.
-	Status StatusCallback
+	// E2EE is how the message chooses end-to-end encryption.
+	E2EE E2EEChoice
+}
+
+// Encryption is the end-to-end encryption choice the options make.
+func (o ExtendWaitOptions) Encryption() E2EEChoice {
+	return encryptionChoice(o.EncryptE2EE, o.E2EE)
+}
+
+// ExtendWait tells the target its wait is extended, in the session found for
+// targetAlias. encryptE2EE, when given and true, requires encryption; otherwise
+// the session's encryption carries over.
+func ExtendWait(ctx context.Context, client *awid.Client, targetAlias string, message string, encryptE2EE ...bool) (*ExtendWaitResult, error) {
+	return ExtendWaitWithOptions(ctx, client, targetAlias, message, ExtendWaitOptions{EncryptE2EE: len(encryptE2EE) > 0 && encryptE2EE[0]})
 }
 
 // ContinuationEncrypted reports whether a message to an existing session is
@@ -1687,12 +1700,18 @@ func ContinuationEncrypted(ctx context.Context, client *awid.Client, sessionID s
 }
 
 func ExtendWaitWithOptions(ctx context.Context, client *awid.Client, targetAlias string, message string, opts ExtendWaitOptions) (*ExtendWaitResult, error) {
+	return ExtendWaitWithStatus(ctx, client, targetAlias, message, opts, nil)
+}
+
+// ExtendWaitWithStatus is ExtendWaitWithOptions with status lines, such as the
+// --plaintext notice, sent to status.
+func ExtendWaitWithStatus(ctx context.Context, client *awid.Client, targetAlias string, message string, opts ExtendWaitOptions, status StatusCallback) (*ExtendWaitResult, error) {
 	sessionID, _, err := lookupSession(ctx, client, targetAlias, opts.RecipientDID, waitingSessionFirst)
 	if err != nil {
 		return nil, err
 	}
 
-	encrypt, err := ContinuationEncrypted(ctx, client, sessionID, opts.E2EE, opts.Status)
+	encrypt, err := ContinuationEncrypted(ctx, client, sessionID, opts.Encryption(), status)
 	if err != nil {
 		return nil, err
 	}

@@ -77,13 +77,13 @@ func chatSend(ctx context.Context, toAlias, message string, opts chat.SendOption
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := configureChatE2EE(ctx, c, sel, opts.E2EE); err != nil {
+	if err := configureChatE2EE(ctx, c, sel, opts.Encryption()); err != nil {
 		return nil, nil, err
 	}
 	target := strings.TrimSpace(toAlias)
 	// Encrypted human aliases use selected-team key discovery; preserve the
 	// released plaintext live-roster route.
-	confirmed, err := confirmChatAlias(ctx, c, sel, target, opts.E2EE != chat.E2EERequired)
+	confirmed, err := confirmChatAlias(ctx, c, sel, target, opts.Encryption() != chat.E2EERequired)
 	if err != nil {
 		return nil, sel, err
 	}
@@ -653,8 +653,8 @@ var chatExtendWaitCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		opts := chat.ExtendWaitOptions{E2EE: choice, RecipientDID: confirmedDID, Status: chatStderrCallback}
-		result, err := chat.ExtendWaitWithOptions(ctx, c.Client, args[0], message, opts)
+		opts := chat.ExtendWaitOptions{E2EE: choice, RecipientDID: confirmedDID}
+		result, err := chat.ExtendWaitWithStatus(ctx, c.Client, args[0], message, opts, chatStderrCallback)
 		if err != nil {
 			return humanMailOnlyRefusal(err)
 		}
