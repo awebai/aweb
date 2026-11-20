@@ -72,8 +72,9 @@ func (c *Client) ChatSessionEncryption(ctx context.Context, sessionID string) (C
 
 // MailConversationEncryption reads a mail conversation's latest stored rows
 // (order=desc; a server that predates the order parameter ignores it and
-// answers its oldest page, which then only ever reads as unknown) to learn
-// whether it is end-to-end encrypted. A server that answers the route itself
+// answers its oldest page, which is encrypted if it holds an encrypted row
+// and otherwise, when full, unknown) to learn whether it is end-to-end
+// encrypted. A server that answers the route itself
 // as not found predates the conversation route (server-v1.19.0) and so
 // end-to-end encryption (server-v1.26.0): its conversations are plaintext.
 func (c *Client) MailConversationEncryption(ctx context.Context, conversationID string) (ConversationEncryptionReading, error) {

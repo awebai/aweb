@@ -528,9 +528,10 @@ func (r *RegistryResolver) SeedVerifiedHeadAt(registryURL, stableID string, head
 }
 
 // SeedVerifiedHead is the released form (aw-v1.36.58), kept for Go callers of
-// this public package: it seeds an anchor for stableID at every registry that
-// has none of its own, which is what the anchor meant before anchors were
-// kept per registry.
+// this public package: it seeds an anchor for stableID that applies at every
+// registry, and wins over a registry's own anchor when its sequence is higher
+// (anchorFor), which is what the anchor meant before anchors were kept per
+// registry.
 func (r *RegistryResolver) SeedVerifiedHead(stableID string, head *VerifiedLogHead) {
 	r.seedAnchor(anyRegistryAnchor(stableID), stableID, head)
 }
