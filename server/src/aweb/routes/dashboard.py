@@ -36,7 +36,6 @@ from aweb.deps import get_db, get_redis
 from aweb.events import (
     team_events_channel_name,
 )
-from aweb.application_state import application_registry_client
 from aweb.grant_liveness_policy import GrantLivenessFailurePolicy
 from aweb.presence_transitions import team_online_aliases
 from aweb.workspace_activity import latest_workspace_activity, workspace_activity_by_id
