@@ -156,7 +156,7 @@ class ClosingRelay:
         self._upstream = (host, port)
         self._server: asyncio.AbstractServer | None = None
         self._writers: list[asyncio.StreamWriter] = []
-        self._tasks: set[asyncio.Task] = set()
+        self.upstream_ports: list[int] = []
         self.server_closes = 0
         self._closed = asyncio.Condition()
 
@@ -169,6 +169,7 @@ class ClosingRelay:
     ) -> None:
         upstream_reader, upstream_writer = await asyncio.open_connection(*self._upstream)
         self._writers += [client_writer, upstream_writer]
+        self.upstream_ports.append(upstream_writer.get_extra_info("sockname")[1])
         server_closed = asyncio.Event()
 
         async def to_server() -> None:
@@ -214,7 +215,8 @@ class ClosingRelay:
 # which the relay holds back, so a longer wait does not change the outcome.
 CLIENT_READS_DELIVERED_BYTES_SECONDS = 0.2
 # A shutdown that has not finished by then is hung, not slow: the lifespan
-# closes a pool whose connections are all already gone.
+# closes a pool whose connections are all already gone. The same bound covers
+# the relay seeing the terminated backends close.
 SHUTDOWN_BOUND_SECONDS = 10
 
 
@@ -232,16 +234,19 @@ async def test_the_lifespan_ends_after_the_database_drops_its_connections_and_a_
     try:
         async with AsyncExitStack() as running:
             await running.enter_async_context(app.router.lifespan_context(app))
+            # The app's own backends: the ones connected through the relay.
             admin = await asyncpg.connect(database_url)
             try:
                 terminated = await admin.fetchval(
                     "SELECT count(pg_terminate_backend(pid)) FROM pg_stat_activity"
-                    " WHERE datname = current_database() AND pid <> pg_backend_pid()"
+                    " WHERE datname = current_database() AND client_port = ANY($1::int[])",
+                    relay.upstream_ports,
                 )
             finally:
                 await admin.close()
-            assert terminated >= 1
-            await relay.wait_for_server_closes(terminated)
+            assert terminated == len(relay.upstream_ports) >= 1
+            async with asyncio.timeout(SHUTDOWN_BOUND_SECONDS):
+                await relay.wait_for_server_closes(terminated)
             await asyncio.sleep(CLIENT_READS_DELIVERED_BYTES_SECONDS)
 
             async with httpx.AsyncClient(
