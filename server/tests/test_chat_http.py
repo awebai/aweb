@@ -1443,7 +1443,6 @@ async def test_receive_old_v1_federated_chat_ignores_deprecated_fields_and_deliv
     alice, bob = (world.source.actor, world.target.actor)
     alice_sk, alice_did_key = (alice.signing_key, alice.did_key)
     bob_sk, bob_did_key = (bob.signing_key, bob.did_key)
-    bob_agent_id = UUID(bob.agent_id)
     app = world.target.node.server.app
     aweb_cloud_db = SimpleNamespace(aweb_db=world.target.node.db)
     payload = _federated_chat_payload(
