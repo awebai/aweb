@@ -227,9 +227,50 @@ exit "$status"
         except OSError:
             pass  # An unwritable telemetry sidecar cannot suppress the primary archive.
 
+    def observe_machine_diagnostics(self, *, phase: str) -> None:
+        """Collect before provider teardown; failure never masks the primary result."""
+        name = "machine-diagnostics-" + phase
+        observation = {
+            "status": "unavailable",
+            "source": self.source["sha"],
+            "run_id": self.directory.name,
+        }
+        try:
+            timeout = min(14, self.remaining())
+            observation["transport_timeout_seconds"] = timeout
+            command = (
+                "timeout --signal=TERM --kill-after=1s 12s python3 "
+                + REMOTE
+                + "/operator/vm_gate/failure_diagnostics.py"
+                + " --source "
+                + Q(self.source["sha"])
+                + " --run-id "
+                + Q(self.directory.name)
+                + " --phase "
+                + Q(phase)
+                + " --output "
+                + Q(LOGS + "/" + name + ".json")
+            )
+            result = self.transport.run(command, timeout=timeout, check=False)
+            observation.update(
+                status="collected" if result.returncode == 0 else "failed",
+                returncode=result.returncode,
+                stdout=result.stdout,
+                stderr=result.stderr,
+            )
+        except (Infrastructure, OSError, subprocess.SubprocessError) as error:
+            observation.update(error=type(error).__name__, message=str(error))
+        try:
+            (self.directory / (name + "-observation.json")).write_text(
+                json.dumps(observation, indent=2) + "\n"
+            )
+        except OSError:
+            pass  # Diagnostics must not prevent the primary archive or exact-ID cleanup.
+
     def execute(self, server, timeout):
         self.deadline = time.monotonic() + timeout + SSH_GRACE
         self.observe_host_metrics("before")
+        self.observe_machine_diagnostics(phase="before")
         self.run(
             f"nohup python3 {REMOTE}/operator/vm_gate/memory.py {LOGS}/memory.jsonl >{LOGS}/sampler.log 2>&1 </dev/null & echo $! >{LOGS}/sampler.pid",
             "sampler-start",
@@ -245,6 +286,8 @@ exit "$status"
             + f">{LOGS}/execution-command.log 2>&1"
         )
         result = self.run(command, "execution", check=False)
+        if result.returncode != 0:
+            self.observe_machine_diagnostics(phase="failure")
         if result.returncode == 255:
             raise Infrastructure("SSH connection lost during gate")
         receipt = self.run(f"cat {LOGS}/gate-exit", "gate-exit", check=False)
@@ -291,6 +334,7 @@ exit "$status"
 
     def collect(self, server, timeout):
         self.deadline = time.monotonic() + timeout
+        self.observe_machine_diagnostics(phase="after")
         self.observe_host_metrics("after")
         self.run(
             f'if test -f {LOGS}/sampler.pid; then kill -TERM "$(cat {LOGS}/sampler.pid)"; fi; docker ps -a --no-trunc >{LOGS}/docker-after.txt; docker network ls >{LOGS}/networks-after.txt; docker volume ls >{LOGS}/volumes-after.txt',
