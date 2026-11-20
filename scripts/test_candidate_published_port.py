@@ -42,16 +42,19 @@ class PublishedPortPropertyTests(unittest.TestCase):
                 out = "127.0.0.1:32768\n"
             elif args[1] == "inspect":
                 name = args[-1]
-                original, _ = containers[name]
-                bindings = [{"HostIp": "127.0.0.1", "HostPort": "32768"}]
-                if not original and outcome != "mapped":
-                    bindings = []
-                if original and lost and len(containers) > 1:
-                    bindings = []
-                out = json.dumps([{
-                    "State": {"Running": not (original and stopped and len(containers) > 1)},
-                    "NetworkSettings": {"Ports": {"80/tcp": bindings}},
-                }])
+                if name not in containers:
+                    code, err = 1, "no such container"
+                else:
+                    original, _ = containers[name]
+                    bindings = [{"HostIp": "127.0.0.1", "HostPort": "32768"}]
+                    if not original and outcome != "mapped":
+                        bindings = []
+                    if original and lost and len(containers) > 1:
+                        bindings = []
+                    out = json.dumps([{
+                        "State": {"Running": not (original and stopped and len(containers) > 1)},
+                        "NetworkSettings": {"Ports": {"80/tcp": bindings}},
+                    }])
             elif args[1] == "rm":
                 removed.append(args[-1])
             elif args[1:3] == ("container", "inspect"):
@@ -99,7 +102,8 @@ class PublishedPortPropertyTests(unittest.TestCase):
             self.exercise("unrelated-error")
 
     def test_persistent_startup_disconnect_still_fails_at_the_original_deadline(self):
-        with patch.object(boundaries.time, "monotonic", side_effect=[0, 11]):
+        with patch.object(boundaries, "wait_for_published_port", return_value="32768"), \
+                patch.object(boundaries.time, "monotonic", side_effect=[0, 11]):
             with self.assertRaisesRegex(AssertionError, "original host publication never became reachable"):
                 self.exercise("refused", startup_disconnect=True)
 
