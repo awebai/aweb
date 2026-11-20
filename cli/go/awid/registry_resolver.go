@@ -504,13 +504,17 @@ func anyRegistryAnchor(stableID string) string {
 	return headCacheKey("*", stableID)
 }
 
-// anchorFor is the anti-rollback anchor for stableID at registryURL: the one
-// verified or seeded there, else one seeded without a registry.
+// anchorFor is the anti-rollback anchor for stableID at registryURL: the
+// higher of the one verified or seeded there and one seeded without a
+// registry, so the released SeedVerifiedHead advances a resolver that already
+// holds a lower anchor, as before anchors were kept per registry.
 func (r *RegistryResolver) anchorFor(registryURL, stableID string) *VerifiedLogHead {
-	if head := r.headCache[headCacheKey(registryURL, stableID)]; head != nil {
-		return head
+	scoped := r.headCache[headCacheKey(registryURL, stableID)]
+	released := r.headCache[anyRegistryAnchor(stableID)]
+	if released != nil && (scoped == nil || released.Seq > scoped.Seq) {
+		return released
 	}
-	return r.headCache[anyRegistryAnchor(stableID)]
+	return scoped
 }
 
 // SeedVerifiedHeadAt installs a previously verified log head as the
