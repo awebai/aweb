@@ -30,7 +30,8 @@ from test_team_room import admit_room_member
 
 
 @pytest_asyncio.fixture
-async def workspace_stack(shared_test_pool, monkeypatch):
+async def workspace_stack(shared_test_pool, shared_test_database, monkeypatch):
+    monkeypatch.setenv("AWEB_DATABASE_URL", shared_test_database.dsn)
     async with privacy_stack(shared_test_pool, monkeypatch) as env:
         for alias in ("alice", "bob"):
             await admit_room_member(env, alias=alias)
@@ -262,6 +263,8 @@ async def test_delete_workspace_recovers_post_commit_presence_failure(workspace_
                 public_origin=str(env.client.base_url).rstrip("/"),
                 host_runs_outbox_recovery=True,
             )
+            app.state.db = env.infra
+            app.state.redis = restricted
             app.state.awid_registry_client = env.app.state.awid_registry_client
             app.state.on_mutation = env.app.state.on_mutation
             async with httpx.AsyncClient(
