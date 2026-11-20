@@ -2149,5 +2149,15 @@ off-mode observation is not a promise of no existence read. The read uses the
 existing SDK active-certificate view after revocation checks, without a new
 cache. An unavailable observation remains unknown and cannot turn an otherwise
 valid off-mode operation into a refusal. Enforcing mode retains its complete
-registration-list and signature-verified miss-refresh owners. This is the
-staging disposition of Antares ruling `2c74f907`, relayed by the coordinator.
+registration-list and signature-verified miss-refresh owners. This
+staged measurement does not change request or certificate authority.
+
+### Controller-key acquisition and request validation
+
+Native authentication, app-task authorization, hook owner acts and service
+registration use `team_key_reader.read_team_key` to acquire SDK key evidence
+and apply the existing native pin owner. Their cached or fresh acquisition
+strength remains explicit; a consumer cannot accept a registry key by bypassing
+that pin. A controller registration request checks its timestamp and signature
+before a pin can change, including `dry_run` requests. Invalid request bytes
+cannot advance the admitted key or its controller-act timestamp.

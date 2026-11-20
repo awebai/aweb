@@ -81,7 +81,9 @@ The identity-signed "my inbound mode" route uses the authenticated, AWID-bound
 `aweb.messaging.delivery_policy.authorize_delivery` owns this rule for native
 and federated sends. Same-team admission intersects all current active team
 memberships of both verified identities through the native member owner. A
-caller-selected team, retired row or superseded team key adds no membership.
+caller-selected team, retired row, superseded team key or revoked admitting
+certificate adds no membership. The same native certificate-standing owner used
+by authentication checks revocation and the staged registration requirement.
 Address residence and human classification remain independent of membership.
 Exact active identity-contact matching has one owner and retains contact locks
 through an existing delivery transaction. Send refusals end with a concrete
