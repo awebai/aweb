@@ -20,10 +20,11 @@ spec.loader.exec_module(boundaries)
 
 class PublishedPortPropertyTests(unittest.TestCase):
     def exercise(self, outcome, *, stolen=False, lost=False, stopped=False,
-                 startup_disconnect=False, later_disconnect=False):
+                 startup_error=None, persistent=False, later_error=None):
         containers = {}
         removed = []
         responses = []
+        requests = 0
 
         def docker(*args, check=True, **kwargs):
             code, out, err = 0, "", ""
@@ -65,9 +66,13 @@ class PublishedPortPropertyTests(unittest.TestCase):
             return result
 
         def http(port):
+            nonlocal requests
+            requests += 1
             self.assertEqual(str(port), "32768")
-            if startup_disconnect or (later_disconnect and len(containers) > 1):
-                raise RemoteDisconnected("Remote end closed connection without response")
+            if startup_error is not None and (requests == 1 or persistent):
+                raise startup_error
+            if later_error is not None and len(containers) > 1 and requests == 2:
+                raise later_error
             return "competitor\n" if stolen and len(containers) > 1 else responses[0] + "\n"
 
         boundary = boundaries.HostPublishedPortTests(
@@ -101,15 +106,25 @@ class PublishedPortPropertyTests(unittest.TestCase):
         with self.assertRaises(AssertionError):
             self.exercise("unrelated-error")
 
+    def test_startup_reset_or_refusal_is_retried(self):
+        for error in (ConnectionResetError, ConnectionRefusedError):
+            with self.subTest(error=error):
+                self.exercise("refused", startup_error=error("startup"))
+
     def test_persistent_startup_disconnect_still_fails_at_the_original_deadline(self):
-        with patch.object(boundaries, "wait_for_published_port", return_value="32768"), \
-                patch.object(boundaries.time, "monotonic", side_effect=[0, 11]):
-            with self.assertRaisesRegex(AssertionError, "original host publication never became reachable"):
-                self.exercise("refused", startup_disconnect=True)
+        for error in (RemoteDisconnected, ConnectionResetError, ConnectionRefusedError):
+            with self.subTest(error=error), \
+                    patch.object(boundaries, "wait_for_published_port", return_value="32768"), \
+                    patch.object(boundaries.time, "monotonic", side_effect=[0, 9, 10]), \
+                    patch.object(boundaries.time, "sleep") as sleep:
+                with self.assertRaisesRegex(AssertionError, "original host publication never became reachable: startup"):
+                    self.exercise("refused", startup_error=error("startup"), persistent=True)
+                sleep.assert_called_once_with(0.1)
 
     def test_disconnect_after_readiness_is_not_retried(self):
-        with self.assertRaises(RemoteDisconnected):
-            self.exercise("refused", later_disconnect=True)
+        for error in (RemoteDisconnected, ConnectionResetError, ConnectionRefusedError):
+            with self.subTest(error=error), self.assertRaises(error):
+                self.exercise("refused", later_error=error("after readiness"))
 
 
 class HostPublishedPortWiringTests(unittest.TestCase):
