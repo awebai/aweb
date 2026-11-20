@@ -679,6 +679,13 @@ def _record_federation(node):
     return recorded.requests
 
 
+def _registered_identity_headers(actor, *, payload):
+    """Identity-only controls intentionally omit team selection."""
+    headers = _registered_actor_headers(actor, payload=payload)
+    headers.pop("X-Team-ID")
+    return headers
+
+
 def _registered_actor_headers(actor, *, payload):
     body = httpx.Request("POST", "http://test", json=payload).content
     return {
@@ -5097,7 +5104,7 @@ async def test_send_message_rejects_unsigned_stable_id_address_binding_when_awid
     )
 
     env, actors = registered_mail_actors
-    alice, bob = actors["alice"], actors["bob"]
+    alice, bob = (actors["alice"], actors["bob"])
     await register_messaging_team(env, team_id="ops:otherco.com")
     addressed = await admit_messaging_actor(
         env,
@@ -5130,7 +5137,6 @@ async def test_send_message_rejects_unsigned_stable_id_address_binding_when_awid
             content=body,
             headers={
                 "Content-Type": "application/json",
-                "X-Team-ID": alice.team_id,
                 **_signed_identity_headers(
                     alice.signing_key, alice.did_key, alice.stable_id, body
                 ),
@@ -9166,7 +9172,7 @@ async def test_send_message_to_address_does_not_fall_back_to_local_persistent_ag
     )
 
     env, actors = registered_mail_actors
-    alice, bob = actors["alice"], actors["bob"]
+    alice, bob = (actors["alice"], actors["bob"])
     await register_messaging_team(env, team_id="ops:otherco.com")
     recipient = await admit_messaging_actor(
         env,
@@ -9190,7 +9196,7 @@ async def test_send_message_to_address_does_not_fall_back_to_local_persistent_ag
         resp = await env.client.post(
             "/v1/messages",
             json=payload,
-            headers=_registered_actor_headers(alice, payload=payload),
+            headers=_registered_identity_headers(alice, payload=payload),
         )
     assert resp.status_code == 404, resp.text
     assert "Recipient address not found" in resp.text
@@ -9527,7 +9533,7 @@ async def test_send_message_to_private_address_rejects_unverified_client_recipie
     resp = await env.client.post(
         "/v1/messages",
         json=payload,
-        headers=_registered_actor_headers(alice, payload=payload),
+        headers=_registered_identity_headers(alice, payload=payload),
     )
     assert resp.status_code == 404, resp.text
     assert "Recipient address not found" in resp.text
