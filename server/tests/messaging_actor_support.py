@@ -1,6 +1,7 @@
 """Messaging actors admitted by the shared registry and native HTTP owners."""
 
 from dataclasses import dataclass, field
+from contextlib import contextmanager
 import json
 from typing import Protocol
 from uuid import UUID, uuid4
@@ -164,3 +165,21 @@ async def admit_messaging_actor(
         agent_id=str(UUID(connected.agent_id)),
         certificate=certificate,
     )
+
+
+@contextmanager
+def record_registry_requests(env):
+    """Observe HTTP at the actual registry app and forward every request unchanged."""
+    original = env.registry_app.middleware_stack or env.registry_app.build_middleware_stack()
+    requests: list[tuple[str, str]] = []
+
+    async def record(scope, receive, send):
+        if scope.get("type") == "http":
+            requests.append((scope["method"], scope["path"]))
+        await original(scope, receive, send)
+
+    env.registry_app.middleware_stack = record
+    try:
+        yield requests
+    finally:
+        env.registry_app.middleware_stack = original

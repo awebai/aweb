@@ -367,12 +367,6 @@
     },
     {
       "tool": "mypy",
-      "file": "server/src/aweb/messaging/address_auth.py",
-      "code": "arg-type",
-      "count": 1
-    },
-    {
-      "tool": "mypy",
       "file": "server/src/aweb/messaging/chat_send.py",
       "code": "arg-type",
       "count": 1
@@ -1196,12 +1190,6 @@
     {
       "tool": "ruff",
       "file": "server/tests/test_cli_human_reply.py",
-      "code": "F401",
-      "count": 1
-    },
-    {
-      "tool": "ruff",
-      "file": "server/tests/test_cli_invite_registry_discovery.py",
       "code": "F401",
       "count": 1
     },

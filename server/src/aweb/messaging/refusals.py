@@ -21,7 +21,7 @@ class DeliveryRefusalCode(StrEnum):
     RECIPIENT_POLICY_REJECTED = "recipient_policy_rejected"
     CONTACT_IDENTITY_BINDING_REQUIRED = "contact_identity_binding_required"
     CONVERSATION_EXISTS = "conversation_exists"
-    RECIPIENT_ADDRESS_NOT_FOUND = "recipient_address_not_found"
+    RECIPIENT_IDENTITY_NOT_FOUND = "recipient_identity_not_found"
 
 
 CONTACT_REBIND_ACTION = "This address now belongs to a different identity. Check the contact and explicitly bind it again before sending."
@@ -61,11 +61,13 @@ class DeliveryRefusal(ServiceError):
 class RecipientAddressNotFound(DeliveryRefusal):
     """A recipient address has no usable route under the address binding rule."""
 
+    code: DeliveryRefusalCode
+
     def __init__(self, *, address: str) -> None:
         super().__init__(
             status_code=HTTPStatus.NOT_FOUND,
             detail=f"Recipient address not found: {address}. Check the address and try again.",
-            code=DeliveryRefusalCode.RECIPIENT_ADDRESS_NOT_FOUND,
+            code=DeliveryRefusalCode.RECIPIENT_IDENTITY_NOT_FOUND,
         )
 
 
@@ -84,7 +86,7 @@ class SignedRecipientMismatch(DeliveryRefusal):
 class MailConversationExists(DeliveryRefusal):
     """Retain the frozen collision detail and add a separate recovery action."""
 
-    code: DeliveryRefusalCode = DeliveryRefusalCode.CONVERSATION_EXISTS
+    code: DeliveryRefusalCode
     recovery_action = (
         "Continue the existing conversation or choose a new conversation_id and retry."
     )
@@ -160,4 +162,14 @@ def encrypted_message_refusal(*, detail: str) -> DeliveryRefusal:
         status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
         detail=detail.rstrip(".")
         + ". Check whether the original message was delivered before preparing a new encrypted message.",
+    )
+
+
+def unreachable_address_refusal(address: str) -> str:
+    """One not-routable action for address and other local-only selectors."""
+    target = address or "The recipient"
+    return (
+        f"{target} is not a registered address. A local identity has no address and "
+        "is reachable only from inside its own team, by alias; a global identity is "
+        "reachable by address once one is assigned. Check the address or use a teammate alias and retry."
     )

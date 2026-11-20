@@ -22,7 +22,6 @@ from typing import TYPE_CHECKING, Any, TypedDict, NoReturn
 from uuid import UUID
 
 import asyncpg
-from awid.federation_errors import FederationAuthorityError
 from awid.registry import RegistryError
 from aweb.messaging.refusals import (
     encrypted_message_refusal,
@@ -42,12 +41,9 @@ from aweb.messaging.message_replay import (
 )
 
 from aweb.agent_wake import agent_wake_scope
-from aweb.attachment_service import refuse_remote_attachments
-from aweb.awid_error_handling import (
-    AWID_DEPENDENCY_ERRORS,
-)
+from aweb.attachment_service import confirm_accepted_attachment_refs, refuse_remote_attachments
+from aweb.awid_error_handling import AWID_DEPENDENCY_ERRORS
 from aweb.message_vocabulary import MessageInputSource, observe_message_vocabulary
-from aweb.attachment_service import attachment_retry
 from aweb.db import TransactionInfra
 from aweb.e2ee_messages import (
     E2EEEnvelopeError,
@@ -893,7 +889,7 @@ async def _stored_exact_send(db, *, payload, sender_did: str) -> MailReplayLooku
     row = lookup.message
     # All callers validate encryption and current delivery policy before this
     # lookup. Bound attachment refs therefore cannot bypass ordinary admission.
-    await attachment_retry(db, payload, MessageKind.MAIL)
+    await confirm_accepted_attachment_refs(db, kind=MessageKind.MAIL, message_id=row["message_id"])
     return MailReplayLookup(
         stored=SentMail(
             message_id=str(row["message_id"]),
@@ -1025,8 +1021,6 @@ async def _commit_mail_continuation(
             to_agent_id=message.recipient.agent_id,
             sender_did=sender.did,
             sender_address=sender.address,
-            team_id=message.local_team_id,
-            sender_verified_team_id=None,
             sender_verified_dids=sender.verified_dids,
             stored_route_continuation=True,
         )
@@ -1172,8 +1166,6 @@ async def send_mail_conversation_continuation(
         to_agent_id=recipient.get("agent_id"),
         sender_did=sender_did,
         sender_address=sender_address,
-        team_id=continuation.conversation.get("team_id") or auth.team_id,
-        sender_verified_team_id=auth.verified_team_id,
         sender_verified_dids=auth_dids(auth),
         stored_route_continuation=True,
     )
@@ -1745,8 +1737,6 @@ async def _commit_new_local_mail(
             recipient_agent=recipient,
             sender_did=sender_did,
             sender_address=sender_address,
-            sender_team_id=auth.team_id,
-            sender_verified_team_id=auth.verified_team_id,
             sender_verified_dids=auth_dids(auth),
         )
         # If an explicit recipient is present, conversation_id is a caller-chosen
@@ -1923,8 +1913,6 @@ async def _send_mail_to_resolved_target(
                 recipient_agent=recipient,
                 sender_did=sender_did,
                 sender_address=sender_address,
-                sender_team_id=auth.team_id,
-                sender_verified_team_id=auth.verified_team_id,
                 sender_verified_dids=auth_dids(auth),
             )
         encrypted_metadata = _validate_encrypted_payload(
@@ -1976,15 +1964,6 @@ async def _send_mail_to_resolved_target(
     except DeliveryPolicyRefused:
         raise
     except (ValidationError, NotFoundError, ForbiddenError, ConflictError) as exc:
-        if (
-            isinstance(exc, ForbiddenError)
-            and payload.to_address
-            and recipient is not None
-            and recipient.get("identity_scope") == "local"
-            and not recipient.get("has_global_claim")
-            and not recipient.get("did_aw")
-        ):
-            raise FederationAuthorityError("local_recipient_route_missing") from exc
         raise DeliveryRefusal(status_code=exc.status_code, detail=exc.detail) from exc
 
     await record_successful_contact_side_effect(

@@ -39,6 +39,17 @@ async def test_exact_attachment_retry_obeys_public_contacts_only_policy(
     before = await node.db.fetch_value(
         "SELECT sum(binds) FROM {{tables.attachment_test_storage}}"
     )
+    if kind == "mail":
+        assert wire["to_stable_id"] == recipient.stable
+        key_only = {key: value for key, value in wire.items() if key != "to_stable_id"}
+        selector_refused = await _request(env, "alice", "POST", path, key_only)
+        assert selector_refused.status_code == 409, selector_refused.text
+        assert selector_refused.json()["detail"] == {
+            "code": "attachment_conflict",
+            "message": "conversation_id recipient does not match the requested recipient. Use the stored recipient or start a new conversation.",
+        }
+    table = "messages" if kind == "mail" else "chat_messages"
+    rows_before = await node.db.fetch_value(f"SELECT count(*) FROM {{{{tables.{table}}}}}")
     raw = json.dumps({"inbound_mode": "contacts_only"}).encode()
     changed = await node.client.patch(
         "/v1/agents/me/inbound-mode",
@@ -68,3 +79,5 @@ async def test_exact_attachment_retry_obeys_public_contacts_only_policy(
         == before
         == 1
     )
+
+    assert await node.db.fetch_value(f"SELECT count(*) FROM {{{{tables.{table}}}}}") == rows_before

@@ -79,6 +79,70 @@ async def test_outbound_resolution_reuses_fresh_cohort_and_refreshes_expired(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("failed_cleanup", ["lease", "permit"])
+async def test_published_resolution_survives_cleanup_database_failure(
+    privacy_app, monkeypatch, caplog, failed_cleanup
+):
+    env = privacy_app
+    table = (
+        "federation_authority_leases"
+        if failed_cleanup == "lease"
+        else "federation_authority_permits"
+    )
+    await env.db.execute(
+        """
+        CREATE FUNCTION {{tables.refuse_authority_cleanup}}() RETURNS trigger
+        LANGUAGE plpgsql AS $$ BEGIN
+            RAISE EXCEPTION 'private cleanup dependency detail';
+        END $$
+        """
+    )
+    # Fail the evidence lease only: the following discovery release must still run.
+    condition = "WHEN (OLD.scope_key LIKE 'origin:%')" if failed_cleanup == "lease" else ""
+    await env.db.execute(
+        f"CREATE TRIGGER refuse_authority_cleanup BEFORE DELETE ON {{{{tables.{table}}}}} "
+        f"FOR EACH ROW {condition} EXECUTE FUNCTION {{{{tables.refuse_authority_cleanup}}}}()"
+    )
+    async with _authority(env, monkeypatch) as authority:
+        with caplog.at_level("WARNING", logger="aweb.federation.activation"):
+            first = await authority.resolve_contact(
+                "foreign.test/bob", source_ip="203.0.113.4"
+            )
+        assert first.canonical_address == "foreign.test/bob"
+        assert first.current_did_key == env.actors["bob"].did
+        assert authority.resolver._clients == {}
+        leases = await env.db.fetch_all(
+            "SELECT scope_key, expires_at > clock_timestamp() AS live "
+            "FROM {{tables.federation_authority_leases}}"
+        )
+        if failed_cleanup == "lease":
+            assert len(leases) == 1 and leases[0]["scope_key"].startswith("origin:")
+            assert leases[0]["live"] is True
+            assert await env.db.fetch_value(
+                "SELECT count(*) FROM {{tables.federation_authority_permits}}"
+            ) == 0
+        else:
+            assert leases == []
+            assert await env.db.fetch_value(
+                "SELECT count(*) FROM {{tables.federation_authority_permits}} "
+                "WHERE expires_at > clock_timestamp()"
+            ) == 3
+        records = [r for r in caplog.records if r.name == "aweb.federation.activation"]
+        assert len(records) == 1
+        assert records[0].getMessage() == (
+            "federation_authority_cleanup_failed stage=" + failed_cleanup
+            + " failure_type=FederationAuthorityError"
+        )
+        assert records[0].exc_info is None
+        assert "private cleanup dependency detail" not in records[0].getMessage()
+        await env.db.execute(f"DROP TRIGGER refuse_authority_cleanup ON {{{{tables.{table}}}}}")
+        second = await authority.resolve_contact(
+            "foreign.test/bob", source_ip="203.0.113.5"
+        )
+        assert second == first
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("surface", ["mail", "chat", "contact"])
 @pytest.mark.parametrize("trusted", [True, False])
 async def test_outbound_budget_uses_the_same_configured_client_address(
@@ -180,6 +244,8 @@ async def test_mounted_mcp_budget_uses_authenticated_sender_regardless_of_proxy_
                     else f"{address} is not a registered address. A local identity has no address and is reachable only from inside its own team, by alias; a global identity is reachable by address once one is assigned. Check the address or use a teammate alias and retry."
                 )
                 assert result["error"] == expected_error
+                if surface in {"mail", "chat"}:
+                    assert result["reason"] == "recipient_identity_not_found"
             sources = await env.db.fetch_all(
                 "SELECT bucket_key FROM {{tables.federation_authority_token_buckets}} "
                 "WHERE bucket_kind='source_ip' ORDER BY bucket_key",
