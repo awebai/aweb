@@ -129,4 +129,6 @@ async def test_root_ingress_preserves_signature_and_missing_registry_refusals(
         assert result.status_code == 503
         assert body["reason"] == "federation_authority_coordination_unavailable"
         assert body["retryable"] is True
-        assert result.headers["Retry-After"] == "1"
+        # This coordination reason is retryable but, unlike rate limiting,
+        # has no Retry-After requirement in federation-error-reference.md:29.
+        assert "Retry-After" not in result.headers
