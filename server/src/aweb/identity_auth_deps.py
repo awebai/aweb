@@ -146,7 +146,9 @@ async def resolve_identity_auth(request: Request, *, db=None) -> IdentityAuth:
         )
     if envelope.version == 1:
         count_legacy_request_auth(request, "identity")
-    return IdentityAuth(did_key=did_key, did_aw=did_aw, address=address, address_resolution=outcome)
+    return IdentityAuth(
+        did_key=did_key, did_aw=did_aw, address=address, address_resolution=outcome
+    )
 
 
 async def lookup_identity_agent_context(
@@ -158,9 +160,10 @@ async def lookup_identity_agent_context(
 ) -> dict | None:
     """Select one current member context, preserving identity-only reads on ambiguity.
 
-    trust-model.md:186-191 permits a unique current row to supply its exact
-    verified address; address-dependent effects require an explicit credential
-    when several rows remain. No newest-row winner establishes authority.
+    A verified identity address does not select a team membership. Preserve it
+    when several memberships remain, without choosing a row or actor. Otherwise
+    unresolved sender contexts still require an explicit credential; no
+    newest-row winner establishes authority (trust-model.md:186-191).
     """
     did_aw_value = (did_aw or "").strip()
     aweb_db = native_database_manager(db)
@@ -179,14 +182,19 @@ async def lookup_identity_agent_context(
     if not rows:
         return None
     prior_resolution = getattr(request.state, "identity_address_resolution", None)
-    if prior_resolution is not None and prior_resolution.state is AddressResolutionState.UNKNOWN:
+    if (
+        prior_resolution is not None
+        and prior_resolution.state is AddressResolutionState.UNKNOWN
+    ):
         # Key possession/current DID binding was authenticated above. During an
         # address outage, retain previously verified projections, including
         # verified-empty; never mint a marker from a key-only observation.
-        request.state.identity_address_resolution = prior_resolution.with_stored_bindings(
-            rows,
-            did_key=did_key,
-            did_aw=did_aw_value,
+        request.state.identity_address_resolution = (
+            prior_resolution.with_stored_bindings(
+                rows,
+                did_key=did_key,
+                did_aw=did_aw_value,
+            )
         )
     else:
         for row in rows:
@@ -210,6 +218,8 @@ async def lookup_identity_agent_context(
     rows = eligible
     outcome = getattr(request.state, "identity_address_resolution", AddressResolution())
     if len(rows) > 1:
+        if did_aw_value and outcome.state is AddressResolutionState.VERIFIED:
+            return None
         request.state.identity_address_resolution = replace(
             outcome,
             state=AddressResolutionState.CONTEXT_REQUIRED,
@@ -262,7 +272,9 @@ async def current_membership(
         return _without_team_context(row)
     if not certificate_id:
         return row
-    revoked = await revoked_certificates(registry_client, team_id, certificate_ids=[certificate_id])
+    revoked = await revoked_certificates(
+        registry_client, team_id, certificate_ids=[certificate_id]
+    )
     if certificate_id not in revoked:
         decision = await read_certificate_registration(
             registry_client=registry_client,
@@ -337,7 +349,9 @@ async def get_messaging_auth(request: Request, db=Depends(get_db)) -> MessagingA
         did_aw=identity.did_aw,
         request=request,
     )
-    outcome = getattr(request.state, "identity_address_resolution", identity.address_resolution)
+    outcome = getattr(
+        request.state, "identity_address_resolution", identity.address_resolution
+    )
     if outcome.state is AddressResolutionState.UNKNOWN:
         address = outcome.stored_address
     elif row:
@@ -350,7 +364,9 @@ async def get_messaging_auth(request: Request, db=Depends(get_db)) -> MessagingA
         address=address,
         team_id=(row or {}).get("team_id") or None,
         alias=(row or {}).get("alias") or None,
-        agent_id=(str((row or {}).get("agent_id")) if (row or {}).get("agent_id") else None),
+        agent_id=(
+            str((row or {}).get("agent_id")) if (row or {}).get("agent_id") else None
+        ),
         identity_scope=(row or {}).get("identity_scope") or None,
         id_chain=getattr(request.state, "id_chain", None),
         address_resolution=outcome,
