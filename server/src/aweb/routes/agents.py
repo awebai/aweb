@@ -41,6 +41,7 @@ from aweb.deps import get_db, get_redis
 from aweb.grant_liveness import (
     cleanup_expired_grant_liveness,
     grant_liveness_expiry,
+    workspace_grant_liveness_join_sql,
 )
 from aweb.human_kind import agent_listing_predicate_sql, effective_agent_type
 from aweb.identity_address import require_address_evidence
@@ -484,18 +485,24 @@ async def list_agents(
     )
 
     workspace_rows = await aweb_db.fetch_all(
-        """SELECT w.workspace_id, w.agent_id, w.workspace_type, w.hostname,
-                  w.workspace_path, w.role AS ws_role, r.canonical_origin AS repo
-           FROM {{tables.workspaces}} w
-           LEFT JOIN {{tables.repos}} r ON r.id=w.repo_id AND r.deleted_at IS NULL
+        f"""SELECT w.workspace_id, w.agent_id, w.workspace_type, w.hostname,
+                  w.team_id, w.last_seen_at, w.workspace_path, w.role AS ws_role,
+                  r.canonical_origin AS repo, grant_liveness.*
+           FROM {{{{tables.workspaces}}}} w
+           LEFT JOIN {{{{tables.repos}}}} r ON r.id=w.repo_id AND r.deleted_at IS NULL
+           {workspace_grant_liveness_join_sql(workspace="w", ttl_seconds_parameter="$2")}
            WHERE w.team_id=$1 AND w.deleted_at IS NULL
-           ORDER BY w.last_seen_at DESC NULLS LAST, w.created_at DESC, w.workspace_id""",
+           ORDER BY w.last_seen_at DESC NULLS LAST, w.created_at DESC, w.workspace_id,
+                    grant_liveness.grant_liveness_last_seen_at DESC,
+                    grant_liveness.grant_liveness_grant_id""",
         identity.team_id,
+        get_presence_ttl_seconds(),
     )
     activity_by_id = await workspace_activity_by_id(
         aweb_db,
         redis,
         workspace_ids=[str(row["workspace_id"]) for row in workspace_rows],
+        workspace_rows=workspace_rows,
         registry_client=application_registry_client(request.app.state),
         request=request,
         failure_policy=GrantLivenessFailurePolicy.OMIT_UNPROVEN,

@@ -14,7 +14,10 @@ from starlette.requests import Request
 from awid.registry import RegistryClient
 
 from .config import get_presence_ttl_seconds
-from .grant_liveness import valid_grant_liveness_by_workspace
+from .grant_liveness import (
+    valid_grant_liveness_by_workspace,
+    valid_grant_liveness_from_workspace_rows,
+)
 from .grant_liveness_policy import GrantLivenessFailurePolicy
 from .presence import list_agent_presences_by_workspace_ids
 
@@ -106,6 +109,7 @@ async def workspace_activity_by_id(
     registry_client: RegistryClient,
     failure_policy: GrantLivenessFailurePolicy,
     request: Request | None = None,
+    workspace_rows: Sequence[Mapping[str, Any]] | None = None,
 ) -> dict[str, WorkspaceActivity]:
     """Combine the timestamps written by root, MCP and valid grant heartbeats.
 
@@ -118,31 +122,41 @@ async def workspace_activity_by_id(
     """
     if not workspace_ids:
         return {}
-    rows = await db.fetch_all(
-        """
-        SELECT workspace_id, team_id, agent_id, last_seen_at
-        FROM {{tables.workspaces}}
-        WHERE workspace_id = ANY($1::uuid[]) AND deleted_at IS NULL
-        """,
-        [UUID(value) for value in workspace_ids],
-    )
-    grants = await valid_grant_liveness_by_workspace(
-        db,
-        workspace_ids,
-        registry_client=registry_client,
-        failure_policy=failure_policy,
-        request=request,
-        ttl_seconds=get_presence_ttl_seconds(),
-    )
+    # A roster may lend its actual workspace/candidate statement. Other callers,
+    # including destructive lifecycle checks, still acquire their own evidence.
+    if workspace_rows is None:
+        rows = await db.fetch_all(
+            """
+            SELECT workspace_id, team_id, agent_id, last_seen_at
+            FROM {{tables.workspaces}}
+            WHERE workspace_id = ANY($1::uuid[]) AND deleted_at IS NULL
+            """,
+            [UUID(value) for value in workspace_ids],
+        )
+        grants = await valid_grant_liveness_by_workspace(
+            db,
+            workspace_ids,
+            registry_client=registry_client,
+            failure_policy=failure_policy,
+            request=request,
+            ttl_seconds=get_presence_ttl_seconds(),
+        )
+    else:
+        grants = await valid_grant_liveness_from_workspace_rows(
+            workspace_rows,
+            registry_client=registry_client,
+            failure_policy=failure_policy,
+            request=request,
+        )
+        rows = list({str(row["workspace_id"]): row for row in workspace_rows}.values())
+    workspace_ids = list(dict.fromkeys(workspace_ids))
     presences = (
         await list_agent_presences_by_workspace_ids(redis, workspace_ids)
         if redis is not None
         else []
     )
     presence_by_id = {
-        record["workspace_id"]: record
-        for record in presences
-        if record.get("workspace_id")
+        record["workspace_id"]: record for record in presences if record.get("workspace_id")
     }
     result = {}
     for row in rows:
