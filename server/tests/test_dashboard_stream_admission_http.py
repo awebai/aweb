@@ -3,9 +3,18 @@
 import json
 
 import pytest
+import pytest_asyncio
 
-from test_dashboard_privacy import TEAM, _make_jwt, _next_event
-from test_dashboard_privacy import privacy_app as privacy_app
+from aweb.embedding import OutboxRecoveryOwnership
+from test_dashboard_privacy import TEAM, _make_jwt, _next_event, privacy_stack
+
+
+@pytest_asyncio.fixture
+async def privacy_app(shared_test_pool, monkeypatch):
+    async with privacy_stack(
+        shared_test_pool, monkeypatch, outbox_recovery=OutboxRecoveryOwnership.HOST
+    ) as env:
+        yield env
 
 
 @pytest.mark.asyncio
