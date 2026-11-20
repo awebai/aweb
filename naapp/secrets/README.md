@@ -100,21 +100,23 @@ deployment ranges. These denials apply even to owner-confirmed internal
 destinations when `SECRETS_INTERNAL_DESTINATIONS=allowed`; the shared mandatory
 loopback/link-local/metadata floor always remains in force. This setting covers
 the service's broker and hook egress; runner job networking is separate.
-A supplied `hook_egress` retains its own denials as well as these deployment
-ranges, and retains its resolver, CA, bounds and internal-destination setting.
+Hook deliveries and team-server reads share the app's one guard, built from
+these settings (`aweb_naapp.runtime.operator_egress`).
 
-An operator enabling hook internal delivery must supply all three production
-constructor inputs: an internal-enabled `hook_egress`, `hook_internal_cidr`,
-and `hook_internal_origins=frozenset({"https://logs.example.com:8443"})`.
-List each origin exactly as its installation shows it: normalization omits
-`https`'s default `:443`, while non-default ports must match. The set contains
-exact receiver origins;
-it is independent of owner registrations and accepts no wildcard or prefix
-matches. Its default empty set permits no internal retry. Public delivery
-remains available to other registered origins. An allowed origin still must
-resolve entirely inside the configured CIDR and pass every address denial;
-setting the CIDR alone never authorizes an internal delivery. The default
-hook guard keeps internal destinations disabled and uses system TLS trust.
+An operator enabling internal destinations names its network with
+`SECRETS_HOOK_INTERNAL_DESTINATIONS=allowed` and `SECRETS_HOOK_INTERNAL_CIDR`,
+and lists exact origins for each purpose: hook receivers in
+`SECRETS_HOOK_INTERNAL_ORIGINS` (for example `["https://logs.example.com:8443"]`)
+and its own team server in `SECRETS_TEAM_SERVER_INTERNAL_ORIGINS`. List each
+origin exactly as its installation shows it: normalization omits `https`'s
+default `:443`, while non-default ports must match. The lists contain exact
+origins, are independent of owner registrations and accept no wildcard or
+prefix matches; each grants reach for its own purpose only. A network with no
+origin, or an origin without the network, stops the service starting. Public
+delivery remains available to other registered origins. A listed origin still
+must resolve entirely inside the configured CIDR and pass every address
+denial. The default guard keeps internal destinations disabled and uses
+system TLS trust, plus `SECRETS_HOOK_CA_FILE` when set.
 
 For the customer-run image and explicit environment startup, see the
 [deployment recipe](deploy/README.md).
