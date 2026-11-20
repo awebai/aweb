@@ -6,6 +6,7 @@ import os
 import runpy
 import subprocess
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 
 # xdist sets its worker identity before conftest imports. Bind services before
@@ -18,7 +19,8 @@ runpy.run_path(str(Path(__file__).with_name("worker_services.py")))[
 
 import pytest  # noqa: E402
 import pytest_asyncio  # noqa: E402
-from pgdbm import AsyncDatabaseManager, AsyncMigrationManager  # noqa: E402
+from asyncpg import Pool  # noqa: E402
+from pgdbm import AsyncDatabaseManager, AsyncMigrationManager, DatabaseConfig  # noqa: E402
 
 from awid.db_config import build_database_config  # noqa: E402
 from aweb_naapp.hooks.owner_act_nonces import apply_owner_act_migrations  # noqa: E402
@@ -48,8 +50,20 @@ os.environ.setdefault("AWEB_INTERNAL_AUTH_SECRET", "test-internal-auth-secret")
 os.environ.setdefault("AWID_SERVICE_TOKEN", "aweb-server-tests-service-token-32-bytes")
 
 
+@dataclass(frozen=True)
+class SharedTestDatabase:
+    """The selected disposable database configuration and its one owned pool."""
+
+    config: DatabaseConfig = field(repr=False)
+    pool: Pool = field(repr=False)
+
+    @property
+    def dsn(self) -> str:
+        return self.config.get_dsn()
+
+
 @pytest_asyncio.fixture
-async def shared_test_pool(test_db_factory):
+async def shared_test_database(test_db_factory):
     db_manager = await test_db_factory.create_db(suffix="aweb_server")
     # Pre-provision pgcrypto in public at the point the fresh database is
     # materialized (pgdbm creates test databases from template0, so no
@@ -64,9 +78,15 @@ async def shared_test_pool(test_db_factory):
     )
     pool = await AsyncDatabaseManager.create_shared_pool(config)
     try:
-        yield pool
+        yield SharedTestDatabase(config=db_manager.config, pool=pool)
     finally:
         await pool.close()
+
+
+@pytest_asyncio.fixture
+async def shared_test_pool(shared_test_database):
+    """Borrow the same pool; the selected database fixture owns its cleanup."""
+    yield shared_test_database.pool
 
 
 @pytest_asyncio.fixture
