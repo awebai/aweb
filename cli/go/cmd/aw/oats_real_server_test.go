@@ -52,8 +52,9 @@ func TestOATSRealExplicitHomeJoinFrom(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(filepath.Dir(target), ".aw", "signing.key")); !os.IsNotExist(err) {
 		t.Fatalf("join wrote checkout identity: %v", err)
 	}
-	// Native init must also connect to the saved service when the unsigned
-	// transport token carries another hint. Both mint and connect use real writers.
+	// The supported token-taking team join path must also connect to the saved
+	// service when its unsigned token carries another hint. The explicit-home
+	// init path above and below uses --join-from, as its public flags require.
 	createdJSON := world.requireCommand(t, source.Home, "team", "invite", "--team-id", world.TeamID)
 	var created teamInviteOutput
 	if err := json.Unmarshal([]byte(createdJSON), &created); err != nil {
@@ -68,15 +69,20 @@ func TestOATSRealExplicitHomeJoinFrom(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The preceding fresh member spent the registry client's per-team
+	// certificate-miss refresh budget. Respect its five-second admission
+	// window (awid/registry.py:refresh_team_certificates_after_miss) before
+	// another fresh credential, so this checks join rather than suppression.
+	time.Sleep(5 * time.Second)
 	nativeTarget := filepath.Join(filepath.Dir(target), "native-identity")
-	world.requireCommand(t, nativeTarget, "init", "--invite", changedToken, "--name", "native-worker", "--do-not-touch-agents-md")
+	world.requireCommand(t, nativeTarget, "team", "join", changedToken, "--name", "native-worker")
 	nativeStatus := world.requireCommand(t, nativeTarget, "id", "status", "--team", world.TeamID)
 	var native identityStatusOutput
 	if err := json.Unmarshal([]byte(nativeStatus), &native); err != nil {
 		t.Fatal(err)
 	}
 	if !native.MintComplete || native.Service != world.Stack.ServerURL || native.Alias != "native-worker" {
-		t.Fatalf("native init did not complete at its saved service: %s", nativeStatus)
+		t.Fatalf("native join did not complete at its saved service: %s", nativeStatus)
 	}
 	// A selected fresh home must not read or replace a different checkout's
 	// principal while the same real invitation flow creates its recipient.
@@ -87,6 +93,8 @@ func TestOATSRealExplicitHomeJoinFrom(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The token-taking join likewise consumed the same real refresh budget.
+	time.Sleep(5 * time.Second)
 	neighborTarget := filepath.Join(filepath.Dir(target), "named-with-checkout-principal")
 	world.requireCommand(t, neighborTarget, "init", "--join-from", source.Home, "--join-team", world.TeamID, "--name", "neighbor-worker", "--do-not-touch-agents-md")
 	neighborJSON := world.requireCommand(t, neighborTarget, "id", "status", "--team", world.TeamID)
