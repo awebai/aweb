@@ -189,6 +189,7 @@ async def resolve_team_identity(
         agent_id=str(row["agent_id"]),
         identity_scope=normalize_identity_scope(cert_info.get("identity_scope")),
         certificate_id=cert_info.get("certificate_id", ""),
+        verified_team_did_key=verified_team_did_key,
     )
 
 

@@ -250,3 +250,41 @@ async def test_certificate_stream_rechecks_its_original_authority_on_grant_caden
     # Advance only the cadence boundary, never authority or dependency results.
     guard.checked_at -= GRANT_STREAM_RECHECK_SECONDS + 1
     assert await guard.reason() == (None if change == "unchanged" else "team_membership_not_current")
+
+
+@pytest.mark.asyncio
+async def test_an_open_certificate_event_stream_stops_after_rotation(pinning, monkeypatch):
+    import asyncio
+    from datetime import datetime, timedelta, timezone
+
+    from aweb import grant_streams
+    from aweb.routes import events
+    from aweb.team_auth_deps import get_team_identity
+
+    env = pinning
+    actor = await _admit(env, "eventstreamoriginal")
+    request = _request(env, actor)
+    identity = await get_team_identity(request, env.infra)
+    assert identity.verified_team_did_key == env.team_did
+    assert grant_streams.GRANT_STREAM_RECHECK_SECONDS == events.GRANT_STREAM_RECHECK_SECONDS == 30
+    # Shorten only the timer for this real stream; all authority/SQL/Redis
+    # observations and the original admitted credential remain untouched.
+    monkeypatch.setattr(grant_streams, "GRANT_STREAM_RECHECK_SECONDS", 0.05)
+    monkeypatch.setattr(events, "GRANT_STREAM_RECHECK_SECONDS", 0.05)
+    stream = events._sse_agent_events(
+        request=request, db=env.infra, redis=env.redis,
+        team_id=TEAM, agent_id=str(actor.id), identity=identity,
+        deadline=datetime.now(timezone.utc) + timedelta(seconds=3),
+    )
+    try:
+        assert await anext(stream) == ": keepalive\n\n"
+        assert "event: connected\n" in await anext(stream)
+        await _change_key(env)
+        frames = []
+        async with asyncio.timeout(4):
+            async for frame in stream:
+                frames.append(frame)
+        assert any("event: team_membership_not_current\n" in frame for frame in frames), frames
+        assert not any("event: actionable_" in frame for frame in frames), frames
+    finally:
+        await stream.aclose()

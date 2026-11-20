@@ -336,6 +336,7 @@ async def get_messaging_auth(request: Request, db=Depends(get_db)) -> MessagingA
             agent_id=team_identity.agent_id,
             identity_scope=team_identity.identity_scope,
             certificate_id=team_identity.certificate_id,
+            verified_team_did_key=team_identity.verified_team_did_key,
             verified_team_id=team_identity.team_id,
             id_chain=getattr(request.state, "id_chain", None),
             address_resolution=team_identity.address_resolution,
