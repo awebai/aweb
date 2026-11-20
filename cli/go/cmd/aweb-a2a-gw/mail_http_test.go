@@ -34,6 +34,7 @@ type mailHTTPOptions struct {
 
 type mailHTTPFixture struct {
 	server       *httptest.Server
+	rpcBaseURL   string
 	configPath   string
 	auditPath    string
 	gateway      *a2agw.Gateway
@@ -203,11 +204,6 @@ func newMailHTTPFixture(t *testing.T, options mailHTTPOptions) *mailHTTPFixture 
 	return f
 }
 
-func (f *mailHTTPFixture) close() {
-	f.server.Close()
-	f.runtime.bridge.Close()
-}
-
 func (f *mailHTTPFixture) call(input httpRPCInput) (httpRPCResult, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -215,7 +211,8 @@ func (f *mailHTTPFixture) call(input httpRPCInput) (httpRPCResult, error) {
 	if err != nil {
 		return httpRPCResult{}, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, f.server.URL+"/a2a/agents/"+firstNonEmpty(input.RouteID, "r_personal")+"/rpc", bytes.NewReader(data))
+	baseURL := firstNonEmpty(f.rpcBaseURL, f.server.URL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/a2a/agents/"+firstNonEmpty(input.RouteID, "r_personal")+"/rpc", bytes.NewReader(data))
 	if err != nil {
 		return httpRPCResult{}, err
 	}
@@ -493,7 +490,7 @@ func TestHTTPMailBridgeRefusesResolvedLocalTargetsBeforeSending(t *testing.T) {
 
 func TestNativeStartupRefusesLocalTargetBeforeOpeningListener(t *testing.T) {
 	f := newMailHTTPFixture(t, mailHTTPOptions{TargetReference: "default:a2a.aweb.ai/private"})
-	err := run([]string{"-config", f.configPath, "-listen", "invalid-listen-address"}, os.Stdout, os.Stderr)
+	err := run(t.Context(), []string{"-config", f.configPath, "-listen", "invalid-listen-address"}, os.Stdout, os.Stderr)
 	if err == nil || !strings.Contains(err.Error(), "route \"r_personal\"") || !strings.Contains(err.Error(), "An A2A route needs an agent with a public address") {
 		t.Fatalf("startup did not refuse local target before listening: %v", err)
 	}
@@ -515,7 +512,7 @@ func TestNativeOfflineConfigCheckDoesNotResolveTargets(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := f.resolutions.Load()
-	runErr := run([]string{"-config", f.configPath, "-check"}, output, os.Stderr)
+	runErr := run(t.Context(), []string{"-config", f.configPath, "-check"}, output, os.Stderr)
 	closeErr := output.Close()
 	if runErr != nil {
 		t.Fatal(runErr)

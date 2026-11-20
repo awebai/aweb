@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -254,7 +255,7 @@ func newManagedHTTPReplyFixture(t *testing.T, options managedHTTPReplyOptions) *
 	cfg := mustLoadConfig(t, f.configPath)
 	cfg.ManagedConfig = managedConfigForTest(provider.URL, "gw", "provider-token")
 	cfg.AllowQuestionReply = true
-	if err := applyManagedRuntimeConfig(&cfg); err != nil {
+	if err := applyManagedRuntimeConfig(t.Context(), &cfg); err != nil {
 		t.Fatal(err)
 	}
 	runtime, gateway, err := buildGatewayWithRuntime(cfg, nil, nil)
@@ -372,8 +373,39 @@ func (p *pausedReplyApplication) ApplyBridgeReply(reply a2agw.BridgeReply) (a2ag
 	return task, applied, err
 }
 
-func TestHTTPManagedFixtureJoinsReplyAuditBeforeTeardown(t *testing.T) {
-	f := newManagedHTTPReplyFixture(t, managedHTTPReplyOptions{})
+func TestHTTPGatewayShutdownJoinsReplyAudit(t *testing.T) {
+	t.Run("native", func(t *testing.T) {
+		assertShutdownJoinsReplyAudit(t, newMailHTTPFixture(t, mailHTTPOptions{PollTimeout: 3 * time.Second}))
+	})
+	t.Run("managed", func(t *testing.T) {
+		assertShutdownJoinsReplyAudit(t, newManagedHTTPReplyFixture(t, managedHTTPReplyOptions{}))
+	})
+}
+
+func assertShutdownJoinsReplyAudit(t *testing.T, f *mailHTTPFixture) {
+	t.Helper()
+	f.server.Close()
+	ctx, stop := context.WithCancel(context.Background())
+	defer stop()
+	server := gatewayHTTPServer("127.0.0.1:0", f.gateway)
+	defer server.Close()
+	listening := make(chan string, 1)
+	server.BaseContext = func(listener net.Listener) context.Context {
+		listening <- "http://" + listener.Addr().String()
+		return context.Background()
+	}
+	admissionStopped := make(chan struct{})
+	server.RegisterOnShutdown(func() { close(admissionStopped) })
+	done := make(chan error, 1)
+	go func() { done <- serveGateway(ctx, server, f.runtime.bridge, nil) }()
+	select {
+	case f.rpcBaseURL = <-listening:
+	case err := <-done:
+		t.Fatalf("gateway failed before it was ready: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("gateway did not listen")
+	}
+
 	paused := &pausedReplyApplication{gateway: f.gateway, applied: make(chan struct{}), release: make(chan struct{})}
 	var release sync.Once
 	unblock := func() { release.Do(func() { close(paused.release) }) }
@@ -390,27 +422,44 @@ func TestHTTPManagedFixtureJoinsReplyAuditBeforeTeardown(t *testing.T) {
 	if got := f.readTask(t, task); got.Status.State != a2agw.TaskStateCompleted {
 		t.Fatalf("reply was not visible before its final audit: %#v", got)
 	}
-	closed := make(chan struct{})
-	go func() { f.close(); close(closed) }()
+	stop()
 	select {
-	case <-closed:
-		t.Error("fixture closed while its reply worker still had a pending audit write")
+	case <-admissionStopped:
+	case <-time.After(2 * time.Second):
+		t.Fatal("gateway did not close its HTTP listener after shutdown was requested")
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("gateway stopped with a pending reply audit: %v", err)
 	case <-time.After(50 * time.Millisecond):
-		// Teardown must remain blocked on the deliberately paused worker.
 	}
 	unblock()
 	select {
-	case <-closed:
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("gateway shutdown: %v", err)
+		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("fixture did not finish after the reply worker was released")
+		t.Fatal("gateway did not finish after the reply worker was released")
 	}
-	// Close must return after the real JSONL write, without another polling wait.
-	data, err := os.ReadFile(f.auditPath)
+	audit, err := os.Open(f.auditPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), `"stage":"task_state_transition"`) {
-		t.Fatal("fixture closed before the reply worker finished its transition audit")
+	defer audit.Close()
+	decoder := json.NewDecoder(audit)
+	for {
+		var event a2agw.AuditEvent
+		err := decoder.Decode(&event)
+		if err == io.EOF {
+			t.Fatal("gateway stopped before writing the task transition audit")
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if event.Stage == "task_state_transition" && event.TaskID == task.ID && event.Outcome == string(a2agw.AuditOK) {
+			return
+		}
 	}
 }
 

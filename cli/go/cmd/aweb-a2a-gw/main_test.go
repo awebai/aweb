@@ -183,7 +183,7 @@ func TestA2AGatewayBuildsFromManagedRuntimeConfig(t *testing.T) {
 	cfgPath := filepath.Join(tmp, "a2a-gw-managed.yaml")
 	writeManagedConfig(t, cfgPath, "http://registry.invalid", managedServer.URL, "gw-test", "test-token")
 	cfg := mustLoadConfig(t, cfgPath)
-	if err := applyManagedRuntimeConfig(&cfg); err != nil {
+	if err := applyManagedRuntimeConfig(t.Context(), &cfg); err != nil {
 		t.Fatalf("applyManagedRuntimeConfig: %v", err)
 	}
 	if cfg.Host != "a2a.aweb.ai" || cfg.DefaultRouteID != "r_personal" || len(cfg.Routes) != 1 {
@@ -773,7 +773,7 @@ func TestA2AGatewayLoadsExplicitManagedEnvWhenConfigFileMissing(t *testing.T) {
 	if cfg.ManagedConfig.ConfigURL != managedServer.URL+"/runtime/config/gw-test" || cfg.ManagedConfig.GatewayID != "gw-test" || cfg.RegistryURL != "http://registry.invalid" {
 		t.Fatalf("unexpected env config: %#v", cfg)
 	}
-	if err := applyManagedRuntimeConfig(&cfg); err != nil {
+	if err := applyManagedRuntimeConfig(t.Context(), &cfg); err != nil {
 		t.Fatalf("applyManagedRuntimeConfig: %v", err)
 	}
 	if cfg.ManagedRuntime.ConfigRevision != "rev-env" || len(cfg.Routes) != 1 {
@@ -810,7 +810,7 @@ func TestA2AGatewayRejectsExpiredManagedRuntimeConfig(t *testing.T) {
 	cfgPath := filepath.Join(tmp, "a2a-gw-managed.yaml")
 	writeManagedConfig(t, cfgPath, "http://aweb.invalid", managedServer.URL, "gw-test", "test-token")
 	cfg := mustLoadConfig(t, cfgPath)
-	if err := applyManagedRuntimeConfig(&cfg); err == nil || !strings.Contains(err.Error(), "expired") {
+	if err := applyManagedRuntimeConfig(t.Context(), &cfg); err == nil || !strings.Contains(err.Error(), "expired") {
 		t.Fatalf("applyManagedRuntimeConfig err=%v, want expired", err)
 	}
 }
@@ -833,7 +833,7 @@ func TestA2AGatewayManagedStartsPendingWhenIdentityMissing(t *testing.T) {
 		RegistryURL:   registry.URL,
 		ManagedConfig: managedConfigForTest(managedServer.URL, "a2a-gateway", "test-token"),
 	}
-	snapshot, err := buildManagedSnapshot(cfg, managedStartDegraded)
+	snapshot, err := buildManagedSnapshot(t.Context(), cfg, managedStartDegraded)
 	if err != nil {
 		t.Fatalf("buildManagedSnapshot: %v", err)
 	}
@@ -878,8 +878,63 @@ func TestA2AGatewayManagedRejectsBadTokenAtStartup(t *testing.T) {
 		RegistryURL:   "http://registry.invalid",
 		ManagedConfig: managedConfigForTest(managedServer.URL, "a2a-gateway", "wrong-token"),
 	}
-	if _, err := buildManagedSnapshot(cfg, managedStartDegraded); err == nil || !strings.Contains(err.Error(), "HTTP 401") {
+	if _, err := buildManagedSnapshot(t.Context(), cfg, managedStartDegraded); err == nil || !strings.Contains(err.Error(), "HTTP 401") {
 		t.Fatalf("buildManagedSnapshot err=%v, want HTTP 401", err)
+	}
+}
+
+func TestManagedGatewayShutdownCancelsConfigRefresh(t *testing.T) {
+	t.Setenv("AWEB_A2A_GW_CONFIG_POLL_INTERVAL", "1s")
+	var fetches atomic.Int32
+	refreshStarted := make(chan struct{})
+	refreshCanceled := make(chan struct{})
+	release := make(chan struct{})
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch fetches.Add(1) {
+		case 1:
+			http.Error(w, `{"detail":{"code":"gateway_identity_missing"}}`, http.StatusNotFound)
+		case 2:
+			close(refreshStarted)
+			select {
+			case <-r.Context().Done():
+				close(refreshCanceled)
+			case <-release:
+			}
+		default:
+			t.Error("refresh fetched again during shutdown")
+			http.Error(w, "unexpected refresh", http.StatusServiceUnavailable)
+		}
+	}))
+	defer provider.Close()
+	defer close(release)
+	cfg := fileConfig{
+		Host:          "a2a.aweb.ai",
+		ManagedConfig: managedConfigForTest(provider.URL, "gateway", "test-token"),
+	}
+	ctx, stop := context.WithCancel(t.Context())
+	defer stop()
+	done := make(chan error, 1)
+	go func() { done <- runManagedGateway(ctx, cfg, "127.0.0.1:0") }()
+	select {
+	case <-refreshStarted:
+	case err := <-done:
+		t.Fatalf("managed gateway exited before refreshing: %v", err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("managed config refresh did not reach the provider")
+	}
+	stop()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("managed gateway shutdown: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("managed shutdown waited for the blocked provider response")
+	}
+	select {
+	case <-refreshCanceled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("managed shutdown did not cancel the in-flight provider request")
 	}
 }
 
@@ -1190,7 +1245,7 @@ func TestA2AGatewayRuntimeHealthReportsManagedConfig(t *testing.T) {
 	cfgPath := filepath.Join(tmp, "a2a-gw-managed-health.yaml")
 	writeManagedConfig(t, cfgPath, registry.URL, managedServer.URL, "gw-test", "test-token")
 	cfg := mustLoadConfig(t, cfgPath)
-	if err := applyManagedRuntimeConfig(&cfg); err != nil {
+	if err := applyManagedRuntimeConfig(t.Context(), &cfg); err != nil {
 		t.Fatalf("applyManagedRuntimeConfig: %v", err)
 	}
 	gateway, err := buildGateway(cfg)
@@ -1231,7 +1286,7 @@ func TestA2AGatewayRunCheckPrintsDiagnostics(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := run([]string{"--config", cfgPath, "--check"}, stdout, os.Stderr); err != nil {
+	if err := run(t.Context(), []string{"--config", cfgPath, "--check"}, stdout, os.Stderr); err != nil {
 		t.Fatalf("run --check: %v", err)
 	}
 	if err := stdout.Close(); err != nil {
@@ -1850,4 +1905,9 @@ func TestA2AGatewayImageHealthcheckProbesLive(t *testing.T) {
 	if len(probes) != 1 || probes[0] != want {
 		t.Fatalf("HEALTHCHECK probes=%q want [%q]", probes, want)
 	}
+}
+
+func buildGateway(cfg fileConfig) (*a2agw.Gateway, error) {
+	_, gateway, err := buildGatewayWithRuntime(cfg, nil, nil)
+	return gateway, err
 }

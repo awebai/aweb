@@ -939,6 +939,9 @@ atomic per route. Expiry removes stored records, and completion, cancellation,
 and task expiry stop bridge polling and remove its thread state. A shorter
 poll timeout stops automatic polling while retaining the live task's
 conversation binding for a later cancellation or reply until task expiry.
+On normal shutdown, the gateway stops accepting HTTP requests, drains admitted
+requests, stops managed configuration refresh, and waits for reply workers to
+finish their audit writes before exiting.
 
 A route needs a global agent with a public address. A local identity is not an
 A2A target: local agents cannot be reached from outside their team. A gateway

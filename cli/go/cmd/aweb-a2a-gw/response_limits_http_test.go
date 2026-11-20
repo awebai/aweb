@@ -55,7 +55,7 @@ func responseLimitProbes(t *testing.T) []responseLimitProbe {
 		}},
 		{Name: "managed-config", Limit: 1 << 20, Prefix: encodeLimitPayload(t, config), Read: func(endpoint string) error {
 			cfg := fileConfig{Host: "gateway.example", ManagedConfig: managedConfig{ConfigURL: endpoint + "/config", GatewayID: "gateway", BearerToken: "provider-token"}, ManagedRuntime: managedRuntimeMeta{ConfigRevision: "previous"}}
-			if err := applyManagedRuntimeConfig(&cfg); err != nil {
+			if err := applyManagedRuntimeConfig(t.Context(), &cfg); err != nil {
 				if cfg.ManagedRuntime.ConfigRevision != "previous" {
 					return fmt.Errorf("failed config read mutated its snapshot")
 				}

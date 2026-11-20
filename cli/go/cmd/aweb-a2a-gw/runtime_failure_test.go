@@ -12,7 +12,7 @@ import (
 
 func TestManagedInitialFailureUsesTypedBearerErrorThroughWrapping(t *testing.T) {
 	cfg := fileConfig{ManagedConfig: managedConfig{ConfigURL: "https://provider.example/config", GatewayID: "gateway"}}
-	err := applyManagedRuntimeConfig(&cfg)
+	err := applyManagedRuntimeConfig(t.Context(), &cfg)
 	if !errors.Is(err, errManagedBearerRequired) || !strings.Contains(err.Error(), "Configure managed_config.bearer_token or bearer_token_env and retry") {
 		t.Fatalf("error=%v", err)
 	}
@@ -43,7 +43,7 @@ func TestManagedConfigAndRegistryReadFailuresAreNotHealthyOrAbsent(t *testing.T)
 	}))
 	defer server.Close()
 	cfg := fileConfig{ManagedConfig: managedConfig{ConfigURL: server.URL + "/config", GatewayID: "gateway", BearerToken: "token"}}
-	err := applyManagedRuntimeConfig(&cfg)
+	err := applyManagedRuntimeConfig(t.Context(), &cfg)
 	var fetch *managedRuntimeConfigFetchError
 	if !errors.As(err, &fetch) || !strings.Contains(err.Error(), "Check the sender connection and retry with a complete body") {
 		t.Fatalf("error=%v", err)
@@ -85,7 +85,7 @@ func TestManagedProviderErrorsExposeOriginWithoutCredentialsOrResponseBody(t *te
 	if capabilityErr == nil || !strings.Contains(capabilityErr.Error(), server.URL) || !strings.Contains(capabilityErr.Error(), "Upgrade the provider") || strings.Contains(capabilityErr.Error(), "private-query-value") {
 		t.Fatalf("capability error=%v", capabilityErr)
 	}
-	err := applyManagedRuntimeConfig(&cfg)
+	err := applyManagedRuntimeConfig(t.Context(), &cfg)
 	if err == nil || !strings.Contains(err.Error(), "HTTP 401") || strings.Contains(err.Error(), "private-response-value") || strings.Contains(err.Error(), "private-query-value") {
 		t.Fatalf("fetch error=%v", err)
 	}
