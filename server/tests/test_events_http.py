@@ -907,6 +907,8 @@ async def test_events_stream_emits_one_mail_event_when_only_unread_count_changes
     )
 
     count_update_frame = await anext(stream)
+    assert count_update_frame.startswith("event: actionable_mail\n"), count_update_frame
+    assert json.loads(count_update_frame.split("data: ", 1)[1])["unread_count"] == 1
     assert await anext(stream) == ": keepalive\n\n"
     await stream.aclose()
 
