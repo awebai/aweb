@@ -7,7 +7,7 @@ registry serves without such an act stays refused.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from awid.signing import canonical_json_bytes, sign_message
@@ -26,12 +26,12 @@ from test_team_key_pinning import (
 SERVICE = "https://aweb.example.test"
 
 
-async def _register(env, team_sk):
+async def _register(env, team_sk, *, dry_run=False, timestamp=None):
     body = {
         "awid_team_id": TEAM,
         "service_url": SERVICE,
-        "dry_run": False,
-        "timestamp": datetime.now(timezone.utc)
+        "dry_run": dry_run,
+        "timestamp": (timestamp or datetime.now(timezone.utc))
         .replace(microsecond=0)
         .isoformat()
         .replace("+00:00", "Z"),
@@ -99,3 +99,26 @@ async def test_registration_by_the_held_key_is_synced(registering):
 
     assert response.status_code == 200, response.text
     assert response.json()["status"] == "synced"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("refusal", ["timestamp", "signature"])
+@pytest.mark.parametrize("dry_run", [False, True])
+async def test_invalid_registration_cannot_advance_the_pin(registering, refusal, dry_run):
+    env = registering
+    await register_namespace_controller(env, env.namespace_did)
+    next_sk, _, next_did = _make_keypair()
+    await rotate_team_key(env, env.namespace_sk, env.namespace_did, next_did)
+    before = await env.db.fetch_one(
+        "SELECT team_did_key, team_key_act_at FROM {{tables.teams}} WHERE team_id=$1", TEAM,
+    )
+    response = await _register(
+        env, env.team_sk if refusal == "signature" else next_sk,
+        dry_run=dry_run,
+        timestamp=datetime.now(timezone.utc) - timedelta(hours=1) if refusal == "timestamp" else None,
+    )
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"]["code"] == "invalid_controller_" + refusal
+    assert await env.db.fetch_one(
+        "SELECT team_did_key, team_key_act_at FROM {{tables.teams}} WHERE team_id=$1", TEAM,
+    ) == before
