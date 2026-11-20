@@ -18,9 +18,10 @@ class LocalNodePreparation(unittest.TestCase):
     def fixture(self) -> Path:
         root = Path(self.enterContext(tempfile.TemporaryDirectory()))
         (root / "scripts").mkdir()
-        (root / "scripts/test_server_local.py").write_bytes(
-            (ROOT / "scripts/test_server_local.py").read_bytes()
-        )
+        for name in ("test_server_local.py", "local_suite_slots.py"):
+            (root / "scripts" / name).write_bytes(
+                (ROOT / "scripts" / name).read_bytes()
+            )
         make = (ROOT / "Makefile").read_text()
         # Execute the committed installation/build owner with real npm and
         # dependency-free locked packages, then assert inputs at the suite boundary.
