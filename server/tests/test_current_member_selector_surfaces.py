@@ -45,6 +45,7 @@ from test_team_key_pinning import pinning as pinning
 class Surface(StrEnum):
     HTTP = "http"
     MCP = "mcp"
+    NATIVE = "native-owner"
 
 
 class Selector(StrEnum):
@@ -68,6 +69,7 @@ class Operation(StrEnum):
     USAGE_COUNT = "usage-count"
     STATUS = "workspace-status"
     ROOM = "room-fanout"
+    NOTICE_COUNT = "room-notice-count"
     CONTROL = "control-target"
     STATUS_HOST = "status-host-target"
     STATUS_PUBLISH = "status-publish-target"
@@ -94,7 +96,7 @@ CASES = (
     [
         Case(operation, surface, selector)
         for operation in (Operation.MAIL, Operation.CHAT)
-        for surface in Surface
+        for surface in (Surface.HTTP, Surface.MCP)
         for selector in Selector
         # HTTP mail alone exposes to_agent_id. Neither chat nor MCP adds that API.
         if selector is not Selector.ADDRESS
@@ -106,14 +108,14 @@ CASES = (
     + [
         Case(operation, surface, Selector.ADDRESS, global_residence=True)
         for operation in (Operation.MAIL, Operation.CHAT)
-        for surface in Surface
+        for surface in (Surface.HTTP, Surface.MCP)
     ]
     + [
         Case(Operation.TASK, surface, selector)
-        for surface in Surface
+        for surface in (Surface.HTTP, Surface.MCP)
         for selector in (Selector.ALIAS, Selector.AGENT_ID)
     ]
-    + [Case(Operation.ROSTER, surface) for surface in Surface]
+    + [Case(Operation.ROSTER, surface) for surface in (Surface.HTTP, Surface.MCP)]
     + [
         Case(operation, Surface.HTTP)
         for operation in (
@@ -130,11 +132,12 @@ CASES = (
         )
     ]
     + [Case(Operation.HANDLE, Surface.MCP, Selector.ADDRESS)]
+    + [Case(Operation.NOTICE_COUNT, Surface.NATIVE)]
     + [Case(Operation.CHAT, Surface.HTTP, Selector.AGENT_ID)]
     + [
         Case(operation, surface, superseded_sender=True)
         for operation in (Operation.MAIL, Operation.CHAT)
-        for surface in Surface
+        for surface in (Surface.HTTP, Surface.MCP)
     ]
 )
 
@@ -426,6 +429,14 @@ async def _probe(env, case, sender, target, *, phase, team_key):
         return await _tool(
             env, sender, "read_contact_messages", {"contact_id": env.matrix_contact_id}
         )
+    if op is Operation.NOTICE_COUNT:
+        from aweb.messaging.room_notices import count_room_notices
+
+        return {
+            "target_notices": await count_room_notices(
+                env.infra, env.matrix_target_identity
+            )
+        }
     if op is Operation.ROOM:
         from test_team_room import metadata, post, post_payload
 
@@ -493,7 +504,7 @@ def _check(result, case, target, *, current, phase):
         else:
             assert data[key] >= 2, context
         return
-    if op is Operation.ROOM:
+    if op in (Operation.ROOM, Operation.NOTICE_COUNT):
         assert data["target_notices"] == int(current), context
         return
     if isinstance(result, dict):
@@ -508,10 +519,29 @@ def _check(result, case, target, *, current, phase):
                 422
                 if op is Operation.TASK
                 or case.superseded_sender
-                or (op is Operation.CHAT and case.selector is Selector.DID_AW)
+                or case.selector is Selector.DID_AW
                 else 404
             )
             assert result.status_code == status, context
+
+
+async def _capture_room_actor(env, actor):
+    from starlette.requests import Request
+    from aweb.team_auth_deps import get_team_identity
+
+    headers = _signed_team_headers(actor.sk, actor.did, TEAM, actor.certificate)
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/v1/room",
+            "headers": [
+                (key.lower().encode(), value.encode()) for key, value in headers.items()
+            ],
+            "app": env.app,
+        }
+    )
+    return await get_team_identity(request, env.infra)
 
 
 @pytest.mark.asyncio
@@ -549,6 +579,18 @@ async def test_selector_and_surface_recheck_membership_after_product_rotation(
             )
             assert "error" not in contact, contact
             env.matrix_contact_id = contact["contact_id"]
+        if case.operation is Operation.NOTICE_COUNT:
+            from test_team_room import metadata, post, post_payload
+
+            room = await metadata(env, sender.alias)
+            sent = await post(
+                env,
+                room,
+                actor=sender.alias,
+                payload=post_payload(env, room, actor=sender.alias),
+            )
+            assert sent.status_code == 200, sent.text
+            env.matrix_target_identity = await _capture_room_actor(env, target)
         key = (env.team_sk, env.team_did)
         before = await _probe(env, case, sender, target, phase=0, team_key=key)
         _check(before, case, target, current=True, phase=0)
@@ -565,5 +607,7 @@ async def test_selector_and_surface_recheck_membership_after_product_rotation(
         ):
             assert await _effect_counts(env) == counts
         await _readmit(env, sender if case.superseded_sender else target, key)
+        if case.operation is Operation.NOTICE_COUNT:
+            env.matrix_target_identity = await _capture_room_actor(env, target)
         restored = await _probe(env, case, sender, target, phase=2, team_key=key)
         _check(restored, case, target, current=True, phase=2)
