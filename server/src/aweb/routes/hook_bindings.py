@@ -15,9 +15,9 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from aweb.application_state import application_registry_client
 from aweb.awid_error_handling import (
     awid_dependency_http_exception,
-    awid_registry_not_configured_exception,
 )
 from aweb.db import DatabaseInfra, get_db_infra
 from aweb.hook_bindings import (
@@ -139,9 +139,7 @@ async def _owner_act_route(request: Request, db_infra: DatabaseInfra, binding_id
     signing = _signing(payload.act)
     try:
         identity = await get_team_identity(request, db_infra)
-        registry_client = getattr(request.app.state, "awid_registry_client", None)
-        if registry_client is None:
-            raise awid_registry_not_configured_exception(operation="AWID owner-act team key")
+        registry_client = application_registry_client(request.app.state)
         async def pin_team_key(team_id: str, served_key: str) -> str:
             return await pinned_team_key(
                 db=db_infra.get_manager("aweb"), registry_client=registry_client,
