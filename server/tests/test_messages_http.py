@@ -7044,6 +7044,7 @@ async def test_send_message_accepts_signed_local_address_binding_without_registr
         bob_did_key,
     )
 
+    # docs/identity-messaging-contract.md:149-161: verified signed local binding needs no registry read.
     registry = AsyncMock()
     app = _build_test_app(aweb_cloud_db.aweb_db, registry)
 
