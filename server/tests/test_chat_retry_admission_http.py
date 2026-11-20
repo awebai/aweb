@@ -87,16 +87,20 @@ async def test_exact_continued_plaintext_retry_survives_retained_departure(chat_
     # Exercise the retained legacy departure shape on actual accepted parties.
     await env.db.execute(
         "UPDATE {{tables.chat_participants}} SET left_at=NOW() WHERE session_id=$1 AND did=$2",
-        UUID(session_id), env.dids["bob"],
+        UUID(session_id),
+        env.dids["bob"],
     )
     before = list(env.mutations)
     payload = _accepted_plaintext_request(row)
     raw = json.dumps(payload).encode()
     sk, did = env.keys["pilot"]
     repeated = await env.client.post(
-        f"/v1/chat/sessions/{session_id}/messages", content=raw,
-        headers={**_signed_identity_headers(sk, did, env.dids["pilot"], raw),
-                 "Content-Type": "application/json"},
+        f"/v1/chat/sessions/{session_id}/messages",
+        content=raw,
+        headers={
+            **_signed_identity_headers(sk, did, env.dids["pilot"], raw),
+            "Content-Type": "application/json",
+        },
     )
     assert repeated.status_code == 200, repeated.text
     assert repeated.json()["message_id"] == message_id
@@ -106,7 +110,9 @@ async def test_exact_continued_plaintext_retry_survives_retained_departure(chat_
 
 
 @pytest.mark.asyncio
-async def test_named_exact_retry_retains_local_party_after_current_key_gains_global_did(mail_server):
+async def test_named_exact_retry_retains_local_party_after_current_key_gains_global_did(
+    mail_server,
+):
     from messaging_actor_support import admit_messaging_actor
     from test_local_policy_refusal_boundaries import admitted_local_recipient
 
@@ -121,27 +127,40 @@ async def test_named_exact_retry_retains_local_party_after_current_key_gains_glo
         "SELECT * FROM {{tables.chat_messages}} WHERE message_id=$1", UUID(message_id)
     )
     await env.registry.revoke_team_certificate(
-        "acme.com", "ops", team_controller_signing_key=env.fixture.team_sk,
+        "acme.com",
+        "ops",
+        team_controller_signing_key=env.fixture.team_sk,
         certificate_id=bob.certificate_id,
     )
     global_bob = await admit_messaging_actor(
-        env.fixture, alias=bob.alias, team_id=bob.team, signing_key=bob.sk,
+        env.fixture,
+        alias=bob.alias,
+        team_id=bob.team,
+        signing_key=bob.sk,
         address="acme.com/local-bob",
     )
     assert global_bob.did_key == bob.did and global_bob.stable_id.startswith("did:aw:")
-    assert await env.db.fetch_value(
-        "SELECT did FROM {{tables.chat_participants}} WHERE session_id=$1 AND did=$2",
-        UUID(session_id), bob.did,
-    ) == bob.did
+    assert (
+        await env.db.fetch_value(
+            "SELECT did FROM {{tables.chat_participants}} WHERE session_id=$1 AND did=$2",
+            UUID(session_id),
+            bob.did,
+        )
+        == bob.did
+    )
     before = list(env.custody.payloads)
     payload = _accepted_plaintext_request(row)
     payload["message"] = payload.pop("body")
     payload.update(session_id=session_id, to_aliases=["local-bob"])
     raw = json.dumps(payload).encode()
     repeated = await env.client.post(
-        "/v1/chat/sessions", content=raw,
-        headers={**_signed_identity_headers(env.pilot_key, env.pilot_did, env.pilot_stable, raw),
-                 "X-Team-ID": "ops:acme.com", "Content-Type": "application/json"},
+        "/v1/chat/sessions",
+        content=raw,
+        headers={
+            **_signed_identity_headers(env.pilot_key, env.pilot_did, env.pilot_stable, raw),
+            "X-Team-ID": "ops:acme.com",
+            "Content-Type": "application/json",
+        },
     )
     assert repeated.status_code == 200, repeated.text
     assert repeated.json()["message_id"] == message_id
