@@ -499,7 +499,7 @@ class HostPublishedPortTests(unittest.TestCase):
                 try:
                     response = read_published_response(port)
                     break
-                except (urllib.error.URLError, TimeoutError) as error:
+                except (urllib.error.URLError, TimeoutError, http.client.RemoteDisconnected) as error:
                     if time.monotonic() >= deadline:
                         self.fail(f"original host publication never became reachable: {error}")
                     time.sleep(0.1)
