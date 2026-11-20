@@ -612,7 +612,7 @@ func TestRunGrantMintSnapshotsNamedAppToolsIntoResidentHome(t *testing.T) {
 		_ = os.RemoveAll(grantMintOut)
 	}
 	var runErr error
-	captureStdout(t, func() { runErr = runGrantMint(&cobra.Command{}, nil) })
+	captureIDCommandStdout(t, func() { runErr = runGrantMint(&cobra.Command{}, nil) })
 	if runErr != nil {
 		t.Fatalf("runGrantMint: %v", runErr)
 	}

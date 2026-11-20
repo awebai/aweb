@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -56,7 +57,7 @@ func TestHostedRemovalTracePreservesRequestAndResponse(t *testing.T) {
 				plan := selfRetirePlan{awebURL: server.URL + "/api", apiKey: apiKey, teamID: team, alias: "retiree"}
 				var result selfRetireResponse
 				var callErr error
-				trace := captureStderr(t, func() {
+				trace := captureHostedRemovalTrace(t, func() {
 					result, callErr = postSelfRetireWithAPIKey(context.Background(), plan)
 				})
 				if status == http.StatusOK {
@@ -88,4 +89,24 @@ func TestHostedRemovalTracePreservesRequestAndResponse(t *testing.T) {
 			})
 		}
 	}
+}
+
+func captureHostedRemovalTrace(t *testing.T, fn func()) string {
+	t.Helper()
+	f, err := os.CreateTemp(t.TempDir(), "stderr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := os.Stderr
+	os.Stderr = f
+	defer func() { os.Stderr = original; _ = f.Close() }()
+	fn()
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		t.Fatal(err)
+	}
+	data, err := io.ReadAll(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
 }

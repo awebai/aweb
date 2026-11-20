@@ -427,7 +427,7 @@ func TestTeamReplaceKeyWithoutHomePrintsCertificatePlacementMaterial(t *testing.
 	teamHumanReplaceKeyHome = ""
 	jsonFlag = true
 	var runErr error
-	printed := captureStdout(t, func() {
+	printed := captureIDCommandStdout(t, func() {
 		runErr = runTeamHumanReplaceKey(nil, []string{"alice"})
 	})
 	if runErr != nil {
