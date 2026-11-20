@@ -30,8 +30,32 @@ raise SystemExit(status)
 """
 
 
+REPORT_ORDER = """
+from pathlib import Path
+import os
+import time
+import pytest
+
+@pytest.hookimpl(hookwrapper=True, tryfirst=True)
+def pytest_runtest_logreport(report):
+    controller = not os.environ.get('PYTEST_XDIST_WORKER')
+    completed = report.nodeid.endswith('test_00_completed')
+    if controller and completed and report.when == 'call' and Path('hold-report').exists():
+        Path('report-held').touch()
+        deadline = time.monotonic() + 15
+        while not Path('release-report').exists():
+            if time.monotonic() >= deadline:
+                raise RuntimeError('controller report was not released')
+            time.sleep(0.01)
+    yield
+    # The outer wrapper returns after every report consumer, including JUnit.
+    if controller and completed and report.when == 'teardown':
+        Path('controller-completed').touch()
+"""
+
+
 class LocalPytestProgress(unittest.TestCase):
-    def start(self, *, suite: Suite, body: str):
+    def start(self, *, suite: Suite, body: str, hold_completed_report: bool = False):
         root = Path(self.enterContext(tempfile.TemporaryDirectory()))
         reports = root / "reports"
         scripts = root / "scripts"
@@ -44,6 +68,9 @@ class LocalPytestProgress(unittest.TestCase):
             if (ROOT / "scripts" / name).exists():
                 (scripts / name).write_bytes((ROOT / "scripts" / name).read_bytes())
         (root / "test_probe.py").write_text(body)
+        (root / "conftest.py").write_text(REPORT_ORDER)
+        if hold_completed_report:
+            (root / "hold-report").touch()
         guard = f"{sys.executable} {ROOT / 'scripts/test-egress/native.py'} --"
         (root / "Makefile").write_text(
             "prepare-server-node:\n\t@true\n"
@@ -81,14 +108,24 @@ class LocalPytestProgress(unittest.TestCase):
         self.addCleanup(cleanup)
         return child, root, reports / suite.value
 
-    def await_call(self, child, root):
+    def await_file(self, child, root, name):
         deadline = time.monotonic() + 15
-        while not (root / "active").exists():
+        while not (root / name).exists():
             if child.poll() is not None:
                 self.fail((root / "launcher.log").read_text())
             if time.monotonic() >= deadline:
-                self.fail("real pytest did not enter the blocking test")
+                self.fail(f"real pytest did not reach {name}")
             time.sleep(0.02)
+
+    def await_call(self, child, root):
+        self.await_file(child, root, "active")
+        if (root / "hold-report").exists():
+            self.await_file(child, root, "report-held")
+            self.assertFalse((root / "controller-completed").exists())
+            # Force worker execution ahead of controller report delivery, then
+            # release that delivery. Worker progress alone cannot acknowledge JUnit.
+            (root / "release-report").touch()
+        self.await_file(child, root, "controller-completed")
 
     def test_interruption_retains_live_node_phase_and_pytest_junit(self):
         body = """
@@ -108,7 +145,9 @@ def test_10_wait():
             (Suite.REGISTRY, signal.SIGTERM),
         ):
             with self.subTest(suite=suite, signal=number):
-                child, root, report = self.start(suite=suite, body=body)
+                child, root, report = self.start(
+                    suite=suite, body=body, hold_completed_report=suite is Suite.SERVER
+                )
                 self.await_call(child, root)
                 states = [
                     json.loads(p.read_text()) for p in report.glob("worker-*.json")
