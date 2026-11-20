@@ -14,10 +14,12 @@ from pydantic import BaseModel
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from aweb.api import RequestBodyCacheMiddleware, create_app
+from aweb.application_state import application_registry_client
 from aweb.identity_auth_deps import resolve_identity_auth
-from awid.did import did_from_public_key
 from awid.signing import canonical_json_bytes, sign_message
 from nacl.signing import SigningKey
+from test_dashboard_privacy import privacy_app as privacy_app
+from test_team_room import admit_room_member
 
 EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
 
@@ -26,10 +28,15 @@ EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
 @pytest.mark.parametrize("cached_only", [False, True])
 @pytest.mark.parametrize("version", [1, 2])
 @pytest.mark.parametrize("body", [b"", b'{"text":"signed bytes"}'])
-async def test_identity_request_auth_binds_cached_bytes(cached_only, version, body):
+async def test_identity_request_auth_binds_cached_bytes(privacy_app, cached_only, version, body):
     """An embedding host's byte cache and the full middleware bind the same body."""
+    env = privacy_app
+    await admit_room_member(env, alias="alice")
+    actor = env.actors["alice"]
     app = FastAPI()
     app.state.public_origin = "https://body.example"
+    # Borrow the serving fixture's real client; its lifecycle remains there.
+    app.state.awid_registry_client = application_registry_client(env.app.state)
     if not cached_only:
         app.add_middleware(RequestBodyCacheMiddleware)
 
@@ -40,8 +47,8 @@ async def test_identity_request_auth_binds_cached_bytes(cached_only, version, bo
         identity = await resolve_identity_auth(request)
         return {"did_key": identity.did_key}
 
-    key = SigningKey.generate()
-    did = did_from_public_key(bytes(key.verify_key))
+    key = SigningKey(actor.sk)
+    did = actor.did
     timestamp = datetime.now(timezone.utc).isoformat()
     payload = {
         "did_aw": "",
