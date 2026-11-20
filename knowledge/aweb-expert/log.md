@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-13
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-deploy-team.
+* **Creation**: lessons [a remote process check that names its target matches itself](/aweb-expert/lessons/a-remote-process-check-matches-itself.md) and [a reused image tag drops the older run's local reference](/aweb-expert/lessons/a-reused-image-tag-drops-the-older-local-reference.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
