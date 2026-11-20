@@ -2,6 +2,7 @@
 
 import json
 from types import SimpleNamespace
+from uuid import UUID
 
 import pytest
 
@@ -117,6 +118,39 @@ async def test_accepted_key_only_attachment_retry_keeps_its_protected_recipient(
             "Use the stored recipient or start a new conversation."
         )
     assert await node.db.fetch_value("SELECT count(*) FROM {{tables.messages}}") == 1
+    assert (
+        await node.db.fetch_value("SELECT sum(binds) FROM {{tables.attachment_test_storage}}") == 1
+    )
+
+
+@pytest.mark.asyncio
+async def test_exact_encrypted_chat_retry_survives_retained_departure(route_pair):
+    node = route_pair.source
+    sender, recipient = node.local, node.global_actor
+    for actor in (sender, recipient):
+        await connect_pair_actor(actor)
+    env = SimpleNamespace(
+        actors={"alice": sender, "bob": recipient},
+        app=node.server.app,
+        db=node.db,
+        client=node.client,
+        team_id=node.team_id,
+    )
+    _, _, wire, conversation_id = await managed_fixture(env, "chat")
+    path = f"/v1/chat/sessions/{conversation_id}/messages"
+    accepted = await _request(env, "alice", "POST", path, wire)
+    assert accepted.status_code == 200, accepted.text
+    # Retained legacy departure state on actual admitted parties, as in the
+    # plaintext control. Today's leaving flag ends a wait, not membership.
+    await node.db.execute(
+        "UPDATE {{tables.chat_participants}} SET left_at=NOW() WHERE session_id=$1 AND did=$2",
+        UUID(conversation_id),
+        recipient.stable,
+    )
+    repeated = await _request(env, "alice", "POST", path, wire)
+    assert repeated.status_code == 200, repeated.text
+    assert repeated.json() == accepted.json()
+    assert await node.db.fetch_value("SELECT count(*) FROM {{tables.chat_messages}}") == 2
     assert (
         await node.db.fetch_value("SELECT sum(binds) FROM {{tables.attachment_test_storage}}") == 1
     )
