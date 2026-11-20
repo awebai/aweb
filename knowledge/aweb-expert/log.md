@@ -1,5 +1,11 @@
 # Knowledge log
 
+## 2026-11-10
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-testing-servers (epic aweb-acww, tasks aweb-acmy and aweb-acww.6).
+* **Creation**: lesson [a gate speed-up counts only when landed and measured on the release path](/aweb-expert/lessons/a-speed-up-counts-only-on-the-release-path.md).
+* **Creation**: decision [gate concurrency comes from machine isolation](/aweb-expert/decisions/gate-concurrency-comes-from-machine-isolation.md), accepted by the operator 2026-11-10 (source-reported).
+* **Creation**: decision [the unchanged-version check compares installed wheels](/aweb-expert/decisions/unchanged-version-check-compares-installed-wheels.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
