@@ -64,11 +64,6 @@ class _FailingRegistryClient:
         raise RuntimeError(f"registry unavailable for {domain}/{name}")
 
 
-class _ConnectFailingRegistryClient:
-    async def get_team(self, domain: str, name: str):
-        raise httpx.ConnectError(f"connect failed for {domain}/{name}")
-
-
 class _FakeRedisPipeline:
     def __init__(self, redis) -> None:
         self.redis = redis
