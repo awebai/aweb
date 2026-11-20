@@ -23,7 +23,6 @@ from httpx import ASGITransport, AsyncClient
 from nacl.signing import SigningKey
 
 from awid.did import did_from_public_key, stable_id_from_public_key
-from awid.federation_errors import FederationAuthorityError
 from awid.e2ee_keys import (
     build_encryption_key_assertion,
     canonical_encryption_assertion,
