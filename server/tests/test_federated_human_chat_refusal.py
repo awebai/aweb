@@ -9,6 +9,7 @@ import httpx
 import pytest
 
 from aweb.application_state import application_registry_client
+from aweb.internal_auth import build_internal_auth_header_value
 from aweb.mcp.server import create_mcp_app
 from aweb.mcp.signing import HostedMessageSigningResult, canonical_signed_payload
 from awid.registry import RegistryClient
@@ -21,6 +22,16 @@ from test_same_origin_delivery import (
     same_origin as same_origin,
     same_origin_registry_socket as same_origin_registry_socket,
 )
+
+PROXY_SECRET = "federated-human-refusal-test-secret"
+
+
+@pytest.fixture(autouse=True)
+def configured_host_signing(monkeypatch):
+    # Configure the public host boundary before native/MCP creation, including
+    # hosts which capture their configuration at resource startup.
+    monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
+    monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", PROXY_SECRET)
 
 
 @pytest.mark.asyncio
@@ -150,6 +161,21 @@ async def test_remote_human_refusal_keeps_typed_body_through_source(
                 ),
                 "Content-Type": "application/json",
                 "Accept": "application/json, text/event-stream",
+                **(
+                    {
+                        "X-User-ID": "test-host-principal",
+                        "X-AWEB-Actor-ID": alice.agent_id,
+                        "X-AWEB-Auth": build_internal_auth_header_value(
+                            secret=PROXY_SECRET,
+                            team_id=TEAM,
+                            principal_type="u",
+                            principal_id="test-host-principal",
+                            actor_id=alice.agent_id,
+                        ),
+                    }
+                    if adapter == "mcp"
+                    else {}
+                ),
             },
         )
         if adapter == "mcp":
@@ -174,14 +200,17 @@ async def test_remote_human_refusal_keeps_typed_body_through_source(
         )
         # Publish the actual controller-signed kind and project from fresh SDK
         # evidence; keep the source's earlier optional-kind cache independent.
-        async with RegistryClient(
+        fresh_reader = RegistryClient(
             registry_url=source_registry.registry_url,
             service_token=source_registry.service_token,
             domain_verifier=same_origin.domain_authority,
-        ) as fresh_reader:
+        )
+        try:
             await same_origin.verify_human(
                 target, bob.stable_id, foreign_receiver.db, registry_client=fresh_reader
             )
+        finally:
+            await fresh_reader.aclose()
         refused = await send(cid if existing else str(uuid4()), continuation=existing)
         assert refused.get("http_status", 422) == 422, refused
         assert refused.get("reason") == "recipient_human_mail_only", refused
