@@ -288,7 +288,9 @@ def published_port(value: str) -> int:
         return port
     except ValueError as exc:
         raise Refused(
-            "Docker did not publish a unique loopback port. Inspect the local Docker port binding and rerun."
+            "Docker did not publish a unique loopback port. "
+            f"Port readback ({len(value)} characters): {value[:512]!r}. "
+            "Inspect the local Docker port binding and rerun."
         ) from exc
 
 

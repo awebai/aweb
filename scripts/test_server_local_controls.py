@@ -71,6 +71,29 @@ class LocalControls(unittest.TestCase):
                 local.published_port(value)
         self.assertEqual(local.published_port("127.0.0.1:5544\n"), 5544)
 
+    def test_rejected_port_readback_retains_bounded_escaped_evidence(self):
+        responses = (
+            "",
+            "invalid IP:0\n",
+            "warning: readback diagnostic\n127.0.0.1:5544\n",
+            "127.0.0.1:5544\n127.0.0.1:5545\n",
+            "0.0.0.0:5544\n",
+            "x" * 600,
+        )
+        for response in responses:
+            with self.subTest(response=response):
+                with self.assertRaises(local.Refused) as raised:
+                    local.published_port(response)
+                message = str(raised.exception)
+                self.assertIn(repr(response[:512]), message)
+                self.assertIn(f"{len(response)} characters", message)
+                self.assertNotIn("\n", message)
+                self.assertLess(len(message), 800)
+                self.assertTrue(
+                    message.endswith("Inspect the local Docker port binding and rerun.")
+                )
+        self.assertEqual(local.published_port("127.0.0.1:5544\n"), 5544)
+
     def test_local_worker_map_binds_each_worker_and_refuses_shared_ports(self):
         owner = local.memory_owner()._worker_module
         plan = [{"postgres_port": 15000 + i, "redis_port": 16000 + i} for i in range(4)]

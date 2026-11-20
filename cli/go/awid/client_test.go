@@ -2357,15 +2357,32 @@ func captureStderrForTest(t *testing.T, fn func()) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	os.Stderr = w
-	fn()
-	_ = w.Close()
-	os.Stderr = old
-	data, err := io.ReadAll(r)
-	if err != nil {
-		t.Fatal(err)
+	// Drain while the producer runs: HTTP tracing can exceed a pipe's capacity.
+	// The buffered result also lets cleanup finish if fn terminates this test.
+	type capturedOutput struct {
+		data []byte
+		err  error
 	}
-	return string(data)
+	result := make(chan capturedOutput, 1)
+	go func() {
+		data, readErr := io.ReadAll(r)
+		result <- capturedOutput{data: data, err: errors.Join(readErr, r.Close())}
+	}()
+	func() {
+		os.Stderr = w
+		defer func() {
+			os.Stderr = old
+			if err := w.Close(); err != nil {
+				t.Errorf("close captured stderr writer: %v", err)
+			}
+		}()
+		fn()
+	}()
+	captured := <-result
+	if captured.err != nil {
+		t.Fatal(captured.err)
+	}
+	return string(captured.data)
 }
 
 func TestNewWithIdentitySetsFields(t *testing.T) {
@@ -8047,5 +8064,17 @@ func TestClientJSONCaptureAfterCompressionAdvertisement(t *testing.T) {
 	status, err := VerifySignedPayload(body["signed_payload"].(string), body["signature"].(string), did, did)
 	if err != nil || status != Verified {
 		t.Fatalf("verification=%v %v", status, err)
+	}
+}
+
+func TestCaptureStderrDrainsLargeTrace(t *testing.T) {
+	payload := strings.Repeat("redacted trace line\n", 1<<16)
+	captured := captureStderrForTest(t, func() {
+		if _, err := io.WriteString(os.Stderr, payload); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if captured != payload {
+		t.Fatalf("captured %d bytes, want the complete %d-byte trace", len(captured), len(payload))
 	}
 }
