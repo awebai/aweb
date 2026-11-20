@@ -6,10 +6,10 @@ Redis chat-session publish and the agent wake publisher are recorded at their
 boundaries.
 """
 
-from identity_binding_support import seed_verified_bindings
-from team_facts_fixtures import legacy_registry
-
+import asyncio
+from contextlib import AsyncExitStack
 import json
+import os
 from datetime import datetime
 from types import SimpleNamespace
 from uuid import UUID, uuid4
@@ -17,26 +17,25 @@ from uuid import UUID, uuid4
 import httpx
 import pytest
 import pytest_asyncio
-from fastapi import Request
+from redis.asyncio import Redis
+from awid.registry import RegistryClient
+from awid.team_certificate import issue_team_certificate
+from aweb.api import create_app
+from aweb.db import DatabaseInfra
+from tests.real_stack import REGISTRY_URL
 
 from awid.signing import sign_message
 from aweb.coordination import tasks_service
-from aweb.coordination.routes.tasks import router as tasks_router
 from aweb.internal_auth import build_internal_auth_header_value
 from aweb.mcp.server import create_mcp_app
 from aweb.mcp.signing import HostedMessageSigningResult, canonical_signed_payload
 from aweb.mutation_hooks import create_mutation_handler
-from aweb.routes.chat import router as chat_router
-from aweb.team_auth_deps import TeamIdentity, get_team_identity
 from test_messages_http import (
-    _build_test_app,
-    _insert_agent,
-    _insert_team,
     _make_keypair,
-    _signed_identity_headers,
+    _signed_team_headers,
 )
 
-TEAM = "ops:acme.com"
+TEAM = "mutation-parity:local"
 INTERNAL_SECRET = "mutation-parity-test-secret"
 
 MESSAGE_SENT_KEYS = {
@@ -77,62 +76,110 @@ ACKNOWLEDGED_KEYS = {
 }
 
 
-class _RecordingRedis:
-    def __init__(self):
-        self.published = []
-
-    async def publish(self, channel, message):
-        self.published.append((channel, json.loads(message)))
-        return 0
-
-    async def hgetall(self, key):
-        # No member has recorded presence.
-        return {}
-
-
 class _RecordingWakes:
-    def __init__(self):
+    def __init__(self, publisher):
+        self.publisher = publisher
         self.submitted = []
 
     def submit(self, wakes):
         self.submitted.append({key: set(kinds) for key, kinds in wakes.items()})
+        self.publisher.submit(wakes)
+
+    async def close(self):
+        await self.publisher.close()
 
 
 @pytest_asyncio.fixture
-async def server(aweb_cloud_db, monkeypatch):
-    db = aweb_cloud_db.aweb_db
-    await _insert_team(db, TEAM)
-    keys = {}
-    agents = {}
-    workspaces = {}
-    for alias in ("pilot", "bob"):
-        sk, _, did_key = _make_keypair()
-        keys[alias] = (sk, did_key)
-        agents[alias] = await _insert_agent(
-            db,
-            team_id=TEAM,
-            alias=alias,
-            did_key=did_key,
-            did_aw=f"did:aw:{alias}",
-            address=f"acme.com/{alias}",
-        )
-        workspaces[alias] = uuid4()
-        await db.execute(
-            """INSERT INTO {{tables.workspaces}}
-               (workspace_id, team_id, agent_id, alias, workspace_type)
-               VALUES ($1, $2, $3, $4, 'hosted_mcp')""",
-            workspaces[alias],
-            TEAM,
-            UUID(agents[alias]),
-            alias,
-        )
+async def server(real_stack, shared_test_pool, monkeypatch):
+    """Actual registry admission, HTTP/MCP auth and Redis publications."""
+    monkeypatch.setenv("AWID_REGISTRY_URL", REGISTRY_URL)
     monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
     monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", INTERNAL_SECRET)
+    db = real_stack.aweb_db
+    namespace_key, _, namespace_did = _make_keypair()
+    team_key, _, team_did = _make_keypair()
+    async with (
+        Redis.from_url(os.environ["REDIS_URL"], decode_responses=True) as redis,
+        AsyncExitStack() as cleanup,
+    ):
+        infra = DatabaseInfra()
+        await infra.initialize(shared_pool=shared_test_pool)
+        cleanup.push_async_callback(infra.close)
+        app = create_app(
+            db_infra=infra,
+            redis=redis,
+            public_origin="http://test",
+            awid_transport=real_stack.awid,
+            host_runs_outbox_recovery=True,
+        )
+        await cleanup.enter_async_context(app.router.lifespan_context(app))
+        registry: RegistryClient = app.state.awid_registry_client
+        await registry.register_namespace("local", namespace_did, namespace_key)
+        await registry.register_team(
+            domain="local",
+            name="mutation-parity",
+            display_name="Mutation parity",
+            team_did_key=team_did,
+            visibility="public",
+            namespace_controller_signing_key=namespace_key,
+        )
+        keys, agents, workspaces, dids, certificates = {}, {}, {}, {}, {}
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as connecting:
+            for alias in ("pilot", "bob"):
+                sk, _, did = _make_keypair()
+                keys[alias] = (sk, did)
+                mapping = await registry.register_did(did, sk)
+                dids[alias] = mapping.did_aw
+                await registry.register_address(
+                    "local", alias, mapping.did_aw, namespace_key, current_did_key=did
+                )
+                certificate, encoded = issue_team_certificate(
+                    team_id=TEAM,
+                    team_signing_key=team_key,
+                    member_did_key=did,
+                    member_did_aw=mapping.did_aw,
+                    member_address=f"local/{alias}",
+                    alias=alias,
+                    identity_scope="global",
+                )
+                await registry.register_team_certificate(
+                    "local",
+                    "mutation-parity",
+                    team_controller_signing_key=team_key,
+                    certificate_id=certificate["certificate_id"],
+                    member_did_key=did,
+                    member_did_aw=mapping.did_aw,
+                    member_address=f"local/{alias}",
+                    alias=alias,
+                    identity_scope="global",
+                    certificate=encoded,
+                )
+                certificates[alias] = encoded
+                body = b"{}"
+                response = await connecting.post(
+                    "/v1/connect",
+                    content=body,
+                    headers={
+                        **_signed_team_headers(sk, did, TEAM, encoded, body),
+                        "Content-Type": "application/json",
+                    },
+                )
+                assert response.status_code == 200, response.text
+                connected = response.json()
+                agents[alias] = connected["agent_id"]
+                workspaces[alias] = UUID(connected["workspace_id"])
+        mutations, published = [], []
 
-    def signer_for(alias):
-        sk, did_key = keys[alias]
+        async def record_mutation(event_type, context):
+            mutations.append((event_type, dict(context)))
 
         async def signer(**kwargs):
+            alias = next(
+                alias for alias, agent_id in agents.items() if agent_id == kwargs["agent_id"]
+            )
+            sk, did_key = keys[alias]
             signed = canonical_signed_payload(dict(kwargs["payload"]))
             return HostedMessageSigningResult(
                 from_did=did_key,
@@ -141,150 +188,128 @@ async def server(aweb_cloud_db, monkeypatch):
                 signature=sign_message(sk, signed.encode()),
             )
 
-        return signer
-
-    current_actor = {"alias": "pilot"}
-
-    async def signer(**kwargs):
-        return await signer_for(current_actor["alias"])(**kwargs)
-
-    mutations = []
-
-    async def record_mutation(event_type, context):
-        mutations.append((event_type, dict(context)))
-
-    redis = _RecordingRedis()
-    app = _build_test_app(db, legacy_registry())
-    seed_verified_bindings(
-        app,
-        *(
-            (f"did:aw:{alias}", did, f"acme.com/{alias}")
-            for alias, (_, did) in keys.items()
-        ),
-    )
-    app.state.on_mutation = record_mutation
-
-    # The task routes run as the member named by the request; certificate
-    # verification, which the proxied MCP member does not use, is not under test.
-    async def task_identity(request: Request) -> TeamIdentity:
-        alias = request.headers["X-Test-Actor"]
-        return TeamIdentity(
-            team_id=TEAM,
-            alias=alias,
-            did_key=keys[alias][1],
-            did_aw=f"did:aw:{alias}",
-            address=f"acme.com/{alias}",
-            agent_id=agents[alias],
-            identity_scope="global",
-            certificate_id=f"cert-{alias}",
+        # The library app owns its ordinary MCP mount; the host extends it
+        # through the released public constructor on the same serving clients.
+        mcp = create_mcp_app(
+            db_infra=infra,
+            redis=redis,
+            registry_client=registry,
+            hosted_signer=signer,
+            public_origin=app.state.public_origin,
         )
-
-    app.include_router(tasks_router)
-    app.include_router(chat_router)
-    app.dependency_overrides[get_team_identity] = task_identity
-    for route in app.routes:
-        for dependency in getattr(
-            getattr(route, "dependant", None), "dependencies", []
-        ):
-            if getattr(dependency.call, "_aweb_grant_scope", None) in {
-                "coord.read",
-                "coord.write",
-            }:
-                app.dependency_overrides[dependency.call] = task_identity
-    mcp = create_mcp_app(db_infra=app.state.db, redis=redis, hosted_signer=signer)
-    app.mount("/mcp", mcp)
-    await mcp.startup()
-    try:
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://test"
-        ) as client:
-
-            async def mcp_result(alias, tool, **arguments):
-                current_actor["alias"] = alias
-                principal = str(uuid4())
-                headers = {
-                    "Accept": "application/json, text/event-stream",
-                    "X-Team-ID": TEAM,
-                    "X-User-ID": principal,
-                    "X-AWEB-Actor-ID": agents[alias],
-                    "X-AWEB-Auth": build_internal_auth_header_value(
-                        secret=INTERNAL_SECRET,
-                        team_id=TEAM,
-                        principal_type="u",
-                        principal_id=principal,
-                        actor_id=agents[alias],
-                    ),
-                }
-                response = await client.post(
-                    "/mcp/",
-                    headers=headers,
-                    json={
-                        "jsonrpc": "2.0",
-                        "id": 1,
-                        "method": "tools/call",
-                        "params": {"name": tool, "arguments": arguments},
-                    },
-                )
-                assert response.status_code == 200, response.text
-                result = response.json()
-                assert "error" not in result, result
-                return json.loads(result["result"]["content"][0]["text"])
-
-            async def mcp_call(alias, tool, **arguments):
-                payload = await mcp_result(alias, tool, **arguments)
-                assert "error" not in payload, payload
-                return payload
-
-            async def rest_task_response(alias, method, path, body=None):
-                return await client.request(
-                    method, path, json=body, headers={"X-Test-Actor": alias}
-                )
-
-            async def rest_task(alias, method, path, body=None):
-                response = await rest_task_response(alias, method, path, body)
-                assert response.status_code == 200, response.text
-                return response.json()
-
-            async def rest_post(alias, path, body=None):
-                sk, did_key = keys[alias]
-                data = json.dumps(body).encode() if body is not None else b""
-                response = await client.post(
-                    path,
-                    content=data,
-                    headers={
-                        "Content-Type": "application/json",
-                        **_signed_identity_headers(sk, did_key, "", data),
-                    },
-                )
-                assert response.status_code == 200, response.text
-                return response.json()
-
-            async def rest_mail(alias, *, body, to_alias=None, conversation_id=None):
-                target = (
-                    {"to_alias": to_alias}
-                    if to_alias
-                    else {"conversation_id": conversation_id}
-                )
-                return await rest_post(
-                    alias, "/v1/messages", {**target, "subject": "status", "body": body}
-                )
-
-            yield SimpleNamespace(
-                db=db,
-                app=app,
-                agents=agents,
-                workspaces=workspaces,
-                mutations=mutations,
-                redis=redis,
-                mcp_call=mcp_call,
-                mcp_result=mcp_result,
-                rest_post=rest_post,
-                rest_mail=rest_mail,
-                rest_task=rest_task,
-                rest_task_response=rest_task_response,
+        app.mount("/parity-mcp", mcp)
+        await mcp.startup()
+        cleanup.push_async_callback(mcp.shutdown)
+        app.state.on_mutation = record_mutation
+        async with redis.pubsub() as stream:
+            await stream.psubscribe(
+                "events:*", f"team-events:{TEAM}", "chat-session:*", "parity-barrier:*"
             )
-    finally:
-        await mcp.shutdown()
+            barrier_channel = f"parity-barrier:{uuid4()}"
+
+            async def collect_publications():
+                # Same Redis backend, real subscribed frames, bounded by an
+                # explicit marker after the HTTP handler's awaited writes.
+                marker = uuid4().hex
+                await redis.publish(barrier_channel, marker)
+                async with asyncio.timeout(5):
+                    while True:
+                        frame = await stream.get_message(ignore_subscribe_messages=True, timeout=1)
+                        if frame is None:
+                            continue
+                        if frame["channel"] == barrier_channel and frame["data"] == marker:
+                            return
+                        published.append((frame["channel"], json.loads(frame["data"])))
+
+            await collect_publications()
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://test"
+            ) as client:
+
+                async def mcp_result(alias, tool, **arguments):
+                    principal = str(uuid4())
+                    headers = {
+                        "Accept": "application/json, text/event-stream",
+                        "X-Team-ID": TEAM,
+                        "X-User-ID": principal,
+                        "X-AWEB-Actor-ID": agents[alias],
+                        "X-AWEB-Auth": build_internal_auth_header_value(
+                            secret=INTERNAL_SECRET,
+                            team_id=TEAM,
+                            principal_type="u",
+                            principal_id=principal,
+                            actor_id=agents[alias],
+                        ),
+                    }
+                    response = await client.post(
+                        "/parity-mcp/",
+                        headers=headers,
+                        json={
+                            "jsonrpc": "2.0",
+                            "id": 1,
+                            "method": "tools/call",
+                            "params": {"name": tool, "arguments": arguments},
+                        },
+                    )
+                    assert response.status_code == 200, response.text
+                    result = response.json()
+                    assert "error" not in result, result
+                    await collect_publications()
+                    return json.loads(result["result"]["content"][0]["text"])
+
+                async def mcp_call(alias, tool, **arguments):
+                    result = await mcp_result(alias, tool, **arguments)
+                    assert "error" not in result, result
+                    return result
+
+                async def rest_task_response(alias, method, path, body=None):
+                    sk, did = keys[alias]
+                    content = json.dumps(body).encode() if body is not None else b""
+                    response = await client.request(
+                        method,
+                        path,
+                        content=content,
+                        headers={
+                            "Content-Type": "application/json",
+                            **_signed_team_headers(sk, did, TEAM, certificates[alias], content),
+                        },
+                    )
+                    await collect_publications()
+                    return response
+
+                async def rest_task(alias, method, path, body=None):
+                    response = await rest_task_response(alias, method, path, body)
+                    assert response.status_code == 200, response.text
+                    return response.json()
+
+                async def rest_post(alias, path, body=None):
+                    return await rest_task(alias, "POST", path, body)
+
+                async def rest_mail(alias, *, body, to_alias=None, conversation_id=None):
+                    target = (
+                        {"to_alias": to_alias} if to_alias else {"conversation_id": conversation_id}
+                    )
+                    return await rest_post(
+                        alias, "/v1/messages", {**target, "subject": "status", "body": body}
+                    )
+
+                yield SimpleNamespace(
+                    db=db,
+                    app=app,
+                    agents=agents,
+                    workspaces=workspaces,
+                    dids=dids,
+                    keys=keys,
+                    mutations=mutations,
+                    redis=redis,
+                    published=published,
+                    mcp_call=mcp_call,
+                    mcp_result=mcp_result,
+                    rest_post=rest_post,
+                    rest_mail=rest_mail,
+                    rest_task=rest_task,
+                    rest_task_response=rest_task_response,
+                )
 
 
 def _events(server, event_type):
@@ -327,14 +352,14 @@ async def test_mcp_send_mail_fires_message_sent_like_rest(server):
     assert set(events[3]) == MESSAGE_SENT_KEYS
     assert events[3]["to_agent_id"] == server.agents["pilot"]
     assert events[3]["to_alias"] == "pilot"
-    for event, sent in zip(mcp_events, (fresh, continued)):
+    for event, sent in zip(mcp_events, (fresh, continued), strict=True):
         assert set(event) == set(rest_event)
         assert event["team_id"] == TEAM
         assert event["from_agent_id"] == server.agents["pilot"]
         assert event["to_agent_id"] == server.agents["bob"]
         assert event["to_alias"] == "bob"
         assert event["from_alias"] == "pilot"
-        assert event["from_did_aw"] == "did:aw:pilot"
+        assert event["from_did_aw"] == server.dids["pilot"]
         assert event["conversation_id"] == sent["conversation_id"]
         assert event["content_mode"] == "legacy_plaintext_v1"
         assert event["priority"] == "normal"
@@ -347,9 +372,7 @@ async def test_a_mail_reply_reaches_the_recipients_event_stream(server, via):
     opened = await server.mcp_call(
         "bob", "send_mail", to="pilot", subject="new", body="open", plaintext=True
     )
-    server.app.state.on_mutation = create_mutation_handler(
-        server.redis, server.app.state.db
-    )
+    server.app.state.on_mutation = create_mutation_handler(server.redis, server.app.state.db)
 
     if via == "mcp":
         await server.mcp_call(
@@ -360,9 +383,7 @@ async def test_a_mail_reply_reaches_the_recipients_event_stream(server, via):
             plaintext=True,
         )
     else:
-        await server.rest_mail(
-            "pilot", conversation_id=opened["conversation_id"], body="reply"
-        )
+        await server.rest_mail("pilot", conversation_id=opened["conversation_id"], body="reply")
 
     assert _published(server, f"events:{server.agents['bob']}") == ["message.delivered"]
 
@@ -395,7 +416,9 @@ async def test_mcp_check_mail_fires_message_acknowledged_once_per_message(server
 async def test_check_mail_acknowledges_like_the_ack_route(server):
     by_route = await server.rest_mail("bob", to_alias="pilot", body="one")
     by_tool = await server.rest_mail("bob", to_alias="pilot", body="two")
-    wakes = server.app.state.agent_wake_publisher = _RecordingWakes()
+    wakes = server.app.state.agent_wake_publisher = _RecordingWakes(
+        server.app.state.agent_wake_publisher
+    )
 
     async def stored_read_at():
         rows = await server.db.fetch_all(
@@ -404,9 +427,7 @@ async def test_check_mail_acknowledges_like_the_ack_route(server):
         )
         return {str(row["message_id"]): row["read_at"] for row in rows}
 
-    acknowledged = await server.rest_post(
-        "pilot", f"/v1/messages/{by_route['message_id']}/ack"
-    )
+    acknowledged = await server.rest_post("pilot", f"/v1/messages/{by_route['message_id']}/ack")
     # The tool acknowledges the unread mail it returns: the one the route left.
     await server.mcp_call("pilot", "check_mail")
 
@@ -415,9 +436,7 @@ async def test_check_mail_acknowledges_like_the_ack_route(server):
         by_route["message_id"],
         by_tool["message_id"],
     ]
-    route_event, tool_event = (
-        {**event, "message_id": "<this message>"} for event in events
-    )
+    route_event, tool_event = ({**event, "message_id": "<this message>"} for event in events)
     assert tool_event == route_event
     assert route_event == {
         "team_id": TEAM,
@@ -428,7 +447,7 @@ async def test_check_mail_acknowledges_like_the_ack_route(server):
         "subject": "status",
         "content_mode": "legacy_plaintext_v1",
     }
-    assert wakes.submitted == [{"did:did:aw:pilot": {"mail"}}] * 2
+    assert wakes.submitted == [{f"did:{server.dids['pilot']}": {"mail"}}] * 2
     read_at = await stored_read_at()
     assert read_at[by_route["message_id"]] == datetime.fromisoformat(
         acknowledged["acknowledged_at"]
@@ -468,7 +487,7 @@ async def test_mcp_send_chat_fires_chat_message_sent_like_rest(server):
         assert event["conversation_id"] == opened["conversation_id"]
         assert event["from_agent_id"] == server.agents["pilot"]
         assert event["from_alias"] == "pilot"
-        assert event["from_did_aw"] == "did:aw:pilot"
+        assert event["from_did_aw"] == server.dids["pilot"]
         assert event["to_aliases"] == ["bob"]
         assert event["content_mode"] == "legacy_plaintext_v1"
     assert [event["preview"] for event in sent] == ["hello bob", "still there?"]
@@ -476,11 +495,9 @@ async def test_mcp_send_chat_fires_chat_message_sent_like_rest(server):
 
 @pytest.mark.asyncio
 async def test_mcp_mark_chat_read_publishes_read_receipt_like_rest(server):
-    opened = await server.mcp_call(
-        "bob", "send_chat", to="pilot", message="ping", plaintext=True
-    )
+    opened = await server.mcp_call("bob", "send_chat", to="pilot", message="ping", plaintext=True)
     session_id = opened["conversation_id"]
-    before = len(server.redis.published)
+    before = len(server.published)
 
     marked = await server.mcp_call(
         "pilot",
@@ -491,13 +508,13 @@ async def test_mcp_mark_chat_read_publishes_read_receipt_like_rest(server):
     assert marked["messages_marked"] == 1
     receipts = [
         payload
-        for channel, payload in server.redis.published[before:]
+        for channel, payload in server.published[before:]
         if payload.get("signal_type") == "read_receipt"
     ]
     assert len(receipts) == 1
     assert receipts[0]["session_id"] == session_id
     assert receipts[0]["message_id"] == opened["message_id"]
-    assert receipts[0]["agent_id"] == "did:aw:pilot"
+    assert receipts[0]["agent_id"] == server.dids["pilot"]
 
     # Nothing newly read: no receipt, as on the REST route.
     again = await server.mcp_call(
@@ -509,7 +526,7 @@ async def test_mcp_mark_chat_read_publishes_read_receipt_like_rest(server):
     assert again["messages_marked"] == 0
     assert [
         payload
-        for channel, payload in server.redis.published[before:]
+        for channel, payload in server.published[before:]
         if payload.get("signal_type") == "read_receipt"
     ] == receipts
 
@@ -518,11 +535,11 @@ async def test_mcp_mark_chat_read_publishes_read_receipt_like_rest(server):
 @pytest.mark.parametrize("shape", ["message_ids", "up_to_message_id"])
 async def test_mark_chat_read_marks_like_the_read_route(server, shape):
     server.app.state.redis = server.redis
-    wakes = server.app.state.agent_wake_publisher = _RecordingWakes()
-
-    opened = await server.mcp_call(
-        "bob", "send_chat", to="pilot", message="ping", plaintext=True
+    wakes = server.app.state.agent_wake_publisher = _RecordingWakes(
+        server.app.state.agent_wake_publisher
     )
+
+    opened = await server.mcp_call("bob", "send_chat", to="pilot", message="ping", plaintext=True)
     session_id = opened["conversation_id"]
     continued = await server.mcp_call(
         "bob",
@@ -542,7 +559,7 @@ async def test_mark_chat_read_marks_like_the_read_route(server, shape):
             if shape == "message_ids"
             else {"up_to_message_id": message_id}
         )
-        published, woken = len(server.redis.published), len(wakes.submitted)
+        published, woken = len(server.published), len(wakes.submitted)
 
         marked = []
         # The second call finds nothing left to mark.
@@ -559,28 +576,29 @@ async def test_mark_chat_read_marks_like_the_read_route(server, shape):
 
         read_by = await server.db.fetch_all(
             """SELECT agent_id FROM {{tables.chat_message_reads}}
-               WHERE session_id = $1 AND did = 'did:aw:pilot' AND message_id = $2""",
+               WHERE session_id = $1 AND did = $3 AND message_id = $2""",
             UUID(session_id),
             UUID(message_id),
+            server.dids["pilot"],
         )
         receipt = await server.db.fetch_one(
             """SELECT agent_id, last_read_message_id FROM {{tables.chat_read_receipts}}
-               WHERE session_id = $1 AND did = 'did:aw:pilot'""",
+               WHERE session_id = $1 AND did = $2""",
             UUID(session_id),
+            server.dids["pilot"],
         )
         observed[via] = {
             "marked": marked,
             "read_by": [str(row["agent_id"]) for row in read_by],
             "receipt_by": str(receipt["agent_id"]),
-            "receipt_names_the_message": receipt["last_read_message_id"]
-            == UUID(message_id),
+            "receipt_names_the_message": receipt["last_read_message_id"] == UUID(message_id),
             "signals": [
                 (
                     payload["agent_id"],
                     payload["session_id"] == session_id,
                     payload["message_id"] == message_id,
                 )
-                for _, payload in server.redis.published[published:]
+                for _, payload in server.published[published:]
                 if payload.get("signal_type") == "read_receipt"
             ],
             "wakes": wakes.submitted[woken:],
@@ -592,8 +610,8 @@ async def test_mark_chat_read_marks_like_the_read_route(server, shape):
         "read_by": [server.agents["pilot"]],
         "receipt_by": server.agents["pilot"],
         "receipt_names_the_message": True,
-        "signals": [("did:aw:pilot", True, True)],
-        "wakes": [{"did:did:aw:pilot": {"chat"}}] * 2,
+        "signals": [(server.dids["pilot"], True, True)],
+        "wakes": [{f"did:{server.dids['pilot']}": {"chat"}}] * 2,
     }
 
 
@@ -681,7 +699,7 @@ async def test_mcp_task_create_fires_the_events_of_its_rest_route(server):
     assert [kind for kind, _ in route_events] == ["task.created"]
     assert tool_events == route_events
     assert route_events[0][1]["actor_agent_id"] == server.agents["pilot"]
-    assert route_events[0][1]["actor_did_aw"] == "did:aw:pilot"
+    assert route_events[0][1]["actor_did_aw"] == server.dids["pilot"]
     stored = await server.db.fetch_all(
         "SELECT created_by_alias, created_by_did, assignee_did FROM {{tables.tasks}} WHERE task_id = ANY($1::uuid[])",
         [UUID(by_tool["task_id"]), UUID(by_route["task_id"])],
@@ -689,16 +707,14 @@ async def test_mcp_task_create_fires_the_events_of_its_rest_route(server):
     assert [dict(row) for row in stored] == [
         {
             "created_by_alias": "pilot",
-            "created_by_did": "did:aw:pilot",
-            "assignee_did": "did:aw:bob",
+            "created_by_did": server.dids["pilot"],
+            "assignee_did": server.dids["bob"],
         },
     ] * 2
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "tool, arguments, method, suffix, body, earlier_statuses", TASK_CHANGES
-)
+@pytest.mark.parametrize("tool, arguments, method, suffix, body, earlier_statuses", TASK_CHANGES)
 async def test_mcp_task_tool_fires_the_events_of_its_rest_route(
     server,
     tool,
@@ -710,9 +726,7 @@ async def test_mcp_task_tool_fires_the_events_of_its_rest_route(
 ):
     fired = {}
     for via in ("mcp", "rest"):
-        task = await server.rest_task(
-            "pilot", "POST", "/v1/tasks", {"title": "Same change"}
-        )
+        task = await server.rest_task("pilot", "POST", "/v1/tasks", {"title": "Same change"})
         for status in earlier_statuses:
             await server.rest_task(
                 "pilot", "PATCH", f"/v1/tasks/{task['task_ref']}", {"status": status}
@@ -721,9 +735,7 @@ async def test_mcp_task_tool_fires_the_events_of_its_rest_route(
         if via == "mcp":
             await server.mcp_call("pilot", tool, ref=task["task_ref"], **arguments)
         else:
-            await server.rest_task(
-                "pilot", method, f"/v1/tasks/{task['task_ref']}{suffix}", body
-            )
+            await server.rest_task("pilot", method, f"/v1/tasks/{task['task_ref']}{suffix}", body)
         fired[via] = _fired_since(server, start, task)
 
     assert fired["rest"], "the route fired nothing to compare with"
@@ -746,9 +758,7 @@ async def _set_status(server, via, alias, ref, status):
             "open": "task_reopen",
         }[status]
         return await server.mcp_call(alias, tool, ref=ref)
-    return await server.rest_task(
-        alias, "PATCH", f"/v1/tasks/{ref}", {"status": status}
-    )
+    return await server.rest_task(alias, "PATCH", f"/v1/tasks/{ref}", {"status": status})
 
 
 async def _claims(server, task_ref):
@@ -768,17 +778,13 @@ async def _focus(server, alias):
 
 
 def _published(server, channel):
-    return [
-        payload["type"] for name, payload in server.redis.published if name == channel
-    ]
+    return [payload["type"] for name, payload in server.published if name == channel]
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("via", ["mcp", "rest"])
 async def test_claim_then_close_releases_the_claim_and_reaches_the_streams(server, via):
-    server.app.state.on_mutation = create_mutation_handler(
-        server.redis, server.app.state.db
-    )
+    server.app.state.on_mutation = create_mutation_handler(server.redis, server.app.state.db)
     task = await _create_task(server, via, "pilot", "Stream me")
     ref = task["task_ref"]
 
@@ -807,9 +813,7 @@ async def test_claim_then_close_releases_the_claim_and_reaches_the_streams(serve
         "task.status_changed",
     ]
     unclaimed = [
-        payload
-        for name, payload in server.redis.published
-        if payload["type"] == "task.unclaimed"
+        payload for name, payload in server.published if payload["type"] == "task.unclaimed"
     ]
     assert [(payload["task_ref"], payload["alias"]) for payload in unclaimed] == [
         (ref, "pilot")
@@ -880,16 +884,10 @@ async def test_a_refused_close_keeps_the_claim_and_fires_nothing(server, via):
 
 
 @pytest.mark.asyncio
-async def test_a_close_that_rolls_back_restores_the_claim_and_fires_nothing(
-    server, monkeypatch
-):
-    task = await server.rest_task(
-        "pilot", "POST", "/v1/tasks", {"title": "Rolled back"}
-    )
+async def test_a_close_that_rolls_back_restores_the_claim_and_fires_nothing(server, monkeypatch):
+    task = await server.rest_task("pilot", "POST", "/v1/tasks", {"title": "Rolled back"})
     ref = task["task_ref"]
-    await server.rest_task(
-        "pilot", "PATCH", f"/v1/tasks/{ref}", {"status": "in_progress"}
-    )
+    await server.rest_task("pilot", "PATCH", f"/v1/tasks/{ref}", {"status": "in_progress"})
     start = len(server.mutations)
     release = tasks_service.release_task_claims_on
     released = []
@@ -900,9 +898,7 @@ async def test_a_close_that_rolls_back_restores_the_claim_and_fires_nothing(
 
     monkeypatch.setattr(tasks_service, "release_task_claims_on", release_then_fail)
     with pytest.raises(RuntimeError, match="fails after the release"):
-        await server.rest_task(
-            "pilot", "PATCH", f"/v1/tasks/{ref}", {"status": "closed"}
-        )
+        await server.rest_task("pilot", "PATCH", f"/v1/tasks/{ref}", {"status": "closed"})
 
     assert released == [str(server.workspaces["pilot"])]
     assert server.mutations[start:] == []
@@ -932,18 +928,19 @@ async def test_mcp_task_tools_answer_a_conflict_or_refusal_as_an_error(server):
         """INSERT INTO {{tables.tasks}}
            (task_id, team_id, task_number, root_task_seq, task_ref_suffix, title,
             assignee_alias, assignee_did, created_by_alias, app_request)
-           VALUES ($1, $2, 900, 900, 'zzzz', 'App request', 'bob', 'did:aw:bob', 'pilot', '{}'::jsonb)""",
+           VALUES ($1, $2, 900, 900, 'zzzz', 'App request', 'bob', $3, 'pilot', '{}'::jsonb)""",
         request_id,
         TEAM,
+        server.dids["bob"],
     )
     for tool, arguments in (
         ("task_claim", {}),
         ("task_update", {"assignee": "pilot"}),
         ("task_update", {"status": "closed", "assignee": "pilot"}),
     ):
-        assert await server.mcp_result(
-            "pilot", tool, ref=str(request_id), **arguments
-        ) == {"error": "target_mismatch"}
+        assert await server.mcp_result("pilot", tool, ref=str(request_id), **arguments) == {
+            "error": "target_mismatch"
+        }
 
     assert server.mutations[start:] == []
     assert dict(
@@ -971,9 +968,7 @@ async def test_mcp_task_tools_answer_a_conflict_or_refusal_as_an_error(server):
         ("task_comment_add", {"body": "x" * 65537}),
     ],
 )
-async def test_mcp_task_tools_refuse_what_their_rest_routes_refuse(
-    server, tool, arguments
-):
+async def test_mcp_task_tools_refuse_what_their_rest_routes_refuse(server, tool, arguments):
     task = await server.rest_task("pilot", "POST", "/v1/tasks", {"title": "Bounds"})
     before = await server.db.fetch_one(
         "SELECT * FROM {{tables.tasks}} WHERE task_id = $1", UUID(task["task_id"])
@@ -1021,9 +1016,7 @@ async def test_mcp_task_tools_refuse_what_their_rest_routes_refuse(
             f"/v1/tasks/{task['task_ref']}/comments",
             {"body": arguments["body"]},
         )
-    assert (
-        await server.rest_task_response("pilot", method, path, body)
-    ).status_code == 422
+    assert (await server.rest_task_response("pilot", method, path, body)).status_code == 422
 
 
 @pytest.mark.asyncio
