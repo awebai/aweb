@@ -13,6 +13,7 @@ from fastapi.responses import StreamingResponse
 from redis.asyncio import Redis
 
 from aweb.auth import validate_workspace_id
+from aweb.application_state import application_registry_client
 from aweb.team_auth_deps import TeamIdentity, team_identity_with_grant_scope
 from aweb.internal_auth import INTERNAL_AUTH_HEADER
 
@@ -355,7 +356,7 @@ async def status(
     grant_liveness_by_workspace = await valid_grant_liveness_by_workspace(
         aweb_db,
         workspace_ids,
-        registry_client=getattr(request.app.state, "awid_registry_client", None),
+        registry_client=application_registry_client(request.app.state),
         request=request,
     )
 

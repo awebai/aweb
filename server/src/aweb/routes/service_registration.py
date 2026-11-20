@@ -14,6 +14,7 @@ from awid.dns_auth import enforce_timestamp_skew
 from awid.log import canonical_server_origin
 from awid.signing import canonical_json_bytes, verify_did_key_signature
 from awid.team_ids import parse_team_id
+from aweb.application_state import RegistryClientUnavailable, application_registry_client
 from aweb.config import get_settings
 from aweb.deps import get_db
 from aweb.team_key_pins import pinned_team_key_for_request
@@ -200,9 +201,12 @@ async def register_team_with_service(
             },
         )
 
-    registry_client = getattr(request.app.state, "awid_registry_client", None)
-    if registry_client is None:
-        raise HTTPException(status_code=503, detail="AWID registry client is not configured")
+    try:
+        registry_client = application_registry_client(request.app.state)
+    except RegistryClientUnavailable as exc:
+        raise HTTPException(
+            status_code=503, detail="AWID registry client is not configured"
+        ) from exc
 
     # The team's key as this server holds it: the registry's answer, moved
     # from an admitted key only by the namespace controller's act.
