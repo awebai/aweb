@@ -15,6 +15,7 @@ import tempfile
 import uuid
 
 from fetch_released_aw import freeze_release
+from local_suite_slots import Scope, SuiteLabel, suite_slot
 from test_server_local import (
     Interrupted,
     Refused,
@@ -286,73 +287,74 @@ def main() -> int:
         signal.signal(sig, interrupted)
     lanes_started = False
     try:
-        # Disk admission precedes every build/pull/project operation, on the same pinned endpoint.
-        selected = check_docker()
-        with pinned_docker_environment(environ=selected):
-            source = source_identity(root=ROOT)
-            bind_root = Path(
-                selected.get(
-                    "AWEB_DOCKER_BIND_ROOT",
-                    "/private/tmp"
-                    if Path("/private/tmp").is_dir()
-                    else tempfile.gettempdir(),
+        with suite_slot(scope=Scope.WHOLE, label=SuiteLabel.USER_PATHS, root=ROOT):
+            # Disk admission precedes every build/pull/project operation, on the same pinned endpoint.
+            selected = check_docker()
+            with pinned_docker_environment(environ=selected):
+                source = source_identity(root=ROOT)
+                bind_root = Path(
+                    selected.get(
+                        "AWEB_DOCKER_BIND_ROOT",
+                        "/private/tmp"
+                        if Path("/private/tmp").is_dir()
+                        else tempfile.gettempdir(),
+                    )
+                ).resolve(strict=True)
+                evidence = Path(
+                    tempfile.mkdtemp(prefix="aweb-user-paths-local-", dir=bind_root)
                 )
-            ).resolve(strict=True)
-            evidence = Path(
-                tempfile.mkdtemp(prefix="aweb-user-paths-local-", dir=bind_root)
-            )
-            selected["AWEB_DOCKER_BIND_ROOT"] = str(bind_root)
-            print(
-                f"Local user paths: source={source.commit} Docker={selected['DOCKER_HOST']} evidence={evidence}",
-                flush=True,
-            )
-            image = prepare_runtime(
-                root=ROOT,
-                source=source,
-                evidence=evidence,
-                environ=selected,
-                reference=selected.get("USER_PATHS_RUNTIME_IMAGE"),
-            )
-            prepare_service_images(environ=selected)
-            metadata = {
-                version: freeze_release(evidence / "metadata", version=version)
-                for version in RELEASES
-            }
-            candidate = evidence / "candidate-aw"
-            export_candidate(image=image, destination=candidate, environ=selected)
-            (evidence / "inputs.json").write_text(
-                json.dumps(
-                    {
-                        "source_sha": source.commit,
-                        "source_tree": source.tree,
-                        "runtime_image": image,
-                        "candidate_sha256": hashlib.sha256(
-                            candidate.read_bytes()
-                        ).hexdigest(),
-                        "docker_host": selected["DOCKER_HOST"],
-                        "releases": {
-                            version: str(path) for version, path in metadata.items()
+                selected["AWEB_DOCKER_BIND_ROOT"] = str(bind_root)
+                print(
+                    f"Local user paths: source={source.commit} Docker={selected['DOCKER_HOST']} evidence={evidence}",
+                    flush=True,
+                )
+                image = prepare_runtime(
+                    root=ROOT,
+                    source=source,
+                    evidence=evidence,
+                    environ=selected,
+                    reference=selected.get("USER_PATHS_RUNTIME_IMAGE"),
+                )
+                prepare_service_images(environ=selected)
+                metadata = {
+                    version: freeze_release(evidence / "metadata", version=version)
+                    for version in RELEASES
+                }
+                candidate = evidence / "candidate-aw"
+                export_candidate(image=image, destination=candidate, environ=selected)
+                (evidence / "inputs.json").write_text(
+                    json.dumps(
+                        {
+                            "source_sha": source.commit,
+                            "source_tree": source.tree,
+                            "runtime_image": image,
+                            "candidate_sha256": hashlib.sha256(
+                                candidate.read_bytes()
+                            ).hexdigest(),
+                            "docker_host": selected["DOCKER_HOST"],
+                            "releases": {
+                                version: str(path) for version, path in metadata.items()
+                            },
                         },
-                    },
-                    indent=2,
+                        indent=2,
+                    )
+                    + "\n"
                 )
-                + "\n"
-            )
-            if source_identity(root=ROOT) != source:
-                raise Refused(
-                    "Source changed during preparation. Restore the selected commit and rerun make test-user-paths-local."
+                if source_identity(root=ROOT) != source:
+                    raise Refused(
+                        "Source changed during preparation. Restore the selected commit and rerun make test-user-paths-local."
+                    )
+                lanes_started = True
+                rows = run_lanes(
+                    root=ROOT,
+                    evidence=evidence,
+                    source=source,
+                    image=image,
+                    candidate=candidate,
+                    metadata=metadata,
+                    environ=selected,
                 )
-            lanes_started = True
-            rows = run_lanes(
-                root=ROOT,
-                evidence=evidence,
-                source=source,
-                image=image,
-                candidate=candidate,
-                metadata=metadata,
-                environ=selected,
-            )
-            return 1 if any(row.exit_code for row in rows) else 0
+                return 1 if any(row.exit_code for row in rows) else 0
     except Interrupted as error:
         if not lanes_started:
             for lane in Lane:
