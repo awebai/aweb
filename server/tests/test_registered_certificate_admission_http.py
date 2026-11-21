@@ -6,13 +6,13 @@ Only DNS selects the disposable registry authority, as in the human-kind tests.
 import asyncio
 import json
 from contextlib import asynccontextmanager
-from time import monotonic
 from uuid import UUID, uuid4
 
 import httpx
 import pytest
 from aweb.api import _build_awid_registry_client
 from aweb.team_key_pins import pinned_team_key
+from awid import registry as awid_registry
 from awid.dns_verify import DomainAuthority
 from awid_service.deps import get_domain_verifier
 from awid_service.testing import TXTAnswers
@@ -126,16 +126,17 @@ async def _local_admissions(env, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_first_connect_for_members_registered_between_list_reads(privacy_app, monkeypatch):  # noqa: F811
+    # Keep the same Redis window open throughout the connections on a busy host.
+    monkeypatch.setattr(awid_registry, "_TEAM_CERTIFICATES_MISS_WINDOW_SECONDS", 60)
     async with _local_admissions(privacy_app, monkeypatch) as (member, connect, _, _, transport):
-        admitted = monotonic()
         await connect(await member("first-member"))
-        assert transport.reads == 1
+        assert (transport.reads, transport.point_reads) == (1, 0)
         second, third = await asyncio.gather(member("second-member"), member("third-member"))
-        assert monotonic() - admitted < 1
         await connect(second)
+        assert (transport.reads, transport.point_reads) == (1, 1)
         await connect(third)
+        assert (transport.reads, transport.point_reads) == (1, 2)
         await connect(second)
-        assert monotonic() - admitted < 5
         assert (transport.reads, transport.point_reads) == (1, 2)
 
 
