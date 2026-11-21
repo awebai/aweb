@@ -128,7 +128,11 @@ func resolveRegistryAuthority(ctx context.Context, req registryAuthorityRequest)
 			serviceURL = strings.TrimSpace(membership.AwebURL)
 		}
 		if serviceURL != "" {
-			if discovered, err := discoverOnboardingServiceURLs(serviceURL); err == nil && strings.TrimSpace(discovered.RegistryURL) != "" {
+			discovered, err := discoverOnboardingServiceURLs(serviceURL)
+			if err != nil {
+				return "", fmt.Errorf("discover registry for %s: %w", domain, err)
+			}
+			if strings.TrimSpace(discovered.RegistryURL) != "" {
 				return awid.CanonicalRegistryServerOrigin(discovered.RegistryURL)
 			}
 		}

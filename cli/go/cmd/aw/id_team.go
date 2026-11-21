@@ -1766,9 +1766,11 @@ func acceptTeamInviteWithDetails(input teamInviteAcceptanceRequest) (*acceptedTe
 	if err != nil {
 		return nil, err
 	}
-	registryURL := strings.TrimSpace(invite.RegistryURL)
-	if registryURL == "" {
-		registryURL = strings.TrimSpace(registry.DefaultRegistryURL)
+	registryURL, err := resolveRegistryAuthority(ctx, registryAuthorityRequest{
+		Kind: registryTeamRoute, Override: invite.RegistryURL, Domain: invite.Domain, TeamID: teamID, DefaultURL: registry.DefaultRegistryURL,
+	})
+	if err != nil {
+		return nil, err
 	}
 	home, err := identityHomeForTarget(workingDir, opts.IdentityHome)
 	if err != nil {
@@ -2234,22 +2236,20 @@ func revokeAcceptedTeamCertificate(accepted *acceptedTeamInvite) error {
 	if err != nil {
 		return err
 	}
-	registryURL := strings.TrimSpace(accepted.RegistryURL)
-	if registryURL != "" {
-		if err := registry.SetFallbackRegistryURL(registryURL); err != nil {
-			return fmt.Errorf("invalid registry url %q: %w", registryURL, err)
-		}
-	} else {
-		registryURL = strings.TrimSpace(registry.DefaultRegistryURL)
+	ctx, cancel := commandAPIContext(nil)
+	defer cancel()
+	registryURL, err := resolveRegistryAuthority(ctx, registryAuthorityRequest{
+		Kind: registryTeamRoute, Override: accepted.RegistryURL, Domain: accepted.Domain,
+		TeamID: awid.BuildTeamID(accepted.Domain, accepted.TeamName), DefaultURL: registry.DefaultRegistryURL,
+	})
+	if err != nil {
+		return err
 	}
 
 	teamKey, err := awconfig.LoadTeamKey(accepted.Domain, accepted.TeamName)
 	if err != nil {
 		return fmt.Errorf("load team key for %s/%s: %w", accepted.Domain, accepted.TeamName, err)
 	}
-
-	ctx, cancel := commandAPIContext(nil)
-	defer cancel()
 
 	if err := registry.RevokeCertificate(
 		ctx,

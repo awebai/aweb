@@ -19,6 +19,7 @@ const initInviteRecoveryFile = "init-invite.json"
 
 // Private: Token is a bearer credential and must never appear in diagnostics.
 type initInviteRecovery struct {
+	Roster           bool   `json:"roster,omitempty"`
 	ParentFromSource bool   `json:"parent_from_source"`
 	MintedKey        bool   `json:"minted_key"`
 	Source           string `json:"source"`
@@ -49,10 +50,25 @@ func loadInitInviteRecovery(path string) (*initInviteRecovery, error) {
 		return nil, err
 	}
 	var s initInviteRecovery
-	if json.Unmarshal(raw, &s) != nil || s.Token == "" || s.TeamID == "" {
+	if json.Unmarshal(raw, &s) != nil || s.TeamID == "" || (!s.Roster && s.Token == "") ||
+		(s.Roster && (s.Scope != awid.IdentityModeGlobal || s.DIDKey == "")) {
 		return nil, errors.New("invalid init invite recovery")
 	}
 	return &s, nil
+}
+
+func (s *initInviteRecovery) matchesSelection(other initInviteRecovery) bool {
+	return s.Source == other.Source && s.SourceHome == other.SourceHome &&
+		s.TeamID == other.TeamID && s.Alias == other.Alias && s.Scope == other.Scope
+}
+
+func (s *initInviteRecovery) matchesKey(home string) bool {
+	path, err := awconfig.IdentityHomePath(awconfig.IdentityHome{Root: home}, "signing.key")
+	if err != nil {
+		return false
+	}
+	key, err := awid.LoadSigningKey(path)
+	return err == nil && didOf(key) == s.DIDKey
 }
 
 func runRecoverableJoinFrom(cmd *cobra.Command, wd, joinFrom, joinTeam string) error {
@@ -118,14 +134,14 @@ func runRecoverableJoinFrom(cmd *cobra.Command, wd, joinFrom, joinTeam string) e
 	}
 	alias := resolveAliasValue(resolveInitLocalName())
 	if prior != nil {
-		if prior.Source != source || prior.SourceHome != sourceHome || prior.TeamID != team || prior.Alias != alias || prior.Scope != scope {
+		if prior.Roster {
+			return usageError("this identity has a pending roster invitation; rerun the original aw team admin add or extend command")
+		}
+		if !prior.matchesSelection(initInviteRecovery{Source: source, SourceHome: sourceHome, TeamID: team, Alias: alias, Scope: scope}) {
 			return errors.New("init retry changed the original source, team, name or scope")
 		}
-		if prior.DIDKey != "" {
-			key, err := awid.LoadSigningKey(filepath.Join(home.Root, "signing.key"))
-			if err != nil || awid.ComputeDIDKey(key.Public().(ed25519.PublicKey)) != prior.DIDKey {
-				return errors.New("init retry child key changed")
-			}
+		if prior.DIDKey != "" && !prior.matchesKey(home.Root) {
+			return errors.New("init retry child key changed")
 		}
 	} else {
 		if err := validateNewInitJoinTarget(wd, home, scope); err != nil {

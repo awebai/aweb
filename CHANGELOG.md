@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+- A workspace API key cannot create another agent through the API. `aw team
+  admin create` refuses a workspace key. `add` and `extend` use workspace-signed
+  creation when acting as an agent. `extend` uses the sole discovered creator
+  workspace and asks you to select one when several qualify. Use a person's
+  setup key for API-key creation.
+- When `aw team admin extend` discovers a different team after admission, it
+  keeps the admitted member and its credentials and stops before adding the
+  rest of the roster. The error identifies the actual team and the saved home.
+- Team membership and workspace commands prefer the controller's recorded
+  registry, the exact membership or the selected service over
+  `AWID_REGISTRY_URL`. A sibling team's registry no longer supplies the route.
+  An error during service discovery stops the command. Older local invites
+  without a pin use the controller's recorded registry when available.
+- `aw init --token-file` and `aw init --token-stdin` read invitation tokens
+  without putting the token in command-line arguments.
+- `aw init --server-name` supplies the admitted service URL on auth and
+  admission paths. On workspace-label paths it still sets the workspace name.
+- If global roster admission fails, rerun the original `add` or `extend`
+  command with the same creator, team, agent name and home to reuse the saved
+  identity and invite. Signup retry refuses a changed registry or identity
+  scope. When prior initialization needs reconciliation, `aw init` reports
+  `partial_init_reconciliation_required` and retains the original credentials.
+
 - Provisioning and creator self-enrollment connect before publishing the member's E2E assertion. A failed connect or unconfirmed publication retains the identity and reports the exact recovery command instead of creation success.
 - On unverified A2A routes, a plain question shared by several live tasks is
   refused with task-specific reply forms. Questions use artifact name `question`;

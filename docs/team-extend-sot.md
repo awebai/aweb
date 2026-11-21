@@ -235,8 +235,12 @@ modes:
 The `agents` array preserves command-line order and failure JSON uses
 `"status": "failed"`. Earlier members remain in the team. If the failed member
 has prepared recovery material or an admitted certificate, its home retains
-the material required to resume the same identity. When there is no identity
-to retain, the failed member's new local files can be rolled back.
+the material required to resume the same identity. For global members
+provisioned by invitation, rerun the original command from the same creator
+with the same team, agent name and home. The retry uses the retained key and
+invitation, including when the registry accepted the membership and its
+response was lost. When there is no identity to retain, the failed member's
+new local files can be rolled back.
 A fully successful batch keeps the existing human and JSON output unchanged;
 per-agent outcome fields are omitted on that path.
 

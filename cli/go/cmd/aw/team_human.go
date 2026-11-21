@@ -1386,15 +1386,10 @@ func suggestTeamHumanAgentName(client *aweb.Client, scope string, used map[strin
 	return "", fmt.Errorf("server returned no available names for %s agent", scope)
 }
 
-type rosterNamePreflight struct {
-	WorkingDir   string
-	AgentsRoot   string
-	ExplicitHome string
-	Specs        []teamAgentSpec
-}
-
-func preflightTeamHumanAddRosterAliases(input rosterNamePreflight) error {
-	wd, agentsRoot, specs := input.WorkingDir, input.AgentsRoot, input.Specs
+func preflightTeamHumanAddRosterAliases(wd string, freshSpecs []teamAgentSpec) error {
+	if len(freshSpecs) == 0 {
+		return nil
+	}
 	client, selection, err := resolveClientSelectionForDir(wd)
 	if err != nil || client == nil || client.Client == nil || selection == nil {
 		if err != nil {
@@ -1408,18 +1403,6 @@ func preflightTeamHumanAddRosterAliases(input rosterNamePreflight) error {
 	if err != nil {
 		debugLog("list team roster for agent-name preflight: %v", err)
 		return nil
-	}
-	freshSpecs := make([]teamAgentSpec, 0, len(specs))
-	for _, spec := range specs {
-		targetDir := filepath.Join(agentsRoot, strings.TrimSpace(spec.Name))
-		if input.ExplicitHome != "" {
-			targetDir = input.ExplicitHome
-		}
-		homeSelection, homeErr := resolveSelectionAtIdentityHome(targetDir, "", awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(targetDir), Source: awconfig.IdentityHomeDefault})
-		if homeErr == nil && strings.EqualFold(strings.TrimSpace(homeSelection.TeamID), strings.TrimSpace(selection.TeamID)) && strings.EqualFold(strings.TrimSpace(homeSelection.Alias), strings.TrimSpace(spec.Name)) {
-			continue
-		}
-		freshSpecs = append(freshSpecs, spec)
 	}
 	return teamHumanAddRosterCollisionError(roster.Agents, freshSpecs)
 }
@@ -1589,9 +1572,6 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 	if err != nil {
 		return err
 	}
-	if err := preflightTeamHumanAddRosterAliases(rosterNamePreflight{WorkingDir: wd, AgentsRoot: agentsRoot, ExplicitHome: explicitHome, Specs: resolvedSpecs}); err != nil {
-		return err
-	}
 	apiKey := strings.TrimSpace(opts.APIKey)
 	if apiKey == "" {
 		apiKey = resolveInitAPIKey()
@@ -1641,6 +1621,7 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 	if expectedTeam == "" {
 		expectedTeam = opts.AuthorityTeamID
 	}
+	freshSpecs := make([]teamAgentSpec, 0, len(resolvedSpecs))
 	for index := range plans {
 		plan := &plans[index]
 		existing, err := existingProvisionedMember(provisionedMemberSelection{Home: awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(plan.HomeDir)}, TeamID: expectedTeam, Name: plan.Name, Scope: awid.IdentityScope(plan.Scope)})
@@ -1651,6 +1632,20 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 		if existing != nil {
 			continue
 		}
+		if !apiKeyBootstrapMode && !teamHumanAddLayoutOnly && plan.Scope == awid.IdentityModeGlobal {
+			if err := preflightProfileAgentHome(plan.HomeDir); err != nil {
+				return err
+			}
+			path := filepath.Join(awconfig.WorktreeIdentityHome(plan.HomeDir), initInviteRecoveryFile)
+			recovery, err := loadRosterInviteRecovery(path, rosterInviteSelection(inviteAnchorDir, creatorHome.Root, expectedTeam, plan.Name))
+			if err != nil {
+				return err
+			}
+			if recovery != nil {
+				continue
+			}
+		}
+		freshSpecs = append(freshSpecs, resolvedSpecs[index])
 		if plan.Profile != nil {
 			if err := preflightProfileAgentHome(plan.HomeDir); err != nil {
 				return err
@@ -1660,6 +1655,9 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 		if err := preflightEmptyAgentHome(plan.HomeDir); err != nil {
 			return err
 		}
+	}
+	if err := preflightTeamHumanAddRosterAliases(wd, freshSpecs); err != nil {
+		return err
 	}
 	if err := preflightTeamHumanAddRosterAuthority(inviteAnchorDir, plans, apiKeyBootstrapMode, opts); err != nil {
 		return err

@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -65,8 +66,40 @@ func createProvisionedTeamMember(input teamMemberCreation) (result *acceptedTeam
 			parentHome = actorHome.Root
 		}
 	}
+	home := awconfig.WorktreeIdentityHome(homeDir)
 	memberAddress := ""
+	var recovery *initInviteRecovery
+	var recoveryPath string
 	if input.Scope == awid.IdentityScopeGlobal {
+		recoveryPath, err = (awconfig.RecoveryFile{Home: awconfig.IdentityHome{Root: home}, Name: initInviteRecoveryFile}).Path()
+		if err != nil {
+			return nil, err
+		}
+		lockPath, err := awconfig.IdentityHomePath(awconfig.IdentityHome{Root: home}, initInviteRecoveryFile+".lock")
+		if err != nil {
+			return nil, err
+		}
+		lock, err := awconfig.TryLockExclusive(lockPath)
+		if err != nil {
+			return nil, retainIdentityForRecovery(fmt.Errorf("lock member invite recovery: %w", err))
+		}
+		defer lock.Close()
+		selection := rosterInviteSelection(anchorDir, actorHome.Root, awid.BuildTeamID(domain, team), alias)
+		recovery, err = loadRosterInviteRecovery(recoveryPath, selection)
+		if err != nil {
+			return nil, err
+		}
+		// Another invocation may have finished while this one was in preflight.
+		accepted, err := existingProvisionedMember(provisionedMemberSelection{Home: awconfig.IdentityHome{Root: home}, TeamID: selection.TeamID, Name: alias, Scope: input.Scope})
+		if err != nil {
+			return nil, retainIdentityForRecovery(err)
+		}
+		if accepted != nil {
+			if err := completeProvisionedTeamMembership(provisionedTeamMembership{WorkingDir: homeDir, Home: awconfig.IdentityHome{Root: home}, AwebURL: accepted.AwebURL}); err != nil {
+				return nil, retainIdentityForRecovery(err)
+			}
+			return accepted, nil
+		}
 		identityExists, err := teamCreateHasIdentityMaterial(homeDir)
 		if err != nil {
 			return nil, err
@@ -76,13 +109,15 @@ func createProvisionedTeamMember(input teamMemberCreation) (result *acceptedTeam
 				return nil, err
 			}
 		}
-		// A prepared global identity can outlive a failed invite. Its key is
-		// retained independently of whether membership acceptance was submitted.
 		defer func() {
-			if resultErr != nil {
-				inspect := formatShellCommand([]string{"aw", "--identity-home", awconfig.WorktreeIdentityHome(homeDir), "id", "show"})
-				resultErr = retainIdentityForRecovery(fmt.Errorf("%w; global identity material is retained at %s. Inspect it with `%s` and finish membership using this same identity and creator; do not create a replacement", resultErr, homeDir, inspect))
+			if resultErr == nil {
+				return
 			}
+			retained := fmt.Errorf("%w; global identity material is retained at %s", resultErr, homeDir)
+			if recovery != nil {
+				retained = fmt.Errorf("%w. To resume, rerun the original command with the same creator, team, name and agent home", retained)
+			}
+			resultErr = retainIdentityForRecovery(retained)
 		}()
 		identity, _, err := awconfig.LoadWorktreeIdentityFromDir(homeDir)
 		if err != nil {
@@ -92,32 +127,75 @@ func createProvisionedTeamMember(input teamMemberCreation) (result *acceptedTeam
 			return nil, errors.New("prepared global identity is missing")
 		}
 		memberAddress = strings.TrimSpace(identity.Address)
+		if recovery == nil {
+			key, err := awid.LoadSigningKey(filepath.Join(home, "signing.key"))
+			if err != nil {
+				return nil, fmt.Errorf("read prepared global identity key: %w", err)
+			}
+			selection.DIDKey = didOf(key)
+			if err := selection.save(recoveryPath); err != nil {
+				return nil, err
+			}
+			recovery = &selection
+		}
 	}
 
-	plan, err := planTeamInvite(teamInviteSource{
-		WorkingDir: anchorDir, Home: actorHome, Domain: domain, Team: team, RegistryURL: registryURL, AwebURL: awebURL,
-	})
-	if err != nil {
-		return nil, err
+	token := ""
+	if recovery != nil {
+		token = recovery.Token
 	}
-	scope := inviteMemberLocal
-	if input.Scope == awid.IdentityScopeGlobal {
-		scope = inviteMemberGlobal
+	if token == "" {
+		plan, err := planTeamInvite(teamInviteSource{
+			WorkingDir: anchorDir, Home: actorHome, Domain: domain, Team: team, RegistryURL: registryURL, AwebURL: awebURL,
+		})
+		if err != nil {
+			return nil, err
+		}
+		scope := inviteMemberLocal
+		if input.Scope == awid.IdentityScopeGlobal {
+			scope = inviteMemberGlobal
+		}
+		created, err := mintPlannedTeamInvite(teamInviteMintRequest{Plan: plan, Scope: scope})
+		if err != nil {
+			return nil, err
+		}
+		token = created.Token
+		if recovery != nil {
+			recovery.Token = token
+			if err := recovery.save(recoveryPath); err != nil {
+				return nil, err
+			}
+		}
 	}
-	created, err := mintPlannedTeamInvite(teamInviteMintRequest{Plan: plan, Scope: scope})
-	if err != nil {
-		return nil, err
-	}
-	token := created.Token
-	acceptOpts := teamAcceptInviteOptions{IdentityHome: awconfig.WorktreeIdentityHome(homeDir), Name: alias, Scope: string(input.Scope), Address: memberAddress, ParentHome: parentHome}
+	acceptOpts := teamAcceptInviteOptions{IdentityHome: home, Name: alias, Scope: string(input.Scope), Address: memberAddress, ParentHome: parentHome}
 	accepted, err := acceptProvisionedTeamInvite(anchorDir, actorHome.Root, homeDir, token, acceptOpts)
 	if err != nil {
 		return nil, err
 	}
 	// Agent provisioning writes the worktree binding immediately: the produced
 	// agent is ready to run with no separate `aw init`.
-	if err := recordAcceptedTeamMembership(acceptedTeamMembershipRequest{WorkingDir: homeDir, Output: accepted.Output, Certificate: accepted.Certificate, RegistryURL: accepted.RegistryURL, AwebURL: accepted.AwebURL, IdentityHome: explicitEncryptionKeyIdentityHome(awconfig.WorktreeIdentityHome(homeDir)), Activation: membershipMakeActive, Binding: membershipWriteWorkspaceBinding}); err != nil {
+	if err := recordAcceptedTeamMembership(acceptedTeamMembershipRequest{WorkingDir: homeDir, Output: accepted.Output, Certificate: accepted.Certificate, RegistryURL: accepted.RegistryURL, AwebURL: accepted.AwebURL, IdentityHome: explicitEncryptionKeyIdentityHome(home), Activation: membershipMakeActive, Binding: membershipWriteWorkspaceBinding}); err != nil {
 		return nil, err
 	}
+	if recovery != nil {
+		if err := removeInitInviteRecovery(recoveryPath); err != nil {
+			return nil, err
+		}
+	}
 	return accepted, nil
+}
+
+func rosterInviteSelection(source, sourceHome, team, alias string) initInviteRecovery {
+	return initInviteRecovery{Roster: true, Source: source, SourceHome: sourceHome, TeamID: team, Alias: alias, Scope: awid.IdentityModeGlobal}
+}
+
+func loadRosterInviteRecovery(path string, selection initInviteRecovery) (*initInviteRecovery, error) {
+	recovery, err := loadInitInviteRecovery(path)
+	if err != nil || recovery == nil {
+		return recovery, err
+	}
+	if !recovery.Roster || !recovery.matchesSelection(selection) || !recovery.matchesKey(filepath.Dir(path)) {
+		return nil, usageError("pending invite in %s requires the original command, creator, team, name and signing key", filepath.Dir(path))
+	}
+	return recovery, nil
 }
