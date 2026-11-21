@@ -173,3 +173,35 @@ async def test_recreation_census_counts_teams_recreated_with_the_same_key(
         "gone",
     )
     assert (await _read_only_census(shared_test_pool))["deleted_teams_with_certificate_rows"] == 2
+
+
+async def _certificate_status(client, domain, name, cert_id) -> dict:
+    resp = await client.get(f"/v1/namespaces/{domain}/teams/{name}/certificates/{cert_id}/status")
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+@pytest.mark.asyncio
+async def test_a_revoked_certificate_id_registered_again_after_recreation_reads_revoked(client, controller_identity):
+    # One certificate has one answer: the status read and the revocation list
+    # both read the revocation history of every team ever created under the
+    # name, so registering a revoked id again in the recreated team does not
+    # make it active.
+    ns_key, ns_did = controller_identity
+    domain = "recreate-status.example"
+    await _register_namespace(client, ns_key, ns_did, domain)
+    team_key, team_did, cert_id = await _team_with_revoked_certificate(client, ns_key, ns_did, domain, "ops")
+
+    await _delete_team(client, ns_key, ns_did, domain, "ops")
+    await _create_team_with_key(client, ns_key, ns_did, domain, "ops", team_did)
+    await _register_certificate(client, team_key, team_did, domain, "ops", cert_id)
+    fresh = str(uuid4())
+    await _register_certificate(client, team_key, team_did, domain, "ops", fresh, alias="bob")
+
+    status = await _certificate_status(client, domain, "ops", cert_id)
+    assert status["status"] == "revoked"
+    assert status["revoked_at"]
+    assert status["team_did_key"] == team_did
+    assert cert_id in await _revoked_ids(client, domain, "ops")
+    # The recreated team's own certificate is active.
+    assert (await _certificate_status(client, domain, "ops", fresh))["status"] == "active"
