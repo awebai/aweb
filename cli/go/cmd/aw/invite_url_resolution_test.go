@@ -118,6 +118,7 @@ func TestAwebURLForTeamInviteDoesNotReturnOtherTeamURL(t *testing.T) {
 // registry-side twin: a hosted aweb.ai team resolves to our registry when
 // nothing else is on record; a BYOT namespace fails closed.
 func TestRegistryURLForTeamInviteHostedNamespaceDefaultsToOurRegistry(t *testing.T) {
+	t.Setenv("AWID_REGISTRY_URL", "")
 	if got, err := resolveRegistryAuthority(context.Background(), registryAuthorityRequest{Kind: registryTeamRoute, WorkingDir: t.TempDir(), Domain: "gracehosted.aweb.ai"}); err != nil || got != awid.DefaultAWIDRegistryURL {
 		if err != nil {
 			t.Fatal(err)
