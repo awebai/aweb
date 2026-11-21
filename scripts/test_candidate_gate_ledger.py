@@ -214,7 +214,7 @@ def interrupted_docker_proof(repo: Path, evidence: Path, env: dict[str, str]) ->
     interruption = (log_dir / 'interruption.tsv').read_text()
     assert 'cleanup=passed' in interruption and 'writer_exit=0' in interruption
     rows = [line.split('\t') for line in (evidence / 'ledger.tsv').read_text().splitlines()]
-    assert [(row[1], row[2]) for row in rows if "/" not in row[1]] == [('checks', 'passed')], rows
+    assert [(row[1], row[2]) for row in rows if "/" not in row[1]] == [('cleanup', 'passed'), ('checks', 'passed')], rows
     assert any(row[1:3] == ['checks/test-shipping', 'passed'] for row in rows), rows
     assert not any(row[1] == 'unit/_candidate-unit-suites' for row in rows), rows
     assert 'run\tINTERRUPTED\t' in (log_dir / 'summary.tsv').read_text()

@@ -520,7 +520,7 @@ printf 'candidate gate PASSED at %s; logs: %s\n' \
 }
 
 # The child owns Docker cleanup. Its output reader survives group signals;
-# the lock holder records completed proof, then waits for real child cleanup.
+# the lock holder waits for cleanup before recording reusable proof.
 source "$ROOT/scripts/candidate-record.sh"
 started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 run_log="$LEDGER_LOGS/${KEY:0:12}-run-$run_id.log"

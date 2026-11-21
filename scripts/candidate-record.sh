@@ -21,9 +21,15 @@ retain_candidate_evidence() {
     cp "$source" "$target/$relative" || return 1
   done
 }
+candidate_stage_passed() {
+  local stage="$1" summary="$2" log="$3"
+  [[ -s "$log" && -f "$summary" ]] && \
+    awk -F'\t' -v stage="$stage" '$1 == stage && $2 == "PASSED" && $3 == stage ".log" && $4 ~ /^[0-9]+s$/ {n++} END {exit !(n == 1)}' "$summary"
+}
 finalize_candidate() {
   local status="$1" interrupted=0 incomplete=0 target_error=0 stage stage_log
-  local entry verdict relative elapsed note result target_log
+  local entry verdict relative elapsed note result target_log cleanup=absent
+  local eligible="${2-$pending}"
   local retained="$LEDGER_LOGS/${KEY:0:12}-evidence-$run_id"
   [[ "$candidate_recorded" == 0 ]] || return "$status"
   candidate_recorded=1
@@ -34,10 +40,21 @@ finalize_candidate() {
     [[ "$status" != 0 ]] || status=1
     return "$status"
   fi
+  if [[ -f "$LOG_DIR/wrapper-verdict.log" ]]; then
+    if grep -qx 'candidate gate cleanup FAILED' "$LOG_DIR/wrapper-verdict.log"; then
+      cleanup=failed
+    elif grep -qx 'candidate gate cleanup PASSED' "$LOG_DIR/wrapper-verdict.log"; then
+      cleanup=passed
+    fi
+  fi
   if [[ "$interrupted" == 1 ]]; then
-    # A partial run must never be read as complete, even if all its completed
-    # stages passed. The interrupted stage has no manufactured code verdict.
-    write_candidate_interruption "$status"
+    if [[ "$cleanup" == passed ]]; then
+      record_candidate_row cleanup passed "$run_log" || return 1
+    else
+      record_candidate_row cleanup failed "$run_log" "cleanup=$cleanup" || return 1
+      eligible=""
+    fi
+    write_candidate_interruption "$status" "$cleanup" || return 1
   fi
   retain_candidate_evidence || return 1
   for stage in $pending; do
@@ -50,8 +67,7 @@ finalize_candidate() {
       continue
     fi
     cp "$LOG_DIR/$stage.log" "$stage_log" || return 1
-    if [[ -s "$stage_log" && -f "$retained/summary.tsv" ]] && \
-       awk -F'\t' -v stage="$stage" '$1 == stage && $2 == "PASSED" && $3 == stage ".log" && $4 ~ /^[0-9]+s$/ {n++} END {exit !(n == 1)}' "$retained/summary.tsv"; then
+    if [[ " $eligible " == *" $stage "* ]] && candidate_stage_passed "$stage" "$retained/summary.tsv" "$stage_log"; then
       record_candidate_row "$stage" passed "$stage_log" || return 1
     elif [[ "$interrupted" == 0 ]]; then
       record_candidate_row "$stage" failed "$stage_log" || return 1
@@ -84,27 +100,17 @@ finalize_candidate() {
     done < "$retained/summary.tsv"
     if [[ "$target_error" != 0 && "$interrupted" == 0 ]]; then status=1; fi
   fi
-  # Cleanup remains an independent receipt on interrupted runs; a missing
-  # verdict is not a product failure and cannot erase the raw interruption.
-  if [[ "$interrupted" == 0 ]] && { [[ ! -f "$LOG_DIR/wrapper-verdict.log" ]] \
-     || ! grep -q '^candidate gate cleanup PASSED$' "$LOG_DIR/wrapper-verdict.log"; }; then
+  if [[ "$interrupted" == 0 && "$cleanup" != passed ]]; then
     record_candidate_row cleanup failed "$run_log" || return 1
     status=1
   fi
   return "$status"
 }
 write_candidate_interruption() {
-  local status="$1" cleanup=absent observed
+  local status="$1" cleanup="$2" observed
   observed="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   if ! grep -q $'^run\tINTERRUPTED\t' "$LOG_DIR/summary.tsv" 2>/dev/null; then
     printf 'run\tINTERRUPTED\tinterruption.tsv\t0s\texit=%s\n' "$status" >> "$LOG_DIR/summary.tsv"
-  fi
-  if [[ -f "$LOG_DIR/wrapper-verdict.log" ]]; then
-    if grep -q '^candidate gate cleanup PASSED$' "$LOG_DIR/wrapper-verdict.log"; then
-      cleanup=passed
-    elif grep -q '^candidate gate cleanup FAILED$' "$LOG_DIR/wrapper-verdict.log"; then
-      cleanup=failed
-    fi
   fi
   printf '%s\t%s\t%s\tcleanup=%s\tchild_exit=%s\twriter_exit=%s\n' \
     "$run_id" "$status" "$observed" "$cleanup" "${candidate_child_status:-unobserved}" "${candidate_writer_status:-unobserved}" > "$LOG_DIR/interruption.tsv"
@@ -117,20 +123,23 @@ finish_candidate_output() {
   [[ -z "${output_pipe:-}" ]] || rm -f "$output_pipe"
 }
 candidate_interrupted() {
-  local status="$1" stop_signal="$2"
+  local status="$1" stop_signal="$2" stage eligible=""
   trap '' INT TERM
-  finalize_candidate "$status" || true
+  # Freeze the eligible stages before signalling the child. Its final cleanup
+  # verdict determines whether any of these stages can be reused.
+  if [[ -f "$LOG_DIR/run-id" && "$(cat "$LOG_DIR/run-id")" == "$run_id" ]]; then
+    for stage in $pending; do
+      if candidate_stage_passed "$stage" "$LOG_DIR/summary.tsv" "$LOG_DIR/$stage.log"; then
+        eligible="$eligible $stage"
+      fi
+    done
+  fi
   if [[ -n "${candidate_job:-}" ]]; then
     kill -s "$stop_signal" "$candidate_job" 2>/dev/null || true
     candidate_child_status=0
     wait "$candidate_job" || candidate_child_status=$?
   fi
   finish_candidate_output
-  # Only the final child-owned verdict establishes cleanup. Waiting for a
-  # vanished process alone never supplies a successful cleanup receipt.
-  if [[ -f "$LOG_DIR/run-id" && "$(cat "$LOG_DIR/run-id")" == "$run_id" ]]; then
-    write_candidate_interruption "$status"
-    retain_candidate_evidence || printf 'gate: evidence retention failed after interruption\n' >&2
-  fi
+  finalize_candidate "$status" "$eligible" || true
   exit "$status"
 }
