@@ -1,11 +1,8 @@
 import { createHash } from "node:crypto";
-import * as ed from "@noble/ed25519";
-import { sha512 } from "@noble/hashes/sha2.js";
 import { readBoundedJSON, readSafeErrorExcerpt } from "./response.js";
 import { canonicalJSONValue } from "../identity/canonical.js";
 import { computeDIDKey } from "../identity/did.js";
-
-ed.etc.sha512Sync = (...m) => sha512(ed.etc.concatBytes(...m));
+import { publicKeyFromSeed, signBytes } from "../identity/signature_wire.js";
 
 function canonicalTimestamp(): string {
   return new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
@@ -32,8 +29,8 @@ function signedTarget(baseURL: string, path: string, method: string, bodyText: s
 function signCanonical(payload: Record<string, string | number>, signingKey: Uint8Array): { did: string; signature: string; canonicalPayload: string; signedPayload: string } {
   const canonicalPayload = canonicalJSONValue(payload, "unsupported request signing value");
   return {
-    did: computeDIDKey(ed.getPublicKey(signingKey)),
-    signature: Buffer.from(ed.sign(new TextEncoder().encode(canonicalPayload), signingKey)).toString("base64").replace(/=+$/, ""),
+    did: computeDIDKey(publicKeyFromSeed(signingKey)),
+    signature: Buffer.from(signBytes({ message: new TextEncoder().encode(canonicalPayload), seed: signingKey })).toString("base64").replace(/=+$/, ""),
     canonicalPayload,
     signedPayload: Buffer.from(canonicalPayload, "utf-8").toString("base64url"),
   };

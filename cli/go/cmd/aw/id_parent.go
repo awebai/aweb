@@ -158,8 +158,11 @@ func selectRequester(opts idParentOptions) (*requester, error) {
 				return nil, err
 			}
 			if installed != nil {
-				certificates := installed.Bundle["certificates"].([]any)
-				named, _ = certificates[len(certificates)-1].(map[string]any)["certificate"].(map[string]any)["domain"].(string)
+				leaf, err := installed.Leaf()
+				if err != nil {
+					return nil, err
+				}
+				named = leaf.Domain()
 			}
 		}
 		domain, err := normalizeIDCreateDomain(named, false)
@@ -268,15 +271,18 @@ func executeIDParentRequest(opts idParentOptions, invitationID, parentID string,
 	}
 	replaces := ""
 	if installed != nil {
-		certificates := installed.Bundle["certificates"].([]any)
-		oldDomain := certificates[len(certificates)-1].(map[string]any)["certificate"].(map[string]any)["domain"].(string)
+		leaf, err := installed.Leaf()
+		if err != nil {
+			return idParentRequestOutput{}, nil, err
+		}
+		oldDomain := leaf.Domain()
 		if strings.HasPrefix(r.id, "did:aw:") && oldDomain != r.domain {
 			return idParentRequestOutput{}, nil, usageError("this agent is registered under %s; a person whose home domain is %s cannot adopt it yet", oldDomain, r.domain)
 		}
 		if !organizationOnlyAgent(installed.Bundle, r.id, oldDomain) || parent == nil || !strings.HasPrefix(parentID, "did:aw:") {
 			return idParentRequestOutput{}, nil, usageError("%s already has an installed ID chain; only an organization-only agent may request its first person parent", r.id)
 		}
-		replaces, err = awid.IDCertificateID(certificates[0].(map[string]any)["certificate"].(map[string]any))
+		replaces, err = leaf.CertificateID()
 		if err != nil {
 			return idParentRequestOutput{}, nil, err
 		}
@@ -314,12 +320,18 @@ func executeIDParentRequest(opts idParentOptions, invitationID, parentID string,
 // existing domain. It never authorizes the new person; import verifies that
 // person's chain and exact signature independently.
 func organizationOnlyAgent(chain map[string]any, id, domain string) bool {
-	certificates, _ := chain["certificates"].([]any)
-	if len(certificates) != 1 {
+	certificates, ok := chain["certificates"].([]any)
+	if !ok || len(certificates) != 1 {
 		return false
 	}
-	signed, _ := certificates[0].(map[string]any)
-	c, _ := signed["certificate"].(map[string]any)
+	signed, ok := certificates[0].(map[string]any)
+	if !ok {
+		return false
+	}
+	c, ok := signed["certificate"].(map[string]any)
+	if !ok {
+		return false
+	}
 	return c["id"] == id && c["kind"] == "agent" && c["domain"] == domain && reflect.DeepEqual(c["parent"], map[string]any{"kind": "namespace", "id": domain})
 }
 
@@ -351,11 +363,14 @@ func executeIDParentResign(opts idParentOptions) (idParentRequestOutput, []byte,
 	if installed == nil {
 		return idParentRequestOutput{}, nil, usageError("%s has no installed certificate to re-sign", identity.DID)
 	}
-	certificates := installed.Bundle["certificates"].([]any)
-	old := certificates[len(certificates)-1].(map[string]any)
-	c := old["certificate"].(map[string]any)
-	if c["id"] != identity.DID {
-		return idParentRequestOutput{}, nil, usageError("the installed certificate names %v, not %s", c["id"], identity.DID)
+	leaf, err := installed.Leaf()
+	if err != nil {
+		return idParentRequestOutput{}, nil, err
+	}
+	old := leaf.Signed()
+	c := leaf.Fields()
+	if leaf.ID() != identity.DID {
+		return idParentRequestOutput{}, nil, usageError("the installed certificate names %v, not %s", leaf.ID(), identity.DID)
 	}
 	requestID, err := newInvitationID()
 	if err != nil {
@@ -378,7 +393,7 @@ func executeIDParentResign(opts idParentOptions) (idParentRequestOutput, []byte,
 	if err != nil {
 		return idParentRequestOutput{}, nil, err
 	}
-	return idParentRequestOutput{RequestID: requestID, ID: identity.DID, Kind: c["kind"].(string), Fingerprint: fingerprint}, raw, nil
+	return idParentRequestOutput{RequestID: requestID, ID: identity.DID, Kind: string(leaf.Kind()), Fingerprint: fingerprint}, raw, nil
 }
 
 var invitationIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
@@ -546,27 +561,33 @@ func validateParentReplacement(r *requester, outgoing *awconfig.IDOutgoingReques
 		return nil
 	}
 	mismatch := &awid.IDCertificateError{Code: "request_binding_mismatch"}
-	certificates := chain["certificates"].([]any)
+	checkedChain, err := awid.IDChainFromBundle(chain)
+	if err != nil {
+		return err
+	}
+	certificates := checkedChain.Certificates()
 	if outgoing.ReplacesCertificateID == "" || len(certificates) < 2 {
 		return mismatch
 	}
-	parent := certificates[len(certificates)-2].(map[string]any)["certificate"].(map[string]any)
-	leaf := certificates[len(certificates)-1].(map[string]any)["certificate"].(map[string]any)
-	if parent["kind"] != "human" || parent["domain"] != leaf["domain"] || leaf["domain"] != r.domain {
+	parent := certificates[len(certificates)-2]
+	leaf := checkedChain.Leaf()
+	if parent.Kind() != awid.IDCertificateKindHuman || parent.Domain() != leaf.Domain() || leaf.Domain() != r.domain {
 		return mismatch
 	}
 	if installed == nil {
 		return mismatch
 	}
-	oldCerts := installed.Bundle["certificates"].([]any)
-	old := oldCerts[len(oldCerts)-1].(map[string]any)["certificate"].(map[string]any)
-	if !organizationOnlyAgent(installed.Bundle, r.id, old["domain"].(string)) {
+	old, err := installed.Leaf()
+	if err != nil {
+		return err
+	}
+	if !organizationOnlyAgent(installed.Bundle, r.id, old.Domain()) {
 		return mismatch
 	}
-	if strings.HasPrefix(r.id, "did:aw:") && old["domain"] != r.domain {
+	if strings.HasPrefix(r.id, "did:aw:") && old.Domain() != r.domain {
 		return mismatch
 	}
-	id, err := awid.IDCertificateID(old)
+	id, err := old.CertificateID()
 	if err != nil {
 		return err
 	}

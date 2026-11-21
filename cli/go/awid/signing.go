@@ -1,19 +1,18 @@
 package awid
 
 import (
-	"bytes"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
-	"sort"
-	"strconv"
 	"strings"
 	"time"
+
+	"github.com/awebai/aw/canonicaljson"
+	"github.com/awebai/aw/signaturewire"
 )
 
 // AnnouncementMaxAge is the maximum age for rotation and replacement
@@ -45,6 +44,19 @@ const (
 	VerificationStale VerificationStatus = "verification_stale"
 	IdentityMismatch  VerificationStatus = "identity_mismatch"
 )
+
+// Trusted reports a successful sender verification result. Specific protocols
+// can still require stronger binding. See docs/receiving-events.md,
+// “Autonomous message presentation”.
+func (status VerificationStatus) Trusted() bool {
+	return status == Verified || status == VerifiedLegacy || status == VerifiedCustodial
+}
+
+// WithholdsMessageContent reports whether an autonomous notice may include the
+// durable message's subject and body. Explicit CLI reads keep the original.
+func (status VerificationStatus) WithholdsMessageContent() bool {
+	return status == Failed || status == IdentityMismatch
+}
 
 func SignedPayloadConversationStatus(signedPayload, conversationID string) VerificationStatus {
 	conversationID = strings.TrimSpace(conversationID)
@@ -119,7 +131,7 @@ type MessageEnvelope struct {
 // Returns the signature as base64 (RFC 4648, no padding).
 func SignMessage(key ed25519.PrivateKey, env *MessageEnvelope) (string, error) {
 	payload := CanonicalJSON(env)
-	sig := ed25519.Sign(key, []byte(payload))
+	sig := signaturewire.SignBytes(key, []byte(payload))
 	return base64.RawStdEncoding.EncodeToString(sig), nil
 }
 
@@ -144,16 +156,10 @@ func SignMessage(key ed25519.PrivateKey, env *MessageEnvelope) (string, error) {
 // TestCanonicalJSONValuePreservesUnicode.
 //
 // This matches the shared onboardingDIDKeySignPayload helper used by the
-// onboarding signing family (cli-signup, claim-human, bootstrap-redeem).
+// onboarding signing family (cli-signup, claim-human).
 //
 // Struct fields are written in declaration order, so callers pass maps.
-func CanonicalJSONValue(v any) (string, error) {
-	escaped, err := CanonicalJSONValueEscapingLineSeparators(v)
-	if err != nil {
-		return "", err
-	}
-	return rawLineSeparators(escaped), nil
-}
+func CanonicalJSONValue(v any) (string, error) { return canonicaljson.Marshal(v) }
 
 // CanonicalJSONValueEscapingLineSeparators is CanonicalJSONValue except that
 // U+2028 and U+2029 are written as the six-character escapes encoding/json
@@ -163,19 +169,7 @@ func CanonicalJSONValue(v any) (string, error) {
 // creation response. Bytes that a Python or TypeScript verifier rebuilds use
 // CanonicalJSONValue.
 func CanonicalJSONValueEscapingLineSeparators(v any) (string, error) {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(v); err != nil {
-		return "", err
-	}
-	// json.Encoder.Encode always appends a trailing newline; strip it so
-	// the returned string is a single canonical JSON value.
-	out := buf.Bytes()
-	if n := len(out); n > 0 && out[n-1] == '\n' {
-		out = out[:n-1]
-	}
-	return string(out), nil
+	return canonicaljson.MarshalDigest(v)
 }
 
 const (
@@ -186,30 +180,7 @@ const (
 // rawLineSeparators replaces the escapes encoding/json writes for U+2028 and
 // U+2029 with the characters' UTF-8 bytes. It walks complete escape tokens,
 // so an escaped reverse solidus followed by the text u2028 stays unchanged.
-func rawLineSeparators(encoded string) string {
-	if !strings.Contains(encoded, escapedLineSeparator) && !strings.Contains(encoded, escapedParagraphSeparator) {
-		return encoded
-	}
-	var out strings.Builder
-	out.Grow(len(encoded))
-	for i := 0; i < len(encoded); {
-		switch {
-		case encoded[i] != '\\' || i+1 >= len(encoded):
-			out.WriteByte(encoded[i])
-			i++
-		case strings.HasPrefix(encoded[i:], escapedLineSeparator):
-			out.WriteRune(0x2028)
-			i += len(escapedLineSeparator)
-		case strings.HasPrefix(encoded[i:], escapedParagraphSeparator):
-			out.WriteRune(0x2029)
-			i += len(escapedParagraphSeparator)
-		default:
-			out.WriteString(encoded[i : i+2])
-			i += 2
-		}
-	}
-	return out.String()
-}
+func rawLineSeparators(v string) string { return canonicaljson.RawLineSeparators(v) }
 
 type AppEmitCredential struct {
 	DIDKey              string
@@ -384,7 +355,7 @@ func signPayload(key ed25519.PrivateKey, payload map[string]any, timestamp, pref
 		return "", "", "", err
 	}
 	didKey = ComputeDIDKey(key.Public().(ed25519.PublicKey))
-	sig := ed25519.Sign(key, []byte(prefix+canonical))
+	sig := signaturewire.SignBytes(key, []byte(prefix+canonical))
 	return didKey, base64.RawStdEncoding.EncodeToString(sig), canonical, nil
 }
 
@@ -415,13 +386,13 @@ func VerifyMessage(env *MessageEnvelope) (VerificationStatus, error) {
 		return Failed, fmt.Errorf("extract public key from from_did: %w", err)
 	}
 
-	sig, err := base64.RawStdEncoding.DecodeString(env.Signature)
+	sig, err := signaturewire.DecodeStd(env.Signature)
 	if err != nil {
 		return Failed, fmt.Errorf("decode signature: %w", err)
 	}
 
 	payload := CanonicalJSON(env)
-	if !ed25519.Verify(pub, []byte(payload), sig) {
+	if !signaturewire.Verify(signaturewire.Proof{PublicKey: pub, Payload: []byte(payload), Signature: sig}) {
 		return Failed, nil
 	}
 
@@ -448,58 +419,33 @@ func VerifySignedPayload(signedPayload, signatureB64, fromDID, signingKeyID stri
 		return Failed, fmt.Errorf("extract public key from from_did: %w", err)
 	}
 
-	sig, err := base64.RawStdEncoding.DecodeString(signatureB64)
+	sig, err := signaturewire.DecodeStd(signatureB64)
 	if err != nil {
 		return Failed, fmt.Errorf("decode signature: %w", err)
 	}
 
-	if !ed25519.Verify(pub, []byte(signedPayload), sig) {
+	if !signaturewire.Verify(signaturewire.Proof{PublicKey: pub, Payload: []byte(signedPayload), Signature: sig}) {
 		return Failed, nil
 	}
 
+	recordNoncanonicalSignedMetadata(signedPayload)
 	return Verified, nil
 }
 
 // CanonicalReplacementJSON builds the canonical JSON for controller-authorized
 // address replacement signing.
 func CanonicalReplacementJSON(address, controllerDID, oldDID, newDID, timestamp string) string {
-	type field struct {
-		key   string
-		value string
-	}
-	fields := []field{
-		{"address", address},
-		{"controller_did", controllerDID},
-		{"new_did", newDID},
-		{"old_did", oldDID},
-		{"timestamp", timestamp},
-	}
-	sort.Slice(fields, func(i, j int) bool { return fields[i].key < fields[j].key })
-
-	var b strings.Builder
-	b.WriteByte('{')
-	for i, f := range fields {
-		if i > 0 {
-			b.WriteByte(',')
-		}
-		b.WriteByte('"')
-		b.WriteString(f.key)
-		b.WriteString(`":"`)
-		writeEscapedString(&b, f.value)
-		b.WriteByte('"')
-	}
-	b.WriteByte('}')
-	return b.String()
+	return canonicaljson.Object(map[string]any{"address": address, "controller_did": controllerDID, "old_did": oldDID, "new_did": newDID, "timestamp": timestamp})
 }
 
 // VerifyReplacementSignature verifies a controller-authorized replacement announcement.
 func VerifyReplacementSignature(controllerPub ed25519.PublicKey, address, controllerDID, oldDID, newDID, timestamp, signature string) (bool, error) {
-	sig, err := base64.RawStdEncoding.DecodeString(signature)
+	sig, err := signaturewire.DecodeStd(signature)
 	if err != nil {
 		return false, err
 	}
 	payload := CanonicalReplacementJSON(address, controllerDID, oldDID, newDID, timestamp)
-	return ed25519.Verify(controllerPub, []byte(payload), sig), nil
+	return signaturewire.Verify(signaturewire.Proof{PublicKey: controllerPub, Payload: []byte(payload), Signature: sig}), nil
 }
 
 // CanonicalJSON builds the canonical JSON payload for message signing.
@@ -507,111 +453,37 @@ func VerifyReplacementSignature(controllerPub ed25519.PublicKey, address, contro
 // Optional fields (conversation_id, from_stable_id, message_id, to_stable_id) are omitted when empty.
 // See also LogEntry.CanonicalJSON which always includes all fields with null for absent values.
 func CanonicalJSON(env *MessageEnvelope) string {
-	type field struct {
-		key string
-		raw string
+	fields := map[string]any{
+		"body":      env.Body,
+		"from":      env.From,
+		"from_did":  env.FromDID,
+		"subject":   env.Subject,
+		"timestamp": env.Timestamp,
+		"to":        env.To,
+		"to_did":    env.ToDID,
+		"type":      env.Type,
 	}
-
-	// Always-present signed fields.
-	fields := []field{
-		{"body", jsonStringValue(env.Body)},
-		{"from", jsonStringValue(env.From)},
-		{"from_did", jsonStringValue(env.FromDID)},
-		{"subject", jsonStringValue(env.Subject)},
-		{"timestamp", jsonStringValue(env.Timestamp)},
-		{"to", jsonStringValue(env.To)},
-		{"to_did", jsonStringValue(env.ToDID)},
-		{"type", jsonStringValue(env.Type)},
+	optionalFields := map[string]string{
+		"from_stable_id":  env.FromStableID,
+		"to_stable_id":    env.ToStableID,
+		"message_id":      env.MessageID,
+		"conversation_id": env.ConversationID,
+		"priority":        env.Priority,
+		"reply_to":        env.ReplyTo,
 	}
-
-	// Optional fields included when present.
-	if env.FromStableID != "" {
-		fields = append(fields, field{"from_stable_id", jsonStringValue(env.FromStableID)})
+	for key, value := range optionalFields {
+		if value != "" {
+			fields[key] = value
+		}
 	}
 	if env.HangOn {
-		fields = append(fields, field{"hang_on", strconv.FormatBool(env.HangOn)})
-	}
-	if env.MessageID != "" {
-		fields = append(fields, field{"message_id", jsonStringValue(env.MessageID)})
-	}
-	if env.ConversationID != "" {
-		fields = append(fields, field{"conversation_id", jsonStringValue(env.ConversationID)})
-	}
-	if env.Priority != "" {
-		fields = append(fields, field{"priority", jsonStringValue(env.Priority)})
-	}
-	if env.ReplyTo != "" {
-		fields = append(fields, field{"reply_to", jsonStringValue(env.ReplyTo)})
+		fields["hang_on"] = true
 	}
 	if env.SenderLeaving {
-		fields = append(fields, field{"sender_leaving", strconv.FormatBool(env.SenderLeaving)})
-	}
-	if env.ToStableID != "" {
-		fields = append(fields, field{"to_stable_id", jsonStringValue(env.ToStableID)})
+		fields["sender_leaving"] = true
 	}
 	if env.WaitSeconds != nil {
-		fields = append(fields, field{"wait_seconds", strconv.Itoa(*env.WaitSeconds)})
+		fields["wait_seconds"] = *env.WaitSeconds
 	}
-
-	sort.Slice(fields, func(i, j int) bool { return fields[i].key < fields[j].key })
-
-	var b strings.Builder
-	b.WriteByte('{')
-	for i, f := range fields {
-		if i > 0 {
-			b.WriteByte(',')
-		}
-		b.WriteByte('"')
-		b.WriteString(f.key)
-		b.WriteString(`":`)
-		b.WriteString(f.raw)
-	}
-	b.WriteByte('}')
-	return b.String()
-}
-
-func jsonStringValue(s string) string {
-	var b strings.Builder
-	b.WriteByte('"')
-	writeEscapedString(&b, s)
-	b.WriteByte('"')
-	return b.String()
-}
-
-// jsonStringWriter is the part of strings.Builder and bytes.Buffer that
-// writeEscapedString uses.
-type jsonStringWriter interface {
-	io.Writer
-	io.StringWriter
-	WriteRune(r rune) (int, error)
-}
-
-// writeEscapedString writes a JSON-escaped string value (without surrounding quotes).
-// It escapes the quotation mark, the reverse solidus and U+0000-U+001F, and
-// writes every other code point as UTF-8, as CanonicalJSONValue does.
-func writeEscapedString(b jsonStringWriter, s string) {
-	for _, r := range s {
-		switch r {
-		case '"':
-			b.WriteString(`\"`)
-		case '\\':
-			b.WriteString(`\\`)
-		case '\n':
-			b.WriteString(`\n`)
-		case '\r':
-			b.WriteString(`\r`)
-		case '\t':
-			b.WriteString(`\t`)
-		case '\b':
-			b.WriteString(`\b`)
-		case '\f':
-			b.WriteString(`\f`)
-		default:
-			if r < 0x20 {
-				fmt.Fprintf(b, `\u%04x`, r)
-			} else {
-				b.WriteRune(r)
-			}
-		}
-	}
+	return canonicaljson.Object(fields)
 }
