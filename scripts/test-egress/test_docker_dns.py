@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class DockerDNS(unittest.TestCase):
-    def qualify(self, name, *, child_status=0, collect_summary=False):
+    def run_guard(self, child, *, collect_summary=False):
         evidence = EVIDENCE / self._testMethodName
         with tempfile.TemporaryDirectory(prefix='aw-dns-default-') as temp:
             adapter = Path(temp) / 'docker'
@@ -38,7 +38,19 @@ os.execv(os.environ['TEST_REAL_DOCKER'], [os.environ['TEST_REAL_DOCKER'], *args]
             env = dict(os.environ, TEST_REAL_DOCKER=shutil.which('docker'),
                        TEST_DNS_SOURCE=str(ROOT / 'scripts/test-egress'),
                        PATH=temp + os.pathsep + os.environ['PATH'])
-            child = f'''import socket
+            summary_args = ['--collect-summary'] if collect_summary else []
+            result = subprocess.run(
+                ['python3', str(ROOT / 'scripts/test-egress/docker.py'),
+                 '--evidence', str(evidence), '--image', IMAGE, *summary_args,
+                 '--command', 'python3', '-c', child],
+                env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            )
+        print(result.stdout, flush=True)
+        (evidence / 'qualification.log').write_text(result.stdout)
+        return result, evidence
+
+    def qualify(self, name, *, child_status=0, collect_summary=False):
+        child = f'''import socket
 from pathlib import Path
 print(Path('/etc/resolv.conf').read_text(), flush=True)
 try:
@@ -50,32 +62,16 @@ else:
 print('Expected DNS refusal', flush=True)
 raise SystemExit({child_status})
 '''
-            summary_args = ['--collect-summary'] if collect_summary else []
-            result = subprocess.run(
-                ['python3', str(ROOT / 'scripts/test-egress/docker.py'),
-                 '--evidence', str(evidence), '--image', IMAGE, *summary_args,
-                 '--command', 'python3', '-c', child],
-                env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            )
-        print(result.stdout, flush=True)
-        (evidence / 'qualification.log').write_text(result.stdout)
+        result, evidence = self.run_guard(child, collect_summary=collect_summary)
         self.assertIn(f'Test child exit status: {child_status};', result.stdout)
         return result.returncode, evidence
 
     def test_governance_alias_resolves_only_to_runner_loopback(self):
-        evidence = EVIDENCE / self._testMethodName
         child = ("import socket\n"
                  "answers = {a[4][0] for a in socket.getaddrinfo('signer.example.com', 443)}\n"
                  "assert answers == {'127.0.0.1'}, answers\n"
                  "print('Governance driver alias resolves to literal loopback', flush=True)\n")
-        result = subprocess.run(
-            ['python3', str(ROOT / 'scripts/test-egress/docker.py'),
-             '--evidence', str(evidence), '--image', IMAGE,
-             '--command', 'python3', '-c', child],
-            text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        )
-        print(result.stdout, flush=True)
-        (evidence / 'qualification.log').write_text(result.stdout)
+        result, evidence = self.run_guard(child)
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertIn('Governance driver alias resolves to literal loopback',
                       (evidence / 'suite.log').read_text())
@@ -94,7 +90,6 @@ raise SystemExit({child_status})
         status, evidence = self.qualify('example.com')
         self.assertEqual(status, 1)
         self.assertIn('example.com', (evidence / 'dns-denied.log').read_text())
-
 
     def test_missing_summary_retains_dns_report_and_child_exit(self):
         status, evidence = self.qualify('example.com', child_status=23, collect_summary=True)
