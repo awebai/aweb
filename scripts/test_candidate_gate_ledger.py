@@ -14,6 +14,7 @@ from collections.abc import Callable
 from contextlib import contextmanager
 import errno
 import socket
+import unittest
 
 from fixture_repo import init_fixture_repo, run_fixture
 
@@ -58,6 +59,62 @@ def source_checks() -> list[str]:
 
 
 SOURCE_CHECKS = source_checks()
+
+
+class CompleteGateVerdictTests(unittest.TestCase):
+    def suite(self, selection: str, *failures: str):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "host-published-port.log").write_text("host preflight\n")
+            for name, command in {
+                "make": 'case " $FAILURES " in *" $1 "*) exit 23;; esac\n',
+                "docker": "exit 0\n",
+            }.items():
+                tool = root / name
+                tool.write_text("#!/bin/sh\n" + command)
+                tool.chmod(0o700)
+            env = dict(
+                os.environ,
+                PATH=f"{root}{os.pathsep}{os.environ['PATH']}",
+                FAILURES=" ".join(failures),
+                CANDIDATE_LOG_DIR=str(root),
+                BUILDX_BUILDER="fixture-only",
+            )
+            result = run(ROOT, "bash", "scripts/candidate-suite.sh", selection, env=env)
+            summary = root / "summary.tsv"
+            rows = dict(line.split("\t")[:2] for line in summary.read_text().splitlines()) if summary.exists() else {}
+            return result, rows
+
+    def test_every_stage_and_independent_target_reports_after_failures(self):
+        result, rows = self.suite(STAGES, "check-python-static", "e2e-user-paths",
+                                  "test-python-locks", "build", "_candidate-artifact-server")
+        self.assertNotEqual(result.returncode, 0)
+        for stage in STAGES.split():
+            self.assertEqual(rows.get(stage), "FAILED", result.stdout)
+        self.assertEqual(rows["checks/check-python-static"], "FAILED")
+        self.assertEqual(rows["checks/test-release-cli-version"], "PASSED")
+        self.assertEqual(rows["unit/_candidate-unit-suites"], "PASSED")
+        self.assertEqual(rows["artifacts/_candidate-artifact-a2a-image"], "PASSED")
+        self.assertEqual(rows["integration/e2e-naapp"], "SKIPPED")
+        self.assertEqual(rows["integration/e2e-folio-wakes"], "PASSED")
+        self.assertEqual(rows["integration/test-oci-exact-publish"], "PASSED")
+        self.assertIn("e2e-naapp SKIPPED", result.stdout)
+        self.assertIn("build FAILED", result.stdout)
+
+    def test_isolated_unit_keeps_every_leaf_after_server_failure(self):
+        result, rows = self.suite("--isolated-suites", "test-server", "test-cli")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(rows, {
+            "unit/test-server": "FAILED",
+            "unit/test-awid": "PASSED",
+            "unit/test-naapp": "PASSED",
+            "unit/test-cli": "FAILED",
+            "unit/test-cli-auth-v2": "PASSED",
+            "unit/_candidate-unit-channel": "PASSED",
+            "unit/test-channel-name-live-contract": "PASSED",
+            "unit/_candidate-unit-channel-core": "PASSED",
+            "unit/_candidate-unit-pi": "PASSED",
+        })
 
 
 def run(root: Path, *args: str, env: dict[str, str] | None = None):
