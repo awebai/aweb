@@ -6,13 +6,10 @@ Evidence survives cleanup. No host credentials or identity directories are mount
 """
 import argparse
 import json
-import hashlib
 import importlib.util
 from pathlib import Path
 import subprocess
-import shutil
 import sys
-import tempfile
 import time
 import uuid
 
@@ -22,6 +19,12 @@ _worker_spec = importlib.util.spec_from_file_location(
 _worker_module = importlib.util.module_from_spec(_worker_spec)
 _worker_spec.loader.exec_module(_worker_module)
 service_plan = _worker_module.service_plan
+
+_image_spec = importlib.util.spec_from_file_location(
+    "package_image", Path(__file__).with_name("package_image.py"))
+_image_module = importlib.util.module_from_spec(_image_spec)
+_image_spec.loader.exec_module(_image_module)
+prepare_image = _image_module.prepare_image
 
 
 def runner_args(token, dns_ip, image, profile='portable', server_workers=0):
@@ -145,30 +148,7 @@ def run_suite(args):
     network = None
     try:
         if not args.image:
-            # Copy only source files and a self-contained Git bundle. A worktree's
-            # .git file points outside it and cannot be copied into the runner.
-            with tempfile.TemporaryDirectory(prefix='aw-egress-source-') as tmp:
-                bundle = Path(tmp) / 'source.bundle'
-                subprocess.run(['git', '-C', str(ROOT), 'bundle', 'create', str(bundle), 'HEAD'], check=True)
-                files = subprocess.check_output(['git', '-C', str(ROOT), 'ls-files', '-z', '--cached', '--others', '--exclude-standard']).decode().split('\0')
-                hashes = []
-                for name in dict.fromkeys(files):
-                    if name and ((ROOT / name).is_file() or (ROOT / name).is_symlink()):
-                        destination = Path(tmp) / name
-                        destination.parent.mkdir(parents=True, exist_ok=True)
-                        shutil.copy2(ROOT / name, destination, follow_symlinks=False)
-                        data = destination.readlink().as_posix().encode() if destination.is_symlink() else destination.read_bytes()
-                        hashes.append(hashlib.sha256(data).hexdigest() + "  " + name)
-                (evidence / 'source-files.sha256').write_text('\n'.join(hashes) + '\n')
-                # A docker-container builder cannot resolve a daemon-local tools
-                # image. Build the tools and suite setup in one recipe instead.
-                recipe = ((ROOT / 'candidate-gate/Dockerfile').read_text()
-                          + '\n' + (ROOT / 'scripts/test-egress/Dockerfile').read_text())
-                dockerfile = Path(tmp) / 'isolated.Dockerfile'
-                dockerfile.write_text(recipe)
-                (evidence / 'Dockerfile.generated').write_text(recipe)
-                subprocess.run(['docker', 'build', '-f', str(dockerfile),
-                                '-t', image, tmp], check=True)
+            prepare_image(ROOT, evidence, image)
         # Pull service images before entering isolation.
         for service in ('postgres:17', 'redis:7'):
             subprocess.run(['docker', 'image', 'inspect', service], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)

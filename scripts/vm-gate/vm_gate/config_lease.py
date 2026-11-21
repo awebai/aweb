@@ -30,13 +30,19 @@ class ConfigLease:
             current = json.loads(path.read_text())
             if any(
                 current.get(k) != self.config.get(k)
-                for k in ["snapshot_id", "snapshot_manifest"]
+                for k in ["snapshot_id", "snapshot_manifest", "merak", "default_target"]
             ):
                 raise Refused(
                     "snapshot configuration changed during local admission; restart with current config"
                 )
             if self.config.get("snapshot_manifest"):
-                actual = json.loads(Path(self.config["snapshot_manifest"]).read_text())
+                actual = json.loads(
+                    Path(
+                        self.config.get(
+                            "execution_manifest", self.config["snapshot_manifest"]
+                        )
+                    ).read_text()
+                )
                 if actual != self.config["manifest"]:
                     raise Refused(
                         "snapshot configuration changed: recorded manifest differs"
