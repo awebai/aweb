@@ -19,7 +19,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-from awid.did import did_from_public_key
+from awid.did import did_key_from_signing_key
 from nacl.signing import SigningKey
 
 from aweb_naapp.manifest import Manifest, template_key_entries, template_kids
@@ -78,7 +78,7 @@ def load_app_key(settings: NaappSettings, manifest: Manifest, purpose: str) -> A
         kid = candidates[0]
 
     signing_key = _configured_key(settings, kid)
-    did_key = did_from_public_key(bytes(signing_key.verify_key))
+    did_key = did_key_from_signing_key(bytes(signing_key))
     if did_key != declared[kid]:
         raise AppKeyError(f"app key {kid} is not the public key the manifest declares for it")
     return AppKey(kid=kid, did_key=did_key, signing_key=signing_key)
@@ -126,4 +126,4 @@ def declared_did_keys(settings: NaappSettings, template: Mapping[str, Any]) -> d
                 f"{prefix}APP_EMIT_KID {emit_kid} must be declared by the manifest for {APP_EVENT} only; "
                 "the released seed value signs app events alone"
             )
-    return {kid: did_from_public_key(bytes(_configured_key(settings, kid).verify_key)) for kid in kids}
+    return {kid: did_key_from_signing_key(bytes(_configured_key(settings, kid))) for kid in kids}

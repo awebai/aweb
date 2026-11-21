@@ -49,7 +49,12 @@ except local.Interrupted as exc:
 
 class NativeLocalServices(unittest.TestCase):
     def test_disk_floor_refuses_before_creating_a_project(self):
-        env = dict(os.environ, AWEB_GATE_MIN_FREE_GB="1000000000")
+        # Reach the guard even when whole-suite slots are occupied; no suite runs.
+        env = dict(
+            os.environ,
+            AWEB_GATE_MIN_FREE_GB="1000000000",
+            LOCAL_PYTEST_ARGS="tests/test_mail_send_retry.py",
+        )
         for key in (
             *local.DATABASE_URLS,
             "PGHOST",
