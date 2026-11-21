@@ -213,24 +213,7 @@ def serve(spec):
                 f"type=bind,src={job},dst=/job",
                 spec["launcher"],
             )
-            attachments = json.loads(docker(
-                "inspect", "--format", "{{json .NetworkSettings.Networks}}", identifier
-            ))
-            if (list(attachments) != [network]
-                    or attachments[network]["NetworkID"] != network_id):
-                raise RuntimeError("Merak launcher network differs from the run bridge")
-            addresses = json.loads(subprocess.check_output(["ip", "-j", "addr"], timeout=15))
-            subnets = [f"{a['local']}/{a['prefixlen']}" for link in addresses
-                       for a in link["addr_info"] if a["family"] == "inet"]
-            bridge_ids = docker("network", "ls", "-q", "--filter", "driver=bridge").split()
-            bridges = json.loads(docker("network", "inspect", *bridge_ids))
-            subnets.extend(row["Subnet"] for bridge in bridges for row in bridge["IPAM"]["Config"]
-                           if row.get("Subnet"))
-            # Include custom daemon pools even when no network has allocated a slice yet.
-            pools = json.loads(docker("info", "--format", "{{json .DefaultAddressPools}}")) or []
-            subnets.extend(pool["Base"] if "Base" in pool else pool["base"] for pool in pools)
             notify(
-                host_subnets=sorted(set(subnets)),
                 ready=True,
                 run=run,
                 container=identifier,
