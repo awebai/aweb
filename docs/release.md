@@ -197,12 +197,17 @@ environment variable is set. Passes are reused across callers with equal inputs.
 A recorded failure blocks every stage for those inputs: fix the code and gate
 the changed tree. For infrastructure failures only, the coordinator removes the
 failed stage ledger lines and supplies `GATE_RERUN_REASON='<reason>'`; the next recorded
-result retains that reason. A refusal lists all failed stages and their retained logs. Cleanup failures also block reuse.
+result retains that reason. A refusal lists all failed stages and their retained
+logs. Cleanup failures also block reuse. After an interruption, completed stages
+are reusable only if the wrapper records successful cleanup. A missing cleanup
+verdict is recorded as a cleanup failure.
 
 On the ccx33 unit profile, the Secrets package uses two whole-module shards
 on separate Postgres and Redis pairs already owned by the isolated runner. The
-measured partition is in `candidate-gate/secrets-shards.json`. The runner
-compares the ordered shard collections to the unsharded collection under the
+measured partition is in `candidate-gate/secrets-shards.json`. The checks stage
+qualifies it by collecting tests without starting services. It reports modules
+missing from collection and collected modules missing from the manifest. The
+runner compares the ordered shard collections to the unsharded collection under the
 same unit selector before it executes either shard. Both shard outcomes and
 logs reach the unit stage. The portable profile and the standalone package
 target still run the complete Secrets unit suite in one process.
