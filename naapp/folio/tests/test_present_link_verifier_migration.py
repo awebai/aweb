@@ -47,14 +47,17 @@ async def test_existing_read_only_tokens_are_hashed_and_editable_link_ids_kept(
     try:
         db = before.db
         document_id = uuid4()
+        # unreachable-state: a team row stored before migration 004, under the 001-003 schema
         await db.execute(
             "INSERT INTO {{tables.teams}} (team_id, team_did_key) VALUES ('t:x', 'did:key:t')"
         )
+        # unreachable-state: a document stored before migration 004, under the 001-003 schema
         await db.execute(
             """INSERT INTO {{tables.documents}} (document_id, team_id, slug, title, created_by_did_key, created_by_alias)
             VALUES ($1, 't:x', 'd', 'D', 'did:key:m', 'm')""",
             document_id,
         )
+        # unreachable-state: a document version stored before migration 004, under the 001-003 schema
         await db.execute(
             """INSERT INTO {{tables.document_versions}}
             (version_id, document_id, version_number, body, created_by_did_key, created_by_alias, certificate_id)
@@ -63,6 +66,7 @@ async def test_existing_read_only_tokens_are_hashed_and_editable_link_ids_kept(
             document_id,
         )
         for token, editable in ((read_only, False), (editable_id, True)):
+            # unreachable-state: a presentation link whose token is stored in clear, before migration 004
             await db.execute(
                 """INSERT INTO {{tables.presentation_links}}
                 (token, document_id, version_number, expires_at, created_by_did_key, created_by_alias,
