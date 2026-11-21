@@ -59,7 +59,7 @@ async def _local_admissions(env, monkeypatch):
     async with registry_listener(env) as (writer, origin):
         async def exact_dns(selected):
             assert selected == domain
-            return DomainAuthority(env.team_did, origin, "_awid." + domain)
+            return DomainAuthority(env.namespace_did, origin, "_awid." + domain)
 
         env.registry_app.dependency_overrides[get_domain_verifier] = lambda: exact_dns
         monkeypatch.setenv("AWID_REGISTRY_URL", origin)
@@ -68,7 +68,6 @@ async def _local_admissions(env, monkeypatch):
         object.__setattr__(cached, "_domain_verifier", exact_dns)
         env.app.state.awid_registry_client = cached
         try:
-            await writer.register_namespace(domain, env.team_did, env.team_sk)
             await cached.list_team_certificates(domain, TEAM_NAME, active_only=False)
             transport.reads = 0
             body = b"{}"
@@ -113,11 +112,11 @@ async def _local_admissions(env, monkeypatch):
                 next_key = _make_keypair()[2]
                 await writer.rotate_team_key(
                     domain, TEAM_NAME, new_team_did_key=next_key,
-                    namespace_controller_signing_key=env.team_sk,
+                    namespace_controller_signing_key=env.namespace_sk,
                 )
                 assert await pinned_team_key(
                     db=env.db, registry_client=writer, team_id=TEAM, served_key=next_key,
-                    txt_resolver=TXTAnswers({"_awid.example.test": env.team_did}),
+                    txt_resolver=TXTAnswers({"_awid.example.test": env.namespace_did}),
                 ) == next_key
 
             yield member, connect, revoke, rotate, transport
