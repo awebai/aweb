@@ -207,7 +207,8 @@ async def test_cross_team_workspace_delete_does_not_touch_foreign_bindings(priva
         env.team_did,
     )
     await env.db.execute(
-        "INSERT INTO {{tables.agents}} (agent_id,team_id,did_key,alias) VALUES ($1,$2,$3,'foreign')",
+        "INSERT INTO {{tables.agents}} (agent_id,team_id,did_key,alias,inbound_mode) "
+        "VALUES ($1,$2,$3,'foreign','contacts_only')",
         agent,
         team,
         env.actors["alice"].did,
