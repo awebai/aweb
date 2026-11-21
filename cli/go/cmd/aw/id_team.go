@@ -2441,7 +2441,7 @@ func runTeamAddMember(cmd *cobra.Command, args []string) error {
 	}
 
 	issuer := teamMembershipIssuer{TeamID: teamID, Key: teamKey, Registry: registry, RegistryURL: teamRegistryURL}
-	cert, err := issuer.sign(awid.TeamCertificateFields{
+	cert, err := issuer.issue(ctx, awid.TeamCertificateFields{
 		MemberDIDKey:  memberDID,
 		MemberDIDAW:   memberDIDAW,
 		MemberAddress: memberAddress,
@@ -2450,10 +2450,6 @@ func runTeamAddMember(cmd *cobra.Command, args []string) error {
 	})
 	if err != nil {
 		return err
-	}
-
-	if err := issuer.register(ctx, cert); err != nil {
-		return fmt.Errorf("register certificate: %w", err)
 	}
 
 	fetchCommand := teamFetchCertificateCommand(domain, team, cert.CertificateID, "")

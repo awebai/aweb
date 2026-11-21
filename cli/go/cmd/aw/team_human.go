@@ -1144,11 +1144,14 @@ func foundTeamWithNamespaceControllerAuthority(input namespaceTeamFounding) (*te
 	if err != nil {
 		return nil, err
 	}
-	bootstrap, err := bootstrapLocalTeamMember(ctx, localTeamMemberBootstrap{
+	bootstrap, err := bootstrapTeamMembership(ctx, teamMembershipBootstrap{
 		Registry: registry, RegistryURL: registryURL, Domain: domain,
 		TeamName: input.Name, DisplayName: input.DisplayName, ControllerKey: controllerKey,
-		MemberKey: plan.IdentitySigningKey, MemberDIDAW: plan.MemberDIDAW, MemberAddress: plan.MemberAddress,
-		Alias: plan.Name, NameFlag: "--first-agent-name", Scope: awid.IdentityScope(plan.Scope),
+		Member: awid.TeamCertificateFields{
+			MemberDIDKey: plan.MemberDIDKey, MemberDIDAW: plan.MemberDIDAW, MemberAddress: plan.MemberAddress,
+			Alias: plan.Name, IdentityScope: plan.Scope,
+		},
+		NameFlag: "--first-agent-name",
 	})
 	if err != nil {
 		return nil, err

@@ -37,3 +37,21 @@ func (issuer teamMembershipIssuer) register(ctx context.Context, cert *awid.Team
 	}
 	return issuer.Registry.RegisterCertificate(ctx, issuer.RegistryURL, domain, team, cert, issuer.Key)
 }
+
+type teamMembershipRegistrationError struct{ cause error }
+
+func (e *teamMembershipRegistrationError) Error() string {
+	return "register certificate: " + e.cause.Error()
+}
+func (e *teamMembershipRegistrationError) Unwrap() error { return e.cause }
+
+func (issuer teamMembershipIssuer) issue(ctx context.Context, member awid.TeamCertificateFields) (*awid.TeamCertificate, error) {
+	cert, err := issuer.sign(member)
+	if err != nil {
+		return nil, err
+	}
+	if err := issuer.register(ctx, cert); err != nil {
+		return nil, &teamMembershipRegistrationError{cause: err}
+	}
+	return cert, nil
+}
