@@ -349,7 +349,7 @@ func TestLockIsOneDaemonPerHostAndReclaimsAStaleOwner(t *testing.T) {
 	} else if _, ok := err.(*ErrDaemonAlreadyRunning); !ok {
 		t.Fatalf("err=%v want ErrDaemonAlreadyRunning", err)
 	}
-	if pid, alive := LockOwner(store.LockPath()); pid != os.Getpid() || !alive {
+	if pid, alive, err := LockOwner(store.LockPath()); err != nil || pid != os.Getpid() || !alive {
 		t.Fatalf("owner pid=%d alive=%t", pid, alive)
 	}
 	if err := lock.Release(); err != nil {
@@ -366,7 +366,7 @@ func TestLockIsOneDaemonPerHostAndReclaimsAStaleOwner(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(lockDir, "pid"), []byte(strconv.Itoa(os.Getpid())+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, held := LockOwner(store.LockPath()); held {
+	if _, held, err := LockOwner(store.LockPath()); err != nil || held {
 		t.Fatal("a released lock reads as held")
 	}
 	reclaimed, err := AcquireLock(store.LockPath())

@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestInviteTokenRoundTrip(t *testing.T) {
@@ -235,5 +236,41 @@ func TestGenerateInviteSecret(t *testing.T) {
 	}
 	if s1 == s2 {
 		t.Fatal("secrets should be unique")
+	}
+}
+
+func TestConsumeTeamInviteRetainsSecretFreeProvenance(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	created := time.Date(2026, 11, 18, 0, 0, 0, 0, time.UTC)
+	invite := &TeamInvite{InviteID: "consumption-test", Domain: "example.com", TeamName: "one", IdentityScope: "local", Secret: "bearer-secret", CreatedAt: created.Format(time.RFC3339), ExpiresAt: created.Add(24 * time.Hour).Format(time.RFC3339), RegistryURL: "https://registry.example.com", AwebURL: "https://service.example.com"}
+	if err := SaveTeamInvite(invite); err != nil {
+		t.Fatal(err)
+	}
+	lock, err := LockTeamInvite(invite.InviteID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ConsumeTeamInvite(ConsumeTeamInviteInput{InviteID: invite.InviteID, Now: created.Add(time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := lock.Close(); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := LoadTeamInvite(invite.InviteID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.Secret != "" || saved.ConsumedAt != created.Add(time.Minute).Format(time.RFC3339) || saved.CreatedAt != invite.CreatedAt || saved.ExpiresAt != invite.ExpiresAt || saved.RegistryURL != invite.RegistryURL || saved.AwebURL != invite.AwebURL {
+		t.Fatal("consumption lost provenance or retained bearer authority")
+	}
+	if err := ConsumeTeamInvite(ConsumeTeamInviteInput{InviteID: invite.InviteID, Now: created.Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	again, err := LoadTeamInvite(invite.InviteID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.ConsumedAt != saved.ConsumedAt {
+		t.Fatal("retry changed the original consumption time")
 	}
 }

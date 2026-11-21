@@ -143,16 +143,23 @@ func TestGatewayRejectsInvalidRouteRuntimeConfig(t *testing.T) {
 		{
 			name: "static api key requires secret",
 			edit: func(route *Route) {
-				route.Auth = AuthConfig{Mode: "static_api_key"}
+				route.Auth = AuthConfig{Mode: string(AuthModeStaticAPIKey)}
 			},
-			want: "StaticAPIKey",
+			want: "StaticAPIKey. Configure the route's API key or disable the route, then retry.",
 		},
 		{
 			name: "bearer requires token",
 			edit: func(route *Route) {
-				route.Auth = AuthConfig{Mode: "bearer"}
+				route.Auth = AuthConfig{Mode: string(AuthModeBearer)}
 			},
-			want: "BearerToken",
+			want: "BearerToken. Configure the route's bearer token or disable the route, then retry.",
+		},
+		{
+			name: "unsupported auth mode lists supported modes",
+			edit: func(route *Route) {
+				route.Auth.Mode = "unsupported"
+			},
+			want: "Set the route auth mode to none, static_api_key, or bearer, then retry.",
 		},
 		{
 			name: "rate limit syntax",
@@ -195,11 +202,11 @@ func TestGatewayAllowsDisabledRouteWithUnavailableAuthSecret(t *testing.T) {
 func TestGatewayPreservingRuntimeCarriesTasksAcrossRebuild(t *testing.T) {
 	route := helpRoute("r_help")
 	gw := newTestGateway(t, Config{Host: "acme.com", Routes: []Route{route}})
-	record, err := gw.tasks.create(route.RouteID, "caller-1", "req-1", A2AMessage{
+	record, err := gw.tasks.create(taskCreation{RouteID: route.RouteID, CallerScope: "caller-1", RequestID: "req-1", Message: A2AMessage{
 		MessageID: "m-1",
 		Role:      RoleUser,
 		Parts:     []A2APart{{Text: "hello", MediaType: "text/plain"}},
-	}, time.Hour)
+	}, TTL: time.Hour})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,8 +215,35 @@ func TestGatewayPreservingRuntimeCarriesTasksAcrossRebuild(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewPreservingRuntime: %v", err)
 	}
-	if _, ok := rebuilt.tasks.getVisible(route.RouteID, "caller-1", "", record.ID); !ok {
+	if _, ok := rebuilt.tasks.getVisible(taskAccess{RouteID: route.RouteID, CallerScope: "caller-1", TaskID: record.ID}); !ok {
 		t.Fatal("rebuilt gateway lost in-flight task")
+	}
+}
+
+func TestPublicConfigDoesNotEnumerateRouteDetails(t *testing.T) {
+	gw := newTestGateway(t, Config{Host: "example.com", Routes: []Route{supportRoute("private-route")}})
+	req := httptest.NewRequest(http.MethodGet, "/config", nil)
+	rec := httptest.NewRecorder()
+	gw.ServeHTTP(rec, req)
+	if strings.Contains(rec.Body.String(), "private-route") || strings.Contains(rec.Body.String(), "rate_limit") || strings.Contains(rec.Body.String(), "auth_mode") {
+		t.Fatalf("public diagnostics exposed route configuration: %s", rec.Body.String())
+	}
+}
+
+func TestOperatorTokenReadsFullConfig(t *testing.T) {
+	gw := newTestGateway(t, Config{Host: "example.com", OperatorToken: "operator-secret", Routes: []Route{supportRoute("private-route")}})
+	for _, authorization := range []string{"", "Bearer wrong", "operator-secret", "Bearer operator-secret"} {
+		req := httptest.NewRequest(http.MethodGet, "/config", nil)
+		req.Header.Set("Authorization", authorization)
+		rec := httptest.NewRecorder()
+		gw.ServeHTTP(rec, req)
+		full := authorization == "Bearer operator-secret"
+		if strings.Contains(rec.Body.String(), "private-route") != full {
+			t.Fatalf("operator diagnostics binding failed: auth=%q body=%s", authorization, rec.Body.String())
+		}
+		if strings.Contains(rec.Body.String(), "operator-secret") {
+			t.Fatal("diagnostics exposed operator token")
+		}
 	}
 }
 

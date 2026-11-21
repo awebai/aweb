@@ -43,10 +43,17 @@ path. A caller can still explicitly name a pin-store path.
 Identity creation must not modify an inherited principal. `id create` and local
 invite acceptance require a fresh explicit `--identity-home` target when another
 identity is inherited. Their existing clean-target/overwrite checks still run.
-`init` only supports an external explicit target for `--workspace-team`;
-account/bootstrap and first-agent creation refuse an inherited identity. `aw run`
+`init --join-from` and `init --workspace-team` support an explicit fresh external
+target. Joining uses the same single invite/accept/connect operation; its token
+never reaches the caller. An inherited home is never a creation target.
+Account/bootstrap and first-agent creation refuse an inherited identity. `aw run`
 never starts implicit onboarding when a selected external principal lacks a
 workspace connection.
+
+`id status`, `id team list` and `id cert show` inspect recorded local state
+without network access or credential renewal. `id status` can inspect an
+incomplete or absent selected home; unreadable or corrupt records remain errors,
+and no checkout identity substitutes for the selected home.
 `team admin add` and `workspace add-worktree` keep their explicit target homes
 separate from the selected actor. Joining a team with an existing global
 identity uses that identity's key; it does not mint another identity.

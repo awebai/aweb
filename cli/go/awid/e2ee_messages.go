@@ -17,6 +17,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/awebai/aw/signaturewire"
 )
 
 const (
@@ -417,7 +419,7 @@ func EncryptE2EEMessage(params E2EEEncryptMessageParams) (*E2EEMessageEnvelope, 
 	if err != nil {
 		return nil, err
 	}
-	envelope.Signature = base64.RawStdEncoding.EncodeToString(ed25519.Sign(params.Sender.SigningKey, []byte(signedPayload)))
+	envelope.Signature = signaturewire.SignStd(params.Sender.SigningKey, []byte(signedPayload))
 	return envelope, nil
 }
 
@@ -545,7 +547,7 @@ func VerifyE2EEMessageEnvelopeSignature(envelope *E2EEMessageEnvelope) error {
 	if strings.TrimSpace(envelope.SigningKeyID) != strings.TrimSpace(envelope.From.DID) {
 		return fmt.Errorf("e2ee envelope signing key does not match sender did")
 	}
-	sig, err := base64.RawStdEncoding.DecodeString(strings.TrimSpace(envelope.Signature))
+	sig, err := signaturewire.DecodeStd(strings.TrimSpace(envelope.Signature))
 	if err != nil {
 		return fmt.Errorf("decode e2ee envelope signature: %w", err)
 	}
@@ -557,7 +559,7 @@ func VerifyE2EEMessageEnvelopeSignature(envelope *E2EEMessageEnvelope) error {
 	if err != nil {
 		return fmt.Errorf("extract e2ee sender did:key: %w", err)
 	}
-	if !ed25519.Verify(pub, payload, sig) {
+	if !signaturewire.Verify(signaturewire.Proof{PublicKey: pub, Payload: payload, Signature: sig}) {
 		return fmt.Errorf("invalid e2ee envelope signature")
 	}
 	return nil
