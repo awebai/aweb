@@ -19,7 +19,6 @@ from user_paths_rc import (
     production_baseline,
     published_server,
     server_inputs,
-    stage_production_wheels,
     verify_server_image,
 )
 from container_fixture_modes import make_public_tree_readable
@@ -284,7 +283,10 @@ def start_stack(server_image=None, *, production=False):
 
 def qualify_released_clients(released_aw, runtimes, observations, production):
     """Use the same lanes, image checks, networks and provisioning for the RC."""
-    with phase("fetch-released-channel-and-oats"):
+    with phase("fetch-released-clients-and-production-wheels"):
+        shutil.copyfile(
+            EVIDENCE / "production-readback.json", WORK / "production-readback.json"
+        )
         run(
             "docker",
             "run",
@@ -309,14 +311,15 @@ def qualify_released_clients(released_aw, runtimes, observations, production):
             LOCAL_IMAGES["runtime"],
             "/work/user_paths_rc.py",
             "/work/artifacts",
+            "--production-readback",
+            "/work/production-readback.json",
         )
         for client in ("channel", "oats"):
             shutil.copy2(
                 WORK / "artifacts" / client / "provenance.json",
                 EVIDENCE / ("released-" + client + ".json"),
             )
-    with phase("stage-production-wheels"):
-        stage_production_wheels(WORK / "production-wheels", production["packages"])
+    with phase("install-production-wheels"):
         run(
             "docker",
             "run",
@@ -340,8 +343,8 @@ def qualify_released_clients(released_aw, runtimes, observations, production):
             "--no-deps",
             "--target=/work/production-package",
             *[
-                "/work/production-wheels/" + path.name
-                for path in sorted((WORK / "production-wheels").iterdir())
+                "/work/artifacts/production-wheels/" + path.name
+                for path in sorted((WORK / "artifacts/production-wheels").iterdir())
             ],
         )
         make_public_tree_readable(root=WORK / "production-package")

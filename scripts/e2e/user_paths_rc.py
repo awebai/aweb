@@ -398,6 +398,11 @@ def stage_oats(destination):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("destination", type=Path)
-    destination = parser.parse_args().destination
-    stage_channel(destination / "channel")
-    stage_oats(destination / "oats")
+    parser.add_argument("--production-readback", required=True, type=Path)
+    args = parser.parse_args()
+    stage_channel(args.destination / "channel")
+    stage_oats(args.destination / "oats")
+    readback = json.loads(args.production_readback.read_text())
+    stage_production_wheels(
+        args.destination / "production-wheels", readback["packages"]
+    )
