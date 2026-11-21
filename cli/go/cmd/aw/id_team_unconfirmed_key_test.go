@@ -4,10 +4,10 @@ import (
 	"context"
 	"crypto/ed25519"
 	"errors"
+	"io"
 	"net/http"
-	"net/http/httputil"
-	"net/url"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -17,12 +17,12 @@ import (
 	"github.com/awebai/aw/awid"
 )
 
-// teamReadFaultProxy forwards to a real AWID registry. With failTeamRead set
-// it answers the read of one team with 503, as when the registry is briefly
-// unreachable; beforeCreate runs once, before the first create of that team
-// is forwarded.
-type teamReadFaultProxy struct {
-	proxy        *httputil.ReverseProxy
+// teamReadFaults carries requests to a real AWID registry. With failTeamRead
+// set it answers the read of one team with 503, as when the registry is
+// briefly unreachable; beforeCreate runs once, before the first create of
+// that team is sent. Requests keep the registry's own URL, so the controller
+// signatures they carry name the registry as their audience.
+type teamReadFaults struct {
 	teamPath     string
 	createPath   string
 	failTeamRead atomic.Bool
@@ -30,50 +30,39 @@ type teamReadFaultProxy struct {
 	once         sync.Once
 }
 
-func (p *teamReadFaultProxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	if req.Method == http.MethodGet && req.URL.Path == p.teamPath && p.failTeamRead.Load() {
-		http.Error(w, "registry unavailable", http.StatusServiceUnavailable)
-		return
+func (f *teamReadFaults) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.Method == http.MethodGet && req.URL.Path == f.teamPath && f.failTeamRead.Load() {
+		return &http.Response{
+			StatusCode: http.StatusServiceUnavailable,
+			Status:     "503 Service Unavailable",
+			Header:     http.Header{"Content-Type": []string{"text/plain"}},
+			Body:       io.NopCloser(strings.NewReader("registry unavailable")),
+			Request:    req,
+		}, nil
 	}
-	if req.Method == http.MethodPost && req.URL.Path == p.createPath && p.beforeCreate != nil {
-		p.once.Do(p.beforeCreate)
+	if req.Method == http.MethodPost && req.URL.Path == f.createPath && f.beforeCreate != nil {
+		f.once.Do(f.beforeCreate)
 	}
-	p.proxy.ServeHTTP(w, req)
+	return http.DefaultTransport.RoundTrip(req)
 }
 
-func newTeamReadFaultProxy(t *testing.T, registryURL, domain, name string) (*teamReadFaultProxy, string) {
-	t.Helper()
-	target, err := url.Parse(registryURL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	proxy := &teamReadFaultProxy{
-		proxy:      httputil.NewSingleHostReverseProxy(target),
+func newTeamReadFaults(domain, name string) *teamReadFaults {
+	return &teamReadFaults{
 		teamPath:   "/v1/namespaces/" + domain + "/teams/" + name,
 		createPath: "/v1/namespaces/" + domain + "/teams",
 	}
-	server := newLocalHTTPServer(t, proxy)
-	return proxy, server.URL
 }
 
-// registerTeamAt runs the team registration aw id team create runs, through
-// registryURL, as the namespace controller controllerKey.
-func registerTeamAt(t *testing.T, registryURL, domain, name string, controllerKey ed25519.PrivateKey) (*localTeamRegistration, error) {
+// registerTeamAt runs the team registration aw id team create runs, at
+// registryURL over transport, as the namespace controller controllerKey.
+func registerTeamAt(t *testing.T, registryURL string, transport http.RoundTripper, domain, name string, controllerKey ed25519.PrivateKey) (*localTeamRegistration, error) {
 	t.Helper()
-	t.Setenv("AWID_REGISTRY_URL", registryURL)
-	registry, err := newConfiguredRegistryClient(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := registry.SetFallbackRegistryURL(registryURL); err != nil {
-		t.Fatal(err)
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	return ensureLocalTeamRegistered(ctx, registry, "", domain, name, "", controllerKey)
+	return ensureLocalTeamRegistered(ctx, trustedClient(t, registryURL, transport), registryURL, domain, name, "", controllerKey)
 }
 
-// directRegistry reaches the real registry without the fault proxy.
+// directRegistry reaches the real registry without faults.
 func directRegistry(t *testing.T, registryURL string) *awid.RegistryClient {
 	t.Helper()
 	return trustedClient(t, registryURL, http.DefaultTransport)
@@ -109,10 +98,10 @@ func TestTeamCreateSetsAsideAKeyItCannotConfirmAndRestoresIt(t *testing.T) {
 	t.Setenv("AWID_SKIP_DNS_VERIFY", "1")
 	registryURL := realAWIDFixture(t)
 	const domain, name = "unconfirmed-race.example", "ops"
-	proxy, proxyURL := newTeamReadFaultProxy(t, registryURL, domain, name)
+	faults := newTeamReadFaults(domain, name)
 	controllerKey := newKey(t)
 	var registered string
-	proxy.beforeCreate = func() {
+	faults.beforeCreate = func() {
 		// The concurrent run: it loads the key this run saved and registers
 		// it first, then the registry stops answering reads.
 		key, err := awconfig.LoadTeamKey(domain, name)
@@ -124,10 +113,10 @@ func TestTeamCreateSetsAsideAKeyItCannotConfirmAndRestoresIt(t *testing.T) {
 		if _, err := directRegistry(t, registryURL).CreateTeam(context.Background(), registryURL, domain, name, "", registered, controllerKey); err != nil {
 			t.Errorf("concurrent registration: %v", err)
 		}
-		proxy.failTeamRead.Store(true)
+		faults.failTeamRead.Store(true)
 	}
 
-	_, err := registerTeamAt(t, proxyURL, domain, name, controllerKey)
+	_, err := registerTeamAt(t, registryURL, faults, domain, name, controllerKey)
 	if code := errorCodeOf(err); code != codeTeamNameUnconfirmed {
 		t.Fatalf("first run: code=%q err=%v, want %q", code, err, codeTeamNameUnconfirmed)
 	}
@@ -144,7 +133,7 @@ func TestTeamCreateSetsAsideAKeyItCannotConfirmAndRestoresIt(t *testing.T) {
 	}
 
 	// While reads fail, the set-aside key is left alone and no new key is made.
-	_, err = registerTeamAt(t, proxyURL, domain, name, controllerKey)
+	_, err = registerTeamAt(t, registryURL, faults, domain, name, controllerKey)
 	if code := errorCodeOf(err); code != codeTeamNameUnconfirmed {
 		t.Fatalf("run while reads fail: code=%q err=%v", code, err)
 	}
@@ -153,8 +142,8 @@ func TestTeamCreateSetsAsideAKeyItCannotConfirmAndRestoresIt(t *testing.T) {
 	}
 	assertNoTeamKeyFile(t, domain, name)
 
-	proxy.failTeamRead.Store(false)
-	result, err := registerTeamAt(t, proxyURL, domain, name, controllerKey)
+	faults.failTeamRead.Store(false)
+	result, err := registerTeamAt(t, registryURL, faults, domain, name, controllerKey)
 	if err != nil {
 		t.Fatalf("run once the registry answers: %v", err)
 	}
@@ -179,66 +168,73 @@ func TestTeamCreateSetsAsideAKeyItCannotConfirmAndRestoresIt(t *testing.T) {
 }
 
 // A key set aside while reads failed is removed by the first read that shows
-// the registry pins another key, and the name is refused as taken.
+// the registry pins another key, and the name is refused as taken. A public
+// team shows its key; a private team refuses the read signed with the
+// set-aside key, which it does only for a key that is not the team's.
 func TestTeamCreateRemovesAnUnconfirmedKeyTheRegistryShowsIsNotTheTeams(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("AWID_SKIP_DNS_VERIFY", "1")
 	registryURL := realAWIDFixture(t)
-	const domain, name = "unconfirmed-elsewhere.example", "ops"
-	proxy, proxyURL := newTeamReadFaultProxy(t, registryURL, domain, name)
+	const domain = "unconfirmed-elsewhere.example"
 	controllerKey := newKey(t)
-	// The namespace is this controller's; the team is pinned to another key
-	// and is public, so this run's read can tell.
-	if _, err := registerTeamAt(t, registryURL, domain, "seed", controllerKey); err != nil {
+	if _, err := registerTeamAt(t, registryURL, http.DefaultTransport, domain, "seed", controllerKey); err != nil {
 		t.Fatalf("seed the namespace: %v", err)
 	}
-	other := newKey(t)
 	registry := directRegistry(t, registryURL)
-	if _, err := registry.CreateTeam(context.Background(), registryURL, domain, name, "", didOf(other), controllerKey); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := registry.SetTeamVisibility(context.Background(), registryURL, domain, name, "public", other); err != nil {
-		t.Fatal(err)
-	}
+	for _, visibility := range []string{"public", "private"} {
+		t.Run(visibility, func(t *testing.T) {
+			name := visibility + "-ops"
+			faults := newTeamReadFaults(domain, name)
+			other := newKey(t)
+			if _, err := registry.CreateTeam(context.Background(), registryURL, domain, name, "", didOf(other), controllerKey); err != nil {
+				t.Fatal(err)
+			}
+			if visibility == "public" {
+				if _, err := registry.SetTeamVisibility(context.Background(), registryURL, domain, name, "public", other); err != nil {
+					t.Fatal(err)
+				}
+			}
 
-	proxy.failTeamRead.Store(true)
-	_, err := registerTeamAt(t, proxyURL, domain, name, controllerKey)
-	if code := errorCodeOf(err); code != codeTeamNameUnconfirmed {
-		t.Fatalf("run while reads fail: code=%q err=%v", code, err)
-	}
-	if setAsideKey(t, domain, name) == nil {
-		t.Fatal("the key this run created was not set aside")
-	}
+			faults.failTeamRead.Store(true)
+			_, err := registerTeamAt(t, registryURL, faults, domain, name, controllerKey)
+			if code := errorCodeOf(err); code != codeTeamNameUnconfirmed {
+				t.Fatalf("run while reads fail: code=%q err=%v", code, err)
+			}
+			if setAsideKey(t, domain, name) == nil {
+				t.Fatal("the key this run created was not set aside")
+			}
 
-	proxy.failTeamRead.Store(false)
-	_, err = registerTeamAt(t, proxyURL, domain, name, controllerKey)
-	if code := errorCodeOf(err); code != codeTeamNameTaken {
-		t.Fatalf("run once the registry answers: code=%q err=%v, want %q", code, err, codeTeamNameTaken)
-	}
-	if setAsideKey(t, domain, name) != nil {
-		t.Fatal("the unconfirmed key was kept for a team pinned to another key")
-	}
-	assertNoTeamKeyFile(t, domain, name)
-	path, err := awconfig.UnconfirmedTeamKeyPath(domain, name)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("set-aside file still present: %v", err)
+			faults.failTeamRead.Store(false)
+			_, err = registerTeamAt(t, registryURL, faults, domain, name, controllerKey)
+			if code := errorCodeOf(err); code != codeTeamNameTaken {
+				t.Fatalf("run once the registry answers: code=%q err=%v, want %q", code, err, codeTeamNameTaken)
+			}
+			if setAsideKey(t, domain, name) != nil {
+				t.Fatal("the unconfirmed key was kept for a team pinned to another key")
+			}
+			assertNoTeamKeyFile(t, domain, name)
+			path, err := awconfig.UnconfirmedTeamKeyPath(domain, name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("set-aside file still present: %v", err)
+			}
+		})
 	}
 }
 
-// A read that answers at once and shows another key is a taken name, and the
-// key this run created is deleted; a private team pinned to another key
-// refuses this run's signed read, which is not absence: the run says it could
-// not confirm and keeps its key aside.
+// A team pinned to another key is a taken name, and the key this run created
+// is deleted. A public team shows its key; a private team refuses the read
+// this run signs with its own key, which it does only for a key that is
+// neither the team's nor a member's, so that refusal shows the same.
 func TestTeamCreateAgainstATeamPinnedToAnotherKey(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("AWID_SKIP_DNS_VERIFY", "1")
 	registryURL := realAWIDFixture(t)
 	const domain = "pinned-elsewhere.example"
 	controllerKey := newKey(t)
-	if _, err := registerTeamAt(t, registryURL, domain, "seed", controllerKey); err != nil {
+	if _, err := registerTeamAt(t, registryURL, http.DefaultTransport, domain, "seed", controllerKey); err != nil {
 		t.Fatalf("seed the namespace: %v", err)
 	}
 	registry := directRegistry(t, registryURL)
@@ -252,7 +248,7 @@ func TestTeamCreateAgainstATeamPinnedToAnotherKey(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := registerTeamAt(t, registryURL, domain, "public-team", controllerKey)
+	_, err := registerTeamAt(t, registryURL, http.DefaultTransport, domain, "public-team", controllerKey)
 	if code := errorCodeOf(err); code != codeTeamNameTaken {
 		t.Fatalf("public team: code=%q err=%v, want %q", code, err, codeTeamNameTaken)
 	}
@@ -261,12 +257,12 @@ func TestTeamCreateAgainstATeamPinnedToAnotherKey(t *testing.T) {
 		t.Fatal("a confirmed taken name left a set-aside key")
 	}
 
-	_, err = registerTeamAt(t, registryURL, domain, "private-team", controllerKey)
-	if code := errorCodeOf(err); code != codeTeamNameUnconfirmed {
-		t.Fatalf("private team: code=%q err=%v, want %q", code, err, codeTeamNameUnconfirmed)
+	_, err = registerTeamAt(t, registryURL, http.DefaultTransport, domain, "private-team", controllerKey)
+	if code := errorCodeOf(err); code != codeTeamNameTaken {
+		t.Fatalf("private team: code=%q err=%v, want %q", code, err, codeTeamNameTaken)
 	}
 	assertNoTeamKeyFile(t, domain, "private-team")
-	if setAsideKey(t, domain, "private-team") == nil {
-		t.Fatal("the key this run created for the private team was not set aside")
+	if setAsideKey(t, domain, "private-team") != nil {
+		t.Fatal("a private team pinned to another key left a set-aside key")
 	}
 }
