@@ -54,7 +54,7 @@ def test_without_a_network_or_an_origin_there_is_no_second_attempt() -> None:
 @pytest.mark.parametrize(
     ("url", "admitted"),
     [
-        ("https://coord.example/api/v1/grants", True),
+        ("https://coord.example/a/longer/path", True),
         ("https://COORD.example:443/x", True),
         ("https://coord.example:8443/x", False),
         ("https://other.example/x", False),
