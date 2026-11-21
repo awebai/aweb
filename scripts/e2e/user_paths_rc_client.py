@@ -10,7 +10,7 @@ import subprocess
 import threading
 import time
 
-from user_paths import CLICommandError, Lane, rows, sent_identity
+from user_paths import CLICommandError, Lane, sent_identity
 
 
 def require(condition, message):
@@ -258,23 +258,21 @@ def plugin_delivery(lane, plugin, kind):
 
 def plugin_reconnect_wake(lane, channel):
     """Show an idle host wake on reconnect from unread state queued offline."""
+
+    def unread_count():
+        return lane.command("t2", "mail", "inbox", "--count-only")["unread_count"]
+
+    require(unread_count() == 0, "The channel wake case needs an empty unread inbox.")
     body = "Released channel wakes from queued mail after reconnect."
     message, thread = send(lane, "t2", "mail", body)
-
-    def unread():
-        return any(
-            row.get("message_id") == message
-            for row in rows(lane.command("t2", "mail", "inbox"))
-        )
-
-    require(unread(), "The offline plugin's exact message was not queued unread.")
+    require(unread_count() == 1, "The offline plugin's message was not queued unread.")
     with Plugin(lane, channel, "t2") as plugin:
         plugin.connect()
         presented = plugin.notification(
             message, thread, "mail", body, lane.actors["g1"]["address"]
         )
         deadline = time.monotonic() + 15
-        while unread():
+        while unread_count() != 0:
             require(
                 time.monotonic() < deadline,
                 "The reconnected channel did not settle its delivered wake.",
