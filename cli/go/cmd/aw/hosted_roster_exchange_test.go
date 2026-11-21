@@ -33,7 +33,7 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 		"workspace key wrong team",
 		"three children discovered creator",
 		"join-from stored key",
-		"init workspace key",
+		"implicit init workspace key refuses external home",
 		"cert-only worktree",
 		"cert-only revoked parent",
 		"revoked parent",
@@ -98,7 +98,7 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 			if scenario == "three children discovered creator" {
 				rosterRoot = deployment
 			}
-			joinFrom := strings.HasPrefix(scenario, "join-from") || scenario == "init workspace key"
+			joinFrom := strings.HasPrefix(scenario, "join-from") || scenario == "implicit init workspace key refuses external home"
 			furtherTeam := strings.HasPrefix(scenario, "further-team")
 			childDir := root + "-child"
 			if joinFrom || furtherTeam {
@@ -589,7 +589,17 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 				if err != nil || verdict.Outcome != "nearest_human" {
 					t.Fatalf("selected home ancestry=%+v err=%v", verdict, err)
 				}
-				if scenario != "further-team cross-machine recipe" {
+				switch {
+				case strings.HasPrefix(scenario, "further-team parent"), scenario == "further-team add parent retry":
+					parentID, _, err := loadTeamInviteParentRecord(token, recipientHome)
+					if err != nil {
+						t.Fatal(err)
+					}
+					requireConsumedInviteRecord(t, parentID)
+					if _, err := awconfig.LoadTeamInvite(recordID); !os.IsNotExist(err) {
+						t.Fatalf("independent parent created a replacement issuer link: %v", err)
+					}
+				case scenario != "further-team cross-machine recipe":
 					requireConsumedInviteRecord(t, recordID)
 				}
 				return
@@ -606,7 +616,7 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 				var joinErr error
 				withTestWorkingDir(t, childDir, func() {
 					var out bytes.Buffer
-					if scenario == "init workspace key" {
+					if scenario == "implicit init workspace key refuses external home" {
 						oldHome := activeIdentityHome
 						activeIdentityHome = awconfig.IdentityHome{Root: filepath.Join(root, ".aw"), Source: awconfig.IdentityHomeFlag}
 						defer func() { activeIdentityHome = oldHome }()
@@ -618,6 +628,18 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 						joinErr = runInitJoinFrom(authTestCmd(&out))
 					}
 				})
+				if scenario == "implicit init workspace key refuses external home" {
+					if joinErr == nil || !strings.Contains(joinErr.Error(), "only supported for --workspace-team or explicit fresh --join-from") {
+						t.Fatalf("implicit external creation did not refuse: %v", joinErr)
+					}
+					if creates != 0 || accepts != 0 {
+						t.Fatalf("refused implicit init created or accepted an invite: %d/%d", creates, accepts)
+					}
+					if _, err := os.Stat(filepath.Join(childDir, ".aw")); !os.IsNotExist(err) {
+						t.Fatalf("implicit external creation wrote child state: %v", err)
+					}
+					return
+				}
 				if strings.HasPrefix(scenario, "join-from retry") {
 					if joinErr == nil {
 						t.Fatal("first attempt unexpectedly succeeded")

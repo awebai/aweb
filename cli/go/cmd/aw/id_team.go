@@ -1142,7 +1142,7 @@ func runTeamInviteAcceptance(cmd *cobra.Command, args []string, completion teamI
 	if err != nil {
 		return err
 	}
-	if home.External() && acceptScope == awid.IdentityModeLocal && !canResumeNativeInviteIssuance(rawToken, home.Root) && !canResumeTeamInviteIDChild(rawToken, home.Root) {
+	if home.External() && acceptScope == awid.IdentityModeLocal && !canResumeNativeInviteIssuance(rawToken, home.Root) && !canResumeTeamInviteIDChild(rawToken, home.Root) && !canResumeHostedInvite(rawToken, home.Root) {
 		if err := ensureExternalLocalAcceptHomeAvailable(home.Root); err != nil {
 			return err
 		}
@@ -1810,12 +1810,19 @@ func acceptTeamInviteWithDetails(input teamInviteAcceptanceRequest) (*acceptedTe
 		return nil, err
 	}
 
+	parentInviteID := ""
+	if opts.ParentHome != "" {
+		parentInviteID, _, err = loadTeamInviteParentRecord(token, home.Root)
+		if err != nil {
+			return nil, err
+		}
+	}
 	appliedDefaultClaim, err := claimNativeInviteDefaultAddress(ctx, nativeInviteDefaultClaimRequest{Plan: plan, Registry: registry, RegistryURL: registryURL})
 	if err != nil {
 		return nil, err
 	}
 
-	cert, err := issueNativeInviteCertificate(ctx, nativeInviteIssuanceRequest{Invite: invite, Plan: plan, Home: home, ParentInviteID: teamInviteParentRecordID(token, opts.ParentHome), TeamKey: teamKey, Registry: registry, RegistryURL: registryURL, DefaultClaimResult: appliedDefaultClaim})
+	cert, err := issueNativeInviteCertificate(ctx, nativeInviteIssuanceRequest{Invite: invite, Plan: plan, Home: home, ParentInviteID: parentInviteID, TeamKey: teamKey, Registry: registry, RegistryURL: registryURL, DefaultClaimResult: appliedDefaultClaim})
 	if err != nil {
 		return nil, err
 	}
@@ -1830,7 +1837,7 @@ func acceptTeamInviteWithDetails(input teamInviteAcceptanceRequest) (*acceptedTe
 			return nil, retainedIssuedIdentityStateFailure(cert, err)
 		}
 	}
-	if err := consumedInviteParent(token, opts.ParentHome); err != nil {
+	if err := consumeInviteParent(parentInviteID); err != nil {
 		return nil, retainIdentityForRecovery(err)
 	}
 	return &acceptedTeamInvite{

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/ed25519"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -111,9 +112,8 @@ func completeExplicitInviteParent(ctx context.Context, wd, home, token, parentHo
 	if _, err := os.Stat(filepath.Join(parentHome, "signing.key")); errors.Is(err, os.ErrNotExist) {
 		parentHome = filepath.Join(parentHome, ".aw")
 	}
-	recordID := "creator-" + strings.TrimPrefix(hostedTeamInviteRecordID(token), "hosted-")
-	invite, err := awconfig.LoadTeamInvite(recordID)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
+	recordID, invite, err := loadTeamInviteParentRecord(token, home)
+	if err != nil {
 		return err
 	}
 	if invite == nil {
@@ -170,19 +170,38 @@ func prepareInviteChildIdentity(home string) error {
 	return awconfig.SaveWorktreeIdentityTo(path, &awconfig.WorktreeIdentity{DID: awid.ComputeDIDKey(key.Public().(ed25519.PublicKey)), IdentityScope: awid.IdentityModeLocal, Custody: awid.CustodySelf, CreatedAt: time.Now().UTC().Format(time.RFC3339)})
 }
 
-func teamInviteParentRecordID(token, parentHome string) string {
-	if parentHome == "" {
-		return ""
+// The exchange belongs to one recipient home even when the hosted invite
+// permits multiple children (docs/identity.md, explicit parent exchange).
+func loadTeamInviteParentRecord(token, childHome string) (string, *awconfig.TeamInvite, error) {
+	legacyID := "creator-" + strings.TrimPrefix(hostedTeamInviteRecordID(token), "hosted-")
+	digest := sha256.Sum256([]byte(legacyID + "\x00" + filepath.Clean(childHome)))
+	recordID := fmt.Sprintf("creator-%x", digest)
+	invite, err := awconfig.LoadTeamInvite(recordID)
+	if !errors.Is(err, os.ErrNotExist) {
+		return recordID, invite, err
 	}
-	return "creator-" + strings.TrimPrefix(hostedTeamInviteRecordID(token), "hosted-")
+
+	legacy, err := awconfig.LoadTeamInvite(legacyID)
+	if errors.Is(err, os.ErrNotExist) {
+		return recordID, nil, nil
+	}
+	if err != nil {
+		return "", nil, err
+	}
+	if legacy.IDChild == nil {
+		return "", nil, errors.New("retained creator exchange has no child binding")
+	}
+	if legacy.IDChild.ChildHome == childHome {
+		return legacyID, legacy, nil
+	}
+	return recordID, nil, nil
 }
 
-func consumedInviteParent(token, parentHome string) error {
-	id := teamInviteParentRecordID(token, parentHome)
-	if id == "" {
+func consumeInviteParent(recordID string) error {
+	if recordID == "" {
 		return nil
 	}
-	return recordConsumedTeamInvite(id)
+	return recordConsumedTeamInvite(recordID)
 }
 
 // recordConsumedTeamInvite retains the irreversible issuance consequence, with

@@ -228,8 +228,9 @@ func finishHostedInviteRefusal(request hostedInviteAcceptanceRequest, history ho
 }
 
 type hostedInviteChildPreparation struct {
-	LocalLink   *awconfig.TeamInvite
-	TreeRequest *awid.IDTreeCreationRequest
+	LocalLink      *awconfig.TeamInvite
+	ParentInviteID string
+	TreeRequest    *awid.IDTreeCreationRequest
 }
 
 func prepareHostedInviteChild(ctx context.Context, request hostedInviteAcceptanceRequest) (hostedInviteChildPreparation, error) {
@@ -244,8 +245,13 @@ func prepareHostedInviteChild(ctx context.Context, request hostedInviteAcceptanc
 	recoveryPath := request.RecoveryPath
 
 	var err error
+	parentInviteID := ""
 	if opts.ParentHome != "" {
 		if err := completeExplicitInviteParent(ctx, workingDir, home.Root, token, opts.ParentHome); err != nil {
+			return hostedInviteChildPreparation{}, err
+		}
+		parentInviteID, _, err = loadTeamInviteParentRecord(token, home.Root)
+		if err != nil {
 			return hostedInviteChildPreparation{}, err
 		}
 	}
@@ -277,7 +283,7 @@ func prepareHostedInviteChild(ctx context.Context, request hostedInviteAcceptanc
 		}
 	}
 
-	return hostedInviteChildPreparation{LocalLink: localLink, TreeRequest: treeRequest}, nil
+	return hostedInviteChildPreparation{LocalLink: localLink, ParentInviteID: parentInviteID, TreeRequest: treeRequest}, nil
 }
 
 type hostedInviteAcceptedResponseRequest struct {
@@ -287,13 +293,13 @@ type hostedInviteAcceptedResponseRequest struct {
 	RegistryURL      string
 	MembershipResult *awid.IDChainResult
 	LocalLink        *awconfig.TeamInvite
+	ParentInviteID   string
 }
 
 func completeHostedInviteResponse(ctx context.Context, responseRequest hostedInviteAcceptedResponseRequest) (*acceptedTeamInvite, error) {
 	request := responseRequest.Acceptance
 
 	workingDir := request.WorkingDir
-	token := request.Token
 	opts := request.Options
 	scope := string(request.Scope)
 	alias := request.Alias
@@ -380,7 +386,7 @@ func completeHostedInviteResponse(ctx context.Context, responseRequest hostedInv
 			return nil, err
 		}
 	}
-	if err := consumedInviteParent(token, opts.ParentHome); err != nil {
+	if err := consumeInviteParent(responseRequest.ParentInviteID); err != nil {
 		return nil, err
 	}
 	return &acceptedTeamInvite{
@@ -479,7 +485,7 @@ func completeHostedInviteAcceptance(ctx context.Context, request hostedInviteAcc
 		return nil, err
 	}
 
-	return completeHostedInviteResponse(ctx, hostedInviteAcceptedResponseRequest{Acceptance: request, Response: resp, Registry: registry, RegistryURL: registryURL, MembershipResult: membershipResult, LocalLink: localLink})
+	return completeHostedInviteResponse(ctx, hostedInviteAcceptedResponseRequest{Acceptance: request, Response: resp, Registry: registry, RegistryURL: registryURL, MembershipResult: membershipResult, LocalLink: localLink, ParentInviteID: child.ParentInviteID})
 
 }
 
