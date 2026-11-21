@@ -27,7 +27,8 @@ from aweb.member_team_key import (
 )
 from aweb.team_registry import native_database_manager
 
-GRANT_STREAM_RECHECK_SECONDS = 30
+STREAM_AUTHORITY_RECHECK_SECONDS = 30
+STREAM_MAX_DURATION_SECONDS = 300
 StreamIdentity = TeamIdentity | MessagingAuth
 
 GRANT_TERMINAL_DETAILS = {
@@ -208,7 +209,7 @@ class NeverGrantStreamGuard:
         if grant is not None and not grant.never_expires:
             return self.expiry_reason(self.identity)
         now = time.monotonic()
-        if now - self.checked_at < GRANT_STREAM_RECHECK_SECONDS:
+        if now - self.checked_at < STREAM_AUTHORITY_RECHECK_SECONDS:
             return None
         self.checked_at = now
         try:

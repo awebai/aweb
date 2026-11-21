@@ -352,7 +352,7 @@ async def test_address_discovery_programming_error_is_not_stored_binding_authori
     "change", ["rotation", "rotation-and-readmission", "revocation", "inactive", "unchanged"]
 )
 async def test_certificate_stream_rechecks_its_original_authority_on_grant_cadence(pinning, change):
-    from aweb.grant_streams import GRANT_STREAM_RECHECK_SECONDS, NeverGrantStreamGuard
+    from aweb.grant_streams import STREAM_AUTHORITY_RECHECK_SECONDS, NeverGrantStreamGuard
     from aweb.team_auth_deps import get_team_identity
 
     env = pinning
@@ -378,7 +378,7 @@ async def test_certificate_stream_rechecks_its_original_authority_on_grant_caden
     elif change == "inactive":
         await _archive_global_member(env, actor)
     # Advance only the cadence boundary, never authority or dependency results.
-    guard.checked_at -= GRANT_STREAM_RECHECK_SECONDS + 1
+    guard.checked_at -= STREAM_AUTHORITY_RECHECK_SECONDS + 1
     assert await guard.reason() == (
         None if change == "unchanged" else "team_membership_not_current"
     )
@@ -398,11 +398,11 @@ async def test_an_open_certificate_event_stream_stops_after_rotation(pinning, mo
     request = _request(env, actor)
     identity = await get_team_identity(request, env.infra)
     assert identity.verified_team_did_key == env.team_did
-    assert grant_streams.GRANT_STREAM_RECHECK_SECONDS == events.GRANT_STREAM_RECHECK_SECONDS == 30
+    assert grant_streams.STREAM_AUTHORITY_RECHECK_SECONDS == events.STREAM_AUTHORITY_RECHECK_SECONDS == 30
     # Shorten only the timer for this real stream; all authority/SQL/Redis
     # observations and the original admitted credential remain untouched.
-    monkeypatch.setattr(grant_streams, "GRANT_STREAM_RECHECK_SECONDS", 0.05)
-    monkeypatch.setattr(events, "GRANT_STREAM_RECHECK_SECONDS", 0.05)
+    monkeypatch.setattr(grant_streams, "STREAM_AUTHORITY_RECHECK_SECONDS", 0.05)
+    monkeypatch.setattr(events, "STREAM_AUTHORITY_RECHECK_SECONDS", 0.05)
     stream = events._sse_agent_events(
         request=request,
         db=env.infra,
@@ -434,8 +434,8 @@ async def test_an_open_certificate_status_stream_stops_after_rotation(pinning, m
     actor = env.actors["bob"]
     workspace = str(actor.workspace)
     headers = _signed_team_headers(actor.sk, actor.did, TEAM, actor.certificate)
-    assert grant_streams.GRANT_STREAM_RECHECK_SECONDS == 30
-    monkeypatch.setattr(grant_streams, "GRANT_STREAM_RECHECK_SECONDS", 0.05)
+    assert grant_streams.STREAM_AUTHORITY_RECHECK_SECONDS == 30
+    monkeypatch.setattr(grant_streams, "STREAM_AUTHORITY_RECHECK_SECONDS", 0.05)
 
     async with env.client.stream(
         "GET", "/v1/status/stream", headers=headers, params={"workspace_id": workspace}
@@ -456,6 +456,34 @@ async def test_an_open_certificate_status_stream_stops_after_rotation(pinning, m
         assert terminal["type"] == "team_membership_not_current", terminal
         async with asyncio.timeout(5):
             assert [line async for line in lines if line.startswith("data: ")] == []
+
+
+@pytest.mark.asyncio
+async def test_idle_certificate_status_stream_closes_at_cap_during_registry_read(pinning, monkeypatch):
+    from aweb import grant_streams
+    from aweb.routes import status
+
+    env = pinning
+    actor = await _admit(env, "idlecertificatestream")
+    workspace = str(actor.workspace)
+    headers = _signed_team_headers(actor.sk, actor.did, TEAM, actor.certificate)
+    assert grant_streams.STREAM_MAX_DURATION_SECONDS == status.STREAM_MAX_DURATION_SECONDS == 300
+    monkeypatch.setattr(status, "STREAM_MAX_DURATION_SECONDS", 2)
+    monkeypatch.setattr(grant_streams, "STREAM_AUTHORITY_RECHECK_SECONDS", 0.05)
+
+    async with env.client.stream(
+        "GET", "/v1/status/stream", headers=headers, params={"workspace_id": workspace}
+    ) as response:
+        assert response.status_code == 200
+        channel = f"events:{workspace}"
+        async with asyncio.timeout(4):
+            while not (await env.redis.pubsub_numsub(channel))[0][1]:
+                await asyncio.sleep(0.01)
+            env.registry.transport.calls.clear()
+            monkeypatch.setattr(env.registry.transport, "delay", 30)
+            assert [line async for line in response.aiter_lines() if line.startswith("data: ")] == []
+        assert any(request.url.path.endswith("/revocations") for request in env.registry.transport.calls)
+        assert (await env.redis.pubsub_numsub(channel))[0][1] == 0
 
 
 @pytest.mark.asyncio

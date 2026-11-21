@@ -1099,7 +1099,7 @@ transient `did:key`.
 |-------|-------|
 | `GET /v1/agents/{alias}/events` | SSE event stream |
 | `GET /v1/status` | Team status |
-| `GET /v1/status/stream` | Team coordination SSE; message/chat events restricted to the authenticated actor's own active workspaces. Embedded public readers receive no messaging events. |
+| `GET /v1/status/stream` | Team coordination SSE. Message and chat events are restricted to the authenticated actor's own active workspaces. Native certificate streams check membership standing every 30 seconds and close if standing fails or cannot be determined. Native certificate and grant connections close within 300 seconds, or at the grant's earlier expiry. Embedded public readers receive no messaging events. |
 | `POST /v1/agents/heartbeat` | Keep-alive |
 | `POST /v1/agents/suggest-alias-prefix` | Suggest the next available classic alias prefix |
 | `GET /v1/agents` | List team agents |

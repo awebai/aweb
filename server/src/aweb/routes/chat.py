@@ -84,7 +84,7 @@ from aweb.messaging.waiting import (
     unregister_waiting,
 )
 from aweb.grant_streams import (
-    GRANT_STREAM_RECHECK_SECONDS,
+    STREAM_AUTHORITY_RECHECK_SECONDS,
     clamp_deadline_to_grant,
     grant_expiry_reason,
     grant_terminal_reason,
@@ -671,7 +671,7 @@ async def _sse_events(
     last_keepalive = last_refresh
     last_pubsub_ping = last_refresh
     last_db_poll = last_refresh
-    next_grant_check = time.monotonic() + GRANT_STREAM_RECHECK_SECONDS
+    next_grant_check = time.monotonic() + STREAM_AUTHORITY_RECHECK_SECONDS
 
     async def _stream_grant_reason():
         nonlocal next_grant_check
@@ -685,7 +685,7 @@ async def _sse_events(
         except Exception:
             logger.exception("Chat stream grant verification failed for session %s", session_id_str)
             return "verification_unavailable"
-        next_grant_check = time.monotonic() + GRANT_STREAM_RECHECK_SECONDS
+        next_grant_check = time.monotonic() + STREAM_AUTHORITY_RECHECK_SECONDS
         return reason
 
     channel = chat_session_channel_name(session_id_str)

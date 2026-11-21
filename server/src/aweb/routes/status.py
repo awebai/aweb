@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from aweb.member_team_key import current_member_sql
 
+import asyncio
 import time
 from collections import OrderedDict
 from contextlib import aclosing
@@ -24,6 +25,7 @@ from ..events import EventCategory, stream_events_multi
 from ._reservation_utils import reservation_metadata
 from ..grant_liveness import valid_grant_liveness_by_workspace
 from ..grant_streams import (
+    STREAM_MAX_DURATION_SECONDS,
     allowed_status_categories,
     clamp_deadline_to_grant,
     NeverGrantStreamGuard,
@@ -756,7 +758,10 @@ async def status_stream(
 
     await require_valid_stream_grant(request, db_infra, identity)
     deadline = clamp_deadline_to_grant(
-        datetime.now(timezone.utc) + timedelta(seconds=300), identity
+        datetime.now(timezone.utc) + timedelta(seconds=STREAM_MAX_DURATION_SECONDS), identity
+    )
+    stream_limit = asyncio.get_running_loop().time() + max(
+        0, (deadline - datetime.now(timezone.utc)).total_seconds()
     )
 
     async def _authority_guarded_status_stream():
@@ -772,10 +777,6 @@ async def status_stream(
                 return True
             return datetime.now(timezone.utc) >= deadline
 
-        reason = terminal or await guard.reason()
-        if reason:
-            yield grant_terminal_sse(reason)
-            return
         async with aclosing(
             stream_events_multi(
                 redis,
@@ -789,16 +790,25 @@ async def status_stream(
                 ),
             )
         ) as items:
-            async for item in items:
-                terminal = await guard.reason()
-                if terminal:
+            while asyncio.get_running_loop().time() < stream_limit:
+                cap = asyncio.timeout_at(stream_limit)
+                try:
+                    async with cap:
+                        # This includes idle PubSub waits and any standing or
+                        # disconnect check performed while obtaining an item.
+                        item = await anext(items)
+                        terminal = await guard.reason()
+                except StopAsyncIteration:
                     break
-                if datetime.now(timezone.utc) >= deadline:
+                except TimeoutError:
+                    if not cap.expired():
+                        raise
+                    return
+                if terminal or datetime.now(timezone.utc) >= deadline:
                     break
                 yield item
-        reason = terminal or await guard.reason()
-        if reason:
-            yield grant_terminal_sse(reason)
+        if terminal:
+            yield grant_terminal_sse(terminal)
 
     return StreamingResponse(
         _authority_guarded_status_stream(),
