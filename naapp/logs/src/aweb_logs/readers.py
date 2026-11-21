@@ -140,15 +140,6 @@ class ReaderDirectory:
     def _holdings(self) -> HumanRoleHoldings:
         return HumanRoleHoldings(roles=frozenset({READER_ROLE}), passkeys=self._passkeys())
 
-    async def current_readers(self, *, installation_id: str, team_id: str) -> list[Reader]:
-        """The readers of this installation and team who can sign in now, in
-        scope order."""
-        async with self.db.transaction() as tx:
-            readers = await self.current_readers_in(
-                tx, installation_id=installation_id, team_id=team_id
-            )
-        return sorted(readers, key=lambda reader: reader.scope)
-
     async def current_readers_in(
         self, tx: TransactionManager, *, installation_id: str, team_id: str
     ) -> list[Reader]:
