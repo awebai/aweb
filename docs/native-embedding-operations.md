@@ -121,61 +121,6 @@ Neither unrelated threads nor a predecessor's unthreaded mail gain authority.
 The operation reads no bodies or custody material and propagates database
 failures. It does not replace display/decryption or grant history access.
 
-## Message retention storage
-
-`aweb.message_retention` owns storage eligibility. An operator supplies policy,
-established ownership facts and an absolute UTC cutoff; these operations do not
-enable automatic retention. Each sweep ends only its own team's interests.
-Message visibility remains unchanged while any party retains an interest.
-
-New mail/chat acceptance captures its native delivery/history parties as
-`UNKNOWN` in the message transaction. Adding a readable history participant
-adds an unknown party in that participant transaction. Captured parties survive
-later participant retirement or succession. Legacy messages without complete
-capture remain unknown; current membership cannot prove historical coverage.
-
-`record_message_retention_owners(db, *, message, party_did, owner_team_ids)`
-accepts a `MessageReference(kind, message_id)`, an actual recorded native party
-and a nonempty frozen set of admitted canonical owner-team IDs established by
-the host. It never infers billing ownership from an agent's current team. An
-exact classification retry leaves interests unchanged. A different owner set
-is an actionable conflict, retaining existing interests; transfer/renewal is
-not implicit in incidental membership or key changes. Missing classification
-does not reject an otherwise valid send.
-
-`preview_team_message_retention(db, *, scope, limit=200, after=None)` accepts a
-frozen `RetentionSweepScope(team_id, cutoff)`. Its cutoff must be timezone-aware
-and no later than database transaction time. It returns a frozen
-`MessageRetentionPreview` with a native preview ID, scope,
-`mail_interests_expiring`, `chat_interests_expiring`, `mail_would_delete`,
-`chat_would_delete`, `unclassified_retained`, `batch_count` and `next_after`.
-All counts describe this bounded batch (maximum 1000 messages); pass
-`next_after` as the next preview's `after` to continue. Preview expires no
-interest and deletes no message. Its only write is a native receipt binding
-the exact message/interest candidates and reported counts to this scope.
-
-`apply_team_message_retention(db, *, preview)` requires that actual preview.
-It checks the native receipt, locks/rechecks its candidates and returns
-`MessageRetentionResult` with the preview ID and actual
-`mail_interests_expired`, `chat_interests_expired`, `mail_deleted`,
-`chat_deleted` and `unclassified_retained` counts. A forged/mismatched preview
-refuses before effects and asks for a new preview. A completed preview retry
-reports zero new mutations. When supplying a surrounding transaction, report
-these effects as committed only after the outer transaction commits.
-
-Physical deletion requires complete known party coverage, a nonempty explicit
-owner set for every party, every interest ended and no pending native delivery
-outbox obligation. Missing metadata, a new history party or a new unpreviewed
-interest protects the row. Apply may delete fewer than previewed, never more:
-even a row that becomes eligible after preview needs a new deletion preview.
-It leaves participants, conversations/sessions and replay receipts intact;
-only deleted chat messages' watermark references are cleared. No native
-retention operation accepts a SQL predicate or a table-name argument.
-
-The host reports the preview before requesting apply, rechecks its current
-ownership/plan policy and keeps automatic retention off until its operator
-separately enables it. A changed cutoff requires a new preview.
-
 ## Native resource lifecycle
 
 `aweb.embedding.embedded_aweb(*, db_infra, redis, registry_client,
