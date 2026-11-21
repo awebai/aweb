@@ -522,6 +522,33 @@ if args[:2] in [['network','create'],['volume','create']]: print('owned');sys.ex
 class ExactMessageAssertions(unittest.TestCase):
     """Negative controls exercise the matrix's actual three-turn assertion path."""
 
+    def test_contacts_only_requires_the_policy_read_back_from_storage(self):
+        import sys
+        from unittest.mock import Mock, call, patch
+
+        spec = importlib.util.spec_from_file_location(
+            "user_paths", ROOT / "scripts/e2e/user_paths.py"
+        )
+        paths = importlib.util.module_from_spec(spec)
+        with patch.dict(sys.modules, {"user_paths_result": result_model}):
+            spec.loader.exec_module(paths)
+        lane = paths.Lane.__new__(paths.Lane)
+        lane.name, lane.version = "released", "1.36.40"
+        lane.command = Mock(side_effect=[
+            {"inbound_mode": "contacts_only"},
+            {"inbound_mode": "team_and_contacts"},
+            {"inbound_mode": "open"},
+        ])
+        lane.refused = Mock()
+        with self.assertRaisesRegex(AssertionError, "team_and_contacts"):
+            lane.contacts_only("mail")
+        self.assertEqual(lane.command.call_args_list, [
+            call("g2", "inbound-mode", "contacts-only"),
+            call("g2", "inbound-mode"),
+            call("g2", "inbound-mode", "open"),
+        ])
+        lane.refused.assert_not_called()
+
     def exercise(self, kind, encrypted, mutate=None):
         import copy
         import json

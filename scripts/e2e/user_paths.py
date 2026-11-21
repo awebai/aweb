@@ -634,25 +634,18 @@ class Lane:
             self.command("g1", "inbound-mode", "open")
 
     def contacts_only(self, kind):
-        configured = self.command("g2", "inbound-mode", "contacts-only")
+        self.command("g2", "inbound-mode", "contacts-only")
         try:
-            mode = configured["inbound_mode"]
-            assert mode == "contacts_only" or (
-                self.name == "released"
-                and self.version == "1.36.40"
-                and mode == "team_and_contacts"
-            ), configured
-            message = (
-                "Recipient only accepts messages from verified team members or exact active contacts"
-                if mode == "team_and_contacts"
-                else "Recipient only accepts messages from exact active contacts"
+            stored = self.command("g2", "inbound-mode")
+            assert stored["inbound_mode"] == "contacts_only", (
+                f"Expected contacts_only; server stored {stored['inbound_mode']}"
             )
             self.refused(
                 "t1",
                 "g2",
                 kind,
                 403,
-                message,
+                "Recipient only accepts messages from exact active contacts",
                 "recipient_policy_rejected",
             )
         finally:

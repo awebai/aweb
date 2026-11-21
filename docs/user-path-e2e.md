@@ -64,9 +64,12 @@ continuation stdout and stderr separately.
 Refusal controls check the actual user-facing diagnostic and no delivery:
 
 - A local sender to a global `contacts_only` recipient without a contact.
-  aw 1.36.40 normalizes that CLI spelling to `team_and_contacts`; the driver
-  checks the returned policy and its corresponding `403 recipient_policy_rejected`
-  diagnostic. It does not claim to have configured `contacts_only` in that lane.
+  The driver reads the stored policy back before testing the corresponding
+  `403 recipient_policy_rejected` refusal. aw 1.36.40 stores
+  `team_and_contacts` for the `contacts-only` spelling, so that release
+  fails this control. Users of 1.36.40 who need this restriction should
+  upgrade, set the mode again, and confirm that `aw inbound-mode --json`
+  reports `contacts_only`.
   Same-team `team_and_contacts` delivery remains a positive neighbor.
 - An address published in real AWID whose identity has not connected residence.
 - A local first-contact sender to the real second-server recipient without an
