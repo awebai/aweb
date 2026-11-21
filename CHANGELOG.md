@@ -6,6 +6,12 @@
   code `native_agent_signature_pending`. Resume the exchange using the retained
   child key and invite.
 
+- `aw wake register`, `deregister`, `pause` and `resume` wait out a wake broker
+  restart (up to 15 s) instead of refusing with "daemon still owns its state",
+  so an OATS spawn or retire hook does not fail while the broker restarts.
+  Only a broker that holds its lock without answering for the whole wait is
+  refused; the error names its pid and says to restart it with `aw wake run`.
+
 - `aw init` and `aw team admin create` accept a supplied workspace API key
   for the service bootstrap, including keys returned by CLI signup.
   `aw workspace add-worktree` uses the existing workspace authority when

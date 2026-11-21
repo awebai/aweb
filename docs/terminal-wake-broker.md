@@ -311,9 +311,15 @@ home exits 0 with a note because the hook may run twice.
 Ordinary deregistration keeps its offline/idempotent behavior. Its successful
 exit, registry-file removal, and status absence are **not** a managed-stop
 completion receipt. File fallback is permitted only while holding the daemon
-lock, excluding a live daemon or a concurrent start. A control timeout or broken
-exchange refuses the command; retry or inspect the daemon instead of changing
-its state files.
+lock, excluding a live daemon or a concurrent start. A broker restart holds the
+lock with no answering socket, from taking the lock until it listens and from
+closing its socket until its channel-core children stop (up to 7 s). So
+`register`, `deregister`, `pause` and `resume` wait up to 15 s when the socket
+is down with the lock held, or an exchange breaks or times out. They retry
+until the daemon answers or the lock frees, and never change state files under
+a held lock. A daemon that holds the lock and does not answer for the whole 15 s
+is wedged: the command refuses, naming its pid, so it can be stopped and
+restarted with `aw wake run`.
 
 For an explicitly authorized withdrawal requiring that proof, the additive
 strict mode is:

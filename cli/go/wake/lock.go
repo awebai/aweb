@@ -106,13 +106,17 @@ func LockOwner(path string) (int, bool, error) {
 	return pid, true, nil
 }
 
+// ErrDaemonOwnsState reports that a daemon holds the lock, so its state files
+// are not the caller's to write.
+var ErrDaemonOwnsState = errors.New("wake: daemon still owns its state")
+
 // WithDaemonStopped holds the daemon's exclusive lock across a fallback write.
 // A control failure alone is not absence evidence (docs/terminal-wake-broker.md).
 // Holding this lock also excludes a daemon starting between the probe and write.
 func WithDaemonStopped(store *Store, update func() error) error {
 	lock, err := awconfig.TryLockExclusive(store.LockPath())
 	if errors.Is(err, awconfig.ErrLockUnavailable) {
-		return fmt.Errorf("wake: daemon still owns its state; retry the control request: %w", err)
+		return fmt.Errorf("%w; retry the control request: %w", ErrDaemonOwnsState, err)
 	}
 	if err != nil {
 		return fmt.Errorf("wake: cannot establish daemon absence: %w", err)
