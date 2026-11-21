@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -21,6 +22,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/awebai/aw/signaturewire"
 )
 
 // signedFields holds the identity fields attached to outgoing messages
@@ -53,6 +56,7 @@ type RecipientResolutionError struct {
 	Err         error
 }
 
+// Error describes the unresolved recipient and retains the underlying failure.
 func (e *RecipientResolutionError) Error() string {
 	if e == nil {
 		return ""
@@ -76,6 +80,7 @@ func UnreachableAddressText(address string) string {
 	return fmt.Sprintf("%s is not a registered address. A local identity has no address and is reachable only from inside its own team, by alias; a global identity is reachable by address once one is assigned", address)
 }
 
+// Unwrap exposes the recipient resolution failure for errors.Is and errors.As.
 func (e *RecipientResolutionError) Unwrap() error {
 	if e == nil {
 		return nil
@@ -429,6 +434,7 @@ func (c *Client) GrantID() string {
 	return strings.TrimSpace(c.grantID)
 }
 
+// TeamID returns the service team selected for this client.
 func (c *Client) TeamID() string {
 	if c == nil {
 		return ""
@@ -662,11 +668,30 @@ func (c *Client) e2eeCustody() E2EECustodyClient {
 	if c == nil || c.plainMessageSigner == nil || strings.TrimSpace(c.grantID) == "" {
 		return nil
 	}
-	custody, _ := c.plainMessageSigner.(E2EECustodyClient)
+	custody, supported := c.plainMessageSigner.(E2EECustodyClient)
+	if !supported {
+		return nil
+	}
 	return custody
 }
 
-func (c *Client) createCustodyE2EEEnvelope(ctx context.Context, custody E2EECustodyClient, kind, subject, body, messageID, conversationID, replyTo string, recipients []E2EERecipientKey, deliveryOrigin, observedInboundMode string) (*E2EEMessageEnvelope, error) {
+type custodyMessageKind string
+
+const custodyChatMessage custodyMessageKind = "chat"
+
+type custodyEnvelopeMessage struct {
+	Kind                custodyMessageKind
+	Subject             string
+	Body                string
+	MessageID           string
+	ConversationID      string
+	ReplyTo             string
+	Recipients          []E2EERecipientKey
+	DeliveryOrigin      string
+	ObservedInboundMode string
+}
+
+func (c *Client) createCustodyE2EEEnvelope(ctx context.Context, custody E2EECustodyClient, message custodyEnvelopeMessage) (*E2EEMessageEnvelope, error) {
 	if c == nil || custody == nil {
 		return nil, errors.New("custody_unavailable")
 	}
@@ -676,22 +701,22 @@ func (c *Client) createCustodyE2EEEnvelope(ctx context.Context, custody E2EECust
 	}
 	req := &E2EEEnvelopeCreateRequest{
 		Version:             1,
-		Operation:           "create_e2ee_envelope",
+		Operation:           string(custodyCreateEnvelope),
 		GrantID:             strings.TrimSpace(c.grantID),
 		SessionDIDKey:       strings.TrimSpace(c.did),
 		TeamID:              firstNonEmptyString(c.custodySubject.TeamID, c.teamID),
 		SubjectDIDAW:        firstNonEmptyString(c.custodySubject.DIDAW, c.stableID),
 		SubjectDIDKey:       strings.TrimSpace(c.custodySubject.DIDKey),
 		Audience:            audience,
-		Kind:                kind,
-		Subject:             subject,
-		Body:                body,
-		MessageID:           messageID,
-		ConversationID:      conversationID,
-		ReplyToMessageID:    replyTo,
-		Recipients:          recipients,
-		DeliveryOrigin:      deliveryOrigin,
-		ObservedInboundMode: observedInboundMode,
+		Kind:                string(message.Kind),
+		Subject:             message.Subject,
+		Body:                message.Body,
+		MessageID:           message.MessageID,
+		ConversationID:      message.ConversationID,
+		ReplyToMessageID:    message.ReplyTo,
+		Recipients:          message.Recipients,
+		DeliveryOrigin:      message.DeliveryOrigin,
+		ObservedInboundMode: message.ObservedInboundMode,
 	}
 	if err := SignE2EECreateCustodyProof(c.signingKey, req); err != nil {
 		return nil, err
@@ -706,6 +731,7 @@ func (c *Client) createCustodyE2EEEnvelope(ctx context.Context, custody E2EECust
 	return out.EncryptedEnvelope, nil
 }
 
+// SetE2EEKey installs the encryption assertion and private key used to decrypt incoming envelopes.
 func (c *Client) SetE2EEKey(assertion *EncryptionKeyAssertion, privateKey *ecdh.PrivateKey) {
 	if c == nil {
 		return
@@ -714,6 +740,7 @@ func (c *Client) SetE2EEKey(assertion *EncryptionKeyAssertion, privateKey *ecdh.
 	c.e2eePrivateKey = privateKey
 }
 
+// ResolveIdentity resolves an alias, address or DID through the configured resolver.
 func (c *Client) ResolveIdentity(ctx context.Context, identifier string) (*ResolvedIdentity, error) {
 	if c == nil || c.resolver == nil {
 		return nil, errors.New("aweb: no identity resolver configured")
@@ -975,12 +1002,12 @@ func (c *Client) NormalizeSenderTrust(ctx context.Context, status VerificationSt
 	}
 	trustAddress := c.canonicalTrustAddress(rawAddress)
 	localTeamReference := c.isCurrentTeamRosterReference(trustAddress)
-	if status != Verified && status != VerifiedLegacy && status != VerifiedCustodial &&
+	if !status.Trusted() &&
 		localTeamReference && strings.TrimSpace(fromStableID) == "" {
 		return status, isContact
 	}
 	var meta *agentMeta
-	acceptedSignature := status == Verified || status == VerifiedLegacy || status == VerifiedCustodial
+	acceptedSignature := status.Trusted()
 	// A local sender is verified only through the live team roster. A bare
 	// alias that cannot be formed into a roster reference fails closed.
 	if acceptedSignature && !recipientBindingMismatch && !localTeamReference && strings.TrimSpace(fromStableID) == "" &&
@@ -1010,7 +1037,7 @@ func (c *Client) NormalizeSenderTrust(ctx context.Context, status VerificationSt
 		isContact = nil
 	}
 	evidence := c.checkStableIdentityRegistry(ctx, status, trustAddress, fromDID, fromStableID)
-	status = c.checkTOFUPinWithMeta(ctx, evidence.status, strings.TrimSpace(rawAddress), trustAddress, fromDID, fromStableID, ra, repl, meta, evidence)
+	status = c.checkResolvedSenderPin(ctx, resolvedSenderPinCheck{Status: evidence.status, RawAddress: strings.TrimSpace(rawAddress), TrustAddress: trustAddress, FromDID: fromDID, FromStableID: fromStableID, Rotation: ra, Replacement: repl, Metadata: meta, Registry: evidence})
 	// The registry's verified head is recorded whatever the message's own
 	// status: it is what this client has now seen of that registry's log. An
 	// advanced anti-rollback checkpoint that is not durable would let the next
@@ -1075,7 +1102,7 @@ func (c *Client) releaseTeamNamePin(rawAddress, trustAddress string) {
 	if moved {
 		// A move that does not persist leaves the old binding on disk, so the
 		// next process is stricter, not laxer. Not a continuity claim.
-		_ = c.savePinStore()
+		c.persistPinMaintenance()
 	}
 }
 
@@ -1190,10 +1217,32 @@ func (c *Client) CheckTOFUPin(ctx context.Context, status VerificationStatus, fr
 
 	trustAddress := c.canonicalTrustAddress(fromAddress)
 	meta := c.resolveAgentMeta(ctx, trustAddress)
-	return c.checkTOFUPinWithMeta(ctx, status, strings.TrimSpace(fromAddress), trustAddress, fromDID, fromStableID, ra, repl, meta, registryEvidence{status: status})
+	return c.checkResolvedSenderPin(ctx, resolvedSenderPinCheck{Status: status, RawAddress: strings.TrimSpace(fromAddress), TrustAddress: trustAddress, FromDID: fromDID, FromStableID: fromStableID, Rotation: ra, Replacement: repl, Metadata: meta, Registry: registryEvidence{status: status}})
 }
 
-func (c *Client) checkTOFUPinWithMeta(ctx context.Context, status VerificationStatus, rawAddress, trustAddress, fromDID, fromStableID string, ra *RotationAnnouncement, repl *ReplacementAnnouncement, meta *agentMeta, evidence registryEvidence) VerificationStatus {
+type resolvedSenderPinCheck struct {
+	Status       VerificationStatus
+	RawAddress   string
+	TrustAddress string
+	FromDID      string
+	FromStableID string
+	Rotation     *RotationAnnouncement
+	Replacement  *ReplacementAnnouncement
+	Metadata     *agentMeta
+	// Registry is what the registry pass established for this message.
+	Registry registryEvidence
+}
+
+func (c *Client) checkResolvedSenderPin(ctx context.Context, check resolvedSenderPinCheck) VerificationStatus {
+	status := check.Status
+	rawAddress := check.RawAddress
+	trustAddress := check.TrustAddress
+	fromDID := check.FromDID
+	fromStableID := check.FromStableID
+	ra := check.Rotation
+	repl := check.Replacement
+	meta := check.Metadata
+	evidence := check.Registry
 	registryConfirmedCurrentKey := evidence.currentKeyConfirmed
 	if (status != Verified && status != VerifiedCustodial) || fromDID == "" || trustAddress == "" || meta == nil {
 		return status
@@ -1322,7 +1371,7 @@ func (c *Client) checkTOFUPinWithMeta(ctx context.Context, status VerificationSt
 		// address authority can authorize the transfer, via a replacement
 		// announcement signed by the namespace controller named in the address's
 		// _awid DNS TXT record. Absent that proof the pin stands and the mismatch
-		// is reported (default-aajc.8).
+		// is reported to the caller.
 		if fromStableID != "" && pinnedKey == fromStableID {
 			if pin, ok := c.pinStore.Pins[pinnedKey]; ok {
 				if strings.TrimSpace(pin.DIDKey) != "" && pin.DIDKey == fromDID {
@@ -1459,11 +1508,20 @@ func (c *Client) savePinStore() error {
 	return nil
 }
 
+// persistPinMaintenance reports failed removal or last-seen maintenance without
+// changing trust: a failed removal leaves the stricter old pin on disk, and a
+// failed refresh leaves an already-durable continuity record intact.
+func (c *Client) persistPinMaintenance() {
+	if err := c.savePinStore(); err != nil {
+		log.Printf("aweb: could not persist pin-store maintenance: %v. Check the pin-store path and permissions, then retry the command.", err)
+	}
+}
+
 // commitContinuity persists a newly established or rotated pin and downgrades
 // the status when it cannot be made durable. A pin that never reaches disk is
 // not continuity: the next process sees no pin, treats the sender as first
 // contact, and trusts whoever answers to that address. Reporting "verified" for
-// a record we failed to keep would be a claim we cannot honour (default-aajc.9).
+// a record we failed to keep would be a claim we cannot honour.
 //
 // This applies to records that are new or changed. A save that only loses a
 // last_seen refresh leaves the durable pin intact and is deliberately not
@@ -1488,7 +1546,7 @@ func (c *Client) commitContinuity(status VerificationStatus) VerificationStatus 
 // the store is undurable we retry and keep the sender unverified until it lands.
 func (c *Client) commitRefresh(status VerificationStatus) VerificationStatus {
 	if !c.pinStore.undurable.Load() {
-		_ = c.savePinStore()
+		c.persistPinMaintenance()
 		return status
 	}
 	if err := c.savePinStore(); err != nil {
@@ -1503,7 +1561,7 @@ func (c *Client) commitRefresh(status VerificationStatus) VerificationStatus {
 // A matching stable binding is sufficient across local key rotation; otherwise
 // we fall back to the current did:key binding.
 func (c *Client) checkRecipientBinding(status VerificationStatus, toDID string, toStableID string) VerificationStatus {
-	if status != Verified && status != VerifiedLegacy && status != VerifiedCustodial {
+	if !status.Trusted() {
 		return status
 	}
 	if stableID := strings.TrimSpace(c.stableID); stableID != "" && strings.TrimSpace(toStableID) != "" {
@@ -1551,6 +1609,7 @@ type APIError struct {
 	answeringMount string
 }
 
+// Error describes the HTTP failure, preserving its structured body and request ID.
 func (e *APIError) Error() string {
 	text := e.responseText()
 	if e.answeringMount != "" {
@@ -1882,18 +1941,9 @@ func isTransientServiceUnavailableBody(body string) bool {
 	return strings.Contains(body, "awid registry unavailable") || strings.Contains(body, "temporarily unavailable")
 }
 
-func traceEnabled() bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("AW_TRACE"))) {
-	case "1", "true", "yes", "on":
-		return true
-	default:
-		return false
-	}
-}
-
 // TraceHTTPRequest writes redacted request detail when AW_TRACE is enabled.
 func TraceHTTPRequest(req *http.Request, body []byte) {
-	if !traceEnabled() || req == nil {
+	if !TraceEnabled() || req == nil {
 		return
 	}
 	if isAttachmentFetchPath(req.URL.Path) {
@@ -1911,7 +1961,7 @@ func TraceHTTPRequest(req *http.Request, body []byte) {
 
 // TraceHTTPResponse writes redacted response detail when AW_TRACE is enabled.
 func TraceHTTPResponse(resp *http.Response) error {
-	if !traceEnabled() || resp == nil {
+	if !TraceEnabled() || resp == nil {
 		return nil
 	}
 	if resp.Request != nil && resp.Request.URL != nil && isAttachmentFetchPath(resp.Request.URL.Path) {
@@ -2006,6 +2056,7 @@ type OutcomeUnknownError struct {
 	check string
 }
 
+// Error reports a transport failure whose remote write outcome is unknown.
 func (e *OutcomeUnknownError) Error() string {
 	if e.write != "" {
 		return e.err.Error() + "\nThe registry may have applied this " + e.write + "; check its state (for example `" + e.check + "`) before retrying."
@@ -2013,6 +2064,7 @@ func (e *OutcomeUnknownError) Error() string {
 	return e.err.Error() + "\nRequest timed out before a response was received; it may have applied. Check current state before retrying."
 }
 
+// Unwrap exposes the transport error without implying that the remote write failed.
 func (e *OutcomeUnknownError) Unwrap() error { return e.err }
 
 // requestAuthPayload binds the final external URL and decoded body bytes.
@@ -2056,7 +2108,7 @@ func SignRequestCredential(key ed25519.PrivateKey, method string, target *url.UR
 		return "", "", "", err
 	}
 	didKey = ComputeDIDKey(key.Public().(ed25519.PublicKey))
-	return didKey, base64.RawStdEncoding.EncodeToString(ed25519.Sign(key, payload)), string(payload), nil
+	return didKey, signaturewire.SignStd(key, payload), string(payload), nil
 }
 
 // signRequest is shared by JSON/raw, event SSE and chat SSE requests. Grant

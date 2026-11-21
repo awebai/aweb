@@ -158,7 +158,7 @@ func executeWhoReceived(ctx context.Context, message awid.InboxMessage, opts who
 	if subject.ID == "" {
 		subject.ID = subject.DIDKey
 	}
-	authenticated := message.VerificationStatus == awid.Verified || message.VerificationStatus == awid.VerifiedLegacy || message.VerificationStatus == awid.VerifiedCustodial
+	authenticated := message.VerificationStatus.Trusted()
 	// Projection metadata may not replace the sender in independently signed bytes.
 	if message.SignedPayload != "" && message.ContentMode != awid.ContentModeEncryptedV2 {
 		var signed struct {

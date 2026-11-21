@@ -7,8 +7,11 @@ import (
 
 // awid is public Go API (cli/go/README.md "Go Library"). These are entry
 // points as released in aw-v1.36.58; a change that breaks one fails to
-// compile here (released-clients-are-a-permanent-constraint).
+// compile here (released-clients-are-a-permanent-constraint). aw-v1.36.58
+// also exposed a comparable spawn request and its client signature.
 var (
+	_ map[SpawnAcceptInviteRequest]struct{}
+	_ func(*Client, context.Context, *SpawnAcceptInviteRequest) (*SpawnAcceptInviteResponse, error)                                                                                                              = (*Client).AcceptSpawnInvite
 	_ func(context.Context, VerificationStatus, string, string, string, string, *SenderMembership, *RotationAnnouncement, *ReplacementAnnouncement, *bool, ...ReceivedSenderBinding) (VerificationStatus, *bool) = (*Client)(nil).NormalizeReceivedSenderTrust
 	_ func(string, *VerifiedLogHead)                                                                                                                                                                             = (*RegistryResolver)(nil).SeedVerifiedHead
 )

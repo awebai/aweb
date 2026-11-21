@@ -140,8 +140,8 @@ reproduce for the runtime it wakes. It is what `channel-core` dispatches today.
 
 | Event type | Delivery intent | Presented content |
 | --- | --- | --- |
-| `mail_message` | `wake` | the exact message fetched by `message_id`, with sender, subject, priority, and verification status |
-| `chat_message` | `steer` when `sender_waiting`, otherwise `wake` | the chat message, with session, conversation, `sender_waiting`/`sender_leaving`, and verification status |
+| `mail_message` | `wake` | the exact message fetched by `message_id`, with sender, subject, priority, and verification status, subject to the presentation rule below |
+| `chat_message` | `steer` when `sender_waiting`, otherwise `wake` | the chat message, with session, conversation, `sender_waiting`/`sender_leaving`, and verification status, subject to the presentation rule below |
 | `control_pause`, `control_resume`, `control_interrupt` | `steer` | the signal only |
 | `work_available` | `ambient` | the task title and `task_id` |
 | `claim_update` | `ambient` | `task_id`, title, status |
@@ -167,10 +167,9 @@ Beyond dispatch, the channel also:
   notification (`encrypted`, `decrypted`, `decrypt_error`).
 - **verifies senders and pins them** (trust-on-first-use, shared with the CLI),
   and presents the verification status with every message, with a warning line
-  when it is not trusted. Mail is the stricter of the two: a mail message whose
-  signature verification errored is never presented at all and is recorded in an
-  undelivered log instead. Chat has no equivalent gate — it is presented with
-  its verification status.
+  when it is not trusted. A mail message whose signature verification errored
+  is recorded in an undelivered log and is never presented. Completed checks
+  apply the autonomous presentation rule below, including failed results.
 - **suppresses duplicates** through a per-workspace delivery-id store, and
   reports stream health once on disconnect and once on recovery to operator
   logs/status only. Connection loss, retries, recovery and a stopped channel loop
@@ -178,6 +177,45 @@ Beyond dispatch, the channel also:
   or pending-chat scan: the reopened stream re-derives actionable state. Startup
   configuration errors with a concrete agent action retain their onboarding
   messages; they are distinct from connection diagnostics.
+
+The Go CLI's delivery-id store is a ten-minute suppression cache, not delivery
+authority. An unreadable or malformed cache is moved into a uniquely named,
+timestamped quarantine beside the store and replaced with an empty cache. A
+warning names the quarantine and says that messages may be shown again. Recovery
+and receipt updates share the store lock. A failure to locate the workspace
+still refuses the operation; missing stores and expired receipts remain empty.
+
+### Autonomous message presentation
+
+`verified`, `verified_legacy` and `verified_custodial` are trusted sender
+verification results. Missing and unknown values are untrusted. These results
+do not replace a caller's separate conversation binding or authority checks.
+
+For `failed` and `identity_mismatch`, channel-core withholds mail and chat
+subject and body before invoking a host. It presents the status, a claimed
+sender only if it is a valid alias, network address or DID, and a command to
+inspect the durable message. An invalid or absent message ID falls back to an
+inbox or pending-chat check. The Go `aw notify` hook has only pending-chat
+metadata and follows the same sender label rule. Explicit read commands can
+show the original content and its verification status.
+
+An undecryptable message uses the same identifier projection. Its
+`decrypt_error` is the fixed code `decryption_failed` and the notice contains
+no provider diagnostic text.
+
+The native Claude and Pi adapters render the channel-core notice. The terminal
+broker renders it with the receiving identity and leaves held messages unread.
+When the sender signature passed but current accountability evidence for an
+enrolled sender cannot be established (`stale_issuer_key`, `status_expired`, or
+`evidence_unavailable`), native mail and chat present the content as
+`trust_status=unverified` with `responsibility_status=responsibility_unavailable`.
+Definitive identity refusals still report `failed` and withhold content. This
+presentation rule grants no authority to make an authenticated request or to
+act for a human.
+Other untrusted results carry warnings on the native adapters, subject to the
+terminal broker's separate hold policy. See [the terminal adapter contract](channel-core-terminal-adapter.md).
+
+The Go and TypeScript implementations share `test-vectors/message-presentation-v1.json`.
 
 ## Raw event stream
 

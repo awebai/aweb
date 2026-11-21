@@ -515,6 +515,12 @@ export interface IdRequestDisposition {
   human_required: IdDisposition;
 }
 
+// These reasons mean the check could not establish current accountability.
+// They are distinct from evidence that definitively refuses the subject.
+export function isUnavailableIdEvidence(reason: IdVerificationReason): boolean {
+  return reason === "stale_issuer_key" || reason === "status_expired" || reason === "evidence_unavailable";
+}
+
 /**
  * Section 5's disposition table. Ordinary admission (signatures, membership,
  * grant scope, audience) must already have passed; this never replaces it. A
@@ -525,15 +531,14 @@ export function idRequestDisposition(result: IdVerification, subject: IdSubject,
   if (!originalAuthPassed) return { ordinary: "refuse", human_required: "refuse" };
   const human_required: IdDisposition = result.outcome === "nearest_human" ? "continue" : "refuse";
   const localLeaf = !subject.id.startsWith("did:aw:");
+  if (isUnavailableIdEvidence(result.reason)) {
+    return { ordinary: localLeaf ? "continue" : "refuse", human_required };
+  }
   switch (result.reason) {
     case "verified":
     case "legacy_no_chain":
     case "unregistered_identity":
       return { ordinary: "continue", human_required };
-    case "stale_issuer_key":
-    case "status_expired":
-    case "evidence_unavailable":
-      return { ordinary: localLeaf ? "continue" : "refuse", human_required };
     default:
       return { ordinary: "refuse", human_required };
   }

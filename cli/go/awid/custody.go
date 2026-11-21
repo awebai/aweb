@@ -10,11 +10,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/awebai/aw/internal/custodypath"
 	"net"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/awebai/aw/internal/custodypath"
+	"github.com/awebai/aw/signaturewire"
 )
 
 // CustodyError keeps a stable refusal code separate from recovery guidance.
@@ -24,6 +26,7 @@ type CustodyError struct{ Code, Message string }
 // cannot bind an addressless recipient (custody hosts before aw 1.36.30).
 const CustodyRecipientBindingUnavailable = "recipient_binding_unavailable"
 
+// Error returns the stable custody refusal code together with any recovery guidance.
 func (e *CustodyError) Error() string {
 	if e.Message == "" {
 		return e.Code
@@ -51,6 +54,7 @@ type PlainMessageSignRequest struct {
 	Envelope      MessageEnvelope `json:"envelope"`
 }
 
+// PlainMessageSignResponse contains the resident-signed envelope fields returned to a grant client.
 type PlainMessageSignResponse struct {
 	FromDID       string `json:"from_did"`
 	SigningKeyID  string `json:"signing_key_id"`
@@ -63,6 +67,7 @@ type PlainMessageSignResponse struct {
 	SignedPayload string `json:"signed_payload"`
 }
 
+// PlainMessageSigner signs structured mail and chat requests through resident custody.
 type PlainMessageSigner interface {
 	SignPlainMessage(ctx context.Context, req *PlainMessageSignRequest) (*PlainMessageSignResponse, error)
 }
@@ -75,6 +80,7 @@ type custodySubject struct {
 	Alias   string
 }
 
+// SetGrantSubject records the resident identity for custody requests while retaining the session signing DID.
 func (c *Client) SetGrantSubject(teamID, didAW, didKey, address, alias string) {
 	if c == nil {
 		return
@@ -93,6 +99,7 @@ func (c *Client) SetGrantSubject(teamID, didAW, didKey, address, alias string) {
 	c.custodySubject.Alias = strings.TrimSpace(alias)
 }
 
+// SetPlainMessageSigner installs the resident signer used by grant clients for message signing.
 func (c *Client) SetPlainMessageSigner(signer PlainMessageSigner) {
 	if c != nil {
 		c.plainMessageSigner = signer
@@ -102,6 +109,7 @@ func (c *Client) SetPlainMessageSigner(signer PlainMessageSigner) {
 // UnixCustodyClient calls a local resident custody service over a Unix socket.
 type UnixCustodyClient struct{ SocketPath string }
 
+// ServiceAudience reads the resident service ID and returns its custody audience binding.
 func (c *UnixCustodyClient) ServiceAudience(ctx context.Context) (string, error) {
 	var status struct {
 		ServiceID string `json:"service_id"`
@@ -115,6 +123,7 @@ func (c *UnixCustodyClient) ServiceAudience(ctx context.Context) (string, error)
 	return "local-resident-custody:" + strings.TrimSpace(status.ServiceID), nil
 }
 
+// SignPlainMessage sends one structured envelope to the resident service for signing.
 func (c *UnixCustodyClient) SignPlainMessage(ctx context.Context, req *PlainMessageSignRequest) (*PlainMessageSignResponse, error) {
 	var out PlainMessageSignResponse
 	if err := c.do(ctx, http.MethodPost, "/sign_plain_message", req, &out); err != nil {
@@ -214,6 +223,7 @@ func custodyProofCanonical(req *PlainMessageSignRequest) (string, error) {
 	return CanonicalJSONValueEscapingLineSeparators(payload)
 }
 
+// SignCustodyProof binds a plain-message custody request to the session key, nonce and timestamp.
 func SignCustodyProof(key ed25519.PrivateKey, req *PlainMessageSignRequest) error {
 	if key == nil {
 		return fmt.Errorf("signing key is required")
@@ -249,11 +259,12 @@ func SignCustodyProof(key ed25519.PrivateKey, req *PlainMessageSignRequest) erro
 	if err != nil {
 		return err
 	}
-	sig := ed25519.Sign(key, []byte(canonical))
+	sig := signaturewire.SignBytes(key, []byte(canonical))
 	req.Signature = base64.RawStdEncoding.EncodeToString(sig)
 	return nil
 }
 
+// VerifyCustodyProof checks the session signature and digest binding of a plain-message custody request.
 func VerifyCustodyProof(req *PlainMessageSignRequest) error {
 	if req == nil {
 		return fmt.Errorf("bad_request")
@@ -276,11 +287,11 @@ func VerifyCustodyProof(req *PlainMessageSignRequest) error {
 	if err != nil {
 		return err
 	}
-	sig, err := base64.RawStdEncoding.DecodeString(strings.TrimSpace(req.Signature))
+	sig, err := signaturewire.DecodeStd(strings.TrimSpace(req.Signature))
 	if err != nil {
 		return fmt.Errorf("bad_signature")
 	}
-	if !ed25519.Verify(pub, []byte(canonical), sig) {
+	if !signaturewire.Verify(signaturewire.Proof{PublicKey: pub, Payload: []byte(canonical), Signature: sig}) {
 		return fmt.Errorf("bad_signature")
 	}
 	return nil
@@ -313,12 +324,14 @@ type E2EEEnvelopeCreateRequest struct {
 	ObservedInboundMode string             `json:"sender_observed_inbound_mode,omitempty"`
 }
 
+// E2EEEnvelopeCreateResponse carries the encrypted envelope produced by resident custody.
 type E2EEEnvelopeCreateResponse struct {
 	ContentMode       string               `json:"content_mode"`
 	MessageVersion    int                  `json:"message_version"`
 	EncryptedEnvelope *E2EEMessageEnvelope `json:"encrypted_envelope"`
 }
 
+// E2EEUnwrapRequest binds a decryption request to a grant, subject, audience and encrypted envelope.
 type E2EEUnwrapRequest struct {
 	Version        int                  `json:"v"`
 	Operation      string               `json:"op"`
@@ -339,6 +352,7 @@ type E2EEUnwrapRequest struct {
 	Envelope       *E2EEMessageEnvelope `json:"encrypted_envelope"`
 }
 
+// E2EEUnwrapResponse contains the plaintext and message identities released by resident custody.
 type E2EEUnwrapResponse struct {
 	Attachments    json.RawMessage   `json:"attachments,omitempty"`
 	Kind           string            `json:"kind"`
@@ -352,11 +366,13 @@ type E2EEUnwrapResponse struct {
 	ContentNotice  string            `json:"content_notice,omitempty"`
 }
 
+// E2EECustodyClient creates and decrypts encrypted envelopes within resident custody.
 type E2EECustodyClient interface {
 	CreateE2EEEnvelope(ctx context.Context, req *E2EEEnvelopeCreateRequest) (*E2EEEnvelopeCreateResponse, error)
 	UnwrapE2EEMessage(ctx context.Context, req *E2EEUnwrapRequest) (*E2EEUnwrapResponse, error)
 }
 
+// CreateE2EEEnvelope submits a session-authenticated request for resident envelope encryption.
 func (c *UnixCustodyClient) CreateE2EEEnvelope(ctx context.Context, req *E2EEEnvelopeCreateRequest) (*E2EEEnvelopeCreateResponse, error) {
 	var out E2EEEnvelopeCreateResponse
 	if err := c.do(ctx, http.MethodPost, "/create_e2ee_envelope", req, &out); err != nil {
@@ -365,6 +381,7 @@ func (c *UnixCustodyClient) CreateE2EEEnvelope(ctx context.Context, req *E2EEEnv
 	return &out, nil
 }
 
+// UnwrapE2EEMessage submits a session-authenticated request for resident envelope decryption.
 func (c *UnixCustodyClient) UnwrapE2EEMessage(ctx context.Context, req *E2EEUnwrapRequest) (*E2EEUnwrapResponse, error) {
 	var out E2EEUnwrapResponse
 	if err := c.do(ctx, http.MethodPost, "/unwrap_e2ee_message", req, &out); err != nil {
@@ -408,12 +425,40 @@ func signCustodyProofFields(key ed25519.PrivateKey, version int, operation strin
 	if err != nil {
 		return err
 	}
-	*signature = base64.RawStdEncoding.EncodeToString(ed25519.Sign(key, []byte(canonical)))
+	*signature = signaturewire.SignStd(key, []byte(canonical))
 	return nil
 }
 
-func verifyCustodyProofFields(version int, operation string, fields map[string]string, nonce, timestamp, requestDigest, signature string, expectedDigest string) error {
-	if version != 1 || operation == "" {
+type custodyOperation string
+
+const (
+	custodyOperationUnspecified custodyOperation = ""
+	custodyCreateEnvelope       custodyOperation = "create_e2ee_envelope"
+	custodyUnwrapEnvelope       custodyOperation = "unwrap_e2ee_message"
+	custodySignAppRequest       custodyOperation = "sign_app_request"
+)
+
+type custodyProofVerification struct {
+	Version        int
+	Operation      custodyOperation
+	Fields         map[string]string
+	Nonce          string
+	Timestamp      string
+	RequestDigest  string
+	Signature      string
+	ExpectedDigest string
+}
+
+func verifyCustodyProofFields(input custodyProofVerification) error {
+	version := input.Version
+	operation := input.Operation
+	fields := input.Fields
+	nonce := input.Nonce
+	timestamp := input.Timestamp
+	requestDigest := input.RequestDigest
+	signature := input.Signature
+	expectedDigest := input.ExpectedDigest
+	if version != 1 || operation == custodyOperationUnspecified {
 		return fmt.Errorf("unsupported_operation")
 	}
 	if strings.TrimSpace(requestDigest) != strings.TrimSpace(expectedDigest) {
@@ -428,16 +473,17 @@ func verifyCustodyProofFields(version int, operation string, fields map[string]s
 	if err != nil {
 		return err
 	}
-	sig, err := base64.RawStdEncoding.DecodeString(strings.TrimSpace(signature))
+	sig, err := signaturewire.DecodeStd(strings.TrimSpace(signature))
 	if err != nil {
 		return fmt.Errorf("bad_signature")
 	}
-	if !ed25519.Verify(pub, []byte(canonical), sig) {
+	if !signaturewire.Verify(signaturewire.Proof{PublicKey: pub, Payload: []byte(canonical), Signature: sig}) {
 		return fmt.Errorf("bad_signature")
 	}
 	return nil
 }
 
+// SignE2EECreateCustodyProof binds the encryption request digest to the session key and proof fields.
 func SignE2EECreateCustodyProof(key ed25519.PrivateKey, req *E2EEEnvelopeCreateRequest) error {
 	if req == nil {
 		return fmt.Errorf("request is required")
@@ -446,7 +492,7 @@ func SignE2EECreateCustodyProof(key ed25519.PrivateKey, req *E2EEEnvelopeCreateR
 		req.Version = 1
 	}
 	if req.Operation == "" {
-		req.Operation = "create_e2ee_envelope"
+		req.Operation = string(custodyCreateEnvelope)
 	}
 	if strings.TrimSpace(req.SessionDIDKey) == "" {
 		req.SessionDIDKey = ComputeDIDKey(key.Public().(ed25519.PublicKey))
@@ -465,6 +511,7 @@ func SignE2EECreateCustodyProof(key ed25519.PrivateKey, req *E2EEEnvelopeCreateR
 	return nil
 }
 
+// VerifyE2EECreateCustodyProof checks the encryption request digest and session signature.
 func VerifyE2EECreateCustodyProof(req *E2EEEnvelopeCreateRequest) error {
 	if req == nil {
 		return fmt.Errorf("bad_request")
@@ -475,9 +522,10 @@ func VerifyE2EECreateCustodyProof(req *E2EEEnvelopeCreateRequest) error {
 		return err
 	}
 	fields := map[string]string{"grant_id": req.GrantID, "session_did_key": req.SessionDIDKey, "team_id": req.TeamID, "subject_did_aw": req.SubjectDIDAW, "subject_did_key": req.SubjectDIDKey, "aud": req.Audience}
-	return verifyCustodyProofFields(req.Version, req.Operation, fields, req.Nonce, req.Timestamp, req.RequestDigest, req.Signature, d)
+	return verifyCustodyProofFields(custodyProofVerification{Version: req.Version, Operation: custodyOperation(req.Operation), Fields: fields, Nonce: req.Nonce, Timestamp: req.Timestamp, RequestDigest: req.RequestDigest, Signature: req.Signature, ExpectedDigest: d})
 }
 
+// SignE2EEUnwrapCustodyProof binds the decryption request digest to the session key and proof fields.
 func SignE2EEUnwrapCustodyProof(key ed25519.PrivateKey, req *E2EEUnwrapRequest) error {
 	if req == nil {
 		return fmt.Errorf("request is required")
@@ -486,7 +534,7 @@ func SignE2EEUnwrapCustodyProof(key ed25519.PrivateKey, req *E2EEUnwrapRequest) 
 		req.Version = 1
 	}
 	if req.Operation == "" {
-		req.Operation = "unwrap_e2ee_message"
+		req.Operation = string(custodyUnwrapEnvelope)
 	}
 	if strings.TrimSpace(req.SessionDIDKey) == "" {
 		req.SessionDIDKey = ComputeDIDKey(key.Public().(ed25519.PublicKey))
@@ -505,6 +553,7 @@ func SignE2EEUnwrapCustodyProof(key ed25519.PrivateKey, req *E2EEUnwrapRequest) 
 	return nil
 }
 
+// VerifyE2EEUnwrapCustodyProof checks the decryption request digest and session signature.
 func VerifyE2EEUnwrapCustodyProof(req *E2EEUnwrapRequest) error {
 	if req == nil {
 		return fmt.Errorf("bad_request")
@@ -515,7 +564,7 @@ func VerifyE2EEUnwrapCustodyProof(req *E2EEUnwrapRequest) error {
 		return err
 	}
 	fields := map[string]string{"grant_id": req.GrantID, "session_did_key": req.SessionDIDKey, "team_id": req.TeamID, "subject_did_aw": req.SubjectDIDAW, "subject_did_key": req.SubjectDIDKey, "aud": req.Audience}
-	return verifyCustodyProofFields(req.Version, req.Operation, fields, req.Nonce, req.Timestamp, req.RequestDigest, req.Signature, d)
+	return verifyCustodyProofFields(custodyProofVerification{Version: req.Version, Operation: custodyOperation(req.Operation), Fields: fields, Nonce: req.Nonce, Timestamp: req.Timestamp, RequestDigest: req.RequestDigest, Signature: req.Signature, ExpectedDigest: d})
 }
 
 // AppRequestSignRequest asks the local resident custody service to sign one
@@ -550,10 +599,12 @@ type AppRequestSignResponse struct {
 	Headers map[string]string `json:"headers"`
 }
 
+// AppRequestCustodyClient signs installed-app requests using resident identity custody.
 type AppRequestCustodyClient interface {
 	SignAppRequest(ctx context.Context, req *AppRequestSignRequest) (*AppRequestSignResponse, error)
 }
 
+// SignAppRequest submits one structured app request to the resident service.
 func (c *UnixCustodyClient) SignAppRequest(ctx context.Context, req *AppRequestSignRequest) (*AppRequestSignResponse, error) {
 	var out AppRequestSignResponse
 	if err := c.do(ctx, http.MethodPost, "/sign_app_request", req, &out); err != nil {
@@ -570,6 +621,7 @@ func appRequestDigestPayload(req *AppRequestSignRequest) map[string]any {
 	return map[string]any{"v": req.Version, "grant_id": req.GrantID, "session_did_key": req.SessionDIDKey, "team_id": req.TeamID, "subject_did_aw": req.SubjectDIDAW, "subject_did_key": req.SubjectDIDKey, "aud": req.Audience, "app_id": req.AppID, "verb": req.Verb, "args": args, "raw_body": req.RawBody}
 }
 
+// SignAppRequestCustodyProof binds the app request digest to the session key and proof fields.
 func SignAppRequestCustodyProof(key ed25519.PrivateKey, req *AppRequestSignRequest) error {
 	if req == nil {
 		return fmt.Errorf("request is required")
@@ -578,7 +630,7 @@ func SignAppRequestCustodyProof(key ed25519.PrivateKey, req *AppRequestSignReque
 		req.Version = 1
 	}
 	if req.Operation == "" {
-		req.Operation = "sign_app_request"
+		req.Operation = string(custodySignAppRequest)
 	}
 	if strings.TrimSpace(req.SessionDIDKey) == "" {
 		req.SessionDIDKey = ComputeDIDKey(key.Public().(ed25519.PublicKey))
@@ -596,6 +648,7 @@ func SignAppRequestCustodyProof(key ed25519.PrivateKey, req *AppRequestSignReque
 	return nil
 }
 
+// VerifyAppRequestCustodyProof checks the app request digest and session signature.
 func VerifyAppRequestCustodyProof(req *AppRequestSignRequest) error {
 	if req == nil {
 		return fmt.Errorf("bad_request")
@@ -605,7 +658,7 @@ func VerifyAppRequestCustodyProof(req *AppRequestSignRequest) error {
 		return err
 	}
 	fields := map[string]string{"grant_id": req.GrantID, "session_did_key": req.SessionDIDKey, "team_id": req.TeamID, "subject_did_aw": req.SubjectDIDAW, "subject_did_key": req.SubjectDIDKey, "aud": req.Audience}
-	return verifyCustodyProofFields(req.Version, req.Operation, fields, req.Nonce, req.Timestamp, req.RequestDigest, req.Signature, d)
+	return verifyCustodyProofFields(custodyProofVerification{Version: req.Version, Operation: custodyOperation(req.Operation), Fields: fields, Nonce: req.Nonce, Timestamp: req.Timestamp, RequestDigest: req.RequestDigest, Signature: req.Signature, ExpectedDigest: d})
 }
 
 // SignAppRequestViaCustody asks the grant's local custody service to sign one

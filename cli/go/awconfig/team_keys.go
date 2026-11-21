@@ -2,14 +2,13 @@ package awconfig
 
 import (
 	"crypto/ed25519"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
-	"github.com/awebai/aw/internal/atomicfile"
+	"github.com/awebai/aw/awid"
 )
 
 func DefaultTeamKeysDir() (string, error) {
@@ -79,29 +78,17 @@ func CreateTeamKey(domain, name string, key ed25519.PrivateKey) error {
 	if err != nil {
 		return err
 	}
-	data, err := encodeTeamKey(key)
-	if err != nil {
-		return err
+	if key == nil {
+		return errors.New("nil team key")
 	}
-	return atomicfile.Options{Mode: 0o600, ParentMode: 0o700, Exclusive: true}.Write(path, data)
+	return awid.StoreSigningKeyFile(awid.SigningKeyFile{Path: path, Key: key, PathPolicy: awid.OperatorManagedAuthorityPath, Exclusive: true})
 }
 
 func writeTeamKeyFile(path string, key ed25519.PrivateKey) error {
-	data, err := encodeTeamKey(key)
-	if err != nil {
-		return err
-	}
-	return atomicWriteFile(path, data)
-}
-
-func encodeTeamKey(key ed25519.PrivateKey) ([]byte, error) {
 	if key == nil {
-		return nil, errors.New("nil team key")
+		return errors.New("nil team key")
 	}
-	return pem.EncodeToMemory(&pem.Block{
-		Type:  "ED25519 PRIVATE KEY",
-		Bytes: key.Seed(),
-	}), nil
+	return awid.StoreSigningKeyFile(awid.SigningKeyFile{Path: path, Key: key, PathPolicy: awid.OperatorManagedAuthorityPath})
 }
 
 // PendingTeamKeyPath holds a new team key between its creation and the
@@ -129,7 +116,7 @@ func LoadPendingTeamKey(domain, name string) (ed25519.PrivateKey, error) {
 	if err != nil {
 		return nil, err
 	}
-	data, err := os.ReadFile(path)
+	data, err := awid.ReadPrivateKeyFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
@@ -151,7 +138,7 @@ func RemoveTeamKey(domain, name string, expected ed25519.PublicKey) error {
 	if err != nil {
 		return err
 	}
-	data, err := os.ReadFile(path)
+	data, err := awid.ReadPrivateKeyFile(path)
 	if err != nil {
 		return err
 	}
@@ -190,7 +177,7 @@ func LoadTeamKey(domain, name string) (ed25519.PrivateKey, error) {
 	if err != nil {
 		return nil, err
 	}
-	data, err := os.ReadFile(path)
+	data, err := awid.ReadPrivateKeyFile(path)
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
 			return nil, err
@@ -199,7 +186,7 @@ func LoadTeamKey(domain, name string) (ed25519.PrivateKey, error) {
 		if legacyErr != nil {
 			return nil, legacyErr
 		}
-		data, err = os.ReadFile(legacyPath)
+		data, err = awid.ReadPrivateKeyFile(legacyPath)
 		if err != nil {
 			return nil, err
 		}
@@ -207,16 +194,4 @@ func LoadTeamKey(domain, name string) (ed25519.PrivateKey, error) {
 	return decodeTeamKey(data)
 }
 
-func decodeTeamKey(data []byte) (ed25519.PrivateKey, error) {
-	block, _ := pem.Decode(data)
-	if block == nil {
-		return nil, errors.New("no PEM block in team key")
-	}
-	if block.Type != "ED25519 PRIVATE KEY" {
-		return nil, errors.New("unexpected team key PEM type")
-	}
-	if len(block.Bytes) != ed25519.SeedSize {
-		return nil, errors.New("invalid team key seed size")
-	}
-	return ed25519.NewKeyFromSeed(block.Bytes), nil
-}
+func decodeTeamKey(data []byte) (ed25519.PrivateKey, error) { return awid.ParseSigningKey(data) }

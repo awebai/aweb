@@ -20,7 +20,7 @@ func TestDelegateMailCarriesVerificationStatus(t *testing.T) {
 		{status: awid.Verified, tag: ""},
 		{status: awid.Failed, tag: " [VERIFICATION FAILED]"},
 		{status: awid.IdentityMismatch, tag: " [IDENTITY MISMATCH]"},
-		{status: "", tag: " [no verification]"},
+		{status: "", tag: " [unverified]"},
 	} {
 		t.Run(string(tc.status), func(t *testing.T) {
 			msg := &awid.InboxMessage{MessageID: "m1", ConversationID: "c1", FromAddress: "acme.com/mayor", FromDID: "did:key:z6Mkmayor", Subject: "s", Body: "b", VerificationStatus: tc.status}

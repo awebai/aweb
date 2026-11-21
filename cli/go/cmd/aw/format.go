@@ -11,24 +11,22 @@ import (
 	"github.com/awebai/aw/internal/termtext"
 )
 
-// formatVerificationTag returns the tag shown after a message's sender. A
-// verified message has none. ALL CAPS for active security failures; lowercase
-// for informational ones. A status that was never set, or one this client does
-// not name, is not a verification and says so.
+// formatVerificationTag returns a warning string for non-verified messages.
+// Returns empty string for a trusted verification result.
+// ALL CAPS for active security failures; lowercase for informational (no signature present).
 func formatVerificationTag(status awid.VerificationStatus) string {
-	switch status {
-	case awid.Verified, awid.VerifiedLegacy, awid.VerifiedCustodial:
+	if status.Trusted() {
 		return ""
+	}
+	switch status {
 	case awid.Failed:
 		return " [VERIFICATION FAILED]"
 	case awid.IdentityMismatch:
 		return " [IDENTITY MISMATCH]"
-	case awid.Unverified:
-		return " [unverified]"
 	case awid.VerificationStale:
 		return " [verification stale]"
 	default:
-		return " [no verification]"
+		return " [unverified]"
 	}
 }
 
@@ -337,28 +335,6 @@ func formatMailShowResponse(resp *awid.InboxResponse, notice string) string {
 
 // --- chat ---
 
-// writePresentedMessages writes the message events a wait presented, and so
-// marked read, other than shown, the message the result itself shows.
-func writePresentedMessages(sb *strings.Builder, result *chat.SendResult, shown *chat.Event) {
-	showsMessage := result.Status == "replied" || result.Status == "sender_left" || result.Status == "pending"
-	var lines []string
-	for i := range result.Events {
-		ev := &result.Events[i]
-		if ev.Type != "message" || (showsMessage && ev == shown) {
-			continue
-		}
-		lines = append(lines, formatChatEventLine(*ev))
-	}
-	if len(lines) == 0 {
-		return
-	}
-	sb.WriteString("Also received:\n")
-	for _, line := range lines {
-		sb.WriteString("  " + line)
-	}
-	sb.WriteString("\n")
-}
-
 func formatChatSend(v any) string {
 	result := v.(*chat.SendResult)
 	var sb strings.Builder
@@ -402,7 +378,6 @@ func formatChatSend(v any) string {
 		return nil
 	}
 	tagEvent := pickTagEvent()
-	writePresentedMessages(&sb, result, tagEvent)
 
 	timestamp := ""
 	tags := ""
@@ -689,14 +664,19 @@ func formatChatPending(v any) string {
 
 func formatChatOpen(v any) string {
 	result := v.(*chat.OpenResult)
+	var sb strings.Builder
+	if result.ReceiptError != "" {
+		fmt.Fprintf(&sb, "Warning: could not save local chat receipts (%s). Check the workspace cache; messages may repeat.\n\n", termtext.Line(result.ReceiptError))
+	}
 	if len(result.Messages) == 0 {
 		if result.UnreadWasEmpty {
-			return fmt.Sprintf("No unread chat messages for %s\n", result.TargetAgent)
+			fmt.Fprintf(&sb, "No unread chat messages for %s\n", result.TargetAgent)
+		} else {
+			sb.WriteString("No unread chat messages\n")
 		}
-		return "No unread chat messages\n"
+		return sb.String()
 	}
 
-	var sb strings.Builder
 	if result.MarkedRead > 0 {
 		sb.WriteString(fmt.Sprintf("Unread chat messages (%d marked as read):\n\n", result.MarkedRead))
 	} else {

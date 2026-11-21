@@ -92,7 +92,7 @@ func (c *Client) NormalizeReceivedSender(ctx context.Context, status Verificatio
 		}
 		return c.NormalizeSenderTrust(ctx, status, reference, did, stableID, sender.Rotation, sender.Replacement, sender.IsContact)
 	}
-	if status != Verified && status != VerifiedLegacy && status != VerifiedCustodial {
+	if !status.Trusted() {
 		return status, nil
 	}
 	if membership == nil || membership.State == "unknown" {
@@ -174,7 +174,7 @@ func (c *Client) receivedLocalSenderTrust(status VerificationStatus, address, di
 	if !crossTeam {
 		return status, false
 	}
-	if status != Verified && status != VerifiedLegacy && status != VerifiedCustodial {
+	if !status.Trusted() {
 		return status, true
 	}
 	if member == nil {

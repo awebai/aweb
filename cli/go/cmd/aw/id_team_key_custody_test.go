@@ -171,8 +171,11 @@ func TestTeamCreateRefusesATeamPinnedToAnotherKey(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "already pinned to "+registry.teamDID) {
 		t.Fatalf("err=%v", err)
 	}
-	if !strings.Contains(err.Error(), "Choose another team name, or run this on the machine that holds that team's key") {
+	if !strings.Contains(err.Error(), "Restore its current controller key to reuse this team, or choose another --name.") {
 		t.Fatalf("the refusal does not say what to do: %v", err)
+	}
+	if code := errorCodeOf(err); code != codeTeamNameTaken {
+		t.Fatalf("error code=%q, want %q", code, codeTeamNameTaken)
 	}
 	exists, err := awconfig.TeamKeyExists("acme.com", "default")
 	if err != nil {

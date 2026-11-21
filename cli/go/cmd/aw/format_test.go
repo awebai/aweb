@@ -15,6 +15,18 @@ func TestFormatVerificationTagDistinguishesStaleVerifierFromMismatch(t *testing.
 	if got := formatVerificationTag(awid.IdentityMismatch); got != " [IDENTITY MISMATCH]" {
 		t.Fatalf("mismatch tag=%q", got)
 	}
+	for _, status := range []awid.VerificationStatus{"", "future_status"} {
+		if got := formatVerificationTag(status); got != " [unverified]" {
+			t.Fatalf("tag for %q = %q", status, got)
+		}
+	}
+}
+
+func TestFormatChatOpenReportsReceiptFailure(t *testing.T) {
+	result := &chat.OpenResult{ReceiptError: "cache lock unavailable", UnreadWasEmpty: true}
+	if got := formatChatOpen(result); !strings.Contains(got, "Check the workspace cache; messages may repeat.") {
+		t.Fatalf("missing receipt warning: %s", got)
+	}
 }
 
 func TestFormatChatSendUsesReplyMessageTagsNotReadReceipt(t *testing.T) {
@@ -441,10 +453,10 @@ func TestFormatChatHistoryPrefersFromAddress(t *testing.T) {
 	}
 
 	out := formatChatHistory(result)
-	if !strings.Contains(out, "otherco/carol: hello") {
+	if !strings.Contains(out, "otherco/carol [unverified]: hello") {
 		t.Fatalf("chat history should prefer sender address:\n%s", out)
 	}
-	if strings.Contains(out, "\ncarol: hello") {
+	if strings.Contains(out, "\ncarol: hello") || strings.Contains(out, "\ncarol [unverified]: hello") {
 		t.Fatalf("chat history should not use alias-only sender label:\n%s", out)
 	}
 }
@@ -465,7 +477,7 @@ func TestFormatChatHistoryFallsBackToStableID(t *testing.T) {
 	}
 
 	out := formatChatHistory(result)
-	if !strings.Contains(out, "did:aw:carol: hello") {
+	if !strings.Contains(out, "did:aw:carol [unverified]: hello") {
 		t.Fatalf("chat history should preserve stable identity fallback:\n%s", out)
 	}
 }
@@ -605,7 +617,7 @@ func TestFormatVerificationTagShowsAnUnsetStatus(t *testing.T) {
 		awid.Failed:            " [VERIFICATION FAILED]",
 		awid.VerificationStale: " [verification stale]",
 		awid.IdentityMismatch:  " [IDENTITY MISMATCH]",
-		"":                     " [no verification]",
+		"":                     " [unverified]",
 	} {
 		if got := formatVerificationTag(status); got != want {
 			t.Errorf("formatVerificationTag(%q)=%q, want %q", status, got, want)
