@@ -74,7 +74,8 @@ async def test_explicit_team_key_reader_uses_borrowed_sdk_strength_and_one_pin_o
 @pytest.mark.asyncio
 async def test_request_registration_uses_the_resource_client_over_the_outer_slot():
     """Unit wiring only: an empty transport response proves no admission rule."""
-    from aweb.team_registry import request_registered_certificates
+    from aweb.application_state import application_registry_client
+    from aweb.certificate_registration import RegistrationMode, observe_certificate_registrations
     from awid.registry import RegistryClient
     from fastapi import FastAPI
     from starlette.requests import Request
@@ -92,7 +93,12 @@ async def test_request_registration_uses_the_resource_client_over_the_outer_slot
         app.state.native_resources = SimpleNamespace(registry_client=client)
         app.state.awid_registry_client = object()
         request = Request({"type": "http", "app": app})
-        assert await request_registered_certificates(request, "team:example.test") == set()
+        facts = await observe_certificate_registrations(
+            registry_client=application_registry_client(request.app.state),
+            team_id="team:example.test",
+            mode=RegistrationMode.REQUIRED,
+        )
+        assert facts.registered_certificate_ids == set()
     assert reads == ["serving.example"]
 
 

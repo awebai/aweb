@@ -21,17 +21,24 @@ from types import MappingProxyType
 from typing import Any
 from uuid import UUID
 
+from awid.registry import TeamCertificateStanding
+from awid.team_certificate import TeamCertificateError
 from fastapi import HTTPException, Request
 
+from aweb.certificate_evidence import EvidenceMode
 from aweb.certificate_registration import (
+    CertificateRegistrationObservation,
+    RegistrationDecision,
+    RegistrationMode,
     RegistrationState,
     configured_registration_mode,
-    read_certificate_registration,
+    observe_certificate_registrations,
+    record_certificate_registration,
 )
 from aweb.identity_scope import IdentityScope
 from aweb.member_status import MemberStatus as MemberStatus
 from aweb.service_errors import NotFoundError
-from aweb.team_registry import revoked_certificates
+from aweb.team_registry import refresh_certificate_standing, revoked_certificates
 from aweb.team_scope import member_team_scope as member_team_scope
 
 logger = logging.getLogger(__name__)
@@ -405,6 +412,16 @@ class CertificateStandingState(StrEnum):
 class CertificateStanding:
     state: CertificateStandingState
     unavailable_cause: Exception | None = None
+    registration: RegistrationDecision | None = None
+    refreshed_after_miss: bool = False
+
+    def require_active(self) -> None:
+        if self.state is CertificateStandingState.UNAVAILABLE:
+            if self.unavailable_cause is None:
+                raise RuntimeError("Unavailable certificate standing requires an acquisition error")
+            raise self.unavailable_cause
+        if self.state is not CertificateStandingState.ACTIVE:
+            raise TeamCertificateError(self.state.value)
 
 
 async def read_certificate_standings(
@@ -413,33 +430,82 @@ async def read_certificate_standings(
     certificate_ids: Collection[str],
     *,
     request: Request | None = None,
+    mode: RegistrationMode | None = None,
+    revocation_evidence: EvidenceMode = EvidenceMode.CACHED,
+    registrations: CertificateRegistrationObservation | None = None,
 ) -> dict[str, CertificateStanding]:
-    """Read revocation once for a team's admitting certificates, then registration.
+    """Read standing for checked artifacts or previously admitted certificates.
 
     Global And Local Identities (docs/identity-messaging-contract.md:81-86)
     gives the same standing rule to request, stream, and delivery membership.
+    An authorized caller can supply a fresh registration snapshot it already
+    needs; otherwise strict misses use the SDK's bounded refresh owner.
     """
-    revoked = await revoked_certificates(
-        registry_client, team_id, certificate_ids=list(certificate_ids)
+    if registrations is not None and registrations.team_id != team_id:
+        raise ValueError("Certificate registrations must come from the selected team")
+    selected = set(certificate_ids)
+    if not selected:
+        return {}
+    try:
+        revoked = await revoked_certificates(
+            registry_client, team_id, certificate_ids=sorted(selected), evidence=revocation_evidence,
+        )
+    except HTTPException as exc:
+        if exc.status_code < 500:
+            raise
+        return {cid: CertificateStanding(CertificateStandingState.UNAVAILABLE, exc) for cid in selected}
+    result = {
+        cid: CertificateStanding(CertificateStandingState.REVOKED)
+        for cid in selected & revoked
+    }
+    remaining = selected - revoked
+    if not remaining:
+        return result
+    mode = mode if mode is not None else configured_registration_mode()
+    snapshot = registrations if registrations is not None else await observe_certificate_registrations(
+        registry_client=registry_client, team_id=team_id, mode=mode,
     )
-    mode = configured_registration_mode()
-    result = {}
-    for certificate_id in certificate_ids:
-        if certificate_id in revoked:
-            result[certificate_id] = CertificateStanding(CertificateStandingState.REVOKED)
-            continue
-        registration = await read_certificate_registration(
-            registry_client=registry_client, team_id=team_id, certificate_id=certificate_id,
-            mode=mode, request=request,
+    for certificate_id in sorted(remaining):
+        observation = snapshot
+        refreshed = False
+        if (
+            registrations is None
+            and mode is RegistrationMode.REQUIRED
+            and snapshot.registered_certificate_ids is not None
+            and certificate_id not in snapshot.registered_certificate_ids
+        ):
+            try:
+                standing = await refresh_certificate_standing(
+                    registry_client, team_id, certificate_id=certificate_id,
+                )
+            except HTTPException as exc:
+                if exc.status_code < 500:
+                    raise
+                result[certificate_id] = CertificateStanding(CertificateStandingState.UNAVAILABLE, exc)
+                continue
+            if standing is TeamCertificateStanding.REVOKED:
+                result[certificate_id] = CertificateStanding(CertificateStandingState.REVOKED)
+                continue
+            if standing is TeamCertificateStanding.ACTIVE:
+                observation = CertificateRegistrationObservation(
+                    team_id=team_id, registered_certificate_ids={certificate_id},
+                )
+                refreshed = True
+        registration = record_certificate_registration(
+            request, observation=observation, certificate_id=certificate_id, mode=mode,
         )
         if registration.allows_registration:
-            result[certificate_id] = CertificateStanding(CertificateStandingState.ACTIVE)
+            result[certificate_id] = CertificateStanding(
+                CertificateStandingState.ACTIVE, registration=registration, refreshed_after_miss=refreshed,
+            )
         elif registration.state is RegistrationState.UNAVAILABLE:
             result[certificate_id] = CertificateStanding(
-                CertificateStandingState.UNAVAILABLE, registration.unavailable_cause
+                CertificateStandingState.UNAVAILABLE, registration.unavailable_cause, registration,
             )
         else:
-            result[certificate_id] = CertificateStanding(CertificateStandingState.UNREGISTERED)
+            result[certificate_id] = CertificateStanding(
+                CertificateStandingState.UNREGISTERED, registration=registration,
+            )
     return result
 
 

@@ -581,7 +581,9 @@ global `did:aw` senders retain their existing key/log and address checks.
 
 Both clients implement this decision matrix, exercised by
 `TestReceivedLocalSenderMatrix` and channel-core's `cross-team received local
-sender` tests. Real two-team mail tests cover a global resident grant, plaintext
+sender` tests. The native HTTP read and both clients share the
+[`sender-standing-v1` vector](../test-vectors/trust/sender-standing-v1.json)
+for registered, unregistered and revoked certificates. Real two-team mail tests cover a global resident grant, plaintext
 and encrypted-v2, CLI reads, channel presentation and wake presentation.
 
 | Evidence after signature and recipient checks | Result |

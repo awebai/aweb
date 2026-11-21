@@ -2,6 +2,7 @@
 import base64
 import json
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from urllib.parse import urlencode
 
 import pytest
@@ -10,6 +11,12 @@ from awid.registry import CachedRegistryClient
 from test_cli_never_grants import registry_listener
 from test_dashboard_privacy import TEAM, TEAM_NAME, _request, _seed_mail, privacy_app  # noqa: F401
 from test_team_room import admit_room_member, headers
+
+
+_STANDING_VECTOR = json.loads(
+    (Path(__file__).resolve().parents[2] / "test-vectors/trust/sender-standing-v1.json").read_text()
+)
+_REQUIRED_STATES = {case["id"]: case["state"] for case in _STANDING_VECTOR["cases"]}
 
 
 @pytest.mark.asyncio
@@ -21,12 +28,16 @@ async def test_sender_standing_sees_registration_after_a_warm_list(privacy_app, 
 
     monkeypatch.setenv("AWEB_REQUIRE_REGISTERED_CERTIFICATES", "false")
     await admit_room_member(env, alias="bob")
-    connected = await env.client.post("/v1/connect", content=b"{}", headers=headers(sender, b"{}"))
-    assert connected.status_code == 200, connected.text
-    body = json.dumps({"to_did": reader.did, "subject": "standing", "body": "one message"}).encode()
-    sent = await env.client.post("/v1/messages", content=body, headers=headers(sender, body))
-    assert sent.status_code == 200, sent.text
-    message_path = f"/v1/messages/{sent.json()['message_id']}"
+    paths = {}
+    for alias in ("alice", "carol"):
+        actor = env.actors[alias]
+        connected = await env.client.post("/v1/connect", content=b"{}", headers=headers(actor, b"{}"))
+        assert connected.status_code == 200, connected.text
+        body = json.dumps({"to_did": reader.did, "subject": "standing", "body": "one message"}).encode()
+        sent = await env.client.post("/v1/messages", content=body, headers=headers(actor, body))
+        assert sent.status_code == 200, sent.text
+        paths[alias] = f"/v1/messages/{sent.json()['message_id']}"
+    message_path = paths["alice"]
     initial = await env.client.get(message_path, headers=headers(reader))
     assert initial.status_code == 200, initial.text
     assert initial.json()["sender_membership"] == {
@@ -56,8 +67,20 @@ async def test_sender_standing_sees_registration_after_a_warm_list(privacy_app, 
             response = await env.client.get(message_path, headers=headers(reader))
             assert response.status_code == 200, response.text
             assert response.json()["sender_membership"] == {
-                "team_id": TEAM, "member_did_aw": None, "state": "active",
+                "team_id": TEAM, "member_did_aw": None, "state": _REQUIRED_STATES["registered"],
             }
+            unregistered = await env.client.get(paths["carol"], headers=headers(reader))
+            assert unregistered.status_code == 200, unregistered.text
+            assert unregistered.json()["sender_membership"]["state"] == _REQUIRED_STATES["unregistered"]
+
+            await writer.revoke_team_certificate(
+                "example.test", TEAM_NAME, team_controller_signing_key=env.team_sk,
+                certificate_id=certificate_id,
+            )
+            env.app.state.awid_registry_client = writer
+            revoked = await env.client.get(message_path, headers=headers(reader))
+            assert revoked.status_code == 200, revoked.text
+            assert revoked.json()["sender_membership"]["state"] == _REQUIRED_STATES["revoked"]
         finally:
             env.app.state.awid_registry_client = writer
             await cache.aclose()

@@ -128,25 +128,6 @@ async def resolve_team_key(
         raise awid_dependency_http_exception(exc, operation="AWID team key resolution") from exc
 
 
-async def request_revoked_certificates(
-    request: Request,
-    team_id: str,
-    *,
-    certificate_ids: list[str] | None = None,
-    evidence: EvidenceMode = EvidenceMode.CACHED,
-) -> set[str]:
-    """Get the set of revoked certificate IDs from awid.
-
-    Raises HTTPException(503) if awid is unreachable.
-    """
-    return await revoked_certificates(
-        application_registry_client(request.app.state),
-        team_id,
-        certificate_ids=certificate_ids,
-        evidence=evidence,
-    )
-
-
 async def revoked_certificates(
     registry_client,
     team_id: str,
@@ -166,8 +147,9 @@ async def revoked_certificates(
         raise RegistryClientUnavailable()
 
     try:
-        if certificate_ids is not None:
-            return await registry_client.get_team_revocations_for_certificates(
+        selected = getattr(registry_client, "get_team_revocations_for_certificates", None)
+        if certificate_ids is not None and callable(selected):
+            return await selected(
                 domain, team_name, certificate_ids, fresh=evidence is EvidenceMode.FRESH
             )
         if evidence is EvidenceMode.FRESH:
@@ -187,16 +169,6 @@ async def revoked_certificates(
             team_id,
         )
         raise awid_dependency_http_exception(exc, operation="AWID team revocation check") from exc
-
-
-async def request_registered_certificates(request: Request, team_id: str) -> set[str]:
-    """Read registered IDs for both enforcement and non-failing staged measurement.
-
-    Staged certificate-registration observations (docs/aweb-sot.md:2176-2186)
-    distinguishes unavailable acquisition from an empty authoritative list.
-    The SDK owns cache freshness.
-    """
-    return await registered_certificates(application_registry_client(request.app.state), team_id)
 
 
 async def refresh_certificate_standing(
