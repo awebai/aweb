@@ -165,11 +165,16 @@ The command requires a clean commit on `origin/main`. It runs the explicit
 product-test list in `scripts/candidate-suite.sh`—all unit, integration,
 packaging, image, audit, and E2E journeys—in isolated local Docker. There is no
 artifact scoping. The Docker entry point locks the source tree before allocating
-resources and records each passing stage (checks, user-paths, unit, artifacts, integration)
-in one host ledger, `~/.cache/aweb-oss/candidate-gate-ledger.tsv`. It runs only
-missing stages; a fully passed tree returns without building. Only after all
-stages pass does it create the requested annotated tags locally on the exact tested
-SHA.
+resources and records stage verdicts (checks, user-paths, unit, artifacts,
+integration) and their `stage/target` results in one host ledger,
+`~/.cache/aweb-oss/candidate-gate-ledger.tsv`. The run's `summary.tsv` has both
+row types. Target rows include the duration, log and any failure or skip
+reason. A failed target leaves its stage red while independent targets and
+later stages continue. Integration skips the OATS and naapp targets if the
+runner's shared CLI build fails, and names that prerequisite in their rows.
+Other journeys build their own inputs or use no stage artifact. Only passing
+stages are reusable. Only after all stages pass does the command create the
+requested annotated tags locally on the exact tested SHA.
 
 Integration includes `make e2e-folio-wakes`, the same real document-change and
 browser-wake acceptance script run by Folio CI. Its services share a private
@@ -191,7 +196,7 @@ candidate-gate`. Release candidates always require all five stages, even if that
 environment variable is set. Passes are reused across callers with equal inputs.
 A recorded failure blocks every stage for those inputs: fix the code and gate
 the changed tree. For infrastructure failures only, the coordinator removes the
-failed ledger line and supplies `GATE_RERUN_REASON='<reason>'`; the next recorded
+failed stage ledger lines and supplies `GATE_RERUN_REASON='<reason>'`; the next recorded
 result retains that reason. Cleanup failures also block reuse.
 
 `main` may move while the gate runs. The tested SHA and its local tags do not.
