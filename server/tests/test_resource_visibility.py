@@ -23,6 +23,8 @@ from test_dashboard import _make_jwt
 from test_dashboard_privacy import TEAM, _request, privacy_app  # noqa: F401
 from test_messages_http import _make_keypair
 
+__all__ = ["privacy_app"]
+
 
 def _wire(response):
     return response.status_code, response.content, response.headers.get("content-type")

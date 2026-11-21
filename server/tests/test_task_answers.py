@@ -18,6 +18,8 @@ from test_tasks_http import TEAM_ID, _DbShim, _seed_team, member_identity
 from test_dashboard_privacy import privacy_app, TEAM as LIVE_TEAM  # noqa: F401
 from awid.signing import canonical_json_bytes, sign_message
 
+__all__ = ["privacy_app"]
+
 ALICE = member_identity()
 
 

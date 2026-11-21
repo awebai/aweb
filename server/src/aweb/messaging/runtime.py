@@ -4,9 +4,17 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING
+
+import httpx
+from starlette.datastructures import State
+
+if TYPE_CHECKING:
+    from awid.registry import RegistryClient
+    from aweb.federation.activation import FederationAuthorityActivation
 
 from aweb.agent_wake import AgentWakePublisher, agent_wake_publisher
+from aweb.application_state import RegistryClientUnavailable, application_registry_client
 from aweb.config import get_public_origin
 from aweb.federation.origins import application_public_origins
 from aweb.federation.transport import delivery_transport
@@ -22,10 +30,10 @@ class MessagingRuntime:
     same application services.
     """
 
-    registry_client: Any
-    federation_authority: Any
-    mail_transport: Any
-    chat_transport: Any
+    registry_client: RegistryClient | None
+    federation_authority: FederationAuthorityActivation | None
+    mail_transport: httpx.AsyncBaseTransport | None
+    chat_transport: httpx.AsyncBaseTransport | None
     public_origin: str
     public_origins: frozenset[str]
     on_mutation: MutationCallback | None
@@ -33,11 +41,20 @@ class MessagingRuntime:
     identity_binding_cache: OrderedDict
 
 
-def messaging_runtime(app_state) -> MessagingRuntime:
-    """The messaging runtime of the application that owns ``app_state``."""
+def messaging_runtime(app_state: State) -> MessagingRuntime:
+    """The messaging runtime of the application that owns ``app_state``.
+
+    Registry-independent local sends retain an optional registry. Binding and
+    routing owners refuse operations that require an unavailable client.
+    Select before any native-state projection so a resource wins over shadows.
+    """
+    try:
+        registry_client = application_registry_client(app_state)
+    except RegistryClientUnavailable:
+        registry_client = None
     federation_authority = getattr(app_state, "federation_authority", None)
     return MessagingRuntime(
-        registry_client=getattr(app_state, "awid_registry_client", None),
+        registry_client=registry_client,
         federation_authority=federation_authority,
         mail_transport=delivery_transport(
             federation_authority,
@@ -46,8 +63,10 @@ def messaging_runtime(app_state) -> MessagingRuntime:
         chat_transport=delivery_transport(
             federation_authority,
             getattr(app_state, "federation_chat_transport", None),
-            getattr(app_state, "federation_message_transport", None),
-            getattr(app_state, "federation_mail_transport", None),
+            fallback_transports=(
+                getattr(app_state, "federation_message_transport", None),
+                getattr(app_state, "federation_mail_transport", None),
+            ),
         ),
         public_origin=application_public_origin(app_state),
         public_origins=frozenset(application_public_origins(app_state)),
@@ -57,7 +76,7 @@ def messaging_runtime(app_state) -> MessagingRuntime:
     )
 
 
-def application_public_origin(app_state) -> str:
+def application_public_origin(app_state: State | None) -> str:
     """The origin an application names as its own when it sends to another server."""
     configured = str(getattr(app_state, "public_origin", "") or "").strip()
     if configured:

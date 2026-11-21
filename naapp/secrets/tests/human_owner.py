@@ -104,7 +104,7 @@ async def human(world, principal, *, member=None, client=None, kind="human"):
             mapping = await registry.register_did(member.did_key, bytes(member.member_key))
             assert mapping.did_aw == principal.principal_did
             member.extra_cert_fields = {"member_did_aw": mapping.did_aw}
-            await world.registry.add_certificate(member.certificate())
+            await world.registry.add_certificate(member.certificate(), team_key=member.team_key)
             fields = {
                 "v": 1,
                 "type": "aweb.id-certificate",
@@ -250,7 +250,7 @@ async def register_holder_member(world, registry, principal, *, team_key):
         extra_cert_fields={"member_did_aw": principal.principal_did},
     )
     assert await registry.register_did(member.member_key) == principal.principal_did
-    await registry.add_certificate(member.certificate())
+    await registry.add_certificate(member.certificate(), team_key=member.team_key)
     return member
 
 

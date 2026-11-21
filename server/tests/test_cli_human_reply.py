@@ -25,6 +25,8 @@ from test_messages_http import _make_keypair, _make_certificate, _signed_team_he
 from aweb.e2ee_messages import decrypt_e2ee_message, encrypt_e2ee_mail, generate_x25519_keypair
 from test_dashboard_privacy import TEAM, _request, privacy_app  # noqa: F401
 
+__all__ = ["privacy_app"]
+
 
 def _pem(path, kind, raw):
     path.write_text(f"-----BEGIN {kind}-----\n{base64.b64encode(raw).decode()}\n-----END {kind}-----\n")

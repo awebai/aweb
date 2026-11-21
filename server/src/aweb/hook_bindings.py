@@ -24,11 +24,22 @@ from uuid import UUID
 from aweb_naapp.hooks.owner_act import CORE_ACTS, hook_binding_subject
 from aweb_naapp.hooks.owner_act_nonces import OwnerActVerifier
 from aweb_naapp.hooks.strictjson import Refused
-from awid.team_ids import parse_team_id
+from awid.external_authority import TXTOutcomeResolver
+from awid.registry import RegistryClient
+from awid.team_key_acts import TeamKeyMemo
+from pgdbm import AsyncDatabaseManager
 
 from aweb.app_registry import normalize_app_id, normalize_digest, normalize_origin, validate_team_id
 from aweb.awid_error_handling import AWID_DEPENDENCY_ERRORS
-from aweb.service_errors import ConflictError, ForbiddenError, NotFoundError, ServiceError, ValidationError
+from aweb.certificate_evidence import EvidenceMode
+from aweb.team_key_reader import read_team_key
+from aweb.service_errors import (
+    ConflictError,
+    ForbiddenError,
+    NotFoundError,
+    ServiceError,
+    ValidationError,
+)
 
 REGISTRATION = "registration"
 PRODUCTION = "production"
@@ -302,28 +313,37 @@ class OwnerActTeamKeyUnavailable(Exception):
 
 
 def core_owner_act_verifier(
-    *, audience: str, registry_client: Any, pin_team_key: Callable[[str, str], Awaitable[str]],
+    *,
+    audience: str,
+    db: AsyncDatabaseManager,
+    registry_client: RegistryClient,
+    txt_resolver: TXTOutcomeResolver,
+    pin_memo: TeamKeyMemo | None = None,
 ) -> OwnerActVerifier:
     """The server's owner-act verifier: core's closed vocabulary, its public
     origin as audience, and the team's controller key read fresh from AWID
-    and held to the key this server admitted (``pin_team_key(team_id, key)``,
-    aweb.team_key_pins)."""
+    and held to the key this server admitted through the native key reader."""
 
     async def team_key_for(team_id: str) -> str:
-        domain, name = parse_team_id(team_id)
         try:
-            team = await registry_client.get_team_fresh(domain, name)
+            key = await read_team_key(
+                db=db,
+                registry_client=registry_client,
+                txt_resolver=txt_resolver,
+                team_id=team_id,
+                evidence=EvidenceMode.FRESH,
+                pin_memo=pin_memo,
+            )
         except AWID_DEPENDENCY_ERRORS as exc:
             raise OwnerActTeamKeyUnavailable(exc) from exc
-        if team is None or not team.team_did_key:
+        if not key:
             raise Refused("owner_required", "the team has no controller key at its registry")
-        try:
-            return await pin_team_key(team_id, team.team_did_key)
-        except AWID_DEPENDENCY_ERRORS as exc:
-            raise OwnerActTeamKeyUnavailable(exc) from exc
+        return key
 
     try:
-        return OwnerActVerifier(scope=OWNER_ACT_SCOPE, audience=audience, acts=CORE_ACTS, team_key_for=team_key_for)
+        return OwnerActVerifier(
+            scope=OWNER_ACT_SCOPE, audience=audience, acts=CORE_ACTS, team_key_for=team_key_for
+        )
     except Refused as refused:
         raise _service_error(refused) from refused
 
@@ -405,7 +425,9 @@ async def _require_production_keys(tx, binding: HookBinding) -> None:
         binding.digest,
     )
     if not from_bytes:
-        raise ConflictError("a production activates only for an install registered from its pinned manifest bytes")
+        raise ConflictError(
+            "a production activates only for an install registered from its pinned manifest bytes"
+        )
     keys = await tx.fetch_value(
         """
         SELECT COUNT(*) FROM {{tables.team_app_keys}}
@@ -419,7 +441,9 @@ async def _require_production_keys(tx, binding: HookBinding) -> None:
         HOOK_EVENT_PURPOSE,
     )
     if not keys:
-        raise ConflictError("a production activates only once the install registers hook keys (hook-event) from its pinned bytes")
+        raise ConflictError(
+            "a production activates only once the install registers hook keys (hook-event) from its pinned bytes"
+        )
 
 
 async def _apply_owner_act(
@@ -505,7 +529,13 @@ async def activate_binding(
     the transaction that changes the binding, where the change's hook event is
     enqueued."""
     return await _apply_owner_act(
-        db, verifier, act=ACTIVATE, team_id=team_id, binding_id=binding_id, signing=signing, signature=signature,
+        db,
+        verifier,
+        act=ACTIVATE,
+        team_id=team_id,
+        binding_id=binding_id,
+        signing=signing,
+        signature=signature,
         in_transaction=in_transaction,
     )
 
@@ -524,6 +554,12 @@ async def revoke_binding(
     ``hook-binding.revoke`` act. ``in_transaction`` runs in the
     transaction that changes the binding."""
     return await _apply_owner_act(
-        db, verifier, act=REVOKE, team_id=team_id, binding_id=binding_id, signing=signing, signature=signature,
+        db,
+        verifier,
+        act=REVOKE,
+        team_id=team_id,
+        binding_id=binding_id,
+        signing=signing,
+        signature=signature,
         in_transaction=in_transaction,
     )

@@ -44,16 +44,17 @@ type teamInviteOutput struct {
 }
 
 type teamAcceptInviteOutput struct {
-	IDRegistration string              `json:"id_registration,omitempty"`
-	Responsibility *awid.IDChainResult `json:"responsibility,omitempty"`
-	HarnessSetup   *joinHarnessResult  `json:"harness_setup,omitempty"`
-	Status         string              `json:"status"`
-	TeamID         string              `json:"team_id"`
-	Alias          string              `json:"alias"`
-	CertPath       string              `json:"cert_path"`
-	Connected      *bool               `json:"connected,omitempty"`
-	AwebURL        string              `json:"aweb_url,omitempty"`
-	ConnectCommand string              `json:"connect_command,omitempty"`
+	TeamKey        *awid.TeamKeyEvidence `json:"team_key,omitempty"`
+	IDRegistration string                `json:"id_registration,omitempty"`
+	Responsibility *awid.IDChainResult   `json:"responsibility,omitempty"`
+	HarnessSetup   *joinHarnessResult    `json:"harness_setup,omitempty"`
+	Status         string                `json:"status"`
+	TeamID         string                `json:"team_id"`
+	Alias          string                `json:"alias"`
+	CertPath       string                `json:"cert_path"`
+	Connected      *bool                 `json:"connected,omitempty"`
+	AwebURL        string                `json:"aweb_url,omitempty"`
+	ConnectCommand string                `json:"connect_command,omitempty"`
 }
 
 type teamAddMemberOutput struct {
@@ -233,14 +234,17 @@ type acceptedTeamInvite struct {
 	Output      *teamAcceptInviteOutput
 	Certificate *awid.TeamCertificate
 	RegistryURL string
-	AwebURL     string
-	Domain      string
-	TeamName    string
+	// The key check's origin is retained for immediate rollback only.
+	observedRegistryURL string
+	AwebURL             string
+	Domain              string
+	TeamName            string
 }
 
 type teamAcceptInviteOptions struct {
 	ParentHome   string
 	Registry     *awid.RegistryClient
+	RegistryURL  string
 	TXTResolver  awid.TXTResolver
 	IdentityHome string
 	Name         string
@@ -2412,7 +2416,7 @@ func revokeAcceptedTeamCertificate(accepted *acceptedTeamInvite) error {
 	if err != nil {
 		return err
 	}
-	registryURL := strings.TrimSpace(accepted.RegistryURL)
+	registryURL := firstNonEmptyString(accepted.RegistryURL, accepted.observedRegistryURL)
 	if registryURL != "" {
 		if err := registry.SetFallbackRegistryURL(registryURL); err != nil {
 			return fmt.Errorf("invalid registry url %q: %w", registryURL, err)
@@ -2727,22 +2731,22 @@ func runTeamFetchCert(cmd *cobra.Command, args []string) error {
 	if err := checkCurrentTeamCertificate(ctx, teamCertificateInstall{RegistryURL: registryURL, Registry: registry}, cert); err != nil {
 		return err
 	}
-	status := "installed"
+	status := certificateInstalled
 	if existingErr == nil && existingCert != nil {
 		same, err := sameTeamCertificate(existingCert, cert)
 		if err != nil {
 			return err
 		}
 		if same {
-			status = "already_installed"
+			status = certificateAlreadyInstalled
 		}
 	}
-	if _, err := commitTeamCertificate(workingDir, identityRoot, "fetch-cert", cert, registryURL, "", func() (string, error) { return status, nil }); err != nil {
+	if _, err := commitTeamCertificate(certificateCommit{WorkingDir: workingDir, IdentityHome: identityRoot, Command: "fetch-cert", Certificate: cert, RegistryURL: registryURL, WorkspacePath: "", Decide: func() (certificateInstallStatus, error) { return status, nil }}); err != nil {
 		return err
 	}
 
 	return printOutput(teamFetchCertOutput{
-		Status:        status,
+		Status:        string(status),
 		TeamID:        teamID,
 		Alias:         strings.TrimSpace(cert.Alias),
 		CertificateID: strings.TrimSpace(cert.CertificateID),
