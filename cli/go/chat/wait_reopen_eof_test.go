@@ -36,7 +36,7 @@ func TestWaitReopenThatEndsAtOnceIsAnError(t *testing.T) {
 	began := time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	result, err := waitForMessage(ctx, client, opener, "s1", nil, "alice", 5, nil, nil, func(Event) (bool, bool) { return true, false })
+	result, err := waitForMessage(ctx, client, opener, "s1", nil, "alice", 5, nil, nil, func(Event) eventDisposition { return acceptEvent })
 	if err == nil {
 		t.Fatalf("reconnect failed with EOF after %d opens, but returned status=%s nil error after %s (local wait is 5s)", calls, result.Status, time.Since(began))
 	}

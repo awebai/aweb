@@ -11,15 +11,15 @@ export const STREAM_PLANNED_CLOSE_MIN_MS = 3 * 60_000 + 30_000;
 export const STREAM_PLANNED_CLOSE_MAX_MS = 4 * 60_000;
 
 /** The delay after a transient failure doubles between these (§3). */
-export const STREAM_RETRY_DELAY_MIN_MS = 1000;
-export const STREAM_RETRY_DELAY_MAX_MS = 15_000;
+const STREAM_RETRY_DELAY_MIN_MS = 1000;
+const STREAM_RETRY_DELAY_MAX_MS = 15_000;
 
 /** The delay after a refusal doubles between these (§4). */
-export const STREAM_REFUSED_DELAY_MIN_MS = 60_000;
-export const STREAM_REFUSED_DELAY_MAX_MS = 15 * 60_000;
+const STREAM_REFUSED_DELAY_MIN_MS = 60_000;
+const STREAM_REFUSED_DELAY_MAX_MS = 15 * 60_000;
 
 /** Caps Retry-After; a larger or unparsable value is treated as this (§3). */
-export const STREAM_RETRY_AFTER_MAX_MS = 5 * 60_000;
+const STREAM_RETRY_AFTER_MAX_MS = 5 * 60_000;
 
 /**
  * How long an open stream may deliver no bytes: two missed 30-second
@@ -57,7 +57,7 @@ export interface StreamPolicyConfig {
  * - transient: retry on the transient delay (§3);
  * - refused: the stream is quarantined (§4).
  */
-export type StreamEndKind = "planned_close" | "transient" | "refused";
+type StreamEndKind = "planned_close" | "transient" | "refused";
 
 /** How one connection attempt ended and what the client does next. */
 export interface StreamEnd {

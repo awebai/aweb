@@ -116,8 +116,12 @@ func runTeamHumanAgentStatus(cmd *cobra.Command, args []string) error {
 	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
 
+	signers, err := teamReadSigners(workingDir, domain, team)
+	if err != nil {
+		return err
+	}
 	out := teamAgentStatusOutput{TeamID: teamID, Alias: alias}
-	readAgentCertificateState(ctx, &out, domain, team, isAwebHostedNamespace(domain), teamReadSigners(workingDir, domain, team))
+	readAgentCertificateState(ctx, &out, domain, team, isAwebHostedNamespace(domain), signers)
 	readAgentCoordinationState(ctx, client, &out, alias)
 
 	out.deriveState()

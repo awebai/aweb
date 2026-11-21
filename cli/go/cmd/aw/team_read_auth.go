@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/ed25519"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -32,7 +33,7 @@ import (
 //
 // An empty result means the read goes out unsigned, which is the pre-visibility
 // behavior byte for byte and is all a public team needs.
-func teamReadSigners(workingDir, domain, team string) []ed25519.PrivateKey {
+func teamReadSigners(workingDir, domain, team string) ([]ed25519.PrivateKey, error) {
 	return teamReadSignersForKeyPath(identitySigningKeyPathForDir(workingDir), domain, team)
 }
 
@@ -40,7 +41,7 @@ func teamReadSigners(workingDir, domain, team string) []ed25519.PrivateKey {
 // the identity signing key path - a selection carries one, and it accounts for
 // --identity-home and the active team, so re-deriving it from the working
 // directory could pick a different identity than the command is acting as.
-func teamReadSignersForKeyPath(signingKeyPath, domain, team string) []ed25519.PrivateKey {
+func teamReadSignersForKeyPath(signingKeyPath, domain, team string) ([]ed25519.PrivateKey, error) {
 	var signers []ed25519.PrivateKey
 	if path := strings.TrimSpace(signingKeyPath); path != "" {
 		if key, err := awid.LoadSigningKey(path); err == nil {
@@ -48,13 +49,17 @@ func teamReadSignersForKeyPath(signingKeyPath, domain, team string) []ed25519.Pr
 		}
 	}
 	if !isAwebHostedNamespace(domain) {
-		if exists, err := awconfig.TeamKeyExists(domain, team); err == nil && exists {
+		exists, err := awconfig.TeamKeyExists(domain, team)
+		if errors.Is(err, awconfig.ErrTeamKeyUnconfirmed) {
+			return nil, err
+		}
+		if err == nil && exists {
 			if key, err := awconfig.LoadTeamKey(domain, team); err == nil && !containsSigningKey(signers, key) {
 				signers = append(signers, key)
 			}
 		}
 	}
-	return signers
+	return signers, nil
 }
 
 func identitySigningKeyPathForDir(workingDir string) string {

@@ -31,6 +31,10 @@ const CustodyRefusalAppToolDenied CustodyRefusalCode = "app_tool_denied"
 // CustodyError keeps a stable refusal code separate from recovery guidance.
 type CustodyError struct{ Code, Message string }
 
+// CustodyRecipientBindingUnavailable is the refusal of a custody host that
+// cannot bind an addressless recipient (custody hosts before aw 1.36.30).
+const CustodyRecipientBindingUnavailable = "recipient_binding_unavailable"
+
 // Error returns the stable custody refusal code together with any recovery guidance.
 func (e *CustodyError) Error() string {
 	if e.Message == "" {

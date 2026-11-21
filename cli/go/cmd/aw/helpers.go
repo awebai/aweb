@@ -664,7 +664,10 @@ func resolveLiveTeamMemberAliasTarget(ctx context.Context, sel *awconfig.Selecti
 	// which is what lets the roster read keep working after the team goes
 	// private. Best-effort: with no usable key the read goes out unsigned,
 	// exactly as before.
-	signers := teamReadSignersForKeyPath(sel.SigningKey, domain, team)
+	signers, err := teamReadSignersForKeyPath(sel.SigningKey, domain, team)
+	if err != nil {
+		return liveTeamMemberAliasTarget{}, false, err
+	}
 	var member *awid.TeamMemberReference
 	if _, err := readSignedTeamState(signers, func(key ed25519.PrivateKey) error {
 		var resolveErr error

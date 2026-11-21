@@ -693,7 +693,8 @@ GET    /v1/namespaces/{domain}/teams/{name}
                    "created_at": "..." }
 
 DELETE /v1/namespaces/{domain}/teams/{name}
-       Delete team.
+       Delete team. Refused with 409 while any certificate is unrevoked.
+       The team's revoked certificates are kept; see revocations.
        Auth: namespace controller DIDKey signature.
 
 POST   /v1/namespaces/{domain}/teams/{name}/rotate
@@ -833,7 +834,11 @@ GET    /v1/namespaces/{domain}/teams/{name}/certificates/{certificate_id}/status
        another team: identical 404 { "detail": "Certificate not found" }.
        No member identity, alias, addresses, enumeration, or history.
        The key is the CURRENT team key (did:key itself identifies the key).
-       Active means revoked_at is null, not that authentication succeeded.
+       Active means no team ever created under this domain and name revoked
+       this certificate id, the same history the revocations list reads, not
+       that authentication succeeded. An id registered again after the team
+       was deleted and created again keeps its earlier revocation, and its
+       revoked_at is the first one.
        Rotation can leave old-key records active; verifiers must reject their
        signatures against the current key. No previous key is returned.
        Cache per (team_id, certificate_id) for at most 60 seconds and fail closed
@@ -863,7 +868,10 @@ POST   /v1/namespaces/{domain}/teams/{name}/certificates/revoke
        Sets revoked_at on the certificate row.
 
 GET    /v1/namespaces/{domain}/teams/{name}/revocations
-       List revoked certificates only.
+       List revoked certificates only. The list covers every team ever
+       created under this domain and name: deleting the team or its
+       namespace and creating the team again, with any key, keeps earlier
+       revocations. A revocation is one-way.
        Auth: none for a public team; private-team read authority as above.
              Services cache this.
        Query params: since (timestamp, optional — for incremental sync)

@@ -1,0 +1,430 @@
+{
+  "schema": "aweb.trust.registry-refetch.v1",
+  "description": "Bounded registry refetch (docs/trust-model.md, 'A cached registry answer is not the registry's answer'): a cached address binding or current key that disagrees with the signed message is read again from the registry once, and the fresh answer decides; at most one forced read per sender per refetch_interval_seconds. Responses are served in order per path, the last one repeating; steps run in order on one client, advancing its clock. expected_requests counts the address and key reads the bound limits; log reads are not counted, since clients may verify a genesis head without one.",
+  "start_time": "2026-11-18T00:00:00Z",
+  "refetch_interval_seconds": 30,
+  "vectors": [
+    {
+      "name": "key-rotated-after-it-was-cached-is-read-again-and-verifies",
+      "address": "acme.com/alice",
+      "from_stable_id": "did:aw:jPUMBAvNeJo8USHNtJ81Wm7cqnk",
+      "responses": {
+        "/v1/did/did:aw:jPUMBAvNeJo8USHNtJ81Wm7cqnk/key": [
+          {
+            "status": 200,
+            "body": {
+              "current_did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+              "did_aw": "did:aw:jPUMBAvNeJo8USHNtJ81Wm7cqnk",
+              "log_head": {
+                "seq": 1,
+                "operation": "create",
+                "previous_did_key": null,
+                "new_did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+                "prev_entry_hash": null,
+                "entry_hash": "36be523af6136103d37cabe29c49777c646c336f5eec4630292e0efe0b0e443c",
+                "state_hash": "d280725abb8857bc173da1188c4a008180023fc40687833f0a0b10056935310f",
+                "authorized_by": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+                "signature": "Kzx3Yu+Gy+OPuAC/CD3K9xDd1Nz9m8k2owbXzgH3nAubWGvvLbt6cLEbZsbwrcd7gvF6gG0f3TEZOQymNz3HBA",
+                "timestamp": "2026-11-01T00:00:00Z"
+              }
+            }
+          },
+          {
+            "status": 200,
+            "body": {
+              "current_did_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+              "did_aw": "did:aw:jPUMBAvNeJo8USHNtJ81Wm7cqnk",
+              "log_head": {
+                "seq": 2,
+                "operation": "rotate_key",
+                "previous_did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+                "new_did_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+                "prev_entry_hash": "36be523af6136103d37cabe29c49777c646c336f5eec4630292e0efe0b0e443c",
+                "entry_hash": "8cb6943bfd6fdb093c8aca25eb0285579e991fcd8216dbede186ba8b7e6dbff8",
+                "state_hash": "72d7cf0598d8c1fe9b333cea334f4e4e4d3c41e11bd619cbe07af2223b91d70c",
+                "authorized_by": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+                "signature": "cTCQkkJpofVVlu409iUyHq/eZiIverDt8C8q8EzHzoVhMdS8vs1kDwI6p9w8DPgncC1AVQY+N5ipFah7cqg9DA",
+                "timestamp": "2026-11-02T00:00:00Z"
+              }
+            }
+          }
+        ],
+        "/v1/did/did:aw:jPUMBAvNeJo8USHNtJ81Wm7cqnk/log": [
+          {
+            "status": 200,
+            "body": [
+              {
+                "seq": 1,
+                "operation": "create",
+                "previous_did_key": null,
+                "new_did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+                "prev_entry_hash": null,
+                "entry_hash": "36be523af6136103d37cabe29c49777c646c336f5eec4630292e0efe0b0e443c",
+                "state_hash": "d280725abb8857bc173da1188c4a008180023fc40687833f0a0b10056935310f",
+                "authorized_by": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+                "signature": "Kzx3Yu+Gy+OPuAC/CD3K9xDd1Nz9m8k2owbXzgH3nAubWGvvLbt6cLEbZsbwrcd7gvF6gG0f3TEZOQymNz3HBA",
+                "timestamp": "2026-11-01T00:00:00Z"
+              }
+            ]
+          }
+        ],
+        "/v1/namespaces/acme.com/addresses/alice": [
+          {
+            "status": 200,
+            "body": {
+              "address_id": "addr-alice",
+              "created_at": "2026-11-01T00:00:00Z",
+              "current_did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+              "did_aw": "did:aw:jPUMBAvNeJo8USHNtJ81Wm7cqnk",
+              "domain": "acme.com",
+              "name": "alice"
+            }
+          }
+        ]
+      },
+      "steps": [
+        {
+          "advance_seconds": 0,
+          "from_did": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+          "expected_status": "verified"
+        },
+        {
+          "advance_seconds": 0,
+          "from_did": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+          "expected_status": "verified"
+        }
+      ],
+      "expected_requests": {
+        "/v1/did/did:aw:jPUMBAvNeJo8USHNtJ81Wm7cqnk/key": 2,
+        "/v1/namespaces/acme.com/addresses/alice": 1
+      }
+    },
+    {
+      "name": "key-read-again-and-unchanged-is-a-mismatch-without-another-read-in-the-interval",
+      "address": "acme.com/alice",
+      "from_stable_id": "did:aw:jPUMBAvNeJo8USHNtJ81Wm7cqnk",
+      "responses": {
+        "/v1/did/did:aw:jPUMBAvNeJo8USHNtJ81Wm7cqnk/key": [
+          {
+            "status": 200,
+            "body": {
+              "current_did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+              "did_aw": "did:aw:jPUMBAvNeJo8USHNtJ81Wm7cqnk",
+              "log_head": {
+                "seq": 1,
+                "operation": "create",
+                "previous_did_key": null,
+                "new_did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+                "prev_entry_hash": null,
+                "entry_hash": "36be523af6136103d37cabe29c49777c646c336f5eec4630292e0efe0b0e443c",
+                "state_hash": "d280725abb8857bc173da1188c4a008180023fc40687833f0a0b10056935310f",
+                "authorized_by": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+                "signature": "Kzx3Yu+Gy+OPuAC/CD3K9xDd1Nz9m8k2owbXzgH3nAubWGvvLbt6cLEbZsbwrcd7gvF6gG0f3TEZOQymNz3HBA",
+                "timestamp": "2026-11-01T00:00:00Z"
+              }
+            }
+          }
+        ],
+        "/v1/did/did:aw:jPUMBAvNeJo8USHNtJ81Wm7cqnk/log": [
+          {
+            "status": 200,
+            "body": [
+              {
+                "seq": 1,
+                "operation": "create",
+                "previous_did_key": null,
+                "new_did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+                "prev_entry_hash": null,
+                "entry_hash": "36be523af6136103d37cabe29c49777c646c336f5eec4630292e0efe0b0e443c",
+                "state_hash": "d280725abb8857bc173da1188c4a008180023fc40687833f0a0b10056935310f",
+                "authorized_by": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+                "signature": "Kzx3Yu+Gy+OPuAC/CD3K9xDd1Nz9m8k2owbXzgH3nAubWGvvLbt6cLEbZsbwrcd7gvF6gG0f3TEZOQymNz3HBA",
+                "timestamp": "2026-11-01T00:00:00Z"
+              }
+            ]
+          }
+        ],
+        "/v1/namespaces/acme.com/addresses/alice": [
+          {
+            "status": 200,
+            "body": {
+              "address_id": "addr-alice",
+              "created_at": "2026-11-01T00:00:00Z",
+              "current_did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+              "did_aw": "did:aw:jPUMBAvNeJo8USHNtJ81Wm7cqnk",
+              "domain": "acme.com",
+              "name": "alice"
+            }
+          }
+        ]
+      },
+      "steps": [
+        {
+          "advance_seconds": 0,
+          "from_did": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+          "expected_status": "verified"
+        },
+        {
+          "advance_seconds": 0,
+          "from_did": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+          "expected_status": "identity_mismatch"
+        },
+        {
+          "advance_seconds": 10,
+          "from_did": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+          "expected_status": "identity_mismatch"
+        }
+      ],
+      "expected_requests": {
+        "/v1/did/did:aw:jPUMBAvNeJo8USHNtJ81Wm7cqnk/key": 2,
+        "/v1/namespaces/acme.com/addresses/alice": 1
+      }
+    },
+    {
+      "name": "key-read-that-fails-is-stale-until-the-interval-ends",
+      "address": "acme.com/alice",
+      "from_stable_id": "did:aw:jPUMBAvNeJo8USHNtJ81Wm7cqnk",
+      "responses": {
+        "/v1/did/did:aw:jPUMBAvNeJo8USHNtJ81Wm7cqnk/key": [
+          {
+            "status": 200,
+            "body": {
+              "current_did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+              "did_aw": "did:aw:jPUMBAvNeJo8USHNtJ81Wm7cqnk",
+              "log_head": {
+                "seq": 1,
+                "operation": "create",
+                "previous_did_key": null,
+                "new_did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+                "prev_entry_hash": null,
+                "entry_hash": "36be523af6136103d37cabe29c49777c646c336f5eec4630292e0efe0b0e443c",
+                "state_hash": "d280725abb8857bc173da1188c4a008180023fc40687833f0a0b10056935310f",
+                "authorized_by": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+                "signature": "Kzx3Yu+Gy+OPuAC/CD3K9xDd1Nz9m8k2owbXzgH3nAubWGvvLbt6cLEbZsbwrcd7gvF6gG0f3TEZOQymNz3HBA",
+                "timestamp": "2026-11-01T00:00:00Z"
+              }
+            }
+          },
+          {
+            "status": 503
+          }
+        ],
+        "/v1/did/did:aw:jPUMBAvNeJo8USHNtJ81Wm7cqnk/log": [
+          {
+            "status": 200,
+            "body": [
+              {
+                "seq": 1,
+                "operation": "create",
+                "previous_did_key": null,
+                "new_did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+                "prev_entry_hash": null,
+                "entry_hash": "36be523af6136103d37cabe29c49777c646c336f5eec4630292e0efe0b0e443c",
+                "state_hash": "d280725abb8857bc173da1188c4a008180023fc40687833f0a0b10056935310f",
+                "authorized_by": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+                "signature": "Kzx3Yu+Gy+OPuAC/CD3K9xDd1Nz9m8k2owbXzgH3nAubWGvvLbt6cLEbZsbwrcd7gvF6gG0f3TEZOQymNz3HBA",
+                "timestamp": "2026-11-01T00:00:00Z"
+              }
+            ]
+          }
+        ],
+        "/v1/namespaces/acme.com/addresses/alice": [
+          {
+            "status": 200,
+            "body": {
+              "address_id": "addr-alice",
+              "created_at": "2026-11-01T00:00:00Z",
+              "current_did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+              "did_aw": "did:aw:jPUMBAvNeJo8USHNtJ81Wm7cqnk",
+              "domain": "acme.com",
+              "name": "alice"
+            }
+          }
+        ]
+      },
+      "steps": [
+        {
+          "advance_seconds": 0,
+          "from_did": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+          "expected_status": "verified"
+        },
+        {
+          "advance_seconds": 0,
+          "from_did": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+          "expected_status": "verification_stale"
+        },
+        {
+          "advance_seconds": 10,
+          "from_did": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+          "expected_status": "verification_stale"
+        },
+        {
+          "advance_seconds": 30,
+          "from_did": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+          "expected_status": "verification_stale"
+        }
+      ],
+      "expected_requests": {
+        "/v1/did/did:aw:jPUMBAvNeJo8USHNtJ81Wm7cqnk/key": 3,
+        "/v1/namespaces/acme.com/addresses/alice": 1
+      }
+    },
+    {
+      "name": "address-cached-for-another-identity-is-read-again-and-verifies",
+      "address": "acme.com/alice",
+      "from_stable_id": "did:aw:jPUMBAvNeJo8USHNtJ81Wm7cqnk",
+      "responses": {
+        "/v1/did/did:aw:jPUMBAvNeJo8USHNtJ81Wm7cqnk/key": [
+          {
+            "status": 200,
+            "body": {
+              "current_did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+              "did_aw": "did:aw:jPUMBAvNeJo8USHNtJ81Wm7cqnk",
+              "log_head": {
+                "seq": 1,
+                "operation": "create",
+                "previous_did_key": null,
+                "new_did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+                "prev_entry_hash": null,
+                "entry_hash": "36be523af6136103d37cabe29c49777c646c336f5eec4630292e0efe0b0e443c",
+                "state_hash": "d280725abb8857bc173da1188c4a008180023fc40687833f0a0b10056935310f",
+                "authorized_by": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+                "signature": "Kzx3Yu+Gy+OPuAC/CD3K9xDd1Nz9m8k2owbXzgH3nAubWGvvLbt6cLEbZsbwrcd7gvF6gG0f3TEZOQymNz3HBA",
+                "timestamp": "2026-11-01T00:00:00Z"
+              }
+            }
+          }
+        ],
+        "/v1/did/did:aw:jPUMBAvNeJo8USHNtJ81Wm7cqnk/log": [
+          {
+            "status": 200,
+            "body": [
+              {
+                "seq": 1,
+                "operation": "create",
+                "previous_did_key": null,
+                "new_did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+                "prev_entry_hash": null,
+                "entry_hash": "36be523af6136103d37cabe29c49777c646c336f5eec4630292e0efe0b0e443c",
+                "state_hash": "d280725abb8857bc173da1188c4a008180023fc40687833f0a0b10056935310f",
+                "authorized_by": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+                "signature": "Kzx3Yu+Gy+OPuAC/CD3K9xDd1Nz9m8k2owbXzgH3nAubWGvvLbt6cLEbZsbwrcd7gvF6gG0f3TEZOQymNz3HBA",
+                "timestamp": "2026-11-01T00:00:00Z"
+              }
+            ]
+          }
+        ],
+        "/v1/namespaces/acme.com/addresses/alice": [
+          {
+            "status": 200,
+            "body": {
+              "address_id": "addr-alice",
+              "created_at": "2026-11-01T00:00:00Z",
+              "current_did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+              "did_aw": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+              "domain": "acme.com",
+              "name": "alice"
+            }
+          },
+          {
+            "status": 200,
+            "body": {
+              "address_id": "addr-alice",
+              "created_at": "2026-11-01T00:00:00Z",
+              "current_did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+              "did_aw": "did:aw:jPUMBAvNeJo8USHNtJ81Wm7cqnk",
+              "domain": "acme.com",
+              "name": "alice"
+            }
+          }
+        ]
+      },
+      "steps": [
+        {
+          "advance_seconds": 0,
+          "from_did": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+          "expected_status": "verified"
+        }
+      ],
+      "expected_requests": {
+        "/v1/did/did:aw:jPUMBAvNeJo8USHNtJ81Wm7cqnk/key": 1,
+        "/v1/namespaces/acme.com/addresses/alice": 2
+      }
+    },
+    {
+      "name": "address-read-again-for-another-identity-is-a-mismatch-without-another-read-in-the-interval",
+      "address": "acme.com/alice",
+      "from_stable_id": "did:aw:jPUMBAvNeJo8USHNtJ81Wm7cqnk",
+      "responses": {
+        "/v1/namespaces/acme.com/addresses/alice": [
+          {
+            "status": 200,
+            "body": {
+              "address_id": "addr-alice",
+              "created_at": "2026-11-01T00:00:00Z",
+              "current_did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+              "did_aw": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+              "domain": "acme.com",
+              "name": "alice"
+            }
+          }
+        ]
+      },
+      "steps": [
+        {
+          "advance_seconds": 0,
+          "from_did": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+          "expected_status": "identity_mismatch"
+        },
+        {
+          "advance_seconds": 10,
+          "from_did": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+          "expected_status": "identity_mismatch"
+        }
+      ],
+      "expected_requests": {
+        "/v1/did/did:aw:jPUMBAvNeJo8USHNtJ81Wm7cqnk/key": 0,
+        "/v1/namespaces/acme.com/addresses/alice": 2
+      }
+    },
+    {
+      "name": "address-read-that-fails-is-stale",
+      "address": "acme.com/alice",
+      "from_stable_id": "did:aw:jPUMBAvNeJo8USHNtJ81Wm7cqnk",
+      "responses": {
+        "/v1/namespaces/acme.com/addresses/alice": [
+          {
+            "status": 200,
+            "body": {
+              "address_id": "addr-alice",
+              "created_at": "2026-11-01T00:00:00Z",
+              "current_did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+              "did_aw": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+              "domain": "acme.com",
+              "name": "alice"
+            }
+          },
+          {
+            "status": 503
+          }
+        ]
+      },
+      "steps": [
+        {
+          "advance_seconds": 0,
+          "from_did": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+          "expected_status": "verification_stale"
+        },
+        {
+          "advance_seconds": 10,
+          "from_did": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+          "expected_status": "verification_stale"
+        }
+      ],
+      "expected_requests": {
+        "/v1/did/did:aw:jPUMBAvNeJo8USHNtJ81Wm7cqnk/key": 0,
+        "/v1/namespaces/acme.com/addresses/alice": 2
+      }
+    }
+  ]
+}

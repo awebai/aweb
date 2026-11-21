@@ -1519,7 +1519,10 @@ func runTeamMembers(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	signers := teamReadSigners(workingDir, domain, team)
+	signers, err := teamReadSigners(workingDir, domain, team)
+	if err != nil {
+		return err
+	}
 	var certs []awid.RegistryCertificate
 	if _, err := readSignedTeamState(signers, func(key ed25519.PrivateKey) error {
 		var listErr error
@@ -3709,23 +3712,18 @@ func ensureLocalTeamRegistered(
 		return nil, fmt.Errorf("ensure namespace at registry: %w", err)
 	}
 
-	var teamPriv ed25519.PrivateKey
-	exists, err := awconfig.TeamKeyExists(domain, name)
+	if err := settleUnconfirmedTeamKey(ctx, registry, registryURL, domain, name); err != nil {
+		return nil, err
+	}
+
+	// The key is in local custody before the registry pins the team to it,
+	// so an interrupted run is completed by a retry that reuses it.
+	teamPriv, created, err := teamKeyForCreate(domain, name)
 	if err != nil {
 		return nil, err
 	}
-	if exists {
-		teamPriv, err = awconfig.LoadTeamKey(domain, name)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		_, teamPriv, err = awid.GenerateKeypair()
-		if err != nil {
-			return nil, err
-		}
-	}
-	teamDIDKey := awid.ComputeDIDKey(teamPriv.Public().(ed25519.PublicKey))
+	teamPub := teamPriv.Public().(ed25519.PublicKey)
+	teamDIDKey := awid.ComputeDIDKey(teamPub)
 
 	_, err = registry.CreateTeam(ctx, registryURL, domain, name, strings.TrimSpace(displayName), teamDIDKey, controllerKey)
 	if err != nil {
@@ -3733,20 +3731,47 @@ func ensureLocalTeamRegistered(
 			return nil, fmt.Errorf("create team at registry: %w", err)
 		}
 		existingTeam, getErr := registry.GetTeam(ctx, registryURL, domain, name, teamPriv)
+		if awid.IsTeamPrivateError(getErr) {
+			// A private team refuses this read, signed with teamPriv, only
+			// when teamPriv is neither its key nor a member's: the registry
+			// pins another key.
+			taken := withErrorCode(codeTeamNameTaken, fmt.Errorf("create team at registry: %w\nRestore this team's controller key to reuse it, or choose another --name.", err))
+			if created {
+				if removeErr := awconfig.RemoveTeamKey(domain, name, teamPub); removeErr != nil {
+					return nil, fmt.Errorf("%w. The unregistered team key this run saved was kept: %v", taken, removeErr)
+				}
+			}
+			return nil, taken
+		}
 		if getErr != nil {
-			debugLog("read existing team after name conflict: %v", getErr)
-			return nil, withErrorCode(codeTeamNameTaken, fmt.Errorf("create team at registry: %w\nRestore this team's controller key to reuse it, or choose another --name.", err))
+			// The registry has the name but could not say which key holds
+			// it; a failed read is not a taken name. A key this run created
+			// may be the registered one (another run here registered it
+			// first), so it is set aside, never destroyed, and never read as
+			// the team key until a read settles it.
+			aside := ""
+			if created {
+				path, asideErr := awconfig.SetAsideUnconfirmedTeamKey(domain, name, teamPub)
+				if asideErr != nil {
+					return nil, fmt.Errorf("%w. The team key this run saved could not be set aside: %v", unconfirmedTeamNameError(domain, name, "", getErr), asideErr)
+				}
+				aside = path
+			}
+			return nil, unconfirmedTeamNameError(domain, name, aside, getErr)
 		}
 		if strings.TrimSpace(existingTeam.TeamDIDKey) != teamDIDKey {
-			return nil, withErrorCode(codeTeamNameTaken, fmt.Errorf("team %s/%s is already pinned to %s\nRestore its current controller key to reuse this team, or choose another --name.", domain, name, existingTeam.TeamDIDKey))
+			pinned := teamPinnedElsewhereError(domain, name, existingTeam.TeamDIDKey)
+			// A key this run created was never registered; keep no key file
+			// for a team pinned to another key.
+			if created {
+				if removeErr := awconfig.RemoveTeamKey(domain, name, teamPub); removeErr != nil {
+					return nil, fmt.Errorf("%w. The unregistered team key this run saved was kept: %v", pinned, removeErr)
+				}
+			}
+			return nil, pinned
 		}
 	}
 
-	if !exists {
-		if err := awconfig.SaveTeamKey(domain, name, teamPriv); err != nil {
-			return nil, err
-		}
-	}
 	teamKeyPath, err := awconfig.TeamKeyPath(domain, name)
 	if err != nil {
 		return nil, err
@@ -3756,6 +3781,158 @@ func ensureLocalTeamRegistered(
 		TeamDIDKey:  teamDIDKey,
 		TeamKey:     teamPriv,
 		TeamKeyPath: teamKeyPath,
+	}, nil
+}
+
+// settleUnconfirmedTeamKey settles a team key an earlier run set aside as
+// unconfirmed, before this run reads or creates a team key. A registry read
+// that succeeds restores it when the registry pins exactly that key, and
+// removes it, refusing the name as taken, when the registry pins another; a
+// private team's refusal of the read signed with that key shows the same. A
+// read that fails otherwise leaves it set aside and refuses: no new key is
+// created while one that may be registered is unsettled.
+func settleUnconfirmedTeamKey(ctx context.Context, registry *awid.RegistryClient, registryURL, domain, name string) error {
+	key, aside, err := awconfig.LoadUnconfirmedTeamKey(domain, name)
+	if err != nil || key == nil {
+		return err
+	}
+	pub := key.Public().(ed25519.PublicKey)
+	team, err := registry.GetTeam(ctx, registryURL, domain, name, key)
+	var pinned error
+	switch {
+	case awid.IsTeamPrivateError(err):
+		// A private team refuses a read signed with the set-aside key only
+		// when that key is neither its key nor a member's.
+		pinned = withErrorCode(codeTeamNameTaken, fmt.Errorf("team %s/%s is private and refuses a read signed with the team key this machine set aside, so another key holds it: %w\nRestore this team's controller key to reuse it, or choose another --name.", domain, name, err))
+	case err != nil:
+		return unconfirmedTeamNameError(domain, name, aside, err)
+	case strings.TrimSpace(team.TeamDIDKey) == awid.ComputeDIDKey(pub):
+		return awconfig.RestoreUnconfirmedTeamKey(domain, name)
+	default:
+		pinned = teamPinnedElsewhereError(domain, name, team.TeamDIDKey)
+	}
+	if err := awconfig.RemoveUnconfirmedTeamKey(domain, name, pub); err != nil {
+		return fmt.Errorf("%w. The unconfirmed team key at %s was kept: %v", pinned, aside, err)
+	}
+	return pinned
+}
+
+// unconfirmedTeamNameError is the refusal when the registry has a team's name
+// and a read could not say which key holds it. aside is where this machine's
+// unconfirmed key waits, or "" when no key was set aside.
+func unconfirmedTeamNameError(domain, name, aside string, readErr error) error {
+	held := ""
+	if aside != "" {
+		held = fmt.Sprintf("\nThe team key this machine created is set aside at %s and is not used as the team key.", aside)
+	}
+	return withErrorCode(codeTeamNameUnconfirmed, fmt.Errorf("team %s/%s already exists at the registry, and reading it to confirm which key holds it failed: %w%s\nRun the same command again once the registry answers: aw restores a set-aside key the registry pins and removes one it does not.", domain, name, readErr, held))
+}
+
+// teamPinnedElsewhereError is the refusal when the registry pins a team's
+// name to another key.
+func teamPinnedElsewhereError(domain, name, pinnedDIDKey string) error {
+	return withErrorCode(codeTeamNameTaken, fmt.Errorf("team %s/%s is already pinned to %s\nRestore its current controller key to reuse this team, or choose another --name.", domain, name, pinnedDIDKey))
+}
+
+// teamKeyForCreate returns the team key to register: the key already saved
+// for the team, or a new key saved exclusively before any registry call.
+// created reports that this run saved the key. When another run saved a key
+// first, that key is used, so concurrent runs register one key.
+func teamKeyForCreate(domain, name string) (key ed25519.PrivateKey, created bool, err error) {
+	exists, err := awconfig.TeamKeyExists(domain, name)
+	if err != nil {
+		return nil, false, err
+	}
+	if !exists {
+		_, key, err = awid.GenerateKeypair()
+		if err != nil {
+			return nil, false, err
+		}
+		err = awconfig.CreateTeamKey(domain, name, key)
+		if err == nil {
+			return key, true, nil
+		}
+		if !errors.Is(err, os.ErrExist) {
+			return nil, false, err
+		}
+	}
+	key, err = awconfig.LoadTeamKey(domain, name)
+	if err != nil {
+		return nil, false, err
+	}
+	return key, false, nil
+}
+
+func bootstrapFirstLocalTeamMember(
+	ctx context.Context,
+	registry *awid.RegistryClient,
+	registryURL, domain, teamName, displayName string,
+	controllerKey, memberKey ed25519.PrivateKey,
+	memberDIDAW, memberAddress, alias string,
+) (*localTeamBootstrapResult, error) {
+	return bootstrapLocalTeamMemberWithScope(
+		ctx,
+		registry,
+		registryURL,
+		domain,
+		teamName,
+		displayName,
+		controllerKey,
+		memberKey,
+		memberDIDAW,
+		memberAddress,
+		alias,
+		awid.IdentityModeGlobal,
+	)
+}
+
+func bootstrapLocalTeamMemberWithScope(
+	ctx context.Context,
+	registry *awid.RegistryClient,
+	registryURL, domain, teamName, displayName string,
+	controllerKey, memberKey ed25519.PrivateKey,
+	memberDIDAW, memberAddress, alias, identityScope string,
+) (*localTeamBootstrapResult, error) {
+	if memberKey == nil {
+		return nil, fmt.Errorf("member signing key is required")
+	}
+	resolvedRegistryURL := strings.TrimSpace(registryURL)
+	if resolvedRegistryURL == "" && registry != nil {
+		resolvedRegistryURL = strings.TrimSpace(registry.DefaultRegistryURL)
+	}
+	identityScope = awid.NormalizeIdentityScope(identityScope)
+	if identityScope != awid.IdentityModeLocal && identityScope != awid.IdentityModeGlobal {
+		return nil, fmt.Errorf("identity scope must be local or global")
+	}
+	registration, err := ensureLocalTeamRegistered(ctx, registry, resolvedRegistryURL, domain, teamName, displayName, controllerKey)
+	if err != nil {
+		return nil, err
+	}
+	memberDIDKey := awid.ComputeDIDKey(memberKey.Public().(ed25519.PublicKey))
+	cert, err := awid.SignTeamCertificate(registration.TeamKey, awid.TeamCertificateFields{
+		Team:          registration.TeamID,
+		MemberDIDKey:  memberDIDKey,
+		MemberDIDAW:   strings.TrimSpace(memberDIDAW),
+		MemberAddress: strings.TrimSpace(memberAddress),
+		Alias:         strings.TrimSpace(alias),
+		IdentityScope: identityScope,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := registry.RegisterCertificate(ctx, resolvedRegistryURL, awconfig.NormalizeDomain(domain), strings.ToLower(strings.TrimSpace(teamName)), cert, registration.TeamKey); err != nil {
+		if isAliasConflict(err) {
+			// aw init's local and guided paths call this, and --name sets
+			// their name.
+			return nil, &plainRefusal{text: nameTakenText(strings.TrimSpace(alias), registration.TeamID, "--name"), err: err}
+		}
+		return nil, fmt.Errorf("register certificate at registry: %w", err)
+	}
+	return &localTeamBootstrapResult{
+		TeamID:      registration.TeamID,
+		TeamDIDKey:  registration.TeamDIDKey,
+		TeamKeyPath: registration.TeamKeyPath,
+		Certificate: cert,
 	}, nil
 }
 

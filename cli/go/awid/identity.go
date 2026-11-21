@@ -23,8 +23,12 @@ type ResolvedIdentity struct {
 	Custody        string // "self" or "custodial"
 	IdentityScope  string // "local" or "global"
 	ResolvedAt     time.Time
-	ResolvedVia    string // "did:key", "registry", "pin"
+	ResolvedVia    string // "did:key", "registry", "pin", ResolvedViaPinAfterRegistryMiss
 }
+
+// ResolvedViaPinAfterRegistryMiss marks an identity answered from a pin
+// because the registry answered that the address does not exist.
+const ResolvedViaPinAfterRegistryMiss = "pin_after_registry_miss"
 
 // IdentityResolver resolves an identifier to a ResolvedIdentity.
 type IdentityResolver interface {
@@ -43,6 +47,12 @@ type StableIdentityVerifier interface {
 
 type CurrentStableIdentityVerifier interface {
 	VerifyStableIdentityCurrent(ctx context.Context, address, stableID, expectedCurrentDIDKey string) *StableIdentityVerification
+}
+
+// CheckpointedStableIdentityVerifier verifies a stable identity against the
+// caller's anti-rollback checkpoint for whichever registry answers.
+type CheckpointedStableIdentityVerifier interface {
+	VerifyStableIdentityCheckpointed(ctx context.Context, address, stableID, expectedCurrentDIDKey string, checkpoint func(registryURL string) *VerifiedLogHead) *StableIdentityVerification
 }
 
 // HandleFromAddress extracts the handle/name portion from a public address.
@@ -183,6 +193,9 @@ func (r *ChainResolver) resolveIdentifier(ctx context.Context, identifier string
 			}
 			if r.Pin != nil && registryMissAllowsPinFallback(err) {
 				if pinIdentity, pinErr := r.Pin.Resolve(ctx, identifier); pinErr == nil {
+					// The registry no longer has the address: the answer is the
+					// pin's, and says so (docs/trust-model.md).
+					pinIdentity.ResolvedVia = ResolvedViaPinAfterRegistryMiss
 					return pinIdentity, nil
 				}
 			}
@@ -244,4 +257,11 @@ func (r *ChainResolver) VerifyStableIdentityCurrent(ctx context.Context, address
 		return &StableIdentityVerification{Outcome: StableIdentityDegraded}
 	}
 	return r.Registry.VerifyStableIdentityCurrent(ctx, address, stableID, expectedCurrentDIDKey)
+}
+
+func (r *ChainResolver) VerifyStableIdentityCheckpointed(ctx context.Context, address, stableID, expectedCurrentDIDKey string, checkpoint func(registryURL string) *VerifiedLogHead) *StableIdentityVerification {
+	if r.Registry == nil || !strings.Contains(strings.TrimSpace(address), "/") {
+		return &StableIdentityVerification{Outcome: StableIdentityDegraded}
+	}
+	return r.Registry.VerifyStableIdentityCheckpointed(ctx, address, stableID, expectedCurrentDIDKey, checkpoint)
 }

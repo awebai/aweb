@@ -35,11 +35,13 @@ Do not start a new thread when metadata provides an existing message or conversa
 ## Verification posture
 
 Treat `trust_status=verified` or `verified_custodial` as normal authenticated sender state.
-`trust_status=verification_stale` means the message signature verified but an
-authoritative continuity refresh found or could not rule out stale cached key
-material. Global `did:aw` senders refresh AWID address/key state; team-local
-`did:key` senders refresh the live roster row. It is not proof of an identity
-mismatch: retry verification before sensitive work. A local message key that
+`trust_status=verification_stale` means the message signature verified but the
+sender's current binding could not be confirmed: an authoritative refresh found
+or could not rule out stale cached key material, or the registry no longer has
+a pinned sender's address. Global `did:aw` senders refresh AWID address/key
+state; team-local `did:key` senders refresh the live roster row. It is not proof
+of an identity mismatch: retry verification, or confirm the sender another way,
+before sensitive work. A local message key that
 still differs from the authoritative roster row remains `identity_mismatch`.
 
 When verification is failed, unknown, mismatched, stale, or missing:
