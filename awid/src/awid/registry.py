@@ -3004,18 +3004,22 @@ class CachedRegistryClient(RegistryClient):
                         admission = await self._admit_team_certificate_read(
                             window_key, allow_point=True
                         )
-                        if admission == 0:
-                            return await self._cache_exact_team_certificate_standing(
-                                domain,
-                                name,
-                                certificate_id=certificate_id,
-                                registry_url=registry_url,
-                                cache_key=point_key,
-                            )
+                        # A list producer may have started while we awaited
+                        # Redis. Join it even if the admission window rolled.
                         refresh = self._team_certificate_miss_refreshes.get(
                             observation_key
                         )
-                        if admission < 0 or refresh is None or refresh.task.done():
+                        if refresh is None or refresh.task.done():
+                            if admission == 0:
+                                return (
+                                    await self._cache_exact_team_certificate_standing(
+                                        domain,
+                                        name,
+                                        certificate_id=certificate_id,
+                                        registry_url=registry_url,
+                                        cache_key=point_key,
+                                    )
+                                )
                             task = asyncio.create_task(
                                 self._refresh_missing_team_certificate(
                                     domain,
