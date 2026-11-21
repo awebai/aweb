@@ -358,6 +358,18 @@ func NewWithIdentity(baseURL string, signingKey ed25519.PrivateKey, did string) 
 	return c, nil
 }
 
+// TeamCertificateKeyMismatchError reports a certificate that names a different
+// member signing key than the one supplied to NewWithCertificate.
+type TeamCertificateKeyMismatchError struct {
+	SigningDIDKey string
+	MemberDIDKey  string
+	MemberDIDAW   string
+}
+
+func (e *TeamCertificateKeyMismatchError) Error() string {
+	return fmt.Sprintf("signing key did:key %s does not match certificate member_did_key %s", e.SigningDIDKey, e.MemberDIDKey)
+}
+
 // NewWithCertificate creates an authenticated client that uses DIDKey signatures
 // and a team certificate instead of API key authentication.
 func NewWithCertificate(baseURL string, signingKey ed25519.PrivateKey, cert *TeamCertificate) (*Client, error) {
@@ -369,7 +381,7 @@ func NewWithCertificate(baseURL string, signingKey ed25519.PrivateKey, cert *Tea
 	}
 	did := ComputeDIDKey(signingKey.Public().(ed25519.PublicKey))
 	if did != cert.MemberDIDKey {
-		return nil, fmt.Errorf("signing key did:key %s does not match certificate member_did_key %s", did, cert.MemberDIDKey)
+		return nil, &TeamCertificateKeyMismatchError{SigningDIDKey: did, MemberDIDKey: cert.MemberDIDKey, MemberDIDAW: cert.MemberDIDAW}
 	}
 	certHeader, err := EncodeTeamCertificateHeader(cert)
 	if err != nil {
