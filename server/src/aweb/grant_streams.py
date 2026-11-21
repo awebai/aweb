@@ -11,9 +11,8 @@ from fastapi import HTTPException, Request
 from aweb.application_state import application_registry_client
 from aweb.auth_context import (
     MessagingAuth,
-    NativeCertificateIdentity,
-    NativeCertificateMessagingAuth,
     TeamIdentity,
+    has_verified_team_certificate,
 )
 from aweb.certificate_registration import configured_registration_mode
 from aweb.identity_grant_status import GrantValidityState, grant_validity
@@ -41,13 +40,8 @@ GRANT_TERMINAL_DETAILS = {
 }
 
 
-def is_native_certificate_stream(identity: object) -> bool:
-    """Classify the checked credential, independent of any opaque certificate ID."""
-    return isinstance(identity, (NativeCertificateIdentity, NativeCertificateMessagingAuth))
-
-
 def requires_stream_recheck(identity: StreamIdentity) -> bool:
-    return is_native_certificate_stream(identity) or identity.grant is not None
+    return has_verified_team_certificate(identity) or identity.grant is not None
 
 
 def clamp_deadline_to_grant(deadline: datetime, identity: StreamIdentity) -> datetime:
@@ -85,16 +79,17 @@ async def grant_terminal_reason(
 ) -> str | None:
     grant = identity.grant
     if grant is None:
-        if not is_native_certificate_stream(identity):
+        if not has_verified_team_certificate(identity):
             return None
-        if not identity.certificate_id or not identity.team_id or not identity.agent_id:
+        checked_key = identity.verified_team_did_key
+        if not (checked_key and identity.certificate_id and identity.team_id and identity.agent_id):
             return "team_membership_not_current"
         row = await read_member_projection(
             native_database_manager(db), team_id=identity.team_id, agent_id=identity.agent_id,
         )
         if (
             row is None or row["did_key"] != identity.did_key
-            or not current_member(row, checked_key=identity.verified_team_did_key or "")
+            or not current_member(row, checked_key=checked_key)
         ):
             return "team_membership_not_current"
         registry = application_registry_client(request.app.state)

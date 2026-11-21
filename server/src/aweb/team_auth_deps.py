@@ -17,7 +17,7 @@ from pgdbm import AsyncDatabaseManager
 
 from aweb.application_state import application_registry_client
 from aweb.audit import AuditActor, is_operator_audit_request, set_verified_audit_actor
-from aweb.auth_context import GRANT_SCOPE_ANY, GRANT_SCOPES, NativeCertificateIdentity, TeamIdentity
+from aweb.auth_context import GRANT_SCOPE_ANY, GRANT_SCOPES, TeamIdentity
 from aweb.auth_metrics import count_legacy_request_auth
 from aweb.certificate_evidence import EvidenceMode
 from aweb.deps import get_db
@@ -191,7 +191,7 @@ async def resolve_team_identity(
                 )
             break
 
-    return NativeCertificateIdentity(
+    return TeamIdentity(
         team_id=team_id,
         alias=cert_info["alias"],
         did_key=did_key,
@@ -201,6 +201,7 @@ async def resolve_team_identity(
         identity_scope=normalize_identity_scope(cert_info.get("identity_scope")),
         certificate_id=cert_info.get("certificate_id", ""),
         verified_team_did_key=verified_team_did_key,
+        certificate_verified=True,
     )
 
 
