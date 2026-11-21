@@ -82,8 +82,10 @@ def _streams(redis):
 
     def dashboard():
         # The first frames precede the dashboard's database snapshot.
+        deadline = asyncio.get_running_loop().time() + 5
         return _sse_dashboard_events(request=Request({"type": "http"}), db=None, redis=redis,
-                                     team_id="lease-ownership:local")
+                                     team_id="lease-ownership:local", user_id="reader",
+                                     deadline=deadline, recheck_at=deadline, standing=None)
 
     return {"status": status, "dashboard": dashboard}
 
