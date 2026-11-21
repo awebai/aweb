@@ -244,15 +244,6 @@ func TestMain(m *testing.M) {
 	awTestBinary.sourceDir = filepath.Clean(filepath.Join(wd, "..", ".."))
 	awTestBinary.env = os.Environ()
 	code := m.Run()
-	if err := stopSharedCommandStack(); err != nil {
-		fmt.Fprintf(os.Stderr, "stop the shared real command stack: %v\n", err)
-		code = 1
-	}
-	// After every fixture that uses them.
-	if err := stopPackageServices(); err != nil {
-		fmt.Fprintf(os.Stderr, "stop the package's disposable services: %v\n", err)
-		code = 1
-	}
 	if awTestBinary.dir != "" {
 		if err := os.RemoveAll(awTestBinary.dir); err != nil {
 			fmt.Fprintf(os.Stderr, "remove shared CLI build: %v\n", err)

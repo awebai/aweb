@@ -1,134 +1,328 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/awebai/aw/awconfig"
+	"github.com/awebai/aw/awid"
 )
 
-// assignAddressWorld is a real world seen from the machine holding its
-// namespace controller key.
-func assignAddressWorld(t *testing.T) *realCommandWorld {
-	t.Helper()
-	t.Setenv("HOME", t.TempDir())
-	world := newRealCommandWorld(t)
-	if err := awconfig.SaveControllerKey(world.Domain, world.NamespaceKey); err != nil {
+func TestIDNamespaceAssignAddressHappyPath(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	subjectPub, _, err := awid.GenerateKeypair()
+	if err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("AWID_REGISTRY_URL", world.Stack.RegistryURL)
-	return world
-}
+	subjectDID := awid.ComputeDIDKey(subjectPub)
+	subjectStableID := awid.ComputeStableID(subjectPub)
 
-func TestIDNamespaceAssignAddressHappyPath(t *testing.T) {
-	world := assignAddressWorld(t)
-	subject := world.registerIdentity(t)
-	// The registry accepts and ignores the retired reachability field, so
-	// only the request shows whether the client still sends it.
-	var bodies []map[string]any
-	t.Setenv("AWID_REGISTRY_URL", world.frontRegistry(t, registryFault{Answer: func(w http.ResponseWriter, r *http.Request) bool {
-		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/addresses") {
-			raw, err := io.ReadAll(r.Body)
-			if err != nil {
-				t.Errorf("read address registration: %v", err)
-			}
-			r.Body = io.NopCloser(bytes.NewReader(raw))
+	controllerPub, controllerPriv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	controllerDID := awid.ComputeDIDKey(controllerPub)
+
+	if err := awconfig.SaveControllerKey("aweb.ai", controllerPriv); err != nil {
+		t.Fatal(err)
+	}
+
+	var registerCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/did/"+subjectStableID+"/key":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          subjectStableID,
+				"current_did_key": subjectDID,
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/aweb.ai":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"namespace_id":        "ns-aweb",
+				"domain":              "aweb.ai",
+				"controller_did":      controllerDID,
+				"verification_status": "verified",
+				"created_at":          "2026-04-01T00:00:00Z",
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/aweb.ai/addresses":
+			registerCalls.Add(1)
 			var body map[string]any
-			if err := json.Unmarshal(raw, &body); err != nil {
-				t.Errorf("address registration body %q: %v", raw, err)
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if body["did_aw"] != subjectStableID {
+				t.Fatalf("did_aw=%v want %s", body["did_aw"], subjectStableID)
 			}
-			bodies = append(bodies, body)
+			if body["current_did_key"] != subjectDID {
+				t.Fatalf("current_did_key=%v want %s", body["current_did_key"], subjectDID)
+			}
+			if _, ok := body["reachability"]; ok {
+				t.Fatalf("unexpected reachability write: %v", body["reachability"])
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"address_id":      "addr-1",
+				"domain":          "aweb.ai",
+				"name":            "alice",
+				"did_aw":          subjectStableID,
+				"current_did_key": subjectDID,
+				"reachability":    "public",
+				"created_at":      "2026-04-20T00:00:00Z",
+			})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
-		return false
-	}}))
+	}))
+	t.Cleanup(server.Close)
 
-	out, err := executeIDNamespaceAssignAddress(world.Context, idNamespaceAssignAddressOptions{
-		Domain: world.Domain,
+	t.Setenv("AWID_REGISTRY_URL", server.URL)
+
+	out, err := executeIDNamespaceAssignAddress(context.Background(), idNamespaceAssignAddressOptions{
+		Domain: "aweb.ai",
 		Name:   "alice",
-		DIDAW:  subject.DIDAW,
+		DIDAW:  subjectStableID,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.Status != "assigned" || out.Address != world.Domain+"/alice" || out.DIDAW != subject.DIDAW || out.DIDKey != subject.DIDKey {
-		t.Fatalf("assign output = %+v", out)
+	if out.Status != "assigned" {
+		t.Fatalf("status=%s want assigned", out.Status)
 	}
-	if len(bodies) != 1 {
-		t.Fatalf("address registrations = %d, want 1", len(bodies))
+	if out.Address != "aweb.ai/alice" {
+		t.Fatalf("address=%s", out.Address)
 	}
-	if _, ok := bodies[0]["reachability"]; ok {
-		t.Fatalf("unexpected reachability write: %v", bodies[0]["reachability"])
+	if out.DIDAW != subjectStableID {
+		t.Fatalf("did_aw=%s", out.DIDAW)
 	}
-	address, _, err := world.Registry.GetNamespaceAddressAt(world.Context, world.Stack.RegistryURL, world.Domain, "alice")
-	if err != nil || address.DIDAW != subject.DIDAW || address.CurrentDIDKey != subject.DIDKey {
-		t.Fatalf("registry address = %+v, %v", address, err)
+	if out.DIDKey != subjectDID {
+		t.Fatalf("did_key=%s", out.DIDKey)
+	}
+	if registerCalls.Load() != 1 {
+		t.Fatalf("register calls=%d want 1", registerCalls.Load())
 	}
 }
 
 func TestIDNamespaceAssignAddressIdempotentMatchingDID(t *testing.T) {
-	world := assignAddressWorld(t)
-	subject := world.registerGlobalMember(t, "alice")
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
 
-	out, err := executeIDNamespaceAssignAddress(world.Context, idNamespaceAssignAddressOptions{
-		Domain: world.Domain,
+	subjectPub, _, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	subjectDID := awid.ComputeDIDKey(subjectPub)
+	subjectStableID := awid.ComputeStableID(subjectPub)
+
+	controllerPub, controllerPriv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	controllerDID := awid.ComputeDIDKey(controllerPub)
+	if err := awconfig.SaveControllerKey("aweb.ai", controllerPriv); err != nil {
+		t.Fatal(err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/did/"+subjectStableID+"/key":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          subjectStableID,
+				"current_did_key": subjectDID,
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/aweb.ai":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"namespace_id":        "ns-aweb",
+				"domain":              "aweb.ai",
+				"controller_did":      controllerDID,
+				"verification_status": "verified",
+				"created_at":          "2026-04-01T00:00:00Z",
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/aweb.ai/addresses":
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]any{"detail": "address already exists"})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/aweb.ai/addresses/alice":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"address_id":      "addr-1",
+				"domain":          "aweb.ai",
+				"name":            "alice",
+				"did_aw":          subjectStableID,
+				"current_did_key": subjectDID,
+				"reachability":    "public",
+				"created_at":      "2026-04-15T00:00:00Z",
+			})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	t.Setenv("AWID_REGISTRY_URL", server.URL)
+
+	out, err := executeIDNamespaceAssignAddress(context.Background(), idNamespaceAssignAddressOptions{
+		Domain: "aweb.ai",
 		Name:   "alice",
-		DIDAW:  subject.DIDAW,
+		DIDAW:  subjectStableID,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.Status != "already_assigned" || out.Address != world.Domain+"/alice" {
-		t.Fatalf("assign output = %+v, want already_assigned", out)
+	if out.Status != "already_assigned" {
+		t.Fatalf("status=%s want already_assigned", out.Status)
+	}
+	if out.Address != "aweb.ai/alice" {
+		t.Fatalf("address=%s", out.Address)
 	}
 }
 
 func TestIDNamespaceAssignAddressConflictWithStaleAddressKey(t *testing.T) {
-	world := assignAddressWorld(t)
-	subject := world.registerGlobalMember(t, "alice")
-	staleDID := didOf(newKey(t))
-	// The registry derives an address's key from its did:aw's current key, so
-	// it never answers a stale one; a registry mid-rotation, or another
-	// registry, can.
-	t.Setenv("AWID_REGISTRY_URL", world.frontRegistry(t, registryFault{Rewrite: func(response *http.Response) error {
-		if response.Request.Method != http.MethodGet || !strings.HasSuffix(response.Request.URL.Path, "/addresses/alice") {
-			return nil
-		}
-		return rewriteJSONBody(response, func(address map[string]any) { address["current_did_key"] = staleDID })
-	}}))
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
 
-	_, err := executeIDNamespaceAssignAddress(world.Context, idNamespaceAssignAddressOptions{
-		Domain: world.Domain,
+	subjectPub, _, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	subjectDID := awid.ComputeDIDKey(subjectPub)
+	subjectStableID := awid.ComputeStableID(subjectPub)
+	stalePub, _, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleDID := awid.ComputeDIDKey(stalePub)
+
+	controllerPub, controllerPriv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	controllerDID := awid.ComputeDIDKey(controllerPub)
+	if err := awconfig.SaveControllerKey("aweb.ai", controllerPriv); err != nil {
+		t.Fatal(err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/did/"+subjectStableID+"/key":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          subjectStableID,
+				"current_did_key": subjectDID,
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/aweb.ai":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"namespace_id":        "ns-aweb",
+				"domain":              "aweb.ai",
+				"controller_did":      controllerDID,
+				"verification_status": "verified",
+				"created_at":          "2026-04-01T00:00:00Z",
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/aweb.ai/addresses":
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]any{"detail": "address already exists"})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/aweb.ai/addresses/alice":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"address_id":      "addr-1",
+				"domain":          "aweb.ai",
+				"name":            "alice",
+				"did_aw":          subjectStableID,
+				"current_did_key": staleDID,
+				"reachability":    "public",
+				"created_at":      "2026-04-15T00:00:00Z",
+			})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	t.Setenv("AWID_REGISTRY_URL", server.URL)
+
+	_, err = executeIDNamespaceAssignAddress(context.Background(), idNamespaceAssignAddressOptions{
+		Domain: "aweb.ai",
 		Name:   "alice",
-		DIDAW:  subject.DIDAW,
+		DIDAW:  subjectStableID,
 	})
 	if err == nil {
 		t.Fatal("expected error for stale address key")
 	}
-	if !strings.Contains(err.Error(), staleDID) || !strings.Contains(err.Error(), subject.DIDKey) {
+	if !strings.Contains(err.Error(), staleDID) || !strings.Contains(err.Error(), subjectDID) {
 		t.Fatalf("error should mention stale and current did:key, got: %v", err)
 	}
 }
 
 func TestIDNamespaceAssignAddressConflictWithDifferentDID(t *testing.T) {
-	world := assignAddressWorld(t)
-	holder := world.registerGlobalMember(t, "alice")
-	subject := world.registerIdentity(t)
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
 
-	_, err := executeIDNamespaceAssignAddress(world.Context, idNamespaceAssignAddressOptions{
-		Domain: world.Domain,
+	subjectPub, _, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	subjectDID := awid.ComputeDIDKey(subjectPub)
+	subjectStableID := awid.ComputeStableID(subjectPub)
+
+	otherPub, _, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherStableID := awid.ComputeStableID(otherPub)
+
+	controllerPub, controllerPriv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	controllerDID := awid.ComputeDIDKey(controllerPub)
+	if err := awconfig.SaveControllerKey("aweb.ai", controllerPriv); err != nil {
+		t.Fatal(err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/did/"+subjectStableID+"/key":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          subjectStableID,
+				"current_did_key": subjectDID,
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/aweb.ai":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"namespace_id":        "ns-aweb",
+				"domain":              "aweb.ai",
+				"controller_did":      controllerDID,
+				"verification_status": "verified",
+				"created_at":          "2026-04-01T00:00:00Z",
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/aweb.ai/addresses":
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]any{"detail": "address already exists"})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/aweb.ai/addresses/alice":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"address_id":      "addr-1",
+				"domain":          "aweb.ai",
+				"name":            "alice",
+				"did_aw":          otherStableID,
+				"current_did_key": awid.ComputeDIDKey(otherPub),
+				"reachability":    "public",
+				"created_at":      "2026-04-15T00:00:00Z",
+			})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	t.Setenv("AWID_REGISTRY_URL", server.URL)
+
+	_, err = executeIDNamespaceAssignAddress(context.Background(), idNamespaceAssignAddressOptions{
+		Domain: "aweb.ai",
 		Name:   "alice",
-		DIDAW:  subject.DIDAW,
+		DIDAW:  subjectStableID,
 	})
 	if err == nil {
 		t.Fatal("expected error for DID mismatch")
 	}
-	if !strings.Contains(err.Error(), holder.DIDAW) {
-		t.Fatalf("error should mention conflicting did_aw %s, got: %v", holder.DIDAW, err)
+	if !strings.Contains(err.Error(), otherStableID) {
+		t.Fatalf("error should mention conflicting did_aw %s, got: %v", otherStableID, err)
 	}
 }
 
@@ -153,8 +347,12 @@ func TestIDNamespaceAssignAddressEmptyDIDAW(t *testing.T) {
 func TestIDNamespaceAssignAddressMissingControllerKey(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
-	// No registry exists here: a request would fail with its own error.
-	t.Setenv("AWID_REGISTRY_URL", "http://example.invalid")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("registry should not be called: %s %s", r.Method, r.URL.Path)
+	}))
+	t.Cleanup(server.Close)
+	t.Setenv("AWID_REGISTRY_URL", server.URL)
 
 	_, err := executeIDNamespaceAssignAddress(context.Background(), idNamespaceAssignAddressOptions{
 		Domain: "aweb.ai",
@@ -170,29 +368,54 @@ func TestIDNamespaceAssignAddressMissingControllerKey(t *testing.T) {
 }
 
 func TestIDNamespaceAssignAddressControllerMismatch(t *testing.T) {
-	world := assignAddressWorld(t)
-	subject := world.registerIdentity(t)
-	// This machine holds a key the registry does not name as controller.
-	if err := awconfig.SaveControllerKey(world.Domain, newKey(t)); err != nil {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	subjectPub, _, err := awid.GenerateKeypair()
+	if err != nil {
 		t.Fatal(err)
 	}
-	origin, recording := world.recordRegistry(t)
-	t.Setenv("AWID_REGISTRY_URL", origin)
+	subjectStableID := awid.ComputeStableID(subjectPub)
 
-	_, err := executeIDNamespaceAssignAddress(world.Context, idNamespaceAssignAddressOptions{
-		Domain: world.Domain,
+	_, localPriv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveControllerKey("aweb.ai", localPriv); err != nil {
+		t.Fatal(err)
+	}
+
+	otherPub, _, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherControllerDID := awid.ComputeDIDKey(otherPub)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/namespaces/aweb.ai" && r.Method == http.MethodGet {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"namespace_id":        "ns-aweb",
+				"domain":              "aweb.ai",
+				"controller_did":      otherControllerDID,
+				"verification_status": "verified",
+				"created_at":          "2026-04-01T00:00:00Z",
+			})
+			return
+		}
+		t.Fatalf("unexpected %s %s — should not reach DID resolve or address POST", r.Method, r.URL.Path)
+	}))
+	t.Cleanup(server.Close)
+	t.Setenv("AWID_REGISTRY_URL", server.URL)
+
+	_, err = executeIDNamespaceAssignAddress(context.Background(), idNamespaceAssignAddressOptions{
+		Domain: "aweb.ai",
 		Name:   "alice",
-		DIDAW:  subject.DIDAW,
+		DIDAW:  subjectStableID,
 	})
 	if err == nil {
 		t.Fatal("expected error for controller key mismatch")
 	}
 	if !strings.Contains(err.Error(), "controller") {
 		t.Fatalf("error should mention controller mismatch, got: %v", err)
-	}
-	for _, answer := range recording.Answers() {
-		if answer.Method != http.MethodGet || answer.Path != "/v1/namespaces/"+world.Domain {
-			t.Fatalf("the refusal reached past the namespace read: %+v", recording.Answers())
-		}
 	}
 }

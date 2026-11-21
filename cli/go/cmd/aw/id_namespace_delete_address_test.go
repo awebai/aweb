@@ -5,8 +5,10 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
+	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -14,39 +16,66 @@ import (
 	"github.com/awebai/aw/awid"
 )
 
-// deleteAddressWorld is a real world with a registered "alice" address, seen
-// from the machine holding the namespace controller key.
-func deleteAddressWorld(t *testing.T) (*realCommandWorld, globalMember) {
-	t.Helper()
-	t.Setenv("HOME", t.TempDir())
-	world := newRealCommandWorld(t)
-	member := world.registerGlobalMember(t, "alice")
-	if err := awconfig.SaveControllerKey(world.Domain, world.NamespaceKey); err != nil {
+func TestIDNamespaceDeleteAddressHappyPath(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	controllerPub, controllerPriv, err := awid.GenerateKeypair()
+	if err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("AWID_REGISTRY_URL", world.Stack.RegistryURL)
-	return world, member
-}
+	controllerDID := awid.ComputeDIDKey(controllerPub)
+	if err := awconfig.SaveControllerKey("acme.com", controllerPriv); err != nil {
+		t.Fatal(err)
+	}
 
-func TestIDNamespaceDeleteAddressHappyPath(t *testing.T) {
-	world, _ := deleteAddressWorld(t)
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.com":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"namespace_id":        "ns-acme",
+				"domain":              "acme.com",
+				"controller_did":      controllerDID,
+				"verification_status": "verified",
+				"created_at":          "2026-04-01T00:00:00Z",
+			})
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/namespaces/acme.com/addresses/alice":
+			verifyRegistrySignatureForTest(t, r, controllerPub, map[string]string{
+				"domain":    "acme.com",
+				"name":      "alice",
+				"operation": "delete_address",
+			})
+			if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"deleted": true})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	t.Cleanup(server.Close)
+	t.Setenv("AWID_REGISTRY_URL", server.URL)
 
-	// The registry refuses unknown body fields, so its acceptance proves the
-	// reason travels under the field it defines.
-	out, err := executeIDNamespaceDeleteAddress(world.Context, idNamespaceDeleteAddressOptions{
-		Domain: world.Domain,
+	out, err := executeIDNamespaceDeleteAddress(context.Background(), idNamespaceDeleteAddressOptions{
+		Domain: "acme.com",
 		Name:   "alice",
 		Reason: "retry clean byot setup",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.Status != "deleted" || out.Address != world.Domain+"/alice" || out.ControllerDID != didOf(world.NamespaceKey) {
-		t.Fatalf("delete output = %+v", out)
+	if out.Status != "deleted" {
+		t.Fatalf("status=%s want deleted", out.Status)
 	}
-	_, _, err = world.Registry.GetNamespaceAddressAt(world.Context, world.Stack.RegistryURL, world.Domain, "alice")
-	if code, ok := registryStatusCode(err); !ok || code != 404 {
-		t.Fatalf("deleted address is still readable: %v", err)
+	if out.Address != "acme.com/alice" {
+		t.Fatalf("address=%s", out.Address)
+	}
+	if out.ControllerDID != controllerDID {
+		t.Fatalf("controller=%s want %s", out.ControllerDID, controllerDID)
+	}
+	if gotBody["reason"] != "retry clean byot setup" {
+		t.Fatalf("reason=%v", gotBody["reason"])
 	}
 }
 
@@ -64,40 +93,84 @@ func TestIDNamespaceDeleteAddressRequiresLocalControllerKey(t *testing.T) {
 }
 
 func TestIDNamespaceDeleteAddressRejectsControllerMismatch(t *testing.T) {
-	world, _ := deleteAddressWorld(t)
-	// This machine holds a key the registry does not name as controller.
-	if err := awconfig.SaveControllerKey(world.Domain, newKey(t)); err != nil {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	_, controllerPriv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveControllerKey("acme.com", controllerPriv); err != nil {
+		t.Fatal(err)
+	}
+	otherPub, _, err := awid.GenerateKeypair()
+	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, err := executeIDNamespaceDeleteAddress(world.Context, idNamespaceDeleteAddressOptions{
-		Domain: world.Domain,
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/namespaces/acme.com" {
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"namespace_id":        "ns-acme",
+			"domain":              "acme.com",
+			"controller_did":      awid.ComputeDIDKey(otherPub),
+			"verification_status": "verified",
+			"created_at":          "2026-04-01T00:00:00Z",
+		})
+	}))
+	t.Cleanup(server.Close)
+	t.Setenv("AWID_REGISTRY_URL", server.URL)
+
+	_, err = executeIDNamespaceDeleteAddress(context.Background(), idNamespaceDeleteAddressOptions{
+		Domain: "acme.com",
 		Name:   "alice",
 	})
 	if err == nil || !strings.Contains(err.Error(), "does not match registered controller") {
 		t.Fatalf("err=%v", err)
 	}
-	if _, _, err := world.Registry.GetNamespaceAddressAt(world.Context, world.Stack.RegistryURL, world.Domain, "alice"); err != nil {
-		t.Fatalf("refused delete removed the address: %v", err)
-	}
 }
 
 func TestIDNamespaceDeleteAddressActiveCertificatesMessage(t *testing.T) {
-	world, member := deleteAddressWorld(t)
-	world.registerMemberCertificate(t, awid.TeamCertificateFields{
-		MemberDIDKey: member.DIDKey, MemberDIDAW: member.DIDAW, MemberAddress: member.Address,
-		Alias: "alice", IdentityScope: awid.IdentityModeGlobal,
-	})
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
 
-	_, err := executeIDNamespaceDeleteAddress(world.Context, idNamespaceDeleteAddressOptions{
-		Domain: world.Domain,
+	controllerPub, controllerPriv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	controllerDID := awid.ComputeDIDKey(controllerPub)
+	if err := awconfig.SaveControllerKey("acme.com", controllerPriv); err != nil {
+		t.Fatal(err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.com":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"namespace_id":        "ns-acme",
+				"domain":              "acme.com",
+				"controller_did":      controllerDID,
+				"verification_status": "verified",
+				"created_at":          "2026-04-01T00:00:00Z",
+			})
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/namespaces/acme.com/addresses/alice":
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]any{"detail": "Address has active certificates"})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	t.Cleanup(server.Close)
+	t.Setenv("AWID_REGISTRY_URL", server.URL)
+
+	_, err = executeIDNamespaceDeleteAddress(context.Background(), idNamespaceDeleteAddressOptions{
+		Domain: "acme.com",
 		Name:   "alice",
 	})
 	if err == nil || !strings.Contains(err.Error(), "revoke team membership certificates first") {
 		t.Fatalf("err=%v", err)
-	}
-	if _, _, err := world.Registry.GetNamespaceAddressAt(world.Context, world.Stack.RegistryURL, world.Domain, "alice"); err != nil {
-		t.Fatalf("refused delete removed the address: %v", err)
 	}
 }
 

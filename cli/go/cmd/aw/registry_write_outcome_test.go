@@ -6,7 +6,9 @@ import (
 	"crypto/ed25519"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -18,60 +20,132 @@ import (
 	"github.com/awebai/aw/awid"
 )
 
-// writeDropper drops the answer to every successful registry write while it
-// is dropping, through the fault front: the registry applied the write and aw
-// never hears so.
-type writeDropper struct {
+// answerDroppingRegistry fronts a real AWID. While dropping, it forwards each
+// write, waits for the registry's success, then closes the connection without
+// answering: the registry applied the write and aw never hears so. The
+// fixture names this server's origin as its public origin, so covering
+// controller signatures made for it verify at AWID.
+type answerDroppingRegistry struct {
+	server *httptest.Server
+
 	mu       sync.Mutex
+	target   string
 	dropping bool
 	dropped  []string
 }
 
-func (d *writeDropper) dropWrites(drop bool) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.dropping = drop
+func newAnswerDroppingRegistry(t *testing.T) *answerDroppingRegistry {
+	t.Helper()
+	proxy := &answerDroppingRegistry{}
+	proxy.server = httptest.NewServer(http.HandlerFunc(proxy.serve))
+	t.Cleanup(proxy.server.Close)
+	registryURL, _ := startAWIDFixture(t, "AWID_FIXTURE_PUBLIC_ORIGINS="+proxy.server.URL)
+	proxy.target = registryURL
+	return proxy
 }
 
-func (d *writeDropper) droppedWrites() []string {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return append([]string{}, d.dropped...)
+func (p *answerDroppingRegistry) dropWrites(drop bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.dropping = drop
 }
 
-func (d *writeDropper) fault() registryFault {
-	return registryFault{DropAnswer: func(response *http.Response) bool {
-		d.mu.Lock()
-		defer d.mu.Unlock()
-		request := response.Request
-		write := request.Method != http.MethodGet && request.Method != http.MethodHead
-		if !d.dropping || !write || response.StatusCode < 200 || response.StatusCode >= 300 {
-			return false
+func (p *answerDroppingRegistry) droppedWrites() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string{}, p.dropped...)
+}
+
+func (p *answerDroppingRegistry) serve(w http.ResponseWriter, r *http.Request) {
+	p.mu.Lock()
+	target, dropping := p.target, p.dropping
+	p.mu.Unlock()
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	forward, err := http.NewRequestWithContext(r.Context(), r.Method, target+r.URL.RequestURI(), bytes.NewReader(body))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	forward.Header = r.Header.Clone()
+	resp, err := http.DefaultTransport.RoundTrip(forward)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	answer, err := io.ReadAll(resp.Body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	write := r.Method != http.MethodGet && r.Method != http.MethodHead
+	if dropping && write && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		p.mu.Lock()
+		p.dropped = append(p.dropped, r.Method+" "+r.URL.Path)
+		p.mu.Unlock()
+		conn, _, err := w.(http.Hijacker).Hijack()
+		if err == nil {
+			_ = conn.Close()
 		}
-		d.dropped = append(d.dropped, request.Method+" "+request.URL.Path)
-		return true
-	}}
+		return
+	}
+	for key, values := range resp.Header {
+		for _, value := range values {
+			w.Header().Add(key, value)
+		}
+	}
+	w.WriteHeader(resp.StatusCode)
+	_, _ = w.Write(answer)
 }
 
-// registryWriteFixture is a world's namespace, team and one member
-// certificate, its controller and team keys stored under HOME.
+// registryWriteFixture is one namespace with a team and one member
+// certificate at AWID, its controller and team keys stored under HOME.
 type registryWriteFixture struct {
 	domain      string
 	teamKey     ed25519.PrivateKey
 	certificate *awid.TeamCertificate
 }
 
-func newRegistryWriteFixture(t *testing.T) registryWriteFixture {
+func newRegistryWriteFixture(t *testing.T, ctx context.Context, registry *awid.RegistryClient, registryURL, domain string) registryWriteFixture {
 	t.Helper()
-	world := newRealCommandWorld(t)
-	if err := awconfig.SaveControllerKey(world.Domain, world.NamespaceKey); err != nil {
+	controllerPub, controllerKey, err := awid.GenerateKeypair()
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := awconfig.SaveTeamKey(world.Domain, "backend", world.TeamKey); err != nil {
+	if _, err := registry.RegisterNamespaceAt(ctx, registryURL, domain, awid.ComputeDIDKey(controllerPub), controllerKey); err != nil {
+		t.Fatalf("register namespace %s: %v", domain, err)
+	}
+	if err := awconfig.SaveControllerKey(domain, controllerKey); err != nil {
 		t.Fatal(err)
 	}
-	certificate := world.registerMemberCertificate(t, awid.TeamCertificateFields{MemberDIDKey: didOf(newKey(t)), Alias: "alice", IdentityScope: awid.IdentityModeLocal})
-	return registryWriteFixture{domain: world.Domain, teamKey: world.TeamKey, certificate: certificate}
+	teamPub, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := registry.CreateTeam(ctx, registryURL, domain, "ops", "Ops", awid.ComputeDIDKey(teamPub), controllerKey); err != nil {
+		t.Fatalf("create team in %s: %v", domain, err)
+	}
+	if err := awconfig.SaveTeamKey(domain, "ops", teamKey); err != nil {
+		t.Fatal(err)
+	}
+	memberPub, _, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	certificate, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+		Team: awid.BuildTeamID(domain, "ops"), MemberDIDKey: awid.ComputeDIDKey(memberPub), Alias: "alice", IdentityScope: "local",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.RegisterCertificate(ctx, registryURL, domain, "ops", certificate, teamKey); err != nil {
+		t.Fatalf("register certificate in %s: %v", domain, err)
+	}
+	return registryWriteFixture{domain: domain, teamKey: teamKey, certificate: certificate}
 }
 
 func requireRegistryNotFound(t *testing.T, what string, err error) {
@@ -91,8 +165,9 @@ func TestControllerWriteWithALostAnswerSaysTheRegistryMayHaveAppliedIt(t *testin
 	defer cancel()
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
-	proxy := &writeDropper{}
-	registryURL := newRealCommandWorld(t).frontRegistry(t, proxy.fault())
+	t.Setenv("AWID_SKIP_DNS_VERIFY", "1")
+	proxy := newAnswerDroppingRegistry(t)
+	registryURL := proxy.server.URL
 	registry := awid.NewAWIDRegistryClient(&http.Client{Timeout: 20 * time.Second}, nil)
 	if err := registry.TrustRegistryOrigin(registryURL); err != nil {
 		t.Fatal(err)
@@ -110,25 +185,25 @@ func TestControllerWriteWithALostAnswerSaysTheRegistryMayHaveAppliedIt(t *testin
 			class: "team",
 			args: func(t *testing.T, f registryWriteFixture) []string {
 				// Delete-team needs the team's active certificates revoked first.
-				if err := registry.RevokeCertificate(ctx, registryURL, f.domain, "backend", f.certificate.CertificateID, f.teamKey); err != nil {
+				if err := registry.RevokeCertificate(ctx, registryURL, f.domain, "ops", f.certificate.CertificateID, f.teamKey); err != nil {
 					t.Fatalf("revoke before team delete: %v", err)
 				}
-				return []string{"id", "team", "delete", "--namespace", f.domain, "--team", "backend", "--registry", registryURL}
+				return []string{"id", "team", "delete", "--namespace", f.domain, "--team", "ops", "--registry", registryURL}
 			},
 			says: "The registry may have applied this team delete; check its state (for example `aw id team members`) before retrying.",
 			applied: func(t *testing.T, f registryWriteFixture) {
-				_, err := registry.GetTeam(ctx, registryURL, f.domain, "backend", f.teamKey)
+				_, err := registry.GetTeam(ctx, registryURL, f.domain, "ops", f.teamKey)
 				requireRegistryNotFound(t, "team after delete", err)
 			},
 		},
 		{
 			class: "certificate",
 			args: func(t *testing.T, f registryWriteFixture) []string {
-				return []string{"id", "team", "remove-member", "--namespace", f.domain, "--team", "backend", "--cert-id", f.certificate.CertificateID, "--registry", registryURL}
+				return []string{"id", "team", "remove-member", "--namespace", f.domain, "--team", "ops", "--cert-id", f.certificate.CertificateID, "--registry", registryURL}
 			},
 			says: "The registry may have applied this certificate revocation; check its state (for example `aw id team members --include-revoked`) before retrying.",
 			applied: func(t *testing.T, f registryWriteFixture) {
-				status, err := registry.GetTeamCertificateStatus(ctx, registryURL, f.domain, "backend", f.certificate.CertificateID)
+				status, err := registry.GetTeamCertificateStatus(ctx, registryURL, f.domain, "ops", f.certificate.CertificateID)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -140,7 +215,7 @@ func TestControllerWriteWithALostAnswerSaysTheRegistryMayHaveAppliedIt(t *testin
 		{
 			class: "namespace",
 			args: func(t *testing.T, f registryWriteFixture) []string {
-				if err := registry.RevokeCertificate(ctx, registryURL, f.domain, "backend", f.certificate.CertificateID, f.teamKey); err != nil {
+				if err := registry.RevokeCertificate(ctx, registryURL, f.domain, "ops", f.certificate.CertificateID, f.teamKey); err != nil {
 					t.Fatalf("revoke before namespace delete: %v", err)
 				}
 				return []string{"id", "namespace", "delete", "--domain", f.domain, "--registry", registryURL}
@@ -154,15 +229,15 @@ func TestControllerWriteWithALostAnswerSaysTheRegistryMayHaveAppliedIt(t *testin
 		{
 			class: "team key rotation",
 			args: func(t *testing.T, f registryWriteFixture) []string {
-				return []string{"id", "team", "rotate-key", "--namespace", f.domain, "--team", "backend", "--registry", registryURL}
+				return []string{"id", "team", "rotate-key", "--namespace", f.domain, "--team", "ops", "--registry", registryURL}
 			},
 			says: "the registry may have applied this rotation; the new key is kept as the pending key, and running aw id team rotate-key again finishes it.",
 			applied: func(t *testing.T, f registryWriteFixture) {
-				pending, err := awconfig.LoadPendingTeamKey(f.domain, "backend")
+				pending, err := awconfig.LoadPendingTeamKey(f.domain, "ops")
 				if err != nil || pending == nil {
 					t.Fatalf("pending team key after the lost rotation: %v", err)
 				}
-				team, err := registry.GetTeam(ctx, registryURL, f.domain, "backend", pending)
+				team, err := registry.GetTeam(ctx, registryURL, f.domain, "ops", pending)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -171,13 +246,13 @@ func TestControllerWriteWithALostAnswerSaysTheRegistryMayHaveAppliedIt(t *testin
 					t.Fatalf("AWID holds %s, not the pending key", team.TeamDIDKey)
 				}
 				// Running it again finishes the rotation, as the message says.
-				again := exec.CommandContext(ctx, bin, "id", "team", "rotate-key", "--namespace", f.domain, "--team", "backend", "--registry", registryURL)
+				again := exec.CommandContext(ctx, bin, "id", "team", "rotate-key", "--namespace", f.domain, "--team", "ops", "--registry", registryURL)
 				again.Env = append(idCreateCommandEnv(tmp), "AWID_REGISTRY_URL="+registryURL)
 				again.Dir = tmp
 				if out, err := again.CombinedOutput(); err != nil {
 					t.Fatalf("running rotate-key again: %v\n%s", err, out)
 				}
-				teamKey, err := awconfig.LoadTeamKey(f.domain, "backend")
+				teamKey, err := awconfig.LoadTeamKey(f.domain, "ops")
 				if err != nil || awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey)) != pendingDID {
 					t.Fatalf("team key after running rotate-key again is not the key AWID holds: %v", err)
 				}
@@ -187,7 +262,8 @@ func TestControllerWriteWithALostAnswerSaysTheRegistryMayHaveAppliedIt(t *testin
 		for _, asJSON := range []bool{false, true} {
 			name := write.class + map[bool]string{false: " text", true: " json"}[asJSON]
 			t.Run(name, func(t *testing.T) {
-				fixture := newRegistryWriteFixture(t)
+				domain := strings.ReplaceAll(strings.ReplaceAll(name, " ", "-"), "--", "-") + ".lost.test"
+				fixture := newRegistryWriteFixture(t, ctx, registry, registryURL, domain)
 				args := write.args(t, fixture)
 				if asJSON {
 					args = append(args, "--json")

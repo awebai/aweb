@@ -1,65 +1,128 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/awebai/aw/awconfig"
+	"github.com/awebai/aw/awid"
 )
 
-// deliveryOriginWorld is a real world seen from the machine holding its
-// namespace controller key.
-func deliveryOriginWorld(t *testing.T) *realCommandWorld {
-	t.Helper()
-	t.Setenv("HOME", t.TempDir())
-	world := newRealCommandWorld(t)
-	if err := awconfig.SaveControllerKey(world.Domain, world.NamespaceKey); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("AWID_REGISTRY_URL", world.Stack.RegistryURL)
-	return world
-}
+func TestIDNamespaceDeliveryOriginHappyPath(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
 
-func (world *realCommandWorld) deliveryOrigin(t *testing.T) string {
-	t.Helper()
-	namespace, _, err := world.Registry.GetNamespaceAt(world.Context, world.Stack.RegistryURL, world.Domain)
+	controllerPub, controllerPriv, err := awid.GenerateKeypair()
 	if err != nil {
 		t.Fatal(err)
 	}
-	return namespace.DefaultDeliveryOrigin
-}
+	controllerDID := awid.ComputeDIDKey(controllerPub)
+	if err := awconfig.SaveControllerKey("acme.com", controllerPriv); err != nil {
+		t.Fatal(err)
+	}
 
-func TestIDNamespaceDeliveryOriginHappyPath(t *testing.T) {
-	world := deliveryOriginWorld(t)
+	var patchCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.com":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"namespace_id":            "ns-acme",
+				"domain":                  "acme.com",
+				"controller_did":          controllerDID,
+				"verification_status":     "verified",
+				"default_delivery_origin": "https://old.example",
+				"last_verified_at":        "2026-04-01T00:00:00Z",
+				"created_at":              "2026-04-01T00:00:00Z",
+			})
+		case r.Method == http.MethodPatch && r.URL.Path == "/v1/namespaces/acme.com":
+			patchCalls.Add(1)
+			verifyCanonicalRegistryAuth(t, r, map[string]string{
+				"domain":                  "acme.com",
+				"operation":               "update_namespace",
+				"default_delivery_origin": "https://aweb.acme.com",
+			})
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			if body["default_delivery_origin"] != "https://aweb.acme.com" {
+				t.Fatalf("default_delivery_origin=%v", body["default_delivery_origin"])
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"namespace_id":            "ns-acme",
+				"domain":                  "acme.com",
+				"controller_did":          controllerDID,
+				"verification_status":     "verified",
+				"default_delivery_origin": "https://aweb.acme.com",
+				"last_verified_at":        "2026-04-01T00:00:00Z",
+				"created_at":              "2026-04-01T00:00:00Z",
+			})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	t.Cleanup(server.Close)
+	t.Setenv("AWID_REGISTRY_URL", server.URL)
 
-	out, err := executeIDNamespaceDeliveryOrigin(world.Context, idNamespaceDeliveryOriginOptions{
-		Domain: world.Domain,
+	out, err := executeIDNamespaceDeliveryOrigin(context.Background(), idNamespaceDeliveryOriginOptions{
+		Domain: "acme.com",
 		Origin: "https://Aweb.Acme.Com/",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.Status != "updated" || out.Origin != "https://aweb.acme.com" {
-		t.Fatalf("output = %+v, want updated to the canonical origin", out)
+	if out.Status != "updated" {
+		t.Fatalf("status=%q", out.Status)
 	}
-	if got := world.deliveryOrigin(t); got != "https://aweb.acme.com" {
-		t.Fatalf("registry delivery origin = %q", got)
+	if out.Origin != "https://aweb.acme.com" {
+		t.Fatalf("origin=%q", out.Origin)
+	}
+	if patchCalls.Load() != 1 {
+		t.Fatalf("patch calls=%d", patchCalls.Load())
 	}
 }
 
 func TestIDNamespaceDeliveryOriginUnchangedDoesNotPatch(t *testing.T) {
-	world := deliveryOriginWorld(t)
-	if _, err := executeIDNamespaceDeliveryOrigin(world.Context, idNamespaceDeliveryOriginOptions{
-		Domain: world.Domain, Origin: "https://aweb.acme.com",
-	}); err != nil {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	controllerPub, controllerPriv, err := awid.GenerateKeypair()
+	if err != nil {
 		t.Fatal(err)
 	}
-	origin, recording := world.recordRegistry(t)
-	t.Setenv("AWID_REGISTRY_URL", origin)
+	controllerDID := awid.ComputeDIDKey(controllerPub)
+	if err := awconfig.SaveControllerKey("acme.com", controllerPriv); err != nil {
+		t.Fatal(err)
+	}
 
-	out, err := executeIDNamespaceDeliveryOrigin(world.Context, idNamespaceDeliveryOriginOptions{
-		Domain: world.Domain,
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.com":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"namespace_id":            "ns-acme",
+				"domain":                  "acme.com",
+				"controller_did":          controllerDID,
+				"verification_status":     "verified",
+				"default_delivery_origin": "https://aweb.acme.com",
+				"last_verified_at":        "2026-04-01T00:00:00Z",
+				"created_at":              "2026-04-01T00:00:00Z",
+			})
+		case r.Method == http.MethodPatch:
+			t.Fatalf("unexpected PATCH")
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	t.Cleanup(server.Close)
+	t.Setenv("AWID_REGISTRY_URL", server.URL)
+
+	out, err := executeIDNamespaceDeliveryOrigin(context.Background(), idNamespaceDeliveryOriginOptions{
+		Domain: "acme.com",
 		Origin: "https://aweb.acme.com",
 	})
 	if err != nil {
@@ -68,22 +131,37 @@ func TestIDNamespaceDeliveryOriginUnchangedDoesNotPatch(t *testing.T) {
 	if out.Status != "unchanged" {
 		t.Fatalf("status=%q", out.Status)
 	}
-	for _, answer := range recording.Answers() {
-		if answer.Method != http.MethodGet {
-			t.Fatalf("an unchanged origin wrote to the registry: %+v", recording.Answers())
-		}
-	}
 }
 
 func TestIDNamespaceDeliveryOriginControllerMismatch(t *testing.T) {
-	world := deliveryOriginWorld(t)
-	// This machine holds a key the registry does not name as controller.
-	if err := awconfig.SaveControllerKey(world.Domain, newKey(t)); err != nil {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	_, controllerPriv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveControllerKey("acme.com", controllerPriv); err != nil {
 		t.Fatal(err)
 	}
 
-	_, err := executeIDNamespaceDeliveryOrigin(world.Context, idNamespaceDeliveryOriginOptions{
-		Domain: world.Domain,
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/namespaces/acme.com" {
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"namespace_id":        "ns-acme",
+			"domain":              "acme.com",
+			"controller_did":      "did:key:z6Mkdifferent",
+			"verification_status": "verified",
+			"created_at":          "2026-04-01T00:00:00Z",
+		})
+	}))
+	t.Cleanup(server.Close)
+	t.Setenv("AWID_REGISTRY_URL", server.URL)
+
+	_, err = executeIDNamespaceDeliveryOrigin(context.Background(), idNamespaceDeliveryOriginOptions{
+		Domain: "acme.com",
 		Origin: "https://aweb.acme.com",
 	})
 	if err == nil {
@@ -91,8 +169,5 @@ func TestIDNamespaceDeliveryOriginControllerMismatch(t *testing.T) {
 	}
 	if got := err.Error(); !strings.Contains(got, "does not match registered controller") {
 		t.Fatalf("err=%v", err)
-	}
-	if got := world.deliveryOrigin(t); got != "" {
-		t.Fatalf("refused update changed the registry delivery origin to %q", got)
 	}
 }
