@@ -2,14 +2,9 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
-	"net/http"
-	"net/http/httputil"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -148,7 +143,10 @@ func TestOATSRealInviteResumesExactIssuanceAfterControllerPersistenceFailure(t *
 }
 
 func TestOATSRealGlobalRosterRetriesAfterLostRegistrationResponse(t *testing.T) {
-	world := newRealCommandWorld(t)
+	const alias = "recipient"
+	target := filepath.Join(t.TempDir(), alias)
+	home := awconfig.WorktreeIdentityHome(target)
+	world := newRealCommandWorldWithRecipientFault(t, home, true)
 	source := world.addLocalMember(t, "issuer")
 	t.Setenv("HOME", world.UserHome)
 	if err := awconfig.SaveControllerKey(world.Domain, world.NamespaceKey); err != nil {
@@ -158,52 +156,28 @@ func TestOATSRealGlobalRosterRetriesAfterLostRegistrationResponse(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	upstream, err := url.Parse(world.Stack.RegistryURL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var dropped atomic.Bool
-	proxy := httputil.NewSingleHostReverseProxy(upstream)
-	registrationPath := "/v1/namespaces/" + world.Domain + "/teams/backend/certificates"
-	proxy.ModifyResponse = func(response *http.Response) error {
-		// Drop the first successful registration response after real AWID
-		// has committed the membership. Every other request reaches AWID.
-		if response.Request.Method == http.MethodPost && response.Request.URL.Path == registrationPath &&
-			response.StatusCode >= 200 && response.StatusCode < 300 && dropped.CompareAndSwap(false, true) {
-			return errors.New("drop committed registration response")
-		}
-		return nil
-	}
-	proxy.ErrorHandler = func(http.ResponseWriter, *http.Request, error) {
-		panic(http.ErrAbortHandler)
-	}
-	transport := newLocalHTTPServer(t, proxy)
-	if err := awconfig.SaveControllerMeta(world.Domain, &awconfig.ControllerMeta{Domain: world.Domain, RegistryURL: transport.URL}); err != nil {
+	if err := awconfig.SaveControllerMeta(world.Domain, &awconfig.ControllerMeta{Domain: world.Domain, RegistryURL: world.Stack.RegistryURL}); err != nil {
 		t.Fatal(err)
 	}
 
-	const alias = "recipient"
-	target := filepath.Join(t.TempDir(), alias)
-	world.Stack.RegistryURL = transport.URL
 	args := []string{"team", "admin", "add", alias + ":global", "--home", target}
 	out, err := world.runInIdentityHome(source.Home, args...)
-	if err == nil || !dropped.Load() || !strings.Contains(err.Error(), "issuance is incomplete or unknown") {
-		t.Fatalf("expected the client to lose a successful registry response: dropped=%v err=%v\n%s", dropped.Load(), err, out)
+	if err == nil || !strings.Contains(err.Error(), "issuance is incomplete or unknown") || !strings.Contains(err.Error(), "unexpected EOF") {
+		t.Fatalf("expected the client to lose a successful registry response: %v\n%s", err, out)
 	}
 
-	home := awconfig.WorktreeIdentityHome(target)
 	keyPath := filepath.Join(home, "signing.key")
 	key, err := awid.LoadSigningKey(keyPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	before, err := world.Registry.ResolveTeamMember(world.Context, upstream.String(), world.Domain, "backend", alias, world.TeamKey)
+	before, err := world.Registry.ResolveTeamMember(world.Context, world.Stack.RegistryURL, world.Domain, "backend", alias, world.TeamKey)
 	if err != nil || before.MemberDIDKey != didOf(key) || before.MemberDIDAW == "" {
 		t.Fatalf("real AWID did not admit the retained global identity: %#v; %v", before, err)
 	}
 	assertOneMembership := func() {
 		t.Helper()
-		rows, err := world.Registry.ListCertificates(world.Context, upstream.String(), world.Domain, "backend", false, world.TeamKey)
+		rows, err := world.Registry.ListCertificates(world.Context, world.Stack.RegistryURL, world.Domain, "backend", false, world.TeamKey)
 		if err != nil {
 			t.Fatal(err)
 		}
