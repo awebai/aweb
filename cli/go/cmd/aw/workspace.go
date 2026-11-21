@@ -1008,67 +1008,16 @@ func fetchWorkspaceTeamAliases(client *aweb.Client, workspaceID string) (map[str
 	return aliases, nil
 }
 
-func resolveWorkspaceTeamRegistryURL(workingDir, awebURL, teamDomain string) (string, error) {
-	return resolveWorkspaceTeamRegistryURLAt(workingDir, "", awebURL, teamDomain)
-}
-
-func resolveWorkspaceTeamRegistryURLAt(workingDir, identityHome, awebURL, teamDomain string) (string, error) {
-	meta, err := awconfig.LoadControllerMeta(teamDomain)
-	if err == nil && meta != nil {
-		if registryURL := strings.TrimSpace(meta.RegistryURL); registryURL != "" {
-			return registryURL, nil
-		}
+func resolveWorkspaceTeamRegistryURL(ctx context.Context, req registryAuthorityRequest) (string, error) {
+	req.Kind = registryTeamRoute
+	url, err := resolveRegistryAuthority(ctx, req)
+	if err != nil || url != "" {
+		return url, err
 	}
-	if err != nil && !os.IsNotExist(err) {
-		return "", fmt.Errorf("load controller metadata for %s: %w", teamDomain, err)
-	}
-	var teamState *awconfig.TeamState
-	if strings.TrimSpace(identityHome) != "" {
-		teamState, err = awconfig.LoadTeamStateFromIdentityHome(identityHome)
-	} else {
-		teamState, err = awconfig.LoadTeamState(workingDir)
-	}
-	if err == nil && teamState != nil {
-		for _, membership := range teamState.Memberships {
-			membershipDomain, _, parseErr := awid.ParseTeamID(strings.TrimSpace(membership.TeamID))
-			if parseErr != nil {
-				continue
-			}
-			if strings.EqualFold(membershipDomain, awconfig.NormalizeDomain(teamDomain)) {
-				if registryURL := strings.TrimSpace(membership.RegistryURL); registryURL != "" {
-					return registryURL, nil
-				}
-			}
-		}
-	} else if err != nil && !os.IsNotExist(err) {
-		return "", fmt.Errorf("load team state: %w", err)
-	}
-	var identity *awconfig.WorktreeIdentity
-	if strings.TrimSpace(identityHome) != "" {
-		identityPath, pathErr := awconfig.IdentityHomePath(awconfig.IdentityHome{Root: identityHome}, "identity.yaml")
-		if pathErr != nil {
-			return "", pathErr
-		}
-		identity, err = awconfig.LoadWorktreeIdentityFrom(identityPath)
-	} else {
-		identity, _, err = awconfig.LoadWorktreeIdentityFromDir(workingDir)
-	}
-	if err == nil && identity != nil {
-		if registryURL := strings.TrimSpace(identity.RegistryURL); registryURL != "" {
-			return registryURL, nil
-		}
-	} else if err != nil && !os.IsNotExist(err) {
-		return "", fmt.Errorf("load worktree identity: %w", err)
-	}
-	if strings.TrimSpace(awebURL) != "" {
-		if discovered, err := discoverOnboardingServiceURLs(awebURL); err == nil {
-			if registryURL := strings.TrimSpace(discovered.RegistryURL); registryURL != "" {
-				return registryURL, nil
-			}
-		}
+	if strings.TrimSpace(req.AwebURL) != "" {
 		return "", usageError("current worktree is missing identity registry_url; run `aw init` again or restore .aw/identity.yaml")
 	}
-	return "", usageError("current worktree is missing registry configuration for %s", teamDomain)
+	return "", usageError("current worktree is missing registry configuration for %s", req.Domain)
 }
 
 func deriveWorkspaceAddWorktreePath(mainRepo, branchName string) (string, error) {

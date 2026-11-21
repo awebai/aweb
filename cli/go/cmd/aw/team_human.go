@@ -1116,27 +1116,16 @@ func foundTeamWithNamespaceControllerAuthority(input namespaceTeamFounding) (*te
 	if err != nil {
 		return nil, fmt.Errorf("load controller key for %s: %w", domain, err)
 	}
-	registryURL := strings.TrimSpace(input.RegistryURL)
-	if registryURL == "" && identityErr == nil && identity != nil {
-		registryURL = strings.TrimSpace(identity.RegistryURL)
-	}
-	if registryURL == "" {
-		registryURL, err = resolveInitAWIDRegistryURL()
-		if err != nil {
-			return nil, err
-		}
-	}
 	registry, err := newConfiguredRegistryClient(nil)
 	if err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(registryURL) != "" {
-		if err := registry.SetFallbackRegistryURL(registryURL); err != nil {
-			return nil, err
-		}
-	}
 	ctx, cancel := commandAPIContext(nil)
 	defer cancel()
+	registryURL, err := resolveTeamCommandRegistry(ctx, registry, input.WorkingDir, domain, awid.BuildTeamID(domain, input.Name), input.RegistryURL)
+	if err != nil {
+		return nil, err
+	}
 	firstAgentAddress := ""
 	if input.CreatorScope == awid.IdentityScopeGlobal && identityErr == nil && identity != nil {
 		firstAgentAddress = strings.TrimSpace(identity.Address)
@@ -1147,7 +1136,7 @@ func foundTeamWithNamespaceControllerAuthority(input namespaceTeamFounding) (*te
 		Name:              input.CreatorAlias,
 		Address:           firstAgentAddress,
 		Scope:             string(input.CreatorScope),
-		RegistryURL:       strings.TrimSpace(registry.DefaultRegistryURL),
+		RegistryURL:       registryURL,
 		Registry:          registry,
 		AllowLocalMint:    true,
 		AllowDefaultClaim: false,
@@ -1155,28 +1144,15 @@ func foundTeamWithNamespaceControllerAuthority(input namespaceTeamFounding) (*te
 	if err != nil {
 		return nil, err
 	}
-	registration, err := ensureLocalTeamRegistered(ctx, registry, strings.TrimSpace(registry.DefaultRegistryURL), domain, strings.ToLower(strings.TrimSpace(input.Name)), strings.TrimSpace(input.DisplayName), controllerKey)
-	if err != nil {
-		return nil, err
-	}
-	cert, err := awid.SignTeamCertificate(registration.TeamKey, awid.TeamCertificateFields{
-		Team:          registration.TeamID,
-		MemberDIDKey:  plan.MemberDIDKey,
-		MemberDIDAW:   strings.TrimSpace(plan.MemberDIDAW),
-		MemberAddress: strings.TrimSpace(plan.MemberAddress),
-		Alias:         strings.TrimSpace(plan.Name),
-		IdentityScope: strings.TrimSpace(plan.Scope),
+	bootstrap, err := bootstrapLocalTeamMember(ctx, localTeamMemberBootstrap{
+		Registry: registry, RegistryURL: registryURL, Domain: domain,
+		TeamName: input.Name, DisplayName: input.DisplayName, ControllerKey: controllerKey,
+		MemberKey: plan.IdentitySigningKey, MemberDIDAW: plan.MemberDIDAW, MemberAddress: plan.MemberAddress,
+		Alias: plan.Name, NameFlag: "--first-agent-name", Scope: awid.IdentityScope(plan.Scope),
 	})
 	if err != nil {
 		return nil, err
 	}
-	if err := registry.RegisterCertificate(ctx, strings.TrimSpace(registry.DefaultRegistryURL), domain, strings.ToLower(strings.TrimSpace(input.Name)), cert, registration.TeamKey); err != nil {
-		if isAliasConflict(err) {
-			return nil, &plainRefusal{text: nameTakenText(strings.TrimSpace(plan.Name), registration.TeamID, "--first-agent-name"), err: err}
-		}
-		return nil, fmt.Errorf("register certificate at registry: %w", err)
-	}
-	bootstrap := &localTeamBootstrapResult{TeamID: registration.TeamID, TeamDIDKey: registration.TeamDIDKey, TeamKeyPath: registration.TeamKeyPath, Certificate: cert}
 	certPath, err := awconfig.SaveTeamCertificateForTeam(input.WorkingDir, bootstrap.TeamID, bootstrap.Certificate)
 	if err != nil {
 		return nil, err
@@ -1188,10 +1164,10 @@ func foundTeamWithNamespaceControllerAuthority(input namespaceTeamFounding) (*te
 	}
 	// The creator self-enrolls as the team's first member and produces a
 	// ready-to-run identity, so the worktree binding is written now.
-	if err := recordAcceptedTeamMembership(acceptedTeamMembershipRequest{WorkingDir: input.WorkingDir, Output: accepted, Certificate: bootstrap.Certificate, RegistryURL: strings.TrimSpace(registry.DefaultRegistryURL), AwebURL: awebURL, IdentityHome: currentEncryptionKeyIdentityHome(), Activation: membershipMakeActive, Binding: membershipWriteWorkspaceBinding}); err != nil {
+	if err := recordAcceptedTeamMembership(acceptedTeamMembershipRequest{WorkingDir: input.WorkingDir, Output: accepted, Certificate: bootstrap.Certificate, RegistryURL: registryURL, AwebURL: awebURL, IdentityHome: currentEncryptionKeyIdentityHome(), Activation: membershipMakeActive, Binding: membershipWriteWorkspaceBinding}); err != nil {
 		return nil, err
 	}
-	return &teamCreateOutput{Status: "created", TeamID: bootstrap.TeamID, TeamDIDKey: bootstrap.TeamDIDKey, TeamKeyPath: bootstrap.TeamKeyPath, RegistryURL: strings.TrimSpace(registry.DefaultRegistryURL)}, nil
+	return &teamCreateOutput{Status: "created", TeamID: bootstrap.TeamID, TeamDIDKey: bootstrap.TeamDIDKey, TeamKeyPath: bootstrap.TeamKeyPath, RegistryURL: registryURL}, nil
 }
 
 func teamHumanCreateOutputFromConnect(teamName string, result connectOutput, homeDir string) teamHumanCreateOutput {
@@ -2459,24 +2435,31 @@ func runTeamHumanRemoveAgent(cmd *cobra.Command, args []string) error {
 	}
 
 	var verified *verifiedMember
+	revoke := func(ctx context.Context) (certificateStoreResult, error) {
+		return revokeHostedTeamCertificate(ctx, teamID, teamRemoveMember, "")
+	}
 	if !isAwebHostedNamespace(domain) {
-		registry, regErr := newConfiguredRegistryClient(nil)
-		if regErr != nil {
-			return regErr
+		registry, err := newConfiguredRegistryClient(nil)
+		if err != nil {
+			return err
+		}
+		registryURL, err := resolveTeamCommandRegistry(ctx, registry, workingDir, domain, teamID, teamHumanRemoveRegistryURL)
+		if err != nil {
+			return err
 		}
 		verified, err = verifyRetirementTarget(
-			ctx, client, registry, resolveTeamRemoveRegistryURL(registry),
-			domain, name, teamRemoveMember, alias,
+			ctx, client, registry, registryURL, domain, name, teamRemoveMember, alias,
 			teamReadSigners(workingDir, domain, name),
 		)
 		if err != nil {
 			return err
 		}
+		revoke = func(ctx context.Context) (certificateStoreResult, error) {
+			return revokeVerifiedTeamCertificate(ctx, registry, registryURL, domain, name, teamID, verified)
+		}
 	}
 
-	out := retireTeamAgent(ctx, client, teamID, teamRemoveMember, alias, verified != nil, func(ctx context.Context) (certificateStoreResult, error) {
-		return revokeTeamCertificate(ctx, domain, name, teamID, teamRemoveMember, verified)
-	})
+	out := retireTeamAgent(ctx, client, teamID, teamRemoveMember, alias, verified != nil, revoke)
 	if err := printOutput(out, formatTeamRemoveAgent); err != nil {
 		return err
 	}
@@ -2486,23 +2469,11 @@ func runTeamHumanRemoveAgent(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// revokeTeamCertificate revokes the member's certificate through whichever
-// authority owns the namespace.
-func revokeTeamCertificate(ctx context.Context, domain, team, teamID, memberAddress string, verified *verifiedMember) (certificateStoreResult, error) {
-	if isAwebHostedNamespace(domain) {
-		return revokeHostedTeamCertificate(ctx, teamID, memberAddress, "")
-	}
-
+func revokeVerifiedTeamCertificate(ctx context.Context, registry *awid.RegistryClient, registryURL, domain, team, teamID string, verified *verifiedMember) (certificateStoreResult, error) {
 	teamKey, err := awconfig.LoadTeamKey(domain, team)
 	if err != nil {
 		return certificateStoreResult{}, fmt.Errorf("load team key for %s: %w", teamID, err)
 	}
-	registry, err := newConfiguredRegistryClient(nil)
-	if err != nil {
-		return certificateStoreResult{}, err
-	}
-	registryURL := resolveTeamRemoveRegistryURL(registry)
-
 	// No lookup here. The member was resolved and verified once, before anything
 	// was written, and its certificate id was carried forward - see verifiedMember.
 	if verified == nil {

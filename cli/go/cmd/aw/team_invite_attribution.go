@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/awebai/aw/awconfig"
@@ -59,19 +58,6 @@ func identityKeyRoute(ctx context.Context, identity *awconfig.ResolvedIdentity, 
 // saved pin, the operation route can fill the same namespace's missing routing
 // information, subject to its independently discovered registry constraint.
 func teamInviteIssuerRegistry(ctx context.Context, opts idChildOptions, identity *awconfig.ResolvedIdentity, domain string) (string, error) {
-	if own := strings.TrimSpace(identity.RegistryURL); own != "" {
-		return own, nil
-	}
-	if selected := strings.TrimSpace(opts.RegistryURL); selected != "" {
-		return selected, nil
-	}
-	if fallback := strings.TrimSpace(opts.TeamRegistryURL); fallback != "" && domain != "" && domain == opts.TeamRegistryDomain {
-		authority, err := awid.DiscoverAuthoritativeRegistry(ctx, opts.TXTResolver, domain)
-		if err != nil {
-			return "", err
-		}
-		return domainRegistryURL(authority, fallback)
-	}
 	registry, err := resolveIdentityRegistryClient(identity)
 	if err != nil {
 		return "", err
@@ -79,11 +65,10 @@ func teamInviteIssuerRegistry(ctx context.Context, opts idChildOptions, identity
 	if opts.TXTResolver != nil {
 		registry.Resolver.DNSResolver = opts.TXTResolver
 	}
-	// An installed chain fixes the issuer namespace independently of any
-	// address or team membership. The selector does not mutate identity state.
-	own := *identity
-	own.Domain = domain
-	return currentIdentityRegistryURL(ctx, &own, registry)
+	return resolveRegistryAuthority(ctx, registryAuthorityRequest{
+		Kind: registryInviteIssuerRoute, Registry: registry, Identity: identity, Domain: domain, Override: opts.RegistryURL,
+		TXTResolver: opts.TXTResolver, TeamRegistry: opts.TeamRegistryURL, TeamDomain: opts.TeamRegistryDomain,
+	})
 }
 
 // A local did:key can be chainless: it has no portable enrollment witness.

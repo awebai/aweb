@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -38,7 +39,9 @@ func addWorktreeViaLocalTeamKey(input worktreeAgentCreation) (connectOutput, err
 	if err != nil {
 		return connectOutput{}, err
 	}
-	registryURL, err := resolveWorkspaceTeamRegistryURLAt(workingDir, sourceIdentityHome, sourceServerURL, teamDomain)
+	registryURL, err := resolveWorkspaceTeamRegistryURL(context.Background(), registryAuthorityRequest{
+		WorkingDir: workingDir, IdentityHome: sourceIdentityHome, AwebURL: sourceServerURL, Domain: teamDomain, TeamID: teamID,
+	})
 	if err != nil {
 		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
 		return connectOutput{}, err

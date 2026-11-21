@@ -479,7 +479,7 @@ func discoverIDCreateRegistryURL(domain string, resolver awid.TXTResolver) (stri
 	if err != nil {
 		return "", err
 	}
-	return authority.RegistryURL, nil
+	return domainRegistryURL(authority, "")
 }
 
 func confirmAndVerifyIDCreateDNS(plan *idCreatePlan, opts idCreateOptions) error {

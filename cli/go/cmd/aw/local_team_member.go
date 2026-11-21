@@ -4,9 +4,9 @@ import (
 	"context"
 	"crypto/ed25519"
 	"fmt"
-	"github.com/awebai/aw/awconfig"
-	"github.com/awebai/aw/awid"
 	"strings"
+
+	"github.com/awebai/aw/awid"
 )
 
 // localTeamMemberBootstrap names the controller and member independently.
@@ -23,6 +23,7 @@ type localTeamMemberBootstrap struct {
 	MemberDIDAW   string
 	MemberAddress string
 	Alias         string
+	NameFlag      string
 	Scope         awid.IdentityScope
 }
 
@@ -49,8 +50,8 @@ func bootstrapLocalTeamMember(ctx context.Context, input localTeamMemberBootstra
 		return nil, err
 	}
 	memberDIDKey := awid.ComputeDIDKey(memberKey.Public().(ed25519.PublicKey))
-	cert, err := awid.SignTeamCertificate(registration.TeamKey, awid.TeamCertificateFields{
-		Team:          registration.TeamID,
+	issuer := teamMembershipIssuer{TeamID: registration.TeamID, Key: registration.TeamKey, Registry: registry, RegistryURL: resolvedRegistryURL}
+	cert, err := issuer.sign(awid.TeamCertificateFields{
 		MemberDIDKey:  memberDIDKey,
 		MemberDIDAW:   strings.TrimSpace(memberDIDAW),
 		MemberAddress: strings.TrimSpace(memberAddress),
@@ -60,11 +61,9 @@ func bootstrapLocalTeamMember(ctx context.Context, input localTeamMemberBootstra
 	if err != nil {
 		return nil, err
 	}
-	if err := registry.RegisterCertificate(ctx, resolvedRegistryURL, awconfig.NormalizeDomain(domain), strings.ToLower(strings.TrimSpace(teamName)), cert, registration.TeamKey); err != nil {
+	if err := issuer.register(ctx, cert); err != nil {
 		if isAliasConflict(err) {
-			// aw init's local and guided paths call this, and --name sets
-			// their name.
-			return nil, &plainRefusal{text: nameTakenText(strings.TrimSpace(alias), registration.TeamID, "--name"), err: err}
+			return nil, &plainRefusal{text: nameTakenText(strings.TrimSpace(alias), registration.TeamID, firstNonEmpty(input.NameFlag, "--name")), err: err}
 		}
 		return nil, fmt.Errorf("register certificate at registry: %w", err)
 	}

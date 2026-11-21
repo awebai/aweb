@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -1093,7 +1094,9 @@ func resolveDefaultCertificateInitAwebURL(workingDir string) (string, bool, erro
 	} else if err != nil && !os.IsNotExist(err) {
 		return "", false, err
 	}
-	registryURL, err := resolveWorkspaceTeamRegistryURL(workingDir, "", teamDomain)
+	registryURL, err := resolveWorkspaceTeamRegistryURL(context.Background(), registryAuthorityRequest{
+		WorkingDir: workingDir, Domain: teamDomain, TeamID: cert.Team,
+	})
 	if err != nil {
 		if os.IsNotExist(err) {
 			return "", false, nil

@@ -193,7 +193,18 @@ func readAgentCertificateState(ctx context.Context, out *teamAgentStatusOutput, 
 		out.Unreadable = append(out.Unreadable, fmt.Sprintf("certificate store: %v", err))
 		return
 	}
-	registryURL := resolveTeamRemoveRegistryURL(registry)
+	workingDir, err := os.Getwd()
+	if err != nil {
+		out.Certificate = agentCertificateUnknown
+		out.Unreadable = append(out.Unreadable, fmt.Sprintf("certificate store: %v", err))
+		return
+	}
+	registryURL, err := resolveTeamCommandRegistry(ctx, registry, workingDir, domain, awid.BuildTeamID(domain, team), "")
+	if err != nil {
+		out.Certificate = agentCertificateUnknown
+		out.Unreadable = append(out.Unreadable, fmt.Sprintf("certificate store: %v", err))
+		return
+	}
 
 	// The key the team read was admitted with is the one the member read
 	// reuses: the second read is gated on the same visibility, so re-walking

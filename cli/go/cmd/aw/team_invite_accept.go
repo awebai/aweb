@@ -644,8 +644,8 @@ func issueNativeInviteCertificate(ctx context.Context, request nativeInviteIssua
 	registry, registryURL := request.Registry, request.RegistryURL
 	appliedDefaultClaim := request.DefaultClaimResult
 	teamID := awid.BuildTeamID(invite.Domain, invite.TeamName)
-	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-		Team:          teamID,
+	issuer := teamMembershipIssuer{TeamID: teamID, Key: teamKey, Registry: registry, RegistryURL: registryURL}
+	cert, err := issuer.sign(awid.TeamCertificateFields{
 		MemberDIDKey:  plan.MemberDIDKey,
 		MemberDIDAW:   plan.MemberDIDAW,
 		MemberAddress: plan.MemberAddress,

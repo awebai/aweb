@@ -153,13 +153,16 @@ func runTeamReissueCert(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	registryURL, err := resolveReissueCertRegistryURL(registry, domain)
+	ctx, cancel := commandAPIContext(cmd)
+	defer cancel()
+	workingDir, err := os.Getwd()
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := commandAPIContext(cmd)
-	defer cancel()
+	registryURL, err := resolveTeamCommandRegistry(ctx, registry, workingDir, domain, teamID, teamReissueCertRegistryURL)
+	if err != nil {
+		return err
+	}
 
 	// The registry enforces one unrevoked certificate per (team, alias), so the
 	// alias's active registration - if any - is both the row to revoke and the
@@ -227,8 +230,8 @@ func runTeamReissueCert(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	freshCertificate, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-		Team:          teamID,
+	issuer := teamMembershipIssuer{TeamID: teamID, Key: teamKey, Registry: registry, RegistryURL: registryURL}
+	freshCertificate, err := issuer.sign(awid.TeamCertificateFields{
 		MemberDIDKey:  memberDID,
 		MemberDIDAW:   memberDIDAW,
 		MemberAddress: memberAddress,
@@ -257,7 +260,7 @@ func runTeamReissueCert(cmd *cobra.Command, args []string) error {
 		}
 		oldAction = revocation.Result
 	}
-	if err := registry.RegisterCertificate(ctx, registryURL, domain, team, freshCertificate, teamKey); err != nil {
+	if err := issuer.register(ctx, freshCertificate); err != nil {
 		if oldRef != nil {
 			return fmt.Errorf("reissue-cert partial state: old certificate %s was revoked but fresh certificate %s was not registered: %w; re-running this command is safe - it will find no active certificate for %s and register a fresh one; fresh certificate material: %s", oldCertificateID, freshCertificate.CertificateID, err, alias, encodedCertificate)
 		}
@@ -307,31 +310,6 @@ func loadReissueCertController(domain, teamName string) (ed25519.PrivateKey, err
 		return nil, fmt.Errorf("load local team controller key: %w", err)
 	}
 	return key, nil
-}
-
-// resolveReissueCertRegistryURL resolves the registry origin:
-// explicit flag -> controller metadata for the namespace -> client default.
-func resolveReissueCertRegistryURL(registry *awid.RegistryClient, domain string) (string, error) {
-	registryURL := strings.TrimSpace(teamReissueCertRegistryURL)
-	if registryURL != "" {
-		if err := registry.SetFallbackRegistryURL(registryURL); err != nil {
-			return "", fmt.Errorf("invalid --registry: %w", err)
-		}
-		return registryURL, nil
-	}
-	if meta, err := awconfig.LoadControllerMeta(domain); err == nil && meta != nil {
-		if metaURL := strings.TrimSpace(meta.RegistryURL); metaURL != "" {
-			if err := registry.SetFallbackRegistryURL(metaURL); err != nil {
-				return "", fmt.Errorf("invalid registry URL in controller metadata for %s: %w", domain, err)
-			}
-			return metaURL, nil
-		}
-	}
-	registryURL = strings.TrimSpace(registry.DefaultRegistryURL)
-	if registryURL == "" {
-		return "", usageError("no AWID registry URL is known for %s; pass --registry", domain)
-	}
-	return registryURL, nil
 }
 
 // resolveActiveReissueCertMember returns the alias's active registration, or

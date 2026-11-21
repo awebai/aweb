@@ -329,7 +329,7 @@ func runIDNamespace(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	domain := strings.TrimSpace(args[0])
-	registryURL, err := registry.DiscoverRegistry(ctx, domain)
+	registryURL, err := resolveRegistryAuthority(ctx, registryAuthorityRequest{Kind: registryDomainRoute, Registry: registry, Domain: domain})
 	if err != nil {
 		return err
 	}
@@ -451,37 +451,14 @@ func currentIdentityRegistryURL(ctx context.Context, identity *awconfig.Resolved
 	if registry == nil {
 		return "", fmt.Errorf("missing registry client")
 	}
-	if strings.TrimSpace(os.Getenv("AWID_REGISTRY_URL")) != "" {
-		return registry.DefaultRegistryURL, nil
-	}
-	if strings.TrimSpace(identity.RegistryURL) != "" {
-		return strings.TrimSpace(identity.RegistryURL), nil
-	}
-	if strings.TrimSpace(identity.Domain) != "" {
-		return registry.DiscoverRegistry(ctx, identity.Domain)
-	}
-	if strings.TrimSpace(identity.StableID) != "" {
-		return "", fmt.Errorf("%w: global identity %s has no registry_url or address domain; cannot safely choose an AWID registry", errMissingIdentityRegistryContext, strings.TrimSpace(identity.StableID))
-	}
-	return registry.DefaultRegistryURL, nil
+	return resolveRegistryAuthority(ctx, registryAuthorityRequest{Kind: registryIdentityRoute, Identity: identity, Registry: registry})
 }
 
 func registryLookupURL(ctx context.Context, registry *awid.RegistryClient, identity *awconfig.ResolvedIdentity, didAW string) (string, error) {
 	if registry == nil {
 		return "", fmt.Errorf("missing registry client")
 	}
-	if strings.TrimSpace(os.Getenv("AWID_REGISTRY_URL")) != "" {
-		return registry.DefaultRegistryURL, nil
-	}
-	if identity != nil && strings.TrimSpace(identity.StableID) == strings.TrimSpace(didAW) {
-		if strings.TrimSpace(identity.RegistryURL) != "" {
-			return strings.TrimSpace(identity.RegistryURL), nil
-		}
-		if strings.TrimSpace(identity.Domain) != "" {
-			return registry.DiscoverRegistry(ctx, identity.Domain)
-		}
-	}
-	return registry.DefaultRegistryURL, nil
+	return resolveRegistryAuthority(ctx, registryAuthorityRequest{Kind: registryIdentityLookup, Identity: identity, LookupDID: didAW, Registry: registry})
 }
 
 func resolveRegistryClientForLookup(workingDir string) (*awid.RegistryClient, *awconfig.ResolvedIdentity, error) {
@@ -497,15 +474,15 @@ func resolveRegistryClientForLookup(workingDir string) (*awid.RegistryClient, *a
 }
 
 func resolveIdentityRegistryClient(identity *awconfig.ResolvedIdentity) (*awid.RegistryClient, error) {
-	baseURL := ""
+	defaultURL := ""
 	if identity != nil {
-		baseURL = strings.TrimSpace(identity.RegistryURL)
+		defaultURL = identity.RegistryURL
 	}
-	registry, err := newRegistryClientWithPreferredBaseURL(baseURL)
+	baseURL, err := resolveRegistryURLSetting(registryURLSettingInput{DefaultURL: defaultURL})
 	if err != nil {
 		return nil, err
 	}
-	return registry, nil
+	return newRegistryClientWithPreferredBaseURL(baseURL)
 }
 
 func resolveIdentitySigningKey(identity *awconfig.ResolvedIdentity) (ed25519.PrivateKey, error) {

@@ -111,7 +111,9 @@ func executeIDAddressClaim(ctx context.Context, workingDir string, opts idAddres
 	if err != nil {
 		return idAddressClaimOutput{}, err
 	}
-	registryURL, err := resolveAddressClaimRegistryURL(ctx, registry, domain, strings.TrimSpace(opts.RegistryURL), strings.TrimSpace(identity.RegistryURL))
+	registryURL, err := resolveRegistryAuthority(ctx, registryAuthorityRequest{
+		Kind: registryAddressClaimRoute, Registry: registry, Domain: domain, Override: opts.RegistryURL, Identity: identity,
+	})
 	if err != nil {
 		return idAddressClaimOutput{}, err
 	}
@@ -158,31 +160,6 @@ func loadAddressClaimNamespaceController(domain string) (ed25519.PrivateKey, str
 		return nil, "", fmt.Errorf("load namespace controller key for %s: %w", domain, err)
 	}
 	return key, awid.ComputeDIDKey(key.Public().(ed25519.PublicKey)), nil
-}
-
-func resolveAddressClaimRegistryURL(ctx context.Context, registry *awid.RegistryClient, domain, override, identityRegistryURL string) (string, error) {
-	if strings.TrimSpace(override) != "" {
-		if err := registry.SetFallbackRegistryURL(override); err != nil {
-			return "", fmt.Errorf("invalid --registry: %w", err)
-		}
-		return strings.TrimSpace(registry.DefaultRegistryURL), nil
-	}
-	if meta, err := awconfig.LoadControllerMeta(domain); err == nil && strings.TrimSpace(meta.RegistryURL) != "" {
-		return strings.TrimSpace(meta.RegistryURL), nil
-	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return "", err
-	}
-	registryURL, err := registry.DiscoverRegistry(ctx, domain)
-	if err == nil && strings.TrimSpace(registryURL) != "" {
-		return registryURL, nil
-	}
-	if strings.TrimSpace(identityRegistryURL) != "" {
-		return strings.TrimSpace(identityRegistryURL), nil
-	}
-	if err != nil {
-		return "", fmt.Errorf("discover registry for %s: %w", domain, err)
-	}
-	return "", fmt.Errorf("registry URL for %s is empty", domain)
 }
 
 func idAddressClaimAtomicError(address, registryURL string, err error) error {

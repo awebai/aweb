@@ -653,26 +653,12 @@ func resolveLiveTeamMemberAliasTarget(ctx context.Context, sel *awconfig.Selecti
 	if err != nil {
 		return liveTeamMemberAliasTarget{}, false, err
 	}
-	registryURL := ""
-	var state *awconfig.TeamState
-	var stateErr error
-	if strings.TrimSpace(sel.IdentityHome) != "" {
-		state, stateErr = awconfig.LoadTeamStateFromIdentityHome(sel.IdentityHome)
-	} else {
-		state, stateErr = awconfig.LoadTeamState(sel.WorkingDir)
-	}
-	if stateErr != nil {
-		debugLog("load team state for alias fallback registry %s: %v", strings.TrimSpace(sel.TeamID), stateErr)
-	} else if state != nil {
-		if membership := state.Membership(sel.TeamID); membership != nil {
-			registryURL = registryURLForTeamMembersMembership(membership)
-		}
-	}
-	registryURL = firstNonEmpty(registryURL, strings.TrimSpace(sel.RegistryURL))
-	if registryURL != "" {
-		if err := registry.SetFallbackRegistryURL(registryURL); err != nil {
-			return liveTeamMemberAliasTarget{}, false, err
-		}
+	registryURL, err := resolveRegistryAuthority(ctx, registryAuthorityRequest{
+		Kind: registryTeamRoute, Domain: domain, TeamID: sel.TeamID,
+		WorkingDir: sel.WorkingDir, IdentityHome: sel.IdentityHome, DefaultURL: registry.DefaultRegistryURL,
+	})
+	if err != nil {
+		return liveTeamMemberAliasTarget{}, false, err
 	}
 	// The selection's own signing key is the member credential for this team,
 	// which is what lets the roster read keep working after the team goes
@@ -682,7 +668,7 @@ func resolveLiveTeamMemberAliasTarget(ctx context.Context, sel *awconfig.Selecti
 	var member *awid.TeamMemberReference
 	if _, err := readSignedTeamState(signers, func(key ed25519.PrivateKey) error {
 		var resolveErr error
-		member, resolveErr = registry.ResolveTeamMember(ctx, strings.TrimSpace(registry.DefaultRegistryURL), domain, team, targetAlias, key)
+		member, resolveErr = registry.ResolveTeamMember(ctx, registryURL, domain, team, targetAlias, key)
 		return resolveErr
 	}); err != nil {
 		var registryErr *awid.RegistryError
@@ -833,13 +819,11 @@ func configureResolvedClientWithRoster(c, rosterClient *aweb.Client, sel *awconf
 	// Received addressless identities are verified at the selected TEAM's
 	// registry. Do not inherit a global identity's unrelated home registry.
 	teamRegistry := newAWIDRegistryResolver(c.Client.HTTPClient(), nil)
-	teamRegistryURL := strings.TrimSpace(os.Getenv("AWID_REGISTRY_URL"))
-	if state, err := awconfig.LoadTeamStateFromIdentityHome(sel.IdentityHome); err == nil && state != nil {
-		if membership := state.Membership(sel.TeamID); membership != nil {
-			if pinned := strings.TrimSpace(membership.RegistryURL); pinned != "" {
-				teamRegistryURL = pinned
-			}
-		}
+	teamRegistryURL, err := resolveRegistryAuthority(context.Background(), registryAuthorityRequest{
+		Kind: registryDeliveryTeamRoute, TeamID: sel.TeamID, IdentityHome: sel.IdentityHome,
+	})
+	if err != nil {
+		return err
 	}
 	if teamRegistryURL != "" {
 		if err := teamRegistry.SetFallbackRegistryURL(teamRegistryURL); err != nil {

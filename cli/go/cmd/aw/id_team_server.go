@@ -123,11 +123,13 @@ func teamServerTarget(ctx context.Context, opts teamServerOptions) (*awid.Regist
 	if strings.Contains(teamName, "/") || strings.Contains(teamName, ":") {
 		return nil, "", "", "", usageError("--team must be a team name, not a full team id")
 	}
-	registry, err := newRegistryClientWithPreferredBaseURL(opts.RegistryURL)
+	registry, err := newConfiguredRegistryClient(nil)
 	if err != nil {
 		return nil, "", "", "", err
 	}
-	registryURL, err := registry.DiscoverRegistry(ctx, domain)
+	registryURL, err := resolveRegistryAuthority(ctx, registryAuthorityRequest{
+		Kind: registryTeamRoute, Registry: registry, Override: opts.RegistryURL, Domain: domain,
+	})
 	if err != nil {
 		return nil, "", "", "", fmt.Errorf("discover registry for %s: %w", domain, err)
 	}
