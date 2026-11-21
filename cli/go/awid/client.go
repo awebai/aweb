@@ -132,20 +132,26 @@ func (c *Client) signEnvelope(ctx context.Context, env *MessageEnvelope) (signed
 	globalStableTarget := strings.HasPrefix(strings.TrimSpace(env.ToStableID), "did:aw:")
 	storedRouteGlobalTarget := globalStableTarget && env.AllowStoredRouteGlobalBinding
 	bindingRequired := env.RequireRecipientBinding || (globalStableTarget && !env.AllowStoredRouteGlobalBinding)
-	// A resolver that cannot name the recipient's current key refuses the
-	// send for every sender: the signature must carry the recipient binding
-	// (docs/identity-messaging-contract.md:119-129).
+	// A lookup that fails refuses only a send that requires the recipient
+	// binding. Otherwise the send is signed without it and the server
+	// resolves the address, as released aw does, so a local seat does not
+	// depend on the registry answering.
 	if c.resolver != nil && env.ToDID == "" && bindingTarget != "" && !storedRouteGlobalTarget {
 		identity, err := c.resolver.Resolve(ctx, bindingTarget)
 		if err != nil {
-			return signedFields{}, &RecipientResolutionError{Target: bindingTarget, MessageType: env.Type, Err: err}
+			if bindingRequired {
+				return signedFields{}, &RecipientResolutionError{Target: bindingTarget, MessageType: env.Type, Err: err}
+			}
+			identity = nil
 		}
-		if identity == nil || strings.TrimSpace(identity.DID) == "" {
-			return signedFields{}, &RecipientResolutionError{Target: bindingTarget, MessageType: env.Type, Err: errors.New("missing current did:key")}
-		}
-		env.ToDID = strings.TrimSpace(identity.DID)
-		if strings.TrimSpace(env.ToStableID) == "" && strings.TrimSpace(identity.StableID) != "" {
-			env.ToStableID = strings.TrimSpace(identity.StableID)
+		if identity != nil {
+			if strings.TrimSpace(identity.DID) == "" {
+				return signedFields{}, &RecipientResolutionError{Target: bindingTarget, MessageType: env.Type, Err: errors.New("missing current did:key")}
+			}
+			env.ToDID = strings.TrimSpace(identity.DID)
+			if strings.TrimSpace(env.ToStableID) == "" && strings.TrimSpace(identity.StableID) != "" {
+				env.ToStableID = strings.TrimSpace(identity.StableID)
+			}
 		}
 	}
 	if bindingRequired && env.ToDID == "" && bindingTarget != "" {

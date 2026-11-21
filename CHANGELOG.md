@@ -93,11 +93,6 @@
   to a bare name now refuse when the agent list lookup fails, as `aw mail send`
   does. Who sees it: released aw, and the bd and gc delegates.
 
-- A send whose recipient key cannot be looked up is refused for every sender
-  ("Nothing was sent: ... send it again when the registry answers"), where a
-  failed lookup used to send without a recipient key unless binding was
-  required. Who sees it: released aw.
-
 - `bd mail inbox` and `bd mail read` show the sender with the verification tag
   aw mail uses, and every delegate's received-mail log records it. Who sees it:
   bd users.
