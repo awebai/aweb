@@ -29,7 +29,7 @@ Embedding routes using the native error adapter preserve these outcomes:
 | --- | --- | --- |
 | AWID confirms the team is unregistered | 404 `awid_team_not_found` | Select a registered team or register it before importing. |
 | Controller or roster read fails | 503 `team_control_authority_unavailable` or `team_import_evidence_unavailable` | Retry when the registry can be read. |
-| AWID returns invalid team or certificate data | 422 `team_control_registry_data_invalid` | Ask the registry operator to correct the team record before importing. |
+| AWID returns invalid team or certificate data | 422 `registry_response_unusable` | Ask the registry operator to correct the team record before importing. |
 
 The adapter logs invalid registry evidence at error level. The released
 `aw id team import-request` command only prepares the signed body. The

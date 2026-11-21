@@ -247,7 +247,7 @@ async def test_invalid_roster_is_a_nonretryable_import_refusal(
     assert response.status_code == 422
     assert json.loads(response.body) == {
         "detail": {
-            "code": "team_control_registry_data_invalid",
+            "code": "registry_response_unusable",
             "message": (
                 "AWID returned invalid team or certificate data. "
                 "Ask the registry operator to correct the team record before importing."

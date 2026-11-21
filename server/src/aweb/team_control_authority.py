@@ -75,7 +75,7 @@ class TeamControlRegistryDataInvalid(TeamControlError):
     """A registry response supplied unusable team or certificate data."""
 
     status_code = 422
-    code = "team_control_registry_data_invalid"
+    code = "registry_response_unusable"
     message = (
         "AWID returned invalid team or certificate data. "
         "Ask the registry operator to correct the team record before importing."

@@ -146,6 +146,50 @@ async def test_native_controller_outage_keeps_retryable503_and_action(caplog):
 
 
 @pytest.mark.asyncio
+async def test_unusable_registry_answer_keeps_nonretryable422_and_action():
+    registry = FastAPI()
+
+    @registry.get("/v1/namespaces/local/teams/operators")
+    async def incomplete_team():
+        return {"team_id": "operators:local", "domain": "local", "name": "operators"}
+
+    db = AsyncDatabaseManager(
+        DatabaseConfig(connection_string="postgresql://unused/test")
+    )
+    app = create_app()
+    async with aclosing(
+        RegistryClient(
+            registry_url="https://registry.test", transport=ASGITransport(app=registry)
+        )
+    ) as sdk:
+        context = TeamControlAuthorityContext(
+            db=db, registry_client=sdk, txt_resolver=SystemTXTOutcomeResolver()
+        )
+
+        @app.post("/controller")
+        async def controller():
+            return await read_fresh_team_controller(
+                context=context, team_id="operators:local"
+            )
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="https://native.test"
+        ) as client:
+            response = await client.post("/controller")
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "detail": {
+            "code": "registry_response_unusable",
+            "message": (
+                "AWID returned invalid team or certificate data. "
+                "Ask the registry operator to correct the team record before importing."
+            ),
+        }
+    }
+
+
+@pytest.mark.asyncio
 async def test_outer_host_keeps_same_expected_controller_error_mapping():
     app = FastAPI()
 
