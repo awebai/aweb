@@ -137,15 +137,16 @@ class HostPublishedPortWiringTests(unittest.TestCase):
         self.assertIn('"$checkout/scripts/e2e/test_candidate_gate_docker_boundaries.py"', block)
         self.assertIn('HostPublishedPortTests', block)
         self.assertIn('"$LOG_DIR/host-published-port.log"', block)
-        self.assertIn('"$LOG_DIR/checks.log"', block)
-        self.assertIn('exit 1', block)
+        self.assertIn('host_port_status=$?', block)
+        self.assertIn('-e CANDIDATE_HOST_PORT_STATUS="$host_port_status"', source)
         self.assertLess(source.index('clone selected the wrong SHA'), start)
         self.assertLess(start, source.index('docker run --rm --init'))
         suite = (ROOT / "scripts/candidate-suite.sh").read_text()
         self.assertIn('cat "$log_dir/host-published-port.log"', suite)
+        self.assertIn("run_step host-published-port host_published_port", suite)
         self.assertIn('run _candidate-gate-docker-boundaries', suite)
 
-    def test_host_failure_preserves_checks_evidence_and_stops_before_runner(self):
+    def test_host_result_survives_until_runner_including_failure(self):
         source = (ROOT / "scripts/candidate-docker-gate.sh").read_text()
         start = source.index('# The published socket belongs to the Docker host')
         block = source[start:source.index('\nfi', start) + 3]
@@ -158,20 +159,14 @@ class HostPublishedPortWiringTests(unittest.TestCase):
                 env = dict(os.environ, PATH=str(root) + os.pathsep + os.environ["PATH"],
                            pending=pending, resource_label="test-label", checkout="/exact checkout",
                            LOG_DIR=tmp, PROBE_EXIT=str(code))
-                result = subprocess.run(["bash", "-c", 'set -eu\n' + block + '\necho runner-reached'],
+                result = subprocess.run(["bash", "-c", 'set -eu\n' + block + '\necho runner-reached "$host_port_status"'],
                                         env=env, text=True, capture_output=True, timeout=5)
                 if pending.startswith("checks"):
                     evidence = (root / "host-published-port.log").read_text()
                     self.assertIn('/exact checkout/scripts/e2e/test_candidate_gate_docker_boundaries.py',
                                   evidence)
-                    if code:
-                        self.assertEqual(result.returncode, 1)
-                        self.assertEqual((root / "checks.log").read_text(), evidence)
-                        self.assertNotIn('runner-reached', result.stdout)
-                        self.assertIn(evidence, result.stderr)
-                    else:
-                        self.assertEqual(result.returncode, 0)
-                        self.assertIn('runner-reached', result.stdout)
+                    self.assertEqual(result.returncode, 0)
+                    self.assertIn(f"runner-reached {code}", result.stdout)
                 else:
                     self.assertEqual(result.returncode, 0)
                     self.assertFalse((root / "host-published-port.log").exists())
