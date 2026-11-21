@@ -1047,7 +1047,6 @@ def _build_real_messaging_app(aweb_db) -> FastAPI:
     app.state.db = _DbShim(aweb_db)
     app.state.public_origin = "http://test"
     app.state.redis = None
-    app.state.rate_limiter = None
 
     @app.middleware("http")
     async def cache_body_middleware(request, call_next):

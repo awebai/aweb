@@ -13,7 +13,6 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol
 
-from awid.ratelimit import RateLimitDecision, build_rate_limiter
 from awid.registry import RegistryClient
 from fastapi import FastAPI
 from redis.asyncio import Redis
@@ -38,16 +37,6 @@ from aweb.resource_startup import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-class ServingRateLimiter(Protocol):
-    """The SDK rate-limit decision boundary implemented by an embedding host."""
-
-    async def hit(
-        self, *, bucket: str, key: str, limit: int, window_seconds: int,
-    ) -> RateLimitDecision:
-        """Return the canonical SDK decision for the named rate-limit bucket."""
-        ...
 
 
 class OutboxRecoveryOwnership(StrEnum):
@@ -157,7 +146,6 @@ async def start_native_resources(
     registry_client: RegistryClient, mcp_factory: MCPFactory,
     outbox_recovery: OutboxRecoveryOwnership,
     on_mutation: MutationCallback | None = None,
-    rate_limiter: ServingRateLimiter | None = None,
 ) -> AsyncIterator[EmbeddedResources]:
     """Shared native owner; caller retains DB, Redis and registry lifecycles."""
 
@@ -188,7 +176,6 @@ async def start_native_resources(
             api_app.state.redis = redis
             api_app.state.awid_registry_client = registry_client
             api_app.state.on_mutation = resources.on_mutation
-            api_app.state.rate_limiter = build_rate_limiter(redis=redis) if rate_limiter is None else rate_limiter
             resources._stage = ResourceStartupStage.FEDERATION
             resources.federation_authority = build_federation_authority_activation(db_infra, public_origin=resources.public_origin)
             cleanup.push_async_callback(resources.federation_authority.aclose)
@@ -231,7 +218,6 @@ async def embedded_aweb(
     *, db_infra: DatabaseInfrastructure, redis: Redis, registry_client: RegistryClient,
     public_origin: str, mcp_factory: MCPFactory, outbox_recovery: OutboxRecoveryOwnership,
     on_mutation: MutationCallback | None = None,
-    rate_limiter: ServingRateLimiter | None = None,
     attachment_backend: AttachmentBackend | None = None,
     proxy_verification: ProxyVerificationConfig | None = None,
 ) -> AsyncIterator[EmbeddedResources]:
@@ -257,6 +243,6 @@ async def embedded_aweb(
     async with start_native_resources(
         api_app=api_app, db_infra=db_infra, redis=redis, registry_client=registry_client,
         mcp_factory=mcp_factory, outbox_recovery=outbox_recovery,
-        on_mutation=on_mutation, rate_limiter=rate_limiter,
+        on_mutation=on_mutation,
     ) as resources:
         yield resources

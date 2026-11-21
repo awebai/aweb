@@ -125,7 +125,7 @@ failures. It does not replace display/decryption or grant history access.
 
 `aweb.embedding.embedded_aweb(*, db_infra, redis, registry_client,
 public_origin, mcp_factory, outbox_recovery, on_mutation=None,
-rate_limiter=None, attachment_backend=None)` is an async context manager.
+attachment_backend=None, proxy_verification=None)` is an async context manager.
 It accepts initialized structural database infrastructure (`is_initialized`
 and `get_manager`), the host's Redis and configured registry clients, and a
 synchronous factory returning the host's actual extended `ManagedMCPApp`.
@@ -255,32 +255,26 @@ not additional clients or startup owners.
 | `redis` | `deps.get_redis`, `redis_client.get_redis`, health, federation, dashboard and outbox recovery | Retain for native request dependencies and maintenance. |
 | `awid_registry_client` | Team/identity auth, team-key pins, service registration, messaging and federation routes; `application_registry_client` also supports initialized servers without a resources object | Retain until those native readers consume the resource reference; a host wrapper does not create a shadow client. |
 | `on_mutation` | `hooks.mutation_callback`, MCP callback scope, messaging runtime and durable federation replay | Retain the same callback reference for native producers/replay. |
-| `rate_limiter` | The SDK's `get_rate_limiter` request dependency | Retain; the SDK reads this native serving slot. |
 | `federation_authority` | Native federation/contact routes and messaging runtime | Retain for the existing native route and transport owner. |
 | `mcp_app` | No native route reads this slot; readiness and mounting use `EmbeddedResources.mcp_app` | This host compatibility projection is removed when the Cloud resource-reference consumer lands. Hosts use the typed reference rather than adding readers of this slot. |
 | `agent_wake_publisher`, `agent_wake_hub` | `agent_wake.agent_wake_publisher`, `routes.events._agent_wake_hub` and shared wake cleanup | Retain for native wake publishing/subscription and the released manual wake-start API. |
 
-`start_native_resources` writes seven direct slots beside `native_resources`;
+`start_native_resources` writes six direct slots beside `native_resources`;
 the shared wake starter writes the publisher/hub pair. `create_app` separately
 initializes `proxy_verification`, `public_origin` and `attachment_backend`: native origin/signature
 checks and participant attachment reads still require them. The source census at `0c2924fc5c` has native dependency
 references in `deps.py:19`, `db.py:130`,
 `team_key_pins.py:121`, `hooks.py:61`, `messaging/runtime.py:46`,
 `routes/federation.py:377`, `routes/contacts.py:72`, `routes/events.py:888`,
-`attachment_service.py:206`, and `awid/ratelimit.py:227`. Slot retirement must
+`attachment_service.py:206`. Slot retirement must
 convert those readers or preserve the released initialized-application path;
 removing a host-only slot does not authorize removing native request state.
 
 
-The optional extension inputs have structural contracts: `on_mutation` is
-`aweb.hooks.MutationCallback`, whose positional call returns an awaitable of
-`MutationDeliveryOutcome | None`; `rate_limiter` is
-`aweb.embedding.ServingRateLimiter`, whose `hit` returns the existing SDK
-`RateLimitDecision`; `attachment_backend` is the existing
-`aweb.attachments.AttachmentBackend` protocol. These annotations create no
-runtime admission or new validation. Ordinary None-returning host callbacks,
-SDK limiter implementations and existing attachment providers retain their
-current behavior.
+The `on_mutation` extension follows `aweb.hooks.MutationCallback`. Its
+positional call returns an awaitable of `MutationDeliveryOutcome | None`.
+The `attachment_backend` extension follows the
+`aweb.attachments.AttachmentBackend` protocol.
 
 ## Existing-member certificate replacement
 
