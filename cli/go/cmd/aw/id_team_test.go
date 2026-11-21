@@ -2582,7 +2582,9 @@ func testHostedLocalAcceptInviteIntoExternalIdentityHome(t *testing.T, tokenStdi
 	var sawConnect bool
 	publishCertTeams := []string{}
 	mailInboxCalls := 0
+	mailSendCalls := 0
 	chatPendingCalls := 0
+	mailRecipient := awid.ComputeDIDKey(primaryPub)
 	var gotConnectPayload connectRequest
 	server := newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -2635,6 +2637,19 @@ func testHostedLocalAcceptInviteIntoExternalIdentityHome(t *testing.T, tokenStdi
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/messages/inbox":
 			mailInboxCalls++
 			_ = json.NewEncoder(w).Encode(awid.InboxResponse{})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/messages":
+			mailSendCalls++
+			cert := requireCertificateAuthForTest(t, r)
+			if cert.Team != teamID || cert.MemberDIDKey != acceptedDID {
+				t.Errorf("mail used %q/%q, want %q/%q", cert.Team, cert.MemberDIDKey, teamID, acceptedDID)
+			}
+			var req awid.SendMessageRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ToDID != mailRecipient || req.Body != "hello from the joined home" {
+				t.Errorf("unexpected mail request: %+v, %v", req, err)
+			}
+			_ = json.NewEncoder(w).Encode(awid.SendMessageResponse{
+				MessageID: "joined-mail", ConversationID: req.ConversationID, Status: "delivered",
+			})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/chat/pending":
 			chatPendingCalls++
 			_ = json.NewEncoder(w).Encode(awid.ChatPendingResponse{})
@@ -2738,6 +2753,21 @@ func testHostedLocalAcceptInviteIntoExternalIdentityHome(t *testing.T, tokenStdi
 	}
 	if primaryAfter := fileDigestsForTest(t, filepath.Join(instanceHome, ".aw")); !reflect.DeepEqual(primaryAfter, primaryBefore) {
 		t.Fatal("external mail/chat mutated caller primary identity home")
+	}
+
+	// A send records an interaction in the caller's workspace. Check the
+	// selected sender on the wire from that same directory after the reads.
+	send := exec.CommandContext(ctx, bin, "--identity-home", identityHome, "mail", "send",
+		"--to-did", mailRecipient, "--subject", "Joined team", "--body", "hello from the joined home", "--json")
+	send.Dir = instanceHome
+	send.Env = testCommandEnv(tmp)
+	out, err = send.CombinedOutput()
+	if err != nil {
+		t.Fatalf("unqualified mail from the joined home failed: %v\n%s", err, out)
+	}
+	var sent awid.SendMessageResponse
+	if err := json.Unmarshal(extractJSON(t, out), &sent); err != nil || sent.MessageID != "joined-mail" || mailSendCalls != 1 {
+		t.Fatalf("joined mail response: %s (requests=%d, error=%v)", out, mailSendCalls, err)
 	}
 }
 
