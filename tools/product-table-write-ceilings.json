@@ -292,7 +292,6 @@
     "server/tests/test_participant_succession.py": 14,
     "server/tests/test_pending_chat_query.py": 11,
     "server/tests/test_production_awid.py": 3,
-    "server/tests/test_registered_certificate_admission_http.py": 1,
     "server/tests/test_registry_member_signing.py": 1,
     "server/tests/test_resource_visibility.py": 7,
     "server/tests/test_retired_mail_participant.py": 5,
