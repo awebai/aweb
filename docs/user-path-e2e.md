@@ -139,6 +139,67 @@ Cleanup removes only this run's project, resources and scratch homes, preserving
 the prepared images. It verifies absence and surfaces cleanup failures. No
 retry or coverage reduction makes a stage pass.
 
+## Released clients against the server RC
+
+Run this mode of `make e2e-user-paths` after the server RC image has been
+published and before final promotion. On the gate worker, stage the prepared
+user-paths runtime for the reviewed harness tree, PostgreSQL 17, Redis 7, and
+both immutable server images. Select the deployed baseline that released
+clients currently see. The second image is the exact published RC. Write
+`server-artifacts.json` with this shape and substitute the version, full
+source SHA and OCI digest from the release receipts.
+
+```json
+{
+  "baseline": {
+    "version": "1.2.3",
+    "source_sha": "<40 lowercase hex characters>",
+    "image": "ghcr.io/awebai/aweb-server@sha256:<64 lowercase hex characters>"
+  },
+  "rc": {
+    "version": "1.2.4rc1",
+    "source_sha": "<40 lowercase hex characters>",
+    "image": "ghcr.io/awebai/aweb-server@sha256:<64 lowercase hex characters>"
+  }
+}
+```
+
+```sh
+USER_PATHS_RC_MANIFEST=/absolute/path/to/server-artifacts.json \
+USER_PATHS_RUNTIME_IMAGE=<prepared-runtime-id> \
+CANDIDATE_LOG_DIR=/absolute/path/to/new-run-evidence make e2e-user-paths
+```
+
+The lane checks local image digests and OCI version and source labels, then
+reads the running server and bundled AWID package versions. It uses fresh
+PostgreSQL, Redis, DNS and identity volumes for each image. The two passes
+use the same npm-latest `aw` wrapper and platform binary, verified npm-latest
+channel bundle, and the released OATS kernel and aweb provider pinned by the
+prepared runtime.
+
+- Released `aw` joins, reads its mail and chat, wakes through its native
+  broker, and retires a local workspace.
+- The published channel process connects over its declared MCP stdio
+  entrypoint. A passive host records the actual mail, chat and subsequent
+  wake notifications. The released CLI performs the plugin workspace's
+  join and retirement.
+- The released OATS kernel and provider create and start a real tmux
+  instance, receive real mail and chat through the native broker, and retire
+  through the provider. The passive session captures presentation without a
+  model call. For a customer-controlled team, the public controller command
+  completes any separate certificate revocation and reads the released name
+  back from the real stores.
+
+The output includes per-runtime user-visible observations and source and
+artifact provenance. `rc-compatibility.json` lists every changed, missing or
+failed observation. The comparison omits generated message, identity and
+session identifiers and timing metadata after the flow verifies the relevant
+bindings. The run retains the public CLI reads, raw channel notifications
+and native OATS receipts. Review the inventory with Antares before promoting
+the RC. A missing case, a failed step or an observed difference leaves the
+comparison red. The existing source-based lane keeps its standing scope and
+ledger separately from this published-artifact qualification.
+
 ## Reviewed released-client issue budget
 
 There are no reviewed released-client issues. npm `latest` aw 1.36.55 carries
