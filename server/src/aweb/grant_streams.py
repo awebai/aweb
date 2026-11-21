@@ -80,7 +80,9 @@ async def require_valid_stream_grant(request: Request, db, identity: StreamIdent
         raise HTTPException(status_code=403, detail=GRANT_TERMINAL_DETAILS[reason])
 
 
-async def grant_terminal_reason(request: Request, db, identity: StreamIdentity) -> str | None:
+async def grant_terminal_reason(
+    request: Request, db, identity: StreamIdentity, *, continue_on_registry_outage: bool = False,
+) -> str | None:
     grant = identity.grant
     if grant is None:
         if not is_native_certificate_stream(identity):
@@ -95,10 +97,20 @@ async def grant_terminal_reason(request: Request, db, identity: StreamIdentity) 
             or not current_member(row, checked_key=identity.verified_team_did_key or "")
         ):
             return "team_membership_not_current"
-        member = await current_membership(
-            application_registry_client(request.app.state),
-            {**dict(row), "certificate_id": identity.certificate_id}, request=request,
-        )
+        registry = application_registry_client(request.app.state)
+        try:
+            member = await current_membership(
+                registry, {**dict(row), "certificate_id": identity.certificate_id}, request=request,
+            )
+        except HTTPException as exc:
+            # The registration adapter wraps acquisition failures in a 503
+            # for the caller. Keep the registry's original classification.
+            acquisition = exc.__cause__ if isinstance(exc.__cause__, HTTPException) else exc
+            if continue_on_registry_outage and exc.status_code == acquisition.status_code == 503:
+                # Only an admitted connection may keep its previous standing.
+                # The local membership and checked key were confirmed above.
+                return None
+            raise
         return None if member and member.get("team_id") else "team_membership_not_current"
     now = datetime.now(timezone.utc)
     if not grant.never_expires and _as_utc(grant.expires_at) <= now:
@@ -213,7 +225,9 @@ class NeverGrantStreamGuard:
             return None
         self.checked_at = now
         try:
-            return await grant_terminal_reason(self.request, self.db, self.identity)
+            return await grant_terminal_reason(
+                self.request, self.db, self.identity, continue_on_registry_outage=True,
+            )
         except Exception:
             logging.getLogger(__name__).warning(
                 "Stream credential revalidation failed", exc_info=True
