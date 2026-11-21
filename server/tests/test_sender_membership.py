@@ -1,11 +1,66 @@
 """Read-time sender membership through the real OSS/AWID/PG/Redis apps."""
+import base64
 import json
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
 import pytest
 from awid.did import stable_id_from_did_key
-from test_dashboard_privacy import TEAM, _request, _seed_mail, privacy_app  # noqa: F401
+from awid.registry import CachedRegistryClient
+from test_cli_never_grants import registry_listener
+from test_dashboard_privacy import TEAM, TEAM_NAME, _request, _seed_mail, privacy_app  # noqa: F401
+from test_team_room import admit_room_member, headers
+
+
+@pytest.mark.asyncio
+async def test_sender_standing_sees_registration_after_a_warm_list(privacy_app, monkeypatch):
+    env = privacy_app
+    sender, reader = env.actors["alice"], env.actors["bob"]
+    certificate = json.loads(base64.b64decode(sender.certificate))
+    certificate_id = certificate["certificate_id"]
+
+    monkeypatch.setenv("AWEB_REQUIRE_REGISTERED_CERTIFICATES", "false")
+    await admit_room_member(env, alias="bob")
+    connected = await env.client.post("/v1/connect", content=b"{}", headers=headers(sender, b"{}"))
+    assert connected.status_code == 200, connected.text
+    body = json.dumps({"to_did": reader.did, "subject": "standing", "body": "one message"}).encode()
+    sent = await env.client.post("/v1/messages", content=body, headers=headers(sender, body))
+    assert sent.status_code == 200, sent.text
+    message_path = f"/v1/messages/{sent.json()['message_id']}"
+    initial = await env.client.get(message_path, headers=headers(reader))
+    assert initial.status_code == 200, initial.text
+    assert initial.json()["sender_membership"] == {
+        "team_id": TEAM, "member_did_aw": None, "state": "active",
+    }
+
+    async with registry_listener(env) as (writer, origin):
+        cache = CachedRegistryClient(origin, env.redis, service_token=writer.service_token)
+        try:
+            before = await cache.list_team_certificates("example.test", TEAM_NAME, active_only=False)
+            assert {row["certificate_id"] for row in before} == {"privacy-bob"}
+            await writer.register_team_certificate(
+                "example.test", TEAM_NAME,
+                team_controller_signing_key=env.team_sk,
+                certificate_id=certificate_id,
+                member_did_key=sender.did,
+                member_did_aw=None,
+                member_address=None,
+                alias=certificate["alias"],
+                identity_scope="local",
+                certificate=sender.certificate,
+            )
+            still_cached = await cache.list_team_certificates("example.test", TEAM_NAME, active_only=False)
+            assert still_cached == before
+            monkeypatch.setenv("AWEB_REQUIRE_REGISTERED_CERTIFICATES", "true")
+            env.app.state.awid_registry_client = cache
+            response = await env.client.get(message_path, headers=headers(reader))
+            assert response.status_code == 200, response.text
+            assert response.json()["sender_membership"] == {
+                "team_id": TEAM, "member_did_aw": None, "state": "active",
+            }
+        finally:
+            env.app.state.awid_registry_client = writer
+            await cache.aclose()
 
 
 @pytest.mark.asyncio
