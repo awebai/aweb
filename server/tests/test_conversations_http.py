@@ -84,7 +84,6 @@ def _build_test_app(aweb_db, registry):
 
     app.state.db = _DbShim()
     app.state.redis = None
-    app.state.rate_limiter = None
     app.state.awid_registry_client = registry
     return app
 

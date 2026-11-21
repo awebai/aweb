@@ -267,7 +267,6 @@ def _build_test_app(aweb_db, registry, *, verified_bindings=()):
 
     app.state.db = _DbShim()
     app.state.redis = None
-    app.state.rate_limiter = None
     app.state.awid_registry_client = legacy_registry(registry)
     if registry is not None:
         # These routing unit cases select the supplied strict foreign authority.
