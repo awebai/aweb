@@ -79,14 +79,20 @@ async def verify_authorization_certificate(request, authorization):
         registry = request.app.state.awid_registry_client
         # C2 requires live authority even when the app otherwise uses a
         # CachedRegistryClient. Never use its stale/outage-grace reads here.
-        team_key = await registry.get_team_public_key_fresh(domain, name)
+        try:
+            team_key = await registry.get_team_public_key_fresh(domain, name)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail="registry_response_unusable") from exc
+        if team_key is None:
+            raise HTTPException(status_code=404, detail="awid_team_not_found")
         select = getattr(registry, "get_team_revocations_for_certificates", None)
         revoked = (await select(domain, name, [payload["certificate_id"]], fresh=True)
                    if callable(select) else await registry.get_team_revocations_fresh(domain, name))
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=503, detail="authority_unavailable") from exc
-    if team_key:
-        team_key = await pinned_team_key_for_request(request, payload["team_id"], team_key)
+    team_key = await pinned_team_key_for_request(request, payload["team_id"], team_key)
     certificates = await _current_certificates(request, payload["team_id"])
     try:
         info = parse_and_verify_certificate(authorization["certificate"],

@@ -7,21 +7,28 @@ itself is tested against real AWID chains in test_handoff_requester.py.
 """
 
 import json
+import os
 import time
+from contextlib import aclosing
 from datetime import timedelta
 
 import httpx
 import pytest
 from aweb_naapp_testing import REGISTRY_URL, SERVICE_TOKEN, Member, did_key
+from aweb_naapp_testing.human_members import human_namespace
 from awid.did import stable_id_from_did_key
+from awid.id_certificates import encode_id_chain_header
+from awid.registry import CachedRegistryClient
 from fastapi import FastAPI, Request
 from nacl.signing import SigningKey
+from redis.asyncio import Redis
 
 from aweb_naapp.console import ClientIdentity, LoginLimiter
-from aweb_naapp.console.handoff_requester import RequesterEvidence
+from aweb_naapp.console.handoff_requester import CHAIN_HEADER, RequesterEvidence, requester_parent
 from aweb_naapp.console.handoff_store import HandoffStore, handoff_start_router
 from aweb_naapp.runtime.origins import split_origins
 from aweb_naapp.runtime.team_auth import AWIDTeamCache, authenticate_request
+from tests.console.test_handoff_requester import issued_agent
 from tests.console.test_handoff_store import ORIGIN, handoff_db, start_body
 
 __all__ = ["handoff_db"]
@@ -31,30 +38,14 @@ API = "https://api.example"
 HOLDER = stable_id_from_did_key(did_key(SigningKey.generate()))
 
 
-@pytest.fixture
-async def requester_app(handoff_db, registry):
-    member = Member(team_id="people:example.com")
-    member.extra_cert_fields = {"member_did_aw": await registry.register_did(member.member_key)}
-    await registry.add_team(member.team_id, member.team_did_key)
-    await registry.add_certificate(member.certificate())
+def build_requester_app(handoff_db, registry, parent, session_start):
     cache = AWIDTeamCache(
         registry_url=REGISTRY_URL, ttl_seconds=60, service_token=SERVICE_TOKEN,
         transport=registry.transport,
     )
-    seen = {"parent": HOLDER, "starts": []}
 
     async def principal(request: Request):
         return await authenticate_request(request, public_origin=API, team_cache=cache)
-
-    async def parent(request, signer):
-        if seen["parent"] is None:
-            return None
-        return RequesterEvidence(seen["parent"], time.monotonic_ns() + 60_000_000_000)
-
-    async def session_start(start, signer, request, *, requester=None):
-        seen["starts"].append((start, signer))
-        seen["requester"] = requester
-        return {"handoff_id": "h1", "expires_at": "2026-11-11T12:10:00Z"}
 
     api = FastAPI()
     api.include_router(
@@ -66,13 +57,39 @@ async def requester_app(handoff_db, registry):
             requester_parent=parent,
         )
     )
-    return split_origins(api, FastAPI(), agent_origin=API, human_origin=ORIGIN), member, seen
+    return split_origins(api, FastAPI(), agent_origin=API, human_origin=ORIGIN)
 
 
-async def post(app, member, body):
+@pytest.fixture
+async def requester_app(handoff_db, registry):
+    member = Member(team_id="people:example.com")
+    member.extra_cert_fields = {"member_did_aw": await registry.register_did(member.member_key)}
+    await registry.add_team(member.team_id, member.team_did_key)
+    await registry.add_certificate(member.certificate())
+    seen = {"parent": HOLDER, "starts": []}
+
+    async def parent(request, signer):
+        if seen["parent"] is None:
+            return None
+        return RequesterEvidence(seen["parent"], time.monotonic_ns() + 60_000_000_000)
+
+    async def session_start(start, signer, request, *, requester=None):
+        seen["starts"].append((start, signer))
+        seen["requester"] = requester
+        return {"handoff_id": "h1", "expires_at": "2026-11-11T12:10:00Z"}
+
+    return build_requester_app(handoff_db, registry, parent, session_start), member, seen
+
+
+async def post(app, member, body, *, chain=None):
     raw = json.dumps(body, separators=(",", ":")).encode()
     headers = {"Content-Type": "application/json", **member.headers(aud=API, method="POST", path="/handoffs", body=raw)}
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=API) as client:
+    if chain is not None:
+        headers[CHAIN_HEADER] = encode_id_chain_header(
+            {"v": 1, "type": "aweb.id-chain", "certificates": chain}
+        )
+    transport = httpx.ASGITransport(app=app, raise_app_exceptions=chain is None)
+    async with httpx.AsyncClient(transport=transport, base_url=API) as client:
         return await client.post("/handoffs", content=raw, headers=headers)
 
 
@@ -80,6 +97,58 @@ def session_body_for(holder: str) -> dict:
     body = start_body(purpose="session")
     body["scope"]["principal"] = holder
     return body
+
+
+async def test_direct_child_handoff_distinguishes_unusable_status_from_failed_read(handoff_db, registry):
+    member = Member(team_id="people:example.com")
+    await registry.add_team(member.team_id, member.team_did_key)
+    async with (
+        human_namespace(registry, "example.com") as namespace,
+        Redis.from_url(os.environ["REDIS_URL"]) as redis,
+    ):
+        human = await namespace.register(member)
+        agent_id, agent_key, chain = await issued_agent(
+            human, [human.identity], member.member_key, human.principal
+        )
+        agent = Member(
+            team_id=member.team_id, team_key=member.team_key, member_key=agent_key,
+            certificate_id="requester-cert", alias="requester",
+            extra_cert_fields={"member_did_aw": agent_id},
+        )
+        await registry.add_certificate(agent.certificate())
+        starts = []
+
+        async def start_session(start, signer, request, *, requester):
+            starts.append(requester.parent)
+            return {"handoff_id": "h1", "expires_at": "2026-11-11T12:10:00Z"}
+
+        def status_fault(request, response):
+            if request.url.path != "/v1/id-certificates/status":
+                return None
+            assert response.status_code == 200
+            return status_response
+
+        async with aclosing(CachedRegistryClient(
+            REGISTRY_URL, redis, transport=registry.transport, service_token=SERVICE_TOKEN,
+            domain_verifier=namespace.authority,
+        )) as cache:
+            app = build_requester_app(handoff_db, registry, requester_parent(cache), start_session)
+            body = session_body_for(human.principal)
+            registry.transport.fault = status_fault
+            status_response = httpx.Response(503)
+            unavailable = await post(app, agent, body, chain=chain)
+            assert unavailable.status_code == 503, unavailable.text
+            assert unavailable.json() == {"detail": "principal_status_unavailable"}
+            status_response = httpx.Response(200, content=b"[]")
+            unusable = await post(app, agent, body, chain=chain)
+            assert unusable.status_code == 422, unusable.text
+            assert unusable.json() == {"detail": "registry_response_unusable"}
+            assert starts == []
+
+            registry.transport.fault = None
+            valid = await post(app, agent, body, chain=chain)
+            assert valid.status_code == 201, valid.text
+            assert starts == [human.principal]
 
 
 async def test_the_holders_direct_child_starts_a_session_for_it(requester_app):
