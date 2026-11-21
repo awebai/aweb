@@ -18,6 +18,8 @@ from test_messages_http import (
     _signed_team_headers,
 )
 
+__all__ = ["privacy_app"]
+
 
 @pytest.mark.asyncio
 async def test_back_to_back_admissions_are_visible_in_the_authenticated_roster(

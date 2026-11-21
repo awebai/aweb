@@ -21,6 +21,8 @@ from test_cli_never_grants import registry_listener
 from test_dashboard_privacy import TEAM, privacy_app as privacy_app
 from test_messages_http import _signed_team_headers
 
+__all__ = ["privacy_app"]
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("channel", ["mail", "chat"])

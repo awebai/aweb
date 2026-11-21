@@ -13,6 +13,8 @@ from test_mcp_notifications import CountDB, infra
 from test_team_room import TEAM, headers, metadata, post, privacy_app  # noqa: F401
 from test_room_notice_count import admitted
 
+__all__ = ["privacy_app"]
+
 
 @pytest.fixture
 def room_count(monkeypatch):

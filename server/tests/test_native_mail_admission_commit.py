@@ -18,6 +18,8 @@ from test_dashboard_privacy import TEAM, privacy_app as privacy_app
 from test_messages_http import _signed_team_headers
 from test_delivery_contract_regressions import _send
 
+__all__ = ["privacy_app"]
+
 
 async def connect_policy_members(env):
     """Establish the positive current-admission premise through the real endpoint."""

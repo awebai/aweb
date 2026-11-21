@@ -197,16 +197,12 @@ async def admit_messaging_actor(
 async def set_messaging_inbound_mode(
     env: MessagingFixture, actor: RegisteredMessagingActor, mode: str
 ) -> None:
+    """Choose receive policy through the same signed preference route as clients."""
     body = json.dumps({"inbound_mode": mode}).encode()
     response = await env.client.patch(
         "/v1/agents/me/inbound-mode",
         content=body,
-        headers={
-            **_signed_team_headers(
-                actor.signing_key, actor.did_key, actor.team_id, actor.certificate, body
-            ),
-            "Content-Type": "application/json",
-        },
+        headers=messaging_actor_headers(actor, body=body),
     )
     assert response.status_code == 200, response.text
     assert response.json()["inbound_mode"] == mode
@@ -325,17 +321,6 @@ def messaging_actor_headers(actor, *, body=b"", team=True):
         )
     )
     return {**headers, "Content-Type": "application/json"}
-
-
-async def set_messaging_inbound_mode(env, actor, *, mode):
-    """Choose receive policy through the same signed preference route as clients."""
-    raw = json.dumps({"inbound_mode": mode}).encode()
-    response = await env.client.patch(
-        "/v1/agents/me/inbound-mode",
-        content=raw,
-        headers=messaging_actor_headers(actor, body=raw),
-    )
-    assert response.status_code == 200, response.text
 
 
 async def add_messaging_contact(

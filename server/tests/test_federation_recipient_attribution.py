@@ -13,6 +13,8 @@ from chat_pair_support import route_pair as route_pair
 from messaging_actor_support import admit_messaging_actor, register_messaging_team
 from test_messages_http import _federated_mail_payload, _registered_routing_pair
 
+__all__ = ["route_pair"]
+
 
 def _mail_to_resident(world, *, conversation_id=None):
     alice, bob = world.source.actor, world.target.actor

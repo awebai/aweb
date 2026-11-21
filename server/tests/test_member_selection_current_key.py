@@ -12,6 +12,8 @@ from test_member_team_key import _certificate, _change_key, _connect, _new_membe
 from test_messages_http import _signed_identity_headers
 from test_team_key_pinning import pinning as pinning
 
+__all__ = ["pinning"]
+
 
 @pytest.fixture(autouse=True)
 def proxy_settings_before_application_construction(monkeypatch):

@@ -20,8 +20,8 @@ from aweb.grant_expiry import GrantLifetimeState, grant_lifetime_state
 from aweb.member_team_key import (
     GRANT_ISSUER_RECOVERY_DETAIL,
     CertificateStandingState,
-    MemberStatus,
     grant_issuer_current,
+    member_row_active,
     read_certificate_standings,
 )
 
@@ -74,7 +74,7 @@ def _stored_grant_validity(row: Mapping[str, Any], *, now: datetime) -> GrantVal
         return GrantValidityState.REVOKED
     if lifetime is GrantLifetimeState.EXPIRED:
         return GrantValidityState.EXPIRED
-    if row["subject_status"] != MemberStatus.ACTIVE.value or row["subject_deleted_at"] is not None:
+    if not member_row_active({"status": row["subject_status"], "deleted_at": row["subject_deleted_at"]}):
         return GrantValidityState.SUBJECT_INACTIVE
     if not grant_issuer_current(row):
         return GrantValidityState.ISSUER_SUPERSEDED

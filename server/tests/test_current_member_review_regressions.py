@@ -26,6 +26,8 @@ from test_messages_http import _signed_identity_headers, _signed_team_headers
 from test_service_registration_team_key import SERVICE, _register
 from test_team_key_pinning import pinning as pinning
 
+__all__ = ["pinning", "route_pair"]
+
 
 def _request(env, actor):
     return Request(
@@ -156,6 +158,47 @@ async def _archive_global_member(env, actor):
         ),
     )
     assert outcome.errors == () and outcome.identity_archived
+
+
+@pytest.mark.asyncio
+async def test_workspace_rosters_follow_readmission_after_team_key_rotation(pinning):
+    from aweb.application_state import application_registry_client
+    from mcp_runtime_fixtures import mounted_mcp
+    from test_current_member_selector_surfaces import _tool
+
+    env = pinning
+    viewer = await _admit(env, "roster-viewer")
+    peer = await _admit(env, "roster-peer")
+    peer_workspace = await env.db.fetch_value(
+        "SELECT workspace_id FROM {{tables.workspaces}} WHERE agent_id = $1", peer.id
+    )
+    paths = (
+        "/v1/workspaces",
+        f"/v1/workspaces/team?only_with_claims=false&always_include_workspace_id={peer_workspace}",
+    )
+
+    async def assert_peer_listed(expected):
+        for path in paths:
+            response = await _http(env, viewer, "GET", path)
+            assert response.status_code == 200, response.text
+            aliases = {row["alias"] for row in response.json()["workspaces"]}
+            assert viewer.alias in aliases
+            assert (peer.alias in aliases) is expected, (path, aliases)
+        result = await _tool(env, viewer, "workspace_status", {"limit": 20})
+        assert result["self"]["alias"] == viewer.alias
+        aliases = {row["alias"] for row in result["team_agents"]}
+        assert (peer.alias in aliases) is expected, result
+
+    async with mounted_mcp(
+        env.app, db_infra=env.infra, redis=env.redis,
+        registry_client=application_registry_client(env.app.state),
+    ):
+        await assert_peer_listed(True)
+        next_key = await _change_key(env)
+        await _readmit(env, viewer, next_key)
+        await assert_peer_listed(False)
+        await _readmit(env, peer, next_key)
+        await assert_peer_listed(True)
 
 
 @pytest.mark.asyncio

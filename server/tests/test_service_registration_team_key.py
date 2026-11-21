@@ -25,6 +25,8 @@ from test_team_key_pinning import (
     pinning as pinning,
 )
 
+__all__ = ["pinning"]
+
 SERVICE = "https://aweb.example.test"
 
 

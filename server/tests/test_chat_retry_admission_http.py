@@ -12,6 +12,8 @@ from test_mcp_chat_send_parity import chat_server as chat_server
 from test_mcp_mail_conversation_parity import mail_server as mail_server
 from test_messages_http import _signed_identity_headers
 
+__all__ = ["chat_server", "mail_server"]
+
 
 @pytest.mark.asyncio
 async def test_named_plaintext_replay_without_timestamp_is_a_request_refusal(chat_server):

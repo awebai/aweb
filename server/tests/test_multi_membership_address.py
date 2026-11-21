@@ -17,6 +17,8 @@ from test_cli_human_reply import _cli, _pem
 from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
 from test_messages_http import _make_certificate, _signed_identity_headers
 
+__all__ = ["privacy_app"]
+
 
 @pytest_asyncio.fixture
 async def addressed_human(privacy_app, tmp_path):

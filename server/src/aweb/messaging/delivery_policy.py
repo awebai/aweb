@@ -85,7 +85,7 @@ async def recipient_inbound_mode(db, recipient: Mapping) -> InboundMode:
     except (ValueError, ForbiddenError) as exc:
         raise DeliveryPolicyRefused(
             code=DeliveryRefusalCode.RECIPIENT_POLICY_REJECTED,
-            detail="Recipient inbound_mode migration required. Ask the server operator to complete the inbound policy migration and retry.",
+            detail="Recipient inbound policy is unavailable. Ask the recipient to reconnect or the server operator to check the recipient's policy.",
         ) from exc
 
 

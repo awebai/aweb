@@ -7,6 +7,8 @@ from test_messages_http import _make_keypair, _signed_identity_headers
 from test_mcp_mail_conversation_parity import mail_server  # noqa: F401
 from test_participant_identity_migration import apply, seed_thread
 
+__all__ = ["mail_server"]
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('reader', ['http', 'mcp'])

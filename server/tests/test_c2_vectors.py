@@ -26,6 +26,8 @@ from test_task_answers import _v2_request
 from test_tasks_http import _seed_team
 from test_dashboard_privacy import privacy_app  # noqa: F401
 
+__all__ = ["app_request_context"]
+
 VECTORS = Path(__file__).resolve().parents[2] / "docs" / "vectors"
 AUTH = json.loads((VECTORS / "app-task-authorization-v1.json").read_text())
 CREDENTIAL = json.loads((VECTORS / "app-request-credential-v1.json").read_text())

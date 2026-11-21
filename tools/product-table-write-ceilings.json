@@ -389,7 +389,6 @@
     "server/tests/test_mcp_notifications.py": 1,
     "server/tests/test_member_team_key.py": 1,
     "server/tests/test_multi_membership_address.py": 3,
-    "server/tests/test_package_data.py": 1,
     "server/tests/test_participant_identity_migration.py": 3,
     "server/tests/test_participant_succession.py": 1,
     "server/tests/test_pending_chat_query.py": 4,

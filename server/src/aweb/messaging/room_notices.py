@@ -2,21 +2,18 @@
 
 from __future__ import annotations
 
-from aweb.member_team_key import current_member_sql, read_certificate_standings
+from aweb.member_team_key import current_member_sql
 
 import logging
 from time import monotonic
 from uuid import UUID
 
 from fastapi import HTTPException, Request
-from aweb.application_state import application_registry_client
-from aweb.grant_streams import grant_has_scope, grant_terminal_reason, is_native_certificate_stream
+from aweb.grant_streams import grant_has_scope, grant_terminal_reason, is_native_certificate_stream, require_valid_stream_grant
 from aweb.identity_binding import verify_identity_binding
 from aweb.id_chain_auth import authenticate_id_chain
 from aweb.messaging.room import _active_member, _post_dict, _uuid
 from aweb.service_errors import ServiceError
-from awid.team_certificate import TeamCertificateError, verify_team_certificate_claims
-from aweb.team_auth import certificate_refusal
 from aweb.auth_context import TeamIdentity
 from aweb.team_registry import native_database_manager, resolve_team_key
 
@@ -78,29 +75,12 @@ async def _refresh_room_authority(request, db, identity):
         ):
             raise HTTPException(status_code=403, detail="Room grant out of scope")
     elif is_native_certificate_stream(identity):
+        # Keep the room's direct refresh of the admitted team key. The shared
+        # stream owner then checks the opening credential and the member row.
         team_key = await resolve_team_key(authority_request, identity.team_id)
         if not team_key:
             raise HTTPException(status_code=401, detail="unknown_team")
-        try:
-            checked = verify_team_certificate_claims(
-                request.headers.get("X-AWID-Team-Certificate", ""),
-                subject_did_key=identity.did_key,
-                team_did_key=team_key,
-            )
-            # The team's key cannot authorize a certificate naming a different
-            # team, and another certificate cannot extend this stream session.
-            if (
-                checked.claims["team_id"] != identity.team_id
-                or checked.claims["certificate_id"] != identity.certificate_id
-            ):
-                raise HTTPException(status_code=403, detail="Room membership changed")
-            standings = await read_certificate_standings(
-                application_registry_client(request.app.state), identity.team_id,
-                [identity.certificate_id], request=authority_request,
-            )
-            standings[identity.certificate_id].require_active()
-        except TeamCertificateError as exc:
-            raise certificate_refusal(exc) from exc
+        await require_valid_stream_grant(authority_request, db, identity)
     else:
         raise HTTPException(status_code=403, detail="Room stream requires native membership authority")
     binding = await verify_identity_binding(

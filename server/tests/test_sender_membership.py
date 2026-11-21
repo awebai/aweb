@@ -16,11 +16,13 @@ from test_current_member_review_regressions import _archive_global_member
 from test_dashboard_privacy import TEAM, TEAM_NAME, _request, _seed_mail, privacy_app  # noqa: F401
 from test_team_room import admit_room_member, headers
 
+__all__ = ["privacy_app"]
+
 
 _STANDING_VECTOR = json.loads(
     (Path(__file__).resolve().parents[2] / "test-vectors/trust/sender-standing-v1.json").read_text()
 )
-_REQUIRED_STATES = {case["id"]: case["state"] for case in _STANDING_VECTOR["cases"]}
+_REQUIRED_CASES = {case["id"]: case for case in _STANDING_VECTOR["cases"]}
 
 
 @pytest.mark.asyncio
@@ -29,6 +31,15 @@ async def test_sender_standing_sees_registration_after_a_warm_list(privacy_app, 
     sender, reader = env.actors["alice"], env.actors["bob"]
     certificate = json.loads(base64.b64decode(sender.certificate))
     certificate_id = certificate["certificate_id"]
+
+    async def assert_admission(alias, case):
+        response = await env.client.post(
+            "/v1/connect", content=b"{}", headers=headers(env.actors[alias], b"{}")
+        )
+        refusal = case["certificate_refusal"]
+        assert response.status_code == (200 if refusal is None else 401), response.text
+        if refusal is not None:
+            assert response.json()["detail"] == refusal
 
     monkeypatch.setenv("AWEB_REQUIRE_REGISTERED_CERTIFICATES", "false")
     await admit_room_member(env, alias="bob")
@@ -71,11 +82,13 @@ async def test_sender_standing_sees_registration_after_a_warm_list(privacy_app, 
             response = await env.client.get(message_path, headers=headers(reader))
             assert response.status_code == 200, response.text
             assert response.json()["sender_membership"] == {
-                "team_id": TEAM, "member_did_aw": None, "state": _REQUIRED_STATES["registered"],
+                "team_id": TEAM, "member_did_aw": None, "state": _REQUIRED_CASES["registered"]["state"],
             }
+            await assert_admission("alice", _REQUIRED_CASES["registered"])
             unregistered = await env.client.get(paths["carol"], headers=headers(reader))
             assert unregistered.status_code == 200, unregistered.text
-            assert unregistered.json()["sender_membership"]["state"] == _REQUIRED_STATES["unregistered"]
+            assert unregistered.json()["sender_membership"]["state"] == _REQUIRED_CASES["unregistered"]["state"]
+            await assert_admission("carol", _REQUIRED_CASES["unregistered"])
 
             await writer.revoke_team_certificate(
                 "example.test", TEAM_NAME, team_controller_signing_key=env.team_sk,
@@ -84,7 +97,8 @@ async def test_sender_standing_sees_registration_after_a_warm_list(privacy_app, 
             env.app.state.awid_registry_client = writer
             revoked = await env.client.get(message_path, headers=headers(reader))
             assert revoked.status_code == 200, revoked.text
-            assert revoked.json()["sender_membership"]["state"] == _REQUIRED_STATES["revoked"]
+            assert revoked.json()["sender_membership"]["state"] == _REQUIRED_CASES["revoked"]["state"]
+            await assert_admission("alice", _REQUIRED_CASES["revoked"])
         finally:
             env.app.state.awid_registry_client = writer
             await cache.aclose()

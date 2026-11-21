@@ -73,7 +73,8 @@ or invalid row policy fails closed with the migration-required refusal. A mode
 change by the identity updates all those rows; a new membership inherits the
 current effective mode. Team ownership alone does not authorize a policy change.
 A global-scope row without a raw `did:aw` has no link to other memberships:
-its policy is its own explicit mode, with NULL or invalid still migration-required.
+its policy is its own explicit mode. Migration 056 backfills legacy NULL rows
+to the native default `open` and preserves explicitly selected policies.
 This does not grant it authority to set an identity-wide policy.
 The identity-signed "my inbound mode" route uses the authenticated, AWID-bound
 `did:aw` for the change; a stored membership claim cannot select its write scope.
@@ -578,12 +579,14 @@ display/routing label: neither client looks up its address or alias or creates a
 global address pin. Same-team locals retain the authenticated live roster path;
 global `did:aw` senders retain their existing key/log and address checks.
 
-Both clients implement this decision matrix, exercised by
-`TestReceivedLocalSenderMatrix` and channel-core's `cross-team received local
-sender` tests. The native HTTP read and both clients share the
-[`sender-standing-v1` vector](../test-vectors/trust/sender-standing-v1.json)
-for registered, unregistered and revoked certificates. Real two-team mail tests cover a global resident grant, plaintext
-and encrypted-v2, CLI reads, channel presentation and wake presentation.
+The [`sender-standing-v1` vector](../test-vectors/trust/sender-standing-v1.json)
+pins the same registered, unregistered and revoked evidence in the native
+Python server, Python AWID certificate helper and Go registry status reader.
+Go and channel-core also consume the resulting server projection and check
+the received-message outcomes in the matrix below. Channel-core has no
+certificate on these reads and uses the delivery server's standing
+attestation. Real two-team mail tests cover plaintext and encrypted-v2,
+including CLI reads, channel presentation and wake presentation.
 
 | Evidence after signature and recipient checks | Result |
 | --- | --- |

@@ -21,6 +21,8 @@ from nacl.signing import SigningKey
 from test_dashboard_privacy import privacy_app as privacy_app
 from test_team_room import admit_room_member
 
+__all__ = ["privacy_app"]
+
 EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
 
 

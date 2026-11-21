@@ -20,6 +20,8 @@ from nacl.signing import SigningKey
 from starlette.requests import Request
 from test_dashboard_privacy import privacy_app as privacy_app
 
+__all__ = ["privacy_app"]
+
 
 def _make_keypair():
     sk = SigningKey.generate()

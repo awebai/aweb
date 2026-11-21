@@ -24,6 +24,8 @@ from messaging_actor_support import admit_messaging_actor
 from test_dashboard_privacy import TEAM, TEAM_NAME
 from test_dashboard_privacy import privacy_app as privacy_app
 
+__all__ = ["privacy_app"]
+
 TEAM_ID = "backend:acme.com"
 MEMBER_DID_KEY = "did:key:z6MkRevocable"
 # A member accepted under its team's current key, as lookup_identity_agent_context reads it.

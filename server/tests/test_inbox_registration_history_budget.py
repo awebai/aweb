@@ -10,6 +10,8 @@ from test_dashboard_privacy import TEAM, TEAM_NAME, privacy_app as privacy_app
 from test_messages_http import _encode_certificate, _make_certificate, _signed_team_headers
 from test_team_room import admit_room_member
 
+__all__ = ["privacy_app"]
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("history", [0, 2000])

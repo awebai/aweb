@@ -13,6 +13,8 @@ from test_dashboard_privacy import (
     pre_chat_coverage_privacy_app as pre_chat_coverage_privacy_app,
 )
 
+__all__ = ["pre_chat_coverage_privacy_app"]
+
 
 @pytest.mark.asyncio
 async def test_migrated_pair_group_and_single_keep_exact_history_and_empty_stays_private(

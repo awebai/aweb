@@ -8,6 +8,8 @@ import pytest
 from test_attachments_http import managed_fixture
 from test_dashboard_privacy import _request, privacy_app as privacy_app
 
+__all__ = ["privacy_app"]
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["mail", "chat"])

@@ -16,6 +16,8 @@ from test_agent_status_host_http import _team_request
 from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
 from test_messages_http import _make_certificate
 
+__all__ = ["privacy_app"]
+
 
 @pytest.mark.usefixtures("source_cli_binary")
 @pytest.mark.asyncio

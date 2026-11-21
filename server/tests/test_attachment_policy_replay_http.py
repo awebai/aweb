@@ -11,6 +11,8 @@ from test_dashboard_privacy import _request
 from test_messages_http import _signed_team_headers
 from test_federated_chat_create_retry import connect_pair_actor
 
+__all__ = ["route_pair"]
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["mail", "chat"])

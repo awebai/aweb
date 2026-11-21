@@ -20,6 +20,8 @@ from test_dashboard_privacy import TEAM, privacy_app as privacy_app
 from test_identity_grants import _grant_headers, _session_keypair
 from test_messages_http import _signed_team_headers
 
+__all__ = ["privacy_app"]
+
 
 async def authenticated_grant_member(env):
     """Capture the real verifier result after signed registration, connect and mint."""

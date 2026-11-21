@@ -18,6 +18,8 @@ from messaging_actor_support import (
 from test_dashboard_privacy import TEAM, privacy_app as privacy_app
 from test_federation_activation_delivery import _envelope
 
+__all__ = ["privacy_app"]
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("transport", ["local", "federation"])

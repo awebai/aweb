@@ -19,6 +19,8 @@ from aweb.messaging.contacts import add_contact, has_exact_active_identity_conta
 from test_cli_never_grants import registry_listener
 from test_dashboard_privacy import _request, privacy_app  # noqa: F401
 
+__all__ = ["privacy_app"]
+
 
 _VECTORS = json.loads(
     (Path(__file__).resolve().parents[2] / "docs/vectors/id-certificates-v1.json").read_text()

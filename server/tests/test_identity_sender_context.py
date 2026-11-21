@@ -20,6 +20,8 @@ from test_messages_http import (
     _signed_team_headers,
 )
 
+__all__ = ["privacy_app"]
+
 
 class SenderTransport(StrEnum):
     HTTP = "http"
@@ -243,7 +245,7 @@ async def test_identity_sender_uses_its_single_current_context_not_first_registe
             assert "sender_context_required" in refused.text
             assert "X-AWID-Team-Certificate" in refused.text
             assert "pass --team" in refused.text
-            assert "upgrade aw 1.36.58" in refused.text
+            assert "aw 1.36.59 or later" in refused.text
             assert (
                 await env.db.fetch_value(
                     "SELECT count(*) FROM {{tables.messages}} WHERE from_did=$1",

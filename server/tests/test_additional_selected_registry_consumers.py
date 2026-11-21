@@ -20,6 +20,8 @@ from test_messages_http import _signed_team_headers
 from test_selected_registry_consumers import root_app, root_request
 from test_team_auth_deps import _admitted_cert_info
 
+__all__ = ["privacy_app"]
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("missing", [False, True])
