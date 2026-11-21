@@ -528,6 +528,8 @@ async def current_membership(
         if standing.state is CertificateStandingState.ACTIVE:
             return row
         if standing.state is CertificateStandingState.UNAVAILABLE:
+            if standing.registration is None:
+                standing.require_active()
             raise HTTPException(
                 status_code=503,
                 detail="Certificate registration is unavailable. Retry in a moment.",

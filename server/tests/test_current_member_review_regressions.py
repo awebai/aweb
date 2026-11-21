@@ -435,7 +435,8 @@ async def test_an_open_certificate_status_stream_stops_after_rotation(pinning, m
     workspace = str(actor.workspace)
     headers = _signed_team_headers(actor.sk, actor.did, TEAM, actor.certificate)
     assert grant_streams.STREAM_AUTHORITY_RECHECK_SECONDS == 30
-    monkeypatch.setattr(grant_streams, "STREAM_AUTHORITY_RECHECK_SECONDS", 0.05)
+    clock = [0.0]
+    monkeypatch.setattr(grant_streams, "time", SimpleNamespace(monotonic=lambda: clock[0]))
 
     async with env.client.stream(
         "GET", "/v1/status/stream", headers=headers, params={"workspace_id": workspace}
@@ -451,6 +452,7 @@ async def test_an_open_certificate_status_stream_stops_after_rotation(pinning, m
         assert (before["type"], before["task_ref"]) == ("task.created", "before-rotation")
 
         await _change_key(env)
+        clock[0] += grant_streams.STREAM_AUTHORITY_RECHECK_SECONDS
         await publish_event(env.redis, TaskCreatedEvent(workspace_id=workspace, task_ref="after-rotation"))
         terminal = await _next_event(lines)
         assert terminal["type"] == "team_membership_not_current", terminal

@@ -18,7 +18,7 @@ from aweb.service_errors import ServiceError
 from awid.team_certificate import TeamCertificateError, verify_team_certificate_claims
 from aweb.team_auth import certificate_refusal
 from aweb.auth_context import TeamIdentity
-from aweb.team_registry import resolve_team_key
+from aweb.team_registry import native_database_manager, resolve_team_key
 
 logger = logging.getLogger(__name__)
 
@@ -123,7 +123,7 @@ async def count_room_notices(db, actor: TeamIdentity) -> int:
         return 0
     grant = actor.grant
     return int(
-        await _aweb_db(db).fetch_val(
+        await native_database_manager(db).fetch_val(
             """
         SELECT count(*)
         FROM {{tables.room_post_notices}} n

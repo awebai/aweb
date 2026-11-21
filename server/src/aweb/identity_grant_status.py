@@ -8,7 +8,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
-from fastapi import HTTPException, Request
+from fastapi import Request
 
 from aweb.application_state import application_registry_client
 from aweb.certificate_registration import (
