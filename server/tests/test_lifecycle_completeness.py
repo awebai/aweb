@@ -142,8 +142,19 @@ async def test_agent_cleanup_retains_history_and_releases_live_coordination(
     assert (row["deleted_at"] is None) == (disposition is AgentDisposition.PRESERVED)
     assert result.identity_deleted == (disposition is AgentDisposition.DELETED)
     assert result.identity_retired == (disposition is AgentDisposition.RETIRED)
+    assert result.chat_participant_cleanup_count == 1
+    assert not await env.db.fetch_value(
+        "SELECT EXISTS(SELECT 1 FROM {{tables.chat_participants}} WHERE session_id=$1 AND did=$2)",
+        session_id, alice.did,
+    )
     assert await env.db.fetch_value(
-        "SELECT left_at IS NOT NULL FROM {{tables.chat_participants}} WHERE session_id=$1 AND did=$2",
+        "SELECT EXISTS(SELECT 1 FROM {{tables.chat_participants}} WHERE session_id=$1 AND did=$2)",
+        session_id, bob.did,
+    )
+    assert await env.db.fetch_value(
+        """SELECT EXISTS(
+            SELECT 1 FROM {{tables.conversation_participants}} WHERE conversation_id=$1 AND did=$2
+        )""",
         session_id, alice.did,
     )
     assert await env.db.fetch_value(
@@ -219,8 +230,8 @@ async def test_coordination_cleanup_rolls_back_with_its_outer_transaction(
             )
             assert not result.errors
             assert result.post_commit_status == "pending"
-            assert await tx.fetch_value(
-                "SELECT left_at IS NOT NULL FROM {{tables.chat_participants}} WHERE session_id=$1",
+            assert not await tx.fetch_value(
+                "SELECT EXISTS(SELECT 1 FROM {{tables.chat_participants}} WHERE session_id=$1)",
                 session,
             )
             raise RuntimeError("outer transaction refused")
@@ -234,11 +245,9 @@ async def test_coordination_cleanup_rolls_back_with_its_outer_transaction(
         )
         is None
     )
-    assert (
-        await db.fetch_value(
-            "SELECT left_at FROM {{tables.chat_participants}} WHERE session_id=$1", session
-        )
-        is None
+    assert await db.fetch_value(
+        "SELECT EXISTS(SELECT 1 FROM {{tables.chat_participants}} WHERE session_id=$1 AND did=$2)",
+        session, did,
     )
     assert (
         await db.fetch_value(
