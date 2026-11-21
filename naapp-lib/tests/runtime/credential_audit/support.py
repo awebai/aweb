@@ -167,6 +167,8 @@ class World:
     handed: list[tuple[int, UUID]]
     fail_after_enqueue: list[bool]
     target_registered: list[bool]
+    # Awaited after each enqueue, inside the effect: work that takes time.
+    pause_after_enqueue: list[Callable[[], Awaitable[None]] | None]
     registry: Registry
     recorder: CredentialAudit = field(init=False)
     passkeys: Passkeys = field(init=False)
@@ -208,9 +210,12 @@ async def world(test_db_factory) -> AsyncIterator[World]:
     handed: list[tuple[int, UUID]] = []
     fail: list[bool] = [False]
     registered: list[bool] = [True]
+    pause: list[Callable[[], Awaitable[None]] | None] = [None]
 
     async def after_enqueue(tx: TransactionManager, event_id: UUID) -> None:
         handed.append((await tx.fetch_value("SELECT txid_current()"), event_id))
+        if pause[0] is not None:
+            await pause[0]()
         if fail[0]:
             raise RuntimeError("the app could not append the event")
 
@@ -223,7 +228,7 @@ async def world(test_db_factory) -> AsyncIterator[World]:
             registry, team_id=TEAM_ID, acts=APP_ACTS + LOGS_ACTS + HUMAN_ROLE_ACTS
         )
         inbox = Inbox()
-        state = World(db, owner, fence, admitted, inbox, handed, fail, registered, registry)
+        state = World(db, owner, fence, admitted, inbox, handed, fail, registered, pause, registry)
         state.recorder = CredentialAudit(
             db=db,
             app_id=APP_ID,

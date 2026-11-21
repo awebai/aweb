@@ -1,34 +1,38 @@
 from __future__ import annotations
 
 import ast
-from collections import OrderedDict
-from time import monotonic
 import base64
 import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
 from dataclasses import asdict, replace
-from unittest.mock import AsyncMock
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
-from team_facts_fixtures import legacy_team
 
 import pytest
+import pytest_asyncio
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.routing import APIRoute
 from httpx import ASGITransport, AsyncClient
 from nacl.signing import SigningKey
 
 from awid.did import did_from_public_key
-from awid.registry import IDTreeEnrollment
 from awid.signing import canonical_json_bytes, sign_message
 from aweb.api import create_app
+from aweb.error_responses import install_service_error_handlers
+from identity_binding_support import register_global_identity
+from tests.test_dashboard_privacy import privacy_app as privacy_app
+from test_id_chain_request_auth import ALICE, VECTORS
+from test_messages_http import _make_certificate, _encode_certificate, _signed_team_headers
 from aweb.auth_context import GRANT_SCOPE_ANY, GRANT_SCOPES, GrantContext
-from aweb.grant_streams import agent_event_allowed, allowed_status_categories, grant_terminal_reason
+from aweb.grant_streams import (
+    agent_event_allowed,
+    allowed_status_categories,
+    grant_terminal_reason,
+)
 from aweb.identity_auth_deps import MessagingAuth, get_messaging_auth
-from aweb.identity_binding import IdentityBinding
-from aweb.identity_grant_auth import required_grant_scope
+from aweb.identity_grant_auth import required_grant_scope, verify_identity_grant_team_identity
 from aweb.coordination.routes.repos import router as repos_router
 from aweb.coordination.routes.tasks import router as tasks_router
 from aweb.coordination.routes.team_instructions import router as instructions_router
@@ -39,18 +43,40 @@ from aweb.routes import agents as agents_routes
 from aweb.routes.chat import router as chat_router, stream as chat_stream_route
 from aweb.routes.claims import router as claims_router
 from aweb.routes.contacts import router as contacts_router
-from aweb.routes.events import event_stream as events_stream_route, router as events_router
+from aweb.routes.events import (
+    event_stream as events_stream_route,
+    router as events_router,
+)
 from aweb.routes.agents import router as agents_router
 from aweb.routes.identity_grants import router as identity_grants_router
 from aweb.routes.messages import router as messages_router
 from aweb.routes.reservations import router as reservations_router
-from aweb.routes.status import router as status_router, status_stream as status_stream_route
-from aweb.team_auth_deps import TeamIdentity, get_team_identity, team_identity_with_grant_scope
+from aweb.routes.status import (
+    router as status_router,
+    status_stream as status_stream_route,
+)
+from aweb.team_auth_deps import (
+    TeamIdentity,
+    get_team_identity,
+    team_identity_with_grant_scope,
+)
+
+__all__ = ["privacy_app"]
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 TEAM_ID = "backend:acme.com"
-SUBJECT_DID_KEY = "did:key:z6MkSubjectAlice"
+SUBJECT_DID_KEY = ALICE["did_key"]
+SUBJECT_DID_AW = ALICE["did_aw"]
+BOB = VECTORS["keys"]["bob"]
+TARGET_DID_KEY = BOB["did_key"]
+TARGET_DID_AW = BOB["did_aw"]
+
+
+@pytest_asyncio.fixture
+async def aweb_cloud_db(privacy_app):
+    """Borrow the shared real services; root-only unit routes use captured auth."""
+    return SimpleNamespace(aweb_db=privacy_app.db, env=privacy_app)
 
 
 class _DbShim:
@@ -75,34 +101,32 @@ def _cached_body_receive(body: bytes):
 
 
 async def _identity(request: Request):
-    return TeamIdentity(
-        team_id=TEAM_ID, alias=request.app.state.alias, did_key=SUBJECT_DID_KEY,
-        did_aw="did:aw:alice", address="acme.com/alice",
-        agent_id=request.app.state.agent_id,
-        identity_scope="global", certificate_id="cert-1",
-    )
+    # The root was verified through the real certificate dependency after
+    # native admission. These unit routes exercise the subsequent grant
+    # operation, including status after the root's standing changes.
+    return request.app.state.root_identities[request.app.state.alias]
 
 
 def _auth_view(auth: MessagingAuth) -> dict:
     return asdict(auth)
 
 
-def _verified_subject_fixture(app):
-    # These are scope/protocol unit fixtures with root auth already supplied
-    # by _identity. Model the corresponding fresh, previously verified fact;
-    # real registry admission/refusal lives in test_identity_binding_http.
-    app.state.identity_binding_cache = OrderedDict({
-        ("did:aw:alice", SUBJECT_DID_KEY, "acme.com/alice"): (
-            monotonic() + 60, IdentityBinding(
-                "did:aw:alice", "acme.com/alice", did_key=SUBJECT_DID_KEY,
-                id_tree=IDTreeEnrollment(False, None),
-            ),
-        ),
-    })
+def _borrow_grant_resources(app, source):
+    app.state.db = source.state.db
+    app.state.awid_registry_client = source.state.awid_registry_client
+    app.state.root_identities = source.state.root_identities
+    app.state.root_messaging = source.state.root_messaging
+    app.state.members = source.state.members
+    app.state.env = source.state.env
+    app.state.agent_id = source.state.agent_id
+    app.state.alias = source.state.alias
 
 
 def _build_app(aweb_db) -> FastAPI:
+    any_grant_identity = team_identity_with_grant_scope(GRANT_SCOPE_ANY)
+    presence_identity = team_identity_with_grant_scope("presence.write")
     app = FastAPI()
+    install_service_error_handlers(app)
     app.include_router(identity_grants_router)
 
     @app.get("/v1/messages")
@@ -118,11 +142,15 @@ def _build_app(aweb_db) -> FastAPI:
         return _auth_view(auth)
 
     @app.get("/v1/team-agents")
-    async def _team_roster(identity: TeamIdentity = Depends(team_identity_with_grant_scope(GRANT_SCOPE_ANY))):
+    async def _team_roster(
+        identity: TeamIdentity = Depends(any_grant_identity),
+    ):
         return asdict(identity)
 
     @app.post("/v1/heartbeat")
-    async def _heartbeat(identity: TeamIdentity = Depends(team_identity_with_grant_scope("presence.write"))):
+    async def _heartbeat(
+        identity: TeamIdentity = Depends(presence_identity),
+    ):
         return asdict(identity)
 
     @app.get("/v1/chat/{session_id}/messages")
@@ -160,12 +188,6 @@ def _build_app(aweb_db) -> FastAPI:
     app.state.public_origin = "http://test"
     # Grant auth checks the issuing certificate against the registry's
     # revocations (aweb-abfn); default to none revoked.
-    registry = AsyncMock()
-    registry.get_team_revocations_for_certificates = None  # Legacy SDK interface.
-    registry.get_team_revocations = AsyncMock(return_value=set())
-    registry.get_team_fresh = AsyncMock(side_effect=legacy_team)
-    app.state.awid_registry_client = registry
-    _verified_subject_fixture(app)
 
     @app.middleware("http")
     async def cache_body_middleware(request, call_next):
@@ -178,26 +200,114 @@ def _build_app(aweb_db) -> FastAPI:
     return app
 
 
-async def _fixture(aweb_db):
-    agent_id = uuid4()
-    await aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ($1, 'acme.com', 'backend', 'did:key:zTeam')
-        """,
-        TEAM_ID,
+async def _fixture(env, *, real_handlers=False, register_issuer=True):
+    """Actual namespace, DID/address, certificate and native admission producer."""
+    sdk = env.app.state.awid_registry_client
+    controller = await env.registry.ensure_namespace(domain="acme.com")
+    await sdk.register_team(
+        domain="acme.com",
+        name="backend",
+        display_name="Grant tests",
+        team_did_key=env.team_did,
+        visibility="public",
+        namespace_controller_signing_key=bytes(controller),
     )
-    await aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}} (agent_id, team_id, alias, did_key, did_aw, address, status, identity_scope, did_aw_verified_key)
-        VALUES ($1, $2, 'alice', $3, 'did:aw:alice', 'acme.com/alice', 'active', 'global', $3)
-        """,
-        agent_id, TEAM_ID, SUBJECT_DID_KEY,
+    members, root_identities, root_messaging = {}, {}, {}
+    for alias, vector, cert_id in (("alice", ALICE, "cert-1"), ("bob", BOB, "cert-bob")):
+        actor = SimpleNamespace(sk=bytes.fromhex(vector["seed_hex"]), did=vector["did_key"])
+        stable = await register_global_identity(env, actor, "acme.com/" + alias)
+        assert stable == vector["did_aw"]
+        cert = _make_certificate(
+            env.team_sk,
+            env.team_did,
+            actor.did,
+            team_id=TEAM_ID,
+            alias=alias,
+            member_did_aw=stable,
+            member_address="acme.com/" + alias,
+            identity_scope="global",
+            certificate_id=cert_id,
+        )
+        encoded = _encode_certificate(cert)
+        if alias != "alice" or register_issuer:
+            await sdk.register_team_certificate(
+                "acme.com",
+                "backend",
+                team_controller_signing_key=env.team_sk,
+                certificate_id=cert_id,
+                member_did_key=actor.did,
+                member_did_aw=stable,
+                member_address="acme.com/" + alias,
+                alias=alias,
+                identity_scope="global",
+                certificate=encoded,
+            )
+        connected = await env.client.post(
+            "/v1/connect",
+            content=b"{}",
+            headers={
+                **_signed_team_headers(actor.sk, actor.did, TEAM_ID, encoded, b"{}"),
+                "Content-Type": "application/json",
+            },
+        )
+        assert connected.status_code == 200, connected.text
+        headers = _signed_team_headers(actor.sk, actor.did, TEAM_ID, encoded, b"")
+        request = Request(
+            {
+                "type": "http",
+                "method": "GET",
+                "scheme": "http",
+                "server": ("test", 80),
+                "path": "/v1/messages",
+                "query_string": b"",
+                "headers": [(k.lower().encode(), v.encode()) for k, v in headers.items()],
+                "app": env.app,
+                "state": {"cached_body": b"", "body_sha256": hashlib.sha256(b"").hexdigest()},
+            }
+        )
+        root_identities[alias] = await get_team_identity(request, db=env.infra)
+        root_messaging[alias] = await get_messaging_auth(request, db=env.infra)
+        members[alias] = SimpleNamespace(
+            **vars(actor),
+            stable=stable,
+            certificate=encoded,
+            claims=cert,
+            id=connected.json()["agent_id"],
+            workspace=connected.json()["workspace_id"],
+        )
+    app = _build_real_messaging_app(env.db) if real_handlers else _build_app(env.db)
+    app.state.awid_registry_client = sdk
+    app.state.root_identities = root_identities
+    app.state.root_messaging = root_messaging
+    app.state.members = members
+    app.state.env = env
+    app.state.agent_id, app.state.alias = members["alice"].id, "alice"
+    return app, members["alice"].id
+
+
+async def _register_issuer(app):
+    env, member = app.state.env, app.state.members["alice"]
+    await app.state.awid_registry_client.register_team_certificate(
+        "acme.com",
+        "backend",
+        team_controller_signing_key=env.team_sk,
+        certificate_id="cert-1",
+        member_did_key=member.did,
+        member_did_aw=member.stable,
+        member_address="acme.com/alice",
+        alias="alice",
+        identity_scope="global",
+        certificate=member.certificate,
     )
-    app = _build_app(aweb_db)
-    app.state.agent_id = str(agent_id)
-    app.state.alias = "alice"
-    return app, agent_id
+
+
+async def _revoke_issuer(app):
+    await app.state.awid_registry_client.revoke_team_certificate(
+        "acme.com",
+        "backend",
+        team_controller_signing_key=app.state.env.team_sk,
+        certificate_id="cert-1",
+    )
 
 
 def _session_keypair():
@@ -238,8 +348,19 @@ def _grant_headers(
     }
 
 
-async def _mint(client, *, grant_did_key: str, scopes: list[str], ttl_seconds: int = 600, label: str | None = None):
-    body = {"grant_did_key": grant_did_key, "scopes": scopes, "ttl_seconds": ttl_seconds}
+async def _mint(
+    client,
+    *,
+    grant_did_key: str,
+    scopes: list[str],
+    ttl_seconds: int = 600,
+    label: str | None = None,
+):
+    body = {
+        "grant_did_key": grant_did_key,
+        "scopes": scopes,
+        "ttl_seconds": ttl_seconds,
+    }
     if label is not None:
         body["label"] = label
     return await client.post("/v1/identity-grants", json=body)
@@ -247,15 +368,20 @@ async def _mint(client, *, grant_did_key: str, scopes: list[str], ttl_seconds: i
 
 @pytest.mark.asyncio
 async def test_mint_and_grant_send_resolves_subject_attribution(aweb_cloud_db):
-    app, agent_id = await _fixture(aweb_cloud_db.aweb_db)
+    app, agent_id = await _fixture(aweb_cloud_db.env)
     signing_key, did_key = _session_keypair()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        minted = await _mint(client, grant_did_key=did_key, scopes=["mail.send", "mail.send", "mail.read"], label="ci worker")
+        minted = await _mint(
+            client,
+            grant_did_key=did_key,
+            scopes=["mail.send", "mail.send", "mail.read"],
+            label="ci worker",
+        )
         assert minted.status_code == 200, minted.text
         grant = minted.json()
         assert grant["team_id"] == TEAM_ID
         assert grant["subject_alias"] == "alice"
-        assert grant["subject_did_aw"] == "did:aw:alice"
+        assert grant["subject_did_aw"] == SUBJECT_DID_AW
         assert grant["grant_did_key"] == did_key
         assert grant["scopes"] == ["mail.send", "mail.read"]
 
@@ -264,14 +390,18 @@ async def test_mint_and_grant_send_resolves_subject_attribution(aweb_cloud_db):
             "/v1/messages",
             content=body,
             headers=_grant_headers(
-                signing_key=signing_key, did_key=did_key, grant_id=grant["grant_id"],
-                method="POST", path="/v1/messages", body=body,
+                signing_key=signing_key,
+                did_key=did_key,
+                grant_id=grant["grant_id"],
+                method="POST",
+                path="/v1/messages",
+                body=body,
             ),
         )
     assert sent.status_code == 200, sent.text
     auth = sent.json()
     assert auth["did_key"] == SUBJECT_DID_KEY
-    assert auth["did_aw"] == "did:aw:alice"
+    assert auth["did_aw"] == SUBJECT_DID_AW
     assert auth["address"] == "acme.com/alice"
     assert auth["alias"] == "alice"
     assert auth["agent_id"] == str(agent_id)
@@ -285,23 +415,31 @@ async def test_mint_and_grant_send_resolves_subject_attribution(aweb_cloud_db):
 
 @pytest.mark.asyncio
 async def test_wrong_session_key_is_rejected(aweb_cloud_db):
-    app, _ = await _fixture(aweb_cloud_db.aweb_db)
+    app, _ = await _fixture(aweb_cloud_db.env)
     signing_key, did_key = _session_keypair()
     other_signing_key, other_did_key = _session_keypair()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        grant_id = (await _mint(client, grant_did_key=did_key, scopes=["mail.send"])).json()["grant_id"]
+        grant_id = (await _mint(client, grant_did_key=did_key, scopes=["mail.send"])).json()[
+            "grant_id"
+        ]
         wrong_key = await client.post(
             "/v1/messages",
             headers=_grant_headers(
-                signing_key=other_signing_key, did_key=other_did_key, grant_id=grant_id,
-                method="POST", path="/v1/messages",
+                signing_key=other_signing_key,
+                did_key=other_did_key,
+                grant_id=grant_id,
+                method="POST",
+                path="/v1/messages",
             ),
         )
         forged_did = await client.post(
             "/v1/messages",
             headers=_grant_headers(
-                signing_key=other_signing_key, did_key=did_key, grant_id=grant_id,
-                method="POST", path="/v1/messages",
+                signing_key=other_signing_key,
+                did_key=did_key,
+                grant_id=grant_id,
+                method="POST",
+                path="/v1/messages",
             ),
         )
     assert wrong_key.status_code == 403
@@ -312,10 +450,12 @@ async def test_wrong_session_key_is_rejected(aweb_cloud_db):
 
 @pytest.mark.asyncio
 async def test_expired_grant_is_rejected(aweb_cloud_db):
-    app, _ = await _fixture(aweb_cloud_db.aweb_db)
+    app, _ = await _fixture(aweb_cloud_db.env)
     signing_key, did_key = _session_keypair()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        grant_id = (await _mint(client, grant_did_key=did_key, scopes=["mail.send"])).json()["grant_id"]
+        grant_id = (await _mint(client, grant_did_key=did_key, scopes=["mail.send"])).json()[
+            "grant_id"
+        ]
         await aweb_cloud_db.aweb_db.execute(
             """
             UPDATE {{tables.identity_session_grants}}
@@ -327,8 +467,11 @@ async def test_expired_grant_is_rejected(aweb_cloud_db):
         expired = await client.post(
             "/v1/messages",
             headers=_grant_headers(
-                signing_key=signing_key, did_key=did_key, grant_id=grant_id,
-                method="POST", path="/v1/messages",
+                signing_key=signing_key,
+                did_key=did_key,
+                grant_id=grant_id,
+                method="POST",
+                path="/v1/messages",
             ),
         )
     assert expired.status_code == 403
@@ -337,17 +480,22 @@ async def test_expired_grant_is_rejected(aweb_cloud_db):
 
 @pytest.mark.asyncio
 async def test_revoked_grant_is_rejected(aweb_cloud_db):
-    app, _ = await _fixture(aweb_cloud_db.aweb_db)
+    app, _ = await _fixture(aweb_cloud_db.env)
     signing_key, did_key = _session_keypair()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        grant_id = (await _mint(client, grant_did_key=did_key, scopes=["mail.send"])).json()["grant_id"]
+        grant_id = (await _mint(client, grant_did_key=did_key, scopes=["mail.send"])).json()[
+            "grant_id"
+        ]
         revoked = await client.post(f"/v1/identity-grants/{grant_id}/revoke")
         assert revoked.status_code == 200
         rejected = await client.post(
             "/v1/messages",
             headers=_grant_headers(
-                signing_key=signing_key, did_key=did_key, grant_id=grant_id,
-                method="POST", path="/v1/messages",
+                signing_key=signing_key,
+                did_key=did_key,
+                grant_id=grant_id,
+                method="POST",
+                path="/v1/messages",
             ),
         )
     assert rejected.status_code == 403
@@ -356,44 +504,105 @@ async def test_revoked_grant_is_rejected(aweb_cloud_db):
 
 @pytest.mark.asyncio
 async def test_scope_enforcement_for_mail_chat_and_roster(aweb_cloud_db):
-    app, _ = await _fixture(aweb_cloud_db.aweb_db)
+    app, _ = await _fixture(aweb_cloud_db.env)
     send_key, send_did = _session_keypair()
     chat_key, chat_did = _session_keypair()
     contacts_key, contacts_did = _session_keypair()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        send_grant = (await _mint(client, grant_did_key=send_did, scopes=["mail.send"])).json()["grant_id"]
-        chat_grant = (await _mint(client, grant_did_key=chat_did, scopes=["chat.read"])).json()["grant_id"]
-        contacts_grant = (await _mint(client, grant_did_key=contacts_did, scopes=["contacts.read", "contacts.write"])).json()["grant_id"]
+        send_grant = (await _mint(client, grant_did_key=send_did, scopes=["mail.send"])).json()[
+            "grant_id"
+        ]
+        chat_grant = (await _mint(client, grant_did_key=chat_did, scopes=["chat.read"])).json()[
+            "grant_id"
+        ]
+        contacts_grant = (
+            await _mint(
+                client,
+                grant_did_key=contacts_did,
+                scopes=["contacts.read", "contacts.write"],
+            )
+        ).json()["grant_id"]
 
         def send_headers(method, path):
-            return _grant_headers(signing_key=send_key, did_key=send_did, grant_id=send_grant, method=method, path=path)
+            return _grant_headers(
+                signing_key=send_key,
+                did_key=send_did,
+                grant_id=send_grant,
+                method=method,
+                path=path,
+            )
 
         def chat_headers(method, path):
-            return _grant_headers(signing_key=chat_key, did_key=chat_did, grant_id=chat_grant, method=method, path=path)
+            return _grant_headers(
+                signing_key=chat_key,
+                did_key=chat_did,
+                grant_id=chat_grant,
+                method=method,
+                path=path,
+            )
 
         def contacts_headers(method, path):
-            return _grant_headers(signing_key=contacts_key, did_key=contacts_did, grant_id=contacts_grant, method=method, path=path)
+            return _grant_headers(
+                signing_key=contacts_key,
+                did_key=contacts_did,
+                grant_id=contacts_grant,
+                method=method,
+                path=path,
+            )
 
         inbox_denied = await client.get("/v1/messages", headers=send_headers("GET", "/v1/messages"))
-        send_allowed = await client.post("/v1/messages", headers=send_headers("POST", "/v1/messages"))
+        send_allowed = await client.post(
+            "/v1/messages", headers=send_headers("POST", "/v1/messages")
+        )
         roster_allowed = await client.get("/v1/agents", headers=send_headers("GET", "/v1/agents"))
-        team_roster_allowed = await client.get("/v1/team-agents", headers=send_headers("GET", "/v1/team-agents"))
-        presence_denied = await client.post("/v1/heartbeat", headers=send_headers("POST", "/v1/heartbeat"))
-        lease_denied = await client.post("/v1/session-leases", headers=send_headers("POST", "/v1/session-leases"))
+        team_roster_allowed = await client.get(
+            "/v1/team-agents", headers=send_headers("GET", "/v1/team-agents")
+        )
+        presence_denied = await client.post(
+            "/v1/heartbeat", headers=send_headers("POST", "/v1/heartbeat")
+        )
+        lease_denied = await client.post(
+            "/v1/session-leases", headers=send_headers("POST", "/v1/session-leases")
+        )
 
-        chat_read_allowed = await client.get("/v1/chat/s1/messages", headers=chat_headers("GET", "/v1/chat/s1/messages"))
-        mark_read_allowed = await client.post("/v1/chat/s1/read", headers=chat_headers("POST", "/v1/chat/s1/read"))
-        chat_send_denied = await client.post("/v1/chat/s1/messages", headers=chat_headers("POST", "/v1/chat/s1/messages"))
-        chat_roster_allowed = await client.get("/v1/agents", headers=chat_headers("GET", "/v1/agents"))
-        contacts_read_allowed = await client.get("/v1/contacts", headers=contacts_headers("GET", "/v1/contacts"))
-        contacts_write_allowed = await client.post("/v1/contacts", headers=contacts_headers("POST", "/v1/contacts"))
-        contacts_delete_allowed = await client.delete("/v1/contacts/contact-1", headers=contacts_headers("DELETE", "/v1/contacts/contact-1"))
-        contacts_wrong_scope = await client.get("/v1/contacts", headers=send_headers("GET", "/v1/contacts"))
+        chat_read_allowed = await client.get(
+            "/v1/chat/s1/messages", headers=chat_headers("GET", "/v1/chat/s1/messages")
+        )
+        mark_read_allowed = await client.post(
+            "/v1/chat/s1/read", headers=chat_headers("POST", "/v1/chat/s1/read")
+        )
+        chat_send_denied = await client.post(
+            "/v1/chat/s1/messages", headers=chat_headers("POST", "/v1/chat/s1/messages")
+        )
+        chat_roster_allowed = await client.get(
+            "/v1/agents", headers=chat_headers("GET", "/v1/agents")
+        )
+        contacts_read_allowed = await client.get(
+            "/v1/contacts", headers=contacts_headers("GET", "/v1/contacts")
+        )
+        contacts_write_allowed = await client.post(
+            "/v1/contacts", headers=contacts_headers("POST", "/v1/contacts")
+        )
+        contacts_delete_allowed = await client.delete(
+            "/v1/contacts/contact-1",
+            headers=contacts_headers("DELETE", "/v1/contacts/contact-1"),
+        )
+        contacts_wrong_scope = await client.get(
+            "/v1/contacts", headers=send_headers("GET", "/v1/contacts")
+        )
         presence_key, presence_did = _session_keypair()
-        presence_grant = (await _mint(client, grant_did_key=presence_did, scopes=["presence.write"])).json()["grant_id"]
+        presence_grant = (
+            await _mint(client, grant_did_key=presence_did, scopes=["presence.write"])
+        ).json()["grant_id"]
         presence_allowed = await client.post(
             "/v1/heartbeat",
-            headers=_grant_headers(signing_key=presence_key, did_key=presence_did, grant_id=presence_grant, method="POST", path="/v1/heartbeat"),
+            headers=_grant_headers(
+                signing_key=presence_key,
+                did_key=presence_did,
+                grant_id=presence_grant,
+                method="POST",
+                path="/v1/heartbeat",
+            ),
         )
 
     assert inbox_denied.status_code == 403
@@ -440,11 +649,13 @@ def test_required_grant_scope_admits_conversation_index_read_only():
 
 @pytest.mark.asyncio
 async def test_grant_cannot_mint_or_revoke_grants(aweb_cloud_db):
-    app, _ = await _fixture(aweb_cloud_db.aweb_db)
+    app, _ = await _fixture(aweb_cloud_db.env)
     signing_key, did_key = _session_keypair()
     worker_key, worker_did = _session_keypair()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        grant_id = (await _mint(client, grant_did_key=did_key, scopes=["mail.send"])).json()["grant_id"]
+        grant_id = (await _mint(client, grant_did_key=did_key, scopes=["mail.send"])).json()[
+            "grant_id"
+        ]
         body = json.dumps(
             {"grant_did_key": worker_did, "scopes": ["mail.send"], "ttl_seconds": 600},
             separators=(",", ":"),
@@ -453,15 +664,22 @@ async def test_grant_cannot_mint_or_revoke_grants(aweb_cloud_db):
             "/v1/identity-grants",
             content=body,
             headers=_grant_headers(
-                signing_key=signing_key, did_key=did_key, grant_id=grant_id,
-                method="POST", path="/v1/identity-grants", body=body,
+                signing_key=signing_key,
+                did_key=did_key,
+                grant_id=grant_id,
+                method="POST",
+                path="/v1/identity-grants",
+                body=body,
             ),
         )
         revoke_denied = await client.post(
             f"/v1/identity-grants/{grant_id}/revoke",
             headers=_grant_headers(
-                signing_key=signing_key, did_key=did_key, grant_id=grant_id,
-                method="POST", path=f"/v1/identity-grants/{grant_id}/revoke",
+                signing_key=signing_key,
+                did_key=did_key,
+                grant_id=grant_id,
+                method="POST",
+                path=f"/v1/identity-grants/{grant_id}/revoke",
             ),
         )
     assert mint_denied.status_code == 403
@@ -472,7 +690,7 @@ async def test_grant_cannot_mint_or_revoke_grants(aweb_cloud_db):
 
 @pytest.mark.asyncio
 async def test_mint_duplicate_active_grant_did_key_conflicts(aweb_cloud_db):
-    app, _ = await _fixture(aweb_cloud_db.aweb_db)
+    app, _ = await _fixture(aweb_cloud_db.env)
     _, did_key = _session_keypair()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         first = await _mint(client, grant_did_key=did_key, scopes=["mail.send"])
@@ -487,7 +705,7 @@ async def test_mint_duplicate_active_grant_did_key_conflicts(aweb_cloud_db):
 
 @pytest.mark.asyncio
 async def test_mint_records_the_issuing_certificate(aweb_cloud_db):
-    app, _ = await _fixture(aweb_cloud_db.aweb_db)
+    app, _ = await _fixture(aweb_cloud_db.env)
     _, did_key = _session_keypair()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         minted = await _mint(client, grant_did_key=did_key, scopes=["mail.read"])
@@ -501,13 +719,15 @@ async def test_mint_records_the_issuing_certificate(aweb_cloud_db):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("certificate_id", ["", "   "])
-async def test_mint_refuses_an_identity_without_an_issuing_certificate(aweb_cloud_db, certificate_id):
+async def test_mint_refuses_an_identity_without_an_issuing_certificate(
+    aweb_cloud_db, certificate_id
+):
     """Revoking the issuing certificate ends a grant, so a grant needs one.
 
     Certificate auth always carries a certificate id; an embedding app that
     resolves the team identity itself may not.
     """
-    app, _ = await _fixture(aweb_cloud_db.aweb_db)
+    app, _ = await _fixture(aweb_cloud_db.env)
 
     async def _identity_without_certificate(request: Request):
         return replace(await _identity(request), certificate_id=certificate_id)
@@ -518,15 +738,22 @@ async def test_mint_refuses_an_identity_without_an_issuing_certificate(aweb_clou
         minted = await _mint(client, grant_did_key=did_key, scopes=["mail.read"])
     assert minted.status_code == 403, minted.text
     assert minted.json()["detail"] == "grants can only be minted with a team certificate"
-    assert await aweb_cloud_db.aweb_db.fetch_value("SELECT COUNT(*) FROM {{tables.identity_session_grants}}") == 0
+    assert (
+        await aweb_cloud_db.aweb_db.fetch_value(
+            "SELECT COUNT(*) FROM {{tables.identity_session_grants}}"
+        )
+        == 0
+    )
 
 
 @pytest.mark.asyncio
 async def test_revoke_is_idempotent_and_audited(aweb_cloud_db):
-    app, agent_id = await _fixture(aweb_cloud_db.aweb_db)
+    app, agent_id = await _fixture(aweb_cloud_db.env)
     _, did_key = _session_keypair()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        grant_id = (await _mint(client, grant_did_key=did_key, scopes=["mail.send"])).json()["grant_id"]
+        grant_id = (await _mint(client, grant_did_key=did_key, scopes=["mail.send"])).json()[
+            "grant_id"
+        ]
         first = await client.post(f"/v1/identity-grants/{grant_id}/revoke")
         second = await client.post(f"/v1/identity-grants/{grant_id}/revoke")
         listed = await client.get("/v1/identity-grants")
@@ -542,24 +769,23 @@ async def test_revoke_is_idempotent_and_audited(aweb_cloud_db):
     assert len(audits) == 1
     assert audits[0]["alias"] == "alice"
     assert audits[0]["resource"] == grant_id
-    details = json.loads(audits[0]["details"]) if isinstance(audits[0]["details"], str) else audits[0]["details"]
+    details = (
+        json.loads(audits[0]["details"])
+        if isinstance(audits[0]["details"], str)
+        else audits[0]["details"]
+    )
     assert details["subject_agent_id"] == str(agent_id)
 
 
 @pytest.mark.asyncio
 async def test_revoke_by_non_subject_is_not_found(aweb_cloud_db):
-    app, _ = await _fixture(aweb_cloud_db.aweb_db)
-    bob_id = uuid4()
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}} (agent_id, team_id, alias, did_key, status)
-        VALUES ($1, $2, 'bob', 'did:key:z6MkSubjectBob', 'active')
-        """,
-        bob_id, TEAM_ID,
-    )
+    app, _ = await _fixture(aweb_cloud_db.env)
+    bob_id = app.state.members["bob"].id
     _, did_key = _session_keypair()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        grant_id = (await _mint(client, grant_did_key=did_key, scopes=["mail.send"])).json()["grant_id"]
+        grant_id = (await _mint(client, grant_did_key=did_key, scopes=["mail.send"])).json()[
+            "grant_id"
+        ]
         app.state.agent_id = str(bob_id)
         app.state.alias = "bob"
         denied = await client.post(f"/v1/identity-grants/{grant_id}/revoke")
@@ -570,15 +796,20 @@ async def test_revoke_by_non_subject_is_not_found(aweb_cloud_db):
 
 @pytest.mark.asyncio
 async def test_tampered_signed_payload_path_is_rejected(aweb_cloud_db):
-    app, _ = await _fixture(aweb_cloud_db.aweb_db)
+    app, _ = await _fixture(aweb_cloud_db.env)
     signing_key, did_key = _session_keypair()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        grant_id = (await _mint(client, grant_did_key=did_key, scopes=["mail.send"])).json()["grant_id"]
+        grant_id = (await _mint(client, grant_did_key=did_key, scopes=["mail.send"])).json()[
+            "grant_id"
+        ]
         tampered = await client.post(
             "/v1/messages",
             headers=_grant_headers(
-                signing_key=signing_key, did_key=did_key, grant_id=grant_id,
-                method="POST", path="/v1/messages",
+                signing_key=signing_key,
+                did_key=did_key,
+                grant_id=grant_id,
+                method="POST",
+                path="/v1/messages",
                 payload_overrides={"path": "/v1/messages?forwarded=1"},
             ),
         )
@@ -588,37 +819,50 @@ async def test_tampered_signed_payload_path_is_rejected(aweb_cloud_db):
 
 def test_identity_grant_routes_are_registered_on_production_app():
     paths = {route.path for route in create_app().routes}
-    assert {"/v1/identity-grants", "/v1/identity-grants/{grant_id}/status", "/v1/identity-grants/{grant_id}/revoke"} <= paths
+    assert {
+        "/v1/identity-grants",
+        "/v1/identity-grants/{grant_id}/status",
+        "/v1/identity-grants/{grant_id}/revoke",
+    } <= paths
 
 
 @pytest.mark.asyncio
 async def test_identity_grant_status_reports_effective_issuer_revocation(aweb_cloud_db):
-    app, _ = await _fixture(aweb_cloud_db.aweb_db)
+    app, _ = await _fixture(aweb_cloud_db.env)
     _, did_key = _session_keypair()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        grant_id = (await _mint(client, grant_did_key=did_key, scopes=["mail.send"])).json()["grant_id"]
+        grant_id = (await _mint(client, grant_did_key=did_key, scopes=["mail.send"])).json()[
+            "grant_id"
+        ]
         before = await client.get(f"/v1/identity-grants/{grant_id}/status")
-        missing = await client.get("/v1/identity-grants/00000000-0000-0000-0000-000000000000/status")
-        app.state.awid_registry_client.get_team_revocations = AsyncMock(return_value={"cert-1"})
+        missing = await client.get(
+            "/v1/identity-grants/00000000-0000-0000-0000-000000000000/status"
+        )
+        await _revoke_issuer(app)
         after = await client.get(f"/v1/identity-grants/{grant_id}/status")
     assert before.status_code == 200, before.text
     assert before.json()["status"] == "active"
     assert before.json()["effective_status"] == "active"
     assert before.json()["last_checked_at"]
     assert missing.status_code == 404
-    assert missing.json() == {"code": "grant_not_found", "contract": "identity-grant-status.v1"}
+    assert missing.json() == {
+        "code": "grant_not_found",
+        "contract": "identity-grant-status.v1",
+    }
     assert after.status_code == 200, after.text
     assert after.json()["status"] == "active"
     assert after.json()["effective_status"] == "issuer_revoked"
-    assert after.json()["status_detail"] == "grant issuing certificate revoked"
+    assert after.json()["status_detail"] == 'grant issuing certificate revoked. This grant was issued from a certificate that is no longer current. Ask the issuer for a new grant, or enable renewal on launch and restart the seat if you use OATS.'
 
 
 @pytest.mark.asyncio
 async def test_identity_grant_status_reports_subject_inactive(aweb_cloud_db):
-    app, agent_id = await _fixture(aweb_cloud_db.aweb_db)
+    app, agent_id = await _fixture(aweb_cloud_db.env)
     _, did_key = _session_keypair()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        grant_id = (await _mint(client, grant_did_key=did_key, scopes=["mail.send"])).json()["grant_id"]
+        grant_id = (await _mint(client, grant_did_key=did_key, scopes=["mail.send"])).json()[
+            "grant_id"
+        ]
         await aweb_cloud_db.aweb_db.execute(
             "UPDATE {{tables.agents}} SET status = 'retired' WHERE agent_id = $1::UUID",
             str(agent_id),
@@ -634,128 +878,149 @@ async def test_identity_grant_status_reports_subject_inactive(aweb_cloud_db):
 async def test_grant_with_revoked_issuing_certificate_is_rejected(aweb_cloud_db):
     """aweb-abfn: revoking the membership certificate that minted a grant ends
     the delegation, even though the grant row itself is unrevoked and unexpired."""
-    app, _ = await _fixture(aweb_cloud_db.aweb_db)
+    app, _ = await _fixture(aweb_cloud_db.env)
     signing_key, did_key = _session_keypair()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        grant_id = (await _mint(client, grant_did_key=did_key, scopes=["mail.send"])).json()["grant_id"]
+        grant_id = (await _mint(client, grant_did_key=did_key, scopes=["mail.send"])).json()[
+            "grant_id"
+        ]
         before = await client.post(
             "/v1/messages",
             headers=_grant_headers(
-                signing_key=signing_key, did_key=did_key, grant_id=grant_id,
-                method="POST", path="/v1/messages",
+                signing_key=signing_key,
+                did_key=did_key,
+                grant_id=grant_id,
+                method="POST",
+                path="/v1/messages",
             ),
         )
         assert before.status_code == 200, before.text
-        app.state.awid_registry_client.get_team_revocations = AsyncMock(return_value={"cert-1"})
+        await _revoke_issuer(app)
         after = await client.post(
             "/v1/messages",
             headers=_grant_headers(
-                signing_key=signing_key, did_key=did_key, grant_id=grant_id,
-                method="POST", path="/v1/messages",
+                signing_key=signing_key,
+                did_key=did_key,
+                grant_id=grant_id,
+                method="POST",
+                path="/v1/messages",
             ),
         )
     assert after.status_code == 403
-    assert after.json()["detail"] == "grant issuing certificate revoked"
+    assert after.json()["detail"] == 'grant issuing certificate revoked. This grant was issued from a certificate that is no longer current. Ask the issuer for a new grant, or enable renewal on launch and restart the seat if you use OATS.'
 
 
 @pytest.mark.asyncio
 async def test_grant_registry_unavailable_fails_closed(aweb_cloud_db):
     """Registry unavailability must not silently skip the issuing-certificate
     check: same fail-closed posture as the certificate-presenting path."""
-    app, _ = await _fixture(aweb_cloud_db.aweb_db)
+    app, _ = await _fixture(aweb_cloud_db.env)
     signing_key, did_key = _session_keypair()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        grant_id = (await _mint(client, grant_did_key=did_key, scopes=["mail.send"])).json()["grant_id"]
-        import httpx as _httpx
-
-        app.state.awid_registry_client.get_team_revocations = AsyncMock(
-            side_effect=_httpx.ConnectError("registry down")
-        )
+        grant_id = (await _mint(client, grant_did_key=did_key, scopes=["mail.send"])).json()[
+            "grant_id"
+        ]
+        app.state.env.registry.transport.down = True
         resp = await client.post(
             "/v1/messages",
             headers=_grant_headers(
-                signing_key=signing_key, did_key=did_key, grant_id=grant_id,
-                method="POST", path="/v1/messages",
+                signing_key=signing_key,
+                did_key=did_key,
+                grant_id=grant_id,
+                method="POST",
+                path="/v1/messages",
             ),
         )
     assert resp.status_code == 503
 
 
 @pytest.mark.asyncio
-async def test_grant_with_unregistered_issuing_certificate_rejected_when_required(aweb_cloud_db, monkeypatch):
-    """Staged existence requirement (AWEB_REQUIRE_REGISTERED_CERTIFICATES):
-    an unregistered issuing certificate is unrevocable, so with the flag on
-    the delegation ends with a verdict distinct from revocation."""
-    from types import SimpleNamespace
-
-    monkeypatch.setenv("AWEB_REQUIRE_REGISTERED_CERTIFICATES", "true")
-    app, _ = await _fixture(aweb_cloud_db.aweb_db)
-    app.state.awid_registry_client.list_team_certificates = AsyncMock(return_value=[])
+async def test_grant_with_unregistered_issuing_certificate_rejected_when_required(
+    aweb_cloud_db, monkeypatch
+):
+    """A supported pending member becomes a distinct refusal when strict is on."""
+    monkeypatch.setenv("AWEB_REQUIRE_REGISTERED_CERTIFICATES", "false")
+    app, _ = await _fixture(aweb_cloud_db.env, register_issuer=False)
     signing_key, did_key = _session_keypair()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        grant_id = (await _mint(client, grant_did_key=did_key, scopes=["mail.send"])).json()["grant_id"]
-        resp = await client.post(
-            "/v1/messages",
-            headers=_grant_headers(
-                signing_key=signing_key, did_key=did_key, grant_id=grant_id,
-                method="POST", path="/v1/messages",
-            ),
+        minted = await _mint(client, grant_did_key=did_key, scopes=["mail.send"])
+        assert minted.status_code == 200, minted.text
+        grant_id = minted.json()["grant_id"]
+        monkeypatch.setenv("AWEB_REQUIRE_REGISTERED_CERTIFICATES", "true")
+        headers = _grant_headers(
+            signing_key=signing_key,
+            did_key=did_key,
+            grant_id=grant_id,
+            method="POST",
+            path="/v1/messages",
         )
-        assert resp.status_code == 403
-        assert resp.json()["detail"] == "grant issuing certificate not registered"
-
-        # A registered issuing certificate keeps the delegation working.
-        app.state.awid_registry_client.list_team_certificates = AsyncMock(
-            return_value=[SimpleNamespace(certificate_id="cert-1")]
-        )
-        ok = await client.post(
-            "/v1/messages",
-            headers=_grant_headers(
-                signing_key=signing_key, did_key=did_key, grant_id=grant_id,
-                method="POST", path="/v1/messages",
-            ),
-        )
+        resp = await client.post("/v1/messages", headers=headers)
+        assert resp.status_code == 403, resp.text
+        assert resp.json()["detail"] == 'grant issuing certificate not registered. This grant was issued from a certificate that is no longer current. Ask the issuer for a new grant, or enable renewal on launch and restart the seat if you use OATS.'
+        await _register_issuer(app)
+        ok = await client.post("/v1/messages", headers=headers)
     assert ok.status_code == 200, ok.text
 
 
 @pytest.mark.asyncio
-async def test_grant_flag_off_makes_no_existence_read(aweb_cloud_db, monkeypatch):
-    """Default OFF: byte-identical to today, zero registry existence reads."""
+async def test_grant_flag_off_measures_missing_issuer_without_refusing(aweb_cloud_db, monkeypatch):
+    """OFF measures the actual missing issuer without imposing a registration gate."""
     monkeypatch.delenv("AWEB_REQUIRE_REGISTERED_CERTIFICATES", raising=False)
-    app, _ = await _fixture(aweb_cloud_db.aweb_db)
-    app.state.awid_registry_client.list_team_certificates = AsyncMock(return_value=[])
+    app, _ = await _fixture(aweb_cloud_db.env, register_issuer=False)
     signing_key, did_key = _session_keypair()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        grant_id = (await _mint(client, grant_did_key=did_key, scopes=["mail.send"])).json()["grant_id"]
+        minted = await _mint(client, grant_did_key=did_key, scopes=["mail.send"])
+        assert minted.status_code == 200, minted.text
+        grant_id = minted.json()["grant_id"]
+        calls = app.state.env.registry.transport.calls
+        start = len(calls)
         resp = await client.post(
             "/v1/messages",
             headers=_grant_headers(
-                signing_key=signing_key, did_key=did_key, grant_id=grant_id,
-                method="POST", path="/v1/messages",
+                signing_key=signing_key,
+                did_key=did_key,
+                grant_id=grant_id,
+                method="POST",
+                path="/v1/messages",
             ),
         )
     assert resp.status_code == 200, resp.text
-    app.state.awid_registry_client.list_team_certificates.assert_not_awaited()
+    catalogs = [
+        request
+        for request in calls[start:]
+        if request.url.path == "/v1/namespaces/acme.com/teams/backend/certificates"
+    ]
+    assert len(catalogs) == 1
+    assert catalogs[0].method == "GET"
+    certificates = await app.state.awid_registry_client.list_team_certificates(
+        "acme.com", "backend", active_only=False
+    )
+    assert "cert-1" not in {cert.certificate_id for cert in certificates}
 
 
 @pytest.mark.asyncio
 async def test_legacy_grant_without_issuing_certificate_still_works(aweb_cloud_db):
     """Grants minted before issued_by_certificate_id was recorded cannot be
     checked; they keep working, bounded by their own expiry."""
-    app, _ = await _fixture(aweb_cloud_db.aweb_db)
+    app, _ = await _fixture(aweb_cloud_db.env)
     signing_key, did_key = _session_keypair()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        grant_id = (await _mint(client, grant_did_key=did_key, scopes=["mail.send"])).json()["grant_id"]
+        grant_id = (await _mint(client, grant_did_key=did_key, scopes=["mail.send"])).json()[
+            "grant_id"
+        ]
         await aweb_cloud_db.aweb_db.execute(
             "UPDATE {{tables.identity_session_grants}} SET issued_by_certificate_id = NULL WHERE grant_id = $1::UUID",
             grant_id,
         )
-        app.state.awid_registry_client.get_team_revocations = AsyncMock(return_value={"cert-1"})
+        await _revoke_issuer(app)
         resp = await client.post(
             "/v1/messages",
             headers=_grant_headers(
-                signing_key=signing_key, did_key=did_key, grant_id=grant_id,
-                method="POST", path="/v1/messages",
+                signing_key=signing_key,
+                did_key=did_key,
+                grant_id=grant_id,
+                method="POST",
+                path="/v1/messages",
             ),
         )
     assert resp.status_code == 200, resp.text
@@ -763,6 +1028,7 @@ async def test_legacy_grant_without_issuing_certificate_still_works(aweb_cloud_d
 
 def _build_real_messaging_app(aweb_db) -> FastAPI:
     app = FastAPI()
+    install_service_error_handlers(app)
     app.include_router(identity_grants_router)
     app.include_router(messages_router)
     app.include_router(chat_router)
@@ -781,13 +1047,6 @@ def _build_real_messaging_app(aweb_db) -> FastAPI:
     app.state.db = _DbShim(aweb_db)
     app.state.public_origin = "http://test"
     app.state.redis = None
-    app.state.rate_limiter = None
-    registry = AsyncMock()
-    registry.get_team_revocations_for_certificates = None  # Legacy SDK interface.
-    registry.get_team_revocations = AsyncMock(return_value=set())
-    registry.get_team_fresh = AsyncMock(side_effect=legacy_team)
-    app.state.awid_registry_client = registry
-    _verified_subject_fixture(app)
 
     @app.middleware("http")
     async def cache_body_middleware(request, call_next):
@@ -800,40 +1059,21 @@ def _build_real_messaging_app(aweb_db) -> FastAPI:
     return app
 
 
-async def _real_messaging_fixture(aweb_db):
-    app, alice_id = await _fixture(aweb_db)
-    app = _build_real_messaging_app(aweb_db)
-    app.state.agent_id = str(alice_id)
-    app.state.alias = "alice"
-    workspace_id = uuid4()
-    await aweb_db.execute(
-        """
-        INSERT INTO {{tables.workspaces}} (
-            workspace_id, team_id, agent_id, alias, human_name, role,
-            workspace_type, last_seen_at
-        )
-        VALUES ($1, $2, $3, 'alice', 'Alice', 'developer', 'manual', $4)
-        """,
+async def _real_messaging_fixture(env):
+    app, alice_id = await _fixture(env, real_handlers=True)
+    workspace_id = app.state.members["alice"].workspace
+    await env.db.execute(
+        "UPDATE {{tables.workspaces}} SET last_seen_at=NOW()-INTERVAL '1 hour' "
+        "WHERE workspace_id=$1::uuid",
         workspace_id,
-        TEAM_ID,
-        alice_id,
-        datetime.now(timezone.utc) - timedelta(hours=1),
     )
-    app.state.alice_workspace_id = str(workspace_id)
-    bob_id = uuid4()
-    await aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}} (agent_id, team_id, alias, did_key, did_aw, address, status, identity_scope, inbound_mode, did_aw_verified_key)
-        VALUES ($1, $2, 'bob', 'did:key:z6MkSubjectBob', 'did:aw:bob', 'acme.com/bob', 'active', 'global', 'open', 'did:key:z6MkSubjectBob')
-        """,
-        bob_id, TEAM_ID,
-    )
-    return app, alice_id, bob_id
+    app.state.alice_workspace_id = workspace_id
+    return app, alice_id, app.state.members["bob"].id
 
 
 @pytest.mark.asyncio
 async def test_grant_agents_real_handlers_scope_and_liveness(aweb_cloud_db, monkeypatch):
-    app, alice_id, _ = await _real_messaging_fixture(aweb_cloud_db.aweb_db)
+    app, alice_id, _ = await _real_messaging_fixture(aweb_cloud_db.env)
 
     root_presence_calls = []
 
@@ -853,42 +1093,92 @@ async def test_grant_agents_real_handlers_scope_and_liveness(aweb_cloud_db, monk
     revoked_key, revoked_did = _session_keypair()
     expired_key, expired_did = _session_keypair()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        old_scope_grant = (await _mint(
-            client,
-            grant_did_key=grant_did,
-            scopes=["mail.read", "mail.send", "chat.read", "chat.send"],
-        )).json()["grant_id"]
-        status_grant = (await _mint(client, grant_did_key=status_did, scopes=["coord.read"])).json()["grant_id"]
+        old_scope_grant = (
+            await _mint(
+                client,
+                grant_did_key=grant_did,
+                scopes=["mail.read", "mail.send", "chat.read", "chat.send"],
+            )
+        ).json()["grant_id"]
+        status_grant = (
+            await _mint(client, grant_did_key=status_did, scopes=["coord.read"])
+        ).json()["grant_id"]
         roster = await client.get(
             "/v1/agents",
-            headers=_grant_headers(signing_key=signing_key, did_key=grant_did, grant_id=old_scope_grant, method="GET", path="/v1/agents"),
+            headers=_grant_headers(
+                signing_key=signing_key,
+                did_key=grant_did,
+                grant_id=old_scope_grant,
+                method="GET",
+                path="/v1/agents",
+            ),
         )
         heartbeat_denied = await client.post(
             "/v1/agents/heartbeat",
-            headers=_grant_headers(signing_key=signing_key, did_key=grant_did, grant_id=old_scope_grant, method="POST", path="/v1/agents/heartbeat"),
+            headers=_grant_headers(
+                signing_key=signing_key,
+                did_key=grant_did,
+                grant_id=old_scope_grant,
+                method="POST",
+                path="/v1/agents/heartbeat",
+            ),
         )
 
-        presence_grant = (await _mint(client, grant_did_key=presence_did, scopes=["presence.write"])).json()["grant_id"]
+        presence_grant = (
+            await _mint(client, grant_did_key=presence_did, scopes=["presence.write"])
+        ).json()["grant_id"]
         heartbeat = await client.post(
             "/v1/agents/heartbeat",
-            headers=_grant_headers(signing_key=presence_key, did_key=presence_did, grant_id=presence_grant, method="POST", path="/v1/agents/heartbeat"),
+            headers=_grant_headers(
+                signing_key=presence_key,
+                did_key=presence_did,
+                grant_id=presence_grant,
+                method="POST",
+                path="/v1/agents/heartbeat",
+            ),
         )
-        other_presence_grant = (await _mint(client, grant_did_key=other_presence_did, scopes=["presence.write"])).json()["grant_id"]
+        other_presence_grant = (
+            await _mint(client, grant_did_key=other_presence_did, scopes=["presence.write"])
+        ).json()["grant_id"]
         other_heartbeat = await client.post(
             "/v1/agents/heartbeat",
-            headers=_grant_headers(signing_key=other_presence_key, did_key=other_presence_did, grant_id=other_presence_grant, method="POST", path="/v1/agents/heartbeat"),
+            headers=_grant_headers(
+                signing_key=other_presence_key,
+                did_key=other_presence_did,
+                grant_id=other_presence_grant,
+                method="POST",
+                path="/v1/agents/heartbeat",
+            ),
         )
         grant_online_roster = await client.get(
             "/v1/agents",
-            headers=_grant_headers(signing_key=signing_key, did_key=grant_did, grant_id=old_scope_grant, method="GET", path="/v1/agents"),
+            headers=_grant_headers(
+                signing_key=signing_key,
+                did_key=grant_did,
+                grant_id=old_scope_grant,
+                method="GET",
+                path="/v1/agents",
+            ),
         )
         status_wrong_scope = await client.get(
             "/v1/status",
-            headers=_grant_headers(signing_key=signing_key, did_key=grant_did, grant_id=old_scope_grant, method="GET", path="/v1/status"),
+            headers=_grant_headers(
+                signing_key=signing_key,
+                did_key=grant_did,
+                grant_id=old_scope_grant,
+                method="GET",
+                path="/v1/status",
+            ),
         )
         grant_online_status = await client.get(
             "/v1/status",
-            headers=_grant_headers(signing_key=status_key, did_key=status_did, grant_id=status_grant, method="GET", path="/v1/status"),
+            headers=_grant_headers(
+                signing_key=status_key,
+                did_key=status_did,
+                grant_id=status_grant,
+                method="GET",
+                path="/v1/status",
+            ),
         )
         await aweb_cloud_db.aweb_db.execute(
             "UPDATE {{tables.identity_session_grants}} SET revoked_at = NOW() WHERE grant_id = $1::UUID",
@@ -896,7 +1186,13 @@ async def test_grant_agents_real_handlers_scope_and_liveness(aweb_cloud_db, monk
         )
         one_grant_roster = await client.get(
             "/v1/agents",
-            headers=_grant_headers(signing_key=signing_key, did_key=grant_did, grant_id=old_scope_grant, method="GET", path="/v1/agents"),
+            headers=_grant_headers(
+                signing_key=signing_key,
+                did_key=grant_did,
+                grant_id=old_scope_grant,
+                method="GET",
+                path="/v1/agents",
+            ),
         )
         await aweb_cloud_db.aweb_db.execute(
             "UPDATE {{tables.identity_session_grants}} SET revoked_at = NOW() WHERE grant_id = $1::UUID",
@@ -904,13 +1200,27 @@ async def test_grant_agents_real_handlers_scope_and_liveness(aweb_cloud_db, monk
         )
         grant_offline_roster = await client.get(
             "/v1/agents",
-            headers=_grant_headers(signing_key=signing_key, did_key=grant_did, grant_id=old_scope_grant, method="GET", path="/v1/agents"),
+            headers=_grant_headers(
+                signing_key=signing_key,
+                did_key=grant_did,
+                grant_id=old_scope_grant,
+                method="GET",
+                path="/v1/agents",
+            ),
         )
         stale_key, stale_did = _session_keypair()
-        stale_grant = (await _mint(client, grant_did_key=stale_did, scopes=["presence.write"])).json()["grant_id"]
+        stale_grant = (
+            await _mint(client, grant_did_key=stale_did, scopes=["presence.write"])
+        ).json()["grant_id"]
         stale_heartbeat = await client.post(
             "/v1/agents/heartbeat",
-            headers=_grant_headers(signing_key=stale_key, did_key=stale_did, grant_id=stale_grant, method="POST", path="/v1/agents/heartbeat"),
+            headers=_grant_headers(
+                signing_key=stale_key,
+                did_key=stale_did,
+                grant_id=stale_grant,
+                method="POST",
+                path="/v1/agents/heartbeat",
+            ),
         )
         await aweb_cloud_db.aweb_db.execute(
             """
@@ -922,29 +1232,53 @@ async def test_grant_agents_real_handlers_scope_and_liveness(aweb_cloud_db, monk
         )
         stale_roster = await client.get(
             "/v1/agents",
-            headers=_grant_headers(signing_key=signing_key, did_key=grant_did, grant_id=old_scope_grant, method="GET", path="/v1/agents"),
+            headers=_grant_headers(
+                signing_key=signing_key,
+                did_key=grant_did,
+                grant_id=old_scope_grant,
+                method="GET",
+                path="/v1/agents",
+            ),
         )
         stale_exists_after_read = await aweb_cloud_db.aweb_db.fetch_value(
             "SELECT EXISTS (SELECT 1 FROM {{tables.identity_grant_liveness}} WHERE grant_id = $1::UUID)",
             stale_grant,
         )
         cleanup_key, cleanup_did = _session_keypair()
-        cleanup_grant = (await _mint(client, grant_did_key=cleanup_did, scopes=["presence.write"])).json()["grant_id"]
+        cleanup_grant = (
+            await _mint(client, grant_did_key=cleanup_did, scopes=["presence.write"])
+        ).json()["grant_id"]
         cleanup_heartbeat = await client.post(
             "/v1/agents/heartbeat",
-            headers=_grant_headers(signing_key=cleanup_key, did_key=cleanup_did, grant_id=cleanup_grant, method="POST", path="/v1/agents/heartbeat"),
+            headers=_grant_headers(
+                signing_key=cleanup_key,
+                did_key=cleanup_did,
+                grant_id=cleanup_grant,
+                method="POST",
+                path="/v1/agents/heartbeat",
+            ),
         )
-        revoked_grant = (await _mint(client, grant_did_key=revoked_did, scopes=["presence.write"])).json()["grant_id"]
+        revoked_grant = (
+            await _mint(client, grant_did_key=revoked_did, scopes=["presence.write"])
+        ).json()["grant_id"]
         await aweb_cloud_db.aweb_db.execute(
             "UPDATE {{tables.identity_session_grants}} SET revoked_at = NOW() WHERE grant_id = $1::UUID",
             revoked_grant,
         )
         revoked = await client.post(
             "/v1/agents/heartbeat",
-            headers=_grant_headers(signing_key=revoked_key, did_key=revoked_did, grant_id=revoked_grant, method="POST", path="/v1/agents/heartbeat"),
+            headers=_grant_headers(
+                signing_key=revoked_key,
+                did_key=revoked_did,
+                grant_id=revoked_grant,
+                method="POST",
+                path="/v1/agents/heartbeat",
+            ),
         )
 
-        expired_grant = (await _mint(client, grant_did_key=expired_did, scopes=["presence.write"])).json()["grant_id"]
+        expired_grant = (
+            await _mint(client, grant_did_key=expired_did, scopes=["presence.write"])
+        ).json()["grant_id"]
         await aweb_cloud_db.aweb_db.execute(
             """
             UPDATE {{tables.identity_session_grants}}
@@ -955,7 +1289,13 @@ async def test_grant_agents_real_handlers_scope_and_liveness(aweb_cloud_db, monk
         )
         expired = await client.post(
             "/v1/agents/heartbeat",
-            headers=_grant_headers(signing_key=expired_key, did_key=expired_did, grant_id=expired_grant, method="POST", path="/v1/agents/heartbeat"),
+            headers=_grant_headers(
+                signing_key=expired_key,
+                did_key=expired_did,
+                grant_id=expired_grant,
+                method="POST",
+                path="/v1/agents/heartbeat",
+            ),
         )
 
     assert roster.status_code == 200, roster.text
@@ -981,11 +1321,19 @@ async def test_grant_agents_real_handlers_scope_and_liveness(aweb_cloud_db, monk
         """
     )
     assert root_presence_calls == []
-    initial_liveness_rows = [row for row in liveness_rows if row["grant_id"] in {presence_grant, other_presence_grant}]
-    assert {row["grant_id"] for row in initial_liveness_rows} == {presence_grant, other_presence_grant}
+    initial_liveness_rows = [
+        row for row in liveness_rows if row["grant_id"] in {presence_grant, other_presence_grant}
+    ]
+    assert {row["grant_id"] for row in initial_liveness_rows} == {
+        presence_grant,
+        other_presence_grant,
+    }
     assert {row["subject_agent_id"] for row in initial_liveness_rows} == {str(alice_id)}
     assert {row["workspace_id"] for row in initial_liveness_rows} == {app.state.alice_workspace_id}
-    assert {row["session_did_key"] for row in initial_liveness_rows} == {presence_did, other_presence_did}
+    assert {row["session_did_key"] for row in initial_liveness_rows} == {
+        presence_did,
+        other_presence_did,
+    }
     assert all(row["expires_at"] >= row["last_seen_at"] for row in initial_liveness_rows)
     online_agents = {agent["agent_id"]: agent for agent in grant_online_roster.json()["agents"]}
     assert online_agents[str(alice_id)]["online"] is True
@@ -1014,18 +1362,26 @@ async def test_grant_agents_real_handlers_scope_and_liveness(aweb_cloud_db, monk
 
 
 @pytest.mark.asyncio
-async def test_grant_mail_send_real_handler_attributes_subject_without_session_signature(aweb_cloud_db):
-    app, alice_id, bob_id = await _real_messaging_fixture(aweb_cloud_db.aweb_db)
+async def test_grant_mail_send_real_handler_attributes_subject_without_session_signature(
+    aweb_cloud_db,
+):
+    app, alice_id, bob_id = await _real_messaging_fixture(aweb_cloud_db.env)
     signing_key, grant_did = _session_keypair()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        grant_id = (await _mint(client, grant_did_key=grant_did, scopes=["mail.send", "mail.read"])).json()["grant_id"]
+        grant_id = (
+            await _mint(client, grant_did_key=grant_did, scopes=["mail.send", "mail.read"])
+        ).json()["grant_id"]
         body = json.dumps({"to_alias": "bob", "body": "hello"}, separators=(",", ":")).encode()
         sent = await client.post(
             "/v1/messages",
             content=body,
             headers=_grant_headers(
-                signing_key=signing_key, did_key=grant_did, grant_id=grant_id,
-                method="POST", path="/v1/messages", body=body,
+                signing_key=signing_key,
+                did_key=grant_did,
+                grant_id=grant_id,
+                method="POST",
+                path="/v1/messages",
+                body=body,
             ),
         )
     assert sent.status_code == 200, sent.text
@@ -1033,40 +1389,46 @@ async def test_grant_mail_send_real_handler_attributes_subject_without_session_s
         "SELECT from_agent_id, from_did, to_agent_id, signature, signed_payload FROM {{tables.messages}} WHERE body = 'hello'"
     )
     assert str(row["from_agent_id"]) == str(alice_id)
-    assert row["from_did"] == "did:aw:alice"
+    assert row["from_did"] == SUBJECT_DID_AW
     assert str(row["to_agent_id"]) == str(bob_id)
     assert row["signature"] is None
     assert row["signed_payload"] is None
 
     async def _bob_auth():
-        return MessagingAuth(
-            did_key="did:key:z6MkSubjectBob", did_aw="did:aw:bob", address="acme.com/bob",
-            team_id=TEAM_ID, alias="bob", agent_id=str(bob_id), identity_scope="global",
-            certificate_id="cert-bob", verified_team_id=TEAM_ID,
-        )
+        return app.state.root_messaging["bob"]
 
     app.dependency_overrides[get_messaging_auth] = _bob_auth
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         inbox = await client.get("/v1/messages/inbox")
     assert inbox.status_code == 200, inbox.text
     message = inbox.json()["messages"][0]
-    assert message["from_did"] == "did:aw:alice"
+    assert message["from_did"] == SUBJECT_DID_AW
     assert message["verification_status"] == "unverified"
 
 
 @pytest.mark.asyncio
-async def test_grant_chat_send_real_handler_attributes_subject_without_session_signature(aweb_cloud_db):
-    app, alice_id, bob_id = await _real_messaging_fixture(aweb_cloud_db.aweb_db)
+async def test_grant_chat_send_real_handler_attributes_subject_without_session_signature(
+    aweb_cloud_db,
+):
+    app, alice_id, bob_id = await _real_messaging_fixture(aweb_cloud_db.env)
     signing_key, grant_did = _session_keypair()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        grant_id = (await _mint(client, grant_did_key=grant_did, scopes=["chat.send", "chat.read"])).json()["grant_id"]
-        body = json.dumps({"to_aliases": ["bob"], "message": "hello chat"}, separators=(",", ":")).encode()
+        grant_id = (
+            await _mint(client, grant_did_key=grant_did, scopes=["chat.send", "chat.read"])
+        ).json()["grant_id"]
+        body = json.dumps(
+            {"to_aliases": ["bob"], "message": "hello chat"}, separators=(",", ":")
+        ).encode()
         sent = await client.post(
             "/v1/chat/sessions",
             content=body,
             headers=_grant_headers(
-                signing_key=signing_key, did_key=grant_did, grant_id=grant_id,
-                method="POST", path="/v1/chat/sessions", body=body,
+                signing_key=signing_key,
+                did_key=grant_did,
+                grant_id=grant_id,
+                method="POST",
+                path="/v1/chat/sessions",
+                body=body,
             ),
         )
     assert sent.status_code == 200, sent.text
@@ -1074,7 +1436,7 @@ async def test_grant_chat_send_real_handler_attributes_subject_without_session_s
         "SELECT from_agent_id, from_did, signature, signed_payload FROM {{tables.chat_messages}} WHERE body = 'hello chat'"
     )
     assert str(row["from_agent_id"]) == str(alice_id)
-    assert row["from_did"] == "did:aw:alice"
+    assert row["from_did"] == SUBJECT_DID_AW
     assert row["signature"] is None
     assert row["signed_payload"] is None
     participant = await aweb_cloud_db.aweb_db.fetch_one(
@@ -1084,33 +1446,55 @@ async def test_grant_chat_send_real_handler_attributes_subject_without_session_s
 
 
 @pytest.mark.asyncio
-async def test_grant_real_send_handlers_reject_session_did_as_root_signed_sender(aweb_cloud_db):
-    app, _, _ = await _real_messaging_fixture(aweb_cloud_db.aweb_db)
+async def test_grant_real_send_handlers_reject_session_did_as_root_signed_sender(
+    aweb_cloud_db,
+):
+    app, _, _ = await _real_messaging_fixture(aweb_cloud_db.env)
     signing_key, grant_did = _session_keypair()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        grant_id = (await _mint(client, grant_did_key=grant_did, scopes=["mail.send", "chat.send"])).json()["grant_id"]
+        grant_id = (
+            await _mint(client, grant_did_key=grant_did, scopes=["mail.send", "chat.send"])
+        ).json()["grant_id"]
         mail_body = json.dumps(
-            {"to_alias": "bob", "body": "bad", "from_did": grant_did, "signature": "not-a-root-signature"},
+            {
+                "to_alias": "bob",
+                "body": "bad",
+                "from_did": grant_did,
+                "signature": "not-a-root-signature",
+            },
             separators=(",", ":"),
         ).encode()
         mail = await client.post(
             "/v1/messages",
             content=mail_body,
             headers=_grant_headers(
-                signing_key=signing_key, did_key=grant_did, grant_id=grant_id,
-                method="POST", path="/v1/messages", body=mail_body,
+                signing_key=signing_key,
+                did_key=grant_did,
+                grant_id=grant_id,
+                method="POST",
+                path="/v1/messages",
+                body=mail_body,
             ),
         )
         chat_body = json.dumps(
-            {"to_aliases": ["bob"], "message": "bad", "from_did": grant_did, "signature": "not-a-root-signature"},
+            {
+                "to_aliases": ["bob"],
+                "message": "bad",
+                "from_did": grant_did,
+                "signature": "not-a-root-signature",
+            },
             separators=(",", ":"),
         ).encode()
         chat = await client.post(
             "/v1/chat/sessions",
             content=chat_body,
             headers=_grant_headers(
-                signing_key=signing_key, did_key=grant_did, grant_id=grant_id,
-                method="POST", path="/v1/chat/sessions", body=chat_body,
+                signing_key=signing_key,
+                did_key=grant_did,
+                grant_id=grant_id,
+                method="POST",
+                path="/v1/chat/sessions",
+                body=chat_body,
             ),
         )
     assert mail.status_code == 422
@@ -1124,7 +1508,7 @@ def _grant_identity(scopes: list[str]) -> TeamIdentity:
         team_id=TEAM_ID,
         alias="alice",
         did_key=SUBJECT_DID_KEY,
-        did_aw="did:aw:alice",
+        did_aw=SUBJECT_DID_AW,
         address="acme.com/alice",
         agent_id="agent-1",
         identity_scope="global",
@@ -1147,49 +1531,57 @@ def test_grant_stream_event_filters_require_underlying_data_scope():
     assert agent_event_allowed(events_only, {"type": "actionable_chat"}) is False
     assert agent_event_allowed(events_only, {"type": "app_event"}) is False
 
-    assert agent_event_allowed(_grant_identity(["events.read", "mail.read"]), {"type": "actionable_mail"}) is True
-    assert agent_event_allowed(_grant_identity(["events.read", "chat.read"]), {"type": "actionable_chat"}) is True
-    assert agent_event_allowed(_grant_identity(["events.read", "coord.read"]), {"type": "app_event"}) is True
+    assert (
+        agent_event_allowed(
+            _grant_identity(["events.read", "mail.read"]), {"type": "actionable_mail"}
+        )
+        is True
+    )
+    assert (
+        agent_event_allowed(
+            _grant_identity(["events.read", "chat.read"]), {"type": "actionable_chat"}
+        )
+        is True
+    )
+    assert (
+        agent_event_allowed(_grant_identity(["events.read", "coord.read"]), {"type": "app_event"})
+        is True
+    )
 
 
 def test_status_stream_grant_categories_are_scope_limited():
     assert allowed_status_categories(_grant_identity(["events.read"])) == set()
     assert allowed_status_categories(_grant_identity(["events.read", "mail.read"])) == {"message"}
     assert allowed_status_categories(_grant_identity(["events.read", "chat.read"])) == {"chat"}
-    assert allowed_status_categories(_grant_identity(["events.read", "coord.read"])) == {"reservation", "task"}
+    assert allowed_status_categories(_grant_identity(["events.read", "coord.read"])) == {
+        "reservation",
+        "task",
+    }
 
 
 @pytest.mark.asyncio
-async def test_grant_terminal_reason_distinguishes_normal_deadline_from_actual_expiry(aweb_cloud_db):
-    app, agent_id = await _fixture(aweb_cloud_db.aweb_db)
+async def test_grant_terminal_reason_distinguishes_normal_deadline_from_actual_expiry(
+    aweb_cloud_db,
+):
+    app, agent_id = await _fixture(aweb_cloud_db.env)
     signing_key, did_key = _session_keypair()
-    del signing_key
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        grant_id = (await _mint(client, grant_did_key=did_key, scopes=["events.read"], ttl_seconds=600)).json()["grant_id"]
-    expires_at = await aweb_cloud_db.aweb_db.fetch_value(
-        "SELECT expires_at FROM {{tables.identity_session_grants}} WHERE grant_id = $1::UUID",
-        grant_id,
-    )
-    identity = TeamIdentity(
-        team_id=TEAM_ID,
-        alias="alice",
-        did_key=SUBJECT_DID_KEY,
-        did_aw="did:aw:alice",
-        address="acme.com/alice",
-        agent_id=str(agent_id),
-        identity_scope="global",
-        certificate_id=None,
-        grant=GrantContext(
-            grant_id=grant_id,
-            session_did_key=did_key,
-            issuing_certificate_id="cert-1",
-            scopes=("events.read",),
-            expires_at=expires_at,
-        ),
+        grant_id = (
+            await _mint(client, grant_did_key=did_key, scopes=["events.read"], ttl_seconds=600)
+        ).json()["grant_id"]
+    identity = await _authenticated_grant_identity(
+        app, signing_key=signing_key, grant_id=grant_id, did_key=did_key, scopes=("events.read",)
     )
     # A caller-supplied stream deadline may be sooner than grant expiry; that
     # must close normally, not as grant_expired.
-    assert await grant_terminal_reason(type("Req", (), {"app": app})(), _DbShim(aweb_cloud_db.aweb_db), identity) is None
+    assert (
+        await grant_terminal_reason(
+            Request({"type": "http", "app": app}),
+            _DbShim(aweb_cloud_db.aweb_db),
+            identity,
+        )
+        is None
+    )
 
     await aweb_cloud_db.aweb_db.execute(
         """
@@ -1199,7 +1591,9 @@ async def test_grant_terminal_reason_distinguishes_normal_deadline_from_actual_e
         """,
         grant_id,
     )
-    expired = await grant_terminal_reason(type("Req", (), {"app": app})(), _DbShim(aweb_cloud_db.aweb_db), identity)
+    expired = await grant_terminal_reason(
+        Request({"type": "http", "app": app}), _DbShim(aweb_cloud_db.aweb_db), identity
+    )
     assert expired == "grant_expired"
 
 
@@ -1241,7 +1635,9 @@ def _team_identity_call_sites(source: str, path_label: str) -> list[tuple[str, s
         if not isinstance(node.func, ast.Name) or node.func.id != "get_team_identity":
             continue
         parent = parents.get(node)
-        while parent is not None and not isinstance(parent, (ast.AsyncFunctionDef, ast.FunctionDef)):
+        while parent is not None and not isinstance(
+            parent, (ast.AsyncFunctionDef, ast.FunctionDef)
+        ):
             parent = parents.get(parent)
         rows.append((path_label, getattr(parent, "name", "<module>")))
     return sorted(rows)
@@ -1346,10 +1742,13 @@ def test_direct_team_identity_calls_are_reviewed_root_only_sites():
         ("server/src/aweb/routes/hook_bindings.py", "_owner_act_route"),
     ]
 
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("deadline_offset_ms", [100, 0, -100])
-async def test_events_stream_filters_mail_by_underlying_grant_scope(aweb_cloud_db, monkeypatch, deadline_offset_ms):
-    app, _, _ = await _real_messaging_fixture(aweb_cloud_db.aweb_db)
+async def test_events_stream_filters_mail_by_underlying_grant_scope(
+    aweb_cloud_db, monkeypatch, deadline_offset_ms
+):
+    app, _, _ = await _real_messaging_fixture(aweb_cloud_db.env)
     events_key, events_did = _session_keypair()
     mail_events_key, mail_events_did = _session_keypair()
     await aweb_cloud_db.aweb_db.execute(
@@ -1358,26 +1757,33 @@ async def test_events_stream_filters_mail_by_underlying_grant_scope(aweb_cloud_d
             message_id, from_did, to_did, from_alias, to_alias,
             subject, body, priority, created_at
         )
-        VALUES ($1, 'did:aw:bob', 'did:aw:alice', 'bob', 'alice',
+        VALUES ($1, $2, $3, 'bob', 'alice',
                 'grant stream subject', 'wake', 'normal', NOW())
         """,
         uuid4(),
+        TARGET_DID_AW,
+        SUBJECT_DID_AW,
     )
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", timeout=5.0) as client:
-        events_grant = (await _mint(client, grant_did_key=events_did, scopes=["events.read"])).json()["grant_id"]
-        mail_events_grant = (await _mint(client, grant_did_key=mail_events_did, scopes=["events.read", "mail.read"])).json()["grant_id"]
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test", timeout=5.0
+    ) as client:
+        events_grant = (
+            await _mint(client, grant_did_key=events_did, scopes=["events.read"])
+        ).json()["grant_id"]
+        mail_events_grant = (
+            await _mint(
+                client,
+                grant_did_key=mail_events_did,
+                scopes=["events.read", "mail.read"],
+            )
+        ).json()["grant_id"]
 
     stream_app = FastAPI()
     stream_app.include_router(events_router)
     stream_app.state.db = _DbShim(aweb_cloud_db.aweb_db)
     stream_app.state.public_origin = "http://test"
     stream_app.state.redis = None
-    stream_registry = AsyncMock()
-    stream_registry.get_team_revocations_for_certificates = None  # Legacy SDK interface.
-    stream_registry.get_team_revocations = AsyncMock(return_value=set())
-    stream_registry.get_team_fresh = AsyncMock(side_effect=legacy_team)
-    stream_app.state.awid_registry_client = stream_registry
-    _verified_subject_fixture(stream_app)
+    _borrow_grant_resources(stream_app, app)
 
     # Advance only this route's clock at polling; DB/auth work cannot consume
     # the short deadline. Each request gets an independent deadline; expired
@@ -1395,18 +1801,40 @@ async def test_events_stream_filters_mail_by_underlying_grant_scope(aweb_cloud_d
     monkeypatch.setattr(events_routes, "datetime", StreamClock)
     monkeypatch.setattr(events_routes, "asyncio", SimpleNamespace(sleep=advance_poll))
 
-    async with AsyncClient(transport=ASGITransport(app=stream_app), base_url="http://test", timeout=5.0) as stream_client:
-        deadline = (clock.now + timedelta(milliseconds=deadline_offset_ms)).isoformat().replace("+00:00", "Z")
+    async with AsyncClient(
+        transport=ASGITransport(app=stream_app), base_url="http://test", timeout=5.0
+    ) as stream_client:
+        deadline = (
+            (clock.now + timedelta(milliseconds=deadline_offset_ms))
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
         path = f"/v1/events/stream?deadline={deadline}"
         events_only = await stream_client.get(
             path,
-            headers=_grant_headers(signing_key=events_key, did_key=events_did, grant_id=events_grant, method="GET", path=path),
+            headers=_grant_headers(
+                signing_key=events_key,
+                did_key=events_did,
+                grant_id=events_grant,
+                method="GET",
+                path=path,
+            ),
         )
-        deadline = (clock.now + timedelta(milliseconds=deadline_offset_ms)).isoformat().replace("+00:00", "Z")
+        deadline = (
+            (clock.now + timedelta(milliseconds=deadline_offset_ms))
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
         path = f"/v1/events/stream?deadline={deadline}"
         mail_allowed = await stream_client.get(
             path,
-            headers=_grant_headers(signing_key=mail_events_key, did_key=mail_events_did, grant_id=mail_events_grant, method="GET", path=path),
+            headers=_grant_headers(
+                signing_key=mail_events_key,
+                did_key=mail_events_did,
+                grant_id=mail_events_grant,
+                method="GET",
+                path=path,
+            ),
         )
 
     assert events_only.status_code == 200, events_only.text
@@ -1417,7 +1845,7 @@ async def test_events_stream_filters_mail_by_underlying_grant_scope(aweb_cloud_d
     assert "grant stream subject" in mail_allowed.text
 
 
-def _stream_request(app: FastAPI, path: str = "/v1/events/stream") -> Request:
+def _stream_request(app: FastAPI, path: str = "/v1/events/stream", *, headers=None) -> Request:
     async def _receive():
         return {"type": "http.request", "body": b"", "more_body": False}
 
@@ -1426,7 +1854,7 @@ def _stream_request(app: FastAPI, path: str = "/v1/events/stream") -> Request:
             "type": "http",
             "method": "GET",
             "path": path,
-            "headers": [],
+            "headers": [(k.lower().encode(), v.encode()) for k, v in (headers or {}).items()],
             "query_string": b"",
             "server": ("test", 80),
             "scheme": "http",
@@ -1437,48 +1865,39 @@ def _stream_request(app: FastAPI, path: str = "/v1/events/stream") -> Request:
     )
 
 
-async def _grant_identity_from_db(aweb_db, *, grant_id: str, did_key: str, scopes: tuple[str, ...]) -> TeamIdentity:
-    expires_at = await aweb_db.fetch_value(
-        "SELECT expires_at FROM {{tables.identity_session_grants}} WHERE grant_id = $1::UUID",
-        grant_id,
-    )
-    agent_id = await aweb_db.fetch_value(
-        "SELECT agent_id FROM {{tables.agents}} WHERE alias = 'alice' AND team_id = $1",
-        TEAM_ID,
-    )
-    return TeamIdentity(
-        team_id=TEAM_ID,
-        alias="alice",
-        did_key=SUBJECT_DID_KEY,
-        did_aw="did:aw:alice",
-        address="acme.com/alice",
-        agent_id=str(agent_id),
-        identity_scope="global",
-        certificate_id=None,
-        grant=GrantContext(
-            grant_id=grant_id,
-            session_did_key=did_key,
-            issuing_certificate_id="cert-1",
-            scopes=scopes,
-            expires_at=expires_at,
+async def _authenticated_grant_identity(
+    app,
+    *,
+    signing_key: bytes,
+    grant_id: str,
+    did_key: str,
+    scopes: tuple[str, ...],
+    path: str = "/v1/events/stream",
+) -> TeamIdentity:
+    request = _stream_request(
+        app,
+        path,
+        headers=_grant_headers(
+            signing_key=signing_key, did_key=did_key, grant_id=grant_id, method="GET", path=path
         ),
     )
-
-
-def _messaging_auth_from_identity(identity: TeamIdentity) -> MessagingAuth:
-    assert identity.grant is not None
-    return MessagingAuth(
-        did_key=identity.did_key,
-        did_aw=identity.did_aw,
-        address=identity.address,
-        team_id=identity.team_id,
-        alias=identity.alias,
-        agent_id=identity.agent_id,
-        identity_scope=identity.identity_scope,
-        certificate_id=None,
-        verified_team_id=identity.team_id,
-        grant=identity.grant,
+    identity = await verify_identity_grant_team_identity(
+        request, app.state.db, required_scope=scopes[0]
     )
+    assert identity.grant.scopes == scopes
+    assert identity.did_key == SUBJECT_DID_KEY
+    return identity
+
+
+async def _authenticated_grant_messaging(app, *, signing_key, did_key, grant_id, path):
+    request = _stream_request(
+        app,
+        path,
+        headers=_grant_headers(
+            signing_key=signing_key, did_key=did_key, grant_id=grant_id, method="GET", path=path
+        ),
+    )
+    return await get_messaging_auth(request, db=app.state.db)
 
 
 async def _next_text(aiter) -> str:
@@ -1489,14 +1908,21 @@ async def _next_text(aiter) -> str:
 
 
 @pytest.mark.asyncio
-async def test_events_stream_real_handler_rejects_revoked_grant_on_reopen(aweb_cloud_db):
-    app, _, _ = await _real_messaging_fixture(aweb_cloud_db.aweb_db)
+async def test_events_stream_real_handler_rejects_revoked_grant_on_reopen(
+    aweb_cloud_db,
+):
+    app, _, _ = await _real_messaging_fixture(aweb_cloud_db.env)
     key, did = _session_keypair()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        grant_id = (await _mint(client, grant_did_key=did, scopes=["events.read"])).json()["grant_id"]
-    identity = await _grant_identity_from_db(aweb_cloud_db.aweb_db, grant_id=grant_id, did_key=did, scopes=("events.read",))
-    del key
-    deadline = (datetime.now(timezone.utc) + timedelta(seconds=5)).isoformat().replace("+00:00", "Z")
+        grant_id = (await _mint(client, grant_did_key=did, scopes=["events.read"])).json()[
+            "grant_id"
+        ]
+    identity = await _authenticated_grant_identity(
+        app, signing_key=key, grant_id=grant_id, did_key=did, scopes=("events.read",)
+    )
+    deadline = (
+        (datetime.now(timezone.utc) + timedelta(seconds=5)).isoformat().replace("+00:00", "Z")
+    )
     response = await events_stream_route(
         _stream_request(app),
         deadline=deadline,
@@ -1514,21 +1940,34 @@ async def test_events_stream_real_handler_rejects_revoked_grant_on_reopen(aweb_c
     await stream.aclose()
     with pytest.raises(HTTPException) as exc:
         await events_stream_route(
-            _stream_request(app), deadline=deadline,
-            db=_DbShim(aweb_cloud_db.aweb_db), redis=None, identity=identity,
+            _stream_request(app),
+            deadline=deadline,
+            db=_DbShim(aweb_cloud_db.aweb_db),
+            redis=None,
+            identity=identity,
         )
     assert exc.value.status_code == 403
     assert exc.value.detail == "identity grant revoked"
 
 
 @pytest.mark.asyncio
-async def test_events_stream_real_handler_short_client_deadline_has_no_grant_terminal(aweb_cloud_db):
-    app, _, _ = await _real_messaging_fixture(aweb_cloud_db.aweb_db)
-    _, did = _session_keypair()
+async def test_events_stream_real_handler_short_client_deadline_has_no_grant_terminal(
+    aweb_cloud_db,
+):
+    app, _, _ = await _real_messaging_fixture(aweb_cloud_db.env)
+    key, did = _session_keypair()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        grant_id = (await _mint(client, grant_did_key=did, scopes=["events.read"], ttl_seconds=600)).json()["grant_id"]
-    identity = await _grant_identity_from_db(aweb_cloud_db.aweb_db, grant_id=grant_id, did_key=did, scopes=("events.read",))
-    deadline = (datetime.now(timezone.utc) + timedelta(milliseconds=100)).isoformat().replace("+00:00", "Z")
+        grant_id = (
+            await _mint(client, grant_did_key=did, scopes=["events.read"], ttl_seconds=600)
+        ).json()["grant_id"]
+    identity = await _authenticated_grant_identity(
+        app, signing_key=key, grant_id=grant_id, did_key=did, scopes=("events.read",)
+    )
+    deadline = (
+        (datetime.now(timezone.utc) + timedelta(milliseconds=100))
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
     response = await events_stream_route(
         _stream_request(app),
         deadline=deadline,
@@ -1544,23 +1983,43 @@ async def test_events_stream_real_handler_short_client_deadline_has_no_grant_ter
 
 
 @pytest.mark.asyncio
-async def test_chat_stream_real_handler_revoked_and_expired_grants_emit_terminal(aweb_cloud_db, monkeypatch):
-    app, _, _ = await _real_messaging_fixture(aweb_cloud_db.aweb_db)
+async def test_chat_stream_real_handler_revoked_and_expired_grants_emit_terminal(
+    aweb_cloud_db, monkeypatch
+):
+    app, _, _ = await _real_messaging_fixture(aweb_cloud_db.env)
     key, did = _session_keypair()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        grant_id = (await _mint(client, grant_did_key=did, scopes=["chat.send", "chat.read"])).json()["grant_id"]
-        body = json.dumps({"to_aliases": ["bob"], "message": "hello stream"}, separators=(",", ":")).encode()
+        grant_id = (
+            await _mint(client, grant_did_key=did, scopes=["chat.send", "chat.read"])
+        ).json()["grant_id"]
+        body = json.dumps(
+            {"to_aliases": ["bob"], "message": "hello stream"}, separators=(",", ":")
+        ).encode()
         sent = await client.post(
             "/v1/chat/sessions",
             content=body,
-            headers=_grant_headers(signing_key=key, did_key=did, grant_id=grant_id, method="POST", path="/v1/chat/sessions", body=body),
+            headers=_grant_headers(
+                signing_key=key,
+                did_key=did,
+                grant_id=grant_id,
+                method="POST",
+                path="/v1/chat/sessions",
+                body=body,
+            ),
         )
         assert sent.status_code == 200, sent.text
         session_id = sent.json()["session_id"]
 
-    identity = await _grant_identity_from_db(aweb_cloud_db.aweb_db, grant_id=grant_id, did_key=did, scopes=("chat.send", "chat.read"))
-    auth = _messaging_auth_from_identity(identity)
-    deadline = (datetime.now(timezone.utc) + timedelta(seconds=5)).isoformat().replace("+00:00", "Z")
+    auth = await _authenticated_grant_messaging(
+        app,
+        signing_key=key,
+        did_key=did,
+        grant_id=grant_id,
+        path=f"/v1/chat/sessions/{session_id}/stream",
+    )
+    deadline = (
+        (datetime.now(timezone.utc) + timedelta(seconds=5)).isoformat().replace("+00:00", "Z")
+    )
     response = await chat_stream_route(
         _stream_request(app, f"/v1/chat/sessions/{session_id}/stream"),
         session_id=session_id,
@@ -1582,6 +2041,7 @@ async def test_chat_stream_real_handler_revoked_and_expired_grants_emit_terminal
     import time
     from types import SimpleNamespace
     from aweb.routes import chat as chat_routes
+
     now_mono = time.monotonic()
     monkeypatch.setattr(chat_routes, "time", SimpleNamespace(monotonic=lambda: now_mono + 31))
     assert "event: grant_revoked" in await _next_text(stream)
@@ -1590,26 +2050,36 @@ async def test_chat_stream_real_handler_revoked_and_expired_grants_emit_terminal
 
     expire_key, expire_did = _session_keypair()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        expire_grant = (await _mint(client, grant_did_key=expire_did, scopes=["chat.read"])).json()["grant_id"]
+        expire_grant = (await _mint(client, grant_did_key=expire_did, scopes=["chat.read"])).json()[
+            "grant_id"
+        ]
     await aweb_cloud_db.aweb_db.execute(
         """
         UPDATE {{tables.identity_session_grants}}
-        SET expires_at = NOW() + INTERVAL '100 milliseconds'
+        SET expires_at = NOW() + INTERVAL '2 seconds'
         WHERE grant_id = $1::UUID
         """,
         expire_grant,
     )
-    expire_identity = await _grant_identity_from_db(aweb_cloud_db.aweb_db, grant_id=expire_grant, did_key=expire_did, scopes=("chat.read",))
+
     expire_response = await chat_stream_route(
         _stream_request(app, f"/v1/chat/sessions/{session_id}/stream"),
         session_id=session_id,
-        deadline=(datetime.now(timezone.utc) + timedelta(seconds=5)).isoformat().replace("+00:00", "Z"),
+        deadline=(datetime.now(timezone.utc) + timedelta(seconds=5))
+        .isoformat()
+        .replace("+00:00", "Z"),
         after=None,
         after_seq=None,
         include=None,
         db=_DbShim(aweb_cloud_db.aweb_db),
         redis=None,
-        auth=_messaging_auth_from_identity(expire_identity),
+        auth=await _authenticated_grant_messaging(
+            app,
+            signing_key=expire_key,
+            did_key=expire_did,
+            grant_id=expire_grant,
+            path=f"/v1/chat/sessions/{session_id}/stream",
+        ),
     )
     expire_body = ""
     async for chunk in expire_response.body_iterator:
@@ -1651,11 +2121,15 @@ class _OneMessageRedis:
 
 
 @pytest.mark.asyncio
-async def test_status_stream_real_handler_drops_coord_categories_without_coord_scope(aweb_cloud_db):
-    app, _, _ = await _real_messaging_fixture(aweb_cloud_db.aweb_db)
-    _, did = _session_keypair()
+async def test_status_stream_real_handler_drops_coord_categories_without_coord_scope(
+    aweb_cloud_db,
+):
+    app, _, _ = await _real_messaging_fixture(aweb_cloud_db.env)
+    key, did = _session_keypair()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        grant_id = (await _mint(client, grant_did_key=did, scopes=["events.read"])).json()["grant_id"]
+        grant_id = (await _mint(client, grant_did_key=did, scopes=["events.read"])).json()[
+            "grant_id"
+        ]
     await aweb_cloud_db.aweb_db.execute(
         """
         UPDATE {{tables.identity_session_grants}}
@@ -1664,7 +2138,9 @@ async def test_status_stream_real_handler_drops_coord_categories_without_coord_s
         """,
         grant_id,
     )
-    identity = await _grant_identity_from_db(aweb_cloud_db.aweb_db, grant_id=grant_id, did_key=did, scopes=("events.read",))
+    identity = await _authenticated_grant_identity(
+        app, signing_key=key, grant_id=grant_id, did_key=did, scopes=("events.read",)
+    )
     response = await status_stream_route(
         _stream_request(app, "/v1/status/stream"),
         workspace_id=app.state.alice_workspace_id,
@@ -1672,7 +2148,13 @@ async def test_status_stream_real_handler_drops_coord_categories_without_coord_s
         human_name=None,
         limit=200,
         event_types="task,reservation",
-        redis=_OneMessageRedis({"type": "task.status_changed", "workspace_id": app.state.alice_workspace_id, "task_ref": "aweb-x"}),
+        redis=_OneMessageRedis(
+            {
+                "type": "task.status_changed",
+                "workspace_id": app.state.alice_workspace_id,
+                "task_ref": "aweb-x",
+            }
+        ),
         db_infra=_DbShim(aweb_cloud_db.aweb_db),
         identity=identity,
     )
@@ -1682,9 +2164,10 @@ async def test_status_stream_real_handler_drops_coord_categories_without_coord_s
     assert "task.status_changed" not in body
     assert "aweb-x" not in body
 
+
 @pytest.mark.asyncio
 async def test_grant_real_coord_and_contacts_routes(aweb_cloud_db):
-    app, alice_id, bob_id = await _real_messaging_fixture(aweb_cloud_db.aweb_db)
+    app, alice_id, bob_id = await _real_messaging_fixture(aweb_cloud_db.env)
     read_key, read_did = _session_keypair()
     write_key, write_did = _session_keypair()
     contacts_key, contacts_did = _session_keypair()
@@ -1696,8 +2179,8 @@ async def test_grant_real_coord_and_contacts_routes(aweb_cloud_db):
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (agent_id, team_id, alias, did_key, status, identity_scope)
-        VALUES ($1, 'other:acme.com', 'other', 'did:key:zOtherAgent', 'active', 'global')
+        INSERT INTO {{tables.agents}} (agent_id, team_id, alias, did_key, status, identity_scope, inbound_mode)
+        VALUES ($1, 'other:acme.com', 'other', 'did:key:zOtherAgent', 'active', 'global', 'open')
         """,
         other_agent,
     )
@@ -1732,62 +2215,140 @@ async def test_grant_real_coord_and_contacts_routes(aweb_cloud_db):
     contact_id = await aweb_cloud_db.aweb_db.fetch_value(
         """
         INSERT INTO {{tables.contacts}} (owner_did, contact_address, label, status)
-        VALUES ('did:aw:alice', 'acme.com/bob', 'Bob', 'active')
+        VALUES ($1, 'acme.com/bob', 'Bob', 'active')
         RETURNING contact_id::text
-        """
+        """,
+        SUBJECT_DID_AW,
     )
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        coord_read = (await _mint(client, grant_did_key=read_did, scopes=["coord.read"])).json()["grant_id"]
-        coord_write = (await _mint(client, grant_did_key=write_did, scopes=["coord.write", "coord.read"])).json()["grant_id"]
-        contacts_grant = (await _mint(client, grant_did_key=contacts_did, scopes=["contacts.read", "contacts.write"])).json()["grant_id"]
-        mail_grant = (await _mint(client, grant_did_key=mail_did, scopes=["mail.read"])).json()["grant_id"]
+        coord_read = (await _mint(client, grant_did_key=read_did, scopes=["coord.read"])).json()[
+            "grant_id"
+        ]
+        coord_write = (
+            await _mint(client, grant_did_key=write_did, scopes=["coord.write", "coord.read"])
+        ).json()["grant_id"]
+        contacts_grant = (
+            await _mint(
+                client,
+                grant_did_key=contacts_did,
+                scopes=["contacts.read", "contacts.write"],
+            )
+        ).json()["grant_id"]
+        mail_grant = (await _mint(client, grant_did_key=mail_did, scopes=["mail.read"])).json()[
+            "grant_id"
+        ]
 
         def h(key, did, grant_id, method, path, body=b""):
-            return _grant_headers(signing_key=key, did_key=did, grant_id=grant_id, method=method, path=path, body=body)
+            return _grant_headers(
+                signing_key=key,
+                did_key=did,
+                grant_id=grant_id,
+                method=method,
+                path=path,
+                body=body,
+            )
 
-        claims = await client.get("/v1/claims", headers=h(read_key, read_did, coord_read, "GET", "/v1/claims"))
-        claims_denied = await client.get("/v1/claims", headers=h(mail_key, mail_did, mail_grant, "GET", "/v1/claims"))
-        reservations = await client.get("/v1/reservations", headers=h(read_key, read_did, coord_read, "GET", "/v1/reservations"))
-        reservations_denied = await client.get("/v1/reservations", headers=h(mail_key, mail_did, mail_grant, "GET", "/v1/reservations"))
-        acquire_body = json.dumps({"resource_key": "alice-resource", "ttl_seconds": 120}, separators=(",", ":")).encode()
+        claims = await client.get(
+            "/v1/claims", headers=h(read_key, read_did, coord_read, "GET", "/v1/claims")
+        )
+        claims_denied = await client.get(
+            "/v1/claims", headers=h(mail_key, mail_did, mail_grant, "GET", "/v1/claims")
+        )
+        reservations = await client.get(
+            "/v1/reservations",
+            headers=h(read_key, read_did, coord_read, "GET", "/v1/reservations"),
+        )
+        reservations_denied = await client.get(
+            "/v1/reservations",
+            headers=h(mail_key, mail_did, mail_grant, "GET", "/v1/reservations"),
+        )
+        acquire_body = json.dumps(
+            {"resource_key": "alice-resource", "ttl_seconds": 120},
+            separators=(",", ":"),
+        ).encode()
         acquired = await client.post(
             "/v1/reservations",
             content=acquire_body,
-            headers=h(write_key, write_did, coord_write, "POST", "/v1/reservations", acquire_body),
+            headers=h(
+                write_key,
+                write_did,
+                coord_write,
+                "POST",
+                "/v1/reservations",
+                acquire_body,
+            ),
         )
-        renew_body = json.dumps({"resource_key": "alice-resource", "ttl_seconds": 180}, separators=(",", ":")).encode()
+        renew_body = json.dumps(
+            {"resource_key": "alice-resource", "ttl_seconds": 180},
+            separators=(",", ":"),
+        ).encode()
         renewed = await client.post(
             "/v1/reservations/renew",
             content=renew_body,
-            headers=h(write_key, write_did, coord_write, "POST", "/v1/reservations/renew", renew_body),
+            headers=h(
+                write_key,
+                write_did,
+                coord_write,
+                "POST",
+                "/v1/reservations/renew",
+                renew_body,
+            ),
         )
-        release_bob_body = json.dumps({"resource_key": "bob-resource"}, separators=(",", ":")).encode()
+        release_bob_body = json.dumps(
+            {"resource_key": "bob-resource"}, separators=(",", ":")
+        ).encode()
         release_bob = await client.post(
             "/v1/reservations/release",
             content=release_bob_body,
-            headers=h(write_key, write_did, coord_write, "POST", "/v1/reservations/release", release_bob_body),
+            headers=h(
+                write_key,
+                write_did,
+                coord_write,
+                "POST",
+                "/v1/reservations/release",
+                release_bob_body,
+            ),
         )
-        release_body = json.dumps({"resource_key": "alice-resource"}, separators=(",", ":")).encode()
+        release_body = json.dumps(
+            {"resource_key": "alice-resource"}, separators=(",", ":")
+        ).encode()
         released = await client.post(
             "/v1/reservations/release",
             content=release_body,
-            headers=h(write_key, write_did, coord_write, "POST", "/v1/reservations/release", release_body),
+            headers=h(
+                write_key,
+                write_did,
+                coord_write,
+                "POST",
+                "/v1/reservations/release",
+                release_body,
+            ),
         )
-        contacts = await client.get("/v1/contacts", headers=h(contacts_key, contacts_did, contacts_grant, "GET", "/v1/contacts"))
-        contacts_denied = await client.get("/v1/contacts", headers=h(mail_key, mail_did, mail_grant, "GET", "/v1/contacts"))
-        deleted = await client.delete(f"/v1/contacts/{contact_id}", headers=h(contacts_key, contacts_did, contacts_grant, "DELETE", f"/v1/contacts/{contact_id}"))
+        contacts = await client.get(
+            "/v1/contacts",
+            headers=h(contacts_key, contacts_did, contacts_grant, "GET", "/v1/contacts"),
+        )
+        contacts_denied = await client.get(
+            "/v1/contacts",
+            headers=h(mail_key, mail_did, mail_grant, "GET", "/v1/contacts"),
+        )
+        deleted = await client.delete(
+            f"/v1/contacts/{contact_id}",
+            headers=h(
+                contacts_key,
+                contacts_did,
+                contacts_grant,
+                "DELETE",
+                f"/v1/contacts/{contact_id}",
+            ),
+        )
 
     deny_app = FastAPI()
     deny_app.include_router(reservations_router)
     deny_app.state.db = _DbShim(aweb_cloud_db.aweb_db)
     deny_app.state.public_origin = "http://test"
-    deny_registry = AsyncMock()
-    deny_registry.get_team_revocations_for_certificates = None  # Legacy SDK interface.
-    deny_registry.get_team_revocations = AsyncMock(return_value=set())
-    deny_registry.get_team_fresh = AsyncMock(side_effect=legacy_team)
-    deny_app.state.awid_registry_client = deny_registry
-    _verified_subject_fixture(deny_app)
+    _borrow_grant_resources(deny_app, app)
 
     @deny_app.middleware("http")
     async def cache_body_middleware(request, call_next):
@@ -1797,11 +2358,20 @@ async def test_grant_real_coord_and_contacts_routes(aweb_cloud_db):
         request._receive = _cached_body_receive(body)
         return await call_next(request)
 
-    async with AsyncClient(transport=ASGITransport(app=deny_app), base_url="http://test") as deny_client:
+    async with AsyncClient(
+        transport=ASGITransport(app=deny_app), base_url="http://test"
+    ) as deny_client:
         revoke_denied = await deny_client.post(
             "/v1/reservations/revoke",
             content=b'{"prefix":""}',
-            headers=h(write_key, write_did, coord_write, "POST", "/v1/reservations/revoke", b'{"prefix":""}'),
+            headers=h(
+                write_key,
+                write_did,
+                coord_write,
+                "POST",
+                "/v1/reservations/revoke",
+                b'{"prefix":""}',
+            ),
         )
 
     assert claims.status_code == 200, claims.text
@@ -1811,7 +2381,9 @@ async def test_grant_real_coord_and_contacts_routes(aweb_cloud_db):
     assert claims_denied.status_code == 403
     assert claims_denied.json()["detail"] == "outside grant scope"
     assert reservations.status_code == 200, reservations.text
-    reservation_keys = {reservation["resource_key"] for reservation in reservations.json()["reservations"]}
+    reservation_keys = {
+        reservation["resource_key"] for reservation in reservations.json()["reservations"]
+    }
     assert "bob-resource" in reservation_keys
     assert "other-resource" not in reservation_keys
     assert reservations_denied.status_code == 403
@@ -1828,9 +2400,10 @@ async def test_grant_real_coord_and_contacts_routes(aweb_cloud_db):
     assert contacts_denied.json()["detail"] == "outside grant scope"
     assert deleted.status_code == 200, deleted.text
 
+
 @pytest.mark.asyncio
 async def test_grant_real_task_workspace_repo_role_instruction_routes(aweb_cloud_db):
-    app, alice_id, bob_id = await _real_messaging_fixture(aweb_cloud_db.aweb_db)
+    app, alice_id, bob_id = await _real_messaging_fixture(aweb_cloud_db.env)
     read_key, read_did = _session_keypair()
     write_key, write_did = _session_keypair()
     presence_key, presence_did = _session_keypair()
@@ -1847,15 +2420,11 @@ async def test_grant_real_task_workspace_repo_role_instruction_routes(aweb_cloud
         VALUES ('other:acme.com', 1, 1, 'a', 'other task', '', '', 2, 'task', '{}'::text[], 'other')
         """
     )
-    bob_workspace_id = uuid4()
+    bob_workspace_id = app.state.members["bob"].workspace
     await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.workspaces}} (
-            workspace_id, team_id, agent_id, alias, human_name, role,
-            workspace_type, last_seen_at
-        )
-        VALUES ($1, $2, $3, 'bob', 'Bob', 'developer', 'manual', NOW() - INTERVAL '1 hour')
-        """,
+        "UPDATE {{tables.workspaces}} SET human_name='Bob', role='developer', "
+        "workspace_type='manual', last_seen_at=NOW()-INTERVAL '1 hour' "
+        "WHERE workspace_id=$1::uuid AND team_id=$2 AND agent_id=$3::uuid",
         bob_workspace_id,
         TEAM_ID,
         bob_id,
@@ -1875,12 +2444,24 @@ async def test_grant_real_task_workspace_repo_role_instruction_routes(aweb_cloud
     )
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        read_grant = (await _mint(client, grant_did_key=read_did, scopes=["coord.read"])).json()["grant_id"]
-        write_grant = (await _mint(client, grant_did_key=write_did, scopes=["coord.write", "coord.read"])).json()["grant_id"]
-        presence_grant = (await _mint(client, grant_did_key=presence_did, scopes=["presence.write"])).json()["grant_id"]
-        other_presence_grant = (await _mint(client, grant_did_key=other_presence_did, scopes=["presence.write"])).json()["grant_id"]
-        expired_presence_grant = (await _mint(client, grant_did_key=expired_presence_did, scopes=["presence.write"])).json()["grant_id"]
-        revoked_presence_grant = (await _mint(client, grant_did_key=revoked_presence_did, scopes=["presence.write"])).json()["grant_id"]
+        read_grant = (await _mint(client, grant_did_key=read_did, scopes=["coord.read"])).json()[
+            "grant_id"
+        ]
+        write_grant = (
+            await _mint(client, grant_did_key=write_did, scopes=["coord.write", "coord.read"])
+        ).json()["grant_id"]
+        presence_grant = (
+            await _mint(client, grant_did_key=presence_did, scopes=["presence.write"])
+        ).json()["grant_id"]
+        other_presence_grant = (
+            await _mint(client, grant_did_key=other_presence_did, scopes=["presence.write"])
+        ).json()["grant_id"]
+        expired_presence_grant = (
+            await _mint(client, grant_did_key=expired_presence_did, scopes=["presence.write"])
+        ).json()["grant_id"]
+        revoked_presence_grant = (
+            await _mint(client, grant_did_key=revoked_presence_did, scopes=["presence.write"])
+        ).json()["grant_id"]
         await aweb_cloud_db.aweb_db.execute(
             """
             UPDATE {{tables.identity_session_grants}}
@@ -1893,110 +2474,252 @@ async def test_grant_real_task_workspace_repo_role_instruction_routes(aweb_cloud
             "UPDATE {{tables.identity_session_grants}} SET revoked_at = NOW() WHERE grant_id = $1::UUID",
             revoked_presence_grant,
         )
-        mail_grant = (await _mint(client, grant_did_key=mail_did, scopes=["mail.read"])).json()["grant_id"]
+        mail_grant = (await _mint(client, grant_did_key=mail_did, scopes=["mail.read"])).json()[
+            "grant_id"
+        ]
 
         def h(key, did, grant_id, method, path, body=b""):
-            return _grant_headers(signing_key=key, did_key=did, grant_id=grant_id, method=method, path=path, body=body)
+            return _grant_headers(
+                signing_key=key,
+                did_key=did,
+                grant_id=grant_id,
+                method=method,
+                path=path,
+                body=body,
+            )
 
-        create_body = json.dumps({"title": "grant task", "description": "from grant"}, separators=(",", ":")).encode()
+        create_body = json.dumps(
+            {"title": "grant task", "description": "from grant"}, separators=(",", ":")
+        ).encode()
         created = await client.post(
             "/v1/tasks",
             content=create_body,
             headers=h(write_key, write_did, write_grant, "POST", "/v1/tasks", create_body),
         )
         task_ref = created.json().get("task_ref")
-        tasks = await client.get("/v1/tasks", headers=h(read_key, read_did, read_grant, "GET", "/v1/tasks"))
-        ready = await client.get("/v1/tasks/ready", headers=h(read_key, read_did, read_grant, "GET", "/v1/tasks/ready"))
-        task = await client.get(f"/v1/tasks/{task_ref}", headers=h(read_key, read_did, read_grant, "GET", f"/v1/tasks/{task_ref}"))
-        wrong_scope_task = await client.get("/v1/tasks", headers=h(mail_key, mail_did, mail_grant, "GET", "/v1/tasks"))
-        patch_body = json.dumps({"status": "in_progress", "notes": "claimed"}, separators=(",", ":")).encode()
+        tasks = await client.get(
+            "/v1/tasks", headers=h(read_key, read_did, read_grant, "GET", "/v1/tasks")
+        )
+        ready = await client.get(
+            "/v1/tasks/ready",
+            headers=h(read_key, read_did, read_grant, "GET", "/v1/tasks/ready"),
+        )
+        task = await client.get(
+            f"/v1/tasks/{task_ref}",
+            headers=h(read_key, read_did, read_grant, "GET", f"/v1/tasks/{task_ref}"),
+        )
+        wrong_scope_task = await client.get(
+            "/v1/tasks", headers=h(mail_key, mail_did, mail_grant, "GET", "/v1/tasks")
+        )
+        patch_body = json.dumps(
+            {"status": "in_progress", "notes": "claimed"}, separators=(",", ":")
+        ).encode()
         patched = await client.patch(
             f"/v1/tasks/{task_ref}",
             content=patch_body,
-            headers=h(write_key, write_did, write_grant, "PATCH", f"/v1/tasks/{task_ref}", patch_body),
+            headers=h(
+                write_key,
+                write_did,
+                write_grant,
+                "PATCH",
+                f"/v1/tasks/{task_ref}",
+                patch_body,
+            ),
         )
         comments_body = json.dumps({"body": "grant comment"}, separators=(",", ":")).encode()
         comment = await client.post(
             f"/v1/tasks/{task_ref}/comments",
             content=comments_body,
-            headers=h(write_key, write_did, write_grant, "POST", f"/v1/tasks/{task_ref}/comments", comments_body),
+            headers=h(
+                write_key,
+                write_did,
+                write_grant,
+                "POST",
+                f"/v1/tasks/{task_ref}/comments",
+                comments_body,
+            ),
         )
-        comments = await client.get(f"/v1/tasks/{task_ref}/comments", headers=h(read_key, read_did, read_grant, "GET", f"/v1/tasks/{task_ref}/comments"))
+        comments = await client.get(
+            f"/v1/tasks/{task_ref}/comments",
+            headers=h(read_key, read_did, read_grant, "GET", f"/v1/tasks/{task_ref}/comments"),
+        )
         workspaces_path = "/v1/workspaces?include_presence=false"
-        workspaces = await client.get(workspaces_path, headers=h(read_key, read_did, read_grant, "GET", workspaces_path))
+        workspaces = await client.get(
+            workspaces_path,
+            headers=h(read_key, read_did, read_grant, "GET", workspaces_path),
+        )
         team_workspaces_path = "/v1/workspaces/team?include_presence=false"
-        team_workspaces = await client.get(team_workspaces_path, headers=h(read_key, read_did, read_grant, "GET", team_workspaces_path))
-        heartbeat_body = json.dumps({"workspace_id": app.state.alice_workspace_id, "alias": "alice"}, separators=(",", ":")).encode()
+        team_workspaces = await client.get(
+            team_workspaces_path,
+            headers=h(read_key, read_did, read_grant, "GET", team_workspaces_path),
+        )
+        heartbeat_body = json.dumps(
+            {"workspace_id": app.state.alice_workspace_id, "alias": "alice"},
+            separators=(",", ":"),
+        ).encode()
         workspace_heartbeat = await client.post(
             "/v1/workspaces/heartbeat",
             content=heartbeat_body,
-            headers=h(presence_key, presence_did, presence_grant, "POST", "/v1/workspaces/heartbeat", heartbeat_body),
+            headers=h(
+                presence_key,
+                presence_did,
+                presence_grant,
+                "POST",
+                "/v1/workspaces/heartbeat",
+                heartbeat_body,
+            ),
         )
         other_workspace_heartbeat = await client.post(
             "/v1/workspaces/heartbeat",
             content=heartbeat_body,
-            headers=h(other_presence_key, other_presence_did, other_presence_grant, "POST", "/v1/workspaces/heartbeat", heartbeat_body),
+            headers=h(
+                other_presence_key,
+                other_presence_did,
+                other_presence_grant,
+                "POST",
+                "/v1/workspaces/heartbeat",
+                heartbeat_body,
+            ),
         )
-        bob_heartbeat_body = json.dumps({"workspace_id": str(bob_workspace_id), "alias": "bob"}, separators=(",", ":")).encode()
+        bob_heartbeat_body = json.dumps(
+            {"workspace_id": str(bob_workspace_id), "alias": "bob"},
+            separators=(",", ":"),
+        ).encode()
         wrong_workspace_heartbeat = await client.post(
             "/v1/workspaces/heartbeat",
             content=bob_heartbeat_body,
-            headers=h(presence_key, presence_did, presence_grant, "POST", "/v1/workspaces/heartbeat", bob_heartbeat_body),
+            headers=h(
+                presence_key,
+                presence_did,
+                presence_grant,
+                "POST",
+                "/v1/workspaces/heartbeat",
+                bob_heartbeat_body,
+            ),
         )
-        metadata_heartbeat_body = json.dumps({"workspace_id": app.state.alice_workspace_id, "alias": "alice", "hostname": "grant-host"}, separators=(",", ":")).encode()
+        metadata_heartbeat_body = json.dumps(
+            {
+                "workspace_id": app.state.alice_workspace_id,
+                "alias": "alice",
+                "hostname": "grant-host",
+            },
+            separators=(",", ":"),
+        ).encode()
         metadata_heartbeat = await client.post(
             "/v1/workspaces/heartbeat",
             content=metadata_heartbeat_body,
-            headers=h(presence_key, presence_did, presence_grant, "POST", "/v1/workspaces/heartbeat", metadata_heartbeat_body),
+            headers=h(
+                presence_key,
+                presence_did,
+                presence_grant,
+                "POST",
+                "/v1/workspaces/heartbeat",
+                metadata_heartbeat_body,
+            ),
         )
         expired_heartbeat = await client.post(
             "/v1/workspaces/heartbeat",
             content=heartbeat_body,
-            headers=h(expired_presence_key, expired_presence_did, expired_presence_grant, "POST", "/v1/workspaces/heartbeat", heartbeat_body),
+            headers=h(
+                expired_presence_key,
+                expired_presence_did,
+                expired_presence_grant,
+                "POST",
+                "/v1/workspaces/heartbeat",
+                heartbeat_body,
+            ),
         )
         revoked_heartbeat = await client.post(
             "/v1/workspaces/heartbeat",
             content=heartbeat_body,
-            headers=h(revoked_presence_key, revoked_presence_did, revoked_presence_grant, "POST", "/v1/workspaces/heartbeat", heartbeat_body),
+            headers=h(
+                revoked_presence_key,
+                revoked_presence_did,
+                revoked_presence_grant,
+                "POST",
+                "/v1/workspaces/heartbeat",
+                heartbeat_body,
+            ),
         )
-        workspace_patch_body = json.dumps({"focus_task_ref": task_ref}, separators=(",", ":")).encode()
+        workspace_patch_body = json.dumps(
+            {"focus_task_ref": task_ref}, separators=(",", ":")
+        ).encode()
         workspace_patch = await client.patch(
             f"/v1/workspaces/{app.state.alice_workspace_id}",
             content=workspace_patch_body,
-            headers=h(presence_key, presence_did, presence_grant, "PATCH", f"/v1/workspaces/{app.state.alice_workspace_id}", workspace_patch_body),
+            headers=h(
+                presence_key,
+                presence_did,
+                presence_grant,
+                "PATCH",
+                f"/v1/workspaces/{app.state.alice_workspace_id}",
+                workspace_patch_body,
+            ),
         )
         workspace_wrong_scope = await client.patch(
             f"/v1/workspaces/{app.state.alice_workspace_id}",
             content=workspace_patch_body,
-            headers=h(read_key, read_did, read_grant, "PATCH", f"/v1/workspaces/{app.state.alice_workspace_id}", workspace_patch_body),
+            headers=h(
+                read_key,
+                read_did,
+                read_grant,
+                "PATCH",
+                f"/v1/workspaces/{app.state.alice_workspace_id}",
+                workspace_patch_body,
+            ),
         )
         workspace_wrong_subject = await client.patch(
             f"/v1/workspaces/{bob_workspace_id}",
             content=workspace_patch_body,
-            headers=h(presence_key, presence_did, presence_grant, "PATCH", f"/v1/workspaces/{bob_workspace_id}", workspace_patch_body),
+            headers=h(
+                presence_key,
+                presence_did,
+                presence_grant,
+                "PATCH",
+                f"/v1/workspaces/{bob_workspace_id}",
+                workspace_patch_body,
+            ),
         )
-        workspace_metadata_body = json.dumps({"hostname": "grant-host"}, separators=(",", ":")).encode()
+        workspace_metadata_body = json.dumps(
+            {"hostname": "grant-host"}, separators=(",", ":")
+        ).encode()
         workspace_metadata = await client.patch(
             f"/v1/workspaces/{app.state.alice_workspace_id}",
             content=workspace_metadata_body,
-            headers=h(presence_key, presence_did, presence_grant, "PATCH", f"/v1/workspaces/{app.state.alice_workspace_id}", workspace_metadata_body),
+            headers=h(
+                presence_key,
+                presence_did,
+                presence_grant,
+                "PATCH",
+                f"/v1/workspaces/{app.state.alice_workspace_id}",
+                workspace_metadata_body,
+            ),
         )
-        repos = await client.get("/v1/repos", headers=h(read_key, read_did, read_grant, "GET", "/v1/repos"))
-        roles = await client.get("/v1/roles/active", headers=h(read_key, read_did, read_grant, "GET", "/v1/roles/active"))
-        instructions = await client.get("/v1/instructions/active", headers=h(read_key, read_did, read_grant, "GET", "/v1/instructions/active"))
+        repos = await client.get(
+            "/v1/repos", headers=h(read_key, read_did, read_grant, "GET", "/v1/repos")
+        )
+        roles = await client.get(
+            "/v1/roles/active",
+            headers=h(read_key, read_did, read_grant, "GET", "/v1/roles/active"),
+        )
+        instructions = await client.get(
+            "/v1/instructions/active",
+            headers=h(read_key, read_did, read_grant, "GET", "/v1/instructions/active"),
+        )
 
     deny_app = FastAPI()
-    for router in (tasks_router, repos_router, roles_router, instructions_router, workspaces_router):
+    for router in (
+        tasks_router,
+        repos_router,
+        roles_router,
+        instructions_router,
+        workspaces_router,
+    ):
         deny_app.include_router(router)
     deny_app.state.db = _DbShim(aweb_cloud_db.aweb_db)
     deny_app.state.public_origin = "http://test"
     deny_app.state.redis = None
-    deny_registry = AsyncMock()
-    deny_registry.get_team_revocations_for_certificates = None  # Legacy SDK interface.
-    deny_registry.get_team_revocations = AsyncMock(return_value=set())
-    deny_registry.get_team_fresh = AsyncMock(side_effect=legacy_team)
-    deny_app.state.awid_registry_client = deny_registry
-    _verified_subject_fixture(deny_app)
+    _borrow_grant_resources(deny_app, app)
 
     @deny_app.middleware("http")
     async def cache_body_middleware(request, call_next):
@@ -2006,13 +2729,46 @@ async def test_grant_real_task_workspace_repo_role_instruction_routes(aweb_cloud
         request._receive = _cached_body_receive(body)
         return await call_next(request)
 
-    async with AsyncClient(transport=ASGITransport(app=deny_app), base_url="http://test") as deny_client:
-        delete_task = await deny_client.delete(f"/v1/tasks/{task_ref}", headers=h(write_key, write_did, write_grant, "DELETE", f"/v1/tasks/{task_ref}"))
-        ensure_body = json.dumps({"origin_url": "git@github.com:awebai/aweb.git"}, separators=(",", ":")).encode()
-        ensure_repo = await deny_client.post("/v1/repos/ensure", content=ensure_body, headers=h(write_key, write_did, write_grant, "POST", "/v1/repos/ensure", ensure_body))
-        reset_roles = await deny_client.post("/v1/roles/reset", headers=h(write_key, write_did, write_grant, "POST", "/v1/roles/reset"))
-        reset_instructions = await deny_client.post("/v1/instructions/reset", headers=h(write_key, write_did, write_grant, "POST", "/v1/instructions/reset"))
-        delete_workspace = await deny_client.delete(f"/v1/workspaces/{app.state.alice_workspace_id}", headers=h(presence_key, presence_did, presence_grant, "DELETE", f"/v1/workspaces/{app.state.alice_workspace_id}"))
+    async with AsyncClient(
+        transport=ASGITransport(app=deny_app), base_url="http://test"
+    ) as deny_client:
+        delete_task = await deny_client.delete(
+            f"/v1/tasks/{task_ref}",
+            headers=h(write_key, write_did, write_grant, "DELETE", f"/v1/tasks/{task_ref}"),
+        )
+        ensure_body = json.dumps(
+            {"origin_url": "git@github.com:awebai/aweb.git"}, separators=(",", ":")
+        ).encode()
+        ensure_repo = await deny_client.post(
+            "/v1/repos/ensure",
+            content=ensure_body,
+            headers=h(
+                write_key,
+                write_did,
+                write_grant,
+                "POST",
+                "/v1/repos/ensure",
+                ensure_body,
+            ),
+        )
+        reset_roles = await deny_client.post(
+            "/v1/roles/reset",
+            headers=h(write_key, write_did, write_grant, "POST", "/v1/roles/reset"),
+        )
+        reset_instructions = await deny_client.post(
+            "/v1/instructions/reset",
+            headers=h(write_key, write_did, write_grant, "POST", "/v1/instructions/reset"),
+        )
+        delete_workspace = await deny_client.delete(
+            f"/v1/workspaces/{app.state.alice_workspace_id}",
+            headers=h(
+                presence_key,
+                presence_did,
+                presence_grant,
+                "DELETE",
+                f"/v1/workspaces/{app.state.alice_workspace_id}",
+            ),
+        )
 
     assert created.status_code == 200, created.text
     assert task_ref
@@ -2045,13 +2801,19 @@ async def test_grant_real_task_workspace_repo_role_instruction_routes(aweb_cloud
         "SELECT grant_id::text, workspace_id::text, subject_agent_id::text FROM {{tables.identity_grant_liveness}} WHERE grant_id = ANY($1::uuid[]) ORDER BY grant_id::text",
         [presence_grant, other_presence_grant],
     )
-    assert {row["grant_id"] for row in liveness_rows} == {presence_grant, other_presence_grant}
+    assert {row["grant_id"] for row in liveness_rows} == {
+        presence_grant,
+        other_presence_grant,
+    }
     assert {row["workspace_id"] for row in liveness_rows} == {app.state.alice_workspace_id}
     assert {row["subject_agent_id"] for row in liveness_rows} == {str(alice_id)}
-    assert await aweb_cloud_db.aweb_db.fetch_value(
-        "SELECT last_seen_at FROM {{tables.workspaces}} WHERE workspace_id = $1::UUID",
-        app.state.alice_workspace_id,
-    ) == old_last_seen
+    assert (
+        await aweb_cloud_db.aweb_db.fetch_value(
+            "SELECT last_seen_at FROM {{tables.workspaces}} WHERE workspace_id = $1::UUID",
+            app.state.alice_workspace_id,
+        )
+        == old_last_seen
+    )
     assert wrong_workspace_heartbeat.status_code == 403
     assert wrong_workspace_heartbeat.json()["detail"] == "grant workspace mismatch"
     assert metadata_heartbeat.status_code == 403
@@ -2071,6 +2833,12 @@ async def test_grant_real_task_workspace_repo_role_instruction_routes(aweb_cloud
     assert repos.json()["repos"][0]["canonical_origin"] == "github.com/awebai/aweb"
     assert roles.status_code == 200, roles.text
     assert instructions.status_code == 200, instructions.text
-    for response in (delete_task, ensure_repo, reset_roles, reset_instructions, delete_workspace):
+    for response in (
+        delete_task,
+        ensure_repo,
+        reset_roles,
+        reset_instructions,
+        delete_workspace,
+    ):
         assert response.status_code == 403
         assert response.json()["detail"] == "outside grant scope"

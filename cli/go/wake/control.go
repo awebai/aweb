@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/awebai/aw/internal/custodypath"
 	"net"
 	"os"
 	"strings"
@@ -76,7 +75,7 @@ func StartControl(ctx context.Context, b *Broker) (<-chan error, error) {
 	if len(path) > maxSocketPath {
 		return nil, fmt.Errorf("wake: control socket path is %d bytes, over the %d-byte unix socket limit: %s", len(path), maxSocketPath, path)
 	}
-	if err := custodypath.Prepare(path); err != nil {
+	if err := prepareControlSocket(path); err != nil {
 		return nil, fmt.Errorf("wake: control socket: %w", err)
 	}
 	// The caller holds the daemon lock, so any existing safe socket is stale.
@@ -89,7 +88,7 @@ func StartControl(ctx context.Context, b *Broker) (<-chan error, error) {
 	}
 	if err := os.Chmod(path, 0o600); err != nil {
 		_ = listener.Close()
-		return nil, err
+		return nil, fmt.Errorf("wake: secure control socket: %w", err)
 	}
 	served := make(chan error, 1)
 	go func() { served <- serveControl(ctx, b, listener) }()
@@ -235,7 +234,7 @@ func callWithTimeout(socketPath string, req ControlRequest, timeout time.Duratio
 		}
 		return fmt.Errorf("%w; retry or inspect the daemon: %w", ErrControlTransport, err)
 	}
-	if err := custodypath.Check(socketPath); err != nil {
+	if err := checkControlSocket(socketPath); err != nil {
 		if os.IsNotExist(err) {
 			if req.Op == OpDeregisterManaged {
 				return ControlResponse{}, transportError(err)

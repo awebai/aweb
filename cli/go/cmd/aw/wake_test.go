@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
@@ -490,6 +491,21 @@ func TestWakeRunIsIdempotentAndServesItsSocket(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("the fake oats stand-in is POSIX shell")
 	}
+	for _, tc := range []struct {
+		name string
+		mode os.FileMode
+	}{
+		{name: "private", mode: 0o700},
+		{name: "shared", mode: 0o770},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			testWakeRunAndControl(t, tc.mode)
+		})
+	}
+}
+
+func testWakeRunAndControl(t *testing.T, mode os.FileMode) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
 
@@ -500,28 +516,33 @@ func TestWakeRunIsIdempotentAndServesItsSocket(t *testing.T) {
 	bin := filepath.Join(root, "aw")
 	buildAwBinary(t, ctx, bin)
 
-	// A unix socket path is bounded by sun_path, and t.TempDir() embeds the
-	// test name; the daemon says so itself, but the test needs a short one.
-	// /tmp keeps it short whatever TMPDIR is.
-	stateRoot, err := os.MkdirTemp("/tmp", "awwk")
-	if err != nil {
+	// Use a short state path so this exercises the socket in the state
+	// directory itself, rather than the private shortened-path runtime.
+	stateDir := shortWakeStateDir(t)
+	if err := os.Chmod(stateDir, mode); err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(stateRoot)
-	stateDir := filepath.Join(stateRoot, "w")
 
-	env := append(testCommandEnv(filepath.Join(root, "user-home")), "AW_NO_UPDATE_CHECK=1", awconfig.IdentityHomeEnv+"=")
+	env := append(testCommandEnv(filepath.Join(root, "user-home")), "AW_NO_UPDATE_CHECK=1",
+		awconfig.IdentityHomeEnv+"=", "AWEB_API_KEY=", "AW_WAKE_STATE_DIR="+stateDir)
 	daemonCtx, stopDaemon := context.WithCancel(ctx)
 	defer stopDaemon()
-	daemon := exec.CommandContext(daemonCtx, bin, "wake", "run", "--state-dir", stateDir)
+	daemon := exec.CommandContext(daemonCtx, bin, "wake", "run")
 	daemon.Dir = root
 	daemon.Env = env
+	var daemonStderr bytes.Buffer
+	daemon.Stderr = &daemonStderr
 	if err := daemon.Start(); err != nil {
 		t.Fatal(err)
 	}
+	daemonDone := make(chan error, 1)
+	go func() {
+		daemonDone <- daemon.Wait()
+		close(daemonDone)
+	}()
 	defer func() {
 		stopDaemon()
-		_ = daemon.Wait()
+		<-daemonDone
 	}()
 
 	socket := filepath.Join(stateDir, "control.sock")
@@ -533,13 +554,17 @@ func TestWakeRunIsIdempotentAndServesItsSocket(t *testing.T) {
 		if time.Now().After(deadline) {
 			t.Fatal("the daemon never created its control socket")
 		}
-		time.Sleep(20 * time.Millisecond)
+		select {
+		case err := <-daemonDone:
+			t.Fatalf("wake run exited before binding: %v\n%s", err, daemonStderr.String())
+		case <-time.After(20 * time.Millisecond):
+		}
 	}
 	if _, alive, err := wake.LockOwner(filepath.Join(stateDir, "daemon.lock")); err != nil || !alive {
 		t.Fatal("the daemon did not take the host lock")
 	}
 
-	second := exec.CommandContext(ctx, bin, "wake", "run", "--state-dir", stateDir)
+	second := exec.CommandContext(ctx, bin, "wake", "run")
 	second.Dir = root
 	second.Env = env
 	out, err := second.CombinedOutput()
@@ -551,12 +576,14 @@ func TestWakeRunIsIdempotentAndServesItsSocket(t *testing.T) {
 	}
 
 	// The running daemon answers status over the socket.
-	statusCmd := exec.CommandContext(ctx, bin, "wake", "status", "--json", "--state-dir", stateDir)
+	statusCmd := exec.CommandContext(ctx, bin, "wake", "status", "--json")
 	statusCmd.Dir = root
 	statusCmd.Env = env
-	statusOut, err := statusCmd.CombinedOutput()
+	var statusStderr bytes.Buffer
+	statusCmd.Stderr = &statusStderr
+	statusOut, err := statusCmd.Output()
 	if err != nil {
-		t.Fatalf("status against a running daemon: %v\n%s", err, statusOut)
+		t.Fatalf("status against a running daemon: %v\n%s", err, statusStderr.String())
 	}
 	var status wake.Status
 	if err := json.Unmarshal(statusOut, &status); err != nil {
@@ -569,13 +596,13 @@ func TestWakeRunIsIdempotentAndServesItsSocket(t *testing.T) {
 		t.Fatalf("max_streams=%d want %d", status.MaxStreams, wake.DefaultMaxStreams)
 	}
 
-	// A registration the running daemon took carries no warning.
+	// The OATS spawn hook registers over the running daemon's socket.
 	instanceHome := filepath.Join(root, "agent-home")
 	if err := os.MkdirAll(filepath.Join(instanceHome, ".aw"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	registerCmd := exec.CommandContext(ctx, bin, "wake", "register", "--home", instanceHome,
-		"--identity-home", filepath.Join(instanceHome, ".aw"), "--delivery", "session", "--state-dir", stateDir)
+		"--identity-home", filepath.Join(instanceHome, ".aw"), "--delivery", "session")
 	registerCmd.Dir = root
 	registerCmd.Env = env
 	registerOut, err := registerCmd.CombinedOutput()
@@ -587,6 +614,18 @@ func TestWakeRunIsIdempotentAndServesItsSocket(t *testing.T) {
 	}
 	if strings.Contains(string(registerOut), "no wake broker is running") {
 		t.Fatalf("register warned of a missing broker while one runs:\n%s", registerOut)
+	}
+	if err := daemon.Process.Signal(os.Interrupt); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-daemonDone; err != nil {
+		t.Fatalf("wake broker could not stop: %v\n%s", err, daemonStderr.String())
+	}
+	for _, output := range []string{daemonStderr.String(), string(registerOut), statusStderr.String()} {
+		warned := strings.Contains(output, "Warning: wake state directory "+stateDir+" is shared")
+		if warned != (mode == 0o770) {
+			t.Errorf("wake directory mode %o, warned=%t:\n%s", mode, warned, output)
+		}
 	}
 }
 

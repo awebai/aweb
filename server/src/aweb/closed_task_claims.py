@@ -5,7 +5,7 @@ from __future__ import annotations
 from awid.team_ids import team_slug
 
 from .claims import release_task_claims_on
-from .coordination.tasks_service import format_task_ref
+from .task_refs import format_task_ref, task_ref_suffix
 
 
 async def _claims_on_closed_tasks(db) -> dict[tuple[str, str], int]:
@@ -33,7 +33,13 @@ async def _claims_on_closed_tasks(db) -> dict[tuple[str, str], int]:
         sorted({row["team_id"] for row in claim_rows}),
     )
     closed_refs = {
-        (row["team_id"], format_task_ref(team_slug(row["team_id"]), row["task_ref_suffix"]))
+        (
+            row["team_id"],
+            format_task_ref(
+                team_slug=team_slug(row["team_id"]),
+                task_ref_suffix=row["task_ref_suffix"],
+            ),
+        )
         for row in task_rows
     }
     return {
@@ -49,7 +55,7 @@ async def _release_if_closed(db, *, team_id: str, task_ref: str) -> int:
     The task row is locked first, so a status change that reopens the task
     either commits before this check or waits for this release.
     """
-    suffix = task_ref[len(team_slug(team_id)) + 1 :]
+    suffix = task_ref_suffix(team_id=team_id, ref=task_ref)
     async with db.transaction() as tx:
         status = await tx.fetch_value(
             """
@@ -76,7 +82,9 @@ async def release_closed_task_claims(db, *, apply: bool = False) -> dict:
     stale = await _claims_on_closed_tasks(db)
     teams: dict[str, dict[str, int]] = {}
     for (team_id, task_ref), claims in sorted(stale.items()):
-        team = teams.setdefault(team_id, {"tasks": 0, "claims": 0, "released_claims": 0})
+        team = teams.setdefault(
+            team_id, {"tasks": 0, "claims": 0, "released_claims": 0}
+        )
         team["tasks"] += 1
         team["claims"] += claims
         if apply:

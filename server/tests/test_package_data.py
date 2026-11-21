@@ -5,6 +5,7 @@ team-and-contacts correction are consolidated into `001_initial.sql`.
 The single baseline is intentional for the pre-distribution hosted reset;
 normal future product migrations must be added as ordered forward files.
 """
+
 from importlib.resources import files
 from pathlib import Path
 import shutil
@@ -33,7 +34,11 @@ def test_defaults_migrations_and_reserved_app_ids_are_packaged():
     assert (AWEB_MIGRATIONS / "001_initial.sql").is_file()
 
     packaged_reserved = package_root / "data" / "reserved-app-ids-v1.json"
-    source_reserved = Path(__file__).resolve().parents[2] / "test-vectors" / "reserved-app-ids-v1.json"
+    source_reserved = (
+        Path(__file__).resolve().parents[2]
+        / "test-vectors"
+        / "reserved-app-ids-v1.json"
+    )
     assert packaged_reserved.is_file()
     assert packaged_reserved.read_text() == source_reserved.read_text()
 
@@ -57,26 +62,67 @@ def test_server_distributions_ship_reserved_app_ids_without_vector_copies(tmp_pa
     with zipfile.ZipFile(wheels[0]) as wheel:
         names = wheel.namelist()
         assert "aweb/data/reserved-app-ids-v1.json" in names
-        for attachment_path in ("inbound_modes.py", "attachments.py", "attachment_service.py", "migrations/aweb/022_message_attachments.sql", "audit.py", "migrations/aweb/023_operator_audit.sql", "migrations/aweb/033_typed_chat_participants.sql", "identity_binding.py", "migrations/aweb/034_agent_identity_binding.sql", "migrations/aweb/037_contacts_only.sql", "migrations/aweb/041_native_send_ingress.sql", "human_kind.py", "human_kind_revalidation.py", "migrations/aweb/047_verified_human_kind.sql"):
+        assert "aweb/migrations/__init__.py" in names
+        for attachment_path in (
+            "inbound_modes.py",
+            "attachments.py",
+            "attachment_service.py",
+            "migrations/aweb/022_message_attachments.sql",
+            "audit.py",
+            "migrations/aweb/023_operator_audit.sql",
+            "migrations/aweb/033_typed_chat_participants.sql",
+            "identity_binding.py",
+            "migrations/aweb/034_agent_identity_binding.sql",
+            "migrations/aweb/037_contacts_only.sql",
+            "migrations/aweb/041_native_send_ingress.sql",
+            "human_kind.py",
+            "human_kind_revalidation.py",
+            "migrations/aweb/047_verified_human_kind.sql",
+        ):
             assert f"aweb/{attachment_path}" in names
-        assert not any("/docs/vectors/" in name or name.startswith("docs/vectors/") for name in names)
+        assert not any(
+            "/docs/vectors/" in name or name.startswith("docs/vectors/")
+            for name in names
+        )
 
     sdists = list(tmp_path.glob("aweb-*.tar.gz"))
     assert sdists
     with tarfile.open(sdists[0]) as sdist:
         names = sdist.getnames()
-        assert any(name.endswith("/src/aweb/data/reserved-app-ids-v1.json") for name in names)
-        for attachment_path in ("inbound_modes.py", "attachments.py", "attachment_service.py", "migrations/aweb/022_message_attachments.sql", "audit.py", "migrations/aweb/023_operator_audit.sql", "migrations/aweb/033_typed_chat_participants.sql", "identity_binding.py", "migrations/aweb/034_agent_identity_binding.sql", "migrations/aweb/037_contacts_only.sql", "migrations/aweb/041_native_send_ingress.sql", "human_kind.py", "human_kind_revalidation.py", "migrations/aweb/047_verified_human_kind.sql"):
+        assert any(
+            name.endswith("/src/aweb/data/reserved-app-ids-v1.json") for name in names
+        )
+        assert any(name.endswith("/src/aweb/migrations/__init__.py") for name in names)
+        for attachment_path in (
+            "inbound_modes.py",
+            "attachments.py",
+            "attachment_service.py",
+            "migrations/aweb/022_message_attachments.sql",
+            "audit.py",
+            "migrations/aweb/023_operator_audit.sql",
+            "migrations/aweb/033_typed_chat_participants.sql",
+            "identity_binding.py",
+            "migrations/aweb/034_agent_identity_binding.sql",
+            "migrations/aweb/037_contacts_only.sql",
+            "migrations/aweb/041_native_send_ingress.sql",
+            "human_kind.py",
+            "human_kind_revalidation.py",
+            "migrations/aweb/047_verified_human_kind.sql",
+        ):
             assert any(name.endswith(f"/src/aweb/{attachment_path}") for name in names)
         assert not any("/docs/vectors/" in name for name in names)
 
 
 def test_awid_service_floor_covers_encryption_key_api():
     """aapv requires awid.e2ee_keys, introduced with awid-service 0.5.9."""
-    pyproject = tomllib.loads((Path(__file__).resolve().parents[1] / "pyproject.toml").read_text())
+    pyproject = tomllib.loads(
+        (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text()
+    )
     dependencies = pyproject["project"]["dependencies"]
     parsed_requirements = [Requirement(dep) for dep in dependencies]
-    awid_req = next((req for req in parsed_requirements if req.name == "awid-service"), None)
+    awid_req = next(
+        (req for req in parsed_requirements if req.name == "awid-service"), None
+    )
     assert awid_req is not None
     lower_bounds = [
         Version(specifier.version)
@@ -88,9 +134,13 @@ def test_awid_service_floor_covers_encryption_key_api():
 
 
 def test_mcp_dependency_excludes_api_incompatible_v2():
-    pyproject = tomllib.loads((Path(__file__).resolve().parents[1] / "pyproject.toml").read_text())
+    pyproject = tomllib.loads(
+        (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text()
+    )
     dependencies = pyproject["project"]["dependencies"]
-    mcp_req = next(Requirement(dep) for dep in dependencies if Requirement(dep).name == "mcp")
+    mcp_req = next(
+        Requirement(dep) for dep in dependencies if Requirement(dep).name == "mcp"
+    )
 
     assert MCP_FASTMCP_API_VERSION in mcp_req.specifier
     assert MCP_INCOMPATIBLE_API_VERSION not in mcp_req.specifier
@@ -99,7 +149,9 @@ def test_mcp_dependency_excludes_api_incompatible_v2():
 def test_canonical_chain_starts_with_reset_baseline_then_forward_migrations():
     """Reset-only rebaseline remains 001; new product schema changes are
     ordered forward migrations instead of edits to the historical baseline."""
-    sql_files = sorted(p.name for p in AWEB_MIGRATIONS.iterdir() if p.name.endswith(".sql"))
+    sql_files = sorted(
+        p.name for p in AWEB_MIGRATIONS.iterdir() if p.name.endswith(".sql")
+    )
     assert sql_files == [
         "001_initial.sql",
         "002_agent_encryption_keys.sql",
@@ -152,6 +204,8 @@ def test_canonical_chain_starts_with_reset_baseline_then_forward_migrations():
         "051_team_key_pin_act.sql",
         "052_member_accepted_team_key.sql",
         "053_drop_retired_signer.sql",
+        "055_chat_conversation_coverage.sql",
+        "056_inbound_mode_default.sql",
     ]
 
 
@@ -168,7 +222,9 @@ def test_agents_table_declares_team_and_contacts_inbound_mode_inline():
 
 
 @pytest.mark.asyncio
-async def test_agents_table_accepts_strict_contacts_only_after_forward_migration(aweb_cloud_db):
+async def test_agents_table_accepts_strict_contacts_only_after_forward_migration(
+    aweb_cloud_db,
+):
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
@@ -261,29 +317,54 @@ def test_agents_table_declares_agent_type_inline():
 
 
 @pytest.mark.asyncio
-async def test_contacts_only_forward_migration_preserves_legacy_rows(aweb_cloud_db):
-    manager = aweb_cloud_db.aweb_db
-    # Reproduce an older database that allowed the legacy spelling.
-    await manager.execute("ALTER TABLE {{tables.agents}} DROP CONSTRAINT agents_inbound_mode_valid")
-    await manager.execute("""
-        ALTER TABLE {{tables.agents}} ADD CONSTRAINT agents_inbound_mode_valid
-        CHECK (inbound_mode IS NULL OR inbound_mode IN ('open', 'team_and_contacts', 'contacts_only'))
-    """)
-    await manager.execute("""
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('default:legacy.example', 'legacy.example', 'default', 'did:key:team')
-    """)
-    for alias, mode in [("legacy", "contacts_only"), ("team", "team_and_contacts"), ("all", "open"), ("unset", None)]:
+async def test_contacts_only_forward_migration_preserves_legacy_rows(shared_test_pool, tmp_path):
+    from tests.product_migration_support import stage_aweb_upgrade
+
+    async with stage_aweb_upgrade(
+        shared_test_pool, tmp_path / "contacts-policy", "037_contacts_only.sql"
+    ) as upgrade:
+        manager = upgrade.infra.get_manager()
+        # Reproduce an older database that allowed the legacy spelling.
+        await manager.execute(
+            "ALTER TABLE {{tables.agents}} DROP CONSTRAINT agents_inbound_mode_valid"
+        )
         await manager.execute("""
-            INSERT INTO {{tables.agents}} (team_id, alias, did_key, inbound_mode)
-            VALUES ('default:legacy.example', $1, $2, $3)
-        """, alias, f"did:key:{alias}", mode)
-    migration = (AWEB_MIGRATIONS / "037_contacts_only.sql").read_text()
-    await manager.execute(migration)
-    modes = await manager.fetch_all("SELECT alias, inbound_mode FROM {{tables.agents}} ORDER BY alias")
-    assert {row["alias"]: row["inbound_mode"] for row in modes} == {
-        "legacy": "team_and_contacts", "team": "team_and_contacts", "all": "open", "unset": None,
-    }
-    await manager.execute("UPDATE {{tables.agents}} SET inbound_mode = 'contacts_only' WHERE alias = 'legacy'")
-    with pytest.raises(QueryError):
-        await manager.execute("UPDATE {{tables.agents}} SET inbound_mode = 'unknown' WHERE alias = 'legacy'")
+            ALTER TABLE {{tables.agents}} ADD CONSTRAINT agents_inbound_mode_valid
+            CHECK (inbound_mode IS NULL OR inbound_mode IN ('open', 'team_and_contacts', 'contacts_only'))
+        """)
+        await manager.execute("""
+            INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+            VALUES ('default:legacy.example', 'legacy.example', 'default', 'did:key:team')
+        """)
+        for alias, mode in [
+            ("legacy", "contacts_only"),
+            ("team", "team_and_contacts"),
+            ("all", "open"),
+            ("unset", None),
+        ]:
+            await manager.execute(
+                """
+                INSERT INTO {{tables.agents}} (team_id, alias, did_key, inbound_mode)
+                VALUES ('default:legacy.example', $1, $2, $3)
+            """,
+                alias,
+                f"did:key:{alias}",
+                mode,
+            )
+        assert await upgrade.apply() == ["037_contacts_only.sql"]
+        modes = await manager.fetch_all(
+            "SELECT alias, inbound_mode FROM {{tables.agents}} ORDER BY alias"
+        )
+        assert {row["alias"]: row["inbound_mode"] for row in modes} == {
+            "legacy": "team_and_contacts",
+            "team": "team_and_contacts",
+            "all": "open",
+            "unset": None,
+        }
+        await manager.execute(
+            "UPDATE {{tables.agents}} SET inbound_mode = 'contacts_only' WHERE alias = 'legacy'"
+        )
+        with pytest.raises(QueryError):
+            await manager.execute(
+                "UPDATE {{tables.agents}} SET inbound_mode = 'unknown' WHERE alias = 'legacy'"
+            )

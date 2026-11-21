@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -55,8 +56,9 @@ type doctorAwebState struct {
 	signingKeyDID string
 	signingKeyErr error
 
-	baseURL string
-	urlErr  error
+	baseURL     string
+	registryURL string
+	urlErr      error
 }
 
 type doctorAwebProbeResult struct {
@@ -158,6 +160,11 @@ func collectDoctorAwebStateAt(workingDir, identityHome string) *doctorAwebState 
 		state.workspacePath = workspacePath
 		if teamState, err := loadDoctorTeamStateAt(workingDir, identityHome); err == nil {
 			state.membership = awconfig.ActiveMembershipFor(workspace, teamState)
+			if state.membership != nil {
+				if membership := teamState.Membership(state.membership.TeamID); membership != nil {
+					state.registryURL = membership.RegistryURL
+				}
+			}
 		}
 		if safe, err := sanitizeLocalURLForOutput(workspace.AwebURL); err != nil {
 			state.urlErr = err
@@ -486,6 +493,18 @@ func (r *doctorRunner) addCoordinationChecks(workspaceID string, teamResp *aweb.
 func (r *doctorRunner) addTeamOnlineChecks(state *doctorAwebState, client *aweb.Client) {
 	ctx, cancel := commandAPIContext(nil)
 	defer cancel()
+	registry, err := newRegistryClientWithPreferredBaseURL(state.registryURL)
+	if err != nil {
+		r.add(awebCheck(doctorCheckTeamMembershipAuth, doctorStatusUnknown, nil, "Current team membership is unknown: registry configuration could not be read.", "Repair the selected registry configuration and retry aw doctor --online.", map[string]any{"error": err.Error()}))
+		r.addBlockedAwebChecks([]string{doctorCheckTeamRolesRead, doctorCheckTeamSelectedRoleMatches}, doctorCheckTeamMembershipAuth)
+		return
+	}
+	membership := doctorCurrentTeamCertificate(ctx, registry, awid.CurrentTeamCertificateCheck{RegistryURL: state.registryURL, Certificate: state.cert})
+	if membership.Status != doctorStatusOK {
+		r.add(membership)
+		r.addBlockedAwebChecks([]string{doctorCheckTeamRolesRead, doctorCheckTeamSelectedRoleMatches}, doctorCheckTeamMembershipAuth)
+		return
+	}
 	localRole := ""
 	if state.membership != nil {
 		localRole = strings.TrimSpace(state.membership.RoleName)
@@ -518,7 +537,51 @@ func (r *doctorRunner) addTeamOnlineChecks(state *doctorAwebState, client *aweb.
 		r.add(awebCheck(doctorCheckTeamMembershipAuth, doctorStatusFail, &doctorTarget{Type: "team", ID: localTeamID}, "Caller-owned team certificate authenticated, but the server returned a different team id.", "Confirm the active local team certificate and configured aweb server belong to the same team.", map[string]any{"local_team_id": localTeamID, "server_team_id": serverTeamID}))
 		return
 	}
-	r.add(awebCheck(doctorCheckTeamMembershipAuth, doctorStatusOK, &doctorTarget{Type: "team", ID: localTeamID}, "Caller-owned team certificate is authorized for matching team reads.", "", map[string]any{"local_team_id": localTeamID, "server_team_id": serverTeamID}))
+	r.add(awebCheck(doctorCheckTeamMembershipAuth, doctorStatusOK, &doctorTarget{Type: "team", ID: localTeamID}, membership.Message, "", map[string]any{"local_team_id": localTeamID, "server_team_id": serverTeamID}))
+}
+
+// doctorCurrentTeamCertificate reports current registry authority separately
+// from offline artifact validity (identity.md:97-102; ruling 9927de43).
+func doctorCurrentTeamCertificate(ctx context.Context, registry *awid.RegistryClient, input awid.CurrentTeamCertificateCheck) doctorCheck {
+	if input.RegistryURL == "" && input.Certificate != nil {
+		domain, _, err := awid.ParseTeamID(input.Certificate.Team)
+		if err == nil {
+			input.RegistryURL, err = registry.Resolver.DiscoverRegistry(ctx, domain)
+		}
+		if err != nil {
+			return awebCheck(doctorCheckTeamMembershipAuth, doctorStatusUnknown, nil,
+				fmt.Sprintf("Current team membership is unknown: registry discovery for %s failed: %v.", domain, err),
+				"Check the team's registry and retry aw doctor --online.", nil)
+		}
+	}
+	observation, err := registry.CheckTeamCertificateCurrentKey(ctx, input)
+	detail := map[string]any{"registry_url": input.RegistryURL}
+	if err == nil && observation.Evidence.State == awid.TeamKeyUnconfirmed {
+		if observation.UnavailableCause != nil {
+			detail["error"] = observation.UnavailableCause.Error()
+		}
+		return awebCheck(doctorCheckTeamMembershipAuth, doctorStatusUnknown, nil,
+			fmt.Sprintf("Team key is unconfirmed at registry %s. Registration and a successful registry read will confirm it; current team membership is unknown.", observation.RegistryURL),
+			"Ask the team's owner to complete registration, then retry aw doctor --online when the registry is available.", detail)
+	}
+	if err == nil {
+		err = registry.CheckCurrentTeamCertificate(ctx, input)
+	}
+	if err == nil {
+		return awebCheck(doctorCheckTeamMembershipAuth, doctorStatusOK, nil,
+			fmt.Sprintf("Team certificate is current at registry %s.", input.RegistryURL), "", detail)
+	}
+	status := doctorStatusFail
+	var refusal *awid.CurrentTeamCertificateError
+	if errors.As(err, &refusal) && (refusal.Code == awid.CurrentCertificateUnavailable || refusal.Code == awid.CurrentCertificateUnregistered) {
+		status = doctorStatusUnknown
+	}
+	message := fmt.Sprintf("Current team membership could not be established at registry %s: %v.", input.RegistryURL, err)
+	if status == doctorStatusUnknown {
+		message = fmt.Sprintf("Current team membership is unknown: registry %s did not answer: %v.", input.RegistryURL, err)
+	}
+	return awebCheck(doctorCheckTeamMembershipAuth, status, nil, message,
+		"Ask the team controller for a current certificate, or retry aw doctor --online when the registry is available.", detail)
 }
 
 func (r *doctorRunner) addAwebHTTPErrorCheck(id string, err error, message, nextStep string) {

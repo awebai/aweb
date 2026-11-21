@@ -15,7 +15,6 @@ import io
 import json
 import secrets
 from collections.abc import AsyncIterator
-from contextlib import aclosing
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -28,13 +27,10 @@ from aweb_naapp.runtime.human_member import check_human_member
 from aweb_naapp.runtime.origins import split_origins
 from aweb_naapp.runtime.team_auth import AWIDTeamCache, authenticate_request
 from aweb_naapp_testing import REGISTRY_URL, SERVICE_TOKEN, Member, did_key
+from aweb_naapp_testing.human_members import human_namespace
 from aweb_naapp_testing.owner_acts import INSTALLATION_ID, TEAM_ID
 from aweb_naapp_testing.webauthn import SoftAuthenticator
-from awid.dns_verify import DomainAuthority
-from awid.id_certificates import id_certificate_signing_bytes
-from awid.registry import RegistryClient
 from awid.signing import canonical_json_bytes
-from awid_service.deps import get_domain_verifier
 from fastapi import APIRouter, FastAPI, Request
 from nacl.signing import SigningKey
 
@@ -174,66 +170,25 @@ class Aw:
         )
 
 
-async def registered_human(
-    registry: RegistryClient, world: World, root: SigningKey, alias: str
-) -> tuple[Member, str]:
-    """A human member of the team: its did:aw registered with a human ID
-    certificate under the namespace, and its team certificate in AWID."""
-    member = Member(
-        team_id=TEAM_ID, team_key=world.owner.team_key, alias=alias, certificate_id="cert-" + alias
-    )
-    principal = (await registry.register_did(member.did_key, bytes(member.member_key))).did_aw
-    member.extra_cert_fields = {"member_did_aw": principal}
-    await world.registry.add_certificate(member.certificate())
-    fields = {
-        "v": 1,
-        "type": "aweb.id-certificate",
-        "id": principal,
-        "domain": "example.com",
-        "parent": {"kind": "namespace", "id": "example.com"},
-        "kind": "human",
-        "issuer_key": did_key(root),
-        "issued_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-    }
-    signed = {
-        "certificate": fields,
-        "signature": b64(root.sign(id_certificate_signing_bytes(fields)).signature),
-    }
-    await registry.register_id_certificate(
-        {"v": 1, "type": "aweb.id-chain", "certificates": [signed]},
-        signer=lambda payload: (member.did_key, member.member_key.sign(payload).signature),
-        expected_head=None,
-        invitation_id=None,
-    )
-    return member, principal
-
-
 @pytest.fixture
 async def aw(world: World) -> AsyncIterator[Aw]:
     """A designated reader whose aw reaches logs as production composes its
     reader sessions: the public origin starts handoffs, the console origin
     approves them and serves the reads."""
     await apply_console_migrations(world.db)
-    root = SigningKey.generate()
-
-    async def dns(domain: str) -> DomainAuthority:
-        assert domain == "example.com"
-        return DomainAuthority(did_key(root), REGISTRY_URL, "_awid.example.com")
-
-    world.registry.app.dependency_overrides[get_domain_verifier] = lambda: dns
-    world.registry.app.state.awid_public_origins = (REGISTRY_URL,)
-    async with aclosing(
-        RegistryClient(
-            REGISTRY_URL,
-            transport=world.registry.transport,
-            service_token=SERVICE_TOKEN,
-            domain_verifier=dns,
-        )
-    ) as registry:
-        await registry.register_namespace("example.com", did_key(root), bytes(root))
-        member, principal = await registered_human(registry, world, root, "reader")
-        outsider = await registered_human(registry, world, root, "outsider")
-        scope, _ = await held_reader(world, principal)
+    async with human_namespace(world.registry, "example.com") as namespace:
+        reader, outsider = [
+            await namespace.register(
+                Member(
+                    team_id=TEAM_ID,
+                    team_key=world.owner.team_key,
+                    alias=alias,
+                    certificate_id=f"cert-{alias}",
+                )
+            )
+            for alias in ("reader", "outsider")
+        ]
+        scope, _ = await held_reader(world, reader.principal)
         cache = AWIDTeamCache(
             registry_url=REGISTRY_URL,
             ttl_seconds=60,
@@ -246,7 +201,11 @@ async def aw(world: World) -> AsyncIterator[Aw]:
 
         async def human_member(team_id, *, principal, certificate):
             return await check_human_member(
-                cache, registry, team_id=team_id, principal=principal, certificate=certificate
+                cache,
+                namespace.client,
+                team_id=team_id,
+                principal=principal,
+                certificate=certificate,
             )
 
         limiter = LoginLimiter(
@@ -284,7 +243,14 @@ async def aw(world: World) -> AsyncIterator[Aw]:
             ),
             base_url=CONSOLE,
         ) as client:
-            yield Aw(client, member, principal, world.devices[scope], world, outsider)
+            yield Aw(
+                client,
+                reader.member,
+                reader.principal,
+                world.devices[scope],
+                world,
+                (outsider.member, outsider.principal),
+            )
 
 
 async def test_aw_exports_the_readers_team_log_with_its_key_bound_session(aw: Aw):

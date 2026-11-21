@@ -1,6 +1,8 @@
 """P3 identity/storage readiness; public guest traffic remains disabled until P5."""
 from test_dashboard_privacy import TEAM, privacy_app, _request  # noqa: F401
 
+__all__ = ["privacy_app"]
+
 import json
 from pathlib import Path
 from uuid import uuid4

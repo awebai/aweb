@@ -127,7 +127,7 @@ async def app_database_url(test_db_factory) -> str:
 async def member(registry) -> Member:
     member = Member(team_id="backend:example.com")
     await registry.add_team(member.team_id, member.team_did_key)
-    await registry.add_certificate(member.certificate())
+    await registry.add_certificate(member.certificate(), team_key=member.team_key)
     return member
 
 
@@ -228,7 +228,7 @@ async def test_the_runtime_applies_the_configured_did_aw_profile(
     unregistered = stable_id_from_did_key(did_key(SigningKey.generate()))
     member = Member(team_id="backend:example.com", extra_cert_fields={"member_did_aw": unregistered})
     await registry.add_team(member.team_id, member.team_did_key)
-    await registry.add_certificate(member.certificate())
+    await registry.add_certificate(member.certificate(), team_key=member.team_key)
     async for _, client in _running(registry, app_database_url, tmp_path, InstalledTeams({}), **settings_values):
         response = await client.post("/v1/whoami", **_signed(member, "/v1/whoami"))
         assert response.status_code == status, response.text

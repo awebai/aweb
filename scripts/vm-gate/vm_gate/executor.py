@@ -2,17 +2,17 @@
 
 import hashlib
 import json
-from pathlib import Path
 import shlex
 import subprocess
 import tarfile
 import time
+from pathlib import Path
 
-from .backend import PREFIX
-from .config import child_environment
-from .errors import Infrastructure, Refused
 from .admission import validate_command
+from .backend import PREFIX
+from .errors import Infrastructure, Refused
 from .evidence import collect_archive
+from .supervisor import GRACE, SSH_GRACE, TIMEOUT_KILL_GRACE
 from .transport import Transport
 
 Q = shlex.quote
@@ -42,6 +42,7 @@ class Executor:
         result = self.transport.run(command, timeout=self.remaining(), check=False)
         (self.directory / (name + ".stdout")).write_text(result.stdout)
         (self.directory / (name + ".stderr")).write_text(result.stderr)
+        (self.directory / (name + ".exit")).write_text(str(result.returncode) + "\n")
         if check and result.returncode:
             raise Infrastructure(f"remote {name} failed (exit {result.returncode})")
         return result
@@ -49,7 +50,9 @@ class Executor:
     def env(self, root=False):
         home = "/root" if root else "/home/gateuser"
         profile = "ccx33" if self.config.get("server_type") == "ccx33" else "portable"
-        return f"env -i HOME={home} PATH={HOST_PATH} GOTOOLCHAIN=local PYTHONPATH={REMOTE}/operator AWEB_GATE_UNIT_PROFILE={profile} "
+        project = self.config.get("compose_project")
+        compose = "COMPOSE_PROJECT_NAME=" + Q(project) + " " if project else ""
+        return f"env -i {compose}HOME={home} PATH={HOST_PATH} GOTOOLCHAIN=local PYTHONPATH={REMOTE}/operator AWEB_GATE_UNIT_PROFILE={profile} "
 
     def host_check(self, root=False):
         return (
@@ -128,8 +131,7 @@ exit "$status"
         validate_command(script)
         (self.directory / "launch.sh").write_text(script)
 
-    def prepare(self, server, timeout):
-        self.deadline = time.monotonic() + timeout
+    def connect(self, server):
         while True:
             info = self.provider.read("server_info", server["id"])
             if info.get("labels", {}).get(PREFIX + "run") != server["run_id"]:
@@ -146,6 +148,11 @@ exit "$status"
                 except Infrastructure:
                     pass  # Bounded, idempotent readiness probe; never a create retry.
             time.sleep(min(2, self.remaining()))
+
+    def prepare(self, server, timeout):
+        self.deadline = time.monotonic() + timeout
+        if self.transport is None:
+            self.connect(server)
         negative = self.transport.prove_mismatch(timeout=min(10, self.remaining()))
         (self.directory / "ssh-host-key-negative.stderr").write_text(negative.stderr)
         (self.directory / "ssh-host-key-negative.stdout").write_text(negative.stdout)
@@ -190,7 +197,8 @@ exit "$status"
             raise Infrastructure("UID 0 admission negative control failed")
         if self.verify_host:
             result = self.run(
-                f"cd {REMOTE}/source && runuser -u gateuser -- " + self.host_check(),
+                f"cd {REMOTE}/source && setsid --wait nohup runuser -u gateuser -- "
+                + self.host_check(),
                 "host-contract",
                 check=False,
             )
@@ -225,9 +233,50 @@ exit "$status"
         except OSError:
             pass  # An unwritable telemetry sidecar cannot suppress the primary archive.
 
+    def observe_machine_diagnostics(self, *, phase: str) -> None:
+        """Collect before provider teardown; failure never masks the primary result."""
+        name = "machine-diagnostics-" + phase
+        observation = {
+            "status": "unavailable",
+            "source": self.source["sha"],
+            "run_id": self.directory.name,
+        }
+        try:
+            timeout = min(14, self.remaining())
+            observation["transport_timeout_seconds"] = timeout
+            command = (
+                "timeout --signal=TERM --kill-after=1s 12s python3 "
+                + REMOTE
+                + "/operator/vm_gate/failure_diagnostics.py"
+                + " --source "
+                + Q(self.source["sha"])
+                + " --run-id "
+                + Q(self.directory.name)
+                + " --phase "
+                + Q(phase)
+                + " --output "
+                + Q(LOGS + "/" + name + ".json")
+            )
+            result = self.transport.run(command, timeout=timeout, check=False)
+            observation.update(
+                status="collected" if result.returncode == 0 else "failed",
+                returncode=result.returncode,
+                stdout=result.stdout,
+                stderr=result.stderr,
+            )
+        except (Infrastructure, OSError, subprocess.SubprocessError) as error:
+            observation.update(error=type(error).__name__, message=str(error))
+        try:
+            (self.directory / (name + "-observation.json")).write_text(
+                json.dumps(observation, indent=2) + "\n"
+            )
+        except OSError:
+            pass  # Diagnostics must not prevent the primary archive or exact-ID cleanup.
+
     def execute(self, server, timeout):
-        self.deadline = time.monotonic() + timeout + 45
+        self.deadline = time.monotonic() + timeout + SSH_GRACE
         self.observe_host_metrics("before")
+        self.observe_machine_diagnostics(phase="before")
         self.run(
             f"nohup python3 {REMOTE}/operator/vm_gate/memory.py {LOGS}/memory.jsonl >{LOGS}/sampler.log 2>&1 </dev/null & echo $! >{LOGS}/sampler.pid",
             "sampler-start",
@@ -235,11 +284,16 @@ exit "$status"
         ledger = Q(self.config["ledger"])
         logs = Q(str(Path(self.config["ledger"]).parent / "gate-logs"))
         command = (
-            f"cd {REMOTE}/source && timeout --signal=TERM --kill-after=30s {timeout} runuser -u gateuser -- "
+            f"cd {REMOTE}/source && setsid --wait nohup runuser -u gateuser -- "
             + self.env()
-            + f"AWEB_GATE_LEDGER={ledger} AWEB_GATE_LOG_DIR={logs} GATE_OWNER={Q(self.config['owner'])} bash {REMOTE}/launch.sh"
+            + f"AWEB_GATE_LEDGER={ledger} AWEB_GATE_LOG_DIR={logs} GATE_OWNER={Q(self.config['owner'])} "
+            + f"timeout --signal=TERM --kill-after={TIMEOUT_KILL_GRACE}s {timeout} "
+            + f"python3 -m vm_gate.supervisor run {LOGS} {GRACE} bash {REMOTE}/launch.sh "
+            + f">{LOGS}/execution-command.log 2>&1"
         )
         result = self.run(command, "execution", check=False)
+        if result.returncode != 0:
+            self.observe_machine_diagnostics(phase="failure")
         if result.returncode == 255:
             raise Infrastructure("SSH connection lost during gate")
         receipt = self.run(f"cat {LOGS}/gate-exit", "gate-exit", check=False)
@@ -247,10 +301,46 @@ exit "$status"
             raise Infrastructure(
                 "gate timed out or stopped without its completed exit receipt"
             )
+        completed = self.run(
+            f"cat {LOGS}/supervisor-receipt.json", "supervisor-receipt", check=False
+        )
+        try:
+            observation = json.loads(completed.stdout)
+        except ValueError:
+            raise Infrastructure("missing supervisor completion receipt") from None
+        if (
+            completed.returncode
+            or not isinstance(observation, dict)
+            or observation.get("raw_exit") != int(receipt.stdout.strip())
+            or type(observation.get("grace_expired")) is not bool
+        ):
+            raise Infrastructure("inconsistent supervisor completion receipt")
+        if observation.get("interrupted") and observation.get("finalized") is not True:
+            raise Infrastructure(
+                "gate interrupted without verified cleanup; partial evidence retained"
+            )
+        if observation["grace_expired"]:
+            raise Infrastructure(
+                "gate finalization exceeded grace; partial evidence retained"
+            )
         return int(receipt.stdout.strip())
+
+    def stop(self, server, timeout):
+        """Bound the owned remote stop independently of subsequent evidence pull."""
+        self.deadline = time.monotonic() + timeout
+        result = self.run(
+            self.env(root=True)
+            + f"python3 -m vm_gate.supervisor stop {LOGS} {max(0.1, timeout - 2)}",
+            "operator-stop",
+            check=False,
+        )
+        if result.returncode:
+            raise Infrastructure("remote stop did not report; collect partial evidence")
+        return json.loads(result.stdout)
 
     def collect(self, server, timeout):
         self.deadline = time.monotonic() + timeout
+        self.observe_machine_diagnostics(phase="after")
         self.observe_host_metrics("after")
         self.run(
             f'if test -f {LOGS}/sampler.pid; then kill -TERM "$(cat {LOGS}/sampler.pid)"; fi; docker ps -a --no-trunc >{LOGS}/docker-after.txt; docker network ls >{LOGS}/networks-after.txt; docker volume ls >{LOGS}/volumes-after.txt',

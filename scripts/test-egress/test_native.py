@@ -9,6 +9,8 @@ import threading
 import unittest
 
 RUNNER = Path(__file__).with_name('native.py')
+sys.path.insert(0, str(RUNNER.parent))
+import native  # noqa: E402
 
 
 @contextmanager
@@ -137,7 +139,9 @@ class NativeGuard(unittest.TestCase):
             pid_file = test_dir / 'pid'
             code = ('import os, sys, urllib.request\n'
                     f'open({str(pid_file)!r}, "w").write(str(os.getpid()))\n'
-                    'try:\n urllib.request.urlopen("https://api.awid.ai/v1/did", timeout=2)\n'
+                    # It waits for the guard's answer: a client that gave up
+                    # would exit while the guard is still naming it.
+                    'try:\n urllib.request.urlopen("https://api.awid.ai/v1/did", timeout=30)\n'
                     'except OSError:\n pass\n')
             result = subprocess.run(
                 [sys.executable, str(RUNNER), '--', sys.executable, '-c', code, 'secret-token-arg'],
@@ -149,6 +153,17 @@ class NativeGuard(unittest.TestCase):
         self.assertIn(f'client=pid={pid} exe=', denied[0])
         self.assertIn(f'cwd={test_dir}', denied[0])
         self.assertNotIn('secret-token-arg', result.stdout + result.stderr)
+
+    def test_a_client_that_exits_during_attribution_is_named_as_exited(self):
+        # A real child, exited and reaped: the guard reads nothing of it, and
+        # says so instead of reporting an unknown working directory.
+        child = subprocess.run([sys.executable, '-c', 'import os; print(os.getpid())'],
+                               capture_output=True, text=True, check=True)
+        pid = int(child.stdout)
+        with self.assertRaises(ProcessLookupError):
+            native.process_facts(pid)
+        self.assertEqual(native.process_chain(pid, guard_child=None),
+                         f'client=pid={pid} exited during attribution')
 
 if __name__ == '__main__':
     unittest.main()

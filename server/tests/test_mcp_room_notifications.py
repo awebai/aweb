@@ -7,11 +7,14 @@ from uuid import uuid4
 import pytest
 from mcp.types import CallToolResult, TextContent
 
+from aweb.internal_auth import ProxyHeaderTrust, ProxyVerificationConfig
 from aweb.mcp import notifications
 from aweb.mcp.auth import AuthContext, MCPAuthMiddleware, _auth_context
 from test_mcp_notifications import CountDB, infra
-from test_team_room import TEAM, headers, metadata, post, privacy_app  # noqa: F401
+from test_team_room import TEAM, headers, metadata, post, privacy_app
 from test_room_notice_count import admitted
+
+__all__ = ["privacy_app"]
 
 
 @pytest.fixture
@@ -146,8 +149,8 @@ async def test_mounted_room_hint_is_actor_bound_non_consuming_and_clears_after_r
             result = await notifications.append_pending_nudge(completed, env.infra)
             await JSONResponse(result.model_dump(mode="json", by_alias=True))(scope, receive, send)
 
-    env.app.mount("/mcp-room-nudge", MCPAuthMiddleware(Probe(), env.infra))
-    monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
+    env.app.mount("/mcp-room-nudge", MCPAuthMiddleware(Probe(), env.infra, proxy_verification=ProxyVerificationConfig(
+        trust=ProxyHeaderTrust.SHARED_SECRET if proxy else ProxyHeaderTrust.DISABLED, shared_secret="test-internal-auth-secret")))
 
     def auth_for(name):
         if not proxy:

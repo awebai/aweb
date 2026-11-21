@@ -10,11 +10,14 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from awid.did import did_from_public_key
 from nacl.signing import SigningKey
+from aweb.internal_auth import ProxyHeaderTrust, ProxyVerificationConfig
 from aweb.auth_context import GRANT_SCOPE_ANY
 from aweb.mcp.auth import MCPAuthMiddleware
 from aweb.team_auth_deps import team_identity_with_grant_scope
-from test_team_room import privacy_app, TEAM, headers, metadata, post
+from test_team_room import TEAM, headers, metadata, post, privacy_app
 from test_identity_grants import _grant_headers
+
+__all__ = ["privacy_app"]
 
 
 async def admitted(env, name="bob"):
@@ -214,10 +217,10 @@ async def test_mcp_count_uses_current_admitted_actor_and_omits_failed_authority(
             result = await room_notice_count(env.infra)
             await JSONResponse({"room_count": result})(scope, receive, send)
 
-    env.app.mount("/mcp-count", MCPAuthMiddleware(Probe(), env.infra))
+    env.app.mount("/mcp-count", MCPAuthMiddleware(Probe(), env.infra, proxy_verification=ProxyVerificationConfig(
+        trust=ProxyHeaderTrust.SHARED_SECRET if proxy else ProxyHeaderTrust.DISABLED, shared_secret="test-internal-auth-secret")))
     auth = headers(actor)
     if proxy:
-        monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
         principal = str(uuid4())
         auth = {
             "X-AWEB-Auth": build_internal_auth_header_value(
