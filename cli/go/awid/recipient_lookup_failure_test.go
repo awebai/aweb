@@ -4,10 +4,8 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 )
 
@@ -82,26 +80,27 @@ func (f *localSenderFixture) send(t *testing.T, kind receivedKind, target string
 	return err
 }
 
-// A send to an address whose recipient key cannot be looked up is refused,
-// whoever sends it: a local sender's mail and chat are never signed without
-// the recipient's key (docs/identity-messaging-contract.md:119-129). The
-// neighbour, a member of the sender's own team named by full address, is
-// bound by the team roster and sent.
-func TestLocalSenderRefusesAnAddressWhoseRecipientKeyCannotBeLookedUp(t *testing.T) {
+// A local sender's send to an address whose recipient key cannot be looked up
+// is posted unsigned to a recipient key, and the server resolves the address,
+// as released aw does: a local seat does not depend on the registry
+// answering. The neighbour, a member of the sender's own team named by full
+// address, is bound by the team roster.
+func TestLocalSenderPostsAnAddressWhoseRecipientKeyCannotBeLookedUp(t *testing.T) {
 	for _, kind := range []receivedKind{receivedMail, receivedChat} {
 		for _, registryStatus := range []int{http.StatusServiceUnavailable, http.StatusNotFound} {
 			f := newLocalSenderFixture(t, registryStatus)
-			err := f.send(t, kind, "other.com/carol")
-			var refusal *RecipientResolutionError
-			if !errors.As(err, &refusal) || f.sent != nil {
-				t.Fatalf("%s, registry %d: err %v, sent %v", kind, registryStatus, err, f.sent)
+			if err := f.send(t, kind, "other.com/carol"); err != nil {
+				t.Fatalf("%s, registry %d: %v", kind, registryStatus, err)
 			}
-			want := "other.com/carol is not a registered address"
-			if registryStatus != http.StatusNotFound {
-				want = "Nothing was sent: a " + string(kind) + " is signed with its recipient's key, which could not be looked up; send it again when the registry answers"
+			if f.sent == nil {
+				t.Fatalf("%s, registry %d: nothing was posted", kind, registryStatus)
 			}
-			if !strings.Contains(err.Error(), want) {
-				t.Fatalf("%s, registry %d: refusal %q does not say %q", kind, registryStatus, err, want)
+			var signed map[string]any
+			if err := json.Unmarshal([]byte(f.sent["signed_payload"].(string)), &signed); err != nil {
+				t.Fatal(err)
+			}
+			if signed["to"] != "other.com/carol" || signed["to_did"] != "" {
+				t.Fatalf("%s, registry %d: signed to=%v to_did=%v, want the address unbound", kind, registryStatus, signed["to"], signed["to_did"])
 			}
 		}
 
