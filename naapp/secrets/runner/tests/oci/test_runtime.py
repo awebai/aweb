@@ -8,7 +8,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from aweb_secrets_runner.job_inputs import JobInputs
 from aweb_secrets_runner.oci_platform import require_memory_directory
+from aweb_secrets_runner.oci_prepare import _compose
 
 
 @unittest.skipUnless(os.environ.get("AWEB_SECRETS_OCI_PROOF") == "1", "explicit Linux OCI proof")
@@ -67,8 +69,13 @@ class RuntimeCapabilityTests(unittest.TestCase):
         require_memory_directory(bundle)
         require_memory_directory(state)
         config_file = bundle / "config.json"
-        config = json.loads(config_file.read_bytes())
-        config["process"].update(args=list(args), cwd=cwd, env=env, terminal=False)
+        # Exercise runc directly to observe empty or missing HOME. Use the
+        # runner's mount and privilege policy for the bundle under test.
+        environment = dict(entry.split("=", 1) for entry in env)
+        inputs = JobInputs(
+            json.dumps({"cwd": cwd}).encode(), b"{}", json.dumps(environment).encode(), args
+        )
+        config = _compose(json.loads(config_file.read_bytes()), inputs, [])
         config_file.write_text(json.dumps(config))
         config_file.chmod(0o600)
         result = subprocess.run(
@@ -118,6 +125,7 @@ class RuntimeCapabilityTests(unittest.TestCase):
     def test_failure_cleans_the_runtime_internal_state(self):
         result = self.run_job(["HOME=/pinned-home"], args=("/absent",))
         self.assertNotEqual(result.returncode, 0)
+        self.assertIn(b"/absent", result.stderr)
 
 
 if __name__ == "__main__":
