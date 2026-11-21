@@ -7,6 +7,7 @@ import httpx
 import pytest
 from aweb.certificate_evidence import EvidenceMode
 from aweb.team_key_reader import read_team_key
+from awid.did import did_key_from_signing_key
 from awid.external_authority import SystemTXTOutcomeResolver
 from awid.registry import CachedRegistryClient
 from awid.team_key_acts import TeamKeyMemo
@@ -20,7 +21,9 @@ async def test_explicit_team_key_reader_uses_borrowed_sdk_strength_and_one_pin_o
     # Stand-in pin admission records the interface, not controller authority.
     import aweb.team_key_reader as owner
 
-    key = ["cached-controller"]
+    cached_key = did_key_from_signing_key(b"\x01" * 32)
+    fresh_key = did_key_from_signing_key(b"\x02" * 32)
+    key = [cached_key]
     reads, admissions = [], []
 
     def reply(request):
@@ -57,10 +60,10 @@ async def test_explicit_team_key_reader_uses_borrowed_sdk_strength_and_one_pin_o
             team_id="team:example.test",
             pin_memo=memo,
         )
-        assert await read_team_key(**arguments, evidence=EvidenceMode.CACHED) == "cached-controller"
-        key[0] = "fresh-controller"
-        assert await read_team_key(**arguments, evidence=EvidenceMode.CACHED) == "cached-controller"
-        assert await read_team_key(**arguments, evidence=EvidenceMode.FRESH) == "fresh-controller"
+        assert await read_team_key(**arguments, evidence=EvidenceMode.CACHED) == cached_key
+        key[0] = fresh_key
+        assert await read_team_key(**arguments, evidence=EvidenceMode.CACHED) == cached_key
+        assert await read_team_key(**arguments, evidence=EvidenceMode.FRESH) == fresh_key
         assert len(reads) == 2
         for admission in admissions:
             assert admission["db"] is db

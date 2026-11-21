@@ -6,7 +6,7 @@ import httpx
 from fastapi import HTTPException
 
 from awid.dns_verify import DnsVerificationError
-from awid.registry import RegistryError
+from awid.registry import MalformedTeamKeyError, RegistryError
 
 from aweb.config import get_awid_service_token
 
@@ -58,6 +58,16 @@ def _retryable_registry_failure(operation: str, reason: str) -> tuple[int, str]:
     )
 
 
+def _unusable_registry_response(operation: str) -> tuple[int, dict[str, str]]:
+    return http.HTTPStatus.UNPROCESSABLE_ENTITY, {
+        "code": "registry_response_unusable",
+        "message": (
+            f"{operation} received an unusable registry response. "
+            "Ask the server operator to check the registry."
+        ),
+    }
+
+
 def _classify_upstream_status(
     status_code: int, *, operation: str, failure_type: str
 ) -> tuple[int, str | dict[str, str]]:
@@ -71,13 +81,7 @@ def _classify_upstream_status(
         return _retryable_registry_failure(
             operation, f"upstream rate limited ({failure_type} status={status_code})"
         )
-    return http.HTTPStatus.UNPROCESSABLE_ENTITY, {
-        "code": "registry_response_unusable",
-        "message": (
-            f"{operation} received an unusable registry response. "
-            "Ask the server operator to check the registry."
-        ),
-    }
+    return _unusable_registry_response(operation)
 
 
 def classify_awid_dependency_error(
@@ -87,6 +91,8 @@ def classify_awid_dependency_error(
     operation = (operation or "AWID registry").strip()
     class_name = type(exc).__name__
 
+    if isinstance(exc, MalformedTeamKeyError):
+        return _unusable_registry_response(operation)
     if isinstance(exc, DnsVerificationError):
         return _retryable_registry_failure(operation, f"DNS resolution failed ({class_name})")
     if isinstance(exc, (httpx.ConnectError, httpx.TimeoutException, httpx.NetworkError, TimeoutError)):
