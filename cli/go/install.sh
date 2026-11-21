@@ -18,6 +18,7 @@ set -e
 REPO="awebai/aw"
 RELEASE_BASE_URL="${AW_RELEASE_BASE_URL:-https://github.com/awebai/aw/releases/download}"
 REQUESTED_VERSION="${AW_VERSION:-}"
+RELEASE_FILE_MISSING=44
 
 # Track where we installed for PATH warning messages
 LAST_INSTALL_PATH=""
@@ -173,23 +174,26 @@ download_release_file() {
     if command -v curl >/dev/null 2>&1; then
         local status=0 code
         code=$(curl --proto '=https' --proto-redir '=https' --max-redirs 10 --max-time 300 -fsSL -w '%{http_code}' -o "$dest" "$url") || status=$?
-        if [ "$code" = 404 ]; then return 44; fi
+        if [ "$code" = 404 ]; then return "$RELEASE_FILE_MISSING"; fi
         return "$status"
     else
         local status=0 response
         response=$(mktemp) || return 1
         wget --https-only --max-redirect=10 --timeout=300 --server-response -q -O "$dest" "$url" 2>"$response" || status=$?
-        if awk '$1 ~ /^HTTP\// { code=$2 } END { exit code != 404 }' "$response"; then status=44; fi
+        if awk '$1 ~ /^HTTP\// { code=$2 } END { exit code != 404 }' "$response"; then status=$RELEASE_FILE_MISSING; fi
         rm -f "$response"
         return "$status"
     fi
 }
 
 # BEGIN GENERATED RELEASE VERIFIER
+SIGNATURE_TOOLS_UNAVAILABLE=45
+
 verify_signed_release() {
-    if ! command -v python3 >/dev/null 2>&1 || ! command -v openssl >/dev/null 2>&1; then
+    if ! command -v python3 >/dev/null 2>&1 || ! command -v openssl >/dev/null 2>&1 ||
+        ! openssl list -signature-algorithms 2>/dev/null | grep -iE '(^|[^[:alnum:]_])ED25519([^[:alnum:]_]|$)' >/dev/null; then
         log_error "Cannot verify $1. Install Python 3 and OpenSSL with Ed25519 support, then retry the installer."
-        return 1
+        return "$SIGNATURE_TOOLS_UNAVAILABLE"
     fi
     python3 - "$1" "$2" "$3" "$4" <<'PY'
 from __future__ import annotations
@@ -530,11 +534,41 @@ stage_verified_binary() {
     fi
 }
 
+install_candidate() {
+    local candidate="$1" binary="$2" source="$3" install_dir
+    if [[ -w /usr/local/bin ]]; then
+        install_dir="/usr/local/bin"
+    else
+        install_dir="$HOME/.local/bin"
+        if ! mkdir -p "$install_dir"; then
+            log_error "Cannot create $install_dir. Check directory permissions and retry the installer."
+            return 1
+        fi
+    fi
+
+    # Complete the private candidate before the single same-directory rename.
+    resign_for_macos "$candidate" &&
+        stage_verified_binary "$candidate" "$install_dir/$binary" "$source" || return 1
+    LAST_INSTALL_PATH="$install_dir/$binary"
+    log_success "aw installed to $LAST_INSTALL_PATH"
+
+    if [[ ":$PATH:" != *":$install_dir:"* ]]; then
+        log_warning "$install_dir is not in your PATH"
+        echo ""
+        echo "Add this to your shell profile (~/.bashrc, ~/.zshrc, etc.):"
+        echo "  export PATH=\"\$PATH:$install_dir\""
+        echo ""
+    fi
+}
+
 # Download and install from GitHub releases
 install_from_release() {
     local platform=$1
     local tmp_dir
-    tmp_dir=$(mktemp -d)
+    if ! tmp_dir=$(mktemp -d); then
+        log_error "Cannot stage the release. Check the temporary directory and retry the installer."
+        return 1
+    fi
 
     # An explicitly selected release never silently becomes latest.
     if [ -n "$REQUESTED_VERSION" ]; then
@@ -567,7 +601,12 @@ install_from_release() {
         return 1
     fi
     log_info "Downloading $archive_name..."
-    if ! download_release_file "$url" "$tmp_dir/$archive_name"; then
+    local archive_status=0
+    download_release_file "$url" "$tmp_dir/$archive_name" || archive_status=$?
+    if [ "$archive_status" -eq "$RELEASE_FILE_MISSING" ]; then
+        rm -rf "$tmp_dir"
+        return "$RELEASE_FILE_MISSING"
+    elif [ "$archive_status" -ne 0 ]; then
         log_error "Could not download $archive_name. Retry the installer to download a fresh archive."
         rm -rf "$tmp_dir"
         return 1
@@ -577,63 +616,67 @@ install_from_release() {
         return 1
     fi
 
-    local manifest_status=0
+    local manifest_status=0 signature_status=0 verification_status=0
     download_release_file "${RELEASE_BASE_URL%/}/v$VERSION/release-manifest.json" "$tmp_dir/release-manifest.json" || manifest_status=$?
-    if [ "$manifest_status" -eq 44 ]; then
-        log_warning "release-manifest.json is missing; publisher authentication is unavailable. This install requires the release SHA-256 digest. Retry the installer after signed releases are published for publisher verification."
-    elif [ "$manifest_status" -ne 0 ]; then
-        log_error "Cannot verify $archive_name: release-manifest.json could not be fetched. Retry the installer to fetch the complete release."
+    download_release_file "${RELEASE_BASE_URL%/}/v$VERSION/release-manifest.sig" "$tmp_dir/release-manifest.sig" || signature_status=$?
+    if [ "$manifest_status" -eq "$RELEASE_FILE_MISSING" ] && [ "$signature_status" -eq "$RELEASE_FILE_MISSING" ]; then
+        log_warning "The release has no signed manifest; publisher authentication is unavailable. Installing with the verified release SHA-256 digest." >&2
+    elif [ "$manifest_status" -ne 0 ] || [ "$signature_status" -ne 0 ]; then
+        log_error "Cannot verify $archive_name: the signed manifest pair is incomplete or unavailable. Retry the installer to fetch the complete release."
         rm -rf "$tmp_dir"
         return 1
     else
-        if ! download_release_file "${RELEASE_BASE_URL%/}/v$VERSION/release-manifest.sig" "$tmp_dir/release-manifest.sig" || ! verify_signed_release "$tmp_dir/$archive_name" "$tmp_dir/release-manifest.json" "$tmp_dir/release-manifest.sig" "$VERSION"; then
-            log_error "Cannot verify $archive_name: signed manifest verification failed. Retry the installer from a current signed release."
+        # The strict verifier is also used by the hardware proof. Only this
+        # checksum-verified install path may accept unavailable local tools.
+        local diagnostic
+        diagnostic=$(verify_signed_release "$tmp_dir/$archive_name" "$tmp_dir/release-manifest.json" "$tmp_dir/release-manifest.sig" "$VERSION" 2>&1) || verification_status=$?
+        if [ "$verification_status" -eq "$SIGNATURE_TOOLS_UNAVAILABLE" ]; then
+            log_warning "The publisher signature was not verified. Installing with the verified SHA-256 checksum. Install Python 3 and OpenSSL with Ed25519 support to verify publisher signatures." >&2
+        elif [ "$verification_status" -ne 0 ]; then
+            printf '%s\n' "$diagnostic" >&2
             rm -rf "$tmp_dir"
             return 1
         fi
     fi
-    cd "$tmp_dir"
 
     log_info "Extracting $archive_name..."
-    if ! extract_release_binary "$tmp_dir/$archive_name" "$tmp_dir/$binary"; then
+    if ! extract_release_binary "$tmp_dir/$archive_name" "$tmp_dir/$binary" ||
+        ! install_candidate "$tmp_dir/$binary" "$binary" "$archive_name"; then
         rm -rf "$tmp_dir"
         return 1
     fi
-
-    # Determine install location
-    local install_dir
-    if [[ -w /usr/local/bin ]]; then
-        install_dir="/usr/local/bin"
-    else
-        install_dir="$HOME/.local/bin"
-        mkdir -p "$install_dir"
-    fi
-
-    # Complete the private candidate before the single same-directory rename.
-    if ! resign_for_macos "$tmp_dir/$binary"; then
-        rm -rf "$tmp_dir"
-        return 1
-    fi
-    if ! stage_verified_binary "$tmp_dir/$binary" "$install_dir/$binary" "$archive_name"; then
-        rm -rf "$tmp_dir"
-        return 1
-    fi
-
-    LAST_INSTALL_PATH="$install_dir/$binary"
-    log_success "aw installed to $install_dir/$binary"
-
-    # Check if install_dir is in PATH
-    if [[ ":$PATH:" != *":$install_dir:"* ]]; then
-        log_warning "$install_dir is not in your PATH"
-        echo ""
-        echo "Add this to your shell profile (~/.bashrc, ~/.zshrc, etc.):"
-        echo "  export PATH=\"\$PATH:$install_dir\""
-        echo ""
-    fi
-
-    cd - > /dev/null || cd "$HOME"
     rm -rf "$tmp_dir"
     return 0
+}
+
+install_from_source_tag() {
+    local tag="v$VERSION" binary="aw" tmp_dir
+    if ! command -v go >/dev/null 2>&1; then
+        log_error "No release archive for this platform. Install Go and retry the installer to build tag $tag."
+        return 1
+    fi
+    if [[ "$1" == windows_* ]]; then binary="aw.exe"; fi
+    if ! tmp_dir=$(mktemp -d); then
+        log_error "Cannot stage release tag $tag. Check the temporary directory and retry the installer."
+        return 1
+    fi
+    log_warning "No release archive for $1. Building the exact release tag $tag from source." >&2
+    if ! GOBIN="$tmp_dir" go install "github.com/$REPO/cmd/aw@$tag"; then
+        # Explicit refs/tags avoids accidentally resolving a same-named branch.
+        local checkout="$tmp_dir/source"
+        if ! git init -q "$checkout" ||
+            ! git -C "$checkout" fetch --depth=1 "https://github.com/$REPO.git" "refs/tags/$tag" ||
+            ! git -C "$checkout" checkout -q --detach FETCH_HEAD ||
+            ! (cd "$checkout" && go build -o "$tmp_dir/$binary" ./cmd/aw); then
+            rm -rf "$tmp_dir"
+            log_error "Could not build release tag $tag. Install Git and ensure the tag is reachable, then retry the installer."
+            return 1
+        fi
+    fi
+    local status=0
+    install_candidate "$tmp_dir/$binary" "$binary" "release tag $tag" || status=$?
+    rm -rf "$tmp_dir"
+    return "$status"
 }
 
 main() {
@@ -646,8 +689,13 @@ main() {
     platform=$(detect_platform)
     log_info "Platform: $platform"
 
-    # Try downloading from GitHub releases first
-    if install_from_release "$platform"; then
+    local status=0
+    install_from_release "$platform" || status=$?
+    if [ "$status" -eq "$RELEASE_FILE_MISSING" ]; then
+        status=0
+        install_from_source_tag "$platform" || status=$?
+    fi
+    if [ "$status" -eq 0 ]; then
         verify_installation
         exit 0
     fi

@@ -19,10 +19,11 @@ def _render_verifier(keys):
         owner.index("from __future__") : owner.index("def create_manifest(")
     ]
     return (
-        START + "\nverify_signed_release() {\n"
-        "    if ! command -v python3 >/dev/null 2>&1 || ! command -v openssl >/dev/null 2>&1; then\n"
+        START + "\nSIGNATURE_TOOLS_UNAVAILABLE=45\n\nverify_signed_release() {\n"
+        "    if ! command -v python3 >/dev/null 2>&1 || ! command -v openssl >/dev/null 2>&1 ||\n"
+        "        ! openssl list -signature-algorithms 2>/dev/null | grep -iE '(^|[^[:alnum:]_])ED25519([^[:alnum:]_]|$)' >/dev/null; then\n"
         '        log_error "Cannot verify $1. Install Python 3 and OpenSSL with Ed25519 support, then retry the installer."\n'
-        "        return 1\n    fi\n"
+        '        return "$SIGNATURE_TOOLS_UNAVAILABLE"\n    fi\n'
         '    python3 - "$1" "$2" "$3" "$4" <<\'PY\'\n' + program + "import sys\ntry:\n"
         f"    keys = json.loads({keys!r}, object_pairs_hook=unique_object)\n"
         "    artifact, manifest_path, signature_path, requested = sys.argv[1:]\n"

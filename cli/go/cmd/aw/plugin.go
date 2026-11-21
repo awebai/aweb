@@ -1613,7 +1613,7 @@ type externalPluginLocation struct {
 	Name      string
 }
 
-// resolveTrustedExternalPluginInDir implements docs/install-integrity.md:20-22.
+// resolveTrustedExternalPluginInDir reports changes to managed executable bytes.
 func resolveTrustedExternalPluginInDir(location externalPluginLocation) (string, bool, error) {
 	dir, name := location.Directory, location.Name
 	path := filepath.Join(dir, pluginExecutableName(name))
@@ -1634,8 +1634,8 @@ func resolveTrustedExternalPluginInDir(location externalPluginLocation) (string,
 	if err != nil {
 		return "", false, err
 	}
-	// Legacy manually installed executables have no recorded digest. Managed
-	// installs must still contain exactly the bytes the user installed.
+	// Manually installed executables have no recorded digest. For managed
+	// installs, disclose local edits without blocking execution.
 	if provenance != nil {
 		f, err := os.Open(path)
 		if err != nil {
@@ -1651,7 +1651,7 @@ func resolveTrustedExternalPluginInDir(location externalPluginLocation) (string,
 			return "", false, closeErr
 		}
 		if provenance.Digest != "sha256:"+hex.EncodeToString(h.Sum(nil)) {
-			return "", false, fmt.Errorf("plugin %q no longer matches its installed digest. Reinstall it with aw plugin remove %s followed by aw plugin install <source>.", name, name)
+			fmt.Fprintf(os.Stderr, "Warning: plugin %q no longer matches its installed digest. Reinstall it with aw plugin remove %s followed by aw plugin install <source>.\n", name, name)
 		}
 	}
 

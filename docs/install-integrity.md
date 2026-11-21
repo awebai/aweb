@@ -6,17 +6,19 @@ a checksum detects corruption but does not independently authenticate a publishe
 1. An archive needs exactly one well-formed SHA-256 entry for its exact name in
    checksums.txt. Missing, duplicate, malformed or mismatched entries refuse before
    extraction or replacement. Refusals name the artifact and explain how to retry.
-2. Installation never automatically changes to an unpinned source build after a
-   release failure. An explicit source build chooses a reviewed version.
+2. The shell installer builds the exact selected `vVERSION` tag when the
+   release archive for its platform returns HTTP 404. It never falls back to
+   source on checksum, signature, or other download errors.
 3. Replacement stages a complete executable in the destination directory, then
    renames it over the serving path. A failed verification leaves the old executable.
 4. [Wake runner integrity](wake-runner-integrity.md) owns cache-byte authorization,
    repair and state-directory rules.
 5. [Runtime hook configuration](runtime-hook-configuration.md) owns lossless edits,
    migration confirmation and atomic settings/instruction updates.
-6. A managed executable plugin must match its installed provenance digest before
-   dispatch. A mismatch explains how to reinstall. Legacy manually placed plugins
-   without provenance remain supported.
+6. Before dispatch, aw compares a managed plugin with its installed provenance
+   digest. If the bytes differ, aw warns on stderr, explains how to reinstall, and
+   runs the locally changed executable. Manually placed executables without
+   provenance remain supported.
 7. [Runtime hook configuration](runtime-hook-configuration.md) also owns private
    notification cooldown files and failure handling.
 
@@ -55,11 +57,13 @@ A signed manifest must match the requested release and cannot be older than the
 running aw version. An explicitly requested version is the shell installer's
 version floor. A valid signature on an older release does not authorize rollback.
 
-This rollout requires checksums in every case. When a manifest is absent, the
-installer warns that publisher authentication is unavailable. A present manifest
-requires a valid signature under a real pin and a matching artifact digest and
-size. Fetch errors and incomplete or invalid signing material refuse. A later
-announced release will require manifest presence too.
+An archive install requires checksums. When both signing files are absent, the
+installer warns that publisher authentication is unavailable. When both files
+are present, the shell installer verifies the signature, artifact digest, and size
+if Python 3 and OpenSSL with Ed25519 support are available. Otherwise it warns on
+stderr and uses the verified archive checksum. The Go upgrade verifier needs no
+external tools. An incomplete pair, a fetch error that prevents establishing
+the pair, or a failed verification refuses.
 
 The publisher stages all archives and npm tarballs, creates the manifest once,
 obtains its detached signature, verifies it locally, and uploads those same bytes
@@ -91,8 +95,8 @@ python3 release_manifest.py readback --requested VERSION \
 
 Run `python3 cli/go/generate_install_verifier.py` after updating real pins or the
 publisher verifier. Its `--check` gate ensures the bootstrap shell uses that
-owner's code and pins. Signed shell verification requires Python 3 and OpenSSL
-with Ed25519 support; Go verification has no external runtime dependency.
+owner's code and pins. The hardware proof requires a successful signature check
+in both verifiers, including Python 3 and Ed25519-capable OpenSSL for the shell.
 
 The shell supports an explicit `AW_VERSION` and `AW_RELEASE_BASE_URL` for a
 published version on another HTTPS mirror. Its release URLs append `/vVERSION/`.
