@@ -175,7 +175,6 @@
     "server/tests/real_stack.py": 1,
     "server/tests/test_addressed_sender_cli.py": 4,
     "server/tests/test_addressless_sender_cli.py": 14,
-    "server/tests/test_agent_activity_http.py": 2,
     "server/tests/test_agent_health_http.py": 2,
     "server/tests/test_agent_key_replacement_http.py": 4,
     "server/tests/test_agent_status_host_http.py": 2,
