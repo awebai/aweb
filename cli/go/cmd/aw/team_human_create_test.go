@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -2043,6 +2044,8 @@ func TestTeamHumanCreateBYOTFirstAgentGlobalMintsWithNamespaceAuthority(t *testi
 	root := t.TempDir()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	// Exercise the founding command's recorded registry in publication.
+	t.Setenv("AWID_REGISTRY_URL", "")
 	t.Chdir(root)
 	_, controllerKey, err := awid.GenerateKeypair()
 	if err != nil {
@@ -2127,6 +2130,10 @@ func TestTeamHumanCreateBYOTFirstAgentGlobalMintsWithNamespaceAuthority(t *testi
 	initAwebURL = server.URL
 
 	if err := runTeamHumanCreate(nil, []string{"Ops"}); err != nil {
+		var publication *requiredEncryptionPublicationError
+		if errors.As(err, &publication) {
+			t.Fatalf("runTeamHumanCreate: %v: %v", err, publication)
+		}
 		t.Fatalf("runTeamHumanCreate: %v", err)
 	}
 	if claimCalls != 1 || certCalls != 1 {
@@ -2136,7 +2143,7 @@ func TestTeamHumanCreateBYOTFirstAgentGlobalMintsWithNamespaceAuthority(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if identity.IdentityScope != awid.IdentityModeGlobal || identity.Address != "acme.com/ops" || identity.StableID != createdDIDAW {
+	if identity.IdentityScope != awid.IdentityModeGlobal || identity.Address != "acme.com/ops" || identity.StableID != createdDIDAW || identity.RegistryURL != server.URL {
 		t.Fatalf("identity=%+v created=%s", identity, createdDIDAW)
 	}
 	cert, err := awconfig.LoadTeamCertificateForTeam(root, "ops:acme.com")
