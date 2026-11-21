@@ -5,12 +5,13 @@ package awid
 import (
 	"crypto/ed25519"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"reflect"
 	"strings"
 	"time"
+
+	"github.com/awebai/aw/signaturewire"
 )
 
 type HumanChannelsPresenceIdentity struct {
@@ -149,7 +150,7 @@ func SignHumanChannelsPresenceRecord(r HumanChannelsRecord, key ed25519.PrivateK
 	if len(key) != ed25519.PrivateKeySize || r.Value["signing_key_id"] != ComputeDIDKey(key.Public().(ed25519.PublicKey)) {
 		return HumanChannelsRecord{}, hcError("invalid", "signing key")
 	}
-	return hcPresenceRecord("SignedArtifact", map[string]any{"signed_payload": string(raw), "signature": base64.RawStdEncoding.EncodeToString(ed25519.Sign(key, raw))})
+	return hcPresenceRecord("SignedArtifact", map[string]any{"signed_payload": string(raw), "signature": signaturewire.SignStd(key, raw)})
 }
 func hcVerifyPresence(a HumanChannelsRecord, c HumanChannelsPresenceContext, binding bool) (HumanChannelsRecord, error) {
 	bad := HumanChannelsRecord{}

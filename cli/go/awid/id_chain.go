@@ -402,8 +402,7 @@ func parseIDStatus(e *IDChainEvidence, domain string) (*idStatusSnapshot, error)
 			}
 		}
 		current := row.Certificates[len(row.Certificates)-1]
-		digest, _ := IDCertificateID(current.Signed["certificate"].(map[string]any))
-		if current.SupersededAt != nil || row.CurrentCertificateID != digest {
+		if current.SupersededAt != nil || !idCurrentCertificateMatches(current.Signed["certificate"].(map[string]any), row.CurrentCertificateID) {
 			return nil, bad
 		}
 		if row.Revocation != nil {
@@ -581,8 +580,7 @@ func verifyIDChain(bundle map[string]any, subject IDChainSubject, evidence *IDCh
 			if err != nil {
 				return IDChainResult{}, err
 			}
-			digest, _ := IDCertificateID(c)
-			if row.CurrentCertificateID != digest {
+			if !idCurrentCertificateMatches(c, row.CurrentCertificateID) {
 				return bad("superseded_certificate")
 			}
 		}
@@ -712,4 +710,14 @@ func VerifyIDChain(bundle map[string]any, subject IDChainSubject, evidence *IDCh
 		return idChainFailure(code)
 	}
 	return r
+}
+
+// idCurrentCertificateMatches compares the public status commitment with the
+// supplied certificate (docs/id-certificates.md, current certificate checks).
+func idCurrentCertificateMatches(certificate map[string]any, expectedID string) bool {
+	digest, err := IDCertificateID(certificate)
+	if err != nil {
+		return false
+	}
+	return digest == expectedID
 }
