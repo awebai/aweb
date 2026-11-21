@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Hosted invite acceptance awaiting an agent signature exits with JSON error
+  code `native_agent_signature_pending`. Resume the exchange using the retained
+  child key and invite.
+
 - `aw init` and `aw team admin create` accept a supplied workspace API key
   for the service bootstrap, including keys returned by CLI signup.
   `aw workspace add-worktree` uses the existing workspace authority when

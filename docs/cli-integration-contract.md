@@ -68,6 +68,15 @@ the registry's or service's own open refusal vocabulary.
 
 The existing JSON error envelope carries `error.code`, `error.message`, and,
 for service refusals, `http_status`, `detail`, and `reason` where available.
+Local ID-certificate refusals such as `request_binding_mismatch`,
+`human_mismatch`, `human_required`, `unregistered_parent`, `wrong_kind`, and
+verifier refusals use `error.code="error"` with the reason in `error.message`.
+A direct refusal has the bare reason as its message. A command may wrap it
+with context. HTTP refusals normally use `error.code="http_error"` with
+`error.http_status` and `error.reason` when the service supplies a reason.
+Consumers branch on the process exit status and structured fields and display
+`error.message` to the operator. See [the CLI error envelope](../cli/go/cmd/aw/errors.go#L136-L158).
+
 Service registration preserves the service's own refusal code as `error.code`
 and `reason`; unrecognized codes are retained. Service codes remain owned by
 the service, rather than becoming a universal CLI vocabulary.
@@ -86,6 +95,7 @@ the service, rather than becoming a universal CLI vocabulary.
 | `retirement_receipt_unavailable` | The CLI could not lock or write the retirement receipt; retain the identity home and repair the receipt destination before retrying. |
 | `workspace_cleanup_incomplete` | The service did not confirm cleanup of the exact workspace and local identity; reconcile it before revoking the certificate. |
 | `invite_issuance_pending` | Issuance is attempted or unknown; keep the exact recipient and record, check online, and resume the retained certificate. Offline cancellation leaves its child untouched. |
+| `native_agent_signature_pending` | Hosted invite acceptance stopped before submitting membership because the child needs an agent signature. The CLI exits with status 1 and retains the child key and pending invite, including any prepared request. Preserve the identity home and finish the exchange, then retry with the same token, name, scope, and home. |
 | `team_server_record_missing` | No signed service record is published for this team; its controller must register the service. |
 | `invalid_alias`, `invalid_team_id`, `invalid_team_server_url` | Correct the input using the validation command's remedy. |
 

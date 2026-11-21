@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -436,7 +437,10 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 					})
 					return result
 				}
-				firstErr := accept()
+				var firstErr error
+				if scenario != "further-team cross-machine recipe" {
+					firstErr = accept()
+				}
 				if scenario == "further-team parent two children" {
 					if firstErr == nil {
 						t.Fatal("first child interruption missing")
@@ -483,8 +487,24 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 					return
 				}
 				if scenario == "further-team cross-machine recipe" {
-					if firstErr == nil || !strings.Contains(firstErr.Error(), "id parent request") || accepts != 0 {
-						t.Fatalf("recipe missing: %v", firstErr)
+					bin := filepath.Join(t.TempDir(), "aw")
+					buildAwBinary(t, context.Background(), bin)
+					initial := exec.Command(bin, "--identity-home", recipientHome, "id", "team", "accept-invite", "--token-stdin", "--name", "child", "--local", "--json")
+					initial.Dir = childDir
+					initial.Env = append(testCommandEnv(os.Getenv("HOME")), "AW_NO_UPDATE_CHECK=1")
+					initial.Stdin = strings.NewReader(token + "\n")
+					out, err := initial.Output()
+					var exit *exec.ExitError
+					if !errors.As(err, &exit) || exit.ExitCode() != 1 || accepts != 0 {
+						t.Fatalf("pending accept exit=%v submissions=%d stdout=%s", err, accepts, out)
+					}
+					var refusal cliErrorEnvelope
+					if err := json.Unmarshal(out, &refusal); err != nil || refusal.Error.Code != "native_agent_signature_pending" {
+						t.Fatalf("pending accept did not report its CLI code: %v\n%s", err, out)
+					}
+					assertHostedPendingChildKey(t, recipientHome)
+					if _, err := os.Stat(filepath.Join(recipientHome, "teams.yaml")); !os.IsNotExist(err) {
+						t.Fatalf("pending accept installed membership: %v", err)
 					}
 					pending, err := loadHostedInviteCreation(filepath.Join(recipientHome, hostedInviteRecoveryFile))
 					if err != nil {
@@ -512,8 +532,6 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 					if err := os.WriteFile(filepath.Join(childDir, "id-invitation.json"), invitationJSON, 0600); err != nil {
 						t.Fatal(err)
 					}
-					bin := filepath.Join(t.TempDir(), "aw")
-					buildAwBinary(t, context.Background(), bin)
 					blocked := exec.Command(bin, "--identity-home", recipientHome, "mail", "inbox")
 					blocked.Dir, blocked.Env = childDir, testCommandEnv(os.Getenv("HOME"))
 					if out, err := blocked.CombinedOutput(); err == nil || !strings.Contains(string(out), "teams.yaml") {
@@ -526,7 +544,7 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 						t.Fatalf("inherited pending home bypassed principal validation: %v\n%s", err, out)
 					}
 					var printed string
-					for _, line := range strings.Split(firstErr.Error(), "\n") {
+					for _, line := range strings.Split(refusal.Error.Message, "\n") {
 						if strings.Contains(line, " id parent request ") {
 							printed = strings.TrimSpace(line)
 							break

@@ -61,6 +61,10 @@ func withErrorCode(code string, err error) error {
 
 // errorCodeOf is err's refusal code, or "" when it has none.
 func errorCodeOf(err error) string {
+	var pending *hostedInviteSignaturePendingError
+	if errors.As(err, &pending) {
+		return codeNativeAgentSignaturePending
+	}
 	var coded *codedError
 	if errors.As(err, &coded) {
 		return coded.code

@@ -8,4 +8,6 @@ const (
 	codeTeamNameTaken           = "team_name_taken"
 	codeTeamNameUnconfirmed     = "team_name_unconfirmed"
 	codeTeamServerRecordMissing = "team_server_record_missing"
+
+	codeNativeAgentSignaturePending = "native_agent_signature_pending"
 )
