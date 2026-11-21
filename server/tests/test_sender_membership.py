@@ -37,7 +37,7 @@ async def test_sender_standing_sees_registration_after_a_warm_list(privacy_app, 
         cache = CachedRegistryClient(origin, env.redis, service_token=writer.service_token)
         try:
             before = await cache.list_team_certificates("example.test", TEAM_NAME, active_only=False)
-            assert {row["certificate_id"] for row in before} == {"privacy-bob"}
+            assert {row.certificate_id for row in before} == {"privacy-bob"}
             await writer.register_team_certificate(
                 "example.test", TEAM_NAME,
                 team_controller_signing_key=env.team_sk,

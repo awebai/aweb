@@ -462,11 +462,12 @@ async def test_an_open_certificate_status_stream_stops_after_rotation(pinning, m
 async def test_idle_certificate_status_stream_closes_at_cap_during_registry_read(pinning, monkeypatch):
     from aweb import grant_streams
     from aweb.routes import status
+    from messaging_actor_support import admit_messaging_actor
 
     env = pinning
-    actor = await _admit(env, "idlecertificatestream")
-    workspace = str(actor.workspace)
-    headers = _signed_team_headers(actor.sk, actor.did, TEAM, actor.certificate)
+    actor = await admit_messaging_actor(env, alias="idlecertificatestream", team_id=TEAM, local=True)
+    workspace = actor.workspace_id
+    headers = _signed_team_headers(actor.signing_key, actor.did_key, TEAM, actor.certificate)
     assert grant_streams.STREAM_MAX_DURATION_SECONDS == status.STREAM_MAX_DURATION_SECONDS == 300
     monkeypatch.setattr(status, "STREAM_MAX_DURATION_SECONDS", 2)
     monkeypatch.setattr(grant_streams, "STREAM_AUTHORITY_RECHECK_SECONDS", 0.05)
