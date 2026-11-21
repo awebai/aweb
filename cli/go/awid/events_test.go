@@ -3,6 +3,7 @@ package awid
 import (
 	"context"
 	"crypto/ed25519"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -426,5 +427,16 @@ func TestAgentEventStreamVerificationUnavailableIsDistinctError(t *testing.T) {
 	}
 	if ok {
 		t.Fatal("verification failure must not be returned as a normal event")
+	}
+}
+
+func TestAgentEventStreamReportsSupersededMembershipWithoutRetry(t *testing.T) {
+	_, ok, err := parseAgentEvent("team_membership_not_current", `{"detail":"Reconnect with the current team key"}`)
+	var closure *AgentEventStreamClosedError
+	if ok || !errors.As(err, &closure) || closure.Event != "team_membership_not_current" || closure.Retryable() {
+		t.Fatalf("ok=%v, err=%v, want terminal membership refusal", ok, err)
+	}
+	if closure.Detail != "Reconnect with the current team key" {
+		t.Fatalf("detail=%q", closure.Detail)
 	}
 }

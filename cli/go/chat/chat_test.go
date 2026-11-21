@@ -6622,25 +6622,32 @@ func TestParseSSEEventGrantTerminalDetail(t *testing.T) {
 	if ev.Type != "grant_expired" || ev.Reason != "identity grant expired" {
 		t.Fatalf("terminal event=%+v", ev)
 	}
-	if !isGrantTerminalEvent(ev.Type) {
+	if !awid.IsAuthorityTerminalEvent(ev.Type) {
 		t.Fatalf("%q should be a grant terminal event", ev.Type)
 	}
 }
 
-func TestSendReturnsVerificationUnavailableStreamError(t *testing.T) {
+func TestSendReturnsAuthorityTerminalStreamError(t *testing.T) {
 	t.Parallel()
-	server := newMockServer(map[string]http.HandlerFunc{
-		"POST /v1/chat/sessions": func(w http.ResponseWriter, _ *http.Request) {
-			jsonResponse(w, awid.ChatCreateSessionResponse{SessionID: "s1", MessageID: "sent", SSEURL: "/v1/chat/sessions/s1/stream"})
-		},
-		"GET /v1/chat/sessions/s1/stream": func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set("Content-Type", "text/event-stream")
-			fmt.Fprint(w, "event: verification_unavailable\ndata: {\"type\":\"verification_unavailable\",\"detail\":\"identity grant verification unavailable\"}\n\n")
-		},
-	})
-	t.Cleanup(server.Close)
-	result, err := Send(context.Background(), mustClient(t, server.URL), "alice", []string{"bob"}, "hello", SendOptions{Wait: 5}, nil)
-	if err == nil || err.Error() != "chat stream closed: identity grant verification unavailable; retry" {
-		t.Fatalf("result=%+v err=%v, want explicit retryable verification failure", result, err)
+	for _, tc := range []struct{ event, detail, want string }{
+		{"verification_unavailable", "identity grant verification unavailable", "identity grant verification unavailable; retry"},
+		{"team_membership_not_current", "reconnect with the current team key", "reconnect with the current team key"},
+	} {
+		t.Run(tc.event, func(t *testing.T) {
+			server := newMockServer(map[string]http.HandlerFunc{
+				"POST /v1/chat/sessions": func(w http.ResponseWriter, _ *http.Request) {
+					jsonResponse(w, awid.ChatCreateSessionResponse{SessionID: "s1", MessageID: "sent", SSEURL: "/v1/chat/sessions/s1/stream"})
+				},
+				"GET /v1/chat/sessions/s1/stream": func(w http.ResponseWriter, _ *http.Request) {
+					w.Header().Set("Content-Type", "text/event-stream")
+					fmt.Fprintf(w, "event: %s\ndata: {\"type\":%q,\"detail\":%q}\n\n", tc.event, tc.event, tc.detail)
+				},
+			})
+			t.Cleanup(server.Close)
+			result, err := Send(context.Background(), mustClient(t, server.URL), "alice", []string{"bob"}, "hello", SendOptions{Wait: 5}, nil)
+			if err == nil || err.Error() != "chat stream closed: "+tc.want {
+				t.Fatalf("result=%+v err=%v, want explicit closure %q", result, err, tc.want)
+			}
+		})
 	}
 }

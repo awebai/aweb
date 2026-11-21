@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from aweb.messaging.kinds import ContentMode
+from aweb.event_types import TransportEventType
+
 import asyncio
 import json
 import logging
@@ -11,7 +14,7 @@ from enum import Enum
 from typing import Any, AsyncIterator, Awaitable, Callable, Optional
 
 from redis.asyncio import Redis
-from redis.asyncio.client import PubSub
+from redis.asyncio.client import Pipeline, PubSub
 from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import RedisError
 
@@ -35,7 +38,9 @@ class Event:
 
     workspace_id: str
     type: str = ""
-    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    timestamp: str = field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -53,7 +58,7 @@ class Event:
 class ReservationAcquiredEvent(Event):
     """Event emitted when reservations are acquired."""
 
-    type: str = field(default="reservation.acquired", init=False)
+    type: str = field(default=TransportEventType.RESERVATION_ACQUIRED.value, init=False)
     paths: list[str] = field(default_factory=list)
     alias: str = ""
     ttl_seconds: int = 0
@@ -65,7 +70,7 @@ class ReservationAcquiredEvent(Event):
 class ReservationReleasedEvent(Event):
     """Event emitted when reservations are released."""
 
-    type: str = field(default="reservation.released", init=False)
+    type: str = field(default=TransportEventType.RESERVATION_RELEASED.value, init=False)
     paths: list[str] = field(default_factory=list)
     alias: str = ""
 
@@ -74,7 +79,7 @@ class ReservationReleasedEvent(Event):
 class ReservationRenewedEvent(Event):
     """Event emitted when reservation TTLs are extended."""
 
-    type: str = field(default="reservation.renewed", init=False)
+    type: str = field(default=TransportEventType.RESERVATION_RENEWED.value, init=False)
     paths: list[str] = field(default_factory=list)
     alias: str = ""
     ttl_seconds: int = 0
@@ -84,14 +89,14 @@ class ReservationRenewedEvent(Event):
 class MessageDeliveredEvent(Event):
     """Event emitted when a message is delivered to a workspace inbox."""
 
-    type: str = field(default="message.delivered", init=False)
+    type: str = field(default=TransportEventType.MAIL_DELIVERED.value, init=False)
     message_id: str = ""
     from_workspace: str = ""
     from_alias: str = ""
     to_alias: str = ""
     subject: str = ""
     priority: str = "normal"
-    content_mode: str = "legacy_plaintext_v1"
+    content_mode: str = ContentMode.PLAINTEXT
     encrypted: bool = False
 
 
@@ -99,11 +104,11 @@ class MessageDeliveredEvent(Event):
 class MessageAcknowledgedEvent(Event):
     """Event emitted when a message is acknowledged."""
 
-    type: str = field(default="message.acknowledged", init=False)
+    type: str = field(default=TransportEventType.MAIL_ACKNOWLEDGED.value, init=False)
     message_id: str = ""
     from_alias: str = ""
     subject: str = ""
-    content_mode: str = "legacy_plaintext_v1"
+    content_mode: str = ContentMode.PLAINTEXT
     encrypted: bool = False
 
 
@@ -111,7 +116,7 @@ class MessageAcknowledgedEvent(Event):
 class ChatMessageEvent(Event):
     """Event emitted when a chat message is sent."""
 
-    type: str = field(default="chat.message_sent", init=False)
+    type: str = field(default=TransportEventType.CHAT_MESSAGE_SENT.value, init=False)
     session_id: str = ""
     message_id: str = ""
     from_alias: str = ""
@@ -123,7 +128,7 @@ class ChatMessageEvent(Event):
 class TaskStatusChangedEvent(Event):
     """Event emitted when a task's status changes."""
 
-    type: str = field(default="task.status_changed", init=False)
+    type: str = field(default=TransportEventType.TASK_STATUS_CHANGED.value, init=False)
     team_id: str = ""
     task_ref: str = ""
     old_status: str = ""
@@ -136,7 +141,7 @@ class TaskStatusChangedEvent(Event):
 class TaskCreatedEvent(Event):
     """Event emitted when a task is created."""
 
-    type: str = field(default="task.created", init=False)
+    type: str = field(default=TransportEventType.TASK_CREATED.value, init=False)
     team_id: str = ""
     task_ref: str = ""
     title: str | None = None
@@ -147,7 +152,7 @@ class TaskCreatedEvent(Event):
 class TaskClaimedEvent(Event):
     """Event emitted when a workspace claims a task."""
 
-    type: str = field(default="task.claimed", init=False)
+    type: str = field(default=TransportEventType.TASK_CLAIMED.value, init=False)
     task_ref: str = ""
     alias: str = ""
     title: str | None = None
@@ -157,7 +162,7 @@ class TaskClaimedEvent(Event):
 class TaskUnclaimedEvent(Event):
     """Event emitted when a workspace releases a task claim."""
 
-    type: str = field(default="task.unclaimed", init=False)
+    type: str = field(default=TransportEventType.TASK_UNCLAIMED.value, init=False)
     task_ref: str = ""
     alias: str = ""
     title: str | None = None
@@ -169,7 +174,9 @@ class TeamEvent:
 
     team_id: str
     type: str = ""
-    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    timestamp: str = field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -180,7 +187,7 @@ class TeamEvent:
 
 @dataclass
 class TeamTaskCreatedEvent(TeamEvent):
-    type: str = field(default="task.created", init=False)
+    type: str = field(default=TransportEventType.TASK_CREATED.value, init=False)
     task_ref: str = ""
     alias: str = ""
     title: str = ""
@@ -190,7 +197,7 @@ class TeamTaskCreatedEvent(TeamEvent):
 
 @dataclass
 class TeamTaskStatusChangedEvent(TeamEvent):
-    type: str = field(default="task.status_changed", init=False)
+    type: str = field(default=TransportEventType.TASK_STATUS_CHANGED.value, init=False)
     task_ref: str = ""
     alias: str = ""
     title: str = ""
@@ -201,7 +208,9 @@ class TeamTaskStatusChangedEvent(TeamEvent):
 
 @dataclass
 class TeamTaskAssigneeChangedEvent(TeamEvent):
-    type: str = field(default="task.assignee_changed", init=False)
+    type: str = field(
+        default=TransportEventType.TASK_ASSIGNEE_CHANGED.value, init=False
+    )
     task_ref: str = ""
     alias: str = ""
     title: str = ""
@@ -213,7 +222,7 @@ class TeamTaskAssigneeChangedEvent(TeamEvent):
 class TeamAgentStatusEvent(TeamEvent):
     """An agent's host-published reachability verdict changed (docs/agent-health.md)."""
 
-    type: str = field(default="agent.status", init=False)
+    type: str = field(default=TransportEventType.AGENT_STATUS.value, init=False)
     agent_id: str = ""
     alias: str = ""
     reachable: str = ""
@@ -227,7 +236,7 @@ class TeamAgentStatusEvent(TeamEvent):
 
 @dataclass
 class TeamTaskClaimedEvent(TeamEvent):
-    type: str = field(default="task.claimed", init=False)
+    type: str = field(default=TransportEventType.TASK_CLAIMED.value, init=False)
     task_ref: str = ""
     alias: str = ""
     title: str = ""
@@ -235,7 +244,7 @@ class TeamTaskClaimedEvent(TeamEvent):
 
 @dataclass
 class TeamTaskUnclaimedEvent(TeamEvent):
-    type: str = field(default="task.unclaimed", init=False)
+    type: str = field(default=TransportEventType.TASK_UNCLAIMED.value, init=False)
     task_ref: str = ""
     alias: str = ""
     title: str = ""
@@ -243,29 +252,29 @@ class TeamTaskUnclaimedEvent(TeamEvent):
 
 @dataclass
 class TeamMessageSentEvent(TeamEvent):
-    type: str = field(default="message.delivered", init=False)
+    type: str = field(default=TransportEventType.MAIL_DELIVERED.value, init=False)
     message_id: str = ""
     from_alias: str = ""
     to_alias: str = ""
     subject: str = ""
     priority: str = "normal"
-    content_mode: str = "legacy_plaintext_v1"
+    content_mode: str = ContentMode.PLAINTEXT
     encrypted: bool = False
 
 
 @dataclass
 class TeamMessageAcknowledgedEvent(TeamEvent):
-    type: str = field(default="message.acknowledged", init=False)
+    type: str = field(default=TransportEventType.MAIL_ACKNOWLEDGED.value, init=False)
     alias: str = ""
     from_alias: str = ""
     subject: str = ""
-    content_mode: str = "legacy_plaintext_v1"
+    content_mode: str = ContentMode.PLAINTEXT
     encrypted: bool = False
 
 
 @dataclass
 class TeamChatMessageSentEvent(TeamEvent):
-    type: str = field(default="chat.message_sent", init=False)
+    type: str = field(default=TransportEventType.CHAT_MESSAGE_SENT.value, init=False)
     from_alias: str = ""
     to_aliases: list[str] = field(default_factory=list)
     preview: str = ""
@@ -273,34 +282,34 @@ class TeamChatMessageSentEvent(TeamEvent):
 
 @dataclass
 class TeamReservationAcquiredEvent(TeamEvent):
-    type: str = field(default="reservation.acquired", init=False)
+    type: str = field(default=TransportEventType.RESERVATION_ACQUIRED.value, init=False)
     alias: str = ""
     paths: list[str] = field(default_factory=list)
 
 
 @dataclass
 class TeamReservationReleasedEvent(TeamEvent):
-    type: str = field(default="reservation.released", init=False)
+    type: str = field(default=TransportEventType.RESERVATION_RELEASED.value, init=False)
     alias: str = ""
     paths: list[str] = field(default_factory=list)
 
 
 @dataclass
 class TeamReservationRenewedEvent(TeamEvent):
-    type: str = field(default="reservation.renewed", init=False)
+    type: str = field(default=TransportEventType.RESERVATION_RENEWED.value, init=False)
     alias: str = ""
     paths: list[str] = field(default_factory=list)
 
 
 @dataclass
 class TeamAgentOnlineEvent(TeamEvent):
-    type: str = field(default="agent.online", init=False)
+    type: str = field(default=TransportEventType.AGENT_ONLINE.value, init=False)
     alias: str = ""
 
 
 @dataclass
 class TeamAgentOfflineEvent(TeamEvent):
-    type: str = field(default="agent.offline", init=False)
+    type: str = field(default=TransportEventType.AGENT_OFFLINE.value, init=False)
     alias: str = ""
 
 
@@ -334,6 +343,16 @@ async def publish_event(redis: Redis, event: Event) -> int:
     count = await redis.publish(channel, message)
     logger.debug(f"Published {event.type} to {channel}, {count} subscribers")
     return count
+
+
+def queue_team_event(pipeline: Pipeline, event: TeamEvent) -> None:
+    """Queue the canonical team publication in a caller-owned MULTI transaction.
+
+    The caller queues its presence snapshot alongside this event, then executes
+    or retries WATCH/MULTI. Serialization happens before that Redis commit;
+    queueing neither executes nor publishes outside the transaction.
+    """
+    pipeline.publish(team_events_channel_name(event.team_id), event.to_json())
 
 
 async def publish_team_event(redis: Redis, event: TeamEvent) -> int:
@@ -450,7 +469,9 @@ async def stream_events_multi(
         while True:
             # Check for client disconnect
             if check_disconnected and await check_disconnected():
-                logger.debug(f"Client disconnected, ending stream for {len(channels)} channels")
+                logger.debug(
+                    f"Client disconnected, ending stream for {len(channels)} channels"
+                )
                 return
 
             now = loop.time()
@@ -487,7 +508,9 @@ async def stream_events_multi(
                     timeout=1.0,
                 )
             except RedisConnectionError:
-                logger.info("Redis pubsub connection dropped; reconnecting", exc_info=True)
+                logger.info(
+                    "Redis pubsub connection dropped; reconnecting", exc_info=True
+                )
                 await _close_pubsub(pubsub)
                 pubsub = None
                 next_reconnect_at = now + reconnect_delay_seconds
@@ -530,12 +553,17 @@ async def stream_events_multi(
 
             # Send keepalive comment if needed
             if current_time - last_keepalive >= keepalive_seconds:
-                if pubsub is not None and current_time - last_pubsub_ping >= keepalive_seconds:
+                if (
+                    pubsub is not None
+                    and current_time - last_pubsub_ping >= keepalive_seconds
+                ):
                     try:
                         await pubsub.ping()
                         last_pubsub_ping = current_time
                     except RedisError:
-                        logger.info("Redis pubsub ping failed; reconnecting", exc_info=True)
+                        logger.info(
+                            "Redis pubsub ping failed; reconnecting", exc_info=True
+                        )
                         await _close_pubsub(pubsub)
                         pubsub = None
                         next_reconnect_at = current_time + reconnect_delay_seconds

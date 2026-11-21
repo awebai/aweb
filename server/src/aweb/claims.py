@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Optional
 from uuid import UUID
 
 from awid.team_ids import team_slug
+from aweb.member_team_key import current_member_sql
 
 if TYPE_CHECKING:
     from .db import DatabaseInfra
@@ -182,6 +184,12 @@ async def _is_open_task_ref(
     return (row["status"] or "").strip().lower() != "closed"
 
 
+@dataclass(frozen=True)
+class ClaimUpsertResult:
+    released_workspace_ids: tuple[str, ...]
+    conflicting_alias: str | None = None
+
+
 async def upsert_claim(
     db_infra: DatabaseInfra,
     *,
@@ -190,21 +198,20 @@ async def upsert_claim(
     alias: str,
     human_name: str,
     task_ref: str,
-) -> Optional[dict[str, Any]]:
-    """Attempt to claim a task.
-
-    Returns ``None`` on success, or the conflicting
-    claim dict (with alias, human_name, workspace_id) if already held by
-    another workspace."""
+) -> ClaimUpsertResult:
+    """Attempt a claim and retain all committed releases for event delivery."""
     aweb_db = db_infra.get_manager("aweb")
 
     apex_task_ref = await resolve_task_claim_apex(db_infra, team_id, task_ref)
 
     async with aweb_db.transaction() as tx:
+        released = tuple(
+            await release_noncurrent_task_claims_on(tx, team_id=team_id, task_ref=task_ref)
+        )
         # Check if another workspace already holds this claim.
         existing = await tx.fetch_one(
             """
-            SELECT workspace_id, alias, human_name
+            SELECT alias
             FROM {{tables.task_claims}}
             WHERE team_id = $1 AND task_ref = $2 AND workspace_id != $3
             """,
@@ -213,11 +220,7 @@ async def upsert_claim(
             UUID(workspace_id),
         )
         if existing:
-            return {
-                "workspace_id": str(existing["workspace_id"]),
-                "alias": existing["alias"],
-                "human_name": existing["human_name"],
-            }
+            return ClaimUpsertResult(released, conflicting_alias=existing["alias"])
 
         await tx.execute(
             """
@@ -254,7 +257,7 @@ async def upsert_claim(
             UUID(workspace_id),
         )
 
-    return None
+    return ClaimUpsertResult(released)
 
 
 async def release_task_claims(
@@ -352,3 +355,30 @@ async def release_task_claims_on(tx, *, team_id: str, task_ref: str, workspace_i
         )
 
     return [str(ws_id) for ws_id in affected_ws_ids]
+
+
+async def release_noncurrent_task_claims_on(tx, *, team_id: str, task_ref: str) -> list[str]:
+    """Reclaim only this task's stale holders through the claim/focus owner.
+
+    Current members retain their conflicts. Key rotation does not sweep claims;
+    a new claim request rechecks its competing holders in its own transaction.
+    """
+    stale = await tx.fetch_all(
+        f"""
+        SELECT c.workspace_id FROM {{{{tables.task_claims}}}} c
+        WHERE c.team_id=$1 AND c.task_ref=$2 AND NOT EXISTS (
+            SELECT 1 FROM {{{{tables.workspaces}}}} w
+            JOIN {{{{tables.agents}}}} a ON a.agent_id=w.agent_id AND a.team_id=w.team_id
+            WHERE w.workspace_id=c.workspace_id AND w.team_id=c.team_id
+              AND {current_member_sql("a")}
+        )
+        ORDER BY c.workspace_id FOR UPDATE OF c
+        """,
+        team_id, task_ref,
+    )
+    released = []
+    for row in stale:
+        released.extend(await release_task_claims_on(
+            tx, team_id=team_id, task_ref=task_ref, workspace_id=str(row["workspace_id"]),
+        ))
+    return released

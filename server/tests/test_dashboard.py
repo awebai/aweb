@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+import socket
 
 import httpx
 import uuid
@@ -13,10 +14,17 @@ from types import SimpleNamespace
 
 import jwt
 import pytest
+import pytest_asyncio
+from awid.registry import RegistryClient
 from httpx import ASGITransport, AsyncClient
 from fastapi import FastAPI
 
-from aweb.events import TeamAgentOfflineEvent, TeamAgentOnlineEvent, TeamTaskCreatedEvent, publish_team_event
+from aweb.events import (
+    TeamAgentOfflineEvent,
+    TeamAgentOnlineEvent,
+    TeamTaskCreatedEvent,
+    publish_team_event,
+)
 from aweb.presence import update_agent_presence
 from aweb.routes import dashboard as dashboard_routes
 from aweb.routes.dashboard import router as dashboard_router
@@ -54,11 +62,6 @@ class _FakeRegistryClient:
 class _FailingRegistryClient:
     async def get_team(self, domain: str, name: str):
         raise RuntimeError(f"registry unavailable for {domain}/{name}")
-
-
-class _ConnectFailingRegistryClient:
-    async def get_team(self, domain: str, name: str):
-        raise httpx.ConnectError(f"connect failed for {domain}/{name}")
 
 
 class _FakeRedisPipeline:
@@ -157,8 +160,10 @@ class _FakeRedis:
 
     async def exists(self, key):
         return int(
-            key in self.hashes and bool(self.hashes[key])
-            or key in self.sets and bool(self.sets[key])
+            key in self.hashes
+            and bool(self.hashes[key])
+            or key in self.sets
+            and bool(self.sets[key])
             or key in self.strings
         )
 
@@ -219,13 +224,14 @@ async def _seed(aweb_db):
     await aweb_db.execute(
         """
         INSERT INTO {{tables.agents}} (
-            agent_id, team_id, did_key, did_aw, address, alias, identity_scope, role, status, human_name, agent_type
+            agent_id, team_id, did_key, did_aw, address, alias, identity_scope, role, status, human_name, agent_type, inbound_mode
         )
         VALUES
-            ($1, 'backend:acme.com', 'did:key:z6Mkalice', 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'active', 'Alice', 'coder'),
-            ($2, 'backend:acme.com', 'did:key:z6Mkbob', NULL, NULL, 'bob', 'local', 'reviewer', 'active', 'Bob', 'reviewer')
+            ($1, 'backend:acme.com', 'did:key:z6Mkalice', 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'active', 'Alice', 'coder', 'open'),
+            ($2, 'backend:acme.com', 'did:key:z6Mkbob', NULL, NULL, 'bob', 'local', 'reviewer', 'active', 'Bob', 'reviewer', 'open')
         """,
-        alice_id, bob_id,
+        alice_id,
+        bob_id,
     )
 
     await aweb_db.execute(
@@ -234,7 +240,8 @@ async def _seed(aweb_db):
             (from_did, to_did, from_alias, to_alias, subject, body, team_id, from_agent_id, to_agent_id)
         VALUES ('did:key:z6Mkalice', 'did:key:z6Mkbob', 'alice', 'bob', 'Hello', 'Hi Bob!', 'backend:acme.com', $1, $2)
         """,
-        alice_id, bob_id,
+        alice_id,
+        bob_id,
     )
 
     await aweb_db.execute(
@@ -250,7 +257,8 @@ async def _seed(aweb_db):
     )
 
     await aweb_db.execute(
-        "UPDATE {{tables.agents}} SET did_aw_verified_key=did_key WHERE agent_id=$1", alice_id,
+        "UPDATE {{tables.agents}} SET did_aw_verified_key=did_key WHERE agent_id=$1",
+        alice_id,
     )
     return str(alice_id), str(bob_id)
 
@@ -276,45 +284,26 @@ def _parse_sse_chunk(chunk: str):
 
 
 @pytest.mark.asyncio
-async def test_list_agents(aweb_cloud_db):
-    app = _build_app(aweb_cloud_db.aweb_db)
-    alice_id, bob_id = await _seed(aweb_cloud_db.aweb_db)
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.workspaces}} (
-            workspace_id, team_id, agent_id, alias, workspace_path, last_seen_at
-        )
-        VALUES (
-            $1, 'backend:acme.com', $2, 'alice', '/Users/alice/project', $3
-        )
-        """,
-        uuid.uuid4(),
-        uuid.UUID(alice_id),
-        datetime(2026, 4, 8, 12, 0, 0, tzinfo=timezone.utc),
+async def test_list_agents(dashboard_stack):
+    env = dashboard_stack
+    await _seed_dashboard_directory(env)
+    alice, bob = env.actors["alice"], env.actors["bob"]
+    await env.db.execute(
+        "UPDATE {{tables.workspaces}} SET workspace_path='/Users/alice/project',last_seen_at=$1 WHERE workspace_id=$2",
+        datetime(2026, 4, 8, 12, 0, tzinfo=timezone.utc),
+        alice.workspace,
     )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.workspaces}} (
-            workspace_id, team_id, agent_id, alias, workspace_path, last_seen_at, deleted_at
-        )
-        VALUES (
-            $1, 'backend:acme.com', $2, 'bob', '/Users/bob/stale', $3, $4
-        )
-        """,
-        uuid.uuid4(),
-        uuid.UUID(bob_id),
-        datetime(2026, 4, 8, 13, 0, 0, tzinfo=timezone.utc),
-        datetime(2026, 4, 8, 13, 5, 0, tzinfo=timezone.utc),
+    await env.db.execute(
+        "UPDATE {{tables.workspaces}} SET workspace_path='/Users/bob/stale',last_seen_at=$1,deleted_at=$2 WHERE agent_id=$3",
+        datetime(2026, 4, 8, 13, 0, tzinfo=timezone.utc),
+        datetime(2026, 4, 8, 13, 5, tzinfo=timezone.utc),
+        bob.id,
     )
-    token = _make_jwt(["backend:acme.com"])
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.get(
-            "/v1/teams/backend:acme.com/agents",
-            headers={"X-Dashboard-Token": token},
-        )
-
-    assert resp.status_code == 200
+    resp = await env.client.get(
+        f"/v1/teams/{env.team_id}/agents",
+        headers={"X-Dashboard-Token": _make_jwt([env.team_id])},
+    )
+    assert resp.status_code == 200, resp.text
     data = resp.json()
     assert len(data["agents"]) == 2
     agents = {a["alias"]: a for a in data["agents"]}
@@ -322,7 +311,7 @@ async def test_list_agents(aweb_cloud_db):
     assert agents["alice"]["workspace_path"] == "/Users/alice/project"
     assert agents["alice"]["last_seen"] == "2026-04-08T12:00:00+00:00"
     assert agents["alice"]["human_name"] == "Alice"
-    assert agents["alice"]["address"] == "acme.com/alice"
+    assert agents["alice"]["address"] == "example.test/alice"
     assert agents["alice"]["agent_type"] == "coder"
     assert agents["bob"]["workspace_path"] is None
     assert agents["bob"]["last_seen"] is None
@@ -332,155 +321,110 @@ async def test_list_agents(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
-async def test_list_agents_prefers_active_workspace_over_newer_deleted_workspace(aweb_cloud_db):
-    app = _build_app(aweb_cloud_db.aweb_db)
-    alice_id, bob_id = await _seed(aweb_cloud_db.aweb_db)
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.workspaces}} (
-            workspace_id, team_id, agent_id, alias, workspace_path, last_seen_at
-        )
-        VALUES (
-            $1, 'backend:acme.com', $2, 'alice', '/Users/alice/project', $3
-        )
-        """,
-        uuid.uuid4(),
-        uuid.UUID(alice_id),
-        datetime(2026, 4, 8, 12, 0, 0, tzinfo=timezone.utc),
+async def test_list_agents_prefers_active_workspace_over_newer_deleted_workspace(
+    dashboard_stack,
+):
+    env = dashboard_stack
+    await _seed_dashboard_directory(env)
+    bob = env.actors["bob"]
+    await env.db.execute(
+        "UPDATE {{tables.workspaces}} SET workspace_path='/Users/bob/active',last_seen_at=$1 WHERE workspace_id=$2",
+        datetime(2026, 4, 8, 11, 0, tzinfo=timezone.utc),
+        bob.workspace,
     )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.workspaces}} (
-            workspace_id, team_id, agent_id, alias, workspace_path, last_seen_at, deleted_at
-        )
-        VALUES
-            ($1, 'backend:acme.com', $2, 'bob', '/Users/bob/stale', $3, $4),
-            ($5, 'backend:acme.com', $2, 'bob', '/Users/bob/active', $6, NULL)
-        """,
+    await env.db.execute(
+        "INSERT INTO {{tables.workspaces}} (workspace_id,team_id,agent_id,alias,workspace_path,last_seen_at,deleted_at) VALUES ($1,$2,$3,'bob-stale','/Users/bob/stale',$4,$5)",
         uuid.uuid4(),
-        uuid.UUID(bob_id),
-        datetime(2026, 4, 8, 13, 0, 0, tzinfo=timezone.utc),
-        datetime(2026, 4, 8, 13, 5, 0, tzinfo=timezone.utc),
-        uuid.uuid4(),
-        datetime(2026, 4, 8, 11, 0, 0, tzinfo=timezone.utc),
+        env.team_id,
+        bob.id,
+        datetime(2026, 4, 8, 13, 0, tzinfo=timezone.utc),
+        datetime(2026, 4, 8, 13, 5, tzinfo=timezone.utc),
     )
-    token = _make_jwt(["backend:acme.com"])
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.get(
-            "/v1/teams/backend:acme.com/agents",
-            headers={"X-Dashboard-Token": token},
-        )
-
-    assert resp.status_code == 200
+    resp = await env.client.get(
+        f"/v1/teams/{env.team_id}/agents",
+        headers={"X-Dashboard-Token": _make_jwt([env.team_id])},
+    )
+    assert resp.status_code == 200, resp.text
     agents = {a["alias"]: a for a in resp.json()["agents"]}
     assert agents["bob"]["workspace_path"] == "/Users/bob/active"
     assert agents["bob"]["last_seen"] == "2026-04-08T11:00:00+00:00"
 
 
 @pytest.mark.asyncio
-async def test_list_agents_excludes_human_typed_action_attribution_rows(aweb_cloud_db):
-    """Cloud creates aweb.agents rows with agent_type='human' to attribute
-    dashboard actions to a real user (the cowork-<hmac> slug pattern in
-    auth_bridge.py). These records are internal: the user has no useful
-    action to take on them, and seeing the opaque slug labelled as an
-    'agent' alongside their real agents is alarming. list_agents must
-    exclude agent_type='human' rows from every dashboard surface.
-    Mirrors the mcp/tools/agents.py:27 filter discipline.
-    """
-    app = _build_app(aweb_cloud_db.aweb_db)
-    await _seed(aweb_cloud_db.aweb_db)
-    human_attribution_id = uuid.uuid4()
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}} (
-            agent_id, team_id, did_key, did_aw, address, alias, identity_scope, role, status, human_name, agent_type
-        )
-        VALUES
-            ($1, 'backend:acme.com', 'did:key:z6Mkjuan', 'did:aw:juan', NULL, 'cowork-gzo3o2loh252', 'global', 'developer', 'active', 'Juan', 'human')
-        """,
-        human_attribution_id,
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        "UPDATE {{tables.agents}} SET human_verified_key=did_key WHERE agent_id=$1", human_attribution_id,
-    )
-    token = _make_jwt(["backend:acme.com"])
+async def test_list_agents_excludes_human_typed_action_attribution_rows(
+    dashboard_stack,
+):
+    from awid.identity_observation import IdentityKind
+    from messaging_actor_support import admit_messaging_actor
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.get(
-            "/v1/teams/backend:acme.com/agents",
-            headers={"X-Dashboard-Token": token},
-        )
-
-    assert resp.status_code == 200
+    env = dashboard_stack
+    await _seed_dashboard_stack(env)
+    await admit_messaging_actor(
+        env, alias="cowork-gzo3o2loh252", team_id=env.team_id, kind=IdentityKind.HUMAN
+    )
+    resp = await env.client.get(
+        f"/v1/teams/{env.team_id}/agents",
+        headers={"X-Dashboard-Token": _make_jwt([env.team_id])},
+    )
+    assert resp.status_code == 200, resp.text
     aliases = {a["alias"] for a in resp.json()["agents"]}
-    assert aliases == {"alice", "bob"}, f"human-typed cowork-* slug leaked into agent list: {aliases}"
+    assert aliases == {"alice", "bob"}, (
+        f"human-typed attribution row leaked into agent list: {aliases}"
+    )
     assert "cowork-gzo3o2loh252" not in aliases
 
 
 @pytest.mark.asyncio
-async def test_agent_detail(aweb_cloud_db):
-    app = _build_app(aweb_cloud_db.aweb_db)
-    await _seed(aweb_cloud_db.aweb_db)
-    token = _make_jwt(["backend:acme.com"])
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.get(
-            "/v1/teams/backend:acme.com/agents/alice",
-            headers={"X-Dashboard-Token": token},
-        )
-
-    assert resp.status_code == 200
+async def test_agent_detail(dashboard_stack):
+    env = dashboard_stack
+    await _seed_dashboard_directory(env)
+    resp = await env.client.get(
+        f"/v1/teams/{env.team_id}/agents/alice",
+        headers={"X-Dashboard-Token": _make_jwt([env.team_id])},
+    )
+    assert resp.status_code == 200, resp.text
     data = resp.json()
     assert data["alias"] == "alice"
     assert data["role"] == "developer"
-    assert data["address"] == "acme.com/alice"
+    assert data["address"] == "example.test/alice"
     assert data["agent_type"] == "coder"
 
 
 @pytest.mark.asyncio
-async def test_claims(aweb_cloud_db):
-    app = _build_app(aweb_cloud_db.aweb_db)
-    alice_id, _ = await _seed(aweb_cloud_db.aweb_db)
-    workspace_id = uuid.uuid4()
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.workspaces}} (
-            workspace_id, team_id, agent_id, alias, workspace_path
-        )
-        VALUES (
-            $1, 'backend:acme.com', $2, 'alice', '/Users/alice/project'
-        )
-        """,
+async def test_claims(dashboard_stack):
+    alice_id, _ = await _seed_dashboard_stack(dashboard_stack)
+    workspace_id = dashboard_stack.actors["alice"].workspace
+    assert workspace_id != uuid.UUID(alice_id)
+    await dashboard_stack.db.execute(
+        "UPDATE {{tables.workspaces}} SET workspace_path='/Users/alice/project' WHERE workspace_id=$1",
         workspace_id,
-        uuid.UUID(alice_id),
     )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.task_claims}} (
+    await dashboard_stack.db.execute(
+        f"""
+        INSERT INTO {{{{tables.task_claims}}}} (
             team_id, workspace_id, alias, human_name, task_ref, claimed_at
         )
         VALUES (
-            'backend:acme.com', $1, 'alice', 'Alice', 'backend-aaaa',
+            '{dashboard_stack.team_id}', $1, 'alice', 'Alice', '{dashboard_stack.team_name}-aaaa',
             TIMESTAMPTZ '2026-04-08T12:15:00Z'
         )
         """,
         workspace_id,
     )
-    token = _make_jwt(["backend:acme.com"])
+    token = _make_jwt([dashboard_stack.team_id])
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.get(
-            "/v1/teams/backend:acme.com/claims",
-            headers={"X-Dashboard-Token": token},
-        )
+    client = dashboard_stack.client
+    resp = await client.get(
+        f"/v1/teams/{dashboard_stack.team_id}/claims",
+        headers={"X-Dashboard-Token": token},
+    )
 
     assert resp.status_code == 200
     data = resp.json()
     assert data == {
         "claims": [
             {
-                "task_ref": "backend-aaaa",
+                "task_ref": f"{dashboard_stack.team_name}-aaaa",
                 "workspace_id": str(workspace_id),
                 "alias": "alice",
                 "claimed_at": "2026-04-08T12:15:00+00:00",
@@ -490,29 +434,25 @@ async def test_claims(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
-async def test_claims_unauthorized_returns_403(aweb_cloud_db):
-    app = _build_app(aweb_cloud_db.aweb_db)
-    await _seed(aweb_cloud_db.aweb_db)
+async def test_claims_unauthorized_returns_403(dashboard_stack):
+    await _seed_dashboard_stack(dashboard_stack)
     token = _make_jwt(["team:other.com"])
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.get(
-            "/v1/teams/backend:acme.com/claims",
-            headers={"X-Dashboard-Token": token},
-        )
+    client = dashboard_stack.client
+    resp = await client.get(
+        f"/v1/teams/{dashboard_stack.team_id}/claims",
+        headers={"X-Dashboard-Token": token},
+    )
 
     assert resp.status_code == 403
 
 
 @pytest.mark.asyncio
-async def test_claims_missing_token_returns_401(aweb_cloud_db):
-    app = _build_app(aweb_cloud_db.aweb_db)
-    await _seed(aweb_cloud_db.aweb_db)
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.get("/v1/teams/backend:acme.com/claims")
-
-    assert resp.status_code == 401
+async def test_claims_missing_token_returns_401(dashboard_stack):
+    env = dashboard_stack
+    await _seed_dashboard_stack(env)
+    resp = await env.client.get(f"/v1/teams/{env.team_id}/claims")
+    assert resp.status_code == 401, resp.text
 
 
 @pytest.mark.asyncio
@@ -521,7 +461,9 @@ async def test_dashboard_messages_route_is_removed(aweb_cloud_db):
     await _seed(aweb_cloud_db.aweb_db)
     token = _make_jwt(["backend:acme.com"])
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.get(
             "/v1/teams/backend:acme.com/messages",
             headers={"X-Dashboard-Token": token},
@@ -532,16 +474,15 @@ async def test_dashboard_messages_route_is_removed(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
-async def test_tasks(aweb_cloud_db):
-    app = _build_app(aweb_cloud_db.aweb_db)
-    await _seed(aweb_cloud_db.aweb_db)
-    token = _make_jwt(["backend:acme.com"])
+async def test_tasks(dashboard_stack):
+    await _seed_dashboard_stack(dashboard_stack)
+    token = _make_jwt([dashboard_stack.team_id])
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.get(
-            "/v1/teams/backend:acme.com/tasks",
-            headers={"X-Dashboard-Token": token},
-        )
+    client = dashboard_stack.client
+    resp = await client.get(
+        f"/v1/teams/{dashboard_stack.team_id}/tasks",
+        headers={"X-Dashboard-Token": token},
+    )
 
     assert resp.status_code == 200
     data = resp.json()
@@ -552,26 +493,25 @@ async def test_tasks(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
-async def test_tasks_filters_and_paginates(aweb_cloud_db):
-    app = _build_app(aweb_cloud_db.aweb_db)
-    await _seed(aweb_cloud_db.aweb_db)
+async def test_tasks_filters_and_paginates(dashboard_stack):
+    await _seed_dashboard_stack(dashboard_stack)
     parent_task_id = uuid.uuid4()
     blocked_task_id = uuid.uuid4()
     blocker_task_id = uuid.uuid4()
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.tasks}} (
+    await dashboard_stack.db.execute(
+        f"""
+        INSERT INTO {{{{tables.tasks}}}} (
             task_id, team_id, task_number, root_task_seq, task_ref_suffix, title, description,
             status, priority, task_type, labels, assignee_alias, parent_task_id, created_at, updated_at
         )
         VALUES
-            ($1, 'backend:acme.com', 2, 2, 'aaab', 'Build dashboard', 'Add dashboard filters',
+            ($1, '{dashboard_stack.team_id}', 2, 2, 'aaab', 'Build dashboard', 'Add dashboard filters',
              'in_progress', 0, 'feature', ARRAY['dashboard','backend']::text[], 'alice', $2,
              TIMESTAMPTZ '2026-04-08T12:05:00Z', TIMESTAMPTZ '2026-04-08T12:06:00Z'),
-            ($2, 'backend:acme.com', 3, 3, 'aaac', 'Parent task', 'Parent for dashboard task',
+            ($2, '{dashboard_stack.team_id}', 3, 3, 'aaac', 'Parent task', 'Parent for dashboard task',
              'open', 1, 'epic', ARRAY['backend']::text[], NULL, NULL,
              TIMESTAMPTZ '2026-04-08T12:04:30Z', TIMESTAMPTZ '2026-04-08T12:04:45Z'),
-            ($3, 'backend:acme.com', 4, 4, 'aaad', 'Blocked task', 'Blocked by dashboard task',
+            ($3, '{dashboard_stack.team_id}', 4, 4, 'aaad', 'Blocked task', 'Blocked by dashboard task',
              'open', 1, 'chore', ARRAY['docs']::text[], NULL, NULL,
              TIMESTAMPTZ '2026-04-08T12:04:00Z', TIMESTAMPTZ '2026-04-08T12:04:10Z')
         """,
@@ -579,30 +519,30 @@ async def test_tasks_filters_and_paginates(aweb_cloud_db):
         parent_task_id,
         blocker_task_id,
     )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.task_dependencies}} (task_id, depends_on_id, team_id)
-        VALUES ($1, $2, 'backend:acme.com')
+    await dashboard_stack.db.execute(
+        f"""
+        INSERT INTO {{{{tables.task_dependencies}}}} (task_id, depends_on_id, team_id)
+        VALUES ($1, $2, '{dashboard_stack.team_id}')
         """,
         blocked_task_id,
         blocker_task_id,
     )
-    token = _make_jwt(["backend:acme.com"])
+    token = _make_jwt([dashboard_stack.team_id])
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.get(
-            "/v1/teams/backend:acme.com/tasks",
-            params={
-                "status": "in_progress",
-                "assignee_alias": "alice",
-                "task_type": "feature",
-                "priority": "P0",
-                "labels": "dashboard,backend",
-                "q": "dashboard filters",
-                "limit": 1,
-            },
-            headers={"X-Dashboard-Token": token},
-        )
+    client = dashboard_stack.client
+    resp = await client.get(
+        f"/v1/teams/{dashboard_stack.team_id}/tasks",
+        params={
+            "status": "in_progress",
+            "assignee_alias": "alice",
+            "task_type": "feature",
+            "priority": "P0",
+            "labels": "dashboard,backend",
+            "q": "dashboard filters",
+            "limit": 1,
+        },
+        headers={"X-Dashboard-Token": token},
+    )
 
     assert resp.status_code == 200
     data = resp.json()
@@ -616,141 +556,145 @@ async def test_tasks_filters_and_paginates(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
-async def test_tasks_empty_result_set(aweb_cloud_db):
-    app = _build_app(aweb_cloud_db.aweb_db)
-    await _seed(aweb_cloud_db.aweb_db)
-    token = _make_jwt(["backend:acme.com"])
+async def test_tasks_empty_result_set(dashboard_stack):
+    await _seed_dashboard_stack(dashboard_stack)
+    token = _make_jwt([dashboard_stack.team_id])
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.get(
-            "/v1/teams/backend:acme.com/tasks",
-            params={"status": "closed"},
-            headers={"X-Dashboard-Token": token},
-        )
-
-    assert resp.status_code == 200
-    assert resp.json() == {"tasks": [], "has_more": False, "next_cursor": None}
-
-
-@pytest.mark.asyncio
-async def test_tasks_unknown_assignee_returns_empty_results(aweb_cloud_db):
-    app = _build_app(aweb_cloud_db.aweb_db)
-    await _seed(aweb_cloud_db.aweb_db)
-    token = _make_jwt(["backend:acme.com"])
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.get(
-            "/v1/teams/backend:acme.com/tasks",
-            params={"assignee_alias": "someone-who-left"},
-            headers={"X-Dashboard-Token": token},
-        )
+    client = dashboard_stack.client
+    resp = await client.get(
+        f"/v1/teams/{dashboard_stack.team_id}/tasks",
+        params={"status": "closed"},
+        headers={"X-Dashboard-Token": token},
+    )
 
     assert resp.status_code == 200
     assert resp.json() == {"tasks": [], "has_more": False, "next_cursor": None}
 
 
 @pytest.mark.asyncio
-async def test_tasks_invalid_cursor_returns_422(aweb_cloud_db):
-    app = _build_app(aweb_cloud_db.aweb_db)
-    await _seed(aweb_cloud_db.aweb_db)
-    token = _make_jwt(["backend:acme.com"])
+async def test_tasks_unknown_assignee_returns_empty_results(dashboard_stack):
+    await _seed_dashboard_stack(dashboard_stack)
+    token = _make_jwt([dashboard_stack.team_id])
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.get(
-            "/v1/teams/backend:acme.com/tasks",
-            params={"cursor": "not-base64"},
-            headers={"X-Dashboard-Token": token},
-        )
+    client = dashboard_stack.client
+    resp = await client.get(
+        f"/v1/teams/{dashboard_stack.team_id}/tasks",
+        params={"assignee_alias": "someone-who-left"},
+        headers={"X-Dashboard-Token": token},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json() == {"tasks": [], "has_more": False, "next_cursor": None}
+
+
+@pytest.mark.asyncio
+async def test_tasks_invalid_cursor_returns_422(dashboard_stack):
+    await _seed_dashboard_stack(dashboard_stack)
+    token = _make_jwt([dashboard_stack.team_id])
+
+    client = dashboard_stack.client
+    resp = await client.get(
+        f"/v1/teams/{dashboard_stack.team_id}/tasks",
+        params={"cursor": "not-base64"},
+        headers={"X-Dashboard-Token": token},
+    )
 
     assert resp.status_code == 422
     assert resp.json()["detail"] == "Invalid cursor"
 
 
 @pytest.mark.asyncio
-async def test_tasks_filters_in_isolation(aweb_cloud_db):
-    app = _build_app(aweb_cloud_db.aweb_db)
-    await _seed(aweb_cloud_db.aweb_db)
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.tasks}} (
+async def test_tasks_filters_in_isolation(dashboard_stack):
+    await _seed_dashboard_stack(dashboard_stack)
+    await dashboard_stack.db.execute(
+        f"""
+        INSERT INTO {{{{tables.tasks}}}} (
             task_id, team_id, task_number, root_task_seq, task_ref_suffix, title, description,
             status, priority, task_type, labels, assignee_alias, created_at
         )
         VALUES
-            ($1, 'backend:acme.com', 2, 2, 'aaab', 'Build dashboard', 'Add dashboard filters',
+            ($1, '{dashboard_stack.team_id}', 2, 2, 'aaab', 'Build dashboard', 'Add dashboard filters',
              'in_progress', 0, 'feature', ARRAY['dashboard','backend']::text[], 'alice', TIMESTAMPTZ '2026-04-08T12:05:00Z'),
-            ($2, 'backend:acme.com', 3, 3, 'aaac', 'Document claims', 'Write pagination docs',
+            ($2, '{dashboard_stack.team_id}', 3, 3, 'aaac', 'Document claims', 'Write pagination docs',
              'open', 1, 'chore', ARRAY['docs']::text[], NULL, TIMESTAMPTZ '2026-04-08T12:04:00Z')
         """,
         uuid.uuid4(),
         uuid.uuid4(),
     )
-    token = _make_jwt(["backend:acme.com"])
+    token = _make_jwt([dashboard_stack.team_id])
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        status_resp = await client.get(
-            "/v1/teams/backend:acme.com/tasks",
-            params={"status": "in_progress"},
-            headers={"X-Dashboard-Token": token},
-        )
-        assignee_resp = await client.get(
-            "/v1/teams/backend:acme.com/tasks",
-            params={"assignee_alias": "alice"},
-            headers={"X-Dashboard-Token": token},
-        )
-        priority_resp = await client.get(
-            "/v1/teams/backend:acme.com/tasks",
-            params={"priority": "P0"},
-            headers={"X-Dashboard-Token": token},
-        )
-        q_resp = await client.get(
-            "/v1/teams/backend:acme.com/tasks",
-            params={"q": "pagination docs"},
-            headers={"X-Dashboard-Token": token},
-        )
+    client = dashboard_stack.client
+    status_resp = await client.get(
+        f"/v1/teams/{dashboard_stack.team_id}/tasks",
+        params={"status": "in_progress"},
+        headers={"X-Dashboard-Token": token},
+    )
+    assignee_resp = await client.get(
+        f"/v1/teams/{dashboard_stack.team_id}/tasks",
+        params={"assignee_alias": "alice"},
+        headers={"X-Dashboard-Token": token},
+    )
+    priority_resp = await client.get(
+        f"/v1/teams/{dashboard_stack.team_id}/tasks",
+        params={"priority": "P0"},
+        headers={"X-Dashboard-Token": token},
+    )
+    q_resp = await client.get(
+        f"/v1/teams/{dashboard_stack.team_id}/tasks",
+        params={"q": "pagination docs"},
+        headers={"X-Dashboard-Token": token},
+    )
 
-    assert [task["title"] for task in status_resp.json()["tasks"]] == ["Build dashboard"]
-    assert [task["title"] for task in assignee_resp.json()["tasks"]] == ["Build dashboard"]
-    assert [task["title"] for task in priority_resp.json()["tasks"]] == ["Build dashboard"]
+    assert [task["title"] for task in status_resp.json()["tasks"]] == [
+        "Build dashboard"
+    ]
+    assert [task["title"] for task in assignee_resp.json()["tasks"]] == [
+        "Build dashboard"
+    ]
+    assert [task["title"] for task in priority_resp.json()["tasks"]] == [
+        "Build dashboard"
+    ]
     assert [task["title"] for task in q_resp.json()["tasks"]] == ["Document claims"]
 
 
 @pytest.mark.asyncio
-async def test_tasks_cursor_pagination(aweb_cloud_db):
-    app = _build_app(aweb_cloud_db.aweb_db)
-    await _seed(aweb_cloud_db.aweb_db)
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.tasks}} (
+async def test_tasks_cursor_pagination(dashboard_stack):
+    await _seed_dashboard_stack(dashboard_stack)
+    await dashboard_stack.db.execute(
+        f"""
+        INSERT INTO {{{{tables.tasks}}}} (
             task_id, team_id, task_number, root_task_seq, task_ref_suffix, title,
             status, priority, task_type, created_at
         )
         VALUES
-            ($1, 'backend:acme.com', 2, 2, 'aaab', 'Second task', 'open', 2, 'task', TIMESTAMPTZ '2026-04-08T12:05:00Z'),
-            ($2, 'backend:acme.com', 3, 3, 'aaac', 'Third task', 'open', 2, 'task', TIMESTAMPTZ '2026-04-08T12:04:00Z')
+            ($1, '{dashboard_stack.team_id}', 2, 2, 'aaab', 'Second task', 'open', 2, 'task', TIMESTAMPTZ '2026-04-08T12:05:00Z'),
+            ($2, '{dashboard_stack.team_id}', 3, 3, 'aaac', 'Third task', 'open', 2, 'task', TIMESTAMPTZ '2026-04-08T12:04:00Z')
         """,
         uuid.uuid4(),
         uuid.uuid4(),
     )
-    token = _make_jwt(["backend:acme.com"])
+    token = _make_jwt([dashboard_stack.team_id])
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        first = await client.get(
-            "/v1/teams/backend:acme.com/tasks",
-            params={"limit": 2},
-            headers={"X-Dashboard-Token": token},
-        )
-        assert first.status_code == 200
-        first_data = first.json()
-        assert [task["title"] for task in first_data["tasks"]] == ["Second task", "Third task"]
-        assert first_data["has_more"] is True
-        assert first_data["next_cursor"] is not None
+    client = dashboard_stack.client
+    first = await client.get(
+        f"/v1/teams/{dashboard_stack.team_id}/tasks",
+        params={"limit": 2},
+        headers={"X-Dashboard-Token": token},
+    )
+    assert first.status_code == 200
+    first_data = first.json()
+    assert [task["title"] for task in first_data["tasks"]] == [
+        "Second task",
+        "Third task",
+    ]
+    assert first_data["has_more"] is True
+    assert first_data["next_cursor"] is not None
 
-        second = await client.get(
-            "/v1/teams/backend:acme.com/tasks",
-            params={"limit": 2, "cursor": first_data["next_cursor"]},
-            headers={"X-Dashboard-Token": token},
-        )
+    second = await client.get(
+        f"/v1/teams/{dashboard_stack.team_id}/tasks",
+        params={"limit": 2, "cursor": first_data["next_cursor"]},
+        headers={"X-Dashboard-Token": token},
+    )
 
     assert second.status_code == 200
     second_data = second.json()
@@ -829,7 +773,9 @@ async def test_events_stream_emits_snapshot_and_team_events(aweb_cloud_db):
         ),
     )
 
-    event_name, payload = _parse_sse_chunk(await asyncio.wait_for(anext(stream), timeout=1))
+    event_name, payload = _parse_sse_chunk(
+        await asyncio.wait_for(anext(stream), timeout=1)
+    )
     assert event_name == "task.created"
     assert payload == {
         "type": "task.created",
@@ -870,7 +816,9 @@ async def test_events_stream_emits_presence_diffs(aweb_cloud_db, monkeypatch):
         team_id="backend:acme.com",
     )
 
-    event_name, payload = _parse_sse_chunk(await asyncio.wait_for(anext(stream), timeout=1))
+    event_name, payload = _parse_sse_chunk(
+        await asyncio.wait_for(anext(stream), timeout=1)
+    )
     assert event_name == "agent.online"
     assert payload == {
         "type": "agent.online",
@@ -881,7 +829,9 @@ async def test_events_stream_emits_presence_diffs(aweb_cloud_db, monkeypatch):
 
     await redis.delete(f"presence:{workspace_id}")
 
-    event_name, payload = _parse_sse_chunk(await asyncio.wait_for(anext(stream), timeout=1))
+    event_name, payload = _parse_sse_chunk(
+        await asyncio.wait_for(anext(stream), timeout=1)
+    )
     assert event_name == "agent.offline"
     assert payload == {
         "type": "agent.offline",
@@ -909,7 +859,9 @@ async def test_team_presence_events_publish_to_shared_channel(aweb_cloud_db):
         redis,
         TeamAgentOnlineEvent(team_id="backend:acme.com", alias="alice"),
     )
-    event_name, payload = _parse_sse_chunk(await asyncio.wait_for(anext(stream), timeout=1))
+    event_name, payload = _parse_sse_chunk(
+        await asyncio.wait_for(anext(stream), timeout=1)
+    )
     assert event_name == "agent.online"
     assert payload == {
         "type": "agent.online",
@@ -922,7 +874,9 @@ async def test_team_presence_events_publish_to_shared_channel(aweb_cloud_db):
         redis,
         TeamAgentOfflineEvent(team_id="backend:acme.com", alias="alice"),
     )
-    event_name, payload = _parse_sse_chunk(await asyncio.wait_for(anext(stream), timeout=1))
+    event_name, payload = _parse_sse_chunk(
+        await asyncio.wait_for(anext(stream), timeout=1)
+    )
     assert event_name == "agent.offline"
     assert payload == {
         "type": "agent.offline",
@@ -938,7 +892,9 @@ async def test_events_stream_missing_token_returns_401(aweb_cloud_db):
     app = _build_app(aweb_cloud_db.aweb_db, redis=_FakeRedis())
     await _seed(aweb_cloud_db.aweb_db)
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.get("/v1/teams/backend:acme.com/events/stream")
 
     assert resp.status_code == 401
@@ -950,7 +906,9 @@ async def test_events_stream_unauthorized_team_returns_403(aweb_cloud_db):
     await _seed(aweb_cloud_db.aweb_db)
     token = _make_jwt(["team:other.com"])
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.get(
             "/v1/teams/backend:acme.com/events/stream",
             headers={"X-Dashboard-Token": token},
@@ -960,109 +918,151 @@ async def test_events_stream_unauthorized_team_returns_403(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
-async def test_unauthorized_team_returns_403(aweb_cloud_db):
-    app = _build_app(aweb_cloud_db.aweb_db)
+async def test_unauthorized_team_returns_403(dashboard_stack):
     token = _make_jwt(["team:other.com"])
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.get(
-            "/v1/teams/backend:acme.com/agents",
-            headers={"X-Dashboard-Token": token},
-        )
+    client = dashboard_stack.client
+    resp = await client.get(
+        f"/v1/teams/{dashboard_stack.team_id}/agents",
+        headers={"X-Dashboard-Token": token},
+    )
 
     assert resp.status_code == 403
 
 
 @pytest.mark.asyncio
-async def test_missing_token_returns_401(aweb_cloud_db):
-    app = _build_app(aweb_cloud_db.aweb_db)
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.get("/v1/teams/backend:acme.com/agents")
-
-    assert resp.status_code == 401
+async def test_missing_token_returns_401(dashboard_stack):
+    env = dashboard_stack
+    await _seed_dashboard_stack(env)
+    resp = await env.client.get(f"/v1/teams/{env.team_id}/agents")
+    assert resp.status_code == 401, resp.text
 
 
 @pytest.mark.asyncio
-async def test_public_team_allows_anonymous_dashboard_reads(aweb_cloud_db):
-    registry_client = _FakeRegistryClient(visibility="public")
-    app = _build_app(aweb_cloud_db.aweb_db, registry_client=registry_client)
-    await _seed(aweb_cloud_db.aweb_db)
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.get("/v1/teams/backend:acme.com/agents")
-
-    assert resp.status_code == 200
+async def test_public_team_allows_anonymous_dashboard_reads(dashboard_stack):
+    env = dashboard_stack
+    await _seed_dashboard_stack(env)
+    registry = env.app.state.awid_registry_client
+    await registry.set_team_visibility("example.test", env.team_name, "public", env.team_sk)
+    resp = await env.client.get(f"/v1/teams/{env.team_id}/agents")
+    assert resp.status_code == 200, resp.text
+    assert {agent["alias"] for agent in resp.json()["agents"]} == {"alice", "bob"}
     assert len(resp.json()["agents"]) == 2
-    assert registry_client.calls == [("acme.com", "backend")]
 
 
 @pytest.mark.asyncio
-async def test_anonymous_request_reports_upstream_registry_connect_errors_as_503(aweb_cloud_db):
-    app = _build_app(aweb_cloud_db.aweb_db, registry_client=_ConnectFailingRegistryClient())
-    await _seed(aweb_cloud_db.aweb_db)
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.get("/v1/teams/backend:acme.com/agents")
-
+async def test_anonymous_request_reports_upstream_registry_connect_errors_as_503(
+    dashboard_stack,
+):
+    env = dashboard_stack
+    await _seed_dashboard_stack(env)
+    with socket.socket() as unused:
+        unused.bind(("127.0.0.1", 0))
+        port = unused.getsockname()[1]
+    original = env.app.state.awid_registry_client
+    unavailable = RegistryClient(registry_url=f"http://127.0.0.1:{port}")
+    try:
+        env.app.state.awid_registry_client = unavailable
+        resp = await env.client.get(f"/v1/teams/{dashboard_stack.team_id}/agents")
+    finally:
+        env.app.state.awid_registry_client = original
+        await unavailable.aclose()
     assert resp.status_code == 503
-    assert "AWID dashboard team visibility lookup upstream unavailable (ConnectError)" in resp.json()["detail"]
+    assert (
+        "AWID dashboard team visibility lookup upstream unavailable (ConnectError)"
+        in resp.json()["detail"]
+    )
 
 
 @pytest.mark.asyncio
-async def test_private_team_with_valid_jwt_does_not_fail_on_registry_lookup_error(aweb_cloud_db):
-    app = _build_app(aweb_cloud_db.aweb_db, registry_client=_FailingRegistryClient())
-    await _seed(aweb_cloud_db.aweb_db)
-    token = _make_jwt(["backend:acme.com"])
+async def test_private_team_with_valid_jwt_does_not_fail_on_registry_lookup_error(
+    dashboard_stack,
+):
+    env = dashboard_stack
+    await _seed_dashboard_stack(env)
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.get(
-            "/v1/teams/backend:acme.com/agents",
-            headers={"X-Dashboard-Token": token},
+    async def fail_at_transport(request):
+        raise RuntimeError("registry visibility transport failed")
+
+    original = env.app.state.awid_registry_client
+    failing = RegistryClient(
+        registry_url="http://registry.test",
+        transport=httpx.MockTransport(fail_at_transport),
+        service_token=original.service_token,
+        domain_verifier=env.registry.namespace_authority,
+    )
+    try:
+        env.app.state.awid_registry_client = failing
+        resp = await env.client.get(
+            f"/v1/teams/{env.team_id}/agents",
+            headers={"X-Dashboard-Token": _make_jwt([env.team_id])},
         )
-
-    assert resp.status_code == 200
+    finally:
+        env.app.state.awid_registry_client = original
+        await failing.aclose()
+    assert resp.status_code == 200, resp.text
     assert len(resp.json()["agents"]) == 2
 
 
 @pytest.mark.asyncio
-async def test_anonymous_request_surfaces_unexpected_registry_lookup_errors(aweb_cloud_db):
-    app = _build_app(aweb_cloud_db.aweb_db, registry_client=_FailingRegistryClient())
-    await _seed(aweb_cloud_db.aweb_db)
+async def test_anonymous_request_surfaces_unexpected_registry_lookup_errors(
+    dashboard_stack, caplog
+):
+    env = dashboard_stack
+    await _seed_dashboard_stack(env)
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.get("/v1/teams/backend:acme.com/agents")
+    async def fail_at_transport(request):
+        raise RuntimeError("registry visibility transport failed")
 
+    original = env.app.state.awid_registry_client
+    failing = RegistryClient(
+        registry_url="http://registry.test",
+        transport=httpx.MockTransport(fail_at_transport),
+        service_token=original.service_token,
+        domain_verifier=env.registry.namespace_authority,
+    )
+    try:
+        env.app.state.awid_registry_client = failing
+        resp = await env.client.get(f"/v1/teams/{dashboard_stack.team_id}/agents")
+    finally:
+        env.app.state.awid_registry_client = original
+        await failing.aclose()
     assert resp.status_code == 500
-    assert "Unexpected AWID dashboard team visibility lookup dependency error (RuntimeError)" in resp.json()["detail"]
+    assert (
+        "Unexpected AWID dashboard team visibility lookup dependency error (RuntimeError)"
+        in resp.json()["detail"]
+    )
+    assert "registry visibility transport failed" in caplog.text
 
 
 @pytest.mark.asyncio
-async def test_anonymous_request_returns_500_during_partial_init_without_registry_client(aweb_cloud_db):
-    app = _build_app(aweb_cloud_db.aweb_db, registry_client=None)
-    await _seed(aweb_cloud_db.aweb_db)
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.get("/v1/teams/backend:acme.com/agents")
-
-    assert resp.status_code == 500
-    assert resp.json()["detail"] == "AWID dashboard team visibility lookup registry client not configured"
+async def test_anonymous_request_returns_503_during_partial_init_without_registry_client(
+    dashboard_stack,
+):
+    env = dashboard_stack
+    await _seed_dashboard_stack(env)
+    del env.app.state.awid_registry_client
+    resp = await env.client.get(f"/v1/teams/{dashboard_stack.team_id}/agents")
+    assert resp.status_code == 503
+    detail = resp.json()["detail"]
+    assert detail["code"] == "registry_client_unavailable"
+    assert detail["message"] == 'Registry client is unavailable. Configure the serving registry client and start the application before retrying.'
 
 
 @pytest.mark.asyncio
-async def test_authenticated_request_succeeds_during_partial_init_without_registry_client(aweb_cloud_db):
-    app = _build_app(aweb_cloud_db.aweb_db, registry_client=None)
-    await _seed(aweb_cloud_db.aweb_db)
-    token = _make_jwt(["backend:acme.com"])
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.get(
-            "/v1/teams/backend:acme.com/agents",
-            headers={"X-Dashboard-Token": token},
-        )
-
-    assert resp.status_code == 200
-    assert len(resp.json()["agents"]) == 2
+async def test_authenticated_presence_read_refuses_a_missing_serving_client(
+    dashboard_stack,
+):
+    env = dashboard_stack
+    await _seed_dashboard_stack(env)
+    del env.app.state.awid_registry_client
+    resp = await env.client.get(
+        f"/v1/teams/{env.team_id}/agents",
+        headers={"X-Dashboard-Token": _make_jwt([env.team_id])},
+    )
+    assert resp.status_code == 503, resp.text
+    assert resp.json()["detail"]["code"] == "registry_client_unavailable"
+    assert resp.json()["detail"]["message"] == 'Registry client is unavailable. Configure the serving registry client and start the application before retrying.'
 
 
 @pytest.mark.asyncio
@@ -1071,7 +1071,9 @@ async def test_usage_endpoint(aweb_cloud_db):
     await _seed(aweb_cloud_db.aweb_db)
     token = _make_jwt(["backend:acme.com"])
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.get(
             "/v1/usage",
             params={"team_id": "backend:acme.com"},
@@ -1086,83 +1088,137 @@ async def test_usage_endpoint(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
-async def test_status_endpoint(aweb_cloud_db):
-    app = _build_app(aweb_cloud_db.aweb_db)
-    await _seed(aweb_cloud_db.aweb_db)
-    token = _make_jwt(["backend:acme.com"])
+async def test_status_endpoint(dashboard_stack):
+    from aweb.presence import clear_workspace_presence
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.get(
-            "/v1/teams/backend:acme.com/status",
-            headers={"X-Dashboard-Token": token},
-        )
-
-    assert resp.status_code == 200
+    env = dashboard_stack
+    await _seed_dashboard_stack(env)
+    await clear_workspace_presence(
+        env.redis, [str(actor.workspace) for actor in env.actors.values()]
+    )
+    await env.db.execute(
+        "UPDATE {{tables.workspaces}} SET last_seen_at=NOW()-INTERVAL '2 hours'"
+    )
+    resp = await env.client.get(
+        f"/v1/teams/{env.team_id}/status",
+        headers={"X-Dashboard-Token": _make_jwt([env.team_id])},
+    )
+    assert resp.status_code == 200, resp.text
     data = resp.json()
-    assert data["team_id"] == "backend:acme.com"
+    assert data["team_id"] == env.team_id
     assert data["agent_count"] == 2
+    assert data["online_agents"] == []
 
 
 @pytest.mark.asyncio
-async def test_roles_active_empty(aweb_cloud_db):
-    app = _build_app(aweb_cloud_db.aweb_db)
-    await _seed(aweb_cloud_db.aweb_db)
-    token = _make_jwt(["backend:acme.com"])
+async def test_roles_active_empty(dashboard_stack):
+    await _seed_dashboard_stack(dashboard_stack)
+    token = _make_jwt([dashboard_stack.team_id])
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.get(
-            "/v1/teams/backend:acme.com/roles/active",
-            headers={"X-Dashboard-Token": token},
-        )
+    client = dashboard_stack.client
+    resp = await client.get(
+        f"/v1/teams/{dashboard_stack.team_id}/roles/active",
+        headers={"X-Dashboard-Token": token},
+    )
 
     assert resp.status_code == 200
     assert resp.json()["roles"] is None
 
 
 @pytest.mark.asyncio
-async def test_instructions_active_empty(aweb_cloud_db):
-    app = _build_app(aweb_cloud_db.aweb_db)
-    await _seed(aweb_cloud_db.aweb_db)
-    token = _make_jwt(["backend:acme.com"])
+async def test_instructions_active_empty(dashboard_stack):
+    await _seed_dashboard_stack(dashboard_stack)
+    token = _make_jwt([dashboard_stack.team_id])
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.get(
-            "/v1/teams/backend:acme.com/instructions/active",
-            headers={"X-Dashboard-Token": token},
-        )
+    client = dashboard_stack.client
+    resp = await client.get(
+        f"/v1/teams/{dashboard_stack.team_id}/instructions/active",
+        headers={"X-Dashboard-Token": token},
+    )
 
     assert resp.status_code == 200
     assert resp.json()["instructions"] is None
 
 
 @pytest.mark.asyncio
-async def test_agent_not_found_returns_404(aweb_cloud_db):
-    app = _build_app(aweb_cloud_db.aweb_db)
-    await _seed(aweb_cloud_db.aweb_db)
-    token = _make_jwt(["backend:acme.com"])
+async def test_agent_not_found_returns_404(dashboard_stack):
+    await _seed_dashboard_stack(dashboard_stack)
+    token = _make_jwt([dashboard_stack.team_id])
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.get(
-            "/v1/teams/backend:acme.com/agents/nonexistent",
-            headers={"X-Dashboard-Token": token},
-        )
+    client = dashboard_stack.client
+    resp = await client.get(
+        f"/v1/teams/{dashboard_stack.team_id}/agents/nonexistent",
+        headers={"X-Dashboard-Token": token},
+    )
 
     assert resp.status_code == 404
 
 
 @pytest.mark.asyncio
-async def test_expired_jwt_returns_401(aweb_cloud_db):
-    app = _build_app(aweb_cloud_db.aweb_db)
+async def test_expired_jwt_returns_401(dashboard_stack):
     token = jwt.encode(
-        {"user_id": "user-123", "team_ids": ["backend:acme.com"], "exp": int(time.time()) - 3600},
+        {
+            "user_id": "user-123",
+            "team_ids": [dashboard_stack.team_id],
+            "exp": int(time.time()) - 3600,
+        },
         _JWT_SECRET,
         algorithm="HS256",
     )
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.get(
-            "/v1/teams/backend:acme.com/agents",
-            headers={"X-Dashboard-Token": token},
-        )
+    client = dashboard_stack.client
+    resp = await client.get(
+        f"/v1/teams/{dashboard_stack.team_id}/agents",
+        headers={"X-Dashboard-Token": token},
+    )
 
     assert resp.status_code == 401
+
+
+@pytest_asyncio.fixture
+async def dashboard_stack(shared_test_pool, monkeypatch):
+    from test_dashboard_privacy import TEAM, TEAM_NAME, privacy_stack
+
+    async with privacy_stack(
+        shared_test_pool, monkeypatch, aliases=("alice", "bob"), team_visibility="private"
+    ) as env:
+        env.team_id, env.team_name = TEAM, TEAM_NAME
+        yield env
+
+
+async def _seed_dashboard_stack(env):
+    """Only real registry/native admission supplies the converted readers' member facts."""
+    from test_dashboard_privacy import _request
+    from test_team_room import admit_room_member
+
+    for alias in ("alice", "bob"):
+        await admit_room_member(env, alias=alias)
+    alice, bob = env.actors["alice"], env.actors["bob"]
+    sent = await _request(
+        env,
+        "alice",
+        "POST",
+        "/v1/messages",
+        {"to_did": bob.did, "subject": "Hello", "body": "Hi Bob!"},
+    )
+    assert sent.status_code == 200, sent.text
+    await env.db.execute(
+        """INSERT INTO {{tables.tasks}}
+           (team_id,task_number,root_task_seq,task_ref_suffix,title,status,priority,task_type,created_at)
+           VALUES ($1,1,1,'aaaa','Fix bug','open',2,'task',TIMESTAMPTZ '2026-04-08T12:03:00Z')""",
+        env.team_id,
+    )
+    return str(alice.id), str(bob.id)
+
+
+async def _seed_dashboard_directory(env):
+    from test_agents_suggest_alias_http import _global_actor, request_as
+
+    await _seed_dashboard_stack(env)
+    await _global_actor(env, "alice", address="example.test/alice")
+    for alias, agent_type in (("alice", "coder"), ("bob", "reviewer")):
+        connected = await request_as(
+            env, alias=alias, method="POST", path="/v1/connect",
+            payload={"human_name": alias.title(), "role": "developer", "agent_type": agent_type},
+        )
+        assert connected.status_code == 200, connected.text

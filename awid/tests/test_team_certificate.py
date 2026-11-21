@@ -13,7 +13,9 @@ from awid.did import did_from_public_key
 from awid.signing import canonical_json_bytes
 from awid.team_certificate import (
     TeamCertificateError,
+    TeamCertificateStanding,
     decode_team_certificate,
+    evaluate_team_certificate_standing,
     verify_team_certificate_signature,
 )
 from nacl.signing import SigningKey
@@ -48,6 +50,21 @@ def header(cert: dict) -> str:
 def test_a_certificate_signed_by_the_team_key_verifies() -> None:
     verify_team_certificate_signature(
         decode_team_certificate(header(certificate())), TEAM_DID_KEY
+    )
+
+
+@pytest.mark.parametrize("registered", [True, False, None])
+def test_revocation_overrides_registration(registered: bool | None) -> None:
+    assert (
+        evaluate_team_certificate_standing(revoked=True, registered=registered)
+        is TeamCertificateStanding.REVOKED
+    )
+
+
+def test_unrequired_registration_allows_an_unrevoked_certificate() -> None:
+    assert (
+        evaluate_team_certificate_standing(revoked=False, registered=None)
+        is TeamCertificateStanding.ACTIVE
     )
 
 
@@ -200,3 +217,29 @@ def test_checked_certificate_retains_immutable_artifact_and_fingerprint(monkeypa
     )
     result["extra"]["nested"][0] = "detached copy"
     assert checked.claims["extra"]["nested"] == ("original",)
+
+
+_SENDER_STANDING = json.loads(
+    (Path(__file__).resolve().parents[2] / "test-vectors/trust/sender-standing-v1.json").read_text()
+)
+
+
+@pytest.mark.parametrize("case", _SENDER_STANDING["cases"], ids=lambda case: case["id"])
+def test_checked_certificate_standing_matches_the_shared_evidence(case):
+    from awid.team_certificate import check_team_certificate_evidence, verify_team_certificate_claims
+
+    issued = certificate()
+    cert_id = issued["certificate_id"]
+    checked = verify_team_certificate_claims(
+        header(issued), subject_did_key=issued["member_did_key"], team_did_key=TEAM_DID_KEY,
+    )
+    evidence = {
+        "revoked_certificate_ids": {cert_id} if case["revoked"] else set(),
+        "registered_certificate_ids": {cert_id} if case["registered"] else set(),
+    }
+    if case["certificate_refusal"] is None:
+        assert check_team_certificate_evidence(checked, **evidence)["certificate_id"] == cert_id
+    else:
+        with pytest.raises(TeamCertificateError) as refused:
+            check_team_certificate_evidence(checked, **evidence)
+        assert refused.value.reason == case["certificate_refusal"]

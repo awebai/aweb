@@ -20,6 +20,8 @@ from awid.signing import canonical_json_bytes, sign_message
 from test_dashboard_privacy import privacy_app  # noqa: F401
 from test_messages_http import _signed_team_headers, _make_certificate, _encode_certificate
 
+__all__ = ["privacy_app"]
+
 
 @pytest_asyncio.fixture
 async def local_mail(privacy_app, monkeypatch):

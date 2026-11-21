@@ -6,12 +6,16 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 import pytest
+from aweb.application_state import application_registry_client
 from aweb.e2ee_messages import generate_x25519_keypair
-from awid.e2ee_keys import build_encryption_key_assertion
+from awid.e2ee_keys import build_encryption_key_assertion, decode_raw_standard_b64
 from test_cli_human_reply import _cli
+from messaging_actor_support import messaging_actor_headers
 from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
 from test_e2ee_local_sender_read_trust import _local_sender_mail
 from test_messages_http import _insert_agent_encryption_assertion
+
+__all__ = ["privacy_app"]
 
 
 @pytest.mark.usefixtures("source_cli_binary")
@@ -45,15 +49,22 @@ async def test_cli_first_contact_human_alias_with_signed_key(
             "UPDATE {{tables.agents}} SET agent_type='human', human_verified_key=did_key WHERE agent_id=$1",
             actor.id,
         )
-        private, public = generate_x25519_keypair()
         row = await env.db.fetch_one(
             "SELECT did_aw FROM {{tables.agents}} WHERE agent_id=$1", actor.id
         )
+        active = await env.db.fetch_all(
+            "SELECT assertion_canonical FROM {{tables.agent_encryption_keys}} "
+            "WHERE agent_id=$1 AND revoked_at IS NULL", actor.id,
+        )
+        assert len(active) == 1
+        previous = json.loads(active[0]["assertion_canonical"])
         assertion = build_encryption_key_assertion(
             signing_key=actor.sk,
             identity_did=actor.did,
             identity_stable_id=row["did_aw"] or "",
-            encryption_public_key=public,
+            encryption_public_key=decode_raw_standard_b64(
+                previous["encryption_public_key"], field_name="encryption_public_key"
+            ),
             custody="hosted_custodial",
             now=datetime.now(UTC),
         )
@@ -107,9 +118,30 @@ async def test_cli_first_contact_human_alias_with_signed_key(
         assert refused_chat.returncode != 0
         await assert_no_delivery()
         assert await privacy_state() == before
-        await _insert_agent_encryption_assertion(
-            env.db, agent_id=actor.id, team_id=TEAM, assertion=assertion
+        # Custody changes supersede this key's signed assertion through its
+        # authenticated product writer, rather than adding a competing key.
+        raw_assertion = json.dumps(assertion).encode()
+        published = await env.client.put(
+            "/v1/agents/me/encryption-key",
+            content=raw_assertion,
+            headers=messaging_actor_headers(actor.registered, body=raw_assertion),
         )
+        assert published.status_code == 200, published.text
+        assert published.json()["encryption_key"]["custody"] == "hosted_custodial"
+        current = await env.db.fetch_all(
+            "SELECT encryption_key_id, assertion_custody FROM {{tables.agent_encryption_keys}} "
+            "WHERE agent_id=$1 AND revoked_at IS NULL", actor.id,
+        )
+        assert len(current) == 1
+        assert current[0]["encryption_key_id"] == previous["encryption_key_id"]
+        assert current[0]["assertion_custody"] == "hosted_custodial"
+        selected = await env.client.get(
+            "/v1/messaging/participants/alice",
+            headers=messaging_actor_headers(env.actors["bob"].registered),
+        )
+        assert selected.status_code == 200, selected.text
+        assert selected.json()["encryption_key"]["encryption_key_id"] == previous["encryption_key_id"]
+        assert selected.json()["encryption_key"]["custody"] == "hosted_custodial"
         if kind == "chat":
             # D8: an authoritative person is reached by mail, even with a
             # usable key and valid same-team admission. No session is created.
@@ -120,6 +152,8 @@ async def test_cli_first_contact_human_alias_with_signed_key(
             )
             stdout, stderr = await asyncio.wait_for(process.communicate(), 30)
             assert process.returncode == 1, (stdout, stderr)
+            error_envelope = json.loads(stdout)
+            assert "reason" in error_envelope["error"], error_envelope
             assert json.loads(stdout)["error"]["reason"] == "recipient_human_mail_only"
             await assert_no_delivery()
             assert await privacy_state() == before
@@ -247,7 +281,10 @@ async def test_cli_first_contact_human_alias_with_signed_key(
             ),
         )
         provider = HostAuthority(env.db, binding)
-        service = NativeMessagingService(env.infra, authority=provider, service=binding)
+        service = NativeMessagingService(
+            env.infra, authority=provider, service=binding,
+            registry_client=application_registry_client(env.app.state),
+        )
         env.app.state.human_channels_service = service
 
         if global_human:

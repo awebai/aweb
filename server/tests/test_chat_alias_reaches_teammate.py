@@ -16,6 +16,8 @@ import pytest
 from chat_pair_support import route_pair, _actor, _send, _signed_team_headers  # noqa: F401
 from test_cli_human_reply import _cli, _pem
 
+__all__ = ["route_pair"]
+
 
 def _cli_home(tmp_path, actor):
     """The actor's identity home, written as the CLI writes it."""

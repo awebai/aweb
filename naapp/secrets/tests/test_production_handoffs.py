@@ -43,7 +43,7 @@ async def registered_member(root, registry):
     )
     principal = await registry.register_did(member.member_key)
     member.extra_cert_fields = {"member_did_aw": principal}
-    await registry.add_certificate(member.certificate())
+    await registry.add_certificate(member.certificate(), team_key=member.team_key)
     return member, principal
 
 

@@ -181,7 +181,7 @@ func parseAgentEvent(eventName, data string) (AgentEvent, bool, error) {
 		return AgentEvent{}, false, nil
 	}
 
-	if isGrantTerminalAgentEvent(eventName) {
+	if IsAuthorityTerminalEvent(eventName) {
 		var payload struct {
 			Detail string `json:"detail"`
 		}
@@ -402,8 +402,8 @@ func (e *AgentEventDecodeError) Error() string { return e.Err.Error() }
 
 func (e *AgentEventDecodeError) Unwrap() error { return e.Err }
 
-// AgentEventStreamClosedError is a stream the server closed because the
-// identity grant behind it ended or could not be verified. Event names why.
+// AgentEventStreamClosedError is a stream the server closed because its
+// membership or grant ended or could not be verified. Event names why.
 type AgentEventStreamClosedError struct {
 	Event  string
 	Detail string
@@ -419,9 +419,10 @@ func (e *AgentEventStreamClosedError) Retryable() bool {
 	return e.Event == "verification_unavailable"
 }
 
-func isGrantTerminalAgentEvent(eventName string) bool {
+// IsAuthorityTerminalEvent recognizes a server frame that closes an authenticated stream.
+func IsAuthorityTerminalEvent(eventName string) bool {
 	switch strings.TrimSpace(eventName) {
-	case "grant_expired", "grant_revoked", "grant_subject_inactive", "grant_issuer_revoked", "verification_unavailable":
+	case "grant_expired", "grant_revoked", "grant_subject_inactive", "grant_issuer_revoked", "team_membership_not_current", "verification_unavailable":
 		return true
 	default:
 		return false
