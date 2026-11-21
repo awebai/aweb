@@ -168,6 +168,7 @@ async def test_member_without_a_workspace_cannot_take_another_members_claim(
             workspace_scope="all_for_agent",
             agent_disposition=AgentDisposition.PRESERVED,
         ),
+        registry_client=env.app.state.awid_registry_client,
     )
     assert not cleanup.errors, cleanup
     assert (

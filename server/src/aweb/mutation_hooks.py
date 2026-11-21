@@ -302,6 +302,7 @@ async def _cascade_agent_deleted(
             target_agent_id=agent_id,
             workspace_scope="latest_for_agent",
         ),
+        registry_client=None,
     )
     if result.errors:
         logger.warning(

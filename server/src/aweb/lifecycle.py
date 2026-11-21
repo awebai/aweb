@@ -861,7 +861,7 @@ async def plan_lifecycle_cascade(
     request: LifecycleCascadeRequest,
     *,
     redis: Redis | None = None,
-    registry_client: RegistryClient | None = None,
+    registry_client: RegistryClient | None,
     request_context: Request | None = None,
 ) -> LifecycleCascadeResult:
     """Return planned coordination lifecycle effects without mutating state.
@@ -1327,7 +1327,7 @@ async def apply_local_workspace_cleanup(
     target: LocalWorkspaceTarget,
     actor: LifecycleActor,
     deleted_at: datetime,
-    registry_client: RegistryClient | None = None,
+    registry_client: RegistryClient | None,
     request_context: Request | None = None,
 ) -> LifecycleCascadeResult:
     """Clean self immediately, or a stale local peer, through the same cascade.
@@ -1576,7 +1576,7 @@ async def apply_lifecycle_cascade(
     redis: Redis | None,
     request: LifecycleCascadeRequest,
     *,
-    registry_client: RegistryClient | None = None,
+    registry_client: RegistryClient | None,
     request_context: Request | None = None,
 ) -> LifecycleCascadeResult:
     """Apply the coordination lifecycle cascade and report post-commit status.

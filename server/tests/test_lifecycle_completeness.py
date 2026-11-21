@@ -51,7 +51,7 @@ async def test_outer_transaction_removed_workspace_retry_completes_without_repla
     replay_tasks_before = set(lifecycle._outbox_replay_tasks)
     async with db.transaction() as outer:
         for _attempt in range(2):
-            result = await apply_lifecycle_cascade(outer, None, request)
+            result = await apply_lifecycle_cascade(outer, None, request, registry_client=None)
             assert not result.errors
             assert result.post_commit_status == "completed"
             assert result.outbox_operation_id is None
@@ -173,6 +173,7 @@ async def test_agent_cleanup_retains_history_and_completion_credentials_without_
             workspace_scope="all_for_agent",
             agent_disposition=disposition,
         ),
+        registry_client=None,
     )
     assert result.errors == ()
     row = await db.fetch_one(
@@ -251,6 +252,7 @@ async def test_agent_cleanup_retains_history_and_completion_credentials_without_
             workspace_scope="all_for_agent",
             agent_disposition=disposition,
         ),
+        registry_client=None,
     )
     assert repeated.errors == ()
     assert repeated.identity_deleted == result.identity_deleted
@@ -276,6 +278,7 @@ async def test_cleanup_scope_refuses_an_agent_of_another_team(aweb_cloud_db, lif
             workspace_scope="all_for_agent",
             agent_disposition=AgentDisposition.DELETED,
         ),
+        registry_client=None,
     )
     assert [error.code for error in result.errors] == ["agent_not_found"]
     assert (
@@ -313,6 +316,7 @@ async def test_coordination_cleanup_rolls_back_with_its_outer_transaction(
                     workspace_scope="all_for_agent",
                     agent_disposition=AgentDisposition.PREPARED_REMOVAL,
                 ),
+                registry_client=None,
             )
             assert not result.errors
             assert result.post_commit_status == "pending"
@@ -367,6 +371,7 @@ async def test_prepared_removal_denies_ordinary_member_activity(privacy_app):
             workspace_scope="all_for_agent",
             agent_disposition=AgentDisposition.PREPARED_REMOVAL,
         ),
+        registry_client=env.app.state.awid_registry_client,
     )
     assert not result.errors
     response = await _send_member_request(
@@ -408,6 +413,7 @@ async def test_concurrent_terminal_disposition_cannot_be_restored_by_prepared_re
                     workspace_scope="all_for_agent",
                     agent_disposition=AgentDisposition.PREPARED_REMOVAL,
                 ),
+                registry_client=None,
             )
 
     prepared_task = None
@@ -484,6 +490,7 @@ async def test_omitted_team_retry_uses_retained_workspace_team_binding(
             actor=LifecycleActor(actor_id="owner", actor_type="system", authority="embedding"),
             target_workspace_ids=(str(workspace),),
         ),
+        registry_client=None,
     )
     assert result.errors == ()
     assert result.workspace_changes == ()
@@ -514,7 +521,9 @@ async def test_explicit_workspace_cannot_select_another_agent_for_cleanup(privac
         target_workspace_ids=(str(bob.workspace),),
         agent_disposition=AgentDisposition.PRESERVED,
     )
-    refused = await apply_lifecycle_cascade(env.db, env.redis, request)
+    refused = await apply_lifecycle_cascade(
+        env.db, env.redis, request, registry_client=env.app.state.awid_registry_client
+    )
     assert [error.code for error in refused.errors] == ["lifecycle_workspace_target_mismatch"]
     for actor in (alice, bob):
         assert (
@@ -528,6 +537,7 @@ async def test_explicit_workspace_cannot_select_another_agent_for_cleanup(privac
         env.db,
         env.redis,
         replace(request, target_workspace_ids=(str(alice.workspace),)),
+        registry_client=env.app.state.awid_registry_client,
     )
     assert accepted.errors == ()
     assert await env.db.fetch_value(
@@ -592,6 +602,7 @@ async def test_cleanup_locks_all_workspaces_before_deleting_any_claim(
                     workspace_scope="all_for_agent",
                     agent_disposition=AgentDisposition.PRESERVED,
                 ),
+                registry_client=None,
             )
 
     cleanup_task = None

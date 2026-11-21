@@ -134,6 +134,7 @@ async def test_lifecycle_plan_reports_claims_without_mutating(aweb_cloud_db):
             workspace_id=workspace_id,
             dry_run=True,
         ),
+        registry_client=None,
     )
 
     assert result.dry_run is True
@@ -190,6 +191,7 @@ async def test_lifecycle_outer_transaction_defers_side_effects_until_commit(
             outer,
             lifecycle_redis,
             _request(team_id=team_id, agent_id=agent_id, workspace_id=workspace_id),
+            registry_client=None,
         )
         assert result.post_commit_status == "pending"
         assert result.outbox_operation_id is not None
@@ -251,6 +253,7 @@ async def test_lifecycle_outer_transaction_rollback_emits_no_side_effects(
                     agent_id=agent_id,
                     workspace_id=workspace_id,
                 ),
+                registry_client=None,
             )
             assert result.post_commit_status == "pending"
             assert result.outbox_operation_id is not None
@@ -313,6 +316,7 @@ async def test_lifecycle_plain_handle_still_publishes_side_effects(
         db,
         lifecycle_redis,
         _request(team_id=team_id, agent_id=agent_id, workspace_id=workspace_id),
+        registry_client=None,
     )
 
     assert result.post_commit_status == "completed"
@@ -363,6 +367,7 @@ async def test_lifecycle_committed_outbox_replays_after_process_death(
             outer,
             lifecycle_redis,
             _request(team_id=team_id, agent_id=agent_id, workspace_id=workspace_id),
+            registry_client=None,
         )
         assert result.post_commit_status == "pending"
 
@@ -447,6 +452,7 @@ async def test_operation_replay_drains_more_than_the_global_batch_default(
             outer,
             lifecycle_redis,
             _request(team_id=team_id, agent_id=agent_id, workspace_id=workspace_id),
+            registry_client=None,
         )
 
     replay = await lifecycle.replay_lifecycle_side_effects(
@@ -488,6 +494,7 @@ async def test_lifecycle_duplicate_replay_does_not_redeliver_completed_rows(
         db,
         lifecycle_redis,
         _request(team_id=team_id, agent_id=agent_id, workspace_id=workspace_id),
+        registry_client=None,
     )
     assert result.post_commit_status == "completed"
     assert published == ["workspace", "team"]
@@ -536,6 +543,7 @@ async def test_chat_waiting_failure_stays_pending_then_replays(
         db,
         redis,
         _request(team_id=team_id, agent_id=agent_id, workspace_id=workspace_id),
+        registry_client=None,
     )
 
     assert result.post_commit_status == "failed"
@@ -663,6 +671,7 @@ async def test_lifecycle_apply_reports_post_commit_event_failures(
         aweb_cloud_db.aweb_db,
         lifecycle_redis,
         _request(team_id=team_id, agent_id=agent_id, workspace_id=workspace_id),
+        registry_client=None,
     )
 
     assert result.errors == ()
@@ -818,6 +827,7 @@ async def test_lifecycle_archive_global_agent_cleans_coordination_state(
             workspace_scope="all_for_agent",
             require_identity_scope="global",
         ),
+        registry_client=None,
     )
 
     assert result.errors == ()
@@ -912,6 +922,7 @@ async def test_lifecycle_archive_global_agent_without_workspace_archives_agent(
             workspace_scope="all_for_agent",
             require_identity_scope="global",
         ),
+        registry_client=None,
     )
 
     agent = await aweb_cloud_db.aweb_db.fetch_one(
@@ -952,6 +963,7 @@ async def test_lifecycle_archive_global_agent_rejects_workspace_subset(
             workspace_scope="explicit",
             require_identity_scope="global",
         ),
+        registry_client=None,
     )
 
     assert [error.code for error in result.errors] == [
@@ -999,6 +1011,7 @@ async def test_lifecycle_archive_global_agent_rejects_non_global_target(
             workspace_scope="all_for_agent",
             require_identity_scope="global",
         ),
+        registry_client=None,
     )
 
     assert "lifecycle_identity_scope_precondition_failed" in {error.code for error in result.errors}
@@ -1051,6 +1064,7 @@ async def test_chat_waiting_cleanup_wakes_the_remaining_participants(aweb_cloud_
                     db,
                     redis,
                     _request(team_id=team_id, agent_id=agent_id, workspace_id=workspace_id),
+                    registry_client=None,
                 )
                 assert result.chat_waiting_cleanup_status == "cleared"
                 await asyncio.wait_for(wakes.wait(), 1.0)
