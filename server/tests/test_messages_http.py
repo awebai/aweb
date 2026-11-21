@@ -7852,103 +7852,91 @@ async def test_identity_auth_mail_derives_sender_address_from_agent_row(
 
 
 @pytest.mark.asyncio
-async def test_send_message_team_auth_uses_cert_identity_when_agent_row_is_partial(
+async def test_send_message_team_auth_uses_global_certificate_before_reconnect(
     registered_mail_actors,
 ):
-    from types import SimpleNamespace
     from messaging_actor_support import (
-        set_messaging_inbound_mode,
         add_messaging_contact,
+        admit_messaging_actor,
+        register_messaging_team,
+        set_messaging_inbound_mode,
     )
 
-    env, actors = registered_mail_actors
-    alice, bob = (actors["alice"], actors["bob"])
-    await set_messaging_inbound_mode(env, bob, mode="team_and_contacts")
-    await add_messaging_contact(env, bob, address=alice.address)
-    app = env.app
-    aweb_cloud_db = SimpleNamespace(aweb_db=env.db)
-    alice_sk, alice_did_key = (alice.signing_key, alice.did_key)
-    cert_header = alice.certificate
-    alice_row = await env.db.fetch_one(
-        "SELECT agent_id FROM {{tables.agents}} WHERE team_id=$1 AND alias='alice'",
-        alice.team_id,
+    env, _ = registered_mail_actors
+    team_id = "upgrade:acme.com"
+    await register_messaging_team(env, team_id=team_id)
+    alice = await admit_messaging_actor(env, team_id=team_id, alias="alice", local=True)
+    bob = await admit_messaging_actor(env, team_id=team_id, alias="bob", address="acme.com/upgrade-bob")
+    registry = env.app.state.awid_registry_client
+    stable_id = (await registry.register_did(alice.did_key, alice.signing_key)).did_aw
+    address = "acme.com/upgrade-alice"
+    controller = await env.registry.ensure_namespace(domain="acme.com")
+    await registry.register_address(
+        "acme.com", "upgrade-alice", stable_id, bytes(controller), current_did_key=alice.did_key,
     )
-    assert alice_row is not None
-    # unreachable-state: old incomplete member projection lost DID/address metadata retained in its valid certificate.
-    await env.db.execute(
-        "UPDATE {{tables.agents}} SET did_aw=NULL, address=NULL, did_aw_verified_key=NULL WHERE agent_id=$1",
+    certificate = _make_certificate(
+        env.team_sk, env.team_did, alice.did_key,
+        team_id=team_id, alias="alice", identity_scope="global", member_did_aw=stable_id,
+        member_address=address, certificate_id="upgrade-alice-" + uuid4().hex,
+    )
+    previous = json.loads(base64.b64decode(alice.certificate))
+    await registry.revoke_team_certificate(
+        "acme.com", "upgrade", team_controller_signing_key=env.team_sk,
+        certificate_id=previous["certificate_id"],
+    )
+    await env.registry.add_certificate(certificate, team_key=SigningKey(env.team_sk))
+    await set_messaging_inbound_mode(env, bob, mode="team_and_contacts")
+    await add_messaging_contact(env, bob, address=address)
+    alice_row = await env.db.fetch_one(
+        "SELECT agent_id, did_aw, address FROM {{tables.agents}} WHERE agent_id=$1",
         UUID(alice.agent_id),
     )
+    assert alice_row is not None and not alice_row["did_aw"] and not alice_row["address"]
     payload = {"to_alias": "bob", "subject": "hello partial", "body": "hi"}
     body_bytes = json.dumps(payload).encode()
     headers = {
         **_signed_team_headers(
-            alice_sk, alice_did_key, alice.team_id, cert_header, body_bytes
+            alice.signing_key, alice.did_key, team_id, _encode_certificate(certificate), body_bytes
         ),
         "Content-Type": "application/json",
     }
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        resp = await client.post("/v1/messages", content=body_bytes, headers=headers)
+    resp = await env.client.post("/v1/messages", content=body_bytes, headers=headers)
     assert resp.status_code == 200, resp.text
-    row = await aweb_cloud_db.aweb_db.fetch_one(
+    row = await env.db.fetch_one(
         "SELECT from_agent_id, from_did FROM {{tables.messages}} WHERE subject = 'hello partial'"
     )
     assert row["from_agent_id"] == alice_row["agent_id"]
-    assert row["from_did"] == alice.stable_id
+    assert row["from_did"] == stable_id
 
 
 @pytest.mark.asyncio
 async def test_global_inbox_does_not_include_current_key_identity(
     registered_mail_actors,
 ):
-    from types import SimpleNamespace
+    from messaging_actor_support import register_messaging_actors, send_messaging_mail
 
-    env, actors = registered_mail_actors
-    app = env.app
-    aweb_cloud_db = SimpleNamespace(aweb_db=env.db)
-    alice = actors["alice"]
-    bob_sk, _, bob_did_key = _make_keypair()
-    mapping = await env.app.state.awid_registry_client.register_did(bob_did_key, bob_sk)
+    env, _ = registered_mail_actors
+    locals = await register_messaging_actors(
+        env, team_id="before-enrollment:local.test", aliases=("sender", "reader"), local=True,
+    )
+    bob = locals["reader"]
+    await send_messaging_mail(
+        env, locals["sender"], payload={"to_alias": "reader", "subject": "hello", "body": "hi"},
+    )
+    mapping = await env.app.state.awid_registry_client.register_did(bob.did_key, bob.signing_key)
     assert (
         await env.db.fetch_value(
             "SELECT count(*) FROM {{tables.agents}} WHERE did_aw=$1", mapping.did_aw
         )
         == 0
     )
-    # unreachable-state: historical did:key mail predates global enrollment and must remain separate from the did:aw inbox.
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.messages}} (
-            message_id, from_did, to_did, from_alias, to_alias, subject, body, priority
-        )
-        VALUES (
-            '11111111-1111-1111-1111-111111111111',
-            'did:aw:alice',
-            $1,
-            'alice',
-            'bob',
-            'hello',
-            'hi',
-            'normal'
-        )
-        """.replace("did:aw:alice", alice.stable_id),
-        bob_did_key,
-    )
-    headers = _signed_identity_headers(bob_sk, bob_did_key, mapping.did_aw)
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        resp = await client.get("/v1/messages/inbox", headers=headers)
+    headers = _signed_identity_headers(bob.signing_key, bob.did_key, mapping.did_aw)
+    resp = await env.client.get("/v1/messages/inbox", headers=headers)
     assert resp.status_code == 200, resp.text
     messages = resp.json()["messages"]
     assert messages == []
-    local_headers = _signed_identity_headers(bob_sk, bob_did_key, "")
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        local = await client.get("/v1/messages/inbox", headers=local_headers)
+    local_headers = _signed_identity_headers(bob.signing_key, bob.did_key, "")
+    local = await env.client.get("/v1/messages/inbox", headers=local_headers)
     assert local.status_code == 200, local.text
     assert [item["body"] for item in local.json()["messages"]] == ["hi"]
 
@@ -8020,7 +8008,11 @@ async def test_exact_message_read_is_participant_visible_side_effect_free_and_ce
     registered_mail_actors,
 ):
     from types import SimpleNamespace
-    from messaging_actor_support import messaging_actor_headers, send_messaging_mail
+    from messaging_actor_support import (
+        messaging_actor_headers,
+        register_messaging_actors,
+        send_messaging_mail,
+    )
 
     env, actors = registered_mail_actors
     app = env.app
@@ -8028,7 +8020,10 @@ async def test_exact_message_read_is_participant_visible_side_effect_free_and_ce
     alice, bob, carol = (actors["alice"], actors["bob"], actors["carol"])
     alice_sk, alice_did_key = (alice.signing_key, alice.did_key)
     bob_sk, bob_did_key = (bob.signing_key, bob.did_key)
-    local_bob_sk, _, local_bob_did_key = _make_keypair()
+    local_actors = await register_messaging_actors(
+        env, team_id="recipient-view:local.test", aliases=("sender", "reader"), local=True,
+    )
+    local_reader = local_actors["reader"]
     encrypted_id = "66666666-6666-4666-8666-666666666666"
     encrypted_conversation_id = "77777777-7777-4777-8777-777777777777"
     encrypted = _encrypted_mail_envelope(
@@ -8050,11 +8045,15 @@ async def test_exact_message_read_is_participant_visible_side_effect_free_and_ce
             "message_id": "55555555-5555-4555-8555-555555555555",
         },
     )
-    # unreachable-state: retained local-key plaintext mail has no current resident recipient; present send cannot create that row.
-    await env.db.execute(
-        "INSERT INTO {{tables.messages}} (message_id,from_did,to_did,from_alias,to_alias,subject,body,priority) VALUES ('88888888-8888-4888-8888-888888888888',$1,$2,'alice','bob','legacy local plaintext','hello','normal')",
-        alice.did_key,
-        local_bob_did_key,
+    await send_messaging_mail(
+        env,
+        local_actors["sender"],
+        payload={
+            "to_alias": "reader",
+            "subject": "local plaintext",
+            "body": "hello",
+            "message_id": "88888888-8888-4888-8888-888888888888",
+        },
     )
     recipient_assertion = build_encryption_key_assertion(
         signing_key=bob_sk,
@@ -8096,7 +8095,7 @@ async def test_exact_message_read_is_participant_visible_side_effect_free_and_ce
         )
         local_key_read = await client.get(
             "/v1/messages/88888888-8888-4888-8888-888888888888",
-            headers=_signed_identity_headers(local_bob_sk, local_bob_did_key, ""),
+            headers=_signed_identity_headers(local_reader.signing_key, local_reader.did_key, ""),
         )
         sender_encrypted = await client.get(
             f"/v1/messages/{encrypted_id}", headers=alice_headers
@@ -8116,7 +8115,7 @@ async def test_exact_message_read_is_participant_visible_side_effect_free_and_ce
     assert sender_global.json()["subject"] == "global plaintext"
     assert recipient_local.status_code == 404, recipient_local.text
     assert local_key_read.status_code == 200, local_key_read.text
-    assert local_key_read.json()["subject"] == "legacy local plaintext"
+    assert local_key_read.json()["subject"] == "local plaintext"
     assert sender_encrypted.status_code == 200, sender_encrypted.text
     assert sender_encrypted.json()["content_mode"] == "encrypted_v2"
     assert sender_encrypted.json()["encrypted_envelope"] == encrypted

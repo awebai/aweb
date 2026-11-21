@@ -69,7 +69,10 @@ async def privacy_app(shared_test_pool, monkeypatch):
 
 
 @asynccontextmanager
-async def privacy_stack(shared_test_pool, monkeypatch, tls=None):
+async def privacy_stack(
+    shared_test_pool, monkeypatch, tls=None, *,
+    aliases=("alice", "bob", "carol"), team_visibility="public",
+):
     """The real apps behind one HTTP server; tls is (host, Certificates covering
     host) to serve over TLS, so the server's public origin is https."""
     monkeypatch.setenv("AWID_DATABASE_URL", "postgresql://unused/test")
@@ -139,11 +142,11 @@ async def privacy_stack(shared_test_pool, monkeypatch, tls=None):
                 name=TEAM_NAME,
                 display_name=TEAM_NAME,
                 team_did_key=team_did,
-                visibility="public",
+                visibility=team_visibility,
                 namespace_controller_signing_key=bytes(namespace_key),
             )
             actors = {}
-            for alias in ("alice", "bob", "carol"):
+            for alias in aliases:
                 sk, _, did = _make_keypair()
                 agent_id, workspace_id = uuid4(), uuid4()
                 await manager.execute(

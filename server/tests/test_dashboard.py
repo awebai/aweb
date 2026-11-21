@@ -942,7 +942,8 @@ async def test_missing_token_returns_401(dashboard_stack):
 async def test_public_team_allows_anonymous_dashboard_reads(dashboard_stack):
     env = dashboard_stack
     await _seed_dashboard_stack(env)
-    await env.registry_db.execute("UPDATE {{tables.teams}} SET visibility='public'")
+    registry = env.app.state.awid_registry_client
+    await registry.set_team_visibility("example.test", env.team_name, "public", env.team_sk)
     resp = await env.client.get(f"/v1/teams/{env.team_id}/agents")
     assert resp.status_code == 200, resp.text
     assert {agent["alias"] for agent in resp.json()["agents"]} == {"alice", "bob"}
@@ -1178,23 +1179,10 @@ async def test_expired_jwt_returns_401(dashboard_stack):
 async def dashboard_stack(shared_test_pool, monkeypatch):
     from test_dashboard_privacy import TEAM, TEAM_NAME, privacy_stack
 
-    async with privacy_stack(shared_test_pool, monkeypatch) as env:
+    async with privacy_stack(
+        shared_test_pool, monkeypatch, aliases=("alice", "bob"), team_visibility="private"
+    ) as env:
         env.team_id, env.team_name = TEAM, TEAM_NAME
-        # These directory fixtures deliberately contain two live members.
-        await env.db.execute(
-            "UPDATE {{tables.workspaces}} SET deleted_at=NOW() "
-            "WHERE team_id=$1 AND alias NOT IN ('alice','bob')",
-            TEAM,
-        )
-        await env.db.execute(
-            "UPDATE {{tables.agents}} SET deleted_at=NOW() "
-            "WHERE team_id=$1 AND alias NOT IN ('alice','bob')",
-            TEAM,
-        )
-        await env.registry_db.execute(
-            "UPDATE {{tables.teams}} SET visibility='private' WHERE domain='example.test' AND name=$1",
-            TEAM_NAME,
-        )
         yield env
 
 
@@ -1224,15 +1212,13 @@ async def _seed_dashboard_stack(env):
 
 
 async def _seed_dashboard_directory(env):
-    from test_agents_suggest_alias_http import _global_actor
+    from test_agents_suggest_alias_http import _global_actor, request_as
 
     await _seed_dashboard_stack(env)
     await _global_actor(env, "alice", address="example.test/alice")
-    await env.db.execute(
-        "UPDATE {{tables.agents}} SET human_name='Alice',role='developer',agent_type='coder' WHERE agent_id=$1",
-        env.actors["alice"].id,
-    )
-    await env.db.execute(
-        "UPDATE {{tables.agents}} SET human_name='Bob',agent_type='reviewer' WHERE agent_id=$1",
-        env.actors["bob"].id,
-    )
+    for alias, agent_type in (("alice", "coder"), ("bob", "reviewer")):
+        connected = await request_as(
+            env, alias=alias, method="POST", path="/v1/connect",
+            payload={"human_name": alias.title(), "role": "developer", "agent_type": agent_type},
+        )
+        assert connected.status_code == 200, connected.text

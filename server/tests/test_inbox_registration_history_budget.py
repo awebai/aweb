@@ -4,11 +4,10 @@ import json
 
 import httpx
 import pytest
-from nacl.signing import SigningKey
 
 from awid.registry import RegistryClient
-from test_dashboard_privacy import TEAM, privacy_app as privacy_app
-from test_messages_http import _make_certificate, _signed_team_headers
+from test_dashboard_privacy import TEAM, TEAM_NAME, privacy_app as privacy_app
+from test_messages_http import _encode_certificate, _make_certificate, _signed_team_headers
 from test_team_room import admit_room_member
 
 
@@ -34,7 +33,7 @@ async def test_warm_inbox_registration_pages_do_not_grow_with_revoked_history(
         },
     )
     assert sent.status_code == 200, sent.text
-    team_key = SigningKey(env.team_sk)
+    original = env.app.state.awid_registry_client
     for number in range(history):
         certificate_id = f"old-inbox-{number}"
         certificate = _make_certificate(
@@ -46,8 +45,24 @@ async def test_warm_inbox_registration_pages_do_not_grow_with_revoked_history(
             identity_scope="local",
             certificate_id=certificate_id,
         )
-        await env.registry.add_certificate(certificate, team_key=team_key)
-        await env.registry.revoke(certificate_id, team_id=TEAM)
+        await original.register_team_certificate(
+            "example.test",
+            TEAM_NAME,
+            team_controller_signing_key=env.team_sk,
+            certificate_id=certificate_id,
+            member_did_key=alice.did,
+            member_did_aw=None,
+            member_address=None,
+            alias=certificate_id,
+            identity_scope="local",
+            certificate=_encode_certificate(certificate),
+        )
+        await original.revoke_team_certificate(
+            "example.test",
+            TEAM_NAME,
+            team_controller_signing_key=env.team_sk,
+            certificate_id=certificate_id,
+        )
     pages = []
 
     class CountedTransport(httpx.ASGITransport):
@@ -61,7 +76,6 @@ async def test_warm_inbox_registration_pages_do_not_grow_with_revoked_history(
                 )
             return await super().handle_async_request(request)
 
-    original = env.app.state.awid_registry_client
     # A real uncached SDK client isolates the owner's active-view guarantee,
     # including hosts whose wrapper does not delegate collection caching.
     registry = RegistryClient(
