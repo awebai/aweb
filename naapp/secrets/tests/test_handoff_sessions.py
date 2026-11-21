@@ -10,7 +10,6 @@ import hashlib
 import json
 import secrets
 from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import aclosing
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
@@ -31,13 +30,11 @@ from aweb_naapp.runtime.human_member import check_human_member
 from aweb_naapp.runtime.origins import split_origins
 from aweb_naapp.runtime.team_auth import AWIDTeamCache, authenticate_request
 from aweb_naapp_testing import REGISTRY_URL, SERVICE_TOKEN, Member, did_key
+from aweb_naapp_testing.human_members import human_namespace
 from aweb_naapp_testing.owner_acts import INSTALLATION_ID
 from aweb_naapp_testing.webauthn import SoftAuthenticator
-from awid.dns_verify import DomainAuthority
-from awid.id_certificates import id_certificate_signing_bytes
 from awid.registry import RegistryClient
 from awid.signing import canonical_json_bytes
-from awid_service.deps import get_domain_verifier
 from fastapi import Depends, FastAPI, HTTPException, Request
 from nacl.signing import SigningKey
 
@@ -183,28 +180,14 @@ async def journey(world, request, human_member_cache_seconds) -> AsyncIterator[J
     from aweb_naapp.console.handoff_sessions import ConsoleHandoffs
 
     await apply_console_migrations(world.db)
-    root = SigningKey.generate()
     options = getattr(request, "param", {})
     team = options.get("team_id", TEAM)
     team_key = world.owner.team_key if team == TEAM else SigningKey.generate()
     if team != TEAM:
         await world.registry.add_team(team, did_key(team_key))
 
-    async def dns(domain):
-        assert domain == "example.com"
-        return DomainAuthority(did_key(root), REGISTRY_URL, "_awid.example.com")
-
-    world.registry.app.dependency_overrides[get_domain_verifier] = lambda: dns
-    world.registry.app.state.awid_public_origins = (REGISTRY_URL,)
-    async with aclosing(
-        RegistryClient(
-            REGISTRY_URL,
-            transport=world.registry.transport,
-            service_token=SERVICE_TOKEN,
-            domain_verifier=dns,
-        )
-    ) as registry:
-        await registry.register_namespace("example.com", did_key(root), bytes(root))
+    async with human_namespace(world.registry, "example.com") as namespace:
+        registry = namespace.client
 
         async def enrol_owner(alias: str):
             # Every extra holder follows the same registered-human, signed owner
@@ -216,33 +199,10 @@ async def journey(world, request, human_member_cache_seconds) -> AsyncIterator[J
                 certificate_id="cert-1" if alias == "alice" else "handoff-" + alias,
             )
             contact = "holder@example.com" if alias == "alice" else alias + "@example.com"
-            principal = (
-                await registry.register_did(member.did_key, bytes(member.member_key))
-            ).did_aw
-            member.extra_cert_fields = {"member_did_aw": principal}
-            await world.registry.add_certificate(member.certificate(), team_key=member.team_key)
-            fields = {
-                "v": 1,
-                "type": "aweb.id-certificate",
-                "id": principal,
-                "domain": "example.com",
-                "parent": {"kind": "namespace", "id": "example.com"},
-                "kind": "human",
-                "issuer_key": did_key(root),
-                "issued_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            }
-            signed = {
-                "certificate": fields,
-                "signature": b64(root.sign(id_certificate_signing_bytes(fields)).signature),
-            }
-            await registry.register_id_certificate(
-                {"v": 1, "type": "aweb.id-chain", "certificates": [signed]},
-                signer=lambda payload: (member.did_key, member.member_key.sign(payload).signature),
-                expected_head=None,
-                invitation_id=None,
-            )
+            registered = await namespace.register(member)
+            principal = registered.principal
             # The signed human identity, for tests that certify an agent under it.
-            member.id_certificate = signed
+            member.id_certificate = registered.identity
             device = SoftAuthenticator(world.passkeys.rp.origin)
             if options.get("designated", True):
                 who = PrincipalKey(team, principal)
