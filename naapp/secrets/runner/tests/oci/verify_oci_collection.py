@@ -1,8 +1,17 @@
-"""Enforce the expected collection for the documented OCI proof command."""
+"""Verify confinement and collection for the documented OCI proof command."""
 
+import os
 from pathlib import Path
 
 import pytest
+
+
+def pytest_sessionstart() -> None:
+    expected = os.environ["AWEB_SECRETS_OCI_EXPECTED_APPARMOR"] + " (enforce)"
+    observed = Path("/proc/self/attr/current").read_text(encoding="utf-8").strip()
+    print(f"Effective AppArmor label: {observed}", flush=True)
+    if observed != expected:
+        pytest.exit(f"OCI proof requires {expected}", returncode=pytest.ExitCode.TESTS_FAILED)
 
 
 def pytest_collection_finish(session: pytest.Session) -> None:

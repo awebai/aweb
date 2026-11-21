@@ -7,31 +7,32 @@ signed assignments and native OCI with those same fixtures. Normal host tests
 skip these checks. Complete the explicit Linux proof before qualifying an OCI
 integration.
 
-On a Linux Docker host with AppArmor enabled, the host operator first loads the
-reviewed profile. It uses AppArmor ABI 4.0, available on Ubuntu 24.04.
+Use a disposable Ubuntu 24.04 VM guest with the local Docker daemon and
+AppArmor ABI 4.0. The guest operator stages the reviewed profile at
+`/usr/local/share/aweb-oci-proof/aweb-secrets-oci-proof.apparmor`. The directory
+is root:root mode 0755 and the file is root:root mode 0444.
 [Proof profile](aweb-secrets-oci-proof.apparmor)
 
-Load it from the runner package directory on that host.
+The proof user needs Docker access and non-interactive sudo for exactly these
+commands against the staged profile.
 
-```sh
-sudo apparmor_parser --add --skip-cache tests/oci/aweb-secrets-oci-proof.apparmor
+```sudoers
+gateuser ALL=(root) NOPASSWD: /usr/sbin/apparmor_parser --add --skip-cache /usr/local/share/aweb-oci-proof/aweb-secrets-oci-proof.apparmor, /usr/sbin/apparmor_parser --remove --skip-cache /usr/local/share/aweb-oci-proof/aweb-secrets-oci-proof.apparmor
 ```
 
-Docker's default profile denies the mount propagation change that rootless runc
-performs before it can prepare the job root. The proof selects the named
-enforcing profile for its own container. Once the last proof container exits,
-the host operator can remove the profile with
-`sudo apparmor_parser --remove tests/oci/aweb-secrets-oci-proof.apparmor`.
-
-Run the proof from the runner package directory.
+Run the proof from the runner package directory in the guest.
 
 ```sh
 ./tests/oci/run-proof.sh
 ```
 
-The script runs the unittest-style cases and pytest worker cases together.
-The proof checks the collected node IDs against `expected-cases.txt` before
-running tests. When a case changes, update the list in the same change.
+Docker's default profile denies runc's mount propagation change before it
+can prepare the nested job root. The script verifies the staged profile's
+digest, loads it in the guest, checks its enforcing mode and verifies the
+container's effective label. It removes the profile when the run ends.
+The proof runs the unittest-style and pytest worker cases together. It checks
+the collected node IDs against `expected-cases.txt` before running any cases.
+When a case changes, update the list in the same change.
 
 The image installs Python 3.12 and the runner’s locked dependencies from the
 three explicit package contexts. Only those package sources enter the build;
