@@ -33,6 +33,7 @@ from fastapi import APIRouter, FastAPI, HTTPException
 
 from aweb_logs.ledger import append
 from aweb_logs.reader_service import ReaderService, reader_sessions
+from aweb_logs.retention import purge
 
 from .fixtures import admitted_evidence, signed_event
 from .reader_world import (
@@ -181,14 +182,24 @@ async def recorded(world: World, kind: str, **fields: Any) -> str:
 
 
 async def purged(world: World, event_id: str) -> int:
-    """L5's purge, as the chain's schema defines it: content gone, the act
-    named. Returns the event's position in the chain."""
-    return await world.db.fetch_value(
-        "UPDATE {{tables.chain_events}} SET salt = NULL, signing_bytes = NULL, signature = NULL,"
-        " purge_act = 'erase:1' WHERE team_id = $1 AND event_id = $2 RETURNING team_seq",
+    """The event purged by Logs' own purge under the act ``erase:1``. Returns
+    its position in the chain."""
+    position = await world.db.fetch_one(
+        "SELECT chain_epoch, team_seq FROM {{tables.chain_events}}"
+        " WHERE team_id = $1 AND event_id = $2",
         TEAM_ID,
         uuid.UUID(event_id),
     )
+    async with world.db.transaction() as tx:
+        count = await purge(
+            tx,
+            world.purges,
+            TEAM_ID,
+            [(position["chain_epoch"], position["team_seq"])],
+            act="erase:1",
+        )
+    assert count == 1
+    return position["team_seq"]
 
 
 async def signed_in(world: World, human: httpx.AsyncClient) -> None:
