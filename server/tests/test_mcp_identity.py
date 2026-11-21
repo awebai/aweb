@@ -43,7 +43,7 @@ async def test_whoami_returns_agent_identity_with_stable_fields(aweb_cloud_db, m
         """
         INSERT INTO {{tables.agents}}
             (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, inbound_mode)
-        VALUES ($1, $2, $3, $4, $5, $6, 'global', 'active', 'contacts_only')
+        VALUES ($1, $2, $3, $4, $5, $6, 'global', 'active', 'open')
         """,
         agent_id,
         team_id,
@@ -99,7 +99,7 @@ async def test_whoami_returns_empty_stable_fields_for_ephemeral_agent(aweb_cloud
         """
         INSERT INTO {{tables.agents}}
             (agent_id, team_id, did_key, alias, identity_scope, status, inbound_mode)
-        VALUES ($1, $2, $3, $4, 'local', 'active', 'contacts_only')
+        VALUES ($1, $2, $3, $4, 'local', 'active', 'open')
         """,
         agent_id,
         team_id,
@@ -148,7 +148,7 @@ async def test_whoami_identity_only_auth_looks_up_by_did_key(aweb_cloud_db, monk
         """
         INSERT INTO {{tables.agents}}
             (team_id, did_key, did_aw, address, alias, identity_scope, status, inbound_mode)
-        VALUES ($1, $2, $3, $4, $5, 'global', 'active', 'contacts_only')
+        VALUES ($1, $2, $3, $4, $5, 'global', 'active', 'open')
         """,
         "ops:otherco.com",
         did_key,

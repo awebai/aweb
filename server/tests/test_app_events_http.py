@@ -113,7 +113,7 @@ async def _seed_team_and_agent(aweb_db, *, team_id: str = TEAM_ID) -> None:
         INSERT INTO {{tables.agents}} (
             agent_id, team_id, did_key, alias, human_name, status, identity_scope, inbound_mode
         )
-        VALUES ($1, $2, 'did:key:z6Mkalice', 'alice', 'Alice', 'active', 'global', 'contacts_only')
+        VALUES ($1, $2, 'did:key:z6Mkalice', 'alice', 'Alice', 'active', 'global', 'open')
         ON CONFLICT DO NOTHING
         """,
         AGENT_ID,

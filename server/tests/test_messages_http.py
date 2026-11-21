@@ -2500,7 +2500,7 @@ async def test_retired_mail_recipient_refuses_even_with_a_learned_return_route(
         INSERT INTO {{tables.agents}}
             (team_id, did_key, alias, identity_scope, role, status, deleted_at, inbound_mode)
         VALUES
-            ('backend:remote.example', $1, 'retired-routed', 'local', 'developer', 'deleted', NOW(), 'contacts_only')
+            ('backend:remote.example', $1, 'retired-routed', 'local', 'developer', 'deleted', NOW(), 'open')
         RETURNING agent_id
         """,
         local_did_key,
@@ -2601,7 +2601,7 @@ async def test_retired_mail_recipient_refuses_even_with_a_learned_return_route(
         INSERT INTO {{tables.agents}}
             (team_id, did_key, alias, identity_scope, role, status, deleted_at, inbound_mode)
         VALUES
-            ('backend:remote.example', 'did:key:z6Mkgm6L6rFHRZFt7PKhqFhJygpzWYudLHjpg88q7Kw2yqmQ' /* z6MkNoRoute */, 'retired-local', 'local', 'developer', 'deleted', NOW(), 'contacts_only')
+            ('backend:remote.example', 'did:key:z6Mkgm6L6rFHRZFt7PKhqFhJygpzWYudLHjpg88q7Kw2yqmQ' /* z6MkNoRoute */, 'retired-local', 'local', 'developer', 'deleted', NOW(), 'open')
         RETURNING agent_id
         """
     )

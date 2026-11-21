@@ -26,7 +26,7 @@ async def seed(db):
     agent = uuid4()
     await db.execute("""INSERT INTO {{tables.agents}}
         (agent_id, team_id, did_key, alias, identity_scope, inbound_mode)
-        VALUES ($1, 'query:example.test', 'did:key:viewer', 'viewer', 'local', 'contacts_only')""", agent)
+        VALUES ($1, 'query:example.test', 'did:key:viewer', 'viewer', 'local', 'open')""", agent)
     sessions = {}
     for index, kind in enumerate(['dual', 'agent_only', 'unread', 'wait', 'encrypted', 'read', 'own_wait', 'expired', 'empty']):
         sid = uuid4()
