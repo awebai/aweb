@@ -150,7 +150,7 @@ async def test_unregistered_certificate_reuses_exact_refusal(privacy_app, monkey
         assert (transport.reads, transport.point_reads) == (1, 1)
         revoked = await member("revoked")
         await revoke(revoked)
-        assert (await connect(revoked, status=401))["detail"] == "revoked"
+        assert (await connect(revoked, status=401))["detail"]["code"] == "certificate_revoked"
         assert (transport.reads, transport.point_reads) == (1, 2)
 
 

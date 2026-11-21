@@ -12,7 +12,7 @@ import logging
 from awid.dns_auth import enforce_timestamp_skew, parse_didkey_auth, require_timestamp
 from awid.registry import CachedRegistryClient, TeamCertificateStanding
 from awid.signing import verify_did_key_signature
-from awid.team_certificate import TeamCertificateError, decode_team_certificate
+from awid.team_certificate import TeamCertificateError, TeamCertificateReason, decode_team_certificate
 from awid.team_ids import parse_team_id
 from fastapi import Depends, HTTPException, Request
 from pgdbm import AsyncDatabaseManager
@@ -398,7 +398,7 @@ async def _verify_admitting_certificate(
                     evidence=EvidenceMode.FRESH,
                 )
                 if cert_data["certificate_id"] in revoked_certs:
-                    raise TeamCertificateError("revoked") from None
+                    raise TeamCertificateError(TeamCertificateReason.REVOKED) from None
             registry = application_registry_client(request.app.state)
             if not isinstance(registry, CachedRegistryClient):
                 # An uncached registry client's initial list was already live.
@@ -410,7 +410,7 @@ async def _verify_admitting_certificate(
                 certificate_id=certificate_id,
             )
             if standing is TeamCertificateStanding.REVOKED:
-                raise TeamCertificateError("revoked") from None
+                raise TeamCertificateError(TeamCertificateReason.REVOKED) from None
             if standing is not TeamCertificateStanding.ACTIVE:
                 raise
             # The standing read can overlap a move of this server's admitted pin.
@@ -428,7 +428,7 @@ async def _verify_admitting_certificate(
                     evidence=EvidenceMode.FRESH,
                 )
                 if result["certificate_id"] in revoked_certs:
-                    raise TeamCertificateError("revoked") from None
+                    raise TeamCertificateError(TeamCertificateReason.REVOKED) from None
         return result
 
     try:

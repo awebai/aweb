@@ -645,7 +645,8 @@ async def test_revoked_originator_cannot_create_or_read_by_replay(app_request_co
     )
     with pytest.raises(HTTPException) as caught:
         await _create(app_request_context, _body(env, expired=expired))
-    assert caught.value.status_code == 401 and caught.value.detail == "revoked"
+    assert caught.value.status_code == 401
+    assert caught.value.detail["code"] == "certificate_revoked"
 
 
 @pytest.mark.asyncio
@@ -948,7 +949,8 @@ async def test_c2_cached_authority_observes_revocation(
         env, expired=expired_replay, request_id="action-1" if expired_replay else "cache-new"
     )
     response = await _app_http(context, "POST", "/v1/tasks/app-requests", body)
-    assert response.status_code == 401 and response.json()["detail"] == "revoked", response.text
+    assert response.status_code == 401, response.text
+    assert response.json()["detail"]["code"] == "certificate_revoked"
     assert await env.db.fetch_value("SELECT count(*) FROM {{tables.task_app_requests}}") == 1
 
 

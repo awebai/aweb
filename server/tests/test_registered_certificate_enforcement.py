@@ -224,7 +224,7 @@ async def test_flag_on_revoked_certificate_keeps_revocation_verdict(monkeypatch,
         await verify_request_certificate(request, db=db_infra)
 
     assert excinfo.value.status_code == 401
-    assert excinfo.value.detail == "revoked"
+    assert excinfo.value.detail["code"] == "certificate_revoked"
     # The registered set is an input of the one check, read with the revoked
     # set before it runs.
     assert registry.list_calls == 1
