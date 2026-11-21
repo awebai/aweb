@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class DockerDNS(unittest.TestCase):
-    def qualify(self, name):
+    def qualify(self, name, *, child_status=0, collect_summary=False):
         evidence = EVIDENCE / self._testMethodName
         with tempfile.TemporaryDirectory(prefix='aw-dns-default-') as temp:
             adapter = Path(temp) / 'docker'
@@ -47,17 +47,19 @@ except socket.gaierror:
     pass
 else:
     raise AssertionError('The no-upstream DNS sink resolved the lookup')
-print('Expected DNS refusal; child successful', flush=True)
+print('Expected DNS refusal', flush=True)
+raise SystemExit({child_status})
 '''
+            summary_args = ['--collect-summary'] if collect_summary else []
             result = subprocess.run(
                 ['python3', str(ROOT / 'scripts/test-egress/docker.py'),
-                 '--evidence', str(evidence), '--image', IMAGE,
+                 '--evidence', str(evidence), '--image', IMAGE, *summary_args,
                  '--command', 'python3', '-c', child],
                 env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             )
         print(result.stdout, flush=True)
         (evidence / 'qualification.log').write_text(result.stdout)
-        self.assertIn('Test child exit status: 0;', result.stdout)
+        self.assertIn(f'Test child exit status: {child_status};', result.stdout)
         return result.returncode, evidence
 
     def test_governance_alias_resolves_only_to_runner_loopback(self):
@@ -92,6 +94,16 @@ print('Expected DNS refusal; child successful', flush=True)
         status, evidence = self.qualify('example.com')
         self.assertEqual(status, 1)
         self.assertIn('example.com', (evidence / 'dns-denied.log').read_text())
+
+
+    def test_missing_summary_retains_dns_report_and_child_exit(self):
+        status, evidence = self.qualify('example.com', child_status=23, collect_summary=True)
+        output = (evidence / 'qualification.log').read_text()
+        self.assertIn('TEST DNS EGRESS DENIED:', output)
+        self.assertIn('example.com', (evidence / 'dns-denied.log').read_text())
+        self.assertIn('TEST SUMMARY COPY FAILED:', output)
+        self.assertEqual(status, 23, output)
+        self.assertFalse((evidence / 'summary.tsv').exists())
 
 
 if __name__ == '__main__':
