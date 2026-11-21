@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-20
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-deploy-team (replay drill over real TLS; packet and lab-certificate hygiene).
+* **Creation**: lessons [a credential-carrying TLS client trusts exactly one CA file](/aweb-expert/lessons/a-credential-carrying-tls-client-trusts-one-ca-file.md), [lab certificates need key identifiers](/aweb-expert/lessons/lab-certificates-need-key-identifiers.md), [syntax-check packet sources without writing bytecode](/aweb-expert/lessons/syntax-check-packet-sources-without-writing-bytecode.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
