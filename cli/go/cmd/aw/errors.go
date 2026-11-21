@@ -60,6 +60,10 @@ func withErrorCode(code string, err error) error {
 
 // errorCodeOf is err's refusal code, or "" when it has none.
 func errorCodeOf(err error) string {
+	var pending *hostedInviteSignaturePendingError
+	if errors.As(err, &pending) {
+		return codeNativeAgentSignaturePending
+	}
 	var coded *codedError
 	if errors.As(err, &coded) {
 		return coded.code
@@ -160,9 +164,8 @@ func errorEnvelope(err error, message string) cliErrorEnvelope {
 	if errors.As(err, &plain) && plain.jsonMessage != "" {
 		message = plain.jsonMessage
 	}
-	var coded *codedError
-	if errors.As(err, &coded) {
-		detail.Code = coded.code
+	if code := errorCodeOf(err); code != "" {
+		detail.Code = code
 	}
 	return cliErrorEnvelope{Error: cliErrorBody{Code: detail.Code, Message: message, HTTPStatus: detail.HTTPStatus, Detail: detail.Detail, Reason: detail.Reason}}
 }

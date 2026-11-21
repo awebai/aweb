@@ -7,4 +7,6 @@ const (
 	codeInviteNotCreated        = "invite_not_created"
 	codeTeamNameTaken           = "team_name_taken"
 	codeTeamServerRecordMissing = "team_server_record_missing"
+
+	codeNativeAgentSignaturePending = "native_agent_signature_pending"
 )

@@ -94,6 +94,7 @@ the service, rather than becoming a universal CLI vocabulary.
 | `retirement_receipt_unavailable` | The CLI could not lock or write the retirement receipt; retain the identity home and repair the receipt destination before retrying. |
 | `workspace_cleanup_incomplete` | The service did not confirm cleanup of the exact workspace and local identity; reconcile it before revoking the certificate. |
 | `invite_issuance_pending` | Issuance is attempted or unknown; keep the exact recipient and record, check online, and resume the retained certificate. Offline cancellation leaves its child untouched. |
+| `native_agent_signature_pending` | Hosted invite acceptance stopped before submitting membership because the child needs an agent signature. The CLI exits with status 1 and retains the child key and pending invite, including any prepared request. Preserve the identity home and finish the exchange, then retry with the same token, name, scope, and home. |
 | `team_server_record_missing` | No signed service record is published for this team; its controller must register the service. |
 | `invalid_alias`, `invalid_team_id`, `invalid_team_server_url` | Correct the input using the validation command's remedy. |
 
