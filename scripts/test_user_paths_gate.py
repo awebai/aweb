@@ -147,9 +147,9 @@ class UserPathsAdmission(unittest.TestCase):
         self.assertEqual(len(full["required_humans"]), 12)
         self.assertEqual(len(full["required_agent_cases"]), 66)
         self.assertEqual(len(full["passed_agent_cases"]), 66)
-        self.assertEqual(len(full["known_issue_budget"]), 2)
+        self.assertEqual(len(full["known_issue_budget"]), 4)
         self.assertEqual(
-            {row["task"] for row in full["known_issue_budget"]}, {"aweb-actw"}
+            {row["task"] for row in full["known_issue_budget"]}, {"aweb-actw", "aweb-adje.15"}
         )
         self.assertEqual(full["known_issues"], [])
         self.assertEqual(
@@ -168,7 +168,8 @@ class UserPathsAdmission(unittest.TestCase):
 
     def test_fixed_released_local_chat_has_no_budget_exception(self):
         self.assertEqual(
-            {row["maximum_version"] for row in result_model.KNOWN_RELEASED_ISSUES},
+            {row["maximum_version"] for row in result_model.KNOWN_RELEASED_ISSUES
+             if row["task"] == "aweb-actw"},
             {"1.36.54"},
         )
         for case in ["released/t1->t2/chat/v2", "released/t2->t1/chat/v2"]:
@@ -525,6 +526,33 @@ if args[:2] in [['network','create'],['volume','create']]: print('owned');sys.ex
 class ExactMessageAssertions(unittest.TestCase):
     """Negative controls exercise the matrix's actual three-turn assertion path."""
 
+    def test_released_contacts_only_budgets_only_the_exact_13640_readback(self):
+        diagnostic = "Expected contacts_only; server stored team_and_contacts"
+        for kind in ("mail", "chat"):
+            case = f"released/contacts-only/{kind}"
+            outcome = dict(case=case, status="FAILED", error=diagnostic, assertion=diagnostic)
+            with self.subTest(case=case):
+                classified = result_model.classify_outcome(outcome, "1.36.40")
+                self.assertEqual(classified["status"], "KNOWN_ISSUE")
+                self.assertEqual(classified["observed_status"], "FAILED")
+                self.assertEqual(result_model.classify_outcome(classified, "1.36.40"), classified)
+                for changed, version in (
+                    (outcome, "1.36.39"),
+                    (outcome, "1.36.41"),
+                    (outcome, "1.36.040"),
+                    (outcome, "1.36.40-rc.1"),
+                    ({**outcome, "case": f"head/contacts-only/{kind}"}, "1.36.40"),
+                    ({**outcome, "assertion": None}, "1.36.40"),
+                    ({**outcome, "failure": {"exit": 1}}, "1.36.40"),
+                    ({**outcome, "assertion": "routing failed"}, "1.36.40"),
+                    (dict(case=case, status="PASSED"), "1.36.40"),
+                ):
+                    self.assertEqual(result_model.classify_outcome(changed, version)["status"], "FAILED")
+                self.assertEqual(
+                    result_model.classify_outcome(dict(case=case, status="PASSED"), "1.36.41")["status"],
+                    "PASSED",
+                )
+
     def test_contacts_only_requires_the_policy_read_back_from_storage(self):
         import sys
         from unittest.mock import Mock, call, patch
@@ -537,14 +565,17 @@ class ExactMessageAssertions(unittest.TestCase):
             spec.loader.exec_module(paths)
         lane = paths.Lane.__new__(paths.Lane)
         lane.name, lane.version = "released", "1.36.40"
+        lane.failures, lane.outcomes, lane.actors = [], [], {}
         lane.command = Mock(side_effect=[
             {"inbound_mode": "contacts_only"},
             {"inbound_mode": "team_and_contacts"},
             {"inbound_mode": "open"},
         ])
         lane.refused = Mock()
-        with self.assertRaisesRegex(AssertionError, "team_and_contacts"):
-            lane.contacts_only("mail")
+        lane.run_case("released/contacts-only/mail", lambda: lane.contacts_only("mail"))
+        self.assertEqual(lane.outcomes[0]["observed_status"], "FAILED")
+        self.assertEqual(lane.outcomes[0]["status"], "KNOWN_ISSUE")
+        self.assertEqual(lane.failures, [])
         self.assertEqual(lane.command.call_args_list, [
             call("g2", "inbound-mode", "contacts-only"),
             call("g2", "inbound-mode"),

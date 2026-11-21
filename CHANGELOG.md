@@ -58,6 +58,9 @@
   `skipped_workspaces` when protected workspaces remain.
 - Dashboard agents and health reads return an error when a required Redis
   presence read fails.
+- Chat conversation lists retain historical participant names, DIDs and
+  addresses after workspace cleanup. Remaining members can still find those
+  chats by filtering on a departed participant's DID or address.
 - Wake file mutations require proof that the daemon lock is free. A failed
   exchange with a live control socket no longer falls back to changing files.
 - Custody checks private permissions for configured and default socket paths,

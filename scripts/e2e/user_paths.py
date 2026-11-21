@@ -281,6 +281,8 @@ class Lane:
             record = dict(case=case, status="FAILED", error=str(error))
             if isinstance(error, CLICommandError):
                 record["failure"] = error.failure
+            elif isinstance(error, AssertionError):
+                record["assertion"] = str(error)
             if self.case_commands:
                 directory = self.root / (
                     "failure-" + case.replace("/", "_").replace("->", "-")
@@ -318,12 +320,13 @@ class Lane:
                 flush=True,
             )
         elif record["status"] == "KNOWN_ISSUE":
+            diagnostic = (record.get("failure") or {}).get("stderr", record["error"])
             print(
                 "KNOWN ISSUE",
                 case,
                 record["known_issue"]["task"],
                 "observed failure:",
-                record["failure"]["stderr"].rstrip("\n"),
+                diagnostic.rstrip("\n"),
                 flush=True,
             )
         elif record["status"] == "PASSED":

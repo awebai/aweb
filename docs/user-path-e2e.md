@@ -66,8 +66,9 @@ Refusal controls check the actual user-facing diagnostic and no delivery:
 - A local sender to a global `contacts_only` recipient without a contact.
   The driver reads the stored policy back before testing the corresponding
   `403 recipient_policy_rejected` refusal. aw 1.36.40 stores
-  `team_and_contacts` for the `contacts-only` spelling, so that release
-  fails this control. Users of 1.36.40 who need this restriction should
+  `team_and_contacts` for the `contacts-only` spelling. The released mail
+  and chat cases record that exact read-back mismatch as a known issue
+  only for aw 1.36.40. Users of 1.36.40 who need this restriction should
   upgrade, set the mode again, and confirm that `aw inbound-mode --json`
   reports `contacts_only`.
   Same-team `team_and_contacts` delivery remains a positive neighbor.
