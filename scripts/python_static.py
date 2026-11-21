@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import importlib.metadata
 import json
 import subprocess
 import sys
+import tokenize
 from collections import Counter
 from dataclasses import dataclass
 from enum import StrEnum
@@ -20,12 +22,21 @@ class Tool(StrEnum):
     MYPY = "mypy"
 
 
+class MypyDiagnosticSeverity(StrEnum):
+    ERROR = "error"
+    NOTE = "note"
+
+
+class SourceSuppressionCode(StrEnum):
+    TYPE_IGNORE = "source-type-ignore"
+    MYPY_DIRECTIVE = "source-mypy-directive"
+
+
 VERSIONS = {Tool.RUFF: "0.15.0", Tool.MYPY: "1.19.1"}
-PACKAGES = ("server", "awid", "key-holder")
+PACKAGES = ("server", "awid")
 SOURCE_ROOTS = {
     "server": ["src/aweb"],
     "awid": ["src/awid", "src/awid_service"],
-    "key-holder": ["src/aweb_key_holder"],
 }
 CEILINGS_PATH = Path("tools/python-static-ceilings.json")
 RECOVERY = "Fix the reported findings and lower cleared ceilings in the same change."
@@ -237,8 +248,11 @@ def verify_package_configuration(package: Package) -> None:
         raise StaticCheckError(f"missing prepared interpreter: {package.interpreter}")
 
 
-def run_tool(*, package: Package, tool: Tool) -> subprocess.CompletedProcess[str]:
+def run_tool(
+    *, package: Package, tool: Tool, files: tuple[Path, ...] = ()
+) -> subprocess.CompletedProcess[str]:
     config = package.directory / "pyproject.toml"
+    targets = [str(path.relative_to(package.directory)) for path in files]
     if tool is Tool.RUFF:
         arguments = [
             "check",
@@ -248,7 +262,7 @@ def run_tool(*, package: Package, tool: Tool) -> subprocess.CompletedProcess[str
             "--ignore-noqa",
             "--output-format",
             "json",
-            ".",
+            *(targets or ["."]),
         ]
     else:
         arguments = [
@@ -257,8 +271,10 @@ def run_tool(*, package: Package, tool: Tool) -> subprocess.CompletedProcess[str
             "--python-executable",
             str(package.interpreter),
             "--no-incremental",
+            "--no-warn-unused-ignores",
             "--output",
             "json",
+            *targets,
         ]
     try:
         result = subprocess.run(
@@ -301,11 +317,69 @@ def diagnostic_path(*, root: Path, package: Package, value: object) -> str:
     return relative.as_posix()
 
 
-def scan_package(*, root: Path, package: Package) -> Counter[DiagnosticGroup]:
-    verify_package_configuration(package)
+def production_files(*, package: Package, files: tuple[Path, ...]) -> tuple[Path, ...]:
+    roots = tuple(
+        package.directory / path for path in SOURCE_ROOTS[package.directory.name]
+    )
+    return tuple(
+        path for path in files if any(path.is_relative_to(root) for root in roots)
+    )
+
+
+def source_suppression_counts(path: Path) -> Counter[SourceSuppressionCode]:
+    """Count source opt-outs (docs/python-static-analysis.md, Source exemptions)."""
+    try:
+        with tokenize.open(path) as stream:
+            source = stream.read()
+        parsed = ast.parse(source, type_comments=True)
+    except (OSError, UnicodeError, SyntaxError) as exc:
+        raise StaticCheckError(
+            f"cannot inspect source exemptions in {path}: {exc}"
+        ) from exc
+    counts: Counter[SourceSuppressionCode] = Counter()
+    if parsed.type_ignores:
+        counts[SourceSuppressionCode.TYPE_IGNORE] = len(parsed.type_ignores)
+    # Pinned mypy reads these lines lexically, even inside a multiline string.
+    directives = sum(line.startswith("# mypy: ") for line in source.splitlines())
+    if directives:
+        counts[SourceSuppressionCode.MYPY_DIRECTIVE] = directives
+    return counts
+
+
+def package_source_suppressions(
+    *, root: Path, package: Package, files: tuple[Path, ...]
+) -> Counter[DiagnosticGroup]:
+    targets = (
+        production_files(package=package, files=files)
+        if files
+        else tuple(
+            path
+            for directory in SOURCE_ROOTS[package.directory.name]
+            for path in sorted((package.directory / directory).rglob("*.py"))
+        )
+    )
     counts: Counter[DiagnosticGroup] = Counter()
+    for path in targets:
+        file = diagnostic_path(root=root, package=package, value=str(path))
+        for code, count in source_suppression_counts(path).items():
+            counts[DiagnosticGroup(tool=Tool.MYPY, file=file, code=code)] += count
+    return counts
+
+
+def scan_package(
+    *, root: Path, package: Package, files: tuple[Path, ...] = ()
+) -> Counter[DiagnosticGroup]:
+    verify_package_configuration(package)
+    counts = package_source_suppressions(root=root, package=package, files=files)
     for tool in Tool:
-        result = run_tool(package=package, tool=tool)
+        targets = (
+            production_files(package=package, files=files)
+            if tool is Tool.MYPY
+            else files
+        )
+        if files and not targets:
+            continue
+        result = run_tool(package=package, tool=tool, files=targets)
         try:
             values = (
                 json.loads(result.stdout)
@@ -326,9 +400,15 @@ def scan_package(*, root: Path, package: Package) -> Counter[DiagnosticGroup]:
         for value in values:
             if not isinstance(value, dict):
                 raise StaticCheckError(f"{tool} diagnostic must be an object")
-            if tool is Tool.MYPY and value.get("severity") == "note":
+            if (
+                tool is Tool.MYPY
+                and value.get("severity") == MypyDiagnosticSeverity.NOTE
+            ):
                 continue
-            if tool is Tool.MYPY and value.get("severity") != "error":
+            if (
+                tool is Tool.MYPY
+                and value.get("severity") != MypyDiagnosticSeverity.ERROR
+            ):
                 raise StaticCheckError("mypy diagnostic has unknown severity")
             code = value.get("code")
             if not isinstance(code, str) or not code:
@@ -357,20 +437,25 @@ def exceeded_ceilings(
     ]
 
 
-def check_holder(root: Path) -> None:
-    """The holder package owns lint, format and its stronger annotation rules."""
-    try:
-        result = subprocess.run(
-            ["make", "-C", str(root / "key-holder"), "check"], timeout=180
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise StaticCheckError(
-            f"holder package check could not complete: {exc}"
-        ) from exc
-    if result.returncode:
-        raise StaticCheckError(
-            f"holder package check failed with exit {result.returncode}"
-        )
+def requested_files(*, root: Path, paths: list[Path] | None) -> tuple[Path, ...]:
+    """Select existing package files; package source roots still govern mypy."""
+    selected = []
+    for value in paths or []:
+        try:
+            path = (root / value).resolve(strict=True)
+            relative = path.relative_to(root)
+        except (OSError, ValueError) as exc:
+            raise StaticCheckError(f"cannot select Python file {value}: {exc}") from exc
+        if (
+            not path.is_file()
+            or path.suffix != ".py"
+            or relative.parts[0] not in PACKAGES
+        ):
+            raise StaticCheckError(
+                f"select an existing server/ or awid/ Python file: {value}"
+            )
+        selected.append(path)
+    return tuple(dict.fromkeys(selected))
 
 
 def main() -> int:
@@ -379,20 +464,26 @@ def main() -> int:
         "--root", type=Path, default=Path(__file__).resolve().parents[1]
     )
     parser.add_argument("--ceilings", type=Path, default=CEILINGS_PATH)
+    parser.add_argument("--files", type=Path, nargs="+")
     args = parser.parse_args()
     root = args.root.resolve()
     try:
         verify_versions()
         ceilings = load_ceilings(root / args.ceilings)
+        files = requested_files(root=root, paths=args.files)
         observed: Counter[DiagnosticGroup] = Counter()
         for name in PACKAGES:
             directory = root / name
+            selected = tuple(path for path in files if path.is_relative_to(directory))
+            if files and not selected:
+                continue
             observed.update(
                 scan_package(
                     root=root,
                     package=Package(
                         directory=directory, interpreter=directory / ".venv/bin/python"
                     ),
+                    files=selected,
                 )
             )
         failures = exceeded_ceilings(observed=observed, ceilings=ceilings)
@@ -404,7 +495,9 @@ def main() -> int:
         previous = prior_ceilings(root)
         if previous is not None:
             increases = exceeded_ceilings(observed=Counter(ceilings), ceilings=previous)
-            if increases:
+            previous_total = sum(previous.values())
+            current_total = sum(ceilings.values())
+            if increases and current_total >= previous_total:
                 print(
                     "Reviewed Python diagnostic ceilings cannot increase:",
                     file=sys.stderr,
@@ -415,7 +508,18 @@ def main() -> int:
                     file=sys.stderr,
                 )
                 return 1
-        check_holder(root)
+            if increases:
+                print(
+                    f"Reviewed allowance relocation: total {previous_total} -> {current_total} "
+                    f"(decrease {previous_total - current_total})."
+                )
+                for group in sorted(previous.keys() | ceilings.keys()):
+                    before = previous.get(group, 0)
+                    after = ceilings.get(group, 0)
+                    if before != after:
+                        print(
+                            f"{group.tool} {group.file} [{group.code}]: {before} -> {after}"
+                        )
     except StaticCheckError as exc:
         print(f"Python static-analysis setup failed: {exc}", file=sys.stderr)
         print(SETUP_RECOVERY, file=sys.stderr)

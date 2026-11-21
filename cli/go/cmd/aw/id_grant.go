@@ -113,30 +113,43 @@ type grantMintOutput struct {
 	CustodySocketPath string                  `json:"custody_socket_path,omitempty"`
 }
 
-// activeGrantHome loads the grant home the current identity-home resolution
-// points at, or reports false when the identity home is not a grant home.
-func activeGrantHome() (*awconfig.GrantHome, bool) {
-	wd, _ := os.Getwd()
+// loadSelectedGrantHome distinguishes a root identity from an unreadable selected
+// grant; a broken selected home cannot fall back to root authority (docs/cli-identity-selection.md:13-17).
+func loadSelectedGrantHome() (*awconfig.GrantHome, error) {
+	wd, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("resolve current grant directory: %w", err)
+	}
 	home, err := identityHomeForDir(wd)
-	if err != nil || !awconfig.IsGrantHome(home.Root) {
-		return nil, false
+	if err != nil {
+		return nil, err
+	}
+	return loadGrantHomeAt(home)
+}
+
+// loadGrantHomeAt preserves selection errors for explicit-home consumers such
+// as mint planning; absence alone permits root authority (docs/cli-identity-selection.md:13-17).
+func loadGrantHomeAt(home awconfig.IdentityHome) (*awconfig.GrantHome, error) {
+	if _, err := os.Lstat(awconfig.GrantHomeStatePath(home.Root)); errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	} else if err != nil {
+		return nil, fmt.Errorf("inspect selected grant home: %w", err)
 	}
 	grant, err := awconfig.LoadGrantHome(home.Root)
 	if err != nil {
-		return nil, false
+		return nil, fmt.Errorf("load selected grant home: %w", err)
 	}
-	return grant, true
+	return grant, nil
 }
 
 // requireGrantAuthorityHome refuses grant subcommands from a grant home: they
 // all need the identity's root team-certificate authority.
 func requireGrantAuthorityHome() error {
-	wd, _ := os.Getwd()
-	home, err := identityHomeForDir(wd)
+	grant, err := loadSelectedGrantHome()
 	if err != nil {
 		return err
 	}
-	if awconfig.IsGrantHome(home.Root) {
+	if grant != nil {
 		return errGrantHomeRootAuthority
 	}
 	return nil
@@ -466,7 +479,7 @@ func runGrantMint(cmd *cobra.Command, _ []string) error {
 		Out:               outDir,
 		CustodySocketPath: state.Custody.SocketPath,
 	}
-	printOutput(out, func(any) string {
+	return printOutput(out, func(any) string {
 		text := fmt.Sprintf("Minted grant %s for %s (team %s), expires %s.\nGrant home: %s\n",
 			out.GrantID, firstNonEmpty(out.Address, out.Alias), out.TeamID, out.ExpiresAt, out.Out)
 		if out.CustodySocketPath != "" {
@@ -477,7 +490,6 @@ func runGrantMint(cmd *cobra.Command, _ []string) error {
 		}
 		return text
 	})
-	return nil
 }
 
 func runGrantList(cmd *cobra.Command, _ []string) error {
@@ -494,8 +506,7 @@ func runGrantList(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	printOutput(resp, formatIdentityGrants)
-	return nil
+	return printOutput(resp, formatIdentityGrants)
 }
 
 func runGrantRevoke(cmd *cobra.Command, args []string) error {
@@ -518,10 +529,9 @@ func runGrantRevoke(cmd *cobra.Command, args []string) error {
 		}
 		return err
 	}
-	printOutput(map[string]string{"status": "revoked", "grant_id": grantID}, func(any) string {
+	return printOutput(map[string]string{"status": "revoked", "grant_id": grantID}, func(any) string {
 		return fmt.Sprintf("Revoked identity grant %s.\n", grantID)
 	})
-	return nil
 }
 
 func runGrantShow(cmd *cobra.Command, args []string) error {
@@ -544,8 +554,7 @@ func runGrantShow(cmd *cobra.Command, args []string) error {
 	}
 	for i := range resp.Grants {
 		if strings.TrimSpace(resp.Grants[i].GrantID) == grantID {
-			printOutput(&resp.Grants[i], formatIdentityGrant)
-			return nil
+			return printOutput(&resp.Grants[i], formatIdentityGrant)
 		}
 	}
 	return grantNotFoundInTeam(grantLookup{grantID: grantID, teamID: selection.TeamID}, nil)

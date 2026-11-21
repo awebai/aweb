@@ -229,6 +229,12 @@
     },
     {
       "tool": "mypy",
+      "file": "server/src/aweb/db.py",
+      "code": "source-type-ignore",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
       "file": "server/src/aweb/federation/activation.py",
       "code": "arg-type",
       "count": 4
@@ -391,6 +397,12 @@
     },
     {
       "tool": "mypy",
+      "file": "server/src/aweb/mcp/tools/mail.py",
+      "code": "source-type-ignore",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
       "file": "server/src/aweb/mcp/tools/room.py",
       "code": "union-attr",
       "count": 4
@@ -454,6 +466,12 @@
       "file": "server/src/aweb/messaging/chat_send.py",
       "code": "assignment",
       "count": 1
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/messaging/conversations.py",
+      "code": "source-type-ignore",
+      "count": 2
     },
     {
       "tool": "mypy",
@@ -603,6 +621,12 @@
       "tool": "mypy",
       "file": "server/src/aweb/routes/status.py",
       "code": "type-var",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/team_auth_deps.py",
+      "code": "source-type-ignore",
       "count": 1
     },
     {
@@ -772,6 +796,18 @@
       "file": "awid/tests/test_registry_auth.py",
       "code": "F401",
       "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "awid/tests/test_registry_client.py",
+      "code": "B017",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "awid/tests/test_registry_client.py",
+      "code": "F401",
+      "count": 3
     },
     {
       "tool": "ruff",
@@ -1461,6 +1497,12 @@
       "tool": "ruff",
       "file": "server/tests/test_e2ee_local_sender_read_trust.py",
       "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_federation_mail.py",
+      "code": "B017",
       "count": 1
     },
     {

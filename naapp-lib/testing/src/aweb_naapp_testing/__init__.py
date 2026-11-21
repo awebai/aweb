@@ -15,16 +15,10 @@ import hashlib
 import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Any, Final, Literal
+from typing import Any
 
 from awid.attestation_records import ATTESTATION_HEADER, encode_attestation_header
-from awid.contract import IdentityScope
-from awid.controller_signing import (
-    ControllerDescriptor,
-    ControllerObjectRequest,
-    ControllerSigningContext,
-)
-from awid.did import did_from_public_key
+from awid.did import did_key_from_signing_key
 from awid.signing import canonical_json_bytes, sign_message
 
 # Published compatibility names; AWID has one implementation in awid_service.testing.
@@ -48,11 +42,13 @@ __all__ = [
     "utc_timestamp",
 ]
 
-TEAM_CONTROLLER_SCOPE: Final[Literal["team"]] = "team"
-
 
 def did_key(key: SigningKey) -> str:
-    return did_from_public_key(bytes(key.verify_key))
+    return did_key_from_signing_key(bytes(key))
+
+
+def _fixture_signing_key() -> SigningKey:
+    return SigningKey.generate()
 
 
 def utc_timestamp(moment: datetime) -> str:
@@ -64,8 +60,8 @@ class Member:
     """A team key and one member certificate signed by it."""
 
     team_id: str
-    team_key: SigningKey = field(default_factory=SigningKey.generate)
-    member_key: SigningKey = field(default_factory=SigningKey.generate)
+    team_key: SigningKey = field(default_factory=_fixture_signing_key)
+    member_key: SigningKey = field(default_factory=_fixture_signing_key)
     certificate_id: str = "cert-1"
     alias: str = "alice"
     extra_cert_fields: dict[str, Any] = field(default_factory=dict)
@@ -79,12 +75,6 @@ class Member:
         return did_key(self.member_key)
 
     def certificate(self) -> dict[str, Any]:
-        """Issue the current scope shape (docs/identity.md:57-73)."""
-        scope = (
-            IdentityScope.GLOBAL
-            if self.extra_cert_fields.get("member_did_aw")
-            else IdentityScope.LOCAL
-        )
         cert = {
             "version": 1,
             "certificate_id": self.certificate_id,
@@ -92,27 +82,11 @@ class Member:
             "team_did_key": self.team_did_key,
             "member_did_key": self.did_key,
             "alias": self.alias,
-            "identity_scope": scope.value,
+            "lifetime": "persistent",
             "issued_at": "2026-01-01T00:00:00Z",
             **self.extra_cert_fields,
         }
-        name, domain = self.team_id.split(":", 1)
-        context = ControllerSigningContext(
-            request=ControllerObjectRequest(
-                operation="team_certificate_issue",
-                domain=domain,
-                parameters={"name": name, "certificate": cert},
-            ),
-            controller=ControllerDescriptor(
-                scope=TEAM_CONTROLLER_SCOPE,
-                domain=domain,
-                did_key=self.team_did_key,
-                key_reference="test-member",
-                generation=0,
-                team=name,
-            ),
-        )
-        cert["signature"] = sign_message(bytes(self.team_key), context.signing_bytes())
+        cert["signature"] = sign_message(bytes(self.team_key), canonical_json_bytes(cert))
         return cert
 
     def headers(
