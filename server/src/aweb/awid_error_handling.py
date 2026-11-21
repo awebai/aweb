@@ -34,6 +34,11 @@ def awid_dependency_http_exception(
     exc: Exception, *, operation: str = "AWID registry", team_id: str | None = None
 ) -> HTTPException:
     status_code, detail = classify_awid_dependency_error(exc, operation=operation, team_id=team_id)
+    if status_code == http.HTTPStatus.UNPROCESSABLE_ENTITY:
+        return HTTPException(
+            status_code=status_code,
+            detail={"code": "registry_response_unusable", "message": detail},
+        )
     return HTTPException(status_code=status_code, detail=detail)
 
 
@@ -67,7 +72,7 @@ def _classify_upstream_status(status_code: int) -> tuple[int, str]:
         return 503, "upstream error"
     if status_code == http.HTTPStatus.TOO_MANY_REQUESTS:
         return 503, "upstream rate limited"
-    return http.HTTPStatus.BAD_GATEWAY, "upstream returned unexpected status"
+    return http.HTTPStatus.UNPROCESSABLE_ENTITY, "upstream returned unexpected status"
 
 
 def classify_awid_dependency_error(

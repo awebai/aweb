@@ -61,7 +61,7 @@ def test_an_unavailable_registry_is_classified_by_the_transport_failure_behind_i
         assert (err.status_code, err.detail) == (503, expected)
 
 
-def test_awid_dependency_http_exception_caps_registry_unactionable_4xx_to_bad_gateway():
+def test_awid_dependency_http_exception_names_unusable_registry_answers():
     not_found = awid_dependency_http_exception(
         RegistryError("not found", status_code=404, detail="Namespace not found"),
         operation="AWID team visibility lookup",
@@ -71,10 +71,16 @@ def test_awid_dependency_http_exception_caps_registry_unactionable_4xx_to_bad_ga
         operation="AWID team visibility lookup",
     )
 
-    assert not_found.status_code == 502
-    assert not_found.detail == "AWID team visibility lookup upstream returned unexpected status (RegistryError status=404): Namespace not found"
-    assert forbidden.status_code == 502
-    assert forbidden.detail == "AWID team visibility lookup upstream returned unexpected status (RegistryError status=403): Forbidden"
+    assert not_found.status_code == 422
+    assert not_found.detail == {
+        "code": "registry_response_unusable",
+        "message": "AWID team visibility lookup upstream returned unexpected status (RegistryError status=404): Namespace not found",
+    }
+    assert forbidden.status_code == 422
+    assert forbidden.detail == {
+        "code": "registry_response_unusable",
+        "message": "AWID team visibility lookup upstream returned unexpected status (RegistryError status=403): Forbidden",
+    }
 
 
 def test_awid_dependency_http_exception_explains_missing_private_team_trusted_lane():
@@ -125,15 +131,18 @@ def test_awid_dependency_http_exception_classifies_http_status_error_as_dependen
     assert "AWID federation target identity resolution upstream error (HTTPStatusError status=503)" in err.detail
 
 
-def test_awid_dependency_http_exception_caps_http_status_error_unactionable_4xx_to_bad_gateway():
+def test_awid_dependency_http_exception_names_unusable_http_status_error():
     request = httpx.Request("GET", "https://awid.example/v1/lookup")
     response = httpx.Response(403, request=request)
     exc = httpx.HTTPStatusError("forbidden", request=request, response=response)
 
     err = awid_dependency_http_exception(exc, operation="AWID federation target identity resolution")
 
-    assert err.status_code == 502
-    assert "AWID federation target identity resolution upstream returned unexpected status (HTTPStatusError status=403)" in err.detail
+    assert err.status_code == 422
+    assert err.detail == {
+        "code": "registry_response_unusable",
+        "message": "AWID federation target identity resolution upstream returned unexpected status (HTTPStatusError status=403): forbidden",
+    }
 
 
 def test_awid_dependency_http_exception_maps_http_status_error_429_to_retryable_503():

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 from collections import OrderedDict
+from contextlib import aclosing
 from time import monotonic
 import hashlib
 import json
@@ -13,14 +14,18 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI, HTTPException
+from httpx import ASGITransport
 from starlette.requests import Request
 
 from nacl.signing import SigningKey
 
 import aweb.identity_auth_deps as _identity_auth_mod
 from awid.did import did_from_public_key
-from awid.registry import IDTreeEnrollment
+from awid.ratelimit import MemoryFixedWindowRateLimiter
+from awid.registry import IDTreeEnrollment, RegistryClient
+from awid.request_auth import compact_team_auth_payload
 from awid.signing import canonical_json_bytes, sign_message
+from awid_service.main import create_app as create_registry_app
 from aweb.identity_auth_deps import IdentityAuth, get_messaging_auth
 from aweb.identity_binding import IdentityBinding
 from aweb.team_auth_deps import TeamIdentity
@@ -464,6 +469,44 @@ HOSTILE_CERTIFICATES = {
     "deep": base64.b64encode(b"[" * 6000).decode(),
     "oversize": base64.b64encode(b'{"pad":"' + b"a" * 7000 + b'"}').decode(),
 }
+
+
+@pytest.mark.asyncio
+async def test_verify_request_certificate_returns_coded_422_for_unusable_registry_answer():
+    from aweb.team_auth_deps import verify_request_certificate
+
+    registry = create_registry_app()
+    registry.state.rate_limiter = MemoryFixedWindowRateLimiter()
+    # AWID refuses this team slug before accessing the database.
+    registry.state.db = None
+    team_id = "invalid_slug:acme.com"
+    team_key, _, team_did = _make_keypair()
+    member_key, _, member_did = _make_keypair()
+    certificate = _make_certificate(team_key, team_did, member_did, team_id=team_id)
+    timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    payload = compact_team_auth_payload(
+        team_id=team_id, timestamp=timestamp, body_sha256=hashlib.sha256(b"").hexdigest()
+    )
+    request = _request_with_app_state({
+        "Authorization": f"DIDKey {member_did} {sign_message(member_key, payload)}",
+        "X-AWEB-Timestamp": timestamp,
+        "X-AWID-Team-Certificate": _encode_certificate(certificate),
+    })
+
+    transport = ASGITransport(app=registry)
+    async with aclosing(RegistryClient("http://registry.test", transport=transport)) as client:
+        request.app.state.awid_registry_client = client
+        with pytest.raises(HTTPException) as refused:
+            await verify_request_certificate(request, db=None)
+
+    assert refused.value.status_code == 422
+    assert refused.value.detail == {
+        "code": "registry_response_unusable",
+        "message": (
+            "AWID team key resolution upstream returned unexpected status (RegistryError status=422): "
+            "team name must be lowercase alphanumeric with hyphens (e.g. 'backend', 'my-team')"
+        ),
+    }
 
 
 @pytest.mark.asyncio
