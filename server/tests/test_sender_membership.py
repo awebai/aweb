@@ -6,9 +6,13 @@ from pathlib import Path
 from urllib.parse import urlencode
 
 import pytest
-from awid.did import stable_id_from_did_key
+from aweb.messaging.sender_membership import sender_memberships
+from awid.identity_observation import IdentityKind
 from awid.registry import CachedRegistryClient
+from messaging_actor_support import admit_privacy_actor
+from starlette.requests import Request
 from test_cli_never_grants import registry_listener
+from test_current_member_review_regressions import _archive_global_member
 from test_dashboard_privacy import TEAM, TEAM_NAME, _request, _seed_mail, privacy_app  # noqa: F401
 from test_team_room import admit_room_member, headers
 
@@ -89,13 +93,9 @@ async def test_sender_standing_sees_registration_after_a_warm_list(privacy_app, 
 @pytest.mark.asyncio
 async def test_sender_membership_mail_and_chat_is_current_and_participant_scoped(privacy_app):
     env = privacy_app
-    sender = env.actors['alice']
-    stable_id = stable_id_from_did_key(sender.did)
-    await env.db.execute(
-        "UPDATE {{tables.agents}} SET agent_type='human', human_verified_key=did_key, identity_scope='global', "
-        "did_aw=$1, certificate_id='privacy-alice', accepted_team_did_key="
-        "(SELECT team_did_key FROM {{tables.teams}} t WHERE t.team_id = agents.team_id) WHERE agent_id=$2", stable_id, sender.id,
-    )
+    sender = await admit_privacy_actor(env, "alice", kind=IdentityKind.HUMAN)
+    stable_id = sender.stable_id
+    await admit_privacy_actor(env, "bob", local=True)
     mail_id = await _seed_mail(env)
     chat = await _request(env, 'alice', 'POST', '/v1/chat/sessions', {
         'to_dids': [env.actors['bob'].did], 'message': 'membership control',
@@ -104,7 +104,7 @@ async def test_sender_membership_mail_and_chat_is_current_and_participant_scoped
     paths = [f'/v1/messages/{mail_id}', f"/v1/chat/sessions/{chat.json()['session_id']}/messages"]
     for state in ('active', 'inactive'):
         if state == 'inactive':
-            await env.db.execute("UPDATE {{tables.agents}} SET status='retired' WHERE agent_id=$1", sender.id)
+            await _archive_global_member(env, sender)
         for path in paths:
             response = await _request(env, 'bob', 'GET', path)
             assert response.status_code == 200, response.text
@@ -127,25 +127,36 @@ async def test_sender_membership_mail_and_chat_is_current_and_participant_scoped
 
 
 @pytest.mark.asyncio
-async def test_sender_membership_revocation_and_missing_provenance(privacy_app):
+async def test_sender_membership_revocation_without_archiving(privacy_app):
     env = privacy_app
-    sender = env.actors['alice']
-    stable_id = stable_id_from_did_key(sender.did)
-    await env.db.execute(
-        "UPDATE {{tables.agents}} SET did_aw=$1, certificate_id='privacy-alice', accepted_team_did_key="
-        "(SELECT team_did_key FROM {{tables.teams}} t WHERE t.team_id = agents.team_id) WHERE agent_id=$2", stable_id, sender.id,
-    )
+    sender = await admit_privacy_actor(env, "alice", local=True)
+    await admit_privacy_actor(env, "bob", local=True)
     mail_id = await _seed_mail(env)
-    await env.registry_db.execute(
-        "INSERT INTO {{tables.team_certificates}} "
-        "(team_uuid, certificate_id, member_did_key, member_did_aw, alias, revoked_at) "
-        "SELECT team_uuid, 'privacy-alice', $1, $2, 'alice', NOW() FROM {{tables.teams}}",
-        sender.did, stable_id,
+    certificate_id = json.loads(base64.b64decode(sender.certificate))["certificate_id"]
+    await env.app.state.awid_registry_client.revoke_team_certificate(
+        "example.test", TEAM_NAME, team_controller_signing_key=env.team_sk,
+        certificate_id=certificate_id,
     )
     response = await _request(env, 'bob', 'GET', f'/v1/messages/{mail_id}')
     assert response.status_code == 200, response.text
     assert response.json()['sender_membership']['state'] == 'inactive'
-    await env.db.execute("UPDATE {{tables.agents}} SET certificate_id=NULL WHERE agent_id=$1", sender.id)
-    response = await _request(env, 'bob', 'GET', f'/v1/messages/{mail_id}')
-    assert response.status_code == 200, response.text
-    assert response.json()['sender_membership']['state'] == 'unknown'
+
+
+@pytest.mark.asyncio
+async def test_missing_sender_certificate_provenance_is_unknown(privacy_app):
+    env = privacy_app
+    sender = await admit_privacy_actor(env, "alice", local=True)
+    row = await env.db.fetch_one(
+        """SELECT a.agent_id, a.team_id, a.did_aw, a.status, a.deleted_at,
+                  a.accepted_team_did_key, t.team_did_key AS current_team_did_key
+           FROM {{tables.agents}} AS a JOIN {{tables.teams}} AS t ON t.team_id=a.team_id
+           WHERE a.agent_id=$1""",
+        sender.id,
+    )
+    evidence = dict(row, certificate_id=None)
+    key = (TEAM, str(sender.id))
+    projected = await sender_memberships(
+        Request({"type": "http", "app": env.app}), env.infra,
+        [{"team_id": TEAM, "from_agent_id": sender.id}], member_rows=[evidence],
+    )
+    assert projected[key].state == "unknown"
