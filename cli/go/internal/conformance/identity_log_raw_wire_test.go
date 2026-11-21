@@ -104,7 +104,7 @@ func TestIdentityLogRawWireVectors(t *testing.T) {
 			if err := resolver.SetFallbackRegistryURL(server.URL); err != nil {
 				t.Fatal(err)
 			}
-			resolver.SeedVerifiedHead(route.DIDAW, &awid.VerifiedLogHead{
+			resolver.SeedVerifiedHeadAt(server.URL, route.DIDAW, &awid.VerifiedLogHead{
 				Seq:           cached.Seq,
 				EntryHash:     cached.EntryHash,
 				StateHash:     cached.StateHash,

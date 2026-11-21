@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -278,7 +279,7 @@ func TestInitGlobalCreatesSelfCustodialGlobalCLIIdentityAndSignsCloudRequest(t *
 	}
 }
 
-func TestInitSelfCustodialGlobalCLIThenAddWorktreeTwiceUsesStoredWorkspaceAPIKey(t *testing.T) {
+func TestInitSelfCustodialGlobalCLIThenAddWorktreeTwiceUsesSignedInvitesWithStoredWorkspaceKey(t *testing.T) {
 	t.Parallel()
 
 	const (
@@ -295,7 +296,9 @@ func TestInitSelfCustodialGlobalCLIThenAddWorktreeTwiceUsesStoredWorkspaceAPIKey
 	var (
 		registeredDIDAW  string
 		registeredDIDKey string
-		workspaceInits   []map[string]any
+		workspaceInits   int
+		invitesCreated   int
+		inviteAccepts    []awid.SpawnAcceptInviteRequest
 		connectAliases   []string
 	)
 
@@ -374,36 +377,58 @@ func TestInitSelfCustodialGlobalCLIThenAddWorktreeTwiceUsesStoredWorkspaceAPIKey
 				"alias":            "laptop",
 				"team_did_key":     teamDIDKey,
 			})
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/workspaces/init":
-			if got := strings.TrimSpace(r.Header.Get("Authorization")); got != "Bearer "+parentAPIKey {
-				t.Fatalf("workspace init Authorization=%q", got)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/create-invite":
+			cert := requireCertificateAuthForTest(t, r)
+			if cert.Team != teamID || cert.MemberDIDKey != registeredDIDKey || cert.MemberDIDAW != registeredDIDAW {
+				t.Errorf("invite did not use signup creator: %+v", cert)
+				w.WriteHeader(http.StatusForbidden)
+				return
 			}
-			var payload map[string]any
-			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-				t.Fatal(err)
+			var request awid.SpawnCreateInviteRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Error(err)
+				w.WriteHeader(http.StatusBadRequest)
+				return
 			}
-			workspaceInits = append(workspaceInits, payload)
-			didKey, _ := payload["did"].(string)
-			alias, _ := payload["alias"].(string)
+			if request.AccessMode != "open" || request.MaxUses != 1 || request.IDChain != nil || request.ForHuman != nil {
+				t.Errorf("unexpected chainless creator invite: %+v", request)
+			}
+			invitesCreated++
+			if err := json.NewEncoder(w).Encode(awid.SpawnCreateInviteResponse{
+				InviteID: fmt.Sprintf("invite-%d", invitesCreated), Token: fmt.Sprintf("aw_inv_child_%d", invitesCreated),
+				AccessMode: "open", MaxUses: 1, Namespace: "hostedchain.aweb.ai", ServerURL: serverURL,
+			}); err != nil {
+				t.Error(err)
+			}
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/invite-preview":
+			writeLegacyHostedPreviewForTest(t, w, r, teamID, serverURL)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/accept-invite":
+			var request awid.SpawnAcceptInviteRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Error(err)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			if didFromDIDKeyAuthorizationForTest(r.Header.Get("Authorization")) != request.DID || request.IdentityScope != awid.IdentityModeLocal || request.IDTree != nil || request.IDChain != nil {
+				t.Errorf("unexpected chainless child acceptance: %+v", request)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			inviteAccepts = append(inviteAccepts, request)
 			encoded := signCert(awid.TeamCertificateFields{
-				Team:          teamID,
-				MemberDIDKey:  didKey,
-				Alias:         alias,
-				IdentityScope: awid.IdentityModeLocal,
+				Team: teamID, MemberDIDKey: request.DID, Alias: request.Alias, IdentityScope: awid.IdentityModeLocal,
 			})
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"server_url":     serverURL,
-				"team_cert":      encoded,
-				"alias":          alias,
-				"team_id":        teamID,
-				"workspace_id":   "ws-" + alias,
-				"did":            didKey,
-				"stable_id":      "",
-				"identity_scope": awid.IdentityModeLocal,
-				"custody":        awid.CustodySelf,
-				"api_key":        "aw_sk_child_" + alias,
-				"team_did_key":   teamDIDKey,
-			})
+			if err := json.NewEncoder(w).Encode(awid.SpawnAcceptInviteResponse{
+				TeamID: teamID, TeamSlug: "default", Namespace: "hostedchain.aweb.ai", Alias: request.Alias,
+				ServerURL: serverURL, DID: request.DID, IdentityScope: awid.IdentityModeLocal,
+				Custody: awid.CustodySelf, Created: true, TeamCert: encoded,
+			}); err != nil {
+				t.Error(err)
+			}
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/workspaces/init":
+			workspaceInits++
+			t.Error("stored workspace API key must not create a child through workspace init")
+			w.WriteHeader(http.StatusBadRequest)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/roles/active":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"team_roles_id": "roles-1",
@@ -430,6 +455,17 @@ func TestInitSelfCustodialGlobalCLIThenAddWorktreeTwiceUsesStoredWorkspaceAPIKey
 			alias := strings.TrimSpace(cert.Alias)
 			if alias == "" {
 				t.Fatal("connect certificate missing alias")
+			}
+			if alias != "laptop" {
+				var request connectRequest
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					t.Error(err)
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				if request.Role != "developer" {
+					t.Errorf("child %s connect role=%q, want developer", alias, request.Role)
+				}
 			}
 			connectAliases = append(connectAliases, alias)
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -491,7 +527,7 @@ func TestInitSelfCustodialGlobalCLIThenAddWorktreeTwiceUsesStoredWorkspaceAPIKey
 		if err != nil {
 			t.Fatalf("load child %s workspace: %v", alias, err)
 		}
-		if childWorkspace.APIKey != "aw_sk_child_"+alias {
+		if childWorkspace.APIKey != "" {
 			t.Fatalf("child %s api_key=%q", alias, childWorkspace.APIKey)
 		}
 		membership := childWorkspace.Membership(teamID)
@@ -506,21 +542,18 @@ func TestInitSelfCustodialGlobalCLIThenAddWorktreeTwiceUsesStoredWorkspaceAPIKey
 		}
 	}
 
-	if got := len(workspaceInits); got != 2 {
-		t.Fatalf("workspace init calls=%d want 2", got)
+	if workspaceInits != 0 || invitesCreated != 2 || len(inviteAccepts) != 2 {
+		t.Fatalf("workspace init=%d invites=%d accepts=%d", workspaceInits, invitesCreated, len(inviteAccepts))
 	}
 	for i, alias := range []string{"bob", "carol"} {
-		if workspaceInits[i]["alias"] != alias {
-			t.Fatalf("workspace init %d alias=%v want %s", i, workspaceInits[i]["alias"], alias)
+		if inviteAccepts[i].Alias != alias || inviteAccepts[i].Token != fmt.Sprintf("aw_inv_child_%d", i+1) {
+			t.Fatalf("child %d did not accept its own invitation: %+v", i, inviteAccepts[i])
 		}
-		if workspaceInits[i]["role_name"] != "developer" {
-			t.Fatalf("workspace init %d role_name=%v", i, workspaceInits[i]["role_name"])
-		}
-		if _, ok := workspaceInits[i]["lifetime"]; ok {
-			t.Fatalf("workspace init %d must not send lifetime: %v", i, workspaceInits[i]["lifetime"])
-		}
-		if workspaceInits[i]["identity_scope"] != awid.IdentityModeLocal {
-			t.Fatalf("workspace init %d identity_scope=%v", i, workspaceInits[i]["identity_scope"])
+		// This fixture models a legacy chainless creator; the untyped hosted
+		// exchange must not invent a human or parent (id-certificates.md §6).
+		chain, err := awconfig.LoadInstalledIDChain(filepath.Join(tmp, "repo-"+alias, ".aw"))
+		if err != nil || chain != nil {
+			t.Fatalf("chainless creator fabricated child attribution: chain=%+v err=%v", chain, err)
 		}
 	}
 	if strings.Join(connectAliases, ",") != "laptop,bob,carol" {

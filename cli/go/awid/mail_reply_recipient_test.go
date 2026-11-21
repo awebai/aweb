@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
-	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -150,7 +149,7 @@ type oldReplyCustody struct{ fakeE2EECustody }
 
 func (f *oldReplyCustody) CreateE2EEEnvelope(_ context.Context, req *E2EEEnvelopeCreateRequest) (*E2EEEnvelopeCreateResponse, error) {
 	f.createReq = req
-	return nil, errors.New("recipient_binding_unavailable")
+	return nil, &CustodyError{Code: CustodyRecipientBindingUnavailable}
 }
 func TestGrantMailReplyRequiresCurrentCustodyHost(t *testing.T) {
 	resident := newE2EETestIdentity(t, "example.com/resident")

@@ -1165,7 +1165,7 @@ func (s *custodyService) createE2EEEnvelope(ctx context.Context, req *awid.E2EEE
 		return cached, nil
 	}
 	if s.residentHome != "" {
-		maybeRenewIdentityEncryptionAssertion(ctx, "", explicitEncryptionKeyIdentityHome(s.residentHome), os.Stderr)
+		maybeRenewIdentityEncryptionAssertion(ctx, s.workingDir, explicitEncryptionKeyIdentityHome(s.residentHome), os.Stderr)
 	}
 	if err := s.reloadActiveE2EEKey(); err != nil {
 		return nil, err
@@ -1534,7 +1534,7 @@ func (s *custodyService) renewEncryptionAssertions(ctx context.Context) {
 	ticker := time.NewTicker(time.Hour)
 	defer ticker.Stop()
 	for {
-		maybeRenewIdentityEncryptionAssertion(ctx, "", explicitEncryptionKeyIdentityHome(s.residentHome), os.Stderr)
+		maybeRenewIdentityEncryptionAssertion(ctx, s.workingDir, explicitEncryptionKeyIdentityHome(s.residentHome), os.Stderr)
 		select {
 		case <-ctx.Done():
 			return

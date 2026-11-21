@@ -633,7 +633,7 @@ func TestInitInviteIdentityScopeDefaultsLocalAndHonorsGlobal(t *testing.T) {
 	}
 }
 
-func TestInitJoinFromHostedSuccessPreservesSourceAndConnectsTarget(t *testing.T) {
+func TestOATSSpawnJoinFromStoredWorkspaceKeyPreservesCreator(t *testing.T) {
 	oldJoinFrom, oldJoinTeam, oldName, oldGlobal := initJoinFrom, initJoinTeam, initName, initGlobal
 	oldJSON, oldServer := jsonFlag, serverFlag
 	t.Cleanup(func() {
@@ -693,19 +693,25 @@ func TestInitJoinFromHostedSuccessPreservesSourceAndConnectsTarget(t *testing.T)
 		t.Fatal(err)
 	}
 	writeSelectionFixtureForTest(t, source, testSelectionFixture{AwebURL: server.URL, TeamID: teamID, Alias: "source", WorkspaceID: "workspace-source", DID: awid.ComputeDIDKey(sourcePub), Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeLocal, SigningKey: sourceKey, CreatedAt: "2026-09-26T00:00:00Z"})
+	binding, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(source, ".aw", "workspace.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding.APIKey = "aw_sk_stored_workspace"
+	if err := awconfig.SaveWorktreeWorkspaceTo(filepath.Join(source, ".aw", "workspace.yaml"), binding); err != nil {
+		t.Fatal(err)
+	}
 	sourceBefore := fileDigestsForTest(t, filepath.Join(source, ".aw"))
 	target := t.TempDir()
-	withTestWorkingDir(t, target, func() {
-		initJoinFrom = source
-		initJoinTeam = teamID
-		initName = "target"
-		initGlobal = false
-		jsonFlag = true
-		var out bytes.Buffer
-		if err := runInitJoinFrom(authTestCmd(&out)); err != nil {
-			t.Fatalf("runInitJoinFrom: %v\n%s", err, out.String())
-		}
-	})
+	bin := filepath.Join(t.TempDir(), "aw")
+	buildAwBinary(t, context.Background(), bin)
+	command := exec.Command(bin, "init", "--join-from="+source, "--join-team="+teamID, "--name=target", "--json", "--do-not-touch-agents-md")
+	command.Dir = target
+	command.Env = withoutEnvForTest(testCommandEnv(t.TempDir()), "AWEB_URL", "AWEB_API_KEY", "AWEB_ROLE_NAME", "AWEB_ROLE")
+	if out, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("OATS spawn: %v %s", err, out)
+	}
+
 	if !sawCreateInvite || !sawAccept || !sawConnect {
 		t.Fatalf("create=%t accept=%t connect=%t", sawCreateInvite, sawAccept, sawConnect)
 	}
@@ -744,7 +750,7 @@ func TestInitJoinFromTextInjectsDocsAndListsWhatIsLeft(t *testing.T) {
 // runControllerKeyJoinFromForTest joins a target folder from a source
 // workspace whose home holds the team key, and returns the target, the
 // source and its digests, the team and init's stdout.
-func runControllerKeyJoinFromForTest(t *testing.T, asJSON bool) (string, string, map[string]struct{}, string, string) {
+func runControllerKeyJoinFromForTest(t *testing.T, asJSON bool, interruptBeforeCertificate ...bool) (string, string, map[string]struct{}, string, string) {
 	t.Helper()
 	oldJoinFrom, oldJoinTeam, oldName, oldGlobal := initJoinFrom, initJoinTeam, initName, initGlobal
 	oldJSON, oldRegistry := jsonFlag, initAWIDRegistry
@@ -764,10 +770,23 @@ func runControllerKeyJoinFromForTest(t *testing.T, asJSON bool) (string, string,
 	if err := awconfig.SaveTeamKey("source", "backend", teamKey); err != nil {
 		t.Fatalf("save team key: %v", err)
 	}
+	target := t.TempDir()
+	registryCalls := 0
 	var sawRegistry, sawConnect bool
 	registry := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/source/teams/backend/certificates" {
 			sawRegistry = true
+			registryCalls++
+			if len(interruptBeforeCertificate) > 0 && interruptBeforeCertificate[0] && registryCalls == 1 {
+				if _, err := os.Stat(filepath.Join(target, ".aw", "signing.key")); err != nil {
+					t.Errorf("failure must follow child key: %v", err)
+				}
+				if _, err := awconfig.LoadTeamCertificateForTeam(target, teamID); !os.IsNotExist(err) {
+					t.Errorf("certificate already persisted: %v", err)
+				}
+				http.Error(w, "certificate registration unavailable", 503)
+				return
+			}
 			w.WriteHeader(http.StatusCreated)
 			return
 		}
@@ -803,7 +822,6 @@ func runControllerKeyJoinFromForTest(t *testing.T, asJSON bool) (string, string,
 	}
 	writeSelectionFixtureForTest(t, source, testSelectionFixture{AwebURL: awebServer.URL, TeamID: teamID, Alias: "source", WorkspaceID: "workspace-source", DID: awid.ComputeDIDKey(sourcePub), Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeLocal, SigningKey: sourceSigning, CreatedAt: "2026-09-26T00:00:00Z"})
 	sourceBefore := fileDigestsForTest(t, filepath.Join(source, ".aw"))
-	target := t.TempDir()
 	var stdout string
 	withTestWorkingDir(t, target, func() {
 		initJoinFrom = source
@@ -813,7 +831,69 @@ func runControllerKeyJoinFromForTest(t *testing.T, asJSON bool) (string, string,
 		jsonFlag = asJSON
 		var out bytes.Buffer
 		stdout = captureStdout(t, func() {
-			if err := runInitJoinFrom(authTestCmd(&out)); err != nil {
+			err := runInitJoinFrom(authTestCmd(&out))
+			if len(interruptBeforeCertificate) > 0 && interruptBeforeCertificate[0] {
+				if err == nil || !strings.Contains(err.Error(), "503") {
+					t.Fatalf("expected pre-certificate registry failure: %v", err)
+				}
+				keyBefore, err := os.ReadFile(filepath.Join(target, ".aw", "signing.key"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				invitesDir, err := awconfig.DefaultTeamInvitesDir()
+				if err != nil {
+					t.Fatal(err)
+				}
+				invitesBefore, err := filepath.Glob(filepath.Join(invitesDir, "*.json"))
+				if err != nil || len(invitesBefore) != 1 {
+					t.Fatalf("expected one retained attempted invite, got %v: %v", invitesBefore, err)
+				}
+				inviteID := strings.TrimSuffix(filepath.Base(invitesBefore[0]), ".json")
+				inviteBefore, err := awconfig.LoadTeamInvite(inviteID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				before, err := awconfig.InspectTeamInviteIssuance(inviteBefore)
+				if err != nil || before == nil || before.State != awconfig.RecoveryAttempted || inviteBefore.Secret != "" {
+					t.Fatalf("unknown registration did not retain its attempted fence: %v", err)
+				}
+				expectedCertificate, err := awid.EncodeTeamCertificateHeader(&before.PreparedEffect)
+				if err != nil {
+					t.Fatal(err)
+				}
+				err = runInitJoinFrom(authTestCmd(&out))
+				if err != nil {
+					t.Fatalf("local invite same-directory retry: %v", err)
+				}
+				keyAfter, err := os.ReadFile(filepath.Join(target, ".aw", "signing.key"))
+				if err != nil || !bytes.Equal(keyBefore, keyAfter) {
+					t.Fatal("local retry changed child key")
+				}
+				invitesAfter, err := filepath.Glob(filepath.Join(invitesDir, "*.json"))
+				if err != nil || len(invitesAfter) != 1 || invitesAfter[0] != invitesBefore[0] {
+					t.Fatalf("retry changed the retained invite: %v: %v", invitesAfter, err)
+				}
+				inviteAfter, err := awconfig.LoadTeamInvite(inviteID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				after, err := awconfig.InspectTeamInviteIssuance(inviteAfter)
+				if err != nil || after == nil || after.State != awconfig.RecoveryConfirmed || inviteAfter.ConsumedAt == "" ||
+					inviteAfter.Secret != "" || inviteAfter.SuspendedSecret != "" {
+					t.Fatalf("retry did not retain the secret-free consumed invite: %v", err)
+				}
+				installed, err := awconfig.LoadTeamCertificateForTeam(target, teamID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				actualCertificate, err := awid.EncodeTeamCertificateHeader(installed)
+				if err != nil || actualCertificate != expectedCertificate {
+					t.Fatalf("retry did not install the exact prepared certificate: %v", err)
+				}
+				if registryCalls != 2 {
+					t.Fatalf("registry calls=%d", registryCalls)
+				}
+			} else if err != nil {
 				t.Fatalf("runInitJoinFrom: %v\n%s", err, out.String())
 			}
 		})
@@ -854,7 +934,7 @@ func TestInitJoinFromDenialLeavesTargetEmptyAndSuggestsAdmission(t *testing.T) {
 		initName = "target"
 		err = runInitJoinFrom(authTestCmd(&bytes.Buffer{}))
 	})
-	if err == nil || !strings.Contains(err.Error(), "create hosted team invite") || !strings.Contains(err.Error(), "--admission-team-id "+teamID) {
+	if err == nil || !strings.Contains(err.Error(), "create hosted team invite") || !strings.Contains(err.Error(), "; alternatively use --admission-team-id "+teamID) {
 		t.Fatalf("expected denial with admission alternative, got %v", err)
 	}
 	if entries, readErr := os.ReadDir(target); readErr != nil || len(entries) != 0 {
@@ -966,9 +1046,12 @@ func TestInitAdmissionTeamIDIssuesAcceptsAndConnects(t *testing.T) {
 }
 
 func TestInitGlobalHostedJoinWithExistingIdentityInstallsGlobalCert(t *testing.T) {
-	oldGlobal, oldName, oldJSON := initGlobal, initName, jsonFlag
-	t.Cleanup(func() { initGlobal, initName, jsonFlag = oldGlobal, oldName, oldJSON })
-	t.Setenv("HOME", t.TempDir())
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	bin := filepath.Join(home, awBinaryNameForTest())
+	buildAwBinary(t, ctx, bin)
 	teamID := "shared:aweb.ai"
 	teamPub, teamKey, err := awid.GenerateKeypair()
 	if err != nil {
@@ -990,6 +1073,15 @@ func TestInitGlobalHostedJoinWithExistingIdentityInstallsGlobalCert(t *testing.T
 	var sawGlobalAccept bool
 	server := newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/cli-auth/status":
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "authorized", "scope": cliAuthScopeTeamAdmission, "resource": serverURL + "/cli", "account": map[string]string{"id": "acct-test"}})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/teams/"+teamID+"/admission-invite":
+			_ = json.NewEncoder(w).Encode(teamAdmissionInviteResponse{InviteID: "invite-global", Token: "aw_inv_global", TeamID: teamID, ServerURL: serverURL, MaxUses: 1})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/create-invite":
+			if cert := requireCertificateAuthForTest(t, r); cert.Team != teamID {
+				t.Errorf("invite issued under wrong team: %s", cert.Team)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"invite_id": "invite-global", "token": "aw_inv_global", "server_url": serverURL})
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/invite-preview":
 			writeLegacyHostedPreviewForTest(t, w, r, teamID, serverURL)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/accept-invite":
@@ -997,7 +1089,7 @@ func TestInitGlobalHostedJoinWithExistingIdentityInstallsGlobalCert(t *testing.T
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				t.Fatal(err)
 			}
-			if req.Token != "aw_inv_global" || req.Name != "alice" || req.Alias != "" || req.IdentityScope != awid.IdentityModeGlobal || req.StableID != stableID || req.DID != memberDID {
+			if (req.Token != "aw_inv_global" && req.Token != hostedJoinTokenForTest(t, "aw_inv_global", serverURL)) || req.Name != "alice" || req.Alias != "" || req.IdentityScope != awid.IdentityModeGlobal || req.StableID != stableID || req.DID != memberDID {
 				t.Fatalf("global accept req=%+v", req)
 			}
 			sawGlobalAccept = true
@@ -1018,27 +1110,61 @@ func TestInitGlobalHostedJoinWithExistingIdentityInstallsGlobalCert(t *testing.T
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
 	})
-	target := t.TempDir()
-	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(target), memberKey); err != nil {
-		t.Fatalf("save key: %v", err)
-	}
-	writeIdentityForTest(t, target, awconfig.WorktreeIdentity{DID: memberDID, StableID: stableID, Address: "aweb.ai/alice", Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeGlobal, RegistryURL: registryURL, CreatedAt: "2026-09-26T00:00:00Z"})
-	initGlobal = true
-	initName = "alice"
-	jsonFlag = true
-	var out bytes.Buffer
-	if err := acceptInitInviteAndConnect(authTestCmd(&out), initInviteConnection{WorkingDir: target, Token: "aw_inv_global", PreferredAwebURL: server.URL}); err != nil {
-		t.Fatalf("acceptInitInviteAndConnect: %v\n%s", err, out.String())
-	}
-	if !sawGlobalAccept {
-		t.Fatal("global accept was not sent")
-	}
-	cert, err := awconfig.LoadTeamCertificateForTeam(target, teamID)
+	saveTeamAdmissionLoginForTest(t, server.URL)
+	source := t.TempDir()
+	sourcePub, sourceKey, err := awid.GenerateKeypair()
 	if err != nil {
-		t.Fatalf("load cert: %v", err)
+		t.Fatal(err)
 	}
-	if cert.IdentityScope != awid.IdentityModeGlobal || cert.MemberDIDAW != stableID || cert.MemberAddress != "aweb.ai/alice" {
-		t.Fatalf("cert=%+v", cert)
+	if _, err := registry.RegisterIdentity(ctx, registryURL, awid.ComputeDIDKey(sourcePub), awid.ComputeStableID(sourcePub), sourceKey); err != nil {
+		t.Fatal(err)
+	}
+	writeSelectionFixtureForTest(t, source, testSelectionFixture{AwebURL: server.URL, RegistryURL: registryURL, TeamID: teamID, Alias: "source", WorkspaceID: "workspace-source", DID: awid.ComputeDIDKey(sourcePub), StableID: awid.ComputeStableID(sourcePub), Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeGlobal, SigningKey: sourceKey})
+	sourceBefore := snapshotJoinFiles(t, source)
+	for _, outcome := range []string{"join-from", "admission", "invite"} {
+		t.Run(outcome, func(t *testing.T) {
+			sawGlobalAccept = false
+			target := t.TempDir()
+			if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(target), memberKey); err != nil {
+				t.Fatalf("save key: %v", err)
+			}
+			writeIdentityForTest(t, target, awconfig.WorktreeIdentity{DID: memberDID, StableID: stableID, Address: "aweb.ai/alice", Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeGlobal, RegistryURL: registryURL, CreatedAt: "2026-09-26T00:00:00Z"})
+			keyBefore, err := os.ReadFile(awconfig.WorktreeSigningKeyPath(target))
+			if err != nil {
+				t.Fatal(err)
+			}
+			args := []string{"init", "--global", "--name", "alice", "--do-not-touch-agents-md", "--json"}
+			if outcome == "join-from" {
+				args = append(args, "--join-from", source)
+			} else if outcome == "admission" {
+				args = append(args, "--admission-team-id", teamID, "--expect-account", "acct-test", "--server-name", server.URL)
+			} else {
+				args = append(args, "--invite", hostedJoinTokenForTest(t, "aw_inv_global", server.URL))
+			}
+			command := exec.CommandContext(ctx, bin, args...)
+			command.Dir = target
+			command.Env = append(testCommandEnv(home), "AWEB_IDENTITY_HOME=", "AWEB_URL=", "AWID_REGISTRY_URL="+registryURL, "AW_NO_UPDATE_CHECK=1")
+			if out, err := command.CombinedOutput(); err != nil {
+				t.Fatalf("global %s command: %v\n%s", outcome, err, out)
+			}
+			if !sawGlobalAccept {
+				t.Fatal("global accept was not sent")
+			}
+			cert, err := awconfig.LoadTeamCertificateForTeam(target, teamID)
+			if err != nil {
+				t.Fatalf("load cert: %v", err)
+			}
+			if cert.IdentityScope != awid.IdentityModeGlobal || cert.MemberDIDAW != stableID || cert.MemberAddress != "aweb.ai/alice" {
+				t.Fatalf("cert=%+v", cert)
+			}
+			keyAfter, err := os.ReadFile(awconfig.WorktreeSigningKeyPath(target))
+			if err != nil || !bytes.Equal(keyBefore, keyAfter) {
+				t.Fatalf("global join changed the existing signing key: %v", err)
+			}
+			if !reflect.DeepEqual(sourceBefore, snapshotJoinFiles(t, source)) {
+				t.Fatal("global join mutated the source identity")
+			}
+		})
 	}
 }
 
@@ -1210,18 +1336,18 @@ func TestInitOutcomeFlagValidation(t *testing.T) {
 	})
 	initJoinFrom = "../source"
 	initAdmissionTeamID = "team:example.com"
-	if err := validateInitOutcomeFlags(); err == nil || !strings.Contains(err.Error(), "--join-from") || !strings.Contains(err.Error(), "--admission-team-id") {
+	if err := validateInitOutcomeFlags(initInviteInput{}); err == nil || !strings.Contains(err.Error(), "--join-from") || !strings.Contains(err.Error(), "--admission-team-id") {
 		t.Fatalf("expected mutual exclusion naming both flags, got %v", err)
 	}
 	initAdmissionTeamID = ""
 	initJoinFrom = ""
 	initJoinTeam = "team:example.com"
-	if err := validateInitOutcomeFlags(); err == nil || !strings.Contains(err.Error(), "--join-team requires --join-from") {
+	if err := validateInitOutcomeFlags(initInviteInput{}); err == nil || !strings.Contains(err.Error(), "--join-team requires --join-from") {
 		t.Fatalf("expected join-team dependency error, got %v", err)
 	}
 	initJoinTeam = ""
 	initNewAccount = true
-	if err := validateInitOutcomeFlags(); err != nil {
+	if err := validateInitOutcomeFlags(initInviteInput{}); err != nil {
 		t.Fatalf("single outcome unexpectedly failed: %v", err)
 	}
 }
@@ -2050,4 +2176,13 @@ func TestInitAdmissionTeamIDRequiresExpectAccountBeforeAnyHostCall(t *testing.T)
 	if called {
 		t.Fatal("server was called")
 	}
+}
+
+func TestInitJoinFromControllerKeyRetryBeforeCertificate(t *testing.T) {
+	target, source, before, team, _ := runControllerKeyJoinFromForTest(t, true, true)
+	cert, err := awconfig.LoadTeamCertificateForTeam(target, team)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertInitJoinTarget(t, target, team, "target", cert.MemberDIDKey, before, source)
 }

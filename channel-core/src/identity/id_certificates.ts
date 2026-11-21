@@ -9,10 +9,10 @@ import { canonicalJSONValue } from "./canonical.js";
 import { computeDIDKey, extractPublicKey, primeSubgroupPoint } from "./did.js";
 import { parseStrictJSON, StrictJSONError } from "./strict_json.js";
 
-export const ID_CERTIFICATE_PREFIX = "aweb.id-certificate/1\n";
+const ID_CERTIFICATE_PREFIX = "aweb.id-certificate/1\n";
 export const ID_CHAIN_MAX_CERTIFICATES = 8;
-export const ID_CHAIN_MAX_DECODED_BYTES = 6144;
-export const ID_CHAIN_MAX_HEADER_BYTES = 8192;
+const ID_CHAIN_MAX_DECODED_BYTES = 6144;
+const ID_CHAIN_MAX_HEADER_BYTES = 8192;
 
 export type IdKind = "human" | "agent";
 

@@ -6,5 +6,6 @@ const (
 	codeControllerKeyMissing    = "controller_key_missing"
 	codeInviteNotCreated        = "invite_not_created"
 	codeTeamNameTaken           = "team_name_taken"
+	codeTeamNameUnconfirmed     = "team_name_unconfirmed"
 	codeTeamServerRecordMissing = "team_server_record_missing"
 )

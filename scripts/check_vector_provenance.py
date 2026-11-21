@@ -918,6 +918,10 @@ ROOT_CONSUMERS = {
         'filepath.Join("..", "..", "..", "docs", "vectors", "team-auth-envelope-v2.json")',
         'filepath.Join("..", "..", "..", "docs", "vectors", "message-display-binding-v1.json")',
     ),
+    PurePosixPath("cli/go/chat/stream_display_binding_test.go"): _consumer(
+        "team-auth-envelope-v2.json",
+        'filepath.Join("..", "..", "..", "docs", "vectors", "team-auth-envelope-v2.json")',
+    ),
     PurePosixPath("channel-core/test/request_envelope_as_message.test.ts"): _consumer(
         {
             "message-display-binding-v1.json",
@@ -964,6 +968,9 @@ PACKAGE_GUARDS = {
     ),
 }
 NON_CONSUMING_CODE_REFERENCES = {
+    PurePosixPath("cli/go/awid/registry_origin.go"): (
+        "vectors/atomic-address-claim-v1.json",
+    ),
     PurePosixPath("awid/src/awid/external_authority.py"): (
         "federation-origin-ip-v1.json",
     ),

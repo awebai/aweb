@@ -28,8 +28,8 @@ function jsonResponse(body: unknown): Response {
 // heads live only in a process-memory cache while the pin persists on disk, so
 // after a restart a compromised registry can serve a VALID but TRUNCATED prefix
 // of the log and roll a rotated identity back to its retired key. The checkpoint
-// persisted with the pin is restored via seedVerifiedHead, and a served log must
-// then contain and extend it.
+// persisted for the registry is restored via seedVerifiedHead, and a served log
+// must then contain and extend it.
 describe("did log anti-rollback checkpoint", () => {
   const { did_aw: didAW, initial_did_key: initialKey, rotated_did_key: rotatedKey } =
     identityLogVectors.mapping;
@@ -85,7 +85,7 @@ describe("did log anti-rollback checkpoint", () => {
     // A fresh resolver stands in for a restarted process: its head cache is
     // empty, and the checkpoint is restored from the persisted pin.
     const resolver = makeResolver(true);
-    resolver.seedVerifiedHead(didAW, {
+    resolver.seedVerifiedHead("https://registry.example.com", didAW, {
       seq: rotate.entry_payload.seq as number,
       entryHash: rotate.entry_hash,
       stateHash: "",
@@ -109,7 +109,7 @@ describe("did log anti-rollback checkpoint", () => {
 
   test("seeding never moves the anchor backwards", async () => {
     const resolver = makeResolver(true);
-    resolver.seedVerifiedHead(didAW, {
+    resolver.seedVerifiedHead("https://registry.example.com", didAW, {
       seq: rotate.entry_payload.seq as number,
       entryHash: rotate.entry_hash,
       stateHash: "",
@@ -117,7 +117,7 @@ describe("did log anti-rollback checkpoint", () => {
       fetchedAt: 0,
     });
     // A lower sequence must not displace the higher anchor.
-    resolver.seedVerifiedHead(didAW, {
+    resolver.seedVerifiedHead("https://registry.example.com", didAW, {
       seq: 1,
       entryHash: register.entry_hash,
       stateHash: "",

@@ -57,10 +57,10 @@ func TestLocalResidentGrantRosterChecksBareSenderAlias(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if got, _ := client.NormalizeReceivedSenderTrust(ctx, awid.Verified, "", "carol", senderDID, "", nil, nil, nil, nil); got != awid.Verified {
+	if got, _ := client.NormalizeReceivedSender(ctx, awid.Verified, awid.ReceivedSender{Alias: "carol", DID: senderDID}); got != awid.Verified {
 		t.Fatalf("current member status=%q, want %q", got, awid.Verified)
 	}
-	if got, _ := client.NormalizeReceivedSenderTrust(ctx, awid.Verified, "", "dave", senderDID, "", nil, nil, nil, nil); got != awid.IdentityMismatch {
+	if got, _ := client.NormalizeReceivedSender(ctx, awid.Verified, awid.ReceivedSender{Alias: "dave", DID: senderDID}); got != awid.IdentityMismatch {
 		t.Fatalf("removed member status=%q, want %q", got, awid.IdentityMismatch)
 	}
 	if rosterReads != 2 {

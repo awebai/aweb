@@ -693,6 +693,9 @@ func TestAwMailSendConversationIDSignsPayloadWithRediscoveredRecipient(t *testin
 					ParticipantAddresses: []string{"test.local/alice", "otherco.com/bob"},
 				},
 			}})
+		case "/v1/messages/conversations/" + conversationID:
+			// The conversation's stored rows: plaintext, nothing to inherit.
+			_ = json.NewEncoder(w).Encode(awid.InboxResponse{})
 		case "/v1/messages":
 			if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
 				t.Fatalf("decode body: %v", err)
