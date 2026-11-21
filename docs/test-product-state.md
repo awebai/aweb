@@ -9,8 +9,9 @@ membership authority. The gate's AST check reports writes per file and table,
 including unresolved targets and helpers under `scripts/test-egress/`. Unmarked
 writes and nonliteral calls have separate per-file ceilings that can only
 decrease against main, with zero for new files. A marked ceiling can increase
-only when its declared count matches the file's `# unreachable-state:` markers
-and the scanner finds exactly that many marked product writes. Review the
+only when the filename contains `migration`, its declared count matches the
+file's `# unreachable-state:` markers, and the scanner finds exactly that many
+marked product writes. Review the
 specific historical state and its declared count together, including when a
 new file first enters the manifest. A missing marked budget grants zero.
 Remove setup inserts rather than making them idempotent.

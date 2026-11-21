@@ -544,8 +544,14 @@ def violations(root: Path, report: Report) -> list[str]:
     reviewed_marked = reviewed["marked_files"] if reviewed is not None else {}
     for file, count in sorted(candidate["marked_files"].items()):
         previous = reviewed_marked.get(file, 0)
+        if count <= previous:
+            continue
+        if "migration" not in Path(file).name:
+            errors.append(
+                f"{file}: a marked writes ceiling increase above reviewed {previous} requires a filename containing 'migration'"
+            )
         markers = report.markers_by_file.get(file, 0)
-        if count > previous and count != markers:
+        if count != markers:
             errors.append(
                 f"{file}: marked writes ceiling {count} must match {markers} unreachable-state markers for a raise above reviewed {previous}"
             )

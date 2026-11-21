@@ -460,7 +460,7 @@ async def f(db, schema):
         self.assertIn("test_new.py: marked writes 1 > 0", result.stdout)
 
     def test_marked_allowance_matches_markers_for_existing_and_new_files(self):
-        path = "server/tests/test_world.py"
+        path = "server/tests/test_migration_world.py"
         statement = '    # unreachable-state: corrupt historical agent\n    await db.execute("DELETE FROM agents")\n'
         budget = {
             "schema_version": 1,
@@ -485,7 +485,8 @@ async def f(db, schema):
         result = self.run_check()
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn(
-            "marked writes: lower server/tests/test_world.py to 1", result.stdout
+            "marked writes: lower server/tests/test_migration_world.py to 1",
+            result.stdout,
         )
         budget["marked_files"][path] = 1
         self.write("tools/product-table-write-ceilings.json", json.dumps(budget))
@@ -497,17 +498,19 @@ async def f(db, schema):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.write(path, "async def f(db):\n" + statement)
         budget["marked_files"][path] = 1
-        self.write("server/tests/test_new.py", "async def f(db):\n" + statement)
-        budget["marked_files"]["server/tests/test_new.py"] = 1
+        self.write(
+            "server/tests/test_new_migration.py", "async def f(db):\n" + statement
+        )
+        budget["marked_files"]["server/tests/test_new_migration.py"] = 1
         self.write("tools/product-table-write-ceilings.json", json.dumps(budget))
         result = self.run_check()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        (self.root / "server/tests/test_new.py").unlink()
-        budget["marked_files"].pop("server/tests/test_new.py")
+        (self.root / "server/tests/test_new_migration.py").unlink()
+        budget["marked_files"].pop("server/tests/test_new_migration.py")
         (self.root / path).unlink()
         self.write("tools/product-table-write-ceilings.json", json.dumps(budget))
         self.assertIn(
-            "marked writes: lower server/tests/test_world.py to 0",
+            "marked writes: lower server/tests/test_migration_world.py to 0",
             self.run_check().stdout,
         )
         budget["marked_files"].clear()
@@ -515,7 +518,7 @@ async def f(db, schema):
         self.assertEqual(self.run_check().returncode, 0)
 
     def test_only_exact_marked_raises_pass(self):
-        file = "server/tests/test_world.py"
+        file = "server/tests/test_migration_world.py"
         marked = '    # unreachable-state: interrupted migration left a historical orphan\n    await db.execute("DELETE FROM agents")\n'
         unmarked = '    await db.execute("DELETE FROM teams")\n'
         nonliteral = "    await db.execute(statement)\n"
@@ -559,6 +562,39 @@ async def f(db, schema):
                 )
                 self.assertIn(reason, result.stdout)
 
+    def test_marked_raise_requires_migration_in_the_filename(self):
+        cases = (
+            ("server/tests/test_historical_migration.py", 0),
+            ("server/tests/test_historical.py", 1),
+            ("server/tests/migration/test_historical.py", 1),
+        )
+        for path, expected in cases:
+            with self.subTest(path=path):
+                self.write(
+                    path,
+                    "async def f(db):\n"
+                    "    # unreachable-state: an older migration left an orphan\n"
+                    '    await db.execute("DELETE FROM agents")\n',
+                )
+                self.write(
+                    "tools/product-table-write-ceilings.json",
+                    json.dumps(
+                        {
+                            "schema_version": 1,
+                            "files": {},
+                            "nonliteral_files": {},
+                            "marked_files": {path: 1},
+                        }
+                    ),
+                )
+                result = self.run_check()
+                (self.root / path).unlink()
+                self.assertEqual(
+                    result.returncode, expected, result.stdout + result.stderr
+                )
+                if expected:
+                    self.assertIn("filename containing 'migration'", result.stdout)
+
     def test_one_marker_cannot_admit_multiple_product_writes_in_one_sql_call(self):
         file = "server/tests/test_world.py"
         self.write(
@@ -593,7 +629,7 @@ async def f(db, schema):
             "main before the ceiling",
         )
         self.git("update-ref", "refs/remotes/origin/main", "HEAD")
-        path = "server/tests/test_world.py"
+        path = "server/tests/test_migration_world.py"
         self.write(
             path,
             'async def f(db):\n    # unreachable-state: corrupt historical agent\n    await db.execute("DELETE FROM agents")\n',
