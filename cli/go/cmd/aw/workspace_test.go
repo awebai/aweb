@@ -8,10 +8,12 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -20,6 +22,7 @@ import (
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"golang.org/x/net/dns/dnsmessage"
 	"gopkg.in/yaml.v3"
 )
 
@@ -1840,18 +1843,23 @@ func TestAPIKeyBootstrapAddWorktreeMailRoundTrip(t *testing.T) {
 	defer cancel()
 
 	tmp := t.TempDir()
-	bin := filepath.Join(tmp, "aw")
 	repo := filepath.Join(tmp, "repo")
 	if err := os.MkdirAll(repo, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	initGitRepoWithOriginAndCommit(t, repo, origin)
-	buildAwBinary(t, ctx, bin)
 
+	hostedURL := externalLikeTestURL(t, awebServer.URL)
+	hosted, err := url.Parse(hostedURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dns, discoveryReads := serveWorktreeDiscoveryRefusal(t, hosted.Hostname(), "acme.com")
 	runAW := func(dir string, env []string, args ...string) string {
 		t.Helper()
-		run := exec.CommandContext(ctx, bin, args...)
-		run.Env = env
+		testArgs := append([]string{"-test.run=^TestAPIKeyWorktreeCommandHelper$", "--"}, args...)
+		run := exec.CommandContext(ctx, os.Args[0], testArgs...)
+		run.Env = append(append([]string{}, env...), "AW_TEST_WORKTREE_DNS="+dns)
 		run.Dir = dir
 		out, err := run.CombinedOutput()
 		if err != nil {
@@ -1859,9 +1867,14 @@ func TestAPIKeyBootstrapAddWorktreeMailRoundTrip(t *testing.T) {
 		}
 		return string(out)
 	}
-	baseEnv := withoutEnvForTest(testCommandEnv(tmp), "AWEB_URL", "AWEB_API_KEY")
-	initEnv := append(append([]string{}, baseEnv...), "AWEB_API_KEY="+apiKey)
-	runAW(repo, initEnv, "init", "--aweb-url", externalLikeTestURL(t, awebServer.URL), "--name", "alice", "--role", "developer")
+	baseEnv := withoutEnvForTest(testCommandEnv(tmp), "AWEB_URL", "AWEB_API_KEY", "AWID_REGISTRY_URL")
+	discoveryEnv := append(append([]string{}, baseEnv...), "AW_TEST_WORKTREE_DISCOVERY=1")
+	initEnv := append(append([]string{}, discoveryEnv...), "AWEB_API_KEY="+apiKey)
+	runAW(repo, initEnv, "init", "--aweb-url", hostedURL, "--name", "alice", "--role", "developer")
+	initReads := discoveryReads.Load()
+	if initReads == 0 {
+		t.Fatal("default API-key init did not attempt team registry discovery")
+	}
 
 	if _, err := os.Stat(filepath.Join(repo, ".aw", "identity.yaml")); !os.IsNotExist(err) {
 		t.Fatalf("parent identity.yaml should not exist after local API-key bootstrap: %v", err)
@@ -1875,7 +1888,10 @@ func TestAPIKeyBootstrapAddWorktreeMailRoundTrip(t *testing.T) {
 		t.Fatalf("parent local cert member_did_aw=%q", parentCert.MemberDIDAW)
 	}
 
-	runAW(repo, baseEnv, "workspace", "add-worktree", "developer", "--name", "charlie")
+	runAW(repo, discoveryEnv, "workspace", "add-worktree", "developer", "--name", "charlie")
+	if discoveryReads.Load() <= initReads {
+		t.Fatal("default worktree creation did not attempt team registry discovery")
+	}
 	child := filepath.Join(tmp, "repo-charlie")
 	if _, err := os.Stat(filepath.Join(child, ".aw", "identity.yaml")); !os.IsNotExist(err) {
 		t.Fatalf("child identity.yaml should not exist after local add-worktree: %v", err)
@@ -1889,16 +1905,110 @@ func TestAPIKeyBootstrapAddWorktreeMailRoundTrip(t *testing.T) {
 		t.Fatalf("child local cert member_did_aw=%q", childCert.MemberDIDAW)
 	}
 
-	runAW(repo, baseEnv, "mail", "send", "--subject", "Test thread", "--plaintext", "--to", "charlie", "--body", "hello child", "--json")
-	childInbox := runAW(child, baseEnv, "mail", "inbox", "--show-all", "--json")
+	for _, dir := range []string{repo, child} {
+		state, err := awconfig.LoadTeamState(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		membership := state.Membership(teamID)
+		if membership == nil || membership.RegistryURL != "" || membership.TeamKey == nil || membership.TeamKey.State != awid.TeamKeyUnconfirmed {
+			t.Fatalf("default discovery refusal persisted the wrong membership in %s: %+v", dir, membership)
+		}
+	}
+
+	mailEnv := append(append([]string{}, baseEnv...), "AWID_REGISTRY_URL="+unreachableTestRegistryURL)
+	runAW(repo, mailEnv, "mail", "send", "--subject", "Test thread", "--plaintext", "--to", "charlie", "--body", "hello child", "--json")
+	childInbox := runAW(child, mailEnv, "mail", "inbox", "--show-all", "--json")
 	if !strings.Contains(childInbox, "hello child") {
 		t.Fatalf("child inbox missing parent mail:\n%s", childInbox)
 	}
-	runAW(child, baseEnv, "mail", "send", "--subject", "Test thread", "--plaintext", "--to", "alice", "--body", "hello parent", "--json")
-	parentInbox := runAW(repo, baseEnv, "mail", "inbox", "--show-all", "--json")
+	runAW(child, mailEnv, "mail", "send", "--subject", "Test thread", "--plaintext", "--to", "alice", "--body", "hello parent", "--json")
+	parentInbox := runAW(repo, mailEnv, "mail", "inbox", "--show-all", "--json")
 	if !strings.Contains(parentInbox, "hello parent") {
 		t.Fatalf("parent inbox missing child mail:\n%s", parentInbox)
 	}
+}
+
+// Execute the ordinary command tree in a fresh process with the test's DNS
+// authority, so the registry client still parses and refuses the TXT response.
+func TestAPIKeyWorktreeCommandHelper(t *testing.T) {
+	address := os.Getenv("AW_TEST_WORKTREE_DNS")
+	if address == "" {
+		return
+	}
+	if os.Getenv("AW_TEST_WORKTREE_DISCOVERY") == "1" {
+		if err := os.Unsetenv("AWID_REGISTRY_URL"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	net.DefaultResolver = &net.Resolver{
+		PreferGo: true,
+		Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, network, address)
+		},
+	}
+	separator := slices.Index(os.Args, "--")
+	if separator < 0 || separator == len(os.Args)-1 {
+		t.Fatal("expected CLI arguments after --")
+	}
+	os.Args = append([]string{"aw"}, os.Args[separator+1:]...)
+	main()
+	os.Exit(0)
+}
+
+func serveWorktreeDiscoveryRefusal(t *testing.T, appHost, teamDomain string) (string, *atomic.Int32) {
+	t.Helper()
+	listener, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var discoveryReads atomic.Int32
+	done := make(chan struct{})
+	t.Cleanup(func() {
+		_ = listener.Close()
+		<-done
+	})
+	go func() {
+		defer close(done)
+		buffer := make([]byte, 4096)
+		for {
+			n, client, err := listener.ReadFromUDP(buffer)
+			if err != nil {
+				return
+			}
+			var query dnsmessage.Message
+			if err := query.Unpack(buffer[:n]); err != nil || len(query.Questions) != 1 {
+				continue
+			}
+			question := query.Questions[0]
+			reply := dnsmessage.Message{
+				Header: dnsmessage.Header{
+					ID: query.ID, Response: true, RecursionAvailable: true,
+				},
+				Questions: query.Questions,
+			}
+			header := dnsmessage.ResourceHeader{Name: question.Name, Class: dnsmessage.ClassINET}
+			switch {
+			case question.Type == dnsmessage.TypeTXT && question.Name.String() == awid.AWIDTXTName(teamDomain)+".":
+				discoveryReads.Add(1)
+				// The malformed controller record stops discovery before HTTP.
+				reply.Answers = []dnsmessage.Resource{{
+					Header: header, Body: &dnsmessage.TXTResource{TXT: []string{"awid=v1"}},
+				}}
+			case question.Type == dnsmessage.TypeA && question.Name.String() == appHost+".":
+				reply.Answers = []dnsmessage.Resource{{
+					Header: header, Body: &dnsmessage.AResource{A: [4]byte{127, 0, 0, 1}},
+				}}
+			}
+			packet, err := reply.Pack()
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			_, _ = listener.WriteToUDP(packet, client)
+		}
+	}()
+	return listener.LocalAddr().String(), &discoveryReads
 }
 
 func withoutEnvForTest(env []string, names ...string) []string {
