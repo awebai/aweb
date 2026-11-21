@@ -73,7 +73,9 @@
   the opening membership stops being current. aw 1.36.58 and earlier ignore
   that reason, and their `aw chat send-and-wait` can return silently. The next
   aw reports the closure and tells the caller to reconnect. Channel-core also
-  reports the reason and treats the stream as refused.
+  reports the reason and treats the stream as refused. During a temporary AWID
+  outage, an already-admitted native certificate stream keeps its last verified
+  standing until the next check or its normal deadline.
 - Current-member rosters hide workspaces and agents admitted under an older
   team key. Certificate admission for inactive or superseded members returns
   403. Rooms retain their existing HTTP refusal text and add the
