@@ -5,6 +5,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from awid.federation_errors import FederationAuthorityError
+from aweb.application_state import application_registry_client
 from aweb.db import TransactionInfra
 from aweb.federation.delivery import _authorize_policy
 from aweb.messaging.messages import authorize_message_delivery
@@ -33,6 +34,7 @@ async def test_inbound_policy_uses_all_current_active_memberships(
 ):
     env = privacy_app
     manager = env.db
+    registry_client = application_registry_client(env.app.state)
     shared_team = f"policy-{uuid4().hex[:10]}:example.test"
     await register_messaging_team(env, team_id=shared_team)
     recipients = [
@@ -68,7 +70,7 @@ async def test_inbound_policy_uses_all_current_active_memberships(
                     envelope=envelope,
                     recipient=recipient,
                     stored_route_continuation=False,
-                    registry_client=None,
+                    registry_client=registry_client,
                 )
             else:
                 await authorize_message_delivery(
@@ -77,7 +79,7 @@ async def test_inbound_policy_uses_all_current_active_memberships(
                     sender_did=sender_did,
                     sender_address=envelope.sender_address,
                     sender_verified_dids=[sender_did, sender_key],
-                    registry_client=None,
+                    registry_client=registry_client,
                 )
     except ForbiddenError as exc:
         allowed = False
@@ -101,6 +103,7 @@ async def test_federation_shared_team_membership_stays_locked_until_delivery_com
 
     env = privacy_app
     manager = env.db
+    registry_client = application_registry_client(env.app.state)
     sender = await admit_messaging_actor(env, alias="policy-sender", team_id=TEAM)
     bob = await admit_messaging_actor(env, alias="policy-recipient", team_id=TEAM)
     await set_messaging_inbound_mode(env, bob, "team_and_contacts")
@@ -122,7 +125,7 @@ async def test_federation_shared_team_membership_stays_locked_until_delivery_com
                 envelope=envelope,
                 recipient=dict(recipient),
                 stored_route_continuation=False,
-                registry_client=None,
+                registry_client=registry_client,
             )
             authorized.set()
             await finish.wait()
@@ -160,7 +163,7 @@ async def test_federation_shared_team_membership_stays_locked_until_delivery_com
                 envelope=envelope,
                 recipient=dict(recipient),
                 stored_route_continuation=False,
-                registry_client=None,
+                registry_client=registry_client,
             )
     assert refused.value.detail.endswith(
         "Ask the recipient to add your exact address as a contact or check their inbound policy."
