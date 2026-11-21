@@ -85,7 +85,10 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(list(self.workspace.iterdir()), [])
 
     async def test_runtime_state_and_credential_bundle_stay_private_and_privileges_are_fixed(self):
-        config, body = self.config("/bin/busybox sleep 0.1")
+        config, body = self.config(
+            r"/bin/busybox awk '$5 ~ /^\/proc\/(bus|fs|irq|sys|sysrq-trigger)$/ {print $5, $6}' "
+            "/proc/self/mountinfo && /bin/busybox sleep 0.1"
+        )
         observed = asyncio.Event()
 
         async def started(pid):
@@ -103,6 +106,13 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
 
         report = await self.run_job(config, body, started=started)
         self.assertEqual(report["exit_code"], 0)
+        mounts = dict(line.split() for line in report["stdout"].splitlines())
+        self.assertEqual(
+            mounts.keys(),
+            {"/proc/bus", "/proc/fs", "/proc/irq", "/proc/sys", "/proc/sysrq-trigger"},
+        )
+        for target, options in mounts.items():
+            self.assertIn("ro", options.split(","), target)
         self.assertTrue(observed.is_set())
         self.assertEqual(list(self.workspace.iterdir()), [])
 
