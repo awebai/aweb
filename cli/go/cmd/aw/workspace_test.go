@@ -2624,6 +2624,7 @@ func TestResolveWorkspaceTeamRegistryURLRejectsEmptyControllerRegistry(t *testin
 func TestResolveWorkspaceTeamRegistryURLFallsBackToServiceDiscovery(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("AWID_REGISTRY_URL", "https://process-default.example")
 
 	discoveryServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery" {
@@ -2636,7 +2637,7 @@ func TestResolveWorkspaceTeamRegistryURLFallsBackToServiceDiscovery(t *testing.T
 		http.NotFound(w, r)
 	}))
 
-	// No controller meta, no identity.yaml — discovery is the only source.
+	// A team service discovered from the selected workspace precedes the process default.
 	registryURL, err := resolveWorkspaceTeamRegistryURL(context.Background(), registryAuthorityRequest{WorkingDir: t.TempDir(), AwebURL: discoveryServer.URL, Domain: "source"})
 	if err != nil {
 		t.Fatalf("resolveWorkspaceTeamRegistryURL: %v", err)
