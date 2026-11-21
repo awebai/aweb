@@ -24,15 +24,12 @@ NEW_CONTACT = "finance-new@example.com"
 
 
 async def effect_rows(db):
-    tables = [
-        "passkey_approvers",
-        "passkey_enrolments",
-        "passkey_contact_proofs",
-        "audit_outbox",
-        "passkey_credentials",
-    ]
     return [
-        await db.fetch_all("SELECT * FROM {{tables." + table + "}} ORDER BY 1") for table in tables
+        await db.fetch_all("SELECT * FROM {{tables.passkey_approvers}} ORDER BY 1"),
+        await db.fetch_all("SELECT * FROM {{tables.passkey_enrolments}} ORDER BY 1"),
+        await db.fetch_all("SELECT * FROM {{tables.passkey_contact_proofs}} ORDER BY 1"),
+        await db.fetch_all("SELECT * FROM {{tables.audit_outbox}} ORDER BY 1"),
+        await db.fetch_all("SELECT * FROM {{tables.passkey_credentials}} ORDER BY 1"),
     ]
 
 

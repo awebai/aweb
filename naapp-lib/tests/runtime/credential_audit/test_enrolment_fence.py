@@ -36,9 +36,11 @@ async def effect_state(world: World) -> list:
     """Everything a completed enrolment writes: the credential, the spent link,
     the approver and the signed event."""
     return [
-        await world.db.fetch_all("SELECT * FROM {{tables." + table + "}} ORDER BY 1")
-        for table in ("passkey_credentials", "passkey_enrolments", "passkey_approvers")
-    ] + [await events(world)]
+        await world.db.fetch_all("SELECT * FROM {{tables.passkey_credentials}} ORDER BY 1"),
+        await world.db.fetch_all("SELECT * FROM {{tables.passkey_enrolments}} ORDER BY 1"),
+        await world.db.fetch_all("SELECT * FROM {{tables.passkey_approvers}} ORDER BY 1"),
+        await events(world),
+    ]
 
 
 async def enrol(client, token: str, device: SoftAuthenticator):

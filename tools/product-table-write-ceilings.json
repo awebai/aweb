@@ -332,7 +332,6 @@
     "naapp-lib/tests/dispatch/test_dispatch.py": 2,
     "naapp-lib/tests/runtime/approvals/test_current_approver.py": 2,
     "naapp-lib/tests/runtime/approvals/test_dispatch_fence.py": 1,
-    "naapp-lib/tests/runtime/approvals/test_passkey_effect_fence.py": 1,
     "naapp-lib/tests/runtime/capability_links/test_snapshots.py": 1,
     "naapp-lib/tests/runtime/test_human_member.py": 1,
     "naapp/logs/tests/test_ingest_http.py": 1,
