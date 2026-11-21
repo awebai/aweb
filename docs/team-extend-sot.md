@@ -2,7 +2,7 @@
 
 > **Status: shipped compatibility command contract.** The everyday workflow is
 > [Orchestrate more local agents](grow-team.md); this document preserves the durable
-> authority discovery, ambiguity, rollback, and batch semantics used by the
+> authority discovery, ambiguity, recovery, and batch semantics used by the
 > implemented command and its tests. It does not make profiles, homes,
 > worktrees, or runtime launch mandatory.
 
@@ -103,18 +103,12 @@ select an anchor wins; lower tiers are not consulted after that:
 
    An explicit `--team-id` alongside either kind of key is also an assertion
    and wins over any workspace-derived assertion. Assertions are
-   side-effect-safe: the key's team is only learned from the server response
-   of the bootstrap call, so the FIRST member is bootstrapped, its response
-   team id is compared to the asserted team, and on mismatch that just-created
-   member is rolled back — server-side membership revoked and the local home
-   removed, via the same rollback machinery the roster path already uses
-   (`rollbackJustCreatedTeamMemberWithExplicitHostedAuth` + home rollback) — and `extend` errors
-   naming both team ids before any further member is attempted. An implicit
-   mismatch says `workspace active team X does not match API key team Y`; it
-   never names an unpassed `--team-id` flag. A mismatch never leaves a partial
-   roster in the key's team. (If a key-introspection preflight endpoint becomes
-   available, it replaces the bootstrap-then-rollback check; the observable
-   contract stays the same.)
+   checked against the admitted member's team before profile or worktree setup.
+   On mismatch, `extend` names both teams and stops before attempting another
+   member. The admitted member's home, signing key and certificate are retained
+   for recovery or explicit retirement. An implicit mismatch says `workspace
+   active team X does not match API key team Y`, identifying the source of
+   the assertion.
 2. **The current workspace, if invite-capable** — cwd has a `.aw` workspace
    with an active team and can mint invites (below). This covers running
    `extend` from an agent home and from a team root whose first member was
@@ -190,12 +184,12 @@ The **agents root** is the directory that holds the team layout
    enclosing `agents/instances`.
 3. `<git-repo-root(cwd)>/agents/instances` exists → that (matches where
    `aw team admin add` and `aw team admin up` operate from a repo subdirectory).
-4. Otherwise there is no layout yet: `<cwd>/agents/instances` is created on
-   success (the clean-dir case).
+4. Otherwise there is no layout yet: use `<cwd>/agents/instances` (the
+   clean-dir case).
 
 New member homes are placed at `<agents-root>/<name>`, with the same
-preflights, materialization, connect, configure, worktree setup, and
-rollback behavior as `aw team admin add`.
+preflights, materialization, connect, configure, worktree setup, and recovery
+behavior as `aw team admin add`.
 
 | Call site | Example cwd | Authority available | Agents root |
 |---|---|---|---|
@@ -239,10 +233,10 @@ modes:
 - `not_attempted` — the untouched tail was skipped after the failure.
 
 The `agents` array preserves command-line order and failure JSON uses
-`"status": "failed"`. The command does not roll back healthy members that
-completed before the failure; changing that to all-or-nothing requires a
-separate design decision because compensating membership removal can itself
-fail. The failing member keeps the existing per-member rollback behavior.
+`"status": "failed"`. Earlier members remain in the team. If the failed member
+has prepared recovery material or an admitted certificate, its home retains
+the material required to resume the same identity. When there is no identity
+to retain, the failed member's new local files can be rolled back.
 A fully successful batch keeps the existing human and JSON output unchanged;
 per-agent outcome fields are omitted on that path.
 

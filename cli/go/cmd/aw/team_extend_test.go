@@ -1,12 +1,13 @@
 package main
 
 import (
-	"bytes"
+	"context"
 	"crypto/ed25519"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -723,16 +724,18 @@ func TestTeamExtendRetainsBootstrapAndResumesSetupWithTheSameMember(t *testing.T
 		t.Fatalf("missing native-home recovery command: %v", firstErr)
 	}
 
-	oldAlias := initAlias
-	t.Cleanup(func() { initAlias = oldAlias })
-	initAlias = "retry"
-	t.Setenv(initAPIKeyEnvVar, teamHumanExtendAPIKey)
-	withTestWorkingDir(t, agentHome, func() {
-		if err := runInit(authTestCmd(&bytes.Buffer{}), nil); err != nil {
-			t.Fatalf("resume the retained bootstrap in its own home: %v", err)
-		}
-	})
-	t.Setenv(initAPIKeyEnvVar, "")
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	binary := filepath.Join(t.TempDir(), "aw")
+	buildAwBinary(t, ctx, binary)
+	resume := exec.CommandContext(ctx, binary, "init", "--awid-registry", pending.RegistryURL, "--alias", "retry")
+	resume.Dir = agentHome
+	resume.Env = append(withoutEnvForTest(testCommandEnv(os.Getenv("HOME")), "AWEB_IDENTITY_HOME", "AWEB_URL", "AWID_REGISTRY_URL", initAPIKeyEnvVar, "AWEB_AGENT_TYPE", "AWEB_HUMAN_NAME", "AWEB_ROLE_NAME", "AWEB_ROLE"),
+		"AWEB_URL="+pending.AwebURL, initAPIKeyEnvVar+"="+teamHumanExtendAPIKey,
+	)
+	if output, err := resume.CombinedOutput(); err != nil {
+		t.Fatalf("resume the retained bootstrap in its own home: %v\n%s", err, output)
+	}
 	original, err := awconfig.LoadTeamCertificateForTeam(agentHome, teamID)
 	if err != nil || original.MemberDIDKey != firstDID {
 		t.Fatalf("recovered bootstrap did not install the retained identity: %v", err)
