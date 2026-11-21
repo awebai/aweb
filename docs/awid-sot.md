@@ -670,6 +670,11 @@ GET    /v1/namespaces/{domain}/teams
        Auth: none returns public teams only. A signed team read by a team
              key or unrevoked member key, or the trusted same-operator service
              credential, also returns private teams visible to that authority.
+       Cursor values are validated before SQL: created_at is a timezone-aware
+       timestamp and team_uuid is a UUID. Invalid decoded values return 422
+       with instructions to restart without a cursor. Malformed cursor
+       encoding remains 400. Valid UUID spellings and timestamp offsets are
+       accepted and bound as typed values.
        Response: { "teams": [{ "name": "backend",
                    "display_name": "Backend Team",
                    "team_did_key": "did:key:z6Mk...",

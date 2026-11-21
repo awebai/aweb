@@ -2120,9 +2120,121 @@ function runOATS(bin, args, input = "", options = {}) {
 
 // cli/go/wake/channel_core_runner_entry.ts
 import { createInterface } from "node:readline";
+import { setTimeout as delay } from "node:timers/promises";
 
 // channel-core/src/api/client.ts
 import { createHash as createHash2 } from "node:crypto";
+
+// channel-core/src/api/response.ts
+var MAX_HTTP_RESPONSE_BYTES = 10 * 1024 * 1024;
+var MAX_HTTP_ERROR_BYTES = 64 * 1024;
+async function readBoundedResponse(response, maxBytes = MAX_HTTP_RESPONSE_BYTES) {
+  const declaredLength = Number(response.headers.get("Content-Length"));
+  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+    await response.body?.cancel().catch(() => {
+    });
+    throw new Error(`HTTP response exceeds maximum size of ${maxBytes} bytes`);
+  }
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const chunks = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => {
+        });
+        throw new Error(`HTTP response exceeds maximum size of ${maxBytes} bytes`);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const body = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder("utf-8", { fatal: true }).decode(body);
+}
+async function readSafeErrorExcerpt(response) {
+  const text2 = await readBoundedResponse(response, MAX_HTTP_ERROR_BYTES);
+  return text2.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").replace(/\s+/g, " ").trim();
+}
+async function readBoundedJSON(response) {
+  return JSON.parse(await readBoundedResponse(response));
+}
+
+// channel-core/src/identity/canonical.ts
+function compareByCodePoint(a, b) {
+  for (let i = 0; i < a.length && i < b.length; ) {
+    const x = a.codePointAt(i);
+    const y = b.codePointAt(i);
+    if (x !== y) return x < y ? -1 : 1;
+    i += x > 65535 ? 2 : 1;
+  }
+  return a.length - b.length;
+}
+function canonicalJSONValue(value, unsupported) {
+  if (Array.isArray(value)) return `[${value.map((item) => canonicalJSONValue(item, unsupported)).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    const obj = value;
+    return `{${Object.keys(obj).sort(compareByCodePoint).map((key) => `${JSON.stringify(key)}:${canonicalJSONValue(obj[key], unsupported)}`).join(",")}}`;
+  }
+  if (typeof value === "string" || typeof value === "boolean" || value === null || typeof value === "number" && Number.isSafeInteger(value)) return JSON.stringify(value);
+  throw new Error(unsupported);
+}
+function escapeJSONString(s) {
+  let result = "";
+  for (const ch of s) {
+    const code = ch.codePointAt(0);
+    switch (ch) {
+      case '"':
+        result += '\\"';
+        break;
+      case "\\":
+        result += "\\\\";
+        break;
+      case "\n":
+        result += "\\n";
+        break;
+      case "\r":
+        result += "\\r";
+        break;
+      case "	":
+        result += "\\t";
+        break;
+      case "\b":
+        result += "\\b";
+        break;
+      case "\f":
+        result += "\\f";
+        break;
+      default:
+        if (code < 32) {
+          result += "\\u" + code.toString(16).padStart(4, "0");
+        } else {
+          result += ch;
+        }
+    }
+  }
+  return result;
+}
+function canonicalStringObject(fields) {
+  const sorted = [...fields].sort(([left], [right]) => compareByCodePoint(left, right));
+  const members = sorted.map(
+    ([key, value]) => `"${escapeJSONString(key)}":"${escapeJSONString(value)}"`
+  );
+  return `{${members.join(",")}}`;
+}
+
+// channel-core/src/identity/did.ts
+import { createHash } from "node:crypto";
 
 // channel-core/node_modules/@noble/ed25519/index.js
 var ed25519_CURVE = {
@@ -2491,37 +2603,6 @@ var sign = (msg, privKey) => {
   const rBytes = sha512s(e.prefix, m);
   return hashFinishS(_sign(e, rBytes, m));
 };
-var veriOpts = { zip215: true };
-var _verify = (sig, msg, pub, opts = veriOpts) => {
-  sig = toU8(sig, L2);
-  msg = toU8(msg);
-  pub = toU8(pub, L);
-  const { zip215 } = opts;
-  let A;
-  let R;
-  let s;
-  let SB;
-  let hashable = Uint8Array.of();
-  try {
-    A = Point.fromHex(pub, zip215);
-    R = Point.fromHex(sig.slice(0, L), zip215);
-    s = bytesToNumLE(sig.slice(L, L2));
-    SB = G.multiply(s, false);
-    hashable = concatBytes(R.toBytes(), A.toBytes(), msg);
-  } catch (error) {
-  }
-  const finish = (hashed) => {
-    if (SB == null)
-      return false;
-    if (!zip215 && A.isSmallOrder())
-      return false;
-    const k = modL_LE(hashed);
-    const RkA = R.add(A.multiply(k, false));
-    return RkA.add(SB.negate()).clearCofactor().is0();
-  };
-  return { hashable, finish };
-};
-var verify = (s, m, p, opts = veriOpts) => hashFinishS(_verify(s, m, p, opts));
 var etc = {
   sha512Async: async (...messages) => {
     const s = subtle();
@@ -3173,73 +3254,59 @@ var sha512 = /* @__PURE__ */ createHasher(
   /* @__PURE__ */ oidNist(3)
 );
 
-// channel-core/src/api/response.ts
-var MAX_HTTP_RESPONSE_BYTES = 10 * 1024 * 1024;
-var MAX_HTTP_ERROR_BYTES = 64 * 1024;
-async function readBoundedResponse(response, maxBytes = MAX_HTTP_RESPONSE_BYTES) {
-  const declaredLength = Number(response.headers.get("Content-Length"));
-  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
-    await response.body?.cancel().catch(() => {
-    });
-    throw new Error(`HTTP response exceeds maximum size of ${maxBytes} bytes`);
+// channel-core/src/identity/signature_wire.ts
+etc.sha512Sync = (...messages) => sha512(etc.concatBytes(...messages));
+function signBytes(input) {
+  return sign(input.message, input.seed);
+}
+function publicKeyFromSeed(seed) {
+  return getPublicKey(seed);
+}
+function littleEndian(bytes) {
+  let value = 0n;
+  for (let index = bytes.length - 1; index >= 0; index -= 1) {
+    value = value << 8n | BigInt(bytes[index]);
   }
-  if (!response.body) return "";
-  const reader = response.body.getReader();
-  const chunks = [];
-  let total = 0;
+  return value;
+}
+function canonicalPoint(encoded) {
+  if (!canonicalPointEncoding(encoded)) return void 0;
+  let point;
   try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      total += value.byteLength;
-      if (total > maxBytes) {
-        await reader.cancel().catch(() => {
-        });
-        throw new Error(`HTTP response exceeds maximum size of ${maxBytes} bytes`);
-      }
-      chunks.push(value);
-    }
-  } finally {
-    reader.releaseLock();
+    point = Point.fromHex(encoded, false);
+  } catch {
+    return void 0;
   }
-  const body = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    body.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return new TextDecoder("utf-8", { fatal: true }).decode(body);
+  if (point.is0()) return void 0;
+  return point;
 }
-async function readSafeErrorExcerpt(response) {
-  const text2 = await readBoundedResponse(response, MAX_HTTP_ERROR_BYTES);
-  return text2.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").replace(/\s+/g, " ").trim();
+function primeSubgroupPoint(encoded) {
+  const point = canonicalPoint(encoded);
+  return point?.isTorsionFree() ? point : void 0;
 }
-async function readBoundedJSON(response) {
-  return JSON.parse(await readBoundedResponse(response));
+function verifyBytes(proof) {
+  const { signature, message, publicKey, profile = 0 /* Message */ } = proof;
+  const publicPoint = primeSubgroupPoint(publicKey);
+  if (!publicPoint || signature.length !== 64) return false;
+  const encodedR = signature.subarray(0, 32);
+  const pointR = profile === 1 /* IdentityCertificate */ ? primeSubgroupPoint(encodedR) : canonicalPoint(encodedR);
+  const scalarS = littleEndian(signature.subarray(32));
+  if (!pointR || scalarS >= ed25519_CURVE.n) return false;
+  const challenge = littleEndian(
+    sha512(etc.concatBytes(encodedR, publicKey, message))
+  ) % ed25519_CURVE.n;
+  const left = scalarS === 0n ? Point.ZERO : Point.BASE.multiply(scalarS);
+  const challengePoint = challenge === 0n ? Point.ZERO : publicPoint.multiply(challenge);
+  return left.equals(pointR.add(challengePoint));
 }
-
-// channel-core/src/identity/canonical.ts
-function compareByCodePoint(a, b) {
-  for (let i = 0; i < a.length && i < b.length; ) {
-    const x = a.codePointAt(i);
-    const y = b.codePointAt(i);
-    if (x !== y) return x < y ? -1 : 1;
-    i += x > 65535 ? 2 : 1;
-  }
-  return a.length - b.length;
+function canonicalPointEncoding(encoded) {
+  if (encoded.length !== 32) return false;
+  const coordinate = littleEndian(encoded);
+  const sign2 = coordinate >> 255n;
+  const y = coordinate & (1n << 255n) - 1n;
+  const fieldPrime = (1n << 255n) - 19n;
+  return y < fieldPrime && !(sign2 === 1n && (y === 1n || y === fieldPrime - 1n));
 }
-function canonicalJSONValue(value, unsupported) {
-  if (Array.isArray(value)) return `[${value.map((item) => canonicalJSONValue(item, unsupported)).join(",")}]`;
-  if (value !== null && typeof value === "object") {
-    const obj = value;
-    return `{${Object.keys(obj).sort(compareByCodePoint).map((key) => `${JSON.stringify(key)}:${canonicalJSONValue(obj[key], unsupported)}`).join(",")}}`;
-  }
-  if (typeof value === "string" || typeof value === "boolean" || value === null || typeof value === "number" && Number.isSafeInteger(value)) return JSON.stringify(value);
-  throw new Error(unsupported);
-}
-
-// channel-core/src/identity/did.ts
-import { createHash } from "node:crypto";
 
 // channel-core/node_modules/base-x/src/esm/index.js
 function base(ALPHABET2) {
@@ -3385,18 +3452,6 @@ function computeDIDKey(publicKey) {
   buf.set(publicKey, 2);
   return DID_KEY_PREFIX + esm_default2.encode(buf);
 }
-function primeSubgroupPoint(encoded) {
-  if (encoded.length !== 32) return void 0;
-  let point;
-  try {
-    point = Point.fromHex(encoded, false);
-  } catch {
-    return void 0;
-  }
-  if (point.is0() || !point.isTorsionFree()) return void 0;
-  if (Buffer.compare(Buffer.from(point.toRawBytes()), Buffer.from(encoded)) !== 0) return void 0;
-  return point;
-}
 function extractPublicKey(did) {
   if (!did.startsWith(DID_KEY_PREFIX)) {
     throw new Error(`invalid did:key: missing prefix "${DID_KEY_PREFIX}"`);
@@ -3424,7 +3479,6 @@ function computeStableID(publicKey) {
 }
 
 // channel-core/src/api/client.ts
-etc.sha512Sync = (...m) => sha512(etc.concatBytes(...m));
 function canonicalTimestamp() {
   return (/* @__PURE__ */ new Date()).toISOString().replace(/\.\d{3}Z$/, "Z");
 }
@@ -3440,8 +3494,8 @@ function signedTarget(baseURL, path, method, bodyText) {
 function signCanonical(payload, signingKey) {
   const canonicalPayload = canonicalJSONValue(payload, "unsupported request signing value");
   return {
-    did: computeDIDKey(getPublicKey(signingKey)),
-    signature: Buffer.from(sign(new TextEncoder().encode(canonicalPayload), signingKey)).toString("base64").replace(/=+$/, ""),
+    did: computeDIDKey(publicKeyFromSeed(signingKey)),
+    signature: Buffer.from(signBytes({ message: new TextEncoder().encode(canonicalPayload), seed: signingKey })).toString("base64").replace(/=+$/, ""),
     canonicalPayload,
     signedPayload: Buffer.from(canonicalPayload, "utf-8").toString("base64url")
   };
@@ -3661,9 +3715,21 @@ function decodeRawStdBase64(value) {
   for (let i = 0; i < binary2.length; i += 1) bytes[i] = binary2.charCodeAt(i);
   return bytes;
 }
+function decodeRawURLBase64(value) {
+  if (!/^[A-Za-z0-9_-]*$/.test(value) || value.length % 4 === 1) throw new Error("invalid unpadded base64url");
+  const raw = Buffer.from(value, "base64url");
+  if (raw.toString("base64url") !== value) throw new Error("noncanonical base64url");
+  return new Uint8Array(raw);
+}
 
 // channel-core/src/identity/signing.ts
-etc.sha512Sync = (...m) => sha512(etc.concatBytes(...m));
+var trustedVerificationStatuses = ["verified", "verified_legacy", "verified_custodial"];
+function isTrustedVerificationStatus(status2) {
+  return trustedVerificationStatuses.some((trusted) => status2 === trusted);
+}
+function withholdsMessageContent(status2) {
+  return status2 === "failed" || status2 === "identity_mismatch";
+}
 function canonicalJSON(env) {
   const fields = [
     ["body", env.body],
@@ -3679,50 +3745,7 @@ function canonicalJSON(env) {
   if (env.conversation_id) fields.push(["conversation_id", env.conversation_id]);
   if (env.message_id) fields.push(["message_id", env.message_id]);
   if (env.to_stable_id) fields.push(["to_stable_id", env.to_stable_id]);
-  fields.sort((a, b) => compareByCodePoint(a[0], b[0]));
-  let result = "{";
-  for (let i = 0; i < fields.length; i++) {
-    if (i > 0) result += ",";
-    result += '"' + fields[i][0] + '":"' + escapeJSON(fields[i][1]) + '"';
-  }
-  result += "}";
-  return result;
-}
-function escapeJSON(s) {
-  let result = "";
-  for (const ch of s) {
-    const code = ch.codePointAt(0);
-    switch (ch) {
-      case '"':
-        result += '\\"';
-        break;
-      case "\\":
-        result += "\\\\";
-        break;
-      case "\n":
-        result += "\\n";
-        break;
-      case "\r":
-        result += "\\r";
-        break;
-      case "	":
-        result += "\\t";
-        break;
-      case "\b":
-        result += "\\b";
-        break;
-      case "\f":
-        result += "\\f";
-        break;
-      default:
-        if (code < 32) {
-          result += "\\u" + code.toString(16).padStart(4, "0");
-        } else {
-          result += ch;
-        }
-    }
-  }
-  return result;
+  return canonicalStringObject(fields);
 }
 function b64Decode(s) {
   return decodeRawStdBase64(s);
@@ -3746,11 +3769,11 @@ async function verifyMessage(env) {
   try {
     const sigBytes = b64Decode(env.signature);
     const payload = canonicalJSON(env);
-    const valid = verify(
-      sigBytes,
-      new TextEncoder().encode(payload),
+    const valid = verifyBytes({
+      signature: sigBytes,
+      message: new TextEncoder().encode(payload),
       publicKey
-    );
+    });
     return valid ? "verified" : "failed";
   } catch {
     return "failed";
@@ -3774,11 +3797,11 @@ async function verifySignedPayload(signedPayload, signatureB64, fromDID, signing
   }
   try {
     const sigBytes = b64Decode(signatureB64);
-    const valid = verify(
-      sigBytes,
-      new TextEncoder().encode(signedPayload),
+    const valid = verifyBytes({
+      signature: sigBytes,
+      message: new TextEncoder().encode(signedPayload),
       publicKey
-    );
+    });
     return valid ? "verified" : "failed";
   } catch {
     return "failed";
@@ -3789,8 +3812,10 @@ function signedPayloadConversationStatus(signedPayload, conversationID) {
   if (!expected) return "verified";
   try {
     const payload = JSON.parse(signedPayload);
-    if (payload.conversation_id === expected) return "verified";
-    if (payload.conversation_id === void 0 || payload.conversation_id === "") {
+    if (payload === null) return "failed";
+    const conversationID2 = typeof payload === "object" && "conversation_id" in payload ? payload.conversation_id : void 0;
+    if (conversationID2 === expected) return "verified";
+    if (conversationID2 === void 0 || conversationID2 === "") {
       return "verified_legacy";
     }
     return "failed";
@@ -7318,7 +7343,6 @@ async function loadSigningKey(path) {
 }
 
 // channel-core/src/config.ts
-etc.sha512Sync = (...m) => sha512(etc.concatBytes(...m));
 function selectIdentityHome(workdir, options = {}) {
   const explicitHome = (options.identityHome || "").trim();
   if (explicitHome) {
@@ -7379,7 +7403,7 @@ async function resolveConfig(workdir, options = {}) {
   const certificate = await loadConfiguredTeamCertificate(identityHome, teamID, certPath);
   if (identityHome.external) preflightFile(identityPath, "identity config");
   const identity = await readYAML(identityPath);
-  const did = computeDIDKey(getPublicKey(signingKey));
+  const did = computeDIDKey(publicKeyFromSeed(signingKey));
   const identityStableID = (identity?.stable_id || "").trim();
   const certificateStableID = (certificate.member_did_aw || "").trim();
   const stableID = certificateStableID || identityStableID;
@@ -7429,7 +7453,7 @@ async function resolveGrantConfig(identityHome, options) {
   const signingKeyPath = join(identityHome.root, "grant-signing.key");
   preflightFile(signingKeyPath, "grant signing key");
   const signingKey = await loadSigningKey(signingKeyPath);
-  const grantSessionDID = computeDIDKey(getPublicKey(signingKey));
+  const grantSessionDID = computeDIDKey(publicKeyFromSeed(signingKey));
   const subject = grant.subject || {};
   return {
     baseURL: (grant.aweb_url || "").trim(),
@@ -7704,7 +7728,6 @@ var Reader = class {
 };
 
 // channel-core/src/identity/id_certificates.ts
-etc.sha512Sync = (...m) => sha512(etc.concatBytes(...m));
 var ID_CERTIFICATE_PREFIX = "aweb.id-certificate/1\n";
 var ID_CHAIN_MAX_CERTIFICATES = 8;
 var ID_CHAIN_MAX_DECODED_BYTES = 6144;
@@ -7787,31 +7810,16 @@ function signatureRefusal(signed) {
   const result = idEd25519Verify(publicKey, idCertificateSigningBytes(signed.certificate), signature);
   return result.accepted ? void 0 : "invalid_signature";
 }
-var GROUP_ORDER = ed25519_CURVE.n;
 function idEd25519Verify(publicKey, message, signature) {
-  const A = primeSubgroupPoint(publicKey);
-  if (!A) return { accepted: false, reason: "invalid_shape" };
-  if (signature.length !== 64) return { accepted: false, reason: "invalid_signature" };
-  const encodedR = signature.subarray(0, 32);
-  const R = primeSubgroupPoint(encodedR);
-  const S = littleEndian(signature.subarray(32));
-  if (!R || S >= GROUP_ORDER) return { accepted: false, reason: "invalid_signature" };
-  const k = littleEndian(sha512(etc.concatBytes(encodedR, publicKey, message))) % GROUP_ORDER;
-  const SB = S === 0n ? Point.ZERO : Point.BASE.multiply(S);
-  const kA = k === 0n ? Point.ZERO : A.multiply(k);
-  return SB.equals(R.add(kA)) ? { accepted: true, reason: null } : { accepted: false, reason: "invalid_signature" };
+  if (!primeSubgroupPoint(publicKey)) return { accepted: false, reason: "invalid_shape" };
+  return verifyBytes({ signature, message, publicKey, profile: 1 /* IdentityCertificate */ }) ? { accepted: true, reason: null } : { accepted: false, reason: "invalid_signature" };
 }
-function littleEndian(bytes) {
-  let value = 0n;
-  for (let i = bytes.length - 1; i >= 0; i -= 1) value = value << 8n | BigInt(bytes[i]);
-  return value;
-}
-var BASE64URL = /^[A-Za-z0-9_-]*$/;
 function decodeBase64URL(value) {
-  if (!BASE64URL.test(value) || value.length % 4 === 1) return void 0;
-  const bytes = Buffer.from(value, "base64url");
-  if (bytes.toString("base64url") !== value) return void 0;
-  return new Uint8Array(bytes);
+  try {
+    return decodeRawURLBase64(value);
+  } catch {
+    return void 0;
+  }
 }
 var DOMAIN_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 function isCanonicalDomain(domain) {
@@ -7891,7 +7899,7 @@ function idStatusRequest(chain, subject, domain) {
 }
 function verifyIdChain(chain, subject, evidence) {
   try {
-    return verify2(chain, subject, evidence);
+    return verify(chain, subject, evidence);
   } catch (error) {
     if (error instanceof Refusal) return refusal(error.reason);
     throw error;
@@ -7915,7 +7923,7 @@ function refusal(reason) {
     reason
   };
 }
-function verify2(presented, subject, evidence) {
+function verify(presented, subject, evidence) {
   let chain = presented;
   if (chain === null) {
     if (!subject.id.startsWith("did:aw:")) return refusal("legacy_no_chain");
@@ -8182,19 +8190,21 @@ function isTimestamp(value) {
 function isPositiveInteger(value) {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 }
+function isUnavailableIdEvidence(reason) {
+  return reason === "stale_issuer_key" || reason === "status_expired" || reason === "evidence_unavailable";
+}
 function idRequestDisposition(result, subject, originalAuthPassed) {
   if (!originalAuthPassed) return { ordinary: "refuse", human_required: "refuse" };
   const human_required = result.outcome === "nearest_human" ? "continue" : "refuse";
   const localLeaf = !subject.id.startsWith("did:aw:");
+  if (isUnavailableIdEvidence(result.reason)) {
+    return { ordinary: localLeaf ? "continue" : "refuse", human_required };
+  }
   switch (result.reason) {
     case "verified":
     case "legacy_no_chain":
     case "unregistered_identity":
       return { ordinary: "continue", human_required };
-    case "stale_issuer_key":
-    case "status_expired":
-    case "evidence_unavailable":
-      return { ordinary: localLeaf ? "continue" : "refuse", human_required };
     default:
       return { ordinary: "refuse", human_required };
   }
@@ -8302,7 +8312,6 @@ var IdStatusClient = class {
 import * as dns2 from "node:dns/promises";
 import { isIP } from "node:net";
 var import_tldts = __toESM(require_cjs(), 1);
-etc.sha512Sync = (...m) => sha512(etc.concatBytes(...m));
 var DEFAULT_AWID_REGISTRY_URL = "https://api.awid.ai";
 var REGISTRY_DISCOVERY_TTL_MS = 15 * 60 * 1e3;
 var REGISTRY_ADDRESS_TTL_MS = 5 * 60 * 1e3;
@@ -8768,11 +8777,7 @@ function verifyDidKeyResolution(resolution, cached, nowMs) {
   }
   let validSignature = false;
   try {
-    validSignature = verify(
-      b64Decode2(head.signature),
-      new TextEncoder().encode(payload),
-      extractPublicKey(head.authorized_by)
-    );
+    validSignature = verifyBytes({ signature: b64Decode2(head.signature), message: new TextEncoder().encode(payload), publicKey: extractPublicKey(head.authorized_by) });
   } catch (error) {
     return { outcome: "HARD_ERROR", error: String(error) };
   }
@@ -8845,20 +8850,20 @@ function verifyDidLogEntries(didAW, entries, nowMs) {
   return { head: cached };
 }
 function stableIdentityStateHash(didAW, currentDidKey) {
-  const payload = `{"current_did_key":"${escapeJSON2(currentDidKey)}","did_aw":"${escapeJSON2(didAW)}"}`;
+  const payload = `{"current_did_key":"${escapeJSONString(currentDidKey)}","did_aw":"${escapeJSONString(didAW)}"}`;
   return bytesToHex2(sha256(new TextEncoder().encode(payload)));
 }
 function canonicalDidLogPayload(didAW, head) {
   const fields = [
-    `"authorized_by":"${escapeJSON2(head.authorized_by)}"`,
-    `"did_aw":"${escapeJSON2(didAW)}"`,
-    `"new_did_key":"${escapeJSON2(head.new_did_key)}"`,
-    `"operation":"${escapeJSON2(head.operation)}"`,
-    `"prev_entry_hash":${head.prev_entry_hash == null ? "null" : `"${escapeJSON2(head.prev_entry_hash)}"`}`,
-    `"previous_did_key":${head.previous_did_key == null ? "null" : `"${escapeJSON2(head.previous_did_key)}"`}`,
+    `"authorized_by":"${escapeJSONString(head.authorized_by)}"`,
+    `"did_aw":"${escapeJSONString(didAW)}"`,
+    `"new_did_key":"${escapeJSONString(head.new_did_key)}"`,
+    `"operation":"${escapeJSONString(head.operation)}"`,
+    `"prev_entry_hash":${head.prev_entry_hash == null ? "null" : `"${escapeJSONString(head.prev_entry_hash)}"`}`,
+    `"previous_did_key":${head.previous_did_key == null ? "null" : `"${escapeJSONString(head.previous_did_key)}"`}`,
     `"seq":${head.seq}`,
-    `"state_hash":"${escapeJSON2(head.state_hash)}"`,
-    `"timestamp":"${escapeJSON2(head.timestamp)}"`
+    `"state_hash":"${escapeJSONString(head.state_hash)}"`,
+    `"timestamp":"${escapeJSONString(head.timestamp)}"`
   ];
   return `{${fields.join(",")}}`;
 }
@@ -8956,42 +8961,6 @@ function b64Decode2(value) {
 }
 function bytesToHex2(bytes) {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-function escapeJSON2(s) {
-  let result = "";
-  for (const ch of s) {
-    const code = ch.codePointAt(0);
-    switch (ch) {
-      case '"':
-        result += '\\"';
-        break;
-      case "\\":
-        result += "\\\\";
-        break;
-      case "\n":
-        result += "\\n";
-        break;
-      case "\r":
-        result += "\\r";
-        break;
-      case "	":
-        result += "\\t";
-        break;
-      case "\b":
-        result += "\\b";
-        break;
-      case "\f":
-        result += "\\f";
-        break;
-      default:
-        if (code < 32) {
-          result += `\\u${code.toString(16).padStart(4, "0")}`;
-        } else {
-          result += ch;
-        }
-    }
-  }
-  return result;
 }
 function didLogContainsEntry(entries, seq2, entryHash) {
   const want = entryHash.trim();
@@ -9510,7 +9479,6 @@ async function readReceivedIdChain(message, authenticated, status2) {
 }
 
 // channel-core/src/identity/trust.ts
-etc.sha512Sync = (...m) => sha512(etc.concatBytes(...m));
 var ANNOUNCEMENT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
 var AGENT_META_CACHE_TTL_MS = 60 * 60 * 1e3;
 var AGENT_META_FAILURE_CACHE_MIN_MS = 3e4;
@@ -9581,11 +9549,11 @@ var SenderTrustManager = class {
       return resolved2;
     }
     if (!status2 || !trimmedAddress) return void 0;
-    if (context && !context.fromDID && (status2 === "verified" || status2 === "verified_legacy" || status2 === "verified_custodial")) {
+    if (context && !context.fromDID && isTrustedVerificationStatus(status2)) {
       return void 0;
     }
     const rosterAlias = this.teamRosterAliasReference(trimmedAddress);
-    if (status2 !== "verified" && status2 !== "verified_legacy" && status2 !== "verified_custodial" && rosterAlias !== void 0 && !fromStableID) {
+    if (!isTrustedVerificationStatus(status2) && rosterAlias !== void 0 && !fromStableID) {
       return void 0;
     }
     const trustAddress = this.canonicalTrustAddress(trimmedAddress);
@@ -9595,7 +9563,7 @@ var SenderTrustManager = class {
     let meta = await this.resolveAgentMeta(trimmedAddress);
     const localKeyMismatch = meta.resolved && meta.identityScope === "local" && meta.did && meta.did !== context?.fromDID;
     const cachedAbsence = !meta.resolved && meta.resolutionError === "not_found";
-    if (usedCachedMetadata && rosterAlias !== void 0 && (status2 === "verified" || status2 === "verified_legacy" || status2 === "verified_custodial") && context?.fromDID && !fromStableID?.startsWith("did:aw:") && (localKeyMismatch || cachedAbsence) && this.now() >= (this.localMismatchRefreshAfter.get(trustAddress) ?? 0)) {
+    if (usedCachedMetadata && rosterAlias !== void 0 && isTrustedVerificationStatus(status2) && context?.fromDID && !fromStableID?.startsWith("did:aw:") && (localKeyMismatch || cachedAbsence) && this.now() >= (this.localMismatchRefreshAfter.get(trustAddress) ?? 0)) {
       meta = await this.resolveAgentMeta(trimmedAddress, true);
       if (meta.resolved && meta.identityScope === "local" && meta.did === context.fromDID) {
         this.localMismatchRefreshAfter.delete(trustAddress);
@@ -9674,7 +9642,7 @@ var SenderTrustManager = class {
   }
   normalizeTrustDecision(store, verificationStatus, rawAddress, fromDID, fromStableID, toDID, toStableID, rotationAnnouncement, replacementAnnouncement, resolved) {
     let status2 = this.checkRecipientBinding(verificationStatus, toDID, toStableID);
-    const acceptedInput = verificationStatus === "verified" || verificationStatus === "verified_legacy" || verificationStatus === "verified_custodial";
+    const acceptedInput = isTrustedVerificationStatus(verificationStatus);
     const recipientBindingMismatch = acceptedInput && status2 === "identity_mismatch";
     if (resolved?.receivedLocalSender) {
       const local = resolved.receivedLocalSender;
@@ -9705,7 +9673,7 @@ var SenderTrustManager = class {
       }
     }
     if (!status2 || !rawAddress.trim()) return { status: status2, stored: false };
-    const acceptedSignature = status2 === "verified" || status2 === "verified_legacy" || status2 === "verified_custodial";
+    const acceptedSignature = isTrustedVerificationStatus(status2);
     if (!acceptedSignature || recipientBindingMismatch || !fromDID) return { status: status2, stored: false };
     const trustAddress = this.canonicalTrustAddress(rawAddress);
     const meta = resolved?.meta || this.unavailableAgentMeta();
@@ -9772,7 +9740,7 @@ var SenderTrustManager = class {
     const crossTeam = selected && (member?.team_id && member.team_id !== selected || protectedTeam && protectedTeam !== selected || addressNamespace && !referenceMatches(selected));
     if (!crossTeam) return;
     const result = { did: context.fromDID || "", status: status2 || "unverified" };
-    if (!["verified", "verified_legacy", "verified_custodial"].includes(result.status)) return result;
+    if (!isTrustedVerificationStatus(result.status)) return result;
     result.status = "verification_stale";
     if (!member) return result;
     if (member.member_did_aw || member.state === "inactive" || protectedTeam && member.team_id && protectedTeam !== member.team_id || addressNamespace && member.team_id && !referenceMatches(member.team_id) || context.projectedSenderDID && context.projectedSenderDID !== context.fromDID) {
@@ -9791,7 +9759,7 @@ var SenderTrustManager = class {
   }
   async prepareReceivedSender(status2, stableID, context) {
     const check = { fromDID: context.fromDID || "", stableID, status: status2 || "unverified" };
-    if (!["verified", "verified_legacy", "verified_custodial"].includes(check.status) || !context.fromDID) return check;
+    if (!isTrustedVerificationStatus(check.status) || !context.fromDID) return check;
     const membership = context.senderMembership;
     check.status = "verification_stale";
     if (!membership || membership.state === "unknown") return check;
@@ -9815,7 +9783,7 @@ var SenderTrustManager = class {
     return check;
   }
   checkRecipientBinding(status2, toDID, toStableID) {
-    if (status2 !== "verified" && status2 !== "verified_legacy" && status2 !== "verified_custodial") {
+    if (!isTrustedVerificationStatus(status2)) {
       return status2;
     }
     const selfStableID = this.selfStableID.trim();
@@ -10017,11 +9985,7 @@ var SenderTrustManager = class {
     if (announcement.old_did !== pinnedDID) return false;
     try {
       const oldPub = extractPublicKey(announcement.old_did);
-      return verify(
-        b64Decode3(announcement.old_key_signature),
-        new TextEncoder().encode(canonicalRotationJSON(announcement.old_did, announcement.new_did, announcement.timestamp)),
-        oldPub
-      );
+      return verifyBytes({ signature: b64Decode3(announcement.old_key_signature), message: new TextEncoder().encode(canonicalRotationJSON(announcement.old_did, announcement.new_did, announcement.timestamp)), publicKey: oldPub });
     } catch {
       return false;
     }
@@ -10039,19 +10003,15 @@ var SenderTrustManager = class {
     }
     try {
       const controllerPub = extractPublicKey(announcement.controller_did);
-      return verify(
-        b64Decode3(announcement.controller_signature),
-        new TextEncoder().encode(
-          canonicalReplacementJSON(
-            announcement.address,
-            announcement.controller_did,
-            announcement.old_did,
-            announcement.new_did,
-            announcement.timestamp
-          )
-        ),
-        controllerPub
-      );
+      return verifyBytes({ signature: b64Decode3(announcement.controller_signature), message: new TextEncoder().encode(
+        canonicalReplacementJSON(
+          announcement.address,
+          announcement.controller_did,
+          announcement.old_did,
+          announcement.new_did,
+          announcement.timestamp
+        )
+      ), publicKey: controllerPub });
     } catch {
       return false;
     }
@@ -10231,14 +10191,14 @@ function isTimestampFresh(value) {
   return Math.abs(Date.now() - time) <= ANNOUNCEMENT_MAX_AGE_MS;
 }
 function canonicalRotationJSON(oldDID, newDID, timestamp2) {
-  return canonicalObject([
+  return canonicalStringObject([
     ["new_did", newDID],
     ["old_did", oldDID],
     ["timestamp", timestamp2]
   ]);
 }
 function canonicalReplacementJSON(address, controllerDID, oldDID, newDID, timestamp2) {
-  return canonicalObject([
+  return canonicalStringObject([
     ["address", address],
     ["controller_did", controllerDID],
     ["new_did", newDID],
@@ -10246,48 +10206,8 @@ function canonicalReplacementJSON(address, controllerDID, oldDID, newDID, timest
     ["timestamp", timestamp2]
   ]);
 }
-function canonicalObject(fields) {
-  const sorted = [...fields].sort(([a], [b]) => compareByCodePoint(a, b));
-  return `{${sorted.map(([key, value]) => `"${key}":"${escapeJSON3(value)}"`).join(",")}}`;
-}
 function b64Decode3(value) {
   return decodeRawStdBase64(value);
-}
-function escapeJSON3(s) {
-  let result = "";
-  for (const ch of s) {
-    const code = ch.codePointAt(0);
-    switch (ch) {
-      case '"':
-        result += '\\"';
-        break;
-      case "\\":
-        result += "\\\\";
-        break;
-      case "\n":
-        result += "\\n";
-        break;
-      case "\r":
-        result += "\\r";
-        break;
-      case "	":
-        result += "\\t";
-        break;
-      case "\b":
-        result += "\\b";
-        break;
-      case "\f":
-        result += "\\f";
-        break;
-      default:
-        if (code < 32) {
-          result += `\\u${code.toString(16).padStart(4, "0")}`;
-        } else {
-          result += ch;
-        }
-    }
-  }
-  return result;
 }
 
 // channel-core/src/channel.ts
@@ -10295,6 +10215,71 @@ var import_proper_lockfile2 = __toESM(require_proper_lockfile(), 1);
 import { dirname as dirname2, join as join2 } from "node:path";
 import { homedir } from "node:os";
 import { appendFile, mkdir, open, readFile as readFile4, rename, rm } from "node:fs/promises";
+
+// channel-core/src/message_presentation.ts
+import { isIP as isIP2 } from "node:net";
+var aliasPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+var noticeIDPattern = /^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+function claimedSenderIdentifier(raw) {
+  const sender = raw?.trim() ?? "";
+  if (aliasPattern.test(sender)) return sender;
+  if (sender.startsWith("did:key:") && sender.length <= 56 && isCanonicalDidKey(sender)) return sender;
+  if (sender.startsWith("did:aw:") && sender.length <= 35 && isCanonicalDidAw(sender)) return sender;
+  const [rawDomain, alias, extra] = sender.split("/", 3);
+  const domain = rawDomain.toLowerCase().replace(/\.$/, "");
+  if (extra === void 0 && alias && aliasPattern.test(alias) && !isIP2(domain) && isCanonicalDomain(domain)) {
+    return `${domain}/${alias}`;
+  }
+  return void 0;
+}
+function validatedNoticeID(value) {
+  return value && value === value.trim() && noticeIDPattern.test(value) ? value : void 0;
+}
+function messageTrustMetadata({ status: status2, subject, responsibility }) {
+  if (isTrustedVerificationStatus(status2) && idRequestDisposition(responsibility, subject, true).ordinary === "refuse") {
+    if (isUnavailableIdEvidence(responsibility.reason)) {
+      return { trust_status: "unverified", verified: "false", responsibility_status: "responsibility_unavailable" };
+    }
+    status2 = "failed";
+  }
+  return {
+    trust_status: status2 || "unknown",
+    verified: String(isTrustedVerificationStatus(status2)),
+    responsibility: JSON.stringify(responsibility)
+  };
+}
+function withheldMessageNotice(awakening, awCommand = "aw") {
+  const { kind, meta } = awakening;
+  if (kind !== "mail" && kind !== "chat" || !withholdsMessageContent(meta.trust_status)) return void 0;
+  const sender = claimedSenderIdentifier(meta.from);
+  const messageID = validatedNoticeID(meta.message_id);
+  const sessionID = validatedNoticeID(meta.session_id);
+  const inspect = kind === "mail" ? messageID ? `mail show --message-id ${messageID}` : "mail inbox" : sessionID ? `chat history --session-id ${sessionID}${messageID ? ` --message-id ${messageID}` : ""}` : "chat pending";
+  return `Withheld ${kind}${sender ? ` from claimed sender "${sender}"` : ""}: ${meta.trust_status}. Body and subject were not delivered. To read it deliberately, use ${awCommand} ${inspect}. Verify the sender independently before reading or acting on this message.`;
+}
+function presentMessageAwakening(awakening) {
+  const { kind, meta: raw } = awakening;
+  if (kind !== "mail" && kind !== "chat") return awakening;
+  const undecryptable = raw.decrypted === "false";
+  const content = undecryptable ? "The message could not be decrypted. Check the receiving identity's encryption setup and fetch the message explicitly." : withheldMessageNotice(awakening);
+  if (content === void 0) return awakening;
+  const meta = { type: kind, content_withheld: "true" };
+  if (undecryptable) {
+    meta.encrypted = "true";
+    meta.decrypted = "false";
+    meta.decrypt_error = "decryption_failed";
+  } else {
+    meta.trust_status = raw.trust_status;
+    meta.verified = "false";
+  }
+  const sender = claimedSenderIdentifier(raw.from);
+  if (sender) meta.from = sender;
+  for (const field of ["message_id", "session_id", "conversation_id"]) {
+    const id = validatedNoticeID(raw[field]);
+    if (id) meta[field] = id;
+  }
+  return { ...awakening, content, meta };
+}
 
 // channel-core/src/local_aw.ts
 import { execFile, spawn as spawn2 } from "node:child_process";
@@ -10893,20 +10878,21 @@ async function dispatchMailEvent(options, dispatched, event, log) {
       }
       continue;
     }
-    let from = senderDisplayAddress(msg.from_alias, msg.from_address);
+    const transport = { message_id: msg.message_id };
+    if (conversationID) transport.conversation_id = conversationID;
     emitTrace(options, "decrypt_started", messageEvent, "mail");
     const decrypt = await resolveMailForDelivery(options, msg);
     emitTrace(options, "decrypt_completed", messageEvent, "mail");
-    if (!decrypt.ok) {
-      await deliverAwakening(options, {
+    if (!decrypt) {
+      await deliverAwakening(options, presentMessageAwakening({
         kind: "mail",
         content: "",
-        meta: encryptedDeliveryFailureMeta("mail", from, msg.message_id, conversationID, decrypt.error),
+        meta: { ...transport, from: senderDisplayAddress(msg.from_alias, msg.from_address), decrypted: "false" },
         deliveryIntent: "wake"
-      });
+      }));
       continue;
     }
-    from = senderDisplayAddress(msg.from_alias, msg.from_address);
+    const from = senderDisplayAddress(msg.from_alias, msg.from_address);
     emitTrace(options, "trust_started", messageEvent, "mail");
     const trust = await normalizeAndPersistMessageTrust(
       options,
@@ -10922,27 +10908,21 @@ async function dispatchMailEvent(options, dispatched, event, log) {
     msg.verification_status = trust.status;
     const authenticated = isTrustedVerificationStatus(msg.verification_status);
     const responsibility = typeof options.trust.verifyResponsibility === "function" ? await options.trust.verifyResponsibility(msg, authenticated) : await readReceivedIdChain(msg, authenticated, { evidence: async () => null });
-    if (authenticated && idRequestDisposition(responsibility, receivedIdSubject(msg), true).ordinary === "refuse") {
-      msg.verification_status = "failed";
-    }
     const meta = {
       type: "mail",
       from,
-      message_id: msg.message_id,
-      responsibility: JSON.stringify(responsibility),
-      trust_status: msg.verification_status || "unknown",
-      verified: String(isTrustedVerificationStatus(msg.verification_status))
+      ...transport,
+      ...messageTrustMetadata({ status: msg.verification_status, subject: receivedIdSubject(msg), responsibility })
     };
-    if (conversationID) meta.conversation_id = conversationID;
     if (msg.subject) meta.subject = msg.subject;
     if (msg.priority && msg.priority !== "normal") meta.priority = msg.priority;
     emitTrace(options, "notification_started", messageEvent, "mail");
-    await deliverAwakening(options, {
+    await deliverAwakening(options, presentMessageAwakening({
       kind: "mail",
       content: msg.body,
       meta,
       deliveryIntent: "wake"
-    });
+    }));
     emitTrace(options, "notification_accepted", messageEvent, "mail");
     await persistDeliveryMark(options, dispatched, key, messageEvent, "mail");
     if (options.mailAcknowledgment !== "manual") {
@@ -10995,22 +10975,23 @@ async function dispatchChatEvent(options, dispatched, event) {
       presentedMessageIds.push(msg.message_id);
       continue;
     }
-    let from = senderDisplayAddress(msg.from_agent, msg.from_address);
+    const transport = { session_id: event.session_id, message_id: msg.message_id };
+    if (conversationID) transport.conversation_id = conversationID;
     const encrypted = isEncryptedMessage(msg);
     emitTrace(options, "decrypt_started", messageEvent, lane);
     const decrypt = await resolveChatForDelivery(options, event.session_id, msg);
     emitTrace(options, "decrypt_completed", messageEvent, lane);
-    if (!decrypt.ok) {
+    if (!decrypt) {
       options.onChatPresented?.(event.session_id, { encrypted });
-      await deliverAwakening(options, {
+      await deliverAwakening(options, presentMessageAwakening({
         kind: "chat",
         content: "",
-        meta: encryptedDeliveryFailureMeta("chat", from, msg.message_id, conversationID, decrypt.error, event.session_id),
+        meta: { ...transport, from: senderDisplayAddress(msg.from_agent, msg.from_address), decrypted: "false" },
         deliveryIntent: event.sender_waiting ? "steer" : "wake"
-      });
+      }));
       continue;
     }
-    from = senderDisplayAddress(msg.from_agent, msg.from_address);
+    const from = senderDisplayAddress(msg.from_agent, msg.from_address);
     emitTrace(options, "trust_started", messageEvent, lane);
     const trust = await normalizeAndPersistMessageTrust(
       options,
@@ -11026,29 +11007,22 @@ async function dispatchChatEvent(options, dispatched, event) {
     msg.verification_status = trust.status;
     const authenticated = isTrustedVerificationStatus(msg.verification_status);
     const responsibility = typeof options.trust.verifyResponsibility === "function" ? await options.trust.verifyResponsibility(msg, authenticated) : await readReceivedIdChain(msg, authenticated, { evidence: async () => null });
-    if (authenticated && idRequestDisposition(responsibility, receivedIdSubject(msg), true).ordinary === "refuse") {
-      msg.verification_status = "failed";
-    }
     const meta = {
       type: "chat",
       from,
-      session_id: event.session_id,
-      message_id: msg.message_id,
-      responsibility: JSON.stringify(responsibility),
-      trust_status: msg.verification_status || "unknown",
-      verified: String(isTrustedVerificationStatus(msg.verification_status))
+      ...transport,
+      ...messageTrustMetadata({ status: msg.verification_status, subject: receivedIdSubject(msg), responsibility })
     };
-    if (conversationID) meta.conversation_id = conversationID;
     if (event.sender_waiting) meta.sender_waiting = "true";
     if (msg.sender_leaving) meta.sender_leaving = "true";
     emitTrace(options, "notification_started", messageEvent, lane);
     options.onChatPresented?.(event.session_id, { encrypted });
-    await deliverAwakening(options, {
+    await deliverAwakening(options, presentMessageAwakening({
       kind: "chat",
       content: msg.body,
       meta,
       deliveryIntent: event.sender_waiting ? "steer" : "wake"
-    });
+    }));
     emitTrace(options, "notification_accepted", messageEvent, lane);
     await persistDeliveryMark(options, dispatched, key, messageEvent, lane);
     presentedMessageIds.push(msg.message_id);
@@ -11155,14 +11129,12 @@ async function normalizeMessageTrust(options, msg, trustAddress, verificationAdd
   return options.trust.normalizeResolvedTrust(...args, resolvedMetadata);
 }
 async function resolveMailForDelivery(options, msg) {
-  if (!isEncryptedMessage(msg)) return { ok: true };
-  if (!options.localDecrypt?.mailMessage) {
-    return { ok: false, error: "local aw decrypt provider is not configured" };
-  }
+  if (!isEncryptedMessage(msg)) return true;
+  if (!options.localDecrypt?.mailMessage) return false;
   try {
     const decrypted = await options.localDecrypt.mailMessage(msg.message_id);
     if (!decrypted || typeof decrypted.body !== "string") {
-      return { ok: false, error: "local aw did not return decrypted mail body" };
+      return false;
     }
     const authenticated = await verifyDecryptedMessage(msg, decrypted, "mail", msg.conversation_id, options.self);
     msg.verification_status = authenticated ? "verified" : "unverified";
@@ -11173,20 +11145,18 @@ async function resolveMailForDelivery(options, msg) {
     }
     msg.subject = decrypted.subject;
     msg.body = decrypted.body;
-    return { ok: true };
-  } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    return true;
+  } catch {
+    return false;
   }
 }
 async function resolveChatForDelivery(options, sessionID, msg) {
-  if (!isEncryptedMessage(msg)) return { ok: true };
-  if (!options.localDecrypt?.chatMessage) {
-    return { ok: false, error: "local aw decrypt provider is not configured" };
-  }
+  if (!isEncryptedMessage(msg)) return true;
+  if (!options.localDecrypt?.chatMessage) return false;
   try {
     const decrypted = await options.localDecrypt.chatMessage(sessionID, msg.message_id);
     if (!decrypted || typeof decrypted.body !== "string") {
-      return { ok: false, error: "local aw did not return decrypted chat body" };
+      return false;
     }
     const authenticated = await verifyDecryptedMessage(msg, decrypted, "chat", sessionID, options.self);
     msg.verification_status = authenticated ? "verified" : "unverified";
@@ -11196,26 +11166,10 @@ async function resolveChatForDelivery(options, sessionID, msg) {
       if (authenticated.signed_from) msg.from_address = authenticated.signed_from;
     }
     msg.body = decrypted.body;
-    return { ok: true };
-  } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    return true;
+  } catch {
+    return false;
   }
-}
-function encryptedDeliveryFailureMeta(type2, from, messageID, conversationID, error, sessionID) {
-  const meta = {
-    type: type2,
-    from,
-    message_id: messageID,
-    encrypted: "true",
-    decrypted: "false",
-    decrypt_error: error
-  };
-  if (conversationID) meta.conversation_id = conversationID;
-  if (sessionID) meta.session_id = sessionID;
-  return meta;
-}
-function isTrustedVerificationStatus(status2) {
-  return status2 === "verified" || status2 === "verified_custodial";
 }
 function trustWarningLine(status2) {
   if (isTrustedVerificationStatus(status2)) return "";
@@ -11240,7 +11194,8 @@ function formatAwakeningForAgent(awakening) {
   const rawType = awakening.meta.type || awakening.kind;
   const type2 = awakening.kind === "app" ? sanitizeSummaryComponent(rawType) || "app" : rawType;
   const lines = [`aweb ${type2} event received.`];
-  const warning = Object.prototype.hasOwnProperty.call(awakening.meta, "trust_status") ? trustWarningLine(awakening.meta.trust_status) : "";
+  const withheld = awakening.meta.content_withheld === "true";
+  const warning = !withheld && Object.prototype.hasOwnProperty.call(awakening.meta, "trust_status") ? trustWarningLine(awakening.meta.trust_status) : "";
   if (warning) lines.push("", warning);
   lines.push("", "Metadata:");
   for (const [key, value] of Object.entries(awakening.meta)) {
@@ -11250,10 +11205,12 @@ function formatAwakeningForAgent(awakening) {
   if (awakening.kind === "app") {
     const summary = sanitizeSummaryComponent(awakening.content) || formatAppEventMetaSummary(awakening.meta);
     if (summary) lines.push("", "App event:", summary);
+  } else if (withheld) {
+    lines.push("", awakening.content);
   } else if (awakening.content) {
     lines.push("", "Message:", awakening.content);
   }
-  lines.push("", awakeningClosingLine(awakening.kind));
+  if (!withheld) lines.push("", awakeningClosingLine(awakening.kind));
   return lines.join("\n");
 }
 function formatAppEventMetaSummary(meta) {
@@ -11382,10 +11339,6 @@ function normalizeTerminalReadiness(raw, present = true) {
 }
 function terminalInputSafeText(text2) {
   return text2.replace(/\r\n?/g, "\n").replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F\u0080-\u009F]/g, "");
-}
-function validatedNoticeID(value) {
-  const raw = value || "";
-  return /^[0-9a-f]{32}$/i.test(raw) || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(raw) ? raw : void 0;
 }
 function quotedIdentityHome(home) {
   if (!home.startsWith("/") || /[\x00-\x1F\x7F-\u009F\u2028\u2029]/.test(home)) return void 0;
@@ -11529,7 +11482,7 @@ function createTerminalAwakeningHandler(options) {
     if (options.isPaused?.()) throw new Error("terminal delivery is paused");
     const quotedHome = receivingIdentityHome === void 0 ? void 0 : quotedIdentityHome(receivingIdentityHome);
     const command = quotedHome ? `aw --identity-home ${quotedHome}` : "aw";
-    const text2 = heldReason ? `[aweb] 1 message held (${heldReason}). Run: ${command} ${awakening.kind === "mail" ? "mail inbox" : "chat pending"}` : [...ambientBatch, { awakening, receivingIdentityHome }].map((item) => textForTerminalAwakening(item.awakening, item.receivingIdentityHome)).join("\n\n---\n\n");
+    const text2 = heldReason ? (awakening.meta.decrypted !== "false" ? withheldMessageNotice(awakening, command) : void 0) ?? `[aweb] 1 message held (${heldReason}). Run: ${command} ${awakening.kind === "mail" ? "mail inbox" : "chat pending"}` : [...ambientBatch, { awakening, receivingIdentityHome }].map((item) => textForTerminalAwakening(item.awakening, item.receivingIdentityHome)).join("\n\n---\n\n");
     throwIfAborted2(options.signal);
     await options.session.input(options.home, text2);
     if (heldReason) {
@@ -11610,24 +11563,65 @@ function traceStatus(bindingID, entry) {
     trace_session_id: entry.session_id
   });
 }
+async function inspectStartupPresence(observer) {
+  try {
+    await observer.inspect();
+  } catch (error) {
+    if (!observer.signal.aborted) observer.reportError(error);
+  }
+}
+async function observeStartupPresence(observer) {
+  while (!observer.signal.aborted && !observer.hasObservedReceiver()) {
+    try {
+      await delay(250, void 0, { signal: observer.signal });
+    } catch (error) {
+      if (observer.signal.aborted) return;
+      throw error;
+    }
+    if (observer.signal.aborted || observer.hasObservedReceiver()) return;
+    await inspectStartupPresence(observer);
+  }
+}
 async function start(init) {
   paused = Boolean(init.paused);
   const oatsBin = init.oatsBin || process.env.AW_WAKE_OATS_BIN || "oats";
   const awCommand = init.awCommand || "aw";
   let confirmedLive = false;
+  let receiverObserved = false;
+  let pendingInspection;
+  const inspectSession = async (home) => {
+    if (abort.signal.aborted) throw new Error("runner generation stopped");
+    status({ readiness_waiting: "inspect_start" });
+    try {
+      const envelope = await runOATS(oatsBin, ["session", "inspect", "--home", home, "--json"], "", { signal: abort.signal });
+      if (abort.signal.aborted) throw new Error("runner generation stopped");
+      const observation = envelope.result;
+      if (typeof observation?.present !== "boolean" || observation.state !== void 0 && typeof observation.state !== "string" || observation.running !== void 0 && typeof observation.running !== "boolean") {
+        throw new Error("oats session inspect did not report valid process presence");
+      }
+      const state = normalizeTerminalReadiness(observation.state, observation.present);
+      if (observation.present) confirmedLive = true;
+      if (observation.present && observation.running !== false && state !== "shell" && state !== "stopped" && state !== "not-launched") {
+        receiverObserved = true;
+      }
+      status({ readiness_waiting: "inspect_done", readiness_state: state, readiness_error: "" });
+      if (confirmedLive && (state === "stopped" || state === "not-launched")) onInactive(state);
+      return { present: observation.present, state };
+    } catch (error) {
+      if (!abort.signal.aborted) {
+        status({ readiness_waiting: "inspect_error", readiness_error: error instanceof Error ? error.message : String(error) });
+      }
+      throw error;
+    }
+  };
   const session = {
     async inspect(home) {
-      status({ readiness_waiting: "inspect_start" });
+      if (pendingInspection) return pendingInspection;
+      pendingInspection = inspectSession(home);
       try {
-        const envelope = await runOATS(oatsBin, ["session", "inspect", "--home", home, "--json"], "", { signal: abort.signal });
-        if (envelope.result?.present === true) confirmedLive = true;
-        const state = normalizeTerminalReadiness(envelope.result?.state, envelope.result?.present ?? true);
-        status({ readiness_waiting: "inspect_done", readiness_state: state, readiness_error: "" });
-        if (confirmedLive && (state === "stopped" || state === "not-launched")) onInactive(state);
-        return { present: envelope.result?.present, state };
-      } catch (error) {
-        status({ readiness_waiting: "inspect_error", readiness_error: error instanceof Error ? error.message : String(error) });
-        throw error;
+        return await pendingInspection;
+      } finally {
+        pendingInspection = void 0;
       }
     },
     async input(home, text2) {
@@ -11678,15 +11672,16 @@ async function start(init) {
       status({ binding_id: binding.binding_id, error: message });
     }));
   }
-  try {
-    await session.inspect(init.home);
-  } catch (error) {
-    if (!abort.signal.aborted) {
-      lastError = error instanceof Error ? error.message : String(error);
-      status({ readiness_error: lastError });
-    }
-  }
+  const startup = {
+    inspect: () => session.inspect(init.home),
+    hasObservedReceiver: () => receiverObserved,
+    signal: abort.signal,
+    reportError: (error) => status({ readiness_error: error instanceof Error ? error.message : String(error) })
+  };
+  await inspectStartupPresence(startup);
+  if (abort.signal.aborted) return;
   status({ ready: true });
+  consumers.push(observeStartupPresence(startup));
 }
 async function main() {
   const rl = createInterface({ input: process.stdin, crlfDelay: Infinity });
