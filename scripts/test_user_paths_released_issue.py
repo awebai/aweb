@@ -129,10 +129,26 @@ class HistoricalChatIssue(unittest.TestCase):
         for row in lanes["released"]["outcomes"]:
             if row["case"] in ["released/t1->t2/chat/v2", "released/t2->t1/chat/v2"]:
                 row.update(failure(row["case"]))
+            elif row["case"] in [
+                "released/contacts-only/mail",
+                "released/contacts-only/chat",
+            ]:
+                diagnostic = "Expected contacts_only; server stored team_and_contacts"
+                row.update(status="FAILED", error=diagnostic, assertion=diagnostic)
         report = qualification(lanes, 100, [])
         self.assertEqual(report["status"], "PASSED")
-        self.assertEqual(len(report["known_issues"]), 2)
-        self.assertEqual(len(report["passed_agent_cases"]), 64)
+        known_issues = {row["case"] for row in report["known_issues"]}
+        self.assertEqual(
+            known_issues,
+            {
+                "released/t1->t2/chat/v2",
+                "released/t2->t1/chat/v2",
+                "released/contacts-only/mail",
+                "released/contacts-only/chat",
+            },
+        )
+        self.assertEqual(len(report["passed_agent_cases"]), 62)
+        self.assertTrue(known_issues.isdisjoint(report["passed_agent_cases"]))
         self.assertEqual(len(report["required_agent_cases"]), 66)
         self.assertEqual(report["missing_agent_cases"], [])
 

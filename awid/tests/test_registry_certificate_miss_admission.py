@@ -16,9 +16,13 @@ from test_team_visibility_enforcement import _register_member
 @pytest.mark.parametrize(
     "next_window", [False, True], ids=["same-window", "next-window"]
 )
+@pytest.mark.parametrize(
+    "list_completes", [False, True], ids=["list-in-flight", "list-completed"]
+)
 async def test_inflight_list_started_during_admission_owns_the_refresh(
     controller_app,
     next_window,
+    list_completes,
 ):
     env = controller_app
     domain, team = "local", "base"
@@ -29,8 +33,10 @@ async def test_inflight_list_started_during_admission_owns_the_refresh(
     list_path = f"/v1/namespaces/{domain}/teams/{team}/certificates"
     list_entered = asyncio.Event()
     release_list = asyncio.Event()
+    first_entered = asyncio.Event()
     second_entered = asyncio.Event()
     second_admitted = asyncio.Event()
+    resume_admission = asyncio.Event()
     arrivals = 0
     admissions = []
     reads = []
@@ -51,6 +57,7 @@ async def test_inflight_list_started_during_admission_owns_the_refresh(
             arrival = arrivals
             if arrival == 1:
                 # Both callers must observe an empty in-flight map.
+                first_entered.set()
                 await second_entered.wait()
             else:
                 assert arrival == 2
@@ -66,6 +73,8 @@ async def test_inflight_list_started_during_admission_owns_the_refresh(
             admissions.append(result)
             if arrival == 2:
                 second_admitted.set()
+                if list_completes:
+                    await resume_admission.wait()
             return result
 
     transport = ObservedTransport(app=env.app, client=env.client._transport.client)
@@ -75,24 +84,31 @@ async def test_inflight_list_started_during_admission_owns_the_refresh(
     ):
         try:
             async with asyncio.timeout(5), asyncio.TaskGroup() as callers:
-                pending = [
-                    callers.create_task(
-                        sdk.refresh_team_certificates_after_miss(
-                            domain, team, certificate_id=certificate_id
-                        )
-                    )
-                    for _ in range(2)
-                ]
+                def start_read():
+                    return callers.create_task(sdk.refresh_team_certificates_after_miss(
+                        domain, team, certificate_id=certificate_id,
+                    ))
+
+                first = start_read()
+                await first_entered.wait()
+                second = start_read()
                 await second_admitted.wait()
                 release_list.set()
+                if list_completes:
+                    # The reader is still suspended on its Redis admission
+                    # even though the first list has published its observation.
+                    await first
+                    resume_admission.set()
             assert admissions == [-1, -1 if next_window else 0]
-            assert [call.result() for call in pending] == [
+            assert [first.result(), second.result()] == [
                 TeamCertificateStanding.ACTIVE,
                 TeamCertificateStanding.ACTIVE,
             ]
             assert reads == [list_path]
+            assert not sdk._team_certificate_miss_states
         finally:
             release_list.set()
+            resume_admission.set()
             keys = [key async for key in redis.scan_iter(match=f"*{origin}:*")]
             if keys:
                 await redis.delete(*keys)

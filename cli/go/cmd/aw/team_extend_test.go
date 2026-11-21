@@ -573,7 +573,7 @@ func TestTeamExtendMiddleFailureReportsEveryRosterOutcome(t *testing.T) {
 			initAwebURL = server.URL
 
 			var runErr error
-			output := captureIDCommandStdout(t, func() {
+			output := captureStdout(t, func() {
 				runErr = runTeamHumanExtend(nil, []string{"first", "second", "third"})
 			})
 			if runErr == nil || !strings.Contains(runErr.Error(), wantFailure) || strings.Contains(runErr.Error(), "injected middle-member failure") {

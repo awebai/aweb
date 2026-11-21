@@ -276,7 +276,7 @@ async def test_new_key_retry_reads_revocations_again(world):
     env = world
     env.keys["backend"] = env.new_did
     env.revoked = ["cert-001"]
-    assert await _refused(env) == "revoked"
+    assert (await _refused(env))["code"] == "certificate_revoked"
     assert env.key_reads == 1
     assert env.revocation_reads == 1
 
@@ -355,5 +355,5 @@ async def test_cached_revocation_never_triggers_key_refresh(world):
     entry = json.loads(world.redis.values[key])
     entry["value"] = ["cert-001"]
     world.redis.values[key] = json.dumps(entry)
-    assert await _refused(world, signer="old") == "revoked"
+    assert (await _refused(world, signer="old"))["code"] == "certificate_revoked"
     assert world.key_reads == 0

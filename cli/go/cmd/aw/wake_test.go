@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -744,6 +745,165 @@ func TestWakeCommandsFallBackToFilesWhenTheDaemonIsDown(t *testing.T) {
 	if _, ok, _ := store.LoadRegistration(instanceHome); ok {
 		t.Fatal("deregister via the fallback path left the registration behind")
 	}
+}
+
+// TestWakeCommandsWaitOutABrokerRestart drives the commands the oats.aweb hooks
+// run, through the built aw, while the daemon lock is held with no control
+// socket. A restarting broker is in that state from taking the lock until it
+// listens, and from closing its socket until its channel-core children have
+// stopped (up to 7 s). OATS reads a non-zero exit from its spawn and retire
+// hooks as a failure, so a restart is waited out rather than refused. Only a
+// daemon that holds the lock through the whole wait is refused, by pid.
+func TestWakeCommandsWaitOutABrokerRestart(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	defer cancel()
+
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(root, "aw")
+	buildAwBinary(t, ctx, bin)
+	env := append(testCommandEnv(filepath.Join(root, "user-home")), "AW_NO_UPDATE_CHECK=1", awconfig.IdentityHomeEnv+"=")
+
+	// The daemon's control socket path is bounded by sun_path; /tmp keeps it short.
+	newState := func(t *testing.T) (string, *wake.Store) {
+		t.Helper()
+		stateRoot, err := os.MkdirTemp("/tmp", "awwr")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.RemoveAll(stateRoot) })
+		stateDir := filepath.Join(stateRoot, "w")
+		store, err := wake.NewStore(stateDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return stateDir, store
+	}
+	newHome := func(t *testing.T, name string) string {
+		t.Helper()
+		home := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Join(home, ".aw"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		return home
+	}
+	// The exact calls the oats.aweb spawn and retire hooks make.
+	registerArgs := func(home, stateDir string) []string {
+		return []string{"wake", "register", "--home", home, "--identity-home", filepath.Join(home, ".aw"),
+			"--delivery", "session", "--backend", "tmux", "--state-dir", stateDir}
+	}
+	deregisterArgs := func(home, stateDir string) []string {
+		return []string{"wake", "deregister", "--home", home, "--state-dir", stateDir}
+	}
+	run := func(args []string) (string, time.Duration, error) {
+		started := time.Now()
+		cmd := exec.CommandContext(ctx, bin, args...)
+		cmd.Dir = root
+		cmd.Env = env
+		out, err := cmd.CombinedOutput()
+		return string(out), time.Since(started), err
+	}
+	// holdLock takes the daemon lock as a broker does, pid file included.
+	holdLock := func(t *testing.T, store *wake.Store) *wake.Lock {
+		t.Helper()
+		lock, err := wake.AcquireLock(store.LockPath())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return lock
+	}
+
+	t.Run("child shutdown", func(t *testing.T) {
+		stateDir, store := newState(t)
+		home := newHome(t, "shutdown-home")
+		const shutdown = 7 * time.Second
+		for _, args := range [][]string{registerArgs(home, stateDir), deregisterArgs(home, stateDir)} {
+			lock := holdLock(t, store)
+			released := make(chan error, 1)
+			go func() {
+				time.Sleep(shutdown)
+				released <- lock.Release()
+			}()
+			out, elapsed, err := run(args)
+			if releaseErr := <-released; releaseErr != nil {
+				t.Fatal(releaseErr)
+			}
+			if err != nil {
+				t.Fatalf("%v during a broker shutdown: %v\n%s", args, err, out)
+			}
+			if elapsed < shutdown {
+				t.Fatalf("%v finished after %s, before the shutdown released the lock at %s:\n%s", args, elapsed, shutdown, out)
+			}
+		}
+		if _, ok, err := store.LoadRegistration(home); err != nil || ok {
+			t.Fatalf("register then deregister across shutdowns left ok=%t err=%v", ok, err)
+		}
+	})
+
+	t.Run("startup", func(t *testing.T) {
+		stateDir, store := newState(t)
+		home := newHome(t, "startup-home")
+		lock := holdLock(t, store)
+		type result struct {
+			out string
+			err error
+		}
+		registered := make(chan result, 1)
+		go func() {
+			out, _, err := run(registerArgs(home, stateDir))
+			registered <- result{out, err}
+		}()
+		time.Sleep(time.Second)
+		if err := lock.Release(); err != nil {
+			t.Fatal(err)
+		}
+		daemonCtx, stopDaemon := context.WithCancel(ctx)
+		daemon := exec.CommandContext(daemonCtx, bin, "wake", "run", "--state-dir", stateDir)
+		daemon.Dir = root
+		daemon.Env = env
+		if err := daemon.Start(); err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			stopDaemon()
+			_ = daemon.Wait()
+		}()
+		got := <-registered
+		if got.err != nil {
+			t.Fatalf("register during a broker startup: %v\n%s", got.err, got.out)
+		}
+		// Either the daemon took the request over its socket or the
+		// command wrote it under the free lock; the store holds it either way.
+		if _, ok, err := store.LoadRegistration(home); err != nil || !ok {
+			t.Fatalf("register during a broker startup wrote no registration: ok=%t err=%v\n%s", ok, err, got.out)
+		}
+	})
+
+	t.Run("wedged", func(t *testing.T) {
+		stateDir, store := newState(t)
+		home := newHome(t, "wedged-home")
+		lock := holdLock(t, store)
+		defer func() { _ = lock.Release() }()
+		out, elapsed, err := run(registerArgs(home, stateDir))
+		if err == nil {
+			t.Fatalf("register against a daemon that never answered succeeded:\n%s", out)
+		}
+		// The documented restart wait (docs/terminal-wake-broker.md, Local state).
+		const restartWait = 15 * time.Second
+		if elapsed < restartWait {
+			t.Fatalf("register refused after %s, before the %s restart wait:\n%s", elapsed, restartWait, out)
+		}
+		for _, want := range []string{fmt.Sprintf("pid %d", os.Getpid()), "aw wake run"} {
+			if !strings.Contains(out, want) {
+				t.Fatalf("the refusal does not say %q:\n%s", want, out)
+			}
+		}
+		if _, ok, err := store.LoadRegistration(home); err != nil || ok {
+			t.Fatalf("a refused register wrote state under a live lock: ok=%t err=%v", ok, err)
+		}
+	})
 }
 
 // TestWakeRegisterAcceptsAHomeUnderASymlinkedParent is the regression for the

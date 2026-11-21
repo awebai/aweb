@@ -107,28 +107,18 @@ func TestBeadsMailDualWriteFailureAndHangNeverPropagate(t *testing.T) {
 
 		// Capture stderr: the record-gap note must actually be told to the
 		// user, not just implied.
-		origStderr := os.Stderr
-		r, w, err := os.Pipe()
-		if err != nil {
-			t.Fatal(err)
-		}
-		os.Stderr = w
-
-		start := time.Now()
-		beadsMailRecordBead(sel, m, "s", "b", resp, "", beadsMailEnvelope{})
-		elapsed := time.Since(start)
-
-		_ = w.Close()
-		os.Stderr = origStderr
-		captured := make([]byte, 4096)
-		n, _ := r.Read(captured)
-		_ = r.Close()
+		var elapsed time.Duration
+		captured := captureStderr(t, func() {
+			start := time.Now()
+			beadsMailRecordBead(sel, m, "s", "b", resp, "", beadsMailEnvelope{})
+			elapsed = time.Since(start)
+		})
 
 		if elapsed > beadsMailDualWriteTimeout+3*time.Second {
 			t.Errorf("mode=%s: dual-write took %s; the timeout bound failed", mode, elapsed)
 		}
-		if !strings.Contains(string(captured[:n]), "recording the message bead failed") {
-			t.Errorf("mode=%s: record-gap note missing from stderr: %q", mode, captured[:n])
+		if !strings.Contains(captured, "recording the message bead failed") {
+			t.Errorf("mode=%s: record-gap note missing from stderr: %q", mode, captured)
 		}
 		if beads := loadBeadsMailBeadMap(sel); len(beads) != 0 {
 			t.Errorf("mode=%s: failed write still mapped a bead: %v", mode, beads)

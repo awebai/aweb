@@ -17,8 +17,10 @@ import (
 //
 // register, deregister, pause, resume and status talk to the running daemon
 // over it. Mutation fallback holds the daemon lock while updating state files;
-// a failed exchange with a live daemon is a refusal, not permission to write.
-// The daemon reconciles offline registrations on start and on a timer.
+// a failed exchange with a live daemon is never permission to write. The
+// mutating commands wait out a restart instead, retrying until the daemon
+// answers or its lock frees. The daemon reconciles offline registrations on
+// start and on a timer.
 
 // ControlOp names a control request.
 type ControlOp string
@@ -51,6 +53,10 @@ type ControlResponse struct {
 
 // ErrDaemonDown reports that no broker is listening on the control socket.
 var ErrDaemonDown = errors.New("wake: broker daemon is not running")
+
+// ErrControlTransport reports a control exchange that failed after the socket
+// was found: a dial, write or read that broke or timed out. It is not absence.
+var ErrControlTransport = errors.New("wake: control exchange failed")
 
 // controlDeadline bounds one control exchange so a wedged daemon cannot hang a
 // spawn hook.
@@ -226,7 +232,7 @@ func callWithTimeout(socketPath string, req ControlRequest, timeout time.Duratio
 		if req.Op == OpDeregisterManaged {
 			return fmt.Errorf("E_WAKE_STOP_UNKNOWN: control transport: %w", err)
 		}
-		return fmt.Errorf("wake: control exchange failed; retry or inspect the daemon: %w", err)
+		return fmt.Errorf("%w; retry or inspect the daemon: %w", ErrControlTransport, err)
 	}
 	if err := checkControlSocket(socketPath); err != nil {
 		if os.IsNotExist(err) {
