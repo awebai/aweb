@@ -31,3 +31,53 @@ The user-paths gate qualifies the released OATS kernel against candidate aw usin
 the real provider and an isolated passive tmux session. Its kernel wake receipt
 is required; direct channel-core delivery alone does not qualify this seam. This
 does not qualify a deployed image or Helm storage.
+
+The probe creates its private deployment's `agents/` directory before calling
+the released kernel. Its bootstrap control runs OATS 0.69.19 with an empty HOME,
+no global Git identity and no parent checkout, so deployment discovery cannot
+borrow the developer's environment. Failed kernel commands retain the JSON
+error code while leaving private stdout out of diagnostics.
+The control excludes Claude from PATH and checks that an unconfigured
+`--no-launch` spawn refuses its unavailable harness before creating a home.
+It then selects the installed Node executable through a local launch
+configuration: the released kernel validates a future launch even when no
+process is started. No placeholder harness executable is installed.
+
+The wake journey explicitly configures a passive Node program as its terminal
+executable, with Codex session delivery. The program has a shebang naming the
+installed Node interpreter; kernel-inserted Codex arguments become script argv.
+Naming Node itself as the executable would make those arguments interpreter
+options (`-c` requests a syntax check) and terminate the terminal instead.
+No executable named `codex` or `claude` is installed or impersonated, and this
+fixture does not certify model execution. The control starts the real released
+kernel session, checks independent terminal liveness after one idle second,
+and retires the home. Actual provider, wake and mail delivery remain the
+user-paths stage's responsibility.
+
+Every probe assertion records its named inputs before verification, using one
+receipt owner. Booleans, numbers, public state words, UTC timestamps and file
+modes are retained; opaque strings and objects are withheld. The full public
+wake snapshot is saved before the quiet-start and idle assertions, so a failed
+check retains its actual `last_input_at`. Assertion failures keep their cause
+and identify the check and receipt without printing private compared values.
+
+`ChannelCoreStatus.LastInputAt` is a Go `time.Time`: no broker input can appear
+as the nonempty JSON string `0001-01-01T00:00:00Z`. The probe accepts that zero,
+an omitted field or the child's empty string as absence. It still refuses
+nonzero or malformed values before the controlled mail. The runner updates
+this timestamp only after a submitted `session input`; the startup observer
+only calls `session inspect` (terminal-wake-broker.md:195-200). The released
+kernel's TASK prompt is launch argv, not this broker input receipt. Generation
+zero is omitted by Go JSON too; the probe compares its numeric default and the
+runner's actual start time to retain the same-generation/process check.
+
+Released plain `retire --json` returns a direct receipt, not an `ok` envelope:
+cleanup requires the exact instance, home removal and confirmed provider
+retirement/alias release.
+
+Command failures retain a child label, executable, PID, elapsed time, configured
+deadline and bounded output tails from known non-secret producers. All kernel
+lifecycle and aw status/credential calls withhold both streams, retaining only
+the safe error code and child identity/timing/status/cause fields. The command
+deadline remains 60 seconds. Diagnostics identify a failure without certifying
+its underlying cause.

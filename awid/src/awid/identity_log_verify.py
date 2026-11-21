@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 import binascii
 import hashlib
 import json
@@ -14,13 +13,16 @@ from typing import Mapping, Sequence
 from awid.did import public_key_from_did, stable_id_from_did_key, validate_stable_id
 from awid.federation_errors import FederationAuthorityError
 from awid.log import identity_state_hash, log_entry_payload
+from awid.signature_wire import Base64Profile, decode_base64
 from awid.signing import verify_did_key_signature
 
 MAX_SAFE_SEQUENCE = 2**53 - 1
 MAX_LOG_ENTRIES = 4096
 _HEX_256 = re.compile(r"^[0-9a-f]{64}$")
 # ASCII digits only; Z or a +hh:mm/-hh:mm offset.
-_TIMESTAMP = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])$")
+_TIMESTAMP = re.compile(
+    r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])$"
+)
 
 
 @dataclass(frozen=True)
@@ -41,7 +43,9 @@ class VerifiedIdentityLog:
     contains_checkpoint: bool
 
 
-def _invalid(*, did_aw: str | None = None, seq: int | None = None) -> FederationAuthorityError:
+def _invalid(
+    *, did_aw: str | None = None, seq: int | None = None
+) -> FederationAuthorityError:
     return FederationAuthorityError(
         "sender_did_log_invalid",
         did_aw=did_aw,
@@ -55,7 +59,9 @@ def _require_sequence(value: object, *, did_aw: str | None = None) -> int:
     return value
 
 
-def _require_text(entry: Mapping[str, object], name: str, *, did_aw: str, seq: int) -> str:
+def _require_text(
+    entry: Mapping[str, object], name: str, *, did_aw: str, seq: int
+) -> str:
     value = entry.get(name)
     if not isinstance(value, str) or not value or value != value.strip():
         raise _invalid(did_aw=did_aw, seq=seq)
@@ -68,17 +74,21 @@ def _require_hash(value: object, *, did_aw: str, seq: int) -> str:
     return value
 
 
-def _verify_signature(*, did_key: str, payload: bytes, signature: object, did_aw: str, seq: int) -> None:
+def _verify_signature(
+    *, did_key: str, payload: bytes, signature: object, did_aw: str, seq: int
+) -> None:
     if not isinstance(signature, str) or not signature or "=" in signature:
         raise _invalid(did_aw=did_aw, seq=seq)
     try:
-        decoded = base64.b64decode(signature + "=" * (-len(signature) % 4), validate=True)
+        decoded = decode_base64(signature, profile=Base64Profile.UNPADDED_STANDARD)
     except (binascii.Error, ValueError) as exc:
         raise _invalid(did_aw=did_aw, seq=seq) from exc
     if len(decoded) != 64:
         raise _invalid(did_aw=did_aw, seq=seq)
     try:
-        verify_did_key_signature(did_key=did_key, payload=payload, signature_b64=signature)
+        verify_did_key_signature(
+            did_key=did_key, payload=payload, signature_b64=signature
+        )
     except ValueError as exc:
         raise _invalid(did_aw=did_aw, seq=seq) from exc
 
@@ -138,7 +148,10 @@ def _verify_entry(
         if previous is None:
             # Internally valid unanchored heads still cannot authorize.
             pass
-        elif previous_key != previous.current_did_key or previous_hash != previous.entry_hash:
+        elif (
+            previous_key != previous.current_did_key
+            or previous_hash != previous.entry_hash
+        ):
             raise _invalid(did_aw=did_aw, seq=seq)
 
     state_hash = _require_hash(entry.get("state_hash"), did_aw=did_aw, seq=seq)
@@ -213,7 +226,9 @@ def verify_identity_head(
                 did_aw=did_aw,
                 current_did_key=current_did_key,
                 entry=entry,
-                previous=None if seq == 1 else IdentityCheckpoint(
+                previous=None
+                if seq == 1
+                else IdentityCheckpoint(
                     seq=seq - 1,
                     entry_hash=str(entry.get("prev_entry_hash")),
                     state_hash="",
@@ -265,7 +280,9 @@ def verify_identity_log(
     if not entries:
         raise FederationAuthorityError("sender_identity_unverifiable", did_aw=did_aw)
     if len(entries) > MAX_LOG_ENTRIES:
-        raise FederationAuthorityError("sender_identity_evidence_too_large", did_aw=did_aw)
+        raise FederationAuthorityError(
+            "sender_identity_evidence_too_large", did_aw=did_aw
+        )
     if any(not isinstance(entry, Mapping) for entry in entries):
         raise _invalid(did_aw=did_aw)
     if _require_sequence(entries[0].get("seq"), did_aw=did_aw) != 1:
@@ -309,8 +326,13 @@ def verify_identity_log(
             if verified.seq < checkpoint.seq
             else "sender_did_log_split_view"
         )
-        raise FederationAuthorityError(reason, did_aw=did_aw, observed_sequence=verified.seq)
-    if expected_current_did_key is not None and verified.current_did_key != expected_current_did_key:
+        raise FederationAuthorityError(
+            reason, did_aw=did_aw, observed_sequence=verified.seq
+        )
+    if (
+        expected_current_did_key is not None
+        and verified.current_did_key != expected_current_did_key
+    ):
         raise FederationAuthorityError(
             "sender_current_key_mismatch",
             did_aw=did_aw,
@@ -336,5 +358,10 @@ def decode_identity_key_resolution(body: bytes) -> dict[str, object]:
     if head is not None:
         if not isinstance(head, dict):
             raise _invalid()
-        _require_sequence(head.get("seq"), did_aw=value.get("did_aw") if isinstance(value.get("did_aw"), str) else None)
+        _require_sequence(
+            head.get("seq"),
+            did_aw=value.get("did_aw")
+            if isinstance(value.get("did_aw"), str)
+            else None,
+        )
     return value

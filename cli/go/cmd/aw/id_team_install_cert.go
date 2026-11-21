@@ -136,7 +136,7 @@ func credentialUpdateError(err error) error {
 // membershipRecorded reports whether the home already records cert's team
 // membership at registryURL, or at its own registry when registryURL is "".
 func membershipRecorded(workingDir, identityHome string, cert *awid.TeamCertificate, registryURL string) bool {
-	state, err := loadOptionalTeamState(workingDir, identityHome)
+	state, err := loadOptionalTeamState(teamMembershipLocation{WorkingDir: workingDir, IdentityHome: identityHome})
 	if err != nil || state == nil {
 		return false
 	}
@@ -337,12 +337,19 @@ func recordTeamCertificate(workingDir, identityHome string, cert *awid.TeamCerti
 				return err
 			}
 		}
-		if err := upsertAcceptedTeamMembershipState(workingDir, &teamAcceptInviteOutput{
-			Status:   status,
-			TeamID:   cert.Team,
-			Alias:    strings.TrimSpace(cert.Alias),
-			CertPath: awconfig.TeamCertificateRelativePath(cert.Team),
-		}, cert, registryURL, "", false, identityHome); err != nil {
+		if err := upsertAcceptedTeamMembershipState(teamMembershipStateUpdate{
+			Location: teamMembershipLocation{WorkingDir: workingDir, IdentityHome: identityHome},
+			Output: &teamAcceptInviteOutput{
+				Status:   status,
+				TeamID:   cert.Team,
+				Alias:    strings.TrimSpace(cert.Alias),
+				CertPath: awconfig.TeamCertificateRelativePath(cert.Team),
+			},
+			Certificate: cert,
+			RegistryURL: registryURL,
+			AwebURL:     "",
+			Activation:  membershipPreserveActive,
+		}); err != nil {
 			return err
 		}
 	}

@@ -2,14 +2,14 @@
 // oats-aweb v1.42.1 test/resident-journey.test.mjs's real local-member workspace.
 // A supported passive launch executable avoids a model call, per OATS's launch
 // configuration contract. Neither the kernel, provider, aw nor broker is faked.
-import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { spawn, spawnSync } from "node:child_process";
-import { chmodSync, copyFileSync, cpSync, mkdirSync, readFileSync, rmSync, statSync, existsSync, symlinkSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { chmodSync, copyFileSync, cpSync, mkdirSync, readFileSync, statSync, existsSync, symlinkSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { DiagnosticOutput, cleanupPassiveTerminal, createProbeAssertions, wakeTimestampIsUnset, kernelSessionSnapshot, prepareKernelProbeDirectories, preparePassiveKernelLaunch, runKernelLifecycleCommand, runKernelProbeCommand } from "./user_paths_kernel_setup.mjs";
 
 const KernelBackend = Object.freeze({ Tmux: "tmux" });
 const OWNED_TMUX = ["tmux", "-L", "oats"];
@@ -23,13 +23,14 @@ const { values } = parseArgs({ options: {
   "fixture-home": { type: "string" }, sender: { type: "string" }, team: { type: "string" }, output: { type: "string" },
   "source-commit": { type: "string" },
 } });
+const evidence = {};
+const assert = createProbeAssertions({ evidence, output: values.output });
 for (const option of ["aw", "root", "seat", "sender", "team", "output", "source-commit", "fixture-home"]) {
   assert.ok(values[option], `--${option} is required`);
 }
 const root = resolve(values.root);
-const home = join(root, "home"), deployment = join(root, "deploy"), source = join(root, "source"), bin = join(root, "bin");
-for (const path of [home, deployment, source, bin, join(root, "tmux")]) mkdirSync(path, { recursive: true, mode: 0o700 });
-const evidence = { scope: "released OATS kernel -> candidate aw wake path; not the lab image, supervisor or Helm storage", provider: PIN, candidate_source_commit: values["source-commit"], candidate_binary_sha256: createHash("sha256").update(readFileSync(values.aw)).digest("hex"), process_uid: process.geteuid(), process_gid: process.getegid() };
+const { home, deployment, source, bin } = prepareKernelProbeDirectories({ root });
+Object.assign(evidence, { scope: "released OATS kernel -> candidate aw wake path; not the lab image, supervisor or Helm storage", provider: PIN, candidate_source_commit: values["source-commit"], candidate_binary_sha256: createHash("sha256").update(readFileSync(values.aw)).digest("hex"), process_uid: process.geteuid(), process_gid: process.getegid() });
 const env = {
   PATH: `${bin}:${dirname(process.execPath)}:/usr/bin:/bin`, HOME: home,
   TMUX_TMPDIR: join(root, "tmux"), OATS_TMUX_SESSION: "r20-kernel-wake",
@@ -40,15 +41,12 @@ const env = {
 };
 symlinkSync(resolve(values.aw), join(bin, "aw"));
 writeFileSync(join(bin, "oats"), `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(KERNEL)} "$@"\n`, { mode: 0o700 });
-writeFileSync(join(bin, "passive-session"), "#!/bin/sh\nexec sleep infinity\n", { mode: 0o700 });
-function command({ argv, cwd = deployment, timeout = 60000 }) {
-  const result = spawnSync(argv[0], argv.slice(1), { cwd, env, encoding: "utf8", timeout });
-  if (result.error) throw result.error;
-  assert.equal(result.status, 0, `${argv.slice(0, 3).join(" ")}: exit=${result.status}: ${result.stderr}`);
-  return result.stdout;
+const passiveLaunch = preparePassiveKernelLaunch({ bin, node: process.execPath });
+function command({ name, argv, cwd = deployment, timeout = 60000, output = DiagnosticOutput.Credential }) {
+  return runKernelProbeCommand({ name, argv, cwd, env, timeout, output });
 }
-const oats = (...argv) => command({ argv: [process.execPath, KERNEL, ...argv] });
-const aw = ({ identity, args }) => command({ argv: [join(bin, "aw"), "--identity-home", join(identity, ".aw"), ...args], cwd: identity });
+const oats = (...args) => runKernelLifecycleCommand({ kernel: KERNEL, args, cwd: deployment, env });
+const aw = ({ identity, args }) => command({ name: `aw ${args.slice(0, 3).join(" ")}`, argv: [join(bin, "aw"), "--identity-home", join(identity, ".aw"), ...args], cwd: identity });
 const parseObject = (raw) => { const value = JSON.parse(raw); assert.ok(value && typeof value === "object" && !Array.isArray(value), "expected command JSON object"); return value; };
 function wakeInstances(status) {
   const rows = status.instances ?? [];
@@ -73,7 +71,7 @@ function executionPermissions(status) {
   const executable = wakeInstances(status).find((row) => row.home === instanceHome)?.channel_core?.bundle_path;
   assert.ok(typeof executable === "string" && executable, "runner reports its actual execution path");
   const entries = [permission(dirname(executable)), permission(executable)];
-  assert.deepEqual(entries.map((entry) => entry.mode), ["700", "600"]);
+  assert.deepEqual(entries.map((entry) => entry.mode), ["700", "600"], "execution directory/file modes must be 0700/0600");
   assert.ok(entries.every((entry) => entry.uid === process.geteuid()), "execution snapshot belongs to runtime UID");
   return entries;
 }
@@ -82,7 +80,7 @@ function executionPermissions(status) {
 function prepareMintAuthority({ seat, fixtureHome, team }) {
   const match = /^([a-z0-9-]+):([a-z0-9.-]+\.test)$/.exec(team);
   assert.ok(match, "mint preflight requires the disposable fixture team");
-  assert.equal(resolve(fixtureHome), join(dirname(resolve(seat)), "home"));
+  assert.equal(resolve(fixtureHome), join(dirname(resolve(seat)), "home"), "mint authority comes from the disposable fixture user home");
   const workspace = createRequire(KERNEL)("yaml").parse(readFileSync(join(seat, ".aw/workspace.yaml"), "utf8"));
   assert.equal(workspace?.aweb_url, env.AWEB_URL, "seat records the local service independently of ambient routing");
   const relativeKey = join(".awid/team-keys", match[2], `${match[1]}.key`);
@@ -94,11 +92,17 @@ function prepareMintAuthority({ seat, fixtureHome, team }) {
   assert.ok(typeof invite.token === "string" && invite.token, "mint preflight must create a disposable invite; its token is not retained");
   return { team, service: workspace.aweb_url, mint_authority: ProbeOutcome.Passed, invite_cleanup: "disposable team; unconsumed preflight invite removed with the team" };
 }
-function activeKernelStatus() {
+function kernelInstanceStatus() {
   const status = parseObject(oats("status", "--json"));
   assert.ok(Array.isArray(status.agents), "kernel status must list agents");
-  const rows = status.agents.flatMap((agent) => { assert.ok(Array.isArray(agent.instances)); return agent.instances; });
-  assert.ok(rows.some((row) => row.home === instanceHome && row.instance === instance && row.running === true), "kernel must report the probe instance active");
+  const rows = status.agents.flatMap((agent) => { assert.ok(Array.isArray(agent.instances), "each kernel agent must list its instances"); return agent.instances; });
+  const row = rows.find((row) => row.home === instanceHome && row.instance === instance);
+  assert.ok(row, "kernel must record the probe instance");
+  return { status, row };
+}
+function activeKernelStatus() {
+  const { status, row } = kernelInstanceStatus();
+  assert.equal(row.running, true, "kernel must report the probe instance active");
   return status;
 }
 function permission(path) {
@@ -110,23 +114,23 @@ let brokerErrors = "";
 const cleanupErrors = [];
 try {
   evidence.kernel = parseObject(oats("--version", "--json"));
-  assert.equal(JSON.parse(readFileSync(join(STAGED, "node_modules/@awebai/oats/package.json"), "utf8")).version, "0.69.19");
+  assert.equal(JSON.parse(readFileSync(join(STAGED, "node_modules/@awebai/oats/package.json"), "utf8")).version, "0.69.19", "released kernel version must match the locked 0.69.19");
   evidence.kernel_integrity = JSON.parse(readFileSync(join(STAGED, "package-lock.json"), "utf8")).packages["node_modules/@awebai/oats"].integrity;
   evidence.node = process.version;
-  evidence.aw = command({ argv: [join(bin, "aw"), "version"] });
+  evidence.aw = command({ name: "aw version", argv: [join(bin, "aw"), "version"], output: DiagnosticOutput.Public });
   assert.match(evidence.aw, new RegExp(`commit: ${values["source-commit"]} `), "candidate aw identifies the requested source SHA");
-  assert.equal(JSON.parse(readFileSync(join(PROVIDER, "oats.json"), "utf8")).version, PIN.version);
+  assert.equal(JSON.parse(readFileSync(join(PROVIDER, "oats.json"), "utf8")).version, PIN.version, "provider version must match its locked pin");
   const ref = pathToFileURL(source).href;
   mkdirSync(join(source, "souls/probe"), { recursive: true });
   cpSync(PROVIDER, join(source, "capabilities/oats-aweb"), { recursive: true });
   writeFileSync(join(source, "oats-workspace.yaml"), `schemaVersion: 2\nname: wake-probe\nmembers:\n  - ${ref}\nlocalTeams: true\ndefaults:\n  messaging:\n    oats.aweb: { from: local/${source} }\n`);
   writeFileSync(join(source, "oats-membership.yaml"), `schemaVersion: 2\nworkspace: ${ref}\n`);
-  writeFileSync(join(source, "souls/probe/soul.yaml"), "schemaVersion: 2\nname: probe\ndescription: released kernel wake probe\nwork: directory\nlaunch: { harness: claude }\n");
+  writeFileSync(join(source, "souls/probe/soul.yaml"), `schemaVersion: 2\nname: probe\ndescription: released kernel wake probe\nwork: directory\nlaunch: { harness: ${passiveLaunch.harness} }\n`);
   writeFileSync(join(source, "souls/probe/AGENTS.md"), "Disposable passive wake probe.\n");
   for (const args of [["init", "-q"], ["add", "."], ["commit", "-qm", "owned wake-probe workspace"]]) {
-    command({ argv: ["git", "-C", source, "-c", "user.name=Wake probe", "-c", "user.email=probe@example.invalid", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", ...args] });
+    command({ name: `git ${args[0]}`, argv: ["git", "-C", source, "-c", "user.name=Wake probe", "-c", "user.email=probe@example.invalid", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", ...args], output: DiagnosticOutput.Public });
   }
-  writeFileSync(join(deployment, "oats-local.yaml"), `schemaVersion: 2\nworkspace: ${ref}\nteams:\n  default: { team: ${JSON.stringify(values.team)} }\ndefaultTeam: default\nsettings:\n  oats.aweb:\n    delivery: session\n    root: ${JSON.stringify(resolve(values.seat))}\nlaunch-configs:\n  passive:\n    harness: claude\n    executable: ${JSON.stringify(join(bin, "passive-session"))}\nsouls:\n  launch:\n    '*': passive\n`);
+  writeFileSync(join(deployment, "oats-local.yaml"), `schemaVersion: 2\nworkspace: ${ref}\nteams:\n  default: { team: ${JSON.stringify(values.team)} }\ndefaultTeam: default\nsettings:\n  oats.aweb:\n    delivery: session\n    root: ${JSON.stringify(resolve(values.seat))}\nlaunch-configs:\n  passive: ${JSON.stringify(passiveLaunch)}\nsouls:\n  launch:\n    '*': passive\n`);
   evidence.mint_preflight = prepareMintAuthority({ seat: values.seat, fixtureHome: values["fixture-home"], team: values.team });
   // Capture bounded public failure text; credentials remain in the owned volume.
   const startOwnedBroker = () => {
@@ -143,16 +147,46 @@ try {
   writeFileSync(join(cache, "runner.mjs"), legacyBytes, { mode: 0o600 });
   writeFileSync(join(cache, "runner.sha256"), "old success stamp\n", { mode: 0o600 });
   broker = startOwnedBroker();
-  const wakeStatus = () => parseObject(command({ argv: [join(bin, "aw"), "wake", "status", "--json"], cwd: home }));
+  const wakeStatus = () => parseObject(command({ name: "aw wake status", argv: [join(bin, "aw"), "wake", "status", "--json"], cwd: home }));
   await until({ read: wakeStatus, ready: (status) => status.daemon_running === true && status.daemon_pid === broker.pid, label: "isolated broker" });
-  const spawned = parseObject(oats("spawn", "probe", "--name", "r20-wake-probe", "--backend", KernelBackend.Tmux, "--json"));
-  assert.equal(spawned.ok, true);
+  const spawned = parseObject(oats("spawn", "probe", "--name", "r20-wake-probe", "--backend", KernelBackend.Tmux, "--no-launch", "--json"));
+  evidence.kernel_spawn = { ok: spawned.ok, instance: spawned.result?.instance, home: spawned.result?.home };
+  assert.equal(spawned.ok, true, "kernel spawn.ok must confirm the no-launch spawn");
   ({ instance, home: instanceHome } = spawned.result);
   assert.ok(instance && instanceHome, "kernel spawn must return its instance and home");
-  evidence.kernel_status_before = activeKernelStatus();
+  const beforeLaunch = kernelInstanceStatus();
+  evidence.kernel_status_before = beforeLaunch.status;
+  assert.equal(beforeLaunch.row.running, false, "a no-launch instance is recorded without a running session");
   const runnerReady = (status) => status.daemon_running === true && status.daemon_pid === broker.pid && wakeInstances(status).some((row) => row.home === instanceHome && row.channel_core?.running === true);
-  const fresh = await until({ read: wakeStatus, ready: runnerReady, label: "kernel-registered wake runner" });
+  const prelaunchKernel = parseObject(oats("session", "inspect", "--home", instanceHome, "--json"));
+  evidence.kernel_prelaunch = kernelSessionSnapshot(prelaunchKernel);
+  assert.equal(prelaunchKernel.result.state, "not-launched", "kernel prelaunch.state must be not-launched");
+  const prelaunch = await until({ read: wakeStatus, ready: (status) => runnerReady(status) && wakeInstances(status).some((row) => row.home === instanceHome && row.last_state === "not-launched" && row.channel_core.readiness_state === "not-launched"), label: "prelaunch observation and ready handshake before process creation" });
+  evidence.wake_prelaunch = prelaunch;
+  const prelaunchRow = wakeInstances(prelaunch).find((row) => row.home === instanceHome);
+  assert.equal(prelaunchRow.phase, "pending", "wake prelaunch.phase must be pending before session creation");
+  const started = parseObject(oats("session", "start", "--home", instanceHome, "--json"));
+  evidence.kernel_start = { ok: typeof started.ok === "boolean" ? started.ok : null };
+  assert.equal(started.ok, true, "kernel session start.ok must confirm launch");
+  const liveKernel = parseObject(oats("session", "inspect", "--home", instanceHome, "--json"));
+  evidence.kernel_started_idle = kernelSessionSnapshot(liveKernel);
+  assert.equal(liveKernel.result.present, true, "kernel started_idle.present must be true before quiet wake readiness");
+  assert.equal(liveKernel.result.running, true, "kernel started_idle.running must be true before quiet wake readiness");
+  evidence.kernel_status_started_idle = activeKernelStatus();
+  const fresh = await until({ read: wakeStatus, ready: (status) => runnerReady(status) && wakeInstances(status).some((row) => row.home === instanceHome && row.phase === "active") && status.readiness?.some((verdict) => verdict.home === instanceHome && verdict.ready === true), label: "quiet startup readiness before any mail" });
   evidence.wake_fresh = fresh;
+  const freshRow = wakeInstances(fresh).find((row) => row.home === instanceHome);
+  // Go omits generation=0 and serializes time.Time's zero as a nonempty string.
+  assert.equal(freshRow.channel_core.generation ?? 0, prelaunchRow.channel_core.generation ?? 0, "quiet startup must keep the registered runner generation");
+  assert.ok(prelaunchRow.channel_core.last_run_at && !wakeTimestampIsUnset(prelaunchRow.channel_core.last_run_at), "prelaunch runner must have a recorded start time");
+  assert.equal(freshRow.channel_core.last_run_at, prelaunchRow.channel_core.last_run_at, "quiet startup must keep the same runner process start");
+  assert.ok(wakeTimestampIsUnset(freshRow.channel_core.last_input_at), "startup inspection submits no input");
+  await sleep(1000);
+  const idle = wakeStatus();
+  evidence.wake_idle_after_presence = idle;
+  const idleRow = wakeInstances(idle).find((row) => row.home === instanceHome);
+  assert.equal(idleRow.last_inspect_at, freshRow.last_inspect_at, "startup observer stops after first live observation");
+  assert.ok(wakeTimestampIsUnset(idleRow.channel_core.last_input_at), "idle startup needs no delivery event");
   evidence.private_execution_fresh = executionPermissions(fresh);
   assert.equal(existsSync(join(cache, "runner.sha256")), false, "candidate removes the legacy stamp");
   assert.equal(readFileSync(join(cache, "runner.mjs"), "utf8"), legacyBytes, "candidate leaves unused legacy bytes alone");
@@ -176,11 +210,11 @@ try {
   const sent = parseObject(aw({ identity: values.sender, args: ["mail", "send", "--to", recipient, "--subject", subject, "--body", "Disposable wake-path qualification; no action.", "--json"] }));
   assert.ok(sent.message_id, "mail send must return its message id");
   evidence.message_id = sent.message_id;
-  evidence.wake_after = await until({ read: wakeStatus, ready: (status) => wakeInstances(status).some((row) => row.home === instanceHome && row.channel_core?.last_input_at && row.channel_core.last_input_at !== wakeInstances(before).find((entry) => entry.home === instanceHome)?.channel_core?.last_input_at), label: "broker input receipt" });
+  evidence.wake_after = await until({ read: wakeStatus, ready: (status) => wakeInstances(status).some((row) => row.home === instanceHome && row.channel_core?.last_input_at && !wakeTimestampIsUnset(row.channel_core.last_input_at) && row.channel_core.last_input_at !== wakeInstances(before).find((entry) => entry.home === instanceHome)?.channel_core?.last_input_at), label: "broker input receipt" });
   const capture = () => {
-    const panes = command({ argv: [...OWNED_TMUX, "list-panes", "-a", "-F", "#{pane_id}"] }).trim().split("\n");
+    const panes = command({ name: "tmux list-panes", argv: [...OWNED_TMUX, "list-panes", "-a", "-F", "#{pane_id}"] }).trim().split("\n");
     assert.ok(panes.length && panes.every((pane) => /^%[0-9]+$/.test(pane)), "owned kernel server reports valid panes");
-    return panes.map((pane) => command({ argv: [...OWNED_TMUX, "capture-pane", "-p", "-S", "-400", "-t", pane] })).join("\n");
+    return panes.map((pane) => command({ name: "tmux capture-pane", argv: [...OWNED_TMUX, "capture-pane", "-p", "-S", "-400", "-t", pane] })).join("\n");
   };
   evidence.presented_wake = await until({ read: capture, ready: (text) => text.includes(sent.message_id) && text.includes(subject), label: "fresh wake in the isolated kernel session" });
   evidence.permissions_after = [join(home, ".config/aw"), state, cache].map(permission);
@@ -190,18 +224,29 @@ try {
 } catch (error) {
   evidence.result = ProbeOutcome.Failed;
   evidence.error = String(error);
+  if (error.diagnostic) evidence.failed_command = error.diagnostic;
   process.exitCode = 1;
 } finally {
-  if (instance) { try { evidence.retire = parseObject(oats("retire", instance, "--json")); assert.equal(evidence.retire.ok, true, "released provider retire must complete successfully"); } catch (error) { cleanupErrors.push(String(error)); } }
+  if (instance) {
+    try {
+      // Plain retire --json in released 0.69.19 returns the receipt directly.
+      evidence.retire = parseObject(oats("retire", instance, "--json"));
+      assert.equal(evidence.retire.retired, instance, "retire.retired must name the owned instance");
+      assert.equal(evidence.retire.removedDir, true, "retire.removedDir must confirm home removal");
+      assert.ok(!evidence.retire.rollbackIncomplete, "retire must not leave rollback incomplete");
+      assert.ok(!evidence.retire.forcedIncomplete, "retire must not force past incomplete cleanup");
+      assert.equal(evidence.retire.capabilityMeta?.["oats.aweb"]?.retired, true, "provider retirement must confirm completed coordination and revocation");
+      assert.equal(evidence.retire.capabilityMeta?.["oats.aweb"]?.aliasReusable, true, "provider retirement must confirm the alias is reusable");
+      assert.equal(existsSync(instanceHome), false, "retired instance home must be absent");
+    } catch (error) { cleanupErrors.push(String(error)); }
+  }
   await stopOwnedBroker(broker);
-  const stopped = spawnSync(OWNED_TMUX[0], [...OWNED_TMUX.slice(1), "kill-server"], { cwd: deployment, env, encoding: "utf8" });
-  if (stopped.error || (stopped.status !== 0 && !/no server running|No such file or directory/.test(stopped.stderr))) cleanupErrors.push(String(stopped.error || stopped.stderr));
+  try { cleanupPassiveTerminal({ root, tmuxBinary: OWNED_TMUX[0], env }); } catch (error) { cleanupErrors.push(String(error)); }
   evidence.cleanup_errors = cleanupErrors;
   if (evidence.result === ProbeOutcome.Failed) evidence.broker_stderr = brokerErrors;
   if (cleanupErrors.length) { evidence.result = ProbeOutcome.Failed; process.exitCode = 1; }
   mkdirSync(dirname(values.output), { recursive: true });
   writeFileSync(values.output, JSON.stringify(evidence, null, 2) + "\n");
-  rmSync(root, { recursive: true, force: true });
 }
-assert.equal(evidence.result, ProbeOutcome.Passed, evidence.error || JSON.stringify(cleanupErrors));
+assert.equal(evidence.result, ProbeOutcome.Passed, `released-kernel-wake result must be PASSED: ${evidence.failed_check || "inspect recorded diagnostics"}`);
 console.log("PASS released OATS kernel -> candidate aw wake path");

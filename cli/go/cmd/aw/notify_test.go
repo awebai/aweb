@@ -59,6 +59,17 @@ func TestFormatNotifyOutputNoPending(t *testing.T) {
 	}
 }
 
+func TestNotifyOnlyShowsIdentifierSenderLabels(t *testing.T) {
+	result := &chat.PendingResult{Pending: []chat.PendingConversation{
+		{LastFrom: "ordinary sender text", UnreadCount: 1},
+		{LastFrom: "alice", UnreadCount: 1},
+	}}
+	out := formatNotifyOutput(result, "self")
+	if strings.Contains(out, "ordinary sender text") || !strings.Contains(out, "Unread message from alice") || !strings.Contains(out, "aw chat pending") {
+		t.Fatalf("unexpected metadata notice: %s", out)
+	}
+}
+
 func TestFormatNotifyOutputUrgentAndFallback(t *testing.T) {
 	t.Parallel()
 
@@ -151,10 +162,10 @@ func TestFormatNotifyOutputFallsBackToStableID(t *testing.T) {
 			{
 				SessionID:            "s1",
 				Participants:         []string{"", ""},
-				ParticipantDIDs:      []string{"did:aw:wendy", "did:aw:rose"},
+				ParticipantDIDs:      []string{"did:aw:wendy", "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2"},
 				ParticipantAddresses: []string{"", ""},
 				LastFrom:             "",
-				LastFromDID:          "did:aw:rose",
+				LastFromDID:          "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
 				LastFromAddress:      "",
 				UnreadCount:          1,
 				SenderWaiting:        false,
@@ -163,7 +174,7 @@ func TestFormatNotifyOutputFallsBackToStableID(t *testing.T) {
 	}
 
 	out := formatNotifyOutput(result, "wendy")
-	if !strings.Contains(out, "Unread message from did:aw:rose") {
+	if !strings.Contains(out, "Unread message from did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2") {
 		t.Fatalf("notify output should preserve stable identity fallback:\n%s", out)
 	}
 }
@@ -176,7 +187,7 @@ func TestFormatNotifyOutputFallbackParticipantPrefersStableIDOverAlias(t *testin
 			{
 				SessionID:            "s1",
 				Participants:         []string{"wendy", "rose"},
-				ParticipantDIDs:      []string{"did:aw:wendy", "did:aw:rose"},
+				ParticipantDIDs:      []string{"did:aw:wendy", "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2"},
 				ParticipantAddresses: []string{"", ""},
 				LastFrom:             "",
 				LastFromDID:          "",
@@ -188,7 +199,7 @@ func TestFormatNotifyOutputFallbackParticipantPrefersStableIDOverAlias(t *testin
 	}
 
 	out := formatNotifyOutput(result, "wendy")
-	if !strings.Contains(out, "Unread message from did:aw:rose") {
+	if !strings.Contains(out, "Unread message from did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2") {
 		t.Fatalf("notify output should prefer participant stable id over alias fallback:\n%s", out)
 	}
 	if strings.Contains(out, "Unread message from rose") {
@@ -230,7 +241,7 @@ func TestFormatNotifyOutputSkipsSelfStableIDParticipant(t *testing.T) {
 			{
 				SessionID:            "s1",
 				Participants:         []string{"", ""},
-				ParticipantDIDs:      []string{"did:aw:wendy", "did:aw:rose"},
+				ParticipantDIDs:      []string{"did:aw:wendy", "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2"},
 				ParticipantAddresses: []string{"", ""},
 				LastFrom:             "",
 				LastFromAddress:      "",
@@ -244,7 +255,7 @@ func TestFormatNotifyOutputSkipsSelfStableIDParticipant(t *testing.T) {
 	if strings.Contains(out, "Unread message from did:aw:wendy") {
 		t.Fatalf("notify output should not surface self stable identity as sender:\n%s", out)
 	}
-	if !strings.Contains(out, "Unread message from did:aw:rose") {
+	if !strings.Contains(out, "Unread message from did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2") {
 		t.Fatalf("notify output should skip self stable identity and fall through to the other participant:\n%s", out)
 	}
 }
@@ -257,7 +268,7 @@ func TestFormatNotifyOutputSkipsSelfCurrentDIDParticipant(t *testing.T) {
 			{
 				SessionID:            "s1",
 				Participants:         []string{"", ""},
-				ParticipantDIDs:      []string{"did:key:self-wendy", "did:aw:rose"},
+				ParticipantDIDs:      []string{"did:key:self-wendy", "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2"},
 				ParticipantAddresses: []string{"", ""},
 				LastFrom:             "",
 				LastFromAddress:      "",
@@ -271,7 +282,7 @@ func TestFormatNotifyOutputSkipsSelfCurrentDIDParticipant(t *testing.T) {
 	if strings.Contains(out, "Unread message from did:key:self-wendy") {
 		t.Fatalf("notify output should not surface self current did as sender:\n%s", out)
 	}
-	if !strings.Contains(out, "Unread message from did:aw:rose") {
+	if !strings.Contains(out, "Unread message from did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2") {
 		t.Fatalf("notify output should skip self current did and fall through to the other participant:\n%s", out)
 	}
 }
@@ -284,7 +295,7 @@ func TestFormatNotifyOutputPrefersParticipantStableIDOverLastFromCurrentDID(t *t
 			{
 				SessionID:            "s1",
 				Participants:         []string{"", ""},
-				ParticipantDIDs:      []string{"did:aw:wendy", "did:aw:rose"},
+				ParticipantDIDs:      []string{"did:aw:wendy", "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2"},
 				ParticipantAddresses: []string{"", ""},
 				LastFrom:             "",
 				LastFromDID:          "did:key:z6MkRoseCurrent",
@@ -296,7 +307,7 @@ func TestFormatNotifyOutputPrefersParticipantStableIDOverLastFromCurrentDID(t *t
 	}
 
 	out := formatNotifyOutput(result, "wendy", "did:aw:wendy", "did:key:self-wendy")
-	if !strings.Contains(out, "Unread message from did:aw:rose") {
+	if !strings.Contains(out, "Unread message from did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2") {
 		t.Fatalf("notify output should prefer participant stable identity over last-from current did:\n%s", out)
 	}
 	if strings.Contains(out, "did:key:z6MkRoseCurrent") {

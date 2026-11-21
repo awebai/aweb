@@ -25,7 +25,7 @@ class DockerDNS(unittest.TestCase):
 import os
 import sys
 args = sys.argv[1:]
-if args and args[0] == 'run' and 'scripts/test-egress/dns.py' in args:
+if args and args[0] == 'run' and 'scripts/test-egress/egress_dns.py' in args:
     args[1:1] = ['--mount', 'type=bind,src=' + os.environ['TEST_DNS_SOURCE'] +
                  ',dst=/src/scripts/test-egress,readonly', '--workdir', '/src']
 if args and args[0] == 'run' and '--dns' in args and not any(
