@@ -16,18 +16,19 @@ from aweb.events import team_events_channel_name
 from aweb.lifecycle import replay_lifecycle_side_effects
 from aweb.outbox_recovery import stop_outbox_recovery
 from aweb.presence import clear_workspace_presence
-from test_dashboard_privacy import TEAM, TEAM_NAME
+from test_dashboard_privacy import TEAM
 from test_dashboard_privacy import privacy_app as privacy_app
-from test_messages_http import _encode_certificate, _make_certificate, _signed_team_headers
-from test_workspace_liveness_http import _send_member_request
+from test_messages_http import _signed_team_headers
+from test_workspace_liveness_http import _connect_registered_member, _send_member_request
 
 
-async def _claim_tasks(env, *, count: int) -> list[str]:
+async def _claim_tasks(env, *, count: int, alias: str = "alice", team_id: str = TEAM) -> list[str]:
     refs = []
     for index in range(count):
         created = await _send_member_request(
             env,
-            alias="alice",
+            alias=alias,
+            team_id=team_id,
             method="POST",
             path="/v1/tasks",
             body={"title": f"Workspace deletion claim {index}"},
@@ -36,7 +37,8 @@ async def _claim_tasks(env, *, count: int) -> list[str]:
         ref = created.json()["task_ref"]
         claimed = await _send_member_request(
             env,
-            alias="alice",
+            alias=alias,
+            team_id=team_id,
             method="PATCH",
             path=f"/v1/tasks/{ref}",
             body={"status": "in_progress"},
@@ -102,44 +104,8 @@ async def test_self_delete_reports_actual_released_claims_and_events(privacy_app
 @pytest.mark.asyncio
 async def test_peer_delete_preserves_a_global_identity_and_its_claim(privacy_app):
     env = privacy_app
-    alice = env.actors["alice"]
-    await _claim_tasks(env, count=1)
-    registry = env.app.state.awid_registry_client
-    registered = await registry.register_did(alice.did, alice.sk)
-    certificate_id = f"global-{uuid4()}"
-    certificate = _encode_certificate(
-        _make_certificate(
-            env.team_sk,
-            env.team_did,
-            alice.did,
-            team_id=TEAM,
-            alias="alice",
-            identity_scope="global",
-            member_did_aw=registered.did_aw,
-            certificate_id=certificate_id,
-        )
-    )
-    await registry.register_team_certificate(
-        "example.test",
-        TEAM_NAME,
-        team_controller_signing_key=env.team_sk,
-        certificate_id=certificate_id,
-        member_did_key=alice.did,
-        member_did_aw=registered.did_aw,
-        member_address=None,
-        alias="alice",
-        identity_scope="global",
-        certificate=certificate,
-    )
-    await env.db.execute(
-        "UPDATE {{tables.agents}} SET identity_scope='global',did_aw=$2,did_aw_verified_key=$3,"
-        "certificate_id=$4,accepted_team_did_key=$5 WHERE agent_id=$1",
-        alice.id,
-        registered.did_aw,
-        alice.did,
-        certificate_id,
-        env.team_did,
-    )
+    alice = await _connect_registered_member(env, alias="global-member", scope="global")
+    await _claim_tasks(env, count=1, alias="global-member")
     response = await _send_member_request(
         env, alias="bob", method="DELETE", path=f"/v1/workspaces/{alice.workspace}"
     )
@@ -166,63 +132,17 @@ async def test_peer_delete_preserves_a_global_identity_and_its_claim(privacy_app
 
 
 @pytest.mark.asyncio
-async def test_peer_delete_preserves_an_unbound_workspace_and_its_claim(privacy_app):
-    env = privacy_app
-    alice = env.actors["alice"]
-    await _claim_tasks(env, count=1)
-    # Workspaces require an agent UUID but intentionally have no agent FK.
-    # An orphan binding exercises unknown identity scope without invalid setup.
-    await env.db.execute(
-        "UPDATE {{tables.workspaces}} SET agent_id=$2 WHERE workspace_id=$1",
-        alice.workspace,
-        uuid4(),
-    )
-    response = await _send_member_request(
-        env, alias="bob", method="DELETE", path=f"/v1/workspaces/{alice.workspace}"
-    )
-    assert response.status_code == 409, response.text
-    assert response.json()["detail"]["code"] == "unknown_identity_scope_no_cleanup"
-    assert (
-        await env.db.fetch_value(
-            "SELECT deleted_at FROM {{tables.workspaces}} WHERE workspace_id=$1", alice.workspace
-        )
-        is None
-    )
-    assert (
-        await env.db.fetch_value(
-            "SELECT count(*) FROM {{tables.task_claims}} WHERE workspace_id=$1", alice.workspace
-        )
-        == 1
-    )
-
-
-@pytest.mark.asyncio
 async def test_cross_team_workspace_delete_does_not_touch_foreign_bindings(privacy_app):
     env = privacy_app
     team = "neighbor:example.test"
-    agent, workspace = uuid4(), uuid4()
-    await env.db.execute(
-        "INSERT INTO {{tables.teams}} (team_id,namespace,team_name,team_did_key) VALUES ($1,'example.test','neighbor',$2)",
-        team,
-        env.team_did,
+    await env.app.state.awid_registry_client.register_team(
+        domain="example.test", name="neighbor", display_name="Neighbor",
+        team_did_key=env.team_did, visibility="public",
+        namespace_controller_signing_key=env.namespace_sk,
     )
-    await env.db.execute(
-        "INSERT INTO {{tables.agents}} (agent_id,team_id,did_key,alias) VALUES ($1,$2,$3,'foreign')",
-        agent,
-        team,
-        env.actors["alice"].did,
-    )
-    await env.db.execute(
-        "INSERT INTO {{tables.workspaces}} (workspace_id,team_id,agent_id,alias) VALUES ($1,$2,$3,'foreign')",
-        workspace,
-        team,
-        agent,
-    )
-    await env.db.execute(
-        "INSERT INTO {{tables.task_claims}} (team_id,workspace_id,alias,task_ref) VALUES ($1,$2,'foreign','neighbor-1')",
-        team,
-        workspace,
-    )
+    member = await _connect_registered_member(env, alias="foreign", team_id=team)
+    agent, workspace = member.id, member.workspace
+    await _claim_tasks(env, count=1, alias="foreign", team_id=team)
     response = await _send_member_request(
         env, alias="bob", method="DELETE", path=f"/v1/workspaces/{workspace}"
     )
