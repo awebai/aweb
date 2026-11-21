@@ -494,7 +494,6 @@ async def test_cleanup_locks_all_workspaces_before_deleting_any_claim(
                     ),
                     team_id=TEAM,
                     target_workspace_ids=(str(low), str(high)),
-                    agent_disposition=AgentDisposition.PRESERVED,
                 ),
                 registry_client=env.app.state.awid_registry_client,
             )
@@ -512,8 +511,7 @@ async def test_cleanup_locks_all_workspaces_before_deleting_any_claim(
             assert pid != holder_pid
             async with asyncio.timeout(5):
                 while not await db.fetch_value("SELECT cardinality(pg_blocking_pids($1)) > 0", pid):
-                    assert not cleanup_task.done()
-                    await asyncio.sleep(0.01)
+                    assert not cleanup_task.done(), cleanup_task.result().errors
             # A delete before the full workspace lock set would lock this row.
             claim = await holder.fetch_one(
                 "SELECT task_ref FROM {{tables.task_claims}} WHERE workspace_id=$1 FOR UPDATE NOWAIT",
