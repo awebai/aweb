@@ -228,6 +228,7 @@ func TestWorkspaceAddWorktreeChecksTheSelectedMembershipRegistry(t *testing.T) {
 			initGitRepoWithOriginAndCommit(t, repo, "https://github.com/example/project.git")
 			binding := workspaceBinding(server.URL, teamID, "parent", "parent-workspace")
 			binding.APIKey = "aw_sk_parent"
+			writeTeamCertificateWorkspaceForTest(t, repo, binding, &testSelectionFixture{IdentityScope: awid.IdentityModeLocal})
 			writeWorkspaceBindingForTest(t, repo, binding)
 			state, err := awconfig.LoadTeamState(repo)
 			if err != nil {

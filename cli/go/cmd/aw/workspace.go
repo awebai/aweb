@@ -491,7 +491,7 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	client, _, err := resolveClientSelectionAtIdentityHome(workingDir, home)
+	client, selection, err := resolveClientSelectionAtIdentityHome(workingDir, home)
 	if err != nil {
 		return err
 	}
@@ -534,6 +534,10 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 	apiKey := resolveInitAPIKey()
 	authority := agentCreationRequest{WorkingDir: workingDir, APIKey: apiKey, AwebURL: sourceServerURL, RequestedTeam: teamID}
 	storedKey := strings.TrimSpace(state.APIKey)
+	if selection.IdentityScope == awid.IdentityModeGlobal {
+		// A global creator issues signed invitations using its selected identity.
+		storedKey = ""
+	}
 	useWorkspaceFallback := false
 	switch {
 	case apiKey != "":
@@ -547,7 +551,7 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 			apiKey = storedKey
 		}
 	case !home.External() && storedKey != "":
-		// A co-located workspace can use its stored key for bootstrap.
+		// A local or legacy co-located workspace can use its stored key for bootstrap.
 		// An explicitly selected identity uses its own signing authority.
 		useWorkspaceFallback = true
 		apiKey = storedKey
