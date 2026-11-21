@@ -114,7 +114,7 @@ async def _create_test_event_recipient(aweb_db):
     return agent_id
 
 
-async def _open_test_event_stream(aweb_db, agent_id, monkeypatch, *, redis=None):
+async def _open_test_event_stream(aweb_db, agent_id, monkeypatch, *, redis=None, identity=None):
     class _DbShim:
         def get_manager(self, name="aweb"):
             assert name == "aweb"
@@ -124,16 +124,8 @@ async def _open_test_event_stream(aweb_db, agent_id, monkeypatch, *, redis=None)
         async def is_disconnected(self):
             return False
 
-    # As in production, a heartbeat is due only after a reconcile had its turn.
-    monkeypatch.setattr(events_module, "EVENTS_RECONCILE_INTERVAL", 0.01)
-    monkeypatch.setattr(events_module, "EVENTS_HEARTBEAT_INTERVAL", 0.05)
-    stream = events_module._sse_agent_events(
-        request=_ConnectedRequest(),
-        db=_DbShim(),
-        redis=redis,
-        team_id="backend:acme.com",
-        agent_id=str(agent_id),
-        identity=TeamIdentity(
+    if identity is None:
+        identity = TeamIdentity(
             team_id="backend:acme.com",
             alias="bob",
             did_key="did:key:z6MkBob",
@@ -143,7 +135,18 @@ async def _open_test_event_stream(aweb_db, agent_id, monkeypatch, *, redis=None)
             identity_scope="global",
             certificate_id="cert-001",
             grant=None,
-        ),
+        )
+
+    # As in production, a heartbeat is due only after a reconcile had its turn.
+    monkeypatch.setattr(events_module, "EVENTS_RECONCILE_INTERVAL", 0.01)
+    monkeypatch.setattr(events_module, "EVENTS_HEARTBEAT_INTERVAL", 0.05)
+    stream = events_module._sse_agent_events(
+        request=_ConnectedRequest(),
+        db=_DbShim(),
+        redis=redis,
+        team_id=identity.team_id,
+        agent_id=str(agent_id),
+        identity=identity,
         deadline=datetime.now(timezone.utc) + timedelta(seconds=1),
     )
     assert await anext(stream) == ": keepalive\n\n"
@@ -628,27 +631,31 @@ async def test_events_stream_emits_one_mail_event_when_only_unread_count_changes
 
 @pytest.mark.asyncio
 async def test_events_stream_opening_frames_restart_the_heartbeat_interval(
-    aweb_cloud_db,
+    privacy_app,
     monkeypatch,
 ):
-    recipient_agent_id = await _create_test_event_recipient(aweb_cloud_db.aweb_db)
-    message_ids = [uuid4(), uuid4()]
-    created_at = datetime.now(timezone.utc) - timedelta(minutes=1)
-    for index, message_id in enumerate(message_ids):
-        await aweb_cloud_db.aweb_db.execute(
-            """
-            INSERT INTO {{tables.messages}}
-                (message_id, from_did, to_did, from_alias, to_alias, subject, body, created_at)
-            VALUES ($1, 'did:aw:alice', 'did:aw:bob', 'alice', 'bob', 'subject', 'body', $2)
-            """,
-            message_id,
-            created_at + timedelta(seconds=index),
-        )
-
+    env = privacy_app
+    await _global_actor(env, "alice")
+    bob_did_aw = await _global_actor(env, "bob")
+    messages = [await _send_mail(env, f"message-{index}") for index in range(2)]
+    bob = env.actors["bob"]
+    # The generator is read directly so the test, not the server, decides when
+    # the stream runs: no frame is produced while the test sleeps.
     stream = await _open_test_event_stream(
-        aweb_cloud_db.aweb_db,
-        recipient_agent_id,
+        env.db,
+        bob.id,
         monkeypatch,
+        identity=TeamIdentity(
+            team_id=TEAM,
+            alias="bob",
+            did_key=bob.did,
+            did_aw=bob_did_aw,
+            address="",
+            agent_id=str(bob.id),
+            identity_scope="global",
+            certificate_id="global-bob",
+            grant=None,
+        ),
     )
     for _ in range(2):
         assert (await anext(stream)).startswith("event: actionable_mail\n")
@@ -656,21 +663,21 @@ async def test_events_stream_opening_frames_restart_the_heartbeat_interval(
     # The opening keepalive is now older than the heartbeat interval, but the
     # stream has just delivered frames, so the change is read before any heartbeat.
     await asyncio.sleep(2 * events_module.EVENTS_HEARTBEAT_INTERVAL)
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        UPDATE {{tables.messages}}
-        SET read_at = NOW()
-        WHERE message_id = $1
-        """,
-        message_ids[0],
+    ack = await request_as(
+        env,
+        alias="bob",
+        method="POST",
+        path=f"/v1/messages/{messages[0]['message_id']}/ack",
+        payload={},
     )
+    assert ack.status_code == 200, ack.text
 
     next_frame = await anext(stream)
     await stream.aclose()
 
     assert next_frame.startswith("event: actionable_mail\n")
     count_update = json.loads(next_frame.split("data: ", 1)[1])
-    assert count_update["message_id"] == str(message_ids[1])
+    assert count_update["message_id"] == messages[1]["message_id"]
     assert count_update["unread_count"] == 1
 
 
