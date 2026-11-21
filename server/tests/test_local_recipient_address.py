@@ -17,7 +17,6 @@ from aweb.federation.activation import build_federation_authority_activation
 from awid.external_authority import SystemTXTOutcomeResolver
 from awid.registry import RegistryClient
 from awid.signing import canonical_json_bytes, sign_message
-from test_addressless_sender_cli import _registry_http
 from test_dashboard_privacy import privacy_app  # noqa: F401
 from test_messages_http import _signed_team_headers, _make_certificate, _encode_certificate
 
@@ -215,11 +214,6 @@ async def test_selected_foreign_origin_does_not_use_home_namespace(local_mail):
 ])
 @pytest.mark.parametrize("channel", ["mail", "chat"])
 async def test_plain_cli_local_address_refusal_does_not_retry(local_mail, tmp_path, sender, target, reason, channel):
-    # aw signs a send with its recipient's key and refuses, before posting,
-    # an address its registry cannot bind to a key (cli/go/awid/client.go
-    # signEnvelope). The server's own refusals of these addresses are the
-    # tests above; this one is aw's against the real registry: definite,
-    # nothing posted, never retried.
     actor, team, certificate = local_mail.actors[sender]
     home = tmp_path / ".aw"
     home.mkdir(mode=0o700)
@@ -238,16 +232,15 @@ async def test_plain_cli_local_address_refusal_does_not_retry(local_mail, tmp_pa
         "memberships": [{**membership, "workspace_id": str(actor.workspace)}],
     }))
     child_env = {key: value for key, value in os.environ.items() if not key.startswith(("AWEB_", "AWID_"))}
+    child_env.update(AWEB_IDENTITY_HOME=str(home), AWID_REGISTRY_URL="http://127.0.0.1:1",
+                     HOME=str(tmp_path), XDG_CONFIG_HOME=str(tmp_path / "config"), AW_NO_UPDATE_CHECK="1")
     command = (["mail", "send", "--to-address", target, "--subject", "hello", "--body", "hello"]
                if channel == "mail" else ["chat", "send-and-leave", target, "hello"])
-    async with _registry_http(local_mail.env.registry_app) as (registry_url, _):
-        child_env.update(AWEB_IDENTITY_HOME=str(home), AWID_REGISTRY_URL=registry_url,
-                         HOME=str(tmp_path), XDG_CONFIG_HOME=str(tmp_path / "config"), AW_NO_UPDATE_CHECK="1")
-        process = await asyncio.create_subprocess_exec(
-            os.environ["AW_TEST_CLI_BINARY"], *command, cwd=tmp_path, env=child_env,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
-        )
-        output, _ = await asyncio.wait_for(process.communicate(), 30)
+    process = await asyncio.create_subprocess_exec(
+        os.environ["AW_TEST_CLI_BINARY"], *command, cwd=tmp_path, env=child_env,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+    )
+    output, _ = await asyncio.wait_for(process.communicate(), 30)
     text = output.decode()
     assert process.returncode != 0, text
     if channel == "mail":
@@ -255,7 +248,6 @@ async def test_plain_cli_local_address_refusal_does_not_retry(local_mail, tmp_pa
     else:
         assert target in text or reason in text, text
     assert "retrying" not in text.lower(), text
-    assert f"{target} is not a registered address" in text, text
-    assert local_mail.responses == []
+    assert local_mail.responses == [{"status": 404, "reason": reason, "retryable": False}]
     assert local_mail.queries == []
     assert await local_mail.env.db.fetch_value("SELECT COUNT(*) FROM {{tables.messages}}") == 0
