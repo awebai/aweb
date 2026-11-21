@@ -201,8 +201,10 @@ result retains that reason. A refusal lists all failed stages and their retained
 
 On the ccx33 unit profile, the Secrets package uses two whole-module shards
 on separate Postgres and Redis pairs already owned by the isolated runner. The
-measured partition is in `candidate-gate/secrets-shards.json`. The runner
-compares the ordered shard collections to the unsharded collection under the
+measured partition is in `candidate-gate/secrets-shards.json`. The checks stage
+qualifies it by collecting tests without starting services. It reports modules
+missing from collection and collected modules missing from the manifest. The
+runner compares the ordered shard collections to the unsharded collection under the
 same unit selector before it executes either shard. Both shard outcomes and
 logs reach the unit stage. The portable profile and the standalone package
 target still run the complete Secrets unit suite in one process.

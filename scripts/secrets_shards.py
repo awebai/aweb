@@ -23,11 +23,23 @@ def load_shards(package: Path, manifest: Path) -> list[list[str]]:
             path = Path(module)
             if (not path.parts or path.is_absolute() or '..' in path.parts or path.parts[0] != 'tests'
                     or path.suffix != '.py' or module in seen
-                    or not (package / path).is_file()
                     or not (package / path).resolve().is_relative_to(package.resolve())):
-                raise ValueError(f'invalid, duplicate or missing module: {module}')
+                raise ValueError(f'invalid or duplicate module: {module}')
             seen.add(module)
     return shards
+
+
+def validate_modules(collected: set[str], shards: list[list[str]]) -> None:
+    assigned = {module for shard in shards for module in shard}
+    errors = [
+        f'module {module} in secrets-shards.json was not collected'
+        for module in sorted(assigned - collected)
+    ] + [
+        f'collected module {module} is missing from secrets-shards.json'
+        for module in sorted(collected - assigned)
+    ]
+    if errors:
+        raise ValueError('\n'.join(errors))
 
 
 def validate_collections(full: list[str], shards: list[list[str]]) -> list[int]:
@@ -48,10 +60,19 @@ def validate_collections(full: list[str], shards: list[list[str]]) -> list[int]:
     return [len(shard) for shard in shards]
 
 
+DESELECTED_MODULES: set[str] = set()
+
+
+def pytest_deselected(items):
+    DESELECTED_MODULES.update(item.nodeid.partition('::')[0] for item in items)
+
+
 def pytest_collection_finish(session):
     """Loaded only in collection subprocesses, retaining exact parametrized IDs."""
+    nodes = [item.nodeid for item in session.items]
+    modules = DESELECTED_MODULES | {node.partition('::')[0] for node in nodes}
     Path(os.environ['AWEB_COLLECTION_RECEIPT']).write_text(
-        json.dumps([item.nodeid for item in session.items], indent=2) + '\n')
+        json.dumps({'nodes': nodes, 'modules': sorted(modules)}, indent=2) + '\n')
 
 
 def collect(package, modules, evidence, name, command, environ):
@@ -64,21 +85,26 @@ def collect(package, modules, evidence, name, command, environ):
             *scratch_args(evidence / name), *modules]
     with (evidence / f'{name}.log').open('w') as log:
         result = subprocess.run(args, cwd=package, env=env, stdout=log, stderr=subprocess.STDOUT)
-    if result.returncode:
+    # Pytest exit 5 supplies an empty collection for the qualifier to report.
+    if result.returncode not in (0, 5):
         raise RuntimeError(f'{name} collection failed: exit {result.returncode}')
-    nodes = json.loads(receipt.read_text())
-    if not isinstance(nodes, list) or not all(isinstance(node, str) for node in nodes):
+    data = json.loads(receipt.read_text())
+    if not isinstance(data, dict) or any(
+        not isinstance(data.get(key), list) or not all(isinstance(item, str) for item in data[key])
+        for key in ('nodes', 'modules')
+    ):
         raise ValueError(f'invalid collection receipt: {name}')
-    return nodes
+    return data['nodes'], set(data['modules'])
 
 
 def qualify(package: Path, manifest: Path, evidence: Path, command, environments):
     evidence.mkdir(parents=True, exist_ok=True)
     try:
         shards = load_shards(package, manifest)
-        full = collect(package, [], evidence, 'unsharded', command, environments[0])
+        full, modules = collect(package, [], evidence, 'unsharded', command, environments[0])
+        validate_modules(modules, shards)
         collected = [
-            collect(package, shard, evidence, f'shard-{number}', command, env)
+            collect(package, shard, evidence, f'shard-{number}', command, env)[0]
             for number, (shard, env) in enumerate(zip(shards, environments, strict=True), 1)
         ]
         counts = validate_collections(full, collected)
@@ -147,22 +173,32 @@ def run_shards(package, shards, environments, evidence, command):
 
 
 def main() -> int:
-    if len(sys.argv) < 3 or sys.argv[1] != '--':
-        raise SystemExit('usage: secrets_shards.py -- <pytest command>')
+    arguments = sys.argv[1:]
+    check_only = arguments[:1] == ['--check']
+    if check_only:
+        arguments = arguments[1:]
+    if len(arguments) < 2 or arguments[0] != '--':
+        raise SystemExit('usage: secrets_shards.py [--check] -- <pytest command>')
     package = Path.cwd()
     manifest = Path(__file__).resolve().parents[1] / 'candidate-gate/secrets-shards.json'
-    command = sys.argv[2:]
-    environments = service_environments(os.environ['AWEB_SECRETS_SHARD_SERVICES'])
+    command = arguments[1:]
+    environments = (
+        [dict(os.environ)] * 2 if check_only
+        else service_environments(os.environ['AWEB_SECRETS_SHARD_SERVICES'])
+    )
     with tempfile.TemporaryDirectory(prefix='aweb-secrets-shards-') as directory:
         evidence = Path(directory)
         try:
             shards = qualify(package, manifest, evidence, command, environments)
-        except (RuntimeError, ValueError):
+        except (OSError, RuntimeError, ValueError) as error:
             for log in sorted(evidence.glob('*.log')):
                 print(f'=== Secrets {log.stem} collection ===', flush=True)
                 print(log.read_text(), end='', flush=True)
-            raise
+            print(f'Secrets collection refused: {error}', file=sys.stderr, flush=True)
+            return 1
         print('Secrets collection: ' + (evidence / 'summary.json').read_text(), flush=True)
+        if check_only:
+            return 0
         return run_shards(package, shards, environments, evidence, command)
 
 
