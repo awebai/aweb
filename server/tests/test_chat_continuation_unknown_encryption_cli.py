@@ -19,6 +19,8 @@ from test_addressless_sender_cli import _registry_http
 from test_agent_activity_emitter_e2e import _grant_home
 from test_dashboard_privacy import _request, privacy_app  # noqa: F401
 
+__all__ = ["privacy_app"]
+
 # Chat history accepts limit up to 2000 (server/src/aweb/routes/chat.py
 # history), the page aw reads (cli/go/awid/conversation_encryption.go).
 CHAT_ENCRYPTION_PAGE = 2000

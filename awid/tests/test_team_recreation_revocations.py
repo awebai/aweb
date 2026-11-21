@@ -123,25 +123,63 @@ async def test_recreated_team_lists_its_own_revocations_and_no_other_teams(clien
     assert await _revoked_ids(client, domain, "web") == {other_team}
 
 
-async def _read_only_census(pool) -> dict:
-    """Run exactly the statement in awid/ops/team-recreation-census.sql, in its
-    own read-only transaction, as it runs in production."""
+# The statement of awid/ops/team-recreation-census.sql, which the test reads
+# back from that file and compares, so the SQL the test runs is the SQL in the
+# file and the test-state scan can read it.
+CENSUS_STATEMENT = """
+WITH deleted AS (
+    SELECT team_uuid, domain, name, team_did_key, deleted_at
+    FROM awid.teams
+    WHERE deleted_at IS NOT NULL
+), recreated AS (
+    SELECT d.team_uuid AS deleted_team,
+           later.team_uuid AS later_team,
+           later.deleted_at IS NULL AS later_is_live,
+           later.team_did_key = d.team_did_key AS same_key
+    FROM deleted d
+    JOIN awid.teams later
+      ON later.domain = d.domain
+     AND later.name = d.name
+     AND later.team_uuid <> d.team_uuid
+     AND later.created_at >= d.deleted_at
+)
+SELECT
+    (SELECT count(*) FROM deleted) AS deleted_teams,
+    (SELECT count(*) FROM deleted d
+      WHERE EXISTS (SELECT 1 FROM awid.team_certificates c WHERE c.team_uuid = d.team_uuid))
+        AS deleted_teams_with_certificate_rows,
+    (SELECT count(DISTINCT deleted_team) FROM recreated) AS deleted_teams_recreated,
+    (SELECT count(DISTINCT deleted_team) FROM recreated WHERE same_key)
+        AS deleted_teams_recreated_with_same_key,
+    (SELECT count(DISTINCT later_team) FROM recreated WHERE same_key AND later_is_live)
+        AS live_teams_recreated_with_same_key;
+"""
+
+
+def _census_file_statement() -> str:
     script = (Path(__file__).resolve().parents[1] / "ops" / "team-recreation-census.sql").read_text()
     _before, begin, tail = script.partition("BEGIN READ ONLY;")
-    query, rollback, after = tail.rpartition("ROLLBACK;")
+    statement, rollback, after = tail.rpartition("ROLLBACK;")
     assert begin and rollback and not after.strip()
+    return statement.strip()
+
+
+async def _read_only_census(pool) -> dict:
+    """Run the statement of awid/ops/team-recreation-census.sql in its own
+    read-only transaction, as it runs in production."""
+    assert _census_file_statement() == CENSUS_STATEMENT.strip()
     async with pool.acquire() as conn:
-        await conn.execute(begin)
+        await conn.execute("BEGIN READ ONLY")
         try:
             assert await conn.fetchval("SHOW transaction_read_only") == "on"
-            return dict(await conn.fetchrow(query))
+            return dict(await conn.fetchrow(CENSUS_STATEMENT))
         finally:
-            await conn.execute(rollback)
+            await conn.execute("ROLLBACK")
 
 
 @pytest.mark.asyncio
 async def test_recreation_census_counts_teams_recreated_with_the_same_key(
-    client, controller_identity, awid_db_infra, shared_test_pool,
+    client, controller_identity, shared_test_pool,
 ):
     ns_key, ns_did = controller_identity
     domain = "census.example"
@@ -150,29 +188,23 @@ async def test_recreation_census_counts_teams_recreated_with_the_same_key(
     await _team_with_revoked_certificate(client, ns_key, ns_did, domain, "fresh")
     await _team_with_revoked_certificate(client, ns_key, ns_did, domain, "gone")
     await _team_with_revoked_certificate(client, ns_key, ns_did, domain, "live")
-    for name in ("same", "fresh", "gone"):
+    # A deleted team that never held a certificate has no certificate rows,
+    # the shape every team deleted before acxc.101 left.
+    _, empty_pub = generate_keypair()
+    await _create_team_with_key(client, ns_key, ns_did, domain, "empty", did_from_public_key(empty_pub))
+    for name in ("same", "fresh", "gone", "empty"):
         await _delete_team(client, ns_key, ns_did, domain, name)
     await _create_team_with_key(client, ns_key, ns_did, domain, "same", same_did)
     _, new_pub = generate_keypair()
     await _create_team_with_key(client, ns_key, ns_did, domain, "fresh", did_from_public_key(new_pub))
 
     assert await _read_only_census(shared_test_pool) == {
-        "deleted_teams": 3,
+        "deleted_teams": 4,
         "deleted_teams_with_certificate_rows": 3,
         "deleted_teams_recreated": 2,
         "deleted_teams_recreated_with_same_key": 1,
         "live_teams_recreated_with_same_key": 1,
     }
-
-    # The shape a deletion left before this fix: the deleted team's certificate
-    # rows are gone. This changes only the private test database.
-    await awid_db_infra.get_manager("aweb").execute(
-        "DELETE FROM {{tables.team_certificates}} WHERE team_uuid IN"
-        " (SELECT team_uuid FROM {{tables.teams}} WHERE domain = $1 AND name = $2 AND deleted_at IS NOT NULL)",
-        domain,
-        "gone",
-    )
-    assert (await _read_only_census(shared_test_pool))["deleted_teams_with_certificate_rows"] == 2
 
 
 async def _certificate_status(client, domain, name, cert_id) -> dict:
