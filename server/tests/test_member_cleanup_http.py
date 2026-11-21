@@ -236,7 +236,7 @@ async def test_empty_prefix_emergency_revoke_keeps_another_teams_reservations(pr
     )
     await env.db.execute(
         "INSERT INTO {{tables.agents}} (agent_id,team_id,did_key,alias,inbound_mode) "
-        "VALUES ($1,$2,'did:key:z6Mkother','other','contacts_only')",
+        "VALUES ($1,$2,'did:key:z6Mkother','other','open')",
         other_agent,
         other_team,
     )
