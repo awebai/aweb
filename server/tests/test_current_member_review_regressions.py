@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
+from fastapi import HTTPException
 from starlette.requests import Request
 
 from aweb.events import TaskCreatedEvent, publish_event, team_events_channel_name
@@ -392,10 +393,16 @@ async def test_address_discovery_programming_error_is_not_stored_binding_authori
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "change", ["rotation", "rotation-and-readmission", "revocation", "inactive", "unchanged"]
+    "change", ["rotation", "rotation-and-readmission", "revocation", "inactive", "unchanged", "outage"]
 )
-async def test_certificate_stream_rechecks_its_original_authority_on_grant_cadence(pinning, change):
-    from aweb.grant_streams import STREAM_AUTHORITY_RECHECK_SECONDS, NeverGrantStreamGuard
+async def test_certificate_stream_rechecks_its_original_authority_on_grant_cadence(
+    pinning, change, monkeypatch,
+):
+    from aweb.grant_streams import (
+        STREAM_AUTHORITY_RECHECK_SECONDS,
+        NeverGrantStreamGuard,
+        require_valid_stream_grant,
+    )
     from aweb.team_auth_deps import get_team_identity
 
     env = pinning
@@ -420,10 +427,15 @@ async def test_certificate_stream_rechecks_its_original_authority_on_grant_caden
         )
     elif change == "inactive":
         await _archive_global_member(env, actor)
+    elif change == "outage":
+        monkeypatch.setattr(env.registry.transport, "down", True)
+        with pytest.raises(HTTPException) as opening:
+            await require_valid_stream_grant(request, env.infra, identity)
+        assert opening.value.status_code == 503
     # Advance only the cadence boundary, never authority or dependency results.
     guard.checked_at -= STREAM_AUTHORITY_RECHECK_SECONDS + 1
     assert await guard.reason() == (
-        None if change == "unchanged" else "team_membership_not_current"
+        None if change in {"unchanged", "outage"} else "team_membership_not_current"
     )
 
 
