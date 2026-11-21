@@ -46,8 +46,18 @@
   the configured presence window. Dashboard presence events no longer depend
   on viewers, and narrow heartbeats preserve workspace metadata.
 - Task deletion and descendant closure release claims in the same transaction.
-  Repeating a DELETE returns the same deleted task. Claim conflicts are checked
-  even when the acting member has no workspace.
+  Repeating `DELETE /v1/tasks/{ref}` returns 200 with the same deleted task.
+  A notification failure can return 503 after deletion and claim release have
+  committed.
+- Moving a task to `in_progress` returns 409 if a workspace holds a conflicting
+  claim, including when the acting member has no workspace.
+- A peer workspace delete blocked by recent activity returns 409 with
+  `local_workspace_still_active` and the message "Workspace activity is not
+  stale enough for lifecycle cleanup."
+- `DELETE /v1/repos/{id}` can return 200 with `repo_deleted: false` and
+  `skipped_workspaces` when protected workspaces remain.
+- Dashboard agents and health reads return an error when a required Redis
+  presence read fails.
 - Wake file mutations require proof that the daemon lock is free. A failed
   exchange with a live control socket no longer falls back to changing files.
 - Custody checks private permissions for configured and default socket paths,
