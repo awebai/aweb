@@ -263,7 +263,7 @@ async def test_a_chat_read_whose_encryption_key_cannot_load_says_so(route_pair, 
     args = ["chat", command] + ([] if command == "pending" else [me.alias]) + ["--json"]
     if command == "listen":
         args += ["--wait", "1"]
-    code, output = await _cli_result(binary, teammate_root, teammate_env, *args)
+    code, _, output = await _cli_result(binary, teammate_root, teammate_env, *args)
 
     assert code != 0, output
     assert "encryption.key" in output, output
