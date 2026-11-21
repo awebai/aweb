@@ -4,7 +4,7 @@ from dataclasses import FrozenInstanceError, replace
 from datetime import datetime, timezone
 
 import pytest
-from awid.team_control_requests import UnownedTeamClaimRequest
+from awid.unowned_team_claim import UnownedTeamClaimRequest
 
 from aweb.team_control_authority import (
     TeamControlAuthorityUnavailable,
@@ -12,6 +12,8 @@ from aweb.team_control_authority import (
     TeamControlRequestReason,
 )
 from aweb.unowned_team_claim import (
+    UnownedTeamClaimInvalid,
+    UnownedTeamClaimReason,
     UnownedTeamClaimTarget,
     verify_unowned_team_claim,
 )
@@ -45,11 +47,11 @@ TARGET = UnownedTeamClaimTarget(
 )
 async def test_claim_target_mismatch_refuses_before_any_authority_read(change):
     async with unreachable_context() as context:
-        with pytest.raises(TeamControlRequestInvalid) as error:
+        with pytest.raises(UnownedTeamClaimInvalid) as error:
             await verify_unowned_team_claim(
                 context=context, claim=signed_claim(**change).to_dict(), target=TARGET
             )
-    assert error.value.reason is TeamControlRequestReason.TARGET_MISMATCH
+    assert error.value.reason is UnownedTeamClaimReason.TARGET_MISMATCH
     assert error.value.message == (
         "The controller claim names a different team or account. "
         "Regenerate it for the exact team, email and username being claimed."
@@ -89,6 +91,7 @@ async def test_unknown_controller_cannot_turn_an_integral_artifact_into_authorit
                 context=context, claim=signed_claim().to_json(), target=TARGET
             )
     assert error.value.status_code == 503
+    assert error.value.code == "team_control_authority_unavailable"
     assert error.value.__cause__ is not None
 
 
@@ -97,11 +100,11 @@ async def test_claim_schema_is_owned_by_the_shared_reader():
     artifact = signed_claim().to_dict()
     artifact["authorized_controller"] = True
     async with unreachable_context() as context:
-        with pytest.raises(TeamControlRequestInvalid) as error:
+        with pytest.raises(UnownedTeamClaimInvalid) as error:
             await verify_unowned_team_claim(
                 context=context, claim=artifact, target=TARGET
             )
-    assert error.value.reason is TeamControlRequestReason.ARTIFACT_INVALID
+    assert error.value.reason is UnownedTeamClaimReason.ARTIFACT_INVALID
     assert error.value.message == (
         "The controller claim file is malformed. "
         "Regenerate it with aw id team claim-human-request and retry."

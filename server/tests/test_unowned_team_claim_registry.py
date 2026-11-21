@@ -1,21 +1,26 @@
 """Fresh controller admission against real public registry registrations."""
 
+import json
 from contextlib import aclosing
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from datetime import datetime, timezone
 
+import httpx
 import pytest
 from awid.did import did_key_from_signing_key
 from awid.external_authority import SystemTXTOutcomeResolver
 from awid.registry import RegistryClient
-from awid.team_control_requests import UnownedTeamClaimRequest
+from awid.unowned_team_claim import UnownedTeamClaimRequest
 
 from aweb.team_control_authority import (
     TeamControlAuthorityContext,
-    TeamControlRequestInvalid,
-    TeamControlRequestReason,
+    TeamControlRegistryDataInvalid,
+    TeamControlTeamNotFound,
 )
+from aweb.team_control_error_transport import team_control_error_response
 from aweb.unowned_team_claim import (
+    UnownedTeamClaimInvalid,
+    UnownedTeamClaimReason,
     UnownedTeamClaimTarget,
     VerifiedUnownedTeamClaim,
     verify_unowned_team_claim,
@@ -97,13 +102,13 @@ async def test_self_valid_member_key_never_becomes_current_controller_claim(real
     artifact = request().sign(signing_key=bytes([74]) * 32)
     artifact.verify_integrity()
     async with aclosing(sdk):
-        with pytest.raises(TeamControlRequestInvalid) as error:
+        with pytest.raises(UnownedTeamClaimInvalid) as error:
             await verify_unowned_team_claim(
                 context=context(real_stack, sdk),
                 claim=artifact.to_dict(),
                 target=TARGET,
             )
-    assert error.value.reason is TeamControlRequestReason.CONTROLLER_MISMATCH
+    assert error.value.reason is UnownedTeamClaimReason.CONTROLLER_MISMATCH
     assert error.value.status_code == 422
     assert error.value.message == (
         "The claim signer is not the team's current controller. "
@@ -126,14 +131,65 @@ async def test_claim_does_not_reuse_pre_rotation_registry_controller(real_stack)
             new_team_did_key=did_key_from_signing_key(new_controller),
             namespace_controller_signing_key=namespace,
         )
-        with pytest.raises(TeamControlRequestInvalid) as error:
+        with pytest.raises(UnownedTeamClaimInvalid) as error:
             await verify_unowned_team_claim(
                 context=context(real_stack, sdk), claim=artifact, target=TARGET
             )
-        assert error.value.reason is TeamControlRequestReason.CONTROLLER_MISMATCH
+        assert error.value.reason is UnownedTeamClaimReason.CONTROLLER_MISMATCH
         proof = await verify_unowned_team_claim(
             context=context(real_stack, sdk),
             claim=request().sign(signing_key=new_controller),
             target=TARGET,
         )
         assert proof.verified_team_did_key == did_key_from_signing_key(new_controller)
+
+
+@pytest.mark.asyncio
+async def test_claim_preserves_definitive_unregistered_team_refusal(real_stack):
+    sdk, _, controller = await registered_claim_team(real_stack)
+    target = replace(TARGET, team_id="missing:local")
+    artifact = replace(request(), awid_team_id=target.team_id).sign(
+        signing_key=controller
+    )
+    async with aclosing(sdk):
+        with pytest.raises(TeamControlTeamNotFound) as refusal:
+            await verify_unowned_team_claim(
+                context=context(real_stack, sdk), claim=artifact, target=target
+            )
+    response = team_control_error_response(refusal.value)
+    assert response.status_code == 404
+    assert json.loads(response.body)["detail"]["code"] == "awid_team_not_found"
+
+
+@pytest.mark.asyncio
+async def test_claim_preserves_invalid_controller_record_refusal(
+    real_stack, monkeypatch
+):
+    sdk, _, controller = await registered_claim_team(real_stack)
+    artifact = request().sign(signing_key=controller)
+
+    def omit_controller_key(http_request, http_response):
+        if (
+            http_request.method != "GET"
+            or http_request.url.path != "/v1/namespaces/local/teams/claim"
+        ):
+            return None
+        assert http_response.status_code == 200
+        body = http_response.json()
+        assert body.pop("team_did_key") == artifact.signer_did_key
+        return httpx.Response(200, json=body)
+
+    monkeypatch.setattr(real_stack.awid, "fault", omit_controller_key)
+    async with aclosing(sdk):
+        with pytest.raises(TeamControlRegistryDataInvalid) as refusal:
+            await verify_unowned_team_claim(
+                context=context(real_stack, sdk), claim=artifact, target=TARGET
+            )
+    assert isinstance(refusal.value.__cause__, KeyError)
+    assert refusal.value.__cause__.args == ("team_did_key",)
+    response = team_control_error_response(refusal.value)
+    assert response.status_code == 422
+    assert (
+        json.loads(response.body)["detail"]["code"]
+        == "team_control_registry_data_invalid"
+    )

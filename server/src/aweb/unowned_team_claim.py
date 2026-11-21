@@ -6,22 +6,54 @@ Account normalization and the final unowned/account locks belong to the host.
 """
 
 from dataclasses import dataclass
+from enum import StrEnum
 
-from awid.team_control_requests import (
+from awid.unowned_team_claim import (
+    ClaimArtifactError,
+    ClaimSignatureError,
     SignedUnownedTeamClaim,
-    TeamControlRequestError,
-    TeamControlSignatureError,
     read_unowned_team_claim,
 )
 
 from aweb.team_control_authority import (
     TeamControlAuthorityContext,
+    TeamControlError,
     TeamControlRequestInvalid,
     TeamControlRequestReason,
     read_fresh_team_controller,
     require_canonical_team_control_scope,
     require_fresh_team_control_request,
 )
+
+
+class UnownedTeamClaimReason(StrEnum):
+    ARTIFACT_INVALID = "team_control_artifact_invalid"
+    TARGET_MISMATCH = "team_control_target_mismatch"
+    CONTROLLER_MISMATCH = "team_control_controller_mismatch"
+
+
+class UnownedTeamClaimInvalid(TeamControlError):
+    """A claim-specific refusal mapped by the shared controller transport."""
+
+    status_code = 422
+
+    def __init__(self, reason: UnownedTeamClaimReason) -> None:
+        self.reason = reason
+        self.message = {
+            UnownedTeamClaimReason.ARTIFACT_INVALID: (
+                "The controller claim file is malformed. "
+                "Regenerate it with aw id team claim-human-request and retry."
+            ),
+            UnownedTeamClaimReason.TARGET_MISMATCH: (
+                "The controller claim names a different team or account. "
+                "Regenerate it for the exact team, email and username being claimed."
+            ),
+            UnownedTeamClaimReason.CONTROLLER_MISMATCH: (
+                "The claim signer is not the team's current controller. "
+                "Regenerate the claim with the current controller key and retry."
+            ),
+        }[reason]
+        super().__init__({"code": reason.value, "message": self.message})
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -42,7 +74,7 @@ class UnownedTeamClaimTarget:
             not isinstance(value, str) or not value
             for value in (self.email, self.username)
         ):
-            raise TeamControlRequestInvalid(TeamControlRequestReason.TARGET_MISMATCH)
+            raise UnownedTeamClaimInvalid(UnownedTeamClaimReason.TARGET_MISMATCH)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -75,7 +107,7 @@ def _require_target(
         target.email,
         target.username,
     ):
-        raise TeamControlRequestInvalid(TeamControlRequestReason.TARGET_MISMATCH)
+        raise UnownedTeamClaimInvalid(UnownedTeamClaimReason.TARGET_MISMATCH)
 
 
 async def verify_unowned_team_claim(
@@ -98,21 +130,19 @@ async def verify_unowned_team_claim(
             if isinstance(claim, SignedUnownedTeamClaim)
             else read_unowned_team_claim(claim)
         )
-    except TeamControlRequestError as exc:
-        raise TeamControlRequestInvalid(
-            TeamControlRequestReason.ARTIFACT_INVALID
-        ) from exc
+    except ClaimArtifactError as exc:
+        raise UnownedTeamClaimInvalid(UnownedTeamClaimReason.ARTIFACT_INVALID) from exc
     _require_target(artifact, target)
     require_fresh_team_control_request(timestamp=artifact.request.timestamp)
     try:
         artifact.verify_integrity()
-    except TeamControlSignatureError as exc:
+    except ClaimSignatureError as exc:
         raise TeamControlRequestInvalid(
             TeamControlRequestReason.SIGNATURE_INVALID
         ) from exc
     key = await read_fresh_team_controller(context=context, team_id=target.team_id)
     if artifact.signer_did_key != key:
-        raise TeamControlRequestInvalid(TeamControlRequestReason.CONTROLLER_MISMATCH)
+        raise UnownedTeamClaimInvalid(UnownedTeamClaimReason.CONTROLLER_MISMATCH)
     result = VerifiedUnownedTeamClaim(artifact=artifact, verified_team_did_key=key)
     result.require_target(target=target)
     return result
