@@ -2,9 +2,14 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -140,4 +145,97 @@ func TestOATSRealInviteResumesExactIssuanceAfterControllerPersistenceFailure(t *
 	if revoked.State != awconfig.TeamInviteConsumed || revoked.Code != "invite_certificate_revoked" || revoked.NextStep != "" || !strings.Contains(revoked.Message, "request a new unused invitation from its issuer") {
 		t.Fatalf("revoked history became unused or offered a guessed recovery command: %#v", revoked)
 	}
+}
+
+func TestOATSRealGlobalRosterRetriesAfterLostRegistrationResponse(t *testing.T) {
+	world := newRealCommandWorld(t)
+	source := world.addLocalMember(t, "issuer")
+	t.Setenv("HOME", world.UserHome)
+	if err := awconfig.SaveControllerKey(world.Domain, world.NamespaceKey); err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveTeamKey(world.Domain, "backend", world.TeamKey); err != nil {
+		t.Fatal(err)
+	}
+
+	upstream, err := url.Parse(world.Stack.RegistryURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var dropped atomic.Bool
+	proxy := httputil.NewSingleHostReverseProxy(upstream)
+	registrationPath := "/v1/namespaces/" + world.Domain + "/teams/backend/certificates"
+	proxy.ModifyResponse = func(response *http.Response) error {
+		// Drop the first successful registration response after real AWID
+		// has committed the membership. Every other request reaches AWID.
+		if response.Request.Method == http.MethodPost && response.Request.URL.Path == registrationPath &&
+			response.StatusCode >= 200 && response.StatusCode < 300 && dropped.CompareAndSwap(false, true) {
+			return errors.New("drop committed registration response")
+		}
+		return nil
+	}
+	proxy.ErrorHandler = func(http.ResponseWriter, *http.Request, error) {
+		panic(http.ErrAbortHandler)
+	}
+	transport := newLocalHTTPServer(t, proxy)
+	if err := awconfig.SaveControllerMeta(world.Domain, &awconfig.ControllerMeta{Domain: world.Domain, RegistryURL: transport.URL}); err != nil {
+		t.Fatal(err)
+	}
+
+	const alias = "recipient"
+	target := filepath.Join(t.TempDir(), alias)
+	world.Stack.RegistryURL = transport.URL
+	args := []string{"team", "admin", "add", alias + ":global", "--home", target}
+	out, err := world.runInIdentityHome(source.Home, args...)
+	if err == nil || !dropped.Load() || !strings.Contains(err.Error(), "issuance is incomplete or unknown") {
+		t.Fatalf("expected the client to lose a successful registry response: dropped=%v err=%v\n%s", dropped.Load(), err, out)
+	}
+
+	home := awconfig.WorktreeIdentityHome(target)
+	keyPath := filepath.Join(home, "signing.key")
+	key, err := awid.LoadSigningKey(keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := world.Registry.ResolveTeamMember(world.Context, upstream.String(), world.Domain, "backend", alias, world.TeamKey)
+	if err != nil || before.MemberDIDKey != didOf(key) || before.MemberDIDAW == "" {
+		t.Fatalf("real AWID did not admit the retained global identity: %#v; %v", before, err)
+	}
+	assertOneMembership := func() {
+		t.Helper()
+		rows, err := world.Registry.ListCertificates(world.Context, upstream.String(), world.Domain, "backend", false, world.TeamKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var count int
+		for _, row := range rows {
+			if row.Alias != alias && row.MemberDIDKey != before.MemberDIDKey && row.MemberDIDAW != before.MemberDIDAW {
+				continue
+			}
+			count++
+			if row.Alias != alias || row.MemberDIDKey != before.MemberDIDKey || row.MemberDIDAW != before.MemberDIDAW ||
+				row.CertificateID != before.CertificateID || row.RevokedAt != "" {
+				t.Fatalf("registry changed the admitted membership: %+v", row)
+			}
+		}
+		if count != 1 {
+			t.Fatalf("expected one registry membership for %s, found %d", alias, count)
+		}
+	}
+	assertOneMembership()
+
+	wrong, err := world.runInIdentityHome(source.Home, "team", "admin", "add", "wrong-recipient:global", "--home", target)
+	if err == nil || !strings.Contains(err.Error(), "requires the original command") {
+		t.Fatalf("retry with a different name did not refuse: %v\n%s", err, wrong)
+	}
+	world.requireCommand(t, source.Home, args...)
+	after, err := awid.LoadSigningKey(keyPath)
+	if err != nil || didOf(after) != before.MemberDIDKey {
+		t.Fatalf("rerun replaced the member key: %v", err)
+	}
+	cert, err := awconfig.LoadTeamCertificateForTeamFromIdentityHome(home, world.TeamID)
+	if err != nil || cert.CertificateID != before.CertificateID || cert.MemberDIDAW != before.MemberDIDAW {
+		t.Fatalf("rerun did not install the admitted certificate: %#v; %v", cert, err)
+	}
+	assertOneMembership()
 }

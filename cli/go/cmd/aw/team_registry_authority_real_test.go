@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os/exec"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -64,6 +65,38 @@ func TestRealTeamControllerUsesItsRegistryForMembershipEffects(t *testing.T) {
 			t.Fatalf("remove member output: %v\n%s", err, out)
 		}
 		assertRegistryStatus(t, member.Certificate.CertificateID, "revoked")
+		assertRegistryStatus(t, peer.Certificate.CertificateID, "active")
+	})
+
+	t.Run("legacy-invite-accept-and-revoke", func(t *testing.T) {
+		var minted teamInviteOutput
+		if err := json.Unmarshal(run(t, filepath.Dir(peer.Home), "team", "invite", "--team-id", world.TeamID), &minted); err != nil {
+			t.Fatal(err)
+		}
+		invite, err := awconfig.LoadTeamInvite(minted.InviteID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		invite.RegistryURL = ""
+		if err := awconfig.SaveTeamInvite(invite); err != nil {
+			t.Fatal(err)
+		}
+
+		dir := t.TempDir()
+		run(t, dir, "id", "team", "accept-invite", minted.Token, "--name", "legacy-invite", "--local")
+		certificate, err := awconfig.LoadTeamCertificateForTeam(dir, world.TeamID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertRegistryStatus(t, certificate.CertificateID, "active")
+
+		t.Setenv("AWID_REGISTRY_URL", world.Stack.ServerURL)
+		t.Setenv("APP_ENV", "development")
+		t.Setenv("AWEB_FEDERATION_TEST", "1")
+		if err := revokeAcceptedTeamCertificate(&acceptedTeamInvite{Certificate: certificate, Domain: world.Domain, TeamName: "backend"}); err != nil {
+			t.Fatal(err)
+		}
+		assertRegistryStatus(t, certificate.CertificateID, "revoked")
 		assertRegistryStatus(t, peer.Certificate.CertificateID, "active")
 	})
 

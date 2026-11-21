@@ -2596,7 +2596,7 @@ updated_at: "2026-04-09T00:00:00Z"
 	}
 }
 
-func TestResolveWorkspaceTeamRegistryURLRejectsEmptyControllerRegistry(t *testing.T) {
+func TestResolveWorkspaceTeamRegistryURLRejectsFailedDiscovery(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -2608,16 +2608,13 @@ func TestResolveWorkspaceTeamRegistryURLRejectsEmptyControllerRegistry(t *testin
 		t.Fatalf("save controller meta: %v", err)
 	}
 
-	// Use a URL that will fail discovery quickly (no server listening).
-	registryURL, err := resolveWorkspaceTeamRegistryURL(context.Background(), registryAuthorityRequest{WorkingDir: t.TempDir(), AwebURL: "http://127.0.0.1:1", Domain: "source"})
-	if err == nil {
-		t.Fatalf("expected error, got registry_url=%q", registryURL)
-	}
-	if registryURL != "" {
-		t.Fatalf("registry_url=%q", registryURL)
-	}
-	if !strings.Contains(err.Error(), "missing identity registry_url") {
-		t.Fatalf("unexpected error: %v", err)
+	t.Setenv("AWID_REGISTRY_URL", "https://process-default.example")
+	service := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "discovery unavailable", http.StatusServiceUnavailable)
+	}))
+	registryURL, err := resolveWorkspaceTeamRegistryURL(context.Background(), registryAuthorityRequest{WorkingDir: t.TempDir(), AwebURL: service.URL, Domain: "source"})
+	if registryURL != "" || err == nil || !strings.Contains(err.Error(), "discover registry for source") {
+		t.Fatalf("failed discovery must refuse the process default: registry_url=%q err=%v", registryURL, err)
 	}
 }
 
