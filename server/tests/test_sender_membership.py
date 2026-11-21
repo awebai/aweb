@@ -38,7 +38,9 @@ async def test_sender_standing_sees_registration_after_a_warm_list(privacy_app, 
         )
         refusal = case["certificate_refusal"]
         assert response.status_code == (200 if refusal is None else 401), response.text
-        if refusal is not None:
+        if refusal == "revoked":
+            assert response.json()["detail"]["code"] == "certificate_revoked"
+        elif refusal is not None:
             assert response.json()["detail"] == refusal
 
     monkeypatch.setenv("AWEB_REQUIRE_REGISTERED_CERTIFICATES", "false")
