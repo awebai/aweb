@@ -26,6 +26,7 @@ import pytest
 
 import aweb.messaging.chat as chat_service
 import aweb.messaging.chat_storage as chat_storage
+from aweb.application_state import application_registry_client
 from aweb.db import TransactionInfra
 from aweb.events import publish_chat_session_signal
 from aweb.federation.delivery import deliver_federated_phase_b
@@ -382,6 +383,7 @@ async def test_federated_message_committed_after_the_stream_opened_is_delivered(
             signature="signed-chat",
             recipient=recipient,
             authority_token=token,
+            registry_client=application_registry_client(env.app.state),
             stored_route_continuation=True,
             stored_route_snapshot=stored_route,
             before_commit=hold_commit,
