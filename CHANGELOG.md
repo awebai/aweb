@@ -2,6 +2,82 @@
 
 ## Unreleased
 
+- `aw workspace delete` exits zero when hosted self-removal returns its
+  accepted receipt or replays the stored result of a completed removal.
+  An accepted receipt reports completion pending and `alias_released: false`
+  until the service finishes the removal.
+
+- Team controllers can sign a team claim with `aw id team claim-human-request`.
+  An existing member can submit the signed file with
+  `aw claim-human --controller-claim-file`.
+
+- Provisioning and creator self-enrollment connect before publishing the member's E2E assertion. A failed connect or unconfirmed publication retains the identity and reports the exact recovery command instead of creation success.
+- On unverified A2A routes, a plain question shared by several live tasks is
+  refused with task-specific reply forms. Questions use artifact name `question`;
+  completed answers retain `answer`.
+
+- Concurrent `aw a2a send` calls retain each task token. Credential-file failures
+  are reported without overwriting unreadable YAML; a task already delivered is
+  still returned with its token when saving fails.
+
+- On verified A2A routes, a plain `QUESTION:` from the target is no longer
+  accepted as a verified task reply. Use the task-bearing fenced `a2a-reply`
+  form with `state: input_required` to ask a question (aw 1.19.0 or later).
+  Initial task instructions and refusal feedback show the exact form. Signed
+  task-bearing legacy fences remain accepted; explicitly unverified routes
+  keep their policy and label.
+- A managed provider that advertises recipient identity but omits it from a
+  send receipt now returns an actionable provider fault and a failed task,
+  rather than leaving the task waiting for replies it cannot bind.
+
+- A2A routes require an agent with a public address. Native gateway startup
+  refuses local identities, including team aliases that resolve to one, before
+  opening its listener. The same check runs before each native bridge send;
+  `-check` continues to validate configuration offline.
+
+- The A2A gateway no longer returns a public route's task when given only its
+  task ID. Callers must send the task token returned by `SendMessage` in
+  `X-A2A-Task-Token`; task IDs are identifiers rather than authorization.
+- A2A credentials and managed-provider tokens require HTTPS, with HTTP allowed
+  on literal loopback IP addresses for local development. Use
+  `http://127.0.0.1` instead of `http://localhost` for those local endpoints.
+
+- Retain the Go entry points `blueprint.CanonicalImportPayload`,
+  `logschain.VerifyChain`, `chat.LoadDeliveredIDs` and
+  `chat.FilterDeliveredMessages` in this release. They are removal candidates
+  for a future release, pending measurement of downstream usage.
+- `aw id request --raw` writes the response body to stdout byte for byte, so
+  `--raw > chart.png` saves an image intact. It no longer appends a newline to
+  a body that lacks one; JSON printed to a terminal may now end without one.
+  The `HTTP <status>` line stays on stderr.
+
+- Coordination reads share root, Redis and currently valid grant activity under
+  the configured presence window. Dashboard presence events no longer depend
+  on viewers, and narrow heartbeats preserve workspace metadata.
+- Task deletion and descendant closure release claims in the same transaction.
+  Repeating `DELETE /v1/tasks/{ref}` returns 200 with the same deleted task.
+  A notification failure can return 503 after deletion and claim release have
+  committed.
+- Moving a task to `in_progress` returns 409 if a workspace holds a conflicting
+  claim, including when the acting member has no workspace.
+- A peer workspace delete blocked by recent activity returns 409 with
+  `local_workspace_still_active` and the message "Workspace activity is not
+  stale enough for lifecycle cleanup."
+- `DELETE /v1/repos/{id}` can return 200 with `repo_deleted: false` and
+  `skipped_workspaces` when protected workspaces remain.
+- Dashboard agents and health reads return an error when a required Redis
+  presence read fails.
+- Chat conversation lists retain historical participant names, DIDs and
+  addresses after workspace cleanup. Remaining members can still find those
+  chats by filtering on a departed participant's DID or address.
+- Wake file mutations require proof that the daemon lock is free. A failed
+  exchange with a live control socket no longer falls back to changing files.
+- `aw wake` warns about shared permissions on a state directory the current
+  user owns. It refuses a state directory owned by another user.
+- Custody checks private permissions for configured and default socket paths,
+  requires the pinned signing key in a credential capture, and allows an exact
+  retry after a failed signing attempt without weakening successful replay checks.
+
 - Native certificate streams end with `team_membership_not_current` when
   the opening membership stops being current. aw 1.36.58 and earlier ignore
   that reason, and their `aw chat send-and-wait` can return silently. The next
@@ -86,6 +162,10 @@
   The `HTTP <status>` line stays on stderr.
 
 - `aw` reports JSON error code `alias_conflict` for HTTP 409 `alias_taken`, preserving the server's `reason` and `detail`.
+- `aw chat pending`, `open`, `history`, `listen` and `show-pending` fail with
+  the reason when the local encryption key state exists but cannot be loaded,
+  as `aw mail` reads do. A workspace with no encryption key state keeps
+  reading, with a warning.
 - AWID cache invalidation for identity-tree, address and team-certificate
   writes no longer scans unrelated Redis keys. Random cache generations keep
   delayed refreshes from restoring invalidated entries without changing the

@@ -691,6 +691,7 @@ async def test_selector_and_surface_recheck_membership_after_product_change(pinn
                     team_id=TEAM, target_agent_id=str(target.id),
                     workspace_scope="all_for_agent", require_identity_scope="global",
                 ),
+                registry_client=application_registry_client(env.app.state),
             )
             assert result.errors == () and result.identity_archived
         elif case.change is MembershipChange.DELETE:

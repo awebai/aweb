@@ -48,6 +48,26 @@ def _consumer(names: str | Iterable[str], *root_markers: str) -> ConsumerSpec:
 SERVER_CONSUMER = PurePosixPath("server/tests/test_identity_conformance_vectors.py")
 GO_CONSUMER = PurePosixPath("cli/go/internal/conformance/conformance_test.go")
 ROOT_CONSUMERS = {
+    PurePosixPath("awid/tests/test_unowned_team_claim.py"): _consumer(
+        "team-control-requests-v1.json",
+        'Path(__file__).resolve().parents[2] / "docs" / "vectors"',
+    ),
+    PurePosixPath("server/tests/test_unowned_team_claim_registry.py"): _consumer(
+        "team-control-requests-v1.json",
+        'Path(__file__).resolve().parents[2] / "docs" / "vectors"',
+    ),
+    PurePosixPath("cli/go/awid/team_claim_artifact_test.go"): _consumer(
+        "team-control-requests-v1.json",
+        'filepath.Join("..", "..", "..", "docs", "vectors", "team-control-requests-v1.json")',
+    ),
+    PurePosixPath("cli/go/cmd/aw/claim_human_controller_test.go"): _consumer(
+        "team-control-requests-v1.json",
+        'filepath.Join("..", "..", "..", "..", "docs", "vectors", "team-control-requests-v1.json")',
+    ),
+    PurePosixPath("cli/go/cmd/aw/id_team_test.go"): _consumer(
+        "team-control-requests-v1.json",
+        'filepath.Join("..", "..", "..", "..", "docs", "vectors", "team-control-requests-v1.json")',
+    ),
     PurePosixPath("server/tests/test_message_event_contracts.py"): _consumer(
         "mutation-hook-call-sites-v1.json",
         "root = Path(__file__).resolve().parents[2]",
@@ -1203,11 +1223,11 @@ def check(
             source = read(path).decode("utf-8")
         except (OSError, UnicodeDecodeError):
             continue
-        referenced_names = sorted(name for name in public_vectors if name in source)
-        if referenced_names:
+        unclassified_vector_names = sorted(name for name in public_vectors if name in source)
+        if unclassified_vector_names:
             failures.append(
                 f"unclassified public-vector code reference in {path}: "
-                f"{', '.join(referenced_names)}"
+                f"{', '.join(unclassified_vector_names)}"
             )
 
     for reference_guard, markers in NON_CONSUMING_CODE_REFERENCES.items():

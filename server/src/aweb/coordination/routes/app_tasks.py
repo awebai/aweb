@@ -1,5 +1,9 @@
 """C2 purpose-bound app task routes; no member-header shortcuts."""
 
+
+from aweb.event_types import MutationEventType
+from aweb.hook_contexts import TaskCommentAddedContext, TaskCreatedContext, TaskStatusChangedContext
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -20,20 +24,17 @@ router = APIRouter()
 
 @router.post("/app-requests")
 async def create_app_request(request: Request, db: DatabaseInfra = Depends(get_db_infra)):
+    """Create or exactly replay a purpose-bound app request after its authority checks."""
     try:
         raw = await request.body()
         prepared = await prepare_app_task(request, body=strict_json_bytes(raw))
-        outcome = {}
+        outcome: dict[str, Any] = {}
         async with db.get_manager("aweb").transaction() as tx:
             credential, installation = await app_request_transport_on(request, tx)
             receipt, created = await create_app_task_on(tx, credential=credential,
                 installation=installation, prepared=prepared, outcome=outcome)
         if created:
-            await fire_mutation_hook(request, "task.created", {
-                "task_id": receipt["task_id"], "task_ref": receipt["task_ref"],
-                "team_id": credential.team_id, **outcome,
-                "parent_task_id": None,
-            })
+            await fire_mutation_hook(request, MutationEventType.TASK_CREATED.value, TaskCreatedContext(task_id=receipt['task_id'], task_ref=receipt['task_ref'], team_id=credential.team_id, **outcome, parent_task_id=None).to_context())
         return JSONResponse(receipt, status_code=201 if created else 200)
     except ServiceError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
@@ -42,6 +43,7 @@ async def create_app_request(request: Request, db: DatabaseInfra = Depends(get_d
 @router.get("/app-requests/{external_request_id}")
 async def app_request_receipt(request: Request, external_request_id: str, originator: str = Query(...),
                               db: DatabaseInfra = Depends(get_db_infra)):
+    """Read the receipt authorized for the current app installation and originator."""
     try:
         async with db.get_manager("aweb").transaction() as tx:
             credential, installation = await app_request_transport_on(request, tx)
@@ -54,6 +56,7 @@ async def app_request_receipt(request: Request, external_request_id: str, origin
 @router.post("/app-requests/{external_request_id}/cancel")
 async def cancel_app_request(request: Request, external_request_id: str, originator: str = Query(...),
                              db: DatabaseInfra = Depends(get_db_infra)):
+    """Cancel an authorized app request and publish only newly committed changes."""
     try:
         async with db.get_manager("aweb").transaction() as tx:
             credential, installation = await app_request_transport_on(request, tx)
@@ -67,19 +70,14 @@ async def cancel_app_request(request: Request, external_request_id: str, origina
             )
             if not row:
                 raise NotFoundError("resource_not_found")
-            outcome = {}
+            outcome: dict[str, Any] = {}
             await cancel_app_task_on(tx, team_id=credential.team_id, task_id=row["task_id"],
                 external_request_id=external_request_id, reason="requested", outcome=outcome)
             result = await read_app_request_on(tx, credential=credential, installation=installation,
                 external_request_id=external_request_id, originator=originator, required_scope="requests.create")
         if outcome["changed"]:
-            await fire_mutation_hook(request, "task.status_changed", {
-                "task_id": str(row["task_id"]), "team_id": credential.team_id, "task_ref": outcome["task_ref"],
-                "actor_alias": credential.app_id, "old_status": outcome["old_status"], "new_status": "closed",
-            })
-            await fire_mutation_hook(request, "task.comment_added", {
-                "task_id": str(row["task_id"]), "comment_id": outcome["comment_id"],
-            })
+            await fire_mutation_hook(request, MutationEventType.TASK_STATUS_CHANGED.value, TaskStatusChangedContext(task_id=str(row['task_id']), team_id=credential.team_id, task_ref=outcome['task_ref'], actor_alias=credential.app_id, old_status=outcome['old_status'], new_status='closed').to_context())
+            await fire_mutation_hook(request, MutationEventType.TASK_COMMENT_ADDED.value, TaskCommentAddedContext(task_id=str(row['task_id']), comment_id=outcome['comment_id']).to_context())
         return result
     except ServiceError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
@@ -87,6 +85,7 @@ async def cancel_app_request(request: Request, external_request_id: str, origina
 
 @router.get("/answers/{task_answer_ref}")
 async def app_answer_receipt(request: Request, task_answer_ref: str, db: DatabaseInfra = Depends(get_db_infra)):
+    """Read an answer receipt within the authenticated app installation scope."""
     try:
         async with db.get_manager("aweb").transaction() as tx:
             credential, installation = await app_request_transport_on(request, tx)

@@ -8,6 +8,7 @@ import pytest
 from nacl.signing import SigningKey
 from awid.did import did_from_public_key
 
+from aweb.application_state import application_registry_client
 from aweb.lifecycle import LifecycleActor, LifecycleCascadeRequest, apply_lifecycle_cascade
 from chat_pair_support import route_pair as route_pair
 from messaging_actor_support import admit_messaging_actor, register_messaging_team
@@ -131,6 +132,7 @@ async def test_continuation_keeps_original_participant_attribution(route_pair, n
             workspace_scope="all_for_agent",
             require_identity_scope="global",
         ),
+        registry_client=application_registry_client(target.server.app.state),
     )
     assert archived.errors == () and archived.identity_archived
     assert await stored_reference() == UUID(bob.agent_id)

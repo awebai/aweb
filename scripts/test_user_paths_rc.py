@@ -73,6 +73,11 @@ class RCEvidenceTests(unittest.TestCase):
                     "sha256": digest,
                     "url": "https://files.pythonhosted.org/packages/aa/bb/aweb-1.2.3-py3-none-any.whl",
                 },
+                "aweb-naapp": {
+                    "version": "0.5.1",
+                    "sha256": digest,
+                    "url": "https://files.pythonhosted.org/packages/aa/bb/aweb_naapp-0.5.1-py3-none-any.whl",
+                },
                 "awid-service": {
                     "version": "1.0.1",
                     "sha256": digest,
@@ -81,6 +86,13 @@ class RCEvidenceTests(unittest.TestCase):
             },
         }
         self.assertEqual(production_baseline(baseline, readback), readback)
+        without_naapp = {
+            name: pin
+            for name, pin in readback["packages"].items()
+            if name != "aweb-naapp"
+        }
+        with self.assertRaisesRegex(ValueError, "aweb-naapp"):
+            production_baseline(baseline, {**readback, "packages": without_naapp})
         for wrong in (
             {**baseline, "version": "1.2.2"},
             {**baseline, "wheel_sha256": "sha256:" + "d" * 64},

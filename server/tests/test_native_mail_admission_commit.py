@@ -1,4 +1,3 @@
-# ruff: noqa: F811 -- shared real-stack fixture is imported for pytest.
 """Native writes retain their current policy decision until the row commits."""
 
 import asyncio
@@ -8,6 +7,7 @@ import asyncpg
 import pytest
 
 from aweb.inbound_modes import set_identity_inbound_mode
+from aweb.application_state import application_registry_client
 from aweb.lifecycle import (
     LifecycleActor,
     LifecycleCascadeRequest,
@@ -73,6 +73,7 @@ async def apply_test_policy_change(tx, env, change, bob):
             require_identity_scope="local",
             mark_local_agent_deleted=True,
         ),
+        registry_client=application_registry_client(env.app.state),
     )
     assert result.identity_deleted, result.errors
 

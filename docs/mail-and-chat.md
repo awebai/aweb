@@ -553,6 +553,10 @@ is extended. An age refusal tells the sender to sign with current UTC time and
 retry; changing a signature is never needed merely to acknowledge an exact
 accepted plaintext message.
 
+Native recipient lookups return 422 with `detail.code=registry_response_unusable`
+when the registry returns an unexpected status. The message directs the sender
+to the server operator. A temporary registry failure returns 503 with retry guidance.
+
 Cross-registry failures return `reason`, `retryable`, and `correlation_id` in
 addition to matching `detail`. Retry unchanged input only when `retryable` is
 true; only rate limiting emits `Retry-After: 1`. See the generated

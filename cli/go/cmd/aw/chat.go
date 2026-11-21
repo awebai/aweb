@@ -348,7 +348,9 @@ var chatPendingCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		_ = configureClientE2EE(ctx, c, sel, false)
+		if err := configureClientE2EEForRead(cmd, ctx, c, sel); err != nil {
+			return err
+		}
 		result, err := chat.Pending(ctx, c.Client)
 		if err != nil {
 			return err
@@ -372,7 +374,9 @@ var chatOpenCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		_ = configureClientE2EE(ctx, c, sel, false)
+		if err := configureClientE2EEForRead(cmd, ctx, c, sel); err != nil {
+			return err
+		}
 		confirmedDID, err := chatSessionDID(ctx, c, sel, args[0])
 		if err != nil {
 			return err
@@ -421,7 +425,9 @@ var chatHistoryCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		_ = configureClientE2EE(ctx, c, sel, false)
+		if err := configureClientE2EEForRead(cmd, ctx, c, sel); err != nil {
+			return err
+		}
 		var result *chat.HistoryResult
 		if strings.TrimSpace(chatHistorySessionID) != "" {
 			result, err = chat.HistoryBySession(ctx, c.Client, chatHistorySessionID, chatHistoryMessageID, chatHistoryUnreadOnly, chatHistoryLimit)
@@ -622,7 +628,9 @@ var chatListenCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		_ = configureClientE2EE(ctx, c, sel, false)
+		if err := configureClientE2EEForRead(cmd, ctx, c, sel); err != nil {
+			return err
+		}
 		confirmedDID, err := chatSessionDID(ctx, c, sel, args[0])
 		if err != nil {
 			return err
@@ -654,7 +662,9 @@ var chatShowPendingCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		_ = configureClientE2EE(ctx, c, sel, false)
+		if err := configureClientE2EEForRead(cmd, ctx, c, sel); err != nil {
+			return err
+		}
 		confirmedDID, err := chatSessionDID(ctx, c, sel, args[0])
 		if err != nil {
 			return err

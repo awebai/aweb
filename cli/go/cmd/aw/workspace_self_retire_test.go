@@ -568,6 +568,13 @@ func addWorkspaceAPIKeyForTest(t *testing.T, dir, apiKey string) {
 // prints (its result, or its error envelope), and stdout+stderr for failures.
 func runSelfRetireDeleteJSONForTest(t *testing.T, serverURL, alias, apiKey string) ([]byte, string, error) {
 	t.Helper()
+	stdout, stderr, err := runSelfRetireDeleteCommandForTest(t, serverURL, alias, apiKey)
+	return []byte(stdout), stdout + stderr, err
+}
+
+// runSelfRetireDeleteCommandForTest runs a built aw from the member home as OATS does.
+func runSelfRetireDeleteCommandForTest(t *testing.T, serverURL, alias, apiKey string) (string, string, error) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
@@ -586,7 +593,7 @@ func runSelfRetireDeleteJSONForTest(t *testing.T, serverURL, alias, apiKey strin
 	run.Stdout = &stdout
 	run.Stderr = &stderr
 	err := run.Run()
-	return stdout.Bytes(), stdout.String() + stderr.String(), err
+	return stdout.String(), stderr.String(), err
 }
 
 // decodeSelfRetireJSONForTest decodes the one JSON document on stdout.
@@ -629,6 +636,52 @@ func TestAwWorkspaceDeleteJSONCarriesCertificateRevokedForARevokedCaller(t *test
 	}
 	if envelope.Error.Code != "certificate_revoked" || envelope.Error.HTTPStatus != http.StatusUnauthorized {
 		t.Fatalf("error = %+v, want code certificate_revoked with status 401\n%s", envelope.Error, out)
+	}
+}
+
+func TestAwWorkspaceDeleteReportsAcceptedHostedRemovalToOATS(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name       string
+		httpStatus int
+		complete   bool
+	}{
+		{"accepted", http.StatusAccepted, false},
+		{"completed-replay", http.StatusOK, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var sawSelfRemove atomic.Bool
+			server := newLocalHTTPServer(t, selfRetireCertServerHandler(t, "worker", &sawSelfRemove, func(w http.ResponseWriter) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tc.httpStatus)
+				detail := map[string]any{
+					"status": "removed", "alias": "worker", "workspace_id": selfRetireFixtureWorkspaceID,
+					"alias_released": tc.complete, "alias_released_reason": "revoked",
+				}
+				if tc.httpStatus == http.StatusAccepted {
+					detail["status"], detail["code"], detail["removal_status"] = "accepted", "self_removal_accepted", "pending"
+					detail["alias_released_reason"] = "Self-removal was accepted and is being completed. No further action is required."
+				}
+				_ = json.NewEncoder(w).Encode(detail)
+			}))
+
+			stdout, stderr, err := runSelfRetireDeleteCommandForTest(t, server.URL, "worker", "")
+			if err != nil || !sawSelfRemove.Load() {
+				t.Fatalf("OATS self-delete should succeed, got %v:\n%s%s", err, stdout, stderr)
+			}
+			var receipt workspaceDeleteOutput
+			if err := json.Unmarshal([]byte(stdout), &receipt); err != nil {
+				t.Fatalf("stdout is not one workspace deletion receipt: %v\n%s%s", err, stdout, stderr)
+			}
+			if receipt.WorkspaceID != selfRetireFixtureWorkspaceID || receipt.Alias != "worker" ||
+				receipt.AliasReleased != tc.complete || receipt.IdentityDeleted != tc.complete {
+				t.Fatalf("unexpected workspace removal receipt: %+v\n%s%s", receipt, stdout, stderr)
+			}
+			if !tc.complete && (receipt.RetirementCode != "self_removal_accepted" || receipt.AliasReleasedReason != "completion pending") {
+				t.Fatalf("expected a pending removal receipt:\n%s%s", stdout, stderr)
+			}
+		})
 	}
 }
 

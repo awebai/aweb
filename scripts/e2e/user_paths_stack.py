@@ -19,7 +19,6 @@ from user_paths_rc import (
     production_baseline,
     published_server,
     server_inputs,
-    stage_production_wheels,
     verify_server_image,
 )
 from container_fixture_modes import make_public_tree_readable
@@ -282,9 +281,31 @@ def start_stack(server_image=None, *, production=False):
     wait_ready()
 
 
+def runtime_import(service, python, distribution, module):
+    return (
+        compose(
+            "exec",
+            "-T",
+            service,
+            python,
+            "-c",
+            "import sys; from importlib import import_module; from importlib.metadata import version; "
+            "print(version(sys.argv[1])); print(import_module(sys.argv[2]).__file__)",
+            distribution,
+            module,
+            capture=True,
+        )
+        .stdout.strip()
+        .splitlines()
+    )
+
+
 def qualify_released_clients(released_aw, runtimes, observations, production):
     """Use the same lanes, image checks, networks and provisioning for the RC."""
-    with phase("fetch-released-channel-and-oats"):
+    with phase("fetch-released-clients-and-production-wheels"):
+        shutil.copyfile(
+            EVIDENCE / "production-readback.json", WORK / "production-readback.json"
+        )
         run(
             "docker",
             "run",
@@ -309,14 +330,15 @@ def qualify_released_clients(released_aw, runtimes, observations, production):
             LOCAL_IMAGES["runtime"],
             "/work/user_paths_rc.py",
             "/work/artifacts",
+            "--production-readback",
+            "/work/production-readback.json",
         )
         for client in ("channel", "oats"):
             shutil.copy2(
                 WORK / "artifacts" / client / "provenance.json",
                 EVIDENCE / ("released-" + client + ".json"),
             )
-    with phase("stage-production-wheels"):
-        stage_production_wheels(WORK / "production-wheels", production["packages"])
+    with phase("install-production-wheels"):
         run(
             "docker",
             "run",
@@ -340,8 +362,8 @@ def qualify_released_clients(released_aw, runtimes, observations, production):
             "--no-deps",
             "--target=/work/production-package",
             *[
-                "/work/production-wheels/" + path.name
-                for path in sorted((WORK / "production-wheels").iterdir())
+                "/work/artifacts/production-wheels/" + path.name
+                for path in sorted((WORK / "artifacts/production-wheels").iterdir())
             ],
         )
         make_public_tree_readable(root=WORK / "production-package")
@@ -355,36 +377,23 @@ def qualify_released_clients(released_aw, runtimes, observations, production):
                 python = SERVER_PYTHON if baseline else "python"
                 actual = {}
                 installed = {}
+                naapp_versions = {}
                 for service in ("server", "peer"):
-                    actual[service], installed[service] = (
-                        compose(
-                            "exec",
-                            "-T",
-                            service,
-                            python,
-                            "-c",
-                            'import aweb; from importlib.metadata import version; print(version("aweb")); print(aweb.__file__)',
-                            capture=True,
+                    actual[service], installed[service] = runtime_import(
+                        service, python, "aweb", "aweb"
+                    )
+                    if baseline:
+                        naapp_versions[service], installed[f"{service}:naapp"] = (
+                            runtime_import(service, python, "aweb-naapp", "aweb_naapp")
                         )
-                        .stdout.strip()
-                        .splitlines()
-                    )
-                registry_version, installed["awid"] = (
-                    compose(
-                        "exec",
-                        "-T",
-                        "awid",
-                        python,
-                        "-c",
-                        'import awid_service; from importlib.metadata import version; print(version("awid-service")); print(awid_service.__file__)',
-                        capture=True,
-                    )
-                    .stdout.strip()
-                    .splitlines()
+                registry_version, installed["awid"] = runtime_import(
+                    "awid", python, "awid-service", "awid_service"
                 )
                 if baseline and (
                     registry_version
                     != production["packages"]["awid-service"]["version"]
+                    or set(naapp_versions.values())
+                    != {production["packages"]["aweb-naapp"]["version"]}
                     or not all(
                         path.startswith("/work/production-package/")
                         for path in installed.values()
@@ -399,6 +408,7 @@ def qualify_released_clients(released_aw, runtimes, observations, production):
                             **artifact,
                             "running": actual,
                             "awid_version": registry_version,
+                            "naapp_versions": naapp_versions,
                             "imported": installed,
                         },
                         indent=2,

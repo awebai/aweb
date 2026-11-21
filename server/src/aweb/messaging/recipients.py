@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass, replace
 from collections.abc import Mapping
 
 from aweb.application_state import RegistryClientUnavailable
-from aweb.messaging.refusals import RecipientAddressNotFound
-from aweb.messaging.refusals import DeliveryRefusal
+from aweb.messaging.refusals import (
+    ContactIdentityBindingRequired,
+    DeliveryRefusal,
+    RecipientAddressNotFound,
+    registry_dependency_refusal,
+)
 from http import HTTPStatus
 from awid.federation_errors import FederationAuthorityError
 from aweb.federation.errors import LocalRecipientNotFoundError
@@ -39,9 +42,6 @@ from aweb.messaging.recipient_bindings import (
     signed_recipient_matches,
 )
 
-from aweb.messaging.refusals import ContactIdentityBindingRequired
-
-
 @dataclass(frozen=True, kw_only=True)
 class RecipientIdentityBinding:
     """The identity a saved contact expects, never a routing authority."""
@@ -50,9 +50,6 @@ class RecipientIdentityBinding:
 
     def matches(self, recipient: Mapping) -> bool:
         return self.did in {recipient.get("did_aw"), recipient.get("did_key")}
-
-
-logger = logging.getLogger(__name__)
 
 
 async def _local_recipient_at_address(db, *, domain: str, name: str) -> Mapping | None:
@@ -164,23 +161,17 @@ async def _resolve_address_identity(
     authority = runtime.federation_authority
     home_namespace = await namespace_uses_home_registry(db, registry, domain)
     resolution = None
-    if home_namespace:
+    if registry is not None and (home_namespace or authority is None):
         try:
             resolution = await registry.resolve_address(domain, name, did_key=auth.did_key)
         except AWID_DEPENDENCY_ERRORS as exc:
-            logger.warning(
-                "Messaging home address lookup unavailable failure_type=%s",
-                type(exc).__name__,
-            )
-            raise FederationAuthorityError("sender_registry_unavailable") from exc
+            raise registry_dependency_refusal(exc, operation="AWID recipient address lookup") from exc
     elif authority is not None:
         try:
             resolution = await authority.resolve_contact(address, source_ip=source)
         except FederationAuthorityError as exc:
             if exc.reason != "recipient_identity_not_found":
                 raise
-    elif registry is not None:
-        resolution = await registry.resolve_address(domain, name, did_key=auth.did_key)
 
     if resolution is not None and resolution.did_aw:
         recipient = await local_recipient_for_address_binding(

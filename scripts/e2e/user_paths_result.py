@@ -19,7 +19,30 @@ KNOWN_RELEASED_ISSUES = [
     dict(case='released/t2->t1/chat/v2', task='aweb-actw', fix='5be20e32e6',
          minimum_version='1.36.40', maximum_version='1.36.54', actor='t2', target='t1', exit=1, code='error',
          message='sending message: recipient has no published E2E encryption key; ask them to upgrade aw/Pi/channel and run `aw id encryption-key setup`, or explicitly send a server-readable upgrade note with --plaintext'),
+    # R15's released-client inventory records the spelling mismatch in 1.36.40.
+    # Antares da6e2b57 limits the budget to that release's two stored-policy assertions.
+    *[
+        dict(case=f'released/contacts-only/{kind}', task='aweb-adje.15',
+             source='aw-v1.36.40:cli/go/cmd/aw/inbound_mode.go:57-62',
+             minimum_version='1.36.40', maximum_version='1.36.40',
+             assertion='Expected contacts_only; server stored team_and_contacts')
+        for kind in ('mail', 'chat')
+    ],
 ]
+
+
+def _matches_chat_key_failure(failure, rule):
+    args = failure.get('args') or []
+    expected = ['chat', 'send-and-wait', rule['target'], None, '--e2ee', '--wait', '0']
+    command_matches = (len(args) == len(expected) and args[:3] == expected[:3] and args[4:] == expected[4:]
+                       and isinstance(args[3], str) and re.fullmatch(re.escape(rule['case']) + r'/[0-9a-f]{32}', args[3]))
+    response_matches = (failure.get('response') == {'error': {'code': rule['code'], 'message': rule['message']}}
+                        or (failure.get('response') is None and failure.get('stdout') == ''))
+    existing_session = failure.get('existing_local_session')
+    session_matches = isinstance(existing_session, str) and re.fullmatch(r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}', existing_session)
+    return (failure.get('exit') == rule['exit'] and failure.get('actor') == rule['actor']
+            and failure.get('phase') == 'initial-send' and session_matches and command_matches and response_matches
+            and failure.get('stderr') == rule['message'] + '\n')
 
 
 def classify_outcome(outcome, version):
@@ -40,18 +63,13 @@ def classify_outcome(outcome, version):
         result['status'] = 'PASSED' if actual == 'PASSED' else 'FAILED'
         return result
     result['known_issue'] = rule
-    failure = outcome.get('failure') or {}
-    args = failure.get('args') or []
-    expected = ['chat', 'send-and-wait', rule['target'], None, '--e2ee', '--wait', '0']
-    command_matches = (len(args) == len(expected) and args[:3] == expected[:3] and args[4:] == expected[4:]
-                       and isinstance(args[3], str) and re.fullmatch(re.escape(rule['case']) + r'/[0-9a-f]{32}', args[3]))
-    response_matches = (failure.get('response') == {'error': {'code': rule['code'], 'message': rule['message']}}
-                        or (failure.get('response') is None and failure.get('stdout') == ''))
-    existing_session = failure.get('existing_local_session')
-    session_matches = isinstance(existing_session, str) and re.fullmatch(r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}', existing_session)
-    if (actual == 'FAILED' and failure.get('exit') == rule['exit'] and failure.get('actor') == rule['actor']
-            and failure.get('phase') == 'initial-send' and session_matches and command_matches and response_matches
-            and failure.get('stderr') == rule['message'] + '\n'):
+    if 'assertion' in rule:
+        matched = (version == rule['minimum_version']
+                   and outcome.get('failure') is None
+                   and outcome.get('assertion') == outcome.get('error') == rule['assertion'])
+    else:
+        matched = _matches_chat_key_failure(outcome.get('failure') or {}, rule)
+    if actual == 'FAILED' and matched:
         result['status'] = 'KNOWN_ISSUE'
     else:
         result.update(status='FAILED', budget_error='declared known issue passed unexpectedly or failed differently')

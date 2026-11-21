@@ -14,6 +14,7 @@ from nacl.signing import SigningKey
 
 from awid.did import did_from_public_key
 from awid.identity_observation import IdentityKind
+from awid.registry import RegistryClient
 from awid_service.testing import Registry
 from aweb.application_state import application_registry_client
 from aweb.lifecycle import LifecycleActor, LifecycleCascadeRequest, apply_lifecycle_cascade
@@ -208,7 +209,14 @@ async def set_messaging_inbound_mode(
     assert response.json()["inbound_mode"] == mode
 
 
-async def archive_messaging_actor(db, redis, *, team_id: str, agent_id) -> None:
+async def archive_messaging_actor(
+    db,
+    redis,
+    *,
+    team_id: str,
+    agent_id,
+    registry_client: RegistryClient | None,
+) -> None:
     result = await apply_lifecycle_cascade(
         db,
         redis,
@@ -220,11 +228,19 @@ async def archive_messaging_actor(db, redis, *, team_id: str, agent_id) -> None:
             workspace_scope="all_for_agent",
             require_identity_scope="global",
         ),
+        registry_client=registry_client,
     )
     assert result.identity_archived, result.errors
 
 
-async def remove_messaging_agent_from_sessions(db, redis, *, team_id: str, agent_id) -> None:
+async def remove_messaging_agent_from_sessions(
+    db,
+    redis,
+    *,
+    team_id: str,
+    agent_id,
+    registry_client: RegistryClient | None,
+) -> None:
     result = await apply_lifecycle_cascade(
         db,
         redis,
@@ -235,6 +251,7 @@ async def remove_messaging_agent_from_sessions(db, redis, *, team_id: str, agent
             target_agent_id=str(agent_id),
             workspace_scope="all_for_agent",
         ),
+        registry_client=registry_client,
     )
     assert not result.errors, result.errors
     assert result.chat_participant_cleanup_count == 1

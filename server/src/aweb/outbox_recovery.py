@@ -16,7 +16,10 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import logging
-from typing import Any, Awaitable, Callable, Optional
+from typing import Any
+
+from .application_state import RegistryClientUnavailable, application_registry_client
+from .hooks import MutationCallback
 
 from .federation.delivery import deliver_federation_mutation_outbox
 from .lifecycle import replay_lifecycle_side_effects
@@ -33,44 +36,68 @@ async def recover_outboxes(
     *,
     aweb_db: Any,
     redis: Any,
-    on_mutation: Optional[Callable[[str, dict], Awaitable[None]]],
+    on_mutation: MutationCallback | None,
 ) -> None:
     """Deliver undelivered lifecycle and federation outbox rows, in bounded batches."""
     for _ in range(_LIFECYCLE_MAX_BATCHES):
-        result = await replay_lifecycle_side_effects(aweb_db, redis, limit=_LIFECYCLE_BATCH_SIZE)
+        result = await replay_lifecycle_side_effects(
+            aweb_db, redis, limit=_LIFECYCLE_BATCH_SIZE
+        )
         if result.attempted_count < _LIFECYCLE_BATCH_SIZE:
             break
     if on_mutation is not None:
-        await deliver_federation_mutation_outbox(aweb_db, on_mutation, limit=_FEDERATION_BATCH_SIZE)
+        await deliver_federation_mutation_outbox(
+            aweb_db, on_mutation, limit=_FEDERATION_BATCH_SIZE
+        )
 
 
 async def _run_outbox_recovery(app: Any, interval_seconds: float) -> None:
+    # Maintenance calls recover_outboxes; defer this import to avoid the cycle.
+    from .maintenance import run_native_maintenance
+
     while True:
         try:
-            await recover_outboxes(
-                aweb_db=app.state.db.get_manager("aweb"),
+            registry = application_registry_client(app.state)
+        except RegistryClientUnavailable:
+            registry = None
+        try:
+            await run_native_maintenance(
+                db_infra=app.state.db,
                 redis=app.state.redis,
+                registry_client=registry,
                 on_mutation=getattr(app.state, "on_mutation", None),
             )
         except Exception:
-            logger.warning("Outbox recovery failed", exc_info=True)
+            logger.warning("Native maintenance failed", exc_info=True)
         await asyncio.sleep(interval_seconds)
 
 
 def start_outbox_recovery(app: Any, *, interval_seconds: float | None = None) -> None:
     # A fresh context: the loop outlives whatever request or startup started it.
+    """Start periodic native maintenance under the released recovery task name."""
     app.state.outbox_recovery_task = asyncio.create_task(
-        _run_outbox_recovery(app, OUTBOX_RECOVERY_INTERVAL_SECONDS if interval_seconds is None else interval_seconds),
+        _run_outbox_recovery(
+            app,
+            OUTBOX_RECOVERY_INTERVAL_SECONDS
+            if interval_seconds is None
+            else interval_seconds,
+        ),
         context=contextvars.Context(),
     )
 
 
 def ensure_outbox_recovery(app: Any) -> None:
     """Start the loop unless it runs, once the app has its database and Redis."""
+    resources = getattr(app.state, "native_resources", None)
+    if resources is not None and not resources.readiness.ready:
+        return
     task = getattr(app.state, "outbox_recovery_task", None)
     if task is not None and not task.done():
         return
-    if getattr(app.state, "db", None) is None or getattr(app.state, "redis", None) is None:
+    if (
+        getattr(app.state, "db", None) is None
+        or getattr(app.state, "redis", None) is None
+    ):
         return
     start_outbox_recovery(app)
 
@@ -88,6 +115,7 @@ class OutboxRecoveryStarter:
 
 
 async def stop_outbox_recovery(app: Any) -> None:
+    """Stop the periodic recovery task owned by this application."""
     task = getattr(app.state, "outbox_recovery_task", None)
     if task is None or task.done():
         return

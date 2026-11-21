@@ -1,7 +1,6 @@
 """Agent HTTP consumers use the serving app, registry, PostgreSQL and Redis."""
 
 import asyncio
-import json
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
@@ -9,39 +8,23 @@ import pytest
 import pytest_asyncio
 from nacl.public import PrivateKey
 
+from aweb.embedding import OutboxRecoveryOwnership
 from awid.e2ee_keys import (
     build_encryption_key_assertion,
     canonical_encryption_assertion,
 )
 from awid.signing import sign_message
 from identity_binding_support import register_global_identity
+from test_coordination_state_http import request_as
 from test_dashboard_privacy import TEAM, privacy_stack
-from test_messages_http import (
-    _encode_certificate,
-    _make_certificate,
-    _make_keypair,
-    _signed_team_headers,
-)
-
-
-async def request_as(env, *, alias, method, path, payload=None):
-    actor = env.actors[alias]
-    body = json.dumps(payload).encode() if payload is not None else b""
-    return await env.client.request(
-        method,
-        path,
-        content=body,
-        headers={
-            **_signed_team_headers(actor.sk, actor.did, TEAM, actor.certificate, body),
-            "Content-Type": "application/json",
-            "Accept": "application/json, text/event-stream",
-        },
-    )
+from test_messages_http import _encode_certificate, _make_certificate, _make_keypair
 
 
 @pytest_asyncio.fixture
 async def privacy_app(shared_test_pool, monkeypatch):
-    async with privacy_stack(shared_test_pool, monkeypatch) as env:
+    async with privacy_stack(
+        shared_test_pool, monkeypatch, outbox_recovery=OutboxRecoveryOwnership.HOST
+    ) as env:
         yield env
 
 
@@ -289,7 +272,10 @@ async def test_get_my_inbound_mode_returns_current_global_agent_policy(privacy_a
     env = privacy_app
     await _global_actor(env)
     changed = await request_as(
-        env, alias="alice", method="PATCH", path="/v1/agents/me/inbound-mode",
+        env,
+        alias="alice",
+        method="PATCH",
+        path="/v1/agents/me/inbound-mode",
         payload={"inbound_mode": "contacts_only"},
     )
     assert changed.status_code == 200, changed.text

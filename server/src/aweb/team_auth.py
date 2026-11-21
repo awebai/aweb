@@ -20,6 +20,7 @@ from fastapi import HTTPException
 
 from awid.team_certificate import (
     TeamCertificateError,
+    TeamCertificateReason,
     check_team_certificate,
     refusal_answer,
 )
@@ -33,11 +34,27 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-def certificate_refusal(error: TeamCertificateError) -> HTTPException:
-    """What the server answers for a certificate the shared check refuses
-    (awid.team_certificate.refusal_answer)."""
-    status_code, detail = refusal_answer(error)
-    return HTTPException(status_code=status_code, detail=detail)
+class TeamCertificateRefusal(HTTPException):
+    """HTTP refusal with the shared certificate error available to embedding hosts."""
+
+    def __init__(self, error: TeamCertificateError) -> None:
+        status_code, diagnostic = refusal_answer(error)
+        detail: str | dict[str, str] = diagnostic
+        if error.reason is TeamCertificateReason.REVOKED:
+            detail = {
+                "code": "certificate_revoked",
+                "message": (
+                    "This team certificate has been revoked. "
+                    "Ask the team's owner for a new certificate."
+                ),
+            }
+        super().__init__(status_code=status_code, detail=detail)
+        self.certificate_error = error
+
+
+def certificate_refusal(error: TeamCertificateError) -> TeamCertificateRefusal:
+    """Return the server's refusal for a certificate the shared check rejects."""
+    return TeamCertificateRefusal(error)
 
 
 def parse_and_verify_certificate(
