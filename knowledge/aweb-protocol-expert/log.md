@@ -1,5 +1,10 @@
 # Knowledge log
 
+## 2026-11-19
+* **Harvest**: OKF proposal from seat aweb-protocol-expert-chat-verify with five backing notes; repository claims checked against aweb main at ecb9d825a. Reviewer and message identifiers are omitted.
+* **Creation**: decision [a team's revocations outlive the team and its namespace](/aweb-protocol-expert/decisions/team-revocations-outlive-the-team.md), a coordinator decision with its rejected alternative, implemented on a review branch and not on main.
+* **Creation**: lessons [channel-core is released only inside bundles](/aweb-protocol-expert/lessons/channel-core-is-released-only-inside-bundles.md), [channel-core changes rebuild the wake runner bundle](/aweb-protocol-expert/lessons/channel-core-changes-rebuild-the-wake-bundle.md), [real-AWID tests in cmd/aw start Docker](/aweb-protocol-expert/lessons/real-awid-tests-start-docker.md) and [an absence search is read whole](/aweb-protocol-expert/lessons/an-absence-search-is-read-whole.md).
+
 ## 2026-11-06
 * **Fix**: review of the db-access proposal on npm gitHead, PubSub release and stream checkouts: hosted specifics in [stream bodies leave the request connection scope](/aweb-protocol-expert/lessons/stream-bodies-leave-the-request-connection-scope.md) and [an npm tarball publish records no gitHead](/aweb-protocol-expert/lessons/npm-tarball-publish-records-no-githead.md) are stated generically or dropped, as the OSS and Cloud boundary requires.
 * **Update**: [SSE cleanup is cancelled on client disconnect](/aweb-protocol-expert/lessons/sse-cleanup-is-cancelled-on-disconnect.md) and [a PubSub release survives any cancellation](/aweb-protocol-expert/decisions/pubsub-release-survives-any-cancellation.md) link each other: the AnyIO shield covers Starlette's disconnect, not native task cancellation.
