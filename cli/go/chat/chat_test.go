@@ -4147,13 +4147,14 @@ func TestSendUsesSignedPayloadStableIDForSSEIdentityMismatch(t *testing.T) {
 	replyTimestamp := "2026-04-10T00:00:00Z"
 
 	replyEnv := &awid.MessageEnvelope{
-		From:         "myteam/architect",
-		FromDID:      senderDID,
-		Type:         "chat",
-		Body:         "hi back!",
-		Timestamp:    replyTimestamp,
-		FromStableID: stableID,
-		MessageID:    replyMsgID,
+		From:           "myteam/architect",
+		FromDID:        senderDID,
+		Type:           "chat",
+		Body:           "hi back!",
+		Timestamp:      replyTimestamp,
+		FromStableID:   stableID,
+		MessageID:      replyMsgID,
+		ConversationID: "s1",
 	}
 	replySig, err := awid.SignMessage(senderPriv, replyEnv)
 	if err != nil {
@@ -4191,16 +4192,18 @@ func TestSendUsesSignedPayloadStableIDForSSEIdentityMismatch(t *testing.T) {
 			}
 
 			replyData, _ := json.Marshal(map[string]any{
-				"type":           "message",
-				"message_id":     replyMsgID,
-				"from_agent":     "architect",
-				"from_address":   "myteam/architect",
-				"body":           "hi back!",
-				"from_did":       senderDID,
-				"signature":      replySig,
-				"signing_key_id": senderDID,
-				"signed_payload": replySignedPayload,
-				"timestamp":      replyTimestamp,
+				"type":            "message",
+				"message_id":      replyMsgID,
+				"session_id":      "s1",
+				"conversation_id": "s1",
+				"from_agent":      "architect",
+				"from_address":    "myteam/architect",
+				"body":            "hi back!",
+				"from_did":        senderDID,
+				"signature":       replySig,
+				"signing_key_id":  senderDID,
+				"signed_payload":  replySignedPayload,
+				"timestamp":       replyTimestamp,
 			})
 			fmt.Fprintf(w, "event: message\ndata: %s\n\n", replyData)
 			if flusher != nil {
@@ -4403,15 +4406,16 @@ func TestSendUsesStableRecipientBindingForSSEAfterLocalKeyRotation(t *testing.T)
 	replyTimestamp := "2026-04-10T00:00:00Z"
 
 	replyEnv := &awid.MessageEnvelope{
-		From:       "myteam/architect",
-		FromDID:    senderDID,
-		To:         receiverStableID,
-		ToDID:      receiverOldDID,
-		ToStableID: receiverStableID,
-		Type:       "chat",
-		Body:       "hi after rotation!",
-		Timestamp:  replyTimestamp,
-		MessageID:  replyMsgID,
+		From:           "myteam/architect",
+		FromDID:        senderDID,
+		To:             receiverStableID,
+		ToDID:          receiverOldDID,
+		ToStableID:     receiverStableID,
+		Type:           "chat",
+		Body:           "hi after rotation!",
+		Timestamp:      replyTimestamp,
+		MessageID:      replyMsgID,
+		ConversationID: "s1",
 	}
 	replySig, err := awid.SignMessage(senderPriv, replyEnv)
 	if err != nil {
@@ -4449,18 +4453,20 @@ func TestSendUsesStableRecipientBindingForSSEAfterLocalKeyRotation(t *testing.T)
 			}
 
 			replyData, _ := json.Marshal(map[string]any{
-				"type":           "message",
-				"message_id":     replyMsgID,
-				"from_agent":     "architect",
-				"from_address":   "myteam/architect",
-				"body":           "hi after rotation!",
-				"from_did":       senderDID,
-				"to_did":         receiverOldDID,
-				"to_stable_id":   receiverStableID,
-				"signature":      replySig,
-				"signing_key_id": senderDID,
-				"signed_payload": replySignedPayload,
-				"timestamp":      replyTimestamp,
+				"type":            "message",
+				"message_id":      replyMsgID,
+				"session_id":      "s1",
+				"conversation_id": "s1",
+				"from_agent":      "architect",
+				"from_address":    "myteam/architect",
+				"body":            "hi after rotation!",
+				"from_did":        senderDID,
+				"to_did":          receiverOldDID,
+				"to_stable_id":    receiverStableID,
+				"signature":       replySig,
+				"signing_key_id":  senderDID,
+				"signed_payload":  replySignedPayload,
+				"timestamp":       replyTimestamp,
 			})
 			fmt.Fprintf(w, "event: message\ndata: %s\n\n", replyData)
 			if flusher != nil {

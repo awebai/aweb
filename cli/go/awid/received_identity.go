@@ -78,6 +78,28 @@ func (c *Client) NormalizeReceivedSenderTrust(ctx context.Context, status Verifi
 // NormalizeReceivedSender keeps display labels out of cross-team local
 // and no-address global verification. It cannot promote a failed signature or recipient mismatch.
 func (c *Client) NormalizeReceivedSender(ctx context.Context, status VerificationStatus, sender ReceivedSender) (VerificationStatus, *bool) {
+	return checkedAsVerified(status, func(status VerificationStatus) (VerificationStatus, *bool) {
+		return c.normalizeReceivedSender(ctx, status, sender)
+	})
+}
+
+// checkedAsVerified runs a sender's trust checks for a legacy-format
+// signature exactly as for a current one. VerifiedLegacy names the signed
+// envelope's format (it has no conversation claim), not a trust result, so
+// the message keeps it only when the checks pass; a failed check gives the
+// same outcome as for a current-format message.
+func checkedAsVerified(status VerificationStatus, check func(VerificationStatus) (VerificationStatus, *bool)) (VerificationStatus, *bool) {
+	if status != VerifiedLegacy {
+		return check(status)
+	}
+	checked, contact := check(Verified)
+	if checked == Verified {
+		checked = VerifiedLegacy
+	}
+	return checked, contact
+}
+
+func (c *Client) normalizeReceivedSender(ctx context.Context, status VerificationStatus, sender ReceivedSender) (VerificationStatus, *bool) {
 	address, alias, did, stableID := sender.Address, sender.Alias, sender.DID, sender.StableID
 	membership := sender.Membership
 	if sender.Binding != nil && strings.TrimSpace(stableID) == "" {
@@ -90,7 +112,7 @@ func (c *Client) NormalizeReceivedSender(ctx context.Context, status Verificatio
 		if reference == "" {
 			reference = alias
 		}
-		return c.NormalizeSenderTrust(ctx, status, reference, did, stableID, sender.Rotation, sender.Replacement, sender.IsContact)
+		return c.normalizeSenderTrust(ctx, status, reference, did, stableID, sender.Rotation, sender.Replacement, sender.IsContact)
 	}
 	if !status.Trusted() {
 		return status, nil

@@ -266,11 +266,15 @@ func TestTOFUConformanceVectors(t *testing.T) {
 				meta.DID = vector.FromDID
 			}
 
-			got := client.checkResolvedSenderPin(context.Background(), resolvedSenderPinCheck{
-				Status: VerificationStatus(vector.InitialStatus), RawAddress: vector.RawAddress,
-				TrustAddress: vector.TrustAddress, FromDID: vector.FromDID, FromStableID: vector.FromStableID,
-				Rotation: rotation, Replacement: replacement, Metadata: meta,
-				Registry: registryEvidence{status: VerificationStatus(vector.InitialStatus), currentKeyConfirmed: vector.RegistryConfirmedCurrentKey},
+			// The pin check runs under the sender-trust owner's rule for a
+			// legacy-format signature (checkedAsVerified).
+			got, _ := checkedAsVerified(VerificationStatus(vector.InitialStatus), func(status VerificationStatus) (VerificationStatus, *bool) {
+				return client.checkResolvedSenderPin(context.Background(), resolvedSenderPinCheck{
+					Status: status, RawAddress: vector.RawAddress,
+					TrustAddress: vector.TrustAddress, FromDID: vector.FromDID, FromStableID: vector.FromStableID,
+					Rotation: rotation, Replacement: replacement, Metadata: meta,
+					Registry: registryEvidence{status: status, currentKeyConfirmed: vector.RegistryConfirmedCurrentKey},
+				}), nil
 			})
 			if got != VerificationStatus(vector.ExpectedStatus) {
 				t.Fatalf("status=%q, want %q", got, vector.ExpectedStatus)

@@ -852,7 +852,7 @@ func (c *Client) ChatHistory(ctx context.Context, p ChatHistoryParams) (*ChatHis
 	}
 	for i := range out.Messages {
 		m := &out.Messages[i]
-		if err := c.VerifyReceivedChatMessage(ctx, m, m.FromAgent); err != nil {
+		if err := c.VerifyReceivedChatMessage(ctx, m, p.SessionID, m.FromAgent); err != nil {
 			return nil, err
 		}
 	}
@@ -862,11 +862,13 @@ func (c *Client) ChatHistory(ctx context.Context, p ChatHistoryParams) (*ChatHis
 // VerifyReceivedChatMessage sets a plaintext or encrypted chat message's
 // verification status and authenticated sender fields, the same way for every
 // reader (chat history and the live stream) and by the rule mail uses
-// (verifyReceived). trustAlias names the sender for trust normalisation when
-// the message carries no address. An error means the message could not be
-// read at all.
-func (c *Client) VerifyReceivedChatMessage(ctx context.Context, m *ChatMessage, trustAlias string) error {
+// (verifyReceived). conversationID is the conversation the reader read the
+// message from; a message from any other conversation is Failed. trustAlias
+// names the sender for trust normalisation when the message carries no
+// address. An error means the message could not be read at all.
+func (c *Client) VerifyReceivedChatMessage(ctx context.Context, m *ChatMessage, conversationID, trustAlias string) error {
 	r := receivedChatMessage(m, trustAlias)
+	r.requestedConversationID = strings.TrimSpace(conversationID)
 	if err := c.verifyReceived(ctx, &r); err != nil {
 		return err
 	}

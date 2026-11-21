@@ -56,9 +56,21 @@ export async function fetchHistory(
   );
 
   for (const msg of resp.messages) {
+    // A message read from a conversation is checked against that
+    // conversation, not only the one its row names: a row from another
+    // conversation is a replay, however it is signed. A server that names no
+    // conversation in the row leaves the requested one.
+    const rowConversation = msg.conversation_id;
+    if (rowConversation && rowConversation !== sessionId) {
+      msg.projected_from_did = msg.from_did;
+      msg.verification_status = "failed";
+      continue;
+    }
+    msg.conversation_id = sessionId;
     if (!displayMatchesSignedClaims(msg)) {
       // The response is left as received: signed metadata is not projected
       // over fields the signature does not cover.
+      msg.conversation_id = rowConversation;
       msg.projected_from_did = msg.from_did;
       msg.verification_status = "failed";
       continue;

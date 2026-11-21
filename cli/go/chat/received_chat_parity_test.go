@@ -134,6 +134,22 @@ func parityCases(t *testing.T, reader, bob parityKey) []parityCase {
 	stableRow := base("10000000-0000-4000-8000-000000000008", "stable id in the row")
 	stableRow.FromStableID = "did:aw:bob-stable"
 
+	// Signed by bob for another conversation, and served in this one with
+	// that conversation's own identifiers: the row matches its signature, but
+	// not the conversation the reader asked for.
+	const otherConversation = "44444444-4444-4444-8444-444444444444"
+	replayed := base("10000000-0000-4000-8000-000000000009", "signed for another conversation")
+	replayed.ConversationID = otherConversation
+
+	// Signed by another key in bob's name, with and without the conversation
+	// claim: leaving the claim out must not skip the sender's trust checks.
+	impostor := newParityKey(t)
+	impersonated := base("10000000-0000-4000-8000-00000000000a", "i am bob")
+	impersonated.FromDID = impostor.did
+	impersonatedUnbound := base("10000000-0000-4000-8000-00000000000b", "i am bob, unbound")
+	impersonatedUnbound.FromDID = impostor.did
+	impersonatedUnbound.ConversationID = ""
+
 	return []parityCase{
 		{name: "legacy signed row", row: legacyRow, want: awid.VerifiedLegacy},
 		{name: "unsigned row", row: unsigned, want: awid.Unverified},
@@ -143,6 +159,9 @@ func parityCases(t *testing.T, reader, bob parityKey) []parityCase {
 		{name: "payload without conversation claim", row: signedParityRow(t, bob, noConversation, map[string]any{"from_address": "myco/bob"}), want: awid.VerifiedLegacy},
 		{name: "signed to another recipient", row: signedParityRow(t, bob, otherRecipient, map[string]any{"from_address": "myco/bob"}), want: awid.IdentityMismatch},
 		{name: "own sent message", row: signedParityRow(t, reader, ownSent, map[string]any{"from_agent": "alice", "from_address": "myco/alice", "to_address": "myco/bob"}), want: awid.Verified},
+		{name: "signed in bob's name by another key", row: signedParityRow(t, impostor, impersonated, map[string]any{"from_address": "myco/bob", "to_address": "myco/alice"}), want: awid.IdentityMismatch},
+		{name: "signed in bob's name by another key, no conversation claim", row: signedParityRow(t, impostor, impersonatedUnbound, map[string]any{"from_address": "myco/bob", "to_address": "myco/alice"}), want: awid.IdentityMismatch},
+		{name: "replayed from another conversation", row: signedParityRow(t, bob, replayed, map[string]any{"session_id": otherConversation, "conversation_id": otherConversation, "from_address": "myco/bob", "to_address": "myco/alice"}), want: awid.Failed},
 	}
 }
 

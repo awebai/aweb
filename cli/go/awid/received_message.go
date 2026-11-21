@@ -33,6 +33,9 @@ type receivedMessage struct {
 	authenticatedSenderRead bool
 	messageID               string
 	conversationID          string
+	// requestedConversationID is the conversation the reader asked for, when
+	// it read one: a message is shown there only if it belongs to it.
+	requestedConversationID string
 	contentMode             string
 	messageVersion          int
 	encrypted               *E2EEMessageEnvelope
@@ -62,7 +65,8 @@ func (r *receivedMessage) isEncrypted() bool {
 }
 
 // verifyReceived sets a received message's verification status and its
-// authenticated sender and recipient fields. In order: the displayed fields
+// authenticated sender and recipient fields. In order: a message read from a
+// conversation must belong to it; the displayed fields
 // must be the signed ones before signed metadata is projected over them; an
 // encrypted message is decrypted and its outer identifiers must be the inner
 // ones; the signature and its conversation claim are verified; the message is
@@ -73,6 +77,18 @@ func (c *Client) verifyReceived(ctx context.Context, r *receivedMessage) error {
 	r.attachments = nil
 	r.attachmentsAvailable = true
 	binding := ReceivedSenderBinding{ProjectedDID: r.fromDID}
+	if r.requestedConversationID != "" {
+		// A message read from a conversation is checked against that
+		// conversation, not only the one its row names: a row from another
+		// conversation is a replay, however it is signed. A server that
+		// names no conversation in the row leaves the requested one.
+		if r.conversationID == "" {
+			r.conversationID = r.requestedConversationID
+		} else if r.conversationID != r.requestedConversationID {
+			r.status = Failed
+			return nil
+		}
+	}
 	if !r.isEncrypted() && r.signedPayload != "" && !c.receivedDisplayMatches(r) {
 		// Preserve the observed response so a mismatch cannot be hidden by
 		// metadata overlay or subsequently promoted by trust normalization.

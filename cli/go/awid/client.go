@@ -993,6 +993,12 @@ func (c *Client) resolveAgentMetaFresh(ctx context.Context, address string, forc
 // signature verification. It suppresses contact tags for local senders and
 // then applies continuity pinning using shared resolver metadata.
 func (c *Client) NormalizeSenderTrust(ctx context.Context, status VerificationStatus, rawAddress, fromDID, fromStableID string, ra *RotationAnnouncement, repl *ReplacementAnnouncement, isContact *bool) (VerificationStatus, *bool) {
+	return checkedAsVerified(status, func(status VerificationStatus) (VerificationStatus, *bool) {
+		return c.normalizeSenderTrust(ctx, status, rawAddress, fromDID, fromStableID, ra, repl, isContact)
+	})
+}
+
+func (c *Client) normalizeSenderTrust(ctx context.Context, status VerificationStatus, rawAddress, fromDID, fromStableID string, ra *RotationAnnouncement, repl *ReplacementAnnouncement, isContact *bool) (VerificationStatus, *bool) {
 	// Mail applies recipient binding before sender continuity normalization.
 	// Never let local-sender cache reconciliation weaken that authoritative
 	// recipient mismatch to verification_stale.

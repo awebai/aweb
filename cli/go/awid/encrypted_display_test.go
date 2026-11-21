@@ -83,7 +83,10 @@ func TestEncryptedDisplayBinding(t *testing.T) {
 				if got.MessageID != raw.MessageID || got.ConversationID != raw.ConversationID {
 					t.Fatalf("outer IDs overwritten: %+v", got)
 				}
-				if mode == "matching" {
+				// A chat read from its conversation names it even when the row
+				// does not, and the envelope authenticates that conversation.
+				authenticated := mode == "matching" || (kind == "chat" && mode == "empty_conversation_id")
+				if authenticated {
 					// Mail and chat both show the authenticated recipient.
 					if got.VerificationStatus != Verified || got.Body != params.Body || got.FromDID != sender.did || got.ToDID != recipient.did {
 						t.Fatalf("authenticated projection lost: %+v", got)

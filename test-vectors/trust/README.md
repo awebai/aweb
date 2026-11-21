@@ -81,7 +81,10 @@ Top-level fields:
 Vector fields:
 
 - `name`: stable test case identifier.
-- `initial_status`: input status from upstream passes.
+- `initial_status`: input status from upstream passes. `verified_legacy` names
+  a signed envelope without a conversation claim, not a trust result: it runs
+  the same checks as `verified`, and stays `verified_legacy` only when they
+  pass.
 - `raw_address`: sender wire-form address.
 - `trust_address`: canonical sender address used for the pin reverse index.
 - `from_did`: sender `did:key`.

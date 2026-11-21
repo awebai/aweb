@@ -211,9 +211,10 @@ func boolField(data map[string]any, key string) bool {
 }
 
 // verifyStreamMessage verifies a message received on the live stream with the
-// same rule chat history uses (awid.Client.VerifyReceivedChatMessage). An
+// same rule chat history uses (awid.Client.VerifyReceivedChatMessage), as
+// read from the conversation sessionID. An
 // event whose row could not be decoded keeps its Failed status.
-func verifyStreamMessage(ctx context.Context, client *awid.Client, ev *Event, participants []awid.ChatParticipant) error {
+func verifyStreamMessage(ctx context.Context, client *awid.Client, sessionID string, ev *Event, participants []awid.ChatParticipant) error {
 	if ev.VerificationStatus == awid.Failed {
 		return nil
 	}
@@ -243,7 +244,7 @@ func verifyStreamMessage(ctx context.Context, client *awid.Client, ev *Event, pa
 		ReplacementAnnouncement: ev.ReplacementAnnouncement,
 		IsContact:               ev.IsContact,
 	}
-	if err := client.VerifyReceivedChatMessage(ctx, &m, chatEventTrustAddress(*ev, participants)); err != nil {
+	if err := client.VerifyReceivedChatMessage(ctx, &m, sessionID, chatEventTrustAddress(*ev, participants)); err != nil {
 		return err
 	}
 	ev.FromDID, ev.ToDID = m.FromDID, m.ToDID
@@ -1186,7 +1187,7 @@ func waitForMessage(ctx context.Context, client *awid.Client, openStream streamO
 				return nil, fmt.Errorf("chat stream closed: %s", detail)
 			}
 			if chatEvent.Type == EventMessage {
-				if err := verifyStreamMessage(ctx, client, &chatEvent, participants); err != nil {
+				if err := verifyStreamMessage(ctx, client, sessionID, &chatEvent, participants); err != nil {
 					return nil, err
 				}
 			}

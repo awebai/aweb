@@ -204,7 +204,7 @@ export class SenderTrustManager {
     toStableID: string | undefined,
     context?: ResolveTrustContext,
   ): Promise<ResolvedTrustMetadata | undefined> {
-    const status = this.checkRecipientBinding(verificationStatus, toDID, toStableID);
+    const status = this.checkRecipientBinding(statusToCheck(verificationStatus), toDID, toStableID);
     const trimmedAddress = rawAddress.trim();
     const local = context && !fromStableID && this.prepareReceivedLocalSender(status, context);
     if (local) {
@@ -330,9 +330,9 @@ export class SenderTrustManager {
       );
       resolved = this.consumeResolvedMetadata(rawAddress, prepared);
     }
-    return this.normalizeTrustDecision(
+    return checkedAsVerified(verificationStatus, (status) => this.normalizeTrustDecision(
       store,
-      verificationStatus,
+      status,
       rawAddress,
       fromDID,
       fromStableID,
@@ -341,7 +341,7 @@ export class SenderTrustManager {
       rotationAnnouncement,
       replacementAnnouncement,
       resolved,
-    );
+    ));
   }
 
   async normalizeResolvedTrust(
@@ -357,9 +357,10 @@ export class SenderTrustManager {
     _verificationAddress?: string,
     resolvedMetadata?: ResolvedTrustMetadata,
   ): Promise<TrustResult> {
-    return this.normalizeTrustDecision(
+    const resolved = this.consumeResolvedMetadata(rawAddress, resolvedMetadata);
+    return checkedAsVerified(verificationStatus, (status) => this.normalizeTrustDecision(
       store,
-      verificationStatus,
+      status,
       rawAddress,
       fromDID,
       fromStableID,
@@ -367,8 +368,8 @@ export class SenderTrustManager {
       toStableID,
       rotationAnnouncement,
       replacementAnnouncement,
-      this.consumeResolvedMetadata(rawAddress, resolvedMetadata),
-    );
+      resolved,
+    ));
   }
 
   private consumeResolvedMetadata(
@@ -1225,6 +1226,25 @@ function b64Decode(value: string): Uint8Array {
  * (Antares 2e8881d7). A real domain/name address is not a team name: its pin
  * is never touched here. Returns whether the store changed.
  */
+// A legacy-format signature (verified_legacy: the signed envelope has no
+// conversation claim) names the envelope's format, not a trust result. Its
+// sender runs the same checks as a current-format sender, and the message
+// keeps verified_legacy only when they pass; a failed check gives the same
+// outcome as for a current-format message.
+function statusToCheck(status: VerificationStatus | undefined): VerificationStatus | undefined {
+  return status === "verified_legacy" ? "verified" : status;
+}
+
+export function checkedAsVerified<T extends { status: VerificationStatus | undefined }>(
+  status: VerificationStatus | undefined,
+  check: (status: VerificationStatus | undefined) => T,
+): T {
+  const result = check(statusToCheck(status));
+  return status === "verified_legacy" && result.status === "verified"
+    ? { ...result, status: "verified_legacy" }
+    : result;
+}
+
 export function releaseTeamNamePin(store: PinStore, rawAddress: string, trustAddress: string, now: number): boolean {
   if (!isTeamScopedName(rawAddress)) return false;
   const retiredAt = new Date(now).toISOString().replace(/\.\d{3}Z$/, "Z");

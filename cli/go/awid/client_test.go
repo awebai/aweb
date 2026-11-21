@@ -4426,14 +4426,15 @@ func TestChatHistoryVerifiesSignedMessages(t *testing.T) {
 	did := ComputeDIDKey(pub)
 
 	env := &MessageEnvelope{
-		From:      "myco/agent",
-		FromDID:   did,
-		To:        "",
-		Type:      "chat",
-		Subject:   "",
-		Body:      "hello chat",
-		Timestamp: "2026-02-22T00:00:00Z",
-		MessageID: "msg-1",
+		From:           "myco/agent",
+		FromDID:        did,
+		To:             "",
+		Type:           "chat",
+		Subject:        "",
+		Body:           "hello chat",
+		Timestamp:      "2026-02-22T00:00:00Z",
+		MessageID:      "msg-1",
+		ConversationID: "sess-1",
 	}
 	sig, err := SignMessage(priv, env)
 	if err != nil {
@@ -4443,13 +4444,14 @@ func TestChatHistoryVerifiesSignedMessages(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"messages": []map[string]any{{
-				"message_id":     "msg-1",
-				"from_agent":     "myco/agent",
-				"body":           "hello chat",
-				"timestamp":      "2026-02-22T00:00:00Z",
-				"from_did":       did,
-				"signature":      sig,
-				"signing_key_id": did,
+				"message_id":      "msg-1",
+				"conversation_id": "sess-1",
+				"from_agent":      "myco/agent",
+				"body":            "hello chat",
+				"timestamp":       "2026-02-22T00:00:00Z",
+				"from_did":        did,
+				"signature":       sig,
+				"signing_key_id":  did,
 			}},
 		})
 	}))
@@ -6475,12 +6477,13 @@ func TestChatHistoryUsesFromAddressForVerification(t *testing.T) {
 	did := ComputeDIDKey(pub)
 
 	env := &MessageEnvelope{
-		From:      "myco/agent",
-		FromDID:   did,
-		Type:      "chat",
-		Body:      "hi there",
-		Timestamp: "2026-02-22T00:00:00Z",
-		MessageID: "msg-chat-1",
+		From:           "myco/agent",
+		FromDID:        did,
+		Type:           "chat",
+		Body:           "hi there",
+		Timestamp:      "2026-02-22T00:00:00Z",
+		MessageID:      "msg-chat-1",
+		ConversationID: "sess-1",
 	}
 	sig, err := SignMessage(priv, env)
 	if err != nil {
@@ -6490,14 +6493,15 @@ func TestChatHistoryUsesFromAddressForVerification(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"messages": []map[string]any{{
-				"message_id":     "msg-chat-1",
-				"from_agent":     "agent",
-				"from_address":   "myco/agent",
-				"body":           "hi there",
-				"timestamp":      "2026-02-22T00:00:00Z",
-				"from_did":       did,
-				"signature":      sig,
-				"signing_key_id": did,
+				"message_id":      "msg-chat-1",
+				"conversation_id": "sess-1",
+				"from_agent":      "agent",
+				"from_address":    "myco/agent",
+				"body":            "hi there",
+				"timestamp":       "2026-02-22T00:00:00Z",
+				"from_did":        did,
+				"signature":       sig,
+				"signing_key_id":  did,
 			}},
 		})
 	}))
@@ -6982,13 +6986,14 @@ func TestChatHistoryCanonicalizesLocalAliasBeforeTOFUPin(t *testing.T) {
 	senderDID := ComputeDIDKey(senderPub)
 
 	env := &MessageEnvelope{
-		From:      "architect",
-		FromDID:   senderDID,
-		To:        "implementer",
-		Type:      "chat",
-		Body:      "hello",
-		Timestamp: "2026-03-24T13:12:05Z",
-		MessageID: "msg-chat-local-1",
+		From:           "architect",
+		FromDID:        senderDID,
+		To:             "implementer",
+		Type:           "chat",
+		Body:           "hello",
+		Timestamp:      "2026-03-24T13:12:05Z",
+		MessageID:      "msg-chat-local-1",
+		ConversationID: "sess-1",
 	}
 	sig, err := SignMessage(senderPriv, env)
 	if err != nil {
@@ -6999,16 +7004,17 @@ func TestChatHistoryCanonicalizesLocalAliasBeforeTOFUPin(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"messages": []map[string]any{{
-				"message_id":     "msg-chat-local-1",
-				"from_agent":     "architect",
-				"from_address":   "architect",
-				"to_address":     "implementer",
-				"body":           "hello",
-				"timestamp":      "2026-03-24T13:12:05Z",
-				"from_did":       senderDID,
-				"signature":      sig,
-				"signing_key_id": senderDID,
-				"is_contact":     false,
+				"message_id":      "msg-chat-local-1",
+				"conversation_id": "sess-1",
+				"from_agent":      "architect",
+				"from_address":    "architect",
+				"to_address":      "implementer",
+				"body":            "hello",
+				"timestamp":       "2026-03-24T13:12:05Z",
+				"from_did":        senderDID,
+				"signature":       sig,
+				"signing_key_id":  senderDID,
+				"is_contact":      false,
 			}},
 		})
 	}))

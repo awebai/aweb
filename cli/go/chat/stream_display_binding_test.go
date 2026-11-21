@@ -94,7 +94,7 @@ func parseStreamRow(t *testing.T, row map[string]any, senderDID string) Event {
 			return &awid.ResolvedIdentity{DID: senderDID, Address: address, StableID: "did:aw:stable-sender", IdentityScope: awid.IdentityModeGlobal, ResolvedVia: "registry"}, nil
 		},
 	})
-	if err := verifyStreamMessage(context.Background(), c, &ev, nil); err != nil {
+	if err := verifyStreamMessage(context.Background(), c, streamConversationID, &ev, nil); err != nil {
 		t.Fatal(err)
 	}
 	return ev

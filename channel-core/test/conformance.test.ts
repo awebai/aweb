@@ -8,6 +8,7 @@ import { computeDIDKey } from "../src/identity/did.js";
 import { PinStore } from "../src/identity/pinstore.js";
 import {
   SenderTrustManager,
+  checkedAsVerified,
   canonicalReplacementJSON,
   canonicalRotationJSON,
   type ReplacementAnnouncement,
@@ -262,15 +263,19 @@ describe("trust conformance vectors", () => {
         ): { status: VerificationStatus | undefined; stored: boolean };
       };
 
-      const result = trust.checkTOFUPinWithMeta(
+      const rotation = await buildRotationAnnouncement(vector.rotation_announcement);
+      const replacement = await buildReplacementAnnouncement(vector.replacement_announcement);
+      // The pin check runs under the sender-trust owner's rule for a
+      // legacy-format signature (checkedAsVerified).
+      const result = checkedAsVerified(vector.initial_status, (status) => trust.checkTOFUPinWithMeta(
         store,
-        vector.initial_status,
+        status,
         vector.raw_address,
         vector.trust_address,
         vector.from_did,
         vector.from_stable_id,
-        await buildRotationAnnouncement(vector.rotation_announcement),
-        await buildReplacementAnnouncement(vector.replacement_announcement),
+        rotation,
+        replacement,
         {
           identityScope: vector.agent_meta.lifetime === "ephemeral" ? "local" : "global",
           custody: vector.agent_meta.custody,
@@ -279,7 +284,7 @@ describe("trust conformance vectors", () => {
           did: vector.registry_names_key ? vector.from_did : undefined,
         },
         { confirmedCurrentKey: vector.registry_confirmed_current_key, movedRegistry: false },
-      );
+      ));
 
       expect(result.status, vector.name).toBe(vector.expected_status);
       assertPinStoreMatchesVector(

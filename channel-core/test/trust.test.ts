@@ -217,6 +217,34 @@ describe("SenderTrustManager", () => {
   // conflicts the steady state and each conflict deferred a wake (aweb-abdk).
   // The sender must be GLOBAL: a local-scope sender is not pinned at all, so the
   // same test built from one would pass without exercising this path.
+  test.each(["verified", "verified_legacy"] as const)(
+    "a %s message signed in a pinned sender's name by another key is an identity mismatch",
+    async (status) => {
+      // verified_legacy names a signed envelope without a conversation claim;
+      // it runs the same sender checks, and keeps its name only when they pass.
+      const owner = await didFromSeed(72);
+      const impostor = await didFromSeed(73);
+      const store = new PinStore();
+      const trust = new SenderTrustManager(
+        authenticatedTeamClient({
+          get: async () => localRoster(
+            { did_key: owner.did, did_aw: "did:aw:grace", identity_scope: "global" },
+            "grace",
+          ),
+        }),
+        { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
+        "backend:acme.com",
+        "",
+      );
+
+      const genuine = await trust.normalizeTrust(store, status, "grace", owner.did, "did:aw:grace", undefined);
+      expect(genuine.status).toBe(status);
+
+      const forged = await trust.normalizeTrust(store, status, "grace", impostor.did, "did:aw:grace", undefined);
+      expect(forged.status).toBe("identity_mismatch");
+    },
+  );
+
   test("an already-pinned global sender stops forcing a commit on every message", async () => {
     const globalIdentity = await didFromSeed(71);
     const store = new PinStore();
