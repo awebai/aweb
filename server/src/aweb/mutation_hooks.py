@@ -393,7 +393,11 @@ async def _announce_task_claim_changes(
 
 
 async def _publish_task_unclaims(
-    redis: Redis, db_infra: "DatabaseInfrastructure", context: dict, *, team_id: str
+    redis: Redis,
+    db_infra: "DatabaseInfrastructure",
+    context: dict,
+    *,
+    team_id: str | None,
 ) -> None:
     """Publish the releases recorded by the committed task transaction."""
     task_ref = context.get("task_ref") or ""
