@@ -23,6 +23,10 @@ type historyAnswer struct {
 	status int
 	body   string
 	rows   int
+	// encrypted is how many of the rows are end-to-end encrypted.
+	encrypted int
+	// drop closes the connection without an answer.
+	drop bool
 }
 
 type continuationFixture struct {
@@ -66,6 +70,13 @@ func newContinuationFixture(t *testing.T, ctx context.Context) *continuationFixt
 		switch {
 		case historyPath && r.Method == http.MethodGet:
 			f.limits = append(f.limits, r.URL.Query().Get("limit"))
+			if f.answer.drop {
+				conn, _, err := w.(http.Hijacker).Hijack()
+				if err == nil {
+					_ = conn.Close()
+				}
+				return
+			}
 			if f.answer.status != 0 {
 				w.WriteHeader(f.answer.status)
 				_, _ = w.Write([]byte(f.answer.body))
@@ -73,6 +84,10 @@ func newContinuationFixture(t *testing.T, ctx context.Context) *continuationFixt
 			}
 			rows := []map[string]any{}
 			for i := 0; i < f.answer.rows; i++ {
+				if i < f.answer.encrypted {
+					rows = append(rows, map[string]any{"message_id": "sealed-" + strconv.Itoa(i), "content_mode": awid.ContentModeEncryptedV2, "message_version": awid.E2EEMessageVersion, "from_agent": "t2"})
+					continue
+				}
 				rows = append(rows, map[string]any{"message_id": "plain-" + strconv.Itoa(i), "content_mode": "plaintext", "message_version": 1, "from_agent": "t2", "body": "readable"})
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"messages": rows})
@@ -117,52 +132,70 @@ func (f *continuationFixture) readLimits() []string {
 	return append([]string(nil), f.limits...)
 }
 
-// A continuation inherits its conversation's encryption. When the stored rows
-// that would show it cannot be read, or the widest readable page is full
-// without an encrypted row, the encryption is unknown: a default continuation
-// refuses and names the explicit choices instead of sending server-readable
-// text into what may be an encrypted conversation.
-func TestDefaultContinuationRefusesWhenTheConversationsEncryptionIsUnknown(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+// plaintextFallback is what aw says when a default continuation sends
+// server-readable plaintext because it cannot encrypt as the conversation
+// would need, or cannot tell whether it must.
+const plaintextFallback = "sending server-readable plaintext"
+
+// A default continuation, as an OATS agent sends it with no flag, is sent as
+// released aw sends it, in plaintext, when aw cannot tell whether the
+// conversation is end-to-end encrypted: the history read is refused (403),
+// hidden (404), fails (5xx or a dropped connection), or its widest page is
+// full without an encrypted row. A warning on stderr says so. The same holds
+// for a conversation that is encrypted when this identity has no key to
+// encrypt with. --e2ee still requires encryption.
+func TestDefaultContinuationSendsPlaintextWhenItCannotEncryptAsTheConversationWould(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
 	f := newContinuationFixture(t, ctx)
 	chatSend := []string{"chat", "send", "--session-id", continuationTestSession, "--body", "next"}
 	mailSend := []string{"mail", "send", "--conversation-id", continuationTestConversation, "--body", "next"}
 
 	for _, tc := range []struct {
-		name      string
-		args      []string
-		answer    historyAnswer
-		wantLimit string
+		name   string
+		args   []string
+		answer historyAnswer
 	}{
-		{name: "chat history denied to a send-scoped grant", args: chatSend, answer: historyAnswer{status: http.StatusForbidden, body: `{"detail":"Forbidden"}`}, wantLimit: "2000"},
-		{name: "chat session hidden", args: chatSend, answer: historyAnswer{status: http.StatusNotFound, body: `{"detail":"Not found"}`}, wantLimit: "2000"},
-		{name: "chat history page full without an encrypted row", args: chatSend, answer: historyAnswer{rows: 2000}, wantLimit: "2000"},
-		{name: "mail conversation denied", args: mailSend, answer: historyAnswer{status: http.StatusForbidden, body: `{"detail":"Forbidden"}`}, wantLimit: "500"},
-		{name: "mail conversation hidden", args: mailSend, answer: historyAnswer{status: http.StatusNotFound, body: `{"detail":"Not found"}`}, wantLimit: "500"},
-		{name: "mail conversation page full without an encrypted row", args: mailSend, answer: historyAnswer{rows: 500}, wantLimit: "500"},
+		{name: "chat history denied to a send-scoped grant", args: chatSend, answer: historyAnswer{status: http.StatusForbidden, body: `{"detail":"Forbidden"}`}},
+		{name: "chat session hidden", args: chatSend, answer: historyAnswer{status: http.StatusNotFound, body: `{"detail":"Not found"}`}},
+		{name: "chat history read fails", args: chatSend, answer: historyAnswer{status: http.StatusInternalServerError, body: `{"detail":"boom"}`}},
+		{name: "chat history connection dropped", args: chatSend, answer: historyAnswer{drop: true}},
+		{name: "chat history page full without an encrypted row", args: chatSend, answer: historyAnswer{rows: 2000}},
+		{name: "chat encrypted session, sender has no encryption key", args: chatSend, answer: historyAnswer{rows: 3, encrypted: 1}},
+		{name: "mail conversation denied", args: mailSend, answer: historyAnswer{status: http.StatusForbidden, body: `{"detail":"Forbidden"}`}},
+		{name: "mail conversation hidden", args: mailSend, answer: historyAnswer{status: http.StatusNotFound, body: `{"detail":"Not found"}`}},
+		{name: "mail conversation read fails", args: mailSend, answer: historyAnswer{status: http.StatusInternalServerError, body: `{"detail":"boom"}`}},
+		{name: "mail conversation connection dropped", args: mailSend, answer: historyAnswer{drop: true}},
+		{name: "mail conversation page full without an encrypted row", args: mailSend, answer: historyAnswer{rows: 500}},
+		{name: "mail encrypted conversation, sender has no encryption key", args: mailSend, answer: historyAnswer{rows: 3, encrypted: 1}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out, err := f.run(ctx, tc.answer, tc.args...)
-			if err == nil {
-				t.Fatalf("the default continuation was sent although the encryption is unknown: %s", out)
+			if err != nil {
+				t.Fatalf("the default continuation was refused: %v\n%s", err, out)
 			}
-			if !strings.Contains(out, "--e2ee") || !strings.Contains(out, "--plaintext") {
-				t.Fatalf("the refusal does not name the explicit choices: %s", out)
+			sent := f.sent()
+			if len(sent) != 1 || sent[0]["encrypted_envelope"] != nil || sent[0]["body"] != "next" {
+				t.Fatalf("posted %#v, want one plaintext message: %s", sent, out)
 			}
-			if sent := f.sent(); len(sent) != 0 {
-				t.Fatalf("a message was posted: %#v", sent)
+			if !strings.Contains(out, plaintextFallback) {
+				t.Fatalf("no warning that the message is server-readable: %s", out)
 			}
-			if limits := f.readLimits(); len(limits) != 1 || limits[0] != tc.wantLimit {
-				t.Fatalf("history reads with limits %v, want one read with limit %s", limits, tc.wantLimit)
+			wantLimit := "500"
+			if tc.args[0] == "chat" {
+				wantLimit = "2000"
+			}
+			if limits := f.readLimits(); len(limits) == 0 || limits[0] != wantLimit {
+				t.Fatalf("history reads with limits %v, want the widest page %s", limits, wantLimit)
 			}
 		})
 	}
 
-	// Controls: a readable history that is shorter than the page is a known
-	// plaintext conversation; an explicit --plaintext needs no answer; a server
-	// that predates the mail conversation route (server-v1.19.0) also predates
-	// end-to-end encryption (server-v1.26.0), so its conversations are plaintext.
+	// Controls: a readable history shorter than the page is a known
+	// plaintext conversation, sent with no warning; an explicit --plaintext
+	// needs no answer; a server that predates the mail conversation route
+	// (server-v1.19.0) also predates end-to-end encryption (server-v1.26.0),
+	// so its conversations are plaintext.
 	for _, tc := range []struct {
 		name   string
 		args   []string
@@ -180,12 +213,21 @@ func TestDefaultContinuationRefusesWhenTheConversationsEncryptionIsUnknown(t *te
 				t.Fatalf("the continuation was refused: %v\n%s", err, out)
 			}
 			sent := f.sent()
-			if len(sent) != 1 {
-				t.Fatalf("posted %d messages, want 1: %s", len(sent), out)
+			if len(sent) != 1 || sent[0]["encrypted_envelope"] != nil || sent[0]["body"] != "next" {
+				t.Fatalf("posted %#v, want one plaintext message: %s", sent, out)
 			}
-			if sent[0]["encrypted_envelope"] != nil || sent[0]["body"] != "next" {
-				t.Fatalf("the continuation was not sent as plaintext: %#v", sent[0])
+			if strings.Contains(out, plaintextFallback) {
+				t.Fatalf("a known plaintext conversation warned: %s", out)
 			}
 		})
+	}
+
+	// The neighbour: --e2ee requires encryption, so a sender with no key is
+	// refused and nothing is posted.
+	for _, args := range [][]string{append(append([]string{}, chatSend...), "--e2ee"), append(append([]string{}, mailSend...), "--e2ee")} {
+		out, err := f.run(ctx, historyAnswer{rows: 3, encrypted: 1}, args...)
+		if err == nil || len(f.sent()) != 0 {
+			t.Fatalf("%v: --e2ee without a key was sent: %v\n%s", args, err, out)
+		}
 	}
 }
