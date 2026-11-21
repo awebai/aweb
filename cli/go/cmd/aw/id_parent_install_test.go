@@ -17,16 +17,20 @@ import (
 func TestParentInstallExistingCertificateForSameLocalKeyOnly(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("AW_CONFIG_PATH", "")
-	t.Setenv("AWID_SKIP_DNS_VERIFY", "1")
-	registryURL := realAWIDFixture(t)
-	t.Setenv("AWID_REGISTRY_URL", registryURL)
-	registry := awid.NewAWIDRegistryClient(nil, nil)
 	const domain = "install.example"
 	controllerPub, controllerKey, err := awid.GenerateKeypair()
 	if err != nil {
 		t.Fatal(err)
 	}
 	controller := awid.ComputeDIDKey(controllerPub)
+	// AWID needs the same DNS controller as the CLI to open and read the
+	// namespace's current root epoch during issuance and install.
+	t.Setenv("AWID_SKIP_DNS_VERIFY", "")
+	t.Setenv("AWID_FIXTURE_DNS_DOMAIN", domain)
+	t.Setenv("AWID_FIXTURE_DNS_CONTROLLER", controller)
+	registryURL := realAWIDFixture(t)
+	t.Setenv("AWID_REGISTRY_URL", registryURL)
+	registry := awid.NewAWIDRegistryClient(nil, nil)
 	if _, err := registry.RegisterNamespaceAt(t.Context(), registryURL, domain, controller, controllerKey); err != nil {
 		t.Fatalf("register namespace: %v", err)
 	}
