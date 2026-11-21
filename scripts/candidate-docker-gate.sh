@@ -91,6 +91,10 @@ if [[ -z "$STAGES" ]]; then
   git -C "$ROOT" merge-base --is-ancestor "$SOURCE_SHA" origin/main \
     || refuse "source SHA is not on the synchronized origin/main history"
 fi
+# docs/python-static-analysis.md: allowances use synchronized main, never the
+# candidate's own budget. Focused callers supply this ref during preparation.
+SYNCHRONIZED_MAIN_SHA="$(git -C "$ROOT" rev-parse --verify 'refs/remotes/origin/main^{commit}')" \
+  || refuse "synchronized origin/main is missing. Synchronize main and start a new gate invocation."
 [[ -d "$LIBRARY_E2E_BLUEPRINT_SRC" ]] || refuse "blueprint input is missing"
 CLI_VERSION="${CLI_VERSION:-$(python3 "$ROOT/scripts/next_tag_version.py" aw-v)}"
 A2A_GATEWAY_VERSION="${A2A_GATEWAY_VERSION:-$(python3 "$ROOT/scripts/next_tag_version.py" a2a-gw-v)}"
@@ -109,6 +113,7 @@ USER_PATHS_LATEST_METADATA="$(python3 "$ROOT/scripts/fetch_released_aw.py" --fre
 USER_PATHS_RESOLVE_SECONDS=$((SECONDS - resolve_started))
 released_identity="$(python3 -c 'import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$USER_PATHS_LATEST_METADATA")"
 USER_PATHS_LATEST_SHA256="$released_identity"
+external_inputs+="SYNCHRONIZED_MAIN_SHA=$SYNCHRONIZED_MAIN_SHA"$'\n'
 external_inputs+="RELEASED_AW=$released_identity"$'\n'
 input_identity() {
   local name="$1" path="$2" default="$3" repo sha relative
@@ -241,6 +246,7 @@ rm -rf -- "$LOG_DIR"
 mkdir -p "$LOG_DIR"
 : > "$LOG_DIR/owned-resources.tsv"
 printf '%s\n' "$run_id" > "$LOG_DIR/run-id"
+printf '%s\n' "$SYNCHRONIZED_MAIN_SHA" > "$LOG_DIR/synchronized-main-sha"
 source "$ROOT/scripts/candidate-cleanup.sh"
 trap 'cleanup "$?"' EXIT
 trap 'cleanup 130' INT
@@ -254,6 +260,8 @@ if [[ -n "${USER_PATHS_LATEST_METADATA:-}" ]]; then
     || refuse "released aw metadata changed after the ledger lookup"
 fi
 checkout="$work/aweb"
+[[ "$(git -C "$ROOT" rev-parse --verify 'refs/remotes/origin/main^{commit}')" == "$SYNCHRONIZED_MAIN_SHA" ]] \
+  || refuse "synchronized origin/main changed or disappeared. Synchronize main and start a new gate invocation."
 # Tracked source is also mounted into services running as other UIDs (notably
 # Library's PostgreSQL initdb). Materialize its Git modes independently of the
 # operator's private umask; keep the work parent and later runtime files private.
@@ -262,6 +270,12 @@ checkout="$work/aweb"
   git clone --local --no-hardlinks "$ROOT" "$checkout" >/dev/null
   git -C "$checkout" checkout --detach "$SOURCE_SHA" >/dev/null
 )
+# Local clone does not copy the source's remote-tracking refs. Bind the checked
+# baseline explicitly; all its objects were copied locally, with no fetch here.
+git -C "$checkout" update-ref refs/remotes/origin/main "$SYNCHRONIZED_MAIN_SHA" \
+  || refuse "could not install synchronized main. Synchronize main and start a new gate invocation."
+[[ "$(git -C "$checkout" rev-parse --verify 'refs/remotes/origin/main^{commit}')" == "$SYNCHRONIZED_MAIN_SHA" ]] \
+  || refuse "cloned main does not match the admitted baseline. Synchronize main and start a new gate invocation."
 git -C "$checkout" remote set-url origin "$checkout"
 [[ "$(git -C "$checkout" rev-parse HEAD)" == "$SOURCE_SHA" ]] || refuse "clone selected the wrong SHA"
 git -C "$checkout" diff --quiet && git -C "$checkout" diff --cached --quiet \
@@ -321,6 +335,8 @@ docker update --cpus "$builder_cpus" --memory "$builder_memory" --memory-swap "$
 
 BUILDX_CONFIG="$buildx_config" docker buildx build --builder "$builder_name" --load --pull \
   --build-arg USER_PATHS_SOURCE_TREE="$TREE" \
+  --build-arg USER_PATHS_SOURCE_SHA="$SOURCE_SHA" \
+  --build-arg USER_PATHS_CLI_VERSION="$CLI_VERSION" \
   --label "aweb.candidate-gate=$resource_label" \
   -f "$checkout/candidate-gate/Dockerfile" -t "$IMAGE" "$checkout" \
   2>&1 | tee "$LOG_DIR/docker-build.log"
@@ -332,6 +348,7 @@ base_ref="$(awk '/^FROM /{print $2; exit}' "$checkout/candidate-gate/Dockerfile"
 base_digest="$(docker image inspect "$base_ref" --format '{{join .RepoDigests ","}}' 2>/dev/null || echo unresolved)"
 locks_digest="$(git -C "$checkout" ls-files -s -- '*uv.lock' | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.read().encode()).hexdigest())')"
 printf 'base\t%s\t%s\nlocks\t%s\n' "$base_ref" "$base_digest" "$locks_digest" > "$LOG_DIR/inputs.tsv"
+printf 'synchronized-main\t%s\n' "$SYNCHRONIZED_MAIN_SHA" >> "$LOG_DIR/inputs.tsv"
 printf 'runner\tcpus=%s\tmemory=%s\tpids=%s\nbuilder\tcpus=%s\tmemory=%s\tmemory_swap=%s\tpids=%s\nservice\tcpus=%s\tmemory=%s\tpids=%s\nredis\tcpus=%s\tmemory=%s\tpids=%s\nsibling\tcpus=%s\tmemory=%s\tpids=%s\n' \
   "$runner_cpus" "$runner_memory" "$runner_pids" \
   "$builder_cpus" "$builder_memory" "$builder_memory_swap" "$builder_pids" \

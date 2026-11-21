@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 
 from awid.dns_auth import enforce_timestamp_skew, parse_didkey_auth, require_timestamp
-from awid.registry import CachedRegistryClient
+from awid.registry import CachedRegistryClient, TeamCertificateStanding
 from awid.signing import verify_did_key_signature
 from awid.team_certificate import TeamCertificateError, decode_team_certificate
 from awid.team_ids import parse_team_id
@@ -48,9 +48,12 @@ from aweb.member_team_key import (
 from aweb.request_body import request_body_sha256
 from aweb.team_auth import certificate_refusal, parse_and_verify_certificate
 from aweb.team_auth_envelope import team_auth_signature_payload
-from aweb.team_key_pins import pinned_team_key_for_request
+from aweb.team_key_pins import AdmittedTeamKeys, pinned_team_key_for_request
 from aweb.team_registry import (
     native_database_manager as _aweb_db,
+)
+from aweb.team_registry import (
+    refresh_certificate_standing,
 )
 from aweb.team_registry import (
     registered_certificates as registered_certificates,
@@ -72,6 +75,16 @@ from aweb.team_registry import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _superseded_team_key() -> HTTPException:
+    return HTTPException(
+        status_code=401,
+        detail={
+            "code": "team_key_not_current",
+            "message": "The team certificate is under a superseded team key",
+        },
+    )
 
 
 async def resolve_team_identity(
@@ -392,11 +405,21 @@ async def _verify_admitting_certificate(
             if not isinstance(registry, CachedRegistryClient):
                 # An uncached registry client's initial list was already live.
                 raise
-            registered_certs = await registered_certificates(
+            certificate_id = cert_data["certificate_id"]
+            standing = await refresh_certificate_standing(
                 registry,
                 cert_team_id,
-                missing_certificate_id=cert_data["certificate_id"],
+                certificate_id=certificate_id,
             )
+            if standing == TeamCertificateStanding.REVOKED:
+                raise TeamCertificateError("revoked") from None
+            if standing != TeamCertificateStanding.ACTIVE:
+                raise
+            # Standing and the server's admitted key can change independently.
+            pin = await AdmittedTeamKeys(_aweb_db(db)).pin(cert_team_id)
+            if pin is not None and pin.team_did_key != team_key:
+                raise _superseded_team_key() from None
+            registered_certs = {certificate_id}
             result = check_certificate(team_key)
         else:
             if revocation_evidence is EvidenceMode.FRESH:
@@ -441,13 +464,7 @@ async def _verify_admitting_certificate(
         ):
             # A certificate under a key the team no longer holds: the member
             # fetches the certificate now recorded for it and continues.
-            raise HTTPException(
-                status_code=401,
-                detail={
-                    "code": "team_key_not_current",
-                    "message": "The team certificate is under a superseded team key",
-                },
-            ) from None
+            raise _superseded_team_key() from None
         if e.reason == "unregistered":
             logger.warning(
                 "certificate existence check failed: a certificate presented for team %s "

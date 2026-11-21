@@ -35,7 +35,7 @@ from awid.attestation_records import (
     TEAM_CUSTODIAN,
     sign_record,
 )
-from awid.did import did_from_public_key
+from awid.did import did_key_from_signing_key
 from awid.external_authority import DNSLookup
 from awid.id_tree_requests import covering_payload
 from awid.dns_verify import DomainAuthority, DnsVerificationError, DomainVerifier
@@ -95,7 +95,7 @@ class ServiceTransport(httpx.AsyncBaseTransport):
 
 
 def _did_key(key: SigningKey) -> str:
-    return did_from_public_key(bytes(key.verify_key))
+    return did_key_from_signing_key(bytes(key))
 
 
 class TXTAnswers:

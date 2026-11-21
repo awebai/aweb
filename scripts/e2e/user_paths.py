@@ -27,7 +27,7 @@ PAIRS = [
 
 
 class CLICommandError(AssertionError):
-    def __init__(self, lane, actor, args, result, *, phase=None):
+    def __init__(self, lane, actor, args, result):
         try:
             response = json.loads(result.stdout)
         except ValueError:
@@ -37,9 +37,7 @@ class CLICommandError(AssertionError):
             args=list(args),
             exit=result.returncode,
             response=response,
-            stdout=result.stdout,
             stderr=result.stderr,
-            phase=phase,
         )
         super().__init__(
             f"{lane}/{actor} aw {args}: {result.returncode}\n{result.stdout}\n{result.stderr}"
@@ -182,7 +180,6 @@ class Lane:
                     (name + "-encryption-key", name, ["id", "encryption-key", "show"]),
                 ]
             )
-        observations = {}
         for label, actor, args in commands:
             result = self.command(actor, *args, check=False)
             (directory / (label + ".json")).write_text(
@@ -195,8 +192,6 @@ class Lane:
                     indent=2,
                 )
             )
-            if label in ("roster", "sessions") and result.returncode == 0:
-                observations[label] = json.loads(result.stdout)
         # A separately pinned published client is an author diagnostic only;
         # it never substitutes for npm latest in the standing released lane.
         comparison = os.environ.get("USER_PATHS_COMPARISON_BIN")
@@ -227,29 +222,6 @@ class Lane:
                 )
             finally:
                 self.binary = original
-        # The actw exception needs the actual existing local session and
-        # published keys, not only the same missing-key diagnostic.
-        if (
-            kind == "chat"
-            and encrypted
-            and case.removesuffix("/v2") + "/plain" in self.results
-            and not self.actors[sender]["address"]
-            and not self.actors[receiver]["address"]
-        ):
-            local_keys = {
-                row.get("did_key")
-                for row in observations.get("roster", {}).get("agents", [])
-                if row.get("identity_scope") == "local" and row.get("encryption_key")
-            }
-            if {self.actors[sender]["did"], self.actors[receiver]["did"]} <= local_keys:
-                sessions = [
-                    row["session_id"]
-                    for row in observations.get("sessions", {}).get("sessions", [])
-                    if row.get("participant_dids") == [self.actors[receiver]["did"]]
-                ]
-                if len(sessions) == 1:
-                    return sessions[0]
-        return None
 
     def run_case(self, case, operation, diagnostic=None):
         started = time.monotonic()
@@ -270,9 +242,7 @@ class Lane:
                 )
             if diagnostic:
                 try:
-                    existing_session = self.capture_failure(case, *diagnostic)
-                    if existing_session and "failure" in record:
-                        record["failure"]["existing_local_session"] = existing_session
+                    self.capture_failure(case, *diagnostic)
                 except Exception as capture_error:
                     record["diagnostic_error"] = str(capture_error)
             # Let real presentation callbacks finish even after an assertion
@@ -303,7 +273,7 @@ class Lane:
                 case,
                 record["known_issue"]["task"],
                 "observed failure:",
-                record["failure"]["stderr"].rstrip("\n"),
+                record["failure"]["response"],
                 flush=True,
             )
         elif record["status"] == "PASSED":
@@ -368,7 +338,7 @@ class Lane:
                 )
         self.record_command(actor, args, result, phase)
         if check and result.returncode:
-            raise CLICommandError(self.name, actor, args, result, phase=phase)
+            raise CLICommandError(self.name, actor, args, result)
         if not check:
             return result
         return json.loads(result.stdout)

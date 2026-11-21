@@ -53,6 +53,49 @@ ROOT_CONSUMERS = {
         "root = Path(__file__).resolve().parents[2]",
         '(root / "docs/vectors/mutation-hook-call-sites-v1.json").read_text()',
     ),
+    PurePosixPath("cli/go/cmd/aw/team_invite_issuance_test.go"): _consumer(
+        "cli-integration-codes-v1.json",
+        'filepath.Join("..", "..", "..", "..", "docs", "vectors", "cli-integration-codes-v1.json")',
+    ),
+    PurePosixPath("awid/tests/test_point_encoding_components.py"): _consumer(
+        "signature-point-encoding-v2.json",
+        'Path(__file__).resolve().parents[2] / "docs" / "vectors"',
+    ),
+    PurePosixPath("cli/go/signaturewire/point_encoding_test.go"): _consumer(
+        "signature-point-encoding-v2.json",
+        '"docs", "vectors", "signature-point-encoding-v2.json"',
+    ),
+    PurePosixPath("channel-core/test/point_encoding_components.test.ts"): _consumer(
+        "signature-point-encoding-v2.json",
+        '"../../docs/vectors/signature-point-encoding-v2.json"',
+    ),
+    PurePosixPath("awid/tests/test_signature_primitive_vectors.py"): _consumer(
+        {
+            "signature-primitives-v1.json",
+            "message-signing-v1.json",
+            "canonical-json-v1.json",
+        },
+        'Path(__file__).resolve().parents[2] / "docs" / "vectors"',
+    ),
+    PurePosixPath("cli/go/awid/signature_primitive_vectors_test.go"): _consumer(
+        "signature-primitives-v1.json",
+        '"docs", "vectors", "signature-primitives-v1.json"',
+    ),
+    PurePosixPath("channel-core/test/signature_primitive_vectors.test.ts"): _consumer(
+        {"signature-primitives-v1.json", "message-signing-v1.json"},
+        '"../../docs/vectors/signature-primitives-v1.json"',
+    ),
+    PurePosixPath(
+        "naapp/secrets/runner/tests/test_shared_wire_primitives.py"
+    ): _consumer(
+        {
+            "signature-point-encoding-v2.json",
+            "signature-primitives-v1.json",
+            "canonical-json-v1.json",
+            "message-signing-v1.json",
+        },
+        'Path(__file__).resolve().parents[4] / "docs" / "vectors"',
+    ),
     PurePosixPath("cli/go/cmd/aw/id_human_add_test.go"): _consumer(
         "id-certificates-v1.json",
         '"../../../../docs/vectors/id-certificates-v1.json"',
@@ -113,7 +156,9 @@ ROOT_CONSUMERS = {
         "id-certificates-v1.json",
         'readRootVector(t, "id-certificates-v1.json")',
     ),
-    PurePosixPath("cli/go/internal/conformance/id_certificate_request_test.go"): _consumer(
+    PurePosixPath(
+        "cli/go/internal/conformance/id_certificate_request_test.go"
+    ): _consumer(
         "id-certificates-v1.json",
         'readRootVector(t, "id-certificates-v1.json")',
     ),
@@ -292,11 +337,15 @@ ROOT_CONSUMERS = {
         "team-certificate-verification-v1.json",
         '(Path(__file__).resolve().parents[2] / "docs/vectors/team-certificate-verification-v1.json")',
     ),
-    PurePosixPath("naapp-lib/tests/runtime/test_team_certificate_vectors.py"): _consumer(
+    PurePosixPath(
+        "naapp-lib/tests/runtime/test_team_certificate_vectors.py"
+    ): _consumer(
         "team-certificate-verification-v1.json",
         '(Path(__file__).resolve().parents[3] / "docs/vectors/team-certificate-verification-v1.json")',
     ),
-    PurePosixPath("naapp-lib/tests/runtime/test_member_credential_startup_check.py"): _consumer(
+    PurePosixPath(
+        "naapp-lib/tests/runtime/test_member_credential_startup_check.py"
+    ): _consumer(
         "team-certificate-verification-v1.json",
         '(Path(__file__).resolve().parents[3] / "docs/vectors/team-certificate-verification-v1.json")',
     ),
@@ -447,7 +496,9 @@ ROOT_CONSUMERS = {
         "principal-attestation-v1.json",
         '(Path(__file__).parents[3] / "docs" / "vectors" / "principal-attestation-v1.json")',
     ),
-    PurePosixPath("naapp-lib/tests/console/test_human_role_holding_identity.py"): _consumer(
+    PurePosixPath(
+        "naapp-lib/tests/console/test_human_role_holding_identity.py"
+    ): _consumer(
         "human-role-holding-v1.json",
         '"docs/vectors/human-role-holding-v1.json"',
     ),
@@ -619,7 +670,9 @@ ROOT_CONSUMERS = {
         "owner-act-delivery-v1.json",
         'AWEB_ROOT / "docs" / "vectors" / "owner-act-delivery-v1.json"',
     ),
-    PurePosixPath("cli/go/internal/appmanifest/owner_act_manifest_vectors_test.go"): _consumer(
+    PurePosixPath(
+        "cli/go/internal/appmanifest/owner_act_manifest_vectors_test.go"
+    ): _consumer(
         "owner-act-delivery-v1.json",
         '"docs", "vectors", "owner-act-delivery-v1.json"',
     ),
@@ -651,7 +704,9 @@ ROOT_CONSUMERS = {
         "owner-act-delivery-v1.json",
         '"../../../../docs/vectors/owner-act-delivery-v1.json"',
     ),
-    PurePosixPath("naapp-lib/tests/console/test_human_role_holding_identity.py"): _consumer(
+    PurePosixPath(
+        "naapp-lib/tests/console/test_human_role_holding_identity.py"
+    ): _consumer(
         "human-role-holding-v1.json",
         'Path(__file__).resolve().parents[3] / "docs/vectors/human-role-holding-v1.json"',
     ),
@@ -883,6 +938,9 @@ PACKAGE_GUARDS = {
     ),
 }
 NON_CONSUMING_CODE_REFERENCES = {
+    PurePosixPath("awid/src/awid/external_authority.py"): (
+        "federation-origin-ip-v1.json",
+    ),
     PurePosixPath("scripts/generate_owner_act_delivery_vector.py"): (
         "docs/vectors/owner-act-delivery-v1.json",
     ),

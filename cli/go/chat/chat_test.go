@@ -346,7 +346,6 @@ func TestExtendWait(t *testing.T) {
 }
 
 func TestOpen(t *testing.T) {
-	t.Parallel()
 	deliveredIDsTestPath(t)
 
 	server := newMockServer(map[string]http.HandlerFunc{
@@ -395,6 +394,31 @@ func TestOpen(t *testing.T) {
 	if !result.SenderWaiting {
 		t.Fatal("sender_waiting=false")
 	}
+
+	t.Run("reports_receipt_write_failure", func(t *testing.T) {
+		workspace := deliveredIDsTestPath(t)
+		lock := filepath.Join(workspace, ".aw", DeliveredIDsFileName+".lock")
+		if err := os.MkdirAll(lock, 0700); err != nil {
+			t.Fatal(err)
+		}
+		got, err := Open(context.Background(), mustClient(t, server.URL), "bob")
+		if err != nil || len(got.Messages) != 2 || got.MarkedRead != 2 {
+			t.Fatalf("receipt failure blocked chat open: %+v, %v", got, err)
+		}
+		data, err := json.Marshal(got)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var output struct {
+			ReceiptError string `json:"receipt_error"`
+		}
+		if err := json.Unmarshal(data, &output); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(output.ReceiptError, "Repair the cache directory before retrying") {
+			t.Fatalf("missing actionable receipt warning: %s", data)
+		}
+	})
 }
 
 func TestOpenPresentsAndAcknowledgesACompleteMaximumUnreadSnapshot(t *testing.T) {

@@ -85,7 +85,11 @@ func TestHostedInviteRequiresPinnedPreviewBeforeAccept(t *testing.T) {
 			defer server.Close()
 			origin = server.URL
 			t.Setenv("AWEB_URL", origin)
-			_, err := acceptHostedTeamInviteWithDetails(dir, "aw_inv_preview_fixture", teamAcceptInviteOptions{Name: "child", Scope: "local"})
+			_, err := acceptHostedTeamInviteWithDetails(teamInviteAcceptanceRequest{
+				WorkingDir: dir,
+				Token:      "aw_inv_preview_fixture",
+				Options:    teamAcceptInviteOptions{Name: "child", Scope: "local"},
+			})
 			if tc.status == 404 && errorEnvelope(err, err.Error()).Error.Code != "unknown_or_invalid" {
 				t.Fatal("accept lost the preview refusal code")
 			}
@@ -244,7 +248,11 @@ func TestHostedInviteLocalChainVerifiesAndResumesWithoutSecondAccept(t *testing.
 			defer server.Close()
 			origin = server.URL
 			opts := teamAcceptInviteOptions{Name: "child", Scope: "local", AwebURL: origin, Registry: registry, TXTResolver: resolver}
-			accepted, err := acceptHostedTeamInviteWithDetails(dir, "aw_inv_typed_local", opts)
+			accepted, err := acceptHostedTeamInviteWithDetails(teamInviteAcceptanceRequest{
+				WorkingDir: dir,
+				Token:      "aw_inv_typed_local",
+				Options:    opts,
+			})
 			if scenario == "native issued later" {
 				if err == nil || accepts != 0 {
 					t.Fatal("native issuer absence did not pend before membership")
@@ -278,7 +286,11 @@ func TestHostedInviteLocalChainVerifiesAndResumesWithoutSecondAccept(t *testing.
 				if err := awconfig.SaveInstalledIDChain(filepath.Join(dir, ".aw"), chain); err != nil {
 					t.Fatal(err)
 				}
-				accepted, err = acceptHostedTeamInviteWithDetails(dir, "aw_inv_typed_local", opts)
+				accepted, err = acceptHostedTeamInviteWithDetails(teamInviteAcceptanceRequest{
+					WorkingDir: dir,
+					Token:      "aw_inv_typed_local",
+					Options:    opts,
+				})
 			}
 			if scenario == "outage resume" {
 				if err == nil {
@@ -294,14 +306,26 @@ func TestHostedInviteLocalChainVerifiesAndResumesWithoutSecondAccept(t *testing.
 				}
 				changed := opts
 				changed.Name = "different"
-				if _, changeErr := acceptHostedTeamInviteWithDetails(dir, "aw_inv_typed_local", changed); changeErr == nil {
+				if _, changeErr := acceptHostedTeamInviteWithDetails(teamInviteAcceptanceRequest{
+					WorkingDir: dir,
+					Token:      "aw_inv_typed_local",
+					Options:    changed,
+				}); changeErr == nil {
 					t.Fatal("resume accepted a changed selection")
 				}
-				if _, changeErr := acceptHostedTeamInviteWithDetails(dir, "aw_inv_other_token", opts); changeErr == nil {
+				if _, changeErr := acceptHostedTeamInviteWithDetails(teamInviteAcceptanceRequest{
+					WorkingDir: dir,
+					Token:      "aw_inv_other_token",
+					Options:    opts,
+				}); changeErr == nil {
 					t.Fatal("resume accepted another invite")
 				}
 				available.Store(true)
-				accepted, err = acceptHostedTeamInviteWithDetails(dir, "aw_inv_typed_local", opts)
+				accepted, err = acceptHostedTeamInviteWithDetails(teamInviteAcceptanceRequest{
+					WorkingDir: dir,
+					Token:      "aw_inv_typed_local",
+					Options:    opts,
+				})
 			}
 			installed, loadErr := awconfig.LoadInstalledIDChain(filepath.Join(dir, ".aw"))
 			if loadErr != nil {
@@ -451,7 +475,7 @@ func TestHostedInviteGlobalRegistrationRetainsPerChildInvitation(t *testing.T) {
 					var registration any = map[string]any{"expected_head": nil, "invitation_id": childInvitation}
 					if reuse {
 						registration = nil
-						if _, err := awid.EncodeIDChainHeader(req.IDChain); err != nil {
+						if _, err := awid.EncodeIDChainHeader(*req.IDChain); err != nil {
 							t.Error("existing global membership lost its signed chain")
 							http.Error(w, "invalid chain", 422)
 							return
@@ -465,7 +489,11 @@ func TestHostedInviteGlobalRegistrationRetainsPerChildInvitation(t *testing.T) {
 			defer server.Close()
 			origin = server.URL
 			opts := teamAcceptInviteOptions{Name: "child", Scope: "global", NoAddress: true, AwebURL: origin, Registry: registry, TXTResolver: resolver}
-			firstAccepted, err := acceptHostedTeamInviteWithDetails(dir, "aw_inv_typed_global", opts)
+			firstAccepted, err := acceptHostedTeamInviteWithDetails(teamInviteAcceptanceRequest{
+				WorkingDir: dir,
+				Token:      "aw_inv_typed_global",
+				Options:    opts,
+			})
 			if reuse {
 				if err != nil || firstAccepted.Output.IDRegistration != "registered" || accepts != 1 || previews != 1 || writes.Load() != 0 {
 					t.Fatalf("existing global was reissued: accepted=%+v err=%v accepts=%d previews=%d registrations=%d", firstAccepted, err, accepts, previews, writes.Load())
@@ -483,7 +511,11 @@ func TestHostedInviteGlobalRegistrationRetainsPerChildInvitation(t *testing.T) {
 			if installed != nil {
 				t.Fatal("failed registration installed chain")
 			}
-			accepted, err := acceptHostedTeamInviteWithDetails(dir, "aw_inv_typed_global", opts)
+			accepted, err := acceptHostedTeamInviteWithDetails(teamInviteAcceptanceRequest{
+				WorkingDir: dir,
+				Token:      "aw_inv_typed_global",
+				Options:    opts,
+			})
 			if err != nil || accepted.Output.IDRegistration != "registered" || accepted.Output.Responsibility.Outcome != "no_human" {
 				t.Fatalf("resume: %+v %v", accepted, err)
 			}
@@ -574,7 +606,11 @@ func TestHostedInviteIssuePresentsSelectedAgentChain(t *testing.T) {
 			if err := awconfig.SaveInstalledIDChain(filepath.Join(principal, ".aw"), chain); err != nil {
 				t.Fatal(err)
 			}
-			created, err := createHostedTeamInvite(decoy, filepath.Join(principal, ".aw"), team, true)
+			domain, name, err := awid.ParseTeamID(team)
+			if err != nil {
+				t.Fatal(err)
+			}
+			created, err := createHostedTeamInvite(teamInviteMintRequest{Plan: teamInvitePlan{Kind: inviteAuthorityHosted, Source: teamInviteSource{WorkingDir: decoy, Home: awconfig.IdentityHome{Root: filepath.Join(principal, ".aw"), Source: awconfig.IdentityHomeFlag}, Domain: domain, Team: name}}, Scope: inviteMemberLocal})
 			if (err != nil) != wrongIssuer || calls != 1 || (!wrongIssuer && created.Token == "") {
 				t.Fatalf("err=%v calls=%d", err, calls)
 			}

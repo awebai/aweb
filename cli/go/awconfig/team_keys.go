@@ -2,11 +2,12 @@ package awconfig
 
 import (
 	"crypto/ed25519"
-	"encoding/pem"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/awebai/aw/awid"
 )
 
 func DefaultTeamKeysDir() (string, error) {
@@ -71,11 +72,7 @@ func writeTeamKeyFile(path string, key ed25519.PrivateKey) error {
 	if key == nil {
 		return errors.New("nil team key")
 	}
-	data := pem.EncodeToMemory(&pem.Block{
-		Type:  "ED25519 PRIVATE KEY",
-		Bytes: key.Seed(),
-	})
-	return atomicWriteFile(path, data)
+	return awid.StoreSigningKeyFile(awid.SigningKeyFile{Path: path, Key: key, PathPolicy: awid.OperatorManagedAuthorityPath})
 }
 
 // PendingTeamKeyPath holds a new team key between its creation and the
@@ -103,7 +100,7 @@ func LoadPendingTeamKey(domain, name string) (ed25519.PrivateKey, error) {
 	if err != nil {
 		return nil, err
 	}
-	data, err := os.ReadFile(path)
+	data, err := awid.ReadPrivateKeyFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
@@ -137,7 +134,7 @@ func LoadTeamKey(domain, name string) (ed25519.PrivateKey, error) {
 	if err != nil {
 		return nil, err
 	}
-	data, err := os.ReadFile(path)
+	data, err := awid.ReadPrivateKeyFile(path)
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
 			return nil, err
@@ -146,7 +143,7 @@ func LoadTeamKey(domain, name string) (ed25519.PrivateKey, error) {
 		if legacyErr != nil {
 			return nil, legacyErr
 		}
-		data, err = os.ReadFile(legacyPath)
+		data, err = awid.ReadPrivateKeyFile(legacyPath)
 		if err != nil {
 			return nil, err
 		}
@@ -154,16 +151,4 @@ func LoadTeamKey(domain, name string) (ed25519.PrivateKey, error) {
 	return decodeTeamKey(data)
 }
 
-func decodeTeamKey(data []byte) (ed25519.PrivateKey, error) {
-	block, _ := pem.Decode(data)
-	if block == nil {
-		return nil, errors.New("no PEM block in team key")
-	}
-	if block.Type != "ED25519 PRIVATE KEY" {
-		return nil, errors.New("unexpected team key PEM type")
-	}
-	if len(block.Bytes) != ed25519.SeedSize {
-		return nil, errors.New("invalid team key seed size")
-	}
-	return ed25519.NewKeyFromSeed(block.Bytes), nil
-}
+func decodeTeamKey(data []byte) (ed25519.PrivateKey, error) { return awid.ParseSigningKey(data) }
