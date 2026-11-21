@@ -34,7 +34,7 @@ cleanup() {
       # These all carry this exact project's label, including UID probes.
       leftovers="$(docker ps -aq --filter label=com.docker.compose.project="$PROJECT")" || cleanup_status=1
       for container in $leftovers; do
-        docker rm -f -v "$container" >>"$OUTPUT/docker-cleanup.log" 2>&1 || cleanup_status=1
+        docker rm -f "$container" >>"$OUTPUT/docker-cleanup.log" 2>&1 || cleanup_status=1
       done
       docker image rm "$IMAGE" >>"$OUTPUT/docker-cleanup.log" 2>&1 || cleanup_status=1
     fi
@@ -54,7 +54,7 @@ cleanup() {
   # Identity homes, browser profile and the holder's private volume are erased.
   for name in inputs.json; do [[ ! -f "$RUNTIME/$name" ]] || cp "$RUNTIME/$name" "$OUTPUT/$name" || cleanup_status=1; done
   if [[ -d "$RUNTIME/work" ]]; then
-    for name in journey.json first-activation.json second-activation.json first-outside.json first-no-evidence-outside.json second-outside.json third-unconfigured-no-evidence-outside.json approval-record.json approval-page.json controller-public.json command-failure.stderr prompt-counts.json first-binding-refresh-refused.json retention.json; do
+    for name in journey.json first-activation.json second-activation.json first-outside.json first-no-evidence-outside.json second-outside.json third-unconfigured-no-evidence-outside.json approval-record.json approval-page.json controller-public.json command-failure.stderr prompt-counts.json retention.json; do
       [[ ! -f "$RUNTIME/work/$name" ]] || cp "$RUNTIME/work/$name" "$OUTPUT/$name" || cleanup_status=1
     done
     [[ ! -d "$RUNTIME/work/public" ]] || cp -R "$RUNTIME/work/public" "$OUTPUT/public-exports" || cleanup_status=1

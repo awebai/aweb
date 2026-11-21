@@ -45,6 +45,19 @@ const (
 	IdentityMismatch  VerificationStatus = "identity_mismatch"
 )
 
+// Trusted reports a successful sender verification result. Specific protocols
+// can still require stronger binding. See docs/receiving-events.md,
+// “Autonomous message presentation”.
+func (status VerificationStatus) Trusted() bool {
+	return status == Verified || status == VerifiedLegacy || status == VerifiedCustodial
+}
+
+// WithholdsMessageContent reports whether an autonomous notice may include the
+// durable message's subject and body. Explicit CLI reads keep the original.
+func (status VerificationStatus) WithholdsMessageContent() bool {
+	return status == Failed || status == IdentityMismatch
+}
+
 func SignedPayloadConversationStatus(signedPayload, conversationID string) VerificationStatus {
 	conversationID = strings.TrimSpace(conversationID)
 	if conversationID == "" {

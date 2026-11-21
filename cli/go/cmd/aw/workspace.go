@@ -282,7 +282,7 @@ func runWorkspaceStatus(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	printOutput(workspaceStatusOutput{
+	if err := printOutput(workspaceStatusOutput{
 		SelectedTeam:       strings.TrimSpace(sel.TeamID),
 		Memberships:        membershipItemsForWorkspaceState(state, teamState, strings.TrimSpace(sel.TeamID), workspaceStatusAll),
 		Workspace:          self,
@@ -294,7 +294,9 @@ func runWorkspaceStatus(cmd *cobra.Command, args []string) error {
 		TeamLocks:          teamLocks,
 		EscalationsPending: statusResp.EscalationsPending,
 		ConflictCount:      len(statusResp.Conflicts),
-	}, formatWorkspaceStatus)
+	}, formatWorkspaceStatus); err != nil {
+		return fmt.Errorf("write workspace status: %w. Check the output destination, then rerun aw workspace status.", err)
+	}
 
 	// Opportunistically clean up workspaces whose directories have disappeared.
 	if gone := detectGoneWorkspaces(client, workspaceID); len(gone) > 0 {
@@ -313,6 +315,10 @@ func loadCurrentWorkspaceAndTeamState(workingDir, identityHome string) (*awconfi
 // workspaceDeleteRefusal refuses a delete through an external identity home.
 // Its alias-release reason is also its --json error code.
 func workspaceDeleteRefusal(selection *awconfig.Selection, reason string) error {
+	if reason == aliasReleaseNotHosted {
+		// Released OATS matches this exact sentence before handing off to the controller.
+		return withErrorCode(reason, usageError("refusing aw workspace delete through external identity home for principal %s; only own hosted local self-release is supported for an external identity home (reason: %s)", externalIdentityRef(awconfig.IdentityHome{Root: selection.IdentityHome}), reason))
+	}
 	return withErrorCode(reason, usageError("refusing aw workspace delete through external identity home for principal %s; only own local retirement is supported for an external identity home (reason: %s). Select that local member's own retained identity home, or ask its team controller for team-authorized removal.", externalIdentityRef(awconfig.IdentityHome{Root: selection.IdentityHome}), reason))
 }
 
@@ -406,7 +412,7 @@ func runWorkspaceDelete(cmd *cobra.Command, args []string) error {
 				retired.AliasReleasedReason,
 			)
 		}
-		printOutput(workspaceDeleteOutput{
+		return writeWorkspaceDeleteOutput(workspaceDeleteOutput{
 			WorkspaceID: retired.WorkspaceID,
 			Alias:       retired.Alias,
 			// Empty on purpose: the retirement response does not carry the
@@ -417,8 +423,7 @@ func runWorkspaceDelete(cmd *cobra.Command, args []string) error {
 			IdentityDeleted:     true,
 			AliasReleased:       true,
 			AliasReleasedReason: retired.AliasReleasedReason,
-		}, formatWorkspaceDelete)
-		return nil
+		})
 	}
 
 	ctx, cancel := commandAPIContext(cmd)
@@ -433,7 +438,7 @@ func runWorkspaceDelete(cmd *cobra.Command, args []string) error {
 	if deleteResp == nil {
 		return fmt.Errorf("workspace %s not found or already deleted", workspaceID)
 	}
-	printOutput(workspaceDeleteOutput{
+	return writeWorkspaceDeleteOutput(workspaceDeleteOutput{
 		WorkspaceID: deleteResp.WorkspaceID,
 		Alias:       deleteResp.Alias,
 		DeletedAt:   deleteResp.DeletedAt,
@@ -443,8 +448,7 @@ func runWorkspaceDelete(cmd *cobra.Command, args []string) error {
 		IdentityDeleted:     deleteResp.IdentityDeleted,
 		AliasReleased:       false,
 		AliasReleasedReason: plan.reason,
-	}, formatWorkspaceDelete)
-	return nil
+	})
 }
 
 func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
@@ -605,10 +609,8 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 		Branch:       branchName,
 		WorktreePath: worktreePath,
 	}
-	if jsonFlag {
-		printJSON(output)
-	} else {
-		printOutput(output, formatWorkspaceAddWorktree)
+	if err := printOutput(output, formatWorkspaceAddWorktree); err != nil {
+		return fmt.Errorf("write add-worktree result: %w. Check the output destination and inspect the created worktree at %s before retrying.", err, worktreePath)
 	}
 	return nil
 }
@@ -647,8 +649,7 @@ func runWorkspaceMigrateMultiTeam(cmd *cobra.Command, args []string) error {
 		if activeMembership := awconfig.ActiveMembershipFor(workspace, teamState); activeMembership != nil {
 			output.CertPath = strings.TrimSpace(activeMembership.CertPath)
 		}
-		printOutput(output, formatWorkspaceMigrateMultiTeam)
-		return nil
+		return writeWorkspaceMigrationResult(output)
 	} else if err != nil && !strings.Contains(err.Error(), awconfig.LegacyWorkspaceSingleTeamError()) {
 		return err
 	}
@@ -657,7 +658,13 @@ func runWorkspaceMigrateMultiTeam(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	printOutput(output, formatWorkspaceMigrateMultiTeam)
+	return writeWorkspaceMigrationResult(output)
+}
+
+func writeWorkspaceMigrationResult(output workspaceMigrateMultiTeamOutput) error {
+	if err := printOutput(output, formatWorkspaceMigrateMultiTeam); err != nil {
+		return fmt.Errorf("write workspace migration result: %w. Check the output destination and run aw workspace status to inspect the workspace.", err)
+	}
 	return nil
 }
 

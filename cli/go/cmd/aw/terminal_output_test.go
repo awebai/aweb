@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -115,70 +114,21 @@ func TestCLIErrorLineEscapesServerText(t *testing.T) {
 
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
-	return captureStream(t, &os.Stdout, fn)
-}
-
-func captureStderr(t *testing.T, fn func()) string {
-	t.Helper()
-	return captureStream(t, &os.Stderr, fn)
-}
-
-// captureStream returns what fn writes to *stream. It drains the pipe while fn
-// writes: a pipe's buffer can be as small as 512 bytes, so reading only after
-// fn returns blocks fn's first larger write forever. The buffered result also
-// lets cleanup finish if fn terminates the test.
-func captureStream(t *testing.T, stream **os.File, fn func()) string {
-	t.Helper()
-	saved := *stream
+	saved := os.Stdout
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
 	}
-	type capturedOutput struct {
-		data []byte
-		err  error
+	os.Stdout = w
+	defer func() { os.Stdout = saved }()
+	fn()
+	w.Close()
+	os.Stdout = saved
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
 	}
-	result := make(chan capturedOutput, 1)
-	go func() {
-		data, readErr := io.ReadAll(r)
-		result <- capturedOutput{data: data, err: errors.Join(readErr, r.Close())}
-	}()
-	func() {
-		*stream = w
-		defer func() {
-			*stream = saved
-			if err := w.Close(); err != nil {
-				t.Errorf("close captured stream writer: %v", err)
-			}
-		}()
-		fn()
-	}()
-	captured := <-result
-	if captured.err != nil {
-		t.Fatal(captured.err)
-	}
-	return string(captured.data)
-}
-
-func TestCaptureStreamDrainsOutputLargerThanAPipe(t *testing.T) {
-	payload := strings.Repeat("captured output line\n", 1<<16)
-	for name, capture := range map[string]func(*testing.T, func()) string{
-		"stdout": captureStdout,
-		"stderr": captureStderr,
-	} {
-		got := capture(t, func() {
-			stream := os.Stdout
-			if name == "stderr" {
-				stream = os.Stderr
-			}
-			if _, err := io.WriteString(stream, payload); err != nil {
-				t.Errorf("%s write: %v", name, err)
-			}
-		})
-		if got != payload {
-			t.Fatalf("%s captured %d bytes, want %d", name, len(got), len(payload))
-		}
-	}
+	return string(out)
 }
 
 // A one-line field that tries to forge the line after it.

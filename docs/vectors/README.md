@@ -1089,7 +1089,8 @@ profile changes. See [the primitive contract](../signature-primitives.md).
 Current shared component evidence for the canonical compressed Ed25519
 representation of A and R. Canonical, noncanonical and negative-zero cases call
 `signaturewire.CanonicalPointEncoding`, `awid.signature_wire.canonical_point_encoding`
-and TypeScript `canonicalPointEncoding` directly. Those same predicates run
+TypeScript `canonicalPointEncoding`, and the standalone Secrets runner’s
+`signature_wire.canonical_point_encoding` directly. Those same predicates run
 inside the production verifiers. Canonical identity and torsion encodings are
 positive representation controls; they do not establish admissible signature
 points. Curve, subgroup and signature-equation rules remain separate checks.

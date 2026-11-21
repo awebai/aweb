@@ -188,7 +188,6 @@ async def deployment(
         console_origin=CONSOLE,
         awid_registry_url=REGISTRY_URL,
         awid_service_token=SERVICE_TOKEN,
-        team_server_internal_origins=[coordination.server.url],
         app_key_files=key_files,
         **getattr(request, "param", {}),
     )

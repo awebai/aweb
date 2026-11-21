@@ -1250,6 +1250,12 @@ func channelReady(result *claudeHooksResult) bool {
 // next steps, so text output ends with the steps and the guide. --json
 // prints one document.
 func printInitOutcome(out connectOutput, result *initResult, workingDir string, setup func() (initSetupDone, error)) error {
+	outputFailure := func(err error) error {
+		if err == nil {
+			return nil
+		}
+		return fmt.Errorf("write init result: %w. Check the output destination and inspect the connected identity before retrying init.", err)
+	}
 	if jsonFlag {
 		done, err := setup()
 		if err != nil {
@@ -1257,16 +1263,17 @@ func printInitOutcome(out connectOutput, result *initResult, workingDir string, 
 		}
 		out.NextSteps = initNextStepsAfter(result, workingDir, done)
 		out.Guide = initGuideURL
-		printOutput(out, formatConnect)
-		return nil
+		return outputFailure(printOutput(out, formatConnect))
 	}
-	printOutput(out, formatConnect)
+	outputErr := printOutput(out, formatConnect)
 	done, err := setup()
 	if err != nil {
-		return err
+		return errors.Join(err, outputFailure(outputErr))
 	}
-	fmt.Fprint(commandStdout, formatInitNextSteps(initNextStepsAfter(result, workingDir, done), !done.ChannelGuidancePrinted))
-	return nil
+	if outputErr == nil {
+		_, outputErr = fmt.Fprint(commandStdout, formatInitNextSteps(initNextStepsAfter(result, workingDir, done), !done.ChannelGuidancePrinted))
+	}
+	return outputFailure(outputErr)
 }
 
 // initDefaultSetup injects the default docs and runs the requested post-init

@@ -141,7 +141,7 @@ func TestRunGrantMintWritesGrantHome(t *testing.T) {
 	grantMintOut = outDir
 
 	var runErr error
-	stdout := captureStdout(t, func() {
+	stdout := captureIDCommandStdout(t, func() {
 		runErr = runGrantMint(&cobra.Command{}, nil)
 	})
 	if runErr != nil {
@@ -285,7 +285,7 @@ func TestRunGrantMintAutoCustodySocketSupportsGrantSignedSend(t *testing.T) {
 	grantMintCustodySocket = "auto"
 
 	var runErr error
-	stdout := captureStdout(t, func() { runErr = runGrantMint(&cobra.Command{}, nil) })
+	stdout := captureIDCommandStdout(t, func() { runErr = runGrantMint(&cobra.Command{}, nil) })
 	if runErr != nil {
 		t.Fatalf("runGrantMint: %v", runErr)
 	}
@@ -855,7 +855,7 @@ func TestRunGrantMintReadsTheStoredCertPath(t *testing.T) {
 	grantMintScopes = []string{"mail.read"}
 	grantMintOut = outDir
 	var runErr error
-	captureStdout(t, func() { runErr = runGrantMint(&cobra.Command{}, nil) })
+	captureIDCommandStdout(t, func() { runErr = runGrantMint(&cobra.Command{}, nil) })
 	if runErr != nil {
 		t.Fatalf("mint with a legacy cert_path: %v", runErr)
 	}
@@ -894,7 +894,7 @@ func TestRunGrantMintRefusesBeforeMintingWhenTheSelectedCertificateCannotLoad(t 
 	grantMintScopes = []string{"mail.read"}
 	grantMintOut = outDir
 	var runErr error
-	captureStdout(t, func() { runErr = runGrantMint(&cobra.Command{}, nil) })
+	captureIDCommandStdout(t, func() { runErr = runGrantMint(&cobra.Command{}, nil) })
 	if runErr == nil {
 		t.Fatal("mint must refuse when the selected team certificate cannot be loaded")
 	}

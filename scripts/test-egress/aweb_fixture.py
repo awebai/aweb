@@ -11,6 +11,7 @@ import asyncio
 from contextlib import AsyncExitStack
 import json
 import os
+from pathlib import Path
 import socket
 import sys
 from urllib.parse import quote
@@ -26,6 +27,29 @@ from awid_service.testing import REGISTRY_URL, SERVICE_TOKEN, running_registry
 from redis.asyncio import Redis
 from fastapi import FastAPI
 import uvicorn
+
+
+def obstruct_registered_certificate(app: FastAPI, domain: str, destination: Path) -> None:
+    registration = f"/v1/namespaces/{domain}/teams/backend/certificates"
+    signing_key = destination.parent.parent / "signing.key"
+    armed = True
+
+    @app.middleware("http")
+    async def obstruct_after_registration(request, call_next):
+        nonlocal armed
+        response = await call_next(request)
+        # The recipient key exists by registration; the issuer is registered
+        # earlier. Block the local write before the client sees success.
+        if (
+            armed
+            and request.method == "POST"
+            and request.url.path == registration
+            and 200 <= response.status_code < 300
+            and signing_key.is_file()
+        ):
+            destination.mkdir(mode=0o700, parents=True)
+            armed = False
+        return response
 
 
 def bind_loopback_listener() -> tuple[socket.socket, str]:
@@ -123,6 +147,8 @@ async def main() -> None:
         )
         registry.app.state.rate_limiter = MemoryFixedWindowRateLimiter()
         registry.app.state.awid_public_origins = (REGISTRY_URL, registry_url)
+        if obstruction := os.environ.get("AW_COMMAND_CERTIFICATE_OBSTRUCTION"):
+            obstruct_registered_certificate(registry.app, domain, Path(obstruction))
         await serve_fixture_app(registry.app, sock=registry_sock, resources=resources)
         server = await resources.enter_async_context(
             running_server(

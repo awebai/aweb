@@ -1,6 +1,11 @@
 package main
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+
+	"github.com/awebai/aw/awid"
+)
 
 // identityRetainingFailure is supplied by the error owner after it has kept an
 // attempted effect for reconciliation. It is a local error contract, never a
@@ -29,8 +34,12 @@ func (err *retainedIdentityError) Unwrap() error         { return err.cause }
 func (err *retainedIdentityError) RetainsIdentity() bool { return true }
 
 func retainIdentityForRecovery(cause error) error {
-	if cause == nil {
-		return nil
+	if cause == nil || retainUnfinishedProvisioningIdentity(cause) {
+		return cause
 	}
 	return &retainedIdentityError{cause: cause}
+}
+
+func retainedIssuedIdentityStateFailure(cert *awid.TeamCertificate, cause error) error {
+	return retainIdentityForRecovery(fmt.Errorf("save the local identity for issued membership certificate %s: %w; retain the identity home and repair its local state before resuming enrollment", cert.CertificateID, cause))
 }

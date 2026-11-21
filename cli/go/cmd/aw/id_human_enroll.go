@@ -73,18 +73,8 @@ func init() {
 	idHumanCmd.AddCommand(idHumanEnrollCmd)
 }
 
-func enrollmentObject(value any) map[string]any {
-	if object, ok := value.(map[string]any); ok {
-		return object
-	}
-	return nil
-}
-func enrollmentText(value any) string {
-	if text, ok := value.(string); ok {
-		return text
-	}
-	return ""
-}
+func enrollmentObject(value any) map[string]any { object, _ := value.(map[string]any); return object }
+func enrollmentText(value any) string           { text, _ := value.(string); return text }
 func humanEnrollmentConfirmation(session *humanEnrollmentSession, admission map[string]any) map[string]any {
 	return map[string]any{"version": json.Number("1"), "intent": session.Intent, "binding": session.Binding, "request_bytes": session.RequestBytes, "admission": admission}
 }
@@ -94,17 +84,17 @@ func sameEnrollmentValue(a, b any) bool {
 	return e == nil && f == nil && bytes.Equal(x, y)
 }
 
-func humanEnrollmentClient(human *humanParticipation, origin string) (*approval.Client, error) {
+func humanEnrollmentClient(human *humanParticipation, origin string) *approval.Client {
 	requester := map[string]any{"kind": "identity", "id": human.record.StableID, "key": human.record.DIDKey}
-	chain, err := humanEnrollmentCertificates(human)
-	if err != nil {
-		return nil, err
+	chain := []any{}
+	if human.chain != nil {
+		chain, _ = human.chain["certificates"].([]any)
 	}
-	client := &approval.Client{Origin: origin, Requester: requester, ResponseLimit: maxResponseBytes, Admission: map[string]any{"team_certificate": nil, "id_chain": chain}}
+	client := &approval.Client{Origin: origin, Requester: requester, Admission: map[string]any{"team_certificate": nil, "id_chain": chain}}
 	client.Authorize = func(body []byte, purpose string, issuedAt int64) (string, error) {
 		return proof.HTTPAuthorizationWithSigner(body, requester, origin, purpose, issuedAt, human.sign)
 	}
-	return client, nil
+	return client
 }
 
 func saveHumanEnrollment(path string, value any) error {
@@ -151,23 +141,84 @@ func humanIssuerRequest(ctx context.Context, human *humanParticipation, origin, 
 }
 
 func humanIssuerHTTP(ctx context.Context, human *humanParticipation, origin, path string, body any) (*idRequestExecutionResult, error) {
-	client := &approval.IdentityIssuerClient{
-		Origin: origin, Person: human.record.StableID, DIDKey: human.record.DIDKey,
-		Sign: human.sign, IDChain: human.chain, ResponseLimit: maxResponseBytes,
-	}
-	response, err := client.Post(ctx, approval.IssuerPostInput{Path: path, Body: body})
+	origin, err := canonicalHumanIssuer(origin)
 	if err != nil {
 		return nil, err
 	}
-	return &idRequestExecutionResult{Status: response.Status, Header: response.Header, Body: response.Body}, nil
+	target, err := url.Parse(origin)
+	if err != nil || target.Scheme != "https" || target.Host == "" || target.User != nil || target.Path != "" || target.RawQuery != "" || target.Fragment != "" {
+		return nil, usageError("issuer must be an HTTPS origin")
+	}
+	target.Path = path
+	raw, err := proof.Canonical(body)
+	if err != nil {
+		return nil, err
+	}
+	timestamp := time.Now().UTC().Format(time.RFC3339)
+	signature, payload, err := awid.SignRequestCredentialWithSigner(human.record.DIDKey, human.sign, http.MethodPost, target, "did_aw", human.record.StableID, timestamp, raw, nil, "POST "+target.String())
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target.String(), bytes.NewReader(raw))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "DIDKey "+human.record.DIDKey+" "+signature)
+	req.Header.Set("X-AWEB-DID-AW", human.record.StableID)
+	req.Header.Set("X-AWEB-Timestamp", timestamp)
+	req.Header.Set("X-AWEB-Signed-Payload", base64.RawURLEncoding.EncodeToString([]byte(payload)))
+	req.Header.Set("Content-Type", "application/json")
+	if human.chain != nil {
+		header, err := awid.EncodeIDChainHeader(human.chain)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("X-AWID-ID-Chain", header)
+	}
+	client := &http.Client{Timeout: awid.APITimeout(), Transport: awid.NewAPITransport(), CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	response, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	answer, err := awid.ReadAllBounded(response.Body, maxResponseBytes)
+	if err != nil {
+		return nil, err
+	}
+	return &idRequestExecutionResult{Status: response.StatusCode, Header: response.Header.Clone(), Body: answer}, nil
 }
 
 func canonicalHumanIssuer(value string) (string, error) {
-	origin, err := approval.CanonicalIssuerOrigin(value)
+	origin, err := awid.CanonicalServerOrigin(value)
 	if err != nil {
-		return "", usageError("%v", err)
+		return "", err
+	}
+	if !strings.HasPrefix(origin, "https://") {
+		return "", usageError("issuer must be an HTTPS origin")
 	}
 	return origin, nil
+}
+
+func humanEnrollmentExchange(ctx context.Context, client *approval.Client, purpose string, body, intent map[string]any, requestBytes []byte) (map[string]any, error) {
+	raw, err := proof.Canonical(body)
+	if err != nil {
+		return nil, err
+	}
+	req, err := client.SignedRequest(ctx, purpose, raw)
+	if err != nil {
+		return nil, err
+	}
+	httpClient := &http.Client{Timeout: awid.APITimeout(), Transport: awid.NewAPITransport(), CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	response, err := httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	answer, err := awid.ReadAllBounded(response.Body, maxResponseBytes)
+	if err != nil {
+		return nil, err
+	}
+	return proof.ReadAnswerJSON(purpose, answer, proof.AnswerInput{Status: response.StatusCode, Intent: intent, RequestBytes: requestBytes})
 }
 
 func runIDHumanEnroll(cmd *cobra.Command, args []string) error {
@@ -246,10 +297,7 @@ func runIDHumanEnroll(cmd *cobra.Command, args []string) error {
 	if humanEnrollOrigin != "" && humanEnrollOrigin != origin {
 		return usageError("--approval-origin differs from the issuer's signed intent")
 	}
-	client, err := humanEnrollmentClient(h, origin)
-	if err != nil {
-		return err
-	}
+	client := humanEnrollmentClient(h, origin)
 	resolver := &awid.NetTXTResolver{}
 	authority, err := awid.DiscoverAuthoritativeRegistry(ctx, resolver, h.record.Domain)
 	if err != nil {
@@ -268,7 +316,7 @@ func runIDHumanEnroll(cmd *cobra.Command, args []string) error {
 	status := idStatusAt(registry, resolver, registryURL)
 	input := proof.EnrollmentInput{IssuerKey: issuerKey, Requester: client.Requester, Origin: origin, RPID: rp, Now: time.Now().Unix()}
 	if h.chain != nil {
-		trust, err := readHumanEnrollmentTrust(ctx, status, h)
+		trust, err := proof.ReadTrust(ctx, status, h.chain["certificates"].([]any), h.record.StableID, h.record.DIDKey, h.record.Domain)
 		if err != nil {
 			return err
 		}
@@ -295,7 +343,7 @@ func runIDHumanEnroll(cmd *cobra.Command, args []string) error {
 	save := func() error { return saveHumanEnrollment(sessionPath, session) }
 	base := map[string]any{"version": 1, "intent": session.Intent, "admission": client.Admission}
 	if session.Start == nil {
-		session.Start, err = client.ExchangeEnrollment(ctx, approval.EnrollmentExchangeInput{Purpose: approval.PurposeEnrollmentStart, Body: base, Intent: session.Intent})
+		session.Start, err = humanEnrollmentExchange(ctx, client, "enrollment_start", base, session.Intent, nil)
 		if err != nil {
 			return err
 		}
@@ -305,9 +353,7 @@ func runIDHumanEnroll(cmd *cobra.Command, args []string) error {
 	}
 	page := origin + "/enroll#" + enrollmentText(session.Start["locator"])
 	fmt.Fprintf(cmd.ErrOrStderr(), "Your issuer names approval service %s (RP ID %s).\nOpen %s\n", origin, rp, page)
-	if err := openHumanApprovalPage(cmd.ErrOrStderr(), page); err != nil {
-		return err
-	}
+	_ = openBrowser(page)
 	if session.Binding == nil {
 		yes, err := awid.TerminalConfirmPrompt()("Register your key in that browser, then type yes to continue [y/N]: ")
 		if err != nil {
@@ -324,7 +370,7 @@ func runIDHumanEnroll(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		material, err := client.ExchangeEnrollment(ctx, approval.EnrollmentExchangeInput{Purpose: approval.PurposeEnrollmentMaterial, Body: base, Intent: session.Intent})
+		material, err := humanEnrollmentExchange(ctx, client, "enrollment_material", base, session.Intent, nil)
 		if err != nil {
 			return err
 		}
@@ -353,7 +399,7 @@ func runIDHumanEnroll(cmd *cobra.Command, args []string) error {
 	if session.Receipt == nil {
 		input.Now = time.Now().Unix()
 		if input.Trust != nil {
-			trust, err := readHumanEnrollmentTrust(ctx, status, h)
+			trust, err := proof.ReadTrust(ctx, status, h.chain["certificates"].([]any), h.record.StableID, h.record.DIDKey, h.record.Domain)
 			if err != nil {
 				return err
 			}
@@ -363,7 +409,7 @@ func runIDHumanEnroll(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		for {
-			answer, err := client.ExchangeEnrollment(ctx, approval.EnrollmentExchangeInput{Purpose: approval.PurposeEnrollmentConfirm, Body: confirmation, Intent: session.Intent, RequestBytes: requestBytes})
+			answer, err := humanEnrollmentExchange(ctx, client, "enrollment_confirm", confirmation, session.Intent, requestBytes)
 			if err != nil {
 				return err
 			}
@@ -419,7 +465,7 @@ func runIDHumanEnroll(cmd *cobra.Command, args []string) error {
 			return err
 		}
 	}
-	trust, err := readHumanEnrollmentTrust(ctx, status, h)
+	trust, err := proof.ReadTrust(ctx, status, h.chain["certificates"].([]any), h.record.StableID, h.record.DIDKey, h.record.Domain)
 	if err != nil {
 		return err
 	}
@@ -442,7 +488,7 @@ func runIDHumanEnroll(cmd *cobra.Command, args []string) error {
 	} else if !errors.Is(readErr, os.ErrNotExist) {
 		return readErr
 	}
-	if _, err = client.ExchangeEnrollment(ctx, approval.EnrollmentExchangeInput{Purpose: approval.PurposeEnrollmentActivate, Body: activation, Intent: session.Intent}); err != nil {
+	if _, err = humanEnrollmentExchange(ctx, client, "enrollment_activate", activation, session.Intent, nil); err != nil {
 		return err
 	}
 	if _, err = humanIssuerRequest(ctx, h, issuer, "/v1/enrollments/"+url.PathEscape(h.record.StableID)+"/activate", map[string]any{}); err != nil {
@@ -466,25 +512,4 @@ func runIDHumanEnroll(cmd *cobra.Command, args []string) error {
 		return approval.FormatEvidence(report) + "\nNext: aw id proof --message-file FILE --out proof.json; the recipient runs aw verify proof.json.\n"
 	})
 	return nil
-}
-
-// A missing chain is supported for first enrollment; a present malformed chain
-// is refused before it can be presented as the person's existing admission.
-func humanEnrollmentCertificates(human *humanParticipation) ([]any, error) {
-	if human.chain == nil {
-		return []any{}, nil
-	}
-	certificates, ok := human.chain["certificates"].([]any)
-	if !ok {
-		return nil, fmt.Errorf("The saved ID chain is malformed. Restore this person's checked ID chain before enrolling or refreshing a binding.")
-	}
-	return certificates, nil
-}
-
-func readHumanEnrollmentTrust(ctx context.Context, status *awid.IDStatusClient, human *humanParticipation) (proof.Trust, error) {
-	certificates, err := humanEnrollmentCertificates(human)
-	if err != nil {
-		return proof.Trust{}, err
-	}
-	return proof.ReadTrust(ctx, status, certificates, human.record.StableID, human.record.DIDKey, human.record.Domain)
 }

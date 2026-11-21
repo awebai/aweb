@@ -6,7 +6,7 @@ import (
 )
 
 // ValidateHomePath is the profile boundary for materialization, refresh and
-// pruning, per docs/blueprint-materialization-contract.md:200-214.
+// pruning, per docs/blueprint-materialization-contract.md, “5. Materialization semantics,” lines 200–214.
 // A managed-set entry records an effect; it never grants new paths.
 func ValidateHomePath(rel string) error {
 	refuse := func() error {

@@ -8,11 +8,12 @@ import json
 import secrets
 
 import cbor2
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import ec
+
 from approval_service.canonical import canonical
 from approval_service.encoding import encode
 from approval_service.wire import domain
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric import ec
 
 
 class Passkey:

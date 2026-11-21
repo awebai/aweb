@@ -1,4 +1,4 @@
-"""Released and structured address conflicts cross the real SDK decoder."""
+"""Address conflicts cross the public SDK and real registry routes."""
 
 import json
 import threading
@@ -9,6 +9,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import httpx
 import pytest
+from awid.did import did_from_public_key, generate_keypair, stable_id_from_did_key
 from awid.registry import (
     AddressAlreadyBoundError,
     DIDCurrentKeyMismatchError,
@@ -20,47 +21,74 @@ from awid.registry import (
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("detail", "code", "error_type"),
+    ("conflict", "detail", "error_type"),
     [
         (
+            "unregistered",
             "did_aw must be registered before address assignment",
-            "did_registration_required",
             DIDRegistrationRequiredError,
         ),
         (
+            "wrong-key",
             "did_aw current key does not match",
-            "did_current_key_mismatch",
             DIDCurrentKeyMismatchError,
         ),
         (
+            "already-bound",
             "address already bound to a different did_aw",
-            "address_already_bound",
             AddressAlreadyBoundError,
         ),
     ],
 )
-@pytest.mark.parametrize("format", ["released_detail", "structured_code"])
-async def test_address_conflict_uses_typed_refusal(detail, code, error_type, format):
-    body = {
-        "detail": detail
-        if format == "released_detail"
-        else {"code": code, "message": "changed prose"}
-    }
-    async with aclosing(
-        RegistryClient(
-            "https://registry.example",
-            transport=httpx.MockTransport(
-                lambda request: httpx.Response(409, json=body)
-            ),
-        )
-    ) as client:
+async def test_real_address_conflict_uses_typed_refusal(
+    controller_app, conflict, detail, error_type
+):
+    env = controller_app
+    seed, public_key = generate_keypair()
+    did_key = did_from_public_key(public_key)
+    did_aw = stable_id_from_did_key(did_key)
+    _, other_public_key = generate_keypair()
+    other_did_key = did_from_public_key(other_public_key)
+    name = "conflict"
+    origin = str(env.client.base_url).rstrip("/")
+    transport = httpx.ASGITransport(app=env.app, client=env.client._transport.client)
+    async with aclosing(RegistryClient(origin, transport=transport)) as client:
+        if conflict != "unregistered":
+            assert (await client.register_did(did_key, seed)).did_aw == did_aw
+        if conflict == "already-bound":
+            owner_seed, owner_public_key = generate_keypair()
+            owner_key = did_from_public_key(owner_public_key)
+            owner = await client.register_did(owner_key, owner_seed)
+            assert (
+                await client.register_address(
+                    "local", name, owner.did_aw, env.controller[0], current_did_key=owner_key
+                )
+            ).did_aw == owner.did_aw
+
         with pytest.raises(error_type) as caught:
-            await client._request_json(
-                "POST", "/v1/namespaces/example/addresses", json={}
+            await client.register_address(
+                "local",
+                name,
+                did_aw,
+                env.controller[0],
+                current_did_key=other_did_key if conflict == "wrong-key" else did_key,
             )
-    assert type(caught.value) is error_type
-    assert caught.value.status_code == 409
-    assert caught.value.detail == detail
+        assert type(caught.value) is error_type
+        assert caught.value.status_code == 409
+        assert caught.value.detail == detail
+
+        if conflict == "already-bound":
+            observed = await client.resolve_address("local", name)
+            assert observed is not None and observed.did_aw == owner.did_aw
+        else:
+            assert await client.resolve_address("local", name) is None
+            if conflict == "unregistered":
+                assert (await client.register_did(did_key, seed)).did_aw == did_aw
+            assert (
+                await client.register_address(
+                    "local", name, did_aw, env.controller[0], current_did_key=did_key
+                )
+            ).did_aw == did_aw
 
 
 @pytest.mark.asyncio

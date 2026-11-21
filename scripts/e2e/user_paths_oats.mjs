@@ -3,13 +3,13 @@
 // A supported passive launch executable avoids a model call, per OATS's launch
 // configuration contract. Neither the kernel, provider, aw nor broker is faked.
 import { createHash } from "node:crypto";
-import { spawn, spawnSync } from "node:child_process";
-import { chmodSync, copyFileSync, cpSync, mkdirSync, readFileSync, rmSync, statSync, existsSync, symlinkSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { chmodSync, copyFileSync, cpSync, mkdirSync, readFileSync, statSync, existsSync, symlinkSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { DiagnosticOutput, createProbeAssertions, wakeTimestampIsUnset, kernelSessionSnapshot, prepareKernelProbeDirectories, preparePassiveKernelLaunch, runKernelLifecycleCommand, runKernelProbeCommand } from "./user_paths_kernel_setup.mjs";
+import { DiagnosticOutput, cleanupPassiveTerminal, createProbeAssertions, wakeTimestampIsUnset, kernelSessionSnapshot, prepareKernelProbeDirectories, preparePassiveKernelLaunch, runKernelLifecycleCommand, runKernelProbeCommand } from "./user_paths_kernel_setup.mjs";
 
 const KernelBackend = Object.freeze({ Tmux: "tmux" });
 const OWNED_TMUX = ["tmux", "-L", "oats"];
@@ -241,14 +241,12 @@ try {
     } catch (error) { cleanupErrors.push(String(error)); }
   }
   await stopOwnedBroker(broker);
-  const stopped = spawnSync(OWNED_TMUX[0], [...OWNED_TMUX.slice(1), "kill-server"], { cwd: deployment, env, encoding: "utf8" });
-  if (stopped.error || (stopped.status !== 0 && !/no server running|No such file or directory/.test(stopped.stderr))) cleanupErrors.push(String(stopped.error || stopped.stderr));
+  try { cleanupPassiveTerminal({ root, tmuxBinary: OWNED_TMUX[0], env }); } catch (error) { cleanupErrors.push(String(error)); }
   evidence.cleanup_errors = cleanupErrors;
   if (evidence.result === ProbeOutcome.Failed) evidence.broker_stderr = brokerErrors;
   if (cleanupErrors.length) { evidence.result = ProbeOutcome.Failed; process.exitCode = 1; }
   mkdirSync(dirname(values.output), { recursive: true });
   writeFileSync(values.output, JSON.stringify(evidence, null, 2) + "\n");
-  rmSync(root, { recursive: true, force: true });
 }
 assert.equal(evidence.result, ProbeOutcome.Passed, `released-kernel-wake result must be PASSED: ${evidence.failed_check || "inspect recorded diagnostics"}`);
 console.log("PASS released OATS kernel -> candidate aw wake path");

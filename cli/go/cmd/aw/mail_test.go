@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1610,9 +1611,22 @@ func TestAwMailSendStartsAThreadDespiteInvalidRosterKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	var listed *awid.ListAgentsResponse
-	warning := captureStderr(t, func() {
+	warning := func() string {
+		readEnd, writeEnd, pipeErr := os.Pipe()
+		if pipeErr != nil {
+			t.Fatal(pipeErr)
+		}
+		original := os.Stderr
+		os.Stderr = writeEnd
+		defer func() { os.Stderr = original; _ = writeEnd.Close(); _ = readEnd.Close() }()
 		listed, err = client.ListAgents(ctx)
-	})
+		_ = writeEnd.Close()
+		output, readErr := io.ReadAll(readEnd)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		return string(output)
+	}()
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}

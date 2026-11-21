@@ -82,7 +82,7 @@ func TestDoctorFrameworkRefusesKeyContentRegardlessOfDescription(t *testing.T) {
 	runner.output.Checks = []doctorCheck{check}
 	runner.runFixFramework()
 	plan := requireDoctorFixStatus(t, runner.output, doctorFixStatusRefused)
-	if plan.RefusalDetail != doctorFixPrivateKeyMaterial || plan.NextStep != doctorFixSafetyNextStep {
+	if plan.RefusalDetail != string(doctorFixPrivateKeyMaterial) || plan.NextStep != doctorFixSafetyNextStep {
 		t.Fatalf("wrong typed key refusal: %#v", plan)
 	}
 	after, err := os.ReadFile(path)

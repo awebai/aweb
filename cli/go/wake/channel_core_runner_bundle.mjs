@@ -3723,6 +3723,13 @@ function decodeRawURLBase64(value) {
 }
 
 // channel-core/src/identity/signing.ts
+var trustedVerificationStatuses = ["verified", "verified_legacy", "verified_custodial"];
+function isTrustedVerificationStatus(status2) {
+  return trustedVerificationStatuses.some((trusted) => status2 === trusted);
+}
+function withholdsMessageContent(status2) {
+  return status2 === "failed" || status2 === "identity_mismatch";
+}
 function canonicalJSON(env) {
   const fields = [
     ["body", env.body],
@@ -7336,7 +7343,6 @@ async function loadSigningKey(path) {
 }
 
 // channel-core/src/config.ts
-etc.sha512Sync = (...m) => sha512(etc.concatBytes(...m));
 function selectIdentityHome(workdir, options = {}) {
   const explicitHome = (options.identityHome || "").trim();
   if (explicitHome) {
@@ -7397,7 +7403,7 @@ async function resolveConfig(workdir, options = {}) {
   const certificate = await loadConfiguredTeamCertificate(identityHome, teamID, certPath);
   if (identityHome.external) preflightFile(identityPath, "identity config");
   const identity = await readYAML(identityPath);
-  const did = computeDIDKey(getPublicKey(signingKey));
+  const did = computeDIDKey(publicKeyFromSeed(signingKey));
   const identityStableID = (identity?.stable_id || "").trim();
   const certificateStableID = (certificate.member_did_aw || "").trim();
   const stableID = certificateStableID || identityStableID;
@@ -7447,7 +7453,7 @@ async function resolveGrantConfig(identityHome, options) {
   const signingKeyPath = join(identityHome.root, "grant-signing.key");
   preflightFile(signingKeyPath, "grant signing key");
   const signingKey = await loadSigningKey(signingKeyPath);
-  const grantSessionDID = computeDIDKey(getPublicKey(signingKey));
+  const grantSessionDID = computeDIDKey(publicKeyFromSeed(signingKey));
   const subject = grant.subject || {};
   return {
     baseURL: (grant.aweb_url || "").trim(),
@@ -8184,19 +8190,21 @@ function isTimestamp(value) {
 function isPositiveInteger(value) {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 }
+function isUnavailableIdEvidence(reason) {
+  return reason === "stale_issuer_key" || reason === "status_expired" || reason === "evidence_unavailable";
+}
 function idRequestDisposition(result, subject, originalAuthPassed) {
   if (!originalAuthPassed) return { ordinary: "refuse", human_required: "refuse" };
   const human_required = result.outcome === "nearest_human" ? "continue" : "refuse";
   const localLeaf = !subject.id.startsWith("did:aw:");
+  if (isUnavailableIdEvidence(result.reason)) {
+    return { ordinary: localLeaf ? "continue" : "refuse", human_required };
+  }
   switch (result.reason) {
     case "verified":
     case "legacy_no_chain":
     case "unregistered_identity":
       return { ordinary: "continue", human_required };
-    case "stale_issuer_key":
-    case "status_expired":
-    case "evidence_unavailable":
-      return { ordinary: localLeaf ? "continue" : "refuse", human_required };
     default:
       return { ordinary: "refuse", human_required };
   }
@@ -9541,11 +9549,11 @@ var SenderTrustManager = class {
       return resolved2;
     }
     if (!status2 || !trimmedAddress) return void 0;
-    if (context && !context.fromDID && (status2 === "verified" || status2 === "verified_legacy" || status2 === "verified_custodial")) {
+    if (context && !context.fromDID && isTrustedVerificationStatus(status2)) {
       return void 0;
     }
     const rosterAlias = this.teamRosterAliasReference(trimmedAddress);
-    if (status2 !== "verified" && status2 !== "verified_legacy" && status2 !== "verified_custodial" && rosterAlias !== void 0 && !fromStableID) {
+    if (!isTrustedVerificationStatus(status2) && rosterAlias !== void 0 && !fromStableID) {
       return void 0;
     }
     const trustAddress = this.canonicalTrustAddress(trimmedAddress);
@@ -9555,7 +9563,7 @@ var SenderTrustManager = class {
     let meta = await this.resolveAgentMeta(trimmedAddress);
     const localKeyMismatch = meta.resolved && meta.identityScope === "local" && meta.did && meta.did !== context?.fromDID;
     const cachedAbsence = !meta.resolved && meta.resolutionError === "not_found";
-    if (usedCachedMetadata && rosterAlias !== void 0 && (status2 === "verified" || status2 === "verified_legacy" || status2 === "verified_custodial") && context?.fromDID && !fromStableID?.startsWith("did:aw:") && (localKeyMismatch || cachedAbsence) && this.now() >= (this.localMismatchRefreshAfter.get(trustAddress) ?? 0)) {
+    if (usedCachedMetadata && rosterAlias !== void 0 && isTrustedVerificationStatus(status2) && context?.fromDID && !fromStableID?.startsWith("did:aw:") && (localKeyMismatch || cachedAbsence) && this.now() >= (this.localMismatchRefreshAfter.get(trustAddress) ?? 0)) {
       meta = await this.resolveAgentMeta(trimmedAddress, true);
       if (meta.resolved && meta.identityScope === "local" && meta.did === context.fromDID) {
         this.localMismatchRefreshAfter.delete(trustAddress);
@@ -9634,7 +9642,7 @@ var SenderTrustManager = class {
   }
   normalizeTrustDecision(store, verificationStatus, rawAddress, fromDID, fromStableID, toDID, toStableID, rotationAnnouncement, replacementAnnouncement, resolved) {
     let status2 = this.checkRecipientBinding(verificationStatus, toDID, toStableID);
-    const acceptedInput = verificationStatus === "verified" || verificationStatus === "verified_legacy" || verificationStatus === "verified_custodial";
+    const acceptedInput = isTrustedVerificationStatus(verificationStatus);
     const recipientBindingMismatch = acceptedInput && status2 === "identity_mismatch";
     if (resolved?.receivedLocalSender) {
       const local = resolved.receivedLocalSender;
@@ -9665,7 +9673,7 @@ var SenderTrustManager = class {
       }
     }
     if (!status2 || !rawAddress.trim()) return { status: status2, stored: false };
-    const acceptedSignature = status2 === "verified" || status2 === "verified_legacy" || status2 === "verified_custodial";
+    const acceptedSignature = isTrustedVerificationStatus(status2);
     if (!acceptedSignature || recipientBindingMismatch || !fromDID) return { status: status2, stored: false };
     const trustAddress = this.canonicalTrustAddress(rawAddress);
     const meta = resolved?.meta || this.unavailableAgentMeta();
@@ -9732,7 +9740,7 @@ var SenderTrustManager = class {
     const crossTeam = selected && (member?.team_id && member.team_id !== selected || protectedTeam && protectedTeam !== selected || addressNamespace && !referenceMatches(selected));
     if (!crossTeam) return;
     const result = { did: context.fromDID || "", status: status2 || "unverified" };
-    if (!["verified", "verified_legacy", "verified_custodial"].includes(result.status)) return result;
+    if (!isTrustedVerificationStatus(result.status)) return result;
     result.status = "verification_stale";
     if (!member) return result;
     if (member.member_did_aw || member.state === "inactive" || protectedTeam && member.team_id && protectedTeam !== member.team_id || addressNamespace && member.team_id && !referenceMatches(member.team_id) || context.projectedSenderDID && context.projectedSenderDID !== context.fromDID) {
@@ -9751,7 +9759,7 @@ var SenderTrustManager = class {
   }
   async prepareReceivedSender(status2, stableID, context) {
     const check = { fromDID: context.fromDID || "", stableID, status: status2 || "unverified" };
-    if (!["verified", "verified_legacy", "verified_custodial"].includes(check.status) || !context.fromDID) return check;
+    if (!isTrustedVerificationStatus(check.status) || !context.fromDID) return check;
     const membership = context.senderMembership;
     check.status = "verification_stale";
     if (!membership || membership.state === "unknown") return check;
@@ -9775,7 +9783,7 @@ var SenderTrustManager = class {
     return check;
   }
   checkRecipientBinding(status2, toDID, toStableID) {
-    if (status2 !== "verified" && status2 !== "verified_legacy" && status2 !== "verified_custodial") {
+    if (!isTrustedVerificationStatus(status2)) {
       return status2;
     }
     const selfStableID = this.selfStableID.trim();
@@ -10207,6 +10215,71 @@ var import_proper_lockfile2 = __toESM(require_proper_lockfile(), 1);
 import { dirname as dirname2, join as join2 } from "node:path";
 import { homedir } from "node:os";
 import { appendFile, mkdir, open, readFile as readFile4, rename, rm } from "node:fs/promises";
+
+// channel-core/src/message_presentation.ts
+import { isIP as isIP2 } from "node:net";
+var aliasPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+var noticeIDPattern = /^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+function claimedSenderIdentifier(raw) {
+  const sender = raw?.trim() ?? "";
+  if (aliasPattern.test(sender)) return sender;
+  if (sender.startsWith("did:key:") && sender.length <= 56 && isCanonicalDidKey(sender)) return sender;
+  if (sender.startsWith("did:aw:") && sender.length <= 35 && isCanonicalDidAw(sender)) return sender;
+  const [rawDomain, alias, extra] = sender.split("/", 3);
+  const domain = rawDomain.toLowerCase().replace(/\.$/, "");
+  if (extra === void 0 && alias && aliasPattern.test(alias) && !isIP2(domain) && isCanonicalDomain(domain)) {
+    return `${domain}/${alias}`;
+  }
+  return void 0;
+}
+function validatedNoticeID(value) {
+  return value && value === value.trim() && noticeIDPattern.test(value) ? value : void 0;
+}
+function messageTrustMetadata({ status: status2, subject, responsibility }) {
+  if (isTrustedVerificationStatus(status2) && idRequestDisposition(responsibility, subject, true).ordinary === "refuse") {
+    if (isUnavailableIdEvidence(responsibility.reason)) {
+      return { trust_status: "unverified", verified: "false", responsibility_status: "responsibility_unavailable" };
+    }
+    status2 = "failed";
+  }
+  return {
+    trust_status: status2 || "unknown",
+    verified: String(isTrustedVerificationStatus(status2)),
+    responsibility: JSON.stringify(responsibility)
+  };
+}
+function withheldMessageNotice(awakening, awCommand = "aw") {
+  const { kind, meta } = awakening;
+  if (kind !== "mail" && kind !== "chat" || !withholdsMessageContent(meta.trust_status)) return void 0;
+  const sender = claimedSenderIdentifier(meta.from);
+  const messageID = validatedNoticeID(meta.message_id);
+  const sessionID = validatedNoticeID(meta.session_id);
+  const inspect = kind === "mail" ? messageID ? `mail show --message-id ${messageID}` : "mail inbox" : sessionID ? `chat history --session-id ${sessionID}${messageID ? ` --message-id ${messageID}` : ""}` : "chat pending";
+  return `Withheld ${kind}${sender ? ` from claimed sender "${sender}"` : ""}: ${meta.trust_status}. Body and subject were not delivered. To read it deliberately, use ${awCommand} ${inspect}. Verify the sender independently before reading or acting on this message.`;
+}
+function presentMessageAwakening(awakening) {
+  const { kind, meta: raw } = awakening;
+  if (kind !== "mail" && kind !== "chat") return awakening;
+  const undecryptable = raw.decrypted === "false";
+  const content = undecryptable ? "The message could not be decrypted. Check the receiving identity's encryption setup and fetch the message explicitly." : withheldMessageNotice(awakening);
+  if (content === void 0) return awakening;
+  const meta = { type: kind, content_withheld: "true" };
+  if (undecryptable) {
+    meta.encrypted = "true";
+    meta.decrypted = "false";
+    meta.decrypt_error = "decryption_failed";
+  } else {
+    meta.trust_status = raw.trust_status;
+    meta.verified = "false";
+  }
+  const sender = claimedSenderIdentifier(raw.from);
+  if (sender) meta.from = sender;
+  for (const field of ["message_id", "session_id", "conversation_id"]) {
+    const id = validatedNoticeID(raw[field]);
+    if (id) meta[field] = id;
+  }
+  return { ...awakening, content, meta };
+}
 
 // channel-core/src/local_aw.ts
 import { execFile, spawn as spawn2 } from "node:child_process";
@@ -10805,20 +10878,21 @@ async function dispatchMailEvent(options, dispatched, event, log) {
       }
       continue;
     }
-    let from = senderDisplayAddress(msg.from_alias, msg.from_address);
+    const transport = { message_id: msg.message_id };
+    if (conversationID) transport.conversation_id = conversationID;
     emitTrace(options, "decrypt_started", messageEvent, "mail");
     const decrypt = await resolveMailForDelivery(options, msg);
     emitTrace(options, "decrypt_completed", messageEvent, "mail");
-    if (!decrypt.ok) {
-      await deliverAwakening(options, {
+    if (!decrypt) {
+      await deliverAwakening(options, presentMessageAwakening({
         kind: "mail",
         content: "",
-        meta: encryptedDeliveryFailureMeta("mail", from, msg.message_id, conversationID, decrypt.error),
+        meta: { ...transport, from: senderDisplayAddress(msg.from_alias, msg.from_address), decrypted: "false" },
         deliveryIntent: "wake"
-      });
+      }));
       continue;
     }
-    from = senderDisplayAddress(msg.from_alias, msg.from_address);
+    const from = senderDisplayAddress(msg.from_alias, msg.from_address);
     emitTrace(options, "trust_started", messageEvent, "mail");
     const trust = await normalizeAndPersistMessageTrust(
       options,
@@ -10834,27 +10908,21 @@ async function dispatchMailEvent(options, dispatched, event, log) {
     msg.verification_status = trust.status;
     const authenticated = isTrustedVerificationStatus(msg.verification_status);
     const responsibility = typeof options.trust.verifyResponsibility === "function" ? await options.trust.verifyResponsibility(msg, authenticated) : await readReceivedIdChain(msg, authenticated, { evidence: async () => null });
-    if (authenticated && idRequestDisposition(responsibility, receivedIdSubject(msg), true).ordinary === "refuse") {
-      msg.verification_status = "failed";
-    }
     const meta = {
       type: "mail",
       from,
-      message_id: msg.message_id,
-      responsibility: JSON.stringify(responsibility),
-      trust_status: msg.verification_status || "unknown",
-      verified: String(isTrustedVerificationStatus(msg.verification_status))
+      ...transport,
+      ...messageTrustMetadata({ status: msg.verification_status, subject: receivedIdSubject(msg), responsibility })
     };
-    if (conversationID) meta.conversation_id = conversationID;
     if (msg.subject) meta.subject = msg.subject;
     if (msg.priority && msg.priority !== "normal") meta.priority = msg.priority;
     emitTrace(options, "notification_started", messageEvent, "mail");
-    await deliverAwakening(options, {
+    await deliverAwakening(options, presentMessageAwakening({
       kind: "mail",
       content: msg.body,
       meta,
       deliveryIntent: "wake"
-    });
+    }));
     emitTrace(options, "notification_accepted", messageEvent, "mail");
     await persistDeliveryMark(options, dispatched, key, messageEvent, "mail");
     if (options.mailAcknowledgment !== "manual") {
@@ -10907,22 +10975,23 @@ async function dispatchChatEvent(options, dispatched, event) {
       presentedMessageIds.push(msg.message_id);
       continue;
     }
-    let from = senderDisplayAddress(msg.from_agent, msg.from_address);
+    const transport = { session_id: event.session_id, message_id: msg.message_id };
+    if (conversationID) transport.conversation_id = conversationID;
     const encrypted = isEncryptedMessage(msg);
     emitTrace(options, "decrypt_started", messageEvent, lane);
     const decrypt = await resolveChatForDelivery(options, event.session_id, msg);
     emitTrace(options, "decrypt_completed", messageEvent, lane);
-    if (!decrypt.ok) {
+    if (!decrypt) {
       options.onChatPresented?.(event.session_id, { encrypted });
-      await deliverAwakening(options, {
+      await deliverAwakening(options, presentMessageAwakening({
         kind: "chat",
         content: "",
-        meta: encryptedDeliveryFailureMeta("chat", from, msg.message_id, conversationID, decrypt.error, event.session_id),
+        meta: { ...transport, from: senderDisplayAddress(msg.from_agent, msg.from_address), decrypted: "false" },
         deliveryIntent: event.sender_waiting ? "steer" : "wake"
-      });
+      }));
       continue;
     }
-    from = senderDisplayAddress(msg.from_agent, msg.from_address);
+    const from = senderDisplayAddress(msg.from_agent, msg.from_address);
     emitTrace(options, "trust_started", messageEvent, lane);
     const trust = await normalizeAndPersistMessageTrust(
       options,
@@ -10938,29 +11007,22 @@ async function dispatchChatEvent(options, dispatched, event) {
     msg.verification_status = trust.status;
     const authenticated = isTrustedVerificationStatus(msg.verification_status);
     const responsibility = typeof options.trust.verifyResponsibility === "function" ? await options.trust.verifyResponsibility(msg, authenticated) : await readReceivedIdChain(msg, authenticated, { evidence: async () => null });
-    if (authenticated && idRequestDisposition(responsibility, receivedIdSubject(msg), true).ordinary === "refuse") {
-      msg.verification_status = "failed";
-    }
     const meta = {
       type: "chat",
       from,
-      session_id: event.session_id,
-      message_id: msg.message_id,
-      responsibility: JSON.stringify(responsibility),
-      trust_status: msg.verification_status || "unknown",
-      verified: String(isTrustedVerificationStatus(msg.verification_status))
+      ...transport,
+      ...messageTrustMetadata({ status: msg.verification_status, subject: receivedIdSubject(msg), responsibility })
     };
-    if (conversationID) meta.conversation_id = conversationID;
     if (event.sender_waiting) meta.sender_waiting = "true";
     if (msg.sender_leaving) meta.sender_leaving = "true";
     emitTrace(options, "notification_started", messageEvent, lane);
     options.onChatPresented?.(event.session_id, { encrypted });
-    await deliverAwakening(options, {
+    await deliverAwakening(options, presentMessageAwakening({
       kind: "chat",
       content: msg.body,
       meta,
       deliveryIntent: event.sender_waiting ? "steer" : "wake"
-    });
+    }));
     emitTrace(options, "notification_accepted", messageEvent, lane);
     await persistDeliveryMark(options, dispatched, key, messageEvent, lane);
     presentedMessageIds.push(msg.message_id);
@@ -11067,14 +11129,12 @@ async function normalizeMessageTrust(options, msg, trustAddress, verificationAdd
   return options.trust.normalizeResolvedTrust(...args, resolvedMetadata);
 }
 async function resolveMailForDelivery(options, msg) {
-  if (!isEncryptedMessage(msg)) return { ok: true };
-  if (!options.localDecrypt?.mailMessage) {
-    return { ok: false, error: "local aw decrypt provider is not configured" };
-  }
+  if (!isEncryptedMessage(msg)) return true;
+  if (!options.localDecrypt?.mailMessage) return false;
   try {
     const decrypted = await options.localDecrypt.mailMessage(msg.message_id);
     if (!decrypted || typeof decrypted.body !== "string") {
-      return { ok: false, error: "local aw did not return decrypted mail body" };
+      return false;
     }
     const authenticated = await verifyDecryptedMessage(msg, decrypted, "mail", msg.conversation_id, options.self);
     msg.verification_status = authenticated ? "verified" : "unverified";
@@ -11085,20 +11145,18 @@ async function resolveMailForDelivery(options, msg) {
     }
     msg.subject = decrypted.subject;
     msg.body = decrypted.body;
-    return { ok: true };
-  } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    return true;
+  } catch {
+    return false;
   }
 }
 async function resolveChatForDelivery(options, sessionID, msg) {
-  if (!isEncryptedMessage(msg)) return { ok: true };
-  if (!options.localDecrypt?.chatMessage) {
-    return { ok: false, error: "local aw decrypt provider is not configured" };
-  }
+  if (!isEncryptedMessage(msg)) return true;
+  if (!options.localDecrypt?.chatMessage) return false;
   try {
     const decrypted = await options.localDecrypt.chatMessage(sessionID, msg.message_id);
     if (!decrypted || typeof decrypted.body !== "string") {
-      return { ok: false, error: "local aw did not return decrypted chat body" };
+      return false;
     }
     const authenticated = await verifyDecryptedMessage(msg, decrypted, "chat", sessionID, options.self);
     msg.verification_status = authenticated ? "verified" : "unverified";
@@ -11108,26 +11166,10 @@ async function resolveChatForDelivery(options, sessionID, msg) {
       if (authenticated.signed_from) msg.from_address = authenticated.signed_from;
     }
     msg.body = decrypted.body;
-    return { ok: true };
-  } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    return true;
+  } catch {
+    return false;
   }
-}
-function encryptedDeliveryFailureMeta(type2, from, messageID, conversationID, error, sessionID) {
-  const meta = {
-    type: type2,
-    from,
-    message_id: messageID,
-    encrypted: "true",
-    decrypted: "false",
-    decrypt_error: error
-  };
-  if (conversationID) meta.conversation_id = conversationID;
-  if (sessionID) meta.session_id = sessionID;
-  return meta;
-}
-function isTrustedVerificationStatus(status2) {
-  return status2 === "verified" || status2 === "verified_custodial";
 }
 function trustWarningLine(status2) {
   if (isTrustedVerificationStatus(status2)) return "";
@@ -11152,7 +11194,8 @@ function formatAwakeningForAgent(awakening) {
   const rawType = awakening.meta.type || awakening.kind;
   const type2 = awakening.kind === "app" ? sanitizeSummaryComponent(rawType) || "app" : rawType;
   const lines = [`aweb ${type2} event received.`];
-  const warning = Object.prototype.hasOwnProperty.call(awakening.meta, "trust_status") ? trustWarningLine(awakening.meta.trust_status) : "";
+  const withheld = awakening.meta.content_withheld === "true";
+  const warning = !withheld && Object.prototype.hasOwnProperty.call(awakening.meta, "trust_status") ? trustWarningLine(awakening.meta.trust_status) : "";
   if (warning) lines.push("", warning);
   lines.push("", "Metadata:");
   for (const [key, value] of Object.entries(awakening.meta)) {
@@ -11162,10 +11205,12 @@ function formatAwakeningForAgent(awakening) {
   if (awakening.kind === "app") {
     const summary = sanitizeSummaryComponent(awakening.content) || formatAppEventMetaSummary(awakening.meta);
     if (summary) lines.push("", "App event:", summary);
+  } else if (withheld) {
+    lines.push("", awakening.content);
   } else if (awakening.content) {
     lines.push("", "Message:", awakening.content);
   }
-  lines.push("", awakeningClosingLine(awakening.kind));
+  if (!withheld) lines.push("", awakeningClosingLine(awakening.kind));
   return lines.join("\n");
 }
 function formatAppEventMetaSummary(meta) {
@@ -11294,10 +11339,6 @@ function normalizeTerminalReadiness(raw, present = true) {
 }
 function terminalInputSafeText(text2) {
   return text2.replace(/\r\n?/g, "\n").replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F\u0080-\u009F]/g, "");
-}
-function validatedNoticeID(value) {
-  const raw = value || "";
-  return /^[0-9a-f]{32}$/i.test(raw) || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(raw) ? raw : void 0;
 }
 function quotedIdentityHome(home) {
   if (!home.startsWith("/") || /[\x00-\x1F\x7F-\u009F\u2028\u2029]/.test(home)) return void 0;
@@ -11441,7 +11482,7 @@ function createTerminalAwakeningHandler(options) {
     if (options.isPaused?.()) throw new Error("terminal delivery is paused");
     const quotedHome = receivingIdentityHome === void 0 ? void 0 : quotedIdentityHome(receivingIdentityHome);
     const command = quotedHome ? `aw --identity-home ${quotedHome}` : "aw";
-    const text2 = heldReason ? `[aweb] 1 message held (${heldReason}). Run: ${command} ${awakening.kind === "mail" ? "mail inbox" : "chat pending"}` : [...ambientBatch, { awakening, receivingIdentityHome }].map((item) => textForTerminalAwakening(item.awakening, item.receivingIdentityHome)).join("\n\n---\n\n");
+    const text2 = heldReason ? (awakening.meta.decrypted !== "false" ? withheldMessageNotice(awakening, command) : void 0) ?? `[aweb] 1 message held (${heldReason}). Run: ${command} ${awakening.kind === "mail" ? "mail inbox" : "chat pending"}` : [...ambientBatch, { awakening, receivingIdentityHome }].map((item) => textForTerminalAwakening(item.awakening, item.receivingIdentityHome)).join("\n\n---\n\n");
     throwIfAborted2(options.signal);
     await options.session.input(options.home, text2);
     if (heldReason) {

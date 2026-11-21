@@ -486,7 +486,7 @@ async def test_a_publish_waits_for_a_rotation_in_progress_and_then_refuses_the_o
     assert team.status_code == 200, team.text
     assert team.json()["team_did_key"] == new[1]
     after = await env.client.get(path)
-    assert (after.status_code, after.json()) == (before.status_code, before.json())
+    assert (after.status_code, after.content) == (before.status_code, before.content)
 
 
 @pytest.mark.asyncio

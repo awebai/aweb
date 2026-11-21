@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import strictAssert from "node:assert/strict";
@@ -99,6 +99,17 @@ export function runKernelProbeCommand({ name, argv, cwd, env, timeout = 60000, o
     throw error;
   }
   return result.stdout;
+}
+
+// Stops the owned tmux server, then removes root. A failed, signalled or
+// timed-out stop keeps root, which holds the server's socket, for inspection.
+export function cleanupPassiveTerminal({ root, tmuxBinary, env }) {
+  const stopped = spawnSync(tmuxBinary, ["-L", "oats", "kill-server"], { env, encoding: "utf8", timeout: 10000 });
+  const noServer = stopped.status === 1 && /^(?:no server running on [^\r\n]+|error connecting to [^\r\n]+ \(No such file or directory\))\s*$/.test(stopped.stderr);
+  if (stopped.error || stopped.signal || (stopped.status !== 0 && !noServer)) {
+    throw new Error(`Owned tmux cleanup failed (status=${stopped.status}, signal=${stopped.signal}, code=${stopped.error?.code ?? "none"}); socket root retained at ${root}. Inspect the owned server before removing that directory.`, { cause: stopped.error });
+  }
+  rmSync(root, { recursive: true, force: true });
 }
 
 export function prepareKernelProbeDirectories({ root }) {

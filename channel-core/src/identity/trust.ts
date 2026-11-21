@@ -1,4 +1,5 @@
 import { verifyBytes } from "./signature_wire.js";
+import { isTrustedVerificationStatus } from "./signing.js";
 import { readReceivedIdChain, type ReceivedIdChain } from "./received_id_chain.js";
 import type { APIClient } from "../api/client.js";
 import type { VerificationStatus } from "./signing.js";
@@ -205,15 +206,13 @@ export class SenderTrustManager {
     if (
       context
       && !context.fromDID
-      && (status === "verified" || status === "verified_legacy" || status === "verified_custodial")
+      && isTrustedVerificationStatus(status)
     ) {
       return undefined;
     }
     const rosterAlias = this.teamRosterAliasReference(trimmedAddress);
     if (
-      status !== "verified"
-      && status !== "verified_legacy"
-      && status !== "verified_custodial"
+      !isTrustedVerificationStatus(status)
       && rosterAlias !== undefined
       && !fromStableID
     ) {
@@ -231,7 +230,7 @@ export class SenderTrustManager {
     if (
       usedCachedMetadata
       && rosterAlias !== undefined
-      && (status === "verified" || status === "verified_legacy" || status === "verified_custodial")
+      && isTrustedVerificationStatus(status)
       && context?.fromDID
       && !fromStableID?.startsWith("did:aw:")
       && (localKeyMismatch || cachedAbsence)
@@ -373,9 +372,7 @@ export class SenderTrustManager {
     resolved: ResolvedTrustMetadata | undefined,
   ): TrustResult {
     let status = this.checkRecipientBinding(verificationStatus, toDID, toStableID);
-    const acceptedInput = verificationStatus === "verified"
-      || verificationStatus === "verified_legacy"
-      || verificationStatus === "verified_custodial";
+    const acceptedInput = isTrustedVerificationStatus(verificationStatus);
     const recipientBindingMismatch = acceptedInput && status === "identity_mismatch";
     if (resolved?.receivedLocalSender) {
       const local = resolved.receivedLocalSender;
@@ -405,7 +402,7 @@ export class SenderTrustManager {
     }
     if (!status || !rawAddress.trim()) return { status, stored: false };
 
-    const acceptedSignature = status === "verified" || status === "verified_legacy" || status === "verified_custodial";
+    const acceptedSignature = isTrustedVerificationStatus(status);
     if (!acceptedSignature || recipientBindingMismatch || !fromDID) return { status, stored: false };
 
     const trustAddress = this.canonicalTrustAddress(rawAddress);
@@ -489,7 +486,7 @@ export class SenderTrustManager {
       || (addressNamespace && !referenceMatches(selected)));
     if (!crossTeam) return;
     const result = { did: context.fromDID || "", status: status || "unverified" };
-    if (!["verified", "verified_legacy", "verified_custodial"].includes(result.status)) return result;
+    if (!isTrustedVerificationStatus(result.status)) return result;
     result.status = "verification_stale";
     if (!member) return result;
     if (member.member_did_aw || member.state === "inactive"
@@ -509,7 +506,7 @@ export class SenderTrustManager {
     status: VerificationStatus | undefined, stableID: string, context: ResolveTrustContext,
   ): Promise<ReceivedSenderCheck> {
     const check: ReceivedSenderCheck = { fromDID: context.fromDID || "", stableID, status: status || "unverified" };
-    if (!["verified", "verified_legacy", "verified_custodial"].includes(check.status) || !context.fromDID) return check;
+    if (!isTrustedVerificationStatus(check.status) || !context.fromDID) return check;
     const membership = context.senderMembership;
     check.status = "verification_stale";
     if (!membership || membership.state === "unknown") return check;
@@ -539,7 +536,7 @@ export class SenderTrustManager {
     toDID: string | undefined,
     toStableID: string | undefined,
   ): VerificationStatus | undefined {
-    if (status !== "verified" && status !== "verified_legacy" && status !== "verified_custodial") {
+    if (!isTrustedVerificationStatus(status)) {
       return status;
     }
     const selfStableID = this.selfStableID.trim();

@@ -95,6 +95,7 @@ def git(root: Path, *args: str) -> str:
 def test_file(path: Path) -> bool:
     return path.suffix == ".py" and (
         bool({"tests", "test", "testing", "e2e"}.intersection(path.parts))
+        or path.parts[:2] == ("scripts", "test-egress")
         or path.name.startswith("test_")
         or path.name.endswith("_test.py")
         or path.stem in {"conftest", "testing"}
@@ -471,6 +472,7 @@ def scan(root: Path) -> Report:
 
 class Budget(TypedDict):
     files: dict[str, int]
+    marked_files: dict[str, int]
     nonliteral_files: dict[str, int]
 
 
@@ -478,14 +480,20 @@ def ceilings(raw: str) -> Budget:
     value = json.loads(raw)
     if (
         not isinstance(value, dict)
-        or set(value) != {"schema_version", "files", "nonliteral_files"}
+        or set(value)
+        not in (
+            {"schema_version", "files", "nonliteral_files"},
+            {"schema_version", "files", "marked_files", "nonliteral_files"},
+        )
         or type(value["schema_version"]) is not int
         or value["schema_version"] != 1
     ):
         raise ScanError(
             "invalid product-write ceiling shape; restore the reviewed manifest"
         )
-    for group in ("files", "nonliteral_files"):
+    # Existing manifests predate the marked budget; absence grants zero.
+    value.setdefault("marked_files", {})
+    for group in ("files", "marked_files", "nonliteral_files"):
         if not isinstance(value[group], dict):
             raise ScanError(f"{group} ceilings must map files to positive counts")
         for file, count in value[group].items():
@@ -500,7 +508,11 @@ def ceilings(raw: str) -> Budget:
                 raise ScanError(
                     "ceilings require relative test paths and positive integer counts; remove cleared entries"
                 )
-    return Budget(files=value["files"], nonliteral_files=value["nonliteral_files"])
+    return Budget(
+        files=value["files"],
+        marked_files=value["marked_files"],
+        nonliteral_files=value["nonliteral_files"],
+    )
 
 
 def violations(root: Path, report: Report) -> list[str]:
@@ -516,19 +528,25 @@ def violations(root: Path, report: Report) -> list[str]:
     )
     errors: list[str] = []
     actual_writes = Counter(w.file for w in report.writes if w.reason is None)
+    actual_marked = Counter(w.file for w in report.writes if w.reason is not None)
     groups: tuple[
-        tuple[Literal["files", "nonliteral_files"], str, dict[str, int]], ...
+        tuple[
+            Literal["files", "marked_files", "nonliteral_files"], str, dict[str, int]
+        ],
+        ...,
     ] = (
         ("files", "unmarked writes", dict(actual_writes)),
+        ("marked_files", "marked writes", dict(actual_marked)),
         ("nonliteral_files", "nonliteral calls", report.nonliteral_by_file),
     )
     for key, label, actual in groups:
         limits = candidate[key]
-        if reviewed is not None:
+        if reviewed is not None or key == "marked_files":
+            reviewed_limits = reviewed[key] if reviewed is not None else {}
             errors.extend(
-                f"{file}: {label} ceiling {count} > reviewed {reviewed[key].get(file, 0)}"
+                f"{file}: {label} ceiling {count} > reviewed {reviewed_limits.get(file, 0)}"
                 for file, count in limits.items()
-                if count > reviewed[key].get(file, 0)
+                if count > reviewed_limits.get(file, 0)
             )
         errors.extend(
             f"{file}: {label} {count} > {limits.get(file, 0)}"
@@ -595,7 +613,7 @@ def main() -> int:
                 print(error)
             if errors:
                 print(
-                    "Build test state through the product/shared builders, or mark a specific unreachable state; lower cleared ceilings. Do not raise reviewed allowances."
+                    "Build test state through the product/shared builders; document specific unreachable states without raising reviewed allowances, and lower cleared ceilings."
                 )
         return int(bool(errors))
     except (

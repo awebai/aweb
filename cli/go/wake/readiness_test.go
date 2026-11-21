@@ -37,6 +37,15 @@ func TestReadinessRequiresIndependentDaemonRegistrationStreamAndWorkerEvidence(t
 	}{
 		{"unavailable control is not absence", ReadinessDaemonUnavailable, func(in *ReadinessInput) { in.ControlError = errors.New("control response lost") }},
 		{"stopped daemon", ReadinessDaemonNotRunning, func(in *ReadinessInput) { in.Status.DaemonRunning = false }},
+		{"missing listener and no daemon lock", ReadinessDaemonNotRunning, func(in *ReadinessInput) {
+			in.Status.DaemonRunning = false
+			in.ControlError = ErrDaemonDown
+		}},
+		{"missing listener with daemon lock held", ReadinessDaemonUnavailable, func(in *ReadinessInput) { in.ControlError = ErrDaemonDown }},
+		{"failed exchange without daemon lock", ReadinessDaemonUnavailable, func(in *ReadinessInput) {
+			in.Status.DaemonRunning = false
+			in.ControlError = errors.New("control response lost")
+		}},
 		{"unreported daemon version", ReadinessVersionUnknown, func(in *ReadinessInput) { in.Status.DaemonVersion = "" }},
 		{"old daemon", ReadinessDaemonOutdated, func(in *ReadinessInput) { in.Status.DaemonVersion = "1.36.12" }},
 		{"missing registration", ReadinessHomeNotRegistered, func(in *ReadinessInput) { in.Registration = nil }},

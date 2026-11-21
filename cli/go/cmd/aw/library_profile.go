@@ -33,7 +33,7 @@ const (
 
 // missingLibraryPluginError keeps plugin absence identifiable through wrapping
 // without making callers depend on the wording shown to the user.
-// docs/improve-profile.md:27 requires the plugin for private shelf operations.
+// docs/improve-profile.md, “1. Install the Library app,” line 27 requires the plugin for private shelf operations.
 type missingLibraryPluginError struct{ cause error }
 
 func (e *missingLibraryPluginError) Error() string { return e.cause.Error() }

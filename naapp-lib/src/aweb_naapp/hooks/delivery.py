@@ -19,14 +19,13 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import urlsplit
 
-from awid.did import did_from_public_key
+from awid.did import did_key_from_signing_key
 from awid.signature_wire import sign_bytes
 from awid.team_certificate import (
     TeamCertificateError,
     check_team_certificate,
     decode_team_certificate,
 )
-from nacl.signing import SigningKey
 
 from aweb_naapp.hooks.envelope import (
     TEAM_ID_PATTERN,
@@ -121,8 +120,7 @@ def sign_delivery(
     """
     envelope = open_envelope(signing)
     verify_signature(envelope.producer_did_key, signing, signature)
-    key = SigningKey(seed)
-    did_key = did_from_public_key(bytes(key.verify_key))
+    did_key = did_key_from_signing_key(seed)
     if did_key != envelope.producer_did_key:
         raise Refused("signer_mismatch", "the key is not the event's producer key")
     if envelope.producer_kind == "client":
@@ -160,7 +158,7 @@ def sign_delivery(
         "Authorization": AUTH_SCHEME
         + did_key
         + " "
-        + encode_signature(sign_bytes(key=key, payload=payload)),
+        + encode_signature(sign_bytes(key=seed, payload=payload)),
         SIGNED_PAYLOAD_HEADER: encode_base64url(payload),
         "Content-Type": "application/json",
     }

@@ -9,16 +9,15 @@ import httpx
 import pytest
 from approval_service.enrollment import PublicIssuer
 from approval_service.grading import EnrollmentGrading
-from awid.id_certificates import id_certificate_id
-from policy_inputs import policy_file
-from test_enrollment import creation, owner, person
-
 from aweb_key_holder.enrollment import Holder
 from aweb_key_holder.http import create_app
 from aweb_key_holder.keys import KeyStore, Refused
+from awid.id_certificates import id_certificate_id
+from test_enrollment import creation, owner, person
+from policy_inputs import policy_file
 
 
-def world(tmp_path, *, registry_client, approved=True):
+def world(tmp_path, *, approved=True):
     store = KeyStore.create(tmp_path / "private", organisation="example.test")
     policy = policy_file(
         tmp_path / "human-approval.json",
@@ -28,7 +27,7 @@ def world(tmp_path, *, registry_client, approved=True):
     return Holder(
         store,
         human_approval_config=policy,
-        registry=registry_client,
+        registry=None,
         origin="https://holder.example",
         approval_origin="https://approval.example",
         rp_id="approval.example",
@@ -36,10 +35,8 @@ def world(tmp_path, *, registry_client, approved=True):
     )
 
 
-def test_bootstrap_audit_names_the_operator_not_the_pending_subject(
-    registry_client, tmp_path
-):
-    holder = world(tmp_path, registry_client=registry_client)
+def test_bootstrap_audit_names_the_operator_not_the_pending_subject(tmp_path):
+    holder = world(tmp_path)
     holder.bootstrap_pending(*person())
     records = [
         r
@@ -50,10 +47,8 @@ def test_bootstrap_audit_names_the_operator_not_the_pending_subject(
     assert all(r["actor"] == "operator" for r in records)
 
 
-def test_private_audit_reader_is_paged_and_needs_no_runtime_config(
-    registry_client, tmp_path
-):
-    holder = world(tmp_path, registry_client=registry_client, approved=False)
+def test_private_audit_reader_is_paged_and_needs_no_runtime_config(tmp_path):
+    holder = world(tmp_path, approved=False)
     holder.issue_person_certificate(*person())
     holder.issue_person_certificate(*person())
     entries = holder.store.audit()
@@ -79,7 +74,7 @@ def test_private_audit_reader_is_paged_and_needs_no_runtime_config(
 
 
 def request_for(holder, target, key):
-    with holder.store.connection() as db:
+    with holder.store._connection() as db:
         start = int(time.time())
         certificate = holder._certificate(holder.store.descriptor(), target, key, start)
         return holder._request(
@@ -98,10 +93,8 @@ def request_for(holder, target, key):
         )
 
 
-def test_unrelated_person_does_not_invalidate_a_prepared_request(
-    registry_client, tmp_path
-):
-    holder = world(tmp_path, registry_client=registry_client)
+def test_unrelated_person_does_not_invalidate_a_prepared_request(tmp_path):
+    holder = world(tmp_path)
     target, key = person()
     before = request_for(holder, target, key)
     holder.bootstrap_pending(*person())
@@ -112,14 +105,14 @@ def test_unrelated_person_does_not_invalidate_a_prepared_request(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("configured", [False, True])
 async def test_unsigned_requests_cannot_discover_operator_mode_or_enrollment_configuration(
-    registry_client, tmp_path, configured
+    tmp_path, configured
 ):
     if configured:
-        holder = world(tmp_path, registry_client=registry_client)
+        holder = world(tmp_path)
     else:
         holder = Holder(
             KeyStore.create(tmp_path / "private", organisation="example.test"),
-            registry=registry_client,
+            registry=None,
             origin="https://holder.example",
         )
     target, _ = person()
@@ -133,9 +126,9 @@ async def test_unsigned_requests_cannot_discover_operator_mode_or_enrollment_con
 
 @pytest.mark.parametrize("state", ["expired", "evidence"])
 def test_retirement_exits_stuck_state_without_erasing_evidence_or_audit(
-    registry_client, tmp_path, state
+    tmp_path, state
 ):
-    holder = world(tmp_path, registry_client=registry_client)
+    holder = world(tmp_path)
     if state == "expired":
         from pending import expire_pending
 
@@ -150,19 +143,19 @@ def test_retirement_exits_stuck_state_without_erasing_evidence_or_audit(
             issuer=PublicIssuer(holder.store.descriptor().did_key, int(time.time())),
             **owner(holder, target),
         )
-    with holder.store.connection() as db:
+    with holder.store._connection() as db:
         previous = dict(
             db.execute("SELECT * FROM enrollments WHERE person=?", (target,)).fetchone()
         )
         consumed = db.execute("SELECT count(*) FROM consumed").fetchone()[0]
     audit = holder.store.audit()
-    with holder.store.connection() as db:
+    with holder.store._connection() as db:
         revision = holder.store.person_revision(db, target)
     with pytest.raises(Refused, match="bootstrap_closed"):
         holder.bootstrap_pending(*person())
     result = holder.store.retire_person(target)
     assert result["state"] == "retired"
-    with holder.store.connection() as db:
+    with holder.store._connection() as db:
         row = dict(
             db.execute("SELECT * FROM enrollments WHERE person=?", (target,)).fetchone()
         )
@@ -171,7 +164,7 @@ def test_retirement_exits_stuck_state_without_erasing_evidence_or_audit(
         assert db.execute("SELECT count(*) FROM consumed").fetchone()[0] == consumed
     assert holder.store.audit()[:-1] == audit
     assert holder.store.audit()[-1]["actor"] == "operator"
-    with holder.store.connection() as db:
+    with holder.store._connection() as db:
         assert holder.store.person_revision(db, target) == revision + 1
     assert holder.store.retire_person(target) == result
     assert len(holder.store.audit()) == len(audit) + 1
@@ -184,14 +177,12 @@ def test_retirement_exits_stuck_state_without_erasing_evidence_or_audit(
     assert holder.bootstrap_pending(*person())["state"] == "enrollment_pending"
 
 
-def test_person_history_migrates_existing_enrollment_without_reset(
-    registry_client, tmp_path
-):
-    holder = world(tmp_path, registry_client=registry_client)
+def test_person_history_migrates_existing_enrollment_without_reset(tmp_path):
+    holder = world(tmp_path)
     target, key = person()
     saved = holder.bootstrap_pending(target, key)
     audit = holder.store.audit()
-    with holder.store.connection() as db, db:
+    with holder.store._connection() as db, db:
         db.execute("ALTER TABLE enrollments DROP COLUMN retired_at")
         db.execute("DROP TABLE person_revisions")
         db.execute(
@@ -206,23 +197,22 @@ def test_person_history_migrates_existing_enrollment_without_reset(
     reopened = KeyStore.open(holder.store.directory)
     assert holder.pending(target) == saved
     assert reopened.audit() == audit
-    with reopened.connection() as db:
+    with reopened._connection() as db:
         assert reopened.person_revision(db, target) == 7
         assert reopened.person_revision(db, person()[0]) == 0
     reopened.retire_person(target)
-    with reopened.connection() as db:
+    with reopened._connection() as db:
         assert reopened.person_revision(db, target) == 8
 
 
 @pytest.mark.asyncio
 async def test_self_signed_outsider_cannot_distinguish_existing_from_unknown_rows(
-    registry_client,
     tmp_path,
 ):
     from awid.did import did_from_public_key, generate_keypair, stable_id_from_did_key
     from test_native_holder import call
 
-    holder = world(tmp_path, registry_client=registry_client)
+    holder = world(tmp_path)
     target, key = person()
     holder.bootstrap_pending(target, key)
     seed, public = generate_keypair()

@@ -2,7 +2,6 @@
 
 import pytest
 from approval_service.grading import EnrollmentGrading
-
 from aweb_key_holder.enrollment import Holder
 from aweb_key_holder.keys import KeyStore, Refused
 
@@ -10,12 +9,12 @@ from aweb_key_holder.keys import KeyStore, Refused
 @pytest.mark.parametrize("configured", [False, True])
 @pytest.mark.parametrize("mode", ["operator", "approved"])
 def test_legacy_holder_refuses_start_with_replacement_instruction(
-    registry_client, tmp_path, configured, mode
+    tmp_path, configured, mode
 ):
     store = KeyStore.create(tmp_path / "private", organisation="example.test")
     # The actual persisted setting used by the previous version, not a mocked
     # policy source. Keep its upgrade behavior even after the column retires.
-    with store.connection() as db, db:
+    with store._connection() as db, db:
         names = {row[1] for row in db.execute("PRAGMA table_info(configuration)")}
         if "human_issuance" not in names:
             db.execute("ALTER TABLE configuration ADD COLUMN human_issuance TEXT")
@@ -31,9 +30,7 @@ def test_legacy_holder_refuses_start_with_replacement_instruction(
         else {}
     )
     with pytest.raises(Refused, match="human_approval"):
-        Holder(
-            store, registry=registry_client, origin="https://holder.example", **values
-        )
+        Holder(store, registry=None, origin="https://holder.example", **values)
 
 
 def test_approved_database_requires_explicit_configured_migration(tmp_path):
@@ -41,7 +38,7 @@ def test_approved_database_requires_explicit_configured_migration(tmp_path):
 
     store = KeyStore.create(tmp_path / "private", organisation="example.test")
     descriptor = store.descriptor()
-    with store.connection() as db, db:
+    with store._connection() as db, db:
         db.execute(
             "ALTER TABLE configuration ADD COLUMN human_issuance TEXT NOT NULL DEFAULT 'approved'"
         )
@@ -62,7 +59,7 @@ def test_approved_database_requires_explicit_configured_migration(tmp_path):
     reopened = KeyStore.open(store.directory)
     assert reopened.descriptor() == descriptor
     assert reopened.audit()[0]["operation"] == "human_approval_change"
-    with reopened.connection() as db:
+    with reopened._connection() as db:
         assert db.execute("PRAGMA user_version").fetchone()[0] == 5
         assert "human_issuance" not in {
             row[1] for row in db.execute("PRAGMA table_info(configuration)")
@@ -70,9 +67,8 @@ def test_approved_database_requires_explicit_configured_migration(tmp_path):
 
 
 @pytest.mark.parametrize("level", ["email", "unrecognised"])
-def test_rendered_but_unsupported_level_refuses_start(registry_client, tmp_path, level):
+def test_rendered_but_unsupported_level_refuses_start(tmp_path, level):
     import json
-
     from approval_service.verify import Refused as ApprovalRefused
 
     store = KeyStore.create(tmp_path / "private", organisation="example.test")
@@ -91,17 +87,14 @@ def test_rendered_but_unsupported_level_refuses_start(registry_client, tmp_path,
     with pytest.raises(ApprovalRefused, match="human_approval_invalid"):
         Holder(
             store,
-            registry=registry_client,
+            registry=None,
             origin="https://holder.example",
             human_approval_config=path,
         )
 
 
-def test_unknown_action_and_unreadable_source_never_enable_off(
-    registry_client, tmp_path
-):
+def test_unknown_action_and_unreadable_source_never_enable_off(tmp_path):
     import json
-
     from approval_service.verify import Refused as ApprovalRefused
     from policy_inputs import policy_file
 
@@ -109,7 +102,7 @@ def test_unknown_action_and_unreadable_source_never_enable_off(
     path = policy_file(tmp_path / "policy.json", "example.test", None)
     holder = Holder(
         store,
-        registry=registry_client,
+        registry=None,
         origin="https://holder.example",
         human_approval_config=path,
     )
@@ -130,7 +123,7 @@ def test_unknown_action_and_unreadable_source_never_enable_off(
     with pytest.raises(ApprovalRefused, match="human_approval_invalid"):
         Holder(
             store,
-            registry=registry_client,
+            registry=None,
             origin="https://holder.example",
             human_approval_config=path,
         )
@@ -141,7 +134,7 @@ def test_actual_legacy_cli_names_the_replacement_section(tmp_path):
     import sys
 
     store = KeyStore.create(tmp_path / "private", organisation="example.test")
-    with store.connection() as db, db:
+    with store._connection() as db, db:
         db.execute(
             "ALTER TABLE configuration ADD COLUMN human_issuance TEXT DEFAULT 'approved'"
         )
@@ -168,17 +161,14 @@ def test_actual_legacy_cli_names_the_replacement_section(tmp_path):
     assert "--human-approval-config FILE migrate" in result.stderr
 
 
-def test_migrated_approved_holder_requires_source_until_explicit_empty_policy(
-    registry_client, tmp_path
-):
-    import base64
-
+def test_migrated_approved_holder_requires_source_until_explicit_empty_policy(tmp_path):
     from approval_service.canonical import parse
     from approval_service.gate import Policy
     from policy_inputs import policy_file
+    import base64
 
     store = KeyStore.create(tmp_path / "private", organisation="example.test")
-    with store.connection() as db, db:
+    with store._connection() as db, db:
         db.execute(
             "ALTER TABLE configuration ADD COLUMN human_issuance TEXT DEFAULT 'approved'"
         )
@@ -193,12 +183,12 @@ def test_migrated_approved_holder_requires_source_until_explicit_empty_policy(
     )
     before = store.audit()
     with pytest.raises(Refused, match="human_approval_source_required"):
-        Holder(store, registry=registry_client, origin="https://holder.example")
+        Holder(store, registry=None, origin="https://holder.example")
     assert store.audit() == before
     path = policy_file(tmp_path / "policy.json", "example.test", None)
     holder = Holder(
         store,
-        registry=registry_client,
+        registry=None,
         origin="https://holder.example",
         human_approval_config=path,
     )
@@ -210,23 +200,22 @@ def test_migrated_approved_holder_requires_source_until_explicit_empty_policy(
     assert change["from"]["require"] == {"organisation.human.add": "passkey"}
     assert change["to"]["require"] == {}
     # Once the operator explicitly turned it off, omission is no downgrade.
-    Holder(store, registry=registry_client, origin="https://holder.example")
+    Holder(store, registry=None, origin="https://holder.example")
     assert store.audit() == rows
 
 
 def test_effect_in_older_source_less_process_cannot_disable_applied_requirement(
-    registry_client,
     tmp_path,
 ):
-    from awid.did import did_from_public_key, generate_keypair, stable_id_from_did_key
+    from awid.did import generate_keypair, did_from_public_key, stable_id_from_did_key
     from policy_inputs import policy_file
 
     store = KeyStore.create(tmp_path / "private", organisation="example.test")
-    old = Holder(store, registry=registry_client, origin="https://holder.example")
+    old = Holder(store, registry=None, origin="https://holder.example")
     path = policy_file(tmp_path / "policy.json", "example.test")
     Holder(
         store,
-        registry=registry_client,
+        registry=None,
         origin="https://holder.example",
         human_approval_config=path,
     )
@@ -240,7 +229,7 @@ def test_effect_in_older_source_less_process_cannot_disable_applied_requirement(
 
 @pytest.mark.parametrize("explicit_passkey", [False, True])
 def test_hardware_requirement_refuses_passkey_only_grading_before_start(
-    registry_client, tmp_path, explicit_passkey
+    tmp_path, explicit_passkey
 ):
     from policy_inputs import policy_file
 
@@ -252,7 +241,7 @@ def test_hardware_requirement_refuses_passkey_only_grading_before_start(
     with pytest.raises(Refused, match="human_approval_hardware_grading_required"):
         Holder(
             store,
-            registry=registry_client,
+            registry=None,
             origin="https://holder.example",
             human_approval_config=path,
             **grading,
@@ -260,16 +249,14 @@ def test_hardware_requirement_refuses_passkey_only_grading_before_start(
     assert store.audit() == []
 
 
-def test_hardware_grading_is_accepted_and_live_impossible_requirement_refuses(
-    registry_client, tmp_path
-):
+def test_hardware_grading_is_accepted_and_live_impossible_requirement_refuses(tmp_path):
     from policy_inputs import policy_file
 
     store = KeyStore.create(tmp_path / "private", organisation="example.test")
     path = policy_file(tmp_path / "policy.json", "example.test")
     holder = Holder(
         store,
-        registry=registry_client,
+        registry=None,
         origin="https://holder.example",
         human_approval_config=path,
     )
@@ -280,7 +267,7 @@ def test_hardware_grading_is_accepted_and_live_impossible_requirement_refuses(
     assert store.audit() == before
     hardware = Holder(
         store,
-        registry=registry_client,
+        registry=None,
         origin="https://holder.example",
         human_approval_config=path,
         grading=EnrollmentGrading("hardware", None),
@@ -293,7 +280,6 @@ def test_hardware_grading_is_accepted_and_live_impossible_requirement_refuses(
 def test_cli_hardware_grading_uses_policy_site_and_names_missing_cache(tmp_path):
     import subprocess
     import sys
-
     from policy_inputs import policy_file
 
     store = KeyStore.create(tmp_path / "private", organisation="example.test")
@@ -329,7 +315,6 @@ def test_cli_policy_refusal_explains_the_operator_action(tmp_path, problem):
     import os
     import subprocess
     import sys
-
     from approval_service.gate import Policy
     from policy_inputs import policy_file
 
@@ -346,7 +331,7 @@ def test_cli_policy_refusal_explains_the_operator_action(tmp_path, problem):
         "https://holder.example",
     ]
     if problem == "missing_source":
-        with store.connection() as db, db:
+        with store._connection() as db, db:
             db.execute(
                 "ALTER TABLE configuration ADD COLUMN human_issuance TEXT DEFAULT 'approved'"
             )

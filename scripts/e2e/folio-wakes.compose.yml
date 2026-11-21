@@ -116,9 +116,6 @@ services:
       FOLIO_AWID_SERVICE_TOKEN: library-e2e-service-token-with-at-least-32-bytes
       FOLIO_PUBLIC_ORIGIN: ${FOLIO_WAKES_ORIGIN:?set by wakes runner}
       FOLIO_APP_EVENTS_ORIGIN: http://127.0.0.1:38000
-      # The team server folio_wakes.py publishes: this stack's own aweb, reached
-      # directly rather than through the egress guard.
-      FOLIO_TEAM_SERVER_INTERNAL_ORIGINS: '["http://127.0.0.1:38000"]'
       FOLIO_APP_EMIT_KID: folio:emit-test
       FOLIO_APP_EMIT_KEY_SEED_HEX: '0101010101010101010101010101010101010101010101010101010101010101'
       FOLIO_APP_KEY_FILES: ${FOLIO_WAKES_APP_KEY_FILES:?set by wakes runner}

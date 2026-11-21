@@ -15,7 +15,7 @@ import (
 func TestOATSRealInviteResumesExactIssuanceAfterControllerPersistenceFailure(t *testing.T) {
 	world := newRealCommandWorld(t)
 	source := world.addLocalMember(t, "root")
-	userHome := filepath.Dir(source.Home)
+	userHome := world.UserHome
 	t.Setenv("HOME", userHome)
 	t.Setenv("AWID_REGISTRY_URL", world.Stack.RegistryURL)
 	if err := awconfig.SaveTeamKey(world.Domain, "backend", world.TeamKey); err != nil {

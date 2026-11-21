@@ -50,19 +50,26 @@ func localRetirementReceiptPath(home awconfig.IdentityHome, workspaceID string) 
 }
 
 // Local self-retirement keeps two authorities separate (docs/aweb-sot.md:233-248,
-// docs/awid-sot.md:853-858): delete under the member credential, persist the exact
-// remaining revocation, then sign that revocation with the team controller key.
+// docs/awid-sot.md:853-858): prepare the exact receipt, delete under the member
+// credential, then sign the revocation with the team controller key.
 func retireLocalControllerMember(request localRetirementRequest) (bool, error) {
 	sel := request.Selection
 	if sel == nil || !strings.EqualFold(sel.WorkspaceID, request.Target) || sel.IdentityScope != awid.IdentityModeLocal {
 		return false, nil
 	}
-	domain, _, err := awid.ParseTeamID(sel.TeamID)
+	domain, team, err := awid.ParseTeamID(sel.TeamID)
 	if err != nil {
 		return true, err
 	}
 	if isAwebHostedNamespace(domain) {
 		return false, nil
+	}
+	if _, err := awconfig.LoadTeamKey(domain, team); errors.Is(err, os.ErrNotExist) {
+		// Without controller custody, keep the released external-home refusal
+		// or the implicit workspace-only delete. Neither claims alias release.
+		return false, nil
+	} else if err != nil {
+		return true, fmt.Errorf("read team controller key: %w; repair the team key before retrying retirement", err)
 	}
 	home, err := identityHomeForDir(request.WorkingDir)
 	if err != nil {
@@ -91,38 +98,13 @@ func retireLocalControllerMember(request localRetirementRequest) (bool, error) {
 	if err != nil {
 		return true, err
 	}
-	ctx, cancel := commandAPIContext(request.Command)
-	deleted, deleteErr := request.Client.WorkspaceDelete(ctx, sel.WorkspaceID)
-	cancel()
-	if deleteErr != nil {
-		return true, deleteErr
-	}
-	if deleted == nil {
-		return true, fmt.Errorf("workspace deletion was not confirmed; retain this identity home and inspect the workspace before retrying")
-	}
-	if deleted.WorkspaceID != sel.WorkspaceID || deleted.Alias != sel.Alias {
-		return true, fmt.Errorf("workspace delete did not confirm this exact member and workspace; retain the identity home and reconcile the server result before revoking its certificate")
-	}
-	if !deleted.IdentityDeleted {
-		return true, withErrorCode("workspace_cleanup_incomplete", fmt.Errorf("workspace %s was deleted but local identity cleanup was not confirmed; retain this home and have the service operator reconcile it before certificate revocation", sel.WorkspaceID))
-	}
-	receipt := localRetirementReceipt{
+	prepared := localRetirementReceipt{
 		Version: localRetirementReceiptVersion, TeamID: sel.TeamID,
 		CertificateID: cert.CertificateID, MemberDIDKey: cert.MemberDIDKey,
 		RegistryURL: registry.DefaultRegistryURL,
-		Delete: workspaceDeleteOutput{
-			WorkspaceID: deleted.WorkspaceID, Alias: deleted.Alias,
-			DeletedAt: deleted.DeletedAt, IdentityDeleted: deleted.IdentityDeleted,
-		},
+		Delete:      workspaceDeleteOutput{WorkspaceID: sel.WorkspaceID, Alias: sel.Alias},
 	}
-	if err := saveLocalRetirementReceipt(path, receipt); err != nil {
-		out := receipt.Delete
-		out.RetirementCode, out.AliasReleasedReason = retiredRevocationPending, string(retiredRevocationPending)
-		out.NextStep = "Retain this identity home and have the key holder run " + localRetirementRevokeCommand(receipt)
-		outputErr := writeLocalRetirementOutput(out)
-		return true, errors.Join(withErrorCode(string(retiredRevocationPending), fmt.Errorf("workspace was deleted but its retirement receipt could not be saved: %w; %s", err, out.NextStep)), outputErr)
-	}
-	return true, finishLocalControllerRevocation(request.Command, path, receipt)
+	return true, runLocalRetirementReceipt(request, path, cert, &prepared)
 }
 
 func saveLocalRetirementReceipt(path string, receipt localRetirementReceipt) error {
@@ -133,8 +115,8 @@ func saveLocalRetirementReceipt(path string, receipt localRetirementReceipt) err
 	return awid.AtomicWriteFile(path, encoded)
 }
 
-// Retry consults only the retained local mapping and the controller-signed
-// registry operation. A deleted member's credential is never sent to a server.
+// A confirmed delete retries only the controller operation. A prepared receipt
+// retries the exact workspace delete until the service confirms its cascade.
 func resumeLocalControllerRetirement(request localRetirementRequest) (bool, error) {
 	home, err := identityHomeForDir(request.WorkingDir)
 	if err != nil {
@@ -155,25 +137,85 @@ func resumeLocalControllerRetirement(request localRetirementRequest) (bool, erro
 	if err != nil {
 		return false, err
 	}
-	data, err := os.ReadFile(path)
+	_, err = os.Stat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
 	}
 	if err != nil {
 		return true, fmt.Errorf("read retirement receipt: %w; retain this identity home and repair the receipt before retrying", err)
 	}
-	var receipt localRetirementReceipt
-	if err := json.Unmarshal(data, &receipt); err != nil {
-		return true, fmt.Errorf("read retirement receipt: %w; retain this identity home and repair the receipt before retrying", err)
-	}
 	cert, err := loadTeamCertificateAt(request.WorkingDir, externalIdentityHomeRoot(home), sel.TeamID)
 	if err != nil {
 		return true, err
 	}
-	if receipt.Version != localRetirementReceiptVersion || receipt.TeamID != sel.TeamID || receipt.Delete.WorkspaceID != sel.WorkspaceID || receipt.Delete.Alias != sel.Alias || receipt.CertificateID != cert.CertificateID || receipt.MemberDIDKey != cert.MemberDIDKey || cert.MemberDIDKey != sel.DID || sel.IdentityScope != awid.IdentityModeLocal {
-		return true, fmt.Errorf("retirement receipt does not match this exact local member, workspace and certificate; select its original identity home before retrying")
+	request.Selection = sel
+	return true, runLocalRetirementReceipt(request, path, cert, nil)
+}
+
+// Serialize the receipt across preparation, confirmation and revocation. A
+// second command may advance the receipt before this one acquires the lock.
+func runLocalRetirementReceipt(request localRetirementRequest, path string, cert *awid.TeamCertificate, prepared *localRetirementReceipt) (result error) {
+	lock, err := awconfig.TryLockExclusive(path + ".lock")
+	if err != nil {
+		return withErrorCode("retirement_receipt_unavailable", fmt.Errorf("lock retirement receipt: %w; check its directory or let the active retirement finish, then retry", err))
 	}
-	return true, finishLocalControllerRevocation(request.Command, path, receipt)
+	defer func() { result = errors.Join(result, lock.Close()) }()
+
+	var receipt localRetirementReceipt
+	data, err := os.ReadFile(path)
+	switch {
+	case errors.Is(err, os.ErrNotExist) && prepared != nil:
+		receipt = *prepared
+		if err := saveLocalRetirementReceipt(path, receipt); err != nil {
+			return withErrorCode("retirement_receipt_unavailable", fmt.Errorf("save prepared retirement receipt: %w; repair its directory before retrying retirement", err))
+		}
+	case err != nil:
+		return fmt.Errorf("read retirement receipt: %w; retain this identity home and repair the receipt before retrying", err)
+	default:
+		if err := json.Unmarshal(data, &receipt); err != nil {
+			return fmt.Errorf("read retirement receipt: %w; retain this identity home and repair the receipt before retrying", err)
+		}
+	}
+
+	sel := request.Selection
+	if receipt.Version != localRetirementReceiptVersion || receipt.TeamID != sel.TeamID || receipt.Delete.WorkspaceID != sel.WorkspaceID || receipt.Delete.Alias != sel.Alias || receipt.CertificateID != cert.CertificateID || receipt.MemberDIDKey != cert.MemberDIDKey || cert.MemberDIDKey != sel.DID || sel.IdentityScope != awid.IdentityModeLocal || (receipt.Revoked && !receipt.Delete.IdentityDeleted) {
+		return fmt.Errorf("retirement receipt does not match this exact local member, workspace and certificate; select its original identity home before retrying")
+	}
+	if !receipt.Delete.IdentityDeleted {
+		if err := confirmLocalRetirementDelete(request, path, &receipt); err != nil {
+			return err
+		}
+	}
+	return finishLocalControllerRevocation(request.Command, path, receipt)
+}
+
+func confirmLocalRetirementDelete(request localRetirementRequest, path string, receipt *localRetirementReceipt) error {
+	client := request.Client
+	if client == nil {
+		current, sel, err := resolveClientSelectionForDir(request.WorkingDir)
+		if err != nil {
+			return fmt.Errorf("reopen prepared retirement: %w; retain this identity home and restore its member credentials before retrying", err)
+		}
+		if sel.TeamID != receipt.TeamID || sel.DID != receipt.MemberDIDKey || sel.WorkspaceID != receipt.Delete.WorkspaceID {
+			return fmt.Errorf("prepared retirement no longer matches this member; select its original identity home before retrying")
+		}
+		client = current
+	}
+	ctx, cancel := commandAPIContext(request.Command)
+	deleted, err := client.WorkspaceDelete(ctx, receipt.Delete.WorkspaceID)
+	cancel()
+	if err != nil {
+		return fmt.Errorf("workspace cleanup is not confirmed: %w; retain the prepared receipt and retry the same workspace delete or ask the service operator to reconcile it", err)
+	}
+	if deleted == nil || deleted.WorkspaceID != receipt.Delete.WorkspaceID || deleted.Alias != receipt.Delete.Alias || !deleted.IdentityDeleted {
+		return withErrorCode("workspace_cleanup_incomplete", fmt.Errorf("workspace delete did not confirm cleanup of this exact local member and workspace; retain the prepared receipt and have the service operator reconcile it before certificate revocation"))
+	}
+	receipt.Delete.DeletedAt = deleted.DeletedAt
+	receipt.Delete.IdentityDeleted = true
+	if err := saveLocalRetirementReceipt(path, *receipt); err != nil {
+		return withErrorCode("retirement_receipt_unavailable", fmt.Errorf("save confirmed workspace cleanup: %w; retain the prepared receipt, repair its directory and retry the same workspace delete", err))
+	}
+	return nil
 }
 
 func localRetirementRevokeCommand(receipt localRetirementReceipt) string {
@@ -190,20 +232,20 @@ func finishLocalControllerRevocation(cmd *cobra.Command, path string, receipt lo
 	out.NextStep = "Retain this identity home and retry aw workspace delete " + out.WorkspaceID + "; the key holder can instead run " + localRetirementRevokeCommand(receipt)
 	if receipt.Revoked {
 		out.AliasReleased, out.AliasReleasedReason, out.RetirementCode, out.NextStep = true, string(retiredAndRevoked), retiredAndRevoked, ""
-		return writeLocalRetirementOutput(out)
+		return writeWorkspaceDeleteOutput(out)
 	}
 	ctx, cancel := commandAPIContext(cmd)
 	err := revokeRetiredCertificate(ctx, receipt)
 	cancel()
 	if errorCodeOf(err) == codeControllerKeyMissing {
 		out.RetirementCode, out.AliasReleasedReason = retiredKeyHolderRequired, codeControllerKeyMissing
-		outputErr := writeLocalRetirementOutput(out)
+		outputErr := writeWorkspaceDeleteOutput(out)
 		return errors.Join(withErrorCode(string(retiredKeyHolderRequired), fmt.Errorf("workspace was deleted but certificate revocation is not confirmed; give the key holder this command: %s", localRetirementRevokeCommand(receipt))), outputErr)
 	}
 
 	if err != nil {
 		out.RetirementCode, out.AliasReleasedReason = retiredRevocationPending, string(retiredRevocationPending)
-		outputErr := writeLocalRetirementOutput(out)
+		outputErr := writeWorkspaceDeleteOutput(out)
 		return errors.Join(withErrorCode(string(retiredRevocationPending), fmt.Errorf("workspace was deleted but certificate revocation is unconfirmed: %w; receipt retained at %s; retry aw workspace delete %s", err, path, out.WorkspaceID)), outputErr)
 	}
 	out.AliasReleased, out.AliasReleasedReason, out.RetirementCode = true, string(retiredAndRevoked), retiredAndRevoked
@@ -212,14 +254,17 @@ func finishLocalControllerRevocation(cmd *cobra.Command, path string, receipt lo
 	if saveErr := saveLocalRetirementReceipt(path, receipt); saveErr != nil {
 		return fmt.Errorf("certificate revocation was confirmed but saving its receipt failed: %w; retain this identity home and verify the certificate before retrying", saveErr)
 	}
-	return writeLocalRetirementOutput(out)
+	return writeWorkspaceDeleteOutput(out)
 }
 
-// writeLocalRetirementOutput preserves the outcome's recovery before another
+// writeWorkspaceDeleteOutput preserves the outcome's recovery before another
 // retirement attempt; output failure does not change certificate state
 // (docs/cli-integration-contract.md:203-207).
-func writeLocalRetirementOutput(out workspaceDeleteOutput) error {
+func writeWorkspaceDeleteOutput(out workspaceDeleteOutput) error {
 	if err := printOutput(out, formatWorkspaceDelete); err != nil {
+		if out.RetirementCode == "" && !out.AliasReleased {
+			return fmt.Errorf("write workspace delete result: %w. Check the output destination and inspect the workspace before retrying deletion.", err)
+		}
 		return fmt.Errorf("write retirement result: %w. Check the output destination and retain this identity home; follow any retirement recovery instructions before retrying.", err)
 	}
 	return nil
