@@ -35,9 +35,16 @@ func legacyTeamKeyPath(domain, name string) (string, error) {
 	return filepath.Join(dir, NormalizeDomain(domain), strings.ToLower(strings.TrimSpace(name))+".key"), nil
 }
 
+// TeamKeyExists reports whether this machine holds the team key. A team whose
+// key is set aside as unconfirmed has a key here that may be the registered
+// one, so it is neither held nor absent: TeamKeyExists refuses with
+// ErrTeamKeyUnconfirmed.
 func TeamKeyExists(domain, name string) (bool, error) {
 	path, err := TeamKeyPath(domain, name)
 	if err != nil {
+		return false, err
+	}
+	if err := refuseUnconfirmedTeamKey(domain, name); err != nil {
 		return false, err
 	}
 	_, err = os.Stat(path)
@@ -214,7 +221,8 @@ func refuseUnconfirmedTeamKey(domain, name string) error {
 		return err
 	}
 	if _, err := os.Lstat(path); err == nil {
-		return fmt.Errorf("team %s/%s: %w: %s holds a key this machine created that the registry has not confirmed", NormalizeDomain(domain), strings.ToLower(strings.TrimSpace(name)), ErrTeamKeyUnconfirmed, path)
+		domain, name = NormalizeDomain(domain), strings.ToLower(strings.TrimSpace(name))
+		return fmt.Errorf("team %s/%s: %w: %s holds a key this machine created that the registry has not confirmed\nRun `aw id team create --namespace %s --name %s` (with the --registry the team was created at, if not the default) once the registry answers: it restores the key if the registry pins it and removes it if not.", domain, name, ErrTeamKeyUnconfirmed, path, domain, name)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}

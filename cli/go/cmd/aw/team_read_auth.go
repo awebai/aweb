@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/ed25519"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -48,7 +49,11 @@ func teamReadSignersForKeyPath(signingKeyPath, domain, team string) ([]ed25519.P
 		}
 	}
 	if !isAwebHostedNamespace(domain) {
-		if exists, err := awconfig.TeamKeyExists(domain, team); err == nil && exists {
+		exists, err := awconfig.TeamKeyExists(domain, team)
+		if errors.Is(err, awconfig.ErrTeamKeyUnconfirmed) {
+			return nil, err
+		}
+		if err == nil && exists {
 			if key, err := awconfig.LoadTeamKey(domain, team); err == nil && !containsSigningKey(signers, key) {
 				signers = append(signers, key)
 			}

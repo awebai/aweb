@@ -219,7 +219,11 @@ func executeTeamSetServer(ctx context.Context, opts teamServerOptions) (teamServ
 // a private team's is readable with the local team key, a public team's
 // anonymously, so with no local team key the read goes out unsigned.
 func teamServerReadKey(domain, teamName string) (ed25519.PrivateKey, error) {
-	if teamKey, err := awconfig.LoadTeamKey(domain, teamName); err == nil {
+	teamKey, err := awconfig.LoadTeamKey(domain, teamName)
+	if errors.Is(err, awconfig.ErrTeamKeyUnconfirmed) {
+		return nil, err
+	}
+	if err == nil {
 		return teamKey, nil
 	}
 	return nil, nil

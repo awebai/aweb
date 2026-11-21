@@ -29,8 +29,13 @@
   key and never destroyed; the next run whose registry read answers restores it
   if the registry pins it and removes it if the registry pins another key. Who
   sees it: released aw users of `aw id team create`, `aw team create`, `aw init`
-  and the onboarding wizard when they create a local team; any command that
-  reads a team key while one is set aside refuses with the same code.
+  and the onboarding wizard when they create a local team. Every other command
+  that reads a team key (invites, `aw workspace add-worktree`, reissue-cert,
+  replace-key, signed team reads, owner acts) refuses with the same code while
+  one is set aside, rather than taking the team as keyless and falling back to
+  a hosted, cloud or unsigned path, and names
+  `aw id team create --namespace <domain> --name <team>` as the step that
+  settles it.
 
 - `aw chat send --session-id`, `aw chat send-and-wait`, `aw chat extend-wait`
   and `aw mail send --conversation-id` continue a conversation with its own
