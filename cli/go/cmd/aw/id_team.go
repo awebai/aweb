@@ -967,15 +967,9 @@ func awebURLForTeamInvite(workingDir, teamID string) string {
 
 func awebURLForTeamInviteAt(workingDir, identityHome, teamID string) string {
 	teamID = strings.TrimSpace(teamID)
-	if workspace, teamState, _, err := loadCurrentWorkspaceAndTeamState(workingDir, identityHome); err == nil && workspace != nil {
-		if awebURL := strings.TrimSpace(workspace.AwebURL); awebURL != "" {
-			if teamID == "" {
-				if awconfig.ActiveMembershipFor(workspace, teamState) != nil {
-					return awebURL
-				}
-			} else if workspace.Membership(teamID) != nil {
-				return awebURL
-			}
+	if workspace, teamState, _, err := loadCurrentWorkspaceAndTeamState(workingDir, identityHome); err == nil {
+		if awebURL := workspaceAwebURLForTeam(workspace, teamState, teamID); awebURL != "" {
+			return awebURL
 		}
 	}
 	var teamState *awconfig.TeamState

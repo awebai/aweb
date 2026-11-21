@@ -61,7 +61,19 @@ func existingProvisionedMember(input provisionedMemberSelection) (*acceptedTeamI
 	if err != nil {
 		return nil, err
 	}
-	return &acceptedTeamInvite{Certificate: cert, Domain: domain, TeamName: team, RegistryURL: member.RegistryURL, AwebURL: member.AwebURL, Output: &teamAcceptInviteOutput{Status: "accepted", TeamID: cert.Team, Alias: cert.Alias, CertPath: awconfig.TeamCertificateRelativePath(cert.Team)}}, nil
+	awebURL := member.AwebURL
+	if awebURL == "" {
+		workspacePath, err := awconfig.IdentityHomePath(input.Home, "workspace.yaml")
+		if err != nil {
+			return nil, err
+		}
+		workspace, err := awconfig.LoadWorktreeWorkspaceFrom(workspacePath)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("read retained member's workspace binding: %w", err)
+		}
+		awebURL = workspaceAwebURLForTeam(workspace, state, cert.Team)
+	}
+	return &acceptedTeamInvite{Certificate: cert, Domain: domain, TeamName: team, RegistryURL: member.RegistryURL, AwebURL: awebURL, Output: &teamAcceptInviteOutput{Status: "accepted", TeamID: cert.Team, Alias: cert.Alias, CertPath: awconfig.TeamCertificateRelativePath(cert.Team)}}, nil
 }
 
 type provisionedSetupFailure struct {

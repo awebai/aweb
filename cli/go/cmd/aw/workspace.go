@@ -314,6 +314,17 @@ func loadCurrentWorkspaceAndTeamState(workingDir, identityHome string) (*awconfi
 	return awconfig.LoadWorkspaceAndTeamState(workingDir)
 }
 
+func workspaceAwebURLForTeam(workspace *awconfig.WorktreeWorkspace, state *awconfig.TeamState, teamID string) string {
+	membership := workspace.Membership(teamID)
+	if teamID == "" {
+		membership = awconfig.ActiveMembershipFor(workspace, state)
+	}
+	if membership == nil {
+		return ""
+	}
+	return strings.TrimSpace(workspace.AwebURL)
+}
+
 // workspaceDeleteRefusal refuses a delete through an external identity home.
 // Its alias-release reason is also its --json error code.
 func workspaceDeleteRefusal(selection *awconfig.Selection, reason string) error {

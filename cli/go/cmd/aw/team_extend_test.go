@@ -693,6 +693,8 @@ func TestTeamExtendRetainsBootstrapAndResumesSetupWithTheSameMember(t *testing.T
 			connectCalls++
 			requireCertificateAuthForTest(t, r)
 			_ = json.NewEncoder(w).Encode(map[string]any{"team_id": teamID, "alias": "retry", "agent_id": "agent-retry", "workspace_id": "ws-retry", "repo_id": "repo-1", "team_did_key": teamDIDKey})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/instructions/active":
+			_ = json.NewEncoder(w).Encode(map[string]any{"team_instructions_id": "instructions-1", "version": 1, "document": map[string]any{"body_md": "Use aw."}})
 		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
 			writePublishEncryptionKeyResponseForTest(t, w, "agent-retry", teamID, "retry")
 		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/agents/remove-member"):
