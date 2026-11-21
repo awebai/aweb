@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"unicode"
 
 	"github.com/awebai/aw/internal/blueprint"
 	"github.com/awebai/aw/internal/pathpreflight"
@@ -97,8 +96,8 @@ func runTeamRefresh(cmd *cobra.Command, args []string) error {
 			InstructionsInjected []string `json:"instructions_injected,omitempty"`
 		}{MaterializeResult: result, InstructionsInjected: docsResult.Injected})
 	}
-	for _, warning := range result.Warnings {
-		fmt.Fprintf(out, "WARNING: %s\n", warning)
+	if err := writeMaterializationWarnings(out, result); err != nil {
+		return err
 	}
 	for _, name := range docsResult.Injected {
 		fmt.Fprintf(out, "Refreshed aw team instructions in %s\n", name)
@@ -267,6 +266,11 @@ func refreshShelfLibraryProfileInHome(homeDir string, old recordedProfileRef, ru
 }
 
 func materializeAndPruneLibraryProfileInHome(homeDir string, old recordedProfileRef, opts blueprint.MaterializeLibraryProfilePayloadOptions) (*blueprint.MaterializeResult, error) {
+	for _, rel := range old.ManagedSet {
+		if err := blueprint.ValidateHomePath(rel); err != nil {
+			return nil, err
+		}
+	}
 	var materialized *blueprint.MaterializeResult
 	err := withWorkingDir(homeDir, func() error {
 		var mErr error
@@ -337,22 +341,7 @@ func hasNewManagedAncestor(rel string, newSet map[string]bool) bool {
 }
 
 func validateManagedSetPath(rel string) error {
-	if rel == "" {
-		return fmt.Errorf("managed path is required")
-	}
-	for _, r := range rel {
-		if unicode.IsControl(r) {
-			return fmt.Errorf("managed path %s contains control characters", rel)
-		}
-	}
-	if filepath.IsAbs(rel) || strings.HasPrefix(rel, "/") || strings.Contains(rel, "://") || strings.Contains(rel, "\\") {
-		return fmt.Errorf("managed path %s is not a safe relative path", rel)
-	}
-	clean := filepath.Clean(filepath.FromSlash(rel))
-	if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
-		return fmt.Errorf("managed path %s is not a safe relative path", rel)
-	}
-	return nil
+	return blueprint.ValidateHomePath(rel)
 }
 
 func callLibraryGetShelfProfile(profileRef string) (*libraryShelfProfileResponse, error) {

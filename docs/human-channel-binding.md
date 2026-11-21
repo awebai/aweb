@@ -126,7 +126,7 @@ resource checks and P8 verification remain their existing authorities. This is
 an input/output predicate, not a proposed new persistence API.
 
 Source fact: P8 already has a distinct subject-signed lane and constrained grant
-checks ([human_channels_presence.go:227–252](../cli/go/awid/human_channels_presence.go)).
+checks ([human_channels_presence.go:228–253](../cli/go/awid/human_channels_presence.go)).
 **Hypothesis:** the rule above does not remove that released lane or make every
 ordinary grant-backed action require a browser. A valid subject operation stays
 subject-authorized; it must not be labelled a human-owner action. BYOT owner acts

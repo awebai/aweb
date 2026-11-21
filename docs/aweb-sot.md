@@ -240,8 +240,16 @@ Four distinct lifecycle stories that must not be conflated:
   hosted team the cloud holds the team controller and does exactly that, so
   `aw workspace delete <your-own-workspace>` retires you; the command reports
   `alias_released` for whether the name is actually reusable, which is a fact
-  about the certificate and not about the local delete. Everywhere else a
-  delete stays a delete and reports `alias_released: false` with a reason.
+  about the certificate and not about the local delete. For a non-hosted local
+  member with a local controller key, the CLI saves a prepared receipt before
+  deleting its own workspace while its member credential is valid. After the
+  service confirms cleanup, the CLI records that result and revokes with the
+  team key. A prepared receipt retries the exact workspace cleanup. A confirmed
+  cleanup retries only the controller operation. Without the local controller
+  key, the implicit workspace path keeps workspace-only deletion and reports
+  `alias_released: false` and `alias_released_reason: team_not_hosted`. An external
+  identity home keeps the released `team_not_hosted` refusal before any delete.
+  Other deletes report `alias_released: false` with a reason.
   Retiring a **global** identity is not this story: global identities outlive
   workspaces, and their names are released by team-authorized removal only.
   Retiring another member is also not this story; that requires an explicit
@@ -342,6 +350,13 @@ X-AWID-Team-Certificate: <base64-encoded certificate JSON; team auth only>
 X-AWEB-Signed-Payload: <optional base64url canonical JSON for team-auth v2>
 X-AWEB-DID-AW: <optional did:aw; global identity-only auth only>
 ```
+
+A missing grant in the selected team, or a missing or expired session lease,
+is a resource-not-found result. Clients preserve that refusal rather than
+claiming the server version is unsupported. Only the router's missing-endpoint
+answer (`{"detail":"Not Found"}`) supports the minimum-server diagnostic; that
+diagnostic ends with an action to upgrade the server or select the intended
+service URL.
 
 Team-certificate routes accept two signed envelopes:
 
@@ -524,19 +539,28 @@ rate limiter here. Hosted proxy admission is deployment policy.
 
 **Registered-certificate cache misses.** In strict registration mode, a
 correctly signed, unrevoked presented certificate absent from the cached
-all-certificates list gets one fresh list read and one verification retry.
-A completed read that still omits it answers 401 `unregistered`. Suppressed
-admission, Redis failure, timeout or failed fresh authority answers transient
-503; the old cached omission is not current proof of absence. The successful
-read replaces only the existing registry/team/reader cache partition, with
-its ordinary TTL and retention. Already registered certificates take the
-existing path without a new admission check.
+all-certificates list gets a fresh registry check before verification
+continues. The first miss opens a five-second window and refreshes the
+complete list. During that window, up to 16 additional misses per registry
+and team can look up the exact certificate's status. A successful point read
+is cached separately within the team and reader's cache partition for at
+most 60 seconds. A definitive absence answers 401 `unregistered` and is
+cached for two seconds. A revoked certificate is refused as revoked. An
+active result from either read goes through the same check of the server's
+admitted team key before verification continues. Point reads do not change
+the age or completeness of the list.
 
-The fresh-list producer and its waiters each retain the registry client's
-total timeout; cancellation of a waiter propagates immediately and cannot
-extend the bounded producer. Concurrent callers in one client share that
-producer. Across clients, a separate five-second per-registry/team Redis
-`SET NX` window bounds added list refreshes to 12 attempts per minute.
+Once all 16 point slots are spent, remaining misses can share the next
+complete-list refresh within the original request. An earlier list can
+confirm presence. Its omission can establish absence only if the list read
+began after the miss reached Redis. Workers share only an exact certificate's
+standing from this refresh. The complete list remains in the authorized
+reader's cache. One Redis admission counter bounds list and point reads
+across workers. Each list producer has the registry
+client's timeout, and requests can wait up to one additional window when the
+point budget is spent. Redis failure, timeout or failed fresh authority
+answers transient 503. Already registered certificates in the normal list
+take the existing path without a new admission check.
 Bad request signatures spend neither refresh budget; bad certificate
 signatures spend only the existing key-refresh budget. A newly valid
 certificate after key rotation still requires fresh revocations, including

@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// Raw primitive boundary for TypeScript and JavaScript; no call-count catalog.
+// Raw primitive boundary and call exemptions for TypeScript and JavaScript.
 // It does not attempt reflection or whole-program data-flow analysis.
 import { createRequire } from 'node:module';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -23,7 +23,10 @@ function primitiveModule(name) {
  return ['@noble/ed25519', '@noble/curves', 'tweetnacl', 'libsodium-wrappers'].some(prefix=>name.startsWith(prefix)) || /^(?:node:crypto|crypto)(?:$|[./])/.test(name);
 }
 function primitive(name) {return primitiveModule(name);}
-const normalized=name=>name.replace(/^(?:reference:|module-literal:)/,'').replace(/^(?:globalThis|self|window)\.crypto(?=\.|$)/,'crypto');
+const normalized=name=>name
+ .replace(/^(?:reference:|module-literal:)/,'')
+ .replace(/^(?:globalThis|self|window)\.crypto(?=\.|$)/,'crypto')
+ .replace(/^(?:node:crypto|crypto)\.webcrypto\.subtle(?=\.|$)/,'crypto.subtle');
 function rawUse(name) {
  name=normalized(name);
  if(!primitiveModule(name))return false;
@@ -40,7 +43,11 @@ export function scanSource(source, file='fixture.ts') {
  const requireFunctions=new Set(["require"]);
  function moduleValue(node) {
   if(!node)return null;
-  if(ts.isIdentifier(node))return aliases.get(node.text)??null;
+  if(ts.isIdentifier(node)) {
+   if(aliases.has(node.text))return aliases.get(node.text);
+   if(['crypto','globalThis','self','window'].includes(node.text))return node.text;
+   return null;
+  }
   if(ts.isCallExpression(node) && ts.isIdentifier(node.expression) && requireFunctions.has(node.expression.text) && node.arguments.length===1 && ts.isStringLiteral(node.arguments[0]))return node.arguments[0].text;
   if(ts.isPropertyAccessExpression(node)){const base=moduleValue(node.expression);return base?base+'.'+node.name.text:null;}
   return null;
@@ -71,8 +78,12 @@ export function scanSource(source, file='fixture.ts') {
   if(ts.isParenthesizedExpression(node) || ts.isNonNullExpression(node) || ts.isAsExpression(node))return name(node.expression);
   return '<expression>';
  };
- const result={};
- const record=(scope,callee)=>{const symbol=scope.join('.')||'<module>';result[symbol]??={};result[symbol][callee]=true;};
+ const result=Object.create(null);
+ const record=(scope,callee)=>{
+  const symbol=scope.join('.')||'<module>';
+  const calls=result[symbol]??=Object.create(null);
+  calls[callee]=(calls[callee]??0)+1;
+ };
  function visit(node,scope=[]) {
   if(ts.isTypeNode(node) || ts.isImportDeclaration(node) || ts.isImportEqualsDeclaration(node))return;
   if(ts.isExportDeclaration(node) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
@@ -112,35 +123,77 @@ export function scanRepository(root) {
  const output=execFileSync('git',['ls-files','-z','--cached','--others','--exclude-standard','--','*.ts','*.tsx','*.mts','*.cts','*.js','*.jsx','*.mjs','*.cjs'],{cwd:root,encoding:'utf8'});
  const sites=[];
  for(const file of [...new Set(output.split('\0'))].sort()) {
-  if(!file || !extensions.test(file) || excluded(file) || !existsSync(path.join(root,file)))continue;
+  if(!file || !extensions.test(file) || excluded(file))continue;
   let parsed;try{parsed=scanSource(readFileSync(path.join(root,file),'utf8'),file);}catch(error){throw new Error(`cannot scan ${file}: ${error.message}`);}
   for(const [symbol,calls] of Object.entries(parsed))sites.push({file,symbol,calls});
  }
  return sites;
 }
 
-export function checkPrimitiveUses(observed,legacy) {
- const errors=[];const files=new Set();
- for(const entry of legacy) {
-  if(!entry.file || typeof entry.reason!=='string' || !entry.reason.trim())errors.push('legacy primitive file requires a reason');
-  else files.add(entry.file);
+const locator=(file,symbol,callee)=>JSON.stringify([file,symbol,callee]);
+const location=(file,symbol,callee)=>`${file}:${symbol}: ${callee}`;
+
+export function checkPrimitiveUses(observed,exemptions) {
+ const errors=[];
+ const matches=new Map();
+ for(const {file,symbol,callee,reason} of exemptions) {
+  if([file,symbol,callee,reason].some(value=>typeof value!=='string' || !value.trim())) {
+   errors.push('primitive exemption requires file, symbol, callee and reason');
+   continue;
+  }
+  const site=location(file,symbol,callee);
+  if(/^(?:reference:|module-literal:)/.test(callee) || !rawUse(callee)) {
+   errors.push(`primitive exemption must name a call: ${site}`);
+   continue;
+  }
+  const key=locator(file,symbol,callee);
+  if(matches.has(key)) {
+   errors.push(`duplicate primitive exemption: ${site}`);
+   continue;
+  }
+  matches.set(key,{site,count:0});
  }
- for(const entry of observed)for(const callee of Object.keys(entry.calls)) {
+ for(const entry of observed)for(const [callee,count] of Object.entries(entry.calls)) {
   if(!rawUse(callee))continue;
-  const codec=entry.file==='channel-core/src/identity/id_certificates.ts';
+  const codec=entry.file==='channel-core/src/identity/signature_wire.ts';
   const name=normalized(callee);
-  if(codec && entry.symbol==='idEd25519Verify')continue;
-  if(entry.file==='channel-core/src/identity/did.ts' && entry.symbol==='primeSubgroupPoint')continue;
-  if(codec && entry.symbol==='<module>' && ['@noble/ed25519.etc.sha512Sync','@noble/ed25519.etc.concatBytes','@noble/ed25519.CURVE.n'].includes(name))continue;
-  if(files.has(entry.file))continue;
-  errors.push(`raw TS crypto must use the shared verifier: ${entry.file}:${entry.symbol}: ${callee}`);
+  if(codec && ['verifyBytes','signBytes','publicKeyFromSeed','primeSubgroupPoint','canonicalPoint'].includes(entry.symbol))continue;
+  if(codec && entry.symbol==='<module>' && ['@noble/ed25519.etc.sha512Sync','@noble/ed25519.etc.concatBytes'].includes(name))continue;
+  const exemption=matches.get(locator(entry.file,entry.symbol,callee));
+  if(exemption)exemption.count+=count;
+  else errors.push(`raw TS crypto must use the shared verifier: ${location(entry.file,entry.symbol,callee)}`);
  }
- return errors;
+ for(const {site,count} of matches.values()) {
+  if(count===0)errors.push(`unused primitive exemption: ${site}`);
+  else if(count!==1)errors.push(`primitive exemption matches ${count} calls: ${site}`);
+ }
+ return errors.sort();
+}
+
+function listedFileError(root,file) {
+ if(path.isAbsolute(file) || path.posix.normalize(file)!==file || file.startsWith('../')) {
+  return `listed source file must be a repository-relative path: ${file}`;
+ }
+ try {
+  if(!statSync(path.join(root,file)).isFile())return `listed source file ${file} must be a regular file`;
+ } catch(error) {
+  if(error.code!=='ENOENT')throw error;
+  return `listed source file ${file} is missing`;
+ }
 }
 
 export function checkInventory(root) {
  const inventory=JSON.parse(readFileSync(path.join(root,'docs/identity-tree-coverage.json'),'utf8'));
- return checkPrimitiveUses(scanRepository(root),inventory.primitive_guard.legacy_files);
+ const entries=inventory.primitive_guard?.exempt_calls;
+ if(!Array.isArray(entries))return ['primitive_guard.exempt_calls must be an array'];
+ if(entries.some(entry=>typeof entry?.file!=='string' || !(extensions.test(entry.file) || /\.(?:go|py)$/.test(entry.file)))) {
+  return ['primitive exemption must name a Go, Python, TypeScript or JavaScript source file'];
+ }
+ const exemptions=entries.filter(entry=>extensions.test(entry.file));
+ const creationFiles=(inventory.creation_paths??[]).filter(row=>row.repo==='aweb').flatMap(row=>row.files);
+ const files=new Set([...exemptions.map(entry=>entry.file),...creationFiles.filter(file=>extensions.test(file))]);
+ const errors=[...files].map(file=>listedFileError(root,file)).filter(Boolean);
+ return errors.length ? errors : checkPrimitiveUses(scanRepository(root),exemptions);
 }
 if(process.argv[1] && path.resolve(process.argv[1])===fileURLToPath(import.meta.url)) {
  try {
