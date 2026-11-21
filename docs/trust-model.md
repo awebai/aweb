@@ -420,6 +420,12 @@ can therefore take up to 60 seconds to take effect at a verifier; during an
 outage, the accepted grace can extend that to 15 minutes of data age. Other
 metadata caches retain their existing bounds.
 
+During DNS discovery failure, team-key and revocation reads can use eligible
+evidence from the last answering registry within its original grace window.
+Without that evidence, or when a caller requires a fresh read, the read fails
+with a retryable 503. A successful DNS answer without an override can select the
+configured registry and establish that a team is absent there.
+
 The committed exit ladder, in order:
 
 1. **Hash-chained revocation log with client-persisted checkpoints** — the
