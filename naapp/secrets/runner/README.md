@@ -240,6 +240,24 @@ keep configuration, identity/journal state and image storage outside it. Runtime
 state and credential-bearing bundles are created privately beneath it. Operators
 provision these resources separately; loading configuration creates none of them.
 
+When this runner uses OCI inside Docker on an AppArmor host, the host operator
+must load a reviewed enforcing profile before launching the runner. Docker's
+`docker-default` denies the recursive slave mount propagation change that
+rootless runc makes while preparing the nested root filesystem. Load the
+deployment's profile on the Docker host with
+`sudo apparmor_parser --add --skip-cache /path/to/reviewed-profile` and select its
+declared name with Docker's `--security-opt apparmor=<name>`.
+
+The checked-in profile covers the synthetic proof's filesystem, runtime tools
+and isolated network. Use it as a reference when reviewing the deployment's
+workspace, binaries, read-only mounts and network access.
+[OCI proof profile](tests/oci/aweb-secrets-oci-proof.apparmor) · [Proof instructions](tests/oci/README.md)
+
+For a Kubernetes runner on AppArmor nodes, load the reviewed deployment
+profile on every eligible node before selecting it as a `Localhost` profile
+in the runner container's security context.
+[Kubernetes AppArmor documentation](https://kubernetes.io/docs/tutorials/security/apparmor/)
+
 `doctor` hashes tools and checks storage/mount permissions without invoking any
 tool, unpacking an image, recovering stale work or opening credentials. Image
 content, parameters and exact environment capability are checked during the
