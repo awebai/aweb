@@ -3310,13 +3310,13 @@ async def test_create_chat_session_to_did_does_not_create_unresolved_identity_co
     contact_count = await aweb_cloud_db.aweb_db.fetch_value(
         """
         SELECT COUNT(*) FROM {{tables.contacts}}
-        WHERE owner_did = 'did:aw:alice'
-          AND contact_address = 'otherco.com/bob'
+        WHERE owner_did = $1
+          AND contact_address = $2
           AND reference_type = 'identity'
           AND status = 'active'
-        """.replace("otherco.com/bob", bob.address).replace(
-            "did:aw:alice", alice.stable_id
-        )
+        """,
+        alice.stable_id,
+        bob.address,
     )
     assert contact_count == 0
 
@@ -3419,11 +3419,11 @@ async def test_create_chat_session_global_recipient_null_inbound_mode_fails_migr
     contact_count = await aweb_cloud_db.aweb_db.fetch_value(
         """
         SELECT COUNT(*) FROM {{tables.contacts}}
-        WHERE owner_did = 'did:aw:alice'
-          AND contact_address = 'otherco.com/bob-migration'
-        """.replace("otherco.com/bob-migration", bob.address)
-        .replace("otherco.com/bob", bob.address)
-        .replace("did:aw:alice", alice.stable_id)
+        WHERE owner_did = $1
+          AND contact_address = $2
+        """,
+        alice.stable_id,
+        bob.address,
     )
     assert contact_count == 0
 
