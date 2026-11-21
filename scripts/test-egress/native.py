@@ -20,6 +20,69 @@ from urllib.parse import urlsplit
 from policy import reserved, denied_read
 
 
+def socket_owner(client_port, proxy_port):
+    """The pid holding the client end of a loopback connection to the proxy."""
+    if Path('/proc/net/tcp').exists():
+        inodes = set()
+        for table in ('/proc/net/tcp', '/proc/net/tcp6'):
+            for line in Path(table).read_text().splitlines()[1:]:
+                fields = line.split()
+                local, remote, inode = fields[1], fields[2], fields[9]
+                if int(local.rsplit(':', 1)[1], 16) == client_port and int(remote.rsplit(':', 1)[1], 16) == proxy_port:
+                    inodes.add(f'socket:[{inode}]')
+        for fd in Path('/proc').glob('[0-9]*/fd/*'):
+            try:
+                if os.readlink(fd) in inodes:
+                    return int(fd.parts[2])
+            except OSError:
+                continue
+        return None
+    listing = subprocess.run(['lsof', '-nP', '-a', f'-iTCP:{client_port}', '-sTCP:ESTABLISHED', '-Fpn'],
+                             capture_output=True, text=True).stdout
+    pid = None
+    for field in listing.splitlines():
+        if field.startswith('p'):
+            pid = int(field[1:])
+        elif field.startswith('n') and field[1:].startswith(f'127.0.0.1:{client_port}->'):
+            return pid
+    return None
+
+
+def process_facts(pid):
+    """(parent pid, executable, working directory) of pid. Never its
+    arguments: a command line can carry a credential."""
+    if Path(f'/proc/{pid}').exists():
+        stat = Path(f'/proc/{pid}/stat').read_text()
+        parent = int(stat.rsplit(')', 1)[1].split()[1])
+        return parent, os.readlink(f'/proc/{pid}/exe'), os.readlink(f'/proc/{pid}/cwd')
+    parent, _, executable = subprocess.run(['ps', '-o', 'ppid=,comm=', '-p', str(pid)],
+                                           capture_output=True, text=True).stdout.strip().partition(' ')
+    cwd = subprocess.run(['lsof', '-a', '-p', str(pid), '-d', 'cwd', '-Fn'],
+                         capture_output=True, text=True).stdout
+    directory = next((field[1:] for field in cwd.splitlines() if field.startswith('n')), '?')
+    return int(parent), executable.strip(), directory
+
+
+def client_attribution(client_port, proxy_port, guard_child):
+    """Which process asked, and its parents up to the guarded command: a Go
+    test's t.TempDir working directory names the test, its test binary the
+    package."""
+    try:
+        pid = socket_owner(client_port, proxy_port)
+        if pid is None:
+            return 'client=unknown (no process holds the connection any more)'
+        chain = []
+        while pid and pid > 1 and len(chain) < 6:
+            parent, executable, cwd = process_facts(pid)
+            chain.append(f'pid={pid} exe={executable} cwd={cwd}')
+            if pid == guard_child:
+                break
+            pid = parent
+        return 'client=' + ' <- '.join(chain)
+    except (OSError, ValueError, IndexError) as error:
+        return f'client=unknown ({type(error).__name__}: {error})'
+
+
 class GuardServer(http.server.ThreadingHTTPServer):
     daemon_threads = False
 
@@ -41,8 +104,10 @@ class Proxy(http.server.BaseHTTPRequestHandler):
                       or (self.command == 'CONNECT' and target.port == 443
                           and denied_read(target.hostname, 'GET')))
             receipt = self.server.report if benign else self.server.receipt
+            client = '' if benign else ' ' + client_attribution(
+                self.client_address[1], self.server.server_port, self.server.child_pid)
             with receipt.open('a') as log:
-                log.write(f'{datetime.now(timezone.utc).isoformat()} {self.command} {target.hostname}:{target.port or (443 if target.scheme == "https" else 80)}\n')
+                log.write(f'{datetime.now(timezone.utc).isoformat()} {self.command} {target.hostname}:{target.port or (443 if target.scheme == "https" else 80)}{client}\n')
                 log.flush()
             self.send_error(403, 'test egress denied')
             return
@@ -96,6 +161,7 @@ def main():
         receipt.open('x').close()
         server = GuardServer(('127.0.0.1', 0), Proxy)
         server.failed = False
+        server.child_pid = None
         server.receipt = receipt
         server.report = receipt.with_suffix(receipt.suffix + ".reported")
         server.report.open("x").close()
@@ -107,7 +173,16 @@ def main():
             env[name] = env[name.lower()] = proxy
         env['NO_PROXY'] = env['no_proxy'] = 'localhost,127.0.0.1,::1,.test,.example,.invalid,.localhost'
         try:
-            result = subprocess.run(command, env=env, check=False)
+            # As subprocess.run does, with the child's pid kept so a denial
+            # can name the process tree it came from.
+            with subprocess.Popen(command, env=env) as child:
+                server.child_pid = child.pid
+                try:
+                    returncode = child.wait()
+                except BaseException:
+                    child.kill()
+                    raise
+            result = subprocess.CompletedProcess(command, returncode)
         finally:
             server.shutdown()
             server.server_close()
