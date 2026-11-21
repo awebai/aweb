@@ -2097,10 +2097,9 @@ func TestTeamHumanCreateBYOTFirstAgentGlobalMintsWithNamespaceAuthority(t *testi
 			createdDIDKey, _ = body["current_did_key"].(string)
 			_ = json.NewEncoder(w).Encode(map[string]any{"status": "claimed", "domain": "acme.com", "name": "ops", "did_aw": createdDIDAW, "current_did_key": createdDIDKey, "did_status": "created", "address_status": "created"})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/did/"+createdDIDAW+"/encryption-key":
-			_ = json.NewEncoder(w).Encode(map[string]any{"status": "published"})
+			writeRegistryEncryptionKeyAssertionForTest(t, w, r)
 		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
-			// aweb-abfd: provisioning publishes to the aweb service once a binding exists.
-			_, _ = w.Write([]byte("{}"))
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-ops", "ops:acme.com", "ops")
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.com/addresses/ops":
 			_ = json.NewEncoder(w).Encode(map[string]any{"domain": "acme.com", "name": "ops", "did_aw": createdDIDAW, "current_did_key": createdDIDKey})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/acme.com/teams":
