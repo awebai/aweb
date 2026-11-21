@@ -1099,12 +1099,3 @@ These cases do not claim a full signature invalid solely because of a
 noncanonical point encoding. Antares accepted this scope in `0a7453e1`, relayed
 in `7be295e4-3463-473a-8dd5-f9eb522aa145`. The frozen v1 full-signature corpus,
 including mixed-order and small-order single-fault controls, is unchanged.
-
-## Team-control request signatures
-
-`team-control-requests-v1.json` is the Go/Python authority for the released
-ordinary-import preimage and the distinct fully-unowned controller-claim
-artifact. It includes the existing CLI import signature, null/blank selector
-neighbors, exact Unicode bytes, both dry-run values, and prospective/existing
-account targets. These are pure signature/codec cases, not fresh-controller or
-ownership-effect evidence. See [the request contract](../team-control-requests.md).

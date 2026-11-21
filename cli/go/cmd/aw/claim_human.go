@@ -8,19 +8,16 @@ import (
 	"io"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
-	"github.com/awebai/aw/internal/termtext"
 	"github.com/spf13/cobra"
 )
 
 var (
-	claimHumanEmail          string
-	claimHumanMockURL        string
-	claimHumanUsername       string
-	claimHumanControllerFile string
+	claimHumanEmail    string
+	claimHumanMockURL  string
+	claimHumanUsername string
 )
 
 var claimHumanCmd = &cobra.Command{
@@ -34,7 +31,6 @@ func init() {
 	claimHumanCmd.Flags().StringVar(&claimHumanEmail, "email", "", "Email address to attach to the current CLI-created account")
 	claimHumanCmd.Flags().StringVar(&claimHumanUsername, "username", "", "Override the default dashboard username derived from the registered domain")
 	claimHumanCmd.Flags().StringVar(&claimHumanMockURL, "mock-url", "", "Override the bootstrap base URL for local development")
-	claimHumanCmd.Flags().StringVar(&claimHumanControllerFile, "controller-claim-file", "", "Controller-signed claim artifact from aw id team claim-human-request (member credential still required)")
 	rootCmd.AddCommand(claimHumanCmd)
 }
 
@@ -42,10 +38,6 @@ func runClaimHuman(cmd *cobra.Command, args []string) error {
 	email := strings.TrimSpace(claimHumanEmail)
 	if email == "" {
 		return usageError("missing required flag: --email")
-	}
-
-	if cmd.Flags().Changed("controller-claim-file") && strings.TrimSpace(claimHumanControllerFile) == "" {
-		return usageError("--controller-claim-file requires a file from aw id team claim-human-request")
 	}
 
 	baseURL, err := resolveClaimHumanBaseURL(claimHumanMockURL)
@@ -63,41 +55,33 @@ func runClaimHuman(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	resp, username, err := claimHumanWithOptions(claimHumanOptions{
-		WorkingDir:          workingDir,
-		IdentityHome:        externalIdentityHomeRoot(home),
-		BaseURL:             baseURL,
-		Email:               email,
-		Username:            strings.TrimSpace(claimHumanUsername),
-		ControllerClaimFile: claimHumanControllerFile,
+		WorkingDir:   workingDir,
+		IdentityHome: externalIdentityHomeRoot(home),
+		BaseURL:      baseURL,
+		Email:        email,
+		Username:     strings.TrimSpace(claimHumanUsername),
 	})
 	if err != nil {
 		return err
 	}
 
 	if jsonFlag {
-		return json.NewEncoder(cmd.OutOrStdout()).Encode(claimHumanCommandOutput{
-			Status: resp.Status, Email: resp.Email, Username: username, EmailSent: resp.EmailSent, EmailMessage: resp.EmailMessage,
+		return json.NewEncoder(cmd.OutOrStdout()).Encode(map[string]any{
+			"status":   resp.Status,
+			"email":    resp.Email,
+			"username": username,
 		})
 	}
 
 	return printClaimHumanSuccess(cmd.OutOrStdout(), email, resp)
 }
 
-type claimHumanCommandOutput struct {
-	Status       string `json:"status"`
-	Email        string `json:"email"`
-	Username     string `json:"username"`
-	EmailSent    *bool  `json:"email_sent,omitempty"`
-	EmailMessage string `json:"email_message,omitempty"`
-}
-
 type claimHumanOptions struct {
-	ControllerClaimFile string
-	WorkingDir          string
-	IdentityHome        string
-	BaseURL             string
-	Email               string
-	Username            string
+	WorkingDir   string
+	IdentityHome string
+	BaseURL      string
+	Email        string
+	Username     string
 }
 
 func claimHumanWithOptions(opts claimHumanOptions) (*awid.ClaimHumanResponse, string, error) {
@@ -114,16 +98,6 @@ func claimHumanWithOptions(opts claimHumanOptions) (*awid.ClaimHumanResponse, st
 	if err != nil {
 		return nil, "", err
 	}
-	var controllerClaim *awid.SignedUnownedTeamClaim
-	if strings.TrimSpace(opts.ControllerClaimFile) != "" {
-		target := normalizeClaimHumanTarget(claimHumanTarget{Username: username, Email: email})
-		artifact, err := readClaimHumanControllerFile(claimHumanControllerInput{Path: opts.ControllerClaimFile, Target: target, Now: time.Now()})
-		if err != nil {
-			return nil, "", err
-		}
-		controllerClaim = &artifact
-		username, email = target.Username, target.Email
-	}
 	client, err := awid.NewWithIdentity(strings.TrimSpace(opts.BaseURL), signingKey, didKey)
 	if err != nil {
 		return nil, "", fmt.Errorf("invalid identity configuration: %w", err)
@@ -133,13 +107,12 @@ func claimHumanWithOptions(opts claimHumanOptions) (*awid.ClaimHumanResponse, st
 	defer cancel()
 
 	resp, err := client.ClaimHuman(ctx, &awid.ClaimHumanRequest{
-		Username:        username,
-		Email:           email,
-		DIDKey:          didKey,
-		ControllerClaim: controllerClaim,
+		Username: username,
+		Email:    email,
+		DIDKey:   didKey,
 	})
 	if err != nil {
-		return nil, "", mapClaimHumanError(claimHumanErrorInput{Cause: err, ControllerClaim: controllerClaim})
+		return nil, "", mapClaimHumanError(err)
 	}
 	return resp, username, nil
 }
@@ -232,34 +205,19 @@ func printClaimHumanSuccess(out io.Writer, requestedEmail string, resp *awid.Cla
 	if resp != nil && strings.TrimSpace(resp.Email) != "" {
 		finalEmail = strings.TrimSpace(resp.Email)
 	}
-	status := awid.ClaimHumanStatus("")
+	status := ""
 	if resp != nil {
-		status = awid.ClaimHumanStatus(strings.TrimSpace(resp.Status))
-	}
-	finalEmail = termtext.Line(finalEmail)
-	if resp != nil && (status == awid.ClaimHumanVerificationSent || status == awid.ClaimHumanApprovalSent) && resp.EmailSent != nil && !*resp.EmailSent {
-		message := strings.TrimSpace(resp.EmailMessage)
-		if message == "" {
-			message = "The verification email could not be sent. Run the command again to request a new one."
-			if status == awid.ClaimHumanApprovalSent {
-				message = "The approval email could not be sent. Run the command again to request a new one."
-			}
-		}
-		_, err := fmt.Fprintln(out, termtext.Line(message))
-		return err
+		status = strings.TrimSpace(resp.Status)
 	}
 	switch status {
-	case awid.ClaimHumanAlreadyAttached:
+	case "already_attached":
 		_, err := fmt.Fprintf(out, "Human account %s is already attached. No verification email was sent.\n", finalEmail)
 		return err
-	case awid.ClaimHumanAttached:
+	case "attached":
 		_, err := fmt.Fprintf(out, "Human account %s is attached. No verification email was sent because the email is already verified.\n", finalEmail)
 		return err
-	case awid.ClaimHumanVerificationSent:
+	case "verification_sent":
 		_, err := fmt.Fprintf(out, "Verification email requested for %s. Click the link in the email to activate your dashboard login.\n", finalEmail)
-		return err
-	case awid.ClaimHumanApprovalSent:
-		_, err := fmt.Fprintln(out, "Approval email requested. Follow the instructions in that email to approve this claim.")
 		return err
 	default:
 		_, err := fmt.Fprintf(out, "Claim-human completed for %s with status %q.\n", finalEmail, status)
@@ -299,16 +257,7 @@ func usernameFromManagedDomain(domain string) (string, error) {
 	return username, nil
 }
 
-type claimHumanErrorInput struct {
-	Cause           error
-	ControllerClaim *awid.SignedUnownedTeamClaim
-}
-
-// mapClaimHumanError preserves controller pin refusal evidence for a submitted
-// controller claim (docs/trust-model.md:476; docs/team-control-requests.md:36-43).
-// Other 401s retain the member-key remedy, including the released no-file path.
-func mapClaimHumanError(input claimHumanErrorInput) error {
-	err := input.Cause
+func mapClaimHumanError(err error) error {
 	status, ok := awid.HTTPStatusCode(err)
 	if !ok {
 		return err
@@ -317,12 +266,6 @@ func mapClaimHumanError(input claimHumanErrorInput) error {
 	case 404:
 		return errors.New("Username not registered. Run aw init first.")
 	case 401:
-		if input.ControllerClaim != nil {
-			detail := awid.DescribeError(err).Detail
-			if detail == "team_key_unverified" || strings.HasPrefix(detail, "team_key_unverified:") {
-				return err
-			}
-		}
 		return errors.New("Your signing key does not match the registered agent. Check .aw/signing.key is intact.")
 	case 409:
 		if msg := claimHumanServerMessage(err); msg != "" {
