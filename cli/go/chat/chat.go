@@ -1686,9 +1686,9 @@ func ExtendWait(ctx context.Context, client *awid.Client, targetAlias string, me
 
 // ContinuationEncrypted reports whether a message to an existing session is
 // end-to-end encrypted, by awid.ContinuationEncryption from the session's
-// stored rows (read unless --e2ee decides alone). A plaintext send into an
-// encrypted session is announced through status; a failed read, or one that
-// cannot establish the encryption, refuses a default send.
+// stored rows (read unless --e2ee decides alone) and whether this client can
+// encrypt. A plaintext send into an encrypted session, or into one whose
+// encryption cannot be read, is announced through status.
 func ContinuationEncrypted(ctx context.Context, client *awid.Client, sessionID string, choice E2EEChoice, status StatusCallback) (bool, error) {
 	var reading awid.ConversationEncryptionReading
 	if choice != E2EERequired {
@@ -1697,10 +1697,7 @@ func ContinuationEncrypted(ctx context.Context, client *awid.Client, sessionID s
 			return false, fmt.Errorf("reading whether the conversation is end-to-end encrypted: %w", err)
 		}
 	}
-	decision, err := awid.ContinuationEncryption(reading, choice)
-	if err != nil {
-		return false, err
-	}
+	decision := awid.ContinuationEncryption(reading, choice, client.E2EESendUnavailable())
 	if decision.Notice != "" && status != nil {
 		status("plaintext", decision.Notice)
 	}

@@ -236,18 +236,10 @@ func (c *Client) prepareE2EEMail(ctx context.Context, payload *SendMessageReques
 	if c == nil || payload == nil {
 		return errors.New("aweb: request is required")
 	}
-	if c.signingKey == nil || strings.TrimSpace(c.did) == "" {
-		return errors.New("E2E messaging requires a local self-custodial signing key")
+	if _, refusal := c.e2eeSenderGap(); refusal != nil {
+		return refusal
 	}
 	custody := c.e2eeCustody()
-	if custody == nil {
-		if !c.canSignMessages() {
-			return errors.New("E2E messaging requires the subject identity signing key; identity grants cannot sign encrypted message envelopes")
-		}
-		if c.e2eeEncryptionKey == nil {
-			return errors.New("E2E messaging requires a local encryption key; upgrade aw and run `aw id encryption-key setup`, or pass --plaintext only for explicit server-readable messaging")
-		}
-	}
 	recipient, err := c.e2eeMailRecipient(ctx, payload)
 	if err != nil {
 		return err

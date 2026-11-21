@@ -670,6 +670,32 @@ func (c *Client) custodyAudience(ctx context.Context) (string, error) {
 	return audience, nil
 }
 
+// E2EESendUnavailable says why this client cannot encrypt a message end to
+// end, or is empty when it can.
+func (c *Client) E2EESendUnavailable() string {
+	reason, _ := c.e2eeSenderGap()
+	return reason
+}
+
+// e2eeSenderGap is why this client cannot encrypt a message: a reason for a
+// continuation's notice, and the refusal an encrypted send returns. Both are
+// empty when it can encrypt.
+func (c *Client) e2eeSenderGap() (string, error) {
+	if c == nil || c.signingKey == nil || strings.TrimSpace(c.did) == "" {
+		return "this identity has no local self-custodial signing key", errors.New("E2E messaging requires a local self-custodial signing key")
+	}
+	if c.e2eeCustody() != nil {
+		return "", nil
+	}
+	if !c.canSignMessages() {
+		return "this identity grant has no custody socket to sign encrypted envelopes", errors.New("E2E messaging requires the subject identity signing key; identity grants cannot sign encrypted message envelopes")
+	}
+	if c.e2eeEncryptionKey == nil {
+		return "this identity has no local encryption key (`aw id encryption-key setup` creates one)", errors.New("E2E messaging requires a local encryption key; upgrade aw and run `aw id encryption-key setup`, or pass --plaintext only for explicit server-readable messaging")
+	}
+	return "", nil
+}
+
 func (c *Client) e2eeCustody() E2EECustodyClient {
 	if c == nil || c.plainMessageSigner == nil || strings.TrimSpace(c.grantID) == "" {
 		return nil

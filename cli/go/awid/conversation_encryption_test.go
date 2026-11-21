@@ -2,53 +2,57 @@ package awid
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 )
 
 // ContinuationEncryption is the one continuation rule for chat and mail:
 // --e2ee encrypts, --plaintext sends plaintext (with a notice into an
-// encrypted conversation), and otherwise the conversation's encryption
-// carries over, an unknown one refusing.
+// encrypted conversation), and otherwise an encrypted conversation is
+// continued encrypted by a sender that can encrypt. An unknown conversation,
+// or an encrypted one whose sender cannot encrypt, is sent in plaintext with
+// a notice that says why.
 func TestContinuationEncryptionIsTheOneContinuationRule(t *testing.T) {
 	unknown := ConversationEncryptionReading{State: ConversationEncryptionUnknown, Reason: "the server does not let this identity read the conversation (HTTP 403)"}
 	encrypted := ConversationEncryptionReading{State: ConversationEncrypted}
 	plaintext := ConversationEncryptionReading{State: ConversationPlaintext}
+	const noKey = "this identity has no local encryption key"
 	for _, tc := range []struct {
 		name          string
 		conversation  ConversationEncryptionReading
 		choice        E2EEChoice
+		cannotEncrypt string
 		wantEncrypt   bool
 		wantInherited bool
-		wantNotice    string
-		wantUnknown   bool
+		wantNotice    []string
 	}{
 		{name: "required into plaintext", conversation: plaintext, choice: E2EERequired, wantEncrypt: true},
 		{name: "required into unknown", conversation: unknown, choice: E2EERequired, wantEncrypt: true},
-		{name: "plaintext into encrypted", conversation: encrypted, choice: E2EEPlaintext, wantNotice: PlaintextIntoEncryptedNotice},
+		{name: "required without a key", conversation: encrypted, choice: E2EERequired, cannotEncrypt: noKey, wantEncrypt: true},
+		{name: "plaintext into encrypted", conversation: encrypted, choice: E2EEPlaintext, wantNotice: []string{PlaintextIntoEncryptedNotice}},
 		{name: "plaintext into unknown", conversation: unknown, choice: E2EEPlaintext},
 		{name: "plaintext into plaintext", conversation: plaintext, choice: E2EEPlaintext},
 		{name: "inherit encrypted", conversation: encrypted, choice: E2EEInherit, wantEncrypt: true, wantInherited: true},
+		{name: "inherit encrypted without a key", conversation: encrypted, choice: E2EEInherit, cannotEncrypt: noKey, wantNotice: []string{"end-to-end encrypted", noKey, plaintextFallbackNotice, "--e2ee"}},
 		{name: "inherit plaintext", conversation: plaintext, choice: E2EEInherit},
-		{name: "inherit unknown", conversation: unknown, choice: E2EEInherit, wantUnknown: true},
+		{name: "inherit plaintext without a key", conversation: plaintext, choice: E2EEInherit, cannotEncrypt: noKey},
+		{name: "inherit unknown", conversation: unknown, choice: E2EEInherit, wantNotice: []string{"cannot tell", unknown.Reason, plaintextFallbackNotice, "--e2ee"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := ContinuationEncryption(tc.conversation, tc.choice)
-			var refusal *UnknownConversationEncryptionError
-			if tc.wantUnknown {
-				if !errors.As(err, &refusal) || refusal.Reason != tc.conversation.Reason {
-					t.Fatalf("err=%v, want the unknown-encryption refusal with its reason", err)
+			got := ContinuationEncryption(tc.conversation, tc.choice, tc.cannotEncrypt)
+			if got.Encrypt != tc.wantEncrypt || got.Inherited != tc.wantInherited {
+				t.Fatalf("got %+v, want encrypt=%v inherited=%v", got, tc.wantEncrypt, tc.wantInherited)
+			}
+			if (got.Notice == "") != (len(tc.wantNotice) == 0) {
+				t.Fatalf("notice %q, want one saying %q", got.Notice, tc.wantNotice)
+			}
+			for _, want := range tc.wantNotice {
+				if !strings.Contains(got.Notice, want) {
+					t.Fatalf("notice %q does not say %q", got.Notice, want)
 				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("err=%v", err)
-			}
-			if got.Encrypt != tc.wantEncrypt || got.Inherited != tc.wantInherited || got.Notice != tc.wantNotice {
-				t.Fatalf("got %+v, want encrypt=%v inherited=%v notice=%q", got, tc.wantEncrypt, tc.wantInherited, tc.wantNotice)
 			}
 		})
 	}
@@ -103,5 +107,49 @@ func TestConversationEncryptionNeedsTheMessageListAndTheLatestPage(t *testing.T)
 				t.Fatalf("mail read query=%v, want the latest 500 (order=desc)", query)
 			}
 		})
+	}
+}
+
+// A read that fails, by an HTTP error or a server that does not answer, is an
+// unknown reading with its reason, not an error: the caller decides what an
+// unknown conversation means. Only a cancelled context is an error.
+func TestConversationEncryptionReadFailureIsUnknown(t *testing.T) {
+	failing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"detail":"boom"}`))
+	}))
+	defer failing.Close()
+	gone := httptest.NewServer(http.NotFoundHandler())
+	goneURL := gone.URL
+	gone.Close()
+	for _, tc := range []struct {
+		name, url string
+	}{
+		{name: "server error", url: failing.URL},
+		{name: "server gone", url: goneURL},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client, err := New(tc.url)
+			if err != nil {
+				t.Fatal(err)
+			}
+			reading, err := client.MailConversationEncryption(context.Background(), "conversation-1")
+			if err != nil {
+				t.Fatalf("err=%v, want an unknown reading", err)
+			}
+			if reading.State != ConversationEncryptionUnknown || !strings.Contains(reading.Reason, "reading the conversation failed") {
+				t.Fatalf("reading=%+v, want unknown with the failure", reading)
+			}
+		})
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	client, err := New(failing.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.ChatSessionEncryption(cancelled, "session-1"); err == nil {
+		t.Fatal("a cancelled read returned no error")
 	}
 }

@@ -53,6 +53,11 @@ func newContinuationFixture(t *testing.T, ctx context.Context) *continuationFixt
 		t.Fatal(err)
 	}
 	did := awid.ComputeDIDKey(pub)
+	peerPub, _, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	peerDID := awid.ComputeDIDKey(peerPub)
 	f.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
@@ -68,6 +73,13 @@ func newContinuationFixture(t *testing.T, ctx context.Context) *continuationFixt
 			requireCertificateAuthForTest(t, r)
 		}
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/conversations":
+			// The listing names the other participant, so a mail
+			// continuation finds its recipient without reading the history.
+			_ = json.NewEncoder(w).Encode(awid.ConversationsResponse{Conversations: []awid.ConversationItem{{
+				ConversationType: "mail", ConversationID: continuationTestConversation,
+				Participants: []string{"t1", "t2"}, ParticipantDIDs: []string{did, peerDID},
+			}}})
 		case historyPath && r.Method == http.MethodGet:
 			f.limits = append(f.limits, r.URL.Query().Get("limit"))
 			if f.answer.drop {

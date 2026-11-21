@@ -2816,7 +2816,7 @@ Flags:
 - `--body-file string Read message body from a file; safe for Markdown or command examples`
 - `--e2ee Send E2E encrypted wait extension; fails closed if encryption keys are missing`
 - `-h, --help help for extend-wait`
-- `--plaintext Send explicit server-readable plaintext wait extension (by default it inherits its conversation's encryption, and needs --e2ee or --plaintext when that cannot be read)`
+- `--plaintext Send explicit server-readable plaintext wait extension (by default it inherits its conversation's encryption, and is plaintext, with a notice, when that cannot be read or this identity cannot encrypt)`
 
 ## `chat history`
 
@@ -2882,7 +2882,7 @@ Flags:
 - `--e2ee Send E2E encrypted chat; fails closed if encryption keys are missing`
 - `-h, --help help for send`
 - `--leave Leave the conversation after sending`
-- `--plaintext Send explicit server-readable plaintext chat (the default for a new conversation; a continuation inherits its conversation's encryption, and needs --e2ee or --plaintext when that cannot be read)`
+- `--plaintext Send explicit server-readable plaintext chat (the default for a new conversation; a continuation inherits its conversation's encryption, and is plaintext, with a notice, when that cannot be read or this identity cannot encrypt)`
 - `--session-id string Existing chat session id`
 
 ## `chat send-and-leave`
@@ -2904,7 +2904,7 @@ Flags:
 - `--body-file string Read message body from a file; safe for Markdown or command examples`
 - `--e2ee Send E2E encrypted chat; fails closed if encryption keys are missing`
 - `-h, --help help for send-and-leave`
-- `--plaintext Send explicit server-readable plaintext chat (the default for a new conversation; a continuation inherits its conversation's encryption, and needs --e2ee or --plaintext when that cannot be read)`
+- `--plaintext Send explicit server-readable plaintext chat (the default for a new conversation; a continuation inherits its conversation's encryption, and is plaintext, with a notice, when that cannot be read or this identity cannot encrypt)`
 - `--start-conversation Start a new conversation instead of continuing an existing one`
 
 ## `chat send-and-wait`
@@ -2926,7 +2926,7 @@ Flags:
 - `--body-file string Read message body from a file; safe for Markdown or command examples`
 - `--e2ee Send E2E encrypted chat; fails closed if encryption keys are missing`
 - `-h, --help help for send-and-wait`
-- `--plaintext Send explicit server-readable plaintext chat (the default for a new conversation; a continuation inherits its conversation's encryption, and needs --e2ee or --plaintext when that cannot be read)`
+- `--plaintext Send explicit server-readable plaintext chat (the default for a new conversation; a continuation inherits its conversation's encryption, and is plaintext, with a notice, when that cannot be read or this identity cannot encrypt)`
 - `--start-conversation Start conversation (5min default wait)`
 - `--wait int Seconds to wait for reply (default 120)`
 
@@ -3470,7 +3470,7 @@ Flags:
 - `--conversation-id string Existing mail conversation to continue (no recipient or --subject)`
 - `--e2ee Send E2E encrypted mail; fails closed if encryption keys are missing`
 - `-h, --help help for send`
-- `--plaintext Send explicit server-readable plaintext mail (the default for a new conversation; --conversation-id inherits its conversation's encryption, and needs --e2ee or --plaintext when that cannot be read)`
+- `--plaintext Send explicit server-readable plaintext mail (the default for a new conversation; --conversation-id inherits its conversation's encryption, and is plaintext, with a notice, when that cannot be read or this identity cannot encrypt)`
 - `--priority string Priority: low|normal|high|urgent (default "normal")`
 - `--subject string Title of the new thread (required with a recipient)`
 - `--to string Recipient name within the active team, or a routable address`
