@@ -117,7 +117,7 @@ class FailureDiagnosticsTests(unittest.TestCase):
                 None,
             )
             executor.transport = BrokenDiagnosticTransport(None)
-            self.assertEqual(executor.execute({}, 30), 7)
+            self.assertEqual(executor.execute(server={}, timeout=30), 7)
             value = executor.collect({}, 30)
             self.assertTrue(executor.transport.downloaded)
             self.assertEqual(value["stages"][0]["status"], "FAILED")

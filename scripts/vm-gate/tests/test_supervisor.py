@@ -140,12 +140,12 @@ class SupervisorTests(unittest.TestCase):
             remote = Executor(
                 {"ledger": "/ledger/rows", "owner": "operator"},
                 temporary,
-                {},
+                {"sha": "a" * 40},
                 "exit 7",
                 None,
             )
             remote.transport = Transport()
-            self.assertEqual(remote.execute({}, 60), 7)
+            self.assertEqual(remote.execute(server={}, timeout=60), 7)
             command = next(
                 c for c in remote.transport.commands if "vm_gate.supervisor run" in c
             )
