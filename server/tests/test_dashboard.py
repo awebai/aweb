@@ -5,7 +5,7 @@ from __future__ import annotations
 import socket
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
 import jwt
@@ -14,10 +14,12 @@ import pytest_asyncio
 from awid.registry import RegistryClient
 
 from aweb.embedding import OutboxRecoveryOwnership
+from aweb.lifecycle import LifecycleActor, LifecycleCascadeRequest, apply_lifecycle_cascade
 from dashboard_test_support import _JWT_SECRET as _JWT_SECRET, _make_jwt as _make_jwt
 from test_dashboard_privacy import TEAM, TEAM_NAME, _request, privacy_stack
 from test_dashboard_privacy import privacy_app as privacy_app
 from test_team_room import admit_room_member
+from test_workspace_liveness_http import _send_member_request
 
 
 @pytest_asyncio.fixture
@@ -612,18 +614,42 @@ async def test_list_agents_prefers_live_workspace_over_newer_deleted_workspace(
 ):
     env = privacy_app
     bob = env.actors["bob"]
-    now = datetime.now(timezone.utc)
-    await env.db.execute(
-        "UPDATE {{tables.workspaces}} SET workspace_path='/workspace/live',last_seen_at=$1 WHERE workspace_id=$2",
-        now,
+    await admit_room_member(env, alias="bob")
+    removed = await apply_lifecycle_cascade(
+        env.db,
+        env.redis,
+        LifecycleCascadeRequest(
+            operation="cleanup_agent_coordination_state",
+            actor=LifecycleActor(actor_id="test-host", actor_type="system", authority="embedding"),
+            team_id=TEAM,
+            target_workspace_ids=(str(bob.workspace),),
+        ),
+        registry_client=env.app.state.awid_registry_client,
+    )
+    assert removed.errors == ()
+    assert not removed.identity_deleted
+    assert [change.workspace_id for change in removed.workspace_changes] == [str(bob.workspace)]
+    connected = await _send_member_request(
+        env,
+        alias="bob",
+        method="POST",
+        path="/v1/connect",
+        body={"workspace_path": "/workspace/live"},
+    )
+    assert connected.status_code == 200, connected.text
+    assert connected.json()["agent_id"] == str(bob.id)
+    live_workspace = uuid.UUID(connected.json()["workspace_id"])
+    assert live_workspace != bob.workspace
+    seen = await env.db.fetch_value(
+        "SELECT last_seen_at FROM {{tables.workspaces}} WHERE workspace_id=$1",
         bob.workspace,
     )
+    assert seen is not None
+    live_seen = seen - timedelta(seconds=1)
     await env.db.execute(
-        "INSERT INTO {{tables.workspaces}} (workspace_id,team_id,agent_id,alias,workspace_path,last_seen_at,deleted_at) VALUES ($1,$2,$3,'bob-stale','/workspace/stale',$4,NOW())",
-        uuid.uuid4(),
-        TEAM,
-        bob.id,
-        now,
+        "UPDATE {{tables.workspaces}} SET last_seen_at=$1 WHERE workspace_id=$2",
+        live_seen,
+        live_workspace,
     )
     response = await env.client.get(
         f"/v1/teams/{TEAM}/agents", headers={"X-Dashboard-Token": _make_jwt([TEAM])}
@@ -631,21 +657,7 @@ async def test_list_agents_prefers_live_workspace_over_newer_deleted_workspace(
     assert response.status_code == 200, response.text
     bob_row = next(row for row in response.json()["agents"] if row["alias"] == "bob")
     assert bob_row["workspace_path"] == "/workspace/live"
-    assert bob_row["last_seen"] == now.isoformat()
-
-
-@pytest.mark.asyncio
-async def test_list_agents_excludes_human_typed_attribution_rows(privacy_app):
-    env = privacy_app
-    await env.db.execute(
-        "UPDATE {{tables.agents}} SET agent_type='human', human_verified_key=did_key WHERE agent_id=$1",
-        env.actors["carol"].id,
-    )
-    response = await env.client.get(
-        f"/v1/teams/{TEAM}/agents", headers={"X-Dashboard-Token": _make_jwt([TEAM])}
-    )
-    assert response.status_code == 200, response.text
-    assert {row["alias"] for row in response.json()["agents"]} == {"alice", "bob"}
+    assert bob_row["last_seen"] == live_seen.isoformat()
 
 
 @pytest.mark.asyncio

@@ -17,6 +17,7 @@ from aweb.team_key_pins import pinned_team_key
 from awid.dns_verify import DomainAuthority
 from awid_service.deps import get_domain_verifier
 from awid_service.testing import TXTAnswers
+from dashboard_test_support import _make_jwt
 from test_cli_never_grants import registry_listener
 from test_dashboard_privacy import TEAM, TEAM_NAME, privacy_app  # noqa: F401
 from test_id_chain_request_auth import ALICE, ROOT, _fixture_signer, _signed_fixture_certificate
@@ -311,6 +312,12 @@ async def test_newly_admitted_global_human_connects_behind_warm_strict_list(
             assert row["certificate_id"] == certificate_id
             assert row["agent_type"] == "human"
             assert row["human_verified_key"] == ALICE["did_key"]
+            dashboard = await env.client.get(
+                f"/v1/teams/{TEAM}/agents",
+                headers={"X-Dashboard-Token": _make_jwt([TEAM])},
+            )
+            assert dashboard.status_code == 200, dashboard.text
+            assert {agent["alias"] for agent in dashboard.json()["agents"]} == set(env.actors)
             again = await env.client.post("/v1/connect", content=body, headers=headers)
             assert again.status_code == 200, again.text
             assert transport.reads == reads_before + 1

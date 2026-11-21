@@ -14,6 +14,7 @@ from test_coordination_state_http import call_mcp, request_as
 from test_coordination_state_http import coordination_mcp as coordination_mcp
 from test_dashboard_privacy import TEAM
 from test_dashboard_privacy import privacy_app as privacy_app
+from test_workspace_liveness_http import _connect_registered_member, _send_member_request
 
 PROXY_SECRET = "r15-disposable-proxy-test-secret"
 
@@ -101,35 +102,24 @@ async def test_route_heartbeat_and_online_list_keep_the_team_boundary(privacy_ap
     assert presence["alias"] == "alice"
     # An unrelated team's real row and presence must not join this team's view.
     foreign_team = "foreign:example.test"
-    await env.db.execute(
-        "INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key) VALUES ($1,'example.test','foreign',$2)",
-        foreign_team,
-        env.team_did,
+    expected_aliases = set(env.actors)
+    await env.app.state.awid_registry_client.register_team(
+        domain="example.test",
+        name="foreign",
+        display_name="Foreign",
+        team_did_key=env.team_did,
+        visibility="public",
+        namespace_controller_signing_key=env.namespace_sk,
     )
-    foreign_agent, foreign_workspace = uuid4(), uuid4()
-    await env.db.execute(
-        "INSERT INTO {{tables.agents}} (agent_id,team_id,did_key,alias) VALUES ($1,$2,$3,'outsider')",
-        foreign_agent,
-        foreign_team,
-        env.actors["bob"].did,
-    )
-    await env.db.execute(
-        "INSERT INTO {{tables.workspaces}} (workspace_id,team_id,agent_id,alias) VALUES ($1,$2,$3,'outsider')",
-        foreign_workspace,
-        foreign_team,
-        foreign_agent,
-    )
-    from aweb.presence import update_agent_presence
-
-    await update_agent_presence(
-        env.redis,
-        workspace_id=str(foreign_workspace),
+    await _connect_registered_member(env, alias="outsider", team_id=foreign_team)
+    foreign_heartbeat = await _send_member_request(
+        env, alias="outsider", method="POST", path="/v1/agents/heartbeat",
         team_id=foreign_team,
-        alias="outsider",
     )
+    assert foreign_heartbeat.status_code == 200, foreign_heartbeat.text
     online = await request_as(
         env, alias="alice", method="GET", path="/v1/workspaces/online"
     )
     assert online.status_code == 200, online.text
-    assert {row["alias"] for row in online.json()["workspaces"]} == set(env.actors)
+    assert {row["alias"] for row in online.json()["workspaces"]} == expected_aliases
     assert {row["team_id"] for row in online.json()["workspaces"]} == {TEAM}
