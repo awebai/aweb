@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"encoding/json"
 	"net/http"
@@ -523,6 +524,7 @@ func TestTeamExtendMiddleFailureReportsEveryRosterOutcome(t *testing.T) {
 			}
 			teamDIDKey := awid.ComputeDIDKey(teamPub)
 			var attempted []string
+			var secondDID string
 			server := newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
 				if serveAPIKeyCreationTeamRead(w, r, teamID) {
 					return
@@ -539,6 +541,7 @@ func TestTeamExtendMiddleFailureReportsEveryRosterOutcome(t *testing.T) {
 					alias, _ := body["alias"].(string)
 					attempted = append(attempted, alias)
 					if alias == "second" {
+						secondDID, _ = body["did"].(string)
 						w.Header().Set("X-Request-ID", requestID)
 						http.Error(w, "injected middle-member failure", http.StatusServiceUnavailable)
 						return
@@ -580,8 +583,13 @@ func TestTeamExtendMiddleFailureReportsEveryRosterOutcome(t *testing.T) {
 			if _, err := os.Stat(filepath.Join(root, "agents", "instances", "first", ".aw", "workspace.yaml")); err != nil {
 				t.Fatalf("successfully created first member was not kept: %v", err)
 			}
-			if _, err := os.Lstat(filepath.Join(root, "agents", "instances", "second")); !os.IsNotExist(err) {
-				t.Fatalf("failed second member retained local state: %v", err)
+			second := awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(filepath.Join(root, "agents", "instances", "second"))}
+			pending, err := loadAPIKeyPartialInit(apiKeyPartialInitPath(second))
+			if err != nil || pending == nil || secondDID == "" || pending.DIDKey != secondDID {
+				t.Fatalf("failed second member lost its exact retained request: %v", err)
+			}
+			if _, err := os.Lstat(filepath.Join(second.Root, "workspace.yaml")); !os.IsNotExist(err) {
+				t.Fatalf("unconfirmed second attempt installed a workspace: %v", err)
 			}
 			if _, err := os.Lstat(filepath.Join(root, "agents", "instances", "third")); !os.IsNotExist(err) {
 				t.Fatalf("not-attempted third member has local state: %v", err)
@@ -629,7 +637,7 @@ func TestTeamExtendMiddleFailureReportsEveryRosterOutcome(t *testing.T) {
 	}
 }
 
-func TestTeamExtendFailedBootstrapAndWorktreeSetupRemoveHomeAndAllowSameNameRetry(t *testing.T) {
+func TestTeamExtendRetainsBootstrapAndResumesSetupWithTheSameMember(t *testing.T) {
 	resetTeamHumanCreateGlobals(t)
 	root := t.TempDir()
 	t.Setenv("HOME", t.TempDir())
@@ -646,6 +654,7 @@ func TestTeamExtendFailedBootstrapAndWorktreeSetupRemoveHomeAndAllowSameNameRetr
 	teamDIDKey := awid.ComputeDIDKey(teamPub)
 	const teamID = "default:retry.aweb.ai"
 	var initCalls, connectCalls, removeCalls int
+	var firstDID string
 	var server *httptest.Server
 	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
 		if serveAPIKeyCreationTeamRead(w, r, teamID) {
@@ -657,15 +666,19 @@ func TestTeamExtendFailedBootstrapAndWorktreeSetupRemoveHomeAndAllowSameNameRetr
 			if got := r.Header.Get("Authorization"); got != "Bearer "+teamHumanExtendAPIKey {
 				t.Fatalf("workspace init Authorization=%q", got)
 			}
-			if initCalls == 1 {
-				http.Error(w, `{"detail":"injected bootstrap failure"}`, http.StatusUnauthorized)
-				return
-			}
 			var body map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Fatal(err)
 			}
 			didKey, _ := body["did"].(string)
+			if initCalls == 1 {
+				firstDID = didKey
+				http.Error(w, `{"detail":"injected bootstrap failure"}`, http.StatusUnauthorized)
+				return
+			}
+			if firstDID == "" || didKey != firstDID {
+				t.Fatal("bootstrap recovery submitted a replacement identity")
+			}
 			alias, _ := body["alias"].(string)
 			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{Team: teamID, MemberDIDKey: didKey, Alias: alias, IdentityScope: awid.IdentityModeLocal})
 			if err != nil {
@@ -699,32 +712,53 @@ func TestTeamExtendFailedBootstrapAndWorktreeSetupRemoveHomeAndAllowSameNameRetr
 		t.Fatalf("first error=%v", firstErr)
 	}
 	agentHome := filepath.Join(root, "agents", "instances", "retry")
-	if _, statErr := os.Lstat(agentHome); !os.IsNotExist(statErr) {
-		t.Fatalf("failed bootstrap left agent home %s: %v", agentHome, statErr)
+	childHome := awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(agentHome)}
+	pending, readErr := loadAPIKeyPartialInit(apiKeyPartialInitPath(childHome))
+	if readErr != nil || pending == nil || firstDID == "" || pending.DIDKey != firstDID {
+		t.Fatalf("failed bootstrap discarded the submitted identity: %v", readErr)
+	}
+	if !strings.Contains(firstErr.Error(), "run `aw init") || !strings.Contains(firstErr.Error(), "--alias retry") {
+		t.Fatalf("missing native-home recovery command: %v", firstErr)
+	}
+
+	oldAlias := initAlias
+	t.Cleanup(func() { initAlias = oldAlias })
+	initAlias = "retry"
+	t.Setenv(initAPIKeyEnvVar, teamHumanExtendAPIKey)
+	withTestWorkingDir(t, agentHome, func() {
+		if err := runInit(authTestCmd(&bytes.Buffer{}), nil); err != nil {
+			t.Fatalf("resume the retained bootstrap in its own home: %v", err)
+		}
+	})
+	t.Setenv(initAPIKeyEnvVar, "")
+	original, err := awconfig.LoadTeamCertificateForTeam(agentHome, teamID)
+	if err != nil || original.MemberDIDKey != firstDID {
+		t.Fatalf("recovered bootstrap did not install the retained identity: %v", err)
 	}
 	secondErr := runTeamHumanExtend(nil, []string{"retry"})
 	if secondErr == nil || !strings.Contains(secondErr.Error(), "is not inside a git repo") {
 		t.Fatalf("worktree setup error=%v", secondErr)
 	}
-	if _, statErr := os.Lstat(agentHome); !os.IsNotExist(statErr) {
-		t.Fatalf("failed worktree setup left agent home %s: %v", agentHome, statErr)
-	}
-	if removeCalls != 1 {
-		t.Fatalf("worktree failure member rollback calls=%d", removeCalls)
+	if removeCalls != 0 {
+		t.Fatalf("worktree failure attempted retirement: %d", removeCalls)
 	}
 	teamHumanAddWorkDir = ""
 	if err := runTeamHumanExtend(nil, []string{"retry"}); err != nil {
-		t.Fatalf("same-name retry after worktree failure: %v", err)
+		t.Fatalf("same-member retry after worktree failure: %v", err)
 	}
-	if initCalls != 3 || connectCalls != 2 {
+	if initCalls != 2 || connectCalls == 0 {
 		t.Fatalf("calls init/connect=%d/%d", initCalls, connectCalls)
 	}
 	if _, statErr := os.Stat(filepath.Join(agentHome, ".aw", "workspace.yaml")); statErr != nil {
-		t.Fatalf("retry did not create agent workspace: %v", statErr)
+		t.Fatalf("retry did not retain agent workspace: %v", statErr)
+	}
+	restored, err := awconfig.LoadTeamCertificateForTeam(agentHome, teamID)
+	if err != nil || restored.CertificateID != original.CertificateID {
+		t.Fatalf("worktree retry replaced the member certificate: %v", err)
 	}
 }
 
-func TestTeamExtendAmbientAPIKeyTeamMismatchRollsBackWithWorkspaceAssertion(t *testing.T) {
+func TestTeamExtendAmbientAPIKeyTeamMismatchRetainsAdmittedMember(t *testing.T) {
 	resetTeamHumanCreateGlobals(t)
 	const ambientKey = "aw_sk_ambient_extend"
 	t.Setenv(initAPIKeyEnvVar, ambientKey)
@@ -804,21 +838,27 @@ func TestTeamExtendAmbientAPIKeyTeamMismatchRollsBackWithWorkspaceAssertion(t *t
 	if strings.Contains(err.Error(), "would silently use the API key's team") {
 		t.Fatalf("ambient API key was refused before bootstrap: %v", err)
 	}
-	if strings.Contains(err.Error(), "--team-id") || !strings.Contains(err.Error(), "workspace active team "+expectedTeamID) || !strings.Contains(err.Error(), "API key team "+actualTeamID) {
+	if !strings.Contains(err.Error(), "workspace active team "+expectedTeamID) || !strings.Contains(err.Error(), "API key team "+actualTeamID) {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if initCalls != 1 || connectCalls != 1 || removeCalls != 1 {
+	if initCalls != 1 || connectCalls != 1 || removeCalls != 0 {
 		t.Fatalf("calls init/connect/remove=%d/%d/%d", initCalls, connectCalls, removeCalls)
 	}
-	if _, statErr := os.Lstat(filepath.Join(root, "agents", "instances", "rollback")); !os.IsNotExist(statErr) {
-		t.Fatalf("rollback home remains: %v", statErr)
+	retainedHome := filepath.Join(root, "agents", "instances", "rollback")
+	if !strings.Contains(err.Error(), "retained at "+retainedHome) ||
+		!strings.Contains(err.Error(), "remove-agent rollback --team-id "+actualTeamID) {
+		t.Fatalf("mismatch lost its retained-member recovery and retirement context: %v", err)
+	}
+	cert, certErr := awconfig.LoadTeamCertificateForTeam(retainedHome, actualTeamID)
+	if certErr != nil || cert.Team != actualTeamID || cert.Alias != "rollback" {
+		t.Fatalf("team mismatch discarded the admitted member: %v", certErr)
 	}
 	if _, statErr := os.Lstat(filepath.Join(root, "agents", "instances", "should-not-run")); !os.IsNotExist(statErr) {
 		t.Fatalf("second member attempted despite mismatch: %v", statErr)
 	}
 }
 
-func TestTeamExtendAPIKeyTeamIDMismatchRollsBackWithExplicitAuth(t *testing.T) {
+func TestTeamExtendExplicitAPIKeyTeamMismatchRetainsAdmittedMember(t *testing.T) {
 	resetTeamHumanCreateGlobals(t)
 	t.Setenv(initAPIKeyEnvVar, "")
 	t.Setenv("AW_CONFIG_PATH", "")
@@ -902,11 +942,17 @@ func TestTeamExtendAPIKeyTeamIDMismatchRollsBackWithExplicitAuth(t *testing.T) {
 	if !strings.Contains(err.Error(), wantMismatch) {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if initCalls != 1 || connectCalls != 1 || removeCalls != 1 {
+	if initCalls != 1 || connectCalls != 1 || removeCalls != 0 {
 		t.Fatalf("calls init/connect/remove=%d/%d/%d", initCalls, connectCalls, removeCalls)
 	}
-	if _, statErr := os.Lstat(filepath.Join(root, "agents", "instances", "rollback")); !os.IsNotExist(statErr) {
-		t.Fatalf("rollback home remains: %v", statErr)
+	retainedHome := filepath.Join(root, "agents", "instances", "rollback")
+	if !strings.Contains(err.Error(), "retained at "+retainedHome) ||
+		!strings.Contains(err.Error(), "remove-agent rollback --team-id "+actualTeamID) {
+		t.Fatalf("mismatch lost its retained-member recovery and retirement context: %v", err)
+	}
+	cert, certErr := awconfig.LoadTeamCertificateForTeam(retainedHome, actualTeamID)
+	if certErr != nil || cert.Team != actualTeamID || cert.Alias != "rollback" {
+		t.Fatalf("team mismatch discarded the admitted member: %v", certErr)
 	}
 	if _, statErr := os.Lstat(filepath.Join(root, "agents", "instances", "should-not-run")); !os.IsNotExist(statErr) {
 		t.Fatalf("second member attempted despite mismatch: %v", statErr)

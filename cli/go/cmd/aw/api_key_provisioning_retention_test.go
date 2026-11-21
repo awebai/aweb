@@ -64,7 +64,7 @@ func TestRosterKeepsAPIKeyInitMaterialAfterSubmittedTransportFailure(t *testing.
 	if !retainUnfinishedProvisioningIdentity(err) {
 		t.Fatalf("submitted API-key recovery was not exposed through the shared retention contract: %v", err)
 	}
-	if !strings.Contains(err.Error(), home.Root) || !strings.Contains(err.Error(), "--alias retained") || strings.Contains(err.Error(), teamHumanExtendAPIKey) {
+	if !strings.Contains(err.Error(), filepath.Dir(home.Root)) || !strings.Contains(err.Error(), "run `aw init") || !strings.Contains(err.Error(), "--alias retained") || strings.Contains(err.Error(), teamHumanExtendAPIKey) {
 		t.Fatal("recovery advice lost its child target/command or exposed the setup key")
 	}
 }

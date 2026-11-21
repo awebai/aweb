@@ -28,7 +28,7 @@ func apiKeyCreationRecoveryAdvice(request apiKeyInitRequest, cause error) error 
 	if remedy, known := workspaceInitRefusalRemedies[errorCodeOf(cause)]; known && remedy.changesContext {
 		return fmt.Errorf("%w\nThe original identity material remains at %s; keep it for reconciliation.", cause, request.IdentityHome)
 	}
-	args := []string{"aw", "--identity-home", request.IdentityHome, "init"}
+	args := []string{"aw", "init"}
 	if request.RegistryURL != "" {
 		args = append(args, "--awid-registry", request.RegistryURL)
 	}

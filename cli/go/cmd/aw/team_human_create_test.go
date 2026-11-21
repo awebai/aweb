@@ -2299,9 +2299,6 @@ func TestTeamHumanAddProfileFailureRetainsAdmittedHome(t *testing.T) {
 			return
 		}
 
-		if serveProvisionedConnectForTest(t, w, r) {
-			return
-		}
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
 			_ = json.NewEncoder(w).Encode(map[string]any{"aweb_url": serverURL, "registry_url": serverURL})
@@ -2504,7 +2501,7 @@ func TestTeamHumanAddHostedProfileFailureRetainsConnectedIdentity(t *testing.T) 
 	}
 }
 
-func TestTeamHumanAddHostedProfileRollbackFailureIsLoud(t *testing.T) {
+func TestTeamHumanAddHostedProfileFailureRetainsAdmittedMember(t *testing.T) {
 	resetTeamHumanCreateGlobals(t)
 	root := t.TempDir()
 	home := t.TempDir()
@@ -2518,6 +2515,7 @@ func TestTeamHumanAddHostedProfileRollbackFailureIsLoud(t *testing.T) {
 		t.Fatal(err)
 	}
 	justCreatedCertID := ""
+	removeCalls := 0
 	var server *httptest.Server
 	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
 		if serveProvisionedConnectForTest(t, w, r) {
@@ -2558,6 +2556,7 @@ func TestTeamHumanAddHostedProfileRollbackFailureIsLoud(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/blueprints/aweb.engineering/profiles/developer":
 			http.Error(w, `{"detail":"catalog unavailable"}`, http.StatusServiceUnavailable)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/teams/default:rollback-fail.aweb.ai/agents/remove-member":
+			removeCalls++
 			http.Error(w, `{"detail":"remove failed"}`, http.StatusServiceUnavailable)
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
@@ -2575,13 +2574,22 @@ func TestTeamHumanAddHostedProfileRollbackFailureIsLoud(t *testing.T) {
 
 	err = runTeamHumanAdd(nil, []string{"developer@aweb.engineering/developer:local"})
 	if err == nil {
-		t.Fatal("expected materialize + rollback failure")
+		t.Fatal("expected profile materialization failure")
 	}
 	text := err.Error()
-	for _, want := range []string{"GET " + server.URL + "/v1/blueprints/aweb.engineering/profiles/developer returned 503", "server-side member rollback failed", "requires --api-key or AWEB_API_KEY", "workspace-bound API keys cannot remove hosted team members", justCreatedCertID, "aw id team remove-member --team default --namespace rollback-fail.aweb.ai --cert-id"} {
+	memberHome := filepath.Join(root, "agents", "instances", "developer")
+	for _, want := range []string{"GET " + server.URL + "/v1/blueprints/aweb.engineering/profiles/developer returned 503",
+		"retained at " + memberHome, "setup did not finish", "remove-agent developer --team-id " + teamID} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("error missing %q:\n%s", want, text)
 		}
+	}
+	if removeCalls != 0 {
+		t.Fatalf("profile failure attempted hosted retirement: %d", removeCalls)
+	}
+	cert, certErr := awconfig.LoadTeamCertificateForTeam(memberHome, teamID)
+	if certErr != nil || justCreatedCertID == "" || cert.CertificateID != justCreatedCertID {
+		t.Fatalf("profile failure did not retain the admitted certificate: %v", certErr)
 	}
 }
 
