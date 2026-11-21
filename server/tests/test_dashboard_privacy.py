@@ -25,6 +25,7 @@ from starlette.requests import Request
 import uvicorn
 
 from aweb.api import create_app
+from aweb.embedding import OutboxRecoveryOwnership
 from aweb.outbox_recovery import stop_outbox_recovery
 from aweb.db import DatabaseInfra
 from aweb.events import (
@@ -44,7 +45,7 @@ from awid.registry import RegistryClient
 from awid_service.db import AwidDatabaseInfra
 from awid_service.main import create_app as create_registry_app
 from awid_service.testing import Registry, ServiceTransport
-from test_dashboard import _JWT_SECRET, _make_jwt
+from dashboard_test_support import _JWT_SECRET, _make_jwt
 from test_messages_http import (
     _encode_certificate,
     _make_certificate,
@@ -63,8 +64,8 @@ _TEAM_SIGNING_KEY, _, _TEAM_DID_KEY = _make_keypair()
 
 
 @pytest_asyncio.fixture
-async def privacy_app(shared_test_pool, monkeypatch):
-    async with privacy_stack(shared_test_pool, monkeypatch) as env:
+async def privacy_app(shared_test_pool, monkeypatch, request):
+    async with privacy_stack(shared_test_pool, monkeypatch, proxy_verification=getattr(request, "param", None)) as env:
         yield env
 
 
@@ -80,6 +81,7 @@ async def pre_chat_coverage_privacy_app(shared_test_pool, monkeypatch, chat_cove
 async def privacy_stack(
     shared_test_pool, monkeypatch, tls=None, *,
     aliases=("alice", "bob", "carol"), team_visibility="public", database=None,
+    outbox_recovery=OutboxRecoveryOwnership.NATIVE, proxy_verification=None,
 ):
     """The real apps behind one HTTP server; tls is (host, Certificates covering
     host) to serve over TLS, so the server's public origin is https."""
@@ -121,7 +123,10 @@ async def privacy_stack(
                 service_token=service_token,
                 domain_verifier=fixture_registry.namespace_authority,
             )
-            app = create_app()
+            app = create_app(
+                host_runs_outbox_recovery=outbox_recovery is OutboxRecoveryOwnership.HOST,
+                proxy_verification=proxy_verification,
+            )
             # Externally provisioned resources, exactly as an embedding host
             # supplies them; lifecycle startup would create different ones.
             app.state.db = db
@@ -133,7 +138,7 @@ async def privacy_stack(
 
             async def observe_mutation(event_type, context):
                 dispatched.append((event_type, dict(context)))
-                await handler(event_type, context)
+                return await handler(event_type, context)
 
             app.state.on_mutation = observe_mutation
             manager = db.get_manager("aweb")

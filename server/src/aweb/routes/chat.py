@@ -43,6 +43,7 @@ from redis.exceptions import RedisError
 
 from aweb.deps import get_db, get_redis
 from aweb.events import chat_session_channel_name
+from aweb.reconnect import ReconnectBackoff
 from aweb.redis_subscriptions import open_subscription, release_subscription
 from aweb.identity_metadata import (
     lookup_identity_metadata_by_did,
@@ -682,16 +683,16 @@ async def _sse_events(
                 request, db, auth, continue_on_registry_outage=True,
             )
         except Exception:
-            logger.exception("Chat stream grant verification failed for session %s", session_id_str)
+            logger.exception(
+                "Chat stream grant verification failed for session %s", session_id_str
+            )
             return "verification_unavailable"
         next_grant_check = time.monotonic() + STREAM_AUTHORITY_RECHECK_SECONDS
         return reason
 
     channel = chat_session_channel_name(session_id_str)
     pubsub: PubSub | None = None
-    reconnect_delay_seconds = 0.1
-    max_reconnect_delay_seconds = 5.0
-    next_reconnect_at: float | None = None
+    backoff = ReconnectBackoff(initial_delay=0.1, maximum_delay=5.0)
 
     try:
         # DID participation was already authorized. Activity channels are only
@@ -724,7 +725,11 @@ async def _sse_events(
             yield f"event: error\ndata: {json.dumps({'error': 'Session not found'})}\n\n"
             return
         viewer_row = next(
-            (row for row in participant_rows if (row.get("did") or "").strip() == viewer_did),
+            (
+                row
+                for row in participant_rows
+                if (row.get("did") or "").strip() == viewer_did
+            ),
             None,
         )
         if viewer_row is None:
@@ -738,7 +743,8 @@ async def _sse_events(
                 {
                     str(row["activity_agent_id"]): row["alias"]
                     for row in participant_rows
-                    if row.get("activity_agent_id") is not None and row is not viewer_row
+                    if row.get("activity_agent_id") is not None
+                    and row is not viewer_row
                 },
             )
 
@@ -773,10 +779,7 @@ async def _sse_events(
                     "Chat session pubsub subscribe failed; using DB fallback polling",
                     exc_info=True,
                 )
-                next_reconnect_at = time.monotonic() + reconnect_delay_seconds
-                reconnect_delay_seconds = min(
-                    max_reconnect_delay_seconds, reconnect_delay_seconds * 2
-                )
+                backoff.schedule(time.monotonic())
 
         yield ": keepalive\n\n"
         last_keepalive = time.monotonic()
@@ -796,10 +799,7 @@ async def _sse_events(
                 )
                 await _close_session_pubsub(pubsub, channel)
                 pubsub = None
-                next_reconnect_at = time.monotonic() + reconnect_delay_seconds
-                reconnect_delay_seconds = min(
-                    max_reconnect_delay_seconds, reconnect_delay_seconds * 2
-                )
+                backoff.schedule(time.monotonic())
             else:
                 for frame in frames:
                     yield frame
@@ -822,11 +822,7 @@ async def _sse_events(
                 await register_waiting(redis, session_id_str, viewer_did)
                 last_refresh = now_mono
 
-            if (
-                redis is not None
-                and pubsub is None
-                and (next_reconnect_at is None or now_mono >= next_reconnect_at)
-            ):
+            if redis is not None and pubsub is None and (backoff.due(now_mono)):
                 try:
                     pubsub = await _connect_pubsub()
                     if activity is not None:
@@ -835,8 +831,7 @@ async def _sse_events(
                             yield frame
                         if woken:
                             last_db_poll = 0.0
-                    reconnect_delay_seconds = 0.1
-                    next_reconnect_at = None
+                    backoff.reset()
                     last_pubsub_ping = time.monotonic()
                 except (RedisError, TimeoutError):
                     logger.info(
@@ -845,10 +840,7 @@ async def _sse_events(
                     )
                     await _close_session_pubsub(pubsub, channel)
                     pubsub = None
-                    next_reconnect_at = now_mono + reconnect_delay_seconds
-                    reconnect_delay_seconds = min(
-                        max_reconnect_delay_seconds, reconnect_delay_seconds * 2
-                    )
+                    backoff.schedule(now_mono)
 
             should_poll = now_mono - last_db_poll >= CHAT_STREAM_FALLBACK_POLL_SECONDS
             if not should_poll:
@@ -871,10 +863,7 @@ async def _sse_events(
                         )
                         await _close_session_pubsub(pubsub, channel)
                         pubsub = None
-                        next_reconnect_at = time.monotonic() + reconnect_delay_seconds
-                        reconnect_delay_seconds = min(
-                            max_reconnect_delay_seconds, reconnect_delay_seconds * 2
-                        )
+                        backoff.schedule(time.monotonic())
                         message = None
                     except RedisError:
                         logger.warning(
@@ -883,10 +872,7 @@ async def _sse_events(
                         )
                         await _close_session_pubsub(pubsub, channel)
                         pubsub = None
-                        next_reconnect_at = time.monotonic() + reconnect_delay_seconds
-                        reconnect_delay_seconds = min(
-                            max_reconnect_delay_seconds, reconnect_delay_seconds * 2
-                        )
+                        backoff.schedule(time.monotonic())
                         message = None
                     if message is not None and message["type"] == "message":
                         if activity is not None and activity.owns(message["channel"]):
@@ -954,14 +940,22 @@ async def _sse_events(
                         bound,
                     )
                     sender_dids = list(
-                        {str(row["from_did"]) for row in new_msgs if row.get("from_did")}
+                        {
+                            str(row["from_did"])
+                            for row in new_msgs
+                            if row.get("from_did")
+                        }
                     )
                     sender_waiting = (
-                        set(await get_waiting_agents(redis, session_id_str, sender_dids))
+                        set(
+                            await get_waiting_agents(redis, session_id_str, sender_dids)
+                        )
                         if sender_dids
                         else set()
                     )
-                    identity_map = await lookup_identity_metadata_by_did(db, sender_dids)
+                    identity_map = await lookup_identity_metadata_by_did(
+                        db, sender_dids
+                    )
                     reason = await _stream_grant_reason()
                     if reason:
                         yield grant_terminal_sse(reason)
@@ -994,21 +988,28 @@ async def _sse_events(
                             "seq": row["seq"],
                             "from_agent": row["from_alias"],
                             "from_address": from_address,
-                            "from_stable_id": identity_map.get(from_did, {}).get("stable_id")
+                            "from_stable_id": identity_map.get(from_did, {}).get(
+                                "stable_id"
+                            )
                             or None,
                             "body": row["body"],
-                            "content_mode": row.get("content_mode") or ContentMode.PLAINTEXT,
+                            "content_mode": row.get("content_mode")
+                            or ContentMode.PLAINTEXT,
                             "message_version": row.get("message_version") or 1,
                             "encrypted_envelope": row.get("encrypted_envelope"),
                             "sender_leaving": bool(row["sender_leaving"]),
                             "sender_waiting": from_did in sender_waiting,
                             "hang_on": is_hang_on,
-                            "extends_wait_seconds": HANG_ON_EXTENSION_SECONDS if is_hang_on else 0,
+                            "extends_wait_seconds": HANG_ON_EXTENSION_SECONDS
+                            if is_hang_on
+                            else 0,
                             "reply_to": str(row["reply_to"])
                             if row.get("reply_to") is not None
                             else None,
                             "timestamp": _utc_iso(row["created_at"]),
-                            "to_address": _chat_to_address(participant_rows, from_did=from_did),
+                            "to_address": _chat_to_address(
+                                participant_rows, from_did=from_did
+                            ),
                             "from_did": row.get("from_did"),
                             "signature": row.get("signature"),
                             "signed_payload": row.get("signed_payload"),
@@ -1016,7 +1017,9 @@ async def _sse_events(
                             **verified_signed_recipient_fields(
                                 {**row, "conversation_id": session_id_str}
                             ),
-                            "is_contact": is_address_in_contacts(from_address, contact_addrs),
+                            "is_contact": is_address_in_contacts(
+                                from_address, contact_addrs
+                            ),
                         }
                         numbered_frames.append(
                             (
@@ -1066,10 +1069,7 @@ async def _sse_events(
                         )
                         await _close_session_pubsub(pubsub, channel)
                         pubsub = None
-                        next_reconnect_at = current_time + reconnect_delay_seconds
-                        reconnect_delay_seconds = min(
-                            max_reconnect_delay_seconds, reconnect_delay_seconds * 2
-                        )
+                        backoff.schedule(current_time)
                 yield ": keepalive\n\n"
                 last_keepalive = current_time
         reason = grant_expiry_reason(auth)

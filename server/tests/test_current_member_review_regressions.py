@@ -10,6 +10,7 @@ from fastapi import HTTPException
 from starlette.requests import Request
 
 from aweb.events import TaskCreatedEvent, publish_event, team_events_channel_name
+from aweb.application_state import application_registry_client
 from aweb.lifecycle import LifecycleActor, LifecycleCascadeRequest, apply_lifecycle_cascade
 from aweb.member_team_key import CurrentMembershipRequired
 from aweb.messaging.sender_membership import sender_memberships
@@ -157,13 +158,13 @@ async def _archive_global_member(env, actor):
             workspace_scope="all_for_agent",
             require_identity_scope="global",
         ),
+        registry_client=application_registry_client(env.app.state),
     )
     assert outcome.errors == () and outcome.identity_archived
 
 
 @pytest.mark.asyncio
 async def test_workspace_rosters_follow_readmission_after_team_key_rotation(pinning):
-    from aweb.application_state import application_registry_client
     from mcp_runtime_fixtures import mounted_mcp
     from test_current_member_selector_surfaces import _tool
 
@@ -416,8 +417,6 @@ async def test_certificate_stream_rechecks_its_original_authority_on_grant_caden
         if change == "rotation-and-readmission":
             await _readmit(env, actor, key)
     elif change == "revocation":
-        from aweb.application_state import application_registry_client
-
         name, domain = TEAM.split(":", 1)
         await application_registry_client(env.app.state).revoke_team_certificate(
             domain,

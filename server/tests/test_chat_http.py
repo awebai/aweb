@@ -269,7 +269,6 @@ def _build_test_app(aweb_db, registry, *, verified_bindings=()):
 
     app.state.db = _DbShim()
     app.state.redis = None
-    app.state.rate_limiter = None
     app.state.awid_registry_client = legacy_registry(registry)
     if registry is not None:
         # These routing unit cases select the supplied strict foreign authority.
@@ -1960,11 +1959,14 @@ async def test_receive_federated_chat_local_didkey_missing_session_target_fails_
     await _store_retained_local_origin(
         world, conversation_id=session_id, local=local, kind=MessageKind.CHAT
     )
+    from aweb.application_state import application_registry_client
+
     await remove_messaging_agent_from_sessions(
         world.source.node.db,
-        world.source.node.server.app.state.redis,
+        app.state.redis,
         team_id=local.team_id,
         agent_id=local.agent_id,
+        registry_client=application_registry_client(app.state),
     )
     payload = _federated_chat_payload(
         sender_sk=bob_sk,
@@ -2492,7 +2494,11 @@ async def test_encrypted_group_chat_excludes_removed_participant_from_future_wra
         carol_did,
     )
     await archive_messaging_actor(
-        aweb_cloud_db.aweb_db, None, team_id=team_id, agent_id=carol_agent_id
+        aweb_cloud_db.aweb_db,
+        None,
+        team_id=team_id,
+        agent_id=carol_agent_id,
+        registry_client=None,
     )
 
     stale_message_id = "33333333-3333-4333-8333-333333333332"

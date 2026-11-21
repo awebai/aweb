@@ -102,9 +102,9 @@ async def test_team_key_resolution_unexpected_error_fails_closed():
         await _resolve_team_key(request, "backend:acme.com", db=SimpleNamespace())
 
     assert raised.value.status_code == 500
-    assert (
-        "Unexpected AWID team key resolution dependency error (RuntimeError): boom"
-        == raised.value.detail
+    assert raised.value.detail == (
+        "Unexpected AWID team key resolution dependency error (RuntimeError). "
+        "Ask the server operator to investigate."
     )
 
 
@@ -130,10 +130,9 @@ async def test_team_revocation_check_upstream_failure_is_retryable_503_and_still
         await revoked_certificates(registry, "backend:acme.com")
 
     assert raised.value.status_code == 503
-    assert (
-        "AWID team revocation check upstream unavailable (ConnectError): connect refused"
-        == raised.value.detail
-    )
+    assert raised.value.detail.startswith("AWID team revocation check upstream unavailable (ConnectError).")
+    assert "Retry when the registry is available" in raised.value.detail
+    assert "connect refused" not in raised.value.detail
 
 
 @pytest.mark.asyncio
@@ -276,7 +275,8 @@ async def test_a_stalled_registry_team_key_read_is_retryable_503_and_still_denie
             await registry.aclose()
 
     assert raised.value.status_code == 503
-    assert raised.value.detail == "AWID team key resolution upstream unavailable (TimeoutError)"
+    assert raised.value.detail.startswith("AWID team key resolution upstream unavailable (TimeoutError).")
+    assert "Retry when the registry is available" in raised.value.detail
 
 
 @pytest.mark.asyncio
@@ -290,7 +290,8 @@ async def test_a_stalled_registry_revocation_check_is_retryable_503_and_still_de
             await registry.aclose()
 
     assert raised.value.status_code == 503
-    assert raised.value.detail == "AWID team revocation check upstream unavailable (TimeoutError)"
+    assert raised.value.detail.startswith("AWID team revocation check upstream unavailable (TimeoutError).")
+    assert "Retry when the registry is available" in raised.value.detail
 
 
 @pytest.mark.asyncio

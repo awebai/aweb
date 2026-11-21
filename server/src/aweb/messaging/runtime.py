@@ -14,7 +14,11 @@ if TYPE_CHECKING:
     from aweb.federation.activation import FederationAuthorityActivation
 
 from aweb.agent_wake import AgentWakePublisher, agent_wake_publisher
-from aweb.application_state import RegistryClientUnavailable, application_registry_client
+from aweb.application_state import (
+    RegistryClientUnavailable,
+    application_registry_client,
+    native_application_state,
+)
 from aweb.config import get_public_origin
 from aweb.federation.origins import application_public_origins
 from aweb.federation.transport import delivery_transport
@@ -52,6 +56,7 @@ def messaging_runtime(app_state: State) -> MessagingRuntime:
         registry_client = application_registry_client(app_state)
     except RegistryClientUnavailable:
         registry_client = None
+    app_state = native_application_state(app_state)
     federation_authority = getattr(app_state, "federation_authority", None)
     return MessagingRuntime(
         registry_client=registry_client,
@@ -78,6 +83,8 @@ def messaging_runtime(app_state: State) -> MessagingRuntime:
 
 def application_public_origin(app_state: State | None) -> str:
     """The origin an application names as its own when it sends to another server."""
+    if app_state is not None:
+        app_state = native_application_state(app_state)
     configured = str(getattr(app_state, "public_origin", "") or "").strip()
     if configured:
         return configured

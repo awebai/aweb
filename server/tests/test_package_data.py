@@ -62,6 +62,7 @@ def test_server_distributions_ship_reserved_app_ids_without_vector_copies(tmp_pa
     with zipfile.ZipFile(wheels[0]) as wheel:
         names = wheel.namelist()
         assert "aweb/data/reserved-app-ids-v1.json" in names
+        assert "aweb/migrations/__init__.py" in names
         for attachment_path in (
             "inbound_modes.py",
             "attachments.py",
@@ -91,6 +92,7 @@ def test_server_distributions_ship_reserved_app_ids_without_vector_copies(tmp_pa
         assert any(
             name.endswith("/src/aweb/data/reserved-app-ids-v1.json") for name in names
         )
+        assert any(name.endswith("/src/aweb/migrations/__init__.py") for name in names)
         for attachment_path in (
             "inbound_modes.py",
             "attachments.py",

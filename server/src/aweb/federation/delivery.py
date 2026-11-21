@@ -60,6 +60,7 @@ from aweb.e2ee_messages import encrypted_message_storage_metadata
 from aweb.federation.authority_state import AuthoritySecurityToken
 from aweb.federation.envelope import FederationEnvelope
 from aweb.message_events import FederatedMessageSentContext
+from aweb.hooks import MutationDeliveryOutcome
 from aweb.messaging.kinds import MessageKind
 
 BeforeCommit = Callable[[], Awaitable[None]]
@@ -859,7 +860,9 @@ async def deliver_federation_mutation_outbox(manager, callback, *, limit: int = 
         for row in rows:
             payload = _decode_json(row["payload_json"])
             try:
-                await callback(row["event_type"], payload)
+                outcome = await callback(row["event_type"], payload)
+                if isinstance(outcome, MutationDeliveryOutcome):
+                    outcome.require_delivery()
             except Exception as exc:
                 logger.warning(
                     "Federation mutation outbox delivery failed failure_type=%s",

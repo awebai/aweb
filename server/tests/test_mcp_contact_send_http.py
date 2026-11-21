@@ -10,6 +10,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from aweb.application_state import application_registry_client
 from aweb.federation.activation import build_federation_authority_activation
 from aweb.mcp.server import create_mcp_app
 from messaging_actor_support import (
@@ -115,7 +116,8 @@ async def test_mounted_mcp_send_to_saved_contact(
                     address=bob.address,
                 )
                 await archive_messaging_actor(
-                    env.db, env.redis, team_id=bob.team_id, agent_id=bob.agent_id
+                    env.db, env.redis, team_id=bob.team_id, agent_id=bob.agent_id,
+                    registry_client=application_registry_client(env.app.state),
                 )
                 await controller_client.reassign_address(
                     "example.test", "bob", carol.stable_id, env.namespace_sk

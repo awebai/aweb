@@ -1099,3 +1099,11 @@ These cases do not claim a full signature invalid solely because of a
 noncanonical point encoding. Antares accepted this scope in `0a7453e1`, relayed
 in `7be295e4-3463-473a-8dd5-f9eb522aa145`. The frozen v1 full-signature corpus,
 including mixed-order and small-order single-fault controls, is unchanged.
+
+## Team-control request signatures
+
+`team-control-requests-v1.json` covers the released ordinary-import preimage
+and the separate [unowned controller claim](../unowned-team-claim.md).
+Go and Python check the same frozen bytes and signatures. The real CLI
+producer and Python admission test reuse the claim signer and account from
+the vector with a freshly registered test team and timestamp.

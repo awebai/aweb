@@ -175,14 +175,10 @@ class _UnusedRedis:
 
 
 @pytest.mark.asyncio
-async def test_an_aweb_app_request_shares_one_checkout(shared_test_pool, monkeypatch):
+async def test_an_aweb_app_request_shares_one_checkout(shared_test_pool):
     from aweb.api import create_app
     from aweb.db import DatabaseInfra
 
-    async def _noop_mount(_app, _db_infra, _redis, _registry_client):
-        return None
-
-    monkeypatch.setattr("aweb.api._mount_mcp_app", _noop_mount)
     db_infra = DatabaseInfra()
     await db_infra.initialize(shared_pool=shared_test_pool)
     app = create_app(db_infra=db_infra, redis=_UnusedRedis())

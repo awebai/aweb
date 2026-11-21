@@ -49,6 +49,7 @@ def application_registry_client(state: State) -> RegistryClient:
     return client
 
 
-def native_application_state(state):
+def native_application_state(state: State) -> State:
+    """Return the state owning native services, following the single resource reference."""
     resources = getattr(state, "native_resources", None)
     return resources.api_app.state if resources is not None else state

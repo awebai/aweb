@@ -49,7 +49,8 @@ async def test_inbound_policy_uses_all_current_active_memberships(
     )
     if not active_sender:
         await archive_messaging_actor(
-            manager, env.redis, team_id=sender.team_id, agent_id=sender.agent_id
+            manager, env.redis, team_id=sender.team_id, agent_id=sender.agent_id,
+            registry_client=registry_client,
         )
     selected = recipients[1 if selected_shared else 0]
     recipient = dict(
@@ -142,6 +143,7 @@ async def test_federation_shared_team_membership_stays_locked_until_delivery_com
                     env.redis,
                     team_id=sender.team_id,
                     agent_id=sender.agent_id,
+                    registry_client=registry_client,
                 )
     finally:
         finish.set()
@@ -154,7 +156,8 @@ async def test_federation_shared_team_membership_stays_locked_until_delivery_com
         == "active"
     )
     await archive_messaging_actor(
-        manager, env.redis, team_id=sender.team_id, agent_id=sender.agent_id
+        manager, env.redis, team_id=sender.team_id, agent_id=sender.agent_id,
+        registry_client=registry_client,
     )
     with pytest.raises(FederationAuthorityError) as refused:
         async with manager.transaction() as tx:

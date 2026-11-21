@@ -317,6 +317,9 @@ remains a hidden, warning compatibility alias for `--name`. New requests,
 registry storage, and product language use `name` as the concept and
 `identity_scope=local|global` for scope.
 
+For a fully unowned team, see [how the controller signs a claim and an existing
+member submits it](unowned-team-claim.md).
+
 ### Hosted organization setup (including Omarchy)
 
 A person already signed in can create a managed organization without a namespace
@@ -700,8 +703,9 @@ grant clients use the locator recorded at mint time. Existing short paths and
 explicit `--custody-socket` locators remain unchanged. Explicit paths must still
 fit the platform's Unix socket limit.
 
-The fallback directory is created with mode 0700; its ownership, permissions,
-and absence of symlinks are checked before use. Existing sockets must be
+Every custody socket, whether default, configured or shortened, uses a private
+directory created with mode 0700. Its ownership, permissions and absence of
+symlinks are checked before listening or sending a request. Existing sockets must be
 owner-only, owned by the current user, and not symlinks. Unsafe paths are refused
 rather than repaired or followed. Restart custody and mint a new grant if an
 older grant contains an unusably long explicit locator; resident keys stay in

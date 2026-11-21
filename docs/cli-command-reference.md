@@ -107,6 +107,7 @@ Flags:
 Attach an email address to your CLI-created account
 
 Flags:
+- `--controller-claim-file string Controller-signed claim artifact from aw id team claim-human-request (member credential still required)`
 - `--email string Email address to attach to the current CLI-created account`
 - `-h, --help help for claim-human`
 - `--mock-url string Override the bootstrap base URL for local development`
@@ -1303,6 +1304,7 @@ Subcommands:
 - `accept-invite` Accept a team invite and receive a membership certificate
 - `add-member` Protocol/admin: add a member by signing a team certificate
 - `check-invite` Inspect a saved invite and check its exact attempted certificate online
+- `claim-human-request` Sign a prospective ownership claim with a local team controller key
 - `cleanup-cloud` Protocol/admin: delete aweb Cloud's BYOT projection after registry team deletion
 - `create` Create a hosted sibling team or a customer-controlled AWID team
 - `delete` Protocol/admin: delete an AWID team using the namespace controller key
@@ -1400,6 +1402,23 @@ Inspect a saved invite and check its exact attempted certificate online
 Flags:
 - `-h, --help help for check-invite`
 - `--invite-id string Saved local invite_id to inspect`
+
+## `id team claim-human-request`
+
+### `id team claim-human-request`
+
+Write a controller claim JSON artifact to stdout. No member credential is created.
+Cloud checks the registry's current controller before accepting ownership.
+Submit this file from an existing member home with aw claim-human --controller-claim-file <file>.
+The artifact is valid for five minutes; regenerate it if it expires.
+
+Flags:
+- `--email string Prospective owner's email`
+- `-h, --help help for claim-human-request`
+- `--namespace string Namespace domain`
+- `--team string Team name`
+- `--timestamp string RFC3339 timestamp (defaults to now; five-minute window)`
+- `--username string Prospective owner's username`
 
 ## `id team cleanup-cloud`
 

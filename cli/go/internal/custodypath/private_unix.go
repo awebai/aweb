@@ -5,6 +5,7 @@ package custodypath
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"syscall"
 
 	"github.com/awebai/aw/internal/pathpreflight"
@@ -24,20 +25,18 @@ func ownerOnly(info os.FileInfo) error {
 	return nil
 }
 
-// Prepare creates only the fixed short runtime directory. Existing unsafe paths
-// are refused, never chmodded or followed. Short legacy/explicit paths are unchanged.
+// Prepare creates a private socket directory. Every locator has the same
+// admission rule (docs/identity.md, local resident custody): unsafe existing
+// directories and sockets are refused, never repaired or followed.
 func Prepare(socket string) error {
-	if !IsRuntime(socket) {
-		return nil
-	}
-	return prepareAt(RuntimeDir(), socket)
+	return prepareAt(filepath.Dir(socket), socket)
 }
 
 func prepareAt(dir, socket string) error {
-	if err := pathpreflight.RejectSymlinkedExistingComponents(dir, "custody runtime", pathpreflight.Options{}); err != nil {
+	if err := pathpreflight.RejectSymlinkedExistingComponents(dir, "custody socket directory", pathpreflight.AllowTempAmbientSymlinkPrefix()); err != nil {
 		return err
 	}
-	if err := os.Mkdir(dir, 0o700); err != nil && !os.IsExist(err) {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
 	return checkAt(dir, socket)
@@ -46,14 +45,11 @@ func prepareAt(dir, socket string) error {
 // Check runs before both listen and dial, so a predictable locator cannot route
 // a client to another user's socket, even before this user first starts custody.
 func Check(socket string) error {
-	if !IsRuntime(socket) {
-		return nil
-	}
-	return checkAt(RuntimeDir(), socket)
+	return checkAt(filepath.Dir(socket), socket)
 }
 
 func checkAt(dir, socket string) error {
-	if err := pathpreflight.RejectSymlinkedExistingComponents(dir, "custody runtime", pathpreflight.Options{}); err != nil {
+	if err := pathpreflight.RejectSymlinkedExistingComponents(dir, "custody socket directory", pathpreflight.AllowTempAmbientSymlinkPrefix()); err != nil {
 		return err
 	}
 	info, err := os.Lstat(dir)

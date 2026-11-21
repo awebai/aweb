@@ -36,6 +36,7 @@ __all__ = [
     "REASONS",
     "REQUIRED_FIELDS",
     "TeamCertificateError",
+    "TeamCertificateReason",
     "TeamCertificateStanding",
     "check_team_certificate",
     "decode_team_certificate",
@@ -54,17 +55,32 @@ __all__ = [
 MAX_HEADER_BYTES = 8192
 
 
-# Why check_team_certificate refuses a certificate. Each is a fault of the
-# certificate presented, so each is an invalid credential to the caller.
+class TeamCertificateReason(StrEnum):
+    """Why a team certificate could not be accepted."""
+
+    MALFORMED = "malformed"
+    UNSUPPORTED_VERSION = "unsupported_version"
+    INVALID_FIELD = "invalid_field"
+    MEMBER_KEY_MISMATCH = "member_key_mismatch"
+    BAD_SIGNATURE = "bad_signature"
+    REVOKED = "revoked"
+    UNREGISTERED = "unregistered"
+    CERTIFICATE_BINDING_MISMATCH = "certificate_binding_mismatch"
+    MISSING_SIGNATURE = "missing_signature"
+    INVALID_TEAM_KEY = "invalid_team_key"
+
+
+# The certificate refusal catalog for check_team_certificate. The signature
+# primitive also supplies MISSING_SIGNATURE and INVALID_TEAM_KEY to its callers.
 REASONS = (
-    "malformed",
-    "unsupported_version",
-    "invalid_field",
-    "member_key_mismatch",
-    "bad_signature",
-    "revoked",
-    "unregistered",
-    "certificate_binding_mismatch",
+    TeamCertificateReason.MALFORMED.value,
+    TeamCertificateReason.UNSUPPORTED_VERSION.value,
+    TeamCertificateReason.INVALID_FIELD.value,
+    TeamCertificateReason.MEMBER_KEY_MISMATCH.value,
+    TeamCertificateReason.BAD_SIGNATURE.value,
+    TeamCertificateReason.REVOKED.value,
+    TeamCertificateReason.UNREGISTERED.value,
+    TeamCertificateReason.CERTIFICATE_BINDING_MISMATCH.value,
 )
 
 CERTIFICATE_VERSION = 1
@@ -86,9 +102,9 @@ class TeamCertificateError(ValueError):
     message.
     """
 
-    def __init__(self, reason: str, field: str | None = None) -> None:
-        super().__init__(reason if field is None else f"{reason}: {field}")
-        self.reason = reason
+    def __init__(self, reason: TeamCertificateReason | str, field: str | None = None) -> None:
+        self.reason = TeamCertificateReason(reason)
+        super().__init__(self.reason.value if field is None else f"{self.reason}: {field}")
         self.field = field
 
 
@@ -334,7 +350,7 @@ def check_team_certificate_evidence(
 
 
 def refusal_answer(error: TeamCertificateError) -> tuple[int, str]:
-    """The HTTP status and detail every verifier answers for a refused certificate.
+    """The status and diagnostic for a refused certificate before transport mapping.
 
     A fault of the certificate is an invalid credential: 401, with the reason
     and, for ``invalid_field``, the field's name. A team key from the registry

@@ -157,10 +157,12 @@ async def test_removed_participant_cannot_reuse_session(privacy_app):
     env = privacy_app
     seed = await _chat(env, "alice", ["bob"])
     thread = seed.json()["session_id"]
+    from aweb.application_state import application_registry_client
     from messaging_actor_support import remove_messaging_agent_from_sessions
 
     await remove_messaging_agent_from_sessions(
-        env.db, env.redis, team_id=TEAM, agent_id=env.actors["alice"].id
+        env.db, env.redis, team_id=TEAM, agent_id=env.actors["alice"].id,
+        registry_client=application_registry_client(env.app.state),
     )
     before = await _snapshot(env)
     response = await _chat(env, "alice", ["bob"], session_id=thread)

@@ -5,7 +5,8 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
 import pytest_asyncio
-from test_agents_suggest_alias_http import request_as
+from aweb.embedding import OutboxRecoveryOwnership
+from test_coordination_state_http import request_as
 from test_dashboard_privacy import TEAM, privacy_stack
 from test_agents_suggest_alias_http import _global_actor
 from test_messages_http import (
@@ -31,6 +32,7 @@ async def privacy_app(shared_test_pool, monkeypatch):
     async with privacy_stack(
         shared_test_pool,
         monkeypatch,
+        outbox_recovery=OutboxRecoveryOwnership.HOST,
     ) as env:
         monkeypatch.setattr(events_module, "EVENTS_RECONCILE_INTERVAL", 0.01)
         monkeypatch.setattr(events_module, "EVENTS_HEARTBEAT_INTERVAL", 0.05)
@@ -426,9 +428,7 @@ async def test_current_actionable_chat_uses_per_session_participant_lists(
 
     seen: dict[str, list[str]] = {}
 
-    async def _fake_get_waiting_agents(
-        _redis, session_id: str, participant_dids: list[str]
-    ):
+    async def _fake_get_waiting_agents(_redis, session_id: str, participant_dids: list[str]):
         seen[session_id] = list(participant_dids)
         return list(participant_dids)
 
@@ -458,20 +458,14 @@ async def test_current_actionable_chat_uses_per_session_participant_lists(
     }
     assert all(item["sender_waiting"] is True for item in actionable)
     by_session = {item["session_id"]: item for item in actionable}
-    assert (
-        by_session["11111111-1111-4111-8111-111111111111"]["from_address"]
-        == "acme.com/alice"
-    )
-    assert by_session["11111111-1111-4111-8111-111111111111"][
-        "participant_addresses"
-    ] == ["acme.com/alice"]
-    assert (
-        by_session["22222222-2222-4222-8222-222222222222"]["from_address"]
-        == "frontend~carol"
-    )
-    assert by_session["22222222-2222-4222-8222-222222222222"][
-        "participant_addresses"
-    ] == ["frontend~carol"]
+    assert by_session["11111111-1111-4111-8111-111111111111"]["from_address"] == "acme.com/alice"
+    assert by_session["11111111-1111-4111-8111-111111111111"]["participant_addresses"] == [
+        "acme.com/alice"
+    ]
+    assert by_session["22222222-2222-4222-8222-222222222222"]["from_address"] == "frontend~carol"
+    assert by_session["22222222-2222-4222-8222-222222222222"]["participant_addresses"] == [
+        "frontend~carol"
+    ]
 
 
 @pytest.mark.asyncio
@@ -520,9 +514,7 @@ async def test_current_actionable_chat_includes_from_stable_id_for_current_sende
         uuid4(),
     )
 
-    async def _fake_get_waiting_agents(
-        _redis, _session_id: str, participant_dids: list[str]
-    ):
+    async def _fake_get_waiting_agents(_redis, _session_id: str, participant_dids: list[str]):
         return list(participant_dids)
 
     monkeypatch.setattr(events_module, "get_waiting_agents", _fake_get_waiting_agents)
@@ -608,9 +600,7 @@ async def test_events_stream_emits_only_new_arrival_for_full_mail_window(privacy
 
 
 @pytest.mark.asyncio
-async def test_events_stream_emits_one_mail_event_when_only_unread_count_changes(
-    privacy_app,
-):
+async def test_events_stream_emits_one_mail_event_when_only_unread_count_changes(privacy_app):
     env = privacy_app
     await _global_actor(env, "alice")
     await _global_actor(env, "bob")
@@ -806,9 +796,7 @@ async def test_events_stream_defers_recipient_wait_until_next_poll(
             session_id,
         )
         if sender_waiting:
-            await waiting_module.register_waiting(
-                redis, str(session_id), "did:aw:alice"
-            )
+            await waiting_module.register_waiting(redis, str(session_id), "did:aw:alice")
     await waiting_module.register_waiting(redis, str(engaged), recipient_did)
     stream = await _open_test_event_stream(db, agent_id, monkeypatch, redis=redis)
     try:
@@ -823,9 +811,7 @@ async def test_events_stream_defers_recipient_wait_until_next_poll(
                 initial_chat.append(json.loads(chunk.split("data: ", 1)[1]))
         assert [e["session_id"] for e in initial_chat] == [str(other)]
         assert initial_chat[0]["sender_waiting"] is sender_waiting
-        assert initial_chat[0]["wake_mode"] == (
-            "interrupt" if sender_waiting else "prompt"
-        )
+        assert initial_chat[0]["wake_mode"] == ("interrupt" if sender_waiting else "prompt")
 
         if release_wait == "unregister":
             await waiting_module.unregister_waiting(redis, str(engaged), recipient_did)
@@ -833,9 +819,7 @@ async def test_events_stream_defers_recipient_wait_until_next_poll(
             now[0] += 91  # Beyond the real helper's freshness window, no sleep.
             if sender_waiting:
                 for session_id in (engaged, other):
-                    await waiting_module.register_waiting(
-                        redis, str(session_id), "did:aw:alice"
-                    )
+                    await waiting_module.register_waiting(redis, str(session_id), "did:aw:alice")
 
         resumed = json.loads((await anext(stream)).split("data: ", 1)[1])
         assert resumed["type"] == "actionable_chat"

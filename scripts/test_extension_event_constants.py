@@ -6,9 +6,8 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-SPEC = importlib.util.spec_from_file_location(
-    "extension_docs", ROOT / "scripts/check-extension-docs.py"
-)
+SPEC = importlib.util.spec_from_file_location("extension_docs", ROOT / "scripts/check-extension-docs.py")
+assert SPEC is not None and SPEC.loader is not None
 CHECKER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(CHECKER)
 
