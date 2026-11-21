@@ -21,6 +21,15 @@
   retry with the same key. When the team name is already pinned to another key,
   the key the run generated is removed, and the refusal (`team_name_taken`)
   says to restore the team's current controller key or choose another name.
+  When the registry has the name but cannot be read to say which key holds it
+  (a network error, a 5xx, or a private team refusing the read), the refusal is
+  the new code `team_name_unconfirmed`, not `team_name_taken`. The key the run
+  generated is set aside at `<team key>.unconfirmed`, never used as the team
+  key and never destroyed; the next run whose registry read answers restores it
+  if the registry pins it and removes it if the registry pins another key. Who
+  sees it: released aw users of `aw id team create`, `aw team create`, `aw init`
+  and the onboarding wizard when they create a local team; any command that
+  reads a team key while one is set aside refuses with the same code.
 
 - `aw chat send --session-id`, `aw chat send-and-wait`, `aw chat extend-wait`
   and `aw mail send --conversation-id` continue a conversation with its own
@@ -41,6 +50,92 @@
   `(*awid.Client).NormalizeReceivedSenderTrust`, and
   `(*awid.RegistryResolver).SeedVerifiedHead`, which seeds an anchor for every
   registry; `SeedVerifiedHeadAt` seeds one.
+
+- Security: a mail or chat message signed without a conversation claim (shown
+  as `verified_legacy`) skipped the sender's trust checks: the registry
+  stable-ID check, the TOFU pin and the custody check. A server, or anyone who
+  could write message rows, could therefore show a message signed by another
+  key in a pinned sender's name with no warning tag. Such a message now runs the
+  same checks as any other and keeps `verified_legacy` only when they pass; a
+  failed check shows `[IDENTITY MISMATCH]` or the other warning a current
+  message would get. Honest servers and senders are unaffected. Affected
+  releases: aw-v1.19.0 through aw-v1.36.58 (and aw-v1.36.59-rc.1 to rc.3),
+  channel-v1.4.1 through channel-v1.8.3, and pi-v0.1.1 through pi-v0.5.0. Who
+  sees it: released aw, the Claude Code channel plugin, the pi extension, and
+  OATS sessions, which run those clients.
+
+- A chat message is checked against the conversation it is read from, not only
+  against the one its row names. A message signed for one conversation and
+  served in another shows as failed, however it is signed. Who sees it: `aw
+  chat history`, `aw chat send-and-wait`, `aw chat listen` and `aw chat open`
+  in released aw, and chat wakes in the channel plugin and the pi extension.
+
+- Received mail and chat are verified by one rule, wherever they are read
+  (history, the live stream, the inbox): the same message gets the same status
+  and shows the same sender. A stream row that is not JSON is failed, as one
+  whose proof fields do not decode already was. Who sees it: released aw.
+
+- `aw chat send-and-wait` text output starts with an `Also received:` block
+  listing every other message the wait presented, and so marked read, before
+  the reply. `--json` and the local log already carried them. Who sees it:
+  released aw.
+
+- A message to a teammate's bare alias signs the member the team's agent list
+  names for it as its recipient (to_did and to_stable_id), as the hosted MCP
+  tools already do; the server still routes by the alias. A server refuses
+  (422) a signed recipient that names another member. `bd mail` and `gc mail`
+  to a bare name now refuse when the agent list lookup fails, as `aw mail send`
+  does. Who sees it: released aw, and the bd and gc delegates.
+
+- A send whose recipient key cannot be looked up is refused for every sender
+  ("Nothing was sent: ... send it again when the registry answers"), where a
+  failed lookup used to send without a recipient key unless binding was
+  required. Who sees it: released aw.
+
+- `bd mail inbox` and `bd mail read` show the sender with the verification tag
+  aw mail uses, and every delegate's received-mail log records it. Who sees it:
+  bd users.
+
+- Pin store changes (`known_agents.yaml`, shared by aw and channel-core):
+  - a team member name the roster now gives to another identity keeps the
+    previous holder's pin under a `retired:<name>@<time>` key instead of
+    deleting it; a real domain/name address is never released this way;
+  - a member name is pinned as `team/name` (an earlier `namespace/name` pin is
+    moved);
+  - the anti-rollback checkpoint lives once per (registry, stable ID) in
+    `received_identity_heads`; the pin keeps only the key binding.
+  Who sees it: released aw, the channel plugin and the pi extension, which read
+  and write the same file. aw-v1.36.58 keeps the root fields it does not know
+  when it rewrites the file, so the checkpoint map survives it; a retired key
+  is an address no lookup reaches.
+
+- A pinned sender whose address the registry says no longer exists shows
+  `[verification stale]`, not verified. Another key than the pin, or first
+  contact with no such address, stays `[IDENTITY MISMATCH]`. Within the 30
+  second registry re-read window, a disagreeing cached answer can show a
+  sender that rotated its key as `[IDENTITY MISMATCH]` until the next read.
+  Who sees it: released aw, the channel plugin and the pi extension.
+
+- Chat reads set up decryption as mail reads do: with no local encryption key
+  they print mail's warning and go on, and with an unreadable key state they
+  fail instead of continuing. The chat pending preview, which decrypts without
+  verifying, shows its sender with a `[no verification]` tag. Who sees it:
+  released aw.
+
+- `aw chat send-and-wait` accepts as the reply only a message whose signed
+  identity is the confirmed target's, when the target was confirmed; a
+  participant handle is matched to an address case-insensitively. Who sees it:
+  released aw.
+
+- Marking chat read retries with a watermark only for a server released before
+  server-v1.26.28; every other refusal is shown as itself. Who sees it:
+  released aw and the channel plugin.
+
+- AWID: a certificate's status read answers from the same revocation history
+  as the revocation list, so a revoked certificate id registered again after
+  the team was deleted and created again reads `revoked`, not `active`. Who
+  sees it: anyone reading `/certificates/{id}/status`, including the aweb
+  server's certificate checks.
 
 - Provisioning and creator self-enrollment connect before publishing the member's E2E assertion. A failed connect or unconfirmed publication retains the identity and reports the exact recovery command instead of creation success.
 - On unverified A2A routes, a plain question shared by several live tasks is
