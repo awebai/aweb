@@ -101,7 +101,7 @@ async def test_unreachable_registry_produces_no_controller_authority():
     assert refusal.value.code == "team_control_authority_unavailable"
     assert refusal.value.message == (
         "The team's current controller could not be confirmed. "
-        "Nothing was imported or claimed. Retry when the registry can be read."
+        "Nothing was imported. Retry when the registry can be read."
     )
     assert refusal.value.__cause__ is not None
 
@@ -124,7 +124,7 @@ async def assert_unavailable_response(app):
             "code": TeamControlAuthorityUnavailable.code,
             "message": (
                 "The team's current controller could not be confirmed. "
-                "Nothing was imported or claimed. Retry when the registry can be read."
+                "Nothing was imported. Retry when the registry can be read."
             ),
         }
     }
