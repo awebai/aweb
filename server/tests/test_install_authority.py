@@ -101,8 +101,8 @@ async def db(aweb_cloud_db):
 async def insert_actor(db, *, team_id=TEAM, status="active", removed=False):
     _, public_key = generate_keypair()
     await db.execute(
-        "INSERT INTO aweb.agents (agent_id, team_id, alias, did_key, status, deleted_at) "
-        "VALUES ($1, $2, 'actor', $3, $4, CASE WHEN $5 THEN NOW() END)",
+        "INSERT INTO aweb.agents (agent_id, team_id, alias, did_key, status, deleted_at, inbound_mode) "
+        "VALUES ($1, $2, 'actor', $3, $4, CASE WHEN $5 THEN NOW() END, 'open')",
         ACTOR,
         team_id,
         did_from_public_key(public_key),

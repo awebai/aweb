@@ -5218,10 +5218,10 @@ async def test_chat_pending_counts_mail_and_sessions_for_global_participant(
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (agent_id, team_id, did_aw, did_key, alias, address, did_aw_verified_key)
+        INSERT INTO {{tables.agents}} (agent_id, team_id, did_aw, did_key, alias, address, did_aw_verified_key, inbound_mode)
         VALUES
-            ($1, 'backend:acme.com', 'did:aw:alice', 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4' /* z6MkAliceCurrent */, 'alice', 'acme.com/alice', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4' /* z6MkAliceCurrent */ END),
-            ($2, 'backend:acme.com', 'did:aw:bob', 'did:key:z6MkpaT971acDhK45NmrbxAZj9q2bXnxJFqodxZDH17gZib9' /* z6MkBob */, 'bob', 'acme.com/bob', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkpaT971acDhK45NmrbxAZj9q2bXnxJFqodxZDH17gZib9' /* z6MkBob */ END)
+            ($1, 'backend:acme.com', 'did:aw:alice', 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4' /* z6MkAliceCurrent */, 'alice', 'acme.com/alice', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4' /* z6MkAliceCurrent */ END, 'open'),
+            ($2, 'backend:acme.com', 'did:aw:bob', 'did:key:z6MkpaT971acDhK45NmrbxAZj9q2bXnxJFqodxZDH17gZib9' /* z6MkBob */, 'bob', 'acme.com/bob', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkpaT971acDhK45NmrbxAZj9q2bXnxJFqodxZDH17gZib9' /* z6MkBob */ END, 'open')
         """,
         uuid4(),
         uuid4(),
@@ -5285,10 +5285,10 @@ async def test_chat_routes_use_team_alias_for_same_namespace_sender_without_publ
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (agent_id, team_id, did_aw, did_key, alias, address, did_aw_verified_key)
+        INSERT INTO {{tables.agents}} (agent_id, team_id, did_aw, did_key, alias, address, did_aw_verified_key, inbound_mode)
         VALUES
-            ($1, 'ops:acme.com', 'did:aw:gsk', 'did:key:z6MknRdRNxTS9XiMUVaXK4hfoBJXiUCf1sEWWtsFvc6sPuMJ' /* gsk */, 'gsk', NULL, CASE WHEN NULLIF('did:aw:gsk', '') IS NOT NULL THEN 'did:key:z6MknRdRNxTS9XiMUVaXK4hfoBJXiUCf1sEWWtsFvc6sPuMJ' /* gsk */ END),
-            ($2, 'support:acme.com', 'did:aw:amy', 'did:key:z6MksPqe4mWxnUsYM45sJdppFQdyfxY5uvmzaFBTstqqYiMa' /* amy */, 'amy', NULL, CASE WHEN NULLIF('did:aw:amy', '') IS NOT NULL THEN 'did:key:z6MksPqe4mWxnUsYM45sJdppFQdyfxY5uvmzaFBTstqqYiMa' /* amy */ END)
+            ($1, 'ops:acme.com', 'did:aw:gsk', 'did:key:z6MknRdRNxTS9XiMUVaXK4hfoBJXiUCf1sEWWtsFvc6sPuMJ' /* gsk */, 'gsk', NULL, CASE WHEN NULLIF('did:aw:gsk', '') IS NOT NULL THEN 'did:key:z6MknRdRNxTS9XiMUVaXK4hfoBJXiUCf1sEWWtsFvc6sPuMJ' /* gsk */ END, 'open'),
+            ($2, 'support:acme.com', 'did:aw:amy', 'did:key:z6MksPqe4mWxnUsYM45sJdppFQdyfxY5uvmzaFBTstqqYiMa' /* amy */, 'amy', NULL, CASE WHEN NULLIF('did:aw:amy', '') IS NOT NULL THEN 'did:key:z6MksPqe4mWxnUsYM45sJdppFQdyfxY5uvmzaFBTstqqYiMa' /* amy */ END, 'open')
         """,
         uuid4(),
         uuid4(),
@@ -5719,8 +5719,8 @@ async def test_chat_pending_includes_last_from_stable_id_for_current_sender_key(
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (agent_id, team_id, did_aw, did_key, alias, address, did_aw_verified_key)
-        VALUES ($1, 'backend:acme.com', 'did:aw:alice', 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4' /* z6MkAliceCurrent */, 'alice', 'acme.com/alice', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4' /* z6MkAliceCurrent */ END)
+        INSERT INTO {{tables.agents}} (agent_id, team_id, did_aw, did_key, alias, address, did_aw_verified_key, inbound_mode)
+        VALUES ($1, 'backend:acme.com', 'did:aw:alice', 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4' /* z6MkAliceCurrent */, 'alice', 'acme.com/alice', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4' /* z6MkAliceCurrent */ END, 'open')
         """,
         uuid4(),
     )
@@ -5947,8 +5947,8 @@ async def test_chat_history_includes_sender_stable_identity_for_current_key(
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (agent_id, team_id, did_aw, did_key, alias, address, did_aw_verified_key)
-        VALUES ($1, 'backend:acme.com', 'did:aw:alice', 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4' /* z6MkAliceCurrent */, 'alice', 'acme.com/alice', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4' /* z6MkAliceCurrent */ END)
+        INSERT INTO {{tables.agents}} (agent_id, team_id, did_aw, did_key, alias, address, did_aw_verified_key, inbound_mode)
+        VALUES ($1, 'backend:acme.com', 'did:aw:alice', 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4' /* z6MkAliceCurrent */, 'alice', 'acme.com/alice', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4' /* z6MkAliceCurrent */ END, 'open')
         """,
         uuid4(),
     )
@@ -6135,8 +6135,8 @@ async def test_chat_stream_replay_includes_sender_stable_identity_for_current_ke
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (agent_id, team_id, did_aw, did_key, alias, address, did_aw_verified_key)
-        VALUES ($1, 'backend:acme.com', 'did:aw:alice', 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4' /* z6MkAliceCurrent */, 'alice', 'acme.com/alice', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4' /* z6MkAliceCurrent */ END)
+        INSERT INTO {{tables.agents}} (agent_id, team_id, did_aw, did_key, alias, address, did_aw_verified_key, inbound_mode)
+        VALUES ($1, 'backend:acme.com', 'did:aw:alice', 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4' /* z6MkAliceCurrent */, 'alice', 'acme.com/alice', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4' /* z6MkAliceCurrent */ END, 'open')
         """,
         uuid4(),
     )
@@ -6229,8 +6229,8 @@ async def test_chat_session_list_accepts_global_session_participant(aweb_cloud_d
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (agent_id, team_id, did_aw, did_key, alias, address, did_aw_verified_key)
-        VALUES ($1, 'backend:acme.com', 'did:aw:bob', 'did:key:z6MkpaT971acDhK45NmrbxAZj9q2bXnxJFqodxZDH17gZib9' /* z6MkBob */, 'bob', 'acme.com/bob', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkpaT971acDhK45NmrbxAZj9q2bXnxJFqodxZDH17gZib9' /* z6MkBob */ END)
+        INSERT INTO {{tables.agents}} (agent_id, team_id, did_aw, did_key, alias, address, did_aw_verified_key, inbound_mode)
+        VALUES ($1, 'backend:acme.com', 'did:aw:bob', 'did:key:z6MkpaT971acDhK45NmrbxAZj9q2bXnxJFqodxZDH17gZib9' /* z6MkBob */, 'bob', 'acme.com/bob', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkpaT971acDhK45NmrbxAZj9q2bXnxJFqodxZDH17gZib9' /* z6MkBob */ END, 'open')
         """,
         uuid4(),
     )

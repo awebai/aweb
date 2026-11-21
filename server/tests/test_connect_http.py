@@ -346,8 +346,8 @@ async def test_connect_http_reuses_existing_agent_for_same_alias(connect_app):
     await connect_app.db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, human_name, agent_type, role, status)
-        VALUES ($1, $2, $3, $4, $5, $6, 'global', 'Old Name', 'old-type', 'old-role', 'retired')
+            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, human_name, agent_type, role, status, inbound_mode)
+        VALUES ($1, $2, $3, $4, $5, $6, 'global', 'Old Name', 'old-type', 'old-role', 'retired', 'open')
         """,
         existing_agent_id,
         "backend:acme.com",
@@ -470,8 +470,8 @@ async def test_connect_http_rejects_alias_collision_for_different_agent(connect_
     await connect_app.db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, alias, identity_scope, status)
-        VALUES ($1, $2, $3, $4, 'global', 'active')
+            (agent_id, team_id, did_key, alias, identity_scope, status, inbound_mode)
+        VALUES ($1, $2, $3, $4, 'global', 'active', 'open')
         """,
         first_agent_id,
         "backend:acme.com",
@@ -546,8 +546,8 @@ async def test_connect_http_rejects_alias_change_for_same_agent(connect_app):
     await connect_app.db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, alias, identity_scope, status)
-        VALUES ($1, $2, $3, $4, 'global', 'active')
+            (agent_id, team_id, did_key, alias, identity_scope, status, inbound_mode)
+        VALUES ($1, $2, $3, $4, 'global', 'active', 'open')
         """,
         existing_agent_id,
         "backend:acme.com",
@@ -621,8 +621,8 @@ async def test_connect_http_allows_rejoin_after_soft_deleted_agent(connect_app):
     await connect_app.db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, alias, identity_scope, status, deleted_at)
-        VALUES ($1, $2, $3, $4, 'global', 'deleted', NOW())
+            (agent_id, team_id, did_key, alias, identity_scope, status, deleted_at, inbound_mode)
+        VALUES ($1, $2, $3, $4, 'global', 'deleted', NOW(), 'open')
         """,
         deleted_agent_id,
         "backend:acme.com",

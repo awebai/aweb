@@ -52,8 +52,8 @@ async def test_agent_deleted_cascade_releases_claims_events_and_presence(aweb_cl
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (agent_id, team_id, did_key, alias, identity_scope, role)
-        VALUES ($1, 'backend:acme.com', 'did:key:z6Mkdeleted', 'alice', 'local', 'developer')
+        INSERT INTO {{tables.agents}} (agent_id, team_id, did_key, alias, identity_scope, role, inbound_mode)
+        VALUES ($1, 'backend:acme.com', 'did:key:z6Mkdeleted', 'alice', 'local', 'developer', 'open')
         """,
         agent_id,
     )

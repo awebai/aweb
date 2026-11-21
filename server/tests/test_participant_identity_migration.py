@@ -76,7 +76,7 @@ async def test_upgrade_preserves_threads_duplicate_state_and_signed_message_byte
     # Multiple verified membership rows naming the SAME global identity are OK.
     await db.execute("""INSERT INTO {{tables.teams}} (team_id,namespace,team_name,team_did_key)
         VALUES ('other:else.test','else.test','other','did:key:team')""")
-    await db.execute(f"INSERT INTO {{{{tables.agents}}}} (team_id,alias,did_key,did_aw,did_aw_verified_key)\n        VALUES ('other:else.test','pilot',$1,'{env.pilot_stable}',$1)", env.pilot_did)
+    await db.execute(f"INSERT INTO {{{{tables.agents}}}} (team_id,alias,did_key,did_aw,did_aw_verified_key, inbound_mode)\n        VALUES ('other:else.test','pilot',$1,'{env.pilot_stable}',$1, 'open')", env.pilot_did)
     rows = [(kind, duplicate, await seed_thread(env, kind, duplicate=duplicate))
             for kind in ('mail', 'chat') for duplicate in (False, True)]
     messages_before = [dict(r) for r in await db.fetch_all('SELECT * FROM {{tables.messages}} ORDER BY message_id')]
@@ -143,7 +143,7 @@ async def test_empty_migration_is_noop_and_local_identity_is_untouched(aweb_clou
     db = aweb_cloud_db.aweb_db
     await apply(db)
     await db.execute("INSERT INTO {{tables.teams}} (team_id,namespace,team_name,team_did_key) VALUES ('t:local','local','t','did:key:team')")
-    await db.execute("INSERT INTO {{tables.agents}} (team_id,alias,did_key) VALUES ('t:local','local','did:key:local')")
+    await db.execute("INSERT INTO {{tables.agents}} (team_id,alias,did_key, inbound_mode) VALUES ('t:local','local','did:key:local', 'open')")
     cid = uuid4()
     await db.execute("INSERT INTO {{tables.conversations}} (conversation_id,conversation_type,created_by_did) VALUES ($1,'mail','did:key:local')", cid)
     await db.execute("INSERT INTO {{tables.conversation_participants}} (conversation_id,did,alias,transport_hint) VALUES ($1,'did:key:local','local','local')", cid)
@@ -157,8 +157,8 @@ async def test_ambiguous_verified_key_mapping_aborts_without_partial_changes(mai
     env, db = mail_server, mail_server.db
     await seed_thread(env, 'mail')
     await db.execute("INSERT INTO {{tables.teams}} (team_id,namespace,team_name,team_did_key) VALUES ('t:other','other','t','did:key:team')")
-    await db.execute("""INSERT INTO {{tables.agents}} (team_id,alias,did_key,did_aw,did_aw_verified_key)
-        VALUES ('t:other','other',$1,'did:aw:someoneelse',$1)""", env.pilot_did)
+    await db.execute("""INSERT INTO {{tables.agents}} (team_id,alias,did_key,did_aw,did_aw_verified_key, inbound_mode)
+        VALUES ('t:other','other',$1,'did:aw:someoneelse',$1, 'open')""", env.pilot_did)
     before = [dict(r) for r in await db.fetch_all('SELECT * FROM {{tables.conversation_participants}} ORDER BY did')]
     with pytest.raises(QueryError, match='ambiguous verified participant'):
         await apply(db)
