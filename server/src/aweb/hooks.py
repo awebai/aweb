@@ -29,7 +29,6 @@ class MutationDeliveryStage(StrEnum):
     CONTEXT_ENRICHMENT = "context_enrichment"
     AGENT_CASCADE = "agent_cascade"
     TASK_STATUS_CASCADE = "task_status_cascade"
-    TASK_CLAIM_RELEASE = "task_claim_release"
     PUBLICATION = "publication"
 
 

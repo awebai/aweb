@@ -1192,16 +1192,15 @@ claim. The release does not depend on the mutation
 hook; the hook only announces it, as `task.unclaimed` workspace and team
 events. Answering a task (`POST /v1/tasks/{ref}/answer`) and cancelling an app
 request close the task and release its claims the same way. Closing a parent
-closes its open descendants without changing their claims, and deleting a task
-releases its claims through the `task.deleted` hook cascade rather than in the
-deleting transaction. If deletion commits but the hook leaves claims held or
-cleanup cannot be verified, the response is `503 task_deleted_cleanup_pending`
-and says that deletion committed. Retrying the same team-scoped DELETE, by ID
-or task reference, retries the cleanup on the same deleted row. A notification
-failure after claims were released is reported separately as
-`task_deleted_notification_failed`; it does not mean the claims remain held.
-An embedding host holding events for an outer transaction retains the explicit
-`DEFERRED` outcome until that transaction commits.
+also closes its open descendants and releases their claims in the same
+transaction. The close takes all affected task row locks before any claimant
+workspace lock. Deleting a task releases its claims in the delete transaction.
+After commit, the status and delete hooks announce the recorded releases.
+Retrying a team-scoped DELETE by ID or task reference returns the same deleted
+task identity. An announcement failure can still return
+`503 task_deleted_notification_failed` after deletion and claim release have
+committed. An embedding host holding events for an outer transaction retains
+the explicit deferred notification status until that transaction commits.
 
 Task claims have no time-based expiry or implicit lease in v1.
 `GET /v1/tasks/active` includes `owner_last_seen_at` for claim-backed tasks.

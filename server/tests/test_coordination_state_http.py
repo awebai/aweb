@@ -261,7 +261,7 @@ async def test_root_activity_without_a_redis_beat_is_visible_on_every_http_reade
 
 
 @pytest.mark.asyncio
-async def test_committed_deletion_reports_claim_release_failure_and_retries(
+async def test_deletion_rolls_back_on_claim_release_failure_and_retries(
     privacy_app,
 ):
     env = privacy_app
@@ -293,10 +293,8 @@ async def test_committed_deletion_reports_claim_release_failure_and_retries(
     """)
     try:
         deleted = await request_as(env, alias="alice", method="DELETE", path=path)
-        assert deleted.status_code == 503, deleted.text
-        assert deleted.json()["detail"]["code"] == "task_deleted_cleanup_pending"
-        assert deleted.json()["detail"]["task_id"] == created.json()["task_id"]
-        assert await env.db.fetch_value(
+        assert deleted.status_code == 500, deleted.text
+        assert not await env.db.fetch_value(
             "SELECT deleted_at IS NOT NULL FROM {{tables.tasks}} WHERE task_id=$1",
             UUID(created.json()["task_id"]),
         )
@@ -316,6 +314,10 @@ async def test_committed_deletion_reports_claim_release_failure_and_retries(
     retried = await request_as(env, alias="alice", method="DELETE", path=path)
     assert retried.status_code == 200, retried.text
     assert retried.json()["task_id"] == created.json()["task_id"]
+    assert await env.db.fetch_value(
+        "SELECT deleted_at IS NOT NULL FROM {{tables.tasks}} WHERE task_id=$1",
+        UUID(retried.json()["task_id"]),
+    )
     assert (
         await env.db.fetch_value(
             "SELECT COUNT(*) FROM {{tables.task_claims}} WHERE team_id=$1 AND task_ref=$2",
@@ -324,6 +326,16 @@ async def test_committed_deletion_reports_claim_release_failure_and_retries(
         )
         == 0
     )
+    repeated = await request_as(env, alias="alice", method="DELETE", path=path)
+    assert repeated.status_code == 200, repeated.text
+    assert repeated.json() == retried.json()
+    contexts = [
+        ctx for event_type, ctx in env.dispatched
+        if event_type == "task.deleted" and ctx["task_ref"] == ref
+    ]
+    assert [ctx["released_claim_workspace_ids"] for ctx in contexts] == [
+        [str(env.actors["alice"].workspace)], []
+    ]
 
 
 @pytest.mark.asyncio

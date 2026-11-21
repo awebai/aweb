@@ -158,9 +158,14 @@ class TaskDeletedContext(CoordinationContext):
 
     event_type: ClassVar[MutationEventType] = MutationEventType.TASK_DELETED
     task_id: str | None | AbsentContextField = AbsentContextField.ABSENT
+    team_id: str | None | AbsentContextField = AbsentContextField.ABSENT
     task_ref: str | None | AbsentContextField = AbsentContextField.ABSENT
+    title: str | None | AbsentContextField = AbsentContextField.ABSENT
     actor_agent_id: str | None | AbsentContextField = AbsentContextField.ABSENT
     actor_did_aw: str | None | AbsentContextField = AbsentContextField.ABSENT
+    released_claim_workspace_ids: list[str] | AbsentContextField = (
+        AbsentContextField.ABSENT
+    )
 
 
 @dataclass(frozen=True, kw_only=True)

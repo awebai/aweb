@@ -16,7 +16,7 @@ from aweb.app_credentials import (
     AppCredential,
     verify_app_credential,
 )
-from aweb.claims import release_task_claims_on
+from aweb.claims import lock_task_claim_workspaces_on, release_task_claims_on
 from aweb.service_errors import (
     ConflictError,
     ForbiddenError,
@@ -565,7 +565,7 @@ async def cancel_installation_requests_on(
 ):
     """Cancel requests through the cleanup seam under its installation row lock."""
     rows = await tx.fetch_all(
-        """SELECT t.task_id, r.external_request_id FROM {{tables.task_app_requests}} r
+        """SELECT t.task_id, t.task_ref_suffix, r.external_request_id FROM {{tables.task_app_requests}} r
            JOIN {{tables.tasks}} t ON t.task_id = r.task_id
            WHERE r.team_id = $1 AND r.app_id = $2 AND r.installation_id = $3
              AND t.status <> 'closed' AND t.deleted_at IS NULL
@@ -574,6 +574,16 @@ async def cancel_installation_requests_on(
         app_id,
         installation_id,
     )
+    if rows:
+        slug = _get_team_slug(team_id)
+        await lock_task_claim_workspaces_on(
+            tx,
+            team_id=team_id,
+            task_refs=[
+                format_task_ref(team_slug=slug, task_ref_suffix=row["task_ref_suffix"])
+                for row in rows
+            ],
+        )
     for row in rows:
         await cancel_app_task_on(
             tx,

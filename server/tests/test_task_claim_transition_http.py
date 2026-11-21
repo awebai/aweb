@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 import pytest
 import pytest_asyncio
 
+from aweb.claims import lock_task_claim_workspaces_on
 from aweb.embedding import OutboxRecoveryOwnership
 from aweb.events import team_events_channel_name
 from test_coordination_state_http import request_as
@@ -23,87 +24,98 @@ async def privacy_app(shared_test_pool, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_retained_deleted_claim_is_locked_but_never_reacquired(privacy_app):
-    # docs/aweb-sot.md:1155–1165 and the retained-path cleanup contract.
+async def test_parent_closure_waits_for_child_before_locking_their_shared_workspace(
+    privacy_app,
+):
     env = privacy_app
-    created = await request_as(
-        env,
-        alias="alice",
-        method="POST",
-        path="/v1/tasks",
-        payload={"title": "Retained claim"},
+    parent = await request_as(
+        env, alias="alice", method="POST", path="/v1/tasks",
+        payload={"title": "Parent lock order"},
     )
-    assert created.status_code == 200, created.text
-    ref = created.json()["task_ref"]
-    path = f"/v1/tasks/{ref}"
-    claimed = await request_as(
-        env, alias="alice", method="PATCH", path=path, payload={"status": "in_progress"}
+    assert parent.status_code == 200, parent.text
+    parent_ref = parent.json()["task_ref"]
+    child = await request_as(
+        env, alias="alice", method="POST", path="/v1/tasks",
+        payload={"title": "Child lock order", "parent_task_id": parent_ref},
     )
-    assert claimed.status_code == 200, claimed.text
-    old_workspace = env.actors["alice"].workspace
-    claim_before = await env.db.fetch_one(
-        "SELECT * FROM {{tables.task_claims}} WHERE team_id=$1 AND task_ref=$2",
-        TEAM,
-        ref,
-    )
-    # Retained claims on deleted workspaces are supported cleanup input. This
-    # changes lifecycle state, never authentication or the claim decision.
-    await env.db.execute(
-        "UPDATE {{tables.workspaces}} SET deleted_at=NOW() WHERE workspace_id=$1",
-        old_workspace,
-    )
-    workspace_before = await env.db.fetch_one(
-        "SELECT * FROM {{tables.workspaces}} WHERE workspace_id=$1", old_workspace
-    )
-    refused = await request_as(
-        env, alias="alice", method="PATCH", path=path, payload={"status": "in_progress"}
-    )
-    assert refused.status_code == 409, refused.text
-    assert "already in progress" in refused.json()["detail"]
-    assert dict(
-        await env.db.fetch_one(
-            "SELECT * FROM {{tables.workspaces}} WHERE workspace_id=$1", old_workspace
+    assert child.status_code == 200, child.text
+    child_id = UUID(child.json()["task_id"])
+    child_ref = child.json()["task_ref"]
+    for ref in (parent_ref, child_ref):
+        claimed = await request_as(
+            env, alias="alice", method="PATCH", path=f"/v1/tasks/{ref}",
+            payload={"status": "in_progress"},
         )
-    ) == dict(workspace_before)
-    assert dict(
-        await env.db.fetch_one(
-            "SELECT * FROM {{tables.task_claims}} WHERE team_id=$1 AND task_ref=$2",
-            TEAM,
-            ref,
-        )
-    ) == dict(claim_before)
+        assert claimed.status_code == 200, claimed.text
 
-    # Explicit release still includes the retained deleted path in its lock set.
-    reopened = await request_as(
-        env, alias="bob", method="PATCH", path=path, payload={"status": "open"}
-    )
-    assert reopened.status_code == 200, reopened.text
-    assert (
-        await env.db.fetch_value(
-            "SELECT COUNT(*) FROM {{tables.task_claims}} WHERE team_id=$1 AND task_ref=$2",
-            TEAM,
-            ref,
-        )
-        == 0
-    )
-    connected = await request_as(
-        env, alias="alice", method="POST", path="/v1/connect", payload={}
-    )
-    assert connected.status_code == 200, connected.text
-    live_workspace = UUID(connected.json()["workspace_id"])
-    assert live_workspace != old_workspace
-    assert connected.json()["agent_id"] == str(env.actors["alice"].id)
-    taken = await request_as(
-        env, alias="alice", method="PATCH", path=path, payload={"status": "in_progress"}
-    )
-    assert taken.status_code == 200, taken.text
-    owner = await env.db.fetch_one(
-        "SELECT workspace_id, alias FROM {{tables.task_claims}} WHERE team_id=$1 AND task_ref=$2",
+    pending = None
+    try:
+        async with env.db.transaction() as child_tx:
+            await child_tx.fetch_value(
+                "SELECT task_id FROM {{tables.tasks}} WHERE task_id=$1 FOR UPDATE",
+                child_id,
+            )
+            pending = asyncio.create_task(
+                request_as(
+                    env, alias="bob", method="PATCH", path=f"/v1/tasks/{parent_ref}",
+                    payload={"status": "closed"},
+                )
+            )
+            async with asyncio.timeout(4):
+                # PostgreSQL supplies the barrier. Only continue when the
+                # parent transaction actually waits on the held child row.
+                while not await child_tx.fetch_value("""
+                    SELECT EXISTS (
+                        SELECT 1 FROM pg_stat_activity a
+                        WHERE a.datname = current_database()
+                          AND pg_backend_pid() = ANY(pg_blocking_pids(a.pid))
+                    )
+                """):
+                    assert not pending.done()
+                locked = await lock_task_claim_workspaces_on(
+                    child_tx, team_id=TEAM, task_refs=[child_ref]
+                )
+                assert [row["workspace_id"] for row in locked] == [
+                    env.actors["alice"].workspace
+                ]
+                await child_tx.execute(
+                    "UPDATE {{tables.tasks}} SET title=$2 WHERE task_id=$1",
+                    child_id,
+                    "Child write committed before closing",
+                )
+        response = await pending
+        assert response.status_code == 200, response.text
+        assert response.json()["auto_closed"] == [{
+            "task_id": str(child_id),
+            "task_ref": child_ref,
+            "title": "Child write committed before closing",
+        }]
+    finally:
+        if pending is not None and not pending.done():
+            pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
+
+    assert await env.db.fetch_value(
+        "SELECT status FROM {{tables.tasks}} WHERE task_id=$1", child_id
+    ) == "closed"
+    assert not await env.db.fetch_all(
+        "SELECT task_ref FROM {{tables.task_claims}} WHERE team_id=$1 AND task_ref=ANY($2::text[])",
         TEAM,
-        ref,
+        [parent_ref, child_ref],
     )
-    assert owner["workspace_id"] == live_workspace
-    assert owner["alias"] == "alice"
+    assert await env.db.fetch_value(
+        "SELECT focus_task_ref FROM {{tables.workspaces}} WHERE workspace_id=$1",
+        env.actors["alice"].workspace,
+    ) is None
+    releases = {
+        ctx["task_ref"]: ctx["released_claim_workspace_ids"]
+        for name, ctx in env.dispatched
+        if name == "task.status_changed" and ctx["new_status"] == "closed"
+    }
+    assert releases == {
+        parent_ref: [str(env.actors["alice"].workspace)],
+        child_ref: [str(env.actors["alice"].workspace)],
+    }
 
 
 @pytest.mark.asyncio

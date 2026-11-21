@@ -13,7 +13,7 @@ from uuid import UUID
 
 from redis.asyncio import Redis
 
-from .claims import fetch_workspace_aliases, release_task_claims
+from .claims import fetch_workspace_aliases
 from .event_types import MutationEventType
 from .events import (
     ChatMessageEvent,
@@ -205,8 +205,7 @@ def create_mutation_handler(redis: Redis, db_infra: DatabaseInfrastructure) -> M
             logger.exception("Mutation context enrichment failed")
             failures.append(MutationDeliveryStage.CONTEXT_ENRICHMENT)
 
-        # Side-effect hooks (cascades that modify state).
-        # These run before SSE translation and do NOT prevent SSE publication.
+        # Additional event publication and the legacy agent cleanup path.
         if event_type == MutationEventType.AGENT_DELETED:
             try:
                 await _cascade_agent_deleted(redis, db_infra, context)
@@ -223,10 +222,12 @@ def create_mutation_handler(redis: Redis, db_infra: DatabaseInfrastructure) -> M
 
         if event_type == MutationEventType.TASK_DELETED:
             try:
-                await _cascade_task_deleted(redis, db_infra, context)
-            except MutationDeliveryFailed as exc:
-                logger.error("Failed to cascade task.deleted", exc_info=True)
-                failures.extend(exc.outcome.failed_stages)
+                await _publish_task_unclaims(
+                    redis, db_infra, context, team_id=context.get("team_id")
+                )
+            except Exception:
+                logger.error("Failed to publish task.deleted claim releases", exc_info=True)
+                failures.append(MutationDeliveryStage.PUBLICATION)
 
         try:
             if event_type in INTENTIONALLY_UNPUBLISHED_EVENTS:
@@ -376,32 +377,7 @@ async def _cascade_task_status_changed(
             ),
         )
     else:
-        claimant_ids = [
-            str(cid) for cid in context.get("released_claim_workspace_ids") or []
-        ]
-        if claimant_ids:
-            claimant_aliases = await fetch_workspace_aliases(
-                db_infra, team_id, claimant_ids
-            )
-            for cid in claimant_ids:
-                await publish_event(
-                    redis,
-                    TaskUnclaimedEvent(
-                        workspace_id=cid,
-                        task_ref=task_ref,
-                        alias=claimant_aliases.get(cid, ""),
-                        title=title,
-                    ),
-                )
-                await publish_team_event(
-                    redis,
-                    TeamTaskUnclaimedEvent(
-                        team_id=team_id,
-                        task_ref=task_ref,
-                        alias=claimant_aliases.get(cid, ""),
-                        title=title or "",
-                    ),
-                )
+        await _publish_task_unclaims(redis, db_infra, context, team_id=team_id)
 
     if actor_workspace_id:
         await publish_event(
@@ -418,76 +394,32 @@ async def _cascade_task_status_changed(
         )
 
 
-async def _cascade_task_deleted(
-    redis: Redis, db_infra: "DatabaseInfrastructure", context: dict
+async def _publish_task_unclaims(
+    redis: Redis, db_infra: "DatabaseInfrastructure", context: dict, *, team_id: str
 ) -> None:
-    """Release all claims on a deleted task and publish unclaim events.
-
-    The task.deleted hook provides {task_id, task_ref}; use task_id as the
-    source of truth for team lookup so colliding task refs cannot release
-    claims in another team.
-    """
-    task_id = context.get("task_id", "").strip()
-    task_ref = context.get("task_ref", "").strip()
-    if not task_id or not task_ref:
+    """Publish the releases recorded by the committed task transaction."""
+    task_ref = context.get("task_ref") or ""
+    claimant_ids = context.get("released_claim_workspace_ids") or []
+    if not task_ref or not claimant_ids:
         return
-
-    try:
-        aweb_db = db_infra.get_manager("aweb")
-        task_row = await aweb_db.fetch_one(
-            "SELECT team_id FROM {{tables.tasks}} WHERE task_id = $1",
-            task_id,
+    if not team_id:
+        raise ValueError("Committed claim releases require a team_id")
+    claimant_aliases = await fetch_workspace_aliases(db_infra, team_id, claimant_ids)
+    title = context.get("title")
+    for workspace_id in claimant_ids:
+        alias = claimant_aliases.get(workspace_id, "")
+        await publish_event(
+            redis,
+            TaskUnclaimedEvent(
+                workspace_id=workspace_id, task_ref=task_ref, alias=alias, title=title
+            ),
         )
-        if task_row is None:
-            return
-
-        team_id = str(task_row["team_id"])
-        claimant_ids = await release_task_claims(
-            db_infra,
-            team_id=team_id,
-            task_ref=task_ref,
+        await publish_team_event(
+            redis,
+            TeamTaskUnclaimedEvent(
+                team_id=team_id, task_ref=task_ref, alias=alias, title=title or ""
+            ),
         )
-
-    except Exception as exc:
-        raise MutationDeliveryFailed(
-            MutationDeliveryOutcome(
-                status=MutationDeliveryStatus.FAILED,
-                failed_stages=(MutationDeliveryStage.TASK_CLAIM_RELEASE,),
-            )
-        ) from exc
-
-    try:
-        if claimant_ids:
-            claimant_aliases = await fetch_workspace_aliases(
-                db_infra, team_id, claimant_ids
-            )
-            for cid in claimant_ids:
-                await publish_event(
-                    redis,
-                    TaskUnclaimedEvent(
-                        workspace_id=cid,
-                        task_ref=task_ref,
-                        alias=claimant_aliases.get(cid, ""),
-                        title=context.get("title"),
-                    ),
-                )
-                await publish_team_event(
-                    redis,
-                    TeamTaskUnclaimedEvent(
-                        team_id=team_id,
-                        task_ref=task_ref,
-                        alias=claimant_aliases.get(cid, ""),
-                        title=str(context.get("title") or ""),
-                    ),
-                )
-
-    except Exception as exc:
-        raise MutationDeliveryFailed(
-            MutationDeliveryOutcome(
-                status=MutationDeliveryStatus.FAILED,
-                failed_stages=(MutationDeliveryStage.PUBLICATION,),
-            )
-        ) from exc
 
 
 async def _alias_for(redis: Redis, workspace_id: str) -> str:
