@@ -85,10 +85,8 @@ func (s *TeamState) validate() error {
 		if membership.TeamID == "" {
 			return errors.New("teams.yaml membership is missing team_id")
 		}
-		if membership.TeamKey != nil {
-			if err := membership.TeamKey.Validate(); err != nil {
-				return fmt.Errorf("teams.yaml membership %q: %w", membership.TeamID, err)
-			}
+		if err := membership.validateTeamKey(); err != nil {
+			return err
 		}
 
 		if membership.CertPath == "" {
@@ -102,6 +100,15 @@ func (s *TeamState) validate() error {
 	}
 	if s.ActiveMembership() == nil {
 		return fmt.Errorf("teams.yaml active_team %q is not present in memberships", s.ActiveTeam)
+	}
+	return nil
+}
+
+func (m TeamMembership) validateTeamKey() error {
+	if m.TeamKey != nil {
+		if err := m.TeamKey.Validate(); err != nil {
+			return fmt.Errorf("teams.yaml membership %q: %w", m.TeamID, err)
+		}
 	}
 	return nil
 }
@@ -214,6 +221,11 @@ func (s *TeamState) UnmarshalYAML(value *yaml.Node) error {
 	if err := value.Decode(&raw); err != nil {
 		return err
 	}
+	*s = raw.normalizedTeamState()
+	return s.validate()
+}
+
+func (raw teamStateYAML) normalizedTeamState() TeamState {
 	memberships := make([]TeamMembership, 0, len(raw.Memberships))
 	for _, membership := range raw.Memberships {
 		memberships = append(memberships, TeamMembership{
@@ -226,12 +238,12 @@ func (s *TeamState) UnmarshalYAML(value *yaml.Node) error {
 			AwebURL:     membership.AwebURL,
 		})
 	}
-	*s = TeamState{
+	state := TeamState{
 		ActiveTeam:  raw.ActiveTeam,
 		Memberships: memberships,
 	}
-	s.normalize()
-	return s.validate()
+	state.normalize()
+	return state
 }
 
 func (s TeamState) MarshalYAML() (any, error) {

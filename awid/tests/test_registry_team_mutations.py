@@ -252,13 +252,16 @@ async def test_registry_delete_requires_revocation_then_removes_team_and_cached_
             NAME,
         )
         assert row["deleted_at"] is not None
-        assert (
-            await db.fetch_value(
-                "SELECT count(*) FROM {{tables.team_certificates}} WHERE team_uuid = $1",
-                row["team_uuid"],
-            )
-            == 0
-        )
+        # The revoked certificate outlives the team, so the revocation still
+        # applies if the team name is created again.
+        assert await db.fetch_value(
+            "SELECT count(*) FROM {{tables.team_certificates}} WHERE team_uuid = $1 AND revoked_at IS NOT NULL",
+            row["team_uuid"],
+        ) == 1
+        assert await db.fetch_value(
+            "SELECT count(*) FROM {{tables.team_certificates}} WHERE team_uuid = $1 AND revoked_at IS NULL",
+            row["team_uuid"],
+        ) == 0
         with pytest.raises(RegistryError) as missing:
             await registry.delete_team(DOMAIN, NAME, controller_identity[0])
         assert missing.value.status_code == 404

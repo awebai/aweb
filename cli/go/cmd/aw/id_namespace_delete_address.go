@@ -86,7 +86,7 @@ func executeIDNamespaceDeleteAddress(ctx context.Context, opts idNamespaceDelete
 	if err != nil {
 		return idNamespaceDeleteAddressOutput{}, err
 	}
-	registryURL, err := registry.DiscoverRegistry(ctx, domain)
+	registryURL, err := resolveRegistryAuthority(ctx, registryAuthorityRequest{Kind: registryDomainRoute, Registry: registry, Domain: domain})
 	if err != nil {
 		return idNamespaceDeleteAddressOutput{}, fmt.Errorf("discover registry for %s: %w", domain, err)
 	}
@@ -127,7 +127,7 @@ func loadVerifiedNamespaceControllerKey(ctx context.Context, domain, registryOve
 	if err != nil {
 		return nil, "", err
 	}
-	registryURL, err := registry.DiscoverRegistry(ctx, domain)
+	registryURL, err := resolveRegistryAuthority(ctx, registryAuthorityRequest{Kind: registryDomainRoute, Registry: registry, Domain: domain})
 	if err != nil {
 		return nil, "", fmt.Errorf("discover registry for %s: %w", domain, err)
 	}

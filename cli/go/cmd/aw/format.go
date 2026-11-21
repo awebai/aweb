@@ -335,6 +335,28 @@ func formatMailShowResponse(resp *awid.InboxResponse, notice string) string {
 
 // --- chat ---
 
+// writePresentedMessages writes the message events a wait presented, and so
+// marked read, other than shown, the message the result itself shows.
+func writePresentedMessages(sb *strings.Builder, result *chat.SendResult, shown *chat.Event) {
+	showsMessage := result.Status == "replied" || result.Status == "sender_left" || result.Status == "pending"
+	var lines []string
+	for i := range result.Events {
+		ev := &result.Events[i]
+		if ev.Type != "message" || (showsMessage && ev == shown) {
+			continue
+		}
+		lines = append(lines, formatChatEventLine(*ev))
+	}
+	if len(lines) == 0 {
+		return
+	}
+	sb.WriteString("Also received:\n")
+	for _, line := range lines {
+		sb.WriteString("  " + line)
+	}
+	sb.WriteString("\n")
+}
+
 func formatChatSend(v any) string {
 	result := v.(*chat.SendResult)
 	var sb strings.Builder
@@ -378,6 +400,7 @@ func formatChatSend(v any) string {
 		return nil
 	}
 	tagEvent := pickTagEvent()
+	writePresentedMessages(&sb, result, tagEvent)
 
 	timestamp := ""
 	tags := ""

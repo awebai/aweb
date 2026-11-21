@@ -43,7 +43,9 @@ func TestChatMarkReadFallsBackToOldServerWatermarkSemantics(t *testing.T) {
 			if _, exists := body["up_to_message_id"]; exists {
 				t.Fatal("exact request unexpectedly included up_to_message_id")
 			}
-			http.Error(w, "old validation shape", http.StatusUnprocessableEntity)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			_, _ = w.Write([]byte(olderServerWatermarkRefusal))
 			return
 		}
 
@@ -153,7 +155,9 @@ func TestChatMarkReadMalformedIDReachesServerWithoutFallback(t *testing.T) {
 	}
 }
 
-func TestChatMarkReadFailedFallbackPreservesOriginal4xx(t *testing.T) {
+// A watermark retry that fails returns the older server's original answer,
+// not the retry's.
+func TestChatMarkReadFailedFallbackPreservesTheOlderServersAnswer(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if serveUnadvertisedHealth(w, r) {
@@ -161,7 +165,9 @@ func TestChatMarkReadFailedFallbackPreservesOriginal4xx(t *testing.T) {
 		}
 		calls++
 		if calls == 1 {
-			http.Error(w, "original permission error", http.StatusForbidden)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			_, _ = w.Write([]byte(olderServerWatermarkRefusal))
 			return
 		}
 		http.Error(w, "fallback failed", http.StatusInternalServerError)
@@ -172,17 +178,17 @@ func TestChatMarkReadFailedFallbackPreservesOriginal4xx(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.ChatMarkRead(context.Background(), "session-denied", &ChatMarkReadRequest{MessageIDs: chatMarkReadTestIDs()[:1]})
+	_, err = client.ChatMarkRead(context.Background(), "session-old", &ChatMarkReadRequest{MessageIDs: chatMarkReadTestIDs()[:1]})
 	if err == nil {
-		t.Fatal("expected original 4xx")
+		t.Fatal("expected the original refusal")
 	}
 	status, ok := HTTPStatusCode(err)
-	if !ok || status != http.StatusForbidden {
-		t.Fatalf("status=(%d,%v), want original 403", status, ok)
+	if !ok || status != http.StatusUnprocessableEntity {
+		t.Fatalf("status=(%d,%v), want the original 422", status, ok)
 	}
 	body, bodyOK := HTTPErrorBody(err)
-	if !bodyOK || !strings.Contains(body, "original permission error") || strings.Contains(body, "fallback failed") {
-		t.Fatalf("error=%q, want only original failure", err)
+	if !bodyOK || !strings.Contains(body, "up_to_message_id") || strings.Contains(body, "fallback failed") {
+		t.Fatalf("error=%q, want only the original refusal", err)
 	}
 	if calls != 2 {
 		t.Fatalf("requests=%d, want one exact request and one fallback", calls)

@@ -343,7 +343,7 @@
       }
     },
     {
-      "name": "ephemeral-sender-clears-existing-pin",
+      "name": "ephemeral-sender-leaves-the-pin-at-a-real-address",
       "initial_status": "verified",
       "raw_address": "alice.example.com/alice",
       "trust_address": "alice.example.com/alice",
@@ -372,8 +372,17 @@
       },
       "expected_status": "verified",
       "expected_pin_store_after": {
-        "pins": {},
-        "addresses": {}
+        "pins": {
+          "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs": {
+            "address": "alice.example.com/alice",
+            "first_seen": "2026-04-01T00:00:00Z",
+            "last_seen": "2026-04-01T00:00:00Z",
+            "server": ""
+          }
+        },
+        "addresses": {
+          "alice.example.com/alice": "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs"
+        }
       }
     },
     {
@@ -536,6 +545,74 @@
         },
         "addresses": {
           "alice.example.com/alice": "did:key:z6Mkhow21JWUi49xXiMVnHL18JjZf5dYMSmSwPoHfWU4VN5q"
+        }
+      }
+    },
+    {
+      "name": "legacy-format-mismatched-did-key-rejects",
+      "initial_status": "verified_legacy",
+      "raw_address": "alice.example.com/alice",
+      "trust_address": "alice.example.com/alice",
+      "from_did": "did:key:z6Mkhow21JWUi49xXiMVnHL18JjZf5dYMSmSwPoHfWU4VN5q",
+      "from_stable_id": "",
+      "rotation_announcement": null,
+      "replacement_announcement": null,
+      "agent_meta": {
+        "lifetime": "persistent",
+        "custody": "self"
+      },
+      "registry_confirmed_current_key": false,
+      "registry_names_key": false,
+      "pin_store_before": {
+        "pins": {
+          "did:key:z6Mkjut1mue4XRWDrNkvEuxc2MLuB9cN8LpXa5LfK87W5JKb": {
+            "address": "alice.example.com/alice",
+            "first_seen": "2026-04-01T00:00:00Z",
+            "last_seen": "2026-04-01T00:00:00Z",
+            "server": ""
+          }
+        },
+        "addresses": {
+          "alice.example.com/alice": "did:key:z6Mkjut1mue4XRWDrNkvEuxc2MLuB9cN8LpXa5LfK87W5JKb"
+        }
+      },
+      "expected_status": "identity_mismatch",
+      "expected_pin_store_after": null
+    },
+    {
+      "name": "legacy-format-first-contact-writes-pin-and-stays-legacy",
+      "initial_status": "verified_legacy",
+      "raw_address": "alice.example.com/alice",
+      "trust_address": "alice.example.com/alice",
+      "from_did": "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs",
+      "from_stable_id": "",
+      "rotation_announcement": null,
+      "replacement_announcement": null,
+      "agent_meta": {
+        "lifetime": "persistent",
+        "custody": "self"
+      },
+      "registry_confirmed_current_key": false,
+      "registry_names_key": true,
+      "pin_store_before": {
+        "pins": {},
+        "addresses": {}
+      },
+      "expected_status": "verified_legacy",
+      "expected_pin_store_after": {
+        "pins": {
+          "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs": {
+            "address": "alice.example.com/alice",
+            "stable_id": "",
+            "did_key": "",
+            "first_seen": "$ANY_TIMESTAMP",
+            "last_seen": "$ANY_TIMESTAMP",
+            "server": "",
+            "confirmed_by": "registry"
+          }
+        },
+        "addresses": {
+          "alice.example.com/alice": "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs"
         }
       }
     }

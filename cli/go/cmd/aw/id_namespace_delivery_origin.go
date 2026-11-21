@@ -84,7 +84,7 @@ func executeIDNamespaceDeliveryOrigin(ctx context.Context, opts idNamespaceDeliv
 	if err != nil {
 		return idNamespaceDeliveryOriginOutput{}, err
 	}
-	registryURL, err := registry.DiscoverRegistry(ctx, domain)
+	registryURL, err := resolveRegistryAuthority(ctx, registryAuthorityRequest{Kind: registryDomainRoute, Registry: registry, Domain: domain})
 	if err != nil {
 		return idNamespaceDeliveryOriginOutput{}, fmt.Errorf("discover registry for %s: %w", domain, err)
 	}

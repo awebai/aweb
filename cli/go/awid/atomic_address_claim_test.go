@@ -83,12 +83,12 @@ func TestAtomicAddressClaimCanonicalFixture(t *testing.T) {
 		t.Fatalf("namespace canonical mismatch:\n got: %s\nwant: %s", namespaceCanonical, vector.NamespaceCanonical)
 	}
 	for _, alias := range vector.RegistryURLAliases {
-		got, err := canonicalRegistryServerOrigin(alias.Input)
+		got, err := CanonicalRegistryServerOrigin(alias.Input)
 		if err != nil {
-			t.Fatalf("canonicalRegistryServerOrigin(%q): %v", alias.Input, err)
+			t.Fatalf("CanonicalRegistryServerOrigin(%q): %v", alias.Input, err)
 		}
 		if got != alias.Canonical {
-			t.Fatalf("canonicalRegistryServerOrigin(%q)=%q want %q", alias.Input, got, alias.Canonical)
+			t.Fatalf("CanonicalRegistryServerOrigin(%q)=%q want %q", alias.Input, got, alias.Canonical)
 		}
 	}
 }

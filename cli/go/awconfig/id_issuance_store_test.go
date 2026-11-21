@@ -70,10 +70,24 @@ func TestIDIssuanceFileStoreWritesPrivateFilesAndNoTemporaries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 1 {
-		t.Fatalf("directory holds %d files, want only the entry", len(entries))
+	var entryFile os.DirEntry
+	for _, entry := range entries {
+		if entry.Name() == requestFileIndexDir {
+			info, err := entry.Info()
+			if err != nil || !info.IsDir() || info.Mode().Perm() != 0700 {
+				t.Fatalf("index directory is not private: %v %v", info, err)
+			}
+			continue
+		}
+		if entryFile != nil {
+			t.Fatal("unexpected temporary or extra issuance file")
+		}
+		entryFile = entry
 	}
-	info, err := entries[0].Info()
+	if entryFile == nil {
+		t.Fatal("issuance entry is missing")
+	}
+	info, err := entryFile.Info()
 	if err != nil {
 		t.Fatal(err)
 	}

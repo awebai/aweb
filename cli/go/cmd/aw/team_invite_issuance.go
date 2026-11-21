@@ -38,7 +38,11 @@ func (e *nativeInviteRegistrationUnknownError) RetainsIdentity() bool { return t
 // An already-registered reply succeeds only after fetching the exact signed
 // effect, not merely a certificate for the same alias (docs/cli-integration-contract.md:161-198).
 func registerExactNativeInviteCertificate(ctx context.Context, request nativeInviteRegistrationRequest) error {
-	err := request.Registry.RegisterCertificate(ctx, request.RegistryURL, request.Invite.Domain, request.Invite.TeamName, request.Certificate, request.TeamKey)
+	issuer := teamMembershipIssuer{
+		TeamID: awid.BuildTeamID(request.Invite.Domain, request.Invite.TeamName), Key: request.TeamKey,
+		Registry: request.Registry, RegistryURL: request.RegistryURL,
+	}
+	err := issuer.register(ctx, request.Certificate)
 	if err == nil {
 		return nil
 	}

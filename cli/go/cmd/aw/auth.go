@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -480,44 +479,63 @@ func getCLIAuthJSON(ctx context.Context, issuer, path, bearer string, out any) e
 }
 
 func doCLIAuthJSON(req *http.Request, out any, issuer string) error {
-	return doCLIJSON(req, out, issuer, false)
+	return executeCLIJSON(cliJSONRequest{Request: req, Output: out, Issuer: issuer, Errors: cliResponseOAuthErrors})
 }
 
-// Owner-principal requests retain their HTTP status; a failed DIDKey proof is
-// not an expired human device authorization.
-func doCLIJSON(req *http.Request, out any, issuer string, preserveHTTPStatus bool) error {
+type cliResponseErrorPolicy uint8
+
+const (
+	cliResponseOAuthErrors cliResponseErrorPolicy = iota
+	cliResponseHTTPStatus
+)
+
+type cliJSONRequest struct {
+	Request *http.Request
+	Output  any
+	Issuer  string
+	Errors  cliResponseErrorPolicy
+}
+
+// executeCLIJSON keeps complete OAuth refusals distinct from owner-principal
+// HTTP failures. An incomplete body is never a successful result or sufficient
+// evidence to replace credentials (docs/identity.md §Hosted organization setup).
+func executeCLIJSON(input cliJSONRequest) error {
+	if input.Request == nil {
+		return errors.New("CLI JSON request is missing")
+	}
+	if input.Errors != cliResponseOAuthErrors && input.Errors != cliResponseHTTPStatus {
+		return errors.New("CLI response error policy is unknown")
+	}
 	client := &http.Client{Timeout: awid.APITimeout(), Transport: awid.NewAPITransport()}
-	resp, err := awid.DoServerRequestWithTimeout(client, req, issuer, awid.APITimeout())
+	resp, err := awid.DoServerRequestWithTimeout(client, input.Request, input.Issuer, awid.APITimeout())
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		data, _ := io.ReadAll(io.LimitReader(resp.Body, awid.MaxResponseSize))
-		var oauthErr cliOAuthError
-		if !preserveHTTPStatus && json.Unmarshal(data, &oauthErr) == nil && strings.TrimSpace(oauthErr.ErrorCode) != "" {
-			if resp.StatusCode == http.StatusUnauthorized && oauthErr.ErrorCode == "" {
-				oauthErr.ErrorCode = "expired"
-			}
-			return &oauthErr
+	data, err := awid.ReadAllBounded(resp.Body, awid.MaxResponseSize)
+	if err != nil {
+		readErr := fmt.Errorf("read CLI authentication response: %w", err)
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return errors.Join(&cliAuthHTTPStatusError{StatusCode: resp.StatusCode}, readErr)
 		}
-		if !preserveHTTPStatus && resp.StatusCode == http.StatusUnauthorized {
-			return &cliOAuthError{ErrorCode: "expired", ErrorDescription: "stored CLI access token is not authorized"}
+		return readErr
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		var oauthErr cliOAuthError
+		if input.Errors == cliResponseOAuthErrors {
+			if err := json.Unmarshal(data, &oauthErr); err == nil && strings.TrimSpace(oauthErr.ErrorCode) != "" {
+				return &oauthErr
+			}
+			if resp.StatusCode == http.StatusUnauthorized {
+				return &cliOAuthError{ErrorCode: "expired", ErrorDescription: "stored CLI access token is not authorized"}
+			}
 		}
 		return cliAuthHTTPStatusErrorFromResponse(resp.StatusCode, data)
 	}
-	if out == nil {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, awid.MaxResponseSize))
+	if input.Output == nil || len(strings.TrimSpace(string(data))) == 0 {
 		return nil
 	}
-	data, err := awid.ReadAllBounded(resp.Body, awid.MaxResponseSize)
-	if err != nil {
-		return err
-	}
-	if len(strings.TrimSpace(string(data))) == 0 {
-		return nil
-	}
-	return json.Unmarshal(data, out)
+	return json.Unmarshal(data, input.Output)
 }
 
 func cliAuthHTTPStatusErrorFromResponse(statusCode int, data []byte) error {
@@ -686,10 +704,6 @@ func cliAuthResource(issuer string) string {
 	return strings.TrimRight(issuer, "/") + "/cli"
 }
 
-func cliAuthConfigPath() (string, error) {
-	return cliAuthConfigPathForScope(cliAuthScope)
-}
-
 func cliAuthConfigPathForScope(scope string) (string, error) {
 	scope = strings.TrimSpace(scope)
 	if scope == "" || scope == cliAuthScope || scope == cliAuthScopeOrgCreate || cliAuthSameScopes(scope, cliAuthDefaultScopes) {
@@ -772,13 +786,4 @@ func removeCLIAuthConfigForScope(scope string) error {
 		_ = os.Chmod(dir, 0o700)
 	}
 	return nil
-}
-
-func firstNonEmptyString(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
 }

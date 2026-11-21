@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"github.com/awebai/aw/awconfig"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -75,10 +76,11 @@ func TestAPIKeyCreationInvitationFixesParentAndIntentBeforeRequest(t *testing.T)
 					t.Fatal(err)
 				}
 				selected.CreationInvitation.Parent["id"] = v.Keys["bob"].DIDAW
-				if _, err := prepareAPIKeyBootstrapIdentity(req, req.Name, registry); err == nil {
-					t.Fatal("retry changed parent")
+				resumed, err := prepareAPIKeyBootstrapIdentity(req, req.Name, registry)
+				if err != nil || resumed.DIDKey != first.DIDKey {
+					t.Fatalf("retry replaced the frozen invitation with refreshed metadata: %v", err)
 				}
-				state, err := loadAPIKeyPartialInit(apiKeyPartialInitPath(req.WorkingDir, req.IdentityHome))
+				state, err := loadAPIKeyPartialInit(apiKeyPartialInitPath(awconfig.IdentityHome{Root: req.IdentityHome}))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -107,7 +109,7 @@ func TestHostedInvitePreviewConsumesPersonInvitationAndRetainsItOnRetry(t *testi
 			defer server.Close()
 			origin = server.URL
 			material := workspaceTeamIdentityMaterial{DIDKey: v.Keys["root_agent"].DIDKey, IdentityScope: scope, StableID: v.Keys["global_agent"].DIDAW}
-			state, err := prepareHostedInviteCreation(t.Context(), nil, "aw_inv_test", server.URL, "terminal", "other.example/different-address", false, material)
+			state, err := prepareHostedInviteCreation(t.Context(), nil, "aw_inv_test", server.URL, "terminal", "other.example/different-address", false, material, true, false, "", "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -118,7 +120,7 @@ func TestHostedInvitePreviewConsumesPersonInvitationAndRetainsItOnRetry(t *testi
 			if request == nil || request.InvitationID != "11111111-1111-4111-8111-111111111111" || request.Parent["id"] != v.Keys["alice"].DIDAW || request.Domain != "example.com" {
 				t.Fatalf("lost person selection: %+v", request)
 			}
-			retry, err := prepareHostedInviteCreation(t.Context(), state, "aw_inv_test", server.URL, "terminal", "other.example/different-address", false, material)
+			retry, err := prepareHostedInviteCreation(t.Context(), state, "aw_inv_test", server.URL, "terminal", "other.example/different-address", false, material, false, false, "", "")
 			if err != nil || retry != state || previewReads != 1 {
 				t.Fatalf("retry: %v reads=%d", err, previewReads)
 			}
@@ -130,12 +132,13 @@ func TestAPIKeyInitSendsAndRetainsInvitationBoundRequest(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("AW_CONFIG_PATH", "")
 	v := adoptionVectors(t)
-	posts := 0
+	posts, teamReads := 0, 0
 	parent := v.Keys["alice"].DIDAW
 	var origin string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/v1/teams/current":
+			teamReads++
 			json.NewEncoder(w).Encode(map[string]any{"team_id": "22222222-2222-4222-8222-222222222222", "canonical_team_id": "agents:other.example", "creation_invitation": map[string]any{"id": "11111111-1111-4111-8111-111111111111", "parent": map[string]any{"kind": "identity", "id": parent}, "domain": "example.com", "name": "terminal", "identity_scope": "local"}})
 		case "/api/v1/workspaces/init":
 			posts++
@@ -160,19 +163,19 @@ func TestAPIKeyInitSendsAndRetainsInvitationBoundRequest(t *testing.T) {
 	if posts != 1 {
 		t.Fatalf("posts=%d", posts)
 	}
-	state, err := loadAPIKeyPartialInit(apiKeyPartialInitPath(req.WorkingDir))
+	state, err := loadAPIKeyPartialInit(apiKeyPartialInitPath(awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(req.WorkingDir)}))
 	if err != nil || state == nil {
 		t.Fatalf("recovery: %v", err)
 	}
 	key, requestID := state.DIDKey, state.IDTree.RequestID
 	parent = v.Keys["bob"].DIDAW
 	if _, err := runAPIKeyBootstrapInit(req); err == nil {
-		t.Fatal("changed invitation accepted on retry")
+		t.Fatal("the endpoint's second temporary failure was hidden")
 	}
-	if posts != 1 {
-		t.Fatal("changed parent reached creation")
+	if posts != 2 || teamReads != 1 {
+		t.Fatalf("retry did not use frozen original selection: posts=%d selection reads=%d", posts, teamReads)
 	}
-	state, err = loadAPIKeyPartialInit(apiKeyPartialInitPath(req.WorkingDir))
+	state, err = loadAPIKeyPartialInit(apiKeyPartialInitPath(awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(req.WorkingDir)}))
 	if err != nil {
 		t.Fatal(err)
 	}

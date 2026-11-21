@@ -281,14 +281,19 @@ workspace identity. aweb coordination endpoints authenticate the workspace with:
 When more than one config source is present, the effective aweb selection order
 is:
 
-1. CLI flags such as `--server-name`
+1. Command service-URL flags such as `aw init --aweb-url`
 2. environment variables such as `AWEB_URL`
 3. local `.aw/workspace.yaml`
 4. local `.aw/identity.yaml` for durable identity fields
 5. local `.aw/context`
 
-That means a directory-local `.aw/` tree is the primary binding for one repo or
-worktree.
+`--server-name` selects a stored server label for workspace commands; it is
+not a service-URL override there. Human connect uses its explicit `--aweb-url`
+or `--url`, then `AWEB_URL`, then the selected human membership's stored URL.
+These URL choices do not change the acting identity.
+
+A directory-local `.aw/` tree supplies the binding for one repo or worktree
+when a higher-priority setting is absent.
 
 ## Bootstrap and Updates
 

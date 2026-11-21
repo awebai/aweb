@@ -10,8 +10,8 @@ import (
 	"github.com/awebai/aw/awid"
 )
 
-// docs/identity.md:237-245 keeps uncertain submissions and successful answers
-// available for resumption, while a definitive unsubmitted refusal releases only selection.
+// The invitation selection follows the submission history. The acceptance-minted
+// key marker remains in every refusal case (docs/identity.md, Acceptance-minted key recovery).
 func TestHostedInviteRefusalPreservesSubmissionHistoryAndRetainedAnswers(t *testing.T) {
 	mismatch := &awid.IDCertificateError{Code: "human_mismatch"}
 	unavailable := errors.New("registry unavailable")
@@ -37,25 +37,28 @@ func TestHostedInviteRefusalPreservesSubmissionHistoryAndRetainedAnswers(t *test
 			}
 			recovery := filepath.Join(home.Root, hostedInviteRecoveryFile)
 			marker := filepath.Join(home.Root, acceptanceKeyMarkerName)
-			for _, path := range []string{recovery, marker} {
-				if err := os.WriteFile(path, []byte("selection"), 0o600); err != nil {
-					t.Fatal(err)
-				}
+			if err := os.WriteFile(recovery, []byte("selection"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(marker, []byte("acceptance minted this key"), 0o600); err != nil {
+				t.Fatal(err)
 			}
 			request := hostedInviteAcceptanceRequest{WorkingDir: root, Home: home, RecoveryPath: recovery, Creation: &hostedInviteCreation{ResponseJSON: scenario.response}}
 			err := finishHostedInviteRefusal(request, scenario.history, scenario.cause)
 			if !errors.Is(err, scenario.cause) {
 				t.Fatalf("lost original refusal: %v", err)
 			}
-			for _, path := range []string{recovery, marker} {
-				_, err := os.Stat(path)
-				if scenario.keep {
-					if err != nil {
-						t.Fatalf("lost retained selection %s: %v", path, err)
-					}
-				} else if !errors.Is(err, os.ErrNotExist) {
-					t.Fatalf("selection was not released %s: %v", path, err)
+			keptMarker, err := os.ReadFile(marker)
+			if err != nil || string(keptMarker) != "acceptance minted this key" {
+				t.Fatalf("acceptance key marker changed: %q, %v", keptMarker, err)
+			}
+			selection, err := os.ReadFile(recovery)
+			if scenario.keep {
+				if err != nil || string(selection) != "selection" {
+					t.Fatalf("retained selection changed: %q, %v", selection, err)
 				}
+			} else if !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("selection was not released %s: %v", recovery, err)
 			}
 		})
 	}

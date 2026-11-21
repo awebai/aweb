@@ -324,7 +324,7 @@ func (w *WorktreeWorkspace) UnmarshalYAML(value *yaml.Node) error {
 		return errors.New(legacyWorkspaceTeamAddressError)
 	}
 	if hasLegacySingleTeam {
-		return errors.New(legacyWorkspaceSingleTeamError)
+		return ErrLegacyWorkspaceSingleTeam
 	}
 	if len(removed) > 0 {
 		return fmt.Errorf("%s: %s. Run `aw init` to reinitialize this worktree.", legacyWorkspaceRemovedFieldsErrorPrefix, strings.Join(removed, ", "))
@@ -333,6 +333,11 @@ func (w *WorktreeWorkspace) UnmarshalYAML(value *yaml.Node) error {
 		return fmt.Errorf("%s: %s. Remove them and keep only the canonical workspace binding keys.", workspaceUnsupportedFieldsErrorPrefix, strings.Join(unsupported, ", "))
 	}
 
+	*w = raw.normalizedWorkspace()
+	return w.validate()
+}
+
+func (raw worktreeWorkspaceYAML) normalizedWorkspace() WorktreeWorkspace {
 	memberships := make([]WorktreeMembership, 0, len(raw.Memberships))
 	for _, membership := range raw.Memberships {
 		memberships = append(memberships, WorktreeMembership{
@@ -345,7 +350,7 @@ func (w *WorktreeWorkspace) UnmarshalYAML(value *yaml.Node) error {
 		})
 	}
 
-	*w = WorktreeWorkspace{
+	workspace := WorktreeWorkspace{
 		AwebURL:         raw.AwebURL,
 		APIKey:          raw.APIKey,
 		Memberships:     memberships,
@@ -358,8 +363,8 @@ func (w *WorktreeWorkspace) UnmarshalYAML(value *yaml.Node) error {
 		WorkspacePath:   raw.WorkspacePath,
 		UpdatedAt:       raw.UpdatedAt,
 	}
-	w.normalize()
-	return w.validate()
+	workspace.normalize()
+	return workspace
 }
 
 func (w WorktreeWorkspace) MarshalYAML() (any, error) {
@@ -492,6 +497,11 @@ func WorktreeRootFromWorkspacePath(path string) string {
 	return filepath.Dir(filepath.Dir(filepath.Clean(path)))
 }
 
+// ErrLegacyWorkspaceSingleTeam identifies the released single-team workspace
+// shape, which can be migrated without treating other load failures as legacy.
+var ErrLegacyWorkspaceSingleTeam = errors.New(legacyWorkspaceSingleTeamError)
+
+// LegacyWorkspaceSingleTeamError preserves the released refusal text accessor.
 func LegacyWorkspaceSingleTeamError() string {
 	return legacyWorkspaceSingleTeamError
 }

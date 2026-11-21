@@ -628,6 +628,30 @@ func (ps *PinStore) StorePin(did, address, handle, server string) {
 	ps.Addresses[address] = did
 }
 
+// RetireAddress moves the pin bound to address to retiredKey, an address no
+// lookup reaches, keeping its record and anti-rollback anchor; address is then
+// free. Returns true when a pin was moved.
+func (ps *PinStore) RetireAddress(address, retiredKey string) bool {
+	moved := false
+	if pinKey, ok := ps.Addresses[address]; ok {
+		delete(ps.Addresses, address)
+		if pin, exists := ps.Pins[pinKey]; exists && pin != nil && pin.Address == address {
+			pin.Address = retiredKey
+			ps.Addresses[retiredKey] = pinKey
+		}
+		moved = true
+	}
+	for pinKey, pin := range ps.Pins {
+		if pin == nil || pin.Address != address {
+			continue
+		}
+		pin.Address = retiredKey
+		ps.Addresses[retiredKey] = pinKey
+		moved = true
+	}
+	return moved
+}
+
 // RemoveAddress removes any reverse index and pin associated with an address.
 // Returns true when anything was removed.
 func (ps *PinStore) RemoveAddress(address string) bool {

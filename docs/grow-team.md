@@ -35,18 +35,25 @@ aw team admin extend \
 
 `aw team admin extend` uses the first applicable source:
 
-1. an explicit `--api-key`, or `AWEB_API_KEY`;
+1. a person's setup key in `--api-key` or `AWEB_API_KEY` (older servers without key-kind metadata keep their existing API behavior);
 2. the current workspace when it can invite members;
-3. an invite-capable home found under `agents/instances/`;
+3. exactly one invite-capable home found under `agents/instances/` for the requested team; the command prints the chosen creator home;
 4. otherwise, an error explaining which authority is missing.
 
-An explicit key wins over whatever happens to be on disk. From a clean
-directory, it is the complete credential:
+A person's explicit setup key wins over whatever happens to be on disk. An
+agent's workspace key instead uses that team's native signing workspace, with
+a notice; without one, the command explains how to select a creator or use a
+setup key. A stored workspace key never creates another identity. From a clean
+directory, a person's setup key is the complete credential:
 
 ```bash
 AWEB_URL=<url> AWEB_API_KEY=<key> \
   aw team admin extend alice@aweb.team/developer=claude-code
 ```
+
+If several candidate homes belong to the requested team, extend lists them and
+refuses before writing: run from the creating workspace or select its
+`--identity-home`. Directory order never chooses the creator.
 
 If discovered homes belong to more than one team, `aw team admin extend` refuses to
 guess. Select the intended team explicitly:

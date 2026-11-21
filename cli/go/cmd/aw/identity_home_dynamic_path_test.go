@@ -29,10 +29,10 @@ func TestPrincipalRecoveryMarkersRejectSymlinksAtEachUse(t *testing.T) {
 	if _, err := loadAPIKeyPartialInit(partialLink); err == nil || !strings.Contains(err.Error(), "symlink") {
 		t.Fatalf("partial-init read symlink error=%v", err)
 	}
-	if err := saveAPIKeyPartialInit(root, &apiKeyPartialInitState{Version: 1}, identityHome); err == nil || !strings.Contains(err.Error(), "symlink") {
+	if err := saveAPIKeyPartialInit(awconfig.IdentityHome{Root: identityHome}, &apiKeyPartialInitState{Version: 1}); err == nil || !strings.Contains(err.Error(), "symlink") {
 		t.Fatalf("partial-init write symlink error=%v", err)
 	}
-	if err := removeAPIKeyPartialInit(root, identityHome); err == nil || !strings.Contains(err.Error(), "symlink") {
+	if err := removeAPIKeyPartialInit(awconfig.IdentityHome{Root: identityHome}); err == nil || !strings.Contains(err.Error(), "symlink") {
 		t.Fatalf("partial-init remove symlink error=%v", err)
 	}
 

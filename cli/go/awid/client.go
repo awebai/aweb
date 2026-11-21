@@ -71,7 +71,7 @@ func (e *RecipientResolutionError) Error() string {
 	if code, ok := HTTPStatusCode(e.Err); ok && code == http.StatusNotFound && isRoutableAddressTarget(e.Target) {
 		return fmt.Sprintf("resolve recipient %q for signed %s: %s (%v)", e.Target, msgType, UnreachableAddressText(e.Target), e.Err)
 	}
-	return fmt.Sprintf("resolve recipient %q for signed %s: %v", e.Target, msgType, e.Err)
+	return fmt.Sprintf("resolve recipient %q for signed %s: %v. Nothing was sent: a %s is signed with its recipient's key, which could not be looked up; send it again when the registry answers", e.Target, msgType, e.Err, msgType)
 }
 
 // UnreachableAddressText says that an address has no registered identity and
@@ -132,6 +132,10 @@ func (c *Client) signEnvelope(ctx context.Context, env *MessageEnvelope) (signed
 	globalStableTarget := strings.HasPrefix(strings.TrimSpace(env.ToStableID), "did:aw:")
 	storedRouteGlobalTarget := globalStableTarget && env.AllowStoredRouteGlobalBinding
 	bindingRequired := env.RequireRecipientBinding || (globalStableTarget && !env.AllowStoredRouteGlobalBinding)
+	// A lookup that fails refuses only a send that requires the recipient
+	// binding. Otherwise the send is signed without it and the server
+	// resolves the address, as released aw does, so a local seat does not
+	// depend on the registry answering.
 	if c.resolver != nil && env.ToDID == "" && bindingTarget != "" && !storedRouteGlobalTarget {
 		identity, err := c.resolver.Resolve(ctx, bindingTarget)
 		if err != nil {
@@ -264,6 +268,9 @@ type agentMeta struct {
 	// the registry or the reader's own team roster, and not from a pin or
 	// from the key alone.
 	Authoritative bool
+	// RegistryAddressMissing says the registry answered that the address does
+	// not exist and the identity came from this client's pin.
+	RegistryAddressMissing bool
 	// ResolutionError says why an address was not resolved: "not_found" when
 	// the authority answered that it does not exist, "unavailable" when it
 	// could not be asked now, "no_resolver" when the client has none to ask.
@@ -275,6 +282,22 @@ type agentMeta struct {
 func (m *agentMeta) names(did, stableID string) bool {
 	return m.Resolved && m.Authoritative && m.DID != "" && m.DID == did &&
 		(stableID == "" || m.StableID == stableID)
+}
+
+// registrySaysNoSuchAddress reports a definite answer from the registry that
+// the address does not exist: answered from this client's pin after the
+// registry's 404, or left unresolved as not_found.
+func (m *agentMeta) registrySaysNoSuchAddress() bool {
+	return m.RegistryAddressMissing || (!m.Resolved && m.ResolutionError == "not_found")
+}
+
+// namesPin reports whether the identity this metadata names is the one pin
+// holds under pinKey: its stable ID, or its did:key.
+func (m *agentMeta) namesPin(pinKey string, pin *Pin) bool {
+	if m.StableID != "" {
+		return m.StableID == pinKey || m.StableID == strings.TrimSpace(pin.StableID)
+	}
+	return m.DID != "" && (m.DID == pinKey || m.DID == strings.TrimSpace(pin.DIDKey))
 }
 
 // Client is an aweb HTTP client.
@@ -659,6 +682,32 @@ func (c *Client) custodyAudience(ctx context.Context) (string, error) {
 	return audience, nil
 }
 
+// E2EESendUnavailable says why this client cannot encrypt a message end to
+// end, or is empty when it can.
+func (c *Client) E2EESendUnavailable() string {
+	reason, _ := c.e2eeSenderGap()
+	return reason
+}
+
+// e2eeSenderGap is why this client cannot encrypt a message: a reason for a
+// continuation's notice, and the refusal an encrypted send returns. Both are
+// empty when it can encrypt.
+func (c *Client) e2eeSenderGap() (string, error) {
+	if c == nil || c.signingKey == nil || strings.TrimSpace(c.did) == "" {
+		return "this identity has no local self-custodial signing key", errors.New("E2E messaging requires a local self-custodial signing key")
+	}
+	if c.e2eeCustody() != nil {
+		return "", nil
+	}
+	if !c.canSignMessages() {
+		return "this identity grant has no custody socket to sign encrypted envelopes", errors.New("E2E messaging requires the subject identity signing key; identity grants cannot sign encrypted message envelopes")
+	}
+	if c.e2eeEncryptionKey == nil {
+		return "this identity has no local encryption key (`aw id encryption-key setup` creates one)", errors.New("E2E messaging requires a local encryption key; upgrade aw and run `aw id encryption-key setup`, or pass --plaintext only for explicit server-readable messaging")
+	}
+	return "", nil
+}
+
 func (c *Client) e2eeCustody() E2EECustodyClient {
 	if c == nil || c.plainMessageSigner == nil || strings.TrimSpace(c.grantID) == "" {
 		return nil
@@ -754,6 +803,10 @@ const (
 	PinMigrationSameIdentity   PinMigrationOutcome = "same_identity"
 	PinMigrationConflict       PinMigrationOutcome = "conflict"
 	PinMigrationUnclassifiable PinMigrationOutcome = "unclassifiable"
+	// PinMigrationTeamUnconfirmed: a pin under a member name's earlier
+	// namespace/name key was kept, because the team roster does not name its
+	// identity for that name.
+	PinMigrationTeamUnconfirmed PinMigrationOutcome = "team_unconfirmed"
 )
 
 // PinMigrationDecline reports a migration that did not happen.
@@ -831,15 +884,79 @@ func (c *Client) canonicalTrustAddress(address string) string {
 	if strings.Contains(address, "/") || strings.Contains(address, "~") {
 		return address
 	}
+	// A member name is team-scoped (docs/identity.md:93-107): a sender known
+	// only by name is looked up and pinned as team/name in the authenticated
+	// team, never as an address.
+	if team := strings.TrimSpace(c.teamID); team != "" {
+		if _, _, err := ParseTeamID(team); err == nil {
+			return team + "/" + address
+		}
+	}
 	if namespace := c.namespaceSlug(); namespace != "" {
 		return namespace + "/" + address
 	}
-	// An addressless client (a local-resident grant) still has an
-	// authenticated team; bare aliases are members of that team's roster.
-	if domain, _, err := ParseTeamID(strings.TrimSpace(c.teamID)); err == nil {
-		return domain + "/" + address
-	}
 	return address
+}
+
+// namespaceMemberNameKey is the namespace/name key a bare member name is
+// pinned under by clients that predate team/name; "" when address is not a bare name or the
+// client has no team.
+func (c *Client) namespaceMemberNameKey(address string) string {
+	address = strings.TrimSpace(address)
+	if address == "" || strings.Contains(address, "/") || strings.Contains(address, "~") {
+		return ""
+	}
+	if _, _, err := ParseTeamID(strings.TrimSpace(c.teamID)); err != nil {
+		return ""
+	}
+	if namespace := c.namespaceSlug(); namespace != "" {
+		return namespace + "/" + address
+	}
+	domain, _, _ := ParseTeamID(strings.TrimSpace(c.teamID))
+	return domain + "/" + address
+}
+
+// migrateMemberNamePin moves a pin from a member name's earlier
+// namespace/name key to its team/name key when the team roster names that
+// pin's identity for the name. Otherwise the pin is kept where it is and
+// reported: it is never dropped. The caller holds the pin store lock.
+func (c *Client) migrateMemberNamePin(rawAddress, trustAddress string, meta *agentMeta) {
+	namespaceKey := c.namespaceMemberNameKey(rawAddress)
+	if namespaceKey == "" || namespaceKey == trustAddress {
+		return
+	}
+	pinKey, pinned := c.pinStore.Addresses[namespaceKey]
+	if !pinned {
+		return
+	}
+	if _, taken := c.pinStore.Addresses[trustAddress]; taken {
+		return
+	}
+	pin := c.pinStore.Pins[pinKey]
+	if pin != nil && meta != nil && meta.Resolved && meta.Authoritative && meta.namesPin(pinKey, pin) {
+		delete(c.pinStore.Addresses, namespaceKey)
+		c.pinStore.Addresses[trustAddress] = pinKey
+		pin.Address = trustAddress
+		return
+	}
+	if c.pinMigrationObserver == nil {
+		return
+	}
+	occupantDID := ""
+	if pin != nil {
+		occupantDID = pin.DIDKey
+	}
+	incomingDID := ""
+	if meta != nil {
+		incomingDID = meta.DID
+	}
+	c.pinMigrationObserver(PinMigrationDecline{
+		Outcome:     PinMigrationTeamUnconfirmed,
+		StableID:    pinKey,
+		Address:     namespaceKey,
+		OccupantDID: occupantDID,
+		IncomingDID: incomingDID,
+	})
 }
 
 func (c *Client) isCurrentTeamRosterReference(address string) bool {
@@ -884,12 +1001,13 @@ func (c *Client) resolveAgentMetaFresh(ctx context.Context, address string, forc
 		}
 		if identity, err := resolve(ctx, trustAddress); err == nil {
 			meta := &agentMeta{
-				DID:           strings.TrimSpace(identity.DID),
-				StableID:      strings.TrimSpace(identity.StableID),
-				IdentityScope: IdentityModeGlobal,
-				Custody:       CustodySelf,
-				Resolved:      true,
-				Authoritative: identity.ResolvedVia == "registry" || identity.ResolvedVia == "team_roster",
+				DID:                    strings.TrimSpace(identity.DID),
+				StableID:               strings.TrimSpace(identity.StableID),
+				IdentityScope:          IdentityModeGlobal,
+				Custody:                CustodySelf,
+				Resolved:               true,
+				Authoritative:          identity.ResolvedVia == "registry" || identity.ResolvedVia == "team_roster",
+				RegistryAddressMissing: identity.ResolvedVia == ResolvedViaPinAfterRegistryMiss,
 			}
 			if identity.IdentityScope != "" {
 				meta.IdentityScope = NormalizeIdentityScope(identity.IdentityScope)
@@ -919,6 +1037,12 @@ func (c *Client) resolveAgentMetaFresh(ctx context.Context, address string, forc
 // signature verification. It suppresses contact tags for local senders and
 // then applies continuity pinning using shared resolver metadata.
 func (c *Client) NormalizeSenderTrust(ctx context.Context, status VerificationStatus, rawAddress, fromDID, fromStableID string, ra *RotationAnnouncement, repl *ReplacementAnnouncement, isContact *bool) (VerificationStatus, *bool) {
+	return checkedAsVerified(status, func(status VerificationStatus) (VerificationStatus, *bool) {
+		return c.normalizeSenderTrust(ctx, status, rawAddress, fromDID, fromStableID, ra, repl, isContact)
+	})
+}
+
+func (c *Client) normalizeSenderTrust(ctx context.Context, status VerificationStatus, rawAddress, fromDID, fromStableID string, ra *RotationAnnouncement, repl *ReplacementAnnouncement, isContact *bool) (VerificationStatus, *bool) {
 	// Mail applies recipient binding before sender continuity normalization.
 	// Never let local-sender cache reconciliation weaken that authoritative
 	// recipient mismatch to verification_stale.
@@ -962,25 +1086,18 @@ func (c *Client) NormalizeSenderTrust(ctx context.Context, status VerificationSt
 	if strings.TrimSpace(fromStableID) == "" || (meta.Resolved && meta.IdentityScope == IdentityModeLocal) {
 		isContact = nil
 	}
-	var registryConfirmedCurrentKey bool
-	var verifiedHead *VerifiedLogHead
-	status, registryConfirmedCurrentKey, verifiedHead = c.checkStableIdentityRegistry(ctx, status, trustAddress, fromDID, fromStableID)
-	keyEvidence := currentKeyUnconfirmed
-	if registryConfirmedCurrentKey {
-		keyEvidence = currentKeyConfirmedByRegistry
-	}
-	status = c.checkResolvedSenderPin(ctx, resolvedSenderPinCheck{Status: status, RawAddress: strings.TrimSpace(rawAddress), TrustAddress: trustAddress, FromDID: fromDID, FromStableID: fromStableID, Rotation: ra, Replacement: repl, Metadata: meta, CurrentKey: keyEvidence})
-	// Persist after the pin exists: on first contact the pin is created by the
-	// check above, so recording the checkpoint earlier would be dropped.
-	// An advanced anti-rollback checkpoint that is not durable would let the next
-	// process accept a log head we have already moved past (default-aajc.8), so a
-	// failure to commit it must not be reported as verified.
-	if err := c.persistVerifiedHeadCheckpoint(fromStableID, verifiedHead); err != nil {
-		if c.pinStore != nil {
-			c.pinStore.undurable.Store(true)
-		}
-		if status == Verified || status == VerifiedCustodial {
-			status = VerificationStale
+	evidence := c.checkStableIdentityRegistry(ctx, status, trustAddress, fromDID, fromStableID)
+	status = c.checkResolvedSenderPin(ctx, resolvedSenderPinCheck{Status: evidence.status, RawAddress: strings.TrimSpace(rawAddress), TrustAddress: trustAddress, FromDID: fromDID, FromStableID: fromStableID, Rotation: ra, Replacement: repl, Metadata: meta, Registry: evidence})
+	// The registry's verified head is recorded whatever the message's own
+	// status: it is what this client has now seen of that registry's log. An
+	// advanced anti-rollback checkpoint that is not durable would let the next
+	// process accept a log head we have already moved past (default-aajc.8),
+	// so a failure to commit it must not be reported as verified.
+	if evidence.head != nil && evidence.registryURL != "" {
+		if err := c.saveIdentityCheckpoint(identityCheckpointWrite{RegistryURL: evidence.registryURL, StableID: fromStableID, Head: evidence.head, CarriesPinAnchor: evidence.pinAnchorSeed}); err != nil {
+			if status == Verified || status == VerifiedCustodial {
+				status = VerificationStale
+			}
 		}
 	}
 	if status == IdentityMismatch && !recipientBindingMismatch && localTeamReference && strings.TrimSpace(fromDID) != "" && !strings.HasPrefix(strings.TrimSpace(fromStableID), "did:aw:") {
@@ -1010,20 +1127,47 @@ func (c *Client) verifyResolvedLocalSender(fresh *agentMeta, rawAddress, trustAd
 	if strings.TrimSpace(fresh.DID) != strings.TrimSpace(fromDID) {
 		return IdentityMismatch
 	}
-	if c.pinStore != nil {
-		c.pinStore.mu.Lock()
-		removed := c.pinStore.RemoveAddress(trustAddress)
-		if rawAddress != "" && rawAddress != trustAddress {
-			removed = c.pinStore.RemoveAddress(rawAddress) || removed
-		}
-		c.pinStore.mu.Unlock()
-		if removed {
-			// A removal that does not persist leaves the old pin on disk, so the
-			// next process is stricter, not laxer. Not a continuity claim.
-			c.persistPinMaintenance()
+	c.releaseTeamNamePin(rawAddress, trustAddress)
+	return acceptedStatus
+}
+
+// releaseTeamNamePin frees a team-scoped member name the roster now gives to
+// a local identity: the previous holder's pin moves to a retired key that
+// keeps its record and anti-rollback anchor (Antares 2e8881d7, the delivering
+// server never deletes a pin). A real domain/name address is not a team
+// name: its pin is never touched here.
+func (c *Client) releaseTeamNamePin(rawAddress, trustAddress string) {
+	if c.pinStore == nil || !teamScopedName(rawAddress) {
+		return
+	}
+	retiredAt := time.Now().UTC().Format(time.RFC3339)
+	c.pinStore.mu.Lock()
+	moved := false
+	for _, key := range []string{trustAddress, strings.TrimSpace(rawAddress)} {
+		if key != "" {
+			moved = c.pinStore.RetireAddress(key, "retired:"+key+"@"+retiredAt) || moved
 		}
 	}
-	return acceptedStatus
+	c.pinStore.mu.Unlock()
+	if moved {
+		// A move that does not persist leaves the old binding on disk, so the
+		// next process is stricter, not laxer. Not a continuity claim.
+		c.persistPinMaintenance()
+	}
+}
+
+// teamScopedName reports a sender reference that is a member name: bare, or
+// qualified by its team (team:domain/name), never a domain/name address.
+func teamScopedName(reference string) bool {
+	reference = strings.TrimSpace(reference)
+	if reference == "" {
+		return false
+	}
+	if !strings.Contains(reference, "/") && !strings.Contains(reference, "~") {
+		return true
+	}
+	_, _, ok := splitTeamMemberReference(reference)
+	return ok
 }
 
 // NormalizeRecipientBinding applies the local recipient-binding check after
@@ -1032,45 +1176,71 @@ func (c *Client) NormalizeRecipientBinding(status VerificationStatus, toDID stri
 	return c.checkRecipientBinding(status, toDID, toStableID)
 }
 
-func (c *Client) checkStableIdentityRegistry(ctx context.Context, status VerificationStatus, trustAddress, fromDID, fromStableID string) (VerificationStatus, bool, *VerifiedLogHead) {
+// registryEvidence is what the registry pass established for one message.
+type registryEvidence struct {
+	status VerificationStatus
+	// currentKeyConfirmed: the registry's verified current key is the
+	// signing key.
+	currentKeyConfirmed bool
+	// movedRegistry: the answering registry had no checkpoint for this
+	// identity while another registry has one. Across a move only the pin's
+	// key binding protects, so the pin does not follow a key change.
+	movedRegistry bool
+	head          *VerifiedLogHead
+	registryURL   string
+	// pinAnchorSeed: the verification was seeded from the pin's legacy
+	// anchor, which the new checkpoint then carries.
+	pinAnchorSeed bool
+}
+
+func (c *Client) checkStableIdentityRegistry(ctx context.Context, status VerificationStatus, trustAddress, fromDID, fromStableID string) registryEvidence {
+	evidence := registryEvidence{status: status}
 	if status != Verified || strings.TrimSpace(fromStableID) == "" || strings.TrimSpace(fromDID) == "" {
-		return status, false, nil
+		return evidence
 	}
 	if !strings.HasPrefix(strings.TrimSpace(fromStableID), "did:aw:") {
-		return status, false, nil
+		return evidence
 	}
 	verifier, ok := c.resolver.(StableIdentityVerifier)
 	if !ok {
-		return status, false, nil
+		return evidence
 	}
-	// Restore the anti-rollback anchor from the checkpoint persisted with the
-	// pin. The resolver's in-memory head cache is what refuses a sequence
-	// regression or a split view, but it is forgotten on restart — so without
-	// this a registry can serve a valid truncated prefix and roll a rotated
-	// identity back to a retired key (default-aajc.8).
-	c.seedVerifiedHeadFromPin(fromStableID)
+	// The resolver's in-memory head cache refuses a sequence regression or a
+	// split view, but is forgotten on restart; the persisted checkpoint for
+	// the answering registry seeds it, so a registry cannot serve a valid
+	// truncated prefix and roll a rotated identity back (default-aajc.8).
 	var result *StableIdentityVerification
-	if currentVerifier, ok := c.resolver.(CurrentStableIdentityVerifier); ok {
+	if checkpointed, ok := c.resolver.(CheckpointedStableIdentityVerifier); ok {
+		result = checkpointed.VerifyStableIdentityCheckpointed(ctx, trustAddress, fromStableID, fromDID, func(registryURL string) *VerifiedLogHead {
+			head, fromPin := c.identityCheckpointOrPinAnchor(registryURL, fromStableID)
+			evidence.pinAnchorSeed = fromPin
+			return head
+		})
+	} else if currentVerifier, ok := c.resolver.(CurrentStableIdentityVerifier); ok {
 		result = currentVerifier.VerifyStableIdentityCurrent(ctx, trustAddress, fromStableID, fromDID)
 	} else {
 		result = verifier.VerifyStableIdentity(ctx, trustAddress, fromStableID)
 	}
 	if result == nil {
-		return status, false, nil
+		return evidence
 	}
 	switch result.Outcome {
 	case StableIdentityStaleCache:
-		return VerificationStale, false, nil
+		evidence.status = VerificationStale
 	case StableIdentityVerified:
 		currentDIDKey := strings.TrimSpace(result.CurrentDIDKey)
 		if currentDIDKey != "" && currentDIDKey != fromDID {
-			return IdentityMismatch, false, nil
+			evidence.status = IdentityMismatch
+			return evidence
 		}
-		return status, currentDIDKey == fromDID, result.VerifiedHead
+		evidence.currentKeyConfirmed = currentDIDKey == fromDID
+		evidence.head = result.VerifiedHead
+		evidence.registryURL = result.RegistryURL
+		evidence.movedRegistry = result.NewCheckpoint && c.identityCheckpointedElsewhere(result.RegistryURL, fromStableID)
 	case StableIdentityHardError:
-		return IdentityMismatch, false, nil
+		evidence.status = IdentityMismatch
 	}
-	return status, false, nil
+	return evidence
 }
 
 // CheckTOFUPin checks a verified message against the TOFU pin store.
@@ -1097,15 +1267,8 @@ func (c *Client) CheckTOFUPin(ctx context.Context, status VerificationStatus, fr
 
 	trustAddress := c.canonicalTrustAddress(fromAddress)
 	meta := c.resolveAgentMeta(ctx, trustAddress)
-	return c.checkResolvedSenderPin(ctx, resolvedSenderPinCheck{Status: status, RawAddress: strings.TrimSpace(fromAddress), TrustAddress: trustAddress, FromDID: fromDID, FromStableID: fromStableID, Rotation: ra, Replacement: repl, Metadata: meta, CurrentKey: currentKeyUnconfirmed})
+	return c.checkResolvedSenderPin(ctx, resolvedSenderPinCheck{Status: status, RawAddress: strings.TrimSpace(fromAddress), TrustAddress: trustAddress, FromDID: fromDID, FromStableID: fromStableID, Rotation: ra, Replacement: repl, Metadata: meta, Registry: registryEvidence{status: status}})
 }
-
-type currentKeyEvidence uint8
-
-const (
-	currentKeyUnconfirmed currentKeyEvidence = iota
-	currentKeyConfirmedByRegistry
-)
 
 type resolvedSenderPinCheck struct {
 	Status       VerificationStatus
@@ -1116,7 +1279,8 @@ type resolvedSenderPinCheck struct {
 	Rotation     *RotationAnnouncement
 	Replacement  *ReplacementAnnouncement
 	Metadata     *agentMeta
-	CurrentKey   currentKeyEvidence
+	// Registry is what the registry pass established for this message.
+	Registry registryEvidence
 }
 
 func (c *Client) checkResolvedSenderPin(ctx context.Context, check resolvedSenderPinCheck) VerificationStatus {
@@ -1128,7 +1292,8 @@ func (c *Client) checkResolvedSenderPin(ctx context.Context, check resolvedSende
 	ra := check.Rotation
 	repl := check.Replacement
 	meta := check.Metadata
-	registryConfirmedCurrentKey := check.CurrentKey == currentKeyConfirmedByRegistry
+	evidence := check.Registry
+	registryConfirmedCurrentKey := evidence.currentKeyConfirmed
 	if (status != Verified && status != VerifiedCustodial) || fromDID == "" || trustAddress == "" || meta == nil {
 		return status
 	}
@@ -1152,17 +1317,7 @@ func (c *Client) checkResolvedSenderPin(ctx context.Context, check resolvedSende
 		return status
 	}
 	if meta.Resolved && meta.IdentityScope == IdentityModeLocal {
-		c.pinStore.mu.Lock()
-		removed := c.pinStore.RemoveAddress(trustAddress)
-		rawAddress = strings.TrimSpace(rawAddress)
-		if rawAddress != "" && rawAddress != trustAddress {
-			removed = c.pinStore.RemoveAddress(rawAddress) || removed
-		}
-		c.pinStore.mu.Unlock()
-		if removed {
-			// As above: an unpersisted removal fails safe (the pin survives).
-			c.persistPinMaintenance()
-		}
+		c.releaseTeamNamePin(rawAddress, trustAddress)
 		return status
 	}
 
@@ -1172,6 +1327,8 @@ func (c *Client) checkResolvedSenderPin(ctx context.Context, check resolvedSende
 
 	c.pinStore.mu.Lock()
 	defer c.pinStore.mu.Unlock()
+
+	c.migrateMemberNamePin(rawAddress, trustAddress, meta)
 
 	pinKey := fromDID
 	if fromStableID != "" {
@@ -1220,13 +1377,24 @@ func (c *Client) checkResolvedSenderPin(ctx context.Context, check resolvedSende
 		if fromStableID == "" && meta.Resolved && meta.Authoritative && meta.DID != "" && meta.DID != fromDID {
 			return IdentityMismatch
 		}
+		// The message is signed by the key this client pinned, and the registry
+		// no longer has the address: not a forgery, not current either
+		// (docs/trust-model.md; Antares 2e8881d7).
+		if meta.registrySaysNoSuchAddress() {
+			if pin, ok := c.pinStore.Pins[pinKey]; !ok || strings.TrimSpace(pin.DIDKey) == "" || pin.DIDKey == fromDID {
+				return VerificationStale
+			}
+		}
 		if fromStableID != "" {
 			if pin, ok := c.pinStore.Pins[pinKey]; ok && strings.TrimSpace(pin.DIDKey) != "" && pin.DIDKey != fromDID {
 				// Same stable identity, different did:key: this is key rotation,
 				// which the DID log DOES prove (did:aw -> did:key), so a verified
 				// registry chain is sufficient here. It says nothing about address
 				// ownership — that is enforced in the mismatch branch below.
-				if registryConfirmedCurrentKey {
+				// Across a registry move the new registry's chain has no
+				// checkpoint behind it: the pin's key binding decides, and a key
+				// other than the pinned one is a mismatch (docs/trust-model.md).
+				if registryConfirmedCurrentKey && !evidence.movedRegistry {
 					c.pinStore.StorePin(pinKey, trustAddress, "", "")
 					c.pinStore.Pins[pinKey].StableID = fromStableID
 					c.pinStore.Pins[pinKey].DIDKey = fromDID
@@ -1997,7 +2165,7 @@ func SignRequestCredential(key ed25519.PrivateKey, method string, target *url.UR
 // credentials keep their already target-bound protocol; root credentials use v2.
 func (c *Client) signRequest(req *http.Request, body []byte) error {
 	if c.idChainHeader != "" {
-		req.Header.Set("X-AWID-ID-Chain", c.idChainHeader)
+		req.Header.Set(HeaderIDChain, c.idChainHeader)
 	}
 	if c.signingKey == nil && c.interactiveSigner == nil {
 		return nil
@@ -2031,66 +2199,15 @@ func (c *Client) signRequest(req *http.Request, body []byte) error {
 		return err
 	}
 	req.Header.Set("Authorization", fmt.Sprintf("DIDKey %s %s", didKey, signature))
-	req.Header.Set("X-AWEB-Timestamp", timestamp)
-	req.Header.Set("X-AWEB-Signed-Payload", base64.RawURLEncoding.EncodeToString([]byte(canonical)))
+	req.Header.Set(HeaderRequestTimestamp, timestamp)
+	req.Header.Set(HeaderSignedPayload, base64.RawURLEncoding.EncodeToString([]byte(canonical)))
 	if teamCertHeader != "" {
-		req.Header.Set("X-AWID-Team-Certificate", teamCertHeader)
+		req.Header.Set(HeaderTeamCertificate, teamCertHeader)
 	} else if c.stableID != "" {
-		req.Header.Set("X-AWEB-DID-AW", c.stableID)
+		req.Header.Set(HeaderIdentityID, c.stableID)
 	}
 	return nil
 }
 
 // verifiedHeadSeeder is implemented by resolvers that keep an anti-rollback
 // anchor, so the client can restore it from the persisted pin checkpoint.
-type verifiedHeadSeeder interface {
-	SeedVerifiedHead(stableID string, head *VerifiedLogHead)
-}
-
-func (c *Client) seedVerifiedHeadFromPin(stableID string) {
-	seeder, ok := c.resolver.(verifiedHeadSeeder)
-	if !ok || c.pinStore == nil {
-		return
-	}
-	c.pinStore.mu.Lock()
-	pin, hasPin := c.pinStore.Pins[stableID]
-	var seq int
-	var entryHash, didKey string
-	if hasPin && pin != nil {
-		seq, entryHash, didKey = pin.LogSeq, pin.LogEntryHash, pin.DIDKey
-	}
-	c.pinStore.mu.Unlock()
-	if seq < 1 || entryHash == "" {
-		return
-	}
-	seeder.SeedVerifiedHead(stableID, &VerifiedLogHead{
-		Seq:           seq,
-		EntryHash:     entryHash,
-		CurrentDIDKey: didKey,
-	})
-}
-
-// persistVerifiedHeadCheckpoint records the verified head with the pin so the
-// anchor survives a restart. It only ever advances: a lower sequence is ignored,
-// so a stale response cannot weaken the checkpoint.
-func (c *Client) persistVerifiedHeadCheckpoint(stableID string, head *VerifiedLogHead) error {
-	if c.pinStore == nil {
-		return nil
-	}
-	if head == nil || head.Seq < 1 || strings.TrimSpace(head.EntryHash) == "" {
-		return nil
-	}
-	c.pinStore.mu.Lock()
-	pin, ok := c.pinStore.Pins[stableID]
-	changed := false
-	if ok && pin != nil && head.Seq > pin.LogSeq {
-		pin.LogSeq = head.Seq
-		pin.LogEntryHash = head.EntryHash
-		changed = true
-	}
-	c.pinStore.mu.Unlock()
-	if changed {
-		return c.savePinStore()
-	}
-	return nil
-}

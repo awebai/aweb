@@ -166,7 +166,9 @@ describe("last_seen coalescing", () => {
   test("a checkpoint advance is unaffected by the window", () => {
     const store = storeWithPin(nowISO(-5_000));
 
-    expect(store.advanceLogCheckpoint(PIN_KEY, 7, "hash-7")).toBe(true);
+    expect(store.advanceReceivedIdentityCheckpoint("https://registry.example", PIN_KEY, {
+      seq: 7, entryHash: "7".repeat(64), stateHash: "", currentDidKey: DID_KEY, fetchedAt: 0,
+    })).toBe(true);
   });
 
   // The last_seen path is also the recovery path after a failed durable commit

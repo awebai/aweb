@@ -21,7 +21,7 @@ import {
 } from "./id_certificates.js";
 import { verifyDidLogEntries, type DidKeyEvidence } from "./registry.js";
 
-export const ID_STATUS_FRESH_SECONDS = 60;
+const ID_STATUS_FRESH_SECONDS = 60;
 
 export type IdVerificationReason =
   | IdDecodeRefusal

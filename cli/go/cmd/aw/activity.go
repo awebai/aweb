@@ -34,15 +34,6 @@ func init() {
 	rootCmd.AddCommand(activityCmd)
 }
 
-func isActivityCommand(cmd *cobra.Command) bool {
-	for current := cmd; current != nil; current = current.Parent() {
-		if current == activityCmd {
-			return true
-		}
-	}
-	return false
-}
-
 // activityIdentityRoot is the identity root the emitter signs with: an
 // identity home holding a signing key, or a grant home.
 func activityIdentityRoot() (string, error) {

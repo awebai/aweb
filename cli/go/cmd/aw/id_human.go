@@ -245,15 +245,7 @@ func executeIDHumanInit(ctx context.Context, opts idHumanInitOptions) (idHumanIn
 // --registry origin when the record names none. A --registry that
 // contradicts the record is refused.
 func domainRegistryURL(authority awid.DomainAuthority, override string) (string, error) {
-	named := strings.TrimSpace(authority.RegistryURL)
-	override = strings.TrimSpace(override)
-	if override == "" {
-		return named, nil
-	}
-	if named != "" && named != awid.DefaultAWIDRegistryURL && named != override {
-		return "", usageError("--registry %s contradicts the registry %s that %s names", override, named, authority.DNSName)
-	}
-	return override, nil
+	return resolveRegistryAuthority(context.Background(), registryAuthorityRequest{Kind: registryDNSAuthority, Authority: authority, Override: override})
 }
 
 // prepareRequestedHuman is init without --as-root: it only prepares a human

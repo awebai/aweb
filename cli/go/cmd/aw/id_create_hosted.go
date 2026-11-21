@@ -429,10 +429,10 @@ func createHostedIdentity(operation hostedIdentityCreation) (resultErr error) {
 		status = hostedIdentityCreated
 	}
 	out := map[string]any{"status": status, "team_id": response.CanonicalTeamID, "service_team_id": response.TeamID, "identity_home": home.Root, "identity_scope": "global", "custody": "self", "did_key": material.DIDKey, "did_aw": material.StableID, "address": response.Address, "inbound_mode": mode}
-	out["id_registration"] = hostedRegistrationUnknown
-	out["responsibility"] = awid.IDChainResult{Outcome: "unknown", Reason: "legacy_no_chain"}
+	out["id_registration"] = identityRegistrationUnknown
+	out["responsibility"] = *responsibilityWithoutInstalledChain()
 	if responsibility != nil {
-		out["id_registration"] = hostedRegistrationConfirmed
+		out["id_registration"] = identityRegistrationRegistered
 		out["responsibility"] = responsibility
 	}
 	if human != nil {
@@ -448,7 +448,7 @@ func prepareHostedIdentity(root, statePath string, association hostedIdentityCon
 		return workspaceTeamIdentityMaterial{}, err
 	}
 	var key ed25519.PrivateKey
-	data, err := os.ReadFile(statePath)
+	data, err := (awconfig.RecoveryFile{Home: awconfig.IdentityHome{Root: filepath.Dir(statePath)}, Name: filepath.Base(statePath)}).Read()
 	switch {
 	case err == nil:
 		info, err := os.Stat(statePath)
@@ -501,7 +501,7 @@ func prepareHostedIdentity(root, statePath string, association hostedIdentityCon
 		if err != nil {
 			return workspaceTeamIdentityMaterial{}, err
 		}
-		if err := awid.AtomicWriteFile(statePath, data); err != nil {
+		if err := (awconfig.RecoveryFile{Home: awconfig.IdentityHome{Root: filepath.Dir(statePath)}, Name: filepath.Base(statePath)}).Write(data); err != nil {
 			return workspaceTeamIdentityMaterial{}, err
 		}
 	default:

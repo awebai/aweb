@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/awebai/aw/awconfig"
@@ -59,19 +58,6 @@ func identityKeyRoute(ctx context.Context, identity *awconfig.ResolvedIdentity, 
 // saved pin, the operation route can fill the same namespace's missing routing
 // information, subject to its independently discovered registry constraint.
 func teamInviteIssuerRegistry(ctx context.Context, opts idChildOptions, identity *awconfig.ResolvedIdentity, domain string) (string, error) {
-	if own := strings.TrimSpace(identity.RegistryURL); own != "" {
-		return own, nil
-	}
-	if selected := strings.TrimSpace(opts.RegistryURL); selected != "" {
-		return selected, nil
-	}
-	if fallback := strings.TrimSpace(opts.TeamRegistryURL); fallback != "" && domain != "" && domain == opts.TeamRegistryDomain {
-		authority, err := awid.DiscoverAuthoritativeRegistry(ctx, opts.TXTResolver, domain)
-		if err != nil {
-			return "", err
-		}
-		return domainRegistryURL(authority, fallback)
-	}
 	registry, err := resolveIdentityRegistryClient(identity)
 	if err != nil {
 		return "", err
@@ -79,14 +65,15 @@ func teamInviteIssuerRegistry(ctx context.Context, opts idChildOptions, identity
 	if opts.TXTResolver != nil {
 		registry.Resolver.DNSResolver = opts.TXTResolver
 	}
-	// An installed chain fixes the issuer namespace independently of any
-	// address or team membership. The selector does not mutate identity state.
-	own := *identity
-	own.Domain = domain
-	return currentIdentityRegistryURL(ctx, &own, registry)
+	return resolveRegistryAuthority(ctx, registryAuthorityRequest{
+		Kind: registryInviteIssuerRoute, Registry: registry, Identity: identity, Domain: domain, Override: opts.RegistryURL,
+		TXTResolver: opts.TXTResolver, TeamRegistry: opts.TeamRegistryURL, TeamDomain: opts.TeamRegistryDomain,
+	})
 }
 
-// No chain is the legacy path only when current evidence establishes absence.
+// A local did:key can be chainless: it has no portable enrollment witness.
+// A global did:aw needs authoritative no-enrollment evidence even when only
+// selecting an invite condition. Present unreadable/malformed files refuse.
 // A team key is never an ID-parent credential.
 func prepareTeamInviteIDChild(ctx context.Context, opts idChildOptions) (*awconfig.TeamInviteIDChild, error) {
 	link, _, err := prepareTeamInviteAuthority(ctx, teamInviteAuthorityRequest{Issuer: opts, Child: inviteCreatesChild})
@@ -138,9 +125,6 @@ func prepareTeamInviteAuthority(ctx context.Context, input teamInviteAuthorityRe
 	opts.RegistryURL, err = teamInviteIssuerRegistry(ctx, opts, identity, domain)
 	if err != nil {
 		return nil, nil, fmt.Errorf("inviter cannot select its identity registry: %w", err)
-	}
-	if chain == nil && input.Child == inviteMembershipOnly {
-		return nil, nil, nil
 	}
 	if chain == nil {
 		resolution, err := identityKeyRoute(ctx, identity, opts.RegistryURL)
@@ -370,6 +354,7 @@ func bindTeamInviteIDChild(ctx context.Context, invite *awconfig.TeamInvite, hom
 	} else {
 		for _, name := range []string{"identity.yaml", "signing.key"} {
 			if _, err := os.Stat(filepath.Join(home, name)); err == nil {
+				fmt.Fprintln(os.Stderr, "Joining membership only; this existing identity keeps its parentage.")
 				return false, nil
 			} else if !errors.Is(err, os.ErrNotExist) {
 				return false, err

@@ -51,15 +51,6 @@ func init() {
 	rootCmd.AddCommand(statusHostCmd, statusCmd)
 }
 
-func isAgentStatusCommand(cmd *cobra.Command) bool {
-	for current := cmd; current != nil; current = current.Parent() {
-		if current == statusCmd || current == statusHostCmd {
-			return true
-		}
-	}
-	return false
-}
-
 // Execute also calls this for pre-run/flag/identity-selection errors, so --json
 // always produces one object even when the command's RunE was never reached.
 func statusInvocation(args []string) (bool, bool) {

@@ -134,8 +134,7 @@ func (f *privateTeamRegistry) verifyPathSignature(r *http.Request) (string, bool
 // and the workspace's did:key.
 func seedTeamReadWorkspace(t *testing.T, fake *privateTeamRegistry) (string, string) {
 	t.Helper()
-	resetTeamRemoveMemberGlobals(t)
-	teamRemoveRegistryURL = fake.server.URL
+	t.Setenv("AWID_REGISTRY_URL", fake.server.URL)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv(awconfig.IdentityHomeEnv, "")
 
@@ -160,7 +159,7 @@ func TestAgentStatusReadsAPrivateTeamWithTheWorkspaceMemberKey(t *testing.T) {
 
 	out := teamAgentStatusOutput{TeamID: "backend:acme.com", Alias: "retiree"}
 	readAgentCertificateState(context.Background(), &out, "acme.com", "backend", false,
-		teamReadSigners(workingDir, "acme.com", "backend"))
+		mustTeamReadSigners(t, workingDir, "acme.com", "backend"))
 
 	if out.Certificate != agentCertificateActive {
 		t.Fatalf("certificate=%q, want %q; unreadable=%v", out.Certificate, agentCertificateActive, out.Unreadable)
@@ -193,7 +192,7 @@ func TestAgentStatusFallsBackToTheTeamControllerKeyOnAPrivateTeam(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	signers := teamReadSigners(workingDir, "acme.com", "backend")
+	signers := mustTeamReadSigners(t, workingDir, "acme.com", "backend")
 	if len(signers) != 2 {
 		t.Fatalf("got %d candidate keys, want the workspace key and the controller key", len(signers))
 	}
@@ -222,8 +221,7 @@ func TestAgentStatusFallsBackToTheTeamControllerKeyOnAPrivateTeam(t *testing.T) 
 // HTTP status the operator has to interpret.
 func TestAgentStatusExplainsAPrivateTeamItCannotSignFor(t *testing.T) {
 	fake := newPrivateTeamRegistry(t, "did:key:z6MkController", nil, "retiree")
-	resetTeamRemoveMemberGlobals(t)
-	teamRemoveRegistryURL = fake.server.URL
+	t.Setenv("AWID_REGISTRY_URL", fake.server.URL)
 
 	out := teamAgentStatusOutput{TeamID: "backend:acme.com", Alias: "retiree"}
 	readAgentCertificateState(context.Background(), &out, "acme.com", "backend", false, nil)
@@ -255,8 +253,7 @@ func TestAgentStatusExplainsAPrivateTeamItCannotSignFor(t *testing.T) {
 func TestAgentStatusReadsAPublicTeamAnonymouslyAsBefore(t *testing.T) {
 	fake := newPrivateTeamRegistry(t, "did:key:z6MkController", nil, "retiree")
 	fake.visibility = "public"
-	resetTeamRemoveMemberGlobals(t)
-	teamRemoveRegistryURL = fake.server.URL
+	t.Setenv("AWID_REGISTRY_URL", fake.server.URL)
 
 	out := teamAgentStatusOutput{TeamID: "backend:acme.com", Alias: "retiree"}
 	readAgentCertificateState(context.Background(), &out, "acme.com", "backend", false, nil)
@@ -353,7 +350,7 @@ func TestTeamReadSignersPrecedenceAndHostedExclusion(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	signers := teamReadSigners(workingDir, "acme.com", "backend")
+	signers := mustTeamReadSigners(t, workingDir, "acme.com", "backend")
 	if len(signers) != 2 || !signers[0].Equal(workspaceKey) || !signers[1].Equal(teamKey) {
 		t.Fatalf("got %d signers; want the workspace key first and the team controller key second", len(signers))
 	}
@@ -363,14 +360,14 @@ func TestTeamReadSignersPrecedenceAndHostedExclusion(t *testing.T) {
 	if err := awconfig.SaveTeamKey("aweb.ai", "backend", teamKey); err != nil {
 		t.Fatal(err)
 	}
-	hosted := teamReadSigners(workingDir, "aweb.ai", "backend")
+	hosted := mustTeamReadSigners(t, workingDir, "aweb.ai", "backend")
 	if len(hosted) != 1 || !hosted[0].Equal(workspaceKey) {
 		t.Fatalf("hosted namespace offered %d signers, want only the workspace key", len(hosted))
 	}
 
 	// A directory with no identity and no team key signs nothing, which is what
 	// keeps public-team reads anonymous.
-	if got := teamReadSigners(t.TempDir(), "other.com", "backend"); len(got) != 0 {
+	if got := mustTeamReadSigners(t, t.TempDir(), "other.com", "backend"); len(got) != 0 {
 		t.Fatalf("got %d signers where no key exists, want none", len(got))
 	}
 }
@@ -423,4 +420,13 @@ func TestReadSignedTeamStateOnlyRetriesTheVisibilityRefusal(t *testing.T) {
 	}); err != nil || attempts != 1 || key != nil {
 		t.Fatalf("attempts=%d key=%v err=%v; no candidates means one unsigned read", attempts, key, err)
 	}
+}
+
+func mustTeamReadSigners(t *testing.T, workingDir, domain, team string) []ed25519.PrivateKey {
+	t.Helper()
+	signers, err := teamReadSigners(workingDir, domain, team)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return signers
 }

@@ -52,12 +52,12 @@ func TestInteractionLogUsesInstanceRootFromSubdirectoryDespiteIdentityHome(t *te
 }
 
 func TestFormatInteractionRecapRendersConversationLikeSummary(t *testing.T) {
-	recap := formatInteractionRecap([]InteractionEntry{
+	recap := formatInteractionRecapStyled([]InteractionEntry{
 		{Timestamp: "2026-03-22T10:00:00Z", Kind: interactionKindUser, Text: "please fix the continue UX"},
 		{Timestamp: "2026-03-22T10:01:00Z", Kind: interactionKindAgent, Text: "I can do that with a small local recap."},
 		{Timestamp: "2026-03-22T10:02:00Z", Kind: interactionKindChatIn, From: "rose", Text: "please keep it narrow"},
 		{Timestamp: "2026-03-22T10:03:00Z", Kind: interactionKindMailOut, To: "henry", Subject: "review", Text: "please take a look"},
-	}, 8)
+	}, 8, false, 0)
 
 	if !strings.Contains(recap, "Recent interactions") {
 		t.Fatalf("expected heading, got %q", recap)

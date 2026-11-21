@@ -95,7 +95,7 @@ func executeIDNamespaceAssignAddress(ctx context.Context, opts idNamespaceAssign
 	if err != nil {
 		return idNamespaceAssignAddressOutput{}, err
 	}
-	registryURL, err := registry.DiscoverRegistry(ctx, domain)
+	registryURL, err := resolveRegistryAuthority(ctx, registryAuthorityRequest{Kind: registryDomainRoute, Registry: registry, Domain: domain})
 	if err != nil {
 		return idNamespaceAssignAddressOutput{}, fmt.Errorf("discover registry for %s: %w", domain, err)
 	}

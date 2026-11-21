@@ -290,7 +290,10 @@ func TestImplicitLocalInitRecordsTheRegistryItUsesNow(t *testing.T) {
 	if meta.RegistryURL != registry.URL {
 		t.Fatalf("controller record keeps registry %q, want %q", meta.RegistryURL, registry.URL)
 	}
-	if got := registryURLForTeamInvite(t.TempDir(), "local", ""); got != registry.URL {
+	if got, err := resolveRegistryAuthority(context.Background(), registryAuthorityRequest{Kind: registryTeamRoute, WorkingDir: t.TempDir(), Domain: "local"}); err != nil || got != registry.URL {
+		if err != nil {
+			t.Fatal(err)
+		}
 		t.Fatalf("invites carry registry %q, want %q", got, registry.URL)
 	}
 }

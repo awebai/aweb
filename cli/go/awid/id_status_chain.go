@@ -14,9 +14,9 @@ func RegisteredIDChain(status map[string]any, id string) (map[string]any, error)
 	}
 	byID := map[string]map[string]any{}
 	for _, value := range rows {
-		row, _ := value.(map[string]any)
-		rowID, _ := row["id"].(string)
-		if row == nil || rowID == "" || byID[rowID] != nil {
+		row, rowOK := value.(map[string]any)
+		rowID, idOK := row["id"].(string)
+		if !rowOK || !idOK || rowID == "" || byID[rowID] != nil {
 			return nil, ErrMalformedIDStatus
 		}
 		byID[rowID] = row
@@ -28,24 +28,36 @@ func RegisteredIDChain(status map[string]any, id string) (map[string]any, error)
 			return nil, fmt.Errorf("the registered chain of %s: %w", id, err)
 		}
 		path = append([]any{signed}, path...)
-		parent, _ := signed["certificate"].(map[string]any)["parent"].(map[string]any)
-		switch parent["kind"] {
-		case "namespace":
+		fields, fieldsOK := signed["certificate"].(map[string]any)
+		parent, parentOK := fields["parent"].(map[string]any)
+		if !fieldsOK || !parentOK {
+			return nil, ErrMalformedIDStatus
+		}
+		kind, kindOK := parent["kind"].(string)
+		if !kindOK {
+			return nil, ErrMalformedIDStatus
+		}
+		switch IDParentKind(kind) {
+		case IDParentKindNamespace:
 			return map[string]any{"v": 1, "type": "aweb.id-chain", "certificates": path}, nil
-		case "identity":
-			id, _ = parent["id"].(string)
+		case IDParentKindIdentity:
+			next, ok := parent["id"].(string)
+			if !ok || next == "" {
+				return nil, ErrMalformedIDStatus
+			}
+			id = next
 		default:
 			return nil, ErrMalformedIDStatus
 		}
 	}
-	return nil, idCertificateRefusal("chain_too_deep")
+	return nil, idCertificateRefusal(IDRefusalChainTooDeep)
 }
 
 // currentIDCertificate is the signed certificate among row's revisions whose
 // ID is row's current certificate ID.
 func currentIDCertificate(row map[string]any) (map[string]any, error) {
 	if row == nil {
-		return nil, idCertificateRefusal("unregistered_identity")
+		return nil, idCertificateRefusal(IDRefusalUnregisteredIdentity)
 	}
 	current, _ := row["current_certificate_id"].(string)
 	revisions, _ := row["certificates"].([]any)
@@ -60,7 +72,7 @@ func currentIDCertificate(row map[string]any) (map[string]any, error) {
 			return signed, nil
 		}
 	}
-	return nil, idCertificateRefusal("evidence_unavailable")
+	return nil, idCertificateRefusal(IDRefusalEvidenceUnavailable)
 }
 
 // RegisteredIDHead is id's current certificate ID as evidence states it, only

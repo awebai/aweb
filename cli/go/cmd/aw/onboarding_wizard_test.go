@@ -1011,14 +1011,9 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 	}
 }
 
-func TestExecuteHostedPathRetriesUsernameAfterSignupConflict(t *testing.T) {
+func TestExecuteHostedPathRetainsSubmittedUsernameAfterUnclassifiedSignupConflict(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-
-	_, teamKey, err := awid.GenerateKeypair()
-	if err != nil {
-		t.Fatal(err)
-	}
 
 	var didRequests []map[string]any
 	registryServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1087,54 +1082,13 @@ func TestExecuteHostedPathRetriesUsernameAfterSignupConflict(t *testing.T) {
 					t.Fatal(err)
 				}
 				signupBodies = append(signupBodies, body)
-				username := strings.TrimSpace(body["username"].(string))
-				if len(signupBodies) == 1 {
-					w.WriteHeader(http.StatusConflict)
-					_, _ = w.Write([]byte(`{"detail":"username taken"}`))
-					return
+				w.WriteHeader(http.StatusConflict)
+				if _, err := w.Write([]byte(`{"detail":"username taken"}`)); err != nil {
+					t.Error(err)
 				}
-				alias := strings.TrimSpace(body["alias"].(string))
-				didKey := strings.TrimSpace(body["did_key"].(string))
-				didAW := strings.TrimSpace(body["did_aw"].(string))
-				memberAddress := username + ".aweb.ai/" + alias
-				cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-					Team:          "default:" + username + ".aweb.ai",
-					MemberDIDKey:  didKey,
-					MemberDIDAW:   didAW,
-					MemberAddress: memberAddress,
-					Alias:         alias,
-					IdentityScope: awid.IdentityModeGlobal,
-				})
-				if err != nil {
-					t.Fatal(err)
-				}
-				encodedCert, err := awid.EncodeTeamCertificateHeader(cert)
-				if err != nil {
-					t.Fatal(err)
-				}
-				_ = json.NewEncoder(w).Encode(map[string]any{
-					"user_id":          "user-1",
-					"username":         username,
-					"org_id":           "org-1",
-					"namespace_domain": username + ".aweb.ai",
-					"team_id":          "default:" + username + ".aweb.ai",
-					"api_key":          "aw_sk_guided_hosted",
-					"certificate":      encodedCert,
-					"did_aw":           didAW,
-					"member_address":   memberAddress,
-					"alias":            alias,
-				})
 			case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
-				_ = json.NewEncoder(w).Encode(map[string]any{
-					"team_id":      "default:jack-2.aweb.ai",
-					"alias":        "laptop",
-					"agent_id":     "agent-1",
-					"workspace_id": "ws-1",
-					"repo_id":      "repo-1",
-					"team_did_key": awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey)),
-				})
-			case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
-				writePublishEncryptionKeyResponseForTest(t, w, "agent-1", "default:jack-2.aweb.ai", "laptop")
+				t.Error("connect followed an unclassified signup refusal")
+				http.Error(w, "unexpected connect", 500)
 			default:
 				t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 			}
@@ -1143,39 +1097,37 @@ func TestExecuteHostedPathRetriesUsernameAfterSignupConflict(t *testing.T) {
 
 	tmp := t.TempDir()
 	var out bytes.Buffer
-	// stdin: first username, agent name, retry username after conflict.
-	// No lifetime prompt. Global mode is explicit via the legacy internal boolean.
-	_, err = executeHostedPath(guidedOnboardingRequest{
+	// A second name is available on stdin but must not replace a submitted
+	// signup whose outcome has not been proved to have no effects.
+	_, err := executeHostedPath(guidedOnboardingRequest{
 		WorkingDir: tmp,
 		PromptIn:   strings.NewReader("jack\nlaptop\njack-2\n"),
 		PromptOut:  &out,
 		BaseURL:    server.URL,
 		Global:     true,
 	})
-	if err != nil {
-		t.Fatalf("executeHostedPath: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "signup attempt retained") {
+		t.Fatalf("unclassified conflict: %v", err)
 	}
-
-	if len(signupBodies) != 2 {
-		t.Fatalf("signup calls=%d", len(signupBodies))
+	if len(signupBodies) != 1 || len(didRequests) != 1 {
+		t.Fatalf("new request or signer after conflict: signup=%d registry=%d", len(signupBodies), len(didRequests))
 	}
-	if len(didRequests) != 2 {
-		// One did:register per attempt: hosted global registration creates a fresh
-		// keypair on first attempt and again on retry under the new username.
-		t.Fatalf("did registrations=%d want 2 for global retry", len(didRequests))
+	if signupBodies[0]["username"] != "jack" || signupBodies[0]["did_aw"] == "" {
+		t.Fatalf("original global selection changed: %v", signupBodies[0])
 	}
-	if signupBodies[0]["username"] != "jack" || signupBodies[1]["username"] != "jack-2" {
-		t.Fatalf("signup usernames=%v", signupBodies)
+	retained, err := loadHostedSignupRecovery(tmp)
+	if err != nil || retained == nil || retained.State != awconfig.RecoveryAttempted {
+		t.Fatalf("missing uncertain signup: %v %v", retained != nil, err)
 	}
-	if got, _ := signupBodies[1]["did_aw"].(string); strings.TrimSpace(got) == "" {
-		t.Fatalf("signup did_aw must be set on global retry; got=%v", signupBodies)
+	request, _, err := retained.identity()
+	if err != nil || request.Username != "jack" || request.DIDKey != signupBodies[0]["did_key"] {
+		t.Fatalf("retained different signup: %v", err)
 	}
-
-	if _, err := os.Stat(filepath.Join(tmp, ".aw", "identity.yaml")); err != nil {
-		t.Fatalf("identity.yaml must exist for global hosted onboarding retry: %v", err)
+	if _, err := os.Stat(filepath.Join(tmp, ".aw", "identity.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("installed identity after refusal: %v", err)
 	}
-	if !strings.Contains(out.String(), `Username "jack" was taken during signup.`) {
-		t.Fatalf("expected retry message, got %q", out.String())
+	if strings.Contains(out.String(), "was taken during signup") {
+		t.Fatalf("unsafe new-name advice: %q", out.String())
 	}
 }
 
@@ -1219,7 +1171,7 @@ func TestExecuteHostedPathDoesNotPromptForUsernameRetryWhenNonInteractive(t *tes
 	if err == nil {
 		t.Fatal("expected non-interactive signup conflict to fail")
 	}
-	if !strings.Contains(err.Error(), `username "jack" is not available (taken)`) {
+	if !strings.Contains(err.Error(), "signup attempt retained") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if signupCalls != 1 {
@@ -2255,7 +2207,7 @@ func TestGuidedOnboardingReconnectRunsPostInitSetupOnce(t *testing.T) {
 	}
 }
 
-func TestRunGuidedPostInitSetupKeepsDocsChannelHooksPrompts(t *testing.T) {
+func TestRunGuidedSetupKeepsDocsChannelHooksPrompts(t *testing.T) {
 	oldInjectDocs := guidedOnboardingInjectDocs
 	oldSetupHooks := guidedOnboardingSetupHooks
 	oldSetupChannel := guidedOnboardingSetupChannel
@@ -2282,7 +2234,7 @@ func TestRunGuidedPostInitSetupKeepsDocsChannelHooksPrompts(t *testing.T) {
 		return &claudeHooksResult{}
 	}
 
-	err := runGuidedPostInitSetup(guidedOnboardingRequest{
+	_, err := runGuidedSetup(guidedOnboardingRequest{
 		WorkingDir:         tmp,
 		PromptIn:           &singleByteReader{data: "n\ny\n"},
 		PromptOut:          &bytes.Buffer{},
@@ -2290,7 +2242,7 @@ func TestRunGuidedPostInitSetupKeepsDocsChannelHooksPrompts(t *testing.T) {
 		AskPostCreateSetup: true,
 	})
 	if err != nil {
-		t.Fatalf("runGuidedPostInitSetup: %v", err)
+		t.Fatalf("runGuidedSetup: %v", err)
 	}
 	if docsRepo != tmp {
 		t.Fatalf("docs_repo=%q", docsRepo)
@@ -2306,7 +2258,7 @@ func TestRunGuidedPostInitSetupKeepsDocsChannelHooksPrompts(t *testing.T) {
 	}
 }
 
-func TestRunGuidedPostInitSetupDefaultsDocsAndChannelToYes(t *testing.T) {
+func TestRunGuidedSetupDefaultsDocsAndChannelToYes(t *testing.T) {
 	oldInjectDocs := guidedOnboardingInjectDocs
 	oldSetupHooks := guidedOnboardingSetupHooks
 	oldSetupChannel := guidedOnboardingSetupChannel
@@ -2341,7 +2293,7 @@ func TestRunGuidedPostInitSetupDefaultsDocsAndChannelToYes(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	err := runGuidedPostInitSetup(guidedOnboardingRequest{
+	_, err := runGuidedSetup(guidedOnboardingRequest{
 		WorkingDir:         tmp,
 		PromptIn:           &singleByteReader{data: "\n\n"},
 		PromptOut:          &out,
@@ -2349,7 +2301,7 @@ func TestRunGuidedPostInitSetupDefaultsDocsAndChannelToYes(t *testing.T) {
 		AskPostCreateSetup: true,
 	})
 	if err != nil {
-		t.Fatalf("runGuidedPostInitSetup: %v", err)
+		t.Fatalf("runGuidedSetup: %v", err)
 	}
 	if docsCalls != 1 {
 		t.Fatalf("docs calls=%d", docsCalls)
@@ -2366,7 +2318,7 @@ func TestRunGuidedPostInitSetupDefaultsDocsAndChannelToYes(t *testing.T) {
 	}
 }
 
-func TestRunGuidedPostInitSetupCanSkipAgentDocsMutation(t *testing.T) {
+func TestRunGuidedSetupCanSkipAgentDocsMutation(t *testing.T) {
 	oldInjectDocs := guidedOnboardingInjectDocs
 	oldSetupHooks := guidedOnboardingSetupHooks
 	oldSetupChannel := guidedOnboardingSetupChannel
@@ -2391,7 +2343,7 @@ func TestRunGuidedPostInitSetupCanSkipAgentDocsMutation(t *testing.T) {
 		return &claudeHooksResult{}
 	}
 
-	err := runGuidedPostInitSetup(guidedOnboardingRequest{
+	_, err := runGuidedSetup(guidedOnboardingRequest{
 		WorkingDir:         tmp,
 		PromptIn:           &singleByteReader{data: "\n"},
 		PromptOut:          &bytes.Buffer{},
@@ -2400,7 +2352,7 @@ func TestRunGuidedPostInitSetupCanSkipAgentDocsMutation(t *testing.T) {
 		AskPostCreateSetup: true,
 	})
 	if err != nil {
-		t.Fatalf("runGuidedPostInitSetup: %v", err)
+		t.Fatalf("runGuidedSetup: %v", err)
 	}
 	if docsCalls != 0 {
 		t.Fatalf("docs calls=%d", docsCalls)

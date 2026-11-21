@@ -3,10 +3,11 @@ package main
 import (
 	"context"
 	"crypto/ed25519"
+	"errors"
 	"fmt"
-	"github.com/awebai/aw/awconfig"
-	"github.com/awebai/aw/awid"
 	"strings"
+
+	"github.com/awebai/aw/awid"
 )
 
 // localTeamMemberBootstrap names the controller and member independently.
@@ -27,46 +28,58 @@ type localTeamMemberBootstrap struct {
 }
 
 func bootstrapLocalTeamMember(ctx context.Context, input localTeamMemberBootstrap) (*localTeamBootstrapResult, error) {
-	registry, registryURL := input.Registry, input.RegistryURL
-	domain, teamName, displayName := input.Domain, input.TeamName, input.DisplayName
-	controllerKey, memberKey := input.ControllerKey, input.MemberKey
-	memberDIDAW, memberAddress, alias := input.MemberDIDAW, input.MemberAddress, input.Alias
-	if len(memberKey) != ed25519.PrivateKeySize {
+	if len(input.MemberKey) != ed25519.PrivateKeySize {
 		return nil, fmt.Errorf("member signing key is malformed")
 	}
-	if len(controllerKey) != ed25519.PrivateKeySize {
+	return bootstrapTeamMembership(ctx, teamMembershipBootstrap{
+		Registry: input.Registry, RegistryURL: input.RegistryURL, Domain: input.Domain,
+		TeamName: input.TeamName, DisplayName: input.DisplayName, ControllerKey: input.ControllerKey,
+		Member: awid.TeamCertificateFields{
+			MemberDIDKey: awid.ComputeDIDKey(input.MemberKey.Public().(ed25519.PublicKey)),
+			MemberDIDAW:  strings.TrimSpace(input.MemberDIDAW), MemberAddress: strings.TrimSpace(input.MemberAddress),
+			Alias: strings.TrimSpace(input.Alias), IdentityScope: string(input.Scope),
+		},
+		NameFlag: "--name",
+	})
+}
+
+type teamMembershipBootstrap struct {
+	Registry      *awid.RegistryClient
+	RegistryURL   string
+	Domain        string
+	TeamName      string
+	DisplayName   string
+	ControllerKey ed25519.PrivateKey
+	Member        awid.TeamCertificateFields
+	NameFlag      string
+}
+
+func bootstrapTeamMembership(ctx context.Context, input teamMembershipBootstrap) (*localTeamBootstrapResult, error) {
+	if len(input.ControllerKey) != ed25519.PrivateKeySize {
 		return nil, fmt.Errorf("controller signing key is malformed")
 	}
-	resolvedRegistryURL := strings.TrimSpace(registryURL)
-	if resolvedRegistryURL == "" && registry != nil {
-		resolvedRegistryURL = strings.TrimSpace(registry.DefaultRegistryURL)
+	registryURL := strings.TrimSpace(input.RegistryURL)
+	if registryURL == "" && input.Registry != nil {
+		registryURL = strings.TrimSpace(input.Registry.DefaultRegistryURL)
 	}
-	if input.Scope != awid.IdentityScopeLocal && input.Scope != awid.IdentityScopeGlobal {
+	if input.Member.IdentityScope != awid.IdentityModeLocal && input.Member.IdentityScope != awid.IdentityModeGlobal {
 		return nil, fmt.Errorf("identity scope must be local or global")
 	}
-	registration, err := ensureLocalTeamRegistered(ctx, registry, resolvedRegistryURL, domain, teamName, displayName, controllerKey)
+	registration, err := ensureLocalTeamRegistered(ctx, input.Registry, registryURL, input.Domain, input.TeamName, input.DisplayName, input.ControllerKey)
 	if err != nil {
 		return nil, err
 	}
-	memberDIDKey := awid.ComputeDIDKey(memberKey.Public().(ed25519.PublicKey))
-	cert, err := awid.SignTeamCertificate(registration.TeamKey, awid.TeamCertificateFields{
-		Team:          registration.TeamID,
-		MemberDIDKey:  memberDIDKey,
-		MemberDIDAW:   strings.TrimSpace(memberDIDAW),
-		MemberAddress: strings.TrimSpace(memberAddress),
-		Alias:         strings.TrimSpace(alias),
-		IdentityScope: string(input.Scope),
-	})
+	issuer := teamMembershipIssuer{TeamID: registration.TeamID, Key: registration.TeamKey, Registry: input.Registry, RegistryURL: registryURL}
+	cert, err := issuer.issue(ctx, input.Member)
 	if err != nil {
-		return nil, err
-	}
-	if err := registry.RegisterCertificate(ctx, resolvedRegistryURL, awconfig.NormalizeDomain(domain), strings.ToLower(strings.TrimSpace(teamName)), cert, registration.TeamKey); err != nil {
-		if isAliasConflict(err) {
-			// aw init's local and guided paths call this, and --name sets
-			// their name.
-			return nil, &plainRefusal{text: nameTakenText(strings.TrimSpace(alias), registration.TeamID, "--name"), err: err}
+		var refused *teamMembershipRegistrationError
+		if errors.As(err, &refused) {
+			if isAliasConflict(refused.cause) {
+				return nil, &plainRefusal{text: nameTakenText(input.Member.Alias, registration.TeamID, input.NameFlag), err: refused.cause}
+			}
+			return nil, fmt.Errorf("register certificate at registry: %w", refused.cause)
 		}
-		return nil, fmt.Errorf("register certificate at registry: %w", err)
+		return nil, err
 	}
 	return &localTeamBootstrapResult{
 		TeamID:      registration.TeamID,

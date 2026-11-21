@@ -331,7 +331,7 @@ func normalizeAtomicAddressClaimFields(fields AtomicAddressClaimFields) (AtomicA
 	if !strings.HasPrefix(out.CurrentDIDKey, "did:key:") {
 		return AtomicAddressClaimFields{}, fmt.Errorf("current_did_key must start with did:key:")
 	}
-	registryURL, err := canonicalRegistryServerOrigin(out.RegistryURL)
+	registryURL, err := CanonicalRegistryServerOrigin(out.RegistryURL)
 	if err != nil {
 		return AtomicAddressClaimFields{}, fmt.Errorf("registry_url: %w", err)
 	}
