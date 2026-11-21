@@ -205,8 +205,6 @@ fi
 run_candidate() {
 set -euo pipefail
 command -v docker >/dev/null || refuse "docker is unavailable"
-wait_for_disk
-mkdir -- "$LOG_DIR" || refuse "could not allocate run logs: $LOG_DIR"
 
 if ! work="$(mktemp -d "/tmp/aweb-candidate-work.XXXXXX")"; then
   refuse "could not allocate the candidate work directory"
@@ -528,7 +526,8 @@ printf 'candidate gate PASSED at %s; logs: %s\n' \
 source "$ROOT/scripts/candidate-record.sh"
 started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 run_log="$LEDGER_LOGS/${KEY:0:12}-run-$run_id.log"
-mkdir -p "$LOG_DIR"
+wait_for_disk
+mkdir -- "$LOG_DIR" || refuse "could not allocate run logs: $LOG_DIR"
 output_pipe="$LOG_DIR/output.pipe"
 mkfifo "$output_pipe"
 if [[ -n "${AWEB_GATE_RUN_REGISTRY:-}" ]]; then
