@@ -17,7 +17,7 @@ import (
 func signTeamCertificateAsGivenForTest(t *testing.T, teamKey ed25519.PrivateKey, cert TeamCertificate) *TeamCertificate {
 	t.Helper()
 	cert.TeamDIDKey = ComputeDIDKey(teamKey.Public().(ed25519.PublicKey))
-	payload := canonicalCertificatePayload(cert.CertificateID, cert.Team, cert.TeamDIDKey, cert.MemberDIDKey, cert.MemberDIDAW, cert.MemberAddress, cert.Alias, cert.IdentityScope, cert.IssuedAt, false)
+	payload := canonicalCertificatePayload(certificatePayloadFields{CertificateID: cert.CertificateID, TeamID: cert.Team, TeamDIDKey: cert.TeamDIDKey, MemberDIDKey: cert.MemberDIDKey, MemberDIDAW: cert.MemberDIDAW, MemberAddress: cert.MemberAddress, Alias: cert.Alias, Scope: cert.IdentityScope, IssuedAt: cert.IssuedAt, ScopeField: certificateIdentityScopeField})
 	cert.Signature = base64.RawStdEncoding.EncodeToString(ed25519.Sign(teamKey, []byte(payload)))
 	return &cert
 }

@@ -21,6 +21,8 @@ fi
 log_dir="${CANDIDATE_LOG_DIR:?CANDIDATE_LOG_DIR is required}"
 stages="${1:-checks user-paths unit artifacts integration}"
 checks() {
+  run check-python-static
+  run check-product-table-writes
   cat "$log_dir/host-published-port.log"
   run check-generated-copies
   run test-generated-copies

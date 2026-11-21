@@ -164,7 +164,7 @@ def main():
         dns = docker('run', '-d', '--network', token, '--name', token + '-dns',
                      '--cpus', '.5', '--memory', '128m', '--pids-limit', '128',
                      '-v', f'{evidence}:/evidence', image, 'python3',
-                     'scripts/test-egress/dns.py', '--log', '/evidence/dns-denied.log')
+                     'scripts/test-egress/egress_dns.py', '--log', '/evidence/dns-denied.log')
         containers.append(dns)
         info = json.loads(docker('inspect', dns))[0]
         dns_ip = info['NetworkSettings']['Networks'][token]['IPAddress']

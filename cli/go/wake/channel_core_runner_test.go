@@ -385,7 +385,7 @@ func TestChannelCoreBindingErrorClearsOnlyOnCompletedTrace(t *testing.T) {
 	child := &ChannelCoreChild{done: make(chan struct{})}
 	done := make(chan struct{})
 	go func() {
-		child.readStatus(reader, make(chan struct{}))
+		child.readStatus(reader, make(chan struct{}), childStatusOptions{})
 		close(done)
 	}()
 	writeLine := func(line string) {
