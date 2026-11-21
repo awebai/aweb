@@ -149,9 +149,10 @@ class ReleaseInstallerProcessTest(unittest.TestCase):
         self.tools = self.sandbox / "tools"
         self.tools.mkdir()
         self.tools.chmod(0o755)
+        # GNU tar invokes gzip through PATH when extracting the release archive.
         for tool in (
             "awk", "cat", "chmod", "cp", "curl", "grep", "head", "mktemp",
-            "mkdir", "mv", "rm", "sed", "tar", "tr", "uname", "basename", "shasum", "sha256sum",
+            "mkdir", "mv", "rm", "sed", "tar", "gzip", "tr", "uname", "basename", "shasum", "sha256sum",
             "codesign", "openssl",
         ):
             if executable := shutil.which(tool):
