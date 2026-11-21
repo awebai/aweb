@@ -1292,7 +1292,7 @@ func TestBootstrapFirstLocalTeamMemberCreatesTeamAndRegistersCertificate(t *test
 		Scope:         awid.IdentityScopeGlobal,
 	})
 	if err != nil {
-		t.Fatalf("bootstrapLocalTeamMemberWithScope: %v", err)
+		t.Fatalf("bootstrapLocalTeamMember: %v", err)
 	}
 	if result.TeamID != "default:acme.com" {
 		t.Fatalf("team_id=%q", result.TeamID)
@@ -1339,16 +1339,20 @@ func TestTeamInviteAndAcceptInviteFlowStdin(t *testing.T) { testTeamInviteAndAcc
 func testTeamInviteAndAcceptInviteFlow(t *testing.T, tokenStdin bool) {
 	t.Parallel()
 
+	const domain = "acme.test"
+	const teamID = "backend:" + domain
 	var encryptionKeyPublished atomic.Bool
 	var registeredCert map[string]any
 	var memberDIDKey string
 	var memberStableID string
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.com/addresses/alice":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/did/"+memberStableID+"/key":
+			json.NewEncoder(w).Encode(map[string]any{"did_aw": memberStableID, "current_did_key": memberDIDKey, "id_tree": map[string]any{"enrolled": false}})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/"+domain+"/addresses/alice":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"address_id":      "addr-alice",
-				"domain":          "acme.com",
+				"domain":          domain,
 				"name":            "alice",
 				"did_aw":          memberStableID,
 				"current_did_key": memberDIDKey,
@@ -1382,7 +1386,7 @@ func testTeamInviteAndAcceptInviteFlow(t *testing.T, tokenStdin bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeTeamKeyForTest(t, tmp, "acme.com", "backend", teamKey)
+	writeTeamKeyForTest(t, tmp, domain, "backend", teamKey)
 
 	// Pre-create agent identity (the accepting agent has an identity)
 	memberPub, memberKey, err := awid.GenerateKeypair()
@@ -1394,7 +1398,8 @@ func testTeamInviteAndAcceptInviteFlow(t *testing.T, tokenStdin bool) {
 	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(tmp, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{
 		DID:           memberDIDKey,
 		StableID:      memberStableID,
-		Address:       "acme.com/alice",
+		Address:       domain + "/alice",
+		RegistryURL:   server.URL,
 		Custody:       awid.CustodySelf,
 		IdentityScope: awid.IdentityModeGlobal,
 		CreatedAt:     "2026-04-06T00:00:00Z",
@@ -1407,7 +1412,7 @@ func testTeamInviteAndAcceptInviteFlow(t *testing.T, tokenStdin bool) {
 	// Step 1: Create invite
 	runInvite := exec.CommandContext(ctx, bin, "id", "team", "invite",
 		"--team", "backend",
-		"--namespace", "acme.com",
+		"--namespace", domain,
 		"--persistent",
 		"--json")
 	runInvite.Env = append(idCreateCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL)
@@ -1457,7 +1462,7 @@ func testTeamInviteAndAcceptInviteFlow(t *testing.T, tokenStdin bool) {
 	if acceptGot["status"] != "accepted" {
 		t.Fatalf("accept status=%v", acceptGot["status"])
 	}
-	if acceptGot["team_id"] != "backend:acme.com" {
+	if acceptGot["team_id"] != teamID {
 		t.Fatalf("team_id=%v", acceptGot["team_id"])
 	}
 	if acceptGot["alias"] != "alice" {
@@ -1465,12 +1470,12 @@ func testTeamInviteAndAcceptInviteFlow(t *testing.T, tokenStdin bool) {
 	}
 
 	// Verify certificate was saved to disk
-	certPath := awconfig.TeamCertificatePath(tmp, "backend:acme.com")
+	certPath := awconfig.TeamCertificatePath(tmp, teamID)
 	cert, err := awid.LoadTeamCertificate(certPath)
 	if err != nil {
 		t.Fatalf("load certificate: %v", err)
 	}
-	if cert.Team != "backend:acme.com" {
+	if cert.Team != teamID {
 		t.Fatalf("cert team_id=%q", cert.Team)
 	}
 	if cert.MemberDIDKey != memberDIDKey {
@@ -1483,10 +1488,10 @@ func testTeamInviteAndAcceptInviteFlow(t *testing.T, tokenStdin bool) {
 	if err != nil {
 		t.Fatalf("load teams state: %v", err)
 	}
-	if teamState.ActiveTeam != "backend:acme.com" {
+	if teamState.ActiveTeam != teamID {
 		t.Fatalf("active_team=%q", teamState.ActiveTeam)
 	}
-	if membership := teamState.Membership("backend:acme.com"); membership == nil {
+	if membership := teamState.Membership(teamID); membership == nil {
 		t.Fatal("expected backend team membership in teams.yaml")
 	} else if strings.TrimSpace(membership.CertPath) == "" {
 		t.Fatal("teams.yaml membership missing cert_path")

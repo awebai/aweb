@@ -232,4 +232,67 @@ describe("conversation-bound verification", () => {
 
     expect(messages[0].verification_status).toBe("verified_legacy");
   });
+
+  test("fails a chat message signed for another conversation, whatever its row says", async () => {
+    // Signed for chat-conv-other and served in chat-conv-1's history, once
+    // with the row naming its own conversation and once with no conversation.
+    const env = chatEnvelope({ conversation_id: "chat-conv-other" });
+    const signedPayload = canonicalJSON(env);
+    const signature = await signMessage(b64ToBytes(vectors.seed), env);
+    const row = (messageID: string, conversationID: string | undefined) => ({
+      message_id: messageID,
+      ...(conversationID === undefined ? {} : { conversation_id: conversationID }),
+      from_agent: "alice",
+      from_address: env.from,
+      to_address: env.to,
+      body: env.body,
+      timestamp: env.timestamp,
+      sender_leaving: false,
+      from_did: env.from_did,
+      to_did: env.to_did,
+      from_stable_id: env.from_stable_id,
+      signature,
+      signing_key_id: env.from_did,
+      signed_payload: signedPayload,
+    });
+    const client = {
+      get: async () => ({
+        messages: [row(env.message_id!, "chat-conv-other"), row(env.message_id!, undefined)],
+      }),
+    };
+
+    const messages = await fetchHistory(client as never, "chat-conv-1");
+
+    expect(messages.map((msg) => msg.verification_status)).toEqual(["failed", "failed"]);
+    // The failed rows are left as received.
+    expect(messages.map((msg) => msg.conversation_id)).toEqual(["chat-conv-other", undefined]);
+  });
+
+  test("verifies a chat message signed for the conversation it is read from", async () => {
+    const env = chatEnvelope({ conversation_id: "chat-conv-1" });
+    const signature = await signMessage(b64ToBytes(vectors.seed), env);
+    const client = {
+      get: async () => ({
+        messages: [{
+          message_id: env.message_id,
+          from_agent: "alice",
+          from_address: env.from,
+          to_address: env.to,
+          body: env.body,
+          timestamp: env.timestamp,
+          sender_leaving: false,
+          from_did: env.from_did,
+          to_did: env.to_did,
+          from_stable_id: env.from_stable_id,
+          signature,
+          signing_key_id: env.from_did,
+          signed_payload: canonicalJSON(env),
+        }],
+      }),
+    };
+
+    const messages = await fetchHistory(client as never, "chat-conv-1");
+
+    expect(messages[0].verification_status).toBe("verified");
+  });
 });

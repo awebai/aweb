@@ -116,7 +116,11 @@ func isolatedRegistryDevelopment(host string) bool {
 // registryOriginKey is the comparable form of a registry origin, or "" when
 // raw is not a usable origin.
 func registryOriginKey(raw string) string {
-	parsed, err := url.Parse(strings.TrimSpace(raw))
+	canonical, err := CanonicalRegistryServerOrigin(raw)
+	if err != nil {
+		return ""
+	}
+	parsed, err := url.Parse(canonical)
 	if err != nil || parsed.Host == "" {
 		return ""
 	}
@@ -144,9 +148,13 @@ type registryTrust struct {
 }
 
 func (t *registryTrust) trust(raw string) error {
-	key := registryOriginKey(raw)
+	canonical, err := CanonicalRegistryServerOrigin(raw)
+	if err != nil {
+		return err
+	}
+	key := registryOriginKey(canonical)
 	if key == "" {
-		return fmt.Errorf("invalid registry origin %q", raw)
+		return &RegistryURLRefusal{Reason: RegistryURLMalformed}
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()

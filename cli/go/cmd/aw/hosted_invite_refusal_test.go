@@ -18,7 +18,7 @@ import (
 )
 
 func TestHostedInviteRefusalReleasesAttemptButInterruptionRetainsIt(t *testing.T) {
-	for _, scenario := range []string{"local condition mismatch", "server condition mismatch", "accept unavailable", "registry unavailable", "legacy local condition mismatch", "legacy unknown submission"} {
+	for _, scenario := range []string{"local condition mismatch", "server condition mismatch", "accept unavailable", "registry unavailable", "legacy local condition mismatch", "legacy unknown submission", "uncoded name refusal", "uncoded expired refusal", "uncoded consumed refusal"} {
 		t.Run(scenario, func(t *testing.T) {
 			t.Setenv("HOME", t.TempDir())
 			t.Setenv("APP_ENV", "development")
@@ -88,6 +88,18 @@ func TestHostedInviteRefusalReleasesAttemptButInterruptionRetainsIt(t *testing.T
 					json.NewEncoder(w).Encode(map[string]any{"invite_id": "11111111-1111-4111-8111-111111111111", "canonical_team_id": "backend:example.com", "identity_scope": "unknown", "server_url": origin, "status": "active", "for_human": human, "id_tree": map[string]any{"v": 1, "issuer_id": v.Keys["bob_agent"].DIDKey, "domain": "example.com", "child_kind": "agent", "mode": "self_custodial"}})
 				case "/api/v1/spawn/accept-invite":
 					accepts++
+					if strings.HasPrefix(scenario, "uncoded ") && accepts == 1 {
+						status, detail := 409, "Name already taken in this team"
+						if scenario == "uncoded expired refusal" {
+							status, detail = 410, "Invite token expired or revoked"
+						}
+						if scenario == "uncoded consumed refusal" {
+							detail = "Invite token use limit reached"
+						}
+						w.WriteHeader(status)
+						json.NewEncoder(w).Encode(map[string]any{"detail": detail})
+						return
+					}
 					if ((scenario == "server condition mismatch" || scenario == "legacy unknown submission") && accepts == 1) || refuseRetry {
 						w.WriteHeader(409)
 						json.NewEncoder(w).Encode(map[string]any{"detail": "condition refused before membership", "reason": "human_condition_mismatch"})
@@ -125,7 +137,7 @@ func TestHostedInviteRefusalReleasesAttemptButInterruptionRetainsIt(t *testing.T
 			opts := teamAcceptInviteOptions{IdentityHome: home, Name: "child", Scope: "global", NoAddress: true}
 			if strings.HasPrefix(scenario, "legacy ") {
 				material := workspaceTeamIdentityMaterial{SigningKey: key, DIDKey: actor.DIDKey, StableID: actor.DIDAW, IdentityScope: "global"}
-				state, err := prepareHostedInviteCreation(context.Background(), nil, "aw_inv_first", origin, "child", "", true, material)
+				state, err := prepareHostedInviteCreation(context.Background(), nil, "aw_inv_first", origin, "child", "", true, material, false, false, "", "")
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -185,6 +197,13 @@ func TestHostedInviteRefusalReleasesAttemptButInterruptionRetainsIt(t *testing.T
 				t.Fatalf("wrong refusal: %v", err)
 			}
 			recoveryPath := filepath.Join(home, hostedInviteRecoveryFile)
+			if strings.HasPrefix(scenario, "uncoded ") {
+				for _, text := range []string{recoveryPath, "init-invite.json", "fetch-cert", "If it is not"} {
+					if !strings.Contains(err.Error(), text) {
+						t.Fatalf("retained first refusal has no recovery exit %q: %v", text, err)
+					}
+				}
+			}
 			if definitive {
 				if _, err := os.Stat(recoveryPath); !os.IsNotExist(err) {
 					t.Fatalf("definitive refusal retained pending attempt: %v", err)

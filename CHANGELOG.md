@@ -2,6 +2,173 @@
 
 ## Unreleased
 
+- `aw init` and `aw team admin create` accept a supplied workspace API key
+  for the service bootstrap, including keys returned by CLI signup.
+  `aw workspace add-worktree` uses the existing workspace authority when
+  the service cannot read the team for the exported key.
+- `aw team admin add` and `extend` use workspace-signed creation when a
+  supplied workspace key identifies a matching creator. `extend` uses the
+  sole discovered creator workspace and asks you to select one when several
+  qualify. A person's setup key works for API-key creation.
+- `aw team admin extend` refuses before admitting any agent if the API key's
+  team differs from `--team-id` or the active workspace team asserted with
+  `AWEB_API_KEY`. The error names both teams.
+- Team membership and workspace commands prefer the controller's recorded
+  registry, the exact membership or the selected service over
+  `AWID_REGISTRY_URL`. A sibling team's registry no longer supplies the route.
+  An error during service discovery stops the command. Older local invites
+  without a pin use the controller's recorded registry when available.
+- `aw init --token-file` and `aw init --token-stdin` read invitation tokens
+  without putting the token in command-line arguments.
+- `aw init --server-name` supplies the admitted service URL on auth and
+  admission paths. On workspace-label paths it still sets the workspace name.
+- If global roster admission fails, rerun the original `add` or `extend`
+  command with the same creator, team, agent name and home to reuse the saved
+  identity and invite. Signup retry refuses a changed registry or identity
+  scope. When prior initialization needs reconciliation, `aw init` reports
+  `partial_init_reconciliation_required` and retains the original credentials.
+
+- AWID keeps a team's revoked certificates when the team or its namespace is
+  deleted, and a team's revocation list covers every team created under that
+  domain and name. Deleting a team and creating it again, with the same key or
+  another, no longer makes a revoked certificate valid again. This defensive
+  fix needs no data repair: the production census (read-only) found 30 deleted
+  teams and none created again. Revocations removed by deletions before this
+  release cannot be recovered.
+
+- `aw chat send-and-wait` and `aw chat listen` show a streamed reply as
+  verified only when its body, message id, conversation and DIDs are the ones
+  its signed payload carries, as `aw chat history` already required. A reply
+  whose payload signs a recipient shows as failed when the server is older than
+  server-v1.27.35, as it already did in chat history.
+
+- `aw id team create` saves a new team key before the registry pins the team
+  to it, so a run interrupted after the registry accepted the team completes on
+  retry with the same key. When the team name is already pinned to another key,
+  the key the run generated is removed, and the refusal (`team_name_taken`)
+  says to restore the team's current controller key or choose another name; a
+  private team that refuses the read signed with that key is pinned to another
+  key in the same way. When the registry has the name but cannot be read to say
+  which key holds it (a network error or a 5xx), the refusal is
+  the new code `team_name_unconfirmed`, not `team_name_taken`. The key the run
+  generated is set aside at `<team key>.unconfirmed`, never used as the team
+  key and never destroyed; the next run whose registry read answers restores it
+  if the registry pins it and removes it if the registry pins another key. Who
+  sees it: released aw users of `aw id team create`, `aw team create`, `aw init`
+  and the onboarding wizard when they create a local team. Every other command
+  that reads a team key (invites, `aw workspace add-worktree`, reissue-cert,
+  replace-key, signed team reads, owner acts) refuses with the same code while
+  one is set aside, rather than taking the team as keyless and falling back to
+  a hosted, cloud or unsigned path, and names
+  `aw id team create --namespace <domain> --name <team>` as the step that
+  settles it.
+
+- `aw chat send --session-id`, `aw chat send-and-wait`, `aw chat extend-wait`
+  and `aw mail send --conversation-id` continue a conversation with its own
+  end-to-end encryption when this identity can encrypt. When aw cannot read
+  whether the conversation is encrypted (the server will not show it this
+  identity, for example a grant scoped to sending only, the read fails, or
+  every message it returns is plaintext and older ones cannot be read), or the
+  conversation is encrypted and this identity has no encryption key or custody
+  socket, the message is sent server-readable, as released aw sends it, and a
+  notice on stderr says so and names `--e2ee`. `--e2ee` still refuses to send
+  without encryption.
+
+- Go library (`chat`, `awid`): a continuation with no encryption choice
+  (`E2EE` left at `E2EEInherit` and `EncryptE2EE` false, the zero value)
+  now inherits the conversation's end-to-end encryption when the client can
+  encrypt, where it used to send plaintext; otherwise it sends plaintext and
+  reports a notice. `(*awid.Client).E2EESendUnavailable` says why a client
+  cannot encrypt.
+  Plaintext on purpose is `E2EE: E2EEPlaintext`. The entry points released in
+  aw-v1.36.58 keep their signatures: `chat.ExtendWait`,
+  `SendOptions.EncryptE2EE` and `ExtendWaitOptions.EncryptE2EE`, string
+  `Event.Type` and `SendResult.Status`,
+  `(*awid.Client).NormalizeReceivedSenderTrust`, and
+  `(*awid.RegistryResolver).SeedVerifiedHead`, which seeds an anchor for every
+  registry; `SeedVerifiedHeadAt` seeds one.
+
+- Security: a mail or chat message signed without a conversation claim (shown
+  as `verified_legacy`) skipped the sender's trust checks: the registry
+  stable-ID check, the TOFU pin and the custody check. A server, or anyone who
+  could write message rows, could therefore show a message signed by another
+  key in a pinned sender's name with no warning tag. Such a message now runs the
+  same checks as any other and keeps `verified_legacy` only when they pass; a
+  failed check shows `[IDENTITY MISMATCH]` or the other warning a current
+  message would get. Honest servers and senders are unaffected. Affected
+  releases: aw-v1.19.0 through aw-v1.36.58 (and aw-v1.36.59-rc.1 to rc.3),
+  channel-v1.4.1 through channel-v1.8.3, and pi-v0.1.1 through pi-v0.5.0. Who
+  sees it: released aw, the Claude Code channel plugin, the pi extension, and
+  OATS sessions, which run those clients.
+
+- A chat message is checked against the conversation it is read from, not only
+  against the one its row names. A message signed for one conversation and
+  served in another shows as failed, however it is signed. Who sees it: `aw
+  chat history`, `aw chat send-and-wait`, `aw chat listen` and `aw chat open`
+  in released aw, and chat wakes in the channel plugin and the pi extension.
+
+- Received mail and chat are verified by one rule, wherever they are read
+  (history, the live stream, the inbox): the same message gets the same status
+  and shows the same sender. A stream row that is not JSON is failed, as one
+  whose proof fields do not decode already was. Who sees it: released aw.
+
+- `aw chat send-and-wait` text output starts with an `Also received:` block
+  listing every other message the wait presented, and so marked read, before
+  the reply. `--json` and the local log already carried them. Who sees it:
+  released aw.
+
+- A message to a teammate's bare alias signs the member the team's agent list
+  names for it as its recipient (to_did and to_stable_id), as the hosted MCP
+  tools already do; the server still routes by the alias. A server refuses
+  (422) a signed recipient that names another member. `bd mail` and `gc mail`
+  to a bare name now refuse when the agent list lookup fails, as `aw mail send`
+  does. Who sees it: released aw, and the bd and gc delegates.
+
+- `bd mail inbox` and `bd mail read` show the sender with the verification tag
+  aw mail uses, and every delegate's received-mail log records it. Who sees it:
+  bd users.
+
+- Pin store changes (`known_agents.yaml`, shared by aw and channel-core):
+  - a team member name the roster now gives to another identity keeps the
+    previous holder's pin under a `retired:<name>@<time>` key instead of
+    deleting it; a real domain/name address is never released this way;
+  - a member name is pinned as `team/name` (an earlier `namespace/name` pin is
+    moved);
+  - the anti-rollback checkpoint lives once per (registry, stable ID) in
+    `received_identity_heads`; the pin keeps only the key binding.
+  Who sees it: released aw, the channel plugin and the pi extension, which read
+  and write the same file. aw-v1.36.58 keeps the root fields it does not know
+  when it rewrites the file, so the checkpoint map survives it; a retired key
+  is an address no lookup reaches.
+
+- A pinned sender whose address the registry says no longer exists shows
+  `[verification stale]`, not verified. Another key than the pin, or first
+  contact with no such address, stays `[IDENTITY MISMATCH]`. Within the 30
+  second registry re-read window, a disagreeing cached answer can show a
+  sender that rotated its key as `[IDENTITY MISMATCH]` until the next read.
+  Who sees it: released aw, the channel plugin and the pi extension.
+
+- Chat reads set up decryption as mail reads do: with no local encryption key
+  they print mail's warning and go on, and with an unreadable key state they
+  fail instead of continuing. The chat pending preview, which decrypts without
+  verifying, shows its sender with an `[unverified]` tag. Who sees it:
+  released aw.
+
+- `aw chat send-and-wait` accepts as the reply only a message whose signed
+  identity is the confirmed target's, when the target was confirmed; a
+  participant handle is matched to an address case-insensitively. Who sees it:
+  released aw.
+
+- Marking chat read retries with a watermark only for a server released before
+  server-v1.26.28; every other refusal is shown as itself. Who sees it:
+  released aw and the channel plugin.
+
+- AWID: a certificate's status read answers from the same revocation history
+  as the revocation list, so a revoked certificate id registered again after
+  the team was deleted and created again reads `revoked`, not `active`. Who
+  sees it: anyone reading `/certificates/{id}/status`, including the aweb
+  server's certificate checks.
+
 - `aw workspace delete` exits zero when hosted self-removal returns its
   accepted receipt or replays the stored result of a completed removal.
   An accepted receipt reports completion pending and `alias_released: false`
@@ -121,51 +288,7 @@
   Upgrade aw if that client reports a sender mismatch. The new plaintext
   signature verification does not create that pre-existing refusal.
 
-- Provisioning and creator self-enrollment connect before publishing the member's E2E assertion. A failed connect or unconfirmed publication retains the identity and reports the exact recovery command instead of creation success.
-- On unverified A2A routes, a plain question shared by several live tasks is
-  refused with task-specific reply forms. Questions use artifact name `question`;
-  completed answers retain `answer`.
-
-- Concurrent `aw a2a send` calls retain each task token. Credential-file failures
-  are reported without overwriting unreadable YAML; a task already delivered is
-  still returned with its token when saving fails.
-
-- On verified A2A routes, a plain `QUESTION:` from the target is no longer
-  accepted as a verified task reply. Use the task-bearing fenced `a2a-reply`
-  form with `state: input_required` to ask a question (aw 1.19.0 or later).
-  Initial task instructions and refusal feedback show the exact form. Signed
-  task-bearing legacy fences remain accepted; explicitly unverified routes
-  keep their policy and label.
-- A managed provider that advertises recipient identity but omits it from a
-  send receipt now returns an actionable provider fault and a failed task,
-  rather than leaving the task waiting for replies it cannot bind.
-
-- A2A routes require an agent with a public address. Native gateway startup
-  refuses local identities, including team aliases that resolve to one, before
-  opening its listener. The same check runs before each native bridge send;
-  `-check` continues to validate configuration offline.
-
-- The A2A gateway no longer returns a public route's task when given only its
-  task ID. Callers must send the task token returned by `SendMessage` in
-  `X-A2A-Task-Token`; task IDs are identifiers rather than authorization.
-- A2A credentials and managed-provider tokens require HTTPS, with HTTP allowed
-  on literal loopback IP addresses for local development. Use
-  `http://127.0.0.1` instead of `http://localhost` for those local endpoints.
-
-- Retain the Go entry points `blueprint.CanonicalImportPayload`,
-  `logschain.VerifyChain`, `chat.LoadDeliveredIDs` and
-  `chat.FilterDeliveredMessages` in this release. They are removal candidates
-  for a future release, pending measurement of downstream usage.
-- `aw id request --raw` writes the response body to stdout byte for byte, so
-  `--raw > chart.png` saves an image intact. It no longer appends a newline to
-  a body that lacks one; JSON printed to a terminal may now end without one.
-  The `HTTP <status>` line stays on stderr.
-
 - `aw` reports JSON error code `alias_conflict` for HTTP 409 `alias_taken`, preserving the server's `reason` and `detail`.
-- `aw chat pending`, `open`, `history`, `listen` and `show-pending` fail with
-  the reason when the local encryption key state exists but cannot be loaded,
-  as `aw mail` reads do. A workspace with no encryption key state keeps
-  reading, with a warning.
 - AWID cache invalidation for identity-tree, address and team-certificate
   writes no longer scans unrelated Redis keys. Random cache generations keep
   delayed refreshes from restoring invalidated entries without changing the
@@ -365,7 +488,6 @@
   returns at once with the service's hint, since a retry before it cannot
   succeed and repeats what the service asked to wait for. A bare `503` keeps
   its three brief retries.
-
 
 - aweb server keeps a registry throttling hint on `503 identity_binding_unavailable`
   responses as `Retry-After`, including authenticated installation lookups.

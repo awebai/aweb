@@ -141,7 +141,9 @@ async def test_real_aw_chat_retains_signed_recipient_display(privacy_app, tmp_pa
         original = response.json()["messages"][0]
         signed = json.loads(original["signed_payload"])
         assert "via" not in signed
-        assert signed["to_did"] == (env.actors["bob"].did if recipient_key else "")
+        # aw signs the recipient's key for an alias too: the member its team
+        # roster confirms for that alias (cmd/aw confirmTeamAlias).
+        assert signed["to_did"] == env.actors["bob"].did
         assert verify_signature(signed["from_did"], original["signed_payload"].encode(), original["signature"]) == VerifyResult.VERIFIED
         shown = await _aw(aw_cli_binary, bob, "chat", "history", "--session-id", session, "--json")
         assert shown["messages"][0]["verification_status"] == "verified", {

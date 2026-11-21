@@ -168,7 +168,7 @@ describe("SenderTrustManager", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  test("removes pins for local-scope senders", async () => {
+  test("retires pins for local-scope senders", async () => {
     const { did } = await didFromSeed(3);
     const store = new PinStore();
     store.storePin(did, "backend:acme.com/alice", "", "");
@@ -182,8 +182,10 @@ describe("SenderTrustManager", () => {
 
     const result = await trust.normalizeTrust(store, "verified", "alice", did, undefined, undefined);
     expect(result.status).toBe("verified");
+    // The name is free, and its pin is kept under a retired key.
     expect(store.addresses.has("backend:acme.com/alice")).toBe(false);
-    expect(store.pins.size).toBe(0);
+    expect(store.pins.size).toBe(1);
+    expect(store.pins.get(did)?.address).toMatch(/^retired:backend:acme\.com\/alice@/);
   });
 
   test("verifies a reissued alias whose pin still names the previous holder", async () => {
@@ -207,8 +209,9 @@ describe("SenderTrustManager", () => {
     const result = await trust.normalizeTrust(store, "verified", "alice", currentHolder.did, undefined, undefined);
 
     expect(result.status).toBe("verified");
+    // The name is free; the previous holder's pin is kept under a retired key.
     expect(store.addresses.has("backend:acme.com/alice")).toBe(false);
-    expect(store.pins.has(previousHolder.did)).toBe(false);
+    expect(store.pins.get(previousHolder.did)?.address).toMatch(/^retired:backend:acme\.com\/alice@/);
   });
 
   // Every accepted message from an already-pinned global sender used to refresh
@@ -217,6 +220,34 @@ describe("SenderTrustManager", () => {
   // conflicts the steady state and each conflict deferred a wake (aweb-abdk).
   // The sender must be GLOBAL: a local-scope sender is not pinned at all, so the
   // same test built from one would pass without exercising this path.
+  test.each(["verified", "verified_legacy"] as const)(
+    "a %s message signed in a pinned sender's name by another key is an identity mismatch",
+    async (status) => {
+      // verified_legacy names a signed envelope without a conversation claim;
+      // it runs the same sender checks, and keeps its name only when they pass.
+      const owner = await didFromSeed(72);
+      const impostor = await didFromSeed(73);
+      const store = new PinStore();
+      const trust = new SenderTrustManager(
+        authenticatedTeamClient({
+          get: async () => localRoster(
+            { did_key: owner.did, did_aw: "did:aw:grace", identity_scope: "global" },
+            "grace",
+          ),
+        }),
+        { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
+        "backend:acme.com",
+        "",
+      );
+
+      const genuine = await trust.normalizeTrust(store, status, "grace", owner.did, "did:aw:grace", undefined);
+      expect(genuine.status).toBe(status);
+
+      const forged = await trust.normalizeTrust(store, status, "grace", impostor.did, "did:aw:grace", undefined);
+      expect(forged.status).toBe("identity_mismatch");
+    },
+  );
+
   test("an already-pinned global sender stops forcing a commit on every message", async () => {
     const globalIdentity = await didFromSeed(71);
     const store = new PinStore();
@@ -923,8 +954,10 @@ describe("SenderTrustManager", () => {
 
     const result = await trust.normalizeTrust(store, "verified", "alice", did, undefined, undefined);
     expect(result.status).toBe("verified");
+    // The name is free, and its pin is kept under a retired key.
     expect(store.addresses.has("backend:acme.com/alice")).toBe(false);
-    expect(store.pins.size).toBe(0);
+    expect(store.pins.size).toBe(1);
+    expect(store.pins.get(did)?.address).toMatch(/^retired:backend:acme\.com\/alice@/);
   });
 
   test("does not verify legacy persistent lifetime metadata as local", async () => {
@@ -1145,7 +1178,10 @@ describe("SenderTrustManager", () => {
     expect(result.status).toBe("verified");
     expect(store.addresses.get(address)).toBe(newIdentity.did);
 
-    store.removeAddress(address);
+    for (const [key, pin] of [...store.pins]) {
+      if (pin.address === address) store.deletePin(key);
+    }
+    expect(store.addresses.has(address)).toBe(false);
     store.storePin(oldIdentity.did, address, "", "");
     const emitted = yaml.load(store.toYAML(), { schema: yaml.JSON_SCHEMA }) as {
       pins: Record<string, Record<string, unknown>>;
@@ -1428,33 +1464,30 @@ describe("SenderTrustManager", () => {
       "backend:acme.com",
       "",
     ) as SenderTrustManager & {
-      persistVerifiedHeadCheckpoint(
+      persistIdentityCheckpoint(
         target: PinStore,
-        id: string,
-        head: {
-          seq: number;
-          entryHash: string;
-          stateHash: string;
-          currentDidKey: string;
-          fetchedAt: number;
+        write: {
+          registryURL?: string;
+          stableID?: string;
+          head?: { seq: number; entryHash: string; stateHash: string; currentDidKey: string; fetchedAt: number };
+          carriesPinAnchor: boolean;
         },
-      ): boolean;
+      ): boolean | "refused";
     };
 
     for (const seq of [1.5, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1]) {
-      expect(trust.persistVerifiedHeadCheckpoint(store, stableID, {
-        seq,
-        entryHash: "a".repeat(64),
-        stateHash: "b".repeat(64),
-        currentDidKey: "did:key:zcheckpoint",
-        fetchedAt: 0,
+      expect(trust.persistIdentityCheckpoint(store, {
+        registryURL: "https://registry.example",
+        stableID,
+        head: { seq, entryHash: "a".repeat(64), stateHash: "b".repeat(64), currentDidKey: "did:key:zcheckpoint", fetchedAt: 0 },
+        carriesPinAnchor: false,
       })).toBe(false);
     }
 
-    expect(store.pins.get(stableID)?.log_seq).toBeUndefined();
+    expect(store.identityCheckpointRegistries(stableID)).toEqual([]);
   });
 
-  test("rejects prepared registry evidence when its pin checkpoint changed in flight", async () => {
+  test("rejects prepared registry evidence when its checkpoint changed in flight", async () => {
     const identity = await didFromSeed(64);
     const stableID = "did:aw:checkpointRace";
     const address = "acme.com/alice";
@@ -1465,30 +1498,18 @@ describe("SenderTrustManager", () => {
     pin.did_key = identity.did;
     pin.log_seq = 1;
     pin.log_entry_hash = "a".repeat(64);
-    const verifyStableIdentity = vi.fn()
-      .mockResolvedValueOnce({
-        outcome: "OK_VERIFIED",
-        currentDidKey: identity.did,
-        verifiedHead: {
-          seq: 2,
-          entryHash: "b".repeat(64),
-          stateHash: "c".repeat(64),
-          currentDidKey: identity.did,
-          fetchedAt: 1,
-        },
-      })
-      .mockResolvedValueOnce({
-        outcome: "OK_VERIFIED",
-        currentDidKey: identity.did,
-        verifiedHead: {
-          seq: 3,
-          entryHash: "d".repeat(64),
-          stateHash: "e".repeat(64),
-          currentDidKey: identity.did,
-          fetchedAt: 2,
-        },
-      });
-    const seedVerifiedHead = vi.fn();
+    const registryURL = "https://registry.example";
+    const answers = [
+      { seq: 2, entryHash: "b".repeat(64), stateHash: "c".repeat(64), currentDidKey: identity.did, fetchedAt: 1 },
+      { seq: 3, entryHash: "d".repeat(64), stateHash: "e".repeat(64), currentDidKey: identity.did, fetchedAt: 2 },
+    ];
+    const seeds: unknown[] = [];
+    const verifyStableIdentity = vi.fn(async (_address: string, _stableID: string, _did: string,
+      checkpointFor?: (registry: string) => unknown) => {
+      seeds.push(checkpointFor?.(registryURL));
+      return { outcome: "OK_VERIFIED", currentDidKey: identity.did, verifiedHead: answers[seeds.length - 1],
+        registryURL, newCheckpoint: false };
+    });
     const trust = new SenderTrustManager(
       { get: vi.fn() } as never,
       {
@@ -1500,7 +1521,6 @@ describe("SenderTrustManager", () => {
           custody: "self",
           identityScope: "global",
         })),
-        seedVerifiedHead,
         verifyStableIdentity,
       } as never,
       "backend:acme.com",
@@ -1528,7 +1548,8 @@ describe("SenderTrustManager", () => {
     const secondPrepared = await trust.resolveTrustMetadata(
       "verified", address, stableID, undefined, undefined, context,
     );
-    expect(seedVerifiedHead).toHaveBeenCalledTimes(2);
+    // Both verifications were seeded from the legacy pin anchor.
+    expect(seeds).toEqual([expect.objectContaining({ seq: 1 }), expect.objectContaining({ seq: 1 })]);
     expect(store.pins.get(stableID)?.log_seq).toBe(1);
 
     const first = await trust.normalizeResolvedTrust(
@@ -1536,16 +1557,17 @@ describe("SenderTrustManager", () => {
       undefined, undefined, address, firstPrepared,
     );
     expect(first).toEqual({ status: "verified", stored: true });
-    expect(store.pins.get(stableID)?.log_seq).toBe(2);
-    expect(store.pins.get(stableID)?.log_entry_hash).toBe("b".repeat(64));
+    // The first evidence carries the anchor into the registry's checkpoint.
+    expect(store.receivedIdentityCheckpoint(registryURL, stableID)).toMatchObject({ seq: 2, entryHash: "b".repeat(64) });
+    expect(store.pins.get(stableID)?.log_seq).toBeUndefined();
 
     const stale = await trust.normalizeResolvedTrust(
       store, "verified", address, identity.did, stableID, undefined, undefined,
       undefined, undefined, address, secondPrepared,
     );
+    // The second was seeded from the anchor the first replaced: stale.
     expect(stale).toEqual({ status: "verification_stale", stored: false });
-    expect(store.pins.get(stableID)?.log_seq).toBe(2);
-    expect(store.pins.get(stableID)?.log_entry_hash).toBe("b".repeat(64));
+    expect(store.receivedIdentityCheckpoint(registryURL, stableID)).toMatchObject({ seq: 2, entryHash: "b".repeat(64) });
   });
 
   test("surfaces stale verifier cache honestly instead of claiming identity mismatch", async () => {

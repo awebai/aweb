@@ -40,7 +40,7 @@ func TestHostedInviteOwnChainSeparatesMembershipFromParentage(t *testing.T) {
 			if scope == "global" {
 				material.StableID = v.Keys[name].DIDAW
 			}
-			state, err := prepareHostedInviteCreation(context.Background(), nil, "aw_inv_independent", server.URL, "child", "", false, material)
+			state, err := prepareHostedInviteCreation(context.Background(), nil, "aw_inv_independent", server.URL, "child", "", false, material, false, true, "", "")
 			if err != nil {
 				t.Fatalf("own chain rejected by invite issuer: %v", err)
 			}
@@ -85,7 +85,7 @@ func TestOtherHumanInviteWithoutAChainNamesOwnParentExchange(t *testing.T) {
 	}))
 	defer server.Close()
 	material := workspaceTeamIdentityMaterial{SigningKey: key, DIDKey: awid.ComputeDIDKey(key.Public().(ed25519.PublicKey)), IdentityScope: "local"}
-	state, err := prepareHostedInviteCreation(context.Background(), nil, "aw_inv_other", server.URL, "child", "", false, material)
+	state, err := prepareHostedInviteCreation(context.Background(), nil, "aw_inv_other", server.URL, "child", "", false, material, false, false, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -307,15 +307,15 @@ func TestInitIndependentInviteFlagsKeepOutcomesSeparate(t *testing.T) {
 	})
 	initInvite, initParent, initJoinFrom, initAdmissionTeamID, initWorkspaceTeam, initNewAccount, initNewTeam = "aw_inv_selected", "/creator", "", "", false, false, false
 	activeIdentityHome = awconfig.IdentityHome{}
-	if err := validateInitOutcomeFlags(); err != nil {
+	if err := validateInitOutcomeFlags(initInviteInput{}); err != nil {
 		t.Fatal(err)
 	}
 	initJoinFrom = "/other"
-	if err := validateInitOutcomeFlags(); err == nil {
+	if err := validateInitOutcomeFlags(initInviteInput{}); err == nil {
 		t.Fatal("two membership sources accepted")
 	}
 	initJoinFrom, initInvite = "", ""
-	if err := validateInitOutcomeFlags(); err == nil {
+	if err := validateInitOutcomeFlags(initInviteInput{}); err == nil {
 		t.Fatal("parent accepted without invite")
 	}
 }

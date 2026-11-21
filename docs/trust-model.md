@@ -556,13 +556,48 @@ by `did:key`). Until then it is `verification_stale` (could not check) or
 `identity_mismatch` (the registry disagrees, or has no such address). A client
 built with no registry to ask reports `unverified`: nothing was checked, and a
 retry would not help. A pin written this way records `confirmed_by: registry`;
-pins written before this rule carry no such field. A stable-identity pin also
-keeps the last verified current key and the highest verified DID-log
-sequence/hash so rollback detection survives process restarts.
+pins written before this rule carry no such field. A stable-identity pin keeps
+the identity's key binding: its last verified current key. The anti-rollback
+checkpoint (the highest verified DID-log sequence and entry hash) is kept once
+per registry and stable ID, so rollback detection survives process restarts. A
+move to another registry starts a new checkpoint there and leaves the old one
+alone; across the move the pin's key binding is what protects: a registry with
+no checkpoint for a pinned identity, while another registry has one, that
+presents a current key other than the pinned key is an `identity_mismatch`,
+whatever its sequence. A checkpoint an earlier client kept on the pin is carried
+into the map under the registry where it next verifies, and kept on the pin
+until then; it is never dropped.
 
 A sender already pinned stays verified by its pin while the registry cannot be
 reached. A later registry answer that names another key for a pinned address is
-an `identity_mismatch`, and the pin is kept.
+an `identity_mismatch`, and the pin is kept. A registry answer that a pinned
+sender's address does not exist, for a message signed by the pinned key, is
+`verification_stale`: not a forgery, and not current verification either. It is
+the same for a message arriving now and for one read again later; the registry
+gives one answer for an address that was retired and one that never existed, so
+no history cut is drawn.
+
+The delivering server can never delete a pin or its anti-rollback anchor. When
+the team roster gives a team-scoped member name to a local identity, the name's
+previous holder's pin moves to a retired key (`retired:<name>@<time>`) that no
+lookup reaches, keeping its record and anchor, and the name is free for the
+holder the roster names. A pin at a real `domain/name` address is never touched
+on the word of the roster or a membership attestation. A registered identity
+that is not, or no longer, on the reader's team is verified against the
+registry and its pin: the roster's silence says nothing about it, and leaving a
+team is not a sign of forgery.
+
+A cached registry answer is not the registry's answer. When a sender's cached
+address binding (its `did:aw`) or cached current key disagrees with the signed
+message, the client asks the registry once more, past every cache, and decides
+on that fresh answer: the same disagreement is an `identity_mismatch`, an answer
+that agrees verifies, and a failed request is `verification_stale`. The refetch
+is bounded: a client forces at most one such read per sender every 30 seconds.
+Between reads it decides on the answer the last one gave, and a sender whose
+last read failed stays `verification_stale` until the next. A run of
+disagreeing messages so costs at most one registry read per sender per
+interval. Go and TypeScript clients both pass
+`test-vectors/trust/registry-refetch-v1.json`.
 
 For a sender shown only by a display alias, with no address, `verified` means
 the message was signed by the key shown; there is no identity claim behind the
@@ -583,7 +618,8 @@ The visible outcomes mean:
 - `verified_custodial` — the same verification result with hosted-custodial
   sender metadata; it is not stronger cryptography;
 - `verification_stale` — the signature may be valid, but authoritative
-  continuity/freshness could not be completed or a required new checkpoint
+  continuity/freshness could not be completed (the registry could not be asked,
+  or no longer has a pinned sender's address) or a required new checkpoint
   could not be persisted; it must not overwrite a pin;
 - `identity_mismatch` — recipient binding, stable-key verification, rollback
   protection, or the pinned address identity conflicts;

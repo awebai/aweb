@@ -263,9 +263,7 @@ func (h *humanParticipation) client(team, url string) (*aweb.Client, *awconfig.S
 	if err != nil {
 		return nil, nil, err
 	}
-	if url == "" {
-		url = firstNonEmpty(strings.TrimSpace(os.Getenv("AWEB_URL")), m.AwebURL)
-	}
+	url = selectedAwebServiceURL(serviceURLSelection{URL: url, StoredURL: m.AwebURL})
 	if url == "" {
 		return nil, nil, usageError("human team is not connected; run aw init --human with --url")
 	}
@@ -274,7 +272,11 @@ func (h *humanParticipation) client(team, url string) (*aweb.Client, *awconfig.S
 		return nil, nil, err
 	}
 	c := &aweb.Client{Client: raw}
-	sel := &awconfig.Selection{WorkingDir: mustGetwd(), IdentityHome: h.dir, ExternalIdentityHome: true, BaseURL: url, AwebURL: url, TeamID: m.TeamID, Alias: cert.Alias, Address: cert.MemberAddress, DID: h.record.DIDKey, StableID: h.record.StableID, Domain: h.record.Domain, RegistryURL: m.RegistryURL, IdentityScope: cert.IdentityScope}
+	workingDir, err := os.Getwd()
+	if err != nil {
+		return nil, nil, fmt.Errorf("read current directory for human participation: %w", err)
+	}
+	sel := &awconfig.Selection{WorkingDir: workingDir, IdentityHome: h.dir, ExternalIdentityHome: true, BaseURL: url, AwebURL: url, TeamID: m.TeamID, Alias: cert.Alias, Address: cert.MemberAddress, DID: h.record.DIDKey, StableID: h.record.StableID, Domain: h.record.Domain, RegistryURL: m.RegistryURL, IdentityScope: cert.IdentityScope}
 	if err := configureResolvedClient(c, sel, url); err != nil {
 		return nil, nil, err
 	}
@@ -304,7 +306,7 @@ func runHumanConnect(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	url := firstNonEmpty(initAwebURL, initURL, m.AwebURL, strings.TrimSpace(os.Getenv("AWEB_URL")))
+	url := selectedAwebServiceURL(serviceURLSelection{AwebURL: initAwebURL, URL: initURL, StoredURL: m.AwebURL})
 	if url == "" {
 		return usageError("human connect requires --url")
 	}
@@ -314,7 +316,10 @@ func runHumanConnect(cmd *cobra.Command) error {
 	}
 	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
-	hostname, _ := os.Hostname()
+	hostname, err := os.Hostname()
+	if err != nil {
+		return fmt.Errorf("read hostname for human connect: %w", err)
+	}
 	body := connectRequest{Hostname: hostname, WorkspacePath: h.dir, HumanName: resolveHumanNameValue(initHumanName, "human")}
 	resp, err := postConnectClient(ctx, c.Client, cert, body)
 	if err != nil {
@@ -328,8 +333,7 @@ func runHumanConnect(cmd *cobra.Command) error {
 	if err := awconfig.SaveTeamStateToIdentityHome(h.dir, state); err != nil {
 		return err
 	}
-	printOutput(connectOutput{Status: "connected", TeamID: resp.TeamID, Alias: resp.Alias, AwebURL: url, StableID: h.record.StableID, Address: cert.MemberAddress, IdentityScope: cert.IdentityScope}, formatConnect)
-	return nil
+	return printOutput(connectOutput{Status: "connected", TeamID: resp.TeamID, Alias: resp.Alias, AwebURL: url, StableID: h.record.StableID, Address: cert.MemberAddress, IdentityScope: cert.IdentityScope}, formatConnect)
 }
 func runHumanFetchCert(cmd *cobra.Command) error {
 	h := activeHuman
@@ -395,8 +399,7 @@ func runHumanFetchCert(cmd *cobra.Command) error {
 	if err := awconfig.SaveTeamStateToIdentityHome(h.dir, state); err != nil {
 		return err
 	}
-	printOutput(teamFetchCertOutput{Status: "installed", TeamID: teamID, Alias: cert.Alias, CertificateID: id, CertPath: rel}, formatTeamFetchCert)
-	return nil
+	return printOutput(teamFetchCertOutput{Status: "installed", TeamID: teamID, Alias: cert.Alias, CertificateID: id, CertPath: rel}, formatTeamFetchCert)
 }
 
 // Only a manifest invocation is scanned. Stop at a built-in command so its

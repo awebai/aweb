@@ -15,15 +15,18 @@ import (
 // to the issuance entry of the certificate it presents. Each issued
 // certificate takes one re-sign; a byte-identical retry changes nothing.
 func ReceiveIDResignRequest(store IDIssuanceStore, raw []byte) (*IDIssuanceEntry, error) {
-	signed, err := ParseIDCertificateRequest(raw)
+	request, err := DecodeIDCertificateRequest(raw)
 	if err != nil {
 		return nil, err
 	}
-	r := signed["request"].(map[string]any)
-	if r["operation"] != "resign" {
-		return nil, idCertificateRefusal("invalid_shape")
+	if request.Operation() != IDCertificateRequestResign {
+		return nil, idCertificateRefusal(IDRefusalInvalidShape)
 	}
-	oldID, err := IDCertificateID(r["old_certificate"].(map[string]any)["certificate"].(map[string]any))
+	old, exists := request.PreviousCertificate()
+	if !exists {
+		return nil, idCertificateRefusal(IDRefusalInvalidShape)
+	}
+	oldID, err := old.CertificateID()
 	if err != nil {
 		return nil, err
 	}
@@ -32,20 +35,20 @@ func ReceiveIDResignRequest(store IDIssuanceStore, raw []byte) (*IDIssuanceEntry
 		return nil, err
 	}
 	if entry == nil {
-		return nil, idCertificateRefusal("issuance_not_recorded")
+		return nil, idCertificateRefusal(IDRefusalIssuanceNotRecorded)
 	}
-	requestID := r["request_id"].(string)
+	requestID := request.RequestID()
 	if other, err := store.EntryForRequest(requestID); err != nil {
 		return nil, err
 	} else if other != nil && other.CertificateID != oldID {
-		return nil, idCertificateRefusal("request_conflict")
+		return nil, idCertificateRefusal(IDRefusalRequestConflict)
 	}
 	if entry.Resign != nil {
 		if entry.Resign.RequestID == requestID && entry.Resign.Request == string(raw) {
 			return entry, nil
 		}
 		if entry.Resign.RequestID == requestID || entry.Resign.State != IDRequestFailed {
-			return nil, idCertificateRefusal("request_conflict")
+			return nil, idCertificateRefusal(IDRefusalRequestConflict)
 		}
 	}
 	entry.Resign = &IDRequestRecord{RequestID: requestID, Request: string(raw), State: IDRequestPending}
@@ -71,13 +74,12 @@ func ApproveIDResignRequest(store IDIssuanceStore, requestID, parentID string, p
 	case IDRequestFailed:
 		return nil, fmt.Errorf("re-sign request %s was refused", requestID)
 	}
-	signed, err := ParseIDCertificateRequest([]byte(entry.Resign.Request))
+	request, err := DecodeIDCertificateRequest([]byte(entry.Resign.Request))
 	if err != nil {
 		return nil, err
 	}
-	r := signed["request"].(map[string]any)
-	if r["domain"] != domain {
-		return nil, fmt.Errorf("this child belongs to %s but its parent is now in %s; its ancestry cannot refresh across domains; respawn under the adopted parent", r["domain"], domain)
+	if request.Domain() != domain {
+		return nil, fmt.Errorf("this child belongs to %s but its parent is now in %s; its ancestry cannot refresh across domains; respawn under the adopted parent", request.Domain(), domain)
 	}
 	if len(parentChain) == 0 {
 		return nil, fmt.Errorf("the parent's own chain is required")
@@ -95,11 +97,11 @@ func ApproveIDResignRequest(store IDIssuanceStore, requestID, parentID string, p
 	if err != nil {
 		return nil, err
 	}
-	req := IDResignRequest{
-		Signed:     r["old_certificate"].(map[string]any),
-		Requested:  map[string]any{"id": r["id"], "domain": r["domain"], "parent": r["parent"], "kind": r["kind"]},
-		SubjectKey: r["subject_key"].(string),
+	previous, exists := request.PreviousCertificate()
+	if !exists {
+		return nil, idCertificateRefusal(IDRefusalInvalidShape)
 	}
+	req := IDResignRequest{Signed: previous.Signed(), Requested: request.CertificateFields(), SubjectKey: request.SubjectKey()}
 	var response []byte
 	_, err = resignIDCertificate(req, parentID, parentChain, evidence, domain, store, sign, now, func(child map[string]any, id string) error {
 		certificates := append(append([]any{}, parentChain...), child)
@@ -178,17 +180,16 @@ func idIssuedResponse(store IDIssuanceStore, record *IDRequestRecord, now time.T
 	if existing != nil {
 		return response, nil
 	}
-	parsed, err := ParseIDCertificateResponse(response)
+	parsed, err := DecodeIDCertificateResponse(response)
 	if err != nil {
 		return nil, err
 	}
-	certificates := parsed["chain"].(map[string]any)["certificates"].([]any)
-	child := certificates[len(certificates)-1].(map[string]any)
-	id, err := IDCertificateID(child["certificate"].(map[string]any))
+	child := parsed.Chain().Leaf()
+	id, err := child.CertificateID()
 	if err != nil || id != record.NewCertificateID {
 		return nil, fmt.Errorf("stored response does not carry certificate %s", record.NewCertificateID)
 	}
-	if err := recordIssued(store, now)(child, id); err != nil {
+	if err := recordIssued(store, now)(child.Signed(), id); err != nil {
 		return nil, err
 	}
 	return response, nil
@@ -209,19 +210,19 @@ type IDCertificateImport struct {
 // certificate signed by the parent's current key. A namespace parent has no
 // chain: its certificate must be signed by the namespace's open epoch key.
 func ImportIDCertificateResponse(request map[string]any, raw []byte, evidence *IDChainEvidence, domain string) (*IDCertificateImport, error) {
-	response, err := ParseIDCertificateResponse(raw)
+	response, err := DecodeIDCertificateResponse(raw)
 	if err != nil {
 		return nil, err
 	}
-	mismatch := idCertificateRefusal("request_binding_mismatch")
+	mismatch := idCertificateRefusal(IDRefusalRequestBindingMismatch)
 	r, ok := request["request"].(map[string]any)
 	if !ok {
-		return nil, idCertificateRefusal("invalid_shape")
+		return nil, idCertificateRefusal(IDRefusalInvalidShape)
 	}
-	if response["request_id"] != r["request_id"] {
+	if response.RequestID() != r["request_id"] {
 		return nil, mismatch
 	}
-	return importIDCertificateChain(r, response["chain"].(map[string]any), evidence, domain)
+	return importIDCertificateChain(idCertificateChainImport{Expected: r, Chain: response.Chain(), Bundle: response.Chain().Bundle(), Evidence: evidence, Domain: domain})
 }
 
 // ImportIDCertificateChain applies the response import's existing binding and
@@ -229,57 +230,67 @@ func ImportIDCertificateResponse(request map[string]any, raw []byte, evidence *I
 // independently selected id, domain, parent and kind. This is pre-registration
 // validation; a global leaf still needs registration and full verification.
 func ImportIDCertificateChain(expected, chain map[string]any, evidence *IDChainEvidence, domain string) (*IDCertificateImport, error) {
-	if _, err := EncodeIDChainHeader(chain); err != nil {
+	checked, err := IDChainFromBundle(chain)
+	if err != nil {
 		return nil, err
 	}
-	return importIDCertificateChain(expected, chain, evidence, domain)
+	return importIDCertificateChain(idCertificateChainImport{Expected: expected, Chain: checked, Bundle: chain, Evidence: evidence, Domain: domain})
 }
 
-func importIDCertificateChain(expected, chain map[string]any, evidence *IDChainEvidence, domain string) (*IDCertificateImport, error) {
-	mismatch := idCertificateRefusal("request_binding_mismatch")
-	certificates := chain["certificates"].([]any)
-	child := certificates[len(certificates)-1].(map[string]any)
-	c := child["certificate"].(map[string]any)
+type idCertificateChainImport struct {
+	Expected map[string]any
+	Chain    IDChain
+	Bundle   map[string]any
+	Evidence *IDChainEvidence
+	Domain   string
+}
+
+func importIDCertificateChain(input idCertificateChainImport) (*IDCertificateImport, error) {
+	expected, chain, evidence, domain := input.Expected, input.Bundle, input.Evidence, input.Domain
+	mismatch := idCertificateRefusal(IDRefusalRequestBindingMismatch)
+	certificates := input.Chain.SignedCertificates()
+	child := input.Chain.Leaf()
+	c := child.Fields()
 	for _, field := range []string{"id", "domain", "parent", "kind"} {
 		if !reflect.DeepEqual(c[field], expected[field]) {
 			return nil, mismatch
 		}
 	}
-	parent := c["parent"].(map[string]any)
+	parent := child.Parent().Fields()
 	if parent["kind"] == "namespace" {
 		// The root admits its first human directly: the chain is that one
 		// certificate, signed by the namespace's open epoch key under fresh,
 		// DNS-anchored namespace evidence.
 		if len(certificates) != 1 {
-			return nil, idCertificateRefusal("invalid_shape")
+			return nil, idCertificateRefusal(IDRefusalInvalidShape)
 		}
-		current, err := idIssuingKey(parent, domain, c["kind"].(string), nil, evidence)
+		current, err := idIssuingKey(parent, domain, string(child.Kind()), nil, evidence)
 		if err != nil {
 			return nil, err
 		}
 		if c["issuer_key"] != current {
-			return nil, idCertificateRefusal("stale_issuer_key")
+			return nil, idCertificateRefusal(IDRefusalStaleIssuerKey)
 		}
-		return &IDCertificateImport{Chain: chain, Certificate: child, RegistrationPending: strings.HasPrefix(c["id"].(string), "did:aw:")}, nil
+		return &IDCertificateImport{Chain: chain, Certificate: child.Signed(), RegistrationPending: strings.HasPrefix(child.ID(), "did:aw:")}, nil
 	}
 	if parent["kind"] != "identity" || len(certificates) < 2 {
-		return nil, idCertificateRefusal("invalid_shape")
+		return nil, idCertificateRefusal(IDRefusalInvalidShape)
 	}
 	if evidence == nil {
-		return nil, idCertificateRefusal("evidence_unavailable")
+		return nil, idCertificateRefusal(IDRefusalEvidenceUnavailable)
 	}
-	current, err := idIssuingKey(parent, domain, c["kind"].(string), certificates[:len(certificates)-1], evidence)
+	current, err := idIssuingKey(parent, domain, string(child.Kind()), certificates[:len(certificates)-1], evidence)
 	if err != nil {
 		// Import preserves the chain verifier's refusal contract; the
 		// signing helper names a revoked signing parent more specifically.
 		if IDCertificateErrorCode(err) == "parent_revoked" {
-			return nil, idCertificateRefusal("revoked")
+			return nil, idCertificateRefusal(IDRefusalRevoked)
 		}
 		return nil, err
 	}
 	// Parsing verified the child's signature under its own issuer_key.
 	if c["issuer_key"] != current {
-		return nil, idCertificateRefusal("stale_issuer_key")
+		return nil, idCertificateRefusal(IDRefusalStaleIssuerKey)
 	}
-	return &IDCertificateImport{Chain: chain, Certificate: child, RegistrationPending: strings.HasPrefix(c["id"].(string), "did:aw:")}, nil
+	return &IDCertificateImport{Chain: chain, Certificate: child.Signed(), RegistrationPending: strings.HasPrefix(child.ID(), "did:aw:")}, nil
 }

@@ -75,23 +75,20 @@ describe("chat mark-read batching", () => {
     );
   });
 
-  test("falls back by 4xx status when an old server returns an unmeasured error shape", async () => {
-    const ids = messageIds(2);
-    const unread = new Set(ids);
-    const client = {
-      post: vi.fn().mockImplementation(async (_path: string, body: Record<string, unknown>) => {
-        if ("message_ids" in body) {
-          throw new APIError(422, "<html>validation response rewritten by proxy</html>");
-        }
-        const watermark = body.up_to_message_id as string;
-        for (const id of ids.slice(0, ids.indexOf(watermark) + 1)) unread.delete(id);
-      }),
-    };
+  // Only the older server's validation answer is retried; any other refusal
+  // is shown as itself, since a watermark would mark unpresented messages read
+  // (Antares d0e3fe47 item 3).
+  test.each([
+    ["one id unknown", new APIError(404, JSON.stringify({ detail: "Message not found" }))],
+    ["forbidden", new APIError(403, JSON.stringify({ detail: "Not a participant" }))],
+    ["a validation answer rewritten by a proxy", new APIError(422, "<html>validation response rewritten by proxy</html>")],
+  ])("shows %s as itself without a watermark retry", async (_name, refusal) => {
+    const client = { post: vi.fn().mockRejectedValue(refusal) };
 
-    await markRead(client as never, "session-variant", ids);
-
-    expect(unread).toEqual(new Set());
-    expect(client.post).toHaveBeenCalledTimes(2);
+    await expect(markRead(client as never, "session-new", messageIds(2))).rejects.toThrow(
+      `next mark-read chunk failed: aweb: http ${refusal.statusCode}`,
+    );
+    expect(client.post).toHaveBeenCalledTimes(1);
   });
 
   test("malformed exact IDs still reach the server but do not trigger fallback", async () => {
@@ -110,8 +107,8 @@ describe("chat mark-read batching", () => {
     );
   });
 
-  test("surfaces the original 4xx when its single fallback also fails", async () => {
-    const original = new APIError(403, "permission denied");
+  test("surfaces the older server's answer when its single fallback also fails", async () => {
+    const original = legacyShapeError();
     const client = {
       post: vi.fn()
         .mockRejectedValueOnce(original)
@@ -119,7 +116,7 @@ describe("chat mark-read batching", () => {
     };
 
     await expect(markRead(client as never, "session-1", messageIds(1))).rejects.toThrow(
-      "aweb: marked 0 of 1 presented chat messages; next mark-read chunk failed: aweb: http 403: permission denied",
+      "aweb: marked 0 of 1 presented chat messages; next mark-read chunk failed: aweb: http 422: {\"detail\"",
     );
     expect(client.post).toHaveBeenCalledTimes(2);
     expect(client.post).toHaveBeenNthCalledWith(
@@ -154,7 +151,7 @@ describe("chat mark-read batching", () => {
     let fallbackCount = 0;
     const client = {
       post: vi.fn().mockImplementation(async (_path: string, body: Record<string, unknown>) => {
-        if ("message_ids" in body) throw new APIError(422, "old server rejected exact IDs");
+        if ("message_ids" in body) throw legacyShapeError();
         fallbackCount += 1;
         if (fallbackCount === 2) throw new APIError(503, "unavailable");
         const watermark = body.up_to_message_id as string;
@@ -163,7 +160,7 @@ describe("chat mark-read batching", () => {
     };
 
     await expect(markRead(client as never, "session-1", ids)).rejects.toThrow(
-      "aweb: marked 1000 of 2001 presented chat messages; next mark-read chunk failed: aweb: http 422: old server rejected exact IDs",
+      "aweb: marked 1000 of 2001 presented chat messages; next mark-read chunk failed: aweb: http 422: {\"detail\"",
     );
     expect(read).toEqual(new Set(ids.slice(0, 1000)));
     expect(client.post).toHaveBeenCalledTimes(4);

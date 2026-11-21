@@ -379,7 +379,7 @@ func holderKind(ctx context.Context, e *holderCredentialExport, cert *awid.TeamC
 		// The active certificate's holder address locates this principal's key
 		// route independently of the exported chain and the acting team owner.
 		if addressDomain, _, ok := strings.Cut(cert.MemberAddress, "/"); ok {
-			registryURL, err = registry.DiscoverRegistry(ctx, addressDomain)
+			registryURL, err = resolveRegistryAuthority(ctx, registryAuthorityRequest{Kind: registryDomainRoute, Registry: registry, Domain: addressDomain})
 			if err != nil {
 				return unknown
 			}

@@ -33,6 +33,11 @@ func TestAwChatSendBySessionIDJSON(t *testing.T) {
 			}
 			t.Fatalf("unexpected chat sessions method=%s; exact session send must not create or resolve sessions", r.Method)
 		case "/v1/chat/sessions/session-1/messages":
+			if r.Method == http.MethodGet {
+				// The session's history: no encrypted message to inherit.
+				_ = json.NewEncoder(w).Encode(awid.ChatHistoryResponse{})
+				return
+			}
 			if r.Method != http.MethodPost {
 				t.Fatalf("method=%s, want POST", r.Method)
 			}

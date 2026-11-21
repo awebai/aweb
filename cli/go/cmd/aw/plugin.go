@@ -1442,7 +1442,7 @@ func executeGrantManifestTool(name, verb string, args map[string]any, rawBody []
 	defer cancel()
 	signed, err := client.SignAppRequestViaCustody(ctx, name, verb, args, rawBody)
 	if err != nil {
-		if err.Error() == "app_tool_denied" {
+		if errors.Is(err, awid.ErrAppToolDenied) {
 			return nil, fmt.Errorf("%w: %s %s is not delegated to this grant; installing an app does not update an existing grant's tool snapshot. Ask the resident owner to approve the app and mint a replacement grant with the intended tools, then restart this session using the new grant (see aw id grant mint --help)", err, name, verb)
 		}
 		return nil, err

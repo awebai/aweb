@@ -107,7 +107,7 @@ func executeIDNamespaceReaffirm(ctx context.Context, opts idNamespaceReaffirmOpt
 			return idNamespaceReaffirmOutput{}, fmt.Errorf("invalid registry URL: %w", err)
 		}
 	}
-	registryURL, err := registry.DiscoverRegistry(ctx, domain)
+	registryURL, err := resolveRegistryAuthority(ctx, registryAuthorityRequest{Kind: registryDomainRoute, Registry: registry, Domain: domain})
 	if err != nil {
 		return idNamespaceReaffirmOutput{}, fmt.Errorf("discover registry for %s: %w", domain, err)
 	}

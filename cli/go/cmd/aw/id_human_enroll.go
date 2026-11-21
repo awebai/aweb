@@ -154,28 +154,23 @@ func humanIssuerHTTP(ctx context.Context, human *humanParticipation, origin, pat
 	if err != nil {
 		return nil, err
 	}
-	timestamp := time.Now().UTC().Format(time.RFC3339)
-	signature, payload, err := awid.SignRequestCredentialWithSigner(human.record.DIDKey, human.sign, http.MethodPost, target, "did_aw", human.record.StableID, timestamp, raw, nil, "POST "+target.String())
-	if err != nil {
-		return nil, err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target.String(), bytes.NewReader(raw))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "DIDKey "+human.record.DIDKey+" "+signature)
-	req.Header.Set("X-AWEB-DID-AW", human.record.StableID)
-	req.Header.Set("X-AWEB-Timestamp", timestamp)
-	req.Header.Set("X-AWEB-Signed-Payload", base64.RawURLEncoding.EncodeToString([]byte(payload)))
-	req.Header.Set("Content-Type", "application/json")
+	var chain *awid.IDChain
 	if human.chain != nil {
-		header, err := awid.EncodeIDChainHeader(human.chain)
+		checked, err := awid.IDChainFromBundle(human.chain)
 		if err != nil {
 			return nil, err
 		}
-		req.Header.Set("X-AWID-ID-Chain", header)
+		chain = &checked
 	}
-	client := &http.Client{Timeout: awid.APITimeout(), Transport: awid.NewAPITransport(), CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	req, err := awid.NewSignedIdentityPostRequest(ctx, awid.SignedIdentityPost{
+		DIDKey: human.record.DIDKey, StableID: human.record.StableID,
+		Sign: human.sign, Target: target, Body: raw, Chain: chain,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	})
+	if err != nil {
+		return nil, err
+	}
+	client := awid.NewNoRedirectClient()
 	response, err := client.Do(req)
 	if err != nil {
 		return nil, err
@@ -208,7 +203,7 @@ func humanEnrollmentExchange(ctx context.Context, client *approval.Client, purpo
 	if err != nil {
 		return nil, err
 	}
-	httpClient := &http.Client{Timeout: awid.APITimeout(), Transport: awid.NewAPITransport(), CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	httpClient := awid.NewNoRedirectClient()
 	response, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err

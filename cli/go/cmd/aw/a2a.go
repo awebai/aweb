@@ -505,7 +505,7 @@ func runA2APublish(ctx context.Context, input a2aPublishInput) (a2aPublishOutput
 		if err != nil {
 			return a2aPublishOutput{}, err
 		}
-		registryURL, err = registry.DiscoverRegistry(ctx, domain)
+		registryURL, err = resolveRegistryAuthority(ctx, registryAuthorityRequest{Kind: registryDomainRoute, Registry: registry, Domain: domain})
 		if err != nil {
 			return a2aPublishOutput{}, fmt.Errorf("discover AWID registry for %s: %w", domain, err)
 		}

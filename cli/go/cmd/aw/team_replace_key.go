@@ -193,9 +193,14 @@ func runTeamHumanReplaceKey(cmd *cobra.Command, args []string) (runErr error) {
 	if serviceURL == "" {
 		return usageError("no aweb service URL is recorded for team %s; pass --aweb-url", teamID)
 	}
-	registryURL := strings.TrimSpace(teamHumanReplaceKeyRegistryURL)
-	if registryURL == "" {
-		registryURL = strings.TrimSpace(registryURLForTeamInvite(wd, domain, serviceURL))
+	ctx, cancel := commandAPIContext(cmd)
+	defer cancel()
+	registryURL, err := resolveRegistryAuthority(ctx, registryAuthorityRequest{
+		Kind: registryTeamRoute, Override: teamHumanReplaceKeyRegistryURL, Domain: domain,
+		TeamID: teamID, WorkingDir: wd, AwebURL: serviceURL,
+	})
+	if err != nil {
+		return err
 	}
 	if registryURL == "" {
 		return usageError("no AWID registry URL is recorded for team %s; pass --registry", teamID)
@@ -205,8 +210,9 @@ func runTeamHumanReplaceKey(cmd *cobra.Command, args []string) (runErr error) {
 		return fmt.Errorf("invalid registry URL: %w", err)
 	}
 
-	newCertificate, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-		Team: teamID, MemberDIDKey: newDIDKey, Alias: alias, IdentityScope: awid.IdentityModeLocal,
+	issuer := teamMembershipIssuer{TeamID: teamID, Key: teamKey, Registry: registry, RegistryURL: registryURL}
+	newCertificate, err := issuer.sign(awid.TeamCertificateFields{
+		MemberDIDKey: newDIDKey, Alias: alias, IdentityScope: awid.IdentityModeLocal,
 	})
 	if err != nil {
 		return fmt.Errorf("mint replacement team certificate: %w", err)
@@ -219,8 +225,6 @@ func runTeamHumanReplaceKey(cmd *cobra.Command, args []string) (runErr error) {
 		TeamID: teamID, OldDIDKey: oldDIDKey, NewDIDKey: newDIDKey,
 		OldCertificateID: oldCertificateID, NewCertificateID: newCertificate.CertificateID,
 	}
-	ctx, cancel := commandAPIContext(cmd)
-	defer cancel()
 	rosterResult, err := postLocalIdentityKeyReplacement(ctx, awid.LocalIdentityKeyReplacementInput{ServiceURL: serviceURL, Alias: alias, Request: requestPayload, TeamKey: teamKey})
 	if err != nil {
 		var unknown *replacementRosterOutcomeUnknownError
@@ -233,7 +237,7 @@ func runTeamHumanReplaceKey(cmd *cobra.Command, args []string) (runErr error) {
 	if err := registry.RevokeCertificate(ctx, registryURL, domain, teamName, oldCertificateID, teamKey); err != nil {
 		return fmt.Errorf("replace-key partial state: roster row was replaced and audit %s was written; old certificate %s was not revoked; new certificate %s was not registered or installed: %w; retain this exact audited replacement certificate material for recovery: %s", rosterResult.AuditID, oldCertificateID, newCertificate.CertificateID, err, encodedCertificate)
 	}
-	if err := registry.RegisterCertificate(ctx, registryURL, domain, teamName, newCertificate, teamKey); err != nil {
+	if err := issuer.register(ctx, newCertificate); err != nil {
 		return fmt.Errorf("replace-key partial state: roster row was replaced and audit %s was written; old certificate was revoked; new certificate was not registered or installed (certificate_id %s): %w; replacement certificate material for recovery: %s", rosterResult.AuditID, newCertificate.CertificateID, err, encodedCertificate)
 	}
 

@@ -20,7 +20,7 @@ func TestActivateExistingTeamMembershipSwitchesActiveTeam(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := activateExistingTeamMembership(workingDir, "circle:juanreyero.com"); err != nil {
+	if err := activateExistingTeamMembershipAt(workingDir, "", "circle:juanreyero.com"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -47,7 +47,7 @@ func TestActivateExistingTeamMembershipRejectsMissingTeam(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := activateExistingTeamMembership(workingDir, "circle:juanreyero.com")
+	err := activateExistingTeamMembershipAt(workingDir, "", "circle:juanreyero.com")
 	if err == nil {
 		t.Fatal("expected missing membership error")
 	}

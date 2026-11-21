@@ -29,7 +29,16 @@ from fastapi import FastAPI
 import uvicorn
 
 
-def obstruct_registered_certificate(app: FastAPI, domain: str, destination: Path) -> None:
+async def lose_registration_body(body):
+    async for chunk in body:
+        if chunk:
+            raise ConnectionResetError("fixture dropped committed certificate response")
+        yield chunk
+
+
+def fail_after_certificate_registration(
+    app: FastAPI, domain: str, destination: Path, *, lose_response: bool
+) -> None:
     registration = f"/v1/namespaces/{domain}/teams/backend/certificates"
     signing_key = destination.parent.parent / "signing.key"
     armed = True
@@ -39,7 +48,7 @@ def obstruct_registered_certificate(app: FastAPI, domain: str, destination: Path
         nonlocal armed
         response = await call_next(request)
         # The recipient key exists by registration; the issuer is registered
-        # earlier. Block the local write before the client sees success.
+        # earlier. The successful response establishes the committed write.
         if (
             armed
             and request.method == "POST"
@@ -47,8 +56,11 @@ def obstruct_registered_certificate(app: FastAPI, domain: str, destination: Path
             and 200 <= response.status_code < 300
             and signing_key.is_file()
         ):
-            destination.mkdir(mode=0o700, parents=True)
             armed = False
+            if lose_response:
+                response.body_iterator = lose_registration_body(response.body_iterator)
+            else:
+                destination.mkdir(mode=0o700, parents=True)
         return response
 
 
@@ -147,8 +159,14 @@ async def main() -> None:
         )
         registry.app.state.rate_limiter = MemoryFixedWindowRateLimiter()
         registry.app.state.awid_public_origins = (REGISTRY_URL, registry_url)
-        if obstruction := os.environ.get("AW_COMMAND_CERTIFICATE_OBSTRUCTION"):
-            obstruct_registered_certificate(registry.app, domain, Path(obstruction))
+        if destination := os.environ.get("AW_COMMAND_CERTIFICATE_DESTINATION"):
+            fail_after_certificate_registration(
+                registry.app,
+                domain,
+                Path(destination),
+                lose_response=os.environ.get("AW_COMMAND_CERTIFICATE_RESPONSE_LOSS")
+                == "true",
+            )
         await serve_fixture_app(registry.app, sock=registry_sock, resources=resources)
         server = await resources.enter_async_context(
             running_server(

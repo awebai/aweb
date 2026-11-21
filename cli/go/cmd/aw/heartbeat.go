@@ -37,8 +37,7 @@ var heartbeatCmd = &cobra.Command{
 		if err != nil {
 			resp.RepoError = err.Error()
 		}
-		printJSON(resp)
-		return nil
+		return printJSON(resp)
 	},
 }
 

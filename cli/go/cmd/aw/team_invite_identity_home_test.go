@@ -77,7 +77,7 @@ func TestTeamInviteActsFromExternalIdentityHome(t *testing.T) {
 	principalBefore := snapshotJoinFiles(t, principal)
 	for _, cwd := range []string{empty, decoy} {
 		for _, source := range []string{"flag", "environment"} {
-			for _, surface := range [][]string{{"team", "invite"}, {"id", "team", "invite"}} {
+			for _, surface := range [][]string{{"team", "invite"}, {"id", "team", "invite"}, {"team", "invite", "--member-global"}, {"id", "team", "invite", "--member-global"}} {
 				t.Run(filepath.Base(cwd)+"/"+source+"/"+strings.Join(surface, "-"), func(t *testing.T) {
 					args := append(append([]string{}, surface...), "--json")
 					env := append(testCommandEnv(filepath.Join(root, "user-home")), "USERPROFILE="+filepath.Join(root, "user-home"), "AWEB_IDENTITY_HOME=", "AWEB_URL=", "AWID_REGISTRY_URL=", "AW_NO_UPDATE_CHECK=1")
@@ -100,8 +100,8 @@ func TestTeamInviteActsFromExternalIdentityHome(t *testing.T) {
 			}
 		}
 	}
-	if creates.Load() != 8 {
-		t.Fatalf("invite requests=%d want8", creates.Load())
+	if creates.Load() != 16 {
+		t.Fatalf("invite requests=%d want16", creates.Load())
 	}
 	if !reflect.DeepEqual(before, snapshotJoinFiles(t, decoy)) || !reflect.DeepEqual(principalBefore, snapshotJoinFiles(t, principal)) {
 		t.Fatal("invite changed principal or decoy files")
@@ -157,7 +157,7 @@ func TestTeamInviteGrantKeepsServerRefusal(t *testing.T) {
 	writeSelectionFixtureForTest(t, decoy, testSelectionFixture{AwebURL: server.URL, TeamID: "other:decoy.test", Alias: "decoy", SigningKey: key})
 	before := snapshotJoinFiles(t, decoy)
 	for _, source := range []string{"flag", "environment"} {
-		args := []string{"team", "invite", "--json"}
+		args := []string{"team", "invite", "--member-global", "--json"}
 		env := append(testCommandEnv(userHome), "USERPROFILE="+userHome, "AWEB_IDENTITY_HOME=", "AWEB_URL=", "AWID_REGISTRY_URL=", "AW_NO_UPDATE_CHECK=1")
 		if source == "flag" {
 			args = append([]string{"--identity-home", grant}, args...)
@@ -207,9 +207,18 @@ func TestSelectedIdentityControllerInviteAndAcceptRoundTrip(t *testing.T) {
 			const team = "backend:acme.com"
 			_, controller, _ := ed25519.GenerateKey(nil)
 			writeTeamKeyForTest(t, userHome, "acme.com", "backend", controller)
-			var registrations, assertions atomic.Int32
+			var registrations, assertions, enrollmentReads atomic.Int32
 			server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/v1/did/"+stable+"/key":
+					enrollmentReads.Add(1)
+					if err := json.NewEncoder(w).Encode(map[string]any{
+						"did_aw":          stable,
+						"current_did_key": did,
+						"id_tree":         map[string]any{"enrolled": false},
+					}); err != nil {
+						t.Error(err)
+					}
 				case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/certificates"):
 					var payload struct {
 						Certificate string `json:"certificate"`
@@ -283,6 +292,9 @@ func TestSelectedIdentityControllerInviteAndAcceptRoundTrip(t *testing.T) {
 			run("id", "team", "accept-invite", invite.Token, "--name", "alice", "--global", "--no-address", "--json")
 			if registrations.Load() != 1 || assertions.Load() != 1 {
 				t.Fatalf("registrations=%d assertions=%d", registrations.Load(), assertions.Load())
+			}
+			if enrollmentReads.Load() != 1 {
+				t.Fatalf("selected inviter enrollment reads=%d, want 1", enrollmentReads.Load())
 			}
 			keyAfter, err := awid.LoadSigningKey(filepath.Join(selectedRoot, "signing.key"))
 			if err != nil || !reflect.DeepEqual(keyAfter, selectedKey) {

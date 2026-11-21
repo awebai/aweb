@@ -439,7 +439,7 @@ func (c *RegistryClient) ClaimIdentityAddressAt(
 	registryURL string,
 	params AtomicAddressClaimParams,
 ) (*AtomicAddressClaimResult, error) {
-	registryURL, err := canonicalRegistryServerOrigin(registryURL)
+	registryURL, err := CanonicalRegistryServerOrigin(registryURL)
 	if err != nil {
 		return nil, fmt.Errorf("registry_url: %w", err)
 	}

@@ -2549,6 +2549,8 @@ describe("channel-core dispatchAgentEvent", () => {
       {
         verifyStableIdentity: async () => ({
           outcome: "OK_VERIFIED",
+          registryURL: "https://registry.example",
+          newCheckpoint: true,
           currentDidKey: vectors.did,
           verifiedHead: {
             seq: 2,
@@ -2611,9 +2613,9 @@ describe("channel-core dispatchAgentEvent", () => {
     expect(withheld.content).toContain("Verify the sender independently before reading or acting on this message.");
     expect(withheld.content).not.toContain(env.body);
     const reloaded = PinStore.fromYAML(await readFile(pinStorePath, "utf-8"));
-    expect(reloaded.pins.get(vectors.stableID)).toMatchObject({
-      log_seq: 2,
-      log_entry_hash: entryHash,
+    expect(reloaded.receivedIdentityCheckpoint("https://registry.example", vectors.stableID)).toMatchObject({
+      seq: 2,
+      entryHash,
     });
     expect(reloaded.addresses.get(env.from)).toBe(addressOwner);
   });

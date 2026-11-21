@@ -233,7 +233,7 @@ func TestMailSendPlainAliasRoutesToOSSEndpoint(t *testing.T) {
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/agents":
-			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{Agents: []awid.AgentView{{AgentID: "bob-agent", Alias: "bob"}}})
+			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{Agents: []awid.AgentView{{AgentID: "bob-agent", Alias: "bob", DIDKey: "did:key:z6Mkbob"}}})
 		case "/v1/messages":
 			gotPath = r.URL.Path
 			var sent map[string]any
@@ -325,7 +325,7 @@ func TestChatSendNetworkAddressUsesUnifiedEndpoint(t *testing.T) {
 	writeNetworkWorkspace(t, tmp, server.URL+"/api", "eve", "acme")
 
 	run := exec.CommandContext(ctx, bin, "chat", "send-and-leave", "--plaintext", "acme/bot", "hello network", "--json")
-	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL=http://127.0.0.1:1")
+	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL="+newRegistryWithAddressesForTest(t, "acme/bot"))
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -391,8 +391,10 @@ func TestChatSendNetworkTarget404ShowsAgentNotFound(t *testing.T) {
 
 	writeNetworkWorkspace(t, tmp, server.URL+"/api", "eve", "acme")
 
+	// The registry knows the address, so the client binds the send and the
+	// server's 404 is what the person sees.
 	run := exec.CommandContext(ctx, bin, "chat", "send-and-wait", "--plaintext", "--start-conversation", "aweb.example/merlin", "hello")
-	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL=http://127.0.0.1:1")
+	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL="+newRegistryWithAddressesForTest(t, "aweb.example/merlin"))
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err == nil {
@@ -412,9 +414,6 @@ func TestMailSendNetworkTarget404ShowsAgentNotFound(t *testing.T) {
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/v1/namespaces/aweb/addresses/merlin":
-			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]string{"detail": "Target not found"})
 		case "/api/v1/conversations":
 			_ = json.NewEncoder(w).Encode(awid.ConversationsResponse{})
 		case "/api/v1/messages/inbox":
@@ -424,10 +423,6 @@ func TestMailSendNetworkTarget404ShowsAgentNotFound(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"detail": "Target not found",
 			})
-		case "/api/v1/agents":
-			// AWID has no aweb/merlin, so the sender's own team is asked next;
-			// merlin is not on it either.
-			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{TeamID: "backend:aweb", Agents: []awid.AgentView{}})
 		case "/api/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
 		default:
@@ -443,11 +438,12 @@ func TestMailSendNetworkTarget404ShowsAgentNotFound(t *testing.T) {
 
 	buildAwBinary(t, ctx, bin)
 
-	// Pin resolution to the disposable registry as well as the service.
 	writeNetworkWorkspace(t, tmp, server.URL+"/api", "eve", "aweb")
 
+	// The registry knows the address, so the client binds the send and the
+	// server's 404 is what the person sees.
 	run := exec.CommandContext(ctx, bin, "mail", "send", "--plaintext", "--to", "aweb/merlin", "--body", "hello", "--subject", "test")
-	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL, "HTTPS_PROXY=http://127.0.0.1:1", "HTTP_PROXY=http://127.0.0.1:1", "NO_PROXY=127.0.0.1,localhost")
+	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL="+newRegistryWithAddressesForTest(t, "aweb/merlin"), "HTTPS_PROXY=http://127.0.0.1:1", "HTTP_PROXY=http://127.0.0.1:1", "NO_PROXY=127.0.0.1,localhost")
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err == nil {
@@ -528,8 +524,10 @@ func TestMailSendToAddressPrintsTheTypedRefusal(t *testing.T) {
 		bin := filepath.Join(tmp, "aw")
 		buildAwBinary(t, ctx, bin)
 		writeNetworkWorkspace(t, tmp, server.URL+"/api", "alice", "local")
+		// The registry knows the address, so the client binds the send and
+		// the server's typed refusal is what the person sees.
 		run := exec.CommandContext(ctx, bin, "mail", "send", "--plaintext", "--to-address", tc.target, "--body", "hi", "--subject", "hi")
-		run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL, "HTTPS_PROXY=http://127.0.0.1:1", "HTTP_PROXY=http://127.0.0.1:1", "NO_PROXY=127.0.0.1,localhost")
+		run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL="+newRegistryWithAddressesForTest(t, tc.target), "HTTPS_PROXY=http://127.0.0.1:1", "HTTP_PROXY=http://127.0.0.1:1", "NO_PROXY=127.0.0.1,localhost")
 		run.Dir = tmp
 		out, err := run.CombinedOutput()
 		cancel()
@@ -651,5 +649,75 @@ func TestDirectoryGetByAddress(t *testing.T) {
 	}
 	if got["org_slug"] != "acme" {
 		t.Fatalf("org_slug=%v", got["org_slug"])
+	}
+}
+
+// A local seat sends to a domain/name address while the registry does not
+// answer, as an OATS agent does with no flags: the send is posted unbound and
+// the server decides, as released aw does. Only a send that requires the
+// recipient binding (a global or stable-ID sender) refuses.
+func TestLocalSeatSendsToAnAddressWhenTheRegistryIsUnreachable(t *testing.T) {
+	t.Parallel()
+
+	var mailBody, chatBody map[string]any
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/messages":
+			if err := json.NewDecoder(r.Body).Decode(&mailBody); err != nil {
+				t.Errorf("decode mail: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"message_id": "mail-1", "conversation_id": mailBody["conversation_id"], "status": "delivered"})
+		case "/api/v1/chat/pending":
+			_ = json.NewEncoder(w).Encode(awid.ChatPendingResponse{Pending: []awid.ChatPendingItem{}})
+		case "/api/v1/chat/sessions":
+			if r.Method == http.MethodGet {
+				_ = json.NewEncoder(w).Encode(awid.ChatListSessionsResponse{Sessions: []awid.ChatSessionItem{}})
+				return
+			}
+			if err := json.NewDecoder(r.Body).Decode(&chatBody); err != nil {
+				t.Errorf("decode chat: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"session_id":        "net-sess-1",
+				"message_id":        "net-msg-1",
+				"participants":      []map[string]string{{"agent_id": "a1", "alias": "eve"}, {"agent_id": "a2", "alias": "acme/bot"}},
+				"targets_connected": []string{},
+				"targets_left":      []string{},
+			})
+		case "/api/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+	writeNetworkWorkspace(t, tmp, server.URL+"/api", "eve", "acme")
+	env := append(testCommandEnv(tmp), "AWID_REGISTRY_URL=http://127.0.0.1:1")
+
+	for _, args := range [][]string{
+		{"mail", "send", "--to", "acme/bot", "--subject", "hello", "--body", "hello network"},
+		{"chat", "send-and-leave", "acme/bot", "hello network"},
+	} {
+		run := exec.CommandContext(ctx, bin, args...)
+		run.Env = env
+		run.Dir = tmp
+		if out, err := run.CombinedOutput(); err != nil {
+			t.Fatalf("%v: %v\n%s", args, err, out)
+		}
+	}
+	if mailBody == nil || mailBody["to_address"] != "acme/bot" {
+		t.Fatalf("mail was not posted to acme/bot: %v", mailBody)
+	}
+	if chatBody == nil {
+		t.Fatal("chat was not posted")
+	}
+	if addrs, ok := chatBody["to_addresses"].([]any); !ok || len(addrs) != 1 || addrs[0] != "acme/bot" {
+		t.Fatalf("chat to_addresses=%v", chatBody["to_addresses"])
 	}
 }

@@ -111,5 +111,5 @@ func postHostedOwnerIdentity(ctx context.Context, owner *hostedOwnerAuthority, i
 	for name, value := range headers {
 		req.Header.Set(name, value)
 	}
-	return doCLIJSON(req, output, owner.issuer, true)
+	return executeCLIJSON(cliJSONRequest{Request: req, Output: output, Issuer: owner.issuer, Errors: cliResponseHTTPStatus})
 }

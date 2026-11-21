@@ -23,7 +23,7 @@ import (
 // inbox read. Continuing is by --conversation-id (or aw mail reply), which
 // names no recipient and keeps the conversation's title.
 func TestAwMailSendToStartsANewThread(t *testing.T) {
-	t.Setenv("AWID_REGISTRY_URL", "http://127.0.0.1:1")
+	t.Setenv("AWID_REGISTRY_URL", newRegistryWithoutAddressesForTest(t))
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 	bin := filepath.Join(t.TempDir(), "aw")
@@ -105,8 +105,11 @@ func TestAwMailSendToStartsANewThread(t *testing.T) {
 					_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 				case "/v1/messages/conversations/" + old:
 					// A continuation reads its own conversation to sign its
-					// recipient; this fixture has none on record.
-					http.NotFound(w, r)
+					// recipient and to inherit its encryption. This server
+					// answers as one without the conversation route does
+					// (before server-v1.19.0): nothing on record, plaintext.
+					w.WriteHeader(http.StatusNotFound)
+					_, _ = w.Write([]byte(`{"detail":"Not Found"}`))
 				default:
 					t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 					http.NotFound(w, r)

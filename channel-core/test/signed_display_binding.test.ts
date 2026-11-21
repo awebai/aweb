@@ -61,6 +61,9 @@ describe("displayed fields are bound to the signed claims", () => {
             signed[field] = "";
             outer[field] = "";
             if (field === "from_did") want = "unverified";
+            // A chat is read from a named conversation, and an empty claim
+            // does not name it.
+            if (kind === "chat" && field === "conversation_id") want = "failed";
           } else if (mode === "empty_mismatch") {
             signed[field] = "";
             // An empty recipient-key claim on mail may stand for this reader.
@@ -93,10 +96,15 @@ describe("displayed fields are bound to the signed claims", () => {
     for (const field of ["conversation_id", "from_did", "to_did", "body"]) {
       test(`${kind}: a null displayed ${field} is an empty one`, async () => {
         const signed: Fields = { type: kind, body: "body", subject: "subject", message_id: "message", conversation_id: "conversation", from_did: did, to_did: did };
+        // A chat read from its conversation names it even when the row does
+        // not: the claim must then be that conversation, not an empty one.
+        const readConversation = kind === "chat" && field === "conversation_id";
         const { raw } = signedResponse(signed, { ...signed, [field]: null });
-        expect((await read(kind, raw)).verification_status).toBe("failed");
+        expect((await read(kind, raw)).verification_status).toBe(readConversation ? "verified" : "failed");
         const { raw: unsigned } = signedResponse({ ...signed, [field]: "" }, { ...signed, [field]: null });
-        expect((await read(kind, unsigned)).verification_status).toBe(field === "from_did" ? "unverified" : "verified");
+        expect((await read(kind, unsigned)).verification_status).toBe(
+          readConversation ? "failed" : field === "from_did" ? "unverified" : "verified",
+        );
       });
     }
   }

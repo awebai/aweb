@@ -404,6 +404,7 @@ func TestMailSendAliasReachesActiveTeamMembers(t *testing.T) {
 		{name: "addressless agent", kind: "agent", scope: awid.IdentityModeGlobal},
 		{name: "addressed agent", kind: "agent", scope: awid.IdentityModeGlobal, address: "demo/juan"},
 		{name: "local human", kind: "human", scope: awid.IdentityModeLocal},
+		{name: "local agent", kind: "agent", scope: awid.IdentityModeLocal},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -484,8 +485,22 @@ func TestMailSendAliasReachesActiveTeamMembers(t *testing.T) {
 			if err := json.Unmarshal([]byte(req.SignedPayload), &signed); err != nil {
 				t.Fatal(err)
 			}
-			if signed.ToDID != req.ToDID || signed.ToStableID != req.ToStableID || signed.Body != "hello human or agent" {
-				t.Fatalf("signed binding/body differ from delivery: %+v", signed)
+			if signed.Body != "hello human or agent" {
+				t.Fatalf("signed body differs from delivery: %+v", signed)
+			}
+			if tc.kind == "human" {
+				if signed.ToDID != req.ToDID || signed.ToStableID != req.ToStableID {
+					t.Fatalf("signed binding differs from delivery: %+v", signed)
+				}
+				return
+			}
+			// The agent list confirmed the alias: the signature binds that
+			// member's key, and the request still routes by the alias alone.
+			if signed.To != "juan" || signed.ToDID != memberDID || signed.ToStableID != memberStable {
+				t.Fatalf("signed recipient=%q to_did=%q to_stable_id=%q, want juan %s %q", signed.To, signed.ToDID, signed.ToStableID, memberDID, memberStable)
+			}
+			if req.ToDID != "" || req.ToStableID != "" {
+				t.Fatalf("the confirmed binding leaked into the routing selectors: %+v", req)
 			}
 		})
 	}

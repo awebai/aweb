@@ -285,7 +285,7 @@ func TestAnImportedChainIsInstalledAsTheNextCredentialGeneration(t *testing.T) {
 	home := t.TempDir()
 	_, humanKey, _ := ed25519.GenerateKey(nil)
 	bundle := map[string]any{"v": 1, "type": "aweb.id-chain", "certificates": []any{signedHumanCertificate(t, humanKey)}}
-	if err := installImportedChain(home, "request-1", []byte("response"), bundle); err != nil {
+	if err := installParentChain(home, "parent-import", "request-1", []byte("response"), bundle, nil); err != nil {
 		t.Fatal(err)
 	}
 	installed, err := awconfig.LoadInstalledIDChain(home)

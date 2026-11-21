@@ -213,7 +213,11 @@ func testProvisionHostedIdentityForwardsInboundMode(t *testing.T, mode string) {
 	}))
 
 	t.Setenv("AWID_REGISTRY_URL", server.URL)
-	_, err = provisionHostedIdentity(server.URL, server.URL, "alice", "laptop", true, mode)
+	state, prepareErr := prepareHostedSignup(hostedSignupCreation{Context: hostedSignupContext{WorkingDir: t.TempDir(), DiscoveryURL: server.URL, OnboardingURL: server.URL, AwebURL: server.URL, RegistryURL: server.URL}, Username: "alice", Alias: "laptop", Scope: awid.IdentityScopeGlobal, InboundMode: mode})
+	if prepareErr != nil {
+		t.Fatal(prepareErr)
+	}
+	_, err = state.provision()
 	if err != nil {
 		t.Fatalf("provisionHostedIdentity: %v", err)
 	}
@@ -287,7 +291,11 @@ func TestProvisionHostedIdentityOmitsInboundModeWhenUnset(t *testing.T) {
 
 	// Pass "" for inboundMode → field must be omitted from the wire body.
 	t.Setenv("AWID_REGISTRY_URL", server.URL)
-	_, err = provisionHostedIdentity(server.URL, server.URL, "bob", "laptop", true, "")
+	state, prepareErr := prepareHostedSignup(hostedSignupCreation{Context: hostedSignupContext{WorkingDir: t.TempDir(), DiscoveryURL: server.URL, OnboardingURL: server.URL, AwebURL: server.URL, RegistryURL: server.URL}, Username: "bob", Alias: "laptop", Scope: awid.IdentityScopeGlobal, InboundMode: ""})
+	if prepareErr != nil {
+		t.Fatal(prepareErr)
+	}
+	_, err = state.provision()
 	if err != nil {
 		t.Fatalf("provisionHostedIdentity: %v", err)
 	}

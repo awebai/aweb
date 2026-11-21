@@ -87,6 +87,13 @@ where a mapped name actually delivered.`,
 			Priority: awid.PriorityNormal,
 		}
 		applyMailRecipientTarget(req, target.Kind, target.Value)
+		if target.Kind == "alias" {
+			confirmed, err := confirmTeamAlias(ctx, c, sel, target.Value, false)
+			if err != nil {
+				return gcMailError("%v", err)
+			}
+			req.ConfirmedRecipient = confirmed.recipient
+		}
 		if err := startNewThread(req); err != nil {
 			return gcMailError("%v", err)
 		}

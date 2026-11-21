@@ -22,12 +22,13 @@ const (
 var teamHumanExtendCmd = &cobra.Command{
 	Use:   "extend <agent-spec>...",
 	Short: "Add agents to an existing team by discovering membership authority",
-	Long:  "Add agents to an existing team by discovering membership authority. Specs use [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME] or NAME[:local|global] for empty-profile homes. Explicit --api-key or --team-id with AWEB_API_KEY wins. An ambient AWEB_API_KEY in a workspace with an active team uses that team as an assertion against the API key's team; explicit --api-key bypasses the workspace assertion.",
+	Long:  "Add agents to an existing team by discovering membership authority. Specs use [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME] or NAME[:local|global] for empty-profile homes. A person's setup key (explicit --api-key or AWEB_API_KEY) takes the API path; a workspace key selects signed creation instead. With no current creator, exactly one discovered agent workspace is selected and named; several candidates require choosing a workspace or its --identity-home.\n\n" + creationAuthorityHelp,
 	Args:  cobra.MinimumNArgs(1),
 	RunE:  runTeamHumanExtend,
 }
 
 type teamExtendAuthority struct {
+	Creation              *creationAuthority
 	Tier                  string
 	AnchorDir             string
 	AgentsRoot            string
@@ -58,6 +59,10 @@ func runTeamHumanExtend(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	authority, err = selectTeamExtendCreation(wd, authority)
+	if err != nil {
+		return err
+	}
 	expectedTeamID, assertionSource := expectedTeamIDForExtend(authority)
 	return runTeamHumanAddWithOptions(cmd, args, teamHumanAddRunOptions{
 		CWD:                   wd,
@@ -65,13 +70,13 @@ func runTeamHumanExtend(cmd *cobra.Command, args []string) error {
 		AgentsRoot:            authority.AgentsRoot,
 		WorktreeAnchorDir:     wd,
 		APIKey:                authority.APIKey,
-		ForceAPIKey:           strings.TrimSpace(authority.APIKey) != "",
 		ExpectedTeamID:        expectedTeamID,
 		TeamIDAssertionSource: assertionSource,
 		OutputStatus:          "extended",
 		OutputAuthorityTier:   authority.Tier,
 		AuthorityTeamID:       authority.TeamID,
 		CommandName:           "aw team admin extend",
+		Creation:              authority.Creation,
 	})
 }
 
@@ -93,6 +98,7 @@ func resolveTeamExtendAuthority(wd string) (teamExtendAuthority, error) {
 		apiKey = strings.TrimSpace(os.Getenv(initAPIKeyEnvVar))
 	}
 	teamID := strings.TrimSpace(teamHumanExtendTeamID)
+
 	if apiKey != "" {
 		if teamID != "" {
 			return teamExtendAuthority{Tier: teamExtendAuthorityTierAPIKey, AnchorDir: wd, AgentsRoot: agentsRoot, APIKey: apiKey, TeamID: teamID, TeamIDAssertionSource: teamIDAssertionSourceExplicitFlag}, nil
@@ -142,7 +148,11 @@ func resolveTeamExtendAuthority(wd string) (teamExtendAuthority, error) {
 		sort.Strings(teamIDs)
 		return teamExtendAuthority{}, usageError("multiple teams found under %s: %s; pass --team-id to choose one", agentsRoot, strings.Join(teamIDs, ", "))
 	}
+	if len(candidates) > 1 {
+		return teamExtendAuthority{}, creationCandidatesError(candidates)
+	}
 	winner := candidates[0]
+	printDiscoveredCreator(winner)
 	return teamExtendAuthority{Tier: teamExtendAuthorityTierDiscoveredAgent, AnchorDir: winner.HomeDir, AgentsRoot: agentsRoot, TeamID: winner.TeamID, Checked: checked}, nil
 }
 
@@ -271,4 +281,78 @@ func printTeamCreateExtendNotice(wd string) {
 		return
 	}
 	fmt.Fprintf(os.Stderr, "Notice: current workspace is already a member of team %s; use `aw team admin extend` to add members to that existing team. `aw team admin create` will create a new team.\n", strings.TrimSpace(teamState.ActiveTeam))
+}
+
+func selectTeamExtendCreation(wd string, authority teamExtendAuthority) (teamExtendAuthority, error) {
+	if authority.APIKey != "" {
+		apiKey := authority.APIKey
+		agentsRoot := authority.AgentsRoot
+		base, err := resolveAPIKeyInitAwebURL()
+		if err != nil {
+			return teamExtendAuthority{}, err
+		}
+		ctx, cancel := commandAPIContext(nil)
+		selected, err := readAPIKeyCreationTeam(ctx, base, apiKey)
+		cancel()
+		if err != nil {
+			return teamExtendAuthority{}, err
+		}
+		expected, assertionSource := expectedTeamIDForExtend(authority)
+		if expected != "" && !strings.EqualFold(expected, selected.CanonicalTeamID) {
+			return teamExtendAuthority{}, teamIDAssertionMismatchError(expected, selected.CanonicalTeamID, assertionSource)
+		}
+		if selected.APIKeyKind == creationKeyKindWorkspace {
+			requested := selected.CanonicalTeamID
+			// Discover a native issuer using the same current/discovered selection as
+			// no-key extend. The deciding function below still checks its team.
+			candidate, ok, err := resolveTeamExtendCandidate(wd, "")
+			if err != nil {
+				return teamExtendAuthority{}, err
+			}
+			tier := teamExtendAuthorityTierCurrentWorkspace
+			if !ok {
+				candidates, _, err := scanTeamExtendCandidates(agentsRoot, requested)
+				if err != nil {
+					return teamExtendAuthority{}, err
+				}
+				if len(candidates) > 0 {
+					if len(candidates) > 1 {
+						return teamExtendAuthority{}, creationCandidatesError(candidates)
+					}
+					candidate, ok = candidates[0], true
+					tier = teamExtendAuthorityTierDiscoveredAgent
+					printDiscoveredCreator(candidate)
+				}
+			}
+			anchor := wd
+			if ok {
+				anchor = candidate.HomeDir
+			}
+			creation, err := resolveAgentCreation(agentCreationRequest{WorkingDir: anchor, APIKey: apiKey, AwebURL: base, RequestedTeam: requested, SelectedTeam: selected})
+			if err != nil {
+				return teamExtendAuthority{}, err
+			}
+			return teamExtendAuthority{Tier: tier, AnchorDir: anchor, AgentsRoot: agentsRoot, TeamID: creation.SourceTeam, APIKey: apiKey, Creation: &creation}, nil
+		}
+		creation, err := decideCreationAuthority(creationAuthorityInput{SuppliedKey: true, KeyKind: selected.APIKeyKind})
+		if err != nil {
+			return teamExtendAuthority{}, err
+		}
+		creation.SelectedTeam = selected
+		authority.Creation = &creation
+	}
+	return authority, nil
+}
+
+func creationCandidatesError(candidates []teamExtendCandidate) error {
+	names := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		names = append(names, candidate.HomeDir+" ("+candidate.TeamID+")")
+	}
+	sort.Strings(names)
+	return usageError("choose the creating workspace: run aw team admin extend from it, or select --identity-home <home>; candidates: %s", strings.Join(names, ", "))
+}
+
+func printDiscoveredCreator(candidate teamExtendCandidate) {
+	fmt.Fprintf(os.Stderr, "Using agent workspace %s as the creator.\n", candidate.HomeDir)
 }
