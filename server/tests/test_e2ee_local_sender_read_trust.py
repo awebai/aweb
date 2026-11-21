@@ -37,8 +37,55 @@ from awid.signing import canonical_json_bytes, sign_message
 from aweb.e2ee_messages import encrypt_e2ee_mail, generate_x25519_keypair
 from test_addressless_sender_cli import _registry_http
 from test_cli_human_reply import _cli, _pem, _reply_context
-from test_dashboard_privacy import TEAM, _request, privacy_app  # noqa: F401
+import test_dashboard_privacy
+from test_dashboard_privacy import TEAM, _request
 from test_messages_http import _signed_team_headers, _encode_certificate
+
+
+def _signed_plaintext_mail_request(
+    *, sender, agent, sender_team, message_id, conversation_id, now
+):
+    """Build the signed plaintext request sent through the real mail route."""
+    payload = canonical_json_bytes(
+        dict(
+            type="mail",
+            from_did=sender["did"],
+            to_did=agent["did"],
+            to_stable_id=agent["stable_id"],
+            subject="Local encrypted",
+            body="local sender private text",
+            message_id=message_id,
+            conversation_id=conversation_id,
+            timestamp=now.isoformat(),
+            **{
+                "from": sender_team.split(":", 1)[1] + "/alice",
+                "to": agent["address"],
+            },
+        )
+    )
+    request = dict(
+        to_did=agent["did"],
+        subject="Local encrypted",
+        body="local sender private text",
+        message_id=message_id,
+        conversation_id=conversation_id,
+        timestamp=now.isoformat(),
+        from_did=sender["did"],
+        signature=sign_message(sender["signing_key"], payload),
+        signed_payload=payload.decode(),
+    )
+    # Optional selectors use absence, not empty strings: SendMessageRequest
+    # requires at least one character when either selector is supplied.
+    for field, value in (
+        ("to_address", agent["address"]),
+        ("to_stable_id", agent["stable_id"]),
+    ):
+        if value:
+            request[field] = value
+    return request
+
+
+privacy_app = test_dashboard_privacy.privacy_app
 
 
 @asynccontextmanager
@@ -53,8 +100,10 @@ async def _local_sender_mail(
     cross_team=False,
     plaintext=False,
 ):
-    """Deliver one local-sender E2EE mail to bob; yield bob's real CLI context
-    and the registry it resolves through."""
+    """Deliver local-sender mail to bob and yield its real CLI/registry context.
+
+    The default is encrypted v2; plaintext selects the signed plaintext route.
+    """
     env.app.state.public_origin = str(env.client.base_url).rstrip("/")
     now = datetime.now(timezone.utc).replace(microsecond=0)
     sender_team = TEAM
@@ -122,35 +171,13 @@ async def _local_sender_mail(
     assert not source["from"].get("address")
     assert bool(source["from"].get("stable_id")) == human
     if plaintext:
-        payload = canonical_json_bytes(
-            dict(
-                type="mail",
-                from_did=sender["did"],
-                to_did=agent["did"],
-                to_stable_id=agent["stable_id"],
-                subject="Local encrypted",
-                body="local sender private text",
-                message_id=message_id,
-                conversation_id=conversation_id,
-                timestamp=now.isoformat(),
-                **{
-                    "from": sender_team.split(":", 1)[1] + "/alice",
-                    "to": agent["address"],
-                },
-            )
-        )
-        body = dict(
-            to_did=agent["did"],
-            to_address=agent["address"],
-            subject="Local encrypted",
-            body="local sender private text",
+        body = _signed_plaintext_mail_request(
+            sender=sender,
+            agent=agent,
+            sender_team=sender_team,
             message_id=message_id,
             conversation_id=conversation_id,
-            timestamp=now.isoformat(),
-            from_did=sender["did"],
-            to_stable_id=agent["stable_id"],
-            signature=sign_message(sender["signing_key"], payload),
-            signed_payload=payload.decode(),
+            now=now,
         )
     else:
         body = dict(
@@ -184,6 +211,7 @@ async def _local_sender_mail(
                 ),
             )
             assert retired.status_code == 200, retired.text
+            assert retired.json()["identity_deleted"] is True, retired.text
 
     identity_home = tmp_path / ".aw"
     identity_home.mkdir(mode=0o700)
@@ -490,7 +518,7 @@ async def _present_by_wake(
             if not delivered.exists():
                 return False
             text = delivered.read_text()
-            if text.startswith("[aweb] 1 message held"):
+            if text.startswith(("[aweb] 1 message held", "Withheld mail")):
                 # Wait for the bounded retry window, so shutdown cannot hide an
                 # incorrect acknowledgment or delivered-ID write after input.
                 return message.get("trace_stage") == "lane_job_failed"
@@ -503,6 +531,8 @@ async def _present_by_wake(
         await asyncio.wait_for(runner.wait(), 10)
     text = delivered.read_text()
     status = re.search(r"^- trust_status: (\S+)$", text, re.MULTILINE)
+    if text.startswith("Withheld mail"):
+        status = re.search(r": (failed|identity_mismatch)\. Body and subject", text)
     return (status.group(1) if status else None), text
 
 
@@ -550,10 +580,13 @@ async def _present_by_channel(
         plugin.terminate()
         await asyncio.wait_for(plugin.wait(), 10)
         stderr.close()
+    status = params["meta"].get("trust_status")
+    if status in {"failed", "identity_mismatch"}:
+        assert "subject" not in params["meta"], params["meta"]
     (tmp_path / "presented-responsibility.json").write_text(
         params["meta"].get("responsibility", "null")
     )
-    return params["meta"].get("trust_status"), params["content"]
+    return status, params["content"]
 
 
 async def _present_by_pi(
@@ -587,7 +620,10 @@ async def _present_by_pi(
     finally:
         session.stdin.close()
         await asyncio.wait_for(session.wait(), 10)
-    return message["details"].get("trust_status"), message["content"]
+    status = message["details"].get("trust_status")
+    if status in {"failed", "identity_mismatch"}:
+        assert "subject" not in message["details"], message["details"]
+    return status, message["content"]
 
 
 PRESENTERS = {
@@ -600,15 +636,35 @@ PRESENTERS = {
 async def _assert_runtime_presentation(
     env, tmp_path, runtime, expected, status, text, message_id
 ):
-    # docs/channel-core-terminal-adapter.md:14-20: native adapters retain their
-    # policy, while the terminal holds content unless sender trust is verified.
-    if runtime != "wake" or expected == "verified":
+    # See “Autonomous message presentation” in docs/receiving-events.md.
+    if expected in {"failed", "identity_mismatch"}:
+        assert status == expected, text
+        assert (
+            "Withheld mail" in text and "Body and subject were not delivered." in text
+        ), text
+        assert f"mail show --message-id {message_id}" in text, text
+        assert (
+            "Verify the sender independently before reading or acting on this message."
+            in text
+        ), text
+        assert (
+            "local sender private text" not in text and "Local encrypted" not in text
+        ), text
+        assert (
+            "modified stored body" not in text and "modified stored subject" not in text
+        ), text
+        if runtime != "wake":
+            return
+    elif runtime != "wake" or expected == "verified":
         assert "local sender private text" in text, text
         assert status == expected, text
         return
+    else:
+        assert (
+            text == "[aweb] 1 message held (unverified sender). Run: aw mail inbox"
+        ), text
+        assert status is None, text
 
-    assert text == "[aweb] 1 message held (unverified sender). Run: aw mail inbox", text
-    assert status is None, text
     row = await env.db.fetch_one(
         "SELECT read_at FROM {{tables.messages}} WHERE message_id=$1", UUID(message_id)
     )
@@ -616,6 +672,35 @@ async def _assert_runtime_presentation(
     store = tmp_path / "delivery.json"
     marks = json.loads(store.read_text()) if store.exists() else {}
     assert not any(message_id in key for key in marks), marks
+
+
+@pytest.mark.usefixtures("source_cli_binary")
+@pytest.mark.asyncio
+@pytest.mark.parametrize("runtime", sorted(PRESENTERS))
+async def test_runtime_withholds_mail_whose_stored_text_fails_verification(
+    privacy_app, runtime_packages, tmp_path, runtime
+):
+    async with _local_sender_mail(
+        privacy_app, tmp_path, False, False, False, plaintext=True
+    ) as (message_id, conversation_id, binary, command_dir, command_env, _):
+        # Simulate storage corruption after delivery, leaving the signature and
+        # its input untouched. The actual runtime checks the stored projection.
+        await privacy_app.db.execute(
+            "UPDATE {{tables.messages}} SET body=$2, subject=$3 WHERE message_id=$1",
+            UUID(message_id),
+            "modified stored body",
+            "modified stored subject",
+        )
+        runtime_env = dict(
+            command_env,
+            PATH=f"{binary.parent}{os.pathsep}{command_env.get('PATH', '')}",
+        )
+        status, text = await PRESENTERS[runtime](
+            tmp_path, binary, command_dir, runtime_env, message_id, conversation_id
+        )
+        await _assert_runtime_presentation(
+            privacy_app, tmp_path, runtime, "failed", status, text, message_id
+        )
 
 
 def _unreachable_url():

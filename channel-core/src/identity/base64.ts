@@ -30,3 +30,12 @@ export function decodeRawStdBase64(value: string): Uint8Array {
   for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
   return bytes;
 }
+
+
+/** Strict URL-alphabet profile, with one spelling and zero unused bits. */
+export function decodeRawURLBase64(value: string): Uint8Array {
+  if (!/^[A-Za-z0-9_-]*$/.test(value) || value.length % 4 === 1) throw new Error("invalid unpadded base64url");
+  const raw = Buffer.from(value, "base64url");
+  if (raw.toString("base64url") !== value) throw new Error("noncanonical base64url");
+  return new Uint8Array(raw);
+}

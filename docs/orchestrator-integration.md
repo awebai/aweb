@@ -278,6 +278,24 @@ identity cleanup was established. On any refusal, error, or indeterminate result
 persist an explicit partial retirement state and retain the identity home; never
 turn an incomplete result into permission to delete local credentials.
 
+For non-hosted own-member retirement with a local controller key, `retirement_code` distinguishes
+`retired_and_revoked`, `retired_revocation_pending`, and
+`retired_key_holder_required`. Only the first reports `alias_released: true`.
+The latter two exit nonzero and supply `next_step` with the exact key-holder
+command. The CLI prepares the receipt before deleting and durably records
+service-confirmed cleanup before revoking the certificate. A retry matches the
+original team, member, workspace and certificate. A prepared receipt retries
+the exact workspace operation; after confirmed cleanup, a retry needs only the
+controller operation. The private receipt contains no keys or tokens.
+
+Without the local controller key, the implicit workspace command deletes only
+the workspace and reports `alias_released: false` with reason `team_not_hosted`.
+For an explicitly selected external identity home, the command refuses before
+deleting, with JSON code `team_not_hosted` and the released stderr sentence
+used by OATS. The controller handles the remaining team cleanup. Hosted
+self-retirement keeps its existing service-authorized flow. Global identity
+and other-member removal stay separate.
+
 ### Team-authorized retirement
 
 When the orchestrator/operator also has the applicable team removal authority:

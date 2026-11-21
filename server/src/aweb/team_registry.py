@@ -10,6 +10,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
+from awid.registry import CachedRegistryClient, TeamCertificateStanding
 from awid.team_ids import build_team_id, parse_team_id
 from awid.team_key_acts import TeamKeyMemo, TeamKeyUnverified
 from fastapi import HTTPException, Request
@@ -192,14 +193,12 @@ async def registered_certificates(
     registry_client,
     team_id: str,
     *,
-    missing_certificate_id: str | None = None,
     active_only: bool = False,
 ) -> set[str]:
     """Read registry certificate IDs through the existing SDK list owner.
 
     Ordinary staged observations can select the active view after checking
-    revocation. Existing callers and signature-verified miss refreshes retain
-    the complete-list contract by default.
+    revocation. Existing list callers retain the complete-list contract by default.
     """
     domain, team_name = member_team_scope(team_id)
 
@@ -207,14 +206,9 @@ async def registered_certificates(
         raise awid_registry_not_configured_exception(operation="AWID certificate existence check")
 
     try:
-        if missing_certificate_id is not None:
-            certificates = await registry_client.refresh_team_certificates_after_miss(
-                domain, team_name, certificate_id=missing_certificate_id
-            )
-        else:
-            certificates = await registry_client.list_team_certificates(
-                domain, team_name, active_only=active_only
-            )
+        certificates = await registry_client.list_team_certificates(
+            domain, team_name, active_only=active_only
+        )
     except AWID_DEPENDENCY_ERRORS as exc:
         status_code = getattr(exc, "status_code", None)
         if status_code == 404:
@@ -243,3 +237,22 @@ async def registered_certificates(
         for cert_id in ((cert.certificate_id or "").strip() for cert in certificates)
         if cert_id
     }
+
+
+async def certificate_standing_after_miss(
+    registry_client: CachedRegistryClient, team_id: str, *, certificate_id: str
+) -> TeamCertificateStanding:
+    """Read the standing of a signature-verified certificate missing from cache."""
+    domain, team_name = member_team_scope(team_id)
+    try:
+        return await registry_client.refresh_team_certificates_after_miss(
+            domain, team_name, certificate_id=certificate_id
+        )
+    except AWID_DEPENDENCY_ERRORS as exc:
+        raise _team_read_failure(
+            exc,
+            registry_client,
+            team_id,
+            operation="AWID certificate existence check",
+            reading="certificate existence check",
+        ) from exc

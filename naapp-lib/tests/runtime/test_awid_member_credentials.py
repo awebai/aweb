@@ -91,12 +91,17 @@ async def running(runtime: NaappRuntime) -> AsyncIterator[httpx.AsyncClient]:
             yield client
 
 
+@pytest.mark.parametrize("trailing_blank_line", [False, True])
 async def test_a_private_teams_member_is_authenticated_with_the_apps_own_certificate(
-    registry, app_database_url, tmp_path
+    registry, app_database_url, tmp_path, trailing_blank_line
 ):
     caller, service = await private_team(registry)
     setup_reads = len(registry.transport.calls)
-    settings = settings_for(app_database_url, {TEAM_ID: aw_files(tmp_path / "aw", service)})
+    files = aw_files(tmp_path / "aw", service)
+    if trailing_blank_line:
+        with Path(files["signing_key_file"]).open("ab") as key_file:
+            key_file.write(b"\n")
+    settings = settings_for(app_database_url, {TEAM_ID: files})
     async for client in running(runtime_for(registry, settings, tmp_path / "app")):
         response = await client.post("/v1/things", **_signed(caller, "/v1/things"))
     assert response.status_code == 200, response.text

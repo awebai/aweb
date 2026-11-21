@@ -3,13 +3,14 @@ package awid
 import (
 	"bytes"
 	"context"
-	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/awebai/aw/signaturewire"
 )
 
 const onboardingClaimHumanPath = "/api/v1/claim-human"
@@ -71,7 +72,7 @@ func (c *Client) ClaimHuman(ctx context.Context, req *ClaimHumanRequest) (*Claim
 
 	timestamp := time.Now().UTC().Format(time.RFC3339)
 	signPayload := onboardingDIDKeySignPayload(httpReq.Method, httpReq.URL.Path, timestamp, bodyBytes)
-	signature := ed25519.Sign(c.signingKey, signPayload)
+	signature := signaturewire.SignBytes(c.signingKey, signPayload)
 	httpReq.Header.Set("Authorization", fmt.Sprintf("DIDKey %s %s", c.did, base64.RawStdEncoding.EncodeToString(signature)))
 	httpReq.Header.Set("X-AWEB-Timestamp", timestamp)
 

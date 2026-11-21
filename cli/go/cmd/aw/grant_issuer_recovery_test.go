@@ -26,7 +26,9 @@ func TestEndedGrantRecoverySurvivesTerminalAndJSONErrorOutput(t *testing.T) {
 		t.Fatalf("terminal lost the server's recovery instruction: %s", terminal.String())
 	}
 	var output bytes.Buffer
-	writeCLIErrorEnvelope(&output, refusal, message)
+	if err := writeCLIErrorResult(&output, cliErrorResult{Refusal: refusal, Message: message, JSON: true}); err != nil {
+		t.Fatal(err)
+	}
 	var envelope cliErrorEnvelope
 	if err := json.Unmarshal(output.Bytes(), &envelope); err != nil {
 		t.Fatal(err)

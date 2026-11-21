@@ -1,19 +1,130 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
 	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/internal/blueprint"
 )
+
+func TestMaterializationWarningsAreVisibleAndReportWriteFailure(t *testing.T) {
+	result := &blueprint.MaterializeResult{Warnings: []string{"remove payload\x1b[2J manually"}}
+	var output bytes.Buffer
+	if err := writeMaterializationWarnings(&output, result); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "WARNING:") || strings.Contains(output.String(), "\x1b") || !strings.Contains(output.String(), `\x1b`) {
+		t.Fatalf("materialization warning was hidden or unsafe: %q", output.String())
+	}
+	reader, writer := io.Pipe()
+	if err := reader.Close(); err != nil {
+		t.Fatal(err)
+	}
+	err := writeMaterializationWarnings(writer, result)
+	if closeErr := writer.Close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	if !errors.Is(err, io.ErrClosedPipe) || !strings.Contains(err.Error(), "The home is materialized") {
+		t.Fatalf("warning output failure lost cause or completed-effect context: %v", err)
+	}
+}
+
+func TestMissingLibraryPluginClassificationUsesErrorIdentity(t *testing.T) {
+	for _, err := range []error{
+		missingLibraryPluginCommandError(),
+		missingLibraryPluginProfileError(libraryProfileSelector{}),
+	} {
+		wrapped := fmt.Errorf("fetch profile: %w", err)
+		if !isMissingLibraryPluginError(wrapped) {
+			t.Fatalf("wrapped missing-plugin refusal lost its identity: %v", wrapped)
+		}
+		if exitCode(wrapped) != 2 {
+			t.Fatalf("missing-plugin refusal lost usage exit status: %v", wrapped)
+		}
+	}
+	if isMissingLibraryPluginError(errors.New("remote Library plugin is not installed")) {
+		t.Fatal("an unrelated error's English text impersonates plugin absence")
+	}
+}
+
+func TestWithWorkingDirReportsRestoreFailure(t *testing.T) {
+	processDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, operationErr := range []error{nil, errors.New("profile operation failed")} {
+		root := t.TempDir()
+		original := filepath.Join(root, "original")
+		target := filepath.Join(root, "target")
+		for _, dir := range []string{original, target} {
+			if err := os.Mkdir(dir, 0700); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := os.Chdir(original); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			if err := os.Chdir(processDir); err != nil {
+				t.Errorf("restore test directory: %v", err)
+			}
+		})
+		err := withWorkingDir(target, func() error {
+			if err := os.Remove(original); err != nil {
+				return err
+			}
+			return operationErr
+		})
+		if !errors.Is(err, os.ErrNotExist) || !strings.Contains(err.Error(), "restore working directory") {
+			t.Fatalf("directory restoration failure was discarded: %v", err)
+		}
+		if !strings.Contains(err.Error(), "Repair the directory before retrying") {
+			t.Fatalf("directory restoration failure has no recovery action: %v", err)
+		}
+		if operationErr != nil && !errors.Is(err, operationErr) {
+			t.Fatalf("operation failure was replaced by cleanup failure: %v", err)
+		}
+		if err := os.Chdir(processDir); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestPublicLibraryProfileReportsErrorBodyReadFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "100")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		if _, err := io.WriteString(w, "upstream refused"); err != nil {
+			t.Errorf("write response: %v", err)
+		}
+	}))
+	defer server.Close()
+	_, err := fetchPublicLibraryProfile(context.Background(), libraryProfileSelector{
+		LibraryURL: server.URL, SourceBlueprintRef: "aweb.team", ProfileRef: "developer",
+	})
+	if !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("truncated error response lost its read error: %v", err)
+	}
+	for _, want := range []string{"503", "upstream refused", "Retry the profile request"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("missing %q in %v", want, err)
+		}
+	}
+}
 
 func TestMissingLibraryPluginErrorsAreActionable(t *testing.T) {
 	home := t.TempDir()
@@ -242,27 +353,22 @@ func withLibraryPayloadFileSHA(files []blueprint.LibraryProfilePayloadFile) []bl
 	return out
 }
 
+// Fixture generation follows the wire contract without materializing a home or
+// asking the consumer to accept an absent expected digest.
 func testLibraryProfilePayloadDigest(t *testing.T, files []blueprint.LibraryProfilePayloadFile) string {
 	t.Helper()
-	version := "0.1.0"
-	for _, file := range files {
-		if file.Path == "profile.yaml" && strings.Contains(file.ContentUTF8, "version: 0.2.0") {
-			version = "0.2.0"
-		}
+	ordered := append([]blueprint.LibraryProfilePayloadFile{}, files...)
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].Path < ordered[j].Path })
+	payloadFiles := make([]map[string]any, 0, len(ordered))
+	for _, file := range ordered {
+		payloadFiles = append(payloadFiles, map[string]any{"path": file.Path, "content_utf8": file.ContentUTF8, "sha256": file.SHA256})
 	}
-	result, err := blueprint.MaterializeLibraryProfilePayload(blueprint.MaterializeLibraryProfilePayloadOptions{
-		TargetDir:        t.TempDir(),
-		BlueprintRef:     "aweb.engineering",
-		BlueprintVersion: "0.1.0",
-		ProfileRef:       "coordinator",
-		ProfileVersion:   version,
-		RuntimeKind:      "local-shell",
-		Files:            files,
-	})
+	canonical, err := awid.CanonicalJSONValue(map[string]any{"schema": "aweb.blueprint.profile-payload.v1", "files": payloadFiles})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return result.ProfileDigest
+	digest := sha256.Sum256([]byte(canonical))
+	return "sha256:" + hex.EncodeToString(digest[:])
 }
 
 func writeLibraryManifestPluginForTest(t *testing.T, home, origin string) {
