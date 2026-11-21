@@ -234,14 +234,17 @@ type acceptedTeamInvite struct {
 	Output      *teamAcceptInviteOutput
 	Certificate *awid.TeamCertificate
 	RegistryURL string
-	AwebURL     string
-	Domain      string
-	TeamName    string
+	// The key check's origin is retained for immediate rollback only.
+	observedRegistryURL string
+	AwebURL             string
+	Domain              string
+	TeamName            string
 }
 
 type teamAcceptInviteOptions struct {
 	ParentHome   string
 	Registry     *awid.RegistryClient
+	RegistryURL  string
 	TXTResolver  awid.TXTResolver
 	IdentityHome string
 	Name         string
@@ -2413,7 +2416,7 @@ func revokeAcceptedTeamCertificate(accepted *acceptedTeamInvite) error {
 	if err != nil {
 		return err
 	}
-	registryURL := strings.TrimSpace(accepted.RegistryURL)
+	registryURL := firstNonEmptyString(accepted.RegistryURL, accepted.observedRegistryURL)
 	if registryURL != "" {
 		if err := registry.SetFallbackRegistryURL(registryURL); err != nil {
 			return fmt.Errorf("invalid registry url %q: %w", registryURL, err)

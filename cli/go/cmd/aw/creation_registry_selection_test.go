@@ -96,9 +96,19 @@ func TestHostedInvitePersistsOnlyAnExplicitRegistrySelection(t *testing.T) {
 			t.Cleanup(issuer.Close)
 			root := t.TempDir()
 			identityHome := filepath.Join(root, ".aw")
-			accepted, err := acceptAndStoreTeamInvite(root, "aw_inv_registry_selection", teamAcceptInviteOptions{
-				Name: "child", Scope: awid.IdentityModeLocal, AwebURL: issuer.URL, Registry: registry,
-			}, teamInviteStoreOptions{IdentityHome: explicitEncryptionKeyIdentityHome(identityHome), SetActive: true})
+			accepted, err := acceptAndStoreTeamInvite(teamInviteStoreRequest{
+				Acceptance: teamInviteAcceptanceRequest{
+					WorkingDir: root,
+					Token:      "aw_inv_registry_selection",
+					Options: teamAcceptInviteOptions{
+						Name: "child", Scope: awid.IdentityModeLocal, AwebURL: issuer.URL, Registry: registry,
+					},
+				},
+				Store: teamInviteStoreOptions{
+					IdentityHome: explicitEncryptionKeyIdentityHome(identityHome),
+					Activation:   membershipMakeActive,
+				},
+			})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -193,45 +203,67 @@ func TestWorkspaceAddWorktreeChecksTheSelectedMembershipRegistry(t *testing.T) {
 		}
 	})
 	defer server.Close()
-	root, err := filepath.EvalSymlinks(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	repo := filepath.Join(root, "repo")
-	if err := os.MkdirAll(repo, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	initGitRepoWithOriginAndCommit(t, repo, "https://github.com/example/project.git")
-	binding := workspaceBinding(server.URL, teamID, "parent", "parent-workspace")
-	binding.APIKey = "aw_sk_parent"
-	writeWorkspaceBindingForTest(t, repo, binding)
-	state, err := awconfig.LoadTeamState(repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	state.Membership(teamID).RegistryURL = selected.URL
-	if err := awconfig.SaveTeamState(repo, state); err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	bin := filepath.Join(root, "aw")
-	buildAwBinary(t, ctx, bin)
-	command := exec.CommandContext(ctx, bin, "workspace", "add-worktree", "developer")
-	command.Dir = repo
-	command.Env = append(testCommandEnv(root), "AWID_REGISTRY_URL="+fallback.URL)
-	if output, err := command.CombinedOutput(); err != nil {
-		t.Fatalf("add-worktree: %v\n%s", err, output)
-	}
-	if selectedReads.Load() != 1 || fallbackReads.Load() != 0 {
-		t.Errorf("registry requests: selected %d, fallback %d", selectedReads.Load(), fallbackReads.Load())
-	}
-	child, err := awconfig.LoadTeamState(filepath.Join(root, "repo-child"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	membership := child.Membership(teamID)
-	if membership == nil || membership.RegistryURL != selected.URL || membership.TeamKey == nil || membership.TeamKey.State != awid.TeamKeyConfirmed {
-		t.Fatalf("child membership = %+v, want confirmed key at %s", membership, selected.URL)
+	for _, tc := range []struct {
+		name         string
+		envOrigin    string
+		wantState    awid.TeamKeyConfirmation
+		wantRequests int32
+		isolated     bool
+	}{
+		{"stored-private-registry", fallback.URL, awid.TeamKeyUnconfirmed, 0, false},
+		{"isolated-membership-selection", fallback.URL, awid.TeamKeyConfirmed, 1, true},
+		{"operator-selected-registry", selected.URL, awid.TeamKeyConfirmed, 1, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			selectedReads.Store(0)
+			fallbackReads.Store(0)
+			root, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			repo := filepath.Join(root, "repo")
+			if err := os.MkdirAll(repo, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			initGitRepoWithOriginAndCommit(t, repo, "https://github.com/example/project.git")
+			binding := workspaceBinding(server.URL, teamID, "parent", "parent-workspace")
+			binding.APIKey = "aw_sk_parent"
+			writeWorkspaceBindingForTest(t, repo, binding)
+			state, err := awconfig.LoadTeamState(repo)
+			if err != nil {
+				t.Fatal(err)
+			}
+			state.Membership(teamID).RegistryURL = selected.URL
+			if err := awconfig.SaveTeamState(repo, state); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			bin := filepath.Join(root, "aw")
+			buildAwBinary(t, ctx, bin)
+			command := exec.CommandContext(ctx, bin, "workspace", "add-worktree", "developer")
+			command.Dir = repo
+			command.Env = append(testCommandEnv(root), "AWID_REGISTRY_URL="+tc.envOrigin,
+				"APP_ENV=production", "AWEB_FEDERATION_TEST=")
+			if tc.isolated {
+				command.Env = append(command.Env, "APP_ENV=development", "AWEB_FEDERATION_TEST=1")
+			}
+			output, err := command.CombinedOutput()
+			if err != nil {
+				t.Fatalf("add-worktree: %v\n%s", err, output)
+			}
+			if selectedReads.Load() != tc.wantRequests || fallbackReads.Load() != 0 {
+				t.Errorf("registry requests: selected %d, fallback %d; want %d and 0\n%s",
+					selectedReads.Load(), fallbackReads.Load(), tc.wantRequests, output)
+			}
+			child, err := awconfig.LoadTeamState(filepath.Join(root, "repo-child"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			membership := child.Membership(teamID)
+			if membership == nil || membership.RegistryURL != selected.URL || membership.TeamKey == nil || membership.TeamKey.State != tc.wantState {
+				t.Fatalf("child membership = %+v, want %s at %s\n%s", membership, tc.wantState, selected.URL, output)
+			}
+		})
 	}
 }

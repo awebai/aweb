@@ -16,13 +16,6 @@ func teamKeyEvidence(observation *awid.TeamCertificateKeyObservation) *awid.Team
 	return &result
 }
 
-func teamKeyRegistry(observation *awid.TeamCertificateKeyObservation) string {
-	if observation == nil {
-		return ""
-	}
-	return observation.RegistryURL
-}
-
 func teamKeyConfirmationText(evidence *awid.TeamKeyEvidence) string {
 	if evidence == nil {
 		return ""

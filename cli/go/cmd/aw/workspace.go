@@ -595,6 +595,9 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 	if hasTeamKey {
 		_, err = addWorktreeViaLocalTeamKey(child)
 	} else if strings.TrimSpace(state.APIKey) != "" {
+		if membership := teamState.Membership(teamID); membership != nil {
+			child.TeamRegistryURL = membership.RegistryURL
+		}
 		_, err = addWorktreeViaCloudBootstrap(child)
 	} else {
 		_, err = addWorktreeViaPrimaryInvite(child)

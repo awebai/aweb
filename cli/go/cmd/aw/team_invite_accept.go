@@ -337,13 +337,23 @@ func completeHostedInviteResponse(ctx context.Context, responseRequest hostedInv
 	if err := creation.save(recoveryPath); err != nil {
 		return nil, err
 	}
+	selectedTeamRegistry := firstNonEmptyString(strings.TrimSpace(opts.RegistryURL), strings.TrimSpace(os.Getenv("AWID_REGISTRY_URL")))
+	if selectedTeamRegistry != "" {
+		selectedTeamRegistry, err = cleanBaseURL(selectedTeamRegistry)
+		if err != nil {
+			return nil, fmt.Errorf("invalid team registry URL: %w", err)
+		}
+	}
 	if responseRequest.Registry == nil {
 		responseRequest.Registry, err = newConfiguredRegistryClient(nil)
 		if err != nil {
 			return nil, err
 		}
 	}
-	keyObservation, err := responseRequest.Registry.CheckTeamCertificateCurrentKey(ctx, awid.CurrentTeamCertificateCheck{Certificate: cert})
+	keyObservation, err := responseRequest.Registry.CheckTeamCertificateCurrentKey(ctx, awid.CurrentTeamCertificateCheck{
+		RegistryURL: selectedTeamRegistry,
+		Certificate: cert,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("hosted membership is not current: %w; ask the team controller for a current certificate", err)
 	}
@@ -398,11 +408,12 @@ func completeHostedInviteResponse(ctx context.Context, responseRequest hostedInv
 			Alias:          strings.TrimSpace(cert.Alias),
 			CertPath:       awconfig.TeamCertificateRelativePath(cert.Team),
 		},
-		Certificate: cert,
-		RegistryURL: keyObservation.RegistryURL,
-		AwebURL:     serverURL,
-		Domain:      strings.TrimSpace(resp.Namespace),
-		TeamName:    strings.TrimSpace(resp.TeamSlug),
+		Certificate:         cert,
+		RegistryURL:         selectedTeamRegistry,
+		observedRegistryURL: keyObservation.RegistryURL,
+		AwebURL:             serverURL,
+		Domain:              strings.TrimSpace(resp.Namespace),
+		TeamName:            strings.TrimSpace(resp.TeamSlug),
 	}, nil
 }
 

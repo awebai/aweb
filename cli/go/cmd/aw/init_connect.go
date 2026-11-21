@@ -61,6 +61,7 @@ type connectRequest struct {
 
 type certificateConnectOptions struct {
 	TeamKeyObservation    *awid.TeamCertificateKeyObservation
+	TeamRegistryURL       string
 	EncryptionPublication encryptionPublicationPolicy
 	Role                  string
 	HumanName             string
@@ -166,7 +167,7 @@ func initCertificateConnectWithOptions(workingDir, awebURL string, opts certific
 				CertPath: filepath.ToSlash(certPath),
 			},
 			Certificate: cert,
-			RegistryURL: teamKeyRegistry(opts.TeamKeyObservation),
+			RegistryURL: opts.TeamRegistryURL,
 			AwebURL:     "",
 			Activation:  membershipMakeActive,
 		}); err != nil {
