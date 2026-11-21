@@ -17,6 +17,7 @@ import re
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from enum import StrEnum
 from types import MappingProxyType
 from typing import Any
 from uuid import uuid4
@@ -35,12 +36,14 @@ __all__ = [
     "REASONS",
     "REQUIRED_FIELDS",
     "TeamCertificateError",
+    "TeamCertificateStanding",
     "check_team_certificate",
     "decode_team_certificate",
     "issue_team_certificate",
     "CheckedTeamCertificate",
     "verify_team_certificate_claims",
     "check_team_certificate_evidence",
+    "evaluate_team_certificate_standing",
     "refusal_answer",
     "verify_team_certificate_signature",
 ]
@@ -280,6 +283,29 @@ def verify_team_certificate_claims(
     )
 
 
+class TeamCertificateStanding(StrEnum):
+    ACTIVE = "active"
+    REVOKED = "revoked"
+    UNREGISTERED = "unregistered"
+
+
+def evaluate_team_certificate_standing(
+    *,
+    revoked: bool,
+    registered: bool | None,
+) -> TeamCertificateStanding:
+    """Apply acquired standing evidence. None deliberately omits registration.
+
+    A caller handles unavailable evidence before applying required registration.
+    A revocation takes precedence over any registration result.
+    """
+    if revoked:
+        return TeamCertificateStanding.REVOKED
+    if registered is False:
+        return TeamCertificateStanding.UNREGISTERED
+    return TeamCertificateStanding.ACTIVE
+
+
 def check_team_certificate_evidence(
     checked: CheckedTeamCertificate,
     *,
@@ -293,13 +319,17 @@ def check_team_certificate_evidence(
     not an exception that can bypass malformed/subject/signature refusals.
     """
     certificate = checked.claims
-    if certificate["certificate_id"] in revoked_certificate_ids:
-        raise TeamCertificateError("revoked")
-    if (
-        registered_certificate_ids is not None
-        and certificate["certificate_id"] not in registered_certificate_ids
-    ):
-        raise TeamCertificateError("unregistered")
+    certificate_id = certificate["certificate_id"]
+    standing = evaluate_team_certificate_standing(
+        revoked=certificate_id in revoked_certificate_ids,
+        registered=(
+            certificate_id in registered_certificate_ids
+            if registered_certificate_ids is not None
+            else None
+        ),
+    )
+    if standing is not TeamCertificateStanding.ACTIVE:
+        raise TeamCertificateError(standing.value)
     return _copy_certificate_value(certificate)
 
 

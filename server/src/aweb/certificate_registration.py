@@ -11,6 +11,10 @@ from collections.abc import Collection
 from dataclasses import dataclass, field
 from enum import StrEnum
 
+from awid.team_certificate import (
+    TeamCertificateStanding,
+    evaluate_team_certificate_standing,
+)
 from fastapi import HTTPException
 from prometheus_client import Counter
 from starlette.requests import Request
@@ -80,9 +84,15 @@ class RegistrationDecision:
 
     @property
     def allows_registration(self) -> bool:
-        return (
-            self.mode is RegistrationMode.NOT_REQUIRED or self.state is RegistrationState.REGISTERED
+        standing = evaluate_team_certificate_standing(
+            revoked=False,
+            registered=(
+                self.state is RegistrationState.REGISTERED
+                if self.mode is RegistrationMode.REQUIRED
+                else None
+            ),
         )
+        return standing is TeamCertificateStanding.ACTIVE
 
 
 def evaluate_certificate_registration(

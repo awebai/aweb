@@ -34,7 +34,7 @@ async def test_inbound_policy_uses_all_current_active_memberships(
 ):
     env = privacy_app
     manager = env.db
-    registry = application_registry_client(env.app.state)
+    registry_client = application_registry_client(env.app.state)
     shared_team = f"policy-{uuid4().hex[:10]}:example.test"
     await register_messaging_team(env, team_id=shared_team)
     recipients = [
@@ -50,7 +50,7 @@ async def test_inbound_policy_uses_all_current_active_memberships(
     if not active_sender:
         await archive_messaging_actor(
             manager, env.redis, team_id=sender.team_id, agent_id=sender.agent_id,
-            registry_client=registry,
+            registry_client=registry_client,
         )
     selected = recipients[1 if selected_shared else 0]
     recipient = dict(
@@ -71,7 +71,7 @@ async def test_inbound_policy_uses_all_current_active_memberships(
                     envelope=envelope,
                     recipient=recipient,
                     stored_route_continuation=False,
-                    registry_client=registry,
+                    registry_client=registry_client,
                 )
             else:
                 await authorize_message_delivery(
@@ -80,7 +80,7 @@ async def test_inbound_policy_uses_all_current_active_memberships(
                     sender_did=sender_did,
                     sender_address=envelope.sender_address,
                     sender_verified_dids=[sender_did, sender_key],
-                    registry_client=registry,
+                    registry_client=registry_client,
                 )
     except ForbiddenError as exc:
         allowed = False
@@ -104,7 +104,7 @@ async def test_federation_shared_team_membership_stays_locked_until_delivery_com
 
     env = privacy_app
     manager = env.db
-    registry = application_registry_client(env.app.state)
+    registry_client = application_registry_client(env.app.state)
     sender = await admit_messaging_actor(env, alias="policy-sender", team_id=TEAM)
     bob = await admit_messaging_actor(env, alias="policy-recipient", team_id=TEAM)
     await set_messaging_inbound_mode(env, bob, "team_and_contacts")
@@ -126,7 +126,7 @@ async def test_federation_shared_team_membership_stays_locked_until_delivery_com
                 envelope=envelope,
                 recipient=dict(recipient),
                 stored_route_continuation=False,
-                registry_client=registry,
+                registry_client=registry_client,
             )
             authorized.set()
             await finish.wait()
@@ -143,7 +143,7 @@ async def test_federation_shared_team_membership_stays_locked_until_delivery_com
                     env.redis,
                     team_id=sender.team_id,
                     agent_id=sender.agent_id,
-                    registry_client=registry,
+                    registry_client=registry_client,
                 )
     finally:
         finish.set()
@@ -157,7 +157,7 @@ async def test_federation_shared_team_membership_stays_locked_until_delivery_com
     )
     await archive_messaging_actor(
         manager, env.redis, team_id=sender.team_id, agent_id=sender.agent_id,
-        registry_client=registry,
+        registry_client=registry_client,
     )
     with pytest.raises(FederationAuthorityError) as refused:
         async with manager.transaction() as tx:
@@ -166,7 +166,7 @@ async def test_federation_shared_team_membership_stays_locked_until_delivery_com
                 envelope=envelope,
                 recipient=dict(recipient),
                 stored_route_continuation=False,
-                registry_client=registry,
+                registry_client=registry_client,
             )
     assert refused.value.detail.endswith(
         "Ask the recipient to add your exact address as a contact or check their inbound policy."

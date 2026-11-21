@@ -25,6 +25,8 @@ export interface EventStreamState {
   state: "connected" | "disconnected" | "reconnected" | "refused";
   /** Why the stream is disconnected, or the HTTP status or terminal event name that refused it. */
   cause?: string;
+  /** Server recovery text for a terminal authority refusal. */
+  detail?: string;
   retryInMs?: number;
   /** When the next attempt is made, in epoch milliseconds. */
   nextAttemptAt?: number;
@@ -182,6 +184,7 @@ export async function* streamAgentEvents(
           cause: end.cause,
           retryInMs: end.waitMs,
           nextAttemptAt: end.nextAttemptAt,
+          ...(end.error instanceof EventStreamClosedError ? { detail: end.error.detail } : {}),
           ...(end.startedRefusalEpisode ? { startsEpisode: true as const } : {}),
         });
       }
@@ -324,16 +327,16 @@ const KNOWN_TYPES: Set<string> = new Set([
   "actionable_mail", "actionable_chat", "actionable_room_post", "room_post",
 ]);
 
-const GRANT_TERMINAL_TYPES = new Set([
+const AUTHORITY_TERMINAL_TYPES = new Set([
   "grant_expired", "grant_revoked", "grant_subject_inactive", "grant_issuer_revoked",
-  "verification_unavailable",
+  "team_membership_not_current", "verification_unavailable",
 ]);
 
 export function parseAgentEvent(eventName: string, data: string): AgentEvent | null {
   eventName = eventName.trim();
   if (!eventName) return null;
 
-  if (GRANT_TERMINAL_TYPES.has(eventName)) {
+  if (AUTHORITY_TERMINAL_TYPES.has(eventName)) {
     let detail = eventName;
     try {
       const payload = JSON.parse(data);
@@ -367,7 +370,8 @@ export function formatEventStreamState(state: EventStreamState): string {
       : "aweb: event stream reconnected";
   }
   if (state.state === "refused") {
-    return `aweb: event stream refused: ${state.cause}, next try ${localClockTime(state.nextAttemptAt ?? Date.now())}`;
+    const refusal = state.detail ? `${state.cause} (${state.detail})` : state.cause;
+    return `aweb: event stream refused: ${refusal}, next try ${localClockTime(state.nextAttemptAt ?? Date.now())}`;
   }
   const seconds = Math.max(1, Math.round((state.retryInMs || 0) / 1000));
   return `aweb: event stream disconnected (${state.cause || "connection failed"}) — retrying in ${seconds}s`;

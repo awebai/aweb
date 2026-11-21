@@ -21,8 +21,11 @@ from types import MappingProxyType
 from typing import Any
 from uuid import UUID
 
-from awid.registry import TeamCertificateStanding
-from awid.team_certificate import TeamCertificateError
+from awid.team_certificate import (
+    TeamCertificateError,
+    TeamCertificateStanding,
+    evaluate_team_certificate_standing,
+)
 from fastapi import HTTPException, Request
 
 from aweb.certificate_evidence import EvidenceMode
@@ -456,9 +459,12 @@ async def read_certificate_standings(
         return {cid: CertificateStanding(CertificateStandingState.UNAVAILABLE, exc) for cid in selected}
     result = {
         cid: CertificateStanding(CertificateStandingState.REVOKED)
-        for cid in selected & revoked
+        for cid in selected
+        if evaluate_team_certificate_standing(
+            revoked=cid in revoked, registered=None,
+        ) is TeamCertificateStanding.REVOKED
     }
-    remaining = selected - revoked
+    remaining = selected - result.keys()
     if not remaining:
         return result
     mode = mode if mode is not None else configured_registration_mode()

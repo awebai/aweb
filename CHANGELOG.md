@@ -57,7 +57,8 @@
 - Native certificate streams end with `team_membership_not_current` when
   the opening membership stops being current. aw 1.36.58 and earlier ignore
   that reason, and their `aw chat send-and-wait` can return silently. The next
-  aw reports the closure and tells the caller to reconnect.
+  aw reports the closure and tells the caller to reconnect. Channel-core also
+  reports the reason and treats the stream as refused.
 - Current-member rosters hide workspaces and agents admitted under an older
   team key. Certificate admission for inactive or superseded members returns
   403. Rooms retain their existing HTTP refusal text and add the
@@ -78,8 +79,9 @@
 - Hosted creation and `aw id team install-cert` save a registry origin only
   when selected by flag or `AWID_REGISTRY_URL`. An origin discovered to check
   the certificate does not become a membership setting.
-- The server migration backfills omitted inbound policies to the native
-  default `open` and preserves all explicitly chosen policies.
+- Agents left without an inbound policy by the May 2026 migration are set to
+  `contacts_only`. Owners can widen it with `aw inbound-mode team-and-contacts`
+  or `aw inbound-mode open`.
 
 - Removed an unused chat departure-marker check.
 - Old chat history with valid participant snapshots is migrated to canonical
