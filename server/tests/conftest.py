@@ -27,6 +27,7 @@ from pgdbm import AsyncDatabaseManager, AsyncMigrationManager, DatabaseConfig  #
 
 from awid.db_config import build_database_config  # noqa: E402
 from aweb_naapp.hooks.owner_act_nonces import apply_owner_act_migrations  # noqa: E402
+from chat_coverage_support import chat_coverage_upgrade as chat_coverage_upgrade  # noqa: E402
 
 pytest_plugins = ("pgdbm.fixtures.conftest", "tests.real_stack")
 
@@ -92,6 +93,20 @@ async def shared_test_pool(shared_test_database):
     yield shared_test_database.pool
 
 
+@dataclass(frozen=True)
+class DatabaseManagers:
+    aweb_db: AsyncDatabaseManager
+
+    @property
+    def oss_db(self) -> AsyncDatabaseManager:
+        return self.aweb_db
+
+
+@pytest_asyncio.fixture
+async def pre_chat_coverage_db(chat_coverage_upgrade):
+    return DatabaseManagers(chat_coverage_upgrade.infra.get_manager())
+
+
 @pytest_asyncio.fixture
 async def aweb_cloud_db(shared_test_pool):
     """Database manager for the unified aweb schema tests."""
@@ -112,11 +127,6 @@ async def aweb_cloud_db(shared_test_pool):
     )
     await aweb_migrations.apply_pending_migrations()
     await apply_owner_act_migrations(aweb_db)
-
-    class DatabaseManagers:
-        def __init__(self, aweb_db):
-            self.oss_db = aweb_db
-            self.aweb_db = aweb_db
 
     yield DatabaseManagers(aweb_db)
 

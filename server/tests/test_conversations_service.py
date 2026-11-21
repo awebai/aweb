@@ -7,7 +7,6 @@ import asyncpg
 import pytest
 
 from aweb.messaging.chat import find_session_between
-from chat_coverage_support import migrate_chat_conversation_coverage
 from aweb.messaging.conversations import (
     add_conversation_participant,
     close_conversation,
@@ -592,11 +591,12 @@ async def test_find_active_conversation_matches_identity_despite_other_membershi
 
 @pytest.mark.asyncio
 async def test_migrated_chat_pair_matches_the_exact_identity_across_memberships(
-    aweb_cloud_db,
+    pre_chat_coverage_db,
+    chat_coverage_upgrade,
 ):
-    db = _DbShim(aweb_cloud_db.aweb_db)
-    alice_a, alice_b, bob_b = await _multi_team_alice_setup(aweb_cloud_db)
-    aweb_db = aweb_cloud_db.aweb_db
+    db = _DbShim(pre_chat_coverage_db.aweb_db)
+    alice_a, alice_b, bob_b = await _multi_team_alice_setup(pre_chat_coverage_db)
+    aweb_db = pre_chat_coverage_db.aweb_db
 
     # Reproduce historical storage, then apply the shipped coverage migration.
     session = await aweb_db.fetch_one(
@@ -620,7 +620,7 @@ async def test_migrated_chat_pair_matches_the_exact_identity_across_memberships(
         bob_b,
     )
 
-    await migrate_chat_conversation_coverage(aweb_db)
+    await chat_coverage_upgrade.apply()
     found_session_id = await find_session_between(
         db,
         did_a="did:aw:alice",
@@ -720,32 +720,33 @@ async def test_find_active_one_to_one_conversation_between_picks_newest_duplicat
 
 @pytest.mark.asyncio
 async def test_find_session_between_picks_newest_migrated_pair(
-    aweb_cloud_db,
+    pre_chat_coverage_db,
+    chat_coverage_upgrade,
 ):
-    db = _DbShim(aweb_cloud_db.aweb_db)
-    await _insert_team(aweb_cloud_db.aweb_db)
+    db = _DbShim(pre_chat_coverage_db.aweb_db)
+    await _insert_team(pre_chat_coverage_db.aweb_db)
     alice_agent_id = await _insert_agent(
-        aweb_cloud_db.aweb_db,
+        pre_chat_coverage_db.aweb_db,
         team_id="backend:acme.com",
         alias="alice",
         did_aw="did:aw:alice",
         address="acme.com/alice",
     )
     bob_agent_id = await _insert_agent(
-        aweb_cloud_db.aweb_db,
+        pre_chat_coverage_db.aweb_db,
         team_id="backend:acme.com",
         alias="bob",
         did_aw="did:aw:bob",
         address="acme.com/bob",
     )
-    older = await aweb_cloud_db.aweb_db.fetch_one(
+    older = await pre_chat_coverage_db.aweb_db.fetch_one(
         """
         INSERT INTO {{tables.chat_sessions}} (team_id, created_by, created_at)
         VALUES ('backend:acme.com', 'alice', NOW() - INTERVAL '1 hour')
         RETURNING session_id
         """
     )
-    newer = await aweb_cloud_db.aweb_db.fetch_one(
+    newer = await pre_chat_coverage_db.aweb_db.fetch_one(
         """
         INSERT INTO {{tables.chat_sessions}} (team_id, created_by, created_at)
         VALUES ('backend:acme.com', 'bob', NOW())
@@ -753,7 +754,7 @@ async def test_find_session_between_picks_newest_migrated_pair(
         """
     )
     for session_id in (older["session_id"], newer["session_id"]):
-        await aweb_cloud_db.aweb_db.execute(
+        await pre_chat_coverage_db.aweb_db.execute(
             """
             INSERT INTO {{tables.chat_participants}}
                 (session_id, did, agent_id, alias, address)
@@ -766,7 +767,7 @@ async def test_find_session_between_picks_newest_migrated_pair(
             bob_agent_id,
         )
 
-    await migrate_chat_conversation_coverage(aweb_cloud_db.aweb_db)
+    await chat_coverage_upgrade.apply()
     found_session_id = await find_session_between(
         db,
         did_a="did:aw:alice",
@@ -777,32 +778,32 @@ async def test_find_session_between_picks_newest_migrated_pair(
 
 
 @pytest.mark.asyncio
-async def test_migration_is_idempotent_before_chat_session_reuse(aweb_cloud_db):
+async def test_migration_is_idempotent_before_chat_session_reuse(pre_chat_coverage_db, chat_coverage_upgrade):
 
     from aweb.messaging.chat import ensure_session
 
-    db = _DbShim(aweb_cloud_db.aweb_db)
-    await _insert_team(aweb_cloud_db.aweb_db)
+    db = _DbShim(pre_chat_coverage_db.aweb_db)
+    await _insert_team(pre_chat_coverage_db.aweb_db)
     alice = await _insert_agent(
-        aweb_cloud_db.aweb_db,
+        pre_chat_coverage_db.aweb_db,
         team_id="backend:acme.com",
         alias="alice",
         did_aw="did:aw:alice",
         address="acme.com/alice",
     )
     bob = await _insert_agent(
-        aweb_cloud_db.aweb_db,
+        pre_chat_coverage_db.aweb_db,
         team_id="backend:acme.com",
         alias="bob",
         did_aw="did:aw:bob",
         address="acme.com/bob",
     )
-    session = await aweb_cloud_db.aweb_db.fetch_one(
+    session = await pre_chat_coverage_db.aweb_db.fetch_one(
         "INSERT INTO {{tables.chat_sessions}} (team_id, created_by) VALUES ('backend:acme.com', 'alice') "
         "RETURNING session_id"
     )
     session_id = session["session_id"]
-    await aweb_cloud_db.aweb_db.execute(
+    await pre_chat_coverage_db.aweb_db.execute(
         """
         INSERT INTO {{tables.chat_participants}} (session_id, did, agent_id, alias, address)
         VALUES ($1, 'did:aw:alice', $2, 'alice', 'acme.com/alice'),
@@ -826,18 +827,18 @@ async def test_migration_is_idempotent_before_chat_session_reuse(aweb_cloud_db):
             "address": "acme.com/bob",
         },
     ]
-    await migrate_chat_conversation_coverage(aweb_cloud_db.aweb_db)
+    await chat_coverage_upgrade.apply()
     before = [
         dict(row)
-        for row in await aweb_cloud_db.aweb_db.fetch_all(
+        for row in await pre_chat_coverage_db.aweb_db.fetch_all(
             "SELECT * FROM {{tables.conversation_participants}} WHERE conversation_id=$1 ORDER BY did",
             session_id,
         )
     ]
-    await migrate_chat_conversation_coverage(aweb_cloud_db.aweb_db)
+    await chat_coverage_upgrade.apply()
     after = [
         dict(row)
-        for row in await aweb_cloud_db.aweb_db.fetch_all(
+        for row in await pre_chat_coverage_db.aweb_db.fetch_all(
             "SELECT * FROM {{tables.conversation_participants}} WHERE conversation_id=$1 ORDER BY did",
             session_id,
         )
@@ -854,7 +855,7 @@ async def test_migration_is_idempotent_before_chat_session_reuse(aweb_cloud_db):
         )
 
     assert await send() == session_id
-    conversation = await aweb_cloud_db.aweb_db.fetch_one(
+    conversation = await pre_chat_coverage_db.aweb_db.fetch_one(
         "SELECT conversation_type FROM {{tables.conversations}} WHERE conversation_id = $1",
         session_id,
     )

@@ -17,6 +17,7 @@ from aweb.federation.delivery import (
     deliver_federated_phase_b,
     replay_federation_mutation_outbox,
 )
+from aweb.inbound_modes import set_identity_inbound_mode
 from aweb.federation.envelope import FederationEnvelope
 from did_key_fixtures import named_did_key
 
@@ -1012,16 +1013,10 @@ async def test_phase_b_contacts_only_requires_exact_active_contact(
     manager = aweb_cloud_db.aweb_db
     envelope = _envelope(kind=kind)
     recipient, token = await _seed_recipient_and_authority(manager, envelope)
-    await manager.execute(
-        "UPDATE {{tables.agents}} SET inbound_mode=$2 WHERE agent_id=$1",
-        recipient["agent_id"],
-        mode,
-    )
+    if multiple != "initial":
+        async with manager.transaction() as tx:
+            await set_identity_inbound_mode(tx, envelope.target_did_aw, mode)
     if multiple == "initial":
-        await manager.execute(
-            "UPDATE {{tables.agents}} SET inbound_mode='open' WHERE agent_id=$1",
-            recipient["agent_id"],
-        )
         await manager.execute("""
             INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
             VALUES ('second:beta.example', 'beta.example', 'Second', 'did:key:z6MkjG8Yy91D972irdjSx451mPnPkm2R1MurRhQUFT7gfeJd' /* team2 */)

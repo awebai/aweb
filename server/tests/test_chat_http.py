@@ -44,7 +44,7 @@ from aweb.routes.chat import router as chat_router
 from aweb.routes.federation import router as federation_router
 from federation_activation_support import TestFederationAuthority
 from did_key_fixtures import named_did_key
-from test_messages_http import (_admit_seeded_team_members, registered_mail_actors as registered_mail_actors, _registered_routing_pair, _record_federation, _registered_actor_headers, _registered_history, _registered_address_reads, _registered_outbound_chat_history, _MovedFederationTransport, _admit_registered_local, _mirror_retained_local_history)
+from test_messages_http import (_admit_seeded_team_members, registered_mail_actors as registered_mail_actors, _registered_routing_pair, _record_federation, _registered_actor_headers, _registered_history, _registered_address_reads, _registered_outbound_chat_history, _MovedFederationTransport, _admit_registered_local, _mirror_retained_local_history, _store_retained_local_origin)
 
 
 # Pytest loads the canonical fixture after this module's shared helpers exist.
@@ -464,11 +464,10 @@ async def test_chat_to_external_address_posts_federated_chat_and_projects_locall
         """
         SELECT contact_address, label, reference_type, status
         FROM {{tables.contacts}}
-        WHERE owner_did = 'did:aw:alice'
-          AND contact_address = 'otherco.com/bob'
-        """.replace("did:aw:alice", alice.stable_id).replace(
-            "otherco.com/bob", bob.address
-        )
+        WHERE owner_did = $1 AND contact_address = $2
+        """,
+        alice.stable_id,
+        bob.address,
     )
     assert dict(contact) == {
         "contact_address": bob.address,
@@ -1232,17 +1231,19 @@ async def test_chat_continuation_refreshes_stale_delivery_origin_once(route_pair
         """
         SELECT delivery_origin, current_did_key
         FROM {{tables.chat_participants}}
-        WHERE session_id = $1 AND did = 'did:aw:bob'
-        """.replace("did:aw:bob", bob.stable_id),
+        WHERE session_id = $1 AND did = $2
+        """,
         session_id,
+        bob.stable_id,
     )
     conversation_participant = await aweb_cloud_db.aweb_db.fetch_one(
         """
         SELECT delivery_origin, current_did_key, transport_hint
         FROM {{tables.conversation_participants}}
-        WHERE conversation_id = $1 AND did = 'did:aw:bob'
-        """.replace("did:aw:bob", bob.stable_id),
+        WHERE conversation_id = $1 AND did = $2
+        """,
         session_id,
+        bob.stable_id,
     )
     assert dict(chat_participant) == {
         "delivery_origin": world.target.node.origin,
@@ -1351,10 +1352,9 @@ async def test_chat_continuation_does_not_retry_when_refresh_keeps_same_origin(
     assert len(remote_requests) == 1
     assert _registered_address_reads(world.target) == prior_reads + 2
     chat_participant = await aweb_cloud_db.aweb_db.fetch_one(
-        "SELECT delivery_origin FROM {{tables.chat_participants}} WHERE session_id = $1 AND did = 'did:aw:bob'".replace(
-            "did:aw:bob", bob.stable_id
-        ),
+        "SELECT delivery_origin FROM {{tables.chat_participants}} WHERE session_id = $1 AND did = $2",
         session_id,
+        bob.stable_id,
     )
     assert chat_participant["delivery_origin"] == world.target.node.origin
 
@@ -1567,67 +1567,21 @@ async def test_receive_federated_chat_local_sender_omission_preserves_both_store
 ):
     """A retained local-key history input, not current first-contact authority."""
     from types import SimpleNamespace
+    from aweb.messaging.kinds import MessageKind
 
     world = await _registered_routing_pair(route_pair)
     bob = world.target.actor
     local_sk, local_did_key = (world.source.node.local.sk, world.source.node.local.did)
     bob_did_key = bob.did_key
-    bob_agent_id = UUID(bob.agent_id)
     app = world.target.node.server.app
     aweb_cloud_db = SimpleNamespace(aweb_db=world.target.node.db)
     session_id = uuid4()
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.conversations}} (
-            conversation_id, conversation_type, team_id, created_by_did
-        ) VALUES ($1, 'chat', 'backend:beta.example', $2)
-        """.replace("backend:beta.example", bob.team_id),
-        session_id,
-        local_did_key,
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.conversation_participants}} (
-            conversation_id, did, agent_id, alias, address, delivery_origin,
-            current_did_key, transport_hint, role
-        ) VALUES
-            ($1, $2, NULL, 'local', 'alpha.example/local',
-             'https://sender.example', $2, 'federation:https://sender.example', 'initiator'),
-            ($1, 'did:aw:bob', $3, 'bob', 'beta.example/bob', NULL, $4,
-             'local', 'participant')
-        """.replace("did:aw:bob", bob.stable_id)
-        .replace("beta.example/bob", bob.address)
-        .replace("https://sender.example", world.source.node.origin)
-        .replace(
-            "federation:https://sender.example",
-            f"federation:{world.source.node.origin}",
-        ),
-        session_id,
-        local_did_key,
-        bob_agent_id,
-        bob_did_key,
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        "INSERT INTO {{tables.chat_sessions}} (session_id, team_id, created_by) VALUES ($1, 'backend:beta.example', $2)".replace(
-            "backend:beta.example", bob.team_id
-        ),
-        session_id,
-        local_did_key,
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.chat_participants}} (
-            session_id, did, agent_id, alias, address, delivery_origin, current_did_key
-        ) VALUES
-            ($1, $2, NULL, 'local', 'alpha.example/local', 'https://sender.example', $2),
-            ($1, 'did:aw:bob', $3, 'bob', 'beta.example/bob', NULL, $4)
-        """.replace("did:aw:bob", bob.stable_id)
-        .replace("beta.example/bob", bob.address)
-        .replace("https://sender.example", world.source.node.origin),
-        session_id,
-        local_did_key,
-        bob_agent_id,
-        bob_did_key,
+    await _mirror_retained_local_history(
+        world,
+        conversation_id=session_id,
+        local_did_key=local_did_key,
+        kind=MessageKind.CHAT,
+        local_address="alpha.example/local",
     )
     target_address_reads_before = _registered_address_reads(world.target)
     payload = _federated_chat_payload(
@@ -1688,14 +1642,15 @@ async def test_receive_federated_chat_local_sender_omission_preserves_both_store
         """
         SELECT 'conversation' AS store, address, delivery_origin
         FROM {{tables.conversation_participants}}
-        WHERE conversation_id = $1 AND did = 'did:aw:bob'
+        WHERE conversation_id = $1 AND did = $2
         UNION ALL
         SELECT 'chat' AS store, address, delivery_origin
         FROM {{tables.chat_participants}}
-        WHERE session_id = $1 AND did = 'did:aw:bob'
+        WHERE session_id = $1 AND did = $2
         ORDER BY store
-        """.replace("did:aw:bob", bob.stable_id),
+        """,
         session_id,
+        bob.stable_id,
     )
     assert [dict(row) for row in target_routes] == [
         {"store": "chat", "address": bob.address, "delivery_origin": None},
@@ -1809,68 +1764,18 @@ async def test_receive_federated_chat_existing_local_didkey_reply_succeeds(route
     bob = world.target.actor
     local = await _admit_registered_local(world.source.node)
     local_sk, local_did_key = (local.signing_key, local.did_key)
-    local_agent_id = UUID(local.agent_id)
     bob_sk, bob_did_key = (bob.signing_key, bob.did_key)
     app = world.source.node.server.app
     aweb_cloud_db = SimpleNamespace(aweb_db=world.source.node.db)
     session_id = uuid4()
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.conversations}} (conversation_id, conversation_type, team_id, created_by_did)
-        VALUES ($1, 'chat', 'backend:beta.example', $2)
-        """.replace("backend:beta.example", world.source.node.team_id),
-        session_id,
-        local_did_key,
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.conversation_participants}}
-            (conversation_id, did, agent_id, alias, address, delivery_origin,
-             current_did_key, transport_hint, role)
-        VALUES
-            ($1, $2, $3, 'local', $2, NULL, $2, 'local', 'initiator'),
-            ($1, 'did:aw:bob', NULL, 'bob', 'remote.example/bob',
-             'https://remote.example', $4, 'federation:https://remote.example',
-             'participant')
-        """.replace("did:aw:bob", bob.stable_id)
-        .replace("https://remote.example", world.target.node.origin)
-        .replace("remote.example/bob", bob.address)
-        .replace(
-            "federation:https://remote.example",
-            f"federation:{world.target.node.origin}",
-        ),
-        session_id,
-        local_did_key,
-        local_agent_id,
-        bob_did_key,
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.chat_sessions}} (session_id, team_id, created_by)
-        VALUES ($1, 'backend:beta.example', $2)
-        """.replace("backend:beta.example", world.source.node.team_id),
-        session_id,
-        local_did_key,
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.chat_participants}} (
-            session_id, did, agent_id, alias, address, delivery_origin,
-            current_did_key
-        ) VALUES
-            ($1, $2, $3, 'local', $2, NULL, $2),
-            ($1, 'did:aw:bob', NULL, 'bob', 'remote.example/bob',
-             'https://remote.example', $4)
-        """.replace("did:aw:bob", bob.stable_id)
-        .replace("https://remote.example", world.target.node.origin)
-        .replace("remote.example/bob", bob.address),
-        session_id,
-        local_did_key,
-        local_agent_id,
-        bob_did_key,
+    await _store_retained_local_origin(
+        world, conversation_id=session_id, local=local, kind=MessageKind.CHAT
     )
     await _mirror_retained_local_history(
-        world, conversation_id=session_id, local=local, kind=MessageKind.CHAT
+        world,
+        conversation_id=session_id,
+        local_did_key=local.did_key,
+        kind=MessageKind.CHAT,
     )
     payload = _federated_chat_payload(
         sender_sk=bob_sk,
@@ -1900,18 +1805,20 @@ async def test_receive_federated_chat_existing_local_didkey_reply_succeeds(route
         """
         SELECT current_did_key
         FROM {{tables.chat_participants}}
-        WHERE session_id = $1 AND did = 'did:aw:bob'
-        """.replace("did:aw:bob", bob.stable_id),
+        WHERE session_id = $1 AND did = $2
+        """,
         session_id,
+        bob.stable_id,
     )
     assert session_participant["current_did_key"] == bob_did_key
     conversation_participant = await aweb_cloud_db.aweb_db.fetch_one(
         """
         SELECT current_did_key
         FROM {{tables.conversation_participants}}
-        WHERE conversation_id = $1 AND did = 'did:aw:bob'
-        """.replace("did:aw:bob", bob.stable_id),
+        WHERE conversation_id = $1 AND did = $2
+        """,
         session_id,
+        bob.stable_id,
     )
     assert conversation_participant["current_did_key"] == bob_did_key
     peer_reads_before = (
@@ -2038,64 +1945,25 @@ async def test_receive_federated_chat_local_didkey_missing_session_target_fails_
 ):
     """Exercise retained local-key route history, never a current first-contact grant."""
     from types import SimpleNamespace
+    from aweb.messaging.kinds import MessageKind
+    from messaging_actor_support import remove_messaging_agent_from_sessions
 
     world = await _registered_routing_pair(route_pair)
     bob = world.target.actor
     local = await _admit_registered_local(world.source.node)
     local_did_key = local.did_key
-    local_agent_id = UUID(local.agent_id)
     bob_sk, bob_did_key = (bob.signing_key, bob.did_key)
     app = world.source.node.server.app
     aweb_cloud_db = SimpleNamespace(aweb_db=world.source.node.db)
     session_id = uuid4()
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.conversations}} (conversation_id, conversation_type, team_id, created_by_did)
-        VALUES ($1, 'chat', 'backend:beta.example', $2)
-        """.replace("backend:beta.example", world.source.node.team_id),
-        session_id,
-        local_did_key,
+    await _store_retained_local_origin(
+        world, conversation_id=session_id, local=local, kind=MessageKind.CHAT
     )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.conversation_participants}}
-            (conversation_id, did, agent_id, alias, address, delivery_origin,
-             current_did_key, transport_hint, role)
-        VALUES
-            ($1, $2, $3, 'local', $2, NULL, $2, 'local', 'initiator'),
-            ($1, 'did:aw:bob', NULL, 'bob', 'remote.example/bob',
-             'https://remote.example', $4, 'federation:https://remote.example',
-             'participant')
-        """.replace("did:aw:bob", bob.stable_id)
-        .replace("https://remote.example", world.target.node.origin)
-        .replace("remote.example/bob", bob.address)
-        .replace(
-            "federation:https://remote.example",
-            f"federation:{world.target.node.origin}",
-        ),
-        session_id,
-        local_did_key,
-        local_agent_id,
-        bob_did_key,
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.chat_sessions}} (session_id, team_id, created_by)
-        VALUES ($1, 'backend:beta.example', $2)
-        """.replace("backend:beta.example", world.source.node.team_id),
-        session_id,
-        local_did_key,
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.chat_participants}} (
-            session_id, did, alias, address, current_did_key
-        ) VALUES ($1, 'did:aw:bob', 'bob', 'remote.example/bob', $2)
-        """.replace("did:aw:bob", bob.stable_id).replace(
-            "remote.example/bob", bob.address
-        ),
-        session_id,
-        bob_did_key,
+    await remove_messaging_agent_from_sessions(
+        world.source.node.db,
+        world.source.node.server.app.state.redis,
+        team_id=local.team_id,
+        agent_id=local.agent_id,
     )
     payload = _federated_chat_payload(
         sender_sk=bob_sk,
@@ -2150,25 +2018,21 @@ async def test_receive_federated_chat_duplicate_message_id_is_idempotent(route_p
     ) as client:
         first = await client.post("/v1/federation/messages", json=payload)
         assert first.status_code == 200, first.text
-        await aweb_cloud_db.aweb_db.execute(
-            """
-            UPDATE {{tables.federation_address_authority_cohorts}}
-            SET authoritative_read_completed_at = authoritative_read_completed_at - INTERVAL '2 minutes',
-                expires_at = expires_at - INTERVAL '2 minutes'
-            WHERE canonical_address = 'alpha.example/alice'
-            """.replace("alpha.example/alice", alice.address)
-        )
         prior_read = await aweb_cloud_db.aweb_db.fetch_value(
-            "SELECT authoritative_read_completed_at FROM {{tables.federation_address_authority_cohorts}} WHERE canonical_address = 'alpha.example/alice'".replace(
-                "alpha.example/alice", alice.address
-            )
+            "SELECT authoritative_read_completed_at FROM {{tables.federation_address_authority_cohorts}} WHERE canonical_address = $1",
+            alice.address,
+        )
+        await aweb_cloud_db.aweb_db.fetch_value(
+            "SELECT pg_sleep(GREATEST(0, EXTRACT(EPOCH FROM expires_at - clock_timestamp()))) "
+            "FROM {{tables.federation_address_authority_cohorts}} WHERE canonical_address=$1",
+            alice.address,
+            timeout=65,
         )
         second = await client.post("/v1/federation/messages", json=payload)
     assert second.status_code == 200, second.text
     cohort = await aweb_cloud_db.aweb_db.fetch_one(
-        "SELECT authoritative_read_completed_at, expires_at FROM {{tables.federation_address_authority_cohorts}} WHERE canonical_address = 'alpha.example/alice'".replace(
-            "alpha.example/alice", alice.address
-        )
+        "SELECT authoritative_read_completed_at, expires_at FROM {{tables.federation_address_authority_cohorts}} WHERE canonical_address = $1",
+        alice.address,
     )
     assert cohort["authoritative_read_completed_at"] > prior_read
     assert cohort["expires_at"] - cohort[
@@ -2494,7 +2358,7 @@ async def test_create_encrypted_group_chat_stores_opaque_metadata_only(aweb_clou
 
 
 @pytest.mark.asyncio
-async def test_encrypted_group_chat_excludes_left_participant_from_future_wraps(
+async def test_encrypted_group_chat_excludes_removed_participant_from_future_wraps(
     aweb_cloud_db,
 ):
     alice_sk, _, alice_did = _make_keypair()
@@ -2619,13 +2483,15 @@ async def test_encrypted_group_chat_excludes_left_participant_from_future_wraps(
         turn = await client.post(f"/v1/chat/sessions/{session_id}/messages", json=turn_payload)
     assert turn.status_code == 200, turn.text
 
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        UPDATE {{tables.chat_participants}}
-        SET left_at = NOW()
-        WHERE session_id = $1 AND did = 'did:aw:carol'
-        """,
-        UUID(session_id),
+    from messaging_actor_support import archive_messaging_actor
+
+    carol_agent_id = await aweb_cloud_db.aweb_db.fetch_value(
+        "SELECT agent_id FROM {{tables.agents}} WHERE team_id=$1 AND did_key=$2",
+        team_id,
+        carol_did,
+    )
+    await archive_messaging_actor(
+        aweb_cloud_db.aweb_db, None, team_id=team_id, agent_id=carol_agent_id
     )
 
     stale_message_id = "33333333-3333-4333-8333-333333333332"
@@ -4709,19 +4575,20 @@ async def test_chat_send_message_accepts_signed_from_did_key_for_team_context(
 
 @pytest.mark.asyncio
 async def test_chat_send_message_rejects_legacy_bound_session_continuation(
-    aweb_cloud_db,
+    pre_chat_coverage_db,
+    chat_coverage_upgrade,
 ):
     alice_sk, _, alice_did_key = _make_keypair()
     _, _, bob_did_key = _make_keypair()
     session_id = uuid4()
     message_id = uuid4()
-    await aweb_cloud_db.aweb_db.execute(
+    await pre_chat_coverage_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
         VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6MknPNGi33ZA1E96cTvr2J1CmyppaBCCL2a56qAnPfFVfQo' /* team-1 */)
         """
     )
-    await aweb_cloud_db.aweb_db.execute(
+    await pre_chat_coverage_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
         VALUES
@@ -4731,20 +4598,20 @@ async def test_chat_send_message_rejects_legacy_bound_session_continuation(
         alice_did_key,
         bob_did_key,
     )
-    alice_agent_id = await aweb_cloud_db.aweb_db.fetch_val(
+    alice_agent_id = await pre_chat_coverage_db.aweb_db.fetch_val(
         "SELECT agent_id FROM {{tables.agents}} WHERE alias = 'alice'"
     )
-    bob_agent_id = await aweb_cloud_db.aweb_db.fetch_val(
+    bob_agent_id = await pre_chat_coverage_db.aweb_db.fetch_val(
         "SELECT agent_id FROM {{tables.agents}} WHERE alias = 'bob'"
     )
-    await aweb_cloud_db.aweb_db.execute(
+    await pre_chat_coverage_db.aweb_db.execute(
         """
         INSERT INTO {{tables.chat_sessions}} (session_id, team_id, created_by)
         VALUES ($1, 'backend:acme.com', 'alice')
         """,
         session_id,
     )
-    await aweb_cloud_db.aweb_db.execute(
+    await pre_chat_coverage_db.aweb_db.execute(
         """
         INSERT INTO {{tables.chat_participants}} (session_id, did, agent_id, alias, address)
         VALUES
@@ -4769,7 +4636,7 @@ async def test_chat_send_message_rejects_legacy_bound_session_continuation(
             "type": "chat",
         }
     )
-    await aweb_cloud_db.aweb_db.execute(
+    await pre_chat_coverage_db.aweb_db.execute(
         """
         INSERT INTO {{tables.chat_messages}}
             (message_id, session_id, from_did, from_alias, body, signature, signed_payload, created_at)
@@ -4781,12 +4648,9 @@ async def test_chat_send_message_rejects_legacy_bound_session_continuation(
         signed_payload.decode(),
     )
 
-    # Historical fixtures inserted after setup must cross the shipped migration.
-    from chat_coverage_support import migrate_chat_conversation_coverage
+    await chat_coverage_upgrade.apply()
 
-    await migrate_chat_conversation_coverage(aweb_cloud_db.aweb_db)
-
-    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+    app = _build_test_app(pre_chat_coverage_db.aweb_db, AsyncMock())
 
     async def _bob_auth_override():
         return MessagingAuth(

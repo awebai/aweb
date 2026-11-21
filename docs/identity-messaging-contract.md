@@ -375,9 +375,8 @@ conversation, the caller is told to retry the original conversation and recipien
 identities unchanged. It must not choose a new message ID merely to recover a
 lost answer: that would submit another message. Choosing a new ID is appropriate
 only when intentionally sending a different signed artifact.
-A plaintext continuation compares the recorded session parties, including retained
-departure markers, rather than only today's delivery targets. Departed parties
-remain excluded from new delivery. A named retry can recognize an original local
+A departed party is removed from the session's participants. A plaintext
+continuation compares the recorded parties that remain. A named retry can recognize an original local
 `did:key` party as the currently admitted global `did:aw` only when that identity's
 current key is still the exact recorded key; this acknowledgement does not rewrite
 participants or grant another membership. Signature and current admission checks

@@ -915,12 +915,13 @@ async def test_consumer_mcp_identity_contact_rejects_reassigned_existing_chat_se
 
 @pytest.mark.asyncio
 async def test_consumer_mcp_send_message_to_contact_reuses_existing_chat_session_without_rediscovery(
-    aweb_cloud_db,
+    pre_chat_coverage_db,
     monkeypatch,
+    chat_coverage_upgrade,
 ):
-    alice_agent_id, bob_agent_id = await _seed_team(aweb_cloud_db.aweb_db)
+    alice_agent_id, bob_agent_id = await _seed_team(pre_chat_coverage_db.aweb_db)
     _patch_auth(monkeypatch, _auth(agent_id=alice_agent_id))
-    contact = await aweb_cloud_db.aweb_db.fetch_one(
+    contact = await pre_chat_coverage_db.aweb_db.fetch_one(
         """
         INSERT INTO {{tables.contacts}} (
             owner_did, contact_address, contact_did_aw,
@@ -932,14 +933,14 @@ async def test_consumer_mcp_send_message_to_contact_reuses_existing_chat_session
         """
     )
     session_id = str(uuid4())
-    await aweb_cloud_db.aweb_db.execute(
+    await pre_chat_coverage_db.aweb_db.execute(
         """
         INSERT INTO {{tables.chat_sessions}} (session_id, team_id, created_by)
         VALUES ($1, 'ops:acme.com', 'alice')
         """,
         session_id,
     )
-    await aweb_cloud_db.aweb_db.execute(
+    await pre_chat_coverage_db.aweb_db.execute(
         """
         INSERT INTO {{tables.chat_participants}} (session_id, did, agent_id, alias, address)
         VALUES
@@ -951,10 +952,7 @@ async def test_consumer_mcp_send_message_to_contact_reuses_existing_chat_session
         bob_agent_id,
     )
 
-    # Historical fixtures inserted after setup must cross the shipped migration.
-    from chat_coverage_support import migrate_chat_conversation_coverage
-
-    await migrate_chat_conversation_coverage(aweb_cloud_db.aweb_db)
+    await chat_coverage_upgrade.apply()
 
     class NoRegistry:
         async def resolve_address(self, *_args, **_kwargs):
@@ -962,7 +960,7 @@ async def test_consumer_mcp_send_message_to_contact_reuses_existing_chat_session
 
     result = json.loads(
         await contacts_tools.send_message_to_contact(
-            DBInfra(aweb_cloud_db.aweb_db),
+            DBInfra(pre_chat_coverage_db.aweb_db),
             registry_client=NoRegistry(),
             contact_id=str(contact["contact_id"]),
             message="hello chat",
@@ -973,12 +971,12 @@ async def test_consumer_mcp_send_message_to_contact_reuses_existing_chat_session
     assert result["delivered"] is True
     assert result["conversation_id"] == session_id
     assert (
-        await aweb_cloud_db.aweb_db.fetch_val(
+        await pre_chat_coverage_db.aweb_db.fetch_val(
             "SELECT COUNT(*) FROM {{tables.chat_sessions}}"
         )
         == 1
     )
-    row = await aweb_cloud_db.aweb_db.fetch_one(
+    row = await pre_chat_coverage_db.aweb_db.fetch_one(
         "SELECT session_id, body FROM {{tables.chat_messages}}"
     )
     assert str(row["session_id"]) == session_id

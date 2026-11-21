@@ -68,8 +68,16 @@ async def privacy_app(shared_test_pool, monkeypatch):
         yield env
 
 
+@pytest_asyncio.fixture
+async def pre_chat_coverage_privacy_app(shared_test_pool, monkeypatch, chat_coverage_upgrade):
+    async with privacy_stack(
+        shared_test_pool, monkeypatch, database=chat_coverage_upgrade.infra
+    ) as env:
+        yield env
+
+
 @asynccontextmanager
-async def privacy_stack(shared_test_pool, monkeypatch, tls=None):
+async def privacy_stack(shared_test_pool, monkeypatch, tls=None, *, database=None):
     """The real apps behind one HTTP server; tls is (host, Certificates covering
     host) to serve over TLS, so the server's public origin is https."""
     monkeypatch.setenv("AWID_DATABASE_URL", "postgresql://unused/test")
@@ -82,7 +90,7 @@ async def privacy_stack(shared_test_pool, monkeypatch, tls=None):
         decode_responses=True,
     ) as redis:
         await redis.ping()
-        db = DatabaseInfra()
+        db = database if database is not None else DatabaseInfra()
         await db.initialize(shared_pool=shared_test_pool)
         registry_db = AwidDatabaseInfra(schema="privacy_registry")
         await registry_db.initialize(shared_pool=shared_test_pool)
@@ -236,7 +244,8 @@ async def privacy_stack(shared_test_pool, monkeypatch, tls=None):
                 await registry.aclose()
                 await fixture_registry.aclose()
         await registry_db.close()
-        await db.close()
+        if database is None:
+            await db.close()
 
 
 async def _request(env, actor, method, path, body=None):

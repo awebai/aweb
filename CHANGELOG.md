@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Removed an unused chat departure-marker check.
 - Old chat history with valid participant snapshots is migrated to canonical
   conversations, preserving exact participants, routes and readable single-party
   sessions. Existing active pairs retain routing precedence; older replaced

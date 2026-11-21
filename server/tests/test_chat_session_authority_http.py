@@ -12,7 +12,12 @@ import pytest
 from awid.did import stable_id_from_public_key
 from awid.signing import canonical_json_bytes, sign_message
 from nacl.signing import SigningKey
-from test_dashboard_privacy import TEAM, _request, privacy_app  # noqa: F401
+from test_dashboard_privacy import (
+    TEAM,
+    _request,
+    pre_chat_coverage_privacy_app as pre_chat_coverage_privacy_app,
+    privacy_app,  # noqa: F401
+)
 from test_messages_http import _make_keypair
 
 
@@ -150,10 +155,10 @@ async def test_removed_participant_cannot_reuse_session(privacy_app):
     env = privacy_app
     seed = await _chat(env, "alice", ["bob"])
     thread = seed.json()["session_id"]
-    await env.db.execute(
-        "UPDATE {{tables.chat_participants}} SET left_at = NOW() WHERE session_id = $1 AND did = $2",
-        UUID(thread),
-        env.actors["alice"].did,
+    from messaging_actor_support import remove_messaging_agent_from_sessions
+
+    await remove_messaging_agent_from_sessions(
+        env.db, env.redis, team_id=TEAM, agent_id=env.actors["alice"].id
     )
     before = await _snapshot(env)
     response = await _chat(env, "alice", ["bob"], session_id=thread)
@@ -271,8 +276,8 @@ async def test_mail_participant_cannot_convert_their_thread_to_chat(privacy_app)
 
 
 @pytest.mark.asyncio
-async def test_legacy_reuse_projects_only_stored_participants(privacy_app):
-    env = privacy_app
+async def test_legacy_reuse_projects_only_stored_participants(pre_chat_coverage_privacy_app, chat_coverage_upgrade):
+    env = pre_chat_coverage_privacy_app
     thread = uuid4()
     await env.db.execute(
         "INSERT INTO {{tables.chat_sessions}} (session_id, team_id, created_by) VALUES ($1, $2, $3)",
@@ -289,10 +294,7 @@ async def test_legacy_reuse_projects_only_stored_participants(privacy_app):
             actor.id,
             alias,
         )
-    # Historical fixtures inserted after setup must cross the shipped migration.
-    from chat_coverage_support import migrate_chat_conversation_coverage
-
-    await migrate_chat_conversation_coverage(env.db)
+    await chat_coverage_upgrade.apply()
 
     response = await _chat(env, "alice", ["carol"], session_id=str(thread))
     assert response.status_code == 200, response.text

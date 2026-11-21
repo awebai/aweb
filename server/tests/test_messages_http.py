@@ -567,57 +567,94 @@ async def _admit_registered_local(node):
     )
 
 
-async def _mirror_retained_local_history(world, *, conversation_id, local, kind):
-    """Retired local-key route input only; today's API cannot create this history.
-
-    docs/identity-messaging-contract.md:257-263 retains exact saved routes without
-    authorizing local-key first contact. The global peer was registered/admitted.
-    """
+async def _store_retained_route(node, *, kind, conversation_id, team_id, parties):
+    """Build an already trusted route with the product's persistence owner."""
+    from aweb.messaging.chat import ensure_session
+    from aweb.messaging.conversations import ConversationParticipant, create_conversation
     from aweb.messaging.kinds import MessageKind
 
-    manager, peer = world.target.node.db, world.target.actor
-    await manager.execute(
-        "INSERT INTO {{tables.conversations}} (conversation_id,conversation_type,team_id,created_by_did) VALUES ($1,$2,$3,$4)",
-        UUID(str(conversation_id)),
-        kind.value,
-        peer.team_id,
-        local.did_key,
-    )
-    await manager.execute(
-        "INSERT INTO {{tables.conversation_participants}} "
-        "(conversation_id,did,agent_id,alias,address,delivery_origin,current_did_key,transport_hint,role) VALUES "
-        "($1,$2,NULL,'local',$3,$4,$2,$5,'initiator'), "
-        "($1,$6,$7,'bob',$8,NULL,$9,'local','participant')",
-        UUID(str(conversation_id)),
-        local.did_key,
-        f"{world.source.node.domain}/local",
-        world.source.node.origin,
-        f"federation:{world.source.node.origin}",
-        peer.stable_id,
-        UUID(peer.agent_id),
-        peer.address,
-        peer.did_key,
-    )
+    infra = node.server.app.state.db
+    conversation_id = UUID(str(conversation_id))
     if kind is MessageKind.CHAT:
-        await manager.execute(
-            "INSERT INTO {{tables.chat_sessions}} (session_id,team_id,created_by) VALUES ($1,$2,$3)",
-            UUID(str(conversation_id)),
-            peer.team_id,
-            local.did_key,
+        assert await ensure_session(
+            infra,
+            team_id=team_id,
+            participant_rows=parties,
+            created_by=parties[0]["did"],
+            session_id=conversation_id,
+        ) == conversation_id
+    else:
+        await create_conversation(
+            infra,
+            conversation_type="mail",
+            created_by_did=parties[0]["did"],
+            initiator=ConversationParticipant(**parties[0]),
+            recipients=[ConversationParticipant(**party) for party in parties[1:]],
+            conversation_id=conversation_id,
+            team_id=team_id,
+            ttl=None,
         )
-        await manager.execute(
-            "INSERT INTO {{tables.chat_participants}} "
-            "(session_id,did,agent_id,alias,address,delivery_origin,current_did_key) VALUES "
-            "($1,$2,NULL,'local',$3,$4,$2), ($1,$5,$6,'bob',$7,NULL,$8)",
-            UUID(str(conversation_id)),
-            local.did_key,
-            f"{world.source.node.domain}/local",
-            world.source.node.origin,
-            peer.stable_id,
-            UUID(peer.agent_id),
-            peer.address,
-            peer.did_key,
-        )
+
+
+async def _mirror_retained_local_history(
+    world, *, conversation_id, local_did_key, kind, local_address=None
+):
+    """Project retained local-key history on the global peer's server."""
+    node, peer = world.target.node, world.target.actor
+    local_origin = world.source.node.origin
+    await _store_retained_route(
+        node,
+        kind=kind,
+        conversation_id=conversation_id,
+        team_id=peer.team_id,
+        parties=[
+            dict(
+                did=local_did_key,
+                current_did_key=local_did_key,
+                alias="local",
+                address=local_address or f"{world.source.node.domain}/local",
+                delivery_origin=local_origin,
+                transport_hint=f"federation:{local_origin}",
+            ),
+            dict(
+                did=peer.stable_id,
+                current_did_key=peer.did_key,
+                agent_id=peer.agent_id,
+                alias="bob",
+                address=peer.address,
+                transport_hint="local",
+            ),
+        ],
+    )
+
+
+async def _store_retained_local_origin(world, *, conversation_id, local, kind):
+    """Project the same valid local-key participant on its own server."""
+    peer, peer_origin = world.target.actor, world.target.node.origin
+    await _store_retained_route(
+        world.source.node,
+        kind=kind,
+        conversation_id=conversation_id,
+        team_id=local.team_id,
+        parties=[
+            dict(
+                did=local.did_key,
+                current_did_key=local.did_key,
+                agent_id=local.agent_id,
+                alias="local",
+                address=local.did_key,
+                transport_hint="local",
+            ),
+            dict(
+                did=peer.stable_id,
+                current_did_key=peer.did_key,
+                alias="bob",
+                address=peer.address,
+                delivery_origin=peer_origin,
+                transport_hint=f"federation:{peer_origin}",
+            ),
+        ],
+    )
 
 
 async def _registered_history(world, *, make_payload):
@@ -5390,38 +5427,14 @@ async def test_receive_federated_mail_existing_local_didkey_reply_succeeds(route
     app = world.source.node.server.app
     aweb_cloud_db = SimpleNamespace(aweb_db=world.source.node.db)
     conversation_id = str(uuid4())
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.conversations}} (conversation_id, conversation_type, team_id, created_by_did)
-        VALUES ($1, 'mail', 'default:beta.example', $2)
-        """.replace("default:beta.example", world.source.node.team_id),
-        UUID(conversation_id),
-        local_did_key,
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.conversation_participants}}
-            (conversation_id, did, agent_id, alias, address, delivery_origin,
-             current_did_key, transport_hint, role)
-        VALUES
-            ($1, $2, $3, 'local', $2, NULL, $2, 'local', 'initiator'),
-            ($1, 'did:aw:bob', NULL, 'bob', 'remote.example/bob',
-             'https://remote.example', $4, 'federation:https://remote.example',
-             'participant')
-        """.replace("did:aw:bob", bob.stable_id)
-        .replace("https://remote.example", world.target.node.origin)
-        .replace("remote.example/bob", bob.address)
-        .replace(
-            "federation:https://remote.example",
-            f"federation:{world.target.node.origin}",
-        ),
-        UUID(conversation_id),
-        local_did_key,
-        local_agent_id,
-        bob_did_key,
+    await _store_retained_local_origin(
+        world, conversation_id=conversation_id, local=local, kind=MessageKind.MAIL
     )
     await _mirror_retained_local_history(
-        world, conversation_id=conversation_id, local=local, kind=MessageKind.MAIL
+        world,
+        conversation_id=conversation_id,
+        local_did_key=local.did_key,
+        kind=MessageKind.MAIL,
     )
     payload = _federated_mail_payload(
         sender_sk=bob_sk,
@@ -5453,9 +5466,10 @@ async def test_receive_federated_mail_existing_local_didkey_reply_succeeds(route
         """
         SELECT current_did_key
         FROM {{tables.conversation_participants}}
-        WHERE conversation_id = $1 AND did = 'did:aw:bob'
-        """.replace("did:aw:bob", bob.stable_id),
+        WHERE conversation_id = $1 AND did = $2
+        """,
         UUID(conversation_id),
+        bob.stable_id,
     )
     assert remote_participant["current_did_key"] == bob_did_key
     peer_reads_before = (
@@ -6053,9 +6067,10 @@ async def test_receive_federated_mail_historical_continuation_uses_stored_sender
         """
         SELECT address, delivery_origin, transport_hint
         FROM {{tables.conversation_participants}}
-        WHERE conversation_id = $1 AND did = 'did:aw:bob'
-        """.replace("did:aw:bob", bob.stable_id),
+        WHERE conversation_id = $1 AND did = $2
+        """,
         UUID(conversation_id),
+        bob.stable_id,
     )
     assert dict(target_route) == {
         "address": bob.address,
@@ -6099,45 +6114,21 @@ async def test_receive_federated_mail_local_sender_omission_preserves_stored_rou
 ):
     """A retained local-key history input, not current first-contact authority."""
     from types import SimpleNamespace
+    from aweb.messaging.kinds import MessageKind
 
     world = await _registered_routing_pair(route_pair)
     bob = world.target.actor
     local_sk, local_did_key = (world.source.node.local.sk, world.source.node.local.did)
     bob_did_key = bob.did_key
-    bob_agent_id = UUID(bob.agent_id)
     app = world.target.node.server.app
     aweb_cloud_db = SimpleNamespace(aweb_db=world.target.node.db)
     conversation_id = uuid4()
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.conversations}} (
-            conversation_id, conversation_type, team_id, created_by_did
-        ) VALUES ($1, 'mail', 'default:beta.example', $2)
-        """.replace("default:beta.example", bob.team_id),
-        conversation_id,
-        local_did_key,
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.conversation_participants}} (
-            conversation_id, did, agent_id, alias, address, delivery_origin,
-            current_did_key, transport_hint, role
-        ) VALUES
-            ($1, $2, NULL, 'local', 'alpha.example/local',
-             'https://sender.example', $2, 'federation:https://sender.example', 'initiator'),
-            ($1, 'did:aw:bob', $3, 'bob', 'beta.example/bob', NULL, $4,
-             'local', 'participant')
-        """.replace("did:aw:bob", bob.stable_id)
-        .replace("beta.example/bob", bob.address)
-        .replace("https://sender.example", world.source.node.origin)
-        .replace(
-            "federation:https://sender.example",
-            f"federation:{world.source.node.origin}",
-        ),
-        conversation_id,
-        local_did_key,
-        bob_agent_id,
-        bob_did_key,
+    await _mirror_retained_local_history(
+        world,
+        conversation_id=conversation_id,
+        local_did_key=local_did_key,
+        kind=MessageKind.MAIL,
+        local_address="alpha.example/local",
     )
     target_address_reads_before = _registered_address_reads(world.target)
     payload = _federated_mail_payload(
@@ -6209,9 +6200,10 @@ async def test_receive_federated_mail_local_sender_omission_preserves_stored_rou
         await aweb_cloud_db.aweb_db.fetch_value(
             """
         SELECT address FROM {{tables.conversation_participants}}
-        WHERE conversation_id = $1 AND did = 'did:aw:bob'
-        """.replace("did:aw:bob", bob.stable_id),
+        WHERE conversation_id = $1 AND did = $2
+        """,
             conversation_id,
+            bob.stable_id,
         )
         == bob.address
     )
@@ -8856,10 +8848,10 @@ async def test_cross_team_same_registry_address_send_creates_bound_contact_witho
         SELECT owner_did, contact_address, contact_did_aw,
                binding_controller_did, binding_accepted_at, status
         FROM {{tables.contacts}}
-        WHERE owner_did = 'did:aw:alice' AND contact_address = 'otherco.com/bob'
-        """.replace("did:aw:alice", alice.stable_id).replace(
-            "otherco.com/bob", bob.address
-        )
+        WHERE owner_did = $1 AND contact_address = $2
+        """,
+        alice.stable_id,
+        bob.address,
     )
     contact = dict(contact)
     assert contact.pop("binding_accepted_at") is not None

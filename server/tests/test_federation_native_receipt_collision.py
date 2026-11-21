@@ -102,7 +102,7 @@ async def test_native_message_receipt_blocks_federation_before_storage_or_outbox
     table = "messages" if kind == "mail" else "chat_messages"
     assert (
         await manager.fetch_value(
-            "SELECT count(*) FROM {{tables." + table + "}} WHERE message_id=$1",
+            f"SELECT count(*) FROM {{{{tables.{table}}}}} WHERE message_id=$1",
             message_id,
         )
         == 1
