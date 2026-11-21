@@ -27,6 +27,9 @@ breaking anything in the field, is paramount.
 - The atomic-deploy principle applies only across the server and its bundled
   hosted application and is not generalised.
 
+The same holds for the aw Go library: an exported name in a release tag stays
+(see [released exported Go names stay](/aweb-protocol-expert/decisions/released-exported-go-names-stay.md)).
+
 The `cross-repo-change` skill carries the procedure; this concept records why
 it exists.
 
