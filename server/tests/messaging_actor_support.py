@@ -1,6 +1,7 @@
 """Messaging actors admitted by the shared registry and native HTTP owners."""
 
-from dataclasses import dataclass, field
+import base64
+from dataclasses import dataclass, field, replace
 from contextlib import contextmanager
 import json
 from typing import Protocol
@@ -228,6 +229,35 @@ async def register_messaging_actors(
         )
         for alias in aliases
     }
+
+
+async def issue_global_certificate_to_local_member(
+    env: MessagingFixture, actor: RegisteredMessagingActor, *, address: str,
+) -> RegisteredMessagingActor:
+    """Publish the identity and its replacement certificate before native reconnect."""
+    registry = application_registry_client(env.app.state)
+    mapping = await registry.register_did(actor.did_key, actor.signing_key)
+    domain, name = address.split("/", 1)
+    controller = await env.registry.ensure_namespace(domain=domain)
+    await registry.register_address(
+        domain, name, mapping.did_aw, bytes(controller), current_did_key=actor.did_key,
+    )
+    previous = json.loads(base64.b64decode(actor.certificate))
+    certificate = _make_certificate(
+        env.team_sk, env.team_did, actor.did_key,
+        team_id=actor.team_id, alias=previous["alias"], identity_scope="global",
+        member_did_aw=mapping.did_aw, member_address=address,
+        certificate_id=f"messaging-global-{uuid4()}",
+    )
+    team_name, team_domain = actor.team_id.split(":", 1)
+    await registry.revoke_team_certificate(
+        team_domain, team_name, team_controller_signing_key=env.team_sk,
+        certificate_id=previous["certificate_id"],
+    )
+    await env.registry.add_certificate(certificate, team_key=SigningKey(env.team_sk))
+    return replace(
+        actor, stable_id=mapping.did_aw, address=address, certificate=_encode_certificate(certificate),
+    )
 
 
 def messaging_actor_headers(actor, *, body=b"", team=True):

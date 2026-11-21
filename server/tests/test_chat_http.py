@@ -3680,6 +3680,8 @@ async def test_create_chat_session_to_private_address_uses_client_recipient_bind
     registered_mail_actors, recipient_identity_scope
 ):
     from messaging_actor_support import (
+        issue_global_certificate_to_local_member,
+        messaging_actor_headers,
         register_messaging_actors,
         set_messaging_inbound_mode,
         record_registry_requests,
@@ -3692,18 +3694,19 @@ async def test_create_chat_session_to_private_address_uses_client_recipient_bind
     )
     alice = sender_actors["alice"]
     others = await register_messaging_actors(
-        env, team_id="ops:otherco.com", aliases=("bob",), local=False
+        env, team_id="ops:otherco.com", aliases=("bob",), local=recipient_identity_scope == "local"
     )
     bob = others["bob"]
-    await set_messaging_inbound_mode(env, bob, mode="open")
+    if recipient_identity_scope == "local":
+        bob = await issue_global_certificate_to_local_member(env, bob, address="otherco.com/bob")
+    else:
+        await set_messaging_inbound_mode(env, bob, mode="open")
+    policy = await env.client.get("/v1/agents/me/inbound-mode", headers=messaging_actor_headers(bob))
+    assert policy.status_code == 200, policy.text
+    assert policy.json()["identity_scope"] == recipient_identity_scope
+    assert policy.json()["inbound_mode"] == "open"
     app = env.app
     alice_sk, alice_did_key = (alice.signing_key, alice.did_key)
-    if recipient_identity_scope == "local":
-        # unreachable-state: old local-scope storage retains a verified global binding; current admission sets global scope.
-        await env.db.execute(
-            "UPDATE {{tables.agents}} SET identity_scope='local' WHERE agent_id=$1",
-            UUID(bob.agent_id),
-        )
     with record_registry_requests(env) as registry_calls:
         message_id = str(uuid4())
         timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat()

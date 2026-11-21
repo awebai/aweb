@@ -7858,6 +7858,7 @@ async def test_send_message_team_auth_uses_global_certificate_before_reconnect(
     from messaging_actor_support import (
         add_messaging_contact,
         admit_messaging_actor,
+        issue_global_certificate_to_local_member,
         register_messaging_team,
         set_messaging_inbound_mode,
     )
@@ -7867,26 +7868,9 @@ async def test_send_message_team_auth_uses_global_certificate_before_reconnect(
     await register_messaging_team(env, team_id=team_id)
     alice = await admit_messaging_actor(env, team_id=team_id, alias="alice", local=True)
     bob = await admit_messaging_actor(env, team_id=team_id, alias="bob", address="acme.com/upgrade-bob")
-    registry = env.app.state.awid_registry_client
-    stable_id = (await registry.register_did(alice.did_key, alice.signing_key)).did_aw
-    address = "acme.com/upgrade-alice"
-    controller = await env.registry.ensure_namespace(domain="acme.com")
-    await registry.register_address(
-        "acme.com", "upgrade-alice", stable_id, bytes(controller), current_did_key=alice.did_key,
-    )
-    certificate = _make_certificate(
-        env.team_sk, env.team_did, alice.did_key,
-        team_id=team_id, alias="alice", identity_scope="global", member_did_aw=stable_id,
-        member_address=address, certificate_id="upgrade-alice-" + uuid4().hex,
-    )
-    previous = json.loads(base64.b64decode(alice.certificate))
-    await registry.revoke_team_certificate(
-        "acme.com", "upgrade", team_controller_signing_key=env.team_sk,
-        certificate_id=previous["certificate_id"],
-    )
-    await env.registry.add_certificate(certificate, team_key=SigningKey(env.team_sk))
+    alice = await issue_global_certificate_to_local_member(env, alice, address="acme.com/upgrade-alice")
     await set_messaging_inbound_mode(env, bob, mode="team_and_contacts")
-    await add_messaging_contact(env, bob, address=address)
+    await add_messaging_contact(env, bob, address=alice.address)
     alice_row = await env.db.fetch_one(
         "SELECT agent_id, did_aw, address FROM {{tables.agents}} WHERE agent_id=$1",
         UUID(alice.agent_id),
@@ -7896,7 +7880,7 @@ async def test_send_message_team_auth_uses_global_certificate_before_reconnect(
     body_bytes = json.dumps(payload).encode()
     headers = {
         **_signed_team_headers(
-            alice.signing_key, alice.did_key, team_id, _encode_certificate(certificate), body_bytes
+            alice.signing_key, alice.did_key, team_id, alice.certificate, body_bytes
         ),
         "Content-Type": "application/json",
     }
@@ -7906,7 +7890,7 @@ async def test_send_message_team_auth_uses_global_certificate_before_reconnect(
         "SELECT from_agent_id, from_did FROM {{tables.messages}} WHERE subject = 'hello partial'"
     )
     assert row["from_agent_id"] == alice_row["agent_id"]
-    assert row["from_did"] == stable_id
+    assert row["from_did"] == alice.stable_id
 
 
 @pytest.mark.asyncio
@@ -8848,6 +8832,8 @@ async def test_send_message_to_private_address_uses_client_recipient_binding(
 ):
     from types import SimpleNamespace
     from messaging_actor_support import (
+        issue_global_certificate_to_local_member,
+        messaging_actor_headers,
         register_messaging_actors,
         set_messaging_inbound_mode,
         record_registry_requests,
@@ -8860,19 +8846,20 @@ async def test_send_message_to_private_address_uses_client_recipient_binding(
     )
     alice = sender_actors["alice"]
     others = await register_messaging_actors(
-        env, team_id="ops:otherco.com", aliases=("bob",), local=False
+        env, team_id="ops:otherco.com", aliases=("bob",), local=recipient_identity_scope == "local"
     )
     bob = others["bob"]
-    await set_messaging_inbound_mode(env, bob, mode="open")
+    if recipient_identity_scope == "local":
+        bob = await issue_global_certificate_to_local_member(env, bob, address="otherco.com/bob")
+    else:
+        await set_messaging_inbound_mode(env, bob, mode="open")
+    policy = await env.client.get("/v1/agents/me/inbound-mode", headers=messaging_actor_headers(bob))
+    assert policy.status_code == 200, policy.text
+    assert policy.json()["identity_scope"] == recipient_identity_scope
+    assert policy.json()["inbound_mode"] == "open"
     app = env.app
     aweb_cloud_db = SimpleNamespace(aweb_db=env.db)
     alice_sk, alice_did_key = (alice.signing_key, alice.did_key)
-    if recipient_identity_scope == "local":
-        # unreachable-state: old local-scope storage retains a verified global binding; current admission sets global scope.
-        await env.db.execute(
-            "UPDATE {{tables.agents}} SET identity_scope='local' WHERE agent_id=$1",
-            UUID(bob.agent_id),
-        )
     with record_registry_requests(env) as registry_calls:
         message_id = str(uuid4())
         timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
