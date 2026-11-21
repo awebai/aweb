@@ -25,18 +25,27 @@ from starlette.requests import Request
 import uvicorn
 
 from aweb.api import create_app
+from aweb.embedding import OutboxRecoveryOwnership
 from aweb.outbox_recovery import stop_outbox_recovery
 from aweb.db import DatabaseInfra
-from aweb.events import MessageDeliveredEvent, ChatMessageEvent, TaskCreatedEvent, publish_event, team_events_channel_name
+from aweb.events import (
+    MessageDeliveredEvent,
+    ChatMessageEvent,
+    TaskCreatedEvent,
+    publish_event,
+    team_events_channel_name,
+)
 from aweb.mutation_hooks import create_mutation_handler
 from aweb.internal_auth import build_internal_auth_header_value
 from aweb.routes.status import status_stream
 from aweb.team_auth_deps import TeamIdentity
+from awid.did import did_key_from_signing_key
 from awid.ratelimit import MemoryFixedWindowRateLimiter
 from awid.registry import RegistryClient
 from awid_service.db import AwidDatabaseInfra
 from awid_service.main import create_app as create_registry_app
-from test_dashboard import _JWT_SECRET, _make_jwt
+from awid_service.testing import Registry, ServiceTransport
+from dashboard_test_support import _JWT_SECRET, _make_jwt
 from test_messages_http import (
     _encode_certificate,
     _make_certificate,
@@ -55,13 +64,25 @@ _TEAM_SIGNING_KEY, _, _TEAM_DID_KEY = _make_keypair()
 
 
 @pytest_asyncio.fixture
-async def privacy_app(shared_test_pool, monkeypatch):
-    async with privacy_stack(shared_test_pool, monkeypatch) as env:
+async def privacy_app(shared_test_pool, monkeypatch, request):
+    async with privacy_stack(shared_test_pool, monkeypatch, proxy_verification=getattr(request, "param", None)) as env:
+        yield env
+
+
+@pytest_asyncio.fixture
+async def pre_chat_coverage_privacy_app(shared_test_pool, monkeypatch, chat_coverage_upgrade):
+    async with privacy_stack(
+        shared_test_pool, monkeypatch, database=chat_coverage_upgrade.infra
+    ) as env:
         yield env
 
 
 @asynccontextmanager
-async def privacy_stack(shared_test_pool, monkeypatch, tls=None):
+async def privacy_stack(
+    shared_test_pool, monkeypatch, tls=None, *,
+    aliases=("alice", "bob", "carol"), team_visibility="public", database=None,
+    outbox_recovery=OutboxRecoveryOwnership.NATIVE, proxy_verification=None,
+):
     """The real apps behind one HTTP server; tls is (host, Certificates covering
     host) to serve over TLS, so the server's public origin is https."""
     monkeypatch.setenv("AWID_DATABASE_URL", "postgresql://unused/test")
@@ -70,10 +91,11 @@ async def privacy_stack(shared_test_pool, monkeypatch, tls=None):
     # Candidate runners provide Redis as a service, not a local executable.
     # Never flush this shared database; team/workspace/session keys are unique.
     async with Redis.from_url(
-        os.environ.get("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True,
+        os.environ.get("REDIS_URL", "redis://localhost:6379/0"),
+        decode_responses=True,
     ) as redis:
         await redis.ping()
-        db = DatabaseInfra()
+        db = database if database is not None else DatabaseInfra()
         await db.initialize(shared_pool=shared_test_pool)
         registry_db = AwidDatabaseInfra(schema="privacy_registry")
         await registry_db.initialize(shared_pool=shared_test_pool)
@@ -81,17 +103,30 @@ async def privacy_stack(shared_test_pool, monkeypatch, tls=None):
         # keeps each app's DID registrations out of the per-IP window that
         # every run on the shared Redis would otherwise consume.
         registry_app = create_registry_app(
-            db_infra=registry_db, redis=redis, rate_limiter=MemoryFixedWindowRateLimiter(),
+            db_infra=registry_db,
+            redis=redis,
+            rate_limiter=MemoryFixedWindowRateLimiter(),
         )
         # The registry's public origin, which covering controller signatures name.
         registry_app.state.awid_public_origins = ("http://registry.test",)
         async with registry_app.router.lifespan_context(registry_app):
+            fixture_registry = Registry(
+                app=registry_app,
+                db=registry_db.get_manager(),
+                transport=ServiceTransport(registry_app),
+                registry_url="http://registry.test",
+            )
+            namespace_key = await fixture_registry.ensure_namespace(domain="example.test")
             registry = RegistryClient(
                 registry_url="http://registry.test",
-                transport=httpx.ASGITransport(app=registry_app),
+                transport=fixture_registry.transport,
                 service_token=service_token,
+                domain_verifier=fixture_registry.namespace_authority,
             )
-            app = create_app()
+            app = create_app(
+                host_runs_outbox_recovery=outbox_recovery is OutboxRecoveryOwnership.HOST,
+                proxy_verification=proxy_verification,
+            )
             # Externally provisioned resources, exactly as an embedding host
             # supplies them; lifecycle startup would create different ones.
             app.state.db = db
@@ -103,39 +138,64 @@ async def privacy_stack(shared_test_pool, monkeypatch, tls=None):
 
             async def observe_mutation(event_type, context):
                 dispatched.append((event_type, dict(context)))
-                await handler(event_type, context)
+                return await handler(event_type, context)
 
             app.state.on_mutation = observe_mutation
             manager = db.get_manager("aweb")
             team_sk, team_did = _TEAM_SIGNING_KEY, _TEAM_DID_KEY
             await manager.execute(
                 "INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key) "
-                "VALUES ($1, 'example.test', $2, $3)", TEAM, TEAM_NAME, team_did,
+                "VALUES ($1, 'example.test', $2, $3)",
+                TEAM,
+                TEAM_NAME,
+                team_did,
             )
-            await registry_db.get_manager().execute(
-                "INSERT INTO {{tables.teams}} (domain, name, team_did_key, visibility) "
-                "VALUES ('example.test', $1, $2, 'public')", TEAM_NAME, team_did,
+            await registry.register_team(
+                domain="example.test",
+                name=TEAM_NAME,
+                display_name=TEAM_NAME,
+                team_did_key=team_did,
+                visibility=team_visibility,
+                namespace_controller_signing_key=namespace_key,
             )
             actors = {}
-            for alias in ("alice", "bob", "carol"):
+            for alias in aliases:
                 sk, _, did = _make_keypair()
                 agent_id, workspace_id = uuid4(), uuid4()
                 await manager.execute(
                     "INSERT INTO {{tables.agents}} "
                     "(agent_id, team_id, did_key, alias, identity_scope, inbound_mode) "
                     "VALUES ($1, $2, $3, $4, 'local', 'open')",
-                    agent_id, TEAM, did, alias,
+                    agent_id,
+                    TEAM,
+                    did,
+                    alias,
                 )
                 await manager.execute(
                     "INSERT INTO {{tables.workspaces}} (workspace_id, team_id, agent_id, alias) "
-                    "VALUES ($1, $2, $3, $4)", workspace_id, TEAM, agent_id, alias,
+                    "VALUES ($1, $2, $3, $4)",
+                    workspace_id,
+                    TEAM,
+                    agent_id,
+                    alias,
                 )
-                certificate = _encode_certificate(_make_certificate(
-                    team_sk, team_did, did, team_id=TEAM, alias=alias,
-                    identity_scope="local", certificate_id=f"privacy-{alias}",
-                ))
+                certificate = _encode_certificate(
+                    _make_certificate(
+                        team_sk,
+                        team_did,
+                        did,
+                        team_id=TEAM,
+                        alias=alias,
+                        identity_scope="local",
+                        certificate_id=f"privacy-{alias}",
+                    )
+                )
                 actors[alias] = SimpleNamespace(
-                    sk=sk, did=did, id=agent_id, workspace=workspace_id, certificate=certificate,
+                    sk=sk,
+                    did=did,
+                    id=agent_id,
+                    workspace=workspace_id,
+                    certificate=certificate,
                 )
             host, certificates = tls or ("127.0.0.1", None)
             scheme = "https" if certificates else "http"
@@ -143,8 +203,17 @@ async def privacy_stack(shared_test_pool, monkeypatch, tls=None):
             sock.bind((host, 0))
             base_url = f"{scheme}://{host}:{sock.getsockname()[1]}"
             app.state.public_origin = base_url
-            server_tls = {"ssl_certfile": str(certificates.cert_file), "ssl_keyfile": str(certificates.key_file)} if certificates else {}
-            server = uvicorn.Server(uvicorn.Config(app, lifespan="off", log_level="error", ws="none", **server_tls))
+            server_tls = (
+                {
+                    "ssl_certfile": str(certificates.cert_file),
+                    "ssl_keyfile": str(certificates.key_file),
+                }
+                if certificates
+                else {}
+            )
+            server = uvicorn.Server(
+                uvicorn.Config(app, lifespan="off", log_level="error", ws="none", **server_tls)
+            )
             serving = asyncio.create_task(server.serve(sockets=[sock]))
             try:
                 for _ in range(100):
@@ -153,13 +222,27 @@ async def privacy_stack(shared_test_pool, monkeypatch, tls=None):
                     await asyncio.sleep(0.02)
                 assert server.started
                 async with httpx.AsyncClient(
-                    base_url=base_url, timeout=5,
-                    verify=ssl.create_default_context(cafile=str(certificates.ca_file)) if certificates else True,
+                    base_url=base_url,
+                    timeout=5,
+                    verify=ssl.create_default_context(cafile=str(certificates.ca_file))
+                    if certificates
+                    else True,
                 ) as client:
                     yield SimpleNamespace(
-                        client=client, db=manager, redis=redis, actors=actors,
-                        registry_db=registry_db.get_manager(), registry_app=registry_app, dispatched=dispatched, app=app, infra=db,
-                        team_sk=team_sk, team_did=team_did,
+                        client=client,
+                        db=manager,
+                        redis=redis,
+                        actors=actors,
+                        registry_db=registry_db.get_manager(),
+                        registry_app=registry_app,
+                        registry=fixture_registry,
+                        dispatched=dispatched,
+                        app=app,
+                        infra=db,
+                        namespace_sk=namespace_key,
+                        namespace_did=did_key_from_signing_key(namespace_key),
+                        team_sk=team_sk,
+                        team_did=team_did,
                     )
             finally:
                 server.should_exit = True
@@ -167,8 +250,10 @@ async def privacy_stack(shared_test_pool, monkeypatch, tls=None):
                 sock.close()
                 await stop_outbox_recovery(app)
                 await registry.aclose()
+                await fixture_registry.aclose()
         await registry_db.close()
-        await db.close()
+        if database is None:
+            await db.close()
 
 
 async def _request(env, actor, method, path, body=None):
@@ -180,9 +265,17 @@ async def _request(env, actor, method, path, body=None):
 
 
 async def _seed_mail(env):
-    response = await _request(env, "alice", "POST", "/v1/messages", {
-        "to_did": env.actors["bob"].did, "subject": "private subject", "body": "private body",
-    })
+    response = await _request(
+        env,
+        "alice",
+        "POST",
+        "/v1/messages",
+        {
+            "to_did": env.actors["bob"].did,
+            "subject": "private subject",
+            "body": "private body",
+        },
+    )
     assert response.status_code == 200, response.text
     return response.json()["message_id"]
 
@@ -201,7 +294,8 @@ async def test_registry_rate_limit_window_is_private_to_each_app(privacy_app):
     # every run on the host would draw from one window; the registry reports
     # the limiter it counts in.
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=privacy_app.registry_app), base_url="http://registry.test",
+        transport=httpx.ASGITransport(app=privacy_app.registry_app),
+        base_url="http://registry.test",
     ) as registry:
         health = await registry.get("/health")
     assert health.status_code == 200, health.text
@@ -227,14 +321,25 @@ async def test_dashboard_cannot_read_mail_but_participants_can(privacy_app, visi
         VALUES ($1, $2, $3, $4, 'alice', 'bob', $5, $6, '', '', 'encrypted_v2', 2,
                 '{"ciphertext":"opaque"}', 'opaque', '[]', 'sha256:test', 6,
                 'sha256:test', 'sha256:test', 'test', 'test', 'sha256:test')""",
-        encrypted_id, TEAM, env.actors["alice"].did, env.actors["bob"].did,
-        env.actors["alice"].id, env.actors["bob"].id,
+        encrypted_id,
+        TEAM,
+        env.actors["alice"].did,
+        env.actors["bob"].did,
+        env.actors["alice"].id,
+        env.actors["bob"].id,
     )
     dashboard = {"X-Dashboard-Token": _make_jwt([TEAM])}
     for headers in (dashboard, {}):
         response = await env.client.get(f"/v1/teams/{TEAM}/messages", headers=headers)
         assert response.status_code == 404, response.text
-        for item in (message_id, str(encrypted_id), "alice", "bob", "private subject", "private body"):
+        for item in (
+            message_id,
+            str(encrypted_id),
+            "alice",
+            "bob",
+            "private subject",
+            "private body",
+        ):
             assert item not in response.text
         response = await env.client.get(f"/v1/messages/{message_id}", headers=headers)
         assert response.status_code == 401
@@ -261,28 +366,54 @@ async def test_public_team_activity_requires_verified_dashboard_token(privacy_ap
     if token == "wrong_team":
         token = _make_jwt(["other:example.test"])
     headers = {"X-Dashboard-Token": token} if token else {}
-    async with env.client.stream("GET", f"/v1/teams/{TEAM}/events/stream", headers=headers) as response:
+    async with env.client.stream(
+        "GET", f"/v1/teams/{TEAM}/events/stream", headers=headers
+    ) as response:
         assert response.status_code == status
 
 
 @pytest.mark.asyncio
 async def test_team_stream_suppresses_old_publishers_and_keeps_task_activity(privacy_app):
     env = privacy_app
-    async with env.client.stream("GET", f"/v1/teams/{TEAM}/events/stream", headers={
-        "X-Dashboard-Token": _make_jwt([TEAM]),
-    }) as response:
+    async with env.client.stream(
+        "GET",
+        f"/v1/teams/{TEAM}/events/stream",
+        headers={
+            "X-Dashboard-Token": _make_jwt([TEAM]),
+        },
+    ) as response:
         assert response.status_code == 200
         lines = response.aiter_lines()
         assert (await _next_event(lines))["type"] == "connected"
         assert (await _next_event(lines))["type"] == "snapshot"
         for mode in ("legacy_plaintext_v1", "encrypted_v2"):
-            for event_type in ("message.sent", "message.delivered", "message.acknowledged", "chat.message_sent"):
-                await env.redis.publish(team_events_channel_name(TEAM), json.dumps({
-                    "type": event_type, "team_id": TEAM, "content_mode": mode,
-                    "from_alias": "alice", "to_alias": "bob", "subject": "private subject",
-                    "preview": "private chat", "message_id": str(uuid4()),
-                }))
-        control = {"type": "task.created", "team_id": TEAM, "task_ref": "privacy-aaaa", "title": "Public work"}
+            for event_type in (
+                "message.sent",
+                "message.delivered",
+                "message.acknowledged",
+                "chat.message_sent",
+            ):
+                await env.redis.publish(
+                    team_events_channel_name(TEAM),
+                    json.dumps(
+                        {
+                            "type": event_type,
+                            "team_id": TEAM,
+                            "content_mode": mode,
+                            "from_alias": "alice",
+                            "to_alias": "bob",
+                            "subject": "private subject",
+                            "preview": "private chat",
+                            "message_id": str(uuid4()),
+                        }
+                    ),
+                )
+        control = {
+            "type": "task.created",
+            "team_id": TEAM,
+            "task_ref": "privacy-aaaa",
+            "title": "Public work",
+        }
         await env.redis.publish(team_events_channel_name(TEAM), json.dumps(control))
         assert await _next_event(lines) == control
 
@@ -294,9 +425,16 @@ async def test_real_sends_keep_mutation_callbacks_and_participant_reads(privacy_
         await pubsub.subscribe(team_events_channel_name(TEAM))
         await pubsub.get_message(timeout=1)  # subscription acknowledgement
         message_id = await _seed_mail(env)
-        chat = await _request(env, "alice", "POST", "/v1/chat/sessions", {
-            "to_dids": [env.actors["bob"].did], "message": "private chat",
-        })
+        chat = await _request(
+            env,
+            "alice",
+            "POST",
+            "/v1/chat/sessions",
+            {
+                "to_dids": [env.actors["bob"].did],
+                "message": "private chat",
+            },
+        )
         assert chat.status_code == 200, chat.text
         session_id = chat.json()["session_id"]
         ack = await _request(env, "bob", "POST", f"/v1/messages/{message_id}/ack")
@@ -343,7 +481,9 @@ async def test_agent_event_snapshot_stays_participant_scoped(privacy_app):
     for alias in ("bob", "carol"):
         actor = env.actors[alias]
         headers = _signed_team_headers(actor.sk, actor.did, TEAM, actor.certificate)
-        response = await env.client.get("/v1/events/stream", params={"deadline": deadline}, headers=headers)
+        response = await env.client.get(
+            "/v1/events/stream", params={"deadline": deadline}, headers=headers
+        )
         assert response.status_code == 200, response.text
         if alias == "bob":
             assert message_id in response.text
@@ -351,9 +491,13 @@ async def test_agent_event_snapshot_stays_participant_scoped(privacy_app):
         else:
             assert message_id not in response.text
             assert "private subject" not in response.text
-    dashboard = await env.client.get("/v1/events/stream", params={"deadline": deadline}, headers={
-        "X-Dashboard-Token": _make_jwt([TEAM]),
-    })
+    dashboard = await env.client.get(
+        "/v1/events/stream",
+        params={"deadline": deadline},
+        headers={
+            "X-Dashboard-Token": _make_jwt([TEAM]),
+        },
+    )
     assert dashboard.status_code == 401
 
 
@@ -363,9 +507,13 @@ async def test_public_usage_requires_token_and_keeps_aggregate(privacy_app):
     await _seed_mail(env)
     response = await env.client.get("/v1/usage", params={"team_id": TEAM})
     assert response.status_code == 401
-    response = await env.client.get("/v1/usage", params={"team_id": TEAM}, headers={
-        "X-Dashboard-Token": _make_jwt([TEAM]),
-    })
+    response = await env.client.get(
+        "/v1/usage",
+        params={"team_id": TEAM},
+        headers={
+            "X-Dashboard-Token": _make_jwt([TEAM]),
+        },
+    )
     assert response.status_code == 200, response.text
     assert response.json()["messages_sent"] == 1
     assert "private subject" not in response.text
@@ -374,13 +522,17 @@ async def test_public_usage_requires_token_and_keeps_aggregate(privacy_app):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("alias", ["bob", "carol"])
 @pytest.mark.parametrize("specific_workspace", [False, True])
-async def test_status_stream_keeps_mail_private_and_team_tasks_visible(privacy_app, alias, specific_workspace):
+async def test_status_stream_keeps_mail_private_and_team_tasks_visible(
+    privacy_app, alias, specific_workspace
+):
     env = privacy_app
     actor = env.actors[alias]
     bob_workspace = str(env.actors["bob"].workspace)
     headers = _signed_team_headers(actor.sk, actor.did, TEAM, actor.certificate)
     params = {"workspace_id": bob_workspace} if specific_workspace else {}
-    async with env.client.stream("GET", "/v1/status/stream", headers=headers, params=params) as response:
+    async with env.client.stream(
+        "GET", "/v1/status/stream", headers=headers, params=params
+    ) as response:
         assert response.status_code == 200
         # Await the actual Redis subscription before sending; no mocked timing.
         channel = f"events:{bob_workspace}"
@@ -390,15 +542,30 @@ async def test_status_stream_keeps_mail_private_and_team_tasks_visible(privacy_a
         message_id = await _seed_mail(env)
         # The legacy status stream consumes workspace-shaped events from
         # embedding/older publishers; current mail hooks use agent-ID channels.
-        await publish_event(env.redis, MessageDeliveredEvent(
-            workspace_id=bob_workspace, message_id=message_id, subject="private subject",
-        ))
-        await publish_event(env.redis, ChatMessageEvent(
-            workspace_id=bob_workspace, session_id="private-session", message_id="private-chat-id",
-        ))
-        await publish_event(env.redis, TaskCreatedEvent(
-            workspace_id=bob_workspace, task_ref="privacy-control", title="Team work",
-        ))
+        await publish_event(
+            env.redis,
+            MessageDeliveredEvent(
+                workspace_id=bob_workspace,
+                message_id=message_id,
+                subject="private subject",
+            ),
+        )
+        await publish_event(
+            env.redis,
+            ChatMessageEvent(
+                workspace_id=bob_workspace,
+                session_id="private-session",
+                message_id="private-chat-id",
+            ),
+        )
+        await publish_event(
+            env.redis,
+            TaskCreatedEvent(
+                workspace_id=bob_workspace,
+                task_ref="privacy-control",
+                title="Team work",
+            ),
+        )
         lines = response.aiter_lines()
         event = await _next_event(lines)
         if alias == "bob":
@@ -414,7 +581,9 @@ async def test_status_stream_keeps_mail_private_and_team_tasks_visible(privacy_a
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("colliding_workspace", [False, True])
-async def test_embedded_public_status_reader_never_gets_messaging(privacy_app, colliding_workspace, monkeypatch):
+async def test_embedded_public_status_reader_never_gets_messaging(
+    privacy_app, colliding_workspace, monkeypatch
+):
     """Exercise the real embedded route with its host-supplied public identity.
 
     The standalone app does not authenticate public principals. The host's
@@ -426,13 +595,19 @@ async def test_embedded_public_status_reader_never_gets_messaging(privacy_app, c
     if colliding_workspace:
         _, _, did = _make_keypair()
         await env.db.execute(
-            "INSERT INTO {{tables.agents}} (agent_id, team_id, did_key, alias) "
-            "VALUES ($1, $2, $3, 'public-collision')", UUID(actor_id), TEAM, did,
+            "INSERT INTO {{tables.agents}} (agent_id, team_id, did_key, alias, inbound_mode) "
+            "VALUES ($1, $2, $3, 'public-collision', 'open')",
+            UUID(actor_id),
+            TEAM,
+            did,
         )
         workspace_id = str(uuid4())
         await env.db.execute(
             "INSERT INTO {{tables.workspaces}} (workspace_id, team_id, agent_id, alias) "
-            "VALUES ($1, $2, $3, 'public-collision')", UUID(workspace_id), TEAM, UUID(actor_id),
+            "VALUES ($1, $2, $3, 'public-collision')",
+            UUID(workspace_id),
+            TEAM,
+            UUID(actor_id),
         )
     # Observe this stream's own server acknowledgement, not a second
     # connection's count. Redis transport and the route's filters stay real.
@@ -449,7 +624,10 @@ async def test_embedded_public_status_reader_never_gets_messaging(privacy_app, c
 
     async def observe_ack(pubsub, response, *args, **kwargs):
         result = await handle_message(pubsub, response, *args, **kwargs)
-        if response[0] in ("subscribe", b"subscribe") and response[1] in (channel, channel.encode()):
+        if response[0] in ("subscribe", b"subscribe") and response[1] in (
+            channel,
+            channel.encode(),
+        ):
             subscribed.set()
         return result
 
@@ -457,31 +635,56 @@ async def test_embedded_public_status_reader_never_gets_messaging(privacy_app, c
     monkeypatch.setattr(PubSub, "handle_message", observe_ack)
 
     header = build_internal_auth_header_value(
-        secret="disposable-embedding-test-secret", team_id=TEAM,
-        principal_type="p", principal_id="anonymous", actor_id=actor_id,
+        secret="disposable-embedding-test-secret",
+        team_id=TEAM,
+        principal_type="p",
+        principal_id="anonymous",
+        actor_id=actor_id,
     )
     incoming = asyncio.Queue()
-    request = Request({
-        "type": "http", "method": "GET", "path": "/v1/status/stream", "app": env.app,
-        "headers": [(b"x-aweb-auth", header.encode())],
-    }, receive=incoming.get)
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/v1/status/stream",
+            "app": env.app,
+            "headers": [(b"x-aweb-auth", header.encode())],
+        },
+        receive=incoming.get,
+    )
     identity = TeamIdentity(
-        team_id=TEAM, alias="", did_key="", did_aw="", address="",
-        agent_id=actor_id, identity_scope="local", certificate_id="",
+        team_id=TEAM,
+        alias="",
+        did_key="",
+        did_aw="",
+        address="",
+        agent_id=actor_id,
+        identity_scope="local",
+        certificate_id="",
     )
     response = await status_stream(
-        request, workspace_id=None, repo=None, human_name=None, limit=200,
-        event_types=None, redis=env.redis, db_infra=env.infra, identity=identity,
+        request,
+        workspace_id=None,
+        repo=None,
+        human_name=None,
+        limit=200,
+        event_types=None,
+        redis=env.redis,
+        db_infra=env.infra,
+        identity=identity,
     )
     stream = response.body_iterator
     next_item = asyncio.create_task(anext(stream))
     subscription_ready = asyncio.create_task(subscribed.wait())
     try:
         done, _ = await asyncio.wait(
-            {next_item, subscription_ready}, return_when=asyncio.FIRST_COMPLETED,
+            {next_item, subscription_ready},
+            return_when=asyncio.FIRST_COMPLETED,
         )
         if next_item in done:
-            pytest.fail(f"Stream ended before its subscription acknowledgement: {next_item.result()!r}")
+            pytest.fail(
+                f"Stream ended before its subscription acknowledgement: {next_item.result()!r}"
+            )
         for event in (
             MessageDeliveredEvent(workspace_id=workspace_id, subject="private subject"),
             ChatMessageEvent(workspace_id=workspace_id, session_id="private-session"),
@@ -511,33 +714,54 @@ async def test_agent_roster_masks_keys_bound_to_unverified_stable_identity(priva
     registered = await env.app.state.awid_registry_client.register_did(bob.did, bob.sk)
     await env.db.execute(
         "UPDATE {{tables.agents}} SET did_aw=$1, identity_scope='global' WHERE agent_id=$2",
-        registered.did_aw, bob.id,
+        registered.did_aw,
+        bob.id,
     )
-    certificate = _encode_certificate(_make_certificate(
-        env.team_sk, env.team_did, bob.did, team_id=TEAM, alias="bob",
-        identity_scope="global", member_did_aw=registered.did_aw,
-    ))
+    certificate = _encode_certificate(
+        _make_certificate(
+            env.team_sk,
+            env.team_did,
+            bob.did,
+            team_id=TEAM,
+            alias="bob",
+            identity_scope="global",
+            member_did_aw=registered.did_aw,
+        )
+    )
     _, public = generate_x25519_keypair()
     assertion = build_encryption_key_assertion(
-        signing_key=bob.sk, identity_did=bob.did, identity_stable_id=registered.did_aw,
+        signing_key=bob.sk,
+        identity_did=bob.did,
+        identity_stable_id=registered.did_aw,
         encryption_public_key=public,
     )
     content = json.dumps(assertion).encode()
-    published = await env.client.put("/v1/agents/me/encryption-key", content=content, headers={
-        **_signed_team_headers(bob.sk, bob.did, TEAM, certificate, content),
-        "Content-Type": "application/json",
-    })
+    published = await env.client.put(
+        "/v1/agents/me/encryption-key",
+        content=content,
+        headers={
+            **_signed_team_headers(bob.sk, bob.did, TEAM, certificate, content),
+            "Content-Type": "application/json",
+        },
+    )
     assert published.status_code == 200, published.text
     alice = env.actors["alice"]
     for verified in (False, True):
         # Models the migration/reverification window after a key was published.
         await env.db.execute(
             "UPDATE {{tables.agents}} SET did_aw_verified_key=$1 WHERE agent_id=$2",
-            bob.did if verified else None, bob.id,
+            bob.did if verified else None,
+            bob.id,
         )
-        response = await env.client.get("/v1/agents", headers=_signed_team_headers(
-            alice.sk, alice.did, TEAM, alice.certificate,
-        ))
+        response = await env.client.get(
+            "/v1/agents",
+            headers=_signed_team_headers(
+                alice.sk,
+                alice.did,
+                TEAM,
+                alice.certificate,
+            ),
+        )
         assert response.status_code == 200, response.text
         rows = response.json()["agents"]
         peer = next(row for row in rows if row["alias"] == "bob")
@@ -547,11 +771,16 @@ async def test_agent_roster_masks_keys_bound_to_unverified_stable_identity(priva
             if row.get("encryption_key"):
                 # Same identity-binding rule used by released aw's verifier.
                 validate_encryption_key_assertion(
-                    row["encryption_key"], current_did_key=row["did_key"],
-                    stable_id=row.get("did_aw"), now=datetime.now(timezone.utc),
+                    row["encryption_key"],
+                    current_did_key=row["did_key"],
+                    stable_id=row.get("did_aw"),
+                    now=datetime.now(timezone.utc),
                 )
-        assert peer.get("encryption_key") == (published.json()["encryption_key"] if verified else None)
+        assert peer.get("encryption_key") == (
+            published.json()["encryption_key"] if verified else None
+        )
         marker = await env.db.fetch_one(
-            "SELECT did_aw_verified_key FROM {{tables.agents}} WHERE agent_id=$1", bob.id,
+            "SELECT did_aw_verified_key FROM {{tables.agents}} WHERE agent_id=$1",
+            bob.id,
         )
         assert marker["did_aw_verified_key"] == (bob.did if verified else None)

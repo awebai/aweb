@@ -24,6 +24,8 @@ import (
 
 func TestInitUsesGuidedOnboardingInTTY(t *testing.T) {
 	resetInitHostFlagsForTest(t)
+	// Hosted onboarding is init's path when no registry is named.
+	t.Setenv("AWID_REGISTRY_URL", "")
 	t.Setenv("AWEB_HUMAN", "Environment Human")
 	t.Setenv("USER", "machine-user")
 	// Cannot use t.Parallel() — needs cwd and globals.
@@ -1226,6 +1228,8 @@ func TestInitOutcomeFlagValidation(t *testing.T) {
 
 func TestInitFailsNonInteractiveHostedWhenRequiredFlagsMissing(t *testing.T) {
 	// Cannot use t.Parallel() — needs cwd and globals.
+	// Hosted onboarding is init's path when no registry is named.
+	t.Setenv("AWID_REGISTRY_URL", "")
 
 	oldIsTTY := initIsTTY
 	oldNewAccount := initNewAccount

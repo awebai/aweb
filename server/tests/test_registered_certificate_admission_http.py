@@ -4,11 +4,13 @@ Real AWID/aweb HTTP apps, signatures, identity tree, PostgreSQL and Redis.
 The global-human case creates authority through signed registry APIs with
 UDP DNS and live TCP listeners for both applications.
 """
+
 import asyncio
 import json
 import os
 import socket
 from contextlib import AsyncExitStack, asynccontextmanager
+from datetime import UTC, datetime, timedelta
 from time import monotonic
 from uuid import UUID, uuid4
 
@@ -22,6 +24,7 @@ from awid.registry import RegistryClient
 from awid_service.deps import get_domain_verifier
 from awid_service.main import create_app as create_registry_app
 from awid_service.testing import TXTAnswers
+from dashboard_test_support import _JWT_SECRET, _make_jwt
 from redis.asyncio import Redis
 from test_cli_never_grants import registry_listener
 from test_dashboard_privacy import TEAM, TEAM_NAME, privacy_app  # noqa: F401
@@ -39,8 +42,10 @@ from test_messages_http import (
 )
 
 from aweb.api import _build_awid_registry_client
-from aweb.team_key_pins import pinned_team_key
+from aweb.team_key_pins import AdmittedTeamKeys, pinned_team_key
 from aweb.testing import running_server
+
+__all__ = ["privacy_app"]
 
 
 @asynccontextmanager
@@ -105,7 +110,7 @@ async def _local_admissions(env, monkeypatch):
     async with registry_listener(env) as (writer, origin):
         async def exact_dns(selected):
             assert selected == domain
-            return DomainAuthority(env.team_did, origin, "_awid." + domain)
+            return DomainAuthority(env.namespace_did, origin, "_awid." + domain)
 
         env.registry_app.dependency_overrides[get_domain_verifier] = lambda: exact_dns
         monkeypatch.setenv("AWID_REGISTRY_URL", origin)
@@ -114,7 +119,6 @@ async def _local_admissions(env, monkeypatch):
         object.__setattr__(cached, "_domain_verifier", exact_dns)
         env.app.state.awid_registry_client = cached
         try:
-            await writer.register_namespace(domain, env.team_did, env.team_sk)
             await cached.list_team_certificates(domain, TEAM_NAME, active_only=False)
             transport.reads = 0
             body = b"{}"
@@ -156,14 +160,22 @@ async def _local_admissions(env, monkeypatch):
                 )
 
             async def rotate():
+                pin = await AdmittedTeamKeys(env.db).pin(TEAM)
+                assert pin is not None and pin.change_time_floor is not None
+                # SDK controller acts use whole seconds. Sign after the floor
+                # recorded by the live team admission.
+                earliest = pin.change_time_floor.replace(microsecond=0) + timedelta(seconds=1)
+                delay = (earliest - datetime.now(UTC)).total_seconds()
+                if delay > 0:
+                    await asyncio.sleep(delay)
                 next_key = _make_keypair()[2]
                 await writer.rotate_team_key(
                     domain, TEAM_NAME, new_team_did_key=next_key,
-                    namespace_controller_signing_key=env.team_sk,
+                    namespace_controller_signing_key=env.namespace_sk,
                 )
                 assert await pinned_team_key(
                     db=env.db, registry_client=writer, team_id=TEAM, served_key=next_key,
-                    txt_resolver=TXTAnswers({"_awid.example.test": env.team_did}),
+                    txt_resolver=TXTAnswers({"_awid.example.test": env.namespace_did}),
                 ) == next_key
 
             yield member, connect, revoke, rotate, transport
@@ -196,7 +208,7 @@ async def test_unregistered_certificate_reuses_exact_refusal(privacy_app, monkey
         assert (transport.reads, transport.point_reads) == (1, 1)
         revoked = await member("revoked")
         await revoke(revoked)
-        assert (await connect(revoked, status=401))["detail"] == "revoked"
+        assert (await connect(revoked, status=401))["detail"]["code"] == "certificate_revoked"
         assert (transport.reads, transport.point_reads) == (1, 2)
 
 
@@ -262,6 +274,7 @@ async def test_key_rotation_during_certificate_miss_refuses_both_slots(privacy_a
 async def test_newly_admitted_global_human_connects_behind_warm_strict_list(test_db_factory, monkeypatch):
     monkeypatch.setenv("APP_ENV", "development")
     monkeypatch.setenv("AWEB_REQUIRE_REGISTERED_CERTIFICATES", "true")
+    monkeypatch.setenv("AWEB_DASHBOARD_JWT_SECRET", _JWT_SECRET)
     monkeypatch.setenv("AWID_RATE_LIMIT_BACKEND", "redis")
     monkeypatch.setenv("AWEB_RATE_LIMIT_BACKEND", "redis")
     monkeypatch.delenv("AWID_RATE_LIMIT_DISABLED", raising=False)
@@ -323,6 +336,26 @@ async def test_newly_admitted_global_human_connects_behind_warm_strict_list(test
         ))
         await stack.enter_async_context(_listener(server.app, server_sock))
         client = await stack.enter_async_context(httpx.AsyncClient(base_url=server_origin, timeout=10))
+        agent_sk, _, agent_did = _make_keypair()
+        agent_alias = "visible-agent"
+        agent_cert_id = f"admission-{uuid4()}"
+        agent_certificate = _encode_certificate(_make_certificate(
+            team_sk, team_did, agent_did, team_id=team_id, alias=agent_alias,
+            identity_scope="local", certificate_id=agent_cert_id,
+        ))
+        await writer.register_team_certificate(
+            domain, team_name, team_controller_signing_key=team_sk,
+            certificate_id=agent_cert_id, member_did_key=agent_did,
+            member_did_aw=None, member_address=None, alias=agent_alias,
+            identity_scope="local", certificate=agent_certificate,
+        )
+        agent_body = b"{}"
+        agent_headers = _signed_team_headers(agent_sk, agent_did, team_id, agent_certificate, agent_body)
+        agent = await client.post(
+            "/v1/connect", content=agent_body, headers={**agent_headers, "Content-Type": "application/json"},
+        )
+        assert agent.status_code == 200, agent.text
+
         cached = server.app.state.awid_registry_client
         before = await cached.list_team_certificates(domain, team_name, active_only=False)
         assert certificate_id not in {cert.certificate_id for cert in before}
@@ -356,6 +389,13 @@ async def test_newly_admitted_global_human_connects_behind_warm_strict_list(test
         assert row["certificate_id"] == certificate_id
         assert row["agent_type"] == "human"
         assert row["human_verified_key"] == ALICE["did_key"]
+        dashboard = await client.get(
+            f"/v1/teams/{team_id}/agents",
+            headers={"X-Dashboard-Token": _make_jwt([team_id])},
+        )
+        assert dashboard.status_code == 200, dashboard.text
+        assert {agent["alias"] for agent in dashboard.json()["agents"]} == {agent_alias}
+
         again = await client.post("/v1/connect", content=body, headers=headers)
         assert again.status_code == 200, again.text
         assert (transport.reads, transport.point_reads) == (reads_before[0] + 1, reads_before[1])

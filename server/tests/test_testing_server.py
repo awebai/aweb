@@ -96,6 +96,7 @@ async def test_health_and_ready_answer_503_when_a_dependency_fails_and_live_answ
     body = {
         "status": "ok" if healthy else "unhealthy",
         "checks": {
+            "native_resources": "ok",
             "redis": "error" if redis_fails else "ok",
             "database": "error" if database_fails else "ok",
         },

@@ -66,8 +66,8 @@ func (s *custodyService) signAppRequest(ctx context.Context, req *awid.AppReques
 	if err := awid.VerifyAppRequestCustodyProof(req); err != nil {
 		return nil, err
 	}
-	fields := map[string]string{"grant_id": req.GrantID, "session_did_key": req.SessionDIDKey, "team_id": req.TeamID, "subject_did_aw": req.SubjectDIDAW, "subject_did_key": req.SubjectDIDKey, "aud": req.Audience}
-	if _, err := s.validateE2EECommon(ctx, req.Operation, fields, req.Nonce, req.Timestamp, ""); err != nil {
+
+	if _, err := s.admitCustodyRequest(ctx, custodyAdmission{grantID: req.GrantID, sessionDIDKey: req.SessionDIDKey, teamID: req.TeamID, subjectDIDAW: req.SubjectDIDAW, subjectDIDKey: req.SubjectDIDKey, audience: req.Audience, timestamp: req.Timestamp, scope: custodyAppSnapshot}); err != nil {
 		return nil, err
 	}
 	snap, err := loadGrantAppToolsSnapshot(s.residentHome, req.GrantID)
@@ -94,12 +94,13 @@ func (s *custodyService) signAppRequest(ctx context.Context, req *awid.AppReques
 	if current.InstallationID != app.InstallationID {
 		return nil, installationApprovalError("app_installation_changed", app.App.Origin, s.residentHome, snap.TeamID)
 	}
-	key, cached, err := s.reserveCustodyReplay(req.GrantID, req.SessionDIDKey, req.Nonce, req.RequestDigest, &awid.AppRequestSignResponse{})
+	key, cached, err := reserveCustodyReplay[awid.AppRequestSignResponse](s, custodyReplayRequest{grantID: req.GrantID, sessionDIDKey: req.SessionDIDKey, nonce: req.Nonce, digest: req.RequestDigest})
 	if err != nil {
 		return nil, err
 	}
-	if out, _ := cached.(*awid.AppRequestSignResponse); out != nil {
-		return out, nil
+	defer s.releaseFailedCustodyReplay(key)
+	if cached != nil {
+		return cached, nil
 	}
 	var tool *appmanifest.Tool
 	for i := range app.Tools {

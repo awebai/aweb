@@ -12,6 +12,7 @@ from uuid import UUID, uuid4
 import pytest
 from fastapi import Depends
 
+from aweb.internal_auth import ProxyHeaderTrust, ProxyVerificationConfig
 from aweb.identity_auth_deps import MessagingAuth, get_messaging_auth
 from aweb.internal_auth import build_internal_auth_header_value
 from aweb.mcp.server import create_mcp_app
@@ -20,8 +21,10 @@ from aweb.messaging import chat, conversations
 from awid.signing import sign_message
 from test_agent_status_host_http import _team_request
 from test_dashboard import _make_jwt
-from test_dashboard_privacy import TEAM, _request, privacy_app  # noqa: F401
+from test_dashboard_privacy import TEAM, _request, privacy_app
 from test_messages_http import _make_keypair
+
+__all__ = ["privacy_app"]
 
 
 def _wire(response):
@@ -162,6 +165,7 @@ async def _foreign_team(env):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("credential", ["certificate", "internal"])
+@pytest.mark.parametrize("privacy_app", [ProxyVerificationConfig(trust=ProxyHeaderTrust.SHARED_SECRET, shared_secret="test-internal-auth-secret")], indirect=True)
 async def test_installed_apps_hides_unauthorized_and_unknown_team(privacy_app, monkeypatch, credential):
     env = privacy_app
     other = await _foreign_team(env)

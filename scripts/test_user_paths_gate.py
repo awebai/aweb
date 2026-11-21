@@ -37,6 +37,8 @@ def known_failure(case):
         exit=1,
         response={"error": {"code": "error", "message": message}},
         stderr=message + "\n",
+        phase="initial-send",
+        existing_local_session="b58ac09b-d7b0-4c70-afe3-1daf87e57cb4",
     )
 
 
@@ -145,7 +147,10 @@ class UserPathsAdmission(unittest.TestCase):
         self.assertEqual(len(full["required_humans"]), 12)
         self.assertEqual(len(full["required_agent_cases"]), 66)
         self.assertEqual(len(full["passed_agent_cases"]), 66)
-        self.assertEqual(full["known_issue_budget"], [])
+        self.assertEqual(len(full["known_issue_budget"]), 4)
+        self.assertEqual(
+            {row["task"] for row in full["known_issue_budget"]}, {"aweb-actw", "aweb-adje.15"}
+        )
         self.assertEqual(full["known_issues"], [])
         self.assertEqual(
             result_model.qualification({"head": lanes["head"]}, 100, [])["status"],
@@ -162,7 +167,11 @@ class UserPathsAdmission(unittest.TestCase):
         self.assertEqual(result_model.qualification(lanes, 100, [])["status"], "FAILED")
 
     def test_fixed_released_local_chat_has_no_budget_exception(self):
-        self.assertEqual(result_model.KNOWN_RELEASED_ISSUES, [])
+        self.assertEqual(
+            {row["maximum_version"] for row in result_model.KNOWN_RELEASED_ISSUES
+             if row["task"] == "aweb-actw"},
+            {"1.36.54"},
+        )
         for case in ["released/t1->t2/chat/v2", "released/t2->t1/chat/v2"]:
             with self.subTest(case=case):
                 passed = result_model.classify_outcome(
@@ -280,6 +289,7 @@ class FrozenGateInput(unittest.TestCase):
                     "candidate-docker-gate.sh",
                     "candidate-suite.sh",
                     "candidate-cleanup.sh",
+                    "candidate-record.sh",
                     "candidate-network.py",
                     "fetch_released_aw.py",
                 ]:
@@ -399,11 +409,14 @@ if args[:2] in [['network','create'],['volume','create']]: print('owned');sys.ex
                     )
                 }
                 (root / "home").mkdir()
+                run_logs = root / "run-logs"
+                run_logs.mkdir()
                 env.pop("OATS_INSTANCE", None)
                 env.update(
                     PATH=f"{commands}:{env['PATH']}",
                     AWEB_GATE_LEDGER=str(root / "ledger.tsv"),
                     AWEB_GATE_LOG_DIR=str(root / "logs"),
+                    AWEB_GATE_RUN_LOG_ROOT=str(run_logs),
                     CLI_VERSION="1.36.54",
                     A2A_GATEWAY_VERSION="1.27.6",
                     HOME=str(root / "home"),
@@ -436,75 +449,75 @@ if args[:2] in [['network','create'],['volume','create']]: print('owned');sys.ex
                     self.assertEqual({row.split("\t")[6] for row in rows}, {"501"})
                     return [row for row in rows if "/" not in row.split("\t")[1]]
 
-                try:
-                    invoke("checks")
-                    self.assertEqual(len(ledger_rows()), 1)
-                    self.assertEqual(
-                        (root / "id-lookups").read_text().splitlines()[:2],
-                        ["-un", "-u"],
-                    )
-                    self.assertTrue(
-                        list(
-                            (repo / "scripts/__pycache__").glob(
-                                "fetch_released_aw.*.pyc"
-                            )
+                invoke("checks")
+                self.assertEqual(len(ledger_rows()), 1)
+                self.assertEqual(
+                    (root / "id-lookups").read_text().splitlines()[:2],
+                    ["-un", "-u"],
+                )
+                self.assertTrue(
+                    list(
+                        (repo / "scripts/__pycache__").glob(
+                            "fetch_released_aw.*.pyc"
                         )
                     )
-                    self.assertEqual(
-                        git("status", "--porcelain", "--untracked-files=all"), ""
-                    )
-                    invoke(None)
-                    ledger = ledger_rows()
-                    self.assertEqual(len(ledger), 5, ledger)
-                    self.assertEqual(len({row.split("\t")[0] for row in ledger}), 1)
-                    receipt = json.loads((root / "snapshot.json").read_text())
-                    # The frozen input names its source: a registry gitHead here.
-                    expected = (
-                        json.dumps(dict(metadata, source="gitHead"), sort_keys=True)
-                        + "\n"
-                    ).encode()
-                    digest = hashlib.sha256(expected).hexdigest()
-                    self.assertEqual(receipt["body"].encode(), expected)
-                    self.assertEqual(receipt["digest"], digest)
-                    self.assertEqual(receipt["declared"], digest)
-                    tree = git("rev-parse", "HEAD^{tree}")
-                    main = git("rev-parse", "refs/remotes/origin/main")
-                    external = f"CLI_VERSION=1.36.54\nA2A_GATEWAY_VERSION=1.27.6\nSYNCHRONIZED_MAIN_SHA={main}\nRELEASED_AW={digest}\n"
-                    self.assertEqual(
-                        ledger[0].split("\t")[0],
-                        tree + "-" + hashlib.sha256(external.encode()).hexdigest(),
-                    )
-                    reused = invoke(None)
-                    self.assertIn("no stages run", reused)
-                    self.assertEqual(reused.count("NOT COVERED: pending aweb-actu"), 12)
-                    self.assertIn("incomplete: human paths not covered", reused)
-                    self.assertEqual(len(ledger_rows()), 5)
-                    # A new reviewed main baseline also invalidates cached checks,
-                    # even when the candidate source tree and artifact are unchanged.
-                    next_main = git(
-                        "commit-tree", tree, "-p", main, "-m", "next reviewed main"
-                    )
-                    git("update-ref", "refs/remotes/origin/main", next_main)
-                    invoke("checks")
-                    rebound = ledger_rows()
-                    self.assertEqual(len(rebound), 6)
-                    self.assertNotEqual(
-                        rebound[-1].split("\t")[0], ledger[0].split("\t")[0]
-                    )
-                    # Changing only the frozen artifact invalidates the key.
-                    metadata["version"] = "1.36.55"
-                    invoke("checks")
-                    changed = ledger_rows()
-                    self.assertEqual(len(changed), 7)
-                    self.assertNotEqual(
-                        changed[-1].split("\t")[0], ledger[0].split("\t")[0]
-                    )
-                    self.assertEqual(server.requests, ["/@awebai%2faw/latest"] * 5)
-                finally:
-                    for logs in Path("/tmp").glob(
-                        "aweb-candidate-gate-" + git("rev-parse", "HEAD") + "-*"
-                    ):
-                        shutil.rmtree(logs, ignore_errors=True)
+                )
+                self.assertEqual(
+                    git("status", "--porcelain", "--untracked-files=all"), ""
+                )
+                invoke(None)
+                ledger = ledger_rows()
+                self.assertEqual(len(ledger), 5, ledger)
+                self.assertEqual(len({row.split("\t")[0] for row in ledger}), 1)
+                receipt = json.loads((root / "snapshot.json").read_text())
+                # The frozen input names its source: a registry gitHead here.
+                expected = (
+                    json.dumps(dict(metadata, source="gitHead"), sort_keys=True)
+                    + "\n"
+                ).encode()
+                digest = hashlib.sha256(expected).hexdigest()
+                self.assertEqual(receipt["body"].encode(), expected)
+                self.assertEqual(receipt["digest"], digest)
+                self.assertEqual(receipt["declared"], digest)
+                tree = git("rev-parse", "HEAD^{tree}")
+                main = git("rev-parse", "refs/remotes/origin/main")
+                external = f"CLI_VERSION=1.36.54\nA2A_GATEWAY_VERSION=1.27.6\nSYNCHRONIZED_MAIN_SHA={main}\nRELEASED_AW={digest}\n"
+                self.assertEqual(
+                    ledger[0].split("\t")[0],
+                    tree + "-" + hashlib.sha256(external.encode()).hexdigest(),
+                )
+                reused = invoke(None)
+                self.assertIn("no stages run", reused)
+                self.assertEqual(reused.count("NOT COVERED: pending aweb-actu"), 12)
+                self.assertIn("incomplete: human paths not covered", reused)
+                self.assertEqual(len(ledger_rows()), 5)
+                # A new reviewed main baseline also invalidates cached checks,
+                # even when the candidate source tree and artifact are unchanged.
+                next_main = git(
+                    "commit-tree", tree, "-p", main, "-m", "next reviewed main"
+                )
+                git("update-ref", "refs/remotes/origin/main", next_main)
+                invoke("checks")
+                rebound = ledger_rows()
+                self.assertEqual(len(rebound), 6)
+                self.assertNotEqual(
+                    rebound[-1].split("\t")[0], ledger[0].split("\t")[0]
+                )
+                # Changing only the frozen artifact invalidates the key.
+                metadata["version"] = "1.36.55"
+                invoke("checks")
+                changed = ledger_rows()
+                self.assertEqual(len(changed), 7)
+                self.assertNotEqual(
+                    changed[-1].split("\t")[0], ledger[0].split("\t")[0]
+                )
+                self.assertEqual(server.requests, ["/@awebai%2faw/latest"] * 5)
+                owned_runs = list(run_logs.iterdir())
+                self.assertEqual(len(owned_runs), 4)
+                for run in owned_runs:
+                    run_id = (run / "run-id").read_text().strip()
+                    self.assertEqual(run.name, f"aweb-candidate-gate-{git('rev-parse', 'HEAD')}-{run_id}")
+                    self.assertTrue((run / "owned-resources.tsv").is_file())
         finally:
             server.shutdown()
             thread.join()
@@ -513,6 +526,63 @@ if args[:2] in [['network','create'],['volume','create']]: print('owned');sys.ex
 
 class ExactMessageAssertions(unittest.TestCase):
     """Negative controls exercise the matrix's actual three-turn assertion path."""
+
+    def test_released_contacts_only_budgets_only_the_exact_13640_readback(self):
+        diagnostic = "Expected contacts_only; server stored team_and_contacts"
+        for kind in ("mail", "chat"):
+            case = f"released/contacts-only/{kind}"
+            outcome = dict(case=case, status="FAILED", error=diagnostic, assertion=diagnostic)
+            with self.subTest(case=case):
+                classified = result_model.classify_outcome(outcome, "1.36.40")
+                self.assertEqual(classified["status"], "KNOWN_ISSUE")
+                self.assertEqual(classified["observed_status"], "FAILED")
+                self.assertEqual(result_model.classify_outcome(classified, "1.36.40"), classified)
+                for changed, version in (
+                    (outcome, "1.36.39"),
+                    (outcome, "1.36.41"),
+                    (outcome, "1.36.040"),
+                    (outcome, "1.36.40-rc.1"),
+                    ({**outcome, "case": f"head/contacts-only/{kind}"}, "1.36.40"),
+                    ({**outcome, "assertion": None}, "1.36.40"),
+                    ({**outcome, "failure": {"exit": 1}}, "1.36.40"),
+                    ({**outcome, "assertion": "routing failed"}, "1.36.40"),
+                    (dict(case=case, status="PASSED"), "1.36.40"),
+                ):
+                    self.assertEqual(result_model.classify_outcome(changed, version)["status"], "FAILED")
+                self.assertEqual(
+                    result_model.classify_outcome(dict(case=case, status="PASSED"), "1.36.41")["status"],
+                    "PASSED",
+                )
+
+    def test_contacts_only_requires_the_policy_read_back_from_storage(self):
+        import sys
+        from unittest.mock import Mock, call, patch
+
+        spec = importlib.util.spec_from_file_location(
+            "user_paths", ROOT / "scripts/e2e/user_paths.py"
+        )
+        paths = importlib.util.module_from_spec(spec)
+        with patch.dict(sys.modules, {"user_paths_result": result_model}):
+            spec.loader.exec_module(paths)
+        lane = paths.Lane.__new__(paths.Lane)
+        lane.name, lane.version = "released", "1.36.40"
+        lane.failures, lane.outcomes, lane.actors = [], [], {}
+        lane.command = Mock(side_effect=[
+            {"inbound_mode": "contacts_only"},
+            {"inbound_mode": "team_and_contacts"},
+            {"inbound_mode": "open"},
+        ])
+        lane.refused = Mock()
+        lane.run_case("released/contacts-only/mail", lambda: lane.contacts_only("mail"))
+        self.assertEqual(lane.outcomes[0]["observed_status"], "FAILED")
+        self.assertEqual(lane.outcomes[0]["status"], "KNOWN_ISSUE")
+        self.assertEqual(lane.failures, [])
+        self.assertEqual(lane.command.call_args_list, [
+            call("g2", "inbound-mode", "contacts-only"),
+            call("g2", "inbound-mode"),
+            call("g2", "inbound-mode", "open"),
+        ])
+        lane.refused.assert_not_called()
 
     def exercise(self, kind, encrypted, mutate=None):
         import copy
@@ -820,8 +890,8 @@ class ExactMessageAssertions(unittest.TestCase):
 
 class ReleasedKnownIssueBudget(unittest.TestCase):
     def setUp(self):
-        # Exercise the unchanged guard using test-only rules, independently of
-        # the now-empty production budget. These are not admission exceptions.
+        # Exercise classifier boundaries with a narrower test-only range,
+        # independently of the reviewed production allowance.
         from unittest.mock import patch
 
         rules = []
@@ -913,6 +983,9 @@ class ReleasedKnownIssueBudget(unittest.TestCase):
                 }
                 case = name + "/t1->t2/chat/v2"
                 failure = known_failure(case)
+                lane.capture_failure = lambda *args: (
+                    "b58ac09b-d7b0-4c70-afe3-1daf87e57cb4"
+                )
                 response = subprocess.CompletedProcess(
                     [], 1, json.dumps(failure["response"]) + "\n", failure["stderr"]
                 )
@@ -921,7 +994,11 @@ class ReleasedKnownIssueBudget(unittest.TestCase):
                     redirect_stdout(stdout),
                     patch.object(paths.subprocess, "run", return_value=response),
                 ):
-                    lane.run_case(case, lambda: lane.flow("t1", "t2", "chat", True))
+                    lane.run_case(
+                        case,
+                        lambda: lane.flow("t1", "t2", "chat", True),
+                        ("t1", "t2", "chat", True),
+                    )
                 self.assertEqual(lane.outcomes[0]["status"], expected)
                 self.assertEqual(len(lane.failures), 0 if name == "released" else 1)
                 if name == "released":
@@ -930,6 +1007,7 @@ class ReleasedKnownIssueBudget(unittest.TestCase):
                             "KNOWN ISSUE " + case + " fixture-issue observed failure:"
                         )
                     )
+                    self.assertIn(failure["stderr"].rstrip("\n"), stdout.getvalue())
                     self.assertNotIn("FAIL ", stdout.getvalue())
                     self.assertEqual(
                         lane.outcomes[0]["failure"]["response"], failure["response"]
@@ -997,11 +1075,12 @@ class ReleasedKnownIssueBudget(unittest.TestCase):
                 self.assertEqual(
                     result_model.classify_outcome(row, version)["status"], "FAILED"
                 )
+                expected = "PASSED" if version in ["1.36.52", "1.36.55"] else "FAILED"
                 self.assertEqual(
                     result_model.classify_outcome(
                         dict(case=case, status="PASSED"), version
                     )["status"],
-                    "FAILED",
+                    expected,
                 )
         for other in [
             "head/t1->t2/chat/v2",

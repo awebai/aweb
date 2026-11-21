@@ -6,6 +6,11 @@ All endpoints are read-only.
 
 from __future__ import annotations
 
+from aweb.member_team_key import current_member_sql
+
+from aweb.application_state import application_registry_client
+from aweb.identity_binding import IdentityProjectionField, verified_identity_field_sql
+
 from aweb.human_kind import agent_listing_predicate_sql, effective_agent_type
 
 import asyncio
@@ -27,18 +32,16 @@ from aweb.coordination.tasks_service import list_tasks_paginated
 from aweb.awid_error_handling import (
     AWID_DEPENDENCY_ERRORS,
     awid_dependency_http_exception,
-    awid_registry_not_configured_exception,
 )
 from aweb.config import get_settings
 from aweb.deps import get_db, get_redis
 from aweb.events import (
-    TeamAgentOfflineEvent,
-    TeamAgentOnlineEvent,
-    publish_team_event,
     team_events_channel_name,
 )
-from aweb.presence import get_workspace_ids_by_team_id, list_agent_presences_by_workspace_ids
-from aweb.redis_subscriptions import open_subscription, release_subscription
+from aweb.grant_liveness_policy import GrantLivenessFailurePolicy
+from aweb.presence_transitions import team_online_aliases
+from aweb.workspace_activity import latest_workspace_activity, workspace_activity_by_id
+from aweb.redis_subscriptions import raw_subscription
 from aweb.service_errors import ValidationError
 from aweb.team_auth import verify_dashboard_token
 
@@ -46,7 +49,6 @@ router = APIRouter(tags=["dashboard"])
 logger = logging.getLogger(__name__)
 
 DASHBOARD_KEEPALIVE_SECONDS = 30.0
-DASHBOARD_PRESENCE_POLL_SECONDS = 5.0
 DASHBOARD_PUBSUB_POLL_SECONDS = 1.0
 
 
@@ -131,18 +133,27 @@ async def _get_team_visibility(request: Request, team_id: str) -> str:
     except ValueError:
         return "private"
 
-    registry_client = getattr(request.app.state, "awid_registry_client", None)
-    if registry_client is None:
-        raise awid_registry_not_configured_exception(operation="AWID dashboard team visibility lookup")
+    registry_client = application_registry_client(request.app.state)
 
     try:
         team = await registry_client.get_team(domain, team_name)
     except AWID_DEPENDENCY_ERRORS as exc:
-        logger.warning("AWID registry dependency failed for team visibility lookup: %s", team_id, exc_info=True)
-        raise awid_dependency_http_exception(exc, operation="AWID dashboard team visibility lookup") from exc
+        logger.warning(
+            "AWID registry dependency failed for team visibility lookup: %s",
+            team_id,
+            exc_info=True,
+        )
+        raise awid_dependency_http_exception(
+            exc, operation="AWID dashboard team visibility lookup"
+        ) from exc
     except Exception as exc:
-        logger.exception("Unexpected AWID registry dependency error for team visibility lookup: %s", team_id)
-        raise awid_dependency_http_exception(exc, operation="AWID dashboard team visibility lookup") from exc
+        logger.exception(
+            "Unexpected AWID registry dependency error for team visibility lookup: %s",
+            team_id,
+        )
+        raise awid_dependency_http_exception(
+            exc, operation="AWID dashboard team visibility lookup"
+        ) from exc
 
     if team is None:
         return "private"
@@ -250,21 +261,17 @@ def _format_sse(event_name: str, payload: dict[str, Any]) -> str:
     return f"event: {event_name}\ndata: {json.dumps(payload)}\n\n"
 
 
-async def _list_online_aliases(redis, *, team_id: str) -> list[str]:
-    workspace_ids = await get_workspace_ids_by_team_id(redis, team_id)
-    if not workspace_ids:
-        return []
-    presences = await list_agent_presences_by_workspace_ids(redis, workspace_ids)
-    aliases = {
-        str(p.get("alias", "")).strip()
-        for p in presences
-        if str(p.get("alias", "")).strip() and str(p.get("team_id", "")).strip() == team_id
-    }
-    return sorted(aliases)
-
-
-async def _build_dashboard_snapshot(db, redis, *, team_id: str) -> dict[str, Any]:
-    online_aliases = await _list_online_aliases(redis, team_id=team_id)
+async def _build_dashboard_snapshot(
+    db, redis, *, team_id: str, request: Request
+) -> dict[str, Any]:
+    online_aliases = await team_online_aliases(
+        db.get_manager("aweb"),
+        redis,
+        team_id=team_id,
+        registry_client=application_registry_client(request.app.state),
+        request=request,
+        failure_policy=GrantLivenessFailurePolicy.OMIT_UNPROVEN,
+    )
     claim_rows = await list_active_claims(db, team_id=team_id, limit=200)
     snapshot = DashboardEventSnapshot(
         team_id=team_id,
@@ -285,18 +292,20 @@ async def _build_dashboard_snapshot(db, redis, *, team_id: str) -> dict[str, Any
 
 async def _sse_dashboard_events(*, request: Request, db, redis, team_id: str):
     channel = team_events_channel_name(team_id)
-    pubsub = await open_subscription(redis, channel)
-    try:
+    async with raw_subscription(redis, channel) as pubsub:
         yield ": keepalive\n\n"
-        yield _format_sse("connected", {"type": "connected", "team_id": team_id, "timestamp": _utc_now_iso()})
+        yield _format_sse(
+            "connected",
+            {"type": "connected", "team_id": team_id, "timestamp": _utc_now_iso()},
+        )
 
-        snapshot = await _build_dashboard_snapshot(db, redis, team_id=team_id)
+        snapshot = await _build_dashboard_snapshot(
+            db, redis, team_id=team_id, request=request
+        )
         yield _format_sse("snapshot", {"type": "snapshot", **snapshot})
 
-        previous_online_aliases = set(snapshot["online_aliases"])
         loop = asyncio.get_running_loop()
         last_keepalive = loop.time()
-        last_presence_poll = loop.time()
 
         while True:
             if await request.is_disconnected():
@@ -308,48 +317,35 @@ async def _sse_dashboard_events(*, request: Request, db, redis, team_id: str):
                     timeout=DASHBOARD_PUBSUB_POLL_SECONDS,
                 )
             except Exception:
-                logger.warning("Dashboard team-events pubsub read failed", exc_info=True)
+                logger.warning(
+                    "Dashboard team-events pubsub read failed", exc_info=True
+                )
                 return
 
             now = loop.time()
 
             if message and message.get("type") == "message":
-                raw_payload = message.get("data")
-                if isinstance(raw_payload, bytes):
-                    raw_payload = raw_payload.decode("utf-8")
-                payload = json.loads(raw_payload)
-                event_type = str(payload.get("type", "message"))
+                try:
+                    raw_payload = message.get("data")
+                    if isinstance(raw_payload, bytes):
+                        raw_payload = raw_payload.decode("utf-8")
+                    payload = json.loads(raw_payload)
+                    if not isinstance(payload, dict) or not isinstance(
+                        payload.get("type"), str
+                    ):
+                        raise ValueError("Expected an event object with a named type")
+                    event_type = payload["type"]
+                except (UnicodeDecodeError, ValueError, TypeError):
+                    logger.warning("Ignoring malformed dashboard team-event frame")
+                    continue
                 # Older/external publishers may still send sensitive messaging
                 # events. Team access never establishes message participation.
                 if not event_type.startswith(("message.", "chat.")):
                     yield _format_sse(event_type, payload)
 
-            if now - last_presence_poll >= DASHBOARD_PRESENCE_POLL_SECONDS:
-                current_online_aliases = set(await _list_online_aliases(redis, team_id=team_id))
-                for alias in sorted(current_online_aliases - previous_online_aliases):
-                    await publish_team_event(
-                        redis,
-                        TeamAgentOnlineEvent(
-                            team_id=team_id,
-                            alias=alias,
-                        ),
-                    )
-                for alias in sorted(previous_online_aliases - current_online_aliases):
-                    await publish_team_event(
-                        redis,
-                        TeamAgentOfflineEvent(
-                            team_id=team_id,
-                            alias=alias,
-                        ),
-                    )
-                previous_online_aliases = current_online_aliases
-                last_presence_poll = now
-
             if now - last_keepalive >= DASHBOARD_KEEPALIVE_SECONDS:
                 yield ": keepalive\n\n"
                 last_keepalive = now
-    finally:
-        await release_subscription(pubsub)
 
 
 # ---------------------------------------------------------------------------
@@ -358,31 +354,36 @@ async def _sse_dashboard_events(*, request: Request, db, redis, team_id: str):
 
 
 @router.get("/v1/teams/{team_id:path}/agents")
-async def list_team_agents(
-    request: Request, team_id: str, db=Depends(get_db)
-) -> dict:
+async def list_team_agents(request: Request, team_id: str, db=Depends(get_db)) -> dict:
     await _require_dashboard_auth(request, team_id)
     aweb_db = db.get_manager("aweb")
 
     rows = await aweb_db.fetch_all(
         f"""
-        SELECT a.agent_id, a.alias, a.did_key, a.human_name, CASE WHEN a.did_aw_verified_key = a.did_key THEN a.address END AS address, a.agent_type, a.human_verified_key,
-               a.role, a.status, a.identity_scope, a.created_at,
-               w.last_seen_at, w.workspace_path
+        SELECT a.agent_id, a.alias, a.did_key, a.human_name, {verified_identity_field_sql(IdentityProjectionField.ADDRESS, agent="a")} AS address, a.agent_type, a.human_verified_key,
+               a.role, a.status, a.identity_scope, a.created_at
         FROM {{{{tables.agents}}}} a
-        LEFT JOIN LATERAL (
-            SELECT last_seen_at, workspace_path
-            FROM {{{{tables.workspaces}}}}
-            WHERE agent_id = a.agent_id AND team_id = a.team_id AND deleted_at IS NULL
-            ORDER BY last_seen_at DESC NULLS LAST, updated_at DESC NULLS LAST, created_at DESC
-            LIMIT 1
-        ) w ON TRUE
-        WHERE a.team_id = $1 AND a.deleted_at IS NULL
+        WHERE a.team_id = $1 AND {current_member_sql("a")}
           AND {agent_listing_predicate_sql("a")}
         ORDER BY a.alias
         """,
         team_id,
     )
+    workspace_rows = await aweb_db.fetch_all(
+        """SELECT workspace_id, agent_id, workspace_path FROM {{tables.workspaces}}
+           WHERE team_id=$1 AND deleted_at IS NULL
+           ORDER BY last_seen_at DESC NULLS LAST, created_at DESC, workspace_id""",
+        team_id,
+    )
+    activity = await workspace_activity_by_id(
+        aweb_db,
+        _state_redis(request),
+        workspace_ids=[str(row["workspace_id"]) for row in workspace_rows],
+        registry_client=application_registry_client(request.app.state),
+        request=request,
+        failure_policy=GrantLivenessFailurePolicy.OMIT_UNPROVEN,
+    )
+    selected = latest_workspace_activity(workspace_rows, activity)
     health = await agent_health(
         aweb_db,
         _state_redis(request),
@@ -405,8 +406,16 @@ async def list_team_agents(
                 role=r["role"],
                 status=r["status"],
                 identity_scope=r["identity_scope"],
-                last_seen=(r["last_seen_at"].isoformat() if r["last_seen_at"] else None),
-                workspace_path=r["workspace_path"],
+                last_seen=(
+                    observed.last_seen_at.isoformat()
+                    if (context := selected.get(str(r["agent_id"]))) is not None
+                    and (observed := context.activity) is not None
+                    and observed.last_seen_at is not None
+                    else None
+                ),
+                workspace_path=selected[str(r["agent_id"])].workspace["workspace_path"]
+                if str(r["agent_id"]) in selected
+                else None,
                 created_at=r["created_at"].isoformat(),
                 health=health[str(r["agent_id"])],
             ).model_dump()
@@ -446,10 +455,10 @@ async def get_team_agent(
 
     row = await aweb_db.fetch_one(
         f"""
-        SELECT agent_id, alias, did_key, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, CASE WHEN did_aw_verified_key = did_key THEN address END AS address, role, status, identity_scope,
+        SELECT agent_id, alias, did_key, {verified_identity_field_sql(IdentityProjectionField.STABLE_DID)} AS did_aw, {verified_identity_field_sql(IdentityProjectionField.ADDRESS)} AS address, role, status, identity_scope,
                human_name, agent_type, human_verified_key, created_at
-        FROM {{{{tables.agents}}}}
-        WHERE team_id = $1 AND alias = $2 AND deleted_at IS NULL
+        FROM {{{{tables.agents}}}} a
+        WHERE a.team_id = $1 AND a.alias = $2 AND {current_member_sql("a")}
           AND {agent_listing_predicate_sql()}
         """,
         team_id,
@@ -580,6 +589,10 @@ async def stream_team_events(
     if redis is None:
         raise HTTPException(status_code=503, detail="Redis unavailable")
 
+    # Configuration refusals must precede SSE headers; the snapshot still
+    # follows the subscription and performs the actual evidence reads.
+    application_registry_client(request.app.state)
+
     return StreamingResponse(
         _sse_dashboard_events(request=request, db=db, redis=redis, team_id=team_id),
         media_type="text/event-stream",
@@ -592,9 +605,7 @@ async def stream_team_events(
 
 
 @router.get("/v1/teams/{team_id:path}/roles/active")
-async def get_active_roles(
-    request: Request, team_id: str, db=Depends(get_db)
-) -> dict:
+async def get_active_roles(request: Request, team_id: str, db=Depends(get_db)) -> dict:
     await _require_dashboard_auth(request, team_id)
     aweb_db = db.get_manager("aweb")
 
@@ -615,7 +626,9 @@ async def get_active_roles(
             "id": str(row["id"]),
             "version": row["version"],
             "bundle": row["bundle_json"],
-            "updated_at": row["updated_at"].isoformat() if row.get("updated_at") else None,
+            "updated_at": row["updated_at"].isoformat()
+            if row.get("updated_at")
+            else None,
         }
     }
 
@@ -644,34 +657,33 @@ async def get_active_instructions(
             "id": str(row["id"]),
             "version": row["version"],
             "document": row["document_json"],
-            "updated_at": row["updated_at"].isoformat() if row.get("updated_at") else None,
+            "updated_at": row["updated_at"].isoformat()
+            if row.get("updated_at")
+            else None,
         }
     }
 
 
 @router.get("/v1/teams/{team_id:path}/status")
-async def get_team_status(
-    request: Request, team_id: str, db=Depends(get_db)
-) -> dict:
+async def get_team_status(request: Request, team_id: str, db=Depends(get_db)) -> dict:
     await _require_dashboard_auth(request, team_id)
     aweb_db = db.get_manager("aweb")
 
     agent_count_row = await aweb_db.fetch_one(
-        "SELECT COUNT(*)::int AS cnt FROM {{tables.agents}} WHERE team_id = $1 AND deleted_at IS NULL",
+        "SELECT COUNT(*)::int AS cnt FROM {{tables.agents}} a WHERE a.team_id = $1 AND "
+        + current_member_sql("a"),
         team_id,
     )
     agent_count = agent_count_row["cnt"] if agent_count_row else 0
 
-    # Online = workspaces with recent last_seen_at
-    online_rows = await aweb_db.fetch_all(
-        """
-        SELECT DISTINCT alias FROM {{tables.workspaces}}
-        WHERE team_id = $1 AND deleted_at IS NULL
-          AND last_seen_at > NOW() - INTERVAL '30 minutes'
-        """,
-        team_id,
+    online_agents = await team_online_aliases(
+        aweb_db,
+        _state_redis(request),
+        team_id=team_id,
+        registry_client=application_registry_client(request.app.state),
+        request=request,
+        failure_policy=GrantLivenessFailurePolicy.OMIT_UNPROVEN,
     )
-    online_agents = [r["alias"] for r in online_rows]
 
     claim_rows = await list_active_claims(db, team_id=team_id)
 
@@ -690,7 +702,11 @@ async def get_team_status(
         agent_count=agent_count,
         online_agents=online_agents,
         active_claims=[
-            {"task_ref": r["task_ref"], "alias": r["alias"], "claimed_at": r["claimed_at"].isoformat()}
+            {
+                "task_ref": r["task_ref"],
+                "alias": r["alias"],
+                "claimed_at": r["claimed_at"].isoformat(),
+            }
             for r in claim_rows
         ],
         active_locks=[
@@ -698,7 +714,9 @@ async def get_team_status(
                 "resource_key": r["resource_key"],
                 "holder_alias": r["holder_alias"],
                 "acquired_at": r["acquired_at"].isoformat(),
-                "expires_at": r["expires_at"].isoformat() if r.get("expires_at") else None,
+                "expires_at": r["expires_at"].isoformat()
+                if r.get("expires_at")
+                else None,
             }
             for r in lock_rows
         ],
@@ -720,7 +738,9 @@ async def get_usage(
     until_dt = _parse_optional_datetime(until)
 
     # Count messages
-    msg_query = "SELECT COUNT(*)::int AS cnt FROM {{tables.messages}} WHERE team_id = $1"
+    msg_query = (
+        "SELECT COUNT(*)::int AS cnt FROM {{tables.messages}} WHERE team_id = $1"
+    )
     msg_params: list = [team_id]
     idx = 2
     if since_dt:
@@ -736,7 +756,8 @@ async def get_usage(
 
     # Count active agents
     agent_row = await aweb_db.fetch_one(
-        "SELECT COUNT(*)::int AS cnt FROM {{tables.agents}} WHERE team_id = $1 AND deleted_at IS NULL",
+        "SELECT COUNT(*)::int AS cnt FROM {{tables.agents}} a WHERE a.team_id = $1 AND "
+        + current_member_sql("a"),
         team_id,
     )
     active_agents = agent_row["cnt"] if agent_row else 0

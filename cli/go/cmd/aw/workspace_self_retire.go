@@ -55,6 +55,9 @@ const (
 // team's owner has to.
 const callerCertificateRevoked = "certificate_revoked"
 
+// selfRemovalAccepted records a hosted removal that the service will finish.
+const selfRemovalAccepted retirementOutcome = "self_removal_accepted"
+
 type selfRetireResponse struct {
 	Status              string `json:"status"`
 	TeamID              string `json:"team_id"`

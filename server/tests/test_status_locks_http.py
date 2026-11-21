@@ -7,6 +7,8 @@ import pytest
 from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
 from test_messages_http import _signed_team_headers
 
+__all__ = ["privacy_app"]
+
 
 @pytest.mark.asyncio
 async def test_status_reports_reservation_held_by_workspace_agent(privacy_app):

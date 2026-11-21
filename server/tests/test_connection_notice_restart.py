@@ -23,6 +23,8 @@ from awid.signing import canonical_json_bytes, sign_message
 from test_dashboard_privacy import TEAM, _request, privacy_app  # noqa: F401
 from test_e2ee_local_sender_read_trust import _local_sender_mail, runtime_packages, REPO  # noqa: F401
 
+__all__ = ["privacy_app", "runtime_packages"]
+
 
 class RecipientListener:
     def __init__(self, app):

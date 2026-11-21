@@ -1,12 +1,15 @@
 package main
 
 import (
+	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The package's tests run the same way on a developer's host as in the gate.
@@ -42,6 +45,32 @@ func TestHarnessScrubsAgentRuntimeMarkers(t *testing.T) {
 				t.Errorf("%s leaked into the environment of child aw processes", name)
 			}
 		}
+	}
+}
+
+func TestHarnessNamesARefusingRegistry(t *testing.T) {
+	// A test that names no registry must not reach the public one, or the DNS
+	// that discovers it: the package's tests never use the internet.
+	value := os.Getenv("AWID_REGISTRY_URL")
+	if value != unreachableTestRegistryURL {
+		t.Fatalf("AWID_REGISTRY_URL=%q in the test process, want %q", value, unreachableTestRegistryURL)
+	}
+	found := false
+	for _, entry := range awTestBinary.env {
+		if strings.HasPrefix(entry, "AWID_REGISTRY_URL=") {
+			found = entry == "AWID_REGISTRY_URL="+unreachableTestRegistryURL
+		}
+	}
+	if !found {
+		t.Fatalf("child aw processes do not inherit AWID_REGISTRY_URL=%s", unreachableTestRegistryURL)
+	}
+	target, err := url.Parse(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if conn, err := net.DialTimeout("tcp", target.Host, 2*time.Second); err == nil {
+		_ = conn.Close()
+		t.Fatalf("something listens at %s; the test registry must refuse", target.Host)
 	}
 }
 

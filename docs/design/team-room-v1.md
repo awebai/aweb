@@ -103,6 +103,11 @@ are room statuses, not changes to existing mail/chat statuses. Record
 the underlying authorization/verification error through the existing logging
 path, without logging post bodies or private key material.
 
+A native current-membership refusal keeps the HTTP string `detail` as
+`Room requires current team membership` and carries the parallel `reason`
+`team_membership_not_current`. The string is the released `aw room read`
+compatibility value.
+
 ## Existing signed-message envelope
 
 Reuse the existing plaintext message envelope and canonical signing bytes

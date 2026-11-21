@@ -405,6 +405,14 @@ func runWorkspaceDelete(cmd *cobra.Command, args []string) error {
 		if retireErr != nil {
 			return fmt.Errorf("workspace not retired: %w", retireErr)
 		}
+		if retired.Status == "accepted" {
+			return writeWorkspaceDeleteOutput(workspaceDeleteOutput{
+				WorkspaceID:         workspaceID,
+				Alias:               plan.alias,
+				AliasReleasedReason: "completion pending",
+				RetirementCode:      selfRemovalAccepted,
+			})
+		}
 		if !retired.AliasReleased {
 			return fmt.Errorf(
 				"workspace not retired: alias %s was not released (%s)",
@@ -595,6 +603,9 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 	if hasTeamKey {
 		_, err = addWorktreeViaLocalTeamKey(child)
 	} else if strings.TrimSpace(state.APIKey) != "" {
+		if membership := teamState.Membership(teamID); membership != nil {
+			child.TeamRegistryURL = membership.RegistryURL
+		}
 		_, err = addWorktreeViaCloudBootstrap(child)
 	} else {
 		_, err = addWorktreeViaPrimaryInvite(child)
@@ -822,6 +833,9 @@ func formatWorkspaceAddWorktree(v any) string {
 
 func formatWorkspaceDelete(v any) string {
 	out := v.(workspaceDeleteOutput)
+	if out.RetirementCode == selfRemovalAccepted {
+		return fmt.Sprintf("Workspace removal accepted for %s (%s). Completion pending.\n", out.Alias, out.WorkspaceID)
+	}
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("Deleted workspace %s (%s)\n", out.Alias, out.WorkspaceID))
 	if out.IdentityDeleted {

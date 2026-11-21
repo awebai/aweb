@@ -38,6 +38,9 @@ func TestAPIKeyGlobalRecoveryCommand(t *testing.T) {
 			var did, pub string
 			calls, issued, registered := 0, 0, 0
 			server := newLocalHTTPServerHandlerWithURL(t, func(base string, w http.ResponseWriter, r *http.Request) {
+				if servePendingPrivateTeamRead(w, r, team) {
+					return
+				}
 				mu.Lock()
 				defer mu.Unlock()
 				switch {

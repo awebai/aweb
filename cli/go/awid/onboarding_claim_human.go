@@ -20,12 +20,29 @@ type ClaimHumanRequest struct {
 	Username string `json:"username"`
 	Email    string `json:"email"`
 	DIDKey   string `json:"did_key"`
+	// ControllerClaim carries the shared artifact; the member's transport
+	// signature still authenticates this request. Cloud alone checks authority.
+	ControllerClaim *SignedUnownedTeamClaim `json:"controller_claim,omitempty"`
 }
+
+// ClaimHumanStatus names the account/email outcome without treating it as a
+// delivery receipt. Released Response.Status remains a string for SDK callers.
+type ClaimHumanStatus string
+
+const (
+	ClaimHumanAlreadyAttached  ClaimHumanStatus = "already_attached"
+	ClaimHumanAttached         ClaimHumanStatus = "attached"
+	ClaimHumanVerificationSent ClaimHumanStatus = "verification_sent"
+	ClaimHumanApprovalSent     ClaimHumanStatus = "approval_sent"
+)
 
 // ClaimHumanResponse is returned by POST /api/v1/claim-human.
 type ClaimHumanResponse struct {
 	Status string `json:"status"`
 	Email  string `json:"email,omitempty"`
+	// EmailSent is absent/null when delivery was not observed or is inapplicable.
+	EmailSent    *bool  `json:"email_sent,omitempty"`
+	EmailMessage string `json:"email_message,omitempty"`
 }
 
 // ClaimHuman calls the cloud onboarding endpoint to attach a human account to

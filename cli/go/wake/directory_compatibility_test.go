@@ -58,6 +58,37 @@ func TestWakeSharedStateWarnsOnceWithoutRefusingCommands(t *testing.T) {
 	}
 }
 
+func TestWakeControlDirectoryRequiresCurrentOwner(t *testing.T) {
+	// An unprivileged test can inspect the root-owned filesystem root without
+	// modifying it. A privileged test can make a foreign-owned fixture.
+	dir := "/"
+	if os.Geteuid() == 0 {
+		dir = t.TempDir()
+		if err := os.Chown(dir, 1, -1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := checkWakeControlDirectory(dir, false); err == nil || !strings.Contains(err.Error(), "unsafe wake control directory") {
+		t.Fatalf("foreign-owned wake state was not refused: %v", err)
+	}
+}
+
+func TestWakeControlShortSocketDirectoryRequiresPrivatePermissions(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkWakeControlDirectory(dir, true); err != nil {
+		t.Fatalf("private socket directory was refused: %v", err)
+	}
+	if err := os.Chmod(dir, 0o770); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkWakeControlDirectory(dir, true); err == nil || !strings.Contains(err.Error(), "unsafe wake control directory") {
+		t.Fatalf("shared private runtime was not refused: %v", err)
+	}
+}
+
 func TestRunnerDoesNotRefuseStorageManagedAncestor(t *testing.T) {
 	mount := t.TempDir()
 	if err := os.Chmod(mount, 0o770); err != nil {

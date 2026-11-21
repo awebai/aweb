@@ -27,6 +27,8 @@ from test_dashboard_privacy import TEAM, TEAM_NAME, privacy_app  # noqa: F401
 from test_messages_http import _make_certificate, _make_keypair
 from test_team_key_pinning import pinning, register_namespace_controller  # noqa: F401
 
+__all__ = ["pinning"]
+
 
 def _certificate(team_sk, team_did, member_did, certificate_id):
     cert = _make_certificate(team_sk, team_did, member_did, team_id=TEAM, alias="bob", identity_scope="local",
