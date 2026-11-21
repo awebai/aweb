@@ -60,7 +60,7 @@ async def test_direct_child_handoff_distinguishes_unusable_status_from_failed_re
             bundle, signer=lambda payload: (agent.did_key, agent.member_key.sign(payload).signature),
             expected_head=None, invitation_id=None,
         )
-        await registry.add_certificate(agent.certificate())
+        await registry.add_certificate(agent.certificate(), team_key=agent.team_key)
 
         team_cache = AWIDTeamCache(
             registry_url=REGISTRY_URL, ttl_seconds=60, service_token=SERVICE_TOKEN,
