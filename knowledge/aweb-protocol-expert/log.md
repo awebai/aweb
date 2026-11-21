@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-18
+* **Harvest**: OKF proposal from seat aweb-protocol-expert-person-parent with one backing note; the review ruling is source-reported, and reviewer names and message identifiers are omitted.
+* **Update**: [released clients are a permanent constraint](/aweb-protocol-expert/decisions/released-clients-are-a-permanent-constraint.md) gains "A persisted in-flight record is a consumer too": an absent new provenance fact preserves the released client's recorded decision, and the regression test reproduces the published writer's exact record shape.
+
 ## 2026-11-06
 * **Fix**: review of the db-access proposal on npm gitHead, PubSub release and stream checkouts: hosted specifics in [stream bodies leave the request connection scope](/aweb-protocol-expert/lessons/stream-bodies-leave-the-request-connection-scope.md) and [an npm tarball publish records no gitHead](/aweb-protocol-expert/lessons/npm-tarball-publish-records-no-githead.md) are stated generically or dropped, as the OSS and Cloud boundary requires.
 * **Update**: [SSE cleanup is cancelled on client disconnect](/aweb-protocol-expert/lessons/sse-cleanup-is-cancelled-on-disconnect.md) and [a PubSub release survives any cancellation](/aweb-protocol-expert/decisions/pubsub-release-survives-any-cancellation.md) link each other: the AnyIO shield covers Starlette's disconnect, not native task cancellation.

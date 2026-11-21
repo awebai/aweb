@@ -3,7 +3,7 @@ type: Decision
 title: Released clients are a permanent constraint
 description: Once a client that sends a shape is published, the server accepts that shape until it is measured that nothing sends it; contract changes are additive by default, narrowing names every consumer and proves each deploys atomically, and removal is a separate change.
 tags: [decision, compatibility, release, clients, contracts]
-timestamp: 2026-11-04
+timestamp: 2026-11-18
 ---
 
 Decided on 2026-07-27 after a chat mark-read change made a new field required
@@ -60,6 +60,30 @@ Rulings and review misses from October 2026 mark the edges of the rule.
   new duty stated in a docstring. See
   [removing an implicit side effect is a contract change](/aweb-protocol-expert/lessons/removing-an-implicit-side-effect-is-a-contract-change.md)
   (2026-11-04).
+- **A persisted in-flight record is a consumer too** (2026-11-16). A released
+  client may have saved an operation that already applied remotely, and it
+  resumes that record after an upgrade. A new authorization fact added for
+  newly started operations must not default to false when the old record
+  lacks it: that silently turns the old retry into a different operation.
+  Keep three states, absent, false and true. Absent preserves the decision the
+  old client made, resending its original request or using its saved
+  response. Partial output already installed locally does not prove the
+  operation changed kind; it may be that operation's own result. A fresh read
+  of current local state may fill the gap only for records with no retained
+  provenance, and never overrides an explicit one. Before adding such a fact,
+  inventory every private record a released client persists, not only its
+  wire requests. The elimination route is a regression test built from the
+  published writer's exact record shape, never one written by the new code
+  under review, covering resend and saved response, each with and without
+  installed partial output. Evidence: a review on 2026-11-16 found a
+  candidate that defaulted an `aw` 1.36.58 pending hosted-invite creation,
+  which records no key-mint or source-parent fact
+  (`cli/go/cmd/aw/hosted_invite_creation.go` at `aw-v1.36.58`), to a
+  membership-only join; b9304e1350 keeps absent provenance as the original
+  creation (on the source's review branch, not on main, as of 2026-11-18).
+  The review ruling is source-reported; no human acceptance is claimed.
+  OKF proposal from aweb-protocol-expert/aweb-protocol-expert-person-parent,
+  2026-11-18; notes/inflight-recovery-is-a-compatibility-consumer.md.
 - **A dated exception, by the operator.** On 2026-10-20, relayed by the naapps
   and secrets coordinators, the operator waived the additive default for the
   naapp install surfaces, released aw clients included, on the premise that no
