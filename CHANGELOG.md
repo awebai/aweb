@@ -20,9 +20,10 @@
   to it, so a run interrupted after the registry accepted the team completes on
   retry with the same key. When the team name is already pinned to another key,
   the key the run generated is removed, and the refusal (`team_name_taken`)
-  says to restore the team's current controller key or choose another name.
-  When the registry has the name but cannot be read to say which key holds it
-  (a network error, a 5xx, or a private team refusing the read), the refusal is
+  says to restore the team's current controller key or choose another name; a
+  private team that refuses the read signed with that key is pinned to another
+  key in the same way. When the registry has the name but cannot be read to say
+  which key holds it (a network error or a 5xx), the refusal is
   the new code `team_name_unconfirmed`, not `team_name_taken`. The key the run
   generated is set aside at `<team key>.unconfirmed`, never used as the team
   key and never destroyed; the next run whose registry read answers restores it
