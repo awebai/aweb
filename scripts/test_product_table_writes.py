@@ -450,6 +450,97 @@ async def f(db, schema):
         )
         self.assertEqual((report["unmarked"], report["marked"]), (1, 0))
 
+    def test_reviewed_nonliteral_raise_requires_the_inline_marker_and_budget(self):
+        path = "naapp/logs/tests/test_governance.py"
+        call = '    await tx.fetch_value("EXPLAIN (FORMAT JSON) " + GOVERNANCE_BEFORE, team, 2)'
+        marker = " # nonliteral-call: EXPLAIN of GOVERNANCE_BEFORE"
+        ceiling = "tools/product-table-write-ceilings.json"
+        budget = {"schema_version": 1, "files": {}, "nonliteral_files": {}}
+        marked_budget = budget | {"marked_nonliteral_files": {path: 1}}
+        prefix = (
+            "from aweb_logs.ledger import GOVERNANCE_BEFORE\n"
+            "async def f(tx, team, query):\n"
+        )
+        for source, manifest, status, detail in (
+            (call + marker, marked_budget, 0, ""),
+            (call + marker, budget, 1, "marked nonliteral calls 1 > 0"),
+            (call, marked_budget, 1, "marked nonliteral calls: lower"),
+            (
+                call,
+                budget | {"nonliteral_files": {path: 1}},
+                1,
+                "ceiling 1 > reviewed 0",
+            ),
+            (
+                call + marker + "\n    await tx.execute(query)",
+                marked_budget,
+                1,
+                "nonliteral calls 1 > 0",
+            ),
+            (
+                call + marker,
+                budget | {"marked_nonliteral_files": {path: 2}},
+                1,
+                "marked nonliteral calls: lower",
+            ),
+        ):
+            with self.subTest(source=source, manifest=manifest):
+                self.write(path, prefix + source + "\n")
+                self.write(ceiling, json.dumps(manifest))
+                result = self.run_check()
+                self.assertEqual(
+                    result.returncode, status, result.stdout + result.stderr
+                )
+                self.assertIn(detail, result.stdout)
+
+        self.write(path, prefix + call + marker + "\n")
+        self.write(ceiling, json.dumps(marked_budget))
+        result = self.run_check("--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["marked_nonliteral_by_file"], {path: 1})
+        self.assertEqual(report["nonliteral_by_file"], {})
+        self.assertEqual(
+            report["unresolved_calls"][0]["reason"], "EXPLAIN of GOVERNANCE_BEFORE"
+        )
+        self.assertEqual(report["writes"], [])
+
+    def test_nonliteral_markers_must_name_one_unresolved_call(self):
+        budget = {
+            "schema_version": 1,
+            "files": {},
+            "nonliteral_files": {},
+            "marked_nonliteral_files": {"server/tests/test_world.py": 1},
+        }
+        self.write("tools/product-table-write-ceilings.json", json.dumps(budget))
+        for source, detail in (
+            ("await db.execute(query)  # nonliteral-call:", "empty nonliteral-call"),
+            (
+                "# nonliteral-call: a witness\n    await db.execute(query)",
+                "must be inline",
+            ),
+            (
+                'await db.execute("SELECT 1")  # nonliteral-call: a witness',
+                "one unresolved call",
+            ),
+            (
+                'await db.execute(f"DELETE FROM {table}")  # nonliteral-call: a witness',
+                "one unresolved call",
+            ),
+            (
+                "await db.execute(query); await db.execute(other)  # nonliteral-call: shared",
+                "one unresolved call",
+            ),
+        ):
+            with self.subTest(source=source):
+                self.write(
+                    "server/tests/test_world.py",
+                    "async def f(db, query, other, table):\n    " + source + "\n",
+                )
+                result = self.run_check()
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn(detail, result.stderr)
+
     def test_marker_alone_cannot_admit_a_new_file(self):
         self.write(
             "server/tests/test_new.py",
