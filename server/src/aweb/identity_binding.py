@@ -19,10 +19,7 @@ from awid.identity_observation import (
 )
 from fastapi import Request
 
-from aweb.application_state import (
-    RegistryClientUnavailable,
-    application_registry_client,
-)
+from aweb.application_state import application_registry_client
 from aweb.service_errors import IdentityBindingCode, IdentityBindingError
 
 from aweb.application_state import native_application_state
@@ -96,14 +93,11 @@ async def verify_identity_binding(
         return IdentityBinding(did_key=did_key)
     if not did_aw or not did_aw.startswith("did:aw:"):
         raise IdentityBindingError(IdentityBindingCode.MISMATCH)
-    try:
-        client = (
-            registry_client
-            if registry_client is not None
-            else application_registry_client(request.app.state)
-        )
-    except RegistryClientUnavailable as exc:
-        raise IdentityBindingError(IdentityBindingCode.UNAVAILABLE) from exc
+    client = (
+        registry_client
+        if registry_client is not None
+        else application_registry_client(request.app.state)
+    )
     cache = identity_binding_cache(request.app.state)
     key: tuple[str, ...] = (did_aw, did_key, address)
     if registry_client is not None:

@@ -137,6 +137,13 @@ class TaskStatusChangedContext(CoordinationContext):
 
 
 @dataclass(frozen=True, kw_only=True)
+class TaskClaimReplacedContext(TaskStatusChangedContext):
+    """Committed claim facts from an update that kept the same task status."""
+
+    event_type: ClassVar[MutationEventType] = MutationEventType.TASK_UPDATED
+
+
+@dataclass(frozen=True, kw_only=True)
 class TaskAssigneeChangedContext(CoordinationContext):
     """Producer projection for task.assignee_changed."""
 

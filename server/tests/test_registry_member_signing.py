@@ -4,7 +4,6 @@ import base64
 import os
 import subprocess
 import json
-from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -210,7 +209,6 @@ async def test_real_private_team_verification_revocation_and_recovery(real_stack
     from aweb.team_auth_deps import verify_request_certificate
     from aweb.coordination.app_tasks import verify_authorization_certificate
     from aweb.hook_bindings import core_owner_act_verifier, OwnerActTeamKeyUnavailable
-    from aweb.team_key_pins import pinned_team_key
     from awid_service.testing import TXTAnswers
     from aweb_naapp.hooks.owner_act import owner_act_signing_bytes, hook_binding_subject
     from tests.test_team_auth import _make_certificate, _encode_certificate
@@ -274,14 +272,11 @@ async def test_real_private_team_verification_revocation_and_recovery(real_stack
     # Production hands verification the app's database infra (aweb.deps.get_db).
     aweb_infra = request.app.state.db
 
-    async def pin_team_key(team_id, served_key):
-        return await pinned_team_key(
-            db=real_stack.aweb_db, registry_client=client,
-            txt_resolver=TXTAnswers(), team_id=team_id, served_key=served_key,
-        )
-
     verifier = core_owner_act_verifier(
-        audience="https://aweb.example", registry_client=client, pin_team_key=pin_team_key,
+        audience="https://aweb.example",
+        db=real_stack.aweb_db,
+        registry_client=client,
+        txt_resolver=TXTAnswers(),
     )
     try:
         with pytest.raises(RegistryError) as denied:

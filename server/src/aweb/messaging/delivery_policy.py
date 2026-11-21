@@ -94,7 +94,7 @@ async def has_current_shared_team(
     *,
     recipient: Mapping,
     sender_dids: list[str],
-    registry_client=None,
+    registry_client,
 ) -> bool:
     """Intersect all current active memberships using R2's single selector."""
     recipient_dids = [
@@ -115,9 +115,10 @@ async def authorize_delivery(
     recipient: Mapping,
     sender: DeliverySender,
     attempt: DeliveryAttempt,
-    registry_client=None,
+    registry_client,
 ) -> None:
-    """Enforce docs/identity-messaging-contract.md:69-93 on every transport.
+    """Enforce Global And Local Identities (docs/identity-messaging-contract.md:81-99) on
+    every transport.
 
     Global contacts-only always applies to continuations. Local participants
     may continue a stored route. Otherwise only current team intersection or an

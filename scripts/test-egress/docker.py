@@ -11,6 +11,7 @@ import importlib.util
 from pathlib import Path
 import subprocess
 import shutil
+import sys
 import tempfile
 import time
 import uuid
@@ -124,6 +125,16 @@ def main():
     args = parser.parse_args()
     if args.server_workers and args.profile != 'ccx33':
         parser.error('seven server workers require --profile ccx33')
+    if sys.platform == 'darwin':
+        sys.path.insert(0, str(ROOT / 'scripts'))
+        from local_suite_slots import Scope, SuiteLabel, suite_slot
+
+        with suite_slot(scope=Scope.WHOLE, label=SuiteLabel.PORTABLE, root=ROOT):
+            return run_suite(args)
+    return run_suite(args)
+
+
+def run_suite(args):
     args.evidence.mkdir(parents=True, exist_ok=False)
     evidence = args.evidence.resolve()
     (evidence / 'source-sha').write_text(subprocess.check_output(['git', '-C', str(ROOT), 'rev-parse', 'HEAD'], text=True))
@@ -214,23 +225,34 @@ def main():
         (evidence / 'network.json').write_text(docker('network', 'inspect', token))
         (evidence / 'runner.json').write_text(docker('inspect', runner))
         command_env = ['-e', 'CANDIDATE_LOG_DIR=/tmp'] if args.collect_summary else []
+        if args.collect_summary and args.server_workers:
+            shard_services = [
+                {key: plan[key] for key in ('postgres_port', 'redis_port')}
+                for plan in services[:2]
+            ]
+            command_env += ['-e', 'AWEB_SECRETS_SHARD_SERVICES=' + json.dumps(shard_services)]
         with (evidence / 'suite.log').open('w') as log:
             result = subprocess.run(['docker', 'exec', *command_env, runner, *(args.command or ['make', 'TEST_EGRESS_RUNNER=', *args.targets])], stdout=log, stderr=subprocess.STDOUT)
         print(f'Test child exit status: {result.returncode}; evidence: {evidence}', flush=True)
         if result.returncode:
             print('\n'.join((evidence / 'suite.log').read_text().splitlines()[-100:]), flush=True)
-        if args.collect_summary:
-            docker('cp', f'{runner}:/tmp/summary.tsv', str(evidence / 'summary.tsv'))
         if docker('inspect', '--format', '{{.State.Running}}', dns) != 'true':
             raise RuntimeError('DNS sink exited during tests')
         report = evidence / 'dns-denied.log.reported'
         if report.exists():
             print('TEST DNS REFUSED (reserved/allowlisted, no upstream):\n' + report.read_text())
         denied = (evidence / 'dns-denied.log').read_text()
+        status = result.returncode
         if denied:
-            print('TEST DNS EGRESS DENIED:\n' + denied)
-            return 1
-        return result.returncode
+            print('TEST DNS EGRESS DENIED:\n' + denied, flush=True)
+            status = status or 1
+        if args.collect_summary:
+            try:
+                docker('cp', f'{runner}:/tmp/summary.tsv', str(evidence / 'summary.tsv'))
+            except (OSError, subprocess.CalledProcessError) as error:
+                print(f'TEST SUMMARY COPY FAILED: {error}', flush=True)
+                status = status or 1
+        return status
     finally:
         for container in reversed(containers):
             subprocess.run(['docker', 'rm', '-f', '-v', container], stdout=subprocess.DEVNULL, check=True)

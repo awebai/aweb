@@ -5,7 +5,8 @@ from awid.registry import RegistryError
 from aweb.certificate_registration import (
     RegistrationMode,
     RegistrationState,
-    read_certificate_registration,
+    evaluate_certificate_registration,
+    observe_certificate_registrations,
 )
 from aweb.service_errors import AuthenticationError
 
@@ -20,11 +21,13 @@ class UnavailableCertificateReader:
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", list(RegistrationMode))
 async def test_registration_unavailability_preserves_the_configured_requirement(mode):
-    decision = await read_certificate_registration(
+    facts = await observe_certificate_registrations(
         registry_client=UnavailableCertificateReader(),
         team_id="backend:example.test",
-        certificate_id="member",
         mode=mode,
+    )
+    decision = evaluate_certificate_registration(
+        observation=facts, certificate_id="member", mode=mode,
     )
     assert decision.state is RegistrationState.UNAVAILABLE
     assert decision.unavailable_cause is not None
@@ -34,9 +37,8 @@ async def test_registration_unavailability_preserves_the_configured_requirement(
 @pytest.mark.asyncio
 async def test_invalid_registration_scope_is_not_an_unavailable_measurement():
     with pytest.raises(AuthenticationError, match="canonical team ID"):
-        await read_certificate_registration(
+        await observe_certificate_registrations(
             registry_client=UnavailableCertificateReader(),
             team_id="example.test/backend",
-            certificate_id="member",
             mode=RegistrationMode.NOT_REQUIRED,
         )

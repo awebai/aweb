@@ -5,6 +5,7 @@ from __future__ import annotations
 from uuid import uuid4
 
 import pytest
+from test_dashboard_privacy import TEAM, privacy_app as privacy_app
 from pgdbm.errors import QueryError
 
 from nacl.signing import SigningKey
@@ -44,6 +45,7 @@ async def _deliver_fixture_mail(db, **fields):
         sender_address=fields.get("sender_address"),
         sender_verified_dids=fields.get("sender_verified_dids"),
         stored_route_continuation=fields.get("stored_route_continuation", False),
+        registry_client=None,
     )
     content = (
         EncryptedMailContent(
@@ -619,45 +621,25 @@ async def test_deliver_message_team_and_contacts_checks_multi_team_identity_memb
 
 
 @pytest.mark.asyncio
-async def test_deliver_message_local_recipient_same_team_behavior_unchanged(
-    aweb_cloud_db,
-):
-    db_shim = _DbShim(aweb_cloud_db.aweb_db)
-    await _insert_team(aweb_cloud_db.aweb_db, "default:local")
-    alice_did_key = _make_did_key()
-    bob_did_key = _make_did_key()
-    row = await aweb_cloud_db.aweb_db.fetch_one(
-        """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES ('default:local', $1, NULL, NULL, 'bob', 'local', 'developer', 'open', CASE WHEN NULLIF(NULL, '') IS NOT NULL THEN $1 END)
-        RETURNING agent_id
-        """,
-        bob_did_key,
-    )
-
-    await aweb_cloud_db.aweb_db.execute(
-        "INSERT INTO {{tables.agents}} (team_id, did_key, alias, identity_scope, role, inbound_mode) "
-        "VALUES ('default:local', $1, 'alice', 'local', 'developer', 'open')",
-        alice_did_key,
-    )
-
-    msg_id, _ = await _deliver_fixture_mail(
-        db_shim,
-        from_did=alice_did_key,
-        to_did=bob_did_key,
+async def test_deliver_message_local_recipient_same_team_behavior_unchanged(privacy_app):
+    alice, bob = (privacy_app.actors[name] for name in ("alice", "bob"))
+    message_id, _ = await _deliver_fixture_mail(
+        privacy_app.infra,
+        from_did=alice.did,
+        to_did=bob.did,
         from_alias="alice",
         to_alias="bob",
         sender_address=None,
-        team_id="default:local",
+        team_id=TEAM,
         subject="Local hello",
         body="Hi Bob!",
         priority="normal",
     )
-    stored = await aweb_cloud_db.aweb_db.fetch_one(
+    stored = await privacy_app.db.fetch_one(
         "SELECT to_agent_id FROM {{tables.messages}} WHERE message_id = $1",
-        msg_id,
+        message_id,
     )
-    assert str(stored["to_agent_id"]) == str(row["agent_id"])
+    assert str(stored["to_agent_id"]) == str(bob.id)
 
 
 @pytest.mark.asyncio
@@ -762,4 +744,5 @@ async def test_contacts_only_rejects_verified_teammate_before_contact(aweb_cloud
             sender_did="did:aw:teammate",
             sender_address="acme.com/teammate",
             stored_route_continuation=True,
+            registry_client=None,
         )

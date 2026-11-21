@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from awid.did import did_from_public_key
+from awid.did import did_key_from_signing_key
 from awid.dns_verify import DomainAuthority
 from awid.id_certificates import id_certificate_signing_bytes
 from awid.registry import RegistryClient
@@ -92,9 +92,8 @@ class HumanNamespace:
 async def human_namespace(registry: Registry, domain: str) -> AsyncGenerator[HumanNamespace]:
     """Register ``domain``'s namespace once, under a new controller, for the
     humans the caller registers in it."""
-    controller = await registry.ensure_namespace(domain=domain)
-    controller_seed = bytes(controller)
-    controller_did = did_from_public_key(bytes(controller.verify_key))
+    controller_seed = await registry.ensure_namespace(domain=domain)
+    controller_did = did_key_from_signing_key(controller_seed)
     authority = registry.namespace_authority
 
     registry.app.dependency_overrides[get_domain_verifier] = lambda: authority

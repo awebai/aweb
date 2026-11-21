@@ -98,7 +98,9 @@ func runDoctorCLI(t *testing.T, bin, dir string, args ...string) ([]byte, error)
 }
 
 // runDoctorCLIWithRegistry is runDoctorCLI with registryURL named by
-// AWID_REGISTRY_URL, the operator's explicit registry choice.
+// AWID_REGISTRY_URL, the operator's explicit registry choice. An empty
+// registryURL is the operator naming none, so the identity's stored registry,
+// or its absence, decides.
 func runDoctorCLIWithRegistry(t *testing.T, bin, dir, registryURL string, args ...string) ([]byte, error) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -140,7 +142,7 @@ func requireDoctorCheckStatus(t *testing.T, out doctorOutput, id string, status 
 	return check
 }
 
-func writeDoctorLocalFixture(t *testing.T, workingDir, awebURL string) {
+func writeDoctorLocalFixture(t *testing.T, workingDir, awebURL string) string {
 	t.Helper()
 	pub, priv, err := awid.GenerateKeypair()
 	if err != nil {
@@ -186,6 +188,7 @@ func writeDoctorLocalFixture(t *testing.T, workingDir, awebURL string) {
 	if err := os.Remove(filepath.Join(workingDir, awconfig.DefaultWorktreeIdentityRelativePath())); err != nil && !os.IsNotExist(err) {
 		t.Fatalf("remove local identity: %v", err)
 	}
+	return registry.URL
 }
 
 func writeDoctorGlobalFixture(t *testing.T, workingDir, awebURL string) ed25519.PrivateKey {

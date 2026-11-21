@@ -16,13 +16,6 @@ func teamKeyEvidence(observation *awid.TeamCertificateKeyObservation) *awid.Team
 	return &result
 }
 
-func teamKeyRegistry(observation *awid.TeamCertificateKeyObservation) string {
-	if observation == nil {
-		return ""
-	}
-	return observation.RegistryURL
-}
-
 func teamKeyConfirmationText(evidence *awid.TeamKeyEvidence) string {
 	if evidence == nil {
 		return ""
@@ -59,11 +52,6 @@ func recheckUnconfirmedTeamKey(selection *awconfig.Selection, cert *awid.TeamCer
 	registry, err := newRegistryClientWithPreferredBaseURL(membership.RegistryURL)
 	if err != nil {
 		return err
-	}
-	if membership.RegistryURL != "" {
-		if err := registry.TrustRegistryOrigin(membership.RegistryURL); err != nil {
-			return err
-		}
 	}
 	ctx, cancel := commandAPIContext(nil)
 	defer cancel()

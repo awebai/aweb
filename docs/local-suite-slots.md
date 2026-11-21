@@ -1,16 +1,19 @@
-# Local whole-suite admission
+# Local Docker and database admission
 
-The local server/registry runner, the three-lane user-path runner and Cloud's
-local backend runner share one machine-wide semaphore. Admission precedes
-installation, image preparation and service creation; release follows cleanup.
-Canonical gates do not use this limiter.
+On the shared Mac, each Docker or database run takes one machine-wide slot,
+including focused runs. The local server and registry runner, the user-path
+runner, the portable Docker runner and Cloud's local backend runner use the
+same pool. Admission precedes installation, image preparation and service
+creation. The runner holds the slot through cleanup. Linux gate workers use
+their own admission. Use a gate worker for any Docker or database test whose
+entry point lacks slot support. There is no host load threshold.
 
 ## 1. Shared files and capacity
 
 All runners use `/private/tmp/aweb-local-suite-slots/slot-N.lock`, numbered from
 zero. `AWEB_LOCAL_SUITE_SLOTS` sets the positive capacity, default **3**. Use the
-same value for every seat on the host, and change it only when no whole-suite
-run is active. The directory is explicitly mode 0777 and
+same value for every seat on the host, and change it only when no slot is
+held. The directory is explicitly mode 0777 and
 files mode 0666, independent of umask, so seats share the same inodes. The path
 is fixed; it does not vary with checkout, account, repository or `TMPDIR`.
 
@@ -28,29 +31,29 @@ services while waiting.
 
 Under the acquired lock, the runner truncates and writes one JSON line with
 `pid`, `repo` (`aweb` or `ac`), `source_sha`, `label` (`server`, `registry`,
-`user-paths` or `backend`) and `started_utc`. Optional `owner` identifies the
-seat. These fields describe the holder for waiting output; they do not grant a
-slot or authorize killing the holder. A partially written record is displayed
-as metadata being published, while its lock remains occupied.
+`user-paths`, `portable` or `backend`) and `started_utc`. The aweb runner also
+records `scope` (`focused` or `whole`). Optional `owner` identifies the seat.
+Waiting output uses the holder record to identify the process. A partially
+written record appears as metadata being published while the lock is held.
 
-The wrapper retains the lock through normal, failed and interrupted cleanup.
-Closing the descriptor releases it on every process exit, including SIGKILL;
-SIGKILL still cannot execute application cleanup. Interrupted waiters exit
-without starting a project. Do not unlink the file when releasing the lock.
+Closing the descriptor releases the lock on every process exit, including
+SIGKILL. SIGKILL prevents the runner from executing cleanup. Interrupted
+waiters exit without starting a project. The lock files stay in place when
+a runner releases its slot.
 
 ## 3. Focused feedback
 
-Explicit pytest paths/node IDs, `-k`, `-m` and `--deselect` selections bypass
-admission. This includes selections in `LOCAL_PYTEST_ARGS` or `PYTEST_ADDOPTS`.
-Root `tests` or `.` and options that only change reporting, verbosity or timing
-still run whole suites and take a slot. Unknown options are treated
-conservatively so an option's value cannot masquerade as a test path.
+Explicit pytest paths or node IDs, `-k`, `-m` and `--deselect` can narrow the
+tests run, including through `LOCAL_PYTEST_ARGS` or `PYTEST_ADDOPTS`. A focused
+server or registry run still takes a slot. Options that change reporting,
+verbosity or timing leave the scope whole. Static checks such as Ruff, mypy,
+Go vet and diff checks run without a slot.
 
-`make test-user-paths-local` always runs all three declared lanes, so it holds
-one slot for the complete invocation. An unrelated pytest environment variable
-does not narrow those lanes or bypass their admission.
+`make test-user-paths-local` holds one slot for all three declared lanes.
+`make test-isolated` and direct invocations of `scripts/test-egress/docker.py`
+use the `portable` label on macOS.
 
-The protocol, rather than shared Python code, is the cross-repository contract.
-The aweb owner is `scripts/local_suite_slots.py`. Real-process controls in
-`scripts/test_local_suite_slots.py` exercise contention and exit handling with
-service boundaries held, without invoking Docker or claiming service coverage.
+Both repositories follow the same lock protocol. The aweb implementation is
+`scripts/local_suite_slots.py`. The process controls in
+`scripts/test_local_suite_slots.py` exercise real flock contention, including
+focused and portable admission, without starting Docker.

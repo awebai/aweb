@@ -45,14 +45,15 @@
 - Coordination reads share root, Redis and currently valid grant activity under
   the configured presence window. Dashboard presence events no longer depend
   on viewers, and narrow heartbeats preserve workspace metadata.
-- A committed task deletion reports incomplete claim cleanup with a retryable
-  error; repeating the DELETE retries cleanup on that same task. Claim
-  conflicts are checked even when the acting member has no workspace.
+- Task deletion and descendant closure release claims in the same transaction.
+  Repeating a DELETE returns the same deleted task. Claim conflicts are checked
+  even when the acting member has no workspace.
 - Wake file mutations require proof that the daemon lock is free. A failed
   exchange with a live control socket no longer falls back to changing files.
 - Custody checks private permissions for configured and default socket paths,
   requires the pinned signing key in a credential capture, and allows an exact
   retry after a failed signing attempt without weakening successful replay checks.
+- Removed an unused chat departure-marker check.
 - Old chat history with valid participant snapshots is migrated to canonical
   conversations, preserving exact participants, routes and readable single-party
   sessions. Existing active pairs retain routing precedence; older replaced
@@ -63,6 +64,46 @@
   key; those sends were already refused by the server's sender-identity check.
   Upgrade aw if that client reports a sender mismatch. The new plaintext
   signature verification does not create that pre-existing refusal.
+
+- Provisioning and creator self-enrollment connect before publishing the member's E2E assertion. A failed connect or unconfirmed publication retains the identity and reports the exact recovery command instead of creation success.
+- On unverified A2A routes, a plain question shared by several live tasks is
+  refused with task-specific reply forms. Questions use artifact name `question`;
+  completed answers retain `answer`.
+
+- Concurrent `aw a2a send` calls retain each task token. Credential-file failures
+  are reported without overwriting unreadable YAML; a task already delivered is
+  still returned with its token when saving fails.
+
+- On verified A2A routes, a plain `QUESTION:` from the target is no longer
+  accepted as a verified task reply. Use the task-bearing fenced `a2a-reply`
+  form with `state: input_required` to ask a question (aw 1.19.0 or later).
+  Initial task instructions and refusal feedback show the exact form. Signed
+  task-bearing legacy fences remain accepted; explicitly unverified routes
+  keep their policy and label.
+- A managed provider that advertises recipient identity but omits it from a
+  send receipt now returns an actionable provider fault and a failed task,
+  rather than leaving the task waiting for replies it cannot bind.
+
+- A2A routes require an agent with a public address. Native gateway startup
+  refuses local identities, including team aliases that resolve to one, before
+  opening its listener. The same check runs before each native bridge send;
+  `-check` continues to validate configuration offline.
+
+- The A2A gateway no longer returns a public route's task when given only its
+  task ID. Callers must send the task token returned by `SendMessage` in
+  `X-A2A-Task-Token`; task IDs are identifiers rather than authorization.
+- A2A credentials and managed-provider tokens require HTTPS, with HTTP allowed
+  on literal loopback IP addresses for local development. Use
+  `http://127.0.0.1` instead of `http://localhost` for those local endpoints.
+
+- Retain the Go entry points `blueprint.CanonicalImportPayload`,
+  `logschain.VerifyChain`, `chat.LoadDeliveredIDs` and
+  `chat.FilterDeliveredMessages` in this release. They are removal candidates
+  for a future release, pending measurement of downstream usage.
+- `aw id request --raw` writes the response body to stdout byte for byte, so
+  `--raw > chart.png` saves an image intact. It no longer appends a newline to
+  a body that lacks one; JSON printed to a terminal may now end without one.
+  The `HTTP <status>` line stays on stderr.
 
 - `aw` reports JSON error code `alias_conflict` for HTTP 409 `alias_taken`, preserving the server's `reason` and `detail`.
 - AWID cache invalidation for identity-tree, address and team-certificate

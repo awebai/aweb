@@ -183,7 +183,7 @@ async def journey(world, request, human_member_cache_seconds) -> AsyncIterator[J
     from aweb_naapp.console.handoff_sessions import ConsoleHandoffs
 
     await apply_console_migrations(world.db)
-    root = await world.registry.ensure_namespace(domain="example.com")
+    root = SigningKey.generate()
     options = getattr(request, "param", {})
     team = options.get("team_id", TEAM)
     team_key = world.owner.team_key if team == TEAM else SigningKey.generate()
@@ -204,6 +204,7 @@ async def journey(world, request, human_member_cache_seconds) -> AsyncIterator[J
             domain_verifier=dns,
         )
     ) as registry:
+        await registry.register_namespace("example.com", did_key(root), bytes(root))
 
         async def enrol_owner(alias: str):
             # Every extra holder follows the same registered-human, signed owner

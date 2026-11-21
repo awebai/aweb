@@ -135,11 +135,11 @@ async def lab(tmp_path, registry, aw_binary, human_fixture_binary, monkeypatch, 
     registry.app.state.awid_public_origins = (inputs[PREFIX + "AWID_REGISTRY_URL"],)
     team = inputs[PREFIX + "TEAM_ID"]
     first = Member(team, alias="team-controller", certificate_id="lab-controller")
-    controller = Member(team)
-    await registry.add_team(team, first.team_did_key, namespace_controller=controller.member_key)
+    await registry.add_team(team, first.team_did_key)
     await registry.publish_team_server(
         team, first.team_key, server_url=inputs[PREFIX + "COORDINATION_ORIGIN"]
     )
+    controller = Member(team)
     domain = "example.test"
     lab_dns.records[("_awid." + domain, "TXT")] = [
         '"' + awid_txt_value(controller.did_key, inputs[PREFIX + "AWID_REGISTRY_URL"]) + '"'
@@ -154,7 +154,7 @@ async def lab(tmp_path, registry, aw_binary, human_fixture_binary, monkeypatch, 
         registry_url=inputs[PREFIX + "AWID_REGISTRY_URL"], transport=registry.transport
     )
     try:
-        await registry.ensure_namespace(domain=domain, controller=controller.member_key)
+        await client.register_namespace(domain, controller.did_key, bytes(controller.member_key))
         members = {}
         for actor in ("HUMAN", "AGENT_A", "AGENT_B"):
             member = Member(

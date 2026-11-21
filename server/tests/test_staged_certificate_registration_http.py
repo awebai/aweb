@@ -22,7 +22,7 @@ async def test_off_mode_authentication_counts_a_valid_unregistered_certificate(
     monkeypatch,
     credential,
 ):
-    # hosted-certificate-anchoring.md:286-294 and Antares2c74f907:
+    # Staged certificate-registration observations (docs/aweb-sot.md:2176-2186):
     # measure a usable would-refuse fact without failing the legacy flow.
     env = privacy_app
     actor = env.actors["alice"]

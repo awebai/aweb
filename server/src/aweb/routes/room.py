@@ -6,6 +6,7 @@ from aweb.agent_wake import agent_wake_publisher, agent_wake_scope
 from aweb.deps import get_db
 from aweb.hooks import mutation_callback
 from aweb.messaging.room import (
+    ROOM_CURRENT_MEMBERSHIP_REQUIRED_DETAIL,
     RoomPost,
     room_metadata,
     read_room,
@@ -17,10 +18,16 @@ from aweb.team_auth_deps import team_identity_with_grant_scope
 from aweb.messaging.room_notices import pending_room_notices, ack_room_notice
 
 router = APIRouter(prefix="/v1/room", tags=["room"])
-_read = team_identity_with_grant_scope("chat.read")
+_read = team_identity_with_grant_scope(
+    "chat.read",
+    membership_refusal_detail=ROOM_CURRENT_MEMBERSHIP_REQUIRED_DETAIL,
+)
 # Public host admission dependency: wraps the same authenticated identity once.
 # Hosts may bind a pre-post quota check without replacing membership authority.
-room_post_identity = team_identity_with_grant_scope("chat.send")
+room_post_identity = team_identity_with_grant_scope(
+    "chat.send",
+    membership_refusal_detail=ROOM_CURRENT_MEMBERSHIP_REQUIRED_DETAIL,
+)
 
 
 @router.get("")

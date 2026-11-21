@@ -9,19 +9,27 @@ from typing import Any
 from fastapi import HTTPException, Request
 
 from aweb.application_state import application_registry_client
-from aweb.auth_context import TeamIdentity
+from aweb.auth_context import (
+    MessagingAuth,
+    NativeCertificateIdentity,
+    NativeCertificateMessagingAuth,
+    TeamIdentity,
+)
 from aweb.certificate_registration import configured_registration_mode
 from aweb.identity_grant_status import GrantValidityState, grant_validity
 from aweb.member_team_key import (
     CURRENT_MEMBERSHIP_REQUIRED_DETAIL,
     GRANT_ISSUER_RECOVERY_DETAIL,
     current_member,
+    current_membership,
     member_key_columns_sql,
     read_member_projection,
 )
 from aweb.team_registry import native_database_manager
 
-GRANT_STREAM_RECHECK_SECONDS = 30
+STREAM_AUTHORITY_RECHECK_SECONDS = 30
+STREAM_MAX_DURATION_SECONDS = 300
+StreamIdentity = TeamIdentity | MessagingAuth
 
 GRANT_TERMINAL_DETAILS = {
     "verification_unavailable": "identity grant verification unavailable",
@@ -33,7 +41,16 @@ GRANT_TERMINAL_DETAILS = {
 }
 
 
-def clamp_deadline_to_grant(deadline: datetime, identity: TeamIdentity) -> datetime:
+def is_native_certificate_stream(identity: object) -> bool:
+    """Classify the checked credential, independent of any opaque certificate ID."""
+    return isinstance(identity, (NativeCertificateIdentity, NativeCertificateMessagingAuth))
+
+
+def requires_stream_recheck(identity: StreamIdentity) -> bool:
+    return is_native_certificate_stream(identity) or identity.grant is not None
+
+
+def clamp_deadline_to_grant(deadline: datetime, identity: StreamIdentity) -> datetime:
     grant = identity.grant
     if grant is None or grant.never_expires:
         return deadline
@@ -46,7 +63,7 @@ def grant_terminal_sse(reason: str) -> str:
     return f"event: {reason}\ndata: {json.dumps(payload)}\n\n"
 
 
-def grant_expiry_reason(identity: TeamIdentity) -> str | None:
+def grant_expiry_reason(identity: StreamIdentity) -> str | None:
     if (
         identity.grant is not None
         and not identity.grant.never_expires
@@ -56,28 +73,26 @@ def grant_expiry_reason(identity: TeamIdentity) -> str | None:
     return None
 
 
-async def require_valid_stream_grant(request: Request, db, identity: TeamIdentity) -> None:
+async def require_valid_stream_grant(request: Request, db, identity: StreamIdentity) -> None:
     """Check before constructing StreamingResponse, while HTTP errors are legal."""
     reason = await grant_terminal_reason(request, db, identity)
     if reason:
         raise HTTPException(status_code=403, detail=GRANT_TERMINAL_DETAILS[reason])
 
 
-async def grant_terminal_reason(request: Request, db, identity: TeamIdentity) -> str | None:
+async def grant_terminal_reason(request: Request, db, identity: StreamIdentity) -> str | None:
     grant = identity.grant
     if grant is None:
-        if not identity.certificate_id:
-            # An identity-only conversation is not a certificate-auth stream.
+        if not is_native_certificate_stream(identity):
             return None
-        from aweb.identity_auth_deps import current_membership
-
+        if not identity.certificate_id or not identity.team_id or not identity.agent_id:
+            return "team_membership_not_current"
         row = await read_member_projection(
             native_database_manager(db), team_id=identity.team_id, agent_id=identity.agent_id,
         )
         if (
-            not row or not current_member(row) or row["did_key"] != identity.did_key
-            or not identity.verified_team_did_key
-            or identity.verified_team_did_key != row["current_team_did_key"]
+            row is None or row["did_key"] != identity.did_key
+            or not current_member(row, checked_key=identity.verified_team_did_key or "")
         ):
             return "team_membership_not_current"
         member = await current_membership(
@@ -188,11 +203,13 @@ class NeverGrantStreamGuard:
         self.checked_at = time.monotonic()
 
     async def reason(self):
+        if not requires_stream_recheck(self.identity):
+            return None
         grant = self.identity.grant
         if grant is not None and not grant.never_expires:
             return self.expiry_reason(self.identity)
         now = time.monotonic()
-        if now - self.checked_at < GRANT_STREAM_RECHECK_SECONDS:
+        if now - self.checked_at < STREAM_AUTHORITY_RECHECK_SECONDS:
             return None
         self.checked_at = now
         try:

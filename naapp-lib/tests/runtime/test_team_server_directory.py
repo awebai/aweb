@@ -30,10 +30,7 @@ class Clock:
 
 def _directory(registry, *, clock=None, registry_override=None) -> TeamServerDirectory:
     cache = AWIDTeamCache(
-        registry_url=REGISTRY_URL,
-        ttl_seconds=60,
-        service_token=SERVICE_TOKEN,
-        transport=registry.transport,
+        registry_url=REGISTRY_URL, ttl_seconds=60, service_token=SERVICE_TOKEN, transport=registry.transport
     )
 
     async def no_override(domain: str) -> str | None:
@@ -61,9 +58,7 @@ async def team(registry):
 
 
 async def test_a_published_record_resolves_to_its_server(registry, team):
-    await registry.publish_team_server(
-        TEAM_ID, team, server_url=SERVER_URL, issued_at=datetime.now(UTC) - timedelta(minutes=1)
-    )
+    await registry.publish_team_server(TEAM_ID, team, server_url=SERVER_URL, issued_at=datetime.now(UTC) - timedelta(minutes=1))
 
     server = await _directory(registry).resolve(TEAM_ID)
 
@@ -77,9 +72,7 @@ async def test_a_team_without_a_record_is_unpublished(registry, team):
 
 
 async def test_a_record_left_by_a_rotated_key_is_a_key_mismatch(registry, team):
-    await registry.publish_team_server(
-        TEAM_ID, team, server_url=SERVER_URL, issued_at=datetime.now(UTC) - timedelta(minutes=1)
-    )
+    await registry.publish_team_server(TEAM_ID, team, server_url=SERVER_URL, issued_at=datetime.now(UTC) - timedelta(minutes=1))
     await registry.rotate_team_key(TEAM_ID, did_key(SigningKey.generate()))
 
     assert await _refusal(_directory(registry)) == "team_server_key_mismatch"
@@ -97,7 +90,7 @@ async def test_a_far_future_record_held_by_the_registry_is_refused(registry, tea
         """,
         "discovery.example",
         "ops",
-        record_signing_bytes(future["record"])[len(b"aweb.team-server/1\n") :].decode(),
+        record_signing_bytes(future["record"])[len(b"aweb.team-server/1\n"):].decode(),
         future["signature"],
         SERVER_URL,
     )
@@ -106,23 +99,16 @@ async def test_a_far_future_record_held_by_the_registry_is_refused(registry, tea
 
 
 async def test_a_domain_whose_awid_record_names_another_registry_is_refused(registry, team):
-    await registry.publish_team_server(
-        TEAM_ID, team, server_url=SERVER_URL, issued_at=datetime.now(UTC) - timedelta(minutes=1)
-    )
+    await registry.publish_team_server(TEAM_ID, team, server_url=SERVER_URL, issued_at=datetime.now(UTC) - timedelta(minutes=1))
 
     async def other_registry(domain: str) -> str | None:
         return "https://other-registry.example"
 
-    assert (
-        await _refusal(_directory(registry, registry_override=other_registry))
-        == "registry_mismatch"
-    )
+    assert await _refusal(_directory(registry, registry_override=other_registry)) == "registry_mismatch"
 
 
 async def test_an_answer_is_reused_for_at_most_a_minute_and_never_after(registry, team):
-    await registry.publish_team_server(
-        TEAM_ID, team, server_url=SERVER_URL, issued_at=datetime.now(UTC) - timedelta(minutes=1)
-    )
+    await registry.publish_team_server(TEAM_ID, team, server_url=SERVER_URL, issued_at=datetime.now(UTC) - timedelta(minutes=1))
     clock = Clock()
     directory = _directory(registry, clock=clock)
     await directory.resolve(TEAM_ID)
@@ -147,17 +133,13 @@ async def test_without_a_service_token_the_member_certificate_reads_a_private_te
     await registry.add_team(TEAM_ID, did_key(team_key), visibility="private")
     member = Member(team_id=TEAM_ID, team_key=team_key, certificate_id="cert-1", alias="alice")
     await registry.add_certificate(member.certificate(), team_key=team_key)
-    await registry.publish_team_server(
-        TEAM_ID, team_key, server_url=SERVER_URL, issued_at=datetime.now(UTC) - timedelta(minutes=1)
-    )
+    await registry.publish_team_server(TEAM_ID, team_key, server_url=SERVER_URL, issued_at=datetime.now(UTC) - timedelta(minutes=1))
 
     async def no_override(domain: str) -> str | None:
         return None
 
     directory = TeamServerDirectory(
-        team_cache=AWIDTeamCache(
-            registry_url=REGISTRY_URL, ttl_seconds=60, transport=registry.transport
-        ),
+        team_cache=AWIDTeamCache(registry_url=REGISTRY_URL, ttl_seconds=60, transport=registry.transport),
         transport=registry.transport,
         registry_override=no_override,
     )
@@ -171,21 +153,15 @@ async def test_a_malformed_awid_registry_value_fails_closed_with_a_code(registry
     async def malformed(domain: str) -> str | None:
         return "not a url"
 
-    assert (
-        await _refusal(_directory(registry, registry_override=malformed)) == "authority_unavailable"
-    )
+    assert await _refusal(_directory(registry, registry_override=malformed)) == "authority_unavailable"
 
 
 async def test_a_team_awid_does_not_know_is_reported_as_unknown(registry):
     assert await _refusal(_directory(registry)) == "team_unknown"
 
 
-async def test_a_dns_failure_is_unavailable_and_never_falls_back_to_the_verifier_registry(
-    registry, team
-):
-    await registry.publish_team_server(
-        TEAM_ID, team, server_url=SERVER_URL, issued_at=datetime.now(UTC) - timedelta(minutes=1)
-    )
+async def test_a_dns_failure_is_unavailable_and_never_falls_back_to_the_verifier_registry(registry, team):
+    await registry.publish_team_server(TEAM_ID, team, server_url=SERVER_URL, issued_at=datetime.now(UTC) - timedelta(minutes=1))
     calls_before = len(registry.transport.calls)
 
     async def dns_fails(domain: str) -> str | None:

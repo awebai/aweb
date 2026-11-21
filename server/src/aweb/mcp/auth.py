@@ -63,7 +63,8 @@ class AuthContext:
     ) -> AuthContext:
         """Adapt the shared HTTP principal without selecting another membership.
 
-        docs/identity-messaging-contract.md:68-94 keeps DID-scoped messaging
+        Global And Local Identities (docs/identity-messaging-contract.md:68-94) keeps
+        DID-scoped messaging
         independent of team selection. Transport metadata adds no authority.
         """
         return cls(

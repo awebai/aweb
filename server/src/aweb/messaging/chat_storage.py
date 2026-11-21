@@ -1,7 +1,8 @@
 """Canonical persistence of an admitted chat message and its sender receipt.
 
 Transport admission remains with the native/federation caller. This writer
-stores the attestation unchanged (docs/identity-messaging-contract.md:69-93).
+stores the attestation unchanged. See Direct Address Send Protocol
+(docs/identity-messaging-contract.md:156-168).
 """
 
 from __future__ import annotations

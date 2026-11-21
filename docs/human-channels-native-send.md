@@ -42,8 +42,8 @@ session implementation is enabled. Existing conformance bytes are retained.
 Construct `aweb.human_channels.native.NativeMessagingService` with the normal
 OSS database infrastructure, a configured `ServiceBinding`, and a
 `NativeMessagingAuthority` provider from `aweb.human_channels.authority`.
-Pass the selected serving SDK client as `registry_client` for certificate-backed
-same-team delivery checks. This resource supplies registry evidence, not host
+Pass the selected serving SDK client in the required `registry_client` keyword
+for certificate-backed same-team delivery checks. This resource supplies registry evidence, not host
 custody or a principal; missing membership evidence cannot grant same-team
 admission. Independently authorized exact contacts and open inbound policy
 retain their own admission paths.

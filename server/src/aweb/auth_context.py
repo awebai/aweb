@@ -63,6 +63,10 @@ class TeamIdentity:
         object.__setattr__(self, "identity_scope", normalize_identity_scope(self.identity_scope))
 
 
+class NativeCertificateIdentity(TeamIdentity):
+    """Team identity produced by native certificate verification and acceptance."""
+
+
 @dataclass(frozen=True)
 class IdentityAuth:
     """Key possession and verified global identity, independent of membership."""
@@ -96,3 +100,7 @@ class MessagingAuth:
             object.__setattr__(
                 self, "identity_scope", normalize_identity_scope(self.identity_scope)
             )
+
+
+class NativeCertificateMessagingAuth(MessagingAuth):
+    """Messaging projection of the same verified native certificate credential."""

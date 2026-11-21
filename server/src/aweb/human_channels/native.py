@@ -127,7 +127,7 @@ class NativeMessagingService:
         db,
         *,
         authority: NativeMessagingAuthority,
-        registry_client=None,
+        registry_client,
         service: ContractRecord,
         publisher=None,
         attachment_backend=None,
@@ -909,7 +909,7 @@ class NativeMessagingUnitOfWork:
                 # A native pair preparation may not silently expand to an old
                 # group's recipients. Managed/group preparation belongs to P4/P5.
                 participants = await self.manager.fetch_all(
-                    "SELECT did FROM {{tables.chat_participants}} WHERE session_id=$1 AND left_at IS NULL",
+                    "SELECT did FROM {{tables.chat_participants}} WHERE session_id=$1",
                     cid,
                 )
                 if {r["did"] for r in participants} != {actor["did"], recipient["did"]}:

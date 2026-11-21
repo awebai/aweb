@@ -145,7 +145,10 @@ async def native_send(aweb_cloud_db):
     provider = HostAuthority(db, service_binding)
     # No publisher until explicitly recovered: simulates commit->process crash.
     service = NativeMessagingService(
-        _build_test_app(db, None).state.db, authority=provider, service=service_binding
+        _build_test_app(db, None).state.db,
+        authority=provider,
+        service=service_binding,
+        registry_client=None,
     )
     auth = MessagingAuth(
         did_key=a_did,
@@ -371,6 +374,7 @@ async def test_committed_intent_recovers_without_second_message(native_send):
         authority=env["provider"],
         service=env["service"].service,
         publisher=publish,
+        registry_client=None,
     )
     await service.publish_pending()
     await service.publish_pending()

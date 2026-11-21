@@ -24,6 +24,10 @@ from uuid import UUID
 from aweb_naapp.hooks.owner_act import CORE_ACTS, hook_binding_subject
 from aweb_naapp.hooks.owner_act_nonces import OwnerActVerifier
 from aweb_naapp.hooks.strictjson import Refused
+from awid.external_authority import TXTOutcomeResolver
+from awid.registry import RegistryClient
+from awid.team_key_acts import TeamKeyMemo
+from pgdbm import AsyncDatabaseManager
 
 from aweb.app_registry import normalize_app_id, normalize_digest, normalize_origin, validate_team_id
 from aweb.awid_error_handling import AWID_DEPENDENCY_ERRORS
@@ -311,21 +315,24 @@ class OwnerActTeamKeyUnavailable(Exception):
 def core_owner_act_verifier(
     *,
     audience: str,
-    registry_client: Any,
-    pin_team_key: Callable[[str, str], Awaitable[str]],
+    db: AsyncDatabaseManager,
+    registry_client: RegistryClient,
+    txt_resolver: TXTOutcomeResolver,
+    pin_memo: TeamKeyMemo | None = None,
 ) -> OwnerActVerifier:
     """The server's owner-act verifier: core's closed vocabulary, its public
     origin as audience, and the team's controller key read fresh from AWID
-    and held to the key this server admitted (``pin_team_key(team_id, key)``,
-    aweb.team_key_pins)."""
+    and held to the key this server admitted through the native key reader."""
 
     async def team_key_for(team_id: str) -> str:
         try:
             key = await read_team_key(
+                db=db,
                 registry_client=registry_client,
+                txt_resolver=txt_resolver,
                 team_id=team_id,
                 evidence=EvidenceMode.FRESH,
-                pin_key=pin_team_key,
+                pin_memo=pin_memo,
             )
         except AWID_DEPENDENCY_ERRORS as exc:
             raise OwnerActTeamKeyUnavailable(exc) from exc

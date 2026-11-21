@@ -52,7 +52,6 @@ from aweb.identity_metadata import (
 from aweb.id_chain_auth import stored_id_chain
 from aweb.messaging.chat_send import (
     _address_from_alias,
-    _left_dids_by_session,
     _parse_timestamp,
     _target_did,
     resolve_actor_agent,
@@ -85,7 +84,7 @@ from aweb.messaging.waiting import (
     unregister_waiting,
 )
 from aweb.grant_streams import (
-    GRANT_STREAM_RECHECK_SECONDS,
+    STREAM_AUTHORITY_RECHECK_SECONDS,
     clamp_deadline_to_grant,
     grant_expiry_reason,
     grant_terminal_reason,
@@ -368,7 +367,6 @@ async def pending(
             session_ids,
         )
     participants_by_session = _group_participants_by_session(participant_rows)
-    left_dids_by_session = await _left_dids_by_session(db, session_ids)
     identity_map = await lookup_identity_metadata_by_did(
         db,
         [
@@ -395,13 +393,11 @@ async def pending(
     pending_items = []
     for item in conversations:
         session_participants = participants_by_session.get(item["session_id"], [])
-        left_dids = left_dids_by_session.get(item["session_id"], set())
-        hidden_dids = set(actor_dids) | left_dids
         waiting = waiting_by_session.get(item["session_id"], [])
         participants = [
             row["alias"]
             for row in session_participants
-            if (row.get("did") or "").strip() not in hidden_dids
+            if (row.get("did") or "").strip() not in actor_dids
         ]
         participant_addresses = [
             (row.get("address") or "").strip()
@@ -411,7 +407,7 @@ async def pending(
                 row["alias"],
             )
             for row in session_participants
-            if (row.get("did") or "").strip() not in hidden_dids
+            if (row.get("did") or "").strip() not in actor_dids
         ]
         time_remaining_seconds = (
             max(
@@ -436,7 +432,7 @@ async def pending(
                 "participant_dids": [
                     (row.get("did") or "").strip()
                     for row in session_participants
-                    if (row.get("did") or "").strip() not in hidden_dids
+                    if (row.get("did") or "").strip() not in actor_dids
                 ],
                 "participant_addresses": participant_addresses,
                 "last_message": item["last_message"],
@@ -672,7 +668,7 @@ async def _sse_events(
     last_keepalive = last_refresh
     last_pubsub_ping = last_refresh
     last_db_poll = last_refresh
-    next_grant_check = time.monotonic() + GRANT_STREAM_RECHECK_SECONDS
+    next_grant_check = time.monotonic() + STREAM_AUTHORITY_RECHECK_SECONDS
 
     async def _stream_grant_reason():
         nonlocal next_grant_check
@@ -688,7 +684,7 @@ async def _sse_events(
                 "Chat stream grant verification failed for session %s", session_id_str
             )
             return "verification_unavailable"
-        next_grant_check = time.monotonic() + GRANT_STREAM_RECHECK_SECONDS
+        next_grant_check = time.monotonic() + STREAM_AUTHORITY_RECHECK_SECONDS
         return reason
 
     channel = chat_session_channel_name(session_id_str)
@@ -1304,7 +1300,6 @@ async def list_sessions(
             session_ids,
         )
     participants_by_session = _group_participants_by_session(participant_rows)
-    left_dids_by_session = await _left_dids_by_session(db, session_ids)
     identity_map = await lookup_identity_metadata_by_did(
         db,
         [
@@ -1326,7 +1321,6 @@ async def list_sessions(
     sessions = []
     for row in rows:
         session_participants = participants_by_session.get(str(row["session_id"]), [])
-        hidden_dids = set(actor_dids) | left_dids_by_session.get(str(row["session_id"]), set())
         waiting = waiting_by_session.get(str(row["session_id"]), [])
         sessions.append(
             SessionListItem(
@@ -1336,12 +1330,12 @@ async def list_sessions(
                 participants=[
                     participant["alias"]
                     for participant in session_participants
-                    if (participant.get("did") or "").strip() not in hidden_dids
+                    if (participant.get("did") or "").strip() not in actor_dids
                 ],
                 participant_dids=[
                     (participant.get("did") or "").strip()
                     for participant in session_participants
-                    if (participant.get("did") or "").strip() not in hidden_dids
+                    if (participant.get("did") or "").strip() not in actor_dids
                 ],
                 participant_addresses=[
                     (participant.get("address") or "").strip()
@@ -1351,7 +1345,7 @@ async def list_sessions(
                         participant["alias"],
                     )
                     for participant in session_participants
-                    if (participant.get("did") or "").strip() not in hidden_dids
+                    if (participant.get("did") or "").strip() not in actor_dids
                 ],
                 created_at=_utc_iso(row["created_at"]),
                 last_activity=_utc_iso(row["last_activity"]),

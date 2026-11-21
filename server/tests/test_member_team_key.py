@@ -17,7 +17,7 @@ from starlette.requests import Request
 from aweb.member_team_key import read_member_projection
 
 from aweb.application_state import application_registry_client
-from aweb.identity_auth_deps import current_membership
+from aweb.member_team_key import current_membership
 from aweb.messaging.delivery_policy import has_current_shared_team
 from aweb.messaging.participants import messaging_participants_by_aliases
 from aweb.messaging.sender_membership import sender_memberships

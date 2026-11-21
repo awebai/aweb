@@ -30,7 +30,9 @@ from aweb.service_errors import IdentityBindingCode, IdentityBindingError, Servi
         ),
     ],
 )
-async def test_binding_handler_preserves_reason_status_retry_and_action(code, status, message):
+async def test_binding_handler_preserves_reason_status_retry_and_action(
+    code, status, message
+):
     app = FastAPI()
 
     @app.exception_handler(ServiceError)
@@ -71,4 +73,6 @@ async def test_missing_serving_registry_keeps_its_expected_actionable_503():
         response = await client.get("/registry")
     assert response.status_code == 503
     assert response.json()["detail"]["code"] == RegistryClientUnavailable.code
-    assert "Configure the serving registry client" in response.json()["detail"]["message"]
+    assert (
+        "Configure the serving registry client" in response.json()["detail"]["message"]
+    )

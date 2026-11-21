@@ -10,22 +10,14 @@ from fastapi import HTTPException, Request
 
 from awid.team_ids import parse_team_id
 from aweb.application_state import application_registry_client
-from aweb.app_credentials import (
-    APP_REQUEST,
-    PURPOSES,
-    AppCredential,
-    verify_app_credential,
-)
+from aweb.app_credentials import APP_REQUEST, PURPOSES, AppCredential, verify_app_credential
+from aweb.certificate_registration import CertificateRegistrationObservation, RegistrationMode
 from aweb.claims import lock_task_claim_workspaces_on, release_task_claims_on
-from aweb.service_errors import (
-    ConflictError,
-    ForbiddenError,
-    NotFoundError,
-    ValidationError,
-)
+from aweb.member_team_key import read_certificate_standings
+from aweb.service_errors import ConflictError, ForbiddenError, NotFoundError, ValidationError
 from aweb.task_contracts import validate_app_task
-from awid.team_certificate import TeamCertificateError
-from aweb.team_auth import certificate_refusal, parse_and_verify_certificate
+from awid.team_certificate import TeamCertificateError, verify_team_certificate_claims
+from aweb.team_auth import certificate_refusal, project_verified_team_certificate
 from aweb.certificate_evidence import EvidenceMode
 from aweb.team_registry import resolve_team_key
 from .tasks_service import (
@@ -93,42 +85,50 @@ def validate_task_authorization(payload, signature, *, expected, now):
 
 async def verify_authorization_certificate(request, authorization):
     payload = authorization["payload"]
+    team_id = payload["team_id"]
     try:
-        domain, name = parse_team_id(payload["team_id"])
-        registry = application_registry_client(request.app.state)
         # C2 requires live authority even when the app otherwise uses a
         # CachedRegistryClient. Never use its stale/outage-grace reads here.
-        team_key = await resolve_team_key(request, payload["team_id"], evidence=EvidenceMode.FRESH)
-        select = getattr(registry, "get_team_revocations_for_certificates", None)
-        revoked = (
-            await select(domain, name, [payload["certificate_id"]], fresh=True)
-            if callable(select)
-            else await registry.get_team_revocations_fresh(domain, name)
-        )
+        team_key = await resolve_team_key(request, team_id, evidence=EvidenceMode.FRESH)
     except HTTPException as exc:
         if exc.status_code == 401:
             raise
         raise HTTPException(status_code=503, detail="authority_unavailable") from exc
     except Exception as exc:
         raise HTTPException(status_code=503, detail="authority_unavailable") from exc
-    certificates = await _current_certificates(request, payload["team_id"])
     try:
-        info = parse_and_verify_certificate(
+        checked = verify_team_certificate_claims(
             authorization["certificate"],
-            request_did_key=payload["actor_did_key"],
+            subject_did_key=payload["actor_did_key"],
             team_did_key=team_key,
-            revoked_certificate_ids=revoked,
-            registered_certificate_ids={c.certificate_id for c in certificates},
         )
     except TeamCertificateError as exc:
         raise certificate_refusal(exc) from exc
+    info = project_verified_team_certificate(checked.claims)
+    certificate_id = info["certificate_id"]
     # The team key is the payload's team's: the certificate must name that team.
-    if info["team_id"] != payload["team_id"] or info["certificate_id"] != payload["certificate_id"]:
+    if info["team_id"] != team_id or certificate_id != payload["certificate_id"]:
         raise HTTPException(status_code=401, detail="signature_invalid")
+    certificates = await _current_certificates(request, team_id)
+    try:
+        standings = await read_certificate_standings(
+            application_registry_client(request.app.state), team_id, [certificate_id],
+            mode=RegistrationMode.REQUIRED, revocation_evidence=EvidenceMode.FRESH,
+            registrations=CertificateRegistrationObservation(
+                team_id=team_id, registered_certificate_ids={c.certificate_id for c in certificates},
+            ),
+        )
+        standings[certificate_id].require_active()
+    except TeamCertificateError as exc:
+        raise certificate_refusal(exc) from exc
+    except HTTPException as exc:
+        if exc.status_code == 401:
+            raise
+        raise HTTPException(status_code=503, detail="authority_unavailable") from exc
     matches = [
         c
         for c in certificates
-        if c.certificate_id == info["certificate_id"]
+        if c.certificate_id == certificate_id
         and c.member_did_key == info["did_key"]
         and (c.member_did_aw or "") == info["member_did_aw"]
         and not c.revoked_at

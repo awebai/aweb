@@ -16,10 +16,7 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi import HTTPException
 
-from aweb.identity_auth_deps import (
-    current_membership,
-)
-from aweb.member_team_key import read_member_projection
+from aweb.member_team_key import current_membership, read_member_projection
 from aweb.routes.connect import connect_agent
 from aweb.team_auth_deps import resolve_team_identity
 from awid.registry import RegistryError

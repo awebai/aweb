@@ -4,7 +4,6 @@ import json
 from datetime import datetime, timezone
 
 import pytest
-from fastapi import HTTPException
 
 from awid.signing import sign_message
 from aweb.application_state import RegistryClientUnavailable
@@ -106,10 +105,10 @@ async def test_controller_service_registration_uses_selected_root_registry(
     root = root_app(env.app, None if missing else registry)
     if missing:
         root.state.awid_registry_client = registry
-        with pytest.raises(HTTPException) as refused:
+        with pytest.raises(RegistryClientUnavailable) as refused:
             await register_team_with_service(body, root_request(root), db=env.infra)
         assert refused.value.status_code == 503
-        assert refused.value.detail == "AWID registry client is not configured"
+        assert refused.value.code == "registry_client_unavailable"
     else:
         assert not hasattr(root.state, "awid_registry_client")
         result = await register_team_with_service(body, root_request(root), db=env.infra)

@@ -39,7 +39,7 @@ from starlette.requests import Request
 from awid.did import did_from_public_key
 from awid.registry import RegistryClient, RegistryError
 from awid.signing import canonical_json_bytes, sign_message
-from aweb.identity_auth_deps import current_membership
+from aweb.member_team_key import current_membership
 from aweb.mcp.auth import MCPAuthMiddleware
 from aweb.team_auth_deps import verify_request_certificate
 from aweb.team_auth_envelope import compact_team_auth_payload

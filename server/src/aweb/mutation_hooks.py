@@ -213,11 +213,17 @@ def create_mutation_handler(redis: Redis, db_infra: DatabaseInfrastructure) -> M
                 logger.error("Failed to cascade agent.deleted", exc_info=True)
                 failures.append(MutationDeliveryStage.AGENT_CASCADE)
 
-        if event_type == MutationEventType.TASK_STATUS_CHANGED:
+        status_changed = event_type == MutationEventType.TASK_STATUS_CHANGED
+        if status_changed or (
+            event_type == MutationEventType.TASK_UPDATED
+            and context.get("released_claim_workspace_ids")
+        ):
             try:
-                await _cascade_task_status_changed(redis, db_infra, context)
+                await _announce_task_claim_changes(
+                    redis, db_infra, context, status_changed=status_changed
+                )
             except Exception:
-                logger.error("Failed to cascade task.status_changed", exc_info=True)
+                logger.error("Failed to publish task claim changes for %s", event_type, exc_info=True)
                 failures.append(MutationDeliveryStage.TASK_STATUS_CASCADE)
 
         if event_type == MutationEventType.TASK_DELETED:
@@ -330,16 +336,10 @@ async def _cascade_agent_deleted(
     )
 
 
-async def _cascade_task_status_changed(
-    redis: Redis, db_infra: "DatabaseInfrastructure", context: dict
+async def _announce_task_claim_changes(
+    redis: Redis, db_infra: "DatabaseInfrastructure", context: dict, *, status_changed: bool
 ) -> None:
-    """Announce the claim changes of a task status change.
-
-    When an aweb task moves to in_progress, announce the claim already acquired
-    by the task transaction. When it moves to any other status, announce the
-    claims the status transaction released, which the context lists in
-    ``released_claim_workspace_ids``; no claim is changed here.
-    """
+    """Announce committed releases before a replacement claim."""
     actor_workspace_id = context.get("actor_workspace_id", "").strip()
     task_ref = context.get("task_ref", "").strip()
     new_status = context.get("new_status", "")
@@ -357,6 +357,7 @@ async def _cascade_task_status_changed(
         return
     team_id = str(task["team_id"])
     alias = context.get("actor_alias") or ""
+    await _publish_task_unclaims(redis, db_infra, context, team_id=team_id)
     if new_status == "in_progress" and claim_preacquired and actor_workspace_id:
         await publish_event(
             redis,
@@ -376,10 +377,7 @@ async def _cascade_task_status_changed(
                 title=title or "",
             ),
         )
-    else:
-        await _publish_task_unclaims(redis, db_infra, context, team_id=team_id)
-
-    if actor_workspace_id:
+    if status_changed and actor_workspace_id:
         await publish_event(
             redis,
             TaskStatusChangedEvent(

@@ -95,7 +95,8 @@ async def _send(
 async def test_identity_sender_uses_its_single_current_context_not_first_registered_address(
     privacy_app, transport
 ):
-    # trust-model.md:186-191 and identity-messaging-contract.md:381-382.
+    # trust-model.md:186-191 and Receiver-Wide Replay And Contact Compatibility
+    # (docs/identity-messaging-contract.md:382-386).
     # Namespace is a fixture precondition; DID/address creation, native
     # admission and both message transports use real production routes.
     env = privacy_app

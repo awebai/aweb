@@ -27,12 +27,15 @@ from aweb.member_team_key import current_member_sql
 from aweb.messaging.sender_membership import sender_memberships
 from aweb.service_errors import (
     ConflictError,
+    CurrentMembershipRefusal,
     ForbiddenError,
     NotFoundError,
     ValidationError,
 )
 
 logger = logging.getLogger(__name__)
+# Released aw 1.36.x recognizes this exact refusal (cmd/aw/room.go).
+ROOM_CURRENT_MEMBERSHIP_REQUIRED_DETAIL = "Room requires current team membership"
 ROOM_DISCLOSURE = (
     "Team room posts are readable by the service operator and all current and future team members."
 )
@@ -92,8 +95,7 @@ async def _active_member(tx, actor):
     )
     if not row:
         logger.warning("Room access refused: actor is not an active team member")
-        # Released aw 1.36.x recognizes this exact refusal (cmd/aw/room.go).
-        raise ForbiddenError("Room requires current team membership")
+        raise CurrentMembershipRefusal(ROOM_CURRENT_MEMBERSHIP_REQUIRED_DETAIL)
 
 
 async def _ensure_room(tx, team_id):

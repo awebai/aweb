@@ -20,6 +20,7 @@ from aweb.federation.delivery import (
     deliver_federated_phase_b,
     replay_federation_mutation_outbox,
 )
+from aweb.inbound_modes import set_identity_inbound_mode
 from aweb.federation.envelope import FederationEnvelope
 from did_key_fixtures import named_did_key
 from chat_pair_support import route_pair as route_pair
@@ -243,6 +244,7 @@ async def test_phase_b_commits_receipt_message_participants_and_outbox_together(
         signature="signed-message",
         recipient=recipient,
         authority_token=token,
+        registry_client=None,
     )
 
     assert result["message_id"] == envelope.message_id
@@ -324,6 +326,7 @@ async def test_phase_b_database_outage_has_stable_retryable_failure() -> None:
             signature="signed-message",
             recipient={},
             authority_token=None,
+            registry_client=None,
         )
 
     assert error.value.reason == "federation_authority_coordination_unavailable"
@@ -346,6 +349,7 @@ async def test_phase_b_rejects_missing_authority_token_without_effects(
             signature="signed-message",
             recipient=recipient,
             authority_token=None,
+            registry_client=None,
         )
 
     assert error.value.reason == "federation_authority_cas_conflict"
@@ -367,6 +371,7 @@ async def test_phase_b_chat_commits_session_message_and_participants(
         signature="signed-chat",
         recipient=recipient,
         authority_token=token,
+        registry_client=None,
     )
 
     assert result["session_id"] == envelope.conversation_id
@@ -412,6 +417,7 @@ async def test_phase_b_exact_replay_returns_established_result_without_effects(
         signature="signed-message",
         recipient=recipient,
         authority_token=token,
+        registry_client=None,
     )
     await manager.execute(
         "DELETE FROM {{tables.contacts}} WHERE owner_did = $1 AND contact_address = $2",
@@ -441,6 +447,7 @@ async def test_phase_b_exact_replay_returns_established_result_without_effects(
         signature="signed-message",
         recipient=recipient,
         authority_token=token,
+        registry_client=None,
     )
 
     after = {
@@ -473,6 +480,7 @@ async def test_phase_b_waits_for_and_enforces_concurrent_recipient_policy_change
                 signature="signed-message",
                 recipient=recipient,
                 authority_token=token,
+                registry_client=None,
             )
         )
         await asyncio.sleep(0.1)
@@ -564,6 +572,7 @@ async def test_phase_b_rechecks_stored_route_after_concurrent_mutation(
                 authority_token=token,
                 stored_route_continuation=True,
                 stored_route_snapshot=stored_route_snapshot,
+                registry_client=None,
             )
         )
         await asyncio.sleep(0.1)
@@ -669,6 +678,7 @@ async def test_phase_b_rejects_missing_global_stored_route_key(
             authority_token=token,
             stored_route_continuation=True,
             stored_route_snapshot=snapshot,
+            registry_client=None,
         )
 
     assert error.value.reason == "federation_conversation_invalid"
@@ -735,6 +745,7 @@ async def test_phase_b_rejects_preexisting_noncanonical_stored_route(
             authority_token=token,
             stored_route_continuation=True,
             stored_route_snapshot=snapshot,
+            registry_client=None,
         )
 
     assert error.value.reason == "federation_conversation_invalid"
@@ -771,6 +782,7 @@ async def test_phase_b_rejects_preexisting_external_chat_target_origin(
             authority_token=token,
             stored_route_continuation=True,
             stored_route_snapshot=snapshot,
+            registry_client=None,
         )
 
     assert error.value.reason == "federation_conversation_invalid"
@@ -796,6 +808,7 @@ async def test_phase_b_changed_same_id_conflicts_across_mail_and_chat(
         signature="signed-message",
         recipient=recipient,
         authority_token=token,
+        registry_client=None,
     )
     changed = _envelope(message_id=UUID(envelope.message_id), kind="chat")
     changed = changed.model_copy(update={"conversation_id": envelope.conversation_id})
@@ -807,6 +820,7 @@ async def test_phase_b_changed_same_id_conflicts_across_mail_and_chat(
             signature="signed-message",
             recipient=recipient,
             authority_token=token,
+            registry_client=None,
         )
 
     assert error.value.reason == "federation_message_replay_conflict"
@@ -825,6 +839,7 @@ async def test_contact_does_not_transfer_when_an_address_is_reassigned(
         signature="signed-first",
         recipient=recipient,
         authority_token=first_token,
+        registry_client=None,
     )
 
     replacement = _envelope().model_copy(
@@ -875,6 +890,7 @@ async def test_contact_does_not_transfer_when_an_address_is_reassigned(
         signature="signed-replacement",
         recipient=recipient,
         authority_token=replacement_token,
+        registry_client=None,
     )
 
     contact = await manager.fetch_one(
@@ -909,6 +925,7 @@ async def test_phase_b_forced_failure_rolls_back_every_effect(aweb_cloud_db) -> 
             recipient=recipient,
             authority_token=token,
             before_commit=fail_before_commit,
+            registry_client=None,
         )
 
     for table in ("message_ingress_receipts", "messages", "federation_mutation_outbox"):
@@ -940,6 +957,7 @@ async def test_committed_outbox_retries_after_hook_failure(aweb_cloud_db, failur
         signature="signed-message",
         recipient=recipient,
         authority_token=token,
+        registry_client=None,
     )
 
     async def fail(_event_type, _payload):
@@ -989,6 +1007,7 @@ async def test_concurrent_outbox_workers_deliver_a_committed_event_once(
         signature="signed-message",
         recipient=recipient,
         authority_token=token,
+        registry_client=None,
     )
 
     entered = asyncio.Event()
@@ -1025,16 +1044,10 @@ async def test_phase_b_contacts_only_requires_exact_active_contact(
     manager = aweb_cloud_db.aweb_db
     envelope = _envelope(kind=kind)
     recipient, token = await _seed_recipient_and_authority(manager, envelope)
-    await manager.execute(
-        "UPDATE {{tables.agents}} SET inbound_mode=$2 WHERE agent_id=$1",
-        recipient["agent_id"],
-        mode,
-    )
+    if multiple != "initial":
+        async with manager.transaction() as tx:
+            await set_identity_inbound_mode(tx, envelope.target_did_aw, mode)
     if multiple == "initial":
-        await manager.execute(
-            "UPDATE {{tables.agents}} SET inbound_mode='open' WHERE agent_id=$1",
-            recipient["agent_id"],
-        )
         await manager.execute("""
             INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
             VALUES ('second:beta.example', 'beta.example', 'Second', 'did:key:z6MkjG8Yy91D972irdjSx451mPnPkm2R1MurRhQUFT7gfeJd' /* team2 */)
@@ -1067,6 +1080,7 @@ async def test_phase_b_contacts_only_requires_exact_active_contact(
             signature="signed-message",
             recipient=recipient,
             authority_token=token,
+            registry_client=None,
             **kwargs,
         )
 
@@ -1222,6 +1236,7 @@ async def test_identity_policy_share_locks_allow_opposite_team_deliveries(
                 envelope=envelope,
                 recipient=current,
                 stored_route_continuation=False,
+                registry_client=None,
             )
 
     await asyncio.wait_for(
@@ -1298,12 +1313,14 @@ async def test_global_recipient_without_stable_did_uses_own_federation_policy(
         current = locked.recipient
         if mode == "open":
             await _authorize_policy(
-                tx, envelope=keyed, recipient=current, stored_route_continuation=False
+                tx, envelope=keyed, recipient=current, stored_route_continuation=False,
+                registry_client=None,
             )
             return
         with pytest.raises(FederationAuthorityError) as refused:
             await _authorize_policy(
-                tx, envelope=keyed, recipient=current, stored_route_continuation=False
+                tx, envelope=keyed, recipient=current, stored_route_continuation=False,
+                registry_client=None,
             )
         assert refused.value.reason == "recipient_policy_rejected"
     if mode != "contacts_only":
@@ -1322,7 +1339,8 @@ async def test_global_recipient_without_stable_did_uses_own_federation_policy(
         locked = await _lock_current_recipient(tx, envelope=keyed, recipient=recipient)
         current = locked.recipient
         await _authorize_policy(
-            tx, envelope=keyed, recipient=current, stored_route_continuation=False
+            tx, envelope=keyed, recipient=current, stored_route_continuation=False,
+            registry_client=None,
         )
 
 
@@ -1339,7 +1357,8 @@ async def test_phase_b_shared_team_delivery_requires_both_current_admissions(
     route_pair, sender_key, recipient_key, delivered
 ):
     # Same-team policy requires actual controller certificates and native
-    # admission for BOTH identities (identity-messaging-contract.md:81-99).
+    # admission for BOTH identities (Global And Local Identities
+    # (docs/identity-messaging-contract.md:81-99)).
     world = await _registered_routing_pair(route_pair)
     bob = world.target.actor
     target = world.target.node

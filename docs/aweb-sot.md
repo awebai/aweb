@@ -1103,7 +1103,7 @@ transient `did:key`.
 |-------|-------|
 | `GET /v1/agents/{alias}/events` | SSE event stream |
 | `GET /v1/status` | Team status |
-| `GET /v1/status/stream` | Team coordination SSE; message/chat events restricted to the authenticated actor's own active workspaces. Embedded public readers receive no messaging events. |
+| `GET /v1/status/stream` | Team coordination SSE. Message and chat events are restricted to the authenticated actor's own active workspaces. Native certificate streams check membership standing every 30 seconds and close if standing fails or cannot be determined. Native certificate and grant connections close within 300 seconds, or at the grant's earlier expiry. Embedded public readers receive no messaging events. |
 | `POST /v1/agents/heartbeat` | Keep-alive |
 | `POST /v1/agents/suggest-alias-prefix` | Suggest the next available classic alias prefix |
 | `GET /v1/agents` | List team agents |
@@ -2230,11 +2230,20 @@ closes the stream with `team_membership_not_current`; unavailable evidence
 fails closed. Readmitting the member under a new certificate does not change
 the credential that opened the old stream. Independent identity-only thread
 participation remains governed by the Identity and Messaging Contract.
+The native stream recheck applies to a credential verified and accepted on
+the native certificate path. A proxy identity keeps its own admission when
+its transport supplies an opaque certificate identifier.
+
+Revocation without a key rotation removes authentication and delivery standing.
+Roster, assignee, room fan-out and alias projections use the admitted member
+row and current team key until its recorded admission changes.
 
 A task claim conflicts with a new claimant only while its holder remains a
 current member. The claim owner releases a non-current holder's claim through
 its normal claim/focus release operation in the new claim transaction. Key
 rotation does not sweep unrelated tasks or claims.
+After a committed takeover, the service announces each released claim before
+the replacement claim, including when the task stays `in_progress`.
 
 ### Staged certificate-registration observations
 
@@ -2254,6 +2263,10 @@ Native authentication, app-task authorization, hook owner acts and service
 registration use `team_key_reader.read_team_key` to acquire SDK key evidence
 and apply the existing native pin owner. Their cached or fresh acquisition
 strength remains explicit; a consumer cannot accept a registry key by bypassing
-that pin. A controller registration request checks its timestamp and signature
-before a pin can change, including `dry_run` requests. Invalid request bytes
-cannot advance the admitted key or its controller-act timestamp.
+that pin. A verified request whose certificate fails under the cached key can
+ask the same reader for the SDK's bounded signature-failure refresh. Hook owner
+acts keep fresh registry acquisition and share the native pin memo. A controller
+registration request checks its timestamp and signature
+before a pin can change, including `dry_run` requests. It refuses if the
+admitted key differs from the key that verified the signature. Invalid request
+bytes cannot advance the admitted key or its controller-act timestamp.

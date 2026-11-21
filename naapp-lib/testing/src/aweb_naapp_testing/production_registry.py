@@ -34,8 +34,13 @@ from types import SimpleNamespace
 
 import httpx
 from awid.dns_verify import DnsVerificationError
-from awid_service.deps import get_domain_verifier
-from awid_service.testing import REGISTRY_URL, SERVICE_TOKEN, Registry, ServiceTransport
+from awid_service.testing import (
+    REGISTRY_URL,
+    SERVICE_TOKEN,
+    Registry,
+    ServiceTransport,
+    fixture_domain_authority,
+)
 from pgdbm import AsyncDatabaseManager, DatabaseConfig
 
 _SCHEMA_PREFIX = "production_awid_"
@@ -119,11 +124,9 @@ async def _serve_authority(app: ReleaseApp) -> asyncio.Server:
             while (await reader.readline()) not in (b"\r\n", b"\n", b""):
                 pass
             domain = httpx.URL(request_line.split()[1]).path.lstrip("/")
-            override = app.dependency_overrides.get(get_domain_verifier)
             try:
-                if override is None:
-                    raise DnsVerificationError(f"No TXT records found for _awid.{domain}")
-                status, body = "200 OK", dataclasses.asdict(await override()(domain))
+                authority = await fixture_domain_authority(app.dependency_overrides, domain)
+                status, body = "200 OK", dataclasses.asdict(authority)
             except DnsVerificationError as refused:
                 status, body = "404 Not Found", {"refused": str(refused)}
             content = json.dumps(body).encode()

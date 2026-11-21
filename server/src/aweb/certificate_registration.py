@@ -15,7 +15,7 @@ from fastapi import HTTPException
 from prometheus_client import Counter
 from starlette.requests import Request
 
-from aweb.member_team_key import member_team_scope
+from aweb.team_scope import member_team_scope
 
 
 class RegistrationMode(StrEnum):
@@ -158,15 +158,10 @@ def configured_registration_mode() -> RegistrationMode:
     )
 
 
-async def read_certificate_registration(
-    *,
-    registry_client,
-    team_id: str,
-    certificate_id: str,
-    mode: RegistrationMode,
-    request: Request | None = None,
-) -> RegistrationDecision:
-    """Observe the staged requirement through the existing registry reader.
+async def observe_certificate_registrations(
+    *, registry_client, team_id: str, mode: RegistrationMode,
+) -> CertificateRegistrationObservation:
+    """Acquire the registration snapshot shared by one standing check or batch.
 
     docs/aweb-sot.md, Staged certificate-registration observations requires useful off-mode counts
     without making measurement unavailability a new refusal. SDK cache/read
@@ -187,19 +182,12 @@ async def read_certificate_registration(
     except HTTPException as exc:
         if exc.status_code < 500:
             raise
-        observation = CertificateRegistrationObservation(
+        return CertificateRegistrationObservation(
             team_id=team_id,
             registered_certificate_ids=None,
             unavailable_cause=exc,
         )
-    else:
-        observation = CertificateRegistrationObservation(
-            team_id=team_id,
-            registered_certificate_ids=registered,
-        )
-    return record_certificate_registration(
-        request,
-        observation=observation,
-        certificate_id=certificate_id,
-        mode=mode,
+    return CertificateRegistrationObservation(
+        team_id=team_id,
+        registered_certificate_ids=registered,
     )

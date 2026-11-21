@@ -72,7 +72,7 @@ async def human(world, principal, *, member=None, client=None, kind="human"):
     )
     root = getattr(world, "human_root", None)
     if root is None:
-        root = world.human_root = await world.registry.ensure_namespace(domain="example.com")
+        root = world.human_root = SigningKey.generate()
         world.human_members = {}
         world.human_identities = {}
 
@@ -92,6 +92,8 @@ async def human(world, principal, *, member=None, client=None, kind="human"):
     ) as registry:
         member = world.human_members.get(principal)
         if member is None:
+            if not world.human_members:
+                await registry.register_namespace("example.com", did_key(root), bytes(root))
             member = Member(
                 team_id=principal.team_id,
                 team_key=world.owner.team_key,

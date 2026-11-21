@@ -7,7 +7,7 @@ actor, never a newly invented global address or membership in another team.
 from __future__ import annotations
 
 from aweb.human_kind import is_verified_human
-from aweb.identity_auth_deps import current_membership
+from aweb.member_team_key import current_membership
 from aweb.member_team_key import (
     current_member_projections,
     messaging_identity_projection,

@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "description": "Local sender standing in required-registration mode and the received-message trust result when a reader uses that evidence across teams.",
+  "cases": [
+    {"id": "registered", "state": "active", "verification_status": "verified"},
+    {"id": "unregistered", "state": "inactive", "verification_status": "identity_mismatch"},
+    {"id": "revoked", "state": "inactive", "verification_status": "identity_mismatch"}
+  ]
+}

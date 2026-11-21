@@ -654,9 +654,9 @@ async def test_a_send_that_commits_then_fails_still_wakes_the_recipient(
     env = wake_app
     commit_continuation = mail_send_module._commit_mail_continuation
 
-    async def commit_then_fail(db, *, message, recipient, sender, registry_client):
+    async def commit_then_fail(db, *, message, recipient, sender):
         await commit_continuation(
-            db, message=message, recipient=recipient, sender=sender, registry_client=registry_client
+            db, message=message, recipient=recipient, sender=sender
         )
         raise RuntimeError("failed after the message committed")
 

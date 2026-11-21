@@ -377,9 +377,8 @@ conversation, the caller is told to retry the original conversation and recipien
 identities unchanged. It must not choose a new message ID merely to recover a
 lost answer: that would submit another message. Choosing a new ID is appropriate
 only when intentionally sending a different signed artifact.
-A plaintext continuation compares the recorded session parties, including retained
-departure markers, rather than only today's delivery targets. Departed parties
-remain excluded from new delivery. A named retry can recognize an original local
+A departed party is removed from the session's participants. A plaintext
+continuation compares the recorded parties that remain. A named retry can recognize an original local
 `did:key` party as the currently admitted global `did:aw` only when that identity's
 current key is still the exact recorded key; this acknowledgement does not rewrite
 participants or grant another membership. Signature and current admission checks
@@ -581,7 +580,9 @@ global `did:aw` senders retain their existing key/log and address checks.
 
 Both clients implement this decision matrix, exercised by
 `TestReceivedLocalSenderMatrix` and channel-core's `cross-team received local
-sender` tests. Real two-team mail tests cover a global resident grant, plaintext
+sender` tests. The native HTTP read and both clients share the
+[`sender-standing-v1` vector](../test-vectors/trust/sender-standing-v1.json)
+for registered, unregistered and revoked certificates. Real two-team mail tests cover a global resident grant, plaintext
 and encrypted-v2, CLI reads, channel presentation and wake presentation.
 
 | Evidence after signature and recipient checks | Result |

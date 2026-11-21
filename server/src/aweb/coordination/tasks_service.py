@@ -3,6 +3,7 @@ from __future__ import annotations
 from aweb.event_types import MutationEventType
 from aweb.hook_contexts import (
     TaskAssigneeChangedContext,
+    TaskClaimReplacedContext,
     TaskCommentAddedContext,
     TaskCreatedContext,
     TaskDeletedContext,
@@ -1703,11 +1704,13 @@ async def update_task(
     )
     new_assignee = written["assignee_alias"]
     old_status = current["status"]
-    if status is not None and status != old_status:
+    status_changed = status is not None and status != old_status
+    if status_changed or released_claim_workspace_ids:
+        context_type = TaskStatusChangedContext if status_changed else TaskClaimReplacedContext
         await fire_mutation_callback(
             on_mutation,
-            MutationEventType.TASK_STATUS_CHANGED.value,
-            TaskStatusChangedContext(
+            context_type.event_type.value,
+            context_type(
                 task_id=written_task_id,
                 team_id=team_id,
                 task_ref=written_ref,
