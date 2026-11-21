@@ -191,7 +191,7 @@ async def test_mcp_auth_prefers_certificate_identity_fields(aweb_cloud_db, monke
         """
         INSERT INTO {{tables.agents}}
             (agent_id, team_id, did_key, alias, identity_scope, status, inbound_mode)
-        VALUES ($1, $2, $3, $4, 'global', 'active', 'contacts_only')
+        VALUES ($1, $2, $3, $4, 'global', 'active', 'open')
         """,
         agent_id,
         team_id,
@@ -263,7 +263,7 @@ async def test_mcp_auth_accepts_raw_manager(aweb_cloud_db, monkeypatch):
         """
         INSERT INTO {{tables.agents}}
             (agent_id, team_id, did_key, alias, identity_scope, status, inbound_mode)
-        VALUES ($1, $2, $3, $4, 'global', 'active', 'contacts_only')
+        VALUES ($1, $2, $3, $4, 'global', 'active', 'open')
         """,
         agent_id,
         team_id,
@@ -387,7 +387,7 @@ async def test_mcp_auth_refuses_a_forwarded_actor_that_is_not_an_active_member(
         """
         INSERT INTO {{tables.agents}}
             (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, did_aw_verified_key, inbound_mode)
-        VALUES ($1, $2, 'did:key:z6MkggGwZHMkBygNAy7tZGtCZxrkWBHQ5fpEm6fSAxfkuvqE' /* z6MkAlice */, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', $3, 'did:key:z6MkggGwZHMkBygNAy7tZGtCZxrkWBHQ5fpEm6fSAxfkuvqE' /* z6MkAlice */, 'contacts_only')
+        VALUES ($1, $2, 'did:key:z6MkggGwZHMkBygNAy7tZGtCZxrkWBHQ5fpEm6fSAxfkuvqE' /* z6MkAlice */, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', $3, 'did:key:z6MkggGwZHMkBygNAy7tZGtCZxrkWBHQ5fpEm6fSAxfkuvqE' /* z6MkAlice */, 'open')
         """,
         agent_id,
         team_id,

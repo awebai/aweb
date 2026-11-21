@@ -209,7 +209,7 @@ async def forwarded_agent(db, *, status="active", removed=False, team=TEAM):
     await db.execute(
         "INSERT INTO {{tables.agents}} (agent_id, team_id, did_key, alias, identity_scope, status, deleted_at, inbound_mode) "
         "VALUES ($1, $2, 'did:key:z6MkggGwZHMkBygNAy7tZGtCZxrkWBHQ5fpEm6fSAxfkuvqE' /* z6MkAlice */, 'alice', 'local', $3, "
-        "CASE WHEN $4 THEN NOW() END, 'contacts_only')",
+        "CASE WHEN $4 THEN NOW() END, 'open')",
         ACTOR, team, status, removed,
     )
 

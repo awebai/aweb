@@ -28,7 +28,7 @@ async def _seed_workspace_with_claim(aweb_db, *, identity_scope: str = "local"):
     await aweb_db.execute(
         """
         INSERT INTO {{tables.agents}} (agent_id, team_id, did_key, alias, identity_scope, role, inbound_mode)
-        VALUES ($1, $2, 'did:key:z6Mkalice', 'alice', $3, 'developer', 'contacts_only')
+        VALUES ($1, $2, 'did:key:z6Mkalice', 'alice', $3, 'developer', 'open')
         """,
         agent_id,
         team_id,
@@ -862,7 +862,7 @@ async def test_lifecycle_archive_global_agent_without_workspace_archives_agent(
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}} (agent_id, team_id, did_key, alias, identity_scope, role, inbound_mode)
-        VALUES ($1, $2, 'did:key:z6Mkalice', 'alice', 'global', 'developer', 'contacts_only')
+        VALUES ($1, $2, 'did:key:z6Mkalice', 'alice', 'global', 'developer', 'open')
         """,
         agent_id,
         team_id,

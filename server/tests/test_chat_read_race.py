@@ -43,7 +43,7 @@ async def _setup_team_and_agents(aweb_db):
         row = await aweb_db.fetch_one(
             """
             INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, identity_scope, inbound_mode)
-            VALUES ('backend:read-race.example', $1, $2, $3, 'global', 'contacts_only')
+            VALUES ('backend:read-race.example', $1, $2, $3, 'global', 'open')
             RETURNING agent_id
             """,
             did_key,

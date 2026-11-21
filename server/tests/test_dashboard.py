@@ -227,8 +227,8 @@ async def _seed(aweb_db):
             agent_id, team_id, did_key, did_aw, address, alias, identity_scope, role, status, human_name, agent_type, inbound_mode
         )
         VALUES
-            ($1, 'backend:acme.com', 'did:key:z6Mkalice', 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'active', 'Alice', 'coder', 'contacts_only'),
-            ($2, 'backend:acme.com', 'did:key:z6Mkbob', NULL, NULL, 'bob', 'local', 'reviewer', 'active', 'Bob', 'reviewer', 'contacts_only')
+            ($1, 'backend:acme.com', 'did:key:z6Mkalice', 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'active', 'Alice', 'coder', 'open'),
+            ($2, 'backend:acme.com', 'did:key:z6Mkbob', NULL, NULL, 'bob', 'local', 'reviewer', 'active', 'Bob', 'reviewer', 'open')
         """,
         alice_id,
         bob_id,

@@ -88,7 +88,7 @@ async def _fixture(aweb_db):
     await aweb_db.execute(
         """
         INSERT INTO {{tables.agents}} (agent_id, team_id, alias, did_key, role, status, inbound_mode)
-        VALUES ($1, $2, 'alice', 'did:key:zAlice', 'developer', 'active', 'contacts_only')
+        VALUES ($1, $2, 'alice', 'did:key:zAlice', 'developer', 'active', 'open')
         """,
         agent_id, TEAM_ID,
     )

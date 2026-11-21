@@ -253,7 +253,7 @@ async def test_handle_contact_default_agent_resolution_uses_recent_activity(aweb
         VALUES (
             'default:acme.com', 'did:key:older', 'did:aw:older',
             'acme.com/older', 'older', 'global', 'developer',
-            '2026-01-01T00:00:00Z', 'contacts_only'
+            '2026-01-01T00:00:00Z', 'open'
         )
         RETURNING agent_id
         """
@@ -266,7 +266,7 @@ async def test_handle_contact_default_agent_resolution_uses_recent_activity(aweb
         VALUES (
             'default:acme.com', 'did:key:recent', 'did:aw:recent',
             'acme.com/recent', 'recent', 'global', 'developer',
-            '2026-01-02T00:00:00Z', 'contacts_only'
+            '2026-01-02T00:00:00Z', 'open'
         )
         RETURNING agent_id
         """
