@@ -444,7 +444,7 @@ func TestTeamReplaceKeyWithoutHomePrintsCertificatePlacementMaterial(t *testing.
 	cmd := &cobra.Command{}
 	cmd.SetErr(&notice)
 	var runErr error
-	printed := captureIDCommandStdout(t, func() {
+	printed := captureStdout(t, func() {
 		runErr = runTeamHumanReplaceKey(cmd, []string{"alice"})
 	})
 	if runErr != nil {
