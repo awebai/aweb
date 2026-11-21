@@ -74,6 +74,7 @@ host_published_port() {
 checks() {
   run check-python-static
   run check-product-table-writes
+  run check-secrets-shards
   run_step host-published-port host_published_port
   run check-generated-copies
   run test-generated-copies

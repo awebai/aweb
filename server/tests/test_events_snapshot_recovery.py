@@ -15,11 +15,13 @@ import pytest
 from pgdbm.errors import QueryError
 
 import aweb.routes.events as events
+from aweb import grant_streams
+from aweb.auth_context import GrantContext
 from aweb.team_auth_deps import TeamIdentity
 
 
 class SnapshotHarness:
-    def __init__(self, monkeypatch, *, target="mail", actions=(), deadline=120):
+    def __init__(self, monkeypatch, *, target="mail", actions=(), deadline=120, grant_seconds=None):
         self.now = 0.0
         self.actions = deque(actions)
         self.attempts = []
@@ -92,15 +94,21 @@ class SnapshotHarness:
         request = SimpleNamespace(is_disconnected=AsyncMock(return_value=False))
         self.request = request
         monkeypatch.setattr(events, "datetime", Clock)
+        monkeypatch.setattr(grant_streams, "datetime", Clock)
         monkeypatch.setattr(events, "monotonic", lambda: self.now)
         monkeypatch.setattr(events, "asyncio", SimpleNamespace(sleep=sleep))
         monkeypatch.setattr(events, "EVENTS_RECONCILE_INTERVAL", 1.0)
         monkeypatch.setattr(events, "random", SimpleNamespace(uniform=lambda low, high: high))
         monkeypatch.setattr(events, "_poll_control_signals", AsyncMock(return_value=[]))
         monkeypatch.setattr(events, "current_app_events_for_agent", AsyncMock(return_value=[]))
+        grant = None if grant_seconds is None else GrantContext(
+            grant_id="grant", session_did_key="did:key:session",
+            issuing_certificate_id="cert", scopes=("events.read", "mail.read"),
+            expires_at=self.origin + timedelta(seconds=grant_seconds),
+        )
         self.identity = TeamIdentity(team_id="backend:acme.com", alias="bob", did_key="did:key:test",
                                      did_aw="", address="", agent_id="22222222-2222-4222-8222-222222222222",
-                                     identity_scope="local", certificate_id="cert", grant=None)
+                                     identity_scope="local", certificate_id="cert", grant=grant)
         self.stream = events._sse_agent_events(request=request, db=db, redis=None,
                             team_id=self.identity.team_id, agent_id=self.identity.agent_id,
                             identity=self.identity, deadline=self.origin + timedelta(seconds=deadline))
@@ -176,9 +184,8 @@ async def test_backoff_preserves_heartbeat_then_recovers(monkeypatch, caplog):
 @pytest.mark.parametrize("boundary", ["deadline", "grant"])
 async def test_backoff_checks_stream_boundaries_on_time(monkeypatch, caplog, boundary):
     h = SnapshotHarness(monkeypatch, actions=[("fail", 0)] * 20,
-                    deadline=3 if boundary == "deadline" else 120)
-    if boundary == "grant":
-        monkeypatch.setattr(events, "grant_expiry_reason", lambda identity: "grant_expired" if h.now >= 3 else None)
+                        deadline=3 if boundary == "deadline" else 120,
+                        grant_seconds=3 if boundary == "grant" else None)
     frames = await h.collect()
     assert h.attempts == [1, 2]
     assert h.now == 3

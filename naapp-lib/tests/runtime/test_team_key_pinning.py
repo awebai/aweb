@@ -43,7 +43,7 @@ async def pins_db(test_db_factory):
 @pytest.fixture
 async def namespace_key(registry) -> SigningKey:
     key = SigningKey.generate()
-    await registry.ensure_namespace(domain="example.com", controller=key)
+    await registry.ensure_namespace(domain="example.com", controller=bytes(key))
     return key
 
 
@@ -129,7 +129,7 @@ async def test_rotation_signed_by_the_dns_controller_moves_the_pin(
     registry, team_cache, pins_db, namespace_key
 ):
     member = await _admitted(registry, team_cache)
-    await registry.ensure_namespace(domain="example.com", controller=namespace_key)
+    await registry.ensure_namespace(domain="example.com", controller=bytes(namespace_key))
     rotated = Member(team_id=TEAM_ID, alias="dave", certificate_id="rotated-dave")
     await _rotate(registry, namespace_key, rotated.team_did_key)
     await registry.add_certificate(rotated.certificate(), team_key=rotated.team_key)
@@ -214,7 +214,7 @@ class _CountingTransport(httpx.AsyncBaseTransport):
 async def test_a_served_key_the_act_does_not_name_keeps_the_pin_with_one_act_read(
     registry, pins_db, namespace_key
 ):
-    await registry.ensure_namespace(domain="example.com", controller=namespace_key)
+    await registry.ensure_namespace(domain="example.com", controller=bytes(namespace_key))
     first = Member(team_id=TEAM_ID)
     await registry.add_team(TEAM_ID, first.team_did_key, visibility="public")
     current = Member(team_id=TEAM_ID, alias="steady", certificate_id="steady-1")

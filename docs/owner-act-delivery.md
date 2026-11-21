@@ -283,9 +283,9 @@ revoke of an absent holding still returns `owner_required`.
 
 - **Designate** creates the holding of (installation, role, principal): B3's
   approver row linked to the principal, with the credential and its `rp_id`
-  stored at sign count 0 and in effect at once, and the notice contact. The
-  holder changes that contact later through B3's contact change, under its
-  passkey.
+  stored at sign count 0 and in effect at once, and the notice contact. An
+  owner changes that contact later through an owner-confirmed contact change
+  (B3 `change_contact_by_owner`).
 - **Replace** retires the current credential at once and puts the replacement
   in effect at the end of the cooling-off period. Until then, the holder's
   approvals and the widening changes they gate are frozen.
