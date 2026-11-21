@@ -12,6 +12,8 @@ from aweb.routes.conversations import list_conversations_for_auth
 from test_messages_http import _signed_identity_headers
 from test_mcp_mail_conversation_parity import mail_server  # noqa: F401
 
+__all__ = ["mail_server"]
+
 MIGRATION = files('aweb') / 'migrations/aweb/045_canonical_participant_dids.sql'
 
 

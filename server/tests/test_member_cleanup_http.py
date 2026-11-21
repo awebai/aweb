@@ -8,8 +8,10 @@ from uuid import UUID
 import pytest
 from aweb.events import team_events_channel_name
 from test_dashboard_privacy import TEAM
-from test_dashboard_privacy import privacy_app as privacy_app
+from test_dashboard_privacy import privacy_app
 from test_workspace_liveness_http import _connect_registered_member, _send_member_request
+
+__all__ = ["privacy_app"]
 
 
 async def _acquire_lock(env, *, alias: str, resource_key: str, team_id: str = TEAM) -> None:

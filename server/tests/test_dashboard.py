@@ -17,9 +17,11 @@ from aweb.embedding import OutboxRecoveryOwnership
 from aweb.lifecycle import LifecycleActor, LifecycleCascadeRequest, apply_lifecycle_cascade
 from dashboard_test_support import _JWT_SECRET as _JWT_SECRET, _make_jwt as _make_jwt
 from test_dashboard_privacy import TEAM, TEAM_NAME, _request, privacy_stack
-from test_dashboard_privacy import privacy_app as privacy_app
+from test_dashboard_privacy import privacy_app
 from test_team_room import admit_room_member
 from test_workspace_liveness_http import _send_member_request
+
+__all__ = ["privacy_app"]
 
 
 @pytest_asyncio.fixture

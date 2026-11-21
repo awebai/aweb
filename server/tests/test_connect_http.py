@@ -17,6 +17,8 @@ from awid.did import did_from_public_key
 from awid.signing import canonical_json_bytes, sign_message
 from test_dashboard_privacy import privacy_app  # noqa: F401
 
+__all__ = ["privacy_app"]
+
 
 @pytest_asyncio.fixture
 async def connect_app(privacy_app):

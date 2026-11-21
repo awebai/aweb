@@ -17,9 +17,11 @@ from aweb.lifecycle import replay_lifecycle_side_effects
 from aweb.outbox_recovery import stop_outbox_recovery
 from aweb.presence import clear_workspace_presence
 from test_dashboard_privacy import TEAM
-from test_dashboard_privacy import privacy_app as privacy_app
+from test_dashboard_privacy import privacy_app
 from test_messages_http import _signed_team_headers
 from test_workspace_liveness_http import _connect_registered_member, _send_member_request
+
+__all__ = ["privacy_app"]
 
 
 async def _claim_tasks(env, *, count: int, alias: str = "alice", team_id: str = TEAM) -> list[str]:

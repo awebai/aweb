@@ -35,6 +35,8 @@ from tests.test_hook_binding_activation import (  # noqa: F401
 from aweb.audit import AuditActor, set_verified_audit_actor
 from aweb.team_auth_deps import TeamIdentity
 
+__all__ = ["env"]
+
 
 env = binding_fixtures.env
 

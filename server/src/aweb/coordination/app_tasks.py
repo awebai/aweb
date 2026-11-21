@@ -9,11 +9,11 @@ from datetime import datetime, timezone
 from fastapi import HTTPException, Request
 
 from awid.team_ids import parse_team_id
-from aweb.application_state import application_registry_client
+from aweb.application_state import RegistryClientUnavailable, application_registry_client
 from aweb.app_credentials import APP_REQUEST, PURPOSES, AppCredential, verify_app_credential
 from aweb.certificate_registration import CertificateRegistrationObservation, RegistrationMode
 from aweb.claims import lock_task_claim_workspaces_on, release_task_claims_on
-from aweb.member_team_key import read_certificate_standings
+from aweb.member_team_key import current_member_sql, read_certificate_standings
 from aweb.service_errors import ConflictError, ForbiddenError, NotFoundError, ValidationError
 from aweb.task_contracts import validate_app_task
 from awid.team_certificate import TeamCertificateError, verify_team_certificate_claims
@@ -70,6 +70,8 @@ async def _current_certificates(request, team_id):
         domain, name = parse_team_id(team_id)
         registry = application_registry_client(request.app.state)
         return await registry.list_team_certificates_fresh(domain, name, active_only=True)
+    except RegistryClientUnavailable:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=503, detail="authority_unavailable") from exc
 
@@ -90,6 +92,8 @@ async def verify_authorization_certificate(request, authorization):
         # C2 requires live authority even when the app otherwise uses a
         # CachedRegistryClient. Never use its stale/outage-grace reads here.
         team_key = await resolve_team_key(request, team_id, evidence=EvidenceMode.FRESH)
+    except RegistryClientUnavailable:
+        raise
     except HTTPException as exc:
         if exc.status_code == 401:
             raise
@@ -367,7 +371,8 @@ async def create_app_task_on(
     )
     if outcome is not None:
         actor = await tx.fetch_one(
-            "SELECT agent_id FROM {{tables.agents}} WHERE team_id=$1 AND did_key=$2 AND deleted_at IS NULL",
+            f"""SELECT a.agent_id FROM {{{{tables.agents}}}} a
+               WHERE a.team_id = $1 AND a.did_key = $2 AND {current_member_sql("a")}""",
             credential.team_id,
             info["did_key"],
         )

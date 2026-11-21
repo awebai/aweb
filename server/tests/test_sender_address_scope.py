@@ -7,6 +7,8 @@ import pytest
 from aweb.messaging.alias_targets import derive_team_address
 from test_dashboard_privacy import TEAM, _request, privacy_app  # noqa: F401
 
+__all__ = ["privacy_app"]
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("scope,address", [("global", ""), ("local", ""), ("global", "example.test/alice")])

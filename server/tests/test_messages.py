@@ -8,6 +8,8 @@ import pytest
 from test_dashboard_privacy import TEAM, privacy_app as privacy_app
 from pgdbm.errors import QueryError
 
+__all__ = ["privacy_app"]
+
 from nacl.signing import SigningKey
 
 from awid.did import did_from_public_key
@@ -199,7 +201,7 @@ async def test_plaintext_message_id_collision_is_a_conflict(aweb_cloud_db, colli
 
 
 @pytest.mark.asyncio
-async def test_agents_inbound_mode_schema_nullable_no_default_and_constraint(
+async def test_agents_inbound_mode_schema_accepts_only_canonical_policies(
     aweb_cloud_db,
 ):
     await _insert_team(aweb_cloud_db.aweb_db, "default:example.com")
@@ -210,13 +212,12 @@ async def test_agents_inbound_mode_schema_nullable_no_default_and_constraint(
         did_key=_make_did_key(),
         did_aw="did:aw:alice-schema",
         address="example.com/alice",
-        inbound_mode=None,
     )
     inbound_mode = await aweb_cloud_db.aweb_db.fetch_value(
         "SELECT inbound_mode FROM {{tables.agents}} WHERE agent_id = $1",
         agent_id,
     )
-    assert inbound_mode is None
+    assert inbound_mode == "open"
 
     await aweb_cloud_db.aweb_db.execute(
         "UPDATE {{tables.agents}} SET inbound_mode = 'team_and_contacts' WHERE agent_id = $1",
@@ -640,37 +641,6 @@ async def test_deliver_message_local_recipient_same_team_behavior_unchanged(priv
         message_id,
     )
     assert str(stored["to_agent_id"]) == str(bob.id)
-
-
-@pytest.mark.asyncio
-async def test_deliver_message_null_inbound_mode_fails_migration_required(
-    aweb_cloud_db,
-):
-    db_shim = _DbShim(aweb_cloud_db.aweb_db)
-    await _insert_team(aweb_cloud_db.aweb_db, "ops:otherco.com")
-    bob_did_aw = "did:aw:bob"
-    await _insert_agent(
-        aweb_cloud_db.aweb_db,
-        team_id="ops:otherco.com",
-        alias="bob",
-        did_key=_make_did_key(),
-        did_aw=bob_did_aw,
-        address="otherco.com/bob",
-        inbound_mode=None,
-    )
-
-    with pytest.raises(ForbiddenError, match="inbound_mode migration required"):
-        await _deliver_fixture_mail(
-            db_shim,
-            from_did="did:aw:alice",
-            to_did=bob_did_aw,
-            from_alias="acme.com/alice",
-            to_alias="bob",
-            sender_address="acme.com/alice",
-            subject="Hello",
-            body="Hi Bob!",
-            priority="normal",
-        )
 
 
 @pytest.mark.asyncio

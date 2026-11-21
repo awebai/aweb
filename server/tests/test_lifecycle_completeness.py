@@ -18,11 +18,13 @@ from aweb.messaging.waiting import get_waiting_agents, register_waiting
 from aweb.lifecycle_agent import apply_agent_disposition_on
 from aweb.member_status import MemberStatus
 from test_dashboard_privacy import TEAM, _request
-from test_dashboard_privacy import privacy_app as privacy_app
+from test_dashboard_privacy import privacy_app
 from test_team_room import admit_room_member
 from test_workspace_liveness_http import _send_member_request
 from test_lifecycle import _seed_waiting_chat, _seed_workspace_with_claim
-from test_lifecycle import lifecycle_redis as lifecycle_redis
+from test_lifecycle import lifecycle_redis
+
+__all__ = ["lifecycle_redis", "privacy_app"]
 
 
 class WorkspaceState(StrEnum):

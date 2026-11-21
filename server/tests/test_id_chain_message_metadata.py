@@ -19,6 +19,8 @@ from awid.signing import canonical_json_bytes, sign_message
 from test_dashboard_privacy import privacy_app, TEAM  # noqa: F401
 from test_messages_http import _signed_identity_headers, _signed_team_headers
 
+__all__ = ["privacy_app"]
+
 
 def _bundle(subject):
     root = SigningKey.generate()

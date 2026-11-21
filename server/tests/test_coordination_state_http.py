@@ -15,8 +15,10 @@ from aweb.lifecycle import (
 from aweb.mcp import create_mcp_app
 from aweb.internal_auth import application_proxy_verification
 from test_dashboard_privacy import TEAM
-from test_dashboard_privacy import privacy_app as privacy_app
+from test_dashboard_privacy import privacy_app
 from test_messages_http import _signed_team_headers
+
+__all__ = ["privacy_app"]
 
 
 async def request_as(env, *, alias, method, path, payload=None):

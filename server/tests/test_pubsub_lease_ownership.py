@@ -24,6 +24,8 @@ from aweb.events import stream_events_multi
 from aweb.routes.dashboard import _sse_dashboard_events
 from test_dashboard_privacy import privacy_app  # noqa: F401
 
+__all__ = ["privacy_app"]
+
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 CYCLES = 10
 

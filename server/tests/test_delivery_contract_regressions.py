@@ -14,6 +14,8 @@ from messaging_actor_support import admit_messaging_actor
 from test_dashboard_privacy import TEAM, privacy_app as privacy_app
 from test_messages_http import _signed_team_headers
 
+__all__ = ["privacy_app"]
+
 
 async def _send(env, payload):
     actor = env.actors["alice"]

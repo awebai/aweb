@@ -49,6 +49,8 @@ from test_messages_http import (
     _signed_identity_headers,
 )
 
+__all__ = ["privacy_app"]
+
 
 @pytest.fixture(scope="module")
 def same_origin_registry_socket():

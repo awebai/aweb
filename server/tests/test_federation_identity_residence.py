@@ -24,6 +24,8 @@ from test_same_origin_delivery import (
     same_origin_registry_socket as same_origin_registry_socket,
 )
 
+__all__ = ["foreign_receiver", "same_origin"]
+
 
 class ResidenceAdmission(StrEnum):
     CURRENT_MEMBER = "current-member"

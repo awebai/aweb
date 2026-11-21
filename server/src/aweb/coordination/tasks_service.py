@@ -199,9 +199,9 @@ async def get_task_answer_on(
 async def _read_answer_member_principal_on(tx, *, agent_id: str, team_id: str):
     """Read the answer actor under the existing shared member lock."""
     return await tx.fetch_one(
-        f"""SELECT {verified_principal_did_sql()} AS principal_did, certificate_id
-           FROM {{{{tables.agents}}}} WHERE agent_id = $1 AND team_id = $2
-             AND deleted_at IS NULL AND status = 'active' FOR SHARE""",
+        f"""SELECT {verified_principal_did_sql(agent="a")} AS principal_did, a.certificate_id
+           FROM {{{{tables.agents}}}} a WHERE a.agent_id = $1 AND a.team_id = $2
+             AND {current_member_sql("a")} FOR SHARE OF a""",
         UUID(agent_id),
         team_id,
     )
@@ -210,10 +210,10 @@ async def _read_answer_member_principal_on(tx, *, agent_id: str, team_id: str):
 async def _read_claimant_principal_on(tx, *, team_id: str, alias: str):
     """Read a claim's principal under the existing shared member lock."""
     return await tx.fetch_one(
-        f"""SELECT {verified_principal_did_sql()} AS principal_did
-           FROM {{{{tables.agents}}}}
-           WHERE team_id = $1 AND alias = $2 AND deleted_at IS NULL
-           FOR SHARE""",
+        f"""SELECT {verified_principal_did_sql(agent="a")} AS principal_did
+           FROM {{{{tables.agents}}}} a
+           WHERE a.team_id = $1 AND a.alias = $2 AND {current_member_sql("a")}
+           FOR SHARE OF a""",
         team_id,
         alias,
     )

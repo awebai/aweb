@@ -19,6 +19,8 @@ from messaging_actor_support import admit_messaging_actor, set_messaging_inbound
 from test_dashboard_privacy import TEAM, privacy_app as privacy_app
 from test_messages_http import _signed_team_headers
 
+__all__ = ["privacy_app"]
+
 HOLD_COMPLETION_SECONDS = 6
 INITIAL_ATTESTATION_AGE_SECONDS = 297
 

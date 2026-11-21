@@ -13,8 +13,10 @@ from aweb.mcp.server import register_tools
 from aweb.mcp.tools import chat as chat_tools
 from aweb.mcp.tools import contacts as contacts_tools
 from aweb.mcp.tools import mail as mail_tools
-from test_mcp_chat_send_parity import chat_server as chat_server
+from test_mcp_chat_send_parity import chat_server
 from test_messages_http import _signed_team_headers
+
+__all__ = ["chat_server"]
 
 
 class DBInfra:

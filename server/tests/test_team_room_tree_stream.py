@@ -32,6 +32,8 @@ from test_id_chain_request_auth import (
     _signed_fixture_certificate,
 )
 
+__all__ = ["privacy_app"]
+
 
 @pytest.fixture(scope="module")
 def room_registry_listener():

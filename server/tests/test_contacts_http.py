@@ -31,6 +31,8 @@ from test_federation_preactivation_harness import (
     _identity_registry_responses,
 )
 
+__all__ = ["privacy_app"]
+
 
 class _ContactRegistry(_TLSRegistry):
     async def _handle(self, reader, writer):

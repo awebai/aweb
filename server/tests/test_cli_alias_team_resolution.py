@@ -26,6 +26,8 @@ from tests.test_addressless_sender_cli import _registry_http
 from tests.test_dashboard_privacy import TEAM, privacy_app as privacy_app  # noqa: F401
 from tests.test_messages_http import _encode_certificate, _make_certificate, _make_keypair, _signed_identity_headers
 
+__all__ = ["privacy_app"]
+
 
 @asynccontextmanager
 async def unavailable_origin():

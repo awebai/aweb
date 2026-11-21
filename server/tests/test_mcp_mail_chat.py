@@ -39,6 +39,8 @@ from messaging_actor_support import admit_messaging_actor
 from test_dashboard_privacy import TEAM as PRIVACY_TEAM
 from test_dashboard_privacy import privacy_app as privacy_app
 
+__all__ = ["mail_server", "privacy_app"]
+
 
 class DBInfra:
     def __init__(self, aweb_db):
@@ -1893,7 +1895,11 @@ async def test_mcp_chat_continuation_encryptor_gets_active_recipient_identities(
     from messaging_actor_support import archive_messaging_actor
 
     await archive_messaging_actor(
-        aweb_cloud_db.aweb_db, None, team_id=team_id, agent_id=carol_agent_id
+        aweb_cloud_db.aweb_db,
+        None,
+        team_id=team_id,
+        agent_id=carol_agent_id,
+        registry_client=None,
     )
     monkeypatch.setattr(
         chat_tools,

@@ -26,7 +26,9 @@ from aweb.messaging.mail_storage import (
 from aweb.messaging.participant_succession import succeed_local_human_participant_on
 from aweb_naapp_testing import Member
 from aweb_naapp_testing.human_members import HumanNamespace
-from test_dashboard_privacy import TEAM, privacy_app as privacy_app
+from test_dashboard_privacy import TEAM, privacy_app
+
+__all__ = ["privacy_app"]
 
 
 def _auth():

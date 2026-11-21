@@ -35,6 +35,7 @@ from ...input_validation import (
     is_valid_human_name,
 )
 from awid.pagination import encode_cursor, validate_pagination_params
+from ...member_team_key import current_member_sql
 from ...grant_liveness import grant_liveness_expiry, cleanup_expired_grant_liveness
 from ...presence import (
     clear_workspace_presence,
@@ -856,10 +857,10 @@ _TEAM_PARTICIPANT_WORKSPACE_SELECT = f"""
             cs.last_claimed_at,
             w.updated_at
         FROM {{{{tables.workspaces}}}} w
-        LEFT JOIN {{{{tables.agents}}}} a
+        JOIN {{{{tables.agents}}}} a
           ON a.agent_id = w.agent_id
          AND a.team_id = w.team_id
-         AND a.deleted_at IS NULL
+         AND {current_member_sql("a")}
         LEFT JOIN {{{{tables.repos}}}} r ON w.repo_id = r.id AND r.deleted_at IS NULL
         LEFT JOIN claim_stats cs ON cs.workspace_id = w.workspace_id
         {_TEAM_FOCUS_JOIN}
@@ -1046,7 +1047,7 @@ async def list_workspaces(
     aweb_db = db_infra.get_manager("aweb")
 
     query = (
-        """
+        f"""
         SELECT
             w.workspace_id,
             w.agent_id,
@@ -1065,12 +1066,12 @@ async def list_workspaces(
             focus_issue.title AS focus_task_title,
             focus_issue.issue_type AS focus_task_type,
             r.canonical_origin as repo
-        FROM {{tables.workspaces}} w
-        LEFT JOIN {{tables.agents}} a
+        FROM {{{{tables.workspaces}}}} w
+        LEFT JOIN {{{{tables.agents}}}} a
           ON a.agent_id = w.agent_id
          AND a.team_id = w.team_id
-         AND a.deleted_at IS NULL
-        LEFT JOIN {{tables.repos}} r ON w.repo_id = r.id AND r.deleted_at IS NULL
+         AND {current_member_sql("a")}
+        LEFT JOIN {{{{tables.repos}}}} r ON w.repo_id = r.id AND r.deleted_at IS NULL
         """
         + task_title_join(
             alias="focus_issue",
@@ -1079,7 +1080,7 @@ async def list_workspaces(
             fields=TaskTitleFields.TITLE_AND_TYPE,
         )
         + """
-        WHERE 1=1
+        WHERE (a.agent_id IS NOT NULL OR w.deleted_at IS NOT NULL)
     """
     )
     params: list = []

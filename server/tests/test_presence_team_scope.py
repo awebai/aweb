@@ -11,10 +11,12 @@ from aweb.internal_auth import (
     build_internal_auth_header_value,
 )
 from test_coordination_state_http import call_mcp, request_as
-from test_coordination_state_http import coordination_mcp as coordination_mcp
+from test_coordination_state_http import coordination_mcp
 from test_dashboard_privacy import TEAM
-from test_dashboard_privacy import privacy_app as privacy_app
+from test_dashboard_privacy import privacy_app
 from test_workspace_liveness_http import _connect_registered_member, _send_member_request
+
+__all__ = ["coordination_mcp", "privacy_app"]
 
 PROXY_SECRET = "r15-disposable-proxy-test-secret"
 

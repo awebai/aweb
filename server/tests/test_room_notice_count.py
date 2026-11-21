@@ -14,11 +14,10 @@ from aweb.internal_auth import ProxyHeaderTrust, ProxyVerificationConfig
 from aweb.auth_context import GRANT_SCOPE_ANY
 from aweb.mcp.auth import MCPAuthMiddleware
 from aweb.team_auth_deps import team_identity_with_grant_scope
-import test_team_room
-from test_team_room import TEAM, headers, metadata, post
+from test_team_room import TEAM, headers, metadata, post, privacy_app
 from test_identity_grants import _grant_headers
 
-privacy_app = test_team_room.privacy_app
+__all__ = ["privacy_app"]
 
 
 async def admitted(env, name="bob"):

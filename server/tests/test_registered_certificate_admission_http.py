@@ -24,6 +24,8 @@ from test_dashboard_privacy import TEAM, TEAM_NAME, privacy_app  # noqa: F401
 from test_id_chain_request_auth import ALICE, ROOT, _fixture_signer, _signed_fixture_certificate
 from test_messages_http import _encode_certificate, _make_certificate, _make_keypair, _signed_team_headers
 
+__all__ = ["privacy_app"]
+
 
 class _CountLists(httpx.AsyncHTTPTransport):
     def __init__(self):

@@ -25,6 +25,8 @@ from test_team_key_pinning import (  # noqa: F401
     rotate_team_key,
 )
 
+__all__ = ["pinning"]
+
 SERVICE = "https://aweb.example.test"
 
 

@@ -5,6 +5,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from awid.federation_errors import FederationAuthorityError
+from aweb.application_state import application_registry_client
 from aweb.db import TransactionInfra
 from aweb.federation.delivery import _authorize_policy
 from aweb.messaging.messages import authorize_message_delivery
@@ -17,6 +18,8 @@ from messaging_actor_support import (
 )
 from test_dashboard_privacy import TEAM, privacy_app as privacy_app
 from test_federation_activation_delivery import _envelope
+
+__all__ = ["privacy_app"]
 
 
 @pytest.mark.asyncio
@@ -45,7 +48,8 @@ async def test_inbound_policy_uses_all_current_active_memberships(
     )
     if not active_sender:
         await archive_messaging_actor(
-            manager, env.redis, team_id=sender.team_id, agent_id=sender.agent_id
+            manager, env.redis, team_id=sender.team_id, agent_id=sender.agent_id,
+            registry_client=application_registry_client(env.app.state),
         )
     selected = recipients[1 if selected_shared else 0]
     recipient = dict(
@@ -137,6 +141,7 @@ async def test_federation_shared_team_membership_stays_locked_until_delivery_com
                     env.redis,
                     team_id=sender.team_id,
                     agent_id=sender.agent_id,
+                    registry_client=application_registry_client(env.app.state),
                 )
     finally:
         finish.set()
@@ -149,7 +154,8 @@ async def test_federation_shared_team_membership_stays_locked_until_delivery_com
         == "active"
     )
     await archive_messaging_actor(
-        manager, env.redis, team_id=sender.team_id, agent_id=sender.agent_id
+        manager, env.redis, team_id=sender.team_id, agent_id=sender.agent_id,
+        registry_client=application_registry_client(env.app.state),
     )
     with pytest.raises(FederationAuthorityError) as refused:
         async with manager.transaction() as tx:

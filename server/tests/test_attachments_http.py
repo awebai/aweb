@@ -9,6 +9,8 @@ import pytest
 from aweb.e2ee_messages import _inner_payload_map
 from test_dashboard_privacy import _request, privacy_app  # noqa: F401
 
+__all__ = ["privacy_app"]
+
 
 def descriptor():
     return {

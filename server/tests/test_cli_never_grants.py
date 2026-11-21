@@ -31,6 +31,8 @@ from test_cli_human_reply import _pem
 from test_dashboard_privacy import TEAM, _request, privacy_app  # noqa: F401
 from test_messages_http import _make_certificate, _make_keypair
 
+__all__ = ["privacy_app"]
+
 
 @asynccontextmanager
 async def registry_listener(env, *, listener_socket: socket.socket | None = None):

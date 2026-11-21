@@ -13,6 +13,8 @@ from awid.signing import canonical_json_bytes, sign_message
 from test_dashboard_privacy import TEAM as TEAM_ID
 from test_agents_suggest_alias_http import privacy_app as privacy_app, _global_actor
 
+__all__ = ["privacy_app"]
+
 
 def _keypair() -> tuple[bytes, str]:
     signing_key = SigningKey.generate()

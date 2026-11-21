@@ -22,6 +22,8 @@ from test_messages_http import (
 )
 from test_task_answers import _v2_request
 
+__all__ = ["privacy_app"]
+
 
 class SubjectProjection(StrEnum):
     LOCAL = "local"

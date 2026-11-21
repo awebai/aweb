@@ -61,6 +61,8 @@ from aweb.team_auth_deps import (
     team_identity_with_grant_scope,
 )
 
+__all__ = ["privacy_app"]
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 TEAM_ID = "backend:acme.com"

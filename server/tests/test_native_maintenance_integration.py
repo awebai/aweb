@@ -9,7 +9,9 @@ import pytest
 from aweb.events import team_events_channel_name
 from aweb.outbox_recovery import stop_outbox_recovery
 from test_coordination_state_http import request_as
-from test_dashboard_privacy import TEAM, privacy_app as privacy_app
+from test_dashboard_privacy import TEAM, privacy_app
+
+__all__ = ["privacy_app"]
 
 
 async def _read_event(stream):

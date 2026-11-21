@@ -11,11 +11,10 @@ from aweb.internal_auth import ProxyHeaderTrust, ProxyVerificationConfig
 from aweb.mcp import notifications
 from aweb.mcp.auth import AuthContext, MCPAuthMiddleware, _auth_context
 from test_mcp_notifications import CountDB, infra
-import test_team_room
-from test_team_room import TEAM, headers, metadata, post
+from test_team_room import TEAM, headers, metadata, post, privacy_app
 from test_room_notice_count import admitted
 
-privacy_app = test_team_room.privacy_app
+__all__ = ["privacy_app"]
 
 
 @pytest.fixture

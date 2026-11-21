@@ -12,8 +12,8 @@ import pytest
 from awid.dns_verify import DomainAuthority
 from awid_service.deps import get_domain_verifier
 from aweb.api import _build_awid_registry_client
-from test_dashboard_privacy import privacy_app as privacy_app, TEAM
-from test_coordination_state_http import coordination_mcp as coordination_mcp, call_mcp
+from test_dashboard_privacy import privacy_app, TEAM
+from test_coordination_state_http import coordination_mcp, call_mcp
 from test_cli_never_grants import registry_listener
 from test_id_chain_request_auth import (
     ALICE,
@@ -27,6 +27,8 @@ from test_messages_http import (
     _make_certificate,
     _signed_team_headers,
 )
+
+__all__ = ["coordination_mcp", "privacy_app"]
 
 
 @pytest.mark.asyncio

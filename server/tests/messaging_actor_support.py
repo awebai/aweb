@@ -14,6 +14,7 @@ from nacl.signing import SigningKey
 
 from awid.did import did_from_public_key
 from awid.identity_observation import IdentityKind
+from awid.registry import RegistryClient
 from awid_service.testing import Registry
 from aweb.application_state import application_registry_client
 from aweb.lifecycle import LifecycleActor, LifecycleCascadeRequest, apply_lifecycle_cascade
@@ -197,22 +198,25 @@ async def admit_messaging_actor(
 async def set_messaging_inbound_mode(
     env: MessagingFixture, actor: RegisteredMessagingActor, mode: str
 ) -> None:
+    """Choose receive policy through the same signed preference route as clients."""
     body = json.dumps({"inbound_mode": mode}).encode()
     response = await env.client.patch(
         "/v1/agents/me/inbound-mode",
         content=body,
-        headers={
-            **_signed_team_headers(
-                actor.signing_key, actor.did_key, actor.team_id, actor.certificate, body
-            ),
-            "Content-Type": "application/json",
-        },
+        headers=messaging_actor_headers(actor, body=body),
     )
     assert response.status_code == 200, response.text
     assert response.json()["inbound_mode"] == mode
 
 
-async def archive_messaging_actor(db, redis, *, team_id: str, agent_id) -> None:
+async def archive_messaging_actor(
+    db,
+    redis,
+    *,
+    team_id: str,
+    agent_id,
+    registry_client: RegistryClient | None,
+) -> None:
     result = await apply_lifecycle_cascade(
         db,
         redis,
@@ -224,11 +228,19 @@ async def archive_messaging_actor(db, redis, *, team_id: str, agent_id) -> None:
             workspace_scope="all_for_agent",
             require_identity_scope="global",
         ),
+        registry_client=registry_client,
     )
     assert result.identity_archived, result.errors
 
 
-async def remove_messaging_agent_from_sessions(db, redis, *, team_id: str, agent_id) -> None:
+async def remove_messaging_agent_from_sessions(
+    db,
+    redis,
+    *,
+    team_id: str,
+    agent_id,
+    registry_client: RegistryClient | None,
+) -> None:
     result = await apply_lifecycle_cascade(
         db,
         redis,
@@ -239,6 +251,7 @@ async def remove_messaging_agent_from_sessions(db, redis, *, team_id: str, agent
             target_agent_id=str(agent_id),
             workspace_scope="all_for_agent",
         ),
+        registry_client=registry_client,
     )
     assert not result.errors, result.errors
     assert result.chat_participant_cleanup_count == 1
@@ -325,17 +338,6 @@ def messaging_actor_headers(actor, *, body=b"", team=True):
         )
     )
     return {**headers, "Content-Type": "application/json"}
-
-
-async def set_messaging_inbound_mode(env, actor, *, mode):
-    """Choose receive policy through the same signed preference route as clients."""
-    raw = json.dumps({"inbound_mode": mode}).encode()
-    response = await env.client.patch(
-        "/v1/agents/me/inbound-mode",
-        content=raw,
-        headers=messaging_actor_headers(actor, body=raw),
-    )
-    assert response.status_code == 200, response.text
 
 
 async def add_messaging_contact(

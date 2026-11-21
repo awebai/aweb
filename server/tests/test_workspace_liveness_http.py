@@ -22,7 +22,7 @@ from aweb.lifecycle import (
 from aweb.mcp.server import create_mcp_app
 from aweb.presence import clear_workspace_presence
 from test_dashboard_privacy import TEAM
-from test_dashboard_privacy import privacy_app as privacy_app
+from test_dashboard_privacy import privacy_app
 from test_identity_grants import _grant_headers, _session_keypair
 from test_messages_http import (
     _encode_certificate,
@@ -30,6 +30,8 @@ from test_messages_http import (
     _make_keypair,
     _signed_team_headers,
 )
+
+__all__ = ["privacy_app"]
 
 
 class Activity(StrEnum):

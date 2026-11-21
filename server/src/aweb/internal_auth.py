@@ -15,8 +15,8 @@ from starlette.requests import Request
 
 from aweb.member_team_key import (
     CURRENT_MEMBERSHIP_REQUIRED_DETAIL,
-    MemberStatus,
     current_member,
+    member_row_active,
     read_member_projection,
 )
 
@@ -238,8 +238,7 @@ async def read_internal_actor_projection(aweb_db, internal: InternalAuthContext)
         return None
     if (
         row["team_id"] != internal["team_id"]
-        or row["status"] != MemberStatus.ACTIVE.value
-        or row["deleted_at"] is not None
+        or not member_row_active(row)
     ):
         raise HTTPException(status_code=403, detail="Agent not connected")
     if not current_member(row):

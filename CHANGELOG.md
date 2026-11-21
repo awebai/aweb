@@ -53,6 +53,34 @@
 - Custody checks private permissions for configured and default socket paths,
   requires the pinned signing key in a credential capture, and allows an exact
   retry after a failed signing attempt without weakening successful replay checks.
+
+- Native certificate streams end with `team_membership_not_current` when
+  the opening membership stops being current. aw 1.36.58 and earlier ignore
+  that reason, and their `aw chat send-and-wait` can return silently. The next
+  aw reports the closure and tells the caller to reconnect.
+- Current-member rosters hide workspaces and agents admitted under an older
+  team key. Certificate admission for inactive or superseded members returns
+  403. Rooms retain their existing HTTP refusal text and add the
+  `team_membership_not_current` reason. Team-restricted delivery can also
+  return 403 `recipient_policy_rejected` when the only shared membership has
+  lost standing and there is no exact contact.
+- An identity-only send with several current sender contexts returns 409
+  `sender_context_required`. A DID or stable ID matching several current
+  recipients also returns 409. In aw 1.36.59, pass `--team` to
+  `aw mail send` or `aw mail reply` from a home with several memberships.
+- A current member can take over a task held by a superseded member. The
+  server releases the stale claim and emits `task.unclaimed` before
+  `task.claimed`.
+- Before using an unconfirmed team key, aw checks certificate standing at the
+  registry. A definitive revocation or key mismatch is reported locally. A
+  temporarily unavailable registry leaves the key unconfirmed and allows the
+  server to decide the request.
+- Hosted creation and `aw id team install-cert` save a registry origin only
+  when selected by flag or `AWID_REGISTRY_URL`. An origin discovered to check
+  the certificate does not become a membership setting.
+- The server migration backfills omitted inbound policies to the native
+  default `open` and preserves all explicitly chosen policies.
+
 - Removed an unused chat departure-marker check.
 - Old chat history with valid participant snapshots is migrated to canonical
   conversations, preserving exact participants, routes and readable single-party
@@ -653,8 +681,8 @@
     - `recipient_encryption_assertion_invalid_or_stale`: "this recipient's
       published encryption key can't be verified right now; try again later,
       and if it persists contact support".
-    - `identity_binding_mismatch`: "this recipient's identity or key no longer
-      matches the registry; check the address and resend".
+    - `identity_binding_mismatch`: "this recipient's key changed; resend the
+      message".
     - An encrypted envelope addressed to a key other than the one this server
       records for the recipient: "this recipient's key changed; resend the
       message".
