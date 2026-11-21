@@ -662,7 +662,7 @@ test-candidate-ledger:
 	python3 scripts/test_candidate_gate_ledger.py
 
 _candidate-unit-suites:
-	python3 scripts/test-egress/docker.py --profile $(CANDIDATE_UNIT_PROFILE) --server-workers $(if $(filter ccx33,$(CANDIDATE_UNIT_PROFILE)),7,0) --evidence "$$CANDIDATE_LOG_DIR/test-egress" --command bash scripts/candidate-suite.sh --isolated-suites
+	python3 scripts/test-egress/docker.py --profile $(CANDIDATE_UNIT_PROFILE) --server-workers $(if $(filter ccx33,$(CANDIDATE_UNIT_PROFILE)),7,0) --evidence "$$CANDIDATE_LOG_DIR/test-egress" --collect-summary --command bash scripts/candidate-suite.sh --isolated-suites
 
 # The gate's own ledger test runs first, on the host, so a gate change that
 # breaks it stops every train and release candidate before any stage runs.
