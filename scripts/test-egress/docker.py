@@ -11,6 +11,7 @@ import importlib.util
 from pathlib import Path
 import subprocess
 import shutil
+import sys
 import tempfile
 import time
 import uuid
@@ -124,6 +125,16 @@ def main():
     args = parser.parse_args()
     if args.server_workers and args.profile != 'ccx33':
         parser.error('seven server workers require --profile ccx33')
+    if sys.platform == 'darwin':
+        sys.path.insert(0, str(ROOT / 'scripts'))
+        from local_suite_slots import Scope, SuiteLabel, suite_slot
+
+        with suite_slot(scope=Scope.WHOLE, label=SuiteLabel.PORTABLE, root=ROOT):
+            return run_suite(args)
+    return run_suite(args)
+
+
+def run_suite(args):
     args.evidence.mkdir(parents=True, exist_ok=False)
     evidence = args.evidence.resolve()
     (evidence / 'source-sha').write_text(subprocess.check_output(['git', '-C', str(ROOT), 'rev-parse', 'HEAD'], text=True))
