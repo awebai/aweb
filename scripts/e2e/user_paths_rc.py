@@ -20,7 +20,7 @@ KERNEL_REPO = "https://github.com/oats-project/oats.git"
 PROVIDER_REPO = "https://github.com/awebai/oats-aweb.git"
 SERVER_REPO = "https://github.com/awebai/aweb.git"
 SERVER_REGISTRY = "ghcr.io/awebai/aweb-server"
-BASELINE_PACKAGES = {"aweb", "awid-service"}
+BASELINE_PACKAGES = {"aweb", "aweb-naapp", "awid-service"}
 FINAL_VERSION = r"[0-9]+\.[0-9]+\.[0-9]+"
 SOURCE = r"[0-9a-f]{40}"
 DIGEST = r"sha256:[0-9a-f]{64}"
@@ -148,7 +148,7 @@ def production_baseline(artifact, readback):
     packages = readback["packages"]
     if not isinstance(packages, dict) or set(packages) != BASELINE_PACKAGES:
         raise ValueError(
-            "Production readback must record the aweb and awid-service wheels."
+            "Production readback must record the aweb, aweb-naapp and awid-service wheels."
         )
     for name, pkg in packages.items():
         version = pkg["version"]

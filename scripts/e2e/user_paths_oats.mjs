@@ -147,7 +147,8 @@ try {
   for (const args of [["init", "-q"], ["add", "."], ["commit", "-qm", "owned wake-probe workspace"]]) {
     command({ name: `git ${args[0]}`, argv: ["git", "-C", source, "-c", "user.name=Wake probe", "-c", "user.email=probe@example.invalid", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", ...args], output: DiagnosticOutput.Public });
   }
-  const deploymentMessaging = manual ? "" : `settings:\n  oats.aweb:\n    delivery: session\n    root: ${JSON.stringify(resolve(values.seat))}\n`;
+  const registrySetting = released ? `    registry: ${JSON.stringify(env.AWID_REGISTRY_URL)}\n` : "";
+  const deploymentMessaging = manual ? "" : `settings:\n  oats.aweb:\n    delivery: session\n    root: ${JSON.stringify(resolve(values.seat))}\n${registrySetting}`;
   writeFileSync(join(deployment, "oats-local.yaml"), `schemaVersion: 2\nworkspace: ${ref}\nteams:\n  default: { team: ${JSON.stringify(values.team)} }\ndefaultTeam: default\n${deploymentMessaging}launch-configs:\n  passive: ${JSON.stringify(passiveLaunch)}\nsouls:\n  launch:\n    '*': passive\n`);
   if (!manual) evidence.mint_preflight = prepareMintAuthority({ seat: values.seat, fixtureHome: values["fixture-home"], team: values.team });
   // Capture bounded public failure text; credentials remain in the owned volume.

@@ -170,7 +170,7 @@ service, independent of the RC manifest. Record `service`, `deployment_id`,
 `deployed_image` (immutable digest), `deployed_source_sha`, `observed_at` (ISO
 8601 with timezone), `production_aweb_version`, `package_lock` (Git `commit`,
 `path`, and `blob` at that deployment), and `packages`. The package object
-contains `aweb` and `awid-service`, each with
+contains `aweb`, `aweb-naapp` and `awid-service`, each with
 `version`, `sha256`, and `url` for the PyPI wheel identified by the deployed
 lock. Record the live aweb package version from the deployment before looking
 up its exact wheel pin at that lock. Do not substitute an arbitrary package
@@ -202,7 +202,8 @@ the fetched tag commit, and records its archive SHA256.
   performs the channel workspace's join and retirement.
 - The released OATS kernel and provider join, launch a different real tmux
   instance, receive real mail and chat through their wake path, and retire
-  through the provider. The terminal captures presentation without a model
+  through the provider. The fixture sets the host-owned registry origin in
+  `oats-local.yaml`. The terminal captures presentation without a model
   call. For a customer-controlled team, the public controller command
   completes separate certificate revocation when the provider reports it.
 

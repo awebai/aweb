@@ -281,6 +281,25 @@ def start_stack(server_image=None, *, production=False):
     wait_ready()
 
 
+def runtime_import(service, python, distribution, module):
+    return (
+        compose(
+            "exec",
+            "-T",
+            service,
+            python,
+            "-c",
+            "import sys; from importlib import import_module; from importlib.metadata import version; "
+            "print(version(sys.argv[1])); print(import_module(sys.argv[2]).__file__)",
+            distribution,
+            module,
+            capture=True,
+        )
+        .stdout.strip()
+        .splitlines()
+    )
+
+
 def qualify_released_clients(released_aw, runtimes, observations, production):
     """Use the same lanes, image checks, networks and provisioning for the RC."""
     with phase("fetch-released-clients-and-production-wheels"):
@@ -358,36 +377,23 @@ def qualify_released_clients(released_aw, runtimes, observations, production):
                 python = SERVER_PYTHON if baseline else "python"
                 actual = {}
                 installed = {}
+                naapp_versions = {}
                 for service in ("server", "peer"):
-                    actual[service], installed[service] = (
-                        compose(
-                            "exec",
-                            "-T",
-                            service,
-                            python,
-                            "-c",
-                            'import aweb; from importlib.metadata import version; print(version("aweb")); print(aweb.__file__)',
-                            capture=True,
+                    actual[service], installed[service] = runtime_import(
+                        service, python, "aweb", "aweb"
+                    )
+                    if baseline:
+                        naapp_versions[service], installed[f"{service}:naapp"] = (
+                            runtime_import(service, python, "aweb-naapp", "aweb_naapp")
                         )
-                        .stdout.strip()
-                        .splitlines()
-                    )
-                registry_version, installed["awid"] = (
-                    compose(
-                        "exec",
-                        "-T",
-                        "awid",
-                        python,
-                        "-c",
-                        'import awid_service; from importlib.metadata import version; print(version("awid-service")); print(awid_service.__file__)',
-                        capture=True,
-                    )
-                    .stdout.strip()
-                    .splitlines()
+                registry_version, installed["awid"] = runtime_import(
+                    "awid", python, "awid-service", "awid_service"
                 )
                 if baseline and (
                     registry_version
                     != production["packages"]["awid-service"]["version"]
+                    or set(naapp_versions.values())
+                    != {production["packages"]["aweb-naapp"]["version"]}
                     or not all(
                         path.startswith("/work/production-package/")
                         for path in installed.values()
@@ -402,6 +408,7 @@ def qualify_released_clients(released_aw, runtimes, observations, production):
                             **artifact,
                             "running": actual,
                             "awid_version": registry_version,
+                            "naapp_versions": naapp_versions,
                             "imported": installed,
                         },
                         indent=2,
