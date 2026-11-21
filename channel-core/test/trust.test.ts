@@ -1178,7 +1178,10 @@ describe("SenderTrustManager", () => {
     expect(result.status).toBe("verified");
     expect(store.addresses.get(address)).toBe(newIdentity.did);
 
-    store.removeAddress(address);
+    for (const [key, pin] of [...store.pins]) {
+      if (pin.address === address) store.deletePin(key);
+    }
+    expect(store.addresses.has(address)).toBe(false);
     store.storePin(oldIdentity.did, address, "", "");
     const emitted = yaml.load(store.toYAML(), { schema: yaml.JSON_SCHEMA }) as {
       pins: Record<string, Record<string, unknown>>;

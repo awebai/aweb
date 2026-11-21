@@ -205,31 +205,6 @@ export class PinStore {
     return true;
   }
 
-  removeAddress(address: string): boolean {
-    let removed = false;
-
-    const pinnedDID = this.addresses.get(address);
-    if (pinnedDID !== undefined) {
-      this.addresses.delete(address);
-      const pin = this.mutablePins.get(pinnedDID);
-      if (pin?.address === address) {
-        this.deletePin(pinnedDID);
-      }
-      removed = true;
-    }
-
-    for (const [pinKey, pin] of this.mutablePins) {
-      if (pin.address !== address) continue;
-      this.deletePin(pinKey);
-      if (this.addresses.get(address) === pinKey) {
-        this.addresses.delete(address);
-      }
-      removed = true;
-    }
-
-    return removed;
-  }
-
   /**
    * Moves the pin bound to address to retiredKey, an address no lookup
    * reaches, keeping its record and anti-rollback anchor; address is then
@@ -254,14 +229,6 @@ export class PinStore {
       moved = true;
     }
     return moved;
-  }
-
-  removeAddresses(addresses: string[]): boolean {
-    let removed = false;
-    for (const address of addresses) {
-      if (address) removed = this.removeAddress(address) || removed;
-    }
-    return removed;
   }
 
   bindStableIdentity(currentKey: string, stableID: string): RekeyPinResult {

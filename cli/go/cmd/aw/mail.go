@@ -64,10 +64,6 @@ func applyMailRecipientTarget(req *awid.SendMessageRequest, kind, value string) 
 	}
 }
 
-func mailRecipientTargetApplied(req *awid.SendMessageRequest) bool {
-	return req.ToAlias != "" || req.ToDID != "" || req.ToStableID != "" || req.ToAddress != ""
-}
-
 func resolveMailMessagingClientSelection() (*aweb.Client, *awconfig.Selection, error) {
 	if activeHuman != nil {
 		return activeHuman.client(teamFlag, "")
