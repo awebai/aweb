@@ -14,6 +14,7 @@ from dataclasses import InitVar, asdict, dataclass, field
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from enum import StrEnum
+from functools import partial
 from json import loads as json_loads
 from types import MappingProxyType
 from typing import Any, Awaitable, Callable, Literal, TypedDict, cast
@@ -259,6 +260,18 @@ class _TeamCertificateObservation:
 class _TeamCertificateMissRefresh:
     task: asyncio.Task[_TeamCertificateObservation]
     waits_for_window: bool
+
+
+@dataclass
+class _TeamCertificateMissState:
+    observation_key: str
+    readers: int = 0
+    refresh: _TeamCertificateMissRefresh | None = None
+
+    @property
+    def completed_refresh(self) -> _TeamCertificateMissRefresh | None:
+        refresh = self.refresh
+        return refresh if refresh is not None and refresh.task.done() else None
 
 
 @dataclass(frozen=True)
@@ -2323,7 +2336,7 @@ class CachedRegistryClient(RegistryClient):
     _domain_verifier: DomainVerifier | None
     _id_status_refreshes: dict[str, asyncio.Task[_IDStatusRefresh]]
     _team_key_signature_refreshes: dict[str, asyncio.Task[str | None]]
-    _team_certificate_miss_refreshes: dict[str, _TeamCertificateMissRefresh]
+    _team_certificate_miss_states: dict[str, _TeamCertificateMissState]
 
     async def _invalidate_controller_request(self, request, registry_origin: str) -> None:
         op, domain, parameters = request.operation, request.domain, request.parameters
@@ -2382,7 +2395,7 @@ class CachedRegistryClient(RegistryClient):
         object.__setattr__(self, "_refresh_tasks", {})
         object.__setattr__(self, "_id_status_refreshes", {})
         object.__setattr__(self, "_team_key_signature_refreshes", {})
-        object.__setattr__(self, "_team_certificate_miss_refreshes", {})
+        object.__setattr__(self, "_team_certificate_miss_states", {})
 
     async def id_chain_evidence(
         self,
@@ -3158,6 +3171,7 @@ class CachedRegistryClient(RegistryClient):
             raise ValueError("The presented certificate ID is required on a registration miss.")
         loop = asyncio.get_running_loop()
         started = loop.time()
+        state: _TeamCertificateMissState | None = None
         try:
             async with asyncio.timeout(self.timeout_seconds) as deadline:
                 origin = await self._team_read_origin(
@@ -3193,7 +3207,12 @@ class CachedRegistryClient(RegistryClient):
                 point_key = f"{cache_key}:point:{digest}"
                 seconds, micros = await self.redis_client.time()
                 request_time = seconds * _MICROSECONDS + micros
+                state = self._team_certificate_miss_states.setdefault(
+                    observation_key, _TeamCertificateMissState(observation_key)
+                )
+                state.readers += 1
                 while True:
+                    completed_before_read = state.completed_refresh
                     point = await self._read_cache_entry(point_key, decode=TeamCertificateStanding)
                     if point is not None and point["fresh"]:
                         return point["value"]
@@ -3207,17 +3226,21 @@ class CachedRegistryClient(RegistryClient):
                         ):
                             return standing
 
-                    refresh = self._team_certificate_miss_refreshes.get(observation_key)
+                    refresh = state.refresh
                     if refresh is None or refresh.task.done():
+                        if state.completed_refresh is not completed_before_read:
+                            continue
                         admission = await self._admit_team_certificate_read(
                             window_key, allow_point=True
                         )
                         # A list producer may have started while we awaited
                         # Redis. Join it even if the admission window rolled.
-                        refresh = self._team_certificate_miss_refreshes.get(
-                            observation_key
-                        )
+                        refresh = state.refresh
                         if refresh is None or refresh.task.done():
+                            # A producer may also have completed. Re-read its
+                            # Redis evidence with the original freshness rules.
+                            if state.completed_refresh is not completed_before_read:
+                                continue
                             if admission == 0:
                                 standing = await self._cache_exact_team_certificate_standing(
                                     domain,
@@ -3244,11 +3267,9 @@ class CachedRegistryClient(RegistryClient):
                             refresh = _TeamCertificateMissRefresh(
                                 task, waits_for_window=admission > 0
                             )
-                            self._team_certificate_miss_refreshes[observation_key] = refresh
+                            state.refresh = refresh
                             task.add_done_callback(
-                                lambda done: self._finish_team_certificate_miss_refresh(
-                                    observation_key, done
-                                )
+                                partial(self._finish_team_certificate_miss_refresh, state)
                             )
                     if refresh.waits_for_window:
                         deadline.reschedule(
@@ -3265,17 +3286,27 @@ class CachedRegistryClient(RegistryClient):
             raise RegistryError(
                 "AWID certificate existence refresh unavailable", status_code=503
             ) from exc
+        finally:
+            if state is not None:
+                state.readers -= 1
+                self._discard_idle_team_certificate_miss_state(state)
 
     def _finish_team_certificate_miss_refresh(
         self,
-        cache_key: str,
+        state: _TeamCertificateMissState,
         task: asyncio.Task[_TeamCertificateObservation],
     ) -> None:
-        refresh = self._team_certificate_miss_refreshes.get(cache_key)
-        if refresh is not None and refresh.task is task:
-            self._team_certificate_miss_refreshes.pop(cache_key)
         if not task.cancelled():
             task.exception()  # Observe failures after every waiter was cancelled.
+        self._discard_idle_team_certificate_miss_state(state)
+
+    def _discard_idle_team_certificate_miss_state(self, state: _TeamCertificateMissState) -> None:
+        # Keep the completed task identity while an overlapping reader may
+        # still be acting on a cache miss observed before it completed.
+        if state.readers or (state.refresh is not None and not state.refresh.task.done()):
+            return
+        if self._team_certificate_miss_states.get(state.observation_key) is state:
+            self._team_certificate_miss_states.pop(state.observation_key)
 
     async def _read_team_certificate_observation(
         self, cache_key: str
