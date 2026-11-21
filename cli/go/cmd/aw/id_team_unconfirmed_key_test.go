@@ -70,12 +70,12 @@ func directRegistry(t *testing.T, registryURL string) *awid.RegistryClient {
 
 func assertNoTeamKeyFile(t *testing.T, domain, name string) {
 	t.Helper()
-	exists, err := awconfig.TeamKeyExists(domain, name)
+	path, err := awconfig.TeamKeyPath(domain, name)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if exists {
-		t.Fatal("a team key file is present")
+	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected no active team key file at %s: %v", path, err)
 	}
 }
 
@@ -125,6 +125,9 @@ func TestTeamCreateSetsAsideAKeyItCannotConfirmAndRestoresIt(t *testing.T) {
 		t.Fatal("the registered key was not set aside")
 	}
 	assertNoTeamKeyFile(t, domain, name)
+	if exists, err := awconfig.TeamKeyExists(domain, name); exists || !errors.Is(err, awconfig.ErrTeamKeyUnconfirmed) {
+		t.Fatalf("TeamKeyExists = %v, %v; want false, ErrTeamKeyUnconfirmed", exists, err)
+	}
 	if _, err := awconfig.LoadTeamKey(domain, name); !errors.Is(err, awconfig.ErrTeamKeyUnconfirmed) {
 		t.Fatalf("LoadTeamKey err=%v, want ErrTeamKeyUnconfirmed", err)
 	}
