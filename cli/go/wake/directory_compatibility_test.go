@@ -75,6 +75,9 @@ func TestWakeControlDirectoryRequiresCurrentOwner(t *testing.T) {
 
 func TestWakeControlShortSocketDirectoryRequiresPrivatePermissions(t *testing.T) {
 	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	if err := checkWakeControlDirectory(dir, true); err != nil {
 		t.Fatalf("private socket directory was refused: %v", err)
 	}
