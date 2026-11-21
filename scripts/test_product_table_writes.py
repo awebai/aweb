@@ -459,7 +459,7 @@ async def f(db, schema):
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("test_new.py: marked writes 1 > 0", result.stdout)
 
-    def test_marked_allowance_ratchets_and_new_files_start_at_zero(self):
+    def test_marked_allowance_matches_markers_for_existing_and_new_files(self):
         path = "server/tests/test_world.py"
         statement = '    # unreachable-state: corrupt historical agent\n    await db.execute("DELETE FROM agents")\n'
         budget = {
@@ -494,18 +494,14 @@ async def f(db, schema):
         budget["marked_files"][path] = 3
         self.write("tools/product-table-write-ceilings.json", json.dumps(budget))
         result = self.run_check()
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("marked writes ceiling 3 > reviewed 2", result.stdout)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.write(path, "async def f(db):\n" + statement)
         budget["marked_files"][path] = 1
         self.write("server/tests/test_new.py", "async def f(db):\n" + statement)
         budget["marked_files"]["server/tests/test_new.py"] = 1
         self.write("tools/product-table-write-ceilings.json", json.dumps(budget))
         result = self.run_check()
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn(
-            "test_new.py: marked writes ceiling 1 > reviewed 0", result.stdout
-        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         (self.root / "server/tests/test_new.py").unlink()
         budget["marked_files"].pop("server/tests/test_new.py")
         (self.root / path).unlink()
@@ -518,7 +514,44 @@ async def f(db, schema):
         self.write("tools/product-table-write-ceilings.json", json.dumps(budget))
         self.assertEqual(self.run_check().returncode, 0)
 
-    def test_bootstrap_cannot_create_a_marked_allowance(self):
+    def test_only_exact_marked_raises_pass(self):
+        file = "server/tests/test_world.py"
+        marked = '    # unreachable-state: interrupted migration left a historical orphan\n    await db.execute("DELETE FROM agents")\n'
+        unmarked = '    await db.execute("DELETE FROM teams")\n'
+        nonliteral = '    await db.execute(statement)\n'
+        base = {"schema_version": 1, "marked_files": {file: 1}, "files": {}, "nonliteral_files": {}}
+        cases = (
+            (marked, {}, 0, ""),
+            (unmarked, {}, 1, "must match 0 unreachable-state markers"),
+            (marked + "    # unreachable-state: unused\n    pass\n", {}, 1,
+             "must match 2 unreachable-state markers"),
+            (marked + unmarked, {"files": {file: 1}}, 1, "unmarked writes ceiling 1 > reviewed 0"),
+            (marked + nonliteral, {"nonliteral_files": {file: 1}}, 1,
+             "nonliteral calls ceiling 1 > reviewed 0"),
+        )
+        for source, limits, status, reason in cases:
+            with self.subTest(source=source):
+                self.write(file, "async def f(db, statement):\n" + source)
+                self.write("tools/product-table-write-ceilings.json", json.dumps(base | limits))
+                result = self.run_check()
+                self.assertEqual(result.returncode, status, result.stdout + result.stderr)
+                self.assertIn(reason, result.stdout)
+
+    def test_one_marker_cannot_admit_multiple_product_writes_in_one_sql_call(self):
+        file = "server/tests/test_world.py"
+        self.write(
+            file,
+            'async def f(db):\n    # unreachable-state: corrupt historical membership\n'
+            '    await db.execute("DELETE FROM agents; DELETE FROM teams")\n',
+        )
+        self.write("tools/product-table-write-ceilings.json", json.dumps({
+            "schema_version": 1, "files": {}, "nonliteral_files": {}, "marked_files": {file: 2},
+        }))
+        result = self.run_check()
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("one marker covers multiple product writes", result.stderr)
+
+    def test_bootstrap_accepts_only_a_marked_allowance_that_matches_markers(self):
         self.git("rm", "tools/product-table-write-ceilings.json")
         self.git(
             "-c",
@@ -543,11 +576,13 @@ async def f(db, schema):
         }
         self.write("tools/product-table-write-ceilings.json", json.dumps(budget))
         result = self.run_check()
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("marked writes ceiling 1 > reviewed 0", result.stdout)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.write(
             path, 'async def f(db):\n    await db.execute("DELETE FROM agents")\n'
         )
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("must match 0 unreachable-state markers", result.stdout)
         budget["marked_files"].clear()
         budget["files"][path] = 1
         self.write("tools/product-table-write-ceilings.json", json.dumps(budget))
