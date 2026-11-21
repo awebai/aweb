@@ -1,5 +1,10 @@
 # Knowledge log
 
+## 2026-11-17
+* **Harvest**: OKF proposal from seat aweb-protocol-expert-team-key-trust with one backing note; a ruled signed-read design (acceptance source-reported) and a lesson on reading the registry's signed-form metrics.
+* **Creation**: decision [signed team reads share one verifier, not one access policy](/aweb-protocol-expert/decisions/signed-team-reads-share-one-verifier-not-one-policy.md); ruled, on a review branch, not on main.
+* **Creation**: lesson [reading the signed-form metrics before a removal](/aweb-protocol-expert/lessons/reading-signed-form-metrics-before-a-removal.md).
+
 ## 2026-11-06
 * **Fix**: review of the db-access proposal on npm gitHead, PubSub release and stream checkouts: hosted specifics in [stream bodies leave the request connection scope](/aweb-protocol-expert/lessons/stream-bodies-leave-the-request-connection-scope.md) and [an npm tarball publish records no gitHead](/aweb-protocol-expert/lessons/npm-tarball-publish-records-no-githead.md) are stated generically or dropped, as the OSS and Cloud boundary requires.
 * **Update**: [SSE cleanup is cancelled on client disconnect](/aweb-protocol-expert/lessons/sse-cleanup-is-cancelled-on-disconnect.md) and [a PubSub release survives any cancellation](/aweb-protocol-expert/decisions/pubsub-release-survives-any-cancellation.md) link each other: the AnyIO shield covers Starlette's disconnect, not native task cancellation.
