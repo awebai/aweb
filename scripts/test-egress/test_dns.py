@@ -5,7 +5,7 @@ import struct
 import tempfile
 import unittest
 
-from dns import response
+from egress_dns import response
 
 
 def question(host, kind=1, klass=1):
