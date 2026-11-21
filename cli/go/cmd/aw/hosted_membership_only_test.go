@@ -3,9 +3,11 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/awebai/aw/awconfig"
@@ -29,13 +31,29 @@ func TestHostedExistingGlobalPinnedInviteDoesNotCreateParentage(t *testing.T) {
 				if err := awid.SaveSigningKey(filepath.Join(root, "signing.key"), key); err != nil {
 					t.Fatal(err)
 				}
-				registryCalls := 0
-				registry := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					registryCalls++
-					http.Error(w, "membership must not register or resolve parentage", 500)
+				_, teamKey, err := awid.GenerateKeypair()
+				if err != nil {
+					t.Fatal(err)
+				}
+				cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{Team: "backend:example.com", MemberDIDKey: did, MemberDIDAW: stable, Alias: "child", IdentityScope: "global"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				header, err := awid.EncodeTeamCertificateHeader(cert)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var teamStatusReads atomic.Int32
+				registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if serveHostedInviteCertificateStatus(t, w, r, cert) {
+						teamStatusReads.Add(1)
+						return
+					}
+					t.Errorf("unexpected registry call %s %s", r.Method, r.URL.RequestURI())
+					http.Error(w, "membership must not register or resolve parentage", http.StatusInternalServerError)
 				}))
+				defer registry.Close()
 				t.Setenv("AWID_REGISTRY_URL", registry.URL)
-				_, teamKey, _ := awid.GenerateKeypair()
 				previews, accepts := 0, 0
 				service := newLocalHTTPServerHandlerWithURL(t, func(origin string, w http.ResponseWriter, r *http.Request) {
 					switch r.URL.Path {
@@ -65,12 +83,6 @@ func TestHostedExistingGlobalPinnedInviteDoesNotCreateParentage(t *testing.T) {
 							http.Error(w, "outcome unavailable", 503)
 							return
 						}
-						cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{Team: "backend:example.com", MemberDIDKey: did, MemberDIDAW: stable, Alias: "child", IdentityScope: "global"})
-						if err != nil {
-							t.Error(err)
-							return
-						}
-						header, _ := awid.EncodeTeamCertificateHeader(cert)
 						response := map[string]any{"team_id": "cloud-team", "team_slug": "backend", "namespace": "example.com", "identity_id": "child", "name": "child", "server_url": origin, "did": did, "stable_id": stable, "custody": "self", "identity_scope": "global", "created": true, "team_cert": header}
 						if scenario == "unsolicited parentage" {
 							response["registration_request"] = map[string]any{}
@@ -128,8 +140,12 @@ func TestHostedExistingGlobalPinnedInviteDoesNotCreateParentage(t *testing.T) {
 				if scenario == "unrecorded creation" {
 					wantPreviews = 0
 				}
-				if previews != wantPreviews || registryCalls != 0 {
-					t.Fatalf("preview=%d registry effects/reads=%d", previews, registryCalls)
+				var wantStatusReads int32
+				if scenario == "ordinary" || scenario == "lost response retry" {
+					wantStatusReads = 1
+				}
+				if reads := teamStatusReads.Load(); previews != wantPreviews || reads != wantStatusReads {
+					t.Fatalf("previews=%d, want %d; team certificate status reads=%d, want %d", previews, wantPreviews, reads, wantStatusReads)
 				}
 				if _, err := os.Stat(filepath.Join(root, "id-chain.json")); !os.IsNotExist(err) {
 					t.Fatalf("membership changed parentage: %v", err)

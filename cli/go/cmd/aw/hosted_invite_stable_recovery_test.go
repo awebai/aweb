@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/awebai/aw/awconfig"
@@ -28,14 +29,31 @@ func TestHostedInviteResumesStable58CreationSelection(t *testing.T) {
 				key := ed25519.NewKeyFromSeed(seed)
 				did := v.Keys["seat"].DIDKey
 				bundle := map[string]any{"v": 1, "type": "aweb.id-chain", "certificates": []any{v.Certificates["alice"].Signed, v.Certificates["coordinator"].Signed, v.Certificates["seat"].Signed}}
-				registryWrites := 0
+				_, teamKey, err := awid.GenerateKeypair()
+				if err != nil {
+					t.Fatal(err)
+				}
+				cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{Team: "backend:example.com", MemberDIDKey: did, Alias: "child", IdentityScope: "local"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				header, err := awid.EncodeTeamCertificateHeader(cert)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var teamStatusReads atomic.Int32
 				status := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					if r.URL.Path != "/v1/id-certificates/status" {
-						registryWrites++
-						http.Error(w, "local child must not register", 500)
-						return
+					switch {
+					case serveHostedInviteCertificateStatus(t, w, r, cert):
+						teamStatusReads.Add(1)
+					case r.Method == http.MethodPost && r.URL.RequestURI() == "/v1/id-certificates/status":
+						if err := json.NewEncoder(w).Encode(v.Statuses["normal"]); err != nil {
+							t.Error(err)
+						}
+					default:
+						t.Errorf("unexpected registry call %s %s", r.Method, r.URL.RequestURI())
+						http.Error(w, "local child must not register", http.StatusInternalServerError)
 					}
-					_ = json.NewEncoder(w).Encode(v.Statuses["normal"])
 				}))
 				defer status.Close()
 				transport := status.Client().Transport.(*http.Transport).Clone()
@@ -46,9 +64,6 @@ func TestHostedInviteResumesStable58CreationSelection(t *testing.T) {
 				resolver := staticTXTResolver{"_awid.example.com": {idCreateDNSRecordValue(v.Keys["root"].DIDKey, "https://registry.example.test")}}
 				t.Setenv("AWID_REGISTRY_URL", "https://registry.example.test")
 				registry := awid.NewAWIDRegistryClient(&http.Client{Transport: transport}, resolver)
-				_, teamKey, _ := awid.GenerateKeypair()
-				cert, _ := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{Team: "backend:example.com", MemberDIDKey: did, Alias: "child", IdentityScope: "local"})
-				header, _ := awid.EncodeTeamCertificateHeader(cert)
 				accepts := 0
 				mode := "host_managed"
 				if installed {
@@ -113,10 +128,25 @@ func TestHostedInviteResumesStable58CreationSelection(t *testing.T) {
 				if savedResponse {
 					wantAccepts = 0
 				}
-				if accepts != wantAccepts || registryWrites != 0 {
-					t.Fatalf("resume effects: accepts=%d registry writes=%d", accepts, registryWrites)
+				if reads := teamStatusReads.Load(); accepts != wantAccepts || reads != 1 {
+					t.Fatalf("resume: accepts=%d, want %d; team certificate status reads=%d, want 1", accepts, wantAccepts, reads)
 				}
 			})
 		}
 	}
+}
+
+// Both hosted invite fixtures issue a certificate in backend:example.com.
+func serveHostedInviteCertificateStatus(t *testing.T, w http.ResponseWriter, r *http.Request, cert *awid.TeamCertificate) bool {
+	t.Helper()
+	path := "/v1/namespaces/example.com/teams/backend/certificates/" + cert.CertificateID + "/status"
+	if r.Method != http.MethodGet || r.URL.RequestURI() != path {
+		return false
+	}
+	if err := json.NewEncoder(w).Encode(awid.TeamCertificateStatus{
+		TeamID: cert.Team, TeamDIDKey: cert.TeamDIDKey, Status: "active",
+	}); err != nil {
+		t.Error(err)
+	}
+	return true
 }
