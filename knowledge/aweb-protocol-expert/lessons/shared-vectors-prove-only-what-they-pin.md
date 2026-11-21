@@ -1,9 +1,9 @@
 ---
 type: Lesson
 title: Shared vectors prove only what they pin
-description: Check each single-fault negative vector by skipping its own check, probe primitive boundaries independently of the corpus in every language, and run every consumer of a vector change with its own prerequisites and policy inputs; a shared corpus does not by itself make accepted input domains equal.
+description: Check each single-fault negative vector by skipping its own check with a mutation that cannot throw, probe primitive boundaries independently of the corpus in every language, and run every consumer of a vector change with its own prerequisites and policy inputs; a shared corpus does not by itself make accepted input domains equal.
 tags: [lesson, conformance, vectors, cross-language, testing]
-timestamp: 2026-10-21
+timestamp: 2026-11-18
 ---
 
 Shared conformance vectors are how independent implementations agree. Three
@@ -32,6 +32,18 @@ ways they were found to prove less than assumed.
   each negative twice: normally (it must refuse with exactly its code), then
   with only that code's check skipped (it must then verify). Exempt codes that
   stop evaluation by definition (oversize, wrong type).
+- The skip-one-check mutation must not throw. A verifier wrapper that maps
+  exceptions to "failed" returns exactly what a negative expects, so a mutation
+  that throws leaves the case green and looks like "this case does not pin the
+  rule". With noble ed25519 v2, removing the identity-point refusal for R let
+  `toRawBytes()` run on the zero point, which throws ("bad point: ZERO"); the
+  wrapper's catch turned that into "failed" and all cases stayed green. Probe
+  the mutated primitive directly, outside the catching wrapper, before reading
+  a green run. Let the reference verifier predict which single case each
+  mutation flips, and treat any other result as a broken mutation until
+  shown otherwise: a mutation that compared the canonical identity encoding
+  flipped exactly the identity-R case, and a cofactored-equation mutation
+  flipped exactly the mixed-order-R case, as the reference had predicted.
 - Pick primitive boundaries independently of the proposed vectors and pair the
   refused input with the nearest valid value and an ordinary valid control, in
   every language. Put non-ASCII digits where each parser reads them.
@@ -51,3 +63,5 @@ Harvested 2026-10-25 from seats `aweb-protocol-expert-agent-activity` (notes
 `aweb-protocol-expert-p0-review` (note
 `shared-vectors-need-runtime-boundary-probes.md`; ACK cb13ba1c) and
 `aweb-protocol-expert-app-team-api` (note `strptime-unicode-digits.md`).
+
+Evidence: OKF proposal from aweb-protocol-expert/aweb-protocol-expert-chat-verify, 2026-11-18; notes/mutation-check-on-noble-zero-point.md. Observed in a review of the channel-core TypeScript signature verifier against the shared signature-primitives vectors, with a pure-Python RFC 8032 reference verifier.
