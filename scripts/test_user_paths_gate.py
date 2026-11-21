@@ -288,6 +288,7 @@ class FrozenGateInput(unittest.TestCase):
                     "candidate-docker-gate.sh",
                     "candidate-suite.sh",
                     "candidate-cleanup.sh",
+                    "candidate-record.sh",
                     "candidate-network.py",
                     "fetch_released_aw.py",
                 ]:
