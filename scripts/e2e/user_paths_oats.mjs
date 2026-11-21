@@ -14,17 +14,23 @@ import { DiagnosticOutput, cleanupPassiveTerminal, createProbeAssertions, wakeTi
 const KernelBackend = Object.freeze({ Tmux: "tmux" });
 const OWNED_TMUX = ["tmux", "-L", "oats"];
 const ProbeOutcome = Object.freeze({ Passed: "PASSED", Failed: "FAILED" });
-const STAGED = "/opt/user-paths/released-oats";
-const KERNEL = join(STAGED, "node_modules/@awebai/oats/bin/oats.mjs");
-const PROVIDER = "/opt/user-paths/oats-aweb/oats-package/capabilities/oats-aweb";
-const PIN = JSON.parse(readFileSync(join(STAGED, "provider.json"), "utf8"));
 const { values } = parseArgs({ options: {
   aw: { type: "string" }, root: { type: "string" }, seat: { type: "string" },
   "fixture-home": { type: "string" }, sender: { type: "string" }, team: { type: "string" }, output: { type: "string" },
   "source-commit": { type: "string" },
-  "released-lifecycle": { type: "boolean" },
+  "released-lifecycle": { type: "boolean" }, "released-artifacts": { type: "string" }, "aw-actor": { type: "string" },
 } });
 const released = values["released-lifecycle"];
+const manual = Boolean(values["aw-actor"]);
+if (released && !values["released-artifacts"]) {
+  throw new Error("--released-artifacts is required for published client validation");
+}
+const STAGED = values["released-artifacts"] || "/opt/user-paths/released-oats";
+const KERNEL = join(STAGED, "node_modules/@awebai/oats/bin/oats.mjs");
+const artifacts = released ? JSON.parse(readFileSync(join(STAGED, "provenance.json"), "utf8")) : null;
+const PIN = artifacts?.provider ?? JSON.parse(readFileSync(join(STAGED, "provider.json"), "utf8"));
+const PROVIDER = join(released ? STAGED : "/opt/user-paths/oats-aweb", PIN.capability_path);
+
 const evidence = {};
 const assert = createProbeAssertions({ evidence, output: values.output });
 for (const option of ["aw", "root", "seat", "sender", "team", "output", "source-commit", "fixture-home"]) {
@@ -34,11 +40,12 @@ const root = resolve(values.root);
 const { home, deployment, source, bin } = prepareKernelProbeDirectories({ root });
 Object.assign(evidence, { scope: "released OATS kernel -> candidate aw wake path; not the lab image, supervisor or Helm storage", provider: PIN, candidate_source_commit: values["source-commit"], candidate_binary_sha256: createHash("sha256").update(readFileSync(values.aw)).digest("hex"), process_uid: process.geteuid(), process_gid: process.getegid() });
 if (released) {
-  evidence.scope = "released OATS kernel and aweb provider with released aw";
+  evidence.scope = manual ? "released aw manual native-broker registration" : "released OATS kernel and aweb provider with released aw";
   evidence.lifecycle = {};
 }
 function recordLifecycle(operation, visible) {
-  if (released) evidence.lifecycle["oats/" + operation] = { status: "PASSED", visible };
+  if (manual && operation === "wake") evidence.lifecycle["aw/wake"] = { status: "PASSED", visible };
+  if (released && !manual) evidence.lifecycle["oats/" + operation] = { status: "PASSED", visible };
 }
 const env = {
   PATH: `${bin}:${dirname(process.execPath)}:/usr/bin:/bin`, HOME: home,
@@ -123,24 +130,26 @@ let brokerErrors = "";
 const cleanupErrors = [];
 try {
   evidence.kernel = parseObject(oats("--version", "--json"));
-  assert.equal(JSON.parse(readFileSync(join(STAGED, "node_modules/@awebai/oats/package.json"), "utf8")).version, "0.69.19", "released kernel version must match the locked 0.69.19");
-  evidence.kernel_integrity = JSON.parse(readFileSync(join(STAGED, "package-lock.json"), "utf8")).packages["node_modules/@awebai/oats"].integrity;
+  assert.equal(JSON.parse(readFileSync(join(STAGED, "node_modules/@awebai/oats/package.json"), "utf8")).version, artifacts?.kernel.version ?? "0.69.19", "kernel version must match the verified package");
+  evidence.kernel_integrity = artifacts?.kernel.integrity ?? JSON.parse(readFileSync(join(STAGED, "package-lock.json"), "utf8")).packages["node_modules/@awebai/oats"].integrity;
   evidence.node = process.version;
   evidence.aw = command({ name: "aw version", argv: [join(bin, "aw"), "version"], output: DiagnosticOutput.Public });
   assert.match(evidence.aw, new RegExp(`commit: ${values["source-commit"]} `), "candidate aw identifies the requested source SHA");
-  assert.equal(JSON.parse(readFileSync(join(PROVIDER, "oats.json"), "utf8")).version, PIN.version, "provider version must match its locked pin");
+  if (!manual) assert.equal(JSON.parse(readFileSync(join(PROVIDER, "oats.json"), "utf8")).version, PIN.version, "provider version must match the verified release");
   const ref = pathToFileURL(source).href;
   mkdirSync(join(source, "souls/probe"), { recursive: true });
-  cpSync(PROVIDER, join(source, "capabilities/oats-aweb"), { recursive: true });
-  writeFileSync(join(source, "oats-workspace.yaml"), `schemaVersion: 2\nname: wake-probe\nmembers:\n  - ${ref}\nlocalTeams: true\ndefaults:\n  messaging:\n    oats.aweb: { from: local/${source} }\n`);
+  if (!manual) cpSync(PROVIDER, join(source, "capabilities/oats-aweb"), { recursive: true });
+  const messaging = manual ? "" : `defaults:\n  messaging:\n    oats.aweb: { from: local/${source} }\n`;
+  writeFileSync(join(source, "oats-workspace.yaml"), `schemaVersion: 2\nname: wake-probe\nmembers:\n  - ${ref}\nlocalTeams: true\n${messaging}`);
   writeFileSync(join(source, "oats-membership.yaml"), `schemaVersion: 2\nworkspace: ${ref}\n`);
   writeFileSync(join(source, "souls/probe/soul.yaml"), `schemaVersion: 2\nname: probe\ndescription: released kernel wake probe\nwork: directory\nlaunch: { harness: ${passiveLaunch.harness} }\n`);
   writeFileSync(join(source, "souls/probe/AGENTS.md"), "Disposable passive wake probe.\n");
   for (const args of [["init", "-q"], ["add", "."], ["commit", "-qm", "owned wake-probe workspace"]]) {
     command({ name: `git ${args[0]}`, argv: ["git", "-C", source, "-c", "user.name=Wake probe", "-c", "user.email=probe@example.invalid", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", ...args], output: DiagnosticOutput.Public });
   }
-  writeFileSync(join(deployment, "oats-local.yaml"), `schemaVersion: 2\nworkspace: ${ref}\nteams:\n  default: { team: ${JSON.stringify(values.team)} }\ndefaultTeam: default\nsettings:\n  oats.aweb:\n    delivery: session\n    root: ${JSON.stringify(resolve(values.seat))}\nlaunch-configs:\n  passive: ${JSON.stringify(passiveLaunch)}\nsouls:\n  launch:\n    '*': passive\n`);
-  evidence.mint_preflight = prepareMintAuthority({ seat: values.seat, fixtureHome: values["fixture-home"], team: values.team });
+  const deploymentMessaging = manual ? "" : `settings:\n  oats.aweb:\n    delivery: session\n    root: ${JSON.stringify(resolve(values.seat))}\n`;
+  writeFileSync(join(deployment, "oats-local.yaml"), `schemaVersion: 2\nworkspace: ${ref}\nteams:\n  default: { team: ${JSON.stringify(values.team)} }\ndefaultTeam: default\n${deploymentMessaging}launch-configs:\n  passive: ${JSON.stringify(passiveLaunch)}\nsouls:\n  launch:\n    '*': passive\n`);
+  if (!manual) evidence.mint_preflight = prepareMintAuthority({ seat: values.seat, fixtureHome: values["fixture-home"], team: values.team });
   // Capture bounded public failure text; credentials remain in the owned volume.
   const startOwnedBroker = () => {
     const child = spawn(join(bin, "aw"), ["wake", "run"], { cwd: home, env, stdio: ["ignore", "ignore", "pipe"] });
@@ -167,6 +176,10 @@ try {
   assert.equal(spawned.ok, true, "kernel spawn.ok must confirm the spawn");
   ({ instance, home: instanceHome } = spawned.result);
   assert.ok(instance && instanceHome, "kernel spawn must return its instance and home");
+  if (manual) {
+    command({ name: "aw wake register", argv: [join(bin, "aw"), "wake", "register", "--home", instanceHome,
+      "--identity-home", join(resolve(values["aw-actor"]), ".aw"), "--delivery", "session", "--backend", "tmux"] });
+  }
   const runnerReady = (status) => status.daemon_running === true && status.daemon_pid === broker.pid && wakeInstances(status).some((row) => row.home === instanceHome && row.channel_core?.running === true);
   let prelaunchRow;
   if (!released) {
@@ -224,11 +237,12 @@ try {
     evidence.private_execution_after_group_widening = executionPermissions(before);
     evidence.permissions_before = [join(home, ".config/aw"), state, cache, join(cache, "runner.mjs")].map(permission);
   }
-  const address = parseObject(aw({ identity: instanceHome, args: ["whoami", "--json"] }));
+  const identity = manual ? resolve(values["aw-actor"]) : instanceHome;
+  const address = parseObject(aw({ identity, args: ["whoami", "--json"] }));
   const recipient = address.address || address.alias || address.name;
   assert.ok(typeof recipient === "string" && recipient, "spawned seat must be addressable");
   recordLifecycle("join", { recipient, team: values.team, session: kernelSessionSnapshot(liveKernel) });
-  const subject = "R20 released-kernel wake probe";
+  const subject = manual ? "Released aw native broker wake" : "R20 released-kernel wake probe";
   const mailBody = "Disposable wake-path qualification; no action.";
   const sent = parseObject(aw({ identity: values.sender, args: ["mail", "send", "--to", recipient, "--subject", subject, "--body", mailBody, "--json"] }));
   assert.ok(sent.message_id, "mail send must return its message id");
@@ -240,7 +254,13 @@ try {
     return panes.map((pane) => command({ name: "tmux capture-pane", argv: [...OWNED_TMUX, "capture-pane", "-p", "-S", "-400", "-t", pane] })).join("\n");
   };
   evidence.presented_wake = await until({ read: capture, ready: (text) => text.includes(sent.message_id) && text.includes(subject), label: "fresh wake in the isolated kernel session" });
-  if (released) {
+  if (manual) {
+    const mailView = parseObject(aw({ identity, args: ["mail", "show", "--conversation-id", sent.conversation_id, "--json"] }));
+    const mail = (mailView.messages || []).find((message) => message.message_id === sent.message_id);
+    assert.equal(mail?.body, mailBody, "the registered released aw identity reads the exact presented mail");
+    recordLifecycle("wake", { subject, event: "mail", presented_through: "tmux", registration: "aw wake register",
+      verification_status: mail.verification_status });
+  } else if (released) {
     const mailView = parseObject(aw({ identity: instanceHome, args: ["mail", "show", "--conversation-id", sent.conversation_id, "--json"] }));
     const mail = (mailView.messages || []).find((message) => message.message_id === sent.message_id);
     assert.equal(mail?.body === mailBody, true, "released OATS identity reads the presented mail");
@@ -266,6 +286,10 @@ try {
   if (error.diagnostic) evidence.failed_command = error.diagnostic;
   process.exitCode = 1;
 } finally {
+  if (instanceHome && manual) {
+    try { command({ name: "aw wake deregister", argv: [join(bin, "aw"), "wake", "deregister", "--home", instanceHome] }); }
+    catch (error) { cleanupErrors.push(String(error)); }
+  }
   if (instance) {
     try {
       // Plain retire --json in released 0.69.19 returns the receipt directly.
@@ -274,25 +298,27 @@ try {
       assert.equal(evidence.retire.removedDir, true, "retire.removedDir must confirm home removal");
       assert.ok(!evidence.retire.rollbackIncomplete, "retire must not leave rollback incomplete");
       assert.ok(!evidence.retire.forcedIncomplete, "retire must not force past incomplete cleanup");
-      assert.equal(evidence.retire.capabilityMeta?.["oats.aweb"]?.retired, true, "provider retirement must confirm completed coordination and revocation");
       assert.equal(existsSync(instanceHome), false, "retired instance home must be absent");
-      const provider = evidence.retire.capabilityMeta["oats.aweb"];
-      if (released && provider.aliasReusable === false && provider.aliasReason === "team_not_hosted") {
-        const pending = provider.pendingControllerCleanup?.find((row) => row.team === values.team && row.alias === instance);
-        assert.ok(pending?.certificateId, "released OATS must identify the certificate for remaining owner cleanup");
-        const [team, domain] = values.team.split(":");
-        aw({ identity: values.seat, args: ["id", "team", "remove-member", "--namespace", domain, "--team", team,
-          "--cert-id", pending.certificateId, "--json"] });
-      } else {
-        assert.equal(provider.aliasReusable, true, "provider retirement must confirm the alias is reusable");
-      }
-      if (released) {
-        const observed = parseObject(aw({ identity: values.seat, args: ["team", "admin", "agent-status", instance, "--json"] }));
-        assert.equal(observed.state, "clear", "controller readback proves retirement");
-        assert.equal(observed.name_reusable, true, "controller readback proves alias reuse");
-        recordLifecycle("retire", { retired: evidence.retire.retired, removedDir: evidence.retire.removedDir,
-          retiredByProvider: provider.retired, aliasReusable: provider.aliasReusable, aliasReason: provider.aliasReason,
-          state: observed.state, name_reusable: observed.name_reusable });
+      if (!manual) {
+        assert.equal(evidence.retire.capabilityMeta?.["oats.aweb"]?.retired, true, "provider retirement must confirm completed coordination and revocation");
+        const provider = evidence.retire.capabilityMeta["oats.aweb"];
+        if (released && provider.aliasReusable === false && provider.aliasReason === "team_not_hosted") {
+          const pending = provider.pendingControllerCleanup?.find((row) => row.team === values.team && row.alias === instance);
+          assert.ok(pending?.certificateId, "released OATS must identify the certificate for remaining owner cleanup");
+          const [team, domain] = values.team.split(":");
+          aw({ identity: values.seat, args: ["id", "team", "remove-member", "--namespace", domain, "--team", team,
+            "--cert-id", pending.certificateId, "--json"] });
+        } else {
+          assert.equal(provider.aliasReusable, true, "provider retirement must confirm the alias is reusable");
+        }
+        if (released) {
+          const observed = parseObject(aw({ identity: values.seat, args: ["team", "admin", "agent-status", instance, "--json"] }));
+          assert.equal(observed.state, "clear", "controller readback proves retirement");
+          assert.equal(observed.name_reusable, true, "controller readback proves alias reuse");
+          recordLifecycle("retire", { retired: evidence.retire.retired, removedDir: evidence.retire.removedDir,
+            retiredByProvider: provider.retired, aliasReusable: provider.aliasReusable, aliasReason: provider.aliasReason,
+            state: observed.state, name_reusable: observed.name_reusable });
+        }
       }
     } catch (error) { cleanupErrors.push(String(error)); }
   }

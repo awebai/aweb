@@ -32,7 +32,7 @@ class Plugin:
             self.lane.environment, AWEB_DELIVERY="channel", AW_BIN=self.lane.binary
         )
         env["PATH"] = str(Path(self.lane.binary).parent) + os.pathsep + env["PATH"]
-        self.log = (self.lane.root / "released-channel.log").open("w")
+        self.log = (self.lane.root / "released-channel.log").open("a")
         self.process = subprocess.Popen(
             ["node", str(self.entry)],
             cwd=self.lane.actors[self.actor]["home"],
@@ -229,17 +229,9 @@ def send(lane, receiver, kind, body):
 def aw_delivery(lane, kind):
     body = f"Released aw {kind} on the RC validation team."
     message, thread = send(lane, "t1", kind, body)
-    lane.assert_message("t1", "g1", kind, body, thread, message, False)
+    views = lane.read_message("t1", "g1", kind, body, thread, message, False)
     observed = {}
-    for view in ("inbox-pending", "history"):
-        result = json.loads(
-            (lane.root / "reads" / f"{message}-{view}.json").read_text()
-        )
-        row = next(
-            item
-            for item in rows(result)
-            if item.get("body", item.get("last_message")) == body
-        )
+    for view, row in views.items():
         observed[view] = {
             key: row[key]
             for key in (
@@ -256,12 +248,43 @@ def aw_delivery(lane, kind):
     return observed
 
 
-def plugin_delivery(lane, plugin, kind, operation):
-    body = f"Released channel {operation} on the RC validation team."
+def plugin_delivery(lane, plugin, kind):
+    body = f"Released channel {kind} on the RC validation team."
     message, thread = send(lane, "t2", kind, body)
     return plugin.notification(
         message, thread, kind, body, lane.actors["g1"]["address"]
     )
+
+
+def plugin_reconnect_wake(lane, channel):
+    """Show an idle host wake on reconnect from unread state queued offline."""
+    body = "Released channel wakes from queued mail after reconnect."
+    message, thread = send(lane, "t2", "mail", body)
+
+    def unread():
+        return any(
+            row.get("message_id") == message
+            for row in rows(lane.command("t2", "mail", "inbox"))
+        )
+
+    require(unread(), "The offline plugin's exact message was not queued unread.")
+    with Plugin(lane, channel, "t2") as plugin:
+        plugin.connect()
+        presented = plugin.notification(
+            message, thread, "mail", body, lane.actors["g1"]["address"]
+        )
+        deadline = time.monotonic() + 15
+        while unread():
+            require(
+                time.monotonic() < deadline,
+                "The reconnected channel did not settle its delivered wake.",
+            )
+            time.sleep(0.1)
+    return {
+        "trigger": "unread-on-reconnect",
+        "presentation": presented,
+        "acknowledged": True,
+    }
 
 
 def retire(lane, actor):
@@ -334,23 +357,27 @@ def joined(lane, actor):
     }
 
 
-def run_kernel(lane, receipts, source):
-    output = lane.root / "released-kernel-lifecycle.json"
+def run_kernel(lane, receipts, source, oats, *, manual=False):
+    client = "aw" if manual else "oats"
+    output = lane.root / (client + "-wake-lifecycle.json")
     result = subprocess.run(
         [
             "node",
             "/work/user_paths_oats.mjs",
             "--released-lifecycle",
+            "--released-artifacts",
+            str(oats),
+            *(["--aw-actor", str(lane.actors["t1"]["home"])] if manual else []),
             "--aw",
             lane.binary,
             "--root",
-            "/identities/kernel-wake",
+            "/identities/" + client + "-wake",
             "--seat",
             str(lane.actors["g1"]["home"]),
             "--fixture-home",
             str(lane.home),
             "--sender",
-            str(lane.actors["t1"]["home"]),
+            str(lane.actors["g1" if manual else "t1"]["home"]),
             "--team",
             "members:" + lane.actors["g1"]["domain"],
             "--source-commit",
@@ -364,28 +391,25 @@ def run_kernel(lane, receipts, source):
     evidence = json.loads(output.read_text()) if output.is_file() else {}
     for case, row in evidence.get("lifecycle", {}).items():
         receipts.rows[case] = row
-    # aw owns the native broker, while OATS owns the lifecycle and terminal.
-    if wake := receipts.rows.get("oats/wake"):
-        receipts.rows["aw/wake"] = wake
     receipts.path.write_text(json.dumps(receipts.rows, indent=2) + "\n")
     if result.returncode:
-        receipts.rows["oats/runner"] = {
+        receipts.rows[client + "/runner"] = {
             "status": "FAILED",
             "visible": {"exit": result.returncode},
         }
         receipts.path.write_text(json.dumps(receipts.rows, indent=2) + "\n")
         print(
-            "Released kernel lifecycle failed; see released-kernel-lifecycle.json.",
+            f"Released {client} wake lifecycle failed; see {output.name}.",
             flush=True,
         )
 
 
-def main(channel, aw_source):
+def main(channel, oats, aw_source):
     lane = Lane("released", os.environ["AW_BIN"])
     receipts = Receipts(lane.root / "compatibility.json")
 
     def provision():
-        lane.provision()
+        lane.provision(start_receivers=False)
         return joined(lane, "t1")
 
     try:
@@ -406,15 +430,14 @@ def main(channel, aw_source):
                 lambda: {"workspace": joined(lane, "t2"), "mcp": plugin.connect()},
             )
             if receipts.rows["channel/join"]["status"] == "PASSED":
-                for operation, kind in (
-                    ("mail", "mail"),
-                    ("chat", "chat"),
-                    ("wake", "mail"),
-                ):
+                for kind in ("mail", "chat"):
                     receipts.observe(
-                        "channel/" + operation,
-                        lambda: plugin_delivery(lane, plugin, kind, operation),
+                        "channel/" + kind, lambda: plugin_delivery(lane, plugin, kind)
                     )
+        if receipts.rows["channel/join"]["status"] == "PASSED":
+            receipts.observe(
+                "channel/wake", lambda: plugin_reconnect_wake(lane, channel)
+            )
     except (OSError, RuntimeError) as exc:
         receipts.rows["channel/runner"] = {
             "status": "FAILED",
@@ -422,7 +445,8 @@ def main(channel, aw_source):
         }
         receipts.path.write_text(json.dumps(receipts.rows, indent=2) + "\n")
     try:
-        run_kernel(lane, receipts, aw_source)
+        run_kernel(lane, receipts, aw_source, oats, manual=True)
+        run_kernel(lane, receipts, aw_source, oats)
     finally:
         receipts.observe("aw/retire", lambda: retire(lane, "t1"))
         receipts.observe("channel/retire", lambda: retire(lane, "t2"))
@@ -432,7 +456,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--channel", required=True, type=Path)
     parser.add_argument("--aw-source", required=True)
+    parser.add_argument("--oats", required=True, type=Path)
     args = parser.parse_args()
     if not re.fullmatch(r"[0-9a-f]{40}", args.aw_source):
         parser.error("--aw-source must be a full release SHA")
-    main(args.channel, args.aw_source)
+    main(args.channel, args.oats, args.aw_source)

@@ -13,19 +13,32 @@ import time
 import uuid
 from user_paths_result import qualification
 from user_paths_kernel_result import add_kernel_wake_result
-from user_paths_rc import ROLES, compatibility, server_inputs, verify_server_image
+from user_paths_rc import (
+    ROLES,
+    compatibility,
+    production_baseline,
+    published_server,
+    server_inputs,
+    stage_production_wheels,
+    verify_server_image,
+)
 from container_fixture_modes import make_public_tree_readable
 
 REPO = Path(__file__).resolve().parents[2]
 BASELINE_WHEEL = os.environ.get("USER_PATHS_BASELINE_WHEEL")
 CANDIDATE_BIN = os.environ.get("USER_PATHS_CANDIDATE_BIN")
 RC_MANIFEST = os.environ.get("USER_PATHS_RC_MANIFEST")
+PRODUCTION_READBACK = os.environ.get("USER_PATHS_PRODUCTION_READBACK")
 if os.environ.get("CANDIDATE_SOURCE_SHA") and (BASELINE_WHEEL or CANDIDATE_BIN):
     raise RuntimeError(
         "author diagnostic modes cannot replace the standing candidate stage"
     )
-if RC_MANIFEST and (os.environ.get("CANDIDATE_SOURCE_SHA") or BASELINE_WHEEL or CANDIDATE_BIN):
-    raise RuntimeError("Run RC artifact qualification through standalone e2e-user-paths.")
+if RC_MANIFEST and (
+    os.environ.get("CANDIDATE_SOURCE_SHA") or BASELINE_WHEEL or CANDIDATE_BIN
+):
+    raise RuntimeError(
+        "Run RC artifact qualification through standalone e2e-user-paths."
+    )
 CLIENT_USER = f"{os.getuid()}:{os.getgid()}"
 PROJECT = "aweb-user-paths-" + uuid.uuid4().hex[:12]
 EVIDENCE = Path(
@@ -81,7 +94,7 @@ def compose(*args, **kwargs):
     return run("docker", "compose", "-p", PROJECT, "-f", str(COMPOSE), *args, **kwargs)
 
 
-def configuration(dns=None, server_image=None):
+def configuration(dns=None, server_image=None, *, production=False):
     token = "disposable-user-path-service-token-32-bytes"
     awid = dict(
         AWID_DATABASE_URL="postgresql://aweb:disposable@postgres:5432/aweb",
@@ -191,6 +204,12 @@ def configuration(dns=None, server_image=None):
         # false compatibility result for either runtime.
         services["awid"]["image"] = server_image
         services["awid"]["entrypoint"][0] = "awid"
+    if production:
+        for name in ("server", "peer", "awid"):
+            services[name]["environment"]["PYTHONPATH"] = "/work/production-package"
+            services[name]["volumes"] = [
+                f"{WORK}/production-package:/work/production-package:ro"
+            ]
     for service in services.values():
         service.update(cpus=1, mem_limit="1g", pids_limit=256)
     for name in ("awid", "server", "peer", "cli"):
@@ -226,9 +245,11 @@ for origin in ['http://awid:8010','http://server:8000','http://peer:8000']:
     )
 
 
-def start_stack(server_image=None):
+def start_stack(server_image=None, *, production=False):
     (WORK / "dns/test.zone").write_text(EMPTY_ZONE)
-    COMPOSE.write_text(json.dumps(configuration(server_image=server_image)))
+    COMPOSE.write_text(
+        json.dumps(configuration(server_image=server_image, production=production))
+    )
     compose("up", "--pull", "never", "-d", "dns", "postgres", "redis")
     dns = run(
         "docker",
@@ -238,61 +259,183 @@ def start_stack(server_image=None):
         compose("ps", "-q", "dns", capture=True).stdout.strip(),
         capture=True,
     ).stdout.strip()
-    COMPOSE.write_text(json.dumps(configuration(dns, server_image=server_image)))
+    COMPOSE.write_text(
+        json.dumps(configuration(dns, server_image=server_image, production=production))
+    )
     compose("up", "--pull", "never", "-d", "--wait", "postgres")
     compose("up", "--pull", "never", "-d", "awid", "server", "peer", "cli")
     # The public CLI owns each identity. Only the empty parent needs chown.
     compose(
-        "run", "--rm", "--no-deps", "--pull", "never", "--user", "0:0",
-        "--entrypoint", "chown", "cli", CLIENT_USER, "/identities",
+        "run",
+        "--rm",
+        "--no-deps",
+        "--pull",
+        "never",
+        "--user",
+        "0:0",
+        "--entrypoint",
+        "chown",
+        "cli",
+        CLIENT_USER,
+        "/identities",
     )
     wait_ready()
 
 
-def qualify_released_clients(released_aw, runtimes, observations):
+def qualify_released_clients(released_aw, runtimes, observations, production):
     """Use the same lanes, image checks, networks and provisioning for the RC."""
-    with phase("fetch-released-channel"):
+    with phase("fetch-released-channel-and-oats"):
         run(
-            "docker", "run", "--rm", "--pull=never", "--name", PROJECT + "-fetch",
-            "--network", "bridge", "--user", CLIENT_USER, "--cpus", "1",
-            "--memory", "512m", "--pids-limit", "64", "--entrypoint", "python3",
-            "-v", f"{WORK}:/work", LOCAL_IMAGES["runtime"],
-            "/work/user_paths_rc.py", "/work/artifacts/channel",
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--name",
+            PROJECT + "-fetch",
+            "--network",
+            "bridge",
+            "--user",
+            CLIENT_USER,
+            "--cpus",
+            "1",
+            "--memory",
+            "512m",
+            "--pids-limit",
+            "64",
+            "--entrypoint",
+            "python3",
+            "-v",
+            f"{WORK}:/work",
+            LOCAL_IMAGES["runtime"],
+            "/work/user_paths_rc.py",
+            "/work/artifacts",
         )
-        shutil.copy2(WORK / "artifacts/channel/provenance.json", EVIDENCE / "released-channel.json")
+        for client in ("channel", "oats"):
+            shutil.copy2(
+                WORK / "artifacts" / client / "provenance.json",
+                EVIDENCE / ("released-" + client + ".json"),
+            )
+    with phase("stage-production-wheels"):
+        stage_production_wheels(WORK / "production-wheels", production["packages"])
+        run(
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--name",
+            PROJECT + "-fetch",
+            "--network",
+            "none",
+            "--user",
+            CLIENT_USER,
+            "--entrypoint",
+            "python3",
+            "-v",
+            f"{WORK}:/work",
+            LOCAL_IMAGES["runtime"],
+            "-m",
+            "pip",
+            "install",
+            "--no-index",
+            "--no-deps",
+            "--target=/work/production-package",
+            *[
+                "/work/production-wheels/" + path.name
+                for path in sorted((WORK / "production-wheels").iterdir())
+            ],
+        )
+        make_public_tree_readable(root=WORK / "production-package")
     for role, artifact in runtimes.items():
         with phase(role + "-released-clients"):
             result_dir = EVIDENCE / role
             result_dir.mkdir()
             try:
-                start_stack(artifact["local_image_id"])
+                baseline = role == "baseline"
+                start_stack(artifact.get("local_image_id"), production=baseline)
+                python = SERVER_PYTHON if baseline else "python"
                 actual = {}
+                installed = {}
                 for service in ("server", "peer"):
-                    actual[service] = compose(
-                        "exec", "-T", service, "python", "-c",
-                        'from importlib.metadata import version; print(version("aweb"))',
+                    actual[service], installed[service] = (
+                        compose(
+                            "exec",
+                            "-T",
+                            service,
+                            python,
+                            "-c",
+                            'import aweb; from importlib.metadata import version; print(version("aweb")); print(aweb.__file__)',
+                            capture=True,
+                        )
+                        .stdout.strip()
+                        .splitlines()
+                    )
+                registry_version, installed["awid"] = (
+                    compose(
+                        "exec",
+                        "-T",
+                        "awid",
+                        python,
+                        "-c",
+                        'import awid_service; from importlib.metadata import version; print(version("awid-service")); print(awid_service.__file__)',
                         capture=True,
-                    ).stdout.strip()
-                registry_version = compose(
-                    "exec", "-T", "awid", "python", "-c",
-                    'from importlib.metadata import version; print(version("awid-service"))',
-                    capture=True,
-                ).stdout.strip()
-                (result_dir / "runtime.json").write_text(json.dumps({
-                    **artifact, "running": actual, "awid_version": registry_version,
-                }, indent=2) + "\n")
-                if set(actual.values()) != {artifact["version"]}:
-                    raise ValueError(f"{role} running server version differs from its artifact.")
-                compose(
-                    "exec", "-T", "-e", "AW_BIN=" + released_aw["binary"], "cli",
-                    "python3", "/work/user_paths_rc_client.py",
-                    "--channel", "/work/artifacts/channel/dist/index.js",
-                    "--aw-source", released_aw["sourceCommit"],
+                    )
+                    .stdout.strip()
+                    .splitlines()
                 )
-            except (ValueError, OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+                if baseline and (
+                    registry_version
+                    != production["packages"]["awid-service"]["version"]
+                    or not all(
+                        path.startswith("/work/production-package/")
+                        for path in installed.values()
+                    )
+                ):
+                    raise ValueError(
+                        "Baseline did not import the deployed server and its paired release wheels."
+                    )
+                (result_dir / "runtime.json").write_text(
+                    json.dumps(
+                        {
+                            **artifact,
+                            "running": actual,
+                            "awid_version": registry_version,
+                            "imported": installed,
+                        },
+                        indent=2,
+                    )
+                    + "\n"
+                )
+                if set(actual.values()) != {artifact["version"]}:
+                    raise ValueError(
+                        f"{role} running server version differs from its artifact."
+                    )
+                compose(
+                    "exec",
+                    "-T",
+                    "-e",
+                    "AW_BIN=" + released_aw["binary"],
+                    "cli",
+                    "python3",
+                    "/work/user_paths_rc_client.py",
+                    "--channel",
+                    "/work/artifacts/channel/dist/index.js",
+                    "--oats",
+                    "/work/artifacts/oats",
+                    "--aw-source",
+                    released_aw["sourceCommit"],
+                )
+            except (
+                ValueError,
+                OSError,
+                subprocess.CalledProcessError,
+                subprocess.TimeoutExpired,
+            ) as error:
                 # Record an infrastructure/runner error independently of the
                 # user observations that completed before it.
-                observations[role]["runner"] = {"status": "FAILED", "visible": {"error": type(error).__name__}}
+                observations[role]["runner"] = {
+                    "status": "FAILED",
+                    "visible": {"error": type(error).__name__},
+                }
                 (result_dir / "runtime-error.txt").write_text(str(error) + "\n")
             finally:
                 if (WORK / "released").exists():
@@ -377,6 +520,8 @@ def main():
     kernel_wake_required = True
     observations = {role: {} for role in ROLES}
     runtimes = {}
+    deployment_readback = {}
+    published_refs = {}
     # Every invocation exposes the human gap, even if infrastructure fails
     # before provisioning. Runnable agent cases alone control admission.
     if RC_MANIFEST:
@@ -427,11 +572,34 @@ def main():
             )
             if RC_MANIFEST:
                 selected = server_inputs(json.loads(Path(RC_MANIFEST).read_text()))
-                for role in ROLES:
-                    artifact = selected[role]
-                    inspection = run("docker", "image", "inspect", artifact["image"], capture=True)
-                    runtimes[role] = verify_server_image(artifact, json.loads(inspection.stdout)[0])
-                (EVIDENCE / "server-artifacts.json").write_text(json.dumps(runtimes, indent=2) + "\n")
+                if not PRODUCTION_READBACK:
+                    raise ValueError(
+                        "USER_PATHS_PRODUCTION_READBACK must name a current deployment readback."
+                    )
+                deployment_readback = production_baseline(
+                    selected["baseline"],
+                    json.loads(Path(PRODUCTION_READBACK).read_text()),
+                )
+                published_refs = {
+                    role: published_server(selected[role], role) for role in ROLES
+                }
+                runtimes["baseline"] = selected["baseline"]
+                artifact = selected["rc"]
+                inspection = run(
+                    "docker", "image", "inspect", artifact["image"], capture=True
+                )
+                runtimes["rc"] = verify_server_image(
+                    artifact, json.loads(inspection.stdout)[0]
+                )
+                (EVIDENCE / "server-artifacts.json").write_text(
+                    json.dumps(runtimes, indent=2) + "\n"
+                )
+                (EVIDENCE / "production-readback.json").write_text(
+                    json.dumps(deployment_readback, indent=2) + "\n"
+                )
+                (EVIDENCE / "server-release-tags.json").write_text(
+                    json.dumps(published_refs, indent=2) + "\n"
+                )
     except Exception as error:
         shutil.rmtree(WORK)
         (EVIDENCE / "infrastructure.json").write_text(
@@ -602,8 +770,13 @@ def main():
                     EVIDENCE / "comparison-provenance.json",
                 )
         if RC_MANIFEST:
-            qualify_released_clients(provenance, runtimes, observations)
-            status = int(compatibility(observations["baseline"], observations["rc"])["status"] != "PASSED")
+            qualify_released_clients(
+                provenance, runtimes, observations, deployment_readback
+            )
+            status = int(
+                compatibility(observations["baseline"], observations["rc"])["status"]
+                != "PASSED"
+            )
             kernel_wake_required = False
         else:
             with phase("setup"):
@@ -769,11 +942,32 @@ def main():
             )
         if RC_MANIFEST:
             rc_result = compatibility(observations["baseline"], observations["rc"])
-            rc_result.update(seconds=TIMINGS["total"], cleanup_errors=cleanup_errors)
+            rc_result.update(
+                seconds=TIMINGS["total"],
+                cleanup_errors=cleanup_errors,
+                server_artifacts=runtimes,
+                release_tags=published_refs,
+                production_readback=deployment_readback,
+            )
+            rc_result["clients"] = {
+                name: json.loads((EVIDENCE / file).read_text())
+                for name, file in (
+                    ("aw", "released-provenance.json"),
+                    ("channel", "released-channel.json"),
+                    ("oats", "released-oats.json"),
+                )
+                if (EVIDENCE / file).exists()
+            }
             if cleanup_errors or TIMINGS["total"] >= 600 or status:
                 rc_result["status"] = "FAILED"
-            (EVIDENCE / "rc-compatibility.json").write_text(json.dumps(rc_result, indent=2) + "\n")
-            result = {**result, "status": rc_result["status"], "rc_compatibility": rc_result}
+            (EVIDENCE / "rc-compatibility.json").write_text(
+                json.dumps(rc_result, indent=2) + "\n"
+            )
+            result = {
+                **result,
+                "status": rc_result["status"],
+                "rc_compatibility": rc_result,
+            }
         (EVIDENCE / "qualification.json").write_text(
             json.dumps(result, indent=2) + "\n"
         )
@@ -785,7 +979,9 @@ def main():
             raise RuntimeError("; ".join(cleanup_errors))
     if RC_MANIFEST:
         if result["status"] != "PASSED":
-            raise RuntimeError(f"Released-client RC qualification failed. Inspect {EVIDENCE / 'rc-compatibility.json'}.")
+            raise RuntimeError(
+                f"Released-client RC qualification failed. Inspect {EVIDENCE / 'rc-compatibility.json'}."
+            )
         return
     assert status == 0 and TIMINGS["total"] < 600, TIMINGS
     if CANDIDATE_BIN:

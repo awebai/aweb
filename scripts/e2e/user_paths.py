@@ -368,7 +368,7 @@ class Lane:
         path.mkdir()
         self.actors[name] = dict(home=path, domain=domain, server=server)
 
-    def provision(self):
+    def provision(self, *, start_receivers=True):
         for name in ["g1", "g2", "remote", "nonresident"]:
             self.actor(
                 name,
@@ -519,6 +519,11 @@ class Lane:
             self.command(name, "id", "encryption-key", "setup")
             actor = self.actors[name]
             actor["did"] = self.command(name, "id", "show")["did_key"]
+        if not start_receivers:
+            return
+        for name, actor in self.actors.items():
+            if name == "nonresident":
+                continue
             actor["events"] = self.root / (name + "-events.jsonl")
             log = (self.root / (name + "-channel.log")).open("w")
             proc = subprocess.Popen(
@@ -828,6 +833,20 @@ class Lane:
                 conversation,
                 event,
             )
+        self.read_message(
+            receiver, sender, kind, body, conversation, message_id, encrypted
+        )
+        Path(
+            str(self.actors[receiver]["events"])
+            + ".release-"
+            + event["meta"]["message_id"]
+        ).touch()
+        return event
+
+    def read_message(
+        self, receiver, sender, kind, body, conversation, message_id, encrypted
+    ):
+        """Read and validate the exact message through the selected CLI."""
         if kind == "mail":
             inbox = self.command(receiver, "mail", "inbox", "--show-all")
             history = self.command(
@@ -843,6 +862,7 @@ class Lane:
                 conversation,
                 history,
             )
+        observed = {}
         expected = self.actors[sender]["address"]
         for label, result in [("inbox/pending", inbox), ("history", history)]:
             matches = [
@@ -850,6 +870,7 @@ class Lane:
             ]
             assert len(matches) == 1, (label, body, result)
             message = matches[0]
+            observed[label.replace("/", "-")] = message
             if kind == "chat" and label == "inbox/pending":
                 # Pending exposes a session summary, not a message ID or mode.
                 assert message["session_id"] == conversation, (
@@ -904,21 +925,10 @@ class Lane:
                 ), (label, message)
             saved = self.root / "reads"
             saved.mkdir(exist_ok=True)
-            (
-                saved
-                / (
-                    event["meta"]["message_id"]
-                    + "-"
-                    + label.replace("/", "-")
-                    + ".json"
-                )
-            ).write_text(json.dumps(result, indent=2))
-        Path(
-            str(self.actors[receiver]["events"])
-            + ".release-"
-            + event["meta"]["message_id"]
-        ).touch()
-        return event
+            (saved / (message_id + "-" + label.replace("/", "-") + ".json")).write_text(
+                json.dumps(result, indent=2)
+            )
+        return observed
 
     def flow(self, sender, receiver, kind, encrypted):
         case = (
