@@ -46,7 +46,9 @@ func TestMalformedRootFlagsUseRequestedJSONPresentation(t *testing.T) {
 		{name: "trailing flag", args: []string{"--invalid-root-flag", "--json"}, json: true},
 		{name: "explicit true", args: []string{"--invalid-root-flag", "--json=true"}, json: true},
 		{name: "explicit false", args: []string{"--invalid-root-flag", "--json=false"}},
-		{name: "false overrides true", args: []string{"--json", "--invalid-root-flag", "--json=false"}},
+		{name: "raw false overrides raw true", args: []string{"--invalid-root-flag", "--json", "--json=false"}},
+		{name: "parsed true wins", args: []string{"--json", "--invalid-root-flag", "--json=false"}, json: true},
+		{name: "parsed false wins", args: []string{"--json=false", "--invalid-root-flag", "--json"}},
 		{name: "separator", args: []string{"--invalid-root-flag", "--", "--json"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
