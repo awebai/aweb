@@ -1,5 +1,10 @@
 # Knowledge log
 
+## 2026-11-18
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-deploy-team (task acwd.25.1).
+* **Creation**: decision [agent-state backups keep in-root links and check every member before writing](/aweb-expert/decisions/agent-state-backups-keep-in-root-links.md).
+* **Creation**: lesson [a tool that pipes through a child owns it on every path](/aweb-expert/lessons/a-tool-that-pipes-through-a-child-owns-it-on-every-path.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
