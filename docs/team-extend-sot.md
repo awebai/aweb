@@ -102,11 +102,10 @@ select an anchor wins; lower tiers are not consulted after that:
    remain `api-key`.
 
    An explicit `--team-id` alongside either kind of key is also an assertion
-   and wins over any workspace-derived assertion. Assertions are
-   checked against the admitted member's team before profile or worktree setup.
-   On mismatch, `extend` names both teams and stops before attempting another
-   member. The admitted member's home, signing key and certificate are retained
-   for recovery or explicit retirement. An implicit mismatch says `workspace
+   and wins over any workspace-derived assertion. `extend` compares the
+   asserted team with the key's canonical team from `GET /api/v1/teams/current`
+   before any admission request or agent home creation. On mismatch it names
+   both teams and refuses the roster. An implicit mismatch says `workspace
    active team X does not match API key team Y`, identifying the source of
    the assertion.
 2. **The current workspace, if invite-capable** — cwd has a `.aw` workspace

@@ -286,7 +286,6 @@ func printTeamCreateExtendNotice(wd string) {
 func selectTeamExtendCreation(wd string, authority teamExtendAuthority) (teamExtendAuthority, error) {
 	if authority.APIKey != "" {
 		apiKey := authority.APIKey
-		teamID := strings.TrimSpace(teamHumanExtendTeamID)
 		agentsRoot := authority.AgentsRoot
 		base, err := resolveAPIKeyInitAwebURL()
 		if err != nil {
@@ -298,11 +297,12 @@ func selectTeamExtendCreation(wd string, authority teamExtendAuthority) (teamExt
 		if err != nil {
 			return teamExtendAuthority{}, err
 		}
+		expected, assertionSource := expectedTeamIDForExtend(authority)
+		if expected != "" && !strings.EqualFold(expected, selected.CanonicalTeamID) {
+			return teamExtendAuthority{}, teamIDAssertionMismatchError(expected, selected.CanonicalTeamID, assertionSource)
+		}
 		if selected.APIKeyKind == creationKeyKindWorkspace {
-			requested := teamID
-			if requested == "" {
-				requested = selected.CanonicalTeamID
-			}
+			requested := selected.CanonicalTeamID
 			// Discover a native issuer using the same current/discovered selection as
 			// no-key extend. The deciding function below still checks its team.
 			candidate, ok, err := resolveTeamExtendCandidate(wd, "")

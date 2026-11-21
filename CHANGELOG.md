@@ -7,9 +7,9 @@
   creation when acting as an agent. `extend` uses the sole discovered creator
   workspace and asks you to select one when several qualify. Use a person's
   setup key for API-key creation.
-- When `aw team admin extend` discovers a different team after admission, it
-  keeps the admitted member and its credentials and stops before adding the
-  rest of the roster. The error identifies the actual team and the saved home.
+- `aw team admin extend` refuses before admitting any agent if the API key's
+  team differs from `--team-id` or the active workspace team asserted with
+  `AWEB_API_KEY`. The error names both teams.
 - Team membership and workspace commands prefer the controller's recorded
   registry, the exact membership or the selected service over
   `AWID_REGISTRY_URL`. A sibling team's registry no longer supplies the route.
