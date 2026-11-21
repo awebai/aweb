@@ -44,28 +44,39 @@ class FakeRemote:
         path = self.directory / "evidence/var/log/vm-gate"
         path.mkdir(parents=True)
         before = (self.directory / "ledger-before.tsv").read_bytes()
-        logpath = Path(self.config["ledger"]).parent / "gate-logs" / "run-unit.log"
-        row = (
-            "\t".join(
-                [
-                    self.source["tree"] + "-inputs",
-                    "unit",
-                    "failed",
-                    self.source["sha"],
-                    "",
-                    str(logpath),
-                    "seat",
-                    "start",
-                    "end",
-                    "",
-                ]
-            )
-            + "\n"
-        )
-        (path / "ledger-after.tsv").write_bytes(before + row.encode())
+        host_logs = Path(self.config["ledger"]).parent / "gate-logs"
         logs = path / "ledger-gate-logs"
-        logs.mkdir()
-        (logs / "run-unit.log").write_text("known bad fixture")
+        retained = Path("unit-evidence-run")
+        entries = {
+            "unit": Path("run-unit.log"),
+            "unit/test-server": retained / "test-egress/suite.log",
+        }
+        rows = []
+        for entry, relative in entries.items():
+            log = logs / relative
+            log.parent.mkdir(parents=True, exist_ok=True)
+            log.write_text(f"failure evidence for {entry}")
+            rows.append(
+                "\t".join(
+                    [
+                        self.source["tree"] + "-inputs",
+                        entry,
+                        "failed",
+                        self.source["sha"],
+                        "",
+                        str(host_logs / relative),
+                        "seat",
+                        "start",
+                        "end",
+                        "",
+                    ]
+                )
+                + "\n"
+            )
+        (logs / retained / "summary.tsv").write_text(
+            "unit/test-server\tFAILED\ttest-egress/suite.log\t2s\n"
+        )
+        (path / "ledger-after.tsv").write_bytes(before + "".join(rows).encode())
         return {
             "stages": [{"stage": "unit", "status": "FAILED", "seconds": 2}],
             "memory": {},
@@ -118,12 +129,30 @@ class RuntimeTests(GitFixture, unittest.TestCase):
             result = runtime.run()
         self.assertEqual(result["exit"], 7)
         self.assertIsNone(result["infrastructure"])
-        self.assertIn("\tfailed\t", Path(self.config["ledger"]).read_text())
+        ledger = Path(self.config["ledger"])
+        rows = [row.split("\t") for row in ledger.read_text().splitlines()]
+        self.assertEqual({row[1] for row in rows}, {"unit", "unit/test-server"})
+        for row in rows:
+            self.assertEqual(row[2], "failed")
+            self.assertEqual(Path(row[5]).read_text(), f"failure evidence for {row[1]}")
+        summary = ledger.parent / "gate-logs/unit-evidence-run/summary.tsv"
         self.assertEqual(
-            (Path(self.config["ledger"]).parent / "gate-logs/run-unit.log").read_text(),
-            "known bad fixture",
+            summary.read_text(), "unit/test-server\tFAILED\ttest-egress/suite.log\t2s\n"
         )
         self.assertEqual(self.backend.items, [])
+
+    def test_conflicting_nested_log_blocks_ledger_import(self):
+        ledger = Path(self.config["ledger"])
+        log = ledger.parent / "gate-logs/unit-evidence-run/test-egress/suite.log"
+        log.parent.mkdir(parents=True)
+        log.write_bytes(b"original")
+        runtime = self.runtime()
+        with patch.object(runtime, "_key"):
+            result = runtime.run()
+        self.assertEqual(result["exit"], 70)
+        self.assertIn("conflicts with retained VM log", result["error"])
+        self.assertEqual(log.read_bytes(), b"original")
+        self.assertFalse(ledger.exists())
 
     def test_preallocation_provider_failure_does_not_leave_private_host_key(self):
         runtime = self.runtime()

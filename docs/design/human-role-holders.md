@@ -170,8 +170,8 @@ checks reuse the 60-second team-facts cache where it applies.
 
 - **Designate** creates the approver row linked to `principal`, with the
   credential and its `rp_id` stored at sign count 0 and in effect at once,
-  and records the notice contact. The holder changes that contact later
-  through B3's existing contact change, under its passkey.
+  and records the notice contact. An owner changes that contact later through
+  an owner-confirmed contact change (B3 `change_contact_by_owner`).
 - **Replace** retires the current credential at once and puts the replacement
   in effect at the end of the cooling-off. Until then, the holder's approvals and the widening changes
   it gates are frozen.

@@ -2,12 +2,69 @@
 from contextlib import redirect_stdout
 import io
 import json
+import os
 from pathlib import Path
+import shlex
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
 
 from secrets_shards import load_shards, run_shards, service_environments, validate_collections
+
+
+class ChecksStage(unittest.TestCase):
+    def test_checks_reports_deleted_and_unassigned_secrets_modules(self):
+        scripts = Path(__file__).resolve().parent
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'scripts').mkdir()
+            shutil.copyfile(scripts / 'secrets_shards.py', root / 'scripts/secrets_shards.py')
+            (root / 'candidate-gate').mkdir()
+            manifest = root / 'candidate-gate/secrets-shards.json'
+            manifest.write_text(json.dumps({
+                'version': 1,
+                'shards': [['tests/test_a.py', 'tests/test_e2e.py'], ['tests/test_removed.py']],
+            }))
+            tests = root / 'package/tests'
+            tests.mkdir(parents=True)
+            for name in ('test_a.py', 'test_removed.py'):
+                (tests / name).write_text('def test_case():\n    raise AssertionError("collection only")\n')
+            (tests / 'test_e2e.py').write_text(
+                'import pytest\n@pytest.mark.e2e\ndef test_case():\n    assert False\n'
+            )
+            (tests.parent / 'pytest.ini').write_text('[pytest]\nmarkers = e2e\n')
+            (root / 'Makefile').write_text(
+                'check-secrets-shards:\n'
+                f'\t@cd package && {shlex.quote(sys.executable)} ../scripts/secrets_shards.py'
+                f' --check -- {shlex.quote(sys.executable)} -m pytest -q -m "not e2e"\n'
+                '.DEFAULT:\n\t@:\n'
+            )
+            log = root / 'log'
+            log.mkdir()
+            (log / 'host-published-port.log').touch()
+            env = dict(os.environ, CANDIDATE_LOG_DIR=str(log), PYTEST_DISABLE_PLUGIN_AUTOLOAD='1')
+            env.pop('PYTEST_ADDOPTS', None)
+            env.pop('AWEB_SECRETS_SHARD_SERVICES', None)
+            for stale in (True, False):
+                with self.subTest(stale=stale):
+                    if stale:
+                        (tests / 'test_removed.py').rename(tests / 'test_added.py')
+                    else:
+                        (tests / 'test_added.py').rename(tests / 'test_removed.py')
+                    result = subprocess.run(
+                        ['bash', str(scripts / 'candidate-suite.sh'), 'checks'],
+                        cwd=root, env=env, capture_output=True, text=True, timeout=30,
+                    )
+                    outcome = 'FAILED' if stale else 'PASSED'
+                    self.assertEqual(result.returncode == 0, not stale, result.stdout + result.stderr)
+                    summary = (log / 'summary.tsv').read_text()
+                    self.assertIn(f'checks/check-secrets-shards\t{outcome}\t', summary)
+                    self.assertIn(f'checks\t{outcome}\t', summary)
+                    if stale:
+                        self.assertIn('module tests/test_removed.py in secrets-shards.json was not collected', result.stdout)
+                        self.assertIn('collected module tests/test_added.py is missing from secrets-shards.json', result.stdout)
 
 
 class Partition(unittest.TestCase):
@@ -22,7 +79,7 @@ class Partition(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_collections([], [[], []])
 
-    def test_manifest_refuses_overlap_missing_files_and_escape(self):
+    def test_manifest_refuses_overlap_and_escape(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             (root / 'tests').mkdir()
@@ -31,7 +88,6 @@ class Partition(unittest.TestCase):
             manifest = root / 'shards.json'
             valid = [['tests/a.py'], ['tests/b.py']]
             for shards in (valid, [['tests/a.py'], ['tests/a.py']],
-                           [['tests/a.py'], ['tests/missing.py']],
                            [['tests/a.py'], ['../outside.py']]):
                 manifest.write_text(json.dumps({'version': 1, 'shards': shards}))
                 with self.subTest(shards=shards):
