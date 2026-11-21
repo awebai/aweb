@@ -5,29 +5,40 @@ from __future__ import annotations
 import base64
 import json
 import logging
-from aweb.identity_address import require_address_evidence
 from datetime import datetime, timezone
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError as ModelError
-from awid.signing import verify_did_key_signature, verify_signature, VerifyResult
+from awid.signing import VerifyResult, verify_did_key_signature, verify_signature
+from pydantic import BaseModel, ConfigDict, Field
+from pydantic import ValidationError as ModelError
+
 from aweb.agent_wake import record_agent_wake, team_room_wake_key
 from aweb.federation.envelope import (
-    enforce_message_timestamp_skew,
     FederationEnvelopeError,
+    enforce_message_timestamp_skew,
 )
+from aweb.event_types import MutationEventType
+from aweb.hooks import MutationCallback, fire_mutation_callback
+from aweb.message_events import RoomMessageSentContext
 from aweb.id_chain_auth import stored_id_chain
+from aweb.identity_address import require_address_evidence
+from aweb.member_team_key import current_member_sql
 from aweb.messaging.sender_membership import sender_memberships
 from aweb.service_errors import (
     ConflictError,
+    CurrentMembershipRefusal,
     ForbiddenError,
     NotFoundError,
     ValidationError,
 )
 
 logger = logging.getLogger(__name__)
-ROOM_DISCLOSURE = "Team room posts are readable by the service operator and all current and future team members."
+# Released aw 1.36.x recognizes this exact refusal (cmd/aw/room.go).
+ROOM_CURRENT_MEMBERSHIP_REQUIRED_DETAIL = "Room requires current team membership"
+ROOM_DISCLOSURE = (
+    "Team room posts are readable by the service operator and all current and future team members."
+)
 ROOM_POLICY = {
     "confidentiality": "server_readable",
     "history_visibility": "current_and_future_members",
@@ -73,10 +84,10 @@ async def _active_member(tx, actor):
     # Lock the member while doing this operation, so an inactive/deleted row
     # cannot retain access through a previously authenticated context.
     row = await tx.fetch_one(
-        """
-        SELECT agent_id FROM {{tables.agents}}
-        WHERE agent_id=$1 AND team_id=$2 AND did_key=$3
-          AND status='active' AND deleted_at IS NULL FOR SHARE
+        f"""
+        SELECT a.agent_id FROM {{{{tables.agents}}}} a
+        WHERE a.agent_id=$1 AND a.team_id=$2 AND a.did_key=$3
+          AND {current_member_sql("a")} FOR SHARE OF a
     """,
         UUID(actor.agent_id),
         actor.team_id,
@@ -84,7 +95,7 @@ async def _active_member(tx, actor):
     )
     if not row:
         logger.warning("Room access refused: actor is not an active team member")
-        raise ForbiddenError("Room requires current team membership")
+        raise CurrentMembershipRefusal(ROOM_CURRENT_MEMBERSHIP_REQUIRED_DETAIL)
 
 
 async def _ensure_room(tx, team_id):
@@ -98,6 +109,7 @@ async def _ensure_room(tx, team_id):
 
 
 async def room_metadata(db, actor):
+    """Return the current team's shared room identity and visibility metadata."""
     async with db.get_manager("aweb").transaction() as tx:
         await _active_member(tx, actor)
         room = await _ensure_room(tx, actor.team_id)
@@ -184,15 +196,9 @@ def _after(cursor, room_id, team_id):
         if not cursor or len(cursor) > 1024:
             raise ValueError()
         value = json.loads(
-            base64.b64decode(
-                cursor + "=" * (-len(cursor) % 4), altchars=b"-_", validate=True
-            )
+            base64.b64decode(cursor + "=" * (-len(cursor) % 4), altchars=b"-_", validate=True)
         )
-        if (
-            not isinstance(value, list)
-            or len(value) != 3
-            or value[:2] != [str(room_id), team_id]
-        ):
+        if not isinstance(value, list) or len(value) != 3 or value[:2] != [str(room_id), team_id]:
             raise ValueError()
         if type(value[2]) is not int or value[2] < 1:
             raise ValueError()
@@ -202,6 +208,7 @@ def _after(cursor, room_id, team_id):
 
 
 async def read_room(db, actor, *, after=None, limit=50):
+    """Read retained team room posts and clear only notices for the returned page."""
     if not 1 <= limit <= 200:
         raise ValidationError("Room limit must be between 1 and 200")
     async with db.get_manager("aweb").transaction() as tx:
@@ -229,14 +236,13 @@ async def read_room(db, actor, *, after=None, limit=50):
             "messages": [_post_dict(row, actor.team_id) for row in rows],
             "has_more": more,
             "next_cursor": (
-                _cursor(room["room_id"], actor.team_id, rows[-1]["sequence"])
-                if more
-                else None
+                _cursor(room["room_id"], actor.team_id, rows[-1]["sequence"]) if more else None
             ),
         }
 
 
 async def exact_room_message(db, actor, message_id):
+    """Read one retained room post without clearing its notice."""
     message_uuid = _uuid(message_id)
     async with db.get_manager("aweb").transaction() as tx:
         await _active_member(tx, actor)
@@ -254,7 +260,15 @@ async def exact_room_message(db, actor, message_id):
         return _post_dict(row, actor.team_id)
 
 
-async def post_room_message(db, actor, post: RoomPost, *, id_chain=None):
+async def post_room_message(
+    db,
+    actor,
+    post: RoomPost,
+    *,
+    id_chain=None,
+    on_mutation: MutationCallback | None = None,
+):
+    """Verify and commit a signed team room post, emitting one callback only for a new commit."""
     require_address_evidence(actor)
     if post.e2ee:
         raise ValidationError("room_e2ee_unsupported")
@@ -281,13 +295,22 @@ async def post_room_message(db, actor, post: RoomPost, *, id_chain=None):
         post.signing_key_id != actor.did_key
         or signed.from_did != actor.did_key
         or signed.from_stable_id != (actor.did_aw or "")
-        or signed.from_label
-        not in {actor.alias, actor.address, actor.did_key, actor.did_aw}
+        or signed.from_label not in {actor.alias, actor.address, actor.did_key, actor.did_aw}
         or signed.to != "team-room:" + actor.team_id
         or signed.conversation_id != str(post.room_id)
     ):
         logger.warning("Room post signed sender or target binding mismatch")
         raise ValidationError("Signed room post binding mismatch")
+    # docs/aw-hooks-sot.md:92: build metadata before commit; emit only a new post.
+    context = RoomMessageSentContext(
+        team_id=actor.team_id,
+        room_id=str(post.room_id),
+        message_id=str(message_id),
+        from_agent_id=actor.agent_id,
+        from_did=actor.did_key,
+        from_did_aw=actor.did_aw,
+        from_alias=actor.alias or actor.did_key,
+    ).to_context()
     async with db.get_manager("aweb").transaction() as tx:
         await _active_member(tx, actor)
         # Serializing room appends makes sequence order also commit order;
@@ -316,12 +339,8 @@ async def post_room_message(db, actor, post: RoomPost, *, id_chain=None):
                 raise ValueError()
             enforce_message_timestamp_skew(timestamp)
         except (ValueError, FederationEnvelopeError) as exc:
-            logger.warning(
-                "Room post timestamp is invalid or outside the shared skew bound"
-            )
-            raise ValidationError(
-                "Invalid room post timestamp or outside accepted skew"
-            ) from exc
+            logger.warning("Room post timestamp is invalid or outside the shared skew bound")
+            raise ValidationError("Invalid room post timestamp or outside accepted skew") from exc
         row = await tx.fetch_one(
             """
             INSERT INTO {{tables.room_messages}}
@@ -344,9 +363,11 @@ async def post_room_message(db, actor, post: RoomPost, *, id_chain=None):
             raise ConflictError("Room message ID already used")
         await tx.execute(
             """WITH recipients AS (
-                SELECT agent_id FROM {{tables.agents}}
-                WHERE team_id=$2 AND agent_id<>$3 AND status='active' AND deleted_at IS NULL
-                ORDER BY agent_id FOR SHARE
+                SELECT a.agent_id FROM {{tables.agents}} a
+                WHERE a.team_id=$2 AND a.agent_id<>$3 AND """
+            + current_member_sql("a")
+            + """
+                ORDER BY a.agent_id FOR SHARE OF a
             )
             INSERT INTO {{tables.room_post_notices}} (message_id, recipient_agent_id)
             SELECT $1, agent_id FROM recipients
@@ -356,4 +377,8 @@ async def post_room_message(db, actor, post: RoomPost, *, id_chain=None):
             UUID(actor.agent_id),
         )
         record_agent_wake(team_room_wake_key(actor.team_id), "room")
-        return _post_dict(row, actor.team_id)
+        output = _post_dict(row, actor.team_id)
+    await fire_mutation_callback(
+        on_mutation, MutationEventType.ROOM_MESSAGE_SENT.value, context
+    )
+    return output

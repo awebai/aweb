@@ -74,6 +74,12 @@ The verifier must not trust request headers such as `Host` or
 `X-Forwarded-Host` for `aud`. Public origins are configuration, not caller
 input.
 
+Every request-signature family in the server reads body evidence through
+`aweb.request_body.request_body_sha256`: use the middleware's precomputed hash,
+or hash an embedding host's `request.state.cached_body` bytes. A host must cache
+the actual request bytes before authentication. The bodyless default is the
+empty-body hash; it is not a substitute for a nonempty cached body.
+
 ## Compatibility: compact v1
 
 Version 2 above is the current protocol for new clients. When

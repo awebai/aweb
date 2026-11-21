@@ -21,6 +21,8 @@ from test_cli_human_reply import _cli, _pem, _reply_context
 from test_messages_http import _make_keypair, _make_certificate, _signed_team_headers
 from test_dashboard_privacy import TEAM, _request, privacy_app  # noqa: F401
 
+__all__ = ["privacy_app"]
+
 
 @asynccontextmanager
 async def _registry_http(app):

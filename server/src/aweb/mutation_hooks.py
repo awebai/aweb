@@ -164,11 +164,16 @@ def create_mutation_handler(redis: Redis, db_infra: DatabaseInfra):
             except Exception:
                 logger.error("Failed to cascade agent.deleted", exc_info=True)
 
-        if event_type == "task.status_changed":
+        status_changed = event_type == "task.status_changed"
+        if status_changed or (
+            event_type == "task.updated" and context.get("released_claim_workspace_ids")
+        ):
             try:
-                await _cascade_task_status_changed(redis, db_infra, context)
+                await _announce_task_claim_changes(
+                    redis, db_infra, context, status_changed=status_changed
+                )
             except Exception:
-                logger.error("Failed to cascade task.status_changed", exc_info=True)
+                logger.error("Failed to publish task claim changes for %s", event_type, exc_info=True)
 
         if event_type == "task.deleted":
             try:
@@ -263,17 +268,10 @@ async def _cascade_agent_deleted(
     )
 
 
-async def _cascade_task_status_changed(
-    redis: Redis, db_infra: "DatabaseInfra", context: dict
+async def _announce_task_claim_changes(
+    redis: Redis, db_infra: "DatabaseInfra", context: dict, *, status_changed: bool
 ) -> None:
-    """Announce the claim changes of a task status change.
-
-    When an aweb task moves to in_progress, create a task claim for the
-    acting workspace unless the status transaction already holds it, and
-    announce the claim. When it moves to any other status, announce the
-    claims the status transaction released, which the context lists in
-    ``released_claim_workspace_ids``; no claim is changed here.
-    """
+    """Announce committed releases before a replacement claim, even on a same-status update."""
     actor_workspace_id = context.get("actor_workspace_id", "").strip()
     task_ref = context.get("task_ref", "").strip()
     new_status = context.get("new_status", "")
@@ -298,22 +296,46 @@ async def _cascade_task_status_changed(
 
     team_id = str(workspace["team_id"])
     alias = workspace["alias"]
-    if new_status == "in_progress":
-        if not claim_preacquired:
-            conflict = await upsert_claim(
-                db_infra,
-                team_id=team_id,
-                workspace_id=actor_workspace_id,
-                alias=alias,
-                human_name=workspace["human_name"] or "",
-                task_ref=task_ref,
-            )
-            if conflict:
-                logger.info(
-                    "Task %s already claimed by %s, skipping event", task_ref, conflict["alias"]
-                )
-                return
+    claimant_ids = [str(cid) for cid in context.get("released_claim_workspace_ids") or []]
+    conflict = None
+    if new_status == "in_progress" and not claim_preacquired:
+        admission = await upsert_claim(
+            db_infra,
+            team_id=team_id,
+            workspace_id=actor_workspace_id,
+            alias=alias,
+            human_name=workspace["human_name"] or "",
+            task_ref=task_ref,
+        )
+        claimant_ids.extend(admission.released_workspace_ids)
+        conflict = admission.conflicting_alias
 
+    if claimant_ids:
+        claimant_ids = list(dict.fromkeys(claimant_ids))
+        claimant_aliases = await fetch_workspace_aliases(db_infra, team_id, claimant_ids)
+        for cid in claimant_ids:
+            await publish_event(
+                redis,
+                TaskUnclaimedEvent(
+                    workspace_id=cid,
+                    task_ref=task_ref,
+                    alias=claimant_aliases.get(cid, ""),
+                    title=title,
+                ),
+            )
+            await publish_team_event(
+                redis,
+                TeamTaskUnclaimedEvent(
+                    team_id=team_id,
+                    task_ref=task_ref,
+                    alias=claimant_aliases.get(cid, ""),
+                    title=title or "",
+                ),
+            )
+    if conflict is not None:
+        logger.info("Task %s already claimed by %s, skipping claim event", task_ref, conflict)
+        return
+    if new_status == "in_progress":
         await publish_event(
             redis,
             TaskClaimedEvent(
@@ -332,42 +354,19 @@ async def _cascade_task_status_changed(
                 title=title or "",
             ),
         )
-    else:
-        claimant_ids = [str(cid) for cid in context.get("released_claim_workspace_ids") or []]
-        if claimant_ids:
-            claimant_aliases = await fetch_workspace_aliases(db_infra, team_id, claimant_ids)
-            for cid in claimant_ids:
-                await publish_event(
-                    redis,
-                    TaskUnclaimedEvent(
-                        workspace_id=cid,
-                        task_ref=task_ref,
-                        alias=claimant_aliases.get(cid, ""),
-                        title=title,
-                    ),
-                )
-                await publish_team_event(
-                    redis,
-                    TeamTaskUnclaimedEvent(
-                        team_id=team_id,
-                        task_ref=task_ref,
-                        alias=claimant_aliases.get(cid, ""),
-                        title=title or "",
-                    ),
-                )
-
-    await publish_event(
-        redis,
-        TaskStatusChangedEvent(
-            workspace_id=actor_workspace_id,
-            team_id=team_id,
-            task_ref=task_ref,
-            old_status=context.get("old_status", "") or "",
-            new_status=new_status,
-            title=title,
-            alias=alias,
-        ),
-    )
+    if status_changed:
+        await publish_event(
+            redis,
+            TaskStatusChangedEvent(
+                workspace_id=actor_workspace_id,
+                team_id=team_id,
+                task_ref=task_ref,
+                old_status=context.get("old_status", "") or "",
+                new_status=new_status,
+                title=title,
+                alias=alias,
+            ),
+        )
 
 async def _cascade_task_deleted(redis: Redis, db_infra: "DatabaseInfra", context: dict) -> None:
     """Release all claims on a deleted task and publish unclaim events.

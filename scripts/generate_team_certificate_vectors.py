@@ -358,8 +358,8 @@ def document() -> str:
         "today_verifiers": {
             "awid": "awid.team_certificate: decode_team_certificate, then verify_team_certificate_signature",
             "server": (
-                "aweb.team_auth.parse_and_verify_certificate, as the server calls it while "
-                "require_registered_certificates is off: with no registered set"
+                "aweb.team_auth_deps verifies claims before aweb.member_team_key reads standing. "
+                "The server entry records staged mode with registration enforcement off."
             ),
             "naapp_runtime": "aweb_naapp.runtime.team_auth.authenticate_request, behind a correctly signed request",
             "library": "library.auth.authenticate_request, behind a correctly signed request",

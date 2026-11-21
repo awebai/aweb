@@ -577,6 +577,35 @@ test("terminal verification failure reports disconnect and drops later frames", 
   expect(client.openSSE).toHaveBeenCalledTimes(1);
 });
 
+test("superseded membership is reported as a refusal and later frames are dropped", async () => {
+  const abort = new AbortController();
+  const states: EventStreamState[] = [];
+  const received: AgentEvent[] = [];
+  const detail = "Reconnect with a certificate issued under the team's current key.";
+  const client = {
+    openSSE: vi.fn(async () => new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(sseFrame("team_membership_not_current", { detail }));
+        controller.enqueue(sseFrame("actionable_mail", { message_id: "after-terminal" }));
+        controller.close();
+      },
+    }))),
+  };
+  for await (const event of streamAgentEvents(client as never, abort.signal, (state) => {
+    states.push(state);
+    if (state.state === "refused" || state.state === "disconnected") abort.abort();
+  }, undefined, undefined, { random: () => 0 })) {
+    received.push(event);
+  }
+  expect(received).toEqual([]);
+  expect(states).toEqual([{
+    state: "refused", cause: "team_membership_not_current", detail,
+    retryInMs: 30_000, nextAttemptAt: expect.any(Number), startsEpisode: true,
+  }]);
+  expect(formatEventStreamState(states[0])).toContain(detail);
+  expect(client.openSSE).toHaveBeenCalledTimes(1);
+});
+
 test("reconnect diagnostics do not ask an agent to fetch the automatic catch-up", () => {
   const diagnostic = formatEventStreamState({ state: "reconnected" });
   expect(diagnostic).not.toMatch(/check|aw mail inbox|aw chat pending/);

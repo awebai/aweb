@@ -527,6 +527,7 @@ func acceptInitInviteAndConnect(cmd *cobra.Command, request initInviteConnection
 				Name:         alias,
 				Scope:        initInviteIdentityScope(),
 				AwebURL:      strings.TrimSpace(request.PreferredAwebURL),
+				RegistryURL:  strings.TrimSpace(initAWIDRegistry),
 			},
 		},
 		Store: teamInviteStoreOptions{IdentityHome: resolvedEncryptionKeyIdentityHome(home), Activation: membershipMakeActive},
@@ -668,7 +669,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		registryURL, err := resolveInitAWIDRegistryURL()
+		registryURL, err := resolveConfiguredInitAWIDRegistryURL()
 		if err != nil {
 			return err
 		}
@@ -960,12 +961,20 @@ func awebURLOrDefault(raw string) string {
 }
 
 func resolveInitAWIDRegistryURL() (string, error) {
+	value, err := resolveConfiguredInitAWIDRegistryURL()
+	if err != nil || value != "" {
+		return value, err
+	}
+	return awid.DefaultAWIDRegistryURL, nil
+}
+
+func resolveConfiguredInitAWIDRegistryURL() (string, error) {
 	value := strings.TrimSpace(initAWIDRegistry)
 	if value == "" {
 		value = strings.TrimSpace(os.Getenv("AWID_REGISTRY_URL"))
 	}
 	if value == "" {
-		value = awid.DefaultAWIDRegistryURL
+		return "", nil
 	}
 	if strings.EqualFold(value, "local") {
 		return "", usageError("AWID_REGISTRY_URL=local is not supported by `aw init`; use an explicit localhost URL such as http://localhost:8010")

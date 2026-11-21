@@ -13,18 +13,19 @@ import (
 // worktreeAgentCreation keeps the creator, new home and cleanup context
 // explicit across the controller, signed-invitation and setup-key paths.
 type worktreeAgentCreation struct {
-	WorkingDir    string
-	CreatorHome   awconfig.IdentityHome
-	WorktreePath  string
-	RepoRoot      string
-	BranchName    string
-	BranchCreated bool
-	ServerURL     string
-	TeamID        string
-	Alias         string
-	Role          string
-	Workspace     *awconfig.WorktreeWorkspace
-	APIKey        string
+	WorkingDir      string
+	CreatorHome     awconfig.IdentityHome
+	WorktreePath    string
+	RepoRoot        string
+	BranchName      string
+	BranchCreated   bool
+	ServerURL       string
+	TeamID          string
+	TeamRegistryURL string
+	Alias           string
+	Role            string
+	Workspace       *awconfig.WorktreeWorkspace
+	APIKey          string
 }
 
 func addWorktreeViaLocalTeamKey(input worktreeAgentCreation) (connectOutput, error) {
@@ -118,6 +119,7 @@ func addWorktreeViaCloudBootstrap(input worktreeAgentCreation) (connectOutput, e
 		WorkingDir:   worktreePath,
 		IdentityHome: filepath.Join(filepath.Clean(worktreePath), ".aw"),
 		AwebURL:      awebURL,
+		RegistryURL:  input.TeamRegistryURL,
 		APIKey:       apiKey,
 		Alias:        alias,
 		Role:         role,

@@ -84,10 +84,78 @@ row is marked delivered only when the callback returns. A callback exception is
 logged, counted in `attempt_count` and `last_error`, and retried on the next
 replay. Rows wait while no callback is installed. This path is at-least-once:
 the callback may run from the background loop rather than the route, and may
-see the same event more than once.
+see the same event more than once. Pending replay chooses the fewest-attempted
+rows first, then creation order, so an old failing batch cannot indefinitely
+hide an untried row behind it. This is retry fairness, not a per-conversation
+callback ordering guarantee.
 
 Event names and context keys are experimental Python integration data, not a
 versioned network protocol.
+
+### Typed producer contexts
+
+`aweb.event_types.MutationEventType` names standard mutation events;
+`TransportEventType` names the stream events produced by translation. These
+are separate vocabularies: `message.sent` is a mutation, while
+`message.delivered` is its delivery signal. The enums are string-compatible
+constants, not an admission gate for host-defined callback names. A known
+handler branch does not establish that a producer emits that event.
+
+`aweb.message_events` provides frozen, keyword-only producer contexts:
+
+- `MailSentContext` for local and outbound mail;
+- `ChatMessageSentContext` for native chat sends;
+- `FederatedMessageSentContext` for the shared inbound outbox shape;
+- `MessageAcknowledgedContext` for incoming mail acknowledgements;
+- `RoomMessageSentContext` for a committed team room post.
+
+Each supplies `event_type` and `to_context() -> dict[str, object]`. Construct
+them from validated producer data. Event names, message kind and transport use
+the server's named enums. Received `content_mode` and priority instead use
+`ContentModeValue` and `MessagePriorityValue` from `aweb.messaging.kinds`: a
+named standard value or the original string. As before typed contexts, an absent
+or empty mode emits `legacy_plaintext_v1`, and an absent or empty priority emits
+`normal`. Exact named values become `ContentMode`/`MessagePriority` constants;
+other accepted nonempty strings retain every character, including case and
+whitespace. These are callback defaults only: request and signed payload bytes
+are unchanged. No context performs validator narrowing. Constructors cannot
+newly fail on accepted metadata, so callback timing remains unchanged.
+
+Mail send, chat send, mail acknowledgement and inbound federation producers
+use these contexts before passing dictionaries to the existing callback or
+durable outbox. They pass the accepted mode and priority to the context without
+changing the request or signed bytes; the context supplies the historical
+emitted defaults described above. The inbound
+context keeps its shared mail/chat shape rather than acquiring native chat's
+preview or recipient-alias list.
+
+`aweb.message_vocabulary.observe_message_vocabulary` measures unnamed accepted
+metadata once at the mail/chat send entry, native preparation after its
+signed envelope validation, or after federation signature
+verification, before replay exits. The Prometheus counter
+`aweb_unnamed_message_vocabulary_total` has only bounded `source` and `field`
+labels. One log line names the source and unnamed fields; neither counter nor
+log contains the received values, identifiers or message content. A counter
+failure is logged and leaves the send working. Contexts and hook translation
+do not observe again. This is measurement only; validators remain unchanged.
+
+Native chat recipients accept the existing list or a tuple; the context takes
+an immutable snapshot and returns a fresh list in the callback dictionary.
+Nullable identity projections remain null. Local sends omit the
+optional `federated` key; federation sends retain it. Inbound chat retains its
+existing shared shape, which may have `to_alias` and no `to_aliases` or preview.
+
+The same module reexports the existing workspace/team mail and chat transport
+DTOs from `aweb.events`; these are the same classes, not another set of stream
+payloads. Their existing imports and constructors remain supported.
+
+This is an additive producer interface. The callback remains `(str, dict)`;
+it is not replaced by a closed DTO parser. Readers still tolerate additive
+keys, host-defined names and missing optional projections. Context objects do
+not verify an identity, sanitize content or alter commit, best-effort failure
+or durable replay semantics. Producer/translator conversion must keep the
+source call-site inventory and its rejection of unresolvable dynamic names
+effective when it adopts named event constants.
 
 ## Default handler and composition warning
 
@@ -128,6 +196,7 @@ MCP `send_chat` tool call, and an acknowledgement fires from
 
 | HTTP route | Event | When called |
 |---|---|---|
+| `POST /v1/room/messages` | `room.message_sent` | After a new room post commits. Exact retries emit nothing. |
 | `POST /v1/messages` | `message.sent` | After a successful local, stored-route, or federated outbound mail send. Helper branches converge on the same event. |
 | `POST /v1/messages/{message_id}/ack` | `message.acknowledged` | Only when the ack changes the stored row. |
 | `POST /v1/chat/sessions` | `chat.message_sent` | After the initial chat message is stored/sent, including federated first contact. |
@@ -156,6 +225,7 @@ table fires the hook.
 
 | MCP tool | Event | When called |
 |---|---|---|
+| `room_post` | `room.message_sent` | After a new room post commits, as `POST /v1/room/messages`. |
 | `send_mail` (and `send_message_to_contact` for mail) | `message.sent` | After a successful local, stored-route, or federated send, as `POST /v1/messages`. |
 | `check_mail` | `message.acknowledged` | Once for each unread message the call marks read; already-read mail does not fire again. |
 | `send_chat` (and `send_message_to_contact` for chat) | `chat.message_sent` | After a new-session or continuation message is stored/sent, including federated delivery. |
@@ -190,6 +260,25 @@ Keys can be absent or null on paths that do not have that projection. Consumers
 must tolerate additive keys and missing optional identity/workspace data.
 
 ### Messaging
+
+`room.message_sent` uses only metadata:
+
+```text
+team_id, room_id, message_id, from_agent_id, from_did, from_did_aw, from_alias
+```
+
+Both HTTP and MCP room sends call one producer. It builds this context before
+committing and calls the best-effort host callback after commit. An exact
+retry returns the stored post without emitting or counting another send.
+No room body or recipient list is included.
+
+A host's pre-post quota admission uses the public dependency
+`aweb.routes.room.room_post_identity`, the same `chat.send` scoped team
+identity dependency used by the room route. A host may bind a wrapper which
+calls it once, checks its authenticated actor, and returns that exact actor.
+The post-commit callback counts a committed post and cannot refuse it at a
+limit. Authentication, current membership and the room signature remain
+native decisions.
 
 `message.sent` route contexts use:
 

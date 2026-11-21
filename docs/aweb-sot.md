@@ -1029,7 +1029,10 @@ verified shared-team authority.
 existing conversation ID starts a new conversation. An explicit existing
 `conversation_id` continues that conversation, subject to participant and
 recipient checks. The server preserves the sender's signed conversation ID;
-an initial ID collision refuses with 409 `conversation_exists`. The accepted
+an initial ID collision refuses with 409 `conversation_exists`. The HTTP detail
+retains that released value, with an additive `recovery_action` directing the
+sender to continue the existing conversation or choose a new ID. MCP carries
+the same action and the stable `conversation_exists` reason. The accepted
 `new_conversation` field is a no-op. HTTP, MCP and saved-contact mail all use
 this rule; chat session reuse is unchanged. `aw mail send` to a recipient
 creates a fresh signed UUID without conversation/inbox pair lookup and rejects
@@ -1096,7 +1099,7 @@ transient `did:key`.
 |-------|-------|
 | `GET /v1/agents/{alias}/events` | SSE event stream |
 | `GET /v1/status` | Team status |
-| `GET /v1/status/stream` | Team coordination SSE; message/chat events restricted to the authenticated actor's own active workspaces. Embedded public readers receive no messaging events. |
+| `GET /v1/status/stream` | Team coordination SSE. Message and chat events are restricted to the authenticated actor's own active workspaces. Native certificate streams check membership standing every 30 seconds and close if standing fails or cannot be determined. Native certificate and grant connections close within 300 seconds, or at the grant's earlier expiry. Embedded public readers receive no messaging events. |
 | `POST /v1/agents/heartbeat` | Keep-alive |
 | `POST /v1/agents/suggest-alias-prefix` | Suggest the next available classic alias prefix |
 | `GET /v1/agents` | List team agents |
@@ -2123,3 +2126,82 @@ falls back to `DATABASE_USES_TRANSACTION_POOLER`, and
 | Dashboard | Out of scope for aweb (any external service that holds `AWEB_DASHBOARD_JWT_SECRET`) |
 | Human accounts | Out of scope for aweb (hosted operator concern) |
 | Coordination (mail, chat, tasks, claims, locks, roles, instructions) | aweb |
+
+## Native request authority reads
+
+### Serving registry selection
+
+All native serving consumers borrow the registry client through
+`aweb.application_state.application_registry_client`. A host's selected
+`native_resources` reference takes precedence over an application-state slot;
+a missing or invalid client in that reference cannot fall through to another
+client. Without a resource reference, the initialized native application slot
+is selected. This reference is configuration, never member or request proof.
+Missing or invalid selected configuration returns `503` with
+`registry_client_unavailable` and the action to configure the serving client
+and start the application. Read-only sender-membership projections retain
+`unknown` when that authority cannot be acquired.
+
+### Current certificate acceptance and stream lifetime
+
+A verified certificate's checked team key is retained as
+`verified_team_did_key` in the native authenticated context. Acceptance checks
+the current-member owner under the same team/member transaction locks as any
+acceptance or projection writes. A cached key or a host snapshot cannot
+substitute for that check, and a missing checked key cannot be filled from the
+member's stored accepted key.
+
+Certificate-authenticated event, status and chat streams recheck their original
+checked key, current membership and certificate standing on the existing
+30-second grant-stream cadence. Rotation, revocation or inactive membership
+closes the stream with `team_membership_not_current`; unavailable evidence
+fails closed. Readmitting the member under a new certificate does not change
+the credential that opened the old stream. Independent identity-only thread
+participation remains governed by the Identity and Messaging Contract.
+The native stream recheck applies to a credential verified and accepted on
+the native certificate path. A proxy identity keeps its own admission when
+its transport supplies an opaque certificate identifier.
+
+Revocation without a key rotation removes authentication and delivery standing.
+Roster, assignee, room fan-out and alias projections use the admitted member
+row and current team key until its recorded admission changes.
+
+Native app-task authorization still uses the fresh registry certificate list
+to bind an originator or target before the server has a local attribution row
+(`server/src/aweb/coordination/app_tasks.py:110–137`). It checks the same
+certificate standing and requires fresh registry evidence for the app act.
+
+A task claim conflicts with a new claimant only while its holder remains a
+current member. The claim owner releases a non-current holder's claim through
+its normal claim/focus release operation in the new claim transaction. Key
+rotation does not sweep unrelated tasks or claims.
+After a committed takeover, the service announces each released claim before
+the replacement claim, including when the task stays `in_progress`.
+
+### Staged certificate-registration observations
+
+While registration enforcement is off, successful artifact and revocation
+checks still evaluate registration and record the would-refuse observation.
+This deliberate measurement supports the decision to enable enforcement; an
+off-mode observation is not a promise of no existence read. The read uses the
+existing SDK active-certificate view after revocation checks, without a new
+cache. An unavailable observation remains unknown and cannot turn an otherwise
+valid off-mode operation into a refusal. Enforcing mode retains its complete
+registration-list and signature-verified miss-refresh owners. AWID's
+`evaluate_team_certificate_standing` applies the same acquired revocation and
+registration facts to the server, registry SDK and checked artifact path. This
+staged measurement does not change request or certificate authority.
+
+### Controller-key acquisition and request validation
+
+Native authentication, app-task authorization, hook owner acts and service
+registration use `team_key_reader.read_team_key` to acquire SDK key evidence
+and apply the existing native pin owner. Their cached or fresh acquisition
+strength remains explicit; a consumer cannot accept a registry key by bypassing
+that pin. A verified request whose certificate fails under the cached key can
+ask the same reader for the SDK's bounded signature-failure refresh. Hook owner
+acts keep fresh registry acquisition and share the native pin memo. A controller
+registration request checks its timestamp and signature
+before a pin can change, including `dry_run` requests. It refuses if the
+admitted key differs from the key that verified the signature. Invalid request
+bytes cannot advance the admitted key or its controller-act timestamp.

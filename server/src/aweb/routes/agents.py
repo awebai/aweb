@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from aweb.member_team_key import current_member_sql
+
+from aweb.identity_binding import IdentityProjectionField, verified_identity_field_sql
+
 from aweb.human_kind import agent_listing_predicate_sql, effective_agent_type
 
 import json
@@ -10,23 +14,52 @@ from uuid import UUID
 import asyncpg
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from pgdbm.errors import QueryError
-from pydantic import BaseModel, Field, field_validator, model_serializer, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 from awid.dns_auth import validate_did_key, verify_signed_json_request
 from awid.e2ee_keys import validate_encryption_key_assertion
 from awid.team_ids import parse_team_id
-from aweb.agent_wake import agent_wake_key, agent_wake_publisher, agent_wake_scope, record_agent_wake
-from aweb.inbound_modes import INBOUND_MODES, normalize_inbound_mode, effective_inbound_mode, set_identity_inbound_mode
+from aweb.agent_wake import (
+    agent_wake_key,
+    agent_wake_publisher,
+    agent_wake_scope,
+    record_agent_wake,
+)
+from aweb.inbound_modes import (
+    INBOUND_MODES,
+    normalize_inbound_mode,
+    effective_inbound_mode,
+    set_identity_inbound_mode,
+)
 from aweb.service_errors import ForbiddenError
 from aweb.alias_allocator import candidate_name_prefixes, used_name_prefixes
 from aweb.coordination.roles import ROLE_MAX_LENGTH
 from aweb.coordination.routes.repos import canonicalize_git_url
 from aweb.coordination.workspace_registry import ensure_repo
 from aweb.deps import get_db, get_redis
-from aweb.grant_liveness import grant_liveness_expiry, cleanup_expired_grant_liveness, valid_grant_liveness_by_workspace
-from aweb.role_name_compat import normalize_optional_role_name, resolve_role_name_aliases
+from aweb.grant_liveness import (
+    grant_liveness_expiry,
+    cleanup_expired_grant_liveness,
+    valid_grant_liveness_by_workspace,
+)
+from aweb.role_name_compat import (
+    normalize_optional_role_name,
+    resolve_role_name_aliases,
+)
+from aweb.application_state import application_registry_client
+from aweb.team_registry import resolve_team_key
 from aweb.auth_context import GRANT_SCOPE_ANY
-from aweb.team_auth_deps import TeamIdentity, _resolve_team_key, get_team_identity, team_identity_with_grant_scope
+from aweb.team_auth_deps import (
+    TeamIdentity,
+    get_team_identity,
+    team_identity_with_grant_scope,
+)
 
 from ..presence import list_agent_presences_by_workspace_ids, update_agent_presence
 
@@ -252,7 +285,7 @@ async def suggest_alias_prefix(
     request_payload = payload or SuggestAliasPrefixRequest()
     aweb_db = db.get_manager("aweb")
     if request_payload.scope == "global":
-        existing = await _global_namespace_names(request, aweb_db, identity)
+        existing = await _global_namespace_names(request, identity)
         user_prefix = _identity_global_name_prefix(identity)
         names = _suggest_scoped_names(
             existing,
@@ -262,7 +295,9 @@ async def suggest_alias_prefix(
         )
     else:
         existing = await _local_team_aliases(aweb_db, identity.team_id)
-        names = _suggest_scoped_names(existing, request_payload.exclude, count=request_payload.count)
+        names = _suggest_scoped_names(
+            existing, request_payload.exclude, count=request_payload.count
+        )
     if not names:
         raise HTTPException(status_code=409, detail="alias_exhausted")
     return SuggestAliasPrefixResponse(
@@ -292,11 +327,9 @@ async def _local_team_aliases(aweb_db, team_id: str) -> list[str]:
     return [str(r.get("alias") or "") for r in rows]
 
 
-async def _global_namespace_names(request: Request, aweb_db, identity: TeamIdentity) -> list[str]:
+async def _global_namespace_names(request: Request, identity: TeamIdentity) -> list[str]:
     namespace, _team_name = parse_team_id(identity.team_id)
-    registry_client = getattr(request.app.state, "awid_registry_client", None)
-    if registry_client is None or not hasattr(registry_client, "list_addresses"):
-        raise HTTPException(status_code=503, detail="awid_registry_unavailable")
+    registry_client = application_registry_client(request.app.state)
     try:
         addresses = await registry_client.list_addresses(namespace)
     except Exception as exc:
@@ -338,7 +371,9 @@ def _suggest_scoped_names(
     return out
 
 
-def _used_global_names(existing_names: list[str], exclude: list[str], *, user_prefix: str) -> set[str]:
+def _used_global_names(
+    existing_names: list[str], exclude: list[str], *, user_prefix: str
+) -> set[str]:
     used = {str(name or "").strip().lower() for name in existing_names if str(name or "").strip()}
     prefix = f"{user_prefix}-"
     for value in exclude:
@@ -402,8 +437,8 @@ async def list_agents(
                ctx.repo
         FROM {{{{tables.agents}}}} a
         CROSS JOIN LATERAL (
-            SELECT CASE WHEN a.did_aw_verified_key = a.did_key THEN a.did_aw END AS did_aw,
-                   CASE WHEN a.did_aw_verified_key = a.did_key THEN a.address END AS address
+            SELECT {verified_identity_field_sql(IdentityProjectionField.STABLE_DID, agent="a")} AS did_aw,
+                   {verified_identity_field_sql(IdentityProjectionField.ADDRESS, agent="a")} AS address
         ) projected
         LEFT JOIN LATERAL (
             SELECT encryption_key_id, encryption_public_key, algorithm,
@@ -439,7 +474,7 @@ async def list_agents(
             ORDER BY w.last_seen_at DESC NULLS LAST, w.created_at DESC, w.workspace_id
             LIMIT 1
         ) ctx ON TRUE
-        WHERE a.team_id = $1 AND a.deleted_at IS NULL
+        WHERE a.team_id = $1 AND {current_member_sql("a")}
           AND {agent_listing_predicate_sql("a")}
         ORDER BY a.alias
         """,
@@ -456,7 +491,12 @@ async def list_agents(
         else []
     )
     presence_by_id = {str(p.get("workspace_id")): p for p in presences if p.get("workspace_id")}
-    grant_liveness_by_id = await valid_grant_liveness_by_workspace(aweb_db, workspace_ids)
+    grant_liveness_by_id = await valid_grant_liveness_by_workspace(
+        aweb_db,
+        workspace_ids,
+        registry_client=application_registry_client(request.app.state),
+        request=request,
+    )
 
     agents: list[AgentView] = []
     for r in rows:
@@ -654,9 +694,11 @@ async def _load_current_agent_inbound_mode(
         try:
             inbound_mode = await effective_inbound_mode(aweb_db, row["did_aw"])
         except ForbiddenError as exc:
-            raise HTTPException(status_code=409, detail="Agent inbound_mode migration required") from exc
+            raise HTTPException(
+                status_code=409, detail="Agent inbound policy is unavailable"
+            ) from exc
     if inbound_mode not in INBOUND_MODES:
-        raise HTTPException(status_code=409, detail="Agent inbound_mode migration required")
+        raise HTTPException(status_code=409, detail="Agent inbound policy is unavailable")
     return AgentInboundModeResponse(
         agent_id=str(row["agent_id"]),
         team_id=str(row["team_id"]),
@@ -687,7 +729,10 @@ async def update_my_inbound_mode(
     """Update the calling global agent's inbound delivery mode."""
     state = await _load_current_agent_inbound_mode(db, identity)
     if state.identity_scope != "global":
-        raise HTTPException(status_code=409, detail="inbound_mode is only configurable for global identities")
+        raise HTTPException(
+            status_code=409,
+            detail="inbound_mode is only configurable for global identities",
+        )
     # Only authentication's verified global identity may select an identity-wide
     # write. A membership row's raw claim is not identity authority.
     did_aw = str(identity.did_aw or "").strip()
@@ -845,7 +890,9 @@ async def patch_agent_workspace(
         raise HTTPException(status_code=404, detail="Workspace not found")
 
     new_hostname = payload.hostname if payload.hostname is not None else row["hostname"]
-    new_path = payload.workspace_path if payload.workspace_path is not None else row["workspace_path"]
+    new_path = (
+        payload.workspace_path if payload.workspace_path is not None else row["workspace_path"]
+    )
     new_role = payload.role if payload.role is not None else row["role"]
     new_human_name = payload.human_name if payload.human_name is not None else row["human_name"]
     new_repo_id = row["repo_id"]
@@ -926,7 +973,7 @@ async def replace_local_identity_key(
             "new_certificate_id": payload.new_certificate_id,
         },
     )
-    if authorizer_did != await _resolve_team_key(request, team_id):
+    if authorizer_did != await resolve_team_key(request, team_id):
         raise HTTPException(
             status_code=403,
             detail="Team controller authorization is required for local identity key replacement",
@@ -1082,8 +1129,8 @@ async def send_control_signal(
 
     target = await aweb_db.fetch_one(
         """
-        SELECT agent_id FROM {{tables.agents}}
-        WHERE team_id = $1 AND alias = $2 AND deleted_at IS NULL
+        SELECT a.agent_id FROM {{tables.agents}} a
+        WHERE a.team_id = $1 AND a.alias = $2 AND """ + current_member_sql("a") + """
         """,
         identity.team_id,
         alias,

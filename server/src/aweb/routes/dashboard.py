@@ -6,6 +6,11 @@ All endpoints are read-only.
 
 from __future__ import annotations
 
+from aweb.member_team_key import current_member_sql
+
+from aweb.application_state import application_registry_client
+from aweb.identity_binding import IdentityProjectionField, verified_identity_field_sql
+
 from aweb.human_kind import agent_listing_predicate_sql, effective_agent_type
 
 import asyncio
@@ -27,7 +32,6 @@ from aweb.coordination.tasks_service import list_tasks_paginated
 from aweb.awid_error_handling import (
     AWID_DEPENDENCY_ERRORS,
     awid_dependency_http_exception,
-    awid_registry_not_configured_exception,
 )
 from aweb.config import get_settings
 from aweb.deps import get_db, get_redis
@@ -131,18 +135,24 @@ async def _get_team_visibility(request: Request, team_id: str) -> str:
     except ValueError:
         return "private"
 
-    registry_client = getattr(request.app.state, "awid_registry_client", None)
-    if registry_client is None:
-        raise awid_registry_not_configured_exception(operation="AWID dashboard team visibility lookup")
+    registry_client = application_registry_client(request.app.state)
 
     try:
         team = await registry_client.get_team(domain, team_name)
     except AWID_DEPENDENCY_ERRORS as exc:
-        logger.warning("AWID registry dependency failed for team visibility lookup: %s", team_id, exc_info=True)
-        raise awid_dependency_http_exception(exc, operation="AWID dashboard team visibility lookup") from exc
+        logger.warning(
+            "AWID registry dependency failed for team visibility lookup: %s", team_id, exc_info=True
+        )
+        raise awid_dependency_http_exception(
+            exc, operation="AWID dashboard team visibility lookup"
+        ) from exc
     except Exception as exc:
-        logger.exception("Unexpected AWID registry dependency error for team visibility lookup: %s", team_id)
-        raise awid_dependency_http_exception(exc, operation="AWID dashboard team visibility lookup") from exc
+        logger.exception(
+            "Unexpected AWID registry dependency error for team visibility lookup: %s", team_id
+        )
+        raise awid_dependency_http_exception(
+            exc, operation="AWID dashboard team visibility lookup"
+        ) from exc
 
     if team is None:
         return "private"
@@ -288,7 +298,9 @@ async def _sse_dashboard_events(*, request: Request, db, redis, team_id: str):
     pubsub = await open_subscription(redis, channel)
     try:
         yield ": keepalive\n\n"
-        yield _format_sse("connected", {"type": "connected", "team_id": team_id, "timestamp": _utc_now_iso()})
+        yield _format_sse(
+            "connected", {"type": "connected", "team_id": team_id, "timestamp": _utc_now_iso()}
+        )
 
         snapshot = await _build_dashboard_snapshot(db, redis, team_id=team_id)
         yield _format_sse("snapshot", {"type": "snapshot", **snapshot})
@@ -358,15 +370,13 @@ async def _sse_dashboard_events(*, request: Request, db, redis, team_id: str):
 
 
 @router.get("/v1/teams/{team_id:path}/agents")
-async def list_team_agents(
-    request: Request, team_id: str, db=Depends(get_db)
-) -> dict:
+async def list_team_agents(request: Request, team_id: str, db=Depends(get_db)) -> dict:
     await _require_dashboard_auth(request, team_id)
     aweb_db = db.get_manager("aweb")
 
     rows = await aweb_db.fetch_all(
         f"""
-        SELECT a.agent_id, a.alias, a.did_key, a.human_name, CASE WHEN a.did_aw_verified_key = a.did_key THEN a.address END AS address, a.agent_type, a.human_verified_key,
+        SELECT a.agent_id, a.alias, a.did_key, a.human_name, {verified_identity_field_sql(IdentityProjectionField.ADDRESS, agent="a")} AS address, a.agent_type, a.human_verified_key,
                a.role, a.status, a.identity_scope, a.created_at,
                w.last_seen_at, w.workspace_path
         FROM {{{{tables.agents}}}} a
@@ -377,7 +387,7 @@ async def list_team_agents(
             ORDER BY last_seen_at DESC NULLS LAST, updated_at DESC NULLS LAST, created_at DESC
             LIMIT 1
         ) w ON TRUE
-        WHERE a.team_id = $1 AND a.deleted_at IS NULL
+        WHERE a.team_id = $1 AND {current_member_sql("a")}
           AND {agent_listing_predicate_sql("a")}
         ORDER BY a.alias
         """,
@@ -438,18 +448,16 @@ async def list_team_claims(
 
 
 @router.get("/v1/teams/{team_id:path}/agents/{alias}")
-async def get_team_agent(
-    request: Request, team_id: str, alias: str, db=Depends(get_db)
-) -> dict:
+async def get_team_agent(request: Request, team_id: str, alias: str, db=Depends(get_db)) -> dict:
     await _require_dashboard_auth(request, team_id)
     aweb_db = db.get_manager("aweb")
 
     row = await aweb_db.fetch_one(
         f"""
-        SELECT agent_id, alias, did_key, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, CASE WHEN did_aw_verified_key = did_key THEN address END AS address, role, status, identity_scope,
+        SELECT agent_id, alias, did_key, {verified_identity_field_sql(IdentityProjectionField.STABLE_DID)} AS did_aw, {verified_identity_field_sql(IdentityProjectionField.ADDRESS)} AS address, role, status, identity_scope,
                human_name, agent_type, human_verified_key, created_at
-        FROM {{{{tables.agents}}}}
-        WHERE team_id = $1 AND alias = $2 AND deleted_at IS NULL
+        FROM {{{{tables.agents}}}} a
+        WHERE a.team_id = $1 AND a.alias = $2 AND {current_member_sql("a")}
           AND {agent_listing_predicate_sql()}
         """,
         team_id,
@@ -592,9 +600,7 @@ async def stream_team_events(
 
 
 @router.get("/v1/teams/{team_id:path}/roles/active")
-async def get_active_roles(
-    request: Request, team_id: str, db=Depends(get_db)
-) -> dict:
+async def get_active_roles(request: Request, team_id: str, db=Depends(get_db)) -> dict:
     await _require_dashboard_auth(request, team_id)
     aweb_db = db.get_manager("aweb")
 
@@ -621,9 +627,7 @@ async def get_active_roles(
 
 
 @router.get("/v1/teams/{team_id:path}/instructions/active")
-async def get_active_instructions(
-    request: Request, team_id: str, db=Depends(get_db)
-) -> dict:
+async def get_active_instructions(request: Request, team_id: str, db=Depends(get_db)) -> dict:
     await _require_dashboard_auth(request, team_id)
     aweb_db = db.get_manager("aweb")
 
@@ -650,14 +654,13 @@ async def get_active_instructions(
 
 
 @router.get("/v1/teams/{team_id:path}/status")
-async def get_team_status(
-    request: Request, team_id: str, db=Depends(get_db)
-) -> dict:
+async def get_team_status(request: Request, team_id: str, db=Depends(get_db)) -> dict:
     await _require_dashboard_auth(request, team_id)
     aweb_db = db.get_manager("aweb")
 
     agent_count_row = await aweb_db.fetch_one(
-        "SELECT COUNT(*)::int AS cnt FROM {{tables.agents}} WHERE team_id = $1 AND deleted_at IS NULL",
+        "SELECT COUNT(*)::int AS cnt FROM {{tables.agents}} a WHERE a.team_id = $1 AND "
+        + current_member_sql("a"),
         team_id,
     )
     agent_count = agent_count_row["cnt"] if agent_count_row else 0
@@ -665,9 +668,11 @@ async def get_team_status(
     # Online = workspaces with recent last_seen_at
     online_rows = await aweb_db.fetch_all(
         """
-        SELECT DISTINCT alias FROM {{tables.workspaces}}
-        WHERE team_id = $1 AND deleted_at IS NULL
-          AND last_seen_at > NOW() - INTERVAL '30 minutes'
+        SELECT DISTINCT w.alias FROM {{tables.workspaces}} w
+        JOIN {{tables.agents}} a ON a.agent_id=w.agent_id AND a.team_id=w.team_id
+        WHERE w.team_id = $1 AND w.deleted_at IS NULL
+          AND """ + current_member_sql("a") + """
+          AND w.last_seen_at > NOW() - INTERVAL '30 minutes'
         """,
         team_id,
     )
@@ -690,7 +695,11 @@ async def get_team_status(
         agent_count=agent_count,
         online_agents=online_agents,
         active_claims=[
-            {"task_ref": r["task_ref"], "alias": r["alias"], "claimed_at": r["claimed_at"].isoformat()}
+            {
+                "task_ref": r["task_ref"],
+                "alias": r["alias"],
+                "claimed_at": r["claimed_at"].isoformat(),
+            }
             for r in claim_rows
         ],
         active_locks=[
@@ -736,7 +745,8 @@ async def get_usage(
 
     # Count active agents
     agent_row = await aweb_db.fetch_one(
-        "SELECT COUNT(*)::int AS cnt FROM {{tables.agents}} WHERE team_id = $1 AND deleted_at IS NULL",
+        "SELECT COUNT(*)::int AS cnt FROM {{tables.agents}} a WHERE a.team_id = $1 AND "
+        + current_member_sql("a"),
         team_id,
     )
     active_agents = agent_row["cnt"] if agent_row else 0

@@ -172,8 +172,8 @@ class DidLogEntry(BaseModel):
 
 
 
-def _db(request: Request):
-    return get_db_infra(request).get_manager("aweb")
+async def _db(request: Request):
+    return (await get_db_infra(request)).get_manager("aweb")
 
 
 def _now() -> datetime:
@@ -271,7 +271,7 @@ async def register_did(request: Request, req: DidRegisterRequest) -> dict:
     entry_hash = awid_sha256_hex(entry_payload)
     state_hash = awid_identity_state_hash(did_aw=req.did_aw, current_did_key=req.new_did_key)
 
-    db = _db(request)
+    db = await _db(request)
     created_at = app_clock(request.app)()
     updated_at = created_at
 
@@ -356,7 +356,7 @@ async def get_key(request: Request, did_aw: str) -> DidKeyResponse:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     # The key and its identity-tree enrollment come from one snapshot.
-    async with _db(request).transaction() as tx:
+    async with (await _db(request)).transaction() as tx:
         await tx.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         row = await tx.fetch_one(
             """
@@ -439,7 +439,7 @@ async def publish_encryption_key(
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    db = _db(request)
+    db = await _db(request)
     async with db.transaction() as tx:
         row = await tx.fetch_one(
             """
@@ -531,7 +531,7 @@ async def list_did_addresses(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    db = _db(request)
+    db = await _db(request)
     params: list[object] = [did_aw]
     where_clauses = [
         "pa.did_aw = $1",
@@ -591,7 +591,7 @@ async def get_head(request: Request, did_aw: str) -> DidHeadResponse:
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    db = _db(request)
+    db = await _db(request)
     row = await db.fetch_one(
         """
         SELECT did_aw, current_did_key, updated_at
@@ -647,7 +647,7 @@ async def get_full(request: Request, did_aw: str, authorization: str | None = He
     except Exception as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
 
-    db = _db(request)
+    db = await _db(request)
     row = await db.fetch_one(
         """
         SELECT did_aw, current_did_key, created_at, updated_at
@@ -681,7 +681,7 @@ async def get_log(request: Request, did_aw: str) -> list[DidLogEntry]:
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    db = _db(request)
+    db = await _db(request)
     rows = await db.fetch_all(
         """
         SELECT did_aw, seq, operation, previous_did_key, new_did_key,
@@ -720,7 +720,7 @@ async def update_mapping(request: Request, did_aw: str, req: DidUpdateRequest) -
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    db = _db(request)
+    db = await _db(request)
     async with db.transaction() as tx:
         # The mapping row serializes this rotation with registrations that
         # select this identity's current key as an issuer or subject key.

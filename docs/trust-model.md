@@ -420,6 +420,12 @@ can therefore take up to 60 seconds to take effect at a verifier; during an
 outage, the accepted grace can extend that to 15 minutes of data age. Other
 metadata caches retain their existing bounds.
 
+During DNS discovery failure, team-key and revocation reads can use eligible
+evidence from the last answering registry within its original grace window.
+Without that evidence, or when a caller requires a fresh read, the read fails
+with a retryable 503. A successful DNS answer without an override can select the
+configured registry and establish that a team is absent there.
+
 The committed exit ladder, in order:
 
 1. **Hash-chained revocation log with client-persisted checkpoints** — the
@@ -521,11 +527,14 @@ Named residuals:
   hosted teams, an inherited authority must accept the child's controller
   through the parent-signed delegation, or hosted team keys are rotated and
   re-pinned first.
-- **A pin set at first sight has no act time.** An act is required to be newer
-  than the act behind the pin only when there is one, so before enforcement
-  is turned on, a genuine but older act (a historical rotation, or one for a
-  deleted team of the same name) could move such a pin. The admission time is
-  to serve as the floor.
+- **A pin set at first sight uses its admission time as the floor.** A signed
+  act must be strictly newer than that admission before it can establish a
+  different key. Once an act has set the pin, its signing time is the floor
+  for the next act. Admission time remains separate from the signed act time,
+  including in compare-and-swap storage. A genuine historical act, including
+  one for a deleted team of the same name, cannot replace a newly admitted
+  key under enforcement. Measuring mode records the same would-refuse result
+  while retaining its staged acceptance behavior.
 - **The `local` namespace** has no DNS, so a pinned local team cannot rotate
   without the server operator re-pinning it.
 - **Hosted teams.** Pinning separates the registry from the namespace

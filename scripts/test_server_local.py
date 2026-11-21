@@ -40,6 +40,8 @@ class Suite(StrEnum):
     ALL = "all"
     SERVER = "server"
     REGISTRY = "registry"
+    NAAPP_LIB = "naapp-lib"
+    LOGS = "logs"
 
 
 class Interrupted(Exception):
@@ -687,7 +689,14 @@ def run_suites(
     for item in selected:
         directory = reports / item.value
         directory.mkdir(mode=0o700)
-        target = "test-server" if item is Suite.SERVER else "test-awid"
+        if item in (Suite.NAAPP_LIB, Suite.LOGS):
+            package = "naapp-lib" if item is Suite.NAAPP_LIB else "naapp/logs"
+            command = ["make", "test-naapp", f"NAAPP_PACKAGES={package}"]
+        else:
+            target = "test-server" if item is Suite.SERVER else "test-awid"
+            command = [
+                "make", target, f"SERVER_TEST_WORKERS={workers if item is Suite.SERVER else 0}",
+            ]
         options = [
             *arguments,
             "-p",
@@ -714,11 +723,7 @@ def run_suites(
         )
         try:
             result = run_logged_suite(
-                [
-                    "make",
-                    target,
-                    f"SERVER_TEST_WORKERS={workers if item is Suite.SERVER else 0}",
-                ],
+                command,
                 environ=env,
                 log=directory / "pytest.log",
             )
@@ -762,7 +767,7 @@ def main() -> int:
                 root=ROOT,
             ),
             local_services(
-                workers=1 if suite is Suite.REGISTRY else workers,
+                workers=workers if suite in (Suite.ALL, Suite.SERVER) else 1,
                 project="aw-local-" + uuid.uuid4().hex[:12],
                 environ=dict(os.environ),
             ) as env,
