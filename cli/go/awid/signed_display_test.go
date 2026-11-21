@@ -72,6 +72,11 @@ func TestSignedDisplayBinding(t *testing.T) {
 						if field == "from_did" {
 							want = Unverified
 						}
+						if kind == "chat" && field == "conversation_id" {
+							// A chat is read from a named conversation, and an
+							// empty claim does not name it.
+							want = Failed
+						}
 					case "empty_mismatch":
 						signed[field] = ""
 						want = Failed

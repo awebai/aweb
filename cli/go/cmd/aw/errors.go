@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/internal/termtext"
 )
@@ -67,6 +68,10 @@ func errorCodeOf(err error) string {
 	var coded *codedError
 	if errors.As(err, &coded) {
 		return coded.code
+	}
+	// Any command that reads a team key refuses one set aside as unconfirmed.
+	if errors.Is(err, awconfig.ErrTeamKeyUnconfirmed) {
+		return codeTeamNameUnconfirmed
 	}
 	var certificate *awid.CurrentTeamCertificateError
 	if errors.As(err, &certificate) {

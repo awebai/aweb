@@ -161,5 +161,6 @@ func delegateMailLogReceived(sel *awconfig.Selection, msg *awid.InboxMessage) {
 		To:             to,
 		Subject:        msg.Subject,
 		Body:           msg.Body,
+		Verification:   string(msg.VerificationStatus),
 	})
 }

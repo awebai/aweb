@@ -124,12 +124,14 @@ async def test_chat_to_a_teammate_alias_never_reaches_an_outsider_with_that_name
 
 
 async def _cli_result(binary, cwd, env, *args):
+    """The exit code, stdout (the --json document) and all output, stderr
+    included (a read with no local encryption key warns there)."""
     process = await asyncio.create_subprocess_exec(
         str(binary), *args, cwd=cwd, env=env,
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
     )
-    output, _ = await asyncio.wait_for(process.communicate(), 30)
-    return process.returncode, output.decode()
+    stdout, stderr = await asyncio.wait_for(process.communicate(), 30)
+    return process.returncode, stdout.decode(), stdout.decode() + stderr.decode()
 
 
 @pytest.mark.usefixtures("source_cli_binary")
@@ -158,7 +160,7 @@ async def test_extend_wait_to_a_teammate_alias_never_posts_into_an_outsiders_ses
         "SELECT count(*) FROM {{tables.chat_messages}} WHERE session_id=$1", outsider_session,
     )
 
-    code, output = await _cli_result(binary, root, env, "chat", "extend-wait", "--plaintext", "bob", "one more minute", "--json")
+    code, stdout, output = await _cli_result(binary, root, env, "chat", "extend-wait", "--plaintext", "bob", "one more minute", "--json")
 
     assert await pair.target.db.fetch_value(
         "SELECT count(*) FROM {{tables.chat_messages}} WHERE session_id=$1", outsider_session,
@@ -166,7 +168,7 @@ async def test_extend_wait_to_a_teammate_alias_never_posts_into_an_outsiders_ses
     assert pair.source.calls.count(("POST", "/v1/federation/messages")) == federated_before
     if earlier_teammate_session:
         assert code == 0, output
-        assert json.loads(output)["session_id"] == teammate_session
+        assert json.loads(stdout)["session_id"] == teammate_session
     else:
         assert code != 0, output
         assert "no conversation found" in output, output
@@ -200,13 +202,13 @@ async def test_reading_a_teammate_alias_uses_the_teammates_session_never_the_out
     args = ["chat", command, "bob", "--json"]
     if command == "listen":
         args += ["--wait", "1"]
-    code, output = await _cli_result(binary, root, env, *args)
+    code, stdout, output = await _cli_result(binary, root, env, *args)
 
     assert "multiple conversations match" not in output, output
     assert first_contact.fields["body"] not in output, "the outsider's message was shown"
     if earlier_teammate_session:
         assert code == 0, output
-        assert json.loads(output)["session_id"] == teammate_session, output
+        assert json.loads(stdout)["session_id"] == teammate_session, output
     else:
         assert code != 0, output
         assert "no conversation found" in output or "no pending conversation" in output, output

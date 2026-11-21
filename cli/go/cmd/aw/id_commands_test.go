@@ -1217,7 +1217,7 @@ func TestPrepareIDCreatePlanUsesDNSDiscoveredRegistryURL(t *testing.T) {
 	}
 }
 
-func TestExecuteIDCreateFailsBeforeLocalIdentityWhenAtomicRegistryUnavailable(t *testing.T) {
+func TestExecuteIDCreateRetainsPrivateKeyWhenAtomicRegistryUnavailable(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 	t.Setenv("AW_CONFIG_PATH", "")
@@ -1251,6 +1251,7 @@ func TestExecuteIDCreateFailsBeforeLocalIdentityWhenAtomicRegistryUnavailable(t 
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
 	}))
+	t.Setenv("AWID_REGISTRY_URL", server.URL)
 	_, err = executeIDCreate(tmp, idCreateOptions{
 		Name:          "Alice",
 		Domain:        "acme.com",
@@ -1266,14 +1267,17 @@ func TestExecuteIDCreateFailsBeforeLocalIdentityWhenAtomicRegistryUnavailable(t 
 	if err == nil {
 		t.Fatal("expected id create to fail when atomic claim registry call fails")
 	}
+	if !retainUnfinishedProvisioningIdentity(err) {
+		t.Fatal("retained standalone creation would be removed by its outer caller")
+	}
 	if !strings.Contains(err.Error(), "could not reach AWID registry") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(tmp, ".aw", "identity.yaml")); !os.IsNotExist(err) {
 		t.Fatalf("identity.yaml should not be written, err=%v", err)
 	}
-	if _, err := os.Stat(filepath.Join(tmp, ".aw", "signing.key")); !os.IsNotExist(err) {
-		t.Fatalf("signing.key should not be written, err=%v", err)
+	if _, err := os.Stat(filepath.Join(tmp, ".aw", "signing.key")); err != nil {
+		t.Fatalf("original private key must be retained: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(tmp, ".aw", "encryption.yaml")); !os.IsNotExist(err) {
 		t.Fatalf("encryption.yaml should not be written, err=%v", err)
@@ -1316,8 +1320,8 @@ func TestAwIDCreateFailsBeforeLocalIdentityWhenRegistryUnavailable(t *testing.T)
 	if _, err := os.Stat(filepath.Join(tmp, ".aw", "identity.yaml")); !os.IsNotExist(err) {
 		t.Fatalf("identity.yaml should not be written, err=%v\n%s", err, string(out))
 	}
-	if _, err := os.Stat(filepath.Join(tmp, ".aw", "signing.key")); !os.IsNotExist(err) {
-		t.Fatalf("signing.key should not be written, err=%v\n%s", err, string(out))
+	if _, err := os.Stat(filepath.Join(tmp, ".aw", "signing.key")); err != nil {
+		t.Fatalf("original private key must be retained, err=%v\n%s", err, string(out))
 	}
 	if _, err := os.Stat(filepath.Join(tmp, ".aw", "encryption.yaml")); !os.IsNotExist(err) {
 		t.Fatalf("encryption.yaml should not be written, err=%v\n%s", err, string(out))
@@ -1391,8 +1395,8 @@ func TestAwIDCreateAtomicClaimConflictDoesNotWriteLocalIdentity(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(tmp, ".aw", "identity.yaml")); !os.IsNotExist(err) {
 		t.Fatalf("identity.yaml should not be written, err=%v\n%s", err, string(out))
 	}
-	if _, err := os.Stat(filepath.Join(tmp, ".aw", "signing.key")); !os.IsNotExist(err) {
-		t.Fatalf("signing.key should not be written, err=%v\n%s", err, string(out))
+	if _, err := os.Stat(filepath.Join(tmp, ".aw", "signing.key")); err != nil {
+		t.Fatalf("original private key must be retained, err=%v\n%s", err, string(out))
 	}
 }
 
@@ -1459,8 +1463,8 @@ func TestAwIDCreateMissingAtomicPrimitiveDoesNotFallbackToSplitCalls(t *testing.
 	if _, err := os.Stat(filepath.Join(tmp, ".aw", "identity.yaml")); !os.IsNotExist(err) {
 		t.Fatalf("identity.yaml should not be written, err=%v\n%s", err, string(out))
 	}
-	if _, err := os.Stat(filepath.Join(tmp, ".aw", "signing.key")); !os.IsNotExist(err) {
-		t.Fatalf("signing.key should not be written, err=%v\n%s", err, string(out))
+	if _, err := os.Stat(filepath.Join(tmp, ".aw", "signing.key")); err != nil {
+		t.Fatalf("original private key must be retained, err=%v\n%s", err, string(out))
 	}
 }
 

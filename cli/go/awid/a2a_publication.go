@@ -335,7 +335,7 @@ func normalizeA2APublicationFields(fields A2APublicationFields) (A2APublicationF
 	if err != nil {
 		return A2APublicationFields{}, err
 	}
-	out.RegistryURL, err = canonicalRegistryServerOrigin(out.RegistryURL)
+	out.RegistryURL, err = CanonicalRegistryServerOrigin(out.RegistryURL)
 	if err != nil {
 		return A2APublicationFields{}, fmt.Errorf("registry_url: %w", err)
 	}
@@ -433,7 +433,7 @@ func normalizeA2ADelegationFields(fields A2ADelegationFields) (A2ADelegationFiel
 		}
 	}
 	out.RevocationReason = strings.TrimSpace(out.RevocationReason)
-	out.RegistryURL, err = canonicalRegistryServerOrigin(out.RegistryURL)
+	out.RegistryURL, err = CanonicalRegistryServerOrigin(out.RegistryURL)
 	if err != nil {
 		return A2ADelegationFields{}, fmt.Errorf("registry_url: %w", err)
 	}

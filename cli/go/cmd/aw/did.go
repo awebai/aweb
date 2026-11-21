@@ -49,11 +49,10 @@ func runDidLog(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if jsonFlag {
-		printJSON(out)
-		return nil
+		return printJSON(out)
 	}
-	fmt.Fprint(commandStdout, formatIDLog(out))
-	return nil
+	_, err = fmt.Fprint(commandStdout, formatIDLog(out))
+	return err
 }
 
 func loadDIDLog(ctx context.Context, workingDir string, args []string) (idLogOutput, error) {
@@ -97,7 +96,7 @@ func loadDIDLog(ctx context.Context, workingDir string, args []string) (idLogOut
 			if identity != nil && awconfig.NormalizeDomain(identity.Domain) == domain && strings.TrimSpace(identity.RegistryURL) != "" {
 				registryURL = strings.TrimSpace(identity.RegistryURL)
 			} else {
-				registryURL, err = registry.DiscoverRegistry(ctx, domain)
+				registryURL, err = resolveRegistryAuthority(ctx, registryAuthorityRequest{Kind: registryDomainRoute, Registry: registry, Domain: domain})
 				if err != nil {
 					return idLogOutput{}, err
 				}

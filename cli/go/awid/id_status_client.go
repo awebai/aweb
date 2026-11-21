@@ -190,7 +190,7 @@ func (c *IDStatusClient) refresh(key, domain string, request map[string]any, a *
 	authority, err := c.Authority(ctx, domain)
 	var status map[string]any
 	if err == nil && (authority.ControllerDID == "" || authority.DNSName == "") {
-		err = idCertificateRefusal("evidence_unavailable")
+		err = idCertificateRefusal(IDRefusalEvidenceUnavailable)
 	}
 	if err == nil {
 		status, err = c.FetchIDCertificateStatus(ctx, domain, request)

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/awebai/aw/awconfig"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,13 +14,13 @@ func TestAPIKeyPartialQuarantinePreservesEachFile(t *testing.T) {
 	if err := os.MkdirAll(selected, 0700); err != nil {
 		t.Fatal(err)
 	}
-	path := apiKeyPartialInitPath(root, selected)
+	path := apiKeyPartialInitPath(awconfig.IdentityHome{Root: selected})
 	var previous string
 	for _, content := range []string{"first synthetic material", "second synthetic material"} {
 		if err := os.WriteFile(path, []byte(content), 0600); err != nil {
 			t.Fatal(err)
 		}
-		rejected, err := quarantineAPIKeyPartialInit(root, selected)
+		rejected, err := quarantineAPIKeyPartialInit(awconfig.IdentityHome{Root: selected})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -49,7 +50,7 @@ func TestAPIKeyPartialQuarantinePreservesEachFile(t *testing.T) {
 
 func TestAPIKeyPartialQuarantineFailurePreservesSource(t *testing.T) {
 	root := t.TempDir()
-	path := apiKeyPartialInitPath(root)
+	path := apiKeyPartialInitPath(awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(root)})
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +61,7 @@ func TestAPIKeyPartialQuarantineFailurePreservesSource(t *testing.T) {
 	if err := os.Symlink(target, path); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := quarantineAPIKeyPartialInit(root); err == nil {
+	if _, err := quarantineAPIKeyPartialInit(awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(root)}); err == nil {
 		t.Fatal("symlink quarantine must refuse")
 	}
 	data, err := os.ReadFile(target)

@@ -101,27 +101,13 @@ func CliSignup(
 	if signingKey == nil {
 		return nil, fmt.Errorf("cli-signup: signing key is required")
 	}
-	expectedDID := ComputeDIDKey(signingKey.Public().(ed25519.PublicKey))
-	if req.DIDKey != expectedDID {
-		return nil, fmt.Errorf(
-			"cli-signup: body did_key %s does not match signing key did:key %s",
-			req.DIDKey, expectedDID,
-		)
-	}
 
 	bodyBytes, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("cli-signup: marshal request: %w", err)
 	}
 
-	const path = "/api/v1/onboarding/cli-signup"
-	headers := onboardingDIDKeyHeaders(http.MethodPost, path, bodyBytes, signingKey)
-
-	var out CliSignupResponse
-	if err := postJSONWithHeaders(ctx, onboardingURL, path, bodyBytes, headers, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	return SubmitCliSignup(ctx, CliSignupSubmission{OnboardingURL: onboardingURL, RequestJSON: bodyBytes, SigningKey: signingKey})
 }
 
 // onboardingDIDKeyHeaders builds the DIDKey auth headers for an onboarding endpoint call.

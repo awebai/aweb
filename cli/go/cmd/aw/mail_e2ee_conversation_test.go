@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -187,6 +188,25 @@ func TestAwMailReplyEncryptionMode(t *testing.T) {
 	})
 }
 
+// A mail sent into an existing conversation inherits its encryption, as a
+// reply does: --e2ee and --plaintext decide alone, and with neither an
+// encrypted conversation stays encrypted (adje.3 3.10, Antares d0e3fe47
+// item 4).
+func TestAwMailSendToAConversationInheritsItsEncryption(t *testing.T) {
+	for _, plaintext := range []bool{false, true} {
+		for _, mode := range []string{"default", "e2ee", "plaintext"} {
+			flags := []string{}
+			if mode != "default" {
+				flags = append(flags, "--"+mode)
+			}
+			encrypted := mode == "e2ee" || (mode == "default" && !plaintext)
+			t.Run(fmt.Sprintf("plain-conversation=%t/mode=%s", plaintext, mode), func(t *testing.T) {
+				testMailReplyEncryptionMode(t, flags, plaintext, false, true, encrypted, "send-conversation")
+			})
+		}
+	}
+}
+
 // The human has no roster entry or address; only this source envelope carries
 // its identity-authorized encryption key. Exercise the actual CLI and crypto.
 func TestAwMailReplyUnlistedSender(t *testing.T) {
@@ -299,7 +319,7 @@ func testMailReplyEncryptionMode(t *testing.T, flags []string, plaintext, grant,
 	var sent map[string]any
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.URL.Path == "/v1/messages/inbox":
+		case r.URL.Path == "/v1/messages/inbox" || r.URL.Path == "/v1/messages/conversations/"+conversationID:
 			message := awid.InboxMessage{
 				MessageID:      sourceID,
 				ConversationID: conversationID,
@@ -460,6 +480,9 @@ func testMailReplyEncryptionMode(t *testing.T, flags []string, plaintext, grant,
 		}
 	}
 	args := append([]string{"mail", "reply", sourceID, "--body", "reply secret"}, flags...)
+	if scenario == "send-conversation" {
+		args = append([]string{"mail", "send", "--conversation-id", conversationID, "--body", "reply secret"}, flags...)
+	}
 	run := exec.CommandContext(ctx, bin, args...)
 	run.Env = append(testCommandEnv(tmp), "AWEB_URL="+server.URL, "AWID_REGISTRY_URL="+server.URL, "AWID_SKIP_DNS_VERIFY=1")
 	run.Dir = workerDir
@@ -521,6 +544,10 @@ func testMailReplyEncryptionMode(t *testing.T, flags []string, plaintext, grant,
 	if strings.Contains(string(out), "requires local encryption private key") {
 		t.Fatalf("reply fetched encrypted source before configuring the local read key:\n%s", out)
 	}
+	announced := strings.Contains(stderr.String(), "server-readable plaintext into an end-to-end encrypted conversation")
+	if want := !plaintext && (slices.Contains(flags, "--plaintext") || slices.Contains(flags, "--e2ee=false")); announced != want {
+		t.Fatalf("--plaintext notice shown=%v, want %v; stderr=%q", announced, want, stderr.String())
+	}
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -550,7 +577,7 @@ func testMailReplyEncryptionMode(t *testing.T, flags []string, plaintext, grant,
 	if err := json.Unmarshal(encoded, &envelope); err != nil {
 		t.Fatal(err)
 	}
-	if !plaintext {
+	if !plaintext && scenario != "send-conversation" {
 		if envelope.ReplyToMessageID != sourceID {
 			t.Fatal("reply lost signed source id")
 		}

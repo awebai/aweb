@@ -1,17 +1,14 @@
 package main
 
 import (
-	"bytes"
 	"crypto/ed25519"
 	"errors"
 	"os"
-	"path/filepath"
 	"strings"
 	"unicode"
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
-	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -66,45 +63,6 @@ type doctorLocalState struct {
 
 	identityPath string
 	identity     *awconfig.WorktreeIdentity
-}
-
-type doctorWorkspaceYAML struct {
-	AwebURL         string                          `yaml:"aweb_url,omitempty"`
-	APIKey          string                          `yaml:"api_key,omitempty"`
-	ActiveTeam      string                          `yaml:"active_team,omitempty"`
-	Memberships     []doctorWorkspaceMembershipYAML `yaml:"memberships,omitempty"`
-	HumanName       string                          `yaml:"human_name,omitempty"`
-	AgentType       string                          `yaml:"agent_type,omitempty"`
-	RepoID          string                          `yaml:"repo_id,omitempty"`
-	CanonicalOrigin string                          `yaml:"canonical_origin,omitempty"`
-	AwebTmuxTmpdir  string                          `yaml:"aweb_tmux_tmpdir,omitempty"`
-	Hostname        string                          `yaml:"hostname,omitempty"`
-	WorkspacePath   string                          `yaml:"workspace_path,omitempty"`
-	UpdatedAt       string                          `yaml:"updated_at,omitempty"`
-}
-
-type doctorWorkspaceMembershipYAML struct {
-	TeamID      string `yaml:"team_id,omitempty"`
-	Alias       string `yaml:"alias,omitempty"`
-	RoleName    string `yaml:"role_name,omitempty"`
-	WorkspaceID string `yaml:"workspace_id,omitempty"`
-	CertPath    string `yaml:"cert_path,omitempty"`
-	JoinedAt    string `yaml:"joined_at,omitempty"`
-}
-
-type doctorTeamStateYAML struct {
-	ActiveTeam  string                     `yaml:"active_team,omitempty"`
-	Memberships []doctorTeamMembershipYAML `yaml:"memberships,omitempty"`
-}
-
-type doctorTeamMembershipYAML struct {
-	TeamKey     *awid.TeamKeyEvidence `yaml:"team_key,omitempty"`
-	TeamID      string                `yaml:"team_id,omitempty"`
-	Alias       string                `yaml:"alias,omitempty"`
-	CertPath    string                `yaml:"cert_path,omitempty"`
-	JoinedAt    string                `yaml:"joined_at,omitempty"`
-	RegistryURL string                `yaml:"registry_url,omitempty"`
-	AwebURL     string                `yaml:"aweb_url,omitempty"`
 }
 
 func (r *doctorRunner) runLocalChecks() {
@@ -920,74 +878,11 @@ func loadDoctorTeamStateAt(workingDir, identityHome string) (*awconfig.TeamState
 			return nil, err
 		}
 	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	var raw doctorTeamStateYAML
-	decoder := yaml.NewDecoder(bytes.NewReader(data))
-	decoder.KnownFields(true)
-	if err := decoder.Decode(&raw); err != nil {
-		return nil, err
-	}
-	state := &awconfig.TeamState{
-		ActiveTeam: strings.TrimSpace(raw.ActiveTeam),
-	}
-	for _, membership := range raw.Memberships {
-		if membership.TeamKey != nil {
-			if err := membership.TeamKey.Validate(); err != nil {
-				return nil, err
-			}
-		}
-		state.Memberships = append(state.Memberships, awconfig.TeamMembership{
-			TeamKey:     membership.TeamKey,
-			TeamID:      strings.TrimSpace(membership.TeamID),
-			Alias:       strings.TrimSpace(membership.Alias),
-			CertPath:    filepath.ToSlash(strings.TrimSpace(membership.CertPath)),
-			JoinedAt:    strings.TrimSpace(membership.JoinedAt),
-			RegistryURL: strings.TrimSpace(membership.RegistryURL),
-			AwebURL:     strings.TrimSpace(membership.AwebURL),
-		})
-	}
-	return state, nil
+	return awconfig.InspectTeamStateFrom(path)
 }
 
 func loadDoctorWorkspaceFrom(path string) (*awconfig.WorktreeWorkspace, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	var raw doctorWorkspaceYAML
-	decoder := yaml.NewDecoder(bytes.NewReader(data))
-	decoder.KnownFields(true)
-	if err := decoder.Decode(&raw); err != nil {
-		return nil, err
-	}
-
-	memberships := make([]awconfig.WorktreeMembership, 0, len(raw.Memberships))
-	for _, membership := range raw.Memberships {
-		memberships = append(memberships, awconfig.WorktreeMembership{
-			TeamID:      strings.TrimSpace(membership.TeamID),
-			Alias:       strings.TrimSpace(membership.Alias),
-			RoleName:    strings.TrimSpace(membership.RoleName),
-			WorkspaceID: strings.TrimSpace(membership.WorkspaceID),
-			CertPath:    filepath.ToSlash(strings.TrimSpace(membership.CertPath)),
-			JoinedAt:    strings.TrimSpace(membership.JoinedAt),
-		})
-	}
-	return &awconfig.WorktreeWorkspace{
-		AwebURL:         strings.TrimSpace(raw.AwebURL),
-		APIKey:          strings.TrimSpace(raw.APIKey),
-		Memberships:     memberships,
-		HumanName:       strings.TrimSpace(raw.HumanName),
-		AgentType:       strings.TrimSpace(raw.AgentType),
-		RepoID:          strings.TrimSpace(raw.RepoID),
-		CanonicalOrigin: strings.TrimSpace(raw.CanonicalOrigin),
-		AwebTmuxTmpdir:  strings.TrimSpace(raw.AwebTmuxTmpdir),
-		Hostname:        strings.TrimSpace(raw.Hostname),
-		WorkspacePath:   strings.TrimSpace(raw.WorkspacePath),
-		UpdatedAt:       strings.TrimSpace(raw.UpdatedAt),
-	}, nil
+	return awconfig.InspectWorktreeWorkspaceFrom(path)
 }
 
 func (r *doctorRunner) addWorkspaceDependentBlockedChecks(workspacePath, prerequisite string) {
