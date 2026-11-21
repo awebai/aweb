@@ -6,7 +6,6 @@ import (
 	"crypto/ed25519"
 	"encoding/pem"
 	"errors"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -48,31 +47,15 @@ func TestOpenPermissionKeyRemainsReadableAndWarnsOnce(t *testing.T) {
 	if err := os.Chmod(path, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	saved := os.Stderr
-	reader, writer, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	os.Stderr = writer
-	t.Cleanup(func() { os.Stderr = saved })
-	for i := 0; i < 2; i++ {
-		loaded, err := LoadSigningKey(path)
-		if err != nil || !loaded.Equal(key) {
-			t.Fatalf("released key read refused: %v", err)
+	logs := captureStderrForTest(t, func() {
+		for i := 0; i < 2; i++ {
+			loaded, err := LoadSigningKey(path)
+			if err != nil || !loaded.Equal(key) {
+				t.Fatalf("released key read refused: %v", err)
+			}
 		}
-	}
-	if err := writer.Close(); err != nil {
-		t.Fatal(err)
-	}
-	os.Stderr = saved
-	logs, err := io.ReadAll(reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := reader.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if strings.Count(string(logs), "Run chmod 600") != 1 || !strings.Contains(string(logs), path) {
+	})
+	if strings.Count(logs, "Run chmod 600") != 1 || !strings.Contains(logs, path) {
 		t.Fatalf("wanted one actionable permission warning: %s", logs)
 	}
 }
