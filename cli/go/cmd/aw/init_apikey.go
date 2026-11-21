@@ -184,7 +184,10 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (out connectOutput, resultErr
 		alias = "" // cloud rejects alias for global identity bootstrap
 	}
 
-	selectedRegistryURL := firstNonEmptyString(strings.TrimSpace(req.RegistryURL), strings.TrimSpace(os.Getenv("AWID_REGISTRY_URL")))
+	selectedRegistryURL, err := resolveRegistryURLSetting(registryURLSettingInput{ExplicitURL: req.RegistryURL})
+	if err != nil {
+		return connectOutput{}, err
+	}
 	registry, err := newRegistryClientWithPreferredBaseURL(selectedRegistryURL)
 	if err != nil {
 		return connectOutput{}, err

@@ -348,7 +348,10 @@ func completeHostedInviteResponse(ctx context.Context, responseRequest hostedInv
 	if err := creation.save(recoveryPath); err != nil {
 		return nil, err
 	}
-	selectedTeamRegistry := firstNonEmptyString(strings.TrimSpace(opts.RegistryURL), strings.TrimSpace(os.Getenv("AWID_REGISTRY_URL")))
+	selectedTeamRegistry, err := resolveRegistryURLSetting(registryURLSettingInput{ExplicitURL: opts.RegistryURL})
+	if err != nil {
+		return nil, err
+	}
 	if selectedTeamRegistry != "" {
 		selectedTeamRegistry, err = cleanBaseURL(selectedTeamRegistry)
 		if err != nil {
