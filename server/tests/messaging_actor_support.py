@@ -51,7 +51,7 @@ async def register_messaging_team(env: MessagingFixture, *, team_id: str) -> Non
             display_name=name,
             team_did_key=env.team_did,
             visibility="public",
-            namespace_controller_signing_key=bytes(controller),
+            namespace_controller_signing_key=controller,
         )
     else:
         assert existing.team_did_key == env.team_did
@@ -69,7 +69,7 @@ async def _certify_kind(
 
     domain = f"messaging-kind-{uuid4().hex}.test"
     await env.registry.ensure_namespace(
-        domain=domain, controller=SigningKey(bytes.fromhex(ROOT["seed_hex"]))
+        domain=domain, controller=bytes.fromhex(ROOT["seed_hex"])
     )
     certificate = _signed_fixture_certificate(
         "alice" if kind is IdentityKind.HUMAN else "root-agent",
@@ -114,7 +114,7 @@ async def admit_messaging_actor(
         domain, name = address.split("/", 1)
         controller = await env.registry.ensure_namespace(domain=domain)
         await registry.register_address(
-            domain, name, identity.did_aw, bytes(controller), current_did_key=did_key
+            domain, name, identity.did_aw, controller, current_did_key=did_key
         )
     if kind is not IdentityKind.UNKNOWN:
         await _certify_kind(env, kind=kind, stable_id=identity.did_aw, key=key)

@@ -2163,7 +2163,7 @@ async def test_create_chat_session_accepts_identity_auth_and_to_did(shared_test_
             display_name="ops",
             team_did_key=other_team_did,
             visibility="public",
-            namespace_controller_signing_key=bytes(controller),
+            namespace_controller_signing_key=controller,
         )
         for alias, actor, stable, address, team, signing_key, team_did in (
             ("alice", alice, alice_stable, "acme.com/alice", TEAM, env.team_sk, env.team_did),
@@ -3467,7 +3467,7 @@ async def test_create_chat_session_to_address_does_not_fall_back_to_local_persis
         team_controller_signing_key=env.team_sk,
         certificate_id=certificate["certificate_id"],
     )
-    await registry.delete_address("otherco.com", "bob", bytes(controller))
+    await registry.delete_address("otherco.com", "bob", controller)
     payload = {"to_addresses": ["otherco.com/bob"], "message": "hidden"}
     body = json.dumps(payload).encode()
     with record_registry_requests(env) as reads:
@@ -3570,7 +3570,7 @@ async def test_create_chat_session_to_address_rejects_cross_team_local_persisten
         team_controller_signing_key=env.team_sk,
         certificate_id=certificate["certificate_id"],
     )
-    await registry.delete_address("otherco.com", "bob", bytes(controller))
+    await registry.delete_address("otherco.com", "bob", controller)
     payload = {"to_addresses": ["otherco.com/bob"], "message": "hidden"}
     body = json.dumps(payload).encode()
     with record_registry_requests(env) as reads:
@@ -3740,7 +3740,7 @@ async def test_create_chat_session_to_private_address_rejects_unverified_client_
         team_controller_signing_key=env.team_sk,
         certificate_id=certificate["certificate_id"],
     )
-    await registry.delete_address("otherco.com", "bob", bytes(controller))
+    await registry.delete_address("otherco.com", "bob", controller)
     payload = {"to_addresses": ["otherco.com/bob"], "message": "hidden"}
     message_id = str(uuid4())
     timestamp = datetime.now(timezone.utc).isoformat()

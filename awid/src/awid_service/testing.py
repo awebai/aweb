@@ -27,7 +27,7 @@ from pgdbm import AsyncDatabaseManager, DatabaseConfig
 from redis.asyncio import Redis
 
 from awid.attestation_records import sign_record
-from awid.did import did_key_from_signing_key
+from awid.did import did_key_from_signing_key, generate_keypair
 from awid.external_authority import DNSLookup
 from awid.dns_verify import DomainAuthority, DnsVerificationError
 from awid.ratelimit import NoOpRateLimiter
@@ -102,15 +102,15 @@ class Registry:
     db: AsyncDatabaseManager
     transport: ServiceTransport
     registry_url: str = REGISTRY_URL
-    _namespace_keys: dict[str, SigningKey] = field(default_factory=dict, repr=False)
+    _namespace_keys: dict[str, bytes] = field(default_factory=dict, repr=False)
     _registry_client: RegistryClient | None = field(default=None, init=False, repr=False)
 
     async def ensure_namespace(
         self,
         *,
         domain: str,
-        controller: SigningKey | None = None,
-    ) -> SigningKey:
+        controller: bytes | None = None,
+    ) -> bytes:
         """Register namespace authority through AWID; retain only fixture-owned custody.
 
         docs/identity.md:95-100 separates namespace authority from the team key.
@@ -120,7 +120,7 @@ class Registry:
         client = self._client()
         known = await client.get_namespace(domain)
         if known is not None:
-            if key is None or known.controller_did != _did_key(key):
+            if key is None or known.controller_did != did_key_from_signing_key(key):
                 raise ValueError(
                     f"Namespace {domain} has a different controller. "
                     "Pass its current signing key as controller=."
@@ -128,12 +128,12 @@ class Registry:
             self._namespace_keys[domain] = key
             return key
         if key is None:
-            key = SigningKey.generate()
+            key, _ = generate_keypair()
         self._namespace_keys[domain] = key
         if get_domain_verifier not in self.app.dependency_overrides:
             self.app.dependency_overrides[get_domain_verifier] = lambda: self.namespace_authority
         try:
-            await client.register_namespace(domain, _did_key(key), bytes(key))
+            await client.register_namespace(domain, did_key_from_signing_key(key), key)
         except Exception:
             del self._namespace_keys[domain]
             raise
@@ -148,7 +148,7 @@ class Registry:
                 "Register the namespace through ensure_namespace first."
             )
         return DomainAuthority(
-            controller_did=_did_key(key),
+            controller_did=did_key_from_signing_key(key),
             registry_url=self.registry_url,
             dns_name=f"_awid.{domain}",
         )

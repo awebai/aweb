@@ -21,7 +21,7 @@ async def _authority(env, monkeypatch):
     origin = str(env.client.base_url).rstrip("/")
     controller = await env.registry.ensure_namespace(domain="foreign.test")
     await env.app.state.awid_registry_client.update_namespace_delivery_origin(
-        "foreign.test", bytes(controller), origin
+        "foreign.test", controller, origin
     )
     async with registry_listener(env) as (_, registry_origin):
         monkeypatch.setenv("AWEB_FEDERATION_TEST", "1")

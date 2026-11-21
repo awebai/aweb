@@ -22,7 +22,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from nacl.signing import SigningKey
 
-from awid.did import did_from_public_key, stable_id_from_public_key
+from awid.did import did_from_public_key, did_key_from_signing_key, stable_id_from_public_key
 from awid.e2ee_keys import (
     build_encryption_key_assertion,
     canonical_encryption_assertion,
@@ -467,7 +467,7 @@ async def _registered_routing_pair(pair):
         domain = f"routing-{uuid4().hex}.test"
         controller = await node.registry.ensure_namespace(domain=domain)
         pair.dns.records[(f"_awid.{domain}", "TXT")] = [
-            f'"awid=v1;controller={did_from_public_key(bytes(controller.verify_key))};registry={node.registry_origin}"'
+            f'"awid=v1;controller={did_key_from_signing_key(controller)};registry={node.registry_origin}"'
         ]
         env = SimpleNamespace(
             app=node.server.app,
@@ -480,7 +480,7 @@ async def _registered_routing_pair(pair):
         await register_messaging_team(env, team_id=team_id)
         registry = node.server.app.state.awid_registry_client
         await registry.update_namespace_delivery_origin(
-            domain, bytes(controller), node.origin
+            domain, controller, node.origin
         )
         actor = await admit_messaging_actor(
             env,
@@ -5159,7 +5159,7 @@ async def test_send_message_rejects_unsigned_stable_id_address_binding_when_awid
         team_controller_signing_key=env.team_sk,
         certificate_id=certificate["certificate_id"],
     )
-    await registry.delete_address("otherco.com", "bob", bytes(controller))
+    await registry.delete_address("otherco.com", "bob", controller)
     assert addressed.stable_id == bob.stable_id
     payload = {
         "to_address": "otherco.com/bob",
@@ -6782,7 +6782,7 @@ async def test_receive_federated_mail_rejects_target_binding_mismatch(route_pair
     other_key, _, other_did = _make_keypair()
     other_identity = await registry.register_did(other_did, other_key)
     await registry.reassign_address(
-        domain, alias, other_identity.did_aw, bytes(controller)
+        domain, alias, other_identity.did_aw, controller
     )
     payload = _federated_mail_payload(
         sender_sk=alice_sk,
@@ -9173,7 +9173,7 @@ async def test_send_message_to_address_does_not_fall_back_to_local_persistent_ag
         team_controller_signing_key=env.team_sk,
         certificate_id=certificate["certificate_id"],
     )
-    await registry.delete_address("otherco.com", "bob", bytes(controller))
+    await registry.delete_address("otherco.com", "bob", controller)
     payload = {"to_address": "otherco.com/bob", "subject": "hidden", "body": "hi"}
     with record_registry_requests(env) as reads:
         resp = await env.client.post(
@@ -9270,7 +9270,7 @@ async def test_send_message_to_address_rejects_cross_team_local_persistent_when_
         team_controller_signing_key=env.team_sk,
         certificate_id=certificate["certificate_id"],
     )
-    await registry.delete_address("otherco.com", "bob", bytes(controller))
+    await registry.delete_address("otherco.com", "bob", controller)
     payload = {"to_address": "otherco.com/bob", "subject": "hidden", "body": "hi"}
     with record_registry_requests(env) as reads:
         resp = await env.client.post(
@@ -9481,7 +9481,7 @@ async def test_send_message_to_private_address_rejects_unverified_client_recipie
         team_controller_signing_key=env.team_sk,
         certificate_id=certificate["certificate_id"],
     )
-    await registry.delete_address("otherco.com", "bob", bytes(controller))
+    await registry.delete_address("otherco.com", "bob", controller)
     payload = {
         "to_address": "otherco.com/bob",
         "subject": "private spoof",

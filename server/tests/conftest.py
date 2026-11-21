@@ -27,9 +27,12 @@ from pgdbm import AsyncDatabaseManager, AsyncMigrationManager, DatabaseConfig  #
 
 from awid.db_config import build_database_config  # noqa: E402
 from aweb_naapp.hooks.owner_act_nonces import apply_owner_act_migrations  # noqa: E402
-from chat_coverage_support import chat_coverage_upgrade as chat_coverage_upgrade  # noqa: E402
 
-pytest_plugins = ("pgdbm.fixtures.conftest", "tests.real_stack")
+pytest_plugins = (
+    "pgdbm.fixtures.conftest",
+    "tests.real_stack",
+    "tests.chat_coverage_support",
+)
 
 
 @pytest.fixture(scope="session")

@@ -38,7 +38,7 @@ from aweb.mutation_hooks import create_mutation_handler
 from aweb.internal_auth import build_internal_auth_header_value
 from aweb.routes.status import status_stream
 from aweb.team_auth_deps import TeamIdentity
-from awid.did import did_from_public_key
+from awid.did import did_key_from_signing_key
 from awid.ratelimit import MemoryFixedWindowRateLimiter
 from awid.registry import RegistryClient
 from awid_service.db import AwidDatabaseInfra
@@ -148,7 +148,7 @@ async def privacy_stack(shared_test_pool, monkeypatch, tls=None, *, database=Non
                 display_name=TEAM_NAME,
                 team_did_key=team_did,
                 visibility="public",
-                namespace_controller_signing_key=bytes(namespace_key),
+                namespace_controller_signing_key=namespace_key,
             )
             actors = {}
             for alias in ("alice", "bob", "carol"):
@@ -231,8 +231,8 @@ async def privacy_stack(shared_test_pool, monkeypatch, tls=None, *, database=Non
                         dispatched=dispatched,
                         app=app,
                         infra=db,
-                        namespace_sk=bytes(namespace_key),
-                        namespace_did=did_from_public_key(bytes(namespace_key.verify_key)),
+                        namespace_sk=namespace_key,
+                        namespace_did=did_key_from_signing_key(namespace_key),
                         team_sk=team_sk,
                         team_did=team_did,
                     )

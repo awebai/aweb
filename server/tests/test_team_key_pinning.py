@@ -35,7 +35,7 @@ def _controller_headers(sk, did, payload):
 async def register_namespace_controller(env, did: str) -> None:
     """Reuse the independent namespace controller retained by the producer."""
     controller = await env.registry.ensure_namespace(domain="example.test")
-    assert bytes(controller) == env.namespace_sk
+    assert controller == env.namespace_sk
     assert did == env.namespace_did
 
 

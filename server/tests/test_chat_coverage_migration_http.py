@@ -6,7 +6,7 @@ from uuid import uuid4
 
 import pytest
 
-from chat_coverage_support import COVERAGE_MIGRATION
+from tests.chat_coverage_support import COVERAGE_MIGRATION
 from test_dashboard_privacy import (
     TEAM,
     _request,

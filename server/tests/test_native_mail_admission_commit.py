@@ -19,7 +19,7 @@ from test_messages_http import _signed_team_headers
 from test_delivery_contract_regressions import _send
 
 
-async def prepare_test_policy_members(env):
+async def connect_policy_members(env):
     """Establish the positive current-admission premise through the real endpoint."""
     for alias in ("alice", "bob"):
         actor = env.actors[alias]
@@ -44,6 +44,9 @@ async def prepare_test_policy_members(env):
             == env.team_did
         )
 
+
+async def prepare_test_policy_members(env):
+    await connect_policy_members(env)
     bob = await admit_messaging_actor(
         env, alias="bob", team_id=TEAM, signing_key=env.actors["bob"].sk
     )
