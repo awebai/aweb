@@ -185,7 +185,7 @@ var mailSendCmd = &cobra.Command{
 		}
 		switch targetKind {
 		case "conversation":
-			c, sel, err = resolveMailSenderClientSelection()
+			c, sel, err = resolveMailContinuationClientSelection()
 			if err != nil {
 				return err
 			}
@@ -352,7 +352,7 @@ var mailReplyCmd = &cobra.Command{
 		var c *aweb.Client
 		var sel *awconfig.Selection
 		awid.RecordHTTPDiagnosticPhase("client_selection_started")
-		c, sel, err = resolveMailSenderClientSelection()
+		c, sel, err = resolveMailContinuationClientSelection()
 		if err != nil {
 			return err
 		}

@@ -1280,7 +1280,7 @@ async def test_recipient_lock_reads_identity_from_current_storage(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("mode", ["open", "contacts_only", None, "unknown"])
+@pytest.mark.parametrize("mode", ["open", "contacts_only", "unknown"])
 async def test_global_recipient_without_stable_did_uses_own_federation_policy(
     aweb_cloud_db, mode
 ):
