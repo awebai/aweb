@@ -41,6 +41,7 @@ REAL_RECIPES = frozenset(
         "_candidate-node-deps",
         "build",
         "_candidate-unit-suites",
+        "test-server",
         "_candidate-artifact-server",
         "freshness",
         "e2e-naapp",
@@ -80,14 +81,24 @@ class CompleteGateVerdictTests(unittest.TestCase):
                 CANDIDATE_LOG_DIR=str(root),
                 BUILDX_BUILDER="fixture-only",
             )
+            if "host-published-port" in failures:
+                env["CANDIDATE_HOST_PORT_STATUS"] = "7"
+            else:
+                env.pop("CANDIDATE_HOST_PORT_STATUS", None)
             result = run(ROOT, "bash", "scripts/candidate-suite.sh", selection, env=env)
             summary = root / "summary.tsv"
-            rows = dict(line.split("\t")[:2] for line in summary.read_text().splitlines()) if summary.exists() else {}
+            rows = {}
+            if summary.exists():
+                rows = dict(
+                    line.split("\t")[:2] for line in summary.read_text().splitlines()
+                )
             return result, rows
 
     def test_every_stage_and_independent_target_reports_after_failures(self):
-        result, rows = self.suite(STAGES, "check-python-static", "e2e-user-paths",
-                                  "test-python-locks", "build", "_candidate-artifact-server")
+        result, rows = self.suite(
+            STAGES, "check-python-static", "e2e-user-paths",
+            "test-python-locks", "build", "_candidate-artifact-server",
+        )
         self.assertNotEqual(result.returncode, 0)
         for stage in STAGES.split():
             self.assertEqual(rows.get(stage), "FAILED", result.stdout)
@@ -100,6 +111,14 @@ class CompleteGateVerdictTests(unittest.TestCase):
         self.assertEqual(rows["integration/test-oci-exact-publish"], "PASSED")
         self.assertIn("e2e-naapp SKIPPED", result.stdout)
         self.assertIn("build FAILED", result.stdout)
+
+    def test_host_probe_failure_is_reported_inside_checks(self):
+        result, rows = self.suite("checks user-paths", "host-published-port")
+        self.assertEqual(result.returncode, 7)
+        self.assertEqual(rows["checks/host-published-port"], "FAILED")
+        self.assertEqual(rows["checks/test-release-cli-version"], "PASSED")
+        self.assertEqual(rows["checks"], "FAILED")
+        self.assertEqual(rows["user-paths"], "PASSED")
 
     def test_isolated_unit_keeps_every_leaf_after_server_failure(self):
         result, rows = self.suite("--isolated-suites", "test-server", "test-cli")
@@ -134,6 +153,11 @@ def checked(root: Path, *args: str):
     return result.stdout.strip()
 
 
+def stage_rows(rows: list[str]) -> list[list[str]]:
+    fields = [row.split("\t") for row in rows]
+    return [row for row in fields if "/" not in row[1]]
+
+
 def verify_same_tree_commit_cache(
     *,
     repo: Path,
@@ -162,7 +186,7 @@ def verify_same_tree_commit_cache(
     assert current_main == checked(repo, "git", "rev-parse", "HEAD")
     rows = ledger.read_text().splitlines()
     assert rows[: len(previous_rows)] == previous_rows
-    fresh = [row.split("\t") for row in rows[len(previous_rows) :]]
+    fresh = stage_rows(rows[len(previous_rows) :])
     assert len(fresh) == len(STAGES.split())
     assert {row[1] for row in fresh} == set(STAGES.split())
     assert all(row[2] == "passed" for row in fresh)
@@ -232,6 +256,10 @@ build:
 \t@echo cli >> "$$CANDIDATE_LOG_DIR/setup.log"
 _candidate-unit-suites:
 \t@test "$$(psql -h "$$TEST_DB_HOST" -U postgres -d postgres -Atc 'SELECT 6 * 7')" = 42
+\t@mkdir -p "$$CANDIDATE_LOG_DIR/test-egress"
+\t@CANDIDATE_LOG_DIR="$$CANDIDATE_LOG_DIR/test-egress" bash scripts/candidate-suite.sh --isolated-suites > "$$CANDIDATE_LOG_DIR/test-egress/suite.log" 2>&1
+test-server:
+\t@true
 _candidate-artifact-server:
 \t@docker build -f candidate-gate/proof.Dockerfile -t "$$AWEB_CANDIDATE_RESOURCE_LABEL-proof" candidate-gate
 \t@docker run --rm "$$AWEB_CANDIDATE_RESOURCE_LABEL-proof" sh -c 'test "$$(echo 42)" = 42'
@@ -299,16 +327,19 @@ candidate-gate:
         del env["LIBRARY_E2E_LIBRARY_CONTEXT"]
         invoke("first-checks", *gate, stages="checks")
         rows = ledger.read_text().splitlines()
-        assert len(rows) == 1 and rows[0].split("\t")[1:3] == ["checks", "passed"]
+        assert [row[1:3] for row in stage_rows(rows)] == [["checks", "passed"]]
         # Exercise the real gate allocation/runner environment and Library's
         # actual Compose Postgres service while its old host port is occupied.
         with held_library_default():
             invoke("missing-only", "make", "candidate-gate")
         rows = ledger.read_text().splitlines()
-        assert len(rows) == len(STAGES.split()) and {
-            row.split("\t")[1] for row in rows
-        } == set(STAGES.split())
-        assert all(row.split("\t")[2] == "passed" for row in rows)
+        assert {row[1] for row in stage_rows(rows)} == set(STAGES.split())
+        assert all(row[2] == "passed" for row in stage_rows(rows))
+        unit_target = [row.split("\t") for row in rows if "\tunit/test-server\t" in row]
+        if len(unit_target) != 1 or unit_target[0][2] != "passed":
+            raise AssertionError(f"missing passed isolated test-server row: {unit_target}")
+        if "candidate: test-server PASSED" not in Path(unit_target[0][5]).read_text():
+            raise AssertionError(f"isolated test-server log missing evidence: {unit_target}")
         assert "no stages run" in invoke("same-tree-direct", *gate)
         rows = verify_same_tree_commit_cache(
             repo=repo,
@@ -354,21 +385,50 @@ candidate-gate:
         invoke("version-input", *gate, stages="checks")
         version_rows = ledger.read_text().splitlines()
         assert (
-            len(version_rows) == len(rows) + 1
+            len(stage_rows(version_rows)) == len(stage_rows(rows)) + 1
             and version_rows[-1].split("\t")[0] != rows[-1].split("\t")[0]
         )
         env["CLI_VERSION"] = "1.2.3"
         (repo / "Makefile").write_text(recipes.replace("6 * 7 == 42", "7 * 6 == 42"))
         checked(repo, "git", "commit", "-qam", "changed tree")
         invoke("changed-tree", *gate, stages="checks")
-        assert len(ledger.read_text().splitlines()) == len(version_rows) + 1
-        (repo / "Makefile").write_text(recipes.replace("6 * 7 == 42", "6 * 7 == 43"))
-        checked(repo, "git", "commit", "-qam", "real failing stage")
-        invoke("failed-tree", *gate, stages="checks", success=False)
+        changed_rows = ledger.read_text().splitlines()
+        assert len(stage_rows(changed_rows)) == len(stage_rows(version_rows)) + 1
+        failing_recipes = recipes.replace("6 * 7 == 42", "6 * 7 == 43")
+        failing_recipes = failing_recipes.replace(
+            'echo cli >> "$$CANDIDATE_LOG_DIR/setup.log"',
+            'echo cli >> "$$CANDIDATE_LOG_DIR/setup.log"; exit 23',
+        )
+        failing_recipes = failing_recipes.replace("test-server:\n\t@true", "test-server:\n\t@exit 23")
+        (repo / "Makefile").write_text(failing_recipes)
+        checked(repo, "git", "commit", "-qam", "independent failures in one invocation")
+        invoke("failed-tree", *gate, stages=STAGES, success=False)
         before = ledger.read_text()
-        assert before.splitlines()[-1].split("\t")[1:3] == ["checks", "failed"]
+        failed_rows = [row.split("\t") for row in before.splitlines()[len(changed_rows) :]]
+        verdicts = {row[1]: row[2] for row in failed_rows}
+        for entry, verdict in {
+            "checks": "failed",
+            "checks/test-shipping": "failed",
+            "checks/test-release-cli-version": "passed",
+            "user-paths": "passed",
+            "unit": "failed",
+            "unit/test-server": "failed",
+            "unit/_candidate-unit-pi": "passed",
+            "artifacts": "failed",
+            "artifacts/build": "failed",
+            "artifacts/_candidate-artifact-server": "passed",
+            "integration": "failed",
+            "integration/e2e-naapp": "skipped",
+            "integration/cli-e2e": "passed",
+            "integration/test-oci-exact-publish": "passed",
+        }.items():
+            if verdicts.get(entry) != verdict:
+                raise AssertionError(f"{entry} expected {verdict}: {verdicts}")
+        skipped = next(row for row in failed_rows if row[1] == "integration/e2e-naapp")
+        if "build FAILED" not in skipped[9]:
+            raise AssertionError(f"skip has no build failure detail: {skipped}")
         refused = invoke("refused-tree", *gate, stages="integration", success=False)
-        assert "already FAILED checks" in refused and "GATE_RERUN_REASON" in refused
+        assert "already FAILED integration" in refused and "GATE_RERUN_REASON" in refused
         assert ledger.read_text() == before
         # Every executed gate has real cleanup evidence; successful stage rows
         # retain their own logs after later invocations reuse/replace run roots.
@@ -391,4 +451,9 @@ candidate-gate:
 
 
 if __name__ == "__main__":
+    result = unittest.TextTestRunner(verbosity=2).run(
+        unittest.defaultTestLoader.loadTestsFromTestCase(CompleteGateVerdictTests)
+    )
+    if not result.wasSuccessful():
+        raise SystemExit(1)
     main()
