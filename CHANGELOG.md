@@ -63,6 +63,8 @@
   chats by filtering on a departed participant's DID or address.
 - Wake file mutations require proof that the daemon lock is free. A failed
   exchange with a live control socket no longer falls back to changing files.
+- `aw wake` warns about shared permissions on a state directory the current
+  user owns. It refuses a state directory owned by another user.
 - Custody checks private permissions for configured and default socket paths,
   requires the pinned signing key in a credential capture, and allows an exact
   retry after a failed signing attempt without weakening successful replay checks.

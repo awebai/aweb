@@ -151,12 +151,13 @@ Long control socket paths use a stable hash of the canonical socket path in
 an owner-only per-user runtime directory, shared with custody:
 `/private/tmp/aw-custody-<uid>` on macOS and `/tmp/aw-custody-<uid>` on other
 Unix systems. The shortened directory must be owner-only and cannot itself be
-a symlink. Ordinary wake paths allow symlinked ancestors, including HOME or
-`~/.config`, and accept an existing state directory that the current user owns
-and other users cannot write. For either locator, the socket must be an actual
-owner-only Unix socket. A refused path reports a wake control error before
-listen or dial. The broker creates the socket with mode 0600. `--state-dir` and
-`AW_WAKE_STATE_DIR` select durable state and the input to the socket locator.
+a symlink. Wake state paths allow symlinked ancestors, including HOME or
+`~/.config`. The current user must own the state directory. Existing shared
+permissions warn with repair advice and remain usable. For either locator, the
+socket must be an actual owner-only Unix socket. A refused path reports a wake
+control error before listen or dial. The broker creates the socket with mode
+0600. `--state-dir` and `AW_WAKE_STATE_DIR` select durable state and the input to
+the socket locator.
 
 `aw wake run` binds its control socket before reporting “listening”. A bind or
 permission failure exits immediately with an error and releases the daemon
