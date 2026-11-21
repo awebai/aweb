@@ -77,6 +77,7 @@ class Report:
     excluded: list[dict[str, object]]
     unresolved_calls: list[dict[str, object]]
     nonliteral_by_file: dict[str, int]
+    markers_by_file: dict[str, int]
     schema_version: int = 1
     scope: str = "Python test/helper ASTs; execute/fetch literal SQL INSERT/UPDATE/DELETE statement sites"
 
@@ -283,7 +284,7 @@ def literal(
 
 def scan_file(
     root: Path, path: Path, tables: dict[str, set[str]]
-) -> tuple[list[Write], list[dict[str, object]], list[dict[str, object]]]:
+) -> tuple[list[Write], list[dict[str, object]], list[dict[str, object]], int]:
     source = (root / path).read_text()
     tree = ast.parse(source, filename=path.as_posix())
     parents = {
@@ -382,6 +383,10 @@ def scan_file(
                 raise ScanError(
                     f"{path}:{line}: one marker covers multiple write calls; put each call and its specific marker on a separate statement"
                 )
+            if sum(name in tables for _, _, name in targets) > 1:
+                raise ScanError(
+                    f"{path}:{line}: one marker covers multiple product writes; use a separate marked call for each write"
+                )
             marked_statements.add(line)
         for operation, qualified, name in targets:
             if name == "{dynamic}":
@@ -414,7 +419,12 @@ def scan_file(
                     reason,
                 )
             )
-    return writes, excluded, unresolved
+    return (
+        writes,
+        excluded,
+        unresolved,
+        sum(c.startswith(MARKER) for c in comments.values()),
+    )
 
 
 def scan(root: Path) -> Report:
@@ -432,8 +442,11 @@ def scan(root: Path) -> Report:
     excluded: list[dict[str, object]] = []
     unresolved: list[dict[str, object]] = []
     files = [path for path in paths if test_file(path)]
+    markers_by_file: dict[str, int] = {}
     for path in files:
-        found, other, dynamic = scan_file(root, path, tables)
+        found, other, dynamic, marker_count = scan_file(root, path, tables)
+        if marker_count:
+            markers_by_file[path.as_posix()] = marker_count
         writes.extend(found)
         excluded.extend(other)
         unresolved.extend(dynamic)
@@ -467,6 +480,7 @@ def scan(root: Path) -> Report:
         nonliteral_by_file=dict(
             sorted(Counter(str(row["file"]) for row in unresolved).items())
         ),
+        markers_by_file=markers_by_file,
     )
 
 
@@ -527,6 +541,14 @@ def violations(root: Path, report: Report) -> list[str]:
         else None
     )
     errors: list[str] = []
+    reviewed_marked = reviewed["marked_files"] if reviewed is not None else {}
+    for file, count in sorted(candidate["marked_files"].items()):
+        previous = reviewed_marked.get(file, 0)
+        markers = report.markers_by_file.get(file, 0)
+        if count > previous and count != markers:
+            errors.append(
+                f"{file}: marked writes ceiling {count} must match {markers} unreachable-state markers for a raise above reviewed {previous}"
+            )
     actual_writes = Counter(w.file for w in report.writes if w.reason is None)
     actual_marked = Counter(w.file for w in report.writes if w.reason is not None)
     groups: tuple[
@@ -541,8 +563,8 @@ def violations(root: Path, report: Report) -> list[str]:
     )
     for key, label, actual in groups:
         limits = candidate[key]
-        if reviewed is not None or key == "marked_files":
-            reviewed_limits = reviewed[key] if reviewed is not None else {}
+        if reviewed is not None and key != "marked_files":
+            reviewed_limits = reviewed[key]
             errors.extend(
                 f"{file}: {label} ceiling {count} > reviewed {reviewed_limits.get(file, 0)}"
                 for file, count in limits.items()
@@ -613,7 +635,7 @@ def main() -> int:
                 print(error)
             if errors:
                 print(
-                    "Build test state through the product/shared builders; document specific unreachable states without raising reviewed allowances, and lower cleared ceilings."
+                    "Build test state through the product/shared builders. For unreachable states, declare the exact marked count and put one specific marker above each write. Lower cleared ceilings."
                 )
         return int(bool(errors))
     except (

@@ -518,35 +518,65 @@ async def f(db, schema):
         file = "server/tests/test_world.py"
         marked = '    # unreachable-state: interrupted migration left a historical orphan\n    await db.execute("DELETE FROM agents")\n'
         unmarked = '    await db.execute("DELETE FROM teams")\n'
-        nonliteral = '    await db.execute(statement)\n'
-        base = {"schema_version": 1, "marked_files": {file: 1}, "files": {}, "nonliteral_files": {}}
+        nonliteral = "    await db.execute(statement)\n"
+        base = {
+            "schema_version": 1,
+            "marked_files": {file: 1},
+            "files": {},
+            "nonliteral_files": {},
+        }
         cases = (
             (marked, {}, 0, ""),
             (unmarked, {}, 1, "must match 0 unreachable-state markers"),
-            (marked + "    # unreachable-state: unused\n    pass\n", {}, 1,
-             "must match 2 unreachable-state markers"),
-            (marked + unmarked, {"files": {file: 1}}, 1, "unmarked writes ceiling 1 > reviewed 0"),
-            (marked + nonliteral, {"nonliteral_files": {file: 1}}, 1,
-             "nonliteral calls ceiling 1 > reviewed 0"),
+            (
+                marked + "    # unreachable-state: unused\n    pass\n",
+                {},
+                1,
+                "must match 2 unreachable-state markers",
+            ),
+            (
+                marked + unmarked,
+                {"files": {file: 1}},
+                1,
+                "unmarked writes ceiling 1 > reviewed 0",
+            ),
+            (
+                marked + nonliteral,
+                {"nonliteral_files": {file: 1}},
+                1,
+                "nonliteral calls ceiling 1 > reviewed 0",
+            ),
         )
         for source, limits, status, reason in cases:
             with self.subTest(source=source):
                 self.write(file, "async def f(db, statement):\n" + source)
-                self.write("tools/product-table-write-ceilings.json", json.dumps(base | limits))
+                self.write(
+                    "tools/product-table-write-ceilings.json", json.dumps(base | limits)
+                )
                 result = self.run_check()
-                self.assertEqual(result.returncode, status, result.stdout + result.stderr)
+                self.assertEqual(
+                    result.returncode, status, result.stdout + result.stderr
+                )
                 self.assertIn(reason, result.stdout)
 
     def test_one_marker_cannot_admit_multiple_product_writes_in_one_sql_call(self):
         file = "server/tests/test_world.py"
         self.write(
             file,
-            'async def f(db):\n    # unreachable-state: corrupt historical membership\n'
+            "async def f(db):\n    # unreachable-state: corrupt historical membership\n"
             '    await db.execute("DELETE FROM agents; DELETE FROM teams")\n',
         )
-        self.write("tools/product-table-write-ceilings.json", json.dumps({
-            "schema_version": 1, "files": {}, "nonliteral_files": {}, "marked_files": {file: 2},
-        }))
+        self.write(
+            "tools/product-table-write-ceilings.json",
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "files": {},
+                    "nonliteral_files": {},
+                    "marked_files": {file: 2},
+                }
+            ),
+        )
         result = self.run_check()
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         self.assertIn("one marker covers multiple product writes", result.stderr)
