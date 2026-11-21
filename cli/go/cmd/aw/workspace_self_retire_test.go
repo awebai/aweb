@@ -657,6 +657,44 @@ func TestAwWorkspaceDeleteJSONCarriesCertificateRevokedForARevokedCaller(t *test
 	}
 }
 
+func TestAwWorkspaceDeleteReportsAnAcceptedHostedRemovalAsACodedRefusal(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		status  string
+		message string
+	}{
+		{"pending", "Self-removal was accepted and is being completed. No further action is required."},
+		{"complete", "Self-removal is complete. No further action is required."},
+	} {
+		t.Run(tc.status, func(t *testing.T) {
+			var sawSelfRemove atomic.Bool
+			server := newLocalHTTPServer(t, selfRetireCertServerHandler(t, "worker", &sawSelfRemove, func(w http.ResponseWriter) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"detail": map[string]any{
+						"code": "self_removal_accepted", "removal_status": tc.status, "message": tc.message,
+					},
+				})
+			}))
+
+			envelope, out, err := runSelfRetireDeleteJSONForTest(t, server.URL, "worker", "")
+			if err == nil || !sawSelfRemove.Load() {
+				t.Fatalf("expected a refusal from the self-remove route, got %v:\n%s", err, out)
+			}
+			refusal := envelope.Error
+			if refusal.Code != "self_removal_accepted" || refusal.Reason != "self_removal_accepted" ||
+				refusal.HTTPStatus != http.StatusUnauthorized || refusal.Message != tc.message || refusal.Detail != tc.message {
+				t.Fatalf("unexpected refusal: %+v\n%s", refusal, out)
+			}
+			if !strings.Contains(out, "\n"+tc.message+"\n") || strings.Contains(out, "alias_released") {
+				t.Fatalf("expected the service's sentence and no deletion result:\n%s", out)
+			}
+		})
+	}
+}
+
 func TestAwWorkspaceDeleteJSONCarriesCertificateRevokedOnTheWorkspaceKeyPath(t *testing.T) {
 	t.Parallel()
 

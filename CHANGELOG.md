@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- When a hosted service adopts owner-completed self-removal, an exact retry
+  after certificate revocation receives HTTP 401 `self_removal_accepted` if
+  the service retained the original accepted request. Previously the retry
+  could finish the removal and report a successful workspace deletion.
+  Released `aw` now receives the service's pending or complete message,
+  which says no further action is required. It exits nonzero and carries the
+  code in `--json` as `error.reason`. This release also reports it as
+  `error.code` and prints the service's sentence on its own.
+
 - Provisioning and creator self-enrollment connect before publishing the member's E2E assertion. A failed connect or unconfirmed publication retains the identity and reports the exact recovery command instead of creation success.
 - On unverified A2A routes, a plain question shared by several live tasks is
   refused with task-specific reply forms. Questions use artifact name `question`;
