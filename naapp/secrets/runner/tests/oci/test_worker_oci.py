@@ -8,6 +8,7 @@ import signal
 import subprocess
 import sys
 import unittest
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -199,15 +200,25 @@ def command(service, path):
     ]
 
 
+@contextmanager
+def worker_process(args):
+    with subprocess.Popen(
+        args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    ) as process:
+        try:
+            yield process
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate(timeout=5)
+
+
 def test_real_run_command_executes_oci_then_restarts_without_rerunning(service, tmp_path, native):
     _, _, journal, _, state, _, _, path = configured(service, tmp_path, native)
     args = command(service, path)
     for _attempt in range(2):
         state["idle"].clear()
-        process = subprocess.Popen(
-            args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-        )
-        try:
+        with worker_process(args) as process:
             assert state["idle"].wait(5)
             process.send_signal(signal.SIGTERM)
             stdout, stderr = process.communicate(timeout=5)
@@ -215,10 +226,6 @@ def test_real_run_command_executes_oci_then_restarts_without_rerunning(service, 
             assert len(state["reports"]) == 1
             assert journal.pending_results() == ()
             assert list(native.workspace.iterdir()) == []
-        finally:
-            if process.poll() is None:
-                process.kill()
-                process.communicate(timeout=5)
 
 
 @pytest.mark.parametrize("hard", [False, True])
@@ -229,21 +236,19 @@ def test_real_worker_death_stops_oci_and_restart_refuses_accepted_replay(
         service, tmp_path, native, script="/bin/busybox sleep 30 & wait", timeout=2 if hard else 30
     )
     args = command(service, path)
-    process = subprocess.Popen(
-        args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-    )
     pids = []
     try:
-        assert state["started"].wait(5)
+        with worker_process(args) as process:
+            assert state["started"].wait(5)
 
-        async def observe():
-            await native.observe_container(asyncio.Event(), pids)
+            async def observe():
+                await native.observe_container(asyncio.Event(), pids)
 
-        asyncio.run(observe())
-        process.send_signal(signal.SIGKILL if hard else signal.SIGTERM)
-        stdout, stderr = process.communicate(timeout=5)
-        assert process.returncode == (-signal.SIGKILL if hard else 143)
-        assert stdout == stderr == b""
+            asyncio.run(observe())
+            process.send_signal(signal.SIGKILL if hard else signal.SIGTERM)
+            stdout, stderr = process.communicate(timeout=5)
+            assert process.returncode == (-signal.SIGKILL if hard else 143)
+            assert stdout == stderr == b""
         asyncio.run(native.assert_reaped(pids))
         assert state["reports"] == [] and journal.pending_results() == ()
         restarted = subprocess.run(args, stdin=subprocess.DEVNULL, capture_output=True, timeout=5)
@@ -251,9 +256,6 @@ def test_real_worker_death_stops_oci_and_restart_refuses_accepted_replay(
         assert restarted.stdout == b""
         assert list(native.workspace.iterdir()) == []
     finally:
-        if process.poll() is None:
-            process.kill()
-            process.communicate(timeout=5)
         from aweb_secrets_runner.oci_recovery import recover
 
         asyncio.run(recover(native.runtime))
