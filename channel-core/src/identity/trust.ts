@@ -1,6 +1,6 @@
+import { verifyBytes } from "./signature_wire.js";
+import { isTrustedVerificationStatus } from "./signing.js";
 import { readReceivedIdChain, type ReceivedIdChain } from "./received_id_chain.js";
-import * as ed from "@noble/ed25519";
-import { sha512 } from "@noble/hashes/sha2.js";
 import type { APIClient } from "../api/client.js";
 import type { VerificationStatus } from "./signing.js";
 import { extractPublicKey } from "./did.js";
@@ -12,9 +12,7 @@ import {
 } from "./registry.js";
 import { PinStore, type IdentityScope } from "./pinstore.js";
 import { decodeRawStdBase64 } from "./base64.js";
-import { compareByCodePoint } from "./canonical.js";
-
-ed.etc.sha512Sync = (...m) => sha512(ed.etc.concatBytes(...m));
+import { canonicalStringObject } from "./canonical.js";
 
 const ANNOUNCEMENT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const AGENT_META_CACHE_TTL_MS = 60 * 60 * 1000;
@@ -208,15 +206,13 @@ export class SenderTrustManager {
     if (
       context
       && !context.fromDID
-      && (status === "verified" || status === "verified_legacy" || status === "verified_custodial")
+      && isTrustedVerificationStatus(status)
     ) {
       return undefined;
     }
     const rosterAlias = this.teamRosterAliasReference(trimmedAddress);
     if (
-      status !== "verified"
-      && status !== "verified_legacy"
-      && status !== "verified_custodial"
+      !isTrustedVerificationStatus(status)
       && rosterAlias !== undefined
       && !fromStableID
     ) {
@@ -234,7 +230,7 @@ export class SenderTrustManager {
     if (
       usedCachedMetadata
       && rosterAlias !== undefined
-      && (status === "verified" || status === "verified_legacy" || status === "verified_custodial")
+      && isTrustedVerificationStatus(status)
       && context?.fromDID
       && !fromStableID?.startsWith("did:aw:")
       && (localKeyMismatch || cachedAbsence)
@@ -376,9 +372,7 @@ export class SenderTrustManager {
     resolved: ResolvedTrustMetadata | undefined,
   ): TrustResult {
     let status = this.checkRecipientBinding(verificationStatus, toDID, toStableID);
-    const acceptedInput = verificationStatus === "verified"
-      || verificationStatus === "verified_legacy"
-      || verificationStatus === "verified_custodial";
+    const acceptedInput = isTrustedVerificationStatus(verificationStatus);
     const recipientBindingMismatch = acceptedInput && status === "identity_mismatch";
     if (resolved?.receivedLocalSender) {
       const local = resolved.receivedLocalSender;
@@ -408,7 +402,7 @@ export class SenderTrustManager {
     }
     if (!status || !rawAddress.trim()) return { status, stored: false };
 
-    const acceptedSignature = status === "verified" || status === "verified_legacy" || status === "verified_custodial";
+    const acceptedSignature = isTrustedVerificationStatus(status);
     if (!acceptedSignature || recipientBindingMismatch || !fromDID) return { status, stored: false };
 
     const trustAddress = this.canonicalTrustAddress(rawAddress);
@@ -492,7 +486,7 @@ export class SenderTrustManager {
       || (addressNamespace && !referenceMatches(selected)));
     if (!crossTeam) return;
     const result = { did: context.fromDID || "", status: status || "unverified" };
-    if (!["verified", "verified_legacy", "verified_custodial"].includes(result.status)) return result;
+    if (!isTrustedVerificationStatus(result.status)) return result;
     result.status = "verification_stale";
     if (!member) return result;
     if (member.member_did_aw || member.state === "inactive"
@@ -512,7 +506,7 @@ export class SenderTrustManager {
     status: VerificationStatus | undefined, stableID: string, context: ResolveTrustContext,
   ): Promise<ReceivedSenderCheck> {
     const check: ReceivedSenderCheck = { fromDID: context.fromDID || "", stableID, status: status || "unverified" };
-    if (!["verified", "verified_legacy", "verified_custodial"].includes(check.status) || !context.fromDID) return check;
+    if (!isTrustedVerificationStatus(check.status) || !context.fromDID) return check;
     const membership = context.senderMembership;
     check.status = "verification_stale";
     if (!membership || membership.state === "unknown") return check;
@@ -542,7 +536,7 @@ export class SenderTrustManager {
     toDID: string | undefined,
     toStableID: string | undefined,
   ): VerificationStatus | undefined {
-    if (status !== "verified" && status !== "verified_legacy" && status !== "verified_custodial") {
+    if (!isTrustedVerificationStatus(status)) {
       return status;
     }
     const selfStableID = this.selfStableID.trim();
@@ -887,11 +881,7 @@ export class SenderTrustManager {
 
     try {
       const oldPub = extractPublicKey(announcement.old_did);
-      return ed.verify(
-        b64Decode(announcement.old_key_signature),
-        new TextEncoder().encode(canonicalRotationJSON(announcement.old_did, announcement.new_did, announcement.timestamp)),
-        oldPub,
-      );
+      return verifyBytes({signature: b64Decode(announcement.old_key_signature), message: new TextEncoder().encode(canonicalRotationJSON(announcement.old_did, announcement.new_did, announcement.timestamp)), publicKey: oldPub});
     } catch {
       return false;
     }
@@ -925,9 +915,7 @@ export class SenderTrustManager {
 
     try {
       const controllerPub = extractPublicKey(announcement.controller_did);
-      return ed.verify(
-        b64Decode(announcement.controller_signature),
-        new TextEncoder().encode(
+      return verifyBytes({signature: b64Decode(announcement.controller_signature), message: new TextEncoder().encode(
           canonicalReplacementJSON(
             announcement.address,
             announcement.controller_did,
@@ -935,9 +923,7 @@ export class SenderTrustManager {
             announcement.new_did,
             announcement.timestamp,
           ),
-        ),
-        controllerPub,
-      );
+        ), publicKey: controllerPub});
     } catch {
       return false;
     }
@@ -1151,7 +1137,7 @@ function isTimestampFresh(value: string): boolean {
 }
 
 export function canonicalRotationJSON(oldDID: string, newDID: string, timestamp: string): string {
-  return canonicalObject([
+  return canonicalStringObject([
     ["new_did", newDID],
     ["old_did", oldDID],
     ["timestamp", timestamp],
@@ -1165,7 +1151,7 @@ export function canonicalReplacementJSON(
   newDID: string,
   timestamp: string,
 ): string {
-  return canonicalObject([
+  return canonicalStringObject([
     ["address", address],
     ["controller_did", controllerDID],
     ["new_did", newDID],
@@ -1174,51 +1160,9 @@ export function canonicalReplacementJSON(
   ]);
 }
 
-function canonicalObject(fields: Array<[string, string]>): string {
-  const sorted = [...fields].sort(([a], [b]) => compareByCodePoint(a, b));
-  return `{${sorted.map(([key, value]) => `"${key}":"${escapeJSON(value)}"`).join(",")}}`;
-}
-
 function b64Decode(value: string): Uint8Array {
   // Rotation and replacement announcements are remote signed data. Throw on
   // malformed raw base64 before ed.verify so rejection does not depend on how
   // the verifier treats an empty signature.
   return decodeRawStdBase64(value);
-}
-
-function escapeJSON(s: string): string {
-  let result = "";
-  for (const ch of s) {
-    const code = ch.codePointAt(0)!;
-    switch (ch) {
-      case "\"":
-        result += "\\\"";
-        break;
-      case "\\":
-        result += "\\\\";
-        break;
-      case "\n":
-        result += "\\n";
-        break;
-      case "\r":
-        result += "\\r";
-        break;
-      case "\t":
-        result += "\\t";
-        break;
-      case "\b":
-        result += "\\b";
-        break;
-      case "\f":
-        result += "\\f";
-        break;
-      default:
-        if (code < 0x20) {
-          result += `\\u${code.toString(16).padStart(4, "0")}`;
-        } else {
-          result += ch;
-        }
-    }
-  }
-  return result;
 }

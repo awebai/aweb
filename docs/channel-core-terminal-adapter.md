@@ -15,16 +15,18 @@ delivers for compatibility with backends that cannot identify an idle prompt;
 submission there remains no proof of consumption. There is no readiness queue,
 coalescing window, rate limit or readiness polling.
 
-The terminal adapter holds mail and chat unless sender trust is `verified` or
-`verified_custodial`. Decryption failures are held too. It submits a fixed notice
-with no sender-controlled content and a command to check mail/chat, selecting
+The terminal adapter holds mail and chat unless sender trust is `verified`,
+`verified_legacy` or `verified_custodial`. Decryption failures are held too.
+Failed and mismatched sender checks use the channel-core notice with a bounded
+claimed identifier and a command to inspect the durable message. Other held
+messages use a fixed notice and a command to check mail or chat. Both select
 the registered receiving identity when needed. Accepted notices are suppressed
 on retries by a bounded in-memory cache (1000 entries); restart or eviction can
 repeat a notice. Held messages remain unread and are not marked delivered.
 Mail notices also defer while known working. The notice otherwise still
 submits terminal input and Enter; prompt safety remains subject
 to the transport limitation below.
-Native channel adapters retain their own presentation policy.
+Native channel adapters use the same notice for failed and mismatched checks.
 
 The terminal adapter serializes input across delivery lanes. Each caller checks
 terminal safety before input: `shell` (including `generic shell`), `stopped`,

@@ -1,0 +1,116 @@
+{
+  "name": "signature-point-encoding-v2",
+  "evidence": "component-only",
+  "authority": "Antares 0a7453e1, relayed in 7be295e4-3463-473a-8dd5-f9eb522aa145",
+  "description": "Canonical compressed-coordinate representation only, for both A and R. Canonical identity/torsion coordinates are positive component controls, not admitted signature points. Curve membership, subgroup and signature equation are separate production checks. No case claims a full signature invalid solely because of point encoding. Frozen v1 signature and ID corpora remain unchanged.",
+  "cases": [
+    {
+      "name": "A-canonical-basepoint",
+      "role": "A",
+      "encoded_hex": "5866666666666666666666666666666666666666666666666666666666666666",
+      "canonical": true
+    },
+    {
+      "name": "R-canonical-basepoint",
+      "role": "R",
+      "encoded_hex": "5866666666666666666666666666666666666666666666666666666666666666",
+      "canonical": true
+    },
+    {
+      "name": "A-canonical-basepoint-opposite-sign",
+      "role": "A",
+      "encoded_hex": "58666666666666666666666666666666666666666666666666666666666666e6",
+      "canonical": true
+    },
+    {
+      "name": "R-canonical-basepoint-opposite-sign",
+      "role": "R",
+      "encoded_hex": "58666666666666666666666666666666666666666666666666666666666666e6",
+      "canonical": true
+    },
+    {
+      "name": "A-canonical-identity",
+      "role": "A",
+      "encoded_hex": "0100000000000000000000000000000000000000000000000000000000000000",
+      "canonical": true
+    },
+    {
+      "name": "R-canonical-identity",
+      "role": "R",
+      "encoded_hex": "0100000000000000000000000000000000000000000000000000000000000000",
+      "canonical": true
+    },
+    {
+      "name": "A-canonical-order-two",
+      "role": "A",
+      "encoded_hex": "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+      "canonical": true
+    },
+    {
+      "name": "R-canonical-order-two",
+      "role": "R",
+      "encoded_hex": "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+      "canonical": true
+    },
+    {
+      "name": "A-canonical-order-four",
+      "role": "A",
+      "encoded_hex": "0000000000000000000000000000000000000000000000000000000000000000",
+      "canonical": true
+    },
+    {
+      "name": "R-canonical-order-four",
+      "role": "R",
+      "encoded_hex": "0000000000000000000000000000000000000000000000000000000000000000",
+      "canonical": true
+    },
+    {
+      "name": "A-noncanonical-zero",
+      "role": "A",
+      "encoded_hex": "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+      "canonical": false
+    },
+    {
+      "name": "R-noncanonical-zero",
+      "role": "R",
+      "encoded_hex": "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+      "canonical": false
+    },
+    {
+      "name": "A-noncanonical-one",
+      "role": "A",
+      "encoded_hex": "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+      "canonical": false
+    },
+    {
+      "name": "R-noncanonical-one",
+      "role": "R",
+      "encoded_hex": "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+      "canonical": false
+    },
+    {
+      "name": "A-negative-zero-identity",
+      "role": "A",
+      "encoded_hex": "0100000000000000000000000000000000000000000000000000000000000080",
+      "canonical": false
+    },
+    {
+      "name": "R-negative-zero-identity",
+      "role": "R",
+      "encoded_hex": "0100000000000000000000000000000000000000000000000000000000000080",
+      "canonical": false
+    },
+    {
+      "name": "A-negative-zero-order-two",
+      "role": "A",
+      "encoded_hex": "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "canonical": false
+    },
+    {
+      "name": "R-negative-zero-order-two",
+      "role": "R",
+      "encoded_hex": "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "canonical": false
+    }
+  ]
+}
