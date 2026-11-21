@@ -219,18 +219,23 @@ def main():
         print(f'Test child exit status: {result.returncode}; evidence: {evidence}', flush=True)
         if result.returncode:
             print('\n'.join((evidence / 'suite.log').read_text().splitlines()[-100:]), flush=True)
-        if args.collect_summary:
-            docker('cp', f'{runner}:/tmp/summary.tsv', str(evidence / 'summary.tsv'))
         if docker('inspect', '--format', '{{.State.Running}}', dns) != 'true':
             raise RuntimeError('DNS sink exited during tests')
         report = evidence / 'dns-denied.log.reported'
         if report.exists():
             print('TEST DNS REFUSED (reserved/allowlisted, no upstream):\n' + report.read_text())
         denied = (evidence / 'dns-denied.log').read_text()
+        status = result.returncode
         if denied:
-            print('TEST DNS EGRESS DENIED:\n' + denied)
-            return 1
-        return result.returncode
+            print('TEST DNS EGRESS DENIED:\n' + denied, flush=True)
+            status = status or 1
+        if args.collect_summary:
+            try:
+                docker('cp', f'{runner}:/tmp/summary.tsv', str(evidence / 'summary.tsv'))
+            except (OSError, subprocess.CalledProcessError) as error:
+                print(f'TEST SUMMARY COPY FAILED: {error}', flush=True)
+                status = status or 1
+        return status
     finally:
         for container in reversed(containers):
             subprocess.run(['docker', 'rm', '-f', '-v', container], stdout=subprocess.DEVNULL, check=True)

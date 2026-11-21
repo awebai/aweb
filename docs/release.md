@@ -197,7 +197,7 @@ environment variable is set. Passes are reused across callers with equal inputs.
 A recorded failure blocks every stage for those inputs: fix the code and gate
 the changed tree. For infrastructure failures only, the coordinator removes the
 failed stage ledger lines and supplies `GATE_RERUN_REASON='<reason>'`; the next recorded
-result retains that reason. Cleanup failures also block reuse.
+result retains that reason. A refusal lists all failed stages and their retained logs. Cleanup failures also block reuse.
 
 `main` may move while the gate runs. The tested SHA and its local tags do not.
 
@@ -232,8 +232,11 @@ absence, and removes the temporary root and buildx configuration. It never
 prunes or restarts shared Docker. The suite's existing 10GB prune applies only
 to its own builder during the run; that builder is removed at the end.
 
-Evidence stays in `/tmp/aweb-candidate-gate-<SHA>-<run-id>/`: `owned-resources.tsv`, raw
-host snapshots, `host-before.json`, `host-after.json`, and
+Evidence stays in a directory created for the invocation under
+`/tmp/aweb-candidate-gate-<SHA>-<run-id>/` by default. A caller with its own
+scratch directory may set `AWEB_GATE_RUN_LOG_ROOT` to that existing absolute
+directory. Raw logs include `owned-resources.tsv`, host snapshots,
+`host-before.json`, `host-after.json`, and
 `host-recovery.json`. On macOS, cleanup passes only if Docker VM total `lsof`
 rows return to at most their baseline plus 5,000. The host-wide `kern.num_files`
 count and its delta are diagnostic evidence only: unrelated sessions on a shared
