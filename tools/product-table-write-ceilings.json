@@ -246,7 +246,7 @@
     "server/tests/test_identity_grants.py": 27,
     "server/tests/test_inbound_modes.py": 3,
     "server/tests/test_inbox_page_reads.py": 3,
-    "server/tests/test_install_authority.py": 2,
+    "server/tests/test_install_authority.py": 1,
     "server/tests/test_installation_http.py": 2,
     "server/tests/test_installation_identity.py": 12,
     "server/tests/test_installation_manifest_v3.py": 1,
