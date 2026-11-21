@@ -10,10 +10,11 @@ import subprocess
 from uuid import uuid4
 
 import pytest
+from awid.team_certificate import issue_team_certificate
 from test_cli_never_grants import registry_listener
 from test_dashboard_privacy import TEAM, TEAM_NAME
 from test_dashboard_privacy import privacy_app as privacy_app
-from test_messages_http import _encode_certificate, _make_certificate, _make_keypair
+from test_messages_http import _make_keypair
 
 
 @pytest.fixture(scope="session")
@@ -69,11 +70,10 @@ async def test_go_fetch_refuses_unrevoked_certificate_after_controller_rotation(
     member_sk, _, member_did = _make_keypair()
     certificate_id = "fetch-" + uuid4().hex
     alias = "fetch-" + uuid4().hex[:12]
-    certificate = _make_certificate(
-        env.team_sk,
-        env.team_did,
-        member_did,
+    _, certificate = issue_team_certificate(
         team_id=TEAM,
+        team_signing_key=env.team_sk,
+        member_did_key=member_did,
         alias=alias,
         identity_scope="local",
         certificate_id=certificate_id,
@@ -89,7 +89,7 @@ async def test_go_fetch_refuses_unrevoked_certificate_after_controller_rotation(
             member_address=None,
             alias=alias,
             identity_scope="local",
-            certificate=_encode_certificate(certificate),
+            certificate=certificate,
         )
         valid = await _fetch(
             current_certificate_fetch_probe,
