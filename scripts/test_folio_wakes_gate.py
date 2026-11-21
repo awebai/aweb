@@ -27,7 +27,7 @@ class FolioGateTests(unittest.TestCase):
             targets = calls.read_text().splitlines()
             self.assertIn("e2e-naapp", targets)
             self.assertIn("e2e-folio-wakes", targets)
-            self.assertNotIn("test-npm-exact-publish", targets)
+            self.assertIn("test-npm-exact-publish", targets)
             self.assertIn("integration\tFAILED", (root / "summary.tsv").read_text())
         recipe = subprocess.check_output(["make", "-n", "e2e-folio-wakes"], cwd=ROOT, text=True)
         self.assertIn("bash scripts/e2e-folio-wakes.sh", recipe)
