@@ -168,11 +168,11 @@ async def test_cross_team_workspace_delete_does_not_touch_foreign_bindings(priva
 
 
 @asynccontextmanager
-async def _redis_without_delete(env):
-    """A real, temporary Redis ACL user denies only destructive key deletion."""
+async def _redis_without_command(env, command: str):
+    """A temporary Redis client with one forbidden command."""
     username, password = f"cleanup-{uuid4().hex}", uuid4().hex
     await env.redis.execute_command(
-        "ACL", "SETUSER", username, "on", f">{password}", "~*", "&*", "+@all", "-del"
+        "ACL", "SETUSER", username, "on", f">{password}", "~*", "&*", "+@all", f"-{command}"
     )
     try:
         parts = urlsplit(os.environ["REDIS_URL"])
@@ -200,7 +200,7 @@ async def test_post_commit_redis_permission_failure_is_retried_against_real_serv
     await clear_workspace_presence(env.redis, [str(alice.workspace)])
     # This host owns replay explicitly; the test drives it after the outage.
     await stop_outbox_recovery(env.app)
-    async with _redis_without_delete(env) as restricted:
+    async with _redis_without_command(env, "del") as restricted:
         app = create_app(
             db_infra=env.infra,
             redis=restricted,

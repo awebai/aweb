@@ -2,9 +2,12 @@
 
 import asyncio
 import json
+import socket
 
 import pytest
 import pytest_asyncio
+from awid.registry import RegistryClient
+from fastapi import HTTPException
 
 from aweb.application_state import RegistryClientUnavailable
 from aweb.embedding import OutboxRecoveryOwnership
@@ -15,8 +18,14 @@ from aweb.maintenance import (
     run_native_maintenance,
 )
 from aweb.presence import clear_workspace_presence
+from aweb.presence_transitions import PresenceReconciliationError
 from test_coordination_state_http import request_as
 from test_dashboard_privacy import TEAM, privacy_stack
+from test_workspace_liveness_http import (
+    GrantHeartbeatRoute,
+    _age_workspace_heartbeat,
+    _send_grant_heartbeat,
+)
 
 
 @pytest_asyncio.fixture
@@ -100,3 +109,51 @@ async def test_missing_registry_reports_presence_failure_after_outbox_progress(
     (failure,) = refused.value.failures
     assert failure.stage is NativeMaintenanceStage.PRESENCE_RECONCILIATION
     assert isinstance(failure.error, RegistryClientUnavailable)
+
+
+@pytest.mark.asyncio
+async def test_registry_connection_failure_preserves_the_presence_projection(
+    maintenance_app,
+):
+    env = maintenance_app
+    await _age_workspace_heartbeat(env)
+    await _send_grant_heartbeat(env, path=GrantHeartbeatRoute.AGENT)
+    arguments = dict(
+        db_infra=env.infra, redis=env.redis, on_mutation=env.app.state.on_mutation
+    )
+    await run_native_maintenance(
+        **arguments, registry_client=env.app.state.awid_registry_client
+    )
+    async with env.redis.pubsub() as subscriber:
+        await subscriber.subscribe(team_events_channel_name(TEAM))
+        await subscriber.get_message(timeout=3)
+        with socket.socket() as unavailable_endpoint:
+            unavailable_endpoint.bind(("127.0.0.1", 0))
+            port = unavailable_endpoint.getsockname()[1]
+            registry = RegistryClient(
+                registry_url=f"http://127.0.0.1:{port}", timeout_seconds=1
+            )
+            try:
+                with pytest.raises(NativeMaintenanceError) as refused:
+                    await run_native_maintenance(**arguments, registry_client=registry)
+            finally:
+                await registry.aclose()
+        assert refused.value.completed_stages == frozenset(
+            {NativeMaintenanceStage.OUTBOX_RECOVERY}
+        )
+        (failure,) = refused.value.failures
+        assert failure.stage is NativeMaintenanceStage.PRESENCE_RECONCILIATION
+        assert isinstance(failure.error, PresenceReconciliationError)
+        (team_failure,) = failure.error.failures
+        assert team_failure.team_id == TEAM
+        assert isinstance(team_failure.error, HTTPException)
+        assert team_failure.error.status_code == 503
+
+        # Redis delivers a barrier after any effects of the failed run.
+        await env.redis.publish(team_events_channel_name(TEAM), "maintenance-barrier")
+        frame = await subscriber.get_message(ignore_subscribe_messages=True, timeout=3)
+        assert frame and frame["data"] == "maintenance-barrier"
+    restored = await run_native_maintenance(
+        **arguments, registry_client=env.app.state.awid_registry_client
+    )
+    assert restored.presence.events_published == 0

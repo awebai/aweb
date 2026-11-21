@@ -339,6 +339,47 @@ async def test_deletion_rolls_back_on_claim_release_failure_and_retries(
 
 
 @pytest.mark.asyncio
+async def test_deletion_notification_failure_reports_the_committed_release(
+    privacy_app, monkeypatch
+):
+    from aweb.mutation_hooks import create_mutation_handler
+    from test_workspace_delete_real_http import _redis_without_command
+
+    env = privacy_app
+    created = await request_as(
+        env, alias="alice", method="POST", path="/v1/tasks",
+        payload={"title": "Committed deletion notification"},
+    )
+    assert created.status_code == 200, created.text
+    ref = created.json()["task_ref"]
+    path = f"/v1/tasks/{ref}"
+    claimed = await request_as(
+        env, alias="alice", method="PATCH", path=path, payload={"status": "in_progress"}
+    )
+    assert claimed.status_code == 200, claimed.text
+    async with _redis_without_command(env, "publish") as restricted:
+        with monkeypatch.context() as configured:
+            configured.setattr(
+                env.app.state, "on_mutation", create_mutation_handler(restricted, env.infra)
+            )
+            response = await request_as(env, alias="alice", method="DELETE", path=path)
+            assert response.status_code == 503, response.text
+            detail = response.json()["detail"]
+            assert detail["code"] == "task_deleted_notification_failed"
+            assert detail["failed_stages"] == ["publication"]
+            assert detail["remaining_claims"] == 0
+    deleted = await request_as(env, alias="alice", method="GET", path=path)
+    assert deleted.status_code == 404, deleted.text
+    assert not await env.db.fetch_value(
+        "SELECT COUNT(*) FROM {{tables.task_claims}} WHERE team_id=$1 AND task_ref=$2",
+        TEAM, ref,
+    )
+    repeated = await request_as(env, alias="alice", method="DELETE", path=path)
+    assert repeated.status_code == 200, repeated.text
+    assert repeated.json()["task_ref"] == ref
+
+
+@pytest.mark.asyncio
 async def test_narrow_heartbeat_refreshes_only_current_metadata_indices(privacy_app):
     from aweb.presence import update_agent_presence
 
