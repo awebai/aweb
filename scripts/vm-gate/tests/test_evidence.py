@@ -32,7 +32,10 @@ class EvidenceTests(unittest.TestCase):
         other = "tmp/aweb-candidate-gate-" + ("b" * 40) + "-nested/summary.tsv"
         archive = self.archive(
             {
-                main: "unit\tFAILED\tunit.log\t23s\t900s\n",
+                main: (
+                    "unit/test-server\tFAILED\ttest-egress/suite.log\t22s\texit 2\n"
+                    "unit\tFAILED\tunit.log\t23s\t900s\n"
+                ),
                 other: "unit\tPASSED\tunit.log\t0s\t900s\n",
             }
         )
@@ -42,6 +45,14 @@ class EvidenceTests(unittest.TestCase):
             [{"stage": "unit", "status": "FAILED", "seconds": 23.0, "summary": main}],
         )
         self.assertTrue((Path(self.tmp.name) / "unpacked" / other).exists())
+        self.assertEqual(
+            result["targets"],
+            [{
+                "stage": "unit", "target": "test-server", "status": "FAILED",
+                "seconds": 22.0, "summary": main, "log": "test-egress/suite.log",
+                "detail": "exit 2",
+            }],
+        )
 
     def test_reused_stage_is_explicit_with_no_fabricated_duration(self):
         output = f"gate: tree {'b' * 40} already passed checks; original log /retained/checks.log\n"
