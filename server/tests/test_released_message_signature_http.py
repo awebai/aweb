@@ -17,6 +17,8 @@ from test_dashboard_privacy import TEAM, privacy_app as privacy_app
 from test_identity_grants import _grant_headers
 from test_messages_http import _signed_team_headers
 
+__all__ = ["privacy_app"]
+
 
 class ReleasedClientClass(StrEnum):
     ORDINARY = "ordinary"

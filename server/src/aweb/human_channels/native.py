@@ -29,6 +29,7 @@ from uuid import UUID, uuid4
 
 from awid.signing import canonical_json_bytes
 from fastapi import HTTPException
+from aweb.application_state import RegistryClientUnavailable
 from aweb.service_errors import ServiceError
 
 from aweb.attachment_service import prepare_attachment_send
@@ -368,7 +369,6 @@ class NativeMessagingService:
 
     async def _policy(self, db, auth, recipient):
         require_address_evidence(auth)
-        from aweb.service_errors import ServiceError
 
         try:
             await authorize_message_delivery(
@@ -384,6 +384,8 @@ class NativeMessagingService:
                 "authority_unavailable" if error.status_code >= 500 else "forbidden",
                 str(error.detail),
             ) from error
+        except RegistryClientUnavailable:
+            raise
         except ServiceError as error:
             raise ContractError("forbidden", error.detail) from error
 

@@ -35,6 +35,8 @@ from test_messages_http import (
     _signed_identity_headers,
 )
 
+__all__ = ["privacy_app"]
+
 PATH = "/v1/agents/me/activity"
 
 

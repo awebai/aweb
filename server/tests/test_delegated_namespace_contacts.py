@@ -27,6 +27,8 @@ from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
 from test_federation_preactivation_harness import _RecordedDNS
 from test_messages_http import _make_certificate, _encode_certificate, _make_keypair
 
+__all__ = ["privacy_app"]
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("route", ["contact", "sender"])

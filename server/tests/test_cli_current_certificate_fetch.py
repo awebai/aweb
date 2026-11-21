@@ -16,6 +16,8 @@ from test_dashboard_privacy import TEAM, TEAM_NAME
 from test_dashboard_privacy import privacy_app as privacy_app
 from test_messages_http import _make_keypair
 
+__all__ = ["privacy_app"]
+
 
 @pytest.fixture(scope="session")
 def current_certificate_fetch_probe(tmp_path_factory):

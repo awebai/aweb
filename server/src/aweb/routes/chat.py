@@ -90,6 +90,7 @@ from aweb.grant_streams import (
     grant_terminal_sse,
     require_valid_stream_grant,
 )
+from aweb.member_team_key import current_member_sql
 from aweb.service_errors import RESOURCE_NOT_FOUND_DETAIL
 
 logger = logging.getLogger(__name__)
@@ -701,7 +702,7 @@ async def _sse_events(
             LEFT JOIN LATERAL (
                 SELECT a.agent_id
                 FROM {{{{tables.agents}}}} a
-                WHERE $3::boolean AND a.deleted_at IS NULL AND a.status = 'active'
+                WHERE $3::boolean AND {current_member_sql("a")}
                   AND CASE WHEN {verified_key_sql("a")}
                            THEN COALESCE(NULLIF(a.did_aw, ''), a.did_key)
                            ELSE a.did_key END = p.did

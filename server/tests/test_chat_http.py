@@ -46,6 +46,8 @@ from federation_activation_support import TestFederationAuthority
 from did_key_fixtures import named_did_key
 from test_messages_http import (registered_mail_actors as registered_mail_actors, _registered_routing_pair, _record_federation, _registered_actor_headers, _registered_history, _registered_address_reads, _registered_outbound_chat_history, _MovedFederationTransport, _admit_registered_local, _mirror_retained_local_history, _store_retained_local_origin)
 
+__all__ = ["registered_mail_actors"]
+
 
 # Pytest loads the canonical fixture after this module's shared helpers exist.
 pytest_plugins = ("chat_pair_support",)

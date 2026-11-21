@@ -8,6 +8,8 @@ from awid.registry import CachedRegistryClient
 from test_dashboard_privacy import TEAM_NAME, privacy_app  # noqa: F401
 from test_team_controller_rotation_http import _controller_action, rotation_app  # noqa: F401
 
+__all__ = ["rotation_app"]
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("operation", ["replace_key", "status_host"])

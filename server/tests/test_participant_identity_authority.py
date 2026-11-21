@@ -9,6 +9,8 @@ from test_dashboard_privacy import privacy_app  # noqa: F401
 from test_messages_http import _signed_identity_headers
 from test_mcp_mail_conversation_parity import mail_server  # noqa: F401
 
+__all__ = ["addressed_human", "mail_server"]
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('kind', ['mail', 'chat'])

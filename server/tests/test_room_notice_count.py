@@ -16,6 +16,8 @@ from aweb.team_auth_deps import team_identity_with_grant_scope
 from test_team_room import privacy_app, TEAM, headers, metadata, post
 from test_identity_grants import _grant_headers
 
+__all__ = ["privacy_app"]
+
 
 async def admitted(env, name="bob"):
     request = Request(

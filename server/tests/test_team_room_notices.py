@@ -15,6 +15,8 @@ from test_team_room import (
     post_payload,
 )
 
+__all__ = ["privacy_app"]
+
 
 async def pending(env, actor="bob"):
     response = await env.client.get("/v1/room/notices", headers=headers(env.actors[actor]))

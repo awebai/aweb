@@ -27,7 +27,7 @@ OVERRIDE, DEFAULT = "https://override.example", "https://api.awid.ai"
 
 
 @pytest_asyncio.fixture
-async def team_registries(test_db_factory, registry_audience_dns, monkeypatch):
+async def team_registries(test_db_factory, registry_audience_dns, monkeypatch, request):
     name = f"r2-{uuid4().hex}"
     team_id = f"{name}:{DOMAIN}"
     first_db = await test_db_factory.create_db(suffix="team_cache_first")
@@ -39,6 +39,8 @@ async def team_registries(test_db_factory, registry_audience_dns, monkeypatch):
     ):
         keys = {}
         for registry, label in ((first, "first"), (second, "second")):
+            if label == "second" and getattr(request, "param", None) == "override-only":
+                continue
             team_key, member_key = SigningKey.generate(), SigningKey.generate()
             keys[label] = _did_key(team_key)
             await registry.add_team(team_id, keys[label])
@@ -115,6 +117,10 @@ async def test_warm_team_reads_do_not_query_dns(team_registries, registry_audien
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "team_registries", [None, "override-only"], indirect=True,
+    ids=["same-team-at-default", "team-only-at-override"],
+)
 async def test_dns_outage_uses_only_the_answering_origins_grace(
     team_registries, registry_audience_dns, cache_age
 ):
@@ -138,6 +144,46 @@ async def test_dns_outage_uses_only_the_answering_origins_grace(
         await client.get_team_public_key(DOMAIN, name)
     with pytest.raises(RegistryError):
         await client.get_team_revocations(DOMAIN, name)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("team_registries", ["override-only"], indirect=True)
+@pytest.mark.parametrize("fact", ["key", "revocations"])
+@pytest.mark.parametrize("fresh", [False, True], ids=["cold", "fresh-read"])
+async def test_dns_outage_cannot_turn_missing_team_into_authority_evidence(
+    team_registries, registry_audience_dns, cache_age, fact, fresh
+):
+    client, first, second, keys, name = team_registries
+    if fresh:
+        assert await client.get_team_public_key(DOMAIN, name) == keys["first"]
+        assert await client.get_team_revocations(DOMAIN, name) == {"first-revoked"}
+        cache_age[0] = 180
+    before = list(first.transport.calls)
+    registry_audience_dns.answer = AuthorityAnswer.UNAVAILABLE
+
+    with pytest.raises(RegistryError) as unavailable:
+        if fact == "key":
+            read_key = client.get_team_public_key_fresh if fresh else client.get_team_public_key
+            await read_key(DOMAIN, name)
+        else:
+            await client.get_team_revocations_for_certificates(
+                DOMAIN, name, ["first-revoked"], fresh=fresh
+            )
+    assert unavailable.value.status_code == 503
+    assert unavailable.value.code == "unavailable"
+    assert first.transport.calls == before and second.transport.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("team_registries", ["override-only"], indirect=True)
+async def test_authoritative_missing_team_keeps_existing_read_semantics(
+    team_registries, registry_audience_dns
+):
+    client, first, second, _, name = team_registries
+    registry_audience_dns.answer = AuthorityAnswer.PUBLIC_DEFAULT
+    assert await client.get_team_public_key(DOMAIN, name) is None
+    assert await client.get_team_revocations(DOMAIN, name) == set()
+    assert not first.transport.calls and len(second.transport.calls) == 2
 
 
 @pytest.mark.asyncio

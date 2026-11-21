@@ -20,6 +20,8 @@ from test_dashboard_privacy import (
 )
 from test_messages_http import _make_keypair
 
+__all__ = ["pre_chat_coverage_privacy_app", "privacy_app"]
+
 
 async def _foreign_actors(env):
     team = f"foreign-{uuid4().hex[:12]}:example.test"

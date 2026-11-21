@@ -9,6 +9,8 @@ from test_dashboard_privacy import privacy_app as privacy_app
 from test_member_team_key import _connect
 from test_messages_http import _signed_identity_headers
 
+__all__ = ["privacy_app"]
+
 
 class AuthenticationCredential(StrEnum):
     CERTIFICATE = "certificate"

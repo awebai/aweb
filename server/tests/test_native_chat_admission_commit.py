@@ -18,6 +18,8 @@ from test_native_mail_admission_commit import (
     prepare_test_policy_members,
 )
 
+__all__ = ["privacy_app"]
+
 
 class ChatPath(Enum):
     NEW_SESSION = auto()

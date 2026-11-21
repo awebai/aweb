@@ -1300,7 +1300,7 @@ async def send_federated_mail_conversation_continuation(
 
 
 async def _resolve_message_alias(
-    db, auth: MessagingAuth, raw_alias: str, registry_client=None
+    db, auth: MessagingAuth, raw_alias: str, *, registry_client
 ) -> dict | None:
     target = resolve_alias_target(auth.team_id, raw_alias, field="to_alias")
     if "~" in str(raw_alias or "") and not await team_exists(db, target.team_id):

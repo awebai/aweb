@@ -19,6 +19,8 @@ from test_member_team_key import _certificate, _change_key, _connect, _new_membe
 from test_messages_http import _signed_team_headers
 from test_team_key_pinning import pinning as pinning
 
+__all__ = ["pinning"]
+
 
 class IssuerReacceptance(StrEnum):
     SUPERSEDED = "superseded"

@@ -17,6 +17,8 @@ from test_messages_http import (
     _signed_team_headers,
 )
 
+__all__ = ["privacy_app"]
+
 
 async def _connect_global_member(env, *, actor, team_id: str, stable_did: str) -> str:
     certificate = _encode_certificate(

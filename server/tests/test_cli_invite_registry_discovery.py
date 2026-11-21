@@ -20,6 +20,8 @@ from test_dashboard_privacy import TEAM, TEAM_NAME
 from test_dashboard_privacy import privacy_app as privacy_app
 from test_identity_binding_http import certificate, request
 
+__all__ = ["privacy_app"]
+
 
 @asynccontextmanager
 async def public_default_probe():

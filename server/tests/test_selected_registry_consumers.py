@@ -27,6 +27,8 @@ from test_id_chain_request_auth import ALICE, ROOT, _fixture_signer, _signed_fix
 from test_messages_http import _signed_identity_headers
 from test_team_room import admit_room_member
 
+__all__ = ["privacy_app"]
+
 
 def root_app(native, registry):
     root = FastAPI()

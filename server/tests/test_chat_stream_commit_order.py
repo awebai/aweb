@@ -39,6 +39,8 @@ from test_federation_activation_delivery import (
 )
 from test_messages_http import _signed_team_headers
 
+__all__ = ["mcp_call", "privacy_app", "wake_app"]
+
 # The stream polls at least every 2 s without a wake; anything committed is
 # delivered well inside this.
 DELIVERY_BOUND_SECONDS = 6

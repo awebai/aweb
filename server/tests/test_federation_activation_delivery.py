@@ -27,6 +27,8 @@ from chat_pair_support import route_pair as route_pair
 from messaging_actor_support import admit_messaging_actor, set_messaging_inbound_mode
 from test_messages_http import _federated_mail_payload, _registered_routing_pair
 
+__all__ = ["route_pair"]
+
 
 class _AdmissionKey(Enum):
     CURRENT = auto()

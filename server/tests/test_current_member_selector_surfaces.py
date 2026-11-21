@@ -43,6 +43,8 @@ from test_messages_http import (
 )
 from test_team_key_pinning import pinning as pinning
 
+__all__ = ["pinning"]
+
 
 class Surface(StrEnum):
     HTTP = "http"

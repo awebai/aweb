@@ -39,6 +39,8 @@ from messaging_actor_support import admit_messaging_actor
 from test_dashboard_privacy import TEAM as PRIVACY_TEAM
 from test_dashboard_privacy import privacy_app as privacy_app
 
+__all__ = ["mail_server", "privacy_app"]
+
 
 class DBInfra:
     def __init__(self, aweb_db):

@@ -17,6 +17,8 @@ from test_dashboard_privacy import TEAM
 from test_dashboard_privacy import privacy_app as privacy_app
 from test_team_key_pinning import pinning as pinning
 
+__all__ = ["pinning"]
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["mail", "chat"])

@@ -24,6 +24,8 @@ from test_messages_http import (
     _signed_team_headers,
 )
 
+__all__ = ["privacy_app"]
+
 
 async def request(env, actor, method, path, payload=None, *, certificate=None, did_aw=None):
     body = json.dumps(payload).encode() if payload is not None else b""

@@ -36,6 +36,8 @@ from test_team_room import (
     post_payload as room_post_payload,
 )
 
+__all__ = ["awid", "db_infra", "privacy_app", "route_pair"]
+
 WAKE_LATENCY_BOUND_SECONDS = 1.0
 
 

@@ -12,6 +12,8 @@ from test_dashboard_privacy import privacy_app as privacy_app
 from test_messages_http import _encode_certificate
 from test_agents_suggest_alias_http import request_as
 
+__all__ = ["privacy_app"]
+
 from uuid import UUID
 from pathlib import Path
 import shutil

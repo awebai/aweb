@@ -18,6 +18,8 @@ from test_dashboard_privacy import TEAM, _request, privacy_app  # noqa: F401
 from test_federation_activation_delivery import _DB, _envelope, _seed_recipient_and_authority
 from test_messages_http import _insert_agent_encryption_assertion, _make_keypair, _signed_team_headers
 
+__all__ = ["privacy_app"]
+
 
 def _identity(actor, custody="self", *, address="", stable_id=""):
     _, public_key = generate_x25519_keypair()

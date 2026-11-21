@@ -9,6 +9,8 @@ import pytest
 from awid.signing import canonical_json_bytes, sign_message
 from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
 
+__all__ = ["privacy_app"]
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('purpose,expected', [(None, 200), ('aweb.awid-controller-request', 401)])

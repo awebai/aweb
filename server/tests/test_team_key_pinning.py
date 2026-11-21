@@ -29,6 +29,8 @@ from test_messages_http import (
     _signed_team_headers,
 )
 
+__all__ = ["privacy_app"]
+
 
 def _controller_headers(sk, did, payload):
     timestamp = datetime.now(timezone.utc).isoformat()

@@ -37,6 +37,8 @@ from test_team_key_pinning import (
     rotate_team_key,
 )  # noqa: F401
 
+__all__ = ["pinning"]
+
 MIGRATIONS = Path(__file__).resolve().parents[1] / "src" / "aweb" / "migrations" / "aweb"
 
 
