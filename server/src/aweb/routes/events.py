@@ -675,11 +675,15 @@ async def _sse_agent_events(
         # The caller deadline bounds waiting, not the initial scoped snapshot.
         # Grant expiry still blocks delivery above, even for an expired deadline.
 
+        delivered = False
         for evt in initial:
             if evt["type"] == "actionable_room_post" and not room_authority.fresh():
                 continue
             if agent_event_allowed(identity, evt):
                 yield _sse_frame(evt)
+                delivered = True
+        if delivered:
+            last_heartbeat_at = datetime.now(timezone.utc)
 
         # Streams opened together reconcile apart.
         next_reconcile_at = monotonic() + random.uniform(0, EVENTS_RECONCILE_INTERVAL)

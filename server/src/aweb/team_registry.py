@@ -10,7 +10,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from awid.registry import TeamCertificateStanding
+from awid.registry import MalformedTeamKeyError, TeamCertificateStanding
 from awid.team_ids import build_team_id, parse_team_id
 from awid.team_key_acts import TeamKeyMemo, TeamKeyUnverified
 from fastapi import HTTPException, Request
@@ -112,7 +112,7 @@ async def resolve_team_key(
         raise team_key_unverified_exception() from None
     except HTTPException:
         raise
-    except AWID_DEPENDENCY_ERRORS as exc:
+    except (MalformedTeamKeyError, *AWID_DEPENDENCY_ERRORS) as exc:
         raise _team_read_failure(
             exc,
             registry_client,

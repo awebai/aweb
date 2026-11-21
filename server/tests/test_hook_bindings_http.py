@@ -264,7 +264,8 @@ async def test_a_stalled_registry_is_a_classified_503_and_the_same_act_can_retry
                 response = await client.post(url, json=_body(signing, signature))
 
     assert response.status_code == 503, response.text
-    assert response.json()["detail"] == "AWID owner-act team key upstream unavailable (TimeoutError)"
+    assert response.json()["detail"].startswith("AWID owner-act team key upstream unavailable (TimeoutError).")
+    assert "Retry when the registry is available" in response.json()["detail"]
     assert "AWID registry dependency failed reading the owner-act team key" in caplog.text
     assert "TimeoutError" in caplog.text
     assert await env.db.fetch_value(

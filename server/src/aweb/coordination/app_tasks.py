@@ -97,9 +97,13 @@ async def verify_authorization_certificate(request, authorization):
     except HTTPException as exc:
         if exc.status_code == 401:
             raise
+        if exc.status_code == 422:
+            raise HTTPException(status_code=422, detail="registry_response_unusable") from exc
         raise HTTPException(status_code=503, detail="authority_unavailable") from exc
     except Exception as exc:
         raise HTTPException(status_code=503, detail="authority_unavailable") from exc
+    if not team_key:
+        raise HTTPException(status_code=404, detail="awid_team_not_found")
     try:
         checked = verify_team_certificate_claims(
             authorization["certificate"],

@@ -14,7 +14,8 @@ from fastapi import HTTPException
 from starlette.requests import Request
 from nacl.signing import SigningKey
 from awid.did import did_from_public_key
-from awid.registry import CachedRegistryClient
+from awid.registry import CachedRegistryClient, RegistryClient
+from awid_service.testing import ServiceTransport
 import awid.registry as registry_module
 import httpx
 from aweb.app_registry import get_installation_on
@@ -928,6 +929,51 @@ async def test_c2_cached_authority_outage_fails_closed(
         response.text
     )
     assert await env.db.fetch_value("SELECT count(*) FROM {{tables.task_app_requests}}") == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("answer", "status", "detail"),
+    [
+        ("keyless", 422, "registry_response_unusable"),
+        ("missing_key", 422, "registry_response_unusable"),
+        ("absent", 404, "awid_team_not_found"),
+    ],
+)
+async def test_c2_distinguishes_unusable_and_absent_team_authority(
+    app_request_context, monkeypatch, answer, status, detail
+):
+    env, *_ = app_request_context
+    original = env.app.state.awid_registry_client
+    transport = ServiceTransport(env.registry_app)
+    team_path = f"/v1/namespaces/example.test/teams/{TEAM.split(':', 1)[0]}"
+
+    def fault(request, response):
+        if request.url.path != team_path or request.method != "GET":
+            return None
+        assert response.status_code == 200
+        if answer == "absent":
+            return httpx.Response(404, json={"detail": "Team not found"})
+        body = response.json()
+        assert body["team_did_key"] == env.team_did
+        if answer == "missing_key":
+            del body["team_did_key"]
+        else:
+            body["team_did_key"] = ""
+        return httpx.Response(200, json=body)
+
+    transport.fault = fault
+    faulty_registry = RegistryClient(
+        original.registry_url, transport=transport, service_token=original.service_token
+    )
+    monkeypatch.setattr(env.app.state, "awid_registry_client", faulty_registry)
+    try:
+        response = await _app_http(app_request_context, "POST", "/v1/tasks/app-requests", _body(env))
+        assert (response.status_code, response.json()["detail"]) == (status, detail), response.text
+        assert [request.url.path for request in transport.calls] == [team_path]
+        assert await env.db.fetch_value("SELECT count(*) FROM {{tables.task_app_requests}}") == 0
+    finally:
+        await faulty_registry.aclose()
 
 
 @pytest.mark.asyncio

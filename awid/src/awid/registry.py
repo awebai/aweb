@@ -38,7 +38,7 @@ from awid.controller_signing import (
     parse_controller_request,
     signature_roles,
 )
-from awid.did import did_key_from_signing_key
+from awid.did import did_key_from_signing_key, validate_did
 from awid.dns_verify import (
     DEFAULT_AWID_REGISTRY_URL,
     DnsLookupError,
@@ -429,6 +429,10 @@ class AlreadyRegisteredError(RegistryError):
 
 class MalformedIDStatusError(ValueError):
     """A successful status answer that is not a JSON object within the response bound."""
+
+
+class MalformedTeamKeyError(ValueError):
+    """A successful team read did not provide usable controller evidence."""
 
 
 class DIDRegistrationRequiredError(RegistryError):
@@ -1705,14 +1709,24 @@ class RegistryClient:
 
         registry_origin is an optional trusted-host pin, never caller wire
         authority. Without a pin, require successful registry selection.
+        An absent team returns None. A successful answer without a usable
+        controller key raises MalformedTeamKeyError.
         """
         registry_url = (
             canonical_server_origin(registry_origin)
             if registry_origin is not None
             else await self._registry_url_for_domain(domain, fallback_on_dns_error=False)
         )
-        team = await self._get_team_at_origin(domain=domain, name=name, registry_url=registry_url)
-        return team.team_did_key if team is not None else None
+        try:
+            team = await self._get_team_at_origin(domain=domain, name=name, registry_url=registry_url)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise MalformedTeamKeyError("AWID team response is invalid") from exc
+        if team is None:
+            return None
+        key = team.team_did_key
+        if not isinstance(key, str) or not validate_did(key):
+            raise MalformedTeamKeyError("AWID team response has no usable controller key")
+        return key
 
     async def get_team(self, domain: str, name: str) -> Team | None:
         """Fetch team metadata from awid."""
@@ -2382,9 +2396,9 @@ class CachedRegistryClient(RegistryClient):
         A stored entry is aged on the Redis server's clock, the one clock
         every process sharing it reads. Evidence aged 60 seconds or less is
         served with no DNS or HTTP work. Older evidence waits for one refresh
-        shared by every caller of the same request; when that attempt fails,
-        the evidence is returned without an age, so it is unavailable. Fetch
-        failures never raise.
+        shared by every caller of the same request. A failed read returns
+        unavailable evidence without an age. A malformed successful response
+        raises MalformedIDStatusError.
         """
         try:
             request = status_request(bundle, subject, domain=domain)
@@ -2427,9 +2441,11 @@ class CachedRegistryClient(RegistryClient):
             self._id_status_refreshes[route_key] = task
 
             def discard_completed_refresh(
-                _task: asyncio.Task[_IDStatusRefresh],
+                done: asyncio.Task[_IDStatusRefresh],
             ) -> None:
                 self._id_status_refreshes.pop(route_key, None)
+                if not done.cancelled():
+                    done.exception()  # Observe failures after every waiter was cancelled.
 
             task.add_done_callback(discard_completed_refresh)
         # A cancelled caller leaves the shared attempt running for the others.
@@ -2460,7 +2476,7 @@ class CachedRegistryClient(RegistryClient):
                 domain,
             )
             await self._invalidate_keys(route_key, cache_key or "")
-            return _IDStatusRefresh(entry=None, age=None)
+            raise
         except (DnsVerificationError, RegistryError, ValueError, OSError, TimeoutError) as exc:
             logger.warning("AWID identity-tree status refresh failed for %s: %r", domain, exc)
             return _IDStatusRefresh(entry=None, age=None)

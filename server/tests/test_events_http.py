@@ -626,6 +626,54 @@ async def test_events_stream_emits_one_mail_event_when_only_unread_count_changes
     assert update["unread_count"] == 1
 
 
+@pytest.mark.asyncio
+async def test_events_stream_opening_frames_restart_the_heartbeat_interval(
+    aweb_cloud_db,
+    monkeypatch,
+):
+    recipient_agent_id = await _create_test_event_recipient(aweb_cloud_db.aweb_db)
+    message_ids = [uuid4(), uuid4()]
+    created_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+    for index, message_id in enumerate(message_ids):
+        await aweb_cloud_db.aweb_db.execute(
+            """
+            INSERT INTO {{tables.messages}}
+                (message_id, from_did, to_did, from_alias, to_alias, subject, body, created_at)
+            VALUES ($1, 'did:aw:alice', 'did:aw:bob', 'alice', 'bob', 'subject', 'body', $2)
+            """,
+            message_id,
+            created_at + timedelta(seconds=index),
+        )
+
+    stream = await _open_test_event_stream(
+        aweb_cloud_db.aweb_db,
+        recipient_agent_id,
+        monkeypatch,
+    )
+    for _ in range(2):
+        assert (await anext(stream)).startswith("event: actionable_mail\n")
+
+    # The opening keepalive is now older than the heartbeat interval, but the
+    # stream has just delivered frames, so the change is read before any heartbeat.
+    await asyncio.sleep(2 * events_module.EVENTS_HEARTBEAT_INTERVAL)
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        UPDATE {{tables.messages}}
+        SET read_at = NOW()
+        WHERE message_id = $1
+        """,
+        message_ids[0],
+    )
+
+    next_frame = await anext(stream)
+    await stream.aclose()
+
+    assert next_frame.startswith("event: actionable_mail\n")
+    count_update = json.loads(next_frame.split("data: ", 1)[1])
+    assert count_update["message_id"] == str(message_ids[1])
+    assert count_update["unread_count"] == 1
+
+
 @pytest.mark.xfail(
     strict=True,
     reason="aweb-abbr.1: actionable mail has no row event for last-read-to-zero",

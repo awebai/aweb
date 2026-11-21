@@ -7,6 +7,10 @@
   An accepted receipt reports completion pending and `alias_released: false`
   until the service finishes the removal.
 
+- Team controllers can sign a team claim with `aw id team claim-human-request`.
+  An existing member can submit the signed file with
+  `aw claim-human --controller-claim-file`.
+
 - Provisioning and creator self-enrollment connect before publishing the member's E2E assertion. A failed connect or unconfirmed publication retains the identity and reports the exact recovery command instead of creation success.
 - On unverified A2A routes, a plain question shared by several live tasks is
   refused with task-specific reply forms. Questions use artifact name `question`;
@@ -158,6 +162,10 @@
   The `HTTP <status>` line stays on stderr.
 
 - `aw` reports JSON error code `alias_conflict` for HTTP 409 `alias_taken`, preserving the server's `reason` and `detail`.
+- `aw chat pending`, `open`, `history`, `listen` and `show-pending` fail with
+  the reason when the local encryption key state exists but cannot be loaded,
+  as `aw mail` reads do. A workspace with no encryption key state keeps
+  reading, with a warning.
 - AWID cache invalidation for identity-tree, address and team-certificate
   writes no longer scans unrelated Redis keys. Random cache generations keep
   delayed refreshes from restoring invalidated entries without changing the
