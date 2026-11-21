@@ -843,6 +843,19 @@ func runControllerKeyJoinFromForTest(t *testing.T, asJSON bool, interruptBeforeC
 					t.Fatal(err)
 				}
 				invitesBefore, err := filepath.Glob(filepath.Join(invitesDir, "*.json"))
+				if err != nil || len(invitesBefore) != 1 {
+					t.Fatalf("expected one retained attempted invite, got %v: %v", invitesBefore, err)
+				}
+				inviteID := strings.TrimSuffix(filepath.Base(invitesBefore[0]), ".json")
+				inviteBefore, err := awconfig.LoadTeamInvite(inviteID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				before, err := awconfig.InspectTeamInviteIssuance(inviteBefore)
+				if err != nil || before == nil || before.State != awconfig.RecoveryAttempted || inviteBefore.Secret != "" {
+					t.Fatalf("unknown registration did not retain its attempted fence: %v", err)
+				}
+				expectedCertificate, err := awid.EncodeTeamCertificateHeader(&before.PreparedEffect)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -855,8 +868,25 @@ func runControllerKeyJoinFromForTest(t *testing.T, asJSON bool, interruptBeforeC
 					t.Fatal("local retry changed child key")
 				}
 				invitesAfter, err := filepath.Glob(filepath.Join(invitesDir, "*.json"))
-				if err != nil || len(invitesBefore) != len(invitesAfter)+1 {
-					t.Fatal("local retry minted another invite")
+				if err != nil || len(invitesAfter) != 1 || invitesAfter[0] != invitesBefore[0] {
+					t.Fatalf("retry changed the retained invite: %v: %v", invitesAfter, err)
+				}
+				inviteAfter, err := awconfig.LoadTeamInvite(inviteID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				after, err := awconfig.InspectTeamInviteIssuance(inviteAfter)
+				if err != nil || after == nil || after.State != awconfig.RecoveryConfirmed || inviteAfter.ConsumedAt == "" ||
+					inviteAfter.Secret != "" || inviteAfter.SuspendedSecret != "" {
+					t.Fatalf("retry did not retain the secret-free consumed invite: %v", err)
+				}
+				installed, err := awconfig.LoadTeamCertificateForTeam(target, teamID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				actualCertificate, err := awid.EncodeTeamCertificateHeader(installed)
+				if err != nil || actualCertificate != expectedCertificate {
+					t.Fatalf("retry did not install the exact prepared certificate: %v", err)
 				}
 				if registryCalls != 2 {
 					t.Fatalf("registry calls=%d", registryCalls)

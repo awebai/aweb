@@ -174,7 +174,7 @@ func TestTeamHumanCreateExistingFoundingPathIgnoresAmbientWorkspaceKey(t *testin
 	}
 }
 
-func TestInitCreatorPreflightReturnsConcreteStateError(t *testing.T) {
+func TestInitExternalCreationRequiresExplicitJoinAndPreservesCreatorKeyRefusal(t *testing.T) {
 	resetTeamHumanCreateGlobals(t)
 	source := t.TempDir()
 	writeWorkspaceBindingForTest(t, source, workspaceBinding("http://127.0.0.1:1", "dev:example.com", "source", "workspace-source"))
@@ -190,8 +190,14 @@ func TestInitCreatorPreflightReturnsConcreteStateError(t *testing.T) {
 	activeIdentityHome = awconfig.IdentityHome{Root: filepath.Join(source, ".aw"), Source: awconfig.IdentityHomeFlag}
 	t.Chdir(t.TempDir())
 	err = validateInitOutcomeFlags(initInviteInput{})
+	if err == nil || !strings.Contains(err.Error(), "only supported for --workspace-team or explicit fresh --join-from") {
+		t.Fatalf("implicit creation did not refuse the external identity home: %v", err)
+	}
+	activeIdentityHome = awconfig.IdentityHome{}
+	t.Setenv(awconfig.IdentityHomeEnv, "")
+	_, err = resolveAgentCreation(agentCreationRequest{WorkingDir: source})
 	if err == nil || err.Error() != "workspace signing key does not match its team certificate" {
-		t.Fatalf("preflight hid state error: %v", err)
+		t.Fatalf("creator resolution hid the key mismatch: %v", err)
 	}
 }
 

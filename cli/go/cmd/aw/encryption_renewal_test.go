@@ -178,7 +178,7 @@ func TestCustodyRenewsExpiredAssertionWithoutGrantActivity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc := &custodyService{residentHome: home}
+	svc := &custodyService{residentHome: home, workingDir: root}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan struct{})
