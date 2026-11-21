@@ -68,14 +68,18 @@ func directRegistry(t *testing.T, registryURL string) *awid.RegistryClient {
 	return trustedClient(t, registryURL, http.DefaultTransport)
 }
 
+// assertNoTeamKeyFile checks the disk, not TeamKeyExists: the readers refuse
+// while a key is set aside, which is the state this file's tests inspect.
 func assertNoTeamKeyFile(t *testing.T, domain, name string) {
 	t.Helper()
-	exists, err := awconfig.TeamKeyExists(domain, name)
+	path, err := awconfig.TeamKeyPath(domain, name)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if exists {
-		t.Fatal("a team key file is present")
+	if _, err := os.Stat(path); err == nil {
+		t.Fatalf("a team key file is present at %s", path)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		t.Fatal(err)
 	}
 }
 
