@@ -1,0 +1,6 @@
+{
+  "repository": "https://github.com/awebai/oats-aweb.git",
+  "version": "1.42.1",
+  "commit": "f3f5e0227a6ee173d7ee69d608ebbde616884dd2",
+  "capability_path": "oats-package/capabilities/oats-aweb"
+}

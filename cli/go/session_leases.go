@@ -2,10 +2,6 @@ package aweb
 
 import (
 	"context"
-	"fmt"
-	"net/http"
-
-	"github.com/awebai/aw/awid"
 )
 
 type SessionLeaseRequest struct {
@@ -73,11 +69,5 @@ func (c *Client) SessionLeaseTakeover(ctx context.Context, req *SessionLeaseTake
 }
 
 func sessionLeaseCompatibilityError(err error) error {
-	if err == nil {
-		return nil
-	}
-	if status, ok := awid.HTTPStatusCode(err); ok && status == http.StatusNotFound {
-		return fmt.Errorf("session leases require aweb server 1.26.28 or later: %w", err)
-	}
-	return err
+	return missingEndpointDiagnostic(err, sessionLeaseEndpoint)
 }
