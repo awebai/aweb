@@ -16,6 +16,8 @@ def test_awid_dependency_http_exception_distinguishes_dns_failure():
 
     assert err.status_code == 503
     assert "AWID team key resolution DNS resolution failed (DnsVerificationError)" in err.detail
+    assert "Retry when the registry is available" in err.detail
+    assert "_awid.example.com" not in err.detail
 
 
 def test_awid_dependency_http_exception_distinguishes_connect_failure():
@@ -34,19 +36,20 @@ def test_a_registry_request_deadline_is_a_dependency_error_and_retryable_503():
     err = awid_dependency_http_exception(TimeoutError(), operation="AWID team key resolution")
 
     assert err.status_code == 503
-    assert err.detail == "AWID team key resolution upstream unavailable (TimeoutError)"
+    assert err.detail.startswith("AWID team key resolution upstream unavailable (TimeoutError).")
+    assert "Retry when the registry is available" in err.detail
 
 
 def test_an_unavailable_registry_is_classified_by_the_transport_failure_behind_it():
-    for cause, expected in (
-        (httpx.ConnectError("connection refused"), "AWID did:aw resolution upstream unavailable (ConnectError): connection refused"),
-        (TimeoutError(), "AWID did:aw resolution upstream unavailable (TimeoutError)"),
-    ):
+    for cause in (httpx.ConnectError("connection refused"), TimeoutError()):
         try:
             raise RegistryError("AWID registry unavailable", status_code=503, code="unavailable") from cause
         except RegistryError as unavailable:
             err = awid_dependency_http_exception(unavailable, operation="AWID did:aw resolution")
-        assert (err.status_code, err.detail) == (503, expected)
+        assert err.status_code == 503
+        assert err.detail.startswith(f"AWID did:aw resolution upstream unavailable ({type(cause).__name__}).")
+        assert "connection refused" not in err.detail
+        assert "Retry when the registry is available" in err.detail
 
 
 def test_awid_dependency_http_exception_names_unusable_registry_answers():
@@ -59,16 +62,15 @@ def test_awid_dependency_http_exception_names_unusable_registry_answers():
         operation="AWID team visibility lookup",
     )
 
-    assert not_found.status_code == 422
-    assert not_found.detail == {
+    expected = {
         "code": "registry_response_unusable",
-        "message": "AWID team visibility lookup upstream returned unexpected status (RegistryError status=404): Namespace not found",
+        "message": (
+            "AWID team visibility lookup received an unusable registry response. "
+            "Ask the server operator to check the registry."
+        ),
     }
-    assert forbidden.status_code == 422
-    assert forbidden.detail == {
-        "code": "registry_response_unusable",
-        "message": "AWID team visibility lookup upstream returned unexpected status (RegistryError status=403): Forbidden",
-    }
+    assert (not_found.status_code, not_found.detail) == (422, expected)
+    assert (forbidden.status_code, forbidden.detail) == (422, expected)
 
 
 def test_awid_dependency_http_exception_explains_missing_private_team_trusted_lane():
@@ -94,7 +96,9 @@ def test_awid_dependency_http_exception_maps_registry_429_to_retryable_503():
     )
 
     assert err.status_code == 503
-    assert err.detail == "AWID team visibility lookup upstream rate limited (RegistryError status=429): Too many requests"
+    assert err.detail.startswith("AWID team visibility lookup upstream rate limited (RegistryError status=429).")
+    assert "Retry when the registry is available" in err.detail
+    assert "Too many requests" not in err.detail
 
 
 def test_awid_dependency_http_exception_preserves_registry_5xx_as_retryable_503():
@@ -104,7 +108,9 @@ def test_awid_dependency_http_exception_preserves_registry_5xx_as_retryable_503(
     )
 
     assert err.status_code == 503
-    assert err.detail == "AWID team visibility lookup upstream error (RegistryError status=503): registry unavailable"
+    assert err.detail.startswith("AWID team visibility lookup upstream error (RegistryError status=503).")
+    assert "Retry when the registry is available" in err.detail
+    assert "registry unavailable" not in err.detail
 
 
 def test_awid_dependency_http_exception_classifies_http_status_error_as_dependency():
@@ -129,7 +135,10 @@ def test_awid_dependency_http_exception_names_unusable_http_status_error():
     assert err.status_code == 422
     assert err.detail == {
         "code": "registry_response_unusable",
-        "message": "AWID federation target identity resolution upstream returned unexpected status (HTTPStatusError status=403): forbidden",
+        "message": (
+            "AWID federation target identity resolution received an unusable registry response. "
+            "Ask the server operator to check the registry."
+        ),
     }
 
 
@@ -151,4 +160,7 @@ def test_awid_dependency_http_exception_does_not_label_unexpected_bug_as_503():
     )
 
     assert err.status_code == 500
-    assert err.detail == "Unexpected AWID team revocation check dependency error (RuntimeError): boom"
+    assert err.detail == (
+        "Unexpected AWID team revocation check dependency error (RuntimeError). "
+        "Ask the server operator to investigate."
+    )

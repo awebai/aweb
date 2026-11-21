@@ -478,8 +478,8 @@ async def test_verify_request_certificate_returns_coded_422_for_unusable_registr
     assert refused.value.detail == {
         "code": "registry_response_unusable",
         "message": (
-            "AWID team key resolution upstream returned unexpected status (RegistryError status=422): "
-            "team name must be lowercase alphanumeric with hyphens (e.g. 'backend', 'my-team')"
+            "AWID team key resolution received an unusable registry response. "
+            "Ask the server operator to check the registry."
         ),
     }
 

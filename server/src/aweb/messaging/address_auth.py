@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from aweb.messaging.refusals import RecipientIdentityBindingError
+from aweb.messaging.refusals import RecipientIdentityBindingError, registry_dependency_refusal
 
 from aweb.messaging.refusals import unreachable_address_refusal as unreachable_address_refusal
 
@@ -10,7 +10,6 @@ from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Mapping
 from collections.abc import Set
 
-from awid.federation_errors import FederationAuthorityError
 from awid.registry import Address
 from awid.log import canonical_server_origin
 from awid.registry import RegistryError
@@ -200,11 +199,7 @@ async def namespace_uses_home_registry(db, registry_client, domain: str) -> bool
             return False
         namespace = await registry_client.get_namespace_fresh(domain)
     except AWID_DEPENDENCY_ERRORS as exc:
-        logging.getLogger(__name__).warning(
-            "Messaging home namespace lookup unavailable failure_type=%s",
-            type(exc).__name__,
-        )
-        raise FederationAuthorityError("sender_registry_unavailable") from exc
+        raise registry_dependency_refusal(exc, operation="AWID recipient namespace lookup") from exc
     return bool(
         namespace
         and namespace.domain == domain
