@@ -246,7 +246,7 @@ func Execute() {
 		// also carry an envelope, even when parsing stops before --json.
 		asJSON := jsonFlag
 		var flagErr *cliFlagParsingError
-		if errors.As(err, &flagErr) && !rootCmd.PersistentFlags().Changed("json") {
+		if errors.As(err, &flagErr) {
 			asJSON = argsContainJSONFlag(os.Args[1:])
 		}
 		os.Exit(exitCode(reportCLIError(err, msg, asJSON)))

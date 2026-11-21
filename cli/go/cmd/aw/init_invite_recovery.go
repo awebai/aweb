@@ -55,14 +55,28 @@ func loadInitInviteRecovery(path string) (*initInviteRecovery, error) {
 	return &s, nil
 }
 
-func runRecoverableJoinFrom(cmd *cobra.Command, wd, source, sourceHome, team string) error {
+func runRecoverableJoinFrom(cmd *cobra.Command, wd, joinFrom, joinTeam string) error {
 	home, err := identityHomeForTarget(wd, "")
 	if err != nil {
 		return err
 	}
 	path := filepath.Join(home.Root, initInviteRecoveryFile)
 	scope := initInviteIdentityScope()
-	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) && scope == awid.IdentityModeGlobal {
+	_, recordErr := os.Stat(path)
+	newSelection := errors.Is(recordErr, os.ErrNotExist)
+	if recordErr != nil && !newSelection {
+		return recordErr
+	}
+	if newSelection && home.External() {
+		if err := validateNewInitJoinTarget(wd, home, scope); err != nil {
+			return err
+		}
+	}
+	source, sourceHome, team, err := resolveInitJoinSource(joinFrom, joinTeam)
+	if err != nil {
+		return err
+	}
+	if newSelection && scope == awid.IdentityModeGlobal {
 		// A source is an explicit parent choice only for a chainless joiner.
 		// Refuse an impossible choice before even creating the recovery lock.
 		if err := validateGlobalInitTarget(wd); err != nil {
@@ -81,8 +95,6 @@ func runRecoverableJoinFrom(cmd *cobra.Command, wd, source, sourceHome, team str
 				return unregisteredInviteParentError()
 			}
 		}
-	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
 	}
 	_, homeErr := os.Stat(home.Root)
 	lock, err := awconfig.TryLockExclusive(path + ".lock")
@@ -116,20 +128,8 @@ func runRecoverableJoinFrom(cmd *cobra.Command, wd, source, sourceHome, team str
 			}
 		}
 	} else {
-		// The lock/record alone grant no right to reuse another identity.
-		released, releaseErr := releasedInitTarget(wd, home)
-		if releaseErr != nil {
-			return releaseErr
-		}
-		if scope == awid.IdentityModeGlobal || !released {
-			if home.External() {
-				err = ensureIdentityCreationTargetClean(home)
-			} else {
-				err = ensureInitInviteTarget(wd)
-			}
-			if err != nil {
-				return err
-			}
+		if err := validateNewInitJoinTarget(wd, home, scope); err != nil {
+			return err
 		}
 		_, keyErr := os.Stat(filepath.Join(home.Root, "signing.key"))
 		if keyErr != nil && !errors.Is(keyErr, os.ErrNotExist) {
@@ -193,7 +193,7 @@ func runRecoverableJoinFrom(cmd *cobra.Command, wd, source, sourceHome, team str
 			if uncertain {
 				return uncertainHostedInviteError(home.Root, team, errors.New("invite expired"))
 			}
-			if err := discardHostedInviteAttempt(recoveryPath, acceptanceMintedKey{Home: home}); err != nil {
+			if err := discardHostedInviteAttempt(recoveryPath); err != nil {
 				return err
 			}
 			if err := releaseInitInviteRecovery(path, wd, home.Root); err != nil {
@@ -264,6 +264,22 @@ func releaseInitInviteRecovery(path, wd, home string) error {
 		}
 	}
 	return removeInitInviteRecovery(path)
+}
+
+// Recheck under the recovery lock before minting. The early call names a
+// dirty explicit target before looking at the source or creating the lock.
+func validateNewInitJoinTarget(wd string, home awconfig.IdentityHome, scope string) error {
+	released, err := releasedInitTarget(wd, home)
+	if err != nil {
+		return err
+	}
+	if released && scope != awid.IdentityModeGlobal {
+		return nil
+	}
+	if home.External() {
+		return ensureIdentityCreationTargetClean(home)
+	}
+	return ensureInitInviteTarget(wd)
 }
 
 func releasedInitTarget(wd string, home awconfig.IdentityHome) (bool, error) {

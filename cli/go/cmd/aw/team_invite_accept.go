@@ -217,7 +217,7 @@ func finishHostedInviteRefusal(request hostedInviteAcceptanceRequest, history ho
 	localMismatch := awid.IDCertificateErrorCode(cause) == "human_mismatch"
 	if request.Creation.ResponseJSON == "" && history != hostedSubmissionAttempted &&
 		(history == hostedSubmissionNotAttempted || localMismatch) {
-		cause = releaseRefusedHostedInvite(request.RecoveryPath, acceptanceMintedKey{Home: request.Home}, cause)
+		cause = releaseRefusedHostedInvite(request.RecoveryPath, cause)
 	}
 	if status, ok := awid.HTTPStatusCode(cause); ok && status >= 400 && status < 500 {
 		if _, err := os.Stat(request.RecoveryPath); err == nil {
@@ -420,7 +420,7 @@ func completeHostedInviteAcceptance(ctx context.Context, request hostedInviteAcc
 	}
 	localLink, treeRequest := child.LocalLink, child.TreeRequest
 	var membershipResult *awid.IDChainResult
-	if creation.MembershipChain != nil {
+	if creation.MembershipOnly || creation.MembershipChain != nil {
 		subjectID := didKey
 		if scope == awid.IdentityModeGlobal {
 			subjectID = stableID
@@ -564,11 +564,14 @@ func verifyHostedInviteAcceptedAttribution(ctx context.Context, responseRequest 
 		}
 	}
 	responsibility := membershipResult
-	if creation.MembershipChain != nil {
+	if creation.MembershipOnly || creation.MembershipChain != nil {
 		if resp.RegistrationRequest != nil {
 			return nil, errors.New("membership-only acceptance requested identity registration")
 		}
 		if resp.IDChain != nil {
+			if creation.MembershipChain == nil {
+				return nil, errors.New("membership-only acceptance returned a new identity chain; retain the original home and invite for reconciliation")
+			}
 			expected, err := awid.EncodeIDChainHeader(creation.MembershipChain)
 			if err != nil {
 				return nil, fmt.Errorf("encode selected membership chain: %w; restore the selected identity's original chain and retry the same invite", err)

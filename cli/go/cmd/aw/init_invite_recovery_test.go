@@ -28,8 +28,10 @@ func TestInitJoinFromUnreadableMembershipKeepsRecovery(t *testing.T) {
 	if err := awid.SaveSigningKey(filepath.Join(home, "signing.key"), key); err != nil {
 		t.Fatal(err)
 	}
+	source := t.TempDir()
+	writeWorkspaceBindingForTest(t, source, workspaceBinding("https://fixture.invalid", "backend:example.com", "source", "workspace-source"))
 	path := filepath.Join(home, initInviteRecoveryFile)
-	state := &initInviteRecovery{MintedKey: true, ParentFromSource: true, Source: "/source", TeamID: "backend:example.com", Alias: "child", Scope: "local", Token: "aw_inv_DO_NOT_PRINT", Origin: "https://fixture.invalid", ExpiresAt: time.Now().Add(-time.Minute).UTC().Format(time.RFC3339), DIDKey: awid.ComputeDIDKey(pub)}
+	state := &initInviteRecovery{MintedKey: true, ParentFromSource: true, Source: source, TeamID: "backend:example.com", Alias: "child", Scope: "local", Token: "aw_inv_DO_NOT_PRINT", Origin: "https://fixture.invalid", ExpiresAt: time.Now().Add(-time.Minute).UTC().Format(time.RFC3339), DIDKey: awid.ComputeDIDKey(pub)}
 	if err := state.save(path); err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +47,7 @@ func TestInitJoinFromUnreadableMembershipKeepsRecovery(t *testing.T) {
 	}
 	before := snapshotJoinFiles(t, home)
 	var out bytes.Buffer
-	err = runRecoverableJoinFrom(authTestCmd(&out), wd, state.Source, "", state.TeamID)
+	err = runRecoverableJoinFrom(authTestCmd(&out), wd, state.Source, state.TeamID)
 	if err == nil || !strings.Contains(err.Error(), "load init retry membership") || strings.Contains(err.Error()+out.String(), state.Token) {
 		t.Fatalf("unreadable membership was treated as absent: %v", err)
 	}
@@ -69,8 +71,10 @@ func TestInitJoinFromExpiredRecovery(t *testing.T) {
 			if err := awid.SaveSigningKey(filepath.Join(home, "signing.key"), key); err != nil {
 				t.Fatal(err)
 			}
+			source := t.TempDir()
+			writeWorkspaceBindingForTest(t, source, workspaceBinding("https://fixture.invalid", "backend:example.com", "source", "workspace-source"))
 			path := filepath.Join(home, initInviteRecoveryFile)
-			state := &initInviteRecovery{MintedKey: true, Source: "/source", TeamID: "backend:example.com", Alias: "child", Scope: "local", Token: "aw_inv_DO_NOT_PRINT", Origin: "https://fixture.invalid", ExpiresAt: time.Now().Add(-time.Minute).UTC().Format(time.RFC3339), DIDKey: awid.ComputeDIDKey(pub)}
+			state := &initInviteRecovery{MintedKey: true, Source: source, TeamID: "backend:example.com", Alias: "child", Scope: "local", Token: "aw_inv_DO_NOT_PRINT", Origin: "https://fixture.invalid", ExpiresAt: time.Now().Add(-time.Minute).UTC().Format(time.RFC3339), DIDKey: awid.ComputeDIDKey(pub)}
 			if err := state.save(path); err != nil {
 				t.Fatal(err)
 			}
@@ -86,7 +90,7 @@ func TestInitJoinFromExpiredRecovery(t *testing.T) {
 				}
 			}
 			var out bytes.Buffer
-			err = runRecoverableJoinFrom(authTestCmd(&out), wd, "/source", "", "backend:example.com")
+			err = runRecoverableJoinFrom(authTestCmd(&out), wd, state.Source, state.TeamID)
 			if err == nil || !strings.Contains(err.Error(), "expired") {
 				t.Fatalf("expiry allowed: %v", err)
 			}

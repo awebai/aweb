@@ -460,11 +460,7 @@ func runInitJoinFrom(cmd *cobra.Command) error {
 	if home.External() && home.Source != awconfig.IdentityHomeFlag {
 		return usageError("join-from creation requires an explicit fresh --identity-home target; refusing to change inherited identity home %s", home.Root)
 	}
-	sourceWorkingDir, sourceIdentityHome, teamID, err := resolveInitJoinSource(strings.TrimSpace(initJoinFrom), strings.TrimSpace(initJoinTeam))
-	if err != nil {
-		return err
-	}
-	return runRecoverableJoinFrom(cmd, wd, sourceWorkingDir, sourceIdentityHome, teamID)
+	return runRecoverableJoinFrom(cmd, wd, strings.TrimSpace(initJoinFrom), strings.TrimSpace(initJoinTeam))
 }
 
 func runInitAdmissionTeamID(cmd *cobra.Command) error {
