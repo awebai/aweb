@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-20
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-naapp-library-auth (task aweb-admf).
+* **Creation**: lesson [guard pgdbm test databases on the captured config, from a pytest-only module](/aweb-expert/lessons/guard-pgdbm-test-databases-on-the-captured-config.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
