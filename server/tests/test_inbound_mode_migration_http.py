@@ -1,4 +1,4 @@
-"""A real N-1 inbound policy row is backfilled before normal delivery resumes."""
+"""A real N-1 inbound policy row stays private after it is backfilled."""
 
 import json
 from uuid import UUID
@@ -16,7 +16,7 @@ MIGRATION = "056_inbound_mode_default.sql"
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("route", ["mail", "chat"])
-async def test_migrated_global_recipient_uses_the_native_default(
+async def test_migrated_global_recipient_keeps_noncontacts_refused(
     shared_test_pool, tmp_path, monkeypatch, route
 ):
     async with stage_aweb_upgrade(shared_test_pool, tmp_path / "policies", MIGRATION) as upgrade:
@@ -33,7 +33,7 @@ async def test_migrated_global_recipient_uses_the_native_default(
                 local=False,
             )
             bob, restricted = (recipients[name] for name in ("bob-migration", "bob-restricted"))
-            await set_messaging_inbound_mode(env, restricted, mode="contacts_only")
+            await set_messaging_inbound_mode(env, restricted, mode="team_and_contacts")
             # unreachable-state: pre-056 policy omitted by old admission.
             await env.db.execute(
                 "UPDATE {{tables.agents}} SET inbound_mode = NULL WHERE agent_id=$1",
@@ -76,17 +76,21 @@ async def test_migrated_global_recipient_uses_the_native_default(
                    WHERE a.attrelid = '{{tables.agents}}'::regclass
                      AND a.attname = 'inbound_mode'"""
             )
-            assert dict(schema) == {"attnotnull": True, "mode_default": "'open'::text"}
+            assert dict(schema) == {"attnotnull": True, "mode_default": "'contacts_only'::text"}
             modes = await env.db.fetch_all(
                 "SELECT alias, inbound_mode FROM {{tables.agents}} WHERE agent_id = ANY($1::UUID[])",
                 [UUID(bob.agent_id), UUID(restricted.agent_id)],
             )
             assert {row["alias"]: row["inbound_mode"] for row in modes} == {
-                "bob-migration": "open",
-                "bob-restricted": "contacts_only",
+                "bob-migration": "contacts_only",
+                "bob-restricted": "team_and_contacts",
             }
             after = await send(bob)
-            assert after.status_code == 200, after.text
+            assert after.status_code == 403, after.text
+            assert "exact active contacts" in after.text
+            await set_messaging_inbound_mode(env, bob, mode="open")
+            owner_opened = await send(bob)
+            assert owner_opened.status_code == 200, owner_opened.text
             still_restricted = await send(restricted)
             assert still_restricted.status_code == 403, still_restricted.text
             assert "exact active contacts" in still_restricted.text

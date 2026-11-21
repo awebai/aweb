@@ -74,7 +74,8 @@ change by the identity updates all those rows; a new membership inherits the
 current effective mode. Team ownership alone does not authorize a policy change.
 A global-scope row without a raw `did:aw` has no link to other memberships:
 its policy is its own explicit mode. Migration 056 backfills legacy NULL rows
-to the native default `open` and preserves explicitly selected policies.
+to `contacts_only` and preserves explicitly selected policies. The old rows
+were closed to delivery and their original policy cannot be recovered.
 This does not grant it authority to set an identity-wide policy.
 The identity-signed "my inbound mode" route uses the authenticated, AWID-bound
 `did:aw` for the change; a stored membership claim cannot select its write scope.

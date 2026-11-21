@@ -13,7 +13,9 @@ from awid.did import did_from_public_key
 from awid.signing import canonical_json_bytes
 from awid.team_certificate import (
     TeamCertificateError,
+    TeamCertificateStanding,
     decode_team_certificate,
+    evaluate_team_certificate_standing,
     verify_team_certificate_signature,
 )
 from nacl.signing import SigningKey
@@ -48,6 +50,21 @@ def header(cert: dict) -> str:
 def test_a_certificate_signed_by_the_team_key_verifies() -> None:
     verify_team_certificate_signature(
         decode_team_certificate(header(certificate())), TEAM_DID_KEY
+    )
+
+
+@pytest.mark.parametrize("registered", [True, False, None])
+def test_revocation_overrides_registration(registered: bool | None) -> None:
+    assert (
+        evaluate_team_certificate_standing(revoked=True, registered=registered)
+        is TeamCertificateStanding.REVOKED
+    )
+
+
+def test_unrequired_registration_allows_an_unrevoked_certificate() -> None:
+    assert (
+        evaluate_team_certificate_standing(revoked=False, registered=None)
+        is TeamCertificateStanding.ACTIVE
     )
 
 

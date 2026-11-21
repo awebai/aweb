@@ -96,6 +96,8 @@ from awid.registry_types import (
 )
 from awid.signature_wire import sign_bytes
 from awid.signing import canonical_json_bytes, sign_message, verify_did_key_signature
+from awid.team_certificate import TeamCertificateStanding as TeamCertificateStanding
+from awid.team_certificate import evaluate_team_certificate_standing
 from awid.team_ids import build_team_id
 from awid.utc_timestamps import parse_utc_seconds
 
@@ -241,12 +243,6 @@ _CACHE_GENERATION_TTL_SECONDS = 3600
 _MICROSECONDS = 1_000_000
 
 
-class TeamCertificateStanding(StrEnum):
-    ACTIVE = "active"
-    REVOKED = "revoked"
-    UNREGISTERED = "unregistered"
-
-
 @dataclass(frozen=True)
 class _TeamCertificateObservation:
     started_us: int
@@ -254,9 +250,9 @@ class _TeamCertificateObservation:
 
     def standing(self, certificate_id: str) -> TeamCertificateStanding:
         revoked = self.revoked_by_id.get(certificate_id)
-        if revoked is None:
-            return TeamCertificateStanding.UNREGISTERED
-        return TeamCertificateStanding.REVOKED if revoked else TeamCertificateStanding.ACTIVE
+        return evaluate_team_certificate_standing(
+            revoked=revoked is True, registered=revoked is not None,
+        )
 
 
 @dataclass(frozen=True)
@@ -3397,7 +3393,7 @@ class CachedRegistryClient(RegistryClient):
                 "Invalid AWID certificate status response", status_code=502
             ) from exc
         if status is None:
-            standing = TeamCertificateStanding.UNREGISTERED
+            standing = evaluate_team_certificate_standing(revoked=False, registered=False)
             ttl = _TEAM_CERTIFICATES_NEGATIVE_TTL_SECONDS
         else:
             if not isinstance(status, dict):
@@ -3412,10 +3408,8 @@ class CachedRegistryClient(RegistryClient):
                 or (revoked_at is not None and not isinstance(revoked_at, str))
             ):
                 raise RegistryError("Invalid AWID certificate status response", status_code=502)
-            standing = (
-                TeamCertificateStanding.REVOKED
-                if state == "revoked"
-                else TeamCertificateStanding.ACTIVE
+            standing = evaluate_team_certificate_standing(
+                revoked=state == "revoked", registered=True,
             )
             ttl = _TEAM_CERTIFICATES_POINT_TTL_SECONDS
         # A point observation never changes the age or completeness of a list.
