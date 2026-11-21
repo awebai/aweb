@@ -61,7 +61,7 @@ def collect(package, modules, evidence, name, command, environ):
     env['PYTHONPATH'] = os.pathsep.join(filter(None, [
         str(Path(__file__).resolve().parent), env.get('PYTHONPATH')]))
     args = [*command, '--collect-only', '-p', 'secrets_shards',
-            *pytest_location(evidence / name), *modules]
+            *scratch_args(evidence / name), *modules]
     with (evidence / f'{name}.log').open('w') as log:
         result = subprocess.run(args, cwd=package, env=env, stdout=log, stderr=subprocess.STDOUT)
     if result.returncode:
@@ -92,7 +92,7 @@ def qualify(package: Path, manifest: Path, evidence: Path, command, environments
     return shards
 
 
-def pytest_location(root: Path) -> list[str]:
+def scratch_args(root: Path) -> list[str]:
     root.mkdir(parents=True, exist_ok=True)
     return [f'--basetemp={root / "pytest"}', '-o', f'cache_dir={root / "cache"}']
 
@@ -122,7 +122,7 @@ def service_environments(plan: str) -> list[dict[str, str]]:
 def run_shards(package, shards, environments, evidence, command):
     def run(index, modules, env):
         root = evidence / f'run-{index}'
-        args = [*command, *pytest_location(root), *modules]
+        args = [*command, *scratch_args(root), *modules]
         log = root / 'pytest.log'
         with log.open('w') as output:
             try:
