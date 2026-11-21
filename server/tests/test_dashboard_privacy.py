@@ -590,8 +590,8 @@ async def test_embedded_public_status_reader_never_gets_messaging(
     if colliding_workspace:
         _, _, did = _make_keypair()
         await env.db.execute(
-            "INSERT INTO {{tables.agents}} (agent_id, team_id, did_key, alias) "
-            "VALUES ($1, $2, $3, 'public-collision')",
+            "INSERT INTO {{tables.agents}} (agent_id, team_id, did_key, alias, inbound_mode) "
+            "VALUES ($1, $2, $3, 'public-collision', 'contacts_only')",
             UUID(actor_id),
             TEAM,
             did,

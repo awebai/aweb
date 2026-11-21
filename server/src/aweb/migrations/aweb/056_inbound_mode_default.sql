@@ -4,5 +4,5 @@
 UPDATE {{tables.agents}} SET inbound_mode = 'contacts_only' WHERE inbound_mode IS NULL;
 
 ALTER TABLE {{tables.agents}}
-    ALTER COLUMN inbound_mode SET DEFAULT 'contacts_only',
+    ALTER COLUMN inbound_mode DROP DEFAULT,
     ALTER COLUMN inbound_mode SET NOT NULL;

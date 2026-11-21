@@ -490,7 +490,7 @@ async def test_revalidation_cli_defaults_to_read_only_and_reports_unresolved(
             ALICE["did_key"],
         )
         await db.execute(
-            "INSERT INTO {{tables.agents}} (team_id,alias,did_key,agent_type) VALUES ('cli:test','old-human',$1,'human')",
+            "INSERT INTO {{tables.agents}} (team_id,alias,did_key,agent_type, inbound_mode) VALUES ('cli:test','old-human',$1,'human', 'contacts_only')",
             ALICE["did_key"],
         )
         for args in ([], ["--apply"]):

@@ -100,8 +100,8 @@ async def _create_test_event_recipient(aweb_db):
     )
     await aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (agent_id, team_id, did_aw, did_key, alias, address)
-        VALUES ($1, 'backend:acme.com', 'did:aw:bob', 'did:key:z6MkBob', 'bob', 'acme.com/bob')
+        INSERT INTO {{tables.agents}} (agent_id, team_id, did_aw, did_key, alias, address, inbound_mode)
+        VALUES ($1, 'backend:acme.com', 'did:aw:bob', 'did:key:z6MkBob', 'bob', 'acme.com/bob', 'contacts_only')
         """,
         agent_id,
     )
@@ -239,8 +239,8 @@ async def test_current_actionable_mail_includes_from_stable_id_for_current_sende
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (agent_id, team_id, did_aw, did_key, alias, address)
-        VALUES ($1, 'backend:acme.com', 'did:aw:alice', 'did:key:z6MkAliceCurrent', 'alice', 'acme.com/alice')
+        INSERT INTO {{tables.agents}} (agent_id, team_id, did_aw, did_key, alias, address, inbound_mode)
+        VALUES ($1, 'backend:acme.com', 'did:aw:alice', 'did:key:z6MkAliceCurrent', 'alice', 'acme.com/alice', 'contacts_only')
         """,
         uuid4(),
     )
@@ -413,11 +413,11 @@ async def test_current_actionable_chat_uses_per_session_participant_lists(
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (agent_id, team_id, did_aw, did_key, alias, address)
+        INSERT INTO {{tables.agents}} (agent_id, team_id, did_aw, did_key, alias, address, inbound_mode)
         VALUES
-            ($1, 'backend:acme.com', 'did:aw:alice', 'did:key:z6MkAlice', 'alice', 'acme.com/alice'),
-            ($2, 'backend:acme.com', 'did:aw:bob', 'did:key:z6MkBob', 'bob', 'acme.com/bob'),
-            ($3, 'frontend:acme.com', 'did:aw:carol', 'did:key:z6MkCarol', 'carol', NULL)
+            ($1, 'backend:acme.com', 'did:aw:alice', 'did:key:z6MkAlice', 'alice', 'acme.com/alice', 'contacts_only'),
+            ($2, 'backend:acme.com', 'did:aw:bob', 'did:key:z6MkBob', 'bob', 'acme.com/bob', 'contacts_only'),
+            ($3, 'frontend:acme.com', 'did:aw:carol', 'did:key:z6MkCarol', 'carol', NULL, 'contacts_only')
         """,
         uuid4(),
         uuid4(),
@@ -514,8 +514,8 @@ async def test_current_actionable_chat_includes_from_stable_id_for_current_sende
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (agent_id, team_id, did_aw, did_key, alias, address)
-        VALUES ($1, 'backend:acme.com', 'did:aw:alice', 'did:key:z6MkAliceCurrent', 'alice', 'acme.com/alice')
+        INSERT INTO {{tables.agents}} (agent_id, team_id, did_aw, did_key, alias, address, inbound_mode)
+        VALUES ($1, 'backend:acme.com', 'did:aw:alice', 'did:key:z6MkAliceCurrent', 'alice', 'acme.com/alice', 'contacts_only')
         """,
         uuid4(),
     )
