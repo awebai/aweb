@@ -1,6 +1,6 @@
 """Real native roster budget and newest-of-all-three activity evidence."""
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
 
 import pytest
 import pytest_asyncio
@@ -12,7 +12,12 @@ from aweb.presence import clear_workspace_presence, update_agent_presence
 from test_dashboard_privacy import TEAM, privacy_stack
 from test_messages_http import _signed_team_headers
 from test_team_room import admit_room_member
-from test_workspace_liveness_http import GrantHeartbeatRoute, _send_grant_heartbeat
+from test_workspace_liveness_http import (
+    GrantHeartbeatRoute,
+    _root_last_seen,
+    _send_grant_heartbeat,
+    _send_member_request,
+)
 
 
 @pytest_asyncio.fixture
@@ -77,29 +82,33 @@ async def test_listening_roster_keeps_the_newest_activity_source(roster_stack, n
     env = roster_stack
     actor = env.actors["alice"]
     await admit_room_member(env, alias="alice")
-    grant_id = await _send_grant_heartbeat(env, path=GrantHeartbeatRoute.WORKSPACE)
-    now = datetime.now(UTC).replace(microsecond=0)
-    times = {name: now - timedelta(minutes=5) for name in ("grant", "redis", "sql")}
-    times[newest] = now - timedelta(minutes=1)
-    await env.db.execute(
-        "UPDATE {{tables.workspaces}} SET last_seen_at=$2 WHERE workspace_id=$1",
-        actor.workspace,
-        times["sql"],
-    )
-    await env.db.execute(
-        "UPDATE {{tables.identity_grant_liveness}} SET last_seen_at=$2 WHERE grant_id=$1",
-        grant_id,
-        times["grant"],
-    )
-    await update_agent_presence(
-        env.redis,
-        workspace_id=str(actor.workspace),
-        alias="alice",
-        team_id=TEAM,
-        status="listening",
-    )
-    await env.redis.hset(f"presence:{actor.workspace}", "last_seen", times["redis"].isoformat())
+    sources = [name for name in ("grant", "redis", "sql") if name != newest] + [newest]
+    times = {}
     try:
+        for name in sources:
+            if name == "grant":
+                grant_id = await _send_grant_heartbeat(
+                    env, path=GrantHeartbeatRoute.WORKSPACE
+                )
+                times[name] = await env.db.fetch_value(
+                    "SELECT last_seen_at FROM {{tables.identity_grant_liveness}} WHERE grant_id=$1",
+                    grant_id,
+                )
+            elif name == "redis":
+                await update_agent_presence(
+                    env.redis, workspace_id=str(actor.workspace), alias="alice",
+                    team_id=TEAM, status="listening",
+                )
+                times[name] = datetime.fromisoformat(
+                    await env.redis.hget(f"presence:{actor.workspace}", "last_seen")
+                )
+            else:
+                connected = await _send_member_request(
+                    env, alias="alice", method="POST", path="/v1/connect", body={}
+                )
+                assert connected.status_code == 200, connected.text
+                times[name] = await _root_last_seen(env)
+        assert all(times[newest] > times[other] for other in sources[:-1])
         agent = next(agent for agent in await roster(env) if agent["alias"] == "alice")
         assert agent["online"] is True
         assert agent["status"] == "listening"
@@ -115,23 +124,15 @@ async def test_invalid_newest_grant_does_not_hide_older_valid_activity(roster_st
     await admit_room_member(env, alias="alice")
     older = await _send_grant_heartbeat(env, path=GrantHeartbeatRoute.WORKSPACE)
     newer = await _send_grant_heartbeat(env, path=GrantHeartbeatRoute.WORKSPACE)
-    now = datetime.now(UTC).replace(microsecond=0)
-    expected = now - timedelta(minutes=2)
-    await env.db.execute(
-        "UPDATE {{tables.workspaces}} SET last_seen_at=$2 WHERE workspace_id=$1",
-        actor.workspace,
-        now - timedelta(hours=1),
-    )
-    await env.db.execute(
-        "UPDATE {{tables.identity_grant_liveness}} SET last_seen_at=$2 WHERE grant_id=$1",
+    expected = await env.db.fetch_value(
+        "SELECT last_seen_at FROM {{tables.identity_grant_liveness}} WHERE grant_id=$1",
         older,
-        expected,
     )
-    await env.db.execute(
-        "UPDATE {{tables.identity_grant_liveness}} SET last_seen_at=$2 WHERE grant_id=$1",
+    newer_seen = await env.db.fetch_value(
+        "SELECT last_seen_at FROM {{tables.identity_grant_liveness}} WHERE grant_id=$1",
         newer,
-        now,
     )
+    assert newer_seen > expected > await _root_last_seen(env)
     revoked = await env.client.post(
         f"/v1/identity-grants/{newer}/revoke",
         headers=_signed_team_headers(actor.sk, actor.did, TEAM, actor.certificate),

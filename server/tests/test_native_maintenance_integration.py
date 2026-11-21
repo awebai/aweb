@@ -8,10 +8,8 @@ import pytest
 
 from aweb.events import team_events_channel_name
 from aweb.outbox_recovery import stop_outbox_recovery
-from aweb.presence import clear_workspace_presence
 from test_coordination_state_http import request_as
 from test_dashboard_privacy import TEAM, privacy_app as privacy_app
-from test_workspace_liveness_http import _age_workspace_heartbeat
 
 
 async def _read_event(stream):
@@ -42,10 +40,11 @@ async def test_serving_timer_reconciles_presence_without_viewers(
             assert response.status_code == 200, response.text
             online = await _read_event(stream)
             assert (online["type"], online["alias"]) == ("agent.online", "alice")
-            await _age_workspace_heartbeat(env)
-            await clear_workspace_presence(
-                env.redis, [str(env.actors["alice"].workspace)]
+            deleted = await request_as(
+                env, alias="alice", method="DELETE",
+                path=f"/v1/workspaces/{env.actors['alice'].workspace}",
             )
+            assert deleted.status_code == 200, deleted.text
             offline = await _read_event(stream)
             assert (offline["type"], offline["alias"]) == ("agent.offline", "alice")
     finally:

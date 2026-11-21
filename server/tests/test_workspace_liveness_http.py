@@ -1,5 +1,6 @@
 """Live-workspace deletion protection through real aweb, AWID, PostgreSQL and Redis."""
 
+import asyncio
 import json
 import socket
 from dataclasses import replace
@@ -144,7 +145,9 @@ async def _send_mcp_heartbeat(env):
         await mcp.shutdown()
 
 
-async def _send_grant_heartbeat(env, *, path: GrantHeartbeatRoute) -> UUID:
+async def _send_grant_heartbeat(
+    env, *, path: GrantHeartbeatRoute, ttl_seconds: int = 600
+) -> UUID:
     session_key, session_did = _session_keypair()
     minted = await _send_member_request(
         env,
@@ -154,7 +157,7 @@ async def _send_grant_heartbeat(env, *, path: GrantHeartbeatRoute) -> UUID:
         body={
             "grant_did_key": session_did,
             "scopes": ["presence.write"],
-            "ttl_seconds": 600,
+            "ttl_seconds": ttl_seconds,
         },
     )
     assert minted.status_code == 200, minted.text
@@ -175,10 +178,9 @@ async def _send_grant_heartbeat(env, *, path: GrantHeartbeatRoute) -> UUID:
     return UUID(grant["grant_id"])
 
 
-async def _age_workspace_heartbeat(env):
-    await env.db.execute(
-        "UPDATE {{tables.workspaces}} SET last_seen_at = NOW() - INTERVAL '2 hours' "
-        "WHERE workspace_id = $1",
+async def _root_last_seen(env):
+    return await env.db.fetch_value(
+        "SELECT last_seen_at FROM {{tables.workspaces}} WHERE workspace_id=$1",
         env.actors["alice"].workspace,
     )
 
@@ -195,7 +197,7 @@ async def test_live_activity_protects_workspace_from_teammate_delete(
         actor = await _connect_registered_member(env, alias=alias)
     else:
         actor = env.actors[alias]
-        await _age_workspace_heartbeat(env)
+        assert await _root_last_seen(env) is None
         if activity == Activity.MCP_HEARTBEAT:
             await _send_mcp_heartbeat(env)
         else:
@@ -207,11 +209,7 @@ async def test_live_activity_protects_workspace_from_teammate_delete(
             await _send_grant_heartbeat(env, path=path)
             # A grant heartbeat must not rewrite shared root presence.
             assert not await env.redis.exists(f"presence:{actor.workspace}")
-            seen = await env.db.fetch_value(
-                "SELECT last_seen_at FROM {{tables.workspaces}} WHERE workspace_id=$1",
-                actor.workspace,
-            )
-            assert seen < datetime.now(UTC) - timedelta(hours=1)
+            assert await _root_last_seen(env) is None
 
     try:
         request = LifecycleCascadeRequest(
@@ -258,29 +256,36 @@ async def test_live_activity_protects_workspace_from_teammate_delete(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("grant_state", list(InvalidGrantActivity))
 async def test_invalid_grant_liveness_does_not_prevent_stale_workspace_cleanup(
-    privacy_app, grant_state: InvalidGrantActivity
+    privacy_app, monkeypatch, grant_state: InvalidGrantActivity
 ):
     env = privacy_app
     actor = env.actors["alice"]
-    await _age_workspace_heartbeat(env)
-    grant_id = await _send_grant_heartbeat(env, path=GrantHeartbeatRoute.AGENT)
+    assert await _root_last_seen(env) is None
+    if grant_state == InvalidGrantActivity.STALE:
+        monkeypatch.setenv("AWEB_PRESENCE_TTL_SECONDS", "10")
+    grant_id = await _send_grant_heartbeat(
+        env, path=GrantHeartbeatRoute.AGENT,
+        ttl_seconds=60 if grant_state == InvalidGrantActivity.EXPIRED else 600,
+    )
     if grant_state == InvalidGrantActivity.REVOKED:
         response = await _send_member_request(
             env, alias="alice", method="POST", path=f"/v1/identity-grants/{grant_id}/revoke"
         )
         assert response.status_code == 200, response.text
     elif grant_state == InvalidGrantActivity.EXPIRED:
-        await env.db.execute(
-            "UPDATE {{tables.identity_session_grants}} "
-            "SET issued_at=NOW()-INTERVAL '2 hours', expires_at=NOW()-INTERVAL '1 second' "
-            "WHERE grant_id=$1",
+        expired_at = await env.db.fetch_value(
+            "SELECT expires_at FROM {{tables.identity_session_grants}} WHERE grant_id=$1",
             grant_id,
         )
     else:
-        await env.db.execute(
-            "UPDATE {{tables.identity_grant_liveness}} SET last_seen_at=NOW()-INTERVAL '2 hours' WHERE grant_id=$1",
+        last_seen = await env.db.fetch_value(
+            "SELECT last_seen_at FROM {{tables.identity_grant_liveness}} WHERE grant_id=$1",
             grant_id,
         )
+        expired_at = last_seen + timedelta(seconds=10)
+    if grant_state != InvalidGrantActivity.REVOKED:
+        # The actual HTTP-minted grant or its configured activity window expires.
+        await asyncio.sleep(max(0, (expired_at - datetime.now(UTC)).total_seconds()) + 0.05)
     response = await _send_member_request(
         env, alias="bob", method="DELETE", path=f"/v1/workspaces/{actor.workspace}"
     )
@@ -305,7 +310,7 @@ async def test_unknown_registry_liveness_cannot_authorize_stale_workspace_deleti
     """A real registry connection failure is uncertainty, not proof of inactivity."""
     env = privacy_app
     actor = env.actors["alice"]
-    await _age_workspace_heartbeat(env)
+    assert await _root_last_seen(env) is None
     grant_id = await _send_grant_heartbeat(env, path=GrantHeartbeatRoute.AGENT)
     request = LifecycleCascadeRequest(
         operation="delete_local_workspace",

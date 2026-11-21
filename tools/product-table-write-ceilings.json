@@ -212,7 +212,7 @@
     "server/tests/test_conversations_service.py": 15,
     "server/tests/test_custodial_recipient_e2ee.py": 5,
     "server/tests/test_custody_symlink_cwd.py": 3,
-    "server/tests/test_dashboard.py": 19,
+    "server/tests/test_dashboard.py": 10,
     "server/tests/test_dashboard_privacy.py": 9,
     "server/tests/test_delegated_namespace_contacts.py": 1,
     "server/tests/test_e2ee_local_sender_read_trust.py": 1,
@@ -270,12 +270,12 @@
     "server/tests/test_mcp_mutation_hook_parity.py": 2,
     "server/tests/test_mcp_notifications.py": 13,
     "server/tests/test_mcp_team_certificate_evidence_http.py": 2,
-    "server/tests/test_mcp_workspace_tools.py": 6,
+    "server/tests/test_mcp_workspace_tools.py": 1,
     "server/tests/test_member_team_key.py": 3,
     "server/tests/test_messages.py": 9,
     "server/tests/test_messages_http.py": 82,
     "server/tests/test_multi_membership_address.py": 13,
-    "server/tests/test_mutation_hooks.py": 12,
+    "server/tests/test_mutation_hooks.py": 8,
     "server/tests/test_operator_audit_http.py": 5,
     "server/tests/test_outbox_recovery.py": 1,
     "server/tests/test_package_data.py": 7,
@@ -309,7 +309,7 @@
     "server/tests/test_team_room_tree_stream.py": 2,
     "server/tests/test_verified_human_kind.py": 13,
     "server/tests/test_verified_installations.py": 6,
-    "server/tests/test_workspaces_delete_http.py": 13
+    "server/tests/test_workspaces_delete_http.py": 3
   },
   "marked_files": {
     "server/tests/test_chat_coverage_migration_http.py": 6,

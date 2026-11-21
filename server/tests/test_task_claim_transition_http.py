@@ -9,7 +9,10 @@ import pytest
 import pytest_asyncio
 
 from aweb.claims import lock_task_claim_workspaces_on
+from aweb.coordination.tasks_service import update_task
+from aweb.db import TransactionInfra
 from aweb.embedding import OutboxRecoveryOwnership
+from aweb.team_auth_deps import TeamIdentity
 from aweb.events import team_events_channel_name
 from test_coordination_state_http import request_as
 from test_dashboard_privacy import TEAM, privacy_stack
@@ -78,11 +81,19 @@ async def test_parent_closure_waits_for_child_before_locking_their_shared_worksp
                 assert [row["workspace_id"] for row in locked] == [
                     env.actors["alice"].workspace
                 ]
-                await child_tx.execute(
-                    "UPDATE {{tables.tasks}} SET title=$2 WHERE task_id=$1",
-                    child_id,
-                    "Child write committed before closing",
+                alice = env.actors["alice"]
+                updated = await update_task(
+                    TransactionInfra(env.infra, child_tx),
+                    actor=TeamIdentity(
+                        team_id=TEAM, agent_id=str(alice.id), alias="alice",
+                        did_key=alice.did, did_aw="", address="", identity_scope="local",
+                        certificate_id="privacy-alice",
+                    ),
+                    on_mutation=None,
+                    ref=child_ref,
+                    title="Child write committed before closing",
                 )
+                assert updated["title"] == "Child write committed before closing"
         response = await pending
         assert response.status_code == 200, response.text
         assert response.json()["auto_closed"] == [{

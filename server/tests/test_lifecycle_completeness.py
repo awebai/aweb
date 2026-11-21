@@ -5,7 +5,7 @@ from contextlib import suppress
 from dataclasses import replace
 from datetime import datetime, timezone
 from enum import StrEnum
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import pytest
 from aweb.lifecycle import (
@@ -460,30 +460,25 @@ async def test_explicit_workspace_cannot_select_another_agent_for_cleanup(privac
 
 @pytest.mark.asyncio
 async def test_cleanup_locks_all_workspaces_before_deleting_any_claim(
-    aweb_cloud_db, lifecycle_redis
+    privacy_app,
 ):
     """Cleanup and claim release share UUID workspace order before claim writes."""
-    db = aweb_cloud_db.aweb_db
-    team, agent, first = await _seed_workspace_with_claim(db, identity_scope="global")
-    second = uuid4()
-    await db.execute(
-        "INSERT INTO {{tables.workspaces}} (workspace_id,team_id,agent_id,alias,workspace_type,last_seen_at) "
-        "VALUES ($1,$2,$3,'alice-second','manual',NOW()-INTERVAL '2 hours')",
-        second,
-        team,
-        agent,
-    )
-    await db.execute(
-        "INSERT INTO {{tables.task_claims}} (team_id,workspace_id,alias,human_name,task_ref,claimed_at) "
-        "VALUES ($1,$2,'alice-second','Alice','backend-778',NOW())",
-        team,
-        second,
-    )
-    low, high = sorted((first, second))
-    await db.execute(
-        "UPDATE {{tables.workspaces}} SET updated_at=NOW()-INTERVAL '1 hour' WHERE workspace_id=$1",
-        high,
-    )
+    env = privacy_app
+    db = env.db
+    aliases = sorted(("alice", "bob"), key=lambda alias: env.actors[alias].workspace)
+    low, high = (env.actors[alias].workspace for alias in aliases)
+    # Claim high first so the product puts low first in recency order.
+    for alias in reversed(aliases):
+        task = await _send_member_request(
+            env, alias=alias, method="POST", path="/v1/tasks",
+            body={"title": f"Cleanup ordering claim for {alias}"},
+        )
+        assert task.status_code == 200, task.text
+        claimed = await _send_member_request(
+            env, alias=alias, method="PATCH", path=f"/v1/tasks/{task.json()['task_ref']}",
+            body={"status": "in_progress"},
+        )
+        assert claimed.status_code == 200, claimed.text
     cleanup_pid = asyncio.get_running_loop().create_future()
 
     async def clean():
@@ -491,18 +486,17 @@ async def test_cleanup_locks_all_workspaces_before_deleting_any_claim(
             cleanup_pid.set_result(await cleanup_tx.fetch_value("SELECT pg_backend_pid()"))
             return await apply_lifecycle_cascade(
                 cleanup_tx,
-                lifecycle_redis,
+                env.redis,
                 LifecycleCascadeRequest(
                     operation="cleanup_agent_coordination_state",
                     actor=LifecycleActor(
                         actor_id="owner", actor_type="system", authority="embedding"
                     ),
-                    team_id=team,
-                    target_agent_id=str(agent),
-                    workspace_scope="all_for_agent",
+                    team_id=TEAM,
+                    target_workspace_ids=(str(low), str(high)),
                     agent_disposition=AgentDisposition.PRESERVED,
                 ),
-                registry_client=None,
+                registry_client=env.app.state.awid_registry_client,
             )
 
     cleanup_task = None
@@ -531,7 +525,7 @@ async def test_cleanup_locks_all_workspaces_before_deleting_any_claim(
         assert result.task_unclaim_count == 2
         assert (
             await db.fetch_value(
-                "SELECT count(*) FROM {{tables.task_claims}} WHERE team_id=$1", team
+                "SELECT count(*) FROM {{tables.task_claims}} WHERE team_id=$1", TEAM
             )
             == 0
         )

@@ -23,7 +23,7 @@ from test_coordination_state_http import request_as
 from test_dashboard_privacy import TEAM, privacy_stack
 from test_workspace_liveness_http import (
     GrantHeartbeatRoute,
-    _age_workspace_heartbeat,
+    _root_last_seen,
     _send_grant_heartbeat,
 )
 
@@ -41,11 +41,7 @@ async def test_native_maintenance_publishes_presence_during_outbox_recovery(
     maintenance_app,
 ):
     env = maintenance_app
-    # Age any starting activity so the signed heartbeat is the online edge.
-    await env.db.execute(
-        "UPDATE {{tables.workspaces}} SET last_seen_at=NOW()-INTERVAL '2 hours' WHERE team_id=$1",
-        TEAM,
-    )
+    assert await _root_last_seen(env) is None
     await clear_workspace_presence(
         env.redis, [str(actor.workspace) for actor in env.actors.values()]
     )
@@ -70,11 +66,11 @@ async def test_native_maintenance_publishes_presence_during_outbox_recovery(
         assert (
             await run_native_maintenance(**arguments)
         ).presence.events_published == 0
-        await env.db.execute(
-            "UPDATE {{tables.workspaces}} SET last_seen_at=NOW()-INTERVAL '2 hours' WHERE workspace_id=$1",
-            env.actors["alice"].workspace,
+        deleted = await request_as(
+            env, alias="alice", method="DELETE",
+            path=f"/v1/workspaces/{env.actors['alice'].workspace}",
         )
-        await clear_workspace_presence(env.redis, [str(env.actors["alice"].workspace)])
+        assert deleted.status_code == 200, deleted.text
         assert (
             await run_native_maintenance(**arguments)
         ).presence.events_published == 1
@@ -116,7 +112,7 @@ async def test_registry_connection_failure_preserves_the_presence_projection(
     maintenance_app,
 ):
     env = maintenance_app
-    await _age_workspace_heartbeat(env)
+    assert await _root_last_seen(env) is None
     await _send_grant_heartbeat(env, path=GrantHeartbeatRoute.AGENT)
     arguments = dict(
         db_infra=env.infra, redis=env.redis, on_mutation=env.app.state.on_mutation

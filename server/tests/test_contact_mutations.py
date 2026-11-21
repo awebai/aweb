@@ -31,14 +31,13 @@ async def test_retry_preserves_complete_existing_acceptance(aweb_cloud_db):
     controller, did = _identity()
     owner = _identity()[1]
     arguments = dict(
-        db=db, owner_did=owner, contact_address="example.test/member",
+        owner_did=owner, contact_address="example.test/member",
         contact_did_aw=did, binding_controller_did=controller, label="Original label",
     )
-    first = await ensure_identity_contact(**arguments)
-    await db.execute("UPDATE {{tables.contacts}} SET status='pending' WHERE contact_id=$1", UUID(first["contact_id"]))
+    first = await add_contact(TransactionInfra(None, db), **arguments, status="pending")
     before = await _rows(db)
     # Same identity under a new resolving controller cannot rewrite acceptance.
-    repeated = await ensure_identity_contact(**{
+    repeated = await ensure_identity_contact(db=db, **{
         **arguments, "binding_controller_did": _identity()[0], "label": "New label",
     })
     assert repeated["contact_id"] == first["contact_id"]

@@ -25,19 +25,20 @@ async def test_invalid_team_id_is_actionable_before_storage():
 @pytest.mark.parametrize("enforce", ["false", "true"])
 async def test_admission_preserves_existing_pin_and_identity(aweb_cloud_db, monkeypatch, enforce):
     from aweb.team_admission import admit_team
+    from aweb.team_key_pins import AdmittedTeamKeys, TeamKeyPin
 
     monkeypatch.setenv("AWEB_ENFORCE_TEAM_KEY_PINS", enforce)
     db = aweb_cloud_db.aweb_db
     team_id = "engineering:admission.example"
-    original_key, served_key = _key(), _key()
-    act_at = datetime(2026, 11, 12, tzinfo=timezone.utc)
+    original_key, moved_key, served_key = _key(), _key(), _key()
 
     assert await admit_team(db=db, team_id=team_id, team_did_key=original_key)
-    # A prior authorized movement is already committed. Admission must leave
-    # both parts of that pin intact; it cannot impersonate another rotation.
-    await db.execute(
-        "UPDATE {{tables.teams}} SET team_key_act_at=$2 WHERE team_id=$1",
-        team_id, act_at,
+    keys = AdmittedTeamKeys(db)
+    before = await keys.pin(team_id)
+    assert before is not None
+    act_at = datetime.now(timezone.utc)
+    assert await keys.move(
+        team_id, expected=before, new=TeamKeyPin(moved_key, act_at)
     )
     assert not await admit_team(db=db, team_id=team_id, team_did_key=served_key)
 
@@ -48,7 +49,7 @@ async def test_admission_preserves_existing_pin_and_identity(aweb_cloud_db, monk
     assert dict(row) == {
         "namespace": "admission.example",
         "team_name": "engineering",
-        "team_did_key": original_key,
+        "team_did_key": moved_key,
         "team_key_act_at": act_at,
     }
 

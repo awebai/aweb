@@ -193,10 +193,10 @@ async def test_post_commit_redis_permission_failure_is_retried_against_real_serv
     env = privacy_app
     alice, bob = env.actors["alice"], env.actors["bob"]
     await _claim_tasks(env, count=1)
-    await env.db.execute(
-        "UPDATE {{tables.workspaces}} SET last_seen_at=NOW()-INTERVAL '2 hours' WHERE workspace_id=$1",
+    assert await env.db.fetch_value(
+        "SELECT last_seen_at FROM {{tables.workspaces}} WHERE workspace_id=$1",
         alice.workspace,
-    )
+    ) is None
     await clear_workspace_presence(env.redis, [str(alice.workspace)])
     # This host owns replay explicitly; the test drives it after the outage.
     await stop_outbox_recovery(env.app)
