@@ -25,7 +25,7 @@ func TestAPIKeyGlobalRecoveryCommand(t *testing.T) {
 	defer cancel()
 	bin := filepath.Join(t.TempDir(), "aw")
 	buildAwBinary(t, ctx, bin)
-	for _, scenario := range []string{"http_failure", "http_body_only", "http_header_only", "http_malformed", "http_missing_id", "http_untrusted_id", "http_conflicting_id", "http_duplicate_json_id", "http_case_variant_id", "http_unicode_fold_id", "http_repeated_header", "http_unauthorized", "http_not_found", "committed_response_loss"} {
+	for _, scenario := range []string{"http_failure", "http_body_only", "http_header_only", "http_malformed", "http_missing_id", "http_untrusted_id", "http_conflicting_id", "http_duplicate_json_id", "http_case_variant_id", "http_unicode_fold_id", "http_repeated_header", "http_unauthorized", "http_not_found", "http_creator_must_sign", "committed_response_loss"} {
 		t.Run(scenario, func(t *testing.T) {
 			teamPub, teamKey, err := awid.GenerateKeypair()
 			if err != nil {
@@ -113,6 +113,8 @@ func TestAPIKeyGlobalRecoveryCommand(t *testing.T) {
 							status = 401
 						case "http_not_found":
 							status = 404
+						case "http_creator_must_sign":
+							status = 403
 						}
 						if scenario == "http_duplicate_json_id" || scenario == "http_case_variant_id" || scenario == "http_unicode_fold_id" {
 							headerID = ""
@@ -135,6 +137,11 @@ func TestAPIKeyGlobalRecoveryCommand(t *testing.T) {
 						}
 						if scenario == "http_malformed" {
 							fmt.Fprint(w, "<html>"+provisioningKey)
+							return
+						}
+						if scenario == "http_creator_must_sign" {
+							// The hosted service's observed 39-byte refusal.
+							fmt.Fprint(w, `{"detail":{"code":"creator_must_sign"}}`)
 							return
 						}
 						fmt.Fprintf(w, `{"error":{"code":"INTERNAL_ERROR","request_id":%q,"message":%q}}`, bodyID, "sensitive arbitrary server detail "+provisioningKey)
@@ -262,6 +269,14 @@ func TestAPIKeyGlobalRecoveryCommand(t *testing.T) {
 					status = 401
 				case "http_not_found":
 					status = 404
+				case "http_creator_must_sign":
+					status = 403
+					expectedCode = "creator_must_sign"
+					// Its remedy needs another key, which this directory's
+					// partial state refuses.
+					if !strings.Contains(stderr, "run the changed command in a new directory") || strings.Contains(stderr, "rerun the same command") || envelope.Error.Code != expectedCode {
+						t.Errorf("guidance or --json code wrong: code %q stderr %q", envelope.Error.Code, stderr)
+					}
 				}
 				for _, want := range []string{"category=hosted_http_failure", fmt.Sprintf("status=%d", status), "request_id=" + expectedID, "error_code=" + expectedCode} {
 					if !strings.Contains(stderr, want) {

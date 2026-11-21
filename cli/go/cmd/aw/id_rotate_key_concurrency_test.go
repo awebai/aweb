@@ -293,6 +293,7 @@ func TestConcurrentRotationRefusesIdentityChangedWhileWaiting(t *testing.T) {
 		}
 	}))
 	t.Cleanup(server.Close)
+	t.Setenv("AWID_REGISTRY_URL", server.URL)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second)
 	defer cancel()
@@ -453,6 +454,7 @@ func TestConcurrentWaiterRecoversAppliedRotationAfterLostResponse(t *testing.T) 
 		}
 	}))
 	t.Cleanup(server.Close)
+	t.Setenv("AWID_REGISTRY_URL", server.URL)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()

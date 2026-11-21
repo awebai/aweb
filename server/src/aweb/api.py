@@ -14,6 +14,7 @@ from redis.asyncio import from_url as async_redis_from_url
 from starlette.routing import Mount
 
 from awid.dns_verify import DomainVerifier
+from awid.external_authority import SystemTXTOutcomeResolver
 from awid.registry import CachedRegistryClient, RegistryClient, RegistryError
 from awid.federation_errors import FederationAuthorityError
 from .config import get_public_origin, get_settings
@@ -365,13 +366,12 @@ def _make_library_lifespan(
     awid_transport: httpx.AsyncBaseTransport | None,
     domain_verifier: DomainVerifier | None,
 ):
-    """Create lifespan for library mode (uses externally provided connections)."""
+    """Use the embedding host's connections and logging configuration."""
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        json_format = os.getenv("AWEB_LOG_JSON", "true").lower() == "true"
-        log_level = os.getenv("AWEB_LOG_LEVEL", "info")
-        configure_logging(log_level=log_level, json_format=json_format)
+        # An embedded app must not replace the host's handlers or root level.
+        # Standalone startup configures process logging in its own lifespan.
         logger.info("Starting aweb coordination server (library mode)")
 
         # Use externally provided connections - no initialization needed
@@ -496,6 +496,9 @@ def create_app(
 
     app = RequestDecompressionFastAPI(title="aweb coordination core", version="0.1.0", lifespan=lifespan)
     app.state.attachment_backend = attachment_backend
+    # DNS names the namespace controller whose act may move a pinned team key
+    # (aweb.team_key_pins); an embedding host may replace the resolver.
+    app.state.awid_txt_resolver = SystemTXTOutcomeResolver()
     app.state.public_origin = (
         canonical_server_origin(public_origin) if public_origin is not None else get_public_origin()
     )

@@ -59,8 +59,8 @@ async def plan_for(
     job_body = inputs["job"].after
     job_body.update(credentials=[], env={})
     async with context.world.db.transaction() as tx:
-        await records.create_policy(tx, installation, policy)
-        await records.create_policy(tx, installation, child_policy)
+        await records.create_policy(tx, installation, policy, team_id=TEAM)
+        await records.create_policy(tx, installation, child_policy, team_id=TEAM)
         for ordinal in range(slot_count):
             source = replace(
                 original.source,
@@ -85,7 +85,7 @@ async def plan_for(
                     "policy_digest": child_policy.digest,
                 }
             )
-            await records.set_grant_template(tx, installation, template)
+            await records.set_grant_template(tx, installation, template, team_id=TEAM)
             record = copy.deepcopy(original.mint.operation.after)
             record.update(secret_id=source.record.secret_id, operation_id=f"issue-run-{ordinal}")
             record["store_as_secret"].update(

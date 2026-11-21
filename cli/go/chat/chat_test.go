@@ -67,7 +67,15 @@ func (m *mockHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	http.NotFound(w, r)
 }
 
+// newMockServer serves handlers. A bare-alias lookup reads the full session
+// list, which the server always serves; a test that does not supply it gets
+// an empty list.
 func newMockServer(handlers map[string]http.HandlerFunc) *httptest.Server {
+	if _, ok := handlers["GET /v1/chat/sessions"]; !ok {
+		handlers["GET /v1/chat/sessions"] = func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatListSessionsResponse{Sessions: []awid.ChatSessionItem{}})
+		}
+	}
 	return httptest.NewServer(&mockHandler{handlers: handlers})
 }
 
@@ -338,7 +346,6 @@ func TestExtendWait(t *testing.T) {
 }
 
 func TestOpen(t *testing.T) {
-	t.Parallel()
 	deliveredIDsTestPath(t)
 
 	server := newMockServer(map[string]http.HandlerFunc{
@@ -387,6 +394,31 @@ func TestOpen(t *testing.T) {
 	if !result.SenderWaiting {
 		t.Fatal("sender_waiting=false")
 	}
+
+	t.Run("reports_receipt_write_failure", func(t *testing.T) {
+		workspace := deliveredIDsTestPath(t)
+		lock := filepath.Join(workspace, ".aw", DeliveredIDsFileName+".lock")
+		if err := os.MkdirAll(lock, 0700); err != nil {
+			t.Fatal(err)
+		}
+		got, err := Open(context.Background(), mustClient(t, server.URL), "bob")
+		if err != nil || len(got.Messages) != 2 || got.MarkedRead != 2 {
+			t.Fatalf("receipt failure blocked chat open: %+v, %v", got, err)
+		}
+		data, err := json.Marshal(got)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var output struct {
+			ReceiptError string `json:"receipt_error"`
+		}
+		if err := json.Unmarshal(data, &output); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(output.ReceiptError, "Repair the cache directory before retrying") {
+			t.Fatalf("missing actionable receipt warning: %s", data)
+		}
+	})
 }
 
 func TestOpenPresentsAndAcknowledgesACompleteMaximumUnreadSnapshot(t *testing.T) {
@@ -1946,7 +1978,7 @@ func TestSendWithExtendWaitPrefersStableIDOverParticipantDIDInCallbacks(t *testi
 
 			hangOnData, _ := json.Marshal(map[string]any{
 				"type": "message", "message_id": "msg-hangon", "from_did": senderDID, "from_stable_id": stableID,
-				"body": "thinking...", "hang_on": true, "extends_wait_seconds": 300,
+				"body": "thinking...", "hang_on": true, "extends_wait_seconds": 1,
 			})
 			fmt.Fprintf(w, "event: message\ndata: %s\n\n", hangOnData)
 			if flusher != nil {
@@ -3351,6 +3383,38 @@ func TestFindSessionAliasErrorsOnAmbiguousAliasMatches(t *testing.T) {
 	}
 }
 
+// A bare alias matched by one pending conversation is still ambiguous when
+// the full session list holds another concrete participant with that alias:
+// the check reads both lists before choosing, and fails closed.
+func TestFindSessionAliasAmbiguityReadsTheFullListBeforeChoosingAPendingMatch(t *testing.T) {
+	t.Parallel()
+
+	server := newMockServer(map[string]http.HandlerFunc{
+		"GET /v1/chat/pending": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatPendingResponse{Pending: []awid.ChatPendingItem{{
+				SessionID:            "s-outside",
+				Participants:         []string{"monitor"},
+				ParticipantAddresses: []string{"otherco.com/monitor"},
+				SenderWaiting:        true,
+			}}})
+		},
+		"GET /v1/chat/sessions": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatListSessionsResponse{Sessions: []awid.ChatSessionItem{
+				{SessionID: "s-outside", Participants: []string{"monitor"}, ParticipantAddresses: []string{"otherco.com/monitor"}},
+				{SessionID: "s-team", Participants: []string{"monitor"}, ParticipantAddresses: []string{"acme.com/monitor"}},
+			}})
+		},
+	})
+	t.Cleanup(server.Close)
+
+	for _, find := range []func(context.Context, *awid.Client, string) (string, bool, error){findSession, findLatestSession} {
+		sessionID, _, err := find(context.Background(), mustClient(t, server.URL), "monitor")
+		if err == nil || !strings.Contains(err.Error(), "multiple conversations match monitor") {
+			t.Fatalf("session_id=%q err=%v, want the ambiguity refusal", sessionID, err)
+		}
+	}
+}
+
 func TestFindSessionAliasAllowsSparseAndRichRowsForSameIdentity(t *testing.T) {
 	t.Parallel()
 
@@ -4423,7 +4487,7 @@ func TestWaitForMessageTreatsInitialEOFAsTimeout(t *testing.T) {
 	result, err := waitForMessage(
 		context.Background(),
 		mustClient(t, server.URL),
-		func(context.Context, string, time.Time, *time.Time) (*awid.SSEStream, error) {
+		func(context.Context, string, time.Time, *time.Time, int64) (*awid.SSEStream, error) {
 			return nil, io.EOF
 		},
 		"s1",
@@ -4455,7 +4519,7 @@ func TestWaitForMessageTreatsWrappedEOFAsTimeout(t *testing.T) {
 	result, err := waitForMessage(
 		context.Background(),
 		mustClient(t, server.URL),
-		func(context.Context, string, time.Time, *time.Time) (*awid.SSEStream, error) {
+		func(context.Context, string, time.Time, *time.Time, int64) (*awid.SSEStream, error) {
 			return nil, &url.Error{Op: "Get", URL: server.URL + "/v1/chat/sessions/s1/stream", Err: io.EOF}
 		},
 		"s1",
@@ -4486,7 +4550,7 @@ func TestWaitForMessagePropagatesContextCancellationOnOpen(t *testing.T) {
 	_, err := waitForMessage(
 		ctx,
 		mustClient(t, server.URL),
-		func(context.Context, string, time.Time, *time.Time) (*awid.SSEStream, error) {
+		func(context.Context, string, time.Time, *time.Time, int64) (*awid.SSEStream, error) {
 			return nil, context.Canceled
 		},
 		"s1",
@@ -4511,7 +4575,7 @@ func TestWaitForMessageDoesNotTreatUnexpectedEOFAsTimeout(t *testing.T) {
 	_, err := waitForMessage(
 		context.Background(),
 		mustClient(t, server.URL),
-		func(context.Context, string, time.Time, *time.Time) (*awid.SSEStream, error) {
+		func(context.Context, string, time.Time, *time.Time, int64) (*awid.SSEStream, error) {
 			return nil, &url.Error{Op: "Get", URL: server.URL + "/v1/chat/sessions/s1/stream", Err: io.ErrUnexpectedEOF}
 		},
 		"s1",

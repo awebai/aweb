@@ -89,6 +89,7 @@ func newDidLogRegistry(t *testing.T) *didLogRegistry {
 	// new client, reusing the persisted pin store.
 	newClient := func() *Client {
 		resolver := NewRegistryResolver(server.Client(), staticTXTResolver{})
+		routeUntrustedResolverRegistriesToInjectedClient(resolver)
 		resolver.registryCache["acme.com"] = cachedValue[DomainAuthority]{
 			value:     DomainAuthority{RegistryURL: server.URL},
 			expiresAt: time.Now().Add(time.Minute),

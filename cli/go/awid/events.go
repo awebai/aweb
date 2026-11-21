@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"strings"
 	"time"
 )
@@ -168,29 +167,9 @@ func (s *AgentEventStream) Next(_ context.Context) (*AgentEvent, error) {
 // deadline is sent as an ISO8601/RFC3339 timestamp because the server expects an absolute time.
 func (c *Client) EventStream(ctx context.Context, deadline time.Time) (*AgentEventStream, error) {
 	path := "/v1/events/stream?deadline=" + urlQueryEscape(deadline.UTC().Format(time.RFC3339))
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+	resp, err := c.openStream(ctx, path)
 	if err != nil {
 		return nil, err
-	}
-	req.Header.Set("Accept", "text/event-stream")
-	req.Header.Set("Cache-Control", "no-cache")
-	setUserAgent(req, c.userAgent)
-	if err := c.signRequest(req, nil); err != nil {
-		return nil, err
-	}
-
-	resp, err := DoNoRedirect(c.sseClient, req)
-	if err != nil {
-		return nil, err
-	}
-	if v := resp.Header.Get("X-Latest-Client-Version"); v != "" {
-		c.latestClientVersion.Store(v)
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body := ReadErrorExcerpt(resp.Body)
-		_ = resp.Body.Close()
-		return nil, newAPIError(resp, body)
 	}
 	return newAgentEventStream(resp.Body), nil
 }

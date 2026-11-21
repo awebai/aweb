@@ -283,7 +283,7 @@ func TestGCMailExecProviderContract(t *testing.T) {
 		ctx:    ctx,
 		script: launcher,
 		dir:    city,
-		env:    append(testCommandEnv(city), "AWEB_URL="+server.URL, "GC_CITY="+city),
+		env:    append(testCommandEnv(city), "AWEB_URL="+server.URL, "AWID_REGISTRY_URL="+server.URL, "GC_CITY="+city),
 	}
 
 	// --- ensure-running: called once before anything, result discarded ------

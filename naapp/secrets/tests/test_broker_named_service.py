@@ -76,7 +76,7 @@ async def test_named_effects_are_pinned_but_terminal_replay_never_renders_an_edi
         policy = Policy.from_body({**POLICY_BODY, "operations": [pin], "open_request": False})
         async with db.transaction() as tx:
             await records.create_operation(tx, INSTALLATION, TEAM, operation)
-            await records.create_policy(tx, INSTALLATION, policy)
+            await records.create_policy(tx, INSTALLATION, policy, team_id=TEAM)
             await records.create_grant(
                 tx,
                 INSTALLATION,

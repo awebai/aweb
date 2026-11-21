@@ -7,13 +7,13 @@ consumed in the transaction that applies the act's effect.
 
 from __future__ import annotations
 
-import base64
 import secrets
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from awid.signing import sign_message
 from awid_service.testing import REGISTRY_URL, SERVICE_TOKEN
 from nacl.signing import SigningKey
 from pgdbm.core import TransactionManager
@@ -39,14 +39,21 @@ class TeamOwner:
     verifier: OwnerActVerifier
     team_id: str = TEAM_ID
     team_key_for: Callable[[str], Awaitable[str]] | None = None
+    # The origin the acts are addressed to: the app's human origin, whose host
+    # is the relying party a human-role credential is bound to.
+    audience: str = AUDIENCE
 
-    def for_acts(self, acts: tuple[str, ...]) -> TeamOwner:
-        """The same owner and registry, through a verifier for ``acts``."""
+    def for_acts(self, acts: tuple[str, ...], *, audience: str | None = None) -> TeamOwner:
+        """The same owner and registry, through a verifier for ``acts``,
+        addressed to ``audience`` (by default, this owner's)."""
         assert self.team_key_for is not None, "an owner made by team_owner()"
-        verifier = OwnerActVerifier(
-            scope=APP_ID, audience=AUDIENCE, acts=acts, team_key_for=self.team_key_for
+        audience = audience or (
+            self.verifier.audience if self.verifier is not None else self.audience
         )
-        return TeamOwner(self.team_key, verifier, self.team_id, self.team_key_for)
+        verifier = OwnerActVerifier(
+            scope=APP_ID, audience=audience, acts=acts, team_key_for=self.team_key_for
+        )
+        return TeamOwner(self.team_key, verifier, self.team_id, self.team_key_for, audience)
 
     def sign(self, act: str, subject: dict[str, Any]) -> tuple[bytes, str]:
         issued = datetime.now(UTC).replace(microsecond=0)
@@ -55,7 +62,7 @@ class TeamOwner:
             "type": "aweb.owner-act",
             "act": act,
             "team_id": self.team_id,
-            "aud": AUDIENCE,
+            "aud": self.verifier.audience if self.verifier is not None else self.audience,
             "team_key_did": did_key(self.team_key),
             "subject": subject,
             "issued_at": issued.strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -63,7 +70,7 @@ class TeamOwner:
             "nonce": secrets.token_hex(16),
         }
         signing = PREFIX + canonical(fields)
-        signature = base64.b64encode(self.team_key.sign(signing).signature).decode().rstrip("=")
+        signature = sign_message(bytes(self.team_key), signing)
         return signing, signature
 
     async def prepare(self, act: str, subject: dict[str, Any]) -> PreparedOwnerAct:
@@ -96,10 +103,14 @@ def revocation_subject(scope: str, subject_ref: str) -> dict[str, Any]:
 
 
 async def team_owner(
-    registry, *, team_id: str = TEAM_ID, acts: tuple[str, ...] = APP_ACTS
+    registry,
+    *,
+    team_id: str = TEAM_ID,
+    acts: tuple[str, ...] = APP_ACTS,
+    audience: str = AUDIENCE,
 ) -> TeamOwner:
     """Register a real owner key for the team the app fixture actually uses,
-    with a verifier for ``acts``."""
+    with a verifier for ``acts`` addressed to ``audience``."""
     key = SigningKey.generate()
     await registry.add_team(team_id, did_key(key))
     cache = AWIDTeamCache(
@@ -113,8 +124,12 @@ async def team_owner(
         return (await cache.get(team_id)).team_did_key
 
     verifier = OwnerActVerifier(
-        scope=APP_ID, audience=AUDIENCE, acts=acts, team_key_for=current_team_key
+        scope=APP_ID, audience=audience, acts=acts, team_key_for=current_team_key
     )
     return TeamOwner(
-        team_key=key, verifier=verifier, team_key_for=current_team_key, team_id=team_id
+        team_key=key,
+        verifier=verifier,
+        team_key_for=current_team_key,
+        team_id=team_id,
+        audience=audience,
     )

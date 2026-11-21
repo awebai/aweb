@@ -38,6 +38,7 @@ class AppIdentity:
     app_id: str
     origin: str
     digest: str
+    manifest_digests: tuple[tuple[int, str], ...] = ()
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -167,11 +168,17 @@ class TeamGrantSource:
         if not isinstance(body, dict):
             raise ValueError("grant answer must be an object")
         identity = self._identity
+        expected_digest: str | None = identity.digest
+        if identity.manifest_digests:
+            version = body.get("manifest_version")
+            if type(version) is not int:
+                raise ValueError("invalid grant manifest_version")
+            expected_digest = dict(identity.manifest_digests).get(version)
         if (
             body["team_id"] != team_id
             or body["app_id"] != identity.app_id
             or body["origin"] != identity.origin
-            or body["digest"] != identity.digest
+            or expected_digest is None or body["digest"] != expected_digest
         ):
             raise ValueError("grant answer names another team or app identity")
         for field in ("state", "app_version", "as_of"):
@@ -204,7 +211,7 @@ class TeamGrantSource:
             team_id=team_id,
             app_id=identity.app_id,
             origin=identity.origin,
-            digest=identity.digest,
+            digest=body["digest"],
             state=body["state"],
             app_version=body["app_version"],
             manifest_version=body["manifest_version"],

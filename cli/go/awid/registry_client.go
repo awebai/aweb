@@ -14,6 +14,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/awebai/aw/signaturewire"
 )
 
 type RegistryError struct {
@@ -420,7 +422,7 @@ func (c *RegistryClient) RotateDIDKey(
 		AuthorizedBy:   oldDID,
 		Timestamp:      timestamp,
 	})
-	signature := base64.RawStdEncoding.EncodeToString(ed25519.Sign(oldSigningKey, []byte(signaturePayload)))
+	signature := signaturewire.SignStd(oldSigningKey, []byte(signaturePayload))
 	req := didUpdateRequest{
 		Operation:     "rotate_key",
 		NewDIDKey:     newDID,
@@ -494,12 +496,27 @@ func isAmbiguousDIDRotationSubmitError(err error) bool {
 }
 
 func (c *RegistryClient) requestJSON(ctx context.Context, method, registryURL, path string, headers map[string]string, body any, out any) error {
-	for attempt := 0; ; attempt++ {
-		req, err := c.newRequest(ctx, method, registryURL, path, headers, body)
+	var raw []byte
+	if body != nil {
+		data, err := json.Marshal(body)
 		if err != nil {
 			return err
 		}
-		resp, err := DoNoRedirectWithTimeout(c.httpClient(), req, APITimeout())
+		raw = data
+	}
+	return c.requestBytes(ctx, method, registryURL, path, headers, raw, out)
+}
+
+// requestBytes sends raw (nil for no body) as it is. A retry, where the
+// request is replay-safe, resends the same bytes and the same headers: a
+// signature made once covers every attempt.
+func (c *RegistryClient) requestBytes(ctx context.Context, method, registryURL, path string, headers map[string]string, raw []byte, out any) error {
+	for attempt := 0; ; attempt++ {
+		req, err := c.newRequest(ctx, method, registryURL, path, headers, raw)
+		if err != nil {
+			return err
+		}
+		resp, err := DoNoRedirectWithTimeout(c.httpClientFor(registryURL), req, APITimeout())
 		if err != nil {
 			if shouldRetryRegistryTransportError(ctx, method, path, attempt, err) {
 				if waitErr := waitForRegistryRetry(ctx, attempt); waitErr != nil {
@@ -612,24 +629,20 @@ func registryPathSegments(path string) []string {
 	return strings.Split(strings.Trim(path, "/"), "/")
 }
 
-func (c *RegistryClient) newRequest(ctx context.Context, method, registryURL, path string, headers map[string]string, body any) (*http.Request, error) {
+func (c *RegistryClient) newRequest(ctx context.Context, method, registryURL, path string, headers map[string]string, raw []byte) (*http.Request, error) {
 	registryURL = strings.TrimSpace(registryURL)
 	if registryURL == "" {
 		registryURL = c.defaultRegistryURL()
 	}
 	var reader io.Reader
-	if body != nil {
-		data, err := json.Marshal(body)
-		if err != nil {
-			return nil, err
-		}
-		reader = bytes.NewReader(data)
+	if raw != nil {
+		reader = bytes.NewReader(raw)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(registryURL, "/")+path, reader)
 	if err != nil {
 		return nil, err
 	}
-	if body != nil {
+	if raw != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
 	req.Header.Set("Accept", "application/json")
@@ -679,7 +692,7 @@ func signedPathHeaders(method, path string, signingKey ed25519.PrivateKey) map[s
 	timestamp := time.Now().UTC().Format(time.RFC3339)
 	did := ComputeDIDKey(signingKey.Public().(ed25519.PublicKey))
 	payload := timestamp + "\n" + method + "\n" + path
-	signature := base64.RawStdEncoding.EncodeToString(ed25519.Sign(signingKey, []byte(payload)))
+	signature := signaturewire.SignStd(signingKey, []byte(payload))
 	return map[string]string{
 		"Authorization":    fmt.Sprintf("DIDKey %s %s", did, signature),
 		"X-AWEB-Timestamp": timestamp,

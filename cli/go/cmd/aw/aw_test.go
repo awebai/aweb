@@ -754,7 +754,7 @@ func TestAwChatSendAndLeavePositionalArgs(t *testing.T) {
 		case "/v1/agents":
 			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{
 				TeamID: "backend:demo",
-				Agents: []awid.AgentView{},
+				Agents: []awid.AgentView{{AgentID: "bob-agent", Alias: "bob", DIDKey: "did:key:z6Mkbob"}},
 			})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
@@ -894,7 +894,7 @@ func TestAwChatSendAndLeavePositionalArgsOrder(t *testing.T) {
 		case "/v1/agents":
 			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{
 				TeamID: "backend:demo",
-				Agents: []awid.AgentView{},
+				Agents: []awid.AgentView{{AgentID: "bob-agent", Alias: "bob", DIDKey: "did:key:z6Mkbob"}},
 			})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
@@ -1201,7 +1201,7 @@ func TestAwMailSendAliasUsesTeamScopedTarget(t *testing.T) {
 		case "/v1/agents":
 			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{
 				TeamID: "backend:demo",
-				Agents: []awid.AgentView{},
+				Agents: []awid.AgentView{{AgentID: "alice-agent", Alias: "alice"}},
 			})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
@@ -1398,7 +1398,7 @@ func TestAwMailSendToAddressUsesIdentityAuth(t *testing.T) {
 		"--to-address", "test.example/monitor",
 		"--body", "hello from address",
 	)
-	run.Env = testCommandEnv(tmp)
+	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL="+registryServer.URL)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -1533,7 +1533,9 @@ func TestAwMessagingUsesIdentityRegistryURLForRecipientBinding(t *testing.T) {
 		CreatedAt:     "2026-04-25T00:00:00Z",
 	})
 
-	env := append(withoutEnvForTest(testCommandEnv(tmp), "AWID_REGISTRY_URL"), "AWID_REGISTRY_URL=http://127.0.0.1:1")
+	env := append(withoutEnvForTest(testCommandEnv(tmp), "AWID_REGISTRY_URL"), "AWID_REGISTRY_URL=http://127.0.0.1:1",
+		// The identity registry is an isolated host reached in isolated development.
+		"APP_ENV=development", "AWEB_FEDERATION_TEST=1")
 	runMail := exec.CommandContext(ctx, bin, "mail", "send", "--subject", "Test thread", "--plaintext", "--to-address", "example.invalid/randy", "--body", "mail repro")
 	runMail.Env = env
 	runMail.Dir = tmp
@@ -1655,7 +1657,7 @@ func TestAwMessagingUsesKnownAgentPinWhenRegistryAddressMissing(t *testing.T) {
 		t.Fatalf("write known_agents: %v", err)
 	}
 
-	env := withoutEnvForTest(testCommandEnv(tmp), "AWID_REGISTRY_URL")
+	env := append(withoutEnvForTest(testCommandEnv(tmp), "AWID_REGISTRY_URL"), "AWID_REGISTRY_URL="+registryServer.URL)
 	runMail := exec.CommandContext(ctx, bin, "mail", "send", "--subject", "Test thread", "--plaintext", "--to-address", recipientAddress, "--body", "mail repro")
 	runMail.Env = env
 	runMail.Dir = tmp
@@ -1747,7 +1749,7 @@ func TestAwChatSendFailsClosedWhenRecipientBindingCannotResolve(t *testing.T) {
 		CreatedAt:     "2026-04-26T00:00:00Z",
 	})
 
-	env := withoutEnvForTest(testCommandEnv(tmp), "AWID_REGISTRY_URL")
+	env := append(withoutEnvForTest(testCommandEnv(tmp), "AWID_REGISTRY_URL"), "AWID_REGISTRY_URL="+registryServer.URL)
 	runChat := exec.CommandContext(ctx, bin, "chat", "send-and-leave", "--plaintext", recipientAddress, "chat repro")
 	runChat.Env = env
 	runChat.Dir = tmp
@@ -2018,7 +2020,7 @@ func TestAwMailSendWritesCommLog(t *testing.T) {
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/agents":
-			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{Agents: []awid.AgentView{}})
+			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{Agents: []awid.AgentView{{AgentID: "eve-agent", Alias: "eve"}}})
 		case "/v1/messages":
 			var posted awid.SendMessageRequest
 			_ = json.NewDecoder(r.Body).Decode(&posted)

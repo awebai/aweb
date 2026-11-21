@@ -145,6 +145,7 @@ func TestTeamInviteChainlessGlobalEnrollmentWithoutTreeRoot(t *testing.T) {
 				_ = json.NewEncoder(w).Encode(response)
 			}))
 			defer server.Close()
+			t.Setenv("AWID_REGISTRY_URL", server.URL)
 			path := filepath.Join(dir, ".aw", "identity.yaml")
 			identity, err := awconfig.LoadWorktreeIdentityFrom(path)
 			if err != nil {
@@ -154,7 +155,7 @@ func TestTeamInviteChainlessGlobalEnrollmentWithoutTreeRoot(t *testing.T) {
 			if err := awconfig.SaveWorktreeIdentityTo(path, identity); err != nil {
 				t.Fatal(err)
 			}
-			link, err := prepareTeamInviteIDChild(context.Background(), idChildOptions{WorkingDir: dir, TXTResolver: staticTXTResolver{}, Now: time.Now})
+			link, _, err := prepareTeamInviteAuthority(context.Background(), teamInviteAuthorityRequest{Issuer: idChildOptions{WorkingDir: dir, TXTResolver: staticTXTResolver{}, Now: time.Now}, Child: inviteCreatesChild})
 			if (err == nil) != tc.allowed || link != nil {
 				t.Fatalf("allowed=%v: link=%+v err=%v", tc.allowed, link, err)
 			}
@@ -176,6 +177,7 @@ func TestLocalTeamInviteKeepsTheInvitersRegistry(t *testing.T) {
 			v := loadWhoVectors(t)
 			dir := whoIdentity(t, v, false, true)
 			t.Setenv("APP_ENV", "development")
+			t.Setenv("AWEB_FEDERATION_TEST", "1") // isolated development reaches the isolated test registries
 			t.Setenv("AWID_REGISTRY_URL", "")
 			keyReads := 0
 			registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -223,7 +225,9 @@ func TestLocalTeamInviteKeepsTheInvitersRegistry(t *testing.T) {
 			}
 			dnsRegistry := ""
 			if scenario == "other namespace" || scenario == "contradictory authority" {
-				dnsRegistry = strings.Replace(registry.URL, "127.0.0.1", "registry.example", 1)
+				// An isolated test name, so isolated development admits the
+				// DNS-learned registry; the fake DNS answers it with loopback.
+				dnsRegistry = strings.Replace(registry.URL, "127.0.0.1", "registry.test", 1)
 			}
 			if scenario == "contradictory authority" {
 				operationRegistry = trap.URL
@@ -236,7 +240,8 @@ func TestLocalTeamInviteKeepsTheInvitersRegistry(t *testing.T) {
 			if err := awconfig.SaveTeamKey(teamDomain, "backend", teamKey); err != nil {
 				t.Fatal(err)
 			}
-			_, token, err := createTeamInviteTokenAt(teamDomain, "backend", operationRegistry, "https://service.example", true, "", dir, "")
+			created, err := mintPlannedTeamInvite(teamInviteMintRequest{Plan: teamInvitePlan{Kind: inviteAuthorityController, Source: teamInviteSource{WorkingDir: dir, Home: awconfig.IdentityHome{Root: filepath.Join(dir, ".aw"), Source: awconfig.IdentityHomeFlag}, Domain: teamDomain, Team: "backend", RegistryURL: operationRegistry, AwebURL: "https://service.example"}}, Scope: inviteMemberLocal})
+			token := created.Token
 			refused := scenario == "contradictory authority" || scenario == "stale key" || scenario == "unknown enrollment"
 			if refused {
 				if err == nil || token != "" {
@@ -263,6 +268,9 @@ func TestLinkedInviteRetainsIssuerRegistryForRechecksAndExchange(t *testing.T) {
 	v := loadWhoVectors(t)
 	dir := whoIdentity(t, v, true, false)
 	t.Setenv("AWID_REGISTRY_URL", "")
+	// The issuer registry is an isolated host reached in isolated development.
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("AWEB_FEDERATION_TEST", "1")
 	statusReads := 0
 	registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/id-certificates/status" {
@@ -325,7 +333,6 @@ func TestLinkedInviteRetainsIssuerRegistryForRechecksAndExchange(t *testing.T) {
 func TestLinkedInviteRegistryHonorsCurrentHomeAndNamespace(t *testing.T) {
 	v := loadWhoVectors(t)
 	dir := whoIdentity(t, v, true, false)
-	t.Setenv("AWID_REGISTRY_URL", "")
 	reads := 0
 	registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		reads++
@@ -337,6 +344,7 @@ func TestLinkedInviteRegistryHonorsCurrentHomeAndNamespace(t *testing.T) {
 		json.NewEncoder(w).Encode(v.Statuses["normal"])
 	}))
 	defer registry.Close()
+	t.Setenv("AWID_REGISTRY_URL", registry.URL)
 	serveRosterTXT(t, idCreateDNSRecordValue(v.Keys["root"].DIDKey, ""))
 	path := filepath.Join(dir, ".aw", "identity.yaml")
 	identity, err := awconfig.LoadWorktreeIdentityFrom(path)

@@ -1,14 +1,11 @@
 import { lstatSync, type Stats } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, normalize, parse, relative, resolve, sep } from "node:path";
-import * as ed from "@noble/ed25519";
-import { sha512 } from "@noble/hashes/sha2.js";
 import yaml from "js-yaml";
 import { loadTeamCertificate, encodeTeamCertificateHeader, type TeamCertificate } from "./identity/certificate.js";
 import { computeDIDKey } from "./identity/did.js";
 import { loadSigningKey } from "./identity/keys.js";
-
-ed.etc.sha512Sync = (...m) => sha512(ed.etc.concatBytes(...m));
+import { publicKeyFromSeed } from "./identity/signature_wire.js";
 
 export interface AgentConfig {
   /** Resolved credential directory (already .aw for the default workspace). */
@@ -202,7 +199,7 @@ export async function resolveConfig(workdir: string, options: ResolveConfigOptio
   const certificate = await loadConfiguredTeamCertificate(identityHome, teamID, certPath);
   if (identityHome.external) preflightFile(identityPath, "identity config");
   const identity = await readYAML<IdentityConfig>(identityPath);
-  const did = computeDIDKey(ed.getPublicKey(signingKey));
+  const did = computeDIDKey(publicKeyFromSeed(signingKey));
   const identityStableID = (identity?.stable_id || "").trim();
   const certificateStableID = (certificate.member_did_aw || "").trim();
   const stableID = certificateStableID || identityStableID;
@@ -255,7 +252,7 @@ async function resolveGrantConfig(identityHome: IdentityHomeSelection, options: 
   const signingKeyPath = join(identityHome.root, "grant-signing.key");
   preflightFile(signingKeyPath, "grant signing key");
   const signingKey = await loadSigningKey(signingKeyPath);
-  const grantSessionDID = computeDIDKey(ed.getPublicKey(signingKey));
+  const grantSessionDID = computeDIDKey(publicKeyFromSeed(signingKey));
   const subject = grant.subject || {};
   return {
     baseURL: (grant.aweb_url || "").trim(),
@@ -372,10 +369,23 @@ function lstatIfExists(path: string): Stats | undefined {
 }
 
 async function readYAML<T>(path: string): Promise<T | null> {
+  let content: string;
   try {
-    const content = await readFile(path, "utf-8");
-    return (yaml.load(content) as T) || null;
-  } catch {
-    return null;
+    content = await readFile(path, "utf-8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw new Error(`cannot read YAML configuration ${path}`, { cause: error });
   }
+  let value: unknown;
+  try {
+    value = yaml.load(content);
+  } catch (error) {
+    throw new Error(`invalid YAML configuration ${path}`, { cause: error });
+  }
+  // Go unmarshals empty documents and explicit null into zero-value structs.
+  if (value === undefined || value === null) return {} as T;
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`YAML configuration must contain a mapping: ${path}`);
+  }
+  return value as T;
 }

@@ -8,9 +8,7 @@ domain is listed or disclosed, and the endpoint is rate limited per caller.
 from __future__ import annotations
 
 import asyncio
-import base64
 import copy
-import hashlib
 import json
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -31,8 +29,6 @@ from identity_support import request_rotation
 from lock_waits import wait_until_blocked_on_lock
 from id_tree_support import (
     DOMAIN,
-    ORIGIN,
-    MixedOrderController,
     VECTORS,
     Tree,
     at,
@@ -40,7 +36,6 @@ from id_tree_support import (
     certificate_id,
     chain_header,
     consumes,
-    covering_headers,
     did_aw,
     did_key,
     seed,
@@ -73,14 +68,10 @@ def one_rate_window(monkeypatch):
     monkeypatch.setattr(ratelimit_module, "time", SimpleNamespace(time=lambda: 1_800_000_000.0))
 
 
-async def _status(tree, body, *, signer=None, when=OBSERVED_AT, headers=None):
+async def _status(tree, body, *, when=OBSERVED_AT, headers=None):
     tree.clock.now = when
     raw = json.dumps(body, separators=(",", ":")).encode()
     sent = {"Content-Type": "application/json"}
-    if signer is not None:
-        sent = covering_headers(
-            signer, method="POST", path=STATUS_PATH, body=raw, domain=DOMAIN, operation="read_id_certificate_status",
-        )
     return await tree.client.post(STATUS_PATH, content=raw, headers={**sent, **(headers or {})})
 
 
@@ -174,53 +165,12 @@ async def test_status_service_token_skips_only_the_ip_budget(tree, monkeypatch, 
 
 
 @pytest.mark.asyncio
-async def test_status_service_token_keeps_signed_caller_budget_and_validation(tree, monkeypatch, one_rate_window):
+async def test_status_service_token_keeps_body_validation(tree, monkeypatch):
     monkeypatch.setattr(tree.client.app.state, "awid_service_token", SERVICE_TOKEN)
     headers = {"X-AWID-Service-Token": SERVICE_TOKEN}
-    responses = [await _status(tree, _request("alice"), signer="bob", headers=headers) for _ in range(61)]
-    assert [r.status_code for r in responses] == [200] * 60 + [429]
-    # A different signed caller still works from the same IP.
-    assert (await _status(tree, _request("alice"), signer="alice", headers=headers)).status_code == 200
     bad_body = await _status(tree, {"v": 1, "domain": DOMAIN, "ids": ["prefix*"]}, headers=headers)
     assert bad_body.status_code == 400
-    bad_proof = await _status(tree, _request("alice"), headers={**headers, "Authorization": "DIDKey invalid invalid"})
-    assert bad_proof.status_code == 401
-
-
-def _from_ip(monkeypatch, address: str) -> dict:
-    """Headers that make a trusted edge attribute the request to ``address``."""
-    monkeypatch.setenv("AWEB_TRUSTED_PROXY_CIDRS", "127.0.0.1/32")
-    monkeypatch.setenv("AWEB_CF_EDGE_CIDRS", "203.0.113.0/24")
-    return {"X-Forwarded-For": f"{address}, 203.0.113.1"}
-
-
-async def _signed_by_fresh_key(tree, body, headers):
-    signing_key, public = generate_keypair()
-    caller = did_from_public_key(public)
-    raw = json.dumps(body, separators=(",", ":")).encode()
-    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    payload = canonical_json_bytes({
-        "v": 2, "type": "aweb.awid-controller-request", "aud": ORIGIN, "method": "POST", "path": STATUS_PATH,
-        "body_sha256": hashlib.sha256(raw).hexdigest(), "timestamp": timestamp,
-        "domain": DOMAIN, "operation": "read_id_certificate_status",
-    })
-    return await tree.client.post(STATUS_PATH, content=raw, headers={
-        "Authorization": f"DIDKey {caller} {sign_message(signing_key, payload)}",
-        "X-AWEB-Timestamp": timestamp,
-        "X-AWEB-Signed-Payload": base64.urlsafe_b64encode(payload).rstrip(b"=").decode(),
-        "Content-Type": "application/json",
-        **headers,
-    })
-
-
-@pytest.mark.asyncio
-async def test_fresh_caller_keys_from_one_ip_share_its_budget(tree, monkeypatch, one_rate_window):
-    headers = _from_ip(monkeypatch, "198.51.100.7")
-    tree.clock.now = OBSERVED_AT
-
-    statuses = [(await _signed_by_fresh_key(tree, _request("alice"), headers)).status_code for _ in range(61)]
-
-    assert statuses == [200] * 60 + [429]
+    assert _code(bad_body) == "invalid_shape"
 
 
 @pytest.mark.asyncio
@@ -240,66 +190,6 @@ async def test_a_rate_limited_request_does_no_dns_lookup(tree, one_rate_window):
 
     assert resp.status_code == 429
     assert lookups == []
-
-
-@pytest.mark.asyncio
-async def test_requests_with_invalid_envelopes_still_spend_the_ip_budget(tree, one_rate_window):
-    raw = json.dumps(_request("alice")).encode()
-    mismatched = covering_headers(
-        "bob", method="POST", path=STATUS_PATH, body=b"{}", domain=DOMAIN, operation="read_id_certificate_status",
-    )
-    for _ in range(60):
-        assert (await tree.client.post(STATUS_PATH, content=raw, headers=mismatched)).status_code == 401
-
-    resp = await _status(tree, _request("alice"))
-
-    assert resp.status_code == 429
-
-
-@pytest.mark.asyncio
-async def test_one_caller_key_from_many_ips_has_one_budget(tree, monkeypatch, one_rate_window):
-    statuses = []
-    for n in range(61):
-        resp = await _status(tree, _request("alice"), signer="bob", headers=_from_ip(monkeypatch, f"198.51.100.{n + 1}"))
-        statuses.append(resp.status_code)
-
-    assert statuses == [200] * 60 + [429]
-
-
-@pytest.mark.asyncio
-async def test_an_invalid_caller_envelope_is_refused_not_anonymous(tree):
-    raw = json.dumps(_request("alice")).encode()
-    headers = covering_headers(
-        "bob", method="POST", path=STATUS_PATH, body=b"{}", domain=DOMAIN, operation="read_id_certificate_status",
-    )
-
-    resp = await tree.client.post(STATUS_PATH, content=raw, headers=headers)
-
-    assert resp.status_code == 401, resp.text
-
-
-@pytest.mark.asyncio
-async def test_a_legacy_caller_envelope_is_refused(tree):
-    raw = json.dumps(_request("alice")).encode()
-    headers = {**build_signed_headers(seed("bob"), did_key("bob"), domain=DOMAIN, operation="read_id_certificate_status"),
-               "Content-Type": "application/json"}
-
-    resp = await tree.client.post(STATUS_PATH, content=raw, headers=headers)
-
-    assert resp.status_code == 401, resp.text
-
-
-@pytest.mark.asyncio
-async def test_a_caller_key_outside_the_prime_order_subgroup_is_refused(tree):
-    raw = json.dumps(_request("alice")).encode()
-    caller = MixedOrderController()
-    headers = caller.covering_headers(
-        method="POST", path=STATUS_PATH, body=raw, domain=DOMAIN, operation="read_id_certificate_status",
-    )
-
-    resp = await tree.client.post(STATUS_PATH, content=raw, headers=headers)
-
-    assert resp.status_code == 401, resp.text
 
 
 @pytest.mark.asyncio

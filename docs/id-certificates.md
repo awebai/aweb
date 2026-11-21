@@ -3,7 +3,7 @@
 Status: **contract candidate; docs and vectors before implementation**.
 [`vectors/id-certificates-v1.json`](vectors/id-certificates-v1.json) freezes the
 bytes and decisions below. This is the source of truth for the identity tree;
-it supersedes [member attribution](member-attribution.md), not existing team
+it supersedes [member attribution](drafts/member-attribution.md), not existing team
 certificates, `member_person`, `member_custody`, owner acts or membership auth.
 The identity-path change was approved on 2026-10-26: a namespace admits human
 and agent identities, humans can issue humans, and local agents need no registry
@@ -29,31 +29,20 @@ messages and tasks as itself. It is reusable across teams and same-domain orgs
 without new keys, a new ID certificate or re-parenting. For a human leaf, the
 responsible-human result is that human itself, not its inviter.
 
-The approved [human-assurance architecture](human-assurance-contract.md)
-places human, namespace-controller and team-controller keys in a protected
-server signer outside worker access, under either hosted or customer custody.
-Human issuance and human team admission each need their own live, exact-act,
-single-use approval. Login alone, a worker/service token and a terminal
-passphrase do not satisfy that boundary. First enrollment uses the explicit
-protected bootstrap; recovery cannot reuse bootstrap as an approval bypass.
+The [human approval and key custody architecture](human-approval-architecture.md)
+separates approval from key holding. A key holder is optional; owner-held keys
+remain supported. Approval bindings and evidence travel beside a chain rather
+than changing the v1 certificate format. Legacy identities without evidence
+remain usable and are reported as having no evidence.
 
-Ordinary human read/connect/handoff authentication is a restricted signer
-operation. Reviewed [linked-channel ingress](agent-channel-endpoints.md#4-who-may-enter-decision-c)
-can authorize its exact MAIL operation only, never governance. Customer
-namespace/controller keys remain with the customer's protected server; Cloud
-does not acquire them. Agent spawning under a valid endorsed agent parent
-remains unattended and grants no resource permission.
-
-The v1 certificate format is unchanged and does not attest to this ceremony.
-The shared signer/adapters require their own release and migration acceptance;
-existing installations are not upgraded by this contract text alone.
+Human ID issuance, team membership, address authority and resource access
+remain separate. Keys held by an independent organisation do not become Cloud
+keys. Issuing an agent under an eligible agent parent grants no resource access.
 
 ### Interactive human participation from the CLI
 
-The keychain/passphrase flow below describes the legacy CLI implementation.
-It is migration inventory, not the supported custody boundary of the approved
-architecture. The protected read/connect/handoff path replaces local human
-signing under [the human-assurance contract](human-assurance-contract.md#4-ordinary-human-authentication-without-worker-custody).
+The following describes the existing keychain/passphrase CLI implementation.
+It does not establish approval evidence or key-holder isolation.
 
 After `aw id human init` and controller-authorized team membership, select the
 human explicitly with `--human <did:aw> --human-domain <identity-domain>`.
@@ -86,15 +75,20 @@ secret use, increase permissions, or replace a controller-signed owner act.
 Manifest parameters named `human` or `human-domain` are reserved for CLI
 identity selection and refused at installation.
 
-Every signature prompts at the controlling terminal and wipes the decrypted
-key afterwards. A send needs both a mail-envelope signature and request
-signature; lookups, reads, acknowledgments and retries can require additional
-prompts. Prompts are numbered within the command. Mail send prompts identify
-the recipient, subject and body hash; a reply's preliminary read identifies the
-source message and proposed body's hash, then its send identifies the resolved
-recipient and subject. Prompting is a custody safeguard, not a remotely
+One person command unlocks the key at its first signature with one passphrase
+prompt at the controlling terminal. The key stays in memory for that command,
+including browser or confirmation waits, and is wiped on success, error or
+interruption. Another command unlocks again. A send still needs both a
+mail-envelope signature and request signature; lookups, reads, acknowledgments
+and retries can require additional signatures. Each signature's numbered
+description is printed on stderr before signing. The unlock prompt names the
+selected human and operation; descriptions identify the recipient, subject and
+body hash when those are known. Prompting is a custody safeguard, not a remotely
 verifiable assertion of a fresh human gesture. Known agent-runtime markers
 and a missing controlling terminal refuse this path.
+
+Ordinary human mail carries its ID chain and no saved enrollment or creation
+evidence. `aw id proof` exports that evidence separately.
 
 This initial path supports plaintext mail, not human encryption-key custody.
 Encrypted sends or replies refuse when that custody is unavailable; there is
@@ -233,8 +227,10 @@ admission verdict:
 An unregistered local key has one parent and kind for that key. Re-parenting
 requires a new local key plus member certificate, or registered enrollment that
 replaces the old local membership. Initial certification of a previously
-chainless local key is not re-parenting. Explicit registered enrollment may
-keep its private key and acquire a stable ID, without guessing its past. Local
+chainless local key is not re-parenting. Neither is the first certificate under
+a person for an agent whose only parent so far is its namespace (§6). Explicit
+registered enrollment may keep its private key and acquire a stable ID, without
+guessing its past. Local
 descendants do not silently change their parent ID when that conversion occurs.
 
 ### Team-row human classification
@@ -341,6 +337,12 @@ parent-authorized delegation under independently discovered inherited DNS.
 Otherwise they are unavailable/evidence_unavailable. No new current status is issued during
 that disagreement; existing caches retain their normal freshness bounds. When
 the same exact key returns after an unavailable interval, its epoch continues.
+A DNS timeout, missing nameservers or another resolver failure returns retryable
+HTTP 503 `dns_unavailable` on status, registration and revocation, with
+`Retry-After: 1`. It does not mean the namespace lacks public proof. A missing
+or malformed record, an unproven root and a missing epoch continue to return
+`evidence_unavailable` when root authority is required.
+
 Publishing another party's public key without holding it grants no authority.
 Delete then re-register is different because deletion is an explicit act.
 
@@ -421,10 +423,32 @@ requires the hosted operator's authorization and execution of reaffirmation,
 with NULL-witness counts before and after, followed by `aw who` on a hosted
 agent proving its chain is verified, not evidence_unavailable. Public clients
 do not reaffirm implicitly.
-When a parent's controller changes through an authorized recovery or rotation,
-AWID updates its directly delegated children's `parent_controller_key` in the
-same transaction. A child's ordinary rotation updates its current controller
-and epoch atomically; the exposed witness always names that current child key.
+A rotation signed by the previous controller key preserves direct delegations
+bound to that key, updating their `parent_controller_key` in the same
+transaction. Recovery without the previous key withdraws the direct outgoing
+delegation witnesses in the replacement transaction; it does not carry them to
+the new key. Each approved child is restored by registration signed by the child
+and the new parent. An unchanged child's epoch and certificates are kept. If its
+key must also be replaced, parent-authorised recovery opens a replaced epoch
+for that child. A child's ordinary rotation updates its current controller and
+epoch atomically; the exposed witness always names that current child key.
+
+Withdrawal clears both witness fields, retaining child namespaces, keys,
+epochs, IDs, teams and addresses. A reused old parent key cannot revive a
+withdrawn witness. Namespace deletion also withdraws its outgoing witnesses.
+Same-key PUT retries do not withdraw children restored after recovery, and
+same-key first enrollment keeps witnesses already bound to that key. Recovery
+compares the requested key with the open epoch, even if reverify already moved
+the stored row. An exact-TXT child remains independently verifiable without
+the delegation. DNS observation alone never approves or permanently withdraws
+children. Existing evidence retains its normal freshness bounds.
+
+This withdraws public delegation authority. It does not revoke team credentials
+or every registry write made under the stolen key; writers that trust the stored
+controller are a separate boundary. For a hosted parent, explicit reaffirmation
+of its approved organisation and key inventory is part of recovery, before
+resuming creation that depends on those delegations. It is not an implicit
+approval of the registry's list of children.
 
 Brief DNS control can cause a permanent tree cutoff: an attacker who installs
 and proves a new key through the recovery path opens replaced. That is the
@@ -483,9 +507,8 @@ DIDKey signature, not team-certificate auth; the HTTP envelope name does not
 make that subject a namespace/team controller. Issuance authority still comes
 from the separately verified parent certificate signature. Revoke uses the
 same covering family with `operation="revoke_id_certificate"` and the allowed
-revoker's signature. Authenticated status reads use
-`operation="read_id_certificate_status"`; anonymous status has no signature.
-These new endpoints have no legacy envelope fallback. Register first verifies
+revoker's signature. Status reads are public and unsigned.
+Register and revoke have no legacy envelope fallback. Register first verifies
 subject key possession independently; it does not require its not-yet-registered
 child certificate already to confer tree authority.
 
@@ -564,18 +587,18 @@ of an old root key. No pre-upgrade namespace history is guessed. A local
 
 ### Human key lifecycle and two machines
 
-The encrypted keychain export/import method below describes legacy custody.
-New protected deployments keep these keys server-side; importing existing
-material is an explicitly approved operator migration outside worker access,
-not a worker-accessible export or multi-machine signer feature. The continuity,
-replacement and revocation rules in this section still apply.
+The encrypted keychain export/import method below is the current owner-held
+custody path. The target key holder is described in the
+[human approval architecture](human-approval-architecture.md).
+The continuity, replacement and revocation rules in this section still apply.
 
 Routine rotation retains the did:aw through the existing old-key-signed
 continuity log. Registered children retain their historic issuer-key witness;
 unregistered children request re-sign on contact. Rotation is NOT a compromise
 remedy: registered children admitted under a leaked key survive rotation.
 Compromise needs root-backdated revocation or explicit per-child revocation;
-S7 must show that choice. Rotating a member's own key still requires ordinary member-certificate reissue, as today.
+the rotation command must show that choice. Rotating a member's own key still
+requires ordinary member-certificate reissue, as today.
 
 The ONE v1 multi-machine method is an explicit password-encrypted export/import
 of the SAME human Ed25519 key between OS keychains, using the established
@@ -650,11 +673,10 @@ claim that a local member revocation is a global ID revocation.
 
 Org/team membership removal is a separate act: it ends that org's owner/role
 authority immediately under the host's transaction and never revokes a human
-ID shared with other orgs. Domain-ID offboarding uses the portable signer:
-hosted and BYOT operators use their own protected namespace signer for the
-current authorized human's live exact-act approval under the
-[human-assurance contract](human-assurance-contract.md). A session or admin
-label alone does not authorize that signature. If the inviter has left, the root
+ID shared with other orgs. Domain-ID offboarding is signed with
+the namespace key by its holder (the operator, or the organization's key
+holder) for the current authorized human. A session or admin label alone does
+not authorize that signature. If the inviter has left, the root
 signs. Retained branches must complete re-parenting before revoke; a partial
 failure is reported and must not be advertised as completed preservation.
 ID revocation is subject to the 60-second status bound, not instant worldwide
@@ -756,16 +778,14 @@ over-depth or over-limit evidence means unavailable, never a partial success.
 `missing` is an explicit unknown-registration result. Invitation/email/account
 details, secrets and a human directory are not exposed by this endpoint.
 
-Use the existing per-caller rate limiter under the operation
-`id_certificate_status`: public requests charge their source-IP bucket, and an
-authenticated request additionally charges its verified caller-key bucket,
-with a default of 60 requests per minute per bucket. The existing configured
-`X-AWID-Service-Token` exempts only the source-IP bucket; a signed caller's
-key bucket still applies. A submitted ID is not
-caller identity; limit before expensive history/proof work and return 429 without partial
-evidence. The normal deployment rate-limit configuration may size these buckets
-for its callers. The service credential changes no request validation or
-evidence and grants no identity or controller authority.
+Use the existing source-IP rate limiter under the operation
+`id_certificate_status`, with a default of 60 requests per minute per source
+IP. This is a public read; there is no signed caller-key budget. The existing
+configured `X-AWID-Service-Token` exempts the source-IP budget. A submitted ID
+is not caller identity; limit before expensive history/proof work and return
+429 without partial evidence. The normal deployment rate-limit configuration
+may size this bucket for its callers. The service credential changes no
+request validation or evidence and grants no identity or controller authority.
 There is no list, prefix, search or pagination operation for a domain's humans.
 Only exact requested IDs and proof-necessary ancestor/key history are returned,
 never team memberships, private certificate blobs, email/account mappings or
@@ -880,6 +900,15 @@ fetches through the cached client and shows nearest human/no human/unknown,
 with a distinct revoked, root_replaced or stale reason and the verified chain. It never
 prints a supplied label as a verified human.
 
+[`aw verify`](message-envelope-verification.md) applies the same shared result
+to an exported message without credentials or an aweb messaging-server read.
+`aw mail show --message-id ID --envelope` exports its original signed bytes (or
+encrypted envelope) with the unchanged adjacent chain. The verifier derives the
+author from signed content, verifies original authentication first, then obtains
+current DNS/public-registry evidence. Invalid proof is explicit in text and
+retains `outcome=unknown, identity_valid=false` in JSON; failed lookups remain
+unavailable.
+
 An enrolled global ID cannot evade status/revocation by omitting the header:
 its independently authenticated stable ID is checked through the same cached
 batch and its current certificate is fetched there within the SAME cached
@@ -980,9 +1009,60 @@ authority. This does not convert existing member_person booleans into IDs.
 
 ## 6. Invitations, adoption and migration
 
-An org-member invite is issued by the inviting human. Fix its intended
-recipient, domain, parent and kind at issue, privately; after the child key
-exists that human's signer signs the exact certificate. No portable signed
+### Creator and membership
+
+The creator signs the child's parent certificate; a team certificate establishes
+membership independently. An agent creator signs with its own key, without a
+person or registry write for a local child. When a person creates an agent,
+the person's own key signs for that named agent under their checked session or
+explicit local command.
+Without a claimed human, creation follows the organisation-parented path.
+A setup key only redeems the invitation fixed in that session; it does not
+authorise signing as the person.
+
+A team invite carries a `for-human` admission condition, defaulting to its
+issuer's verified nearest human; without one, the default is no condition.
+`--for-human <did:aw>` selects another person: the joiner supplies its own valid
+chain with that nearest human; the issuer signs no parentage. The membership
+grantor (Cloud or the host holding the team key) verifies the condition at
+acceptance. Joining never changes parentage.
+
+A fresh identity accepted from an invite without a separate parent is created
+by that invite's issuer, whose key signs the child certificate; the resulting
+chain must satisfy the invite's condition. Creation also
+accepts a parent source independent of the invite. `aw init --join-from`
+remains the shorthand for taking both from the same source; OATS spawn is
+unchanged. Existing identities are not re-parented by joining a team.
+
+Hosted invite creation accepts optional `for_human` (a `did:aw` person ID).
+Omission selects the issuer's verified nearest human or no condition; explicit
+null or an empty string is refused. The resolved value is stored with the invite
+and returned as `for_human: string | null` in creation and preview. A client
+requesting an explicit condition refuses if the service does not echo it.
+The bearer token cannot replace this stored condition. Hosted acceptance may
+carry top-level `id_chain`, bound to its authenticated joining key: this is
+membership only. The existing `id_tree` remains the fresh-child exchange;
+both paths must satisfy the same condition before membership is granted.
+Current registry evidence is required for a conditioned acceptance, including
+on the local controller path. Revoked or replaced person ancestry refuses;
+unavailable status gives `evidence_unavailable`, without admission fallback.
+
+`--parent <home>` is same-machine creation only. For a different-human invite
+without a chain on another machine, the refusal names the joiner's own parent
+request/import exchange, never the issuer as parent. The caller obtains that
+chain first, then joins from its key-and-chain home without prior membership.
+A fresh identity created by the invite issuer must also match the condition;
+a stable client cannot turn an invite for another person into its issuer's child.
+
+Creating a person's ID needs no approval service. Enrolling an approval key
+and approving an act are separate, optional operations, as defined in the
+[approval architecture](human-approval-architecture.md#creation-enrolment-and-approval).
+
+### Human issuance and pending registration
+
+For human ID issuance, fix its intended recipient, domain, parent and kind
+privately at issue, separately from team membership; after the child key exists
+the authorised issuer signs the exact certificate. No portable signed
 delegation. A custodial server can perform bounded deferred signing for that
 exact pending invitation, rechecking session/invitation authorization and the
 parent after lock waits. For host-managed invitations, deferred kind=human
@@ -1005,8 +1085,8 @@ When a same-machine constructor (`aw team admin create --agent` or certificate-o
 existing child request/receive/approve/import exchange before accepting the
 hosted invite. The retained preview pins the parent and domain; the child keeps
 its original key and request UUID. If issuance refuses, the pending child home
-and request remain available rather than being rolled back. Ordinary invite
-accept across machines still requires the explicit parent exchange.
+and request remain available rather than being rolled back. Creation across
+machines uses the explicit parent exchange.
 For a local-team invitation, the inviter's own saved registry remains its
 identity registry. When that pin is absent, the already-resolved team registry
 (including service discovery) is a routing fallback only for an inviter in that
@@ -1016,8 +1096,7 @@ The existing private invitation link retains the selected issuer registry for
 later rechecks and import; the current identity pin and namespace checks still
 apply. Routing metadata grants no parent-signing authority: the current key,
 enrollment and chain checks are unchanged.
-Agents can issue agent spawns, never human invites. An untyped new invite from
-an attributed agent is a spawn/inherits or refuses, not an unattributed escape.
+Agents can issue agent spawns, never human ID invitations.
 Do not guess a parent from pre-upgrade bearer tokens or local instance names.
 
 Org membership may complete while identity registration is **pending**.
@@ -1037,6 +1116,67 @@ retain its exact authenticated intended-parent operation and resume issuance
 after registration with current checks and no extra login; it must not guess
 or retroactively attach unrelated legacy agents.
 
+### First adoption under a person
+
+An agent immediately under its organisation's namespace may be adopted once
+through the adoption path by a person of that organisation, keeping its ID and
+key. The recorded creator alone may adopt while their account is active and they are a current member of the agent's team; organisation membership is not required. Otherwise, a current explicit team member with team-admin or owning-organisation owner/admin authority may adopt. The person explicitly
+signs for that named agent and key under their checked session or local command.
+A chain already containing a person refuses adoption. An agent immediately
+under another agent is not adopted independently; only its namespace-parented
+root qualifies. An awsign root receipt is optional evidence on this same
+adoption, not a second parent-signing operation.
+
+Registered adoption requires the person's home domain to equal the agent's
+domain; cross-domain adoption of a registered agent is not supported.
+Registered adoption uses the existing atomic registry head replacement. Moving
+a registered agent between people remains the separate explicit re-parenting
+operation in §3, with the new parent's signature, subject key proof and expected
+head; it is not another adoption. A local agent that already has a person parent
+cannot be moved to another person. For its first adoption, it installs the
+person-parented chain in place of the organisation chain. The old local
+certificate remains cryptographically valid and reports `no_human` if presented.
+
+Existing descendants retain copies of the old ancestry until refreshed. They
+may report `no_human`, or refuse a superseded registered ancestor certificate.
+The commands below refresh same-domain descendants to the new ancestry.
+The refresh is explicit, level by level; it does not happen automatically.
+A deployment may instead respawn its agents under the adopted parent.
+
+For that one-time organization-only adoption, `parent request` accepts an
+installed chain only when it is exactly namespace → this agent in the
+installed certificate's own domain, and the requested parent is a registered
+identity. A local agent may request its first person in another domain. Import verifies that
+the new parent is a human, verifies the exact requested binding and refuses a
+second adoption, including an older outstanding request. A registered agent
+retains its working chain until the registry accepts replacement of its exact
+old head. `--no-register` retains the signed adoption response with registration
+pending; it leaves that working chain installed. A retry reuses the same
+response, invitation ID and expected head.
+
+Local children spawned before a same-domain adoption retain the old ancestry
+until refreshed.
+Use `aw id parent request --resign`, transfer to the actual parent for
+`aw id child receive` and `approve`, then `aw id parent import` on the child.
+This exchange also works when the parent's key did not rotate: it carries the
+parent's newly verified ancestry and keeps the child's ID, key and immediate
+parent. An unregistered parent proves its authority through its carried chain
+and exact signing key; it has no registry identity row. Repeat down the tree
+for local descendants. Use `aw id parent refresh` to fetch and verify current
+registered ancestry while preserving the local certificates beneath it. A
+registered agent uses that same command to refresh its whole chain without
+re-signing its own certificate.
+Branches with only local ancestors require the parent exchange above.
+
+After a local cross-domain adoption, existing children's old-domain certificates
+cannot be refreshed: re-signing keeps their domain and a chain cannot cross
+domains. Their old chains remain valid and report `no_human`; the parent's
+re-sign approval refuses with guidance to respawn under the adopted parent,
+without signing or installing a mixed-domain chain. The child cannot discover a
+local parent's changed domain from its carried copy alone, so request export
+may succeed; the parent detects it on approval. Children spawned after adoption
+use the person's domain and show that person.
+
 ### Self-custodial child requests and re-sign transport
 
 J1's cross-machine admission and J10's local-child re-sign use one explicit
@@ -1047,6 +1187,25 @@ host-managed invitation continues to use its host's existing invitation record
 and verified-account checks; presenting it on this file path refuses
 `invitation_mode_mismatch`. AWID is the registration/time witness, not the
 pending-request mailbox. Membership remains a separate operation.
+
+Hosted creation may advertise an additive public `creation_invitation` beside
+its existing team or invitation preview metadata:
+`{id,parent:{kind:"identity",id},domain,name,identity_scope}`. The checked creator
+session fixes this person parent, home domain and named child's local/global
+scope before the setup key or invite is redeemed. Its domain may differ from
+the membership team's namespace. A new client copies these exact fields into
+its existing `id_tree` request, adding `invitation_id` equal to the preview's
+`id`; the independent `request_id` identifies retries. It retains that selection
+and its child key before creation, verifies the returned chain against the
+selected parent and domain, and refuses changes on retry. An advertised null or
+malformed invitation refuses. Absence preserves the existing creation behavior.
+A named `init --admission-team-id` sends optional `creation:{name,identity_scope}`
+under its checked CLI login. Chosen-organization team creation can fix that same
+intent with `--first-agent-name` and `--first-agent-local` or
+`--first-agent-global`; without a named child it still returns an untyped
+membership invitation. Generic admission invitations remain unchanged.
+Released clients that still ask for namespace parentage continue to receive it;
+a setup credential's account association alone never selects a person signer.
 
 The child exports canonical UTF-8 JSON with exactly this wrapper:
 
@@ -1209,11 +1368,19 @@ init path, not a CSR exchange: the human operator creates their own human key,
 uses the current namespace controller to issue the namespace-parent human
 certificate directly, and registers with the subject's key proof. It creates
 no CSR or invitation. It requires a human interactive invocation; an agent-run
-or non-TTY command cannot use it to mint a human. Human key custody and each
-human signing prompt retain their existing rules. For a human prepared on a
+or non-TTY command cannot use it to mint a human. Human key custody follows §1; all human signatures in one command share its
+single terminal unlock. For a human prepared on a
 different machine, the issuer fixes the invitation and parent BEFORE CSR
 export; key/DID preparation may precede that, but `--domain` alone cannot
 produce an issue CSR without its required invitation ID and parent.
+
+`aw id parent install <chain-file|->` installs an already-issued public chain
+in another home holding the same local key. It requires the leaf ID to equal
+that home's own did:key, verifies the whole chain against current authority,
+and accepts only an empty home or the identical installed chain. It has no
+outgoing-request requirement and cannot replace a different chain. This lets
+several homes sharing a local key carry the same verified certificate; it
+creates no new key, signature, registration or ancestry.
 
 The CLI surfaces are `aw id parent request` (issue or --resign),
 `aw id parent import <response>`, and `aw id child invite`, `receive <request>`,
@@ -1235,7 +1402,7 @@ exchange never grants team membership, moves an address or rebinds a contact.
 
 `aw id revoke <id>` revokes a registered identity under §3, using the same
 signer selection as `aw id child invite`: the current identity by default,
-`--human <did:aw> --domain D` for a human held in the keychain, or
+`--human <did:aw> --human-domain D` for a human held in the keychain, or
 `--as-root --domain D` for the namespace root. An identity signer may revoke
 itself; revoking its current child requires that it remain a valid parent.
 Namespace-root authority follows §3. Team membership or team-controller

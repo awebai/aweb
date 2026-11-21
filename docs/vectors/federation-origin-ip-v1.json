@@ -133,7 +133,25 @@
     {"name": "ipv6_link_local", "input": "fe80::1", "expected": {"allowed": false, "reason": "sender_registry_origin_forbidden"}},
     {"name": "ipv6_multicast", "input": "ff02::1", "expected": {"allowed": false, "reason": "sender_registry_origin_forbidden"}},
     {"name": "ipv6_documentation", "input": "2001:db8::1", "expected": {"allowed": false, "reason": "sender_registry_origin_forbidden"}},
-    {"name": "ipv4_mapped_private", "input": "::ffff:127.0.0.1", "expected": {"allowed": false, "reason": "sender_registry_origin_forbidden"}}
+    {"name": "ipv4_mapped_private", "input": "::ffff:127.0.0.1", "expected": {"allowed": false, "reason": "sender_registry_origin_forbidden"}},
+    {"name": "ipv4_this_network", "input": "0.0.0.1", "expected": {"allowed": false, "reason": "sender_registry_origin_forbidden"}},
+    {"name": "ipv4_ietf_protocol_assignments", "input": "192.0.0.1", "expected": {"allowed": false, "reason": "sender_registry_origin_forbidden"}},
+    {"name": "ipv4_ietf_globally_reachable_exception", "input": "192.0.0.9", "expected": {"allowed": true, "reason": null}},
+    {"name": "ipv4_broadcast", "input": "255.255.255.255", "expected": {"allowed": false, "reason": "sender_registry_origin_forbidden"}},
+    {"name": "ipv6_nat64_well_known_private", "input": "64:ff9b::a00:1", "expected": {"allowed": false, "reason": "sender_registry_origin_forbidden"}},
+    {"name": "ipv6_nat64_well_known_public", "input": "64:ff9b::5db8:d822", "expected": {"allowed": false, "reason": "sender_registry_origin_forbidden"}},
+    {"name": "ipv6_nat64_local_use", "input": "64:ff9b:1::a00:1", "expected": {"allowed": false, "reason": "sender_registry_origin_forbidden"}},
+    {"name": "ipv6_6to4", "input": "2002:a00:1::", "expected": {"allowed": false, "reason": "sender_registry_origin_forbidden"}},
+    {"name": "ipv6_teredo", "input": "2001::a00:1", "expected": {"allowed": false, "reason": "sender_registry_origin_forbidden"}},
+    {"name": "ipv6_discard_only", "input": "100::1", "expected": {"allowed": false, "reason": "sender_registry_origin_forbidden"}},
+    {"name": "ipv6_benchmarking", "input": "2001:2::1", "expected": {"allowed": false, "reason": "sender_registry_origin_forbidden"}},
+    {"name": "ipv6_orchid", "input": "2001:10::1", "expected": {"allowed": false, "reason": "sender_registry_origin_forbidden"}},
+    {"name": "ipv6_orchid_v2_globally_reachable_exception", "input": "2001:20::1", "expected": {"allowed": true, "reason": null}},
+    {"name": "ipv6_amt_globally_reachable_exception", "input": "2001:3::1", "expected": {"allowed": true, "reason": null}},
+    {"name": "ipv6_documentation_3fff", "input": "3fff::1", "expected": {"allowed": false, "reason": "sender_registry_origin_forbidden"}},
+    {"name": "ipv6_srv6_sid_outside_global_unicast", "input": "5f00::1", "expected": {"allowed": false, "reason": "sender_registry_origin_forbidden"}},
+    {"name": "ipv6_outside_global_unicast", "input": "4000::1", "expected": {"allowed": false, "reason": "sender_registry_origin_forbidden"}},
+    {"name": "ipv6_site_local_deprecated", "input": "fec0::1", "expected": {"allowed": false, "reason": "sender_registry_origin_forbidden"}}
   ],
   "answer_set_cases": [
     {

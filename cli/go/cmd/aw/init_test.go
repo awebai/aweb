@@ -612,7 +612,7 @@ func TestInitGlobalJoinRequiresExistingGlobalIdentity(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	workingDir := t.TempDir()
 
-	err := acceptInitInviteAndConnect(authTestCmd(&bytes.Buffer{}), workingDir, "aw_inv_no_identity", "https://app.aweb.ai")
+	err := acceptInitInviteAndConnect(authTestCmd(&bytes.Buffer{}), initInviteConnection{WorkingDir: workingDir, Token: "aw_inv_no_identity", PreferredAwebURL: "https://app.aweb.ai"})
 	if err == nil || !strings.Contains(err.Error(), "aw id create") {
 		t.Fatalf("expected existing global identity guidance, got %v", err)
 	}
@@ -708,6 +708,14 @@ func TestInitJoinFromHostedSuccessPreservesSourceAndConnectsTarget(t *testing.T)
 		t.Fatalf("create=%t accept=%t connect=%t", sawCreateInvite, sawAccept, sawConnect)
 	}
 	assertInitJoinTarget(t, target, teamID, "target", acceptedDID, sourceBefore, source)
+	chain, err := awconfig.LoadInstalledIDChain(filepath.Join(target, ".aw"))
+	if err != nil || chain != nil {
+		t.Fatalf("chainless source unexpectedly issued a chain: chain=%+v err=%v", chain, err)
+	}
+	verdict, err := executeWho(context.Background(), whoOptions{WorkingDir: target})
+	if err != nil || verdict.Outcome != "unknown" {
+		t.Fatalf("chainless source ancestry=%+v err=%v", verdict, err)
+	}
 }
 
 func TestInitJoinFromControllerKeySuccessPreservesSourceAndConnectsTarget(t *testing.T) {
@@ -892,6 +900,13 @@ func TestInitAdmissionTeamIDIssuesAcceptsAndConnects(t *testing.T) {
 			if !uuidV4PatternForTest.MatchString(req.RequestID) {
 				t.Fatalf("admission request_id %q is not a random (version 4) UUID", req.RequestID)
 			}
+			raw, _ := json.Marshal(req)
+			var wire map[string]any
+			json.Unmarshal(raw, &wire)
+			creation, _ := wire["creation"].(map[string]any)
+			if creation["name"] != "target" || creation["identity_scope"] != "local" {
+				t.Errorf("admission lost named intent: %v", wire)
+			}
 			if req.AliasHint != "target" || req.ExpectedAccountID != "acct-test" {
 				t.Fatalf("admission req=%+v", req)
 			}
@@ -965,6 +980,7 @@ func TestInitGlobalHostedJoinWithExistingIdentityInstallsGlobalCert(t *testing.T
 	memberDID := awid.ComputeDIDKey(memberPub)
 	stableID := awid.ComputeStableID(memberPub)
 	registryURL := realAWIDFixture(t)
+	t.Setenv("AWID_REGISTRY_URL", registryURL)
 	registry := awid.NewAWIDRegistryClient(nil, nil)
 	if _, err := registry.RegisterIdentity(context.Background(), registryURL, memberDID, stableID, memberKey); err != nil {
 		t.Fatalf("register real AWID fixture identity: %v", err)
@@ -1009,7 +1025,7 @@ func TestInitGlobalHostedJoinWithExistingIdentityInstallsGlobalCert(t *testing.T
 	initName = "alice"
 	jsonFlag = true
 	var out bytes.Buffer
-	if err := acceptInitInviteAndConnect(authTestCmd(&out), target, "aw_inv_global", server.URL); err != nil {
+	if err := acceptInitInviteAndConnect(authTestCmd(&out), initInviteConnection{WorkingDir: target, Token: "aw_inv_global", PreferredAwebURL: server.URL}); err != nil {
 		t.Fatalf("acceptInitInviteAndConnect: %v\n%s", err, out.String())
 	}
 	if !sawGlobalAccept {
@@ -1912,6 +1928,7 @@ func TestImplicitLocalInitProvisioningAgainstLocalServers(t *testing.T) {
 	}))
 
 	tmp := t.TempDir()
+	t.Setenv("AWID_REGISTRY_URL", registryServer.URL)
 	result, err := runImplicitLocalInit(implicitLocalInitRequest{
 		WorkingDir:  tmp,
 		AwebURL:     awebServer.URL,
@@ -1936,11 +1953,11 @@ func TestImplicitLocalInitProvisioningAgainstLocalServers(t *testing.T) {
 	if gotCertPayload["identity_scope"] != awid.IdentityModeLocal {
 		t.Fatalf("cert identity_scope=%v", gotCertPayload["identity_scope"])
 	}
-	if _, ok := gotCertPayload["member_did_aw"]; ok {
-		t.Fatalf("local cert should not include member_did_aw: %v", gotCertPayload["member_did_aw"])
+	if gotCertPayload["member_did_aw"] != nil {
+		t.Fatalf("local cert should carry no member_did_aw: %v", gotCertPayload["member_did_aw"])
 	}
-	if _, ok := gotCertPayload["member_address"]; ok {
-		t.Fatalf("local cert should not include member_address: %v", gotCertPayload["member_address"])
+	if gotCertPayload["member_address"] != nil {
+		t.Fatalf("local cert should carry no member_address: %v", gotCertPayload["member_address"])
 	}
 	if gotConnectBody["role"] != "developer" {
 		t.Fatalf("connect role=%v", gotConnectBody["role"])

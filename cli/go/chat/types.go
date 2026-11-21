@@ -13,6 +13,7 @@ type Event struct {
 	AttachmentsAvailable bool                        `json:"attachments_available"`
 	SenderMembership     *awid.SenderMembership      `json:"sender_membership,omitempty"`
 	Type                 string                      `json:"type"`
+	Seq                  int64                       `json:"seq,omitempty"`
 	Agent                string                      `json:"agent,omitempty"`
 	SessionID            string                      `json:"session_id,omitempty"`
 	MessageID            string                      `json:"message_id,omitempty"`
@@ -70,7 +71,10 @@ type OpenResult struct {
 	// this result presented. Open still succeeds when it is set: the messages
 	// were delivered, they were just not acknowledged, so they will be
 	// presented again.
-	MarkReadError  string `json:"mark_read_error,omitempty"`
+	MarkReadError string `json:"mark_read_error,omitempty"`
+	// ReceiptError reports a failed local write without losing opened messages
+	// or conflating the cache with the server acknowledgement.
+	ReceiptError   string `json:"receipt_error,omitempty"`
 	SenderWaiting  bool   `json:"sender_waiting"`
 	UnreadWasEmpty bool   `json:"unread_was_empty,omitempty"`
 }
@@ -119,6 +123,9 @@ type SendOptions struct {
 	Leaving           bool // Sender is leaving the conversation
 	StartConversation bool // Ignore targets_left, use 5min default wait
 	EncryptE2EE       bool // Send encrypted_v2 chat; fail closed if keys are missing
+	// RecipientDID is the DID the caller confirmed for its one target. An
+	// existing session is then selected by this strong identity only.
+	RecipientDID string
 }
 
 // StatusCallback receives protocol status updates.

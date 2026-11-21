@@ -149,7 +149,7 @@ func runTeamReissueCert(cmd *cobra.Command, args []string) error {
 		memberDID = homeDID
 	}
 
-	registry, err := newConfiguredRegistryClient(nil, "")
+	registry, err := newConfiguredRegistryClient(nil)
 	if err != nil {
 		return err
 	}

@@ -27,6 +27,7 @@ type BundleMalformed struct {
 	Reason string
 }
 
+// Error identifies the malformed export line and its structural refusal.
 func (e *BundleMalformed) Error() string {
 	return fmt.Sprintf("line %d: %s", e.Line, e.Reason)
 }
@@ -55,6 +56,10 @@ type LastCheckpoint struct {
 
 // BundleReport is what a bundle proves, and how far.
 type BundleReport struct {
+	// AttestedEpochs names epochs attested by an accepted receipt or checkpoint
+	// from the bundle or supplied witnesses. Intact alone is structural, and
+	// attestation does not prove the export is complete (docs/logs-chain.md, “Verifying a bundle,” lines 378–382).
+	AttestedEpochs        []int64
 	ReceiptKeys           []string
 	CheckpointKeys        []string
 	Epochs                []EpochReport
@@ -92,11 +97,14 @@ func (r BundleReport) JSON() map[string]any {
 	for _, c := range r.WitnessesContradicted {
 		contradicted = append(contradicted, map[string]any{"artefact": c.Artefact, "index": c.Index, "reason": c.Reason})
 	}
+	attested := make([]int64, len(r.AttestedEpochs))
+	copy(attested, r.AttestedEpochs)
 	report := map[string]any{
-		"intact":        r.Intact(),
-		"accepted_keys": map[string]any{"receipt": sortedKeys(r.ReceiptKeys), "checkpoint": sortedKeys(r.CheckpointKeys)},
-		"epochs":        epochs,
-		"witnesses":     map[string]any{"contradicted": contradicted},
+		"attested_epochs": attested,
+		"intact":          r.Intact(),
+		"accepted_keys":   map[string]any{"receipt": sortedKeys(r.ReceiptKeys), "checkpoint": sortedKeys(r.CheckpointKeys)},
+		"epochs":          epochs,
+		"witnesses":       map[string]any{"contradicted": contradicted},
 	}
 	if r.LastCheckpoint != nil {
 		report["last_checkpoint"] = map[string]any{
@@ -118,8 +126,13 @@ func sortedKeys(keys []string) []any {
 	return out
 }
 
+type artefactReference struct {
+	Kind  logRecordKind
+	Index int
+}
+
 type witness struct {
-	kind     string
+	kind     logRecordKind
 	index    int
 	artefact Artefact
 	teamID   string
@@ -141,7 +154,8 @@ type bundleEpoch struct {
 	positionSeq     int64
 	positionHash    string
 	positionEvent   *StoredEvent
-	counts          map[string]int
+	counts          map[logRecordKind]int
+	attested        bool
 	anchored        bool
 	anchoredTo      int64
 	firstUnanchored int64
@@ -152,25 +166,32 @@ type bundleEpoch struct {
 	positions       map[int64]storedPosition
 }
 
-func newBundleEpoch(genesis Genesis, linked bool, witnessed map[int64]bool) (*bundleEpoch, error) {
+type epochVerificationOptions struct {
+	Genesis             Genesis
+	LinkedToPredecessor bool
+	WitnessedPositions  map[int64]bool
+}
+
+func newBundleEpoch(options epochVerificationOptions) (*bundleEpoch, error) {
+	genesis := options.Genesis
 	state, err := newEpochState(genesis)
 	if err != nil {
 		return nil, err
 	}
 	return &bundleEpoch{
-		state: state, linked: linked, witnessed: witnessed, positionHash: state.genesisHash,
-		counts: map[string]int{}, headCheckpoints: map[string]bool{}, positions: map[int64]storedPosition{},
+		state: state, linked: options.LinkedToPredecessor, witnessed: options.WitnessedPositions, positionHash: state.genesisHash,
+		counts: map[logRecordKind]int{}, headCheckpoints: map[string]bool{}, positions: map[int64]storedPosition{},
 	}, nil
 }
 
 func (e *bundleEpoch) event(event StoredEvent) {
 	seq := event.Link.TeamSeq
-	if e.lastSeq != 0 && seq == e.lastSeq {
-		e.state.fail(seq, "sequence_duplicate")
+	if seq == 0 || e.lastSeq != 0 && seq == e.lastSeq {
+		e.state.fail(seq, sequenceDuplicateFault)
 		return
 	}
 	if seq < e.lastSeq {
-		e.state.fail(seq, "misplaced")
+		e.state.fail(seq, misplacedFault)
 		return
 	}
 	e.state.add(event)
@@ -187,29 +208,30 @@ func (e *bundleEpoch) event(event StoredEvent) {
 
 // artefact checks one of the bundle's artefacts at the current position, and
 // says whether it holds.
-func (e *bundleEpoch) artefact(kind string, artefact Artefact, keys map[string]bool) bool {
+func (e *bundleEpoch) artefact(kind logRecordKind, artefact Artefact, keys map[string]bool) bool {
 	index := e.counts[kind]
 	e.counts[kind]++
 	opened, reason := acceptedArtefact(kind, artefact, keys, e.state.genesis)
 	if opened != nil {
 		if opened.teamSeq != e.positionSeq {
-			reason = "misplaced"
+			reason = misplacedFault
 		} else {
 			reason = opened.atPosition(e.positionHash, e.positionEvent)
 		}
 	}
-	if reason != "" {
-		e.state.report.Contradicted = append(e.state.report.Contradicted, Contradiction{kind, index, reason})
+	if reason != noChainFault {
+		e.state.report.Contradicted = append(e.state.report.Contradicted, Contradiction{string(kind), index, string(reason)})
 		return false
 	}
-	if kind == "checkpoint" {
+	e.attested = true
+	if kind == checkpointRecord {
 		e.anchored, e.anchoredTo, e.firstUnanchored = true, e.positionSeq, 0
 		e.headCheckpoints[ArtefactSHA256(artefact.SigningBytes)] = true
 	}
 	return true
 }
 
-func (e *bundleEpoch) witnessFault(w witness, keys map[string]bool) string {
+func (e *bundleEpoch) witnessFault(w witness, keys map[string]bool) chainFault {
 	opened, reason := acceptedArtefact(w.kind, w.artefact, keys, e.state.genesis)
 	if opened == nil {
 		return reason
@@ -219,7 +241,7 @@ func (e *bundleEpoch) witnessFault(w witness, keys map[string]bool) string {
 	}
 	stored, present := e.positions[opened.teamSeq]
 	if !present {
-		return "not_in_chain"
+		return notInChainFault
 	}
 	return opened.atPosition(stored.hash, &stored.event)
 }
@@ -244,27 +266,27 @@ func VerifyBundle(
 	receiptKeys, checkpointKeys map[string]bool,
 	witnessReceipts, witnessCheckpoints []Artefact,
 ) (BundleReport, error) {
-	keys := map[string]map[string]bool{"receipt": receiptKeys, "checkpoint": checkpointKeys}
+	keys := map[logRecordKind]map[string]bool{receiptRecord: receiptKeys, checkpointRecord: checkpointKeys}
 	report := BundleReport{ReceiptKeys: keyList(receiptKeys), CheckpointKeys: keyList(checkpointKeys)}
-	held := map[[2]any]string{}
+	held := map[artefactReference]chainFault{}
 	var witnesses []witness
 	for _, given := range []struct {
-		kind      string
+		kind      logRecordKind
 		artefacts []Artefact
-	}{{"receipt", witnessReceipts}, {"checkpoint", witnessCheckpoints}} {
+	}{{receiptRecord, witnessReceipts}, {checkpointRecord, witnessCheckpoints}} {
 		for index, artefact := range given.artefacts {
 			w := witness{kind: given.kind, index: index, artefact: artefact}
-			if given.kind == "receipt" {
+			if given.kind == receiptRecord {
 				receipt, err := OpenReceipt(artefact.SigningBytes, artefact.Signature)
 				if err != nil || !receiptKeys[receipt.DIDKey] {
-					held[[2]any{given.kind, index}] = "signature_invalid"
+					held[artefactReference{given.kind, index}] = signatureFault
 					continue
 				}
 				w.teamID, w.epoch, w.teamSeq = receipt.TeamID, receipt.ChainEpoch, receipt.TeamSeq
 			} else {
 				checkpoint, err := OpenCheckpoint(artefact.SigningBytes, artefact.Signature)
 				if err != nil || !checkpointKeys[checkpoint.DIDKey] {
-					held[[2]any{given.kind, index}] = "signature_invalid"
+					held[artefactReference{given.kind, index}] = signatureFault
 					continue
 				}
 				w.teamID, w.epoch, w.teamSeq = checkpoint.TeamID, checkpoint.ChainEpoch, checkpoint.TeamSeq
@@ -276,18 +298,23 @@ func VerifyBundle(
 	var current *bundleEpoch
 	present := map[int64]bool{}
 	closeEpoch := func(epoch *bundleEpoch) {
-		report.Epochs = append(report.Epochs, epoch.report())
 		present[epoch.state.genesis.ChainEpoch] = true
 		for _, w := range witnesses {
 			if w.epoch != epoch.state.genesis.ChainEpoch {
 				continue
 			}
-			if _, done := held[[2]any{w.kind, w.index}]; done {
+			if _, done := held[artefactReference{w.kind, w.index}]; done {
 				continue
 			}
-			if reason := epoch.witnessFault(w, keys[w.kind]); reason != "" {
-				held[[2]any{w.kind, w.index}] = reason
+			if reason := epoch.witnessFault(w, keys[w.kind]); reason != noChainFault {
+				held[artefactReference{w.kind, w.index}] = reason
+			} else {
+				epoch.attested = true
 			}
+		}
+		report.Epochs = append(report.Epochs, epoch.report())
+		if epoch.attested {
+			report.AttestedEpochs = append(report.AttestedEpochs, epoch.state.genesis.ChainEpoch)
 		}
 	}
 
@@ -300,7 +327,7 @@ func VerifyBundle(
 			}
 			for _, w := range witnesses {
 				if w.teamID != teamID {
-					held[[2]any{w.kind, w.index}] = "wrong_chain"
+					held[artefactReference{w.kind, w.index}] = wrongChainFault
 				}
 			}
 			return nil
@@ -310,7 +337,7 @@ func VerifyBundle(
 			return err
 		}
 		switch name {
-		case "genesis":
+		case genesisRecord:
 			genesis, err := bundleGenesis(value, number)
 			if err != nil {
 				return err
@@ -331,10 +358,10 @@ func VerifyBundle(
 					witnessed[w.teamSeq] = true
 				}
 			}
-			if current, err = newBundleEpoch(genesis, linked, witnessed); err != nil {
+			if current, err = newBundleEpoch(epochVerificationOptions{Genesis: genesis, LinkedToPredecessor: linked, WitnessedPositions: witnessed}); err != nil {
 				return &BundleMalformed{number, "genesis: " + err.Error()}
 			}
-		case "event":
+		case eventRecord:
 			if current == nil {
 				return &BundleMalformed{number, "an event record precedes its epoch's genesis"}
 			}
@@ -345,13 +372,13 @@ func VerifyBundle(
 			current.event(event)
 		default:
 			if current == nil {
-				return &BundleMalformed{number, "a " + name + " record precedes its epoch's genesis"}
+				return &BundleMalformed{number, "a " + string(name) + " record precedes its epoch's genesis"}
 			}
 			artefact, err := bundleArtefact(value, number)
 			if err != nil {
 				return err
 			}
-			if current.artefact(name, artefact, keys[name]) && name == "checkpoint" {
+			if current.artefact(name, artefact, keys[name]) && name == checkpointRecord {
 				report.LastCheckpoint = &LastCheckpoint{
 					ChainEpoch: current.state.genesis.ChainEpoch, TeamSeq: current.positionSeq,
 					SigningBytesSHA256: ArtefactSHA256(artefact.SigningBytes),
@@ -370,18 +397,18 @@ func VerifyBundle(
 		closeEpoch(current)
 	}
 	for _, w := range witnesses {
-		key := [2]any{w.kind, w.index}
+		key := artefactReference{w.kind, w.index}
 		if _, done := held[key]; !done && !present[w.epoch] {
-			held[key] = "epoch_absent"
+			held[key] = epochAbsentFault
 		}
 	}
 	for key, reason := range held {
-		report.WitnessesContradicted = append(report.WitnessesContradicted, Contradiction{key[0].(string), key[1].(int), reason})
+		report.WitnessesContradicted = append(report.WitnessesContradicted, Contradiction{string(key.Kind), key.Index, string(reason)})
 	}
 	sort.Slice(report.WitnessesContradicted, func(i, j int) bool {
 		a, b := report.WitnessesContradicted[i], report.WitnessesContradicted[j]
 		if a.Artefact != b.Artefact {
-			return a.Artefact == "receipt"
+			return a.Artefact == string(receiptRecord)
 		}
 		return a.Index < b.Index
 	})
@@ -404,13 +431,13 @@ func bundleHeader(record map[string]any, number int) (string, error) {
 	return teamID, nil
 }
 
-func bundleRecord(record map[string]any, number int) (string, map[string]any, error) {
+func bundleRecord(record map[string]any, number int) (logRecordKind, map[string]any, error) {
 	if len(record) == 1 {
 		for name, value := range record {
 			switch name {
-			case "genesis", "event", "receipt", "checkpoint":
+			case string(genesisRecord), string(eventRecord), string(receiptRecord), string(checkpointRecord):
 				if object, ok := value.(map[string]any); ok {
-					return name, object, nil
+					return logRecordKind(name), object, nil
 				}
 			}
 		}

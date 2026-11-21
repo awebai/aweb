@@ -1,23 +1,22 @@
 """Human form headers, authority, escaping and real Chromium/passkey confirmation."""
 
 import asyncio
-import base64
 import copy
 import os
 import re
-import socket
 from urllib.parse import quote, urlencode
 
 import pytest
 import uvicorn
 from aweb_naapp.console import CONSOLE_HEADERS
 from aweb_naapp.runtime.approvals import ApprovalState
-from aweb_naapp.runtime.passkeys import RelyingParty, contact_sha256
+from aweb_naapp.runtime.passkeys import RelyingParty
 from aweb_naapp_testing.owner_acts import INSTALLATION_ID
 from playwright.async_api import TimeoutError as BrowserTimeout
 from playwright.async_api import expect
 
 from aweb_secrets.owners import owner_scope
+from tests.console_network import passkey_origin as passkey_origin
 from tests.test_change_records import ITEMS
 from tests.test_change_sets import ALICE, TEAM, enrol_owner
 from tests.test_change_sets import world as _world
@@ -83,16 +82,22 @@ async def test_frozen_reason_cannot_escape_review_markup(world):
 
 
 @pytest.fixture
-async def service(world):
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.bind(("127.0.0.1", 0))
-    port = sock.getsockname()[1]
-    origin = f"http://localhost:{port}"
+async def service(world, console_tls, console_listener):
+    sock = console_listener.socket
+    port, origin = console_listener.port, console_listener.origin
     world.passkeys.rp = RelyingParty(origin=origin, name="Secrets")
     app = await application(
-        world, forms=True, human_origin=origin, agent_origin=f"http://127.0.0.1:{port}"
+        world, forms=True, human_origin=origin, agent_origin=f"https://127.0.0.1:{port}"
     )
-    server = uvicorn.Server(uvicorn.Config(app, log_level="warning", lifespan="off"))
+    server = uvicorn.Server(
+        uvicorn.Config(
+            app,
+            log_level="warning",
+            lifespan="off",
+            ssl_certfile=str(console_tls.cert_file),
+            ssl_keyfile=str(console_tls.key_file),
+        )
+    )
     task = asyncio.create_task(server.serve(sockets=[sock]))
     try:
         async with asyncio.timeout(10):
@@ -124,38 +129,13 @@ async def enrolled_page(world, context, service):
             }
         },
     )
-    scope = owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did)
-    subject = {
-        "app_id": world.admitted.app_id,
-        "installation_id": INSTALLATION_ID,
-        "role": scope,
-        "contact_sha256": contact_sha256("alice@acme.com"),
-    }
-    signing, signature = world.owner.sign("app-role.designate", subject)
-    designated = await context.request.post(
-        service + f"/installations/{INSTALLATION_ID}/owner-acts",
-        data={
-            "signing": base64.b64encode(signing).decode(),
-            "signature": signature,
-            "team_id": TEAM,
-            "principal": ALICE.principal_did,
-            "contact": "alice@acme.com",
-        },
-    )
-    assert designated.status == 200
+    from tests.human_owner import install_virtual_credential
+    from tests.test_change_sets import enrol_owner
+
+    contact = "alice@acme.com"
+    scope = await enrol_owner(world, ALICE, contact)
+    await install_virtual_credential(cdp, auth["authenticatorId"], world.devices[contact])
     await page.goto(service + "/login?" + urlencode({"scope": scope}))
-    status = await page.evaluate(
-        """async link_token => {
-      const response = await fetch('/enrolment/options', {method:'POST',
-        headers:{'Content-Type':'application/json'}, body:JSON.stringify({link_token})});
-      const credential = await navigator.credentials.create({publicKey:
-        PublicKeyCredential.parseCreationOptionsFromJSON(await response.json())});
-      return (await fetch('/enrolment', {method:'POST', headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({link_token, credential:credential.toJSON()})})).status;
-    }""",
-        world.inbox.enrolments["alice@acme.com"][-1],
-    )
-    assert status == 200
     await page.get_by_role("button", name="Sign in with a passkey").click()
     await page.wait_for_url(service + "/")
     return page, cdp, auth["authenticatorId"]

@@ -2,7 +2,6 @@
 
 This module provides consistent pagination across all list endpoints:
 - Cursor encoding/decoding for stateless pagination
-- Standard response format with {items, has_more, next_cursor}
 - Parameter validation with sensible defaults and limits
 """
 
@@ -10,30 +9,12 @@ from __future__ import annotations
 
 import base64
 import json
-from typing import Any, Generic, Optional, TypeVar
-
-from pydantic import BaseModel
+from typing import Any, Optional
 
 # Pagination constants per spec
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 200
 MAX_CURSOR_SIZE_BYTES = 8192  # 8KB max cursor size to prevent DoS
-
-T = TypeVar("T")
-
-
-class PaginatedResponse(BaseModel, Generic[T]):
-    """Standard paginated response format.
-
-    Attributes:
-        items: List of items for the current page
-        has_more: True if there are more items after this page
-        next_cursor: Opaque cursor string for fetching the next page, None if no more items
-    """
-
-    items: list[T]
-    has_more: bool
-    next_cursor: Optional[str] = None
 
 
 def encode_cursor(data: dict[str, Any]) -> str:

@@ -22,23 +22,7 @@ func TerminalConfirmPrompt() ConfirmPrompt {
 }
 
 func terminalConfirm(inputPath, outputPath, question string) (bool, error) {
-	input, err := os.OpenFile(inputPath, os.O_RDWR, 0)
-	if err != nil {
-		return false, ErrNoTerminal
-	}
-	defer input.Close()
-	if !term.IsTerminal(int(input.Fd())) {
-		return false, ErrNoTerminal
-	}
-	output, err := os.OpenFile(outputPath, os.O_WRONLY, 0)
-	if err != nil {
-		return false, ErrNoTerminal
-	}
-	defer output.Close()
-	if _, err := fmt.Fprint(output, question); err != nil {
-		return false, err
-	}
-	line, err := bufio.NewReader(input).ReadString('\n')
+	line, err := terminalText(inputPath, outputPath, question)
 	if err != nil {
 		return false, err
 	}
@@ -47,4 +31,36 @@ func terminalConfirm(inputPath, outputPath, question string) (bool, error) {
 		return true, nil
 	}
 	return false, nil
+}
+
+// TerminalTextPrompt reads a non-secret answer only from the controlling terminal.
+// It never consumes piped command input.
+func TerminalTextPrompt() func(string) (string, error) {
+	return func(question string) (string, error) {
+		return terminalText(controllingTerminalInput, controllingTerminalOutput, question)
+	}
+}
+
+func terminalText(inputPath, outputPath, question string) (string, error) {
+	input, err := os.OpenFile(inputPath, os.O_RDWR, 0)
+	if err != nil {
+		return "", ErrNoTerminal
+	}
+	defer input.Close()
+	if !term.IsTerminal(int(input.Fd())) {
+		return "", ErrNoTerminal
+	}
+	output, err := os.OpenFile(outputPath, os.O_WRONLY, 0)
+	if err != nil {
+		return "", ErrNoTerminal
+	}
+	defer output.Close()
+	if _, err := fmt.Fprint(output, question); err != nil {
+		return "", err
+	}
+	line, err := bufio.NewReader(input).ReadString('\n')
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(line), nil
 }

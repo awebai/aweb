@@ -1,4 +1,4 @@
-// digests.mjs
+// ../src/aweb_naapp/assets/canonical-json.mjs
 function scalarString(value) {
   for (const point of value)
     if (point.codePointAt(0) >= 55296 && point.codePointAt(0) <= 57343)

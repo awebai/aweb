@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"sort"
 	"strings"
 	"time"
+
+	"github.com/awebai/aw/canonicaljson"
+	"github.com/awebai/aw/signaturewire"
 )
 
 // TeamCertificate is a team membership proof signed by the team controller.
@@ -75,8 +77,8 @@ func SignTeamCertificate(teamKey ed25519.PrivateKey, fields TeamCertificateField
 	memberDIDAW := strings.TrimSpace(fields.MemberDIDAW)
 	memberAddress := strings.TrimSpace(fields.MemberAddress)
 
-	payload := canonicalCertificatePayload(certID, fields.Team, teamDIDKey, fields.MemberDIDKey, memberDIDAW, memberAddress, fields.Alias, identityScope, issuedAt, false)
-	sig := ed25519.Sign(teamKey, []byte(payload))
+	payload := canonicalCertificatePayload(certificatePayloadFields{CertificateID: certID, TeamID: fields.Team, TeamDIDKey: teamDIDKey, MemberDIDKey: fields.MemberDIDKey, MemberDIDAW: memberDIDAW, MemberAddress: memberAddress, Alias: fields.Alias, Scope: identityScope, IssuedAt: issuedAt, ScopeField: certificateIdentityScopeField})
+	sig := signaturewire.SignBytes(teamKey, []byte(payload))
 
 	return &TeamCertificate{
 		Version:       1,
@@ -93,68 +95,22 @@ func SignTeamCertificate(teamKey ed25519.PrivateKey, fields TeamCertificateField
 	}, nil
 }
 
-// VerifyTeamCertificate checks the certificate signature against the team's
-// public key. Returns nil if valid, an error describing the failure otherwise.
-func VerifyTeamCertificate(cert *TeamCertificate, teamPub ed25519.PublicKey) error {
-	if cert == nil {
-		return fmt.Errorf("nil certificate")
-	}
-	if teamPub == nil {
-		return fmt.Errorf("nil team public key")
-	}
-
-	sig, err := base64.RawStdEncoding.DecodeString(cert.Signature)
-	if err != nil {
-		return fmt.Errorf("decode certificate signature: %w", err)
-	}
-
-	identityScope := NormalizeIdentityScope(cert.IdentityScope)
-	if identityScope != IdentityModeGlobal && identityScope != IdentityModeLocal {
-		return fmt.Errorf("certificate identity_scope is invalid")
-	}
-	cert.IdentityScope = identityScope
-
-	payload := canonicalCertificatePayload(
-		cert.CertificateID,
-		cert.Team,
-		cert.TeamDIDKey,
-		cert.MemberDIDKey,
-		cert.MemberDIDAW,
-		cert.MemberAddress,
-		cert.Alias,
-		identityScope,
-		cert.IssuedAt,
-		false,
-	)
-
-	if !ed25519.Verify(teamPub, []byte(payload), sig) {
-		legacyPayload := canonicalCertificatePayload(
-			cert.CertificateID,
-			cert.Team,
-			cert.TeamDIDKey,
-			cert.MemberDIDKey,
-			cert.MemberDIDAW,
-			cert.MemberAddress,
-			cert.Alias,
-			cert.legacyLifetime,
-			cert.IssuedAt,
-			true,
-		)
-		if !ed25519.Verify(teamPub, []byte(legacyPayload), sig) {
-			return fmt.Errorf("certificate signature verification failed")
-		}
-	}
-	return nil
-}
-
 // SaveTeamCertificate writes a certificate to disk as JSON with 0600 permissions.
 func SaveTeamCertificate(path string, cert *TeamCertificate) error {
+	data, err := EncodeTeamCertificateFile(cert)
+	if err != nil {
+		return err
+	}
+	return atomicWriteFile(path, data)
+}
+
+// EncodeTeamCertificateFile is cert as a certificate file holds it.
+func EncodeTeamCertificateFile(cert *TeamCertificate) ([]byte, error) {
 	data, err := json.MarshalIndent(cert, "", "  ")
 	if err != nil {
-		return fmt.Errorf("marshal certificate: %w", err)
+		return nil, fmt.Errorf("marshal certificate: %w", err)
 	}
-	data = append(data, '\n')
-	return atomicWriteFile(path, data)
+	return append(data, '\n'), nil
 }
 
 // LoadTeamCertificate reads a certificate from disk.
@@ -301,60 +257,44 @@ func (c *TeamCertificate) UnmarshalJSON(data []byte) error {
 // The payload must match exactly what the verifier reconstructs: the certificate
 // JSON (minus signature) serialized with sorted keys, no whitespace, and native
 // types (version as int, omitted empty optional fields).
-func canonicalCertificatePayload(certID, team, teamDIDKey, memberDIDKey, memberDIDAW, memberAddress, alias, scopeOrLifetime, issuedAt string, legacyLifetime bool) string {
-	type entry struct {
-		key string
-		val string // serialized JSON value (already quoted for strings)
-	}
+type certificateScopeField string
 
-	scopeKey := "identity_scope"
-	if legacyLifetime {
-		scopeKey = "lifetime"
-	}
-	entries := []entry{
-		{"alias", jsonString(alias)},
-		{"certificate_id", jsonString(certID)},
-		{"issued_at", jsonString(issuedAt)},
-		{scopeKey, jsonString(scopeOrLifetime)},
-	}
-	if memberAddress != "" {
-		entries = append(entries, entry{"member_address", jsonString(memberAddress)})
-	}
-	if memberDIDAW != "" {
-		entries = append(entries, entry{"member_did_aw", jsonString(memberDIDAW)})
-	}
-	entries = append(entries,
-		entry{"member_did_key", jsonString(memberDIDKey)},
-		entry{"team_did_key", jsonString(teamDIDKey)},
-		entry{"team_id", jsonString(team)},
-		entry{"version", "1"},
-	)
+const (
+	certificateIdentityScopeField certificateScopeField = "identity_scope"
+	certificateLifetimeField      certificateScopeField = "lifetime"
+)
 
-	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].key < entries[j].key
-	})
-
-	var b strings.Builder
-	b.WriteByte('{')
-	for i, e := range entries {
-		if i > 0 {
-			b.WriteByte(',')
-		}
-		b.WriteByte('"')
-		b.WriteString(e.key)
-		b.WriteString(`":`)
-		b.WriteString(e.val)
-	}
-	b.WriteByte('}')
-	return b.String()
+type certificatePayloadFields struct {
+	CertificateID string
+	TeamID        string
+	TeamDIDKey    string
+	MemberDIDKey  string
+	MemberDIDAW   string
+	MemberAddress string
+	Alias         string
+	Scope         string
+	IssuedAt      string
+	ScopeField    certificateScopeField
 }
 
-func jsonString(s string) string {
-	var b strings.Builder
-	b.WriteByte('"')
-	writeEscapedString(&b, s)
-	b.WriteByte('"')
-	return b.String()
+func canonicalCertificatePayload(certificate certificatePayloadFields) string {
+	fields := map[string]any{
+		"alias":                        certificate.Alias,
+		"certificate_id":               certificate.CertificateID,
+		"issued_at":                    certificate.IssuedAt,
+		string(certificate.ScopeField): certificate.Scope,
+		"member_did_key":               certificate.MemberDIDKey,
+		"team_did_key":                 certificate.TeamDIDKey,
+		"team_id":                      certificate.TeamID,
+		"version":                      1,
+	}
+	if certificate.MemberAddress != "" {
+		fields["member_address"] = certificate.MemberAddress
+	}
+	if certificate.MemberDIDAW != "" {
+		fields["member_did_aw"] = certificate.MemberDIDAW
+	}
+	return canonicaljson.Object(fields)
 }
 
 func firstNonEmpty(values ...string) string {
@@ -364,4 +304,16 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// VerifyTeamCertificate checks the certificate signature against the team's
+// public key. Returns nil if valid, an error describing the failure otherwise.
+// It keeps its released signature and runs CheckDecodedTeamCertificate, the
+// one strict check (version, required fields, portable values, subject and
+// signature).
+func VerifyTeamCertificate(cert *TeamCertificate, teamPub ed25519.PublicKey) error {
+	if teamPub == nil {
+		return fmt.Errorf("nil team public key")
+	}
+	return CheckDecodedTeamCertificate(cert, ComputeDIDKey(teamPub))
 }

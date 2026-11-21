@@ -98,8 +98,8 @@ func executeIDNamespaceReaffirm(ctx context.Context, opts idNamespaceReaffirmOpt
 	}
 	// The configured registry (AWID_REGISTRY_URL), as other namespace
 	// commands use, and --registry over it.
-	registry := awid.NewAWIDRegistryClient(nil, opts.TXTResolver)
-	if err := configureEmbeddedRegistryBaseURL("", registry.SetFallbackRegistryURL); err != nil {
+	registry := newAWIDRegistryClient(nil, opts.TXTResolver)
+	if err := configureEmbeddedRegistryBaseURL(registry.SetFallbackRegistryURL); err != nil {
 		return idNamespaceReaffirmOutput{}, err
 	}
 	if override := strings.TrimSpace(opts.RegistryURL); override != "" {

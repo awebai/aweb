@@ -47,7 +47,7 @@ async def test_changed_remote_version_activates_monotonic_context_and_records_op
     _, record, token, old, _, first, _ = await initial(w)
     await apply(w, first)
     observation = await observe(w, old.context, version=version)
-    revision = await config_revision(w.db, INSTALLATION_ID)
+    revision = await config_revision(w.db, INSTALLATION_ID, team_id=TEAM)
     result = await reconciler(w).reconcile(observation, admitted=w.admitted)
     assert result.changed
     assert result.affected_secret_ids == (record.secret_id,)
@@ -57,7 +57,7 @@ async def test_changed_remote_version_activates_monotonic_context_and_records_op
     assert binding.reference == observation.binding.reference
     assert binding.credential_context == token
     assert binding.version_ref != old.version_ref
-    assert await config_revision(w.db, INSTALLATION_ID) == revision + 1
+    assert await config_revision(w.db, INSTALLATION_ID, team_id=TEAM) == revision + 1
     with pytest.raises(CustodyUnavailable):
         await active_binding(w.db, old.context)
     row = await w.db.fetch_one(
@@ -235,7 +235,7 @@ async def test_reconciliation_voids_real_root_and_descendant_approvals_atomicall
         cache_key, os.urandom(24).hex(), datetime.now(UTC) + timedelta(hours=1)
     )
     observation = await observe(w, binding.context)
-    revision = await config_revision(w.db, INSTALLATION_ID)
+    revision = await config_revision(w.db, INSTALLATION_ID, team_id=TEAM)
     if rollback:
         import asyncpg
 
@@ -328,7 +328,9 @@ async def test_reconciliation_voids_real_root_and_descendant_approvals_atomicall
         "SELECT state FROM {{tables.secrets}} WHERE secret_id=$1",
         descendant.secret_id,
     ) == ("active" if rollback else "disabled")
-    assert await config_revision(w.db, INSTALLATION_ID) == revision + (0 if rollback else 1)
+    assert await config_revision(w.db, INSTALLATION_ID, team_id=TEAM) == revision + (
+        0 if rollback else 1
+    )
     # Eviction is cleanup only: the old cache entry is still present when the
     # exact opener refuses the old authority, before it can read any SDK value.
     assert await w.containment.tokens.get(cache_key) is not None
@@ -355,10 +357,10 @@ async def test_invalid_observation_metadata_cannot_allocate_or_emit(world, broke
     else:
         observation = replace(observation, item_version=True)
     count = await w.db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}")
-    revision = await config_revision(w.db, INSTALLATION_ID)
+    revision = await config_revision(w.db, INSTALLATION_ID, team_id=TEAM)
     with pytest.raises(CustodyUnavailable):
         await reconciler(w).reconcile(observation, admitted=w.admitted)
-    assert await config_revision(w.db, INSTALLATION_ID) == revision
+    assert await config_revision(w.db, INSTALLATION_ID, team_id=TEAM) == revision
     assert await w.db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}") == count
     assert (await active_binding(w.db, old.context)).version_ref == old.version_ref
 
@@ -401,7 +403,7 @@ async def test_unsealed_parent_record_confirmation_and_reconciliation_share_lock
         == 0
     )
     observation = await observe(w, old.context)
-    revision = await config_revision(w.db, INSTALLATION_ID)
+    revision = await config_revision(w.db, INSTALLATION_ID, team_id=TEAM)
     started = asyncio.get_running_loop().create_future()
 
     async def confirm_edit():
@@ -462,6 +464,6 @@ async def test_unsealed_parent_record_confirmation_and_reconciliation_share_lock
                 task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
     assert (await w.approvals.get(approval_id)).state is ApprovalState.CONSUMED
-    assert await config_revision(w.db, INSTALLATION_ID) == revision + 2
+    assert await config_revision(w.db, INSTALLATION_ID, team_id=TEAM) == revision + 2
     current = await active_binding(w.db, replace(old.context, version=old.context.version + 1))
     assert current.item_version == observation.item_version

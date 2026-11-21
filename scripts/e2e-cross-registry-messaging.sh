@@ -6,6 +6,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 source "$ROOT/scripts/journey-network.sh"
 PROJECT="${AWEB_CROSS_REGISTRY_PROJECT:-aweb-cross-reg-$RANDOM-$$}"
+CLI_IMAGE="$PROJECT-cli:journey"
 BIND_ROOT="${AWEB_DOCKER_BIND_ROOT:-${TMPDIR:-/tmp}}"
 [[ "$BIND_ROOT" = /* && -d "$BIND_ROOT" ]] || { echo "AWEB_DOCKER_BIND_ROOT must be an existing absolute directory" >&2; exit 2; }
 RUNTIME="$(mktemp -d "$BIND_ROOT/aweb-cross-reg.XXXXXX")"
@@ -22,6 +23,8 @@ AWID_B_URL="$(journey_url "$PROJECT" awid-b 8010 "http://$PUBLISHED_HOST:$AWID_B
 AWEB_A_URL="$(journey_url "$PROJECT" aweb-a 8000 "http://$PUBLISHED_HOST:$AWEB_A_PORT")"
 AWEB_B_URL="$(journey_url "$PROJECT" aweb-b 8000 "http://$PUBLISHED_HOST:$AWEB_B_PORT")"
 mkdir -p "$DNS_DIR" "$WORK_DIR/home" "$WORK_DIR/alice" "$WORK_DIR/bob"
+# CoreDNS runs as nonroot; only its public DNS mounts cross the UID boundary.
+chmod 0755 "$DNS_DIR"
 
 compose() {
   docker compose -p "$PROJECT" -f "$COMPOSE_FILE" "$@"
@@ -38,6 +41,10 @@ cleanup() {
   fi
   if [[ -f "$COMPOSE_FILE" ]]; then
     compose down -v --rmi local --remove-orphans >/dev/null 2>&1 || status=1
+    # Compose's local-image cleanup leaves explicitly tagged images behind.
+    if docker image inspect "$CLI_IMAGE" >/dev/null 2>&1; then
+      docker image rm "$CLI_IMAGE" >/dev/null 2>&1 || status=1
+    fi
     for kind in container volume network image; do
       case "$kind" in
         container) leftovers="$(docker ps -aq --filter label=com.docker.compose.project="$PROJECT")" ;;
@@ -91,6 +98,31 @@ for part in sys.argv[1].split("."):
     value=value.get(part, "") if isinstance(value, dict) else ""
 print(value if value is not None else "")
 ' "$field"
+}
+
+# The expected condition comes from the inviter's independently checked who,
+# not from the invite itself. Missing and explicit-null fields are distinct.
+assert_invite_human() {
+  python3 -c '
+import json,sys
+raw=sys.stdin.read(); start=raw.find("{")
+assert start >= 0, "missing invite JSON"
+value=json.loads(raw[start:]); expected=sys.argv[1] or None
+assert "for_human" in value, "missing invite condition"
+assert value["for_human"] == expected, (value["for_human"], expected)
+' "$1"
+}
+
+file_snapshot() {
+  local identity="$1"
+  shift
+  python3 - "$WORK_DIR/$identity/.aw" "$@" <<'PYSNAPSHOT'
+import hashlib,json,sys
+from pathlib import Path
+root=Path(sys.argv[1])
+print(json.dumps({name: hashlib.sha256((root/name).read_bytes()).hexdigest()
+                  if (root/name).exists() else None for name in sys.argv[2:]}, sort_keys=True))
+PYSNAPSHOT
 }
 
 run_cli() {
@@ -182,6 +214,7 @@ $TTL 1
 @ IN NS ns.example.net.
 ns IN A 127.0.0.1
 EOF
+chmod 0644 "$DNS_DIR/Corefile" "$DNS_DIR/example.com.zone" "$DNS_DIR/example.net.zone"
 
 cat > "$COMPOSE_FILE" <<EOF
 services:
@@ -280,6 +313,7 @@ services:
       awid-b: {condition: service_started}
       federation-dns: {condition: service_started}
   cli:
+    image: "$CLI_IMAGE"
     build:
       context: "$ROOT"
       dockerfile: scripts/federation-cli.Dockerfile
@@ -292,7 +326,10 @@ services:
     cap_add: [IPC_LOCK]
     environment:
       HOME: /work/home
+      # Isolated development: the CLI reaches awid-a and awid-b, single-label
+      # http registries no AWID_REGISTRY_URL names, as the servers do.
       APP_ENV: development
+      AWEB_FEDERATION_TEST: "1"
       AWEB_CROSS_REGISTRY_CSR: "${AWEB_CROSS_REGISTRY_CSR:-1}"
     volumes:
       - "$WORK_DIR:/work"
@@ -304,6 +341,10 @@ EOF
 
 compose down -v --remove-orphans >/dev/null 2>&1 || true
 compose build awid-a awid-b aweb-a aweb-b cli
+if ! CLI_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$CLI_IMAGE")" || [[ -z "$CLI_IMAGE_ID" ]]; then
+  echo "CLI build did not produce the expected image: $CLI_IMAGE" >&2
+  exit 1
+fi
 compose up -d federation-dns postgres-a postgres-b redis-a redis-b
 DNS_IP="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$(compose ps -q federation-dns)")"
 [[ -n "$DNS_IP" ]]
@@ -360,6 +401,8 @@ ns IN A 127.0.0.1
 _awid IN TXT "awid=v1; controller=$BOB_CONTROLLER; registry=http://awid-b:8010;"
 _awid.beta IN TXT "awid=v1; controller=$beta_controller; registry=http://awid-b:8010;"
 EOF
+  # mv replaces the inode, so set the new public mode before publishing it.
+  chmod 0644 "$DNS_DIR/example.com.zone.tmp" "$DNS_DIR/example.net.zone.tmp"
   mv "$DNS_DIR/example.com.zone.tmp" "$DNS_DIR/example.com.zone"
   mv "$DNS_DIR/example.net.zone.tmp" "$DNS_DIR/example.net.zone"
 }
@@ -486,15 +529,20 @@ ALICE_DID_AW="$(printf '%s' "$alice_create" | json_field did_aw)"
 BOB_DID_AW="$(printf '%s' "$bob_create" | json_field did_aw)"
 compose run --rm -T --no-deps --entrypoint id-tree-verifier cli
 compose cp "$ROOT/scripts/cross-registry-python-verifier.py" awid-b:/tmp/cross-registry-python-verifier.py
+# docker cp preserves host modes but the verifier runs as the registry UID.
+compose exec -T --user root awid-b chmod 0644 /tmp/cross-registry-python-verifier.py
 compose exec -T awid-b python /tmp/cross-registry-python-verifier.py < "$WORK_DIR/journey-public.json"
 # Membership and connection are not ancestry: joining a team, connecting to
 # aweb and later leaving the team keep each identity and its exact chain.
 ALICE_WHO="$(who_json alice)"
+ALICE_HUMAN="$(printf '%s' "$ALICE_WHO" | json_field human_id)"
+[[ -n "$ALICE_HUMAN" ]]
 BOB_WHO="$(who_json bob)"
 [[ "$(printf '%s' "$ALICE_WHO" | json_field outcome)" == nearest_human && "$(printf '%s' "$ALICE_WHO" | json_field id)" == "$ALICE_DID_AW" ]]
 [[ "$(printf '%s' "$BOB_WHO" | json_field outcome)" == no_human && "$(printf '%s' "$BOB_WHO" | json_field id)" == "$BOB_DID_AW" ]]
 run_cli alice id team create --name alpha --namespace alpha.example.com --registry http://awid-a:8010 --json >/dev/null
 alice_invite="$(run_cli alice id team invite --team alpha --namespace alpha.example.com --member-global --json)"
+printf '%s' "$alice_invite" | assert_invite_human "$ALICE_HUMAN"
 run_cli alice id team accept-invite "$(printf '%s' "$alice_invite" | json_field token)" --name alice --global --json >/dev/null
 [[ "$(who_json alice)" == "$ALICE_WHO" ]]
 run_cli alice init --url http://aweb-a:8000 --name alice --do-not-touch-agents-md >/dev/null
@@ -502,6 +550,7 @@ run_cli alice init --url http://aweb-a:8000 --name alice --do-not-touch-agents-m
 
 run_cli bob id team create --name beta --namespace beta.example.net --registry http://awid-b:8010 --json >/dev/null
 bob_invite="$(run_cli bob id team invite --team beta --namespace beta.example.net --member-global --json)"
+printf '%s' "$bob_invite" | assert_invite_human ""
 run_cli bob id team accept-invite "$(printf '%s' "$bob_invite" | json_field token)" --name bob --global --json >/dev/null
 [[ "$(who_json bob)" == "$BOB_WHO" ]]
 run_cli bob init --url http://aweb-b:8000 --name bob --do-not-touch-agents-md >/dev/null
@@ -525,7 +574,6 @@ CONVERSATION_ID="$(printf '%s' "$mail_out" | json_field conversation_id)"
 bob_inbox="$(run_cli bob mail inbox --show-all --json)"
 assert_inbox_message "$bob_inbox" "two registry mail" "alice to bob"
 MAIL_ID="$(printf '%s' "$mail_out" | json_field message_id)"
-ALICE_HUMAN="$(printf '%s' "$ALICE_WHO" | json_field human_id)"
 assert_received_who bob "$ALICE_WHO" alpha.example.com/alice
 assert_received_who bob "$ALICE_WHO" "$ALICE_DID_AW"
 assert_received_who bob "$ALICE_WHO" --message-id "$MAIL_ID"
@@ -551,9 +599,29 @@ run_cli bob chat send-and-leave --plaintext alpha.example.com/alice "two registr
 alice_chat="$(run_cli alice chat history beta.example.net/bob --json)"
 assert_chat_message "$alice_chat" "two registry chat reply"
 
-# A registered global identity with authoritative no enrollment stays unknown.
-plain_invite="$(run_cli alice id team invite --team alpha --namespace alpha.example.com --member-global --json)"
+# The received-sender control needs an unconditioned join: membership must not
+# create ancestry. First retain the human-conditioned refusal for this same
+# joiner, including its pre-existing journey-local membership.
+plain_identity="$(file_snapshot plain identity.yaml signing.key id-chain.json)"
+plain_membership="$(file_snapshot plain teams.yaml workspace.yaml)"
+conditioned_plain_invite="$(run_cli alice id team invite --team alpha --namespace alpha.example.com --member-global --json)"
+printf '%s' "$conditioned_plain_invite" | assert_invite_human "$ALICE_HUMAN"
+if refused="$(run_cli plain id team accept-invite "$(printf '%s' "$conditioned_plain_invite" | json_field token)" --name plain --global --json 2>&1)"; then
+  echo "human-conditioned invite admitted the chainless sender" >&2
+  exit 1
+fi
+[[ "$refused" == *human_required* ]] || { printf '%s\n' "$refused" >&2; exit 1; }
+[[ "$(file_snapshot plain identity.yaml signing.key id-chain.json)" == "$plain_identity" ]]
+[[ "$(file_snapshot plain teams.yaml workspace.yaml)" == "$plain_membership" ]]
+echo "PASS: a human-conditioned mail-team invite refuses the chainless sender without changing identity or membership"
+
+# This fixture host holds alpha's team key. The already-proven chainless
+# identity issues a real invite whose default condition is explicitly null.
+plain_invite="$(run_cli plain id team invite --team alpha --namespace alpha.example.com --member-global --json)"
+printf '%s' "$plain_invite" | assert_invite_human ""
 run_cli plain id team accept-invite "$(printf '%s' "$plain_invite" | json_field token)" --name plain --global --json >/dev/null
+[[ "$(file_snapshot plain identity.yaml signing.key id-chain.json)" == "$plain_identity" ]]
+
 run_cli plain init --url http://aweb-a:8000 --name plain --do-not-touch-agents-md >/dev/null
 plain_mail="$(run_cli plain mail send --plaintext --to-address beta.example.net/bob --subject 'chainless sender' --body 'no human inferred' --json)"
 PLAIN_MAIL_ID="$(printf '%s' "$plain_mail" | json_field message_id)"
@@ -567,6 +635,71 @@ plain_inbox="$(run_cli bob mail inbox --show-all --json)"
 verify_ts_received "$plain_inbox" "" "$PLAIN_MAIL_ID"
 echo "PASS: an unenrolled received sender remains unknown with no inferred human"
 
+echo "Proving exported mail with only public bytes, real DNS and public registry reads"
+encrypted_mail="$(run_cli alice mail send --e2ee --to-address beta.example.net/bob --subject 'encrypted export' --body 'outside encrypted proof' --json)"
+ENCRYPTED_MAIL_ID="$(printf '%s' "$encrypted_mail" | json_field message_id)"
+[[ -n "$ENCRYPTED_MAIL_ID" ]]
+mkdir -p "$RUNTIME/envelopes"
+run_cli bob mail show --message-id "$MAIL_ID" --envelope > "$RUNTIME/envelopes/adopted.json"
+run_cli bob mail show --message-id "$PLAIN_MAIL_ID" --envelope > "$RUNTIME/envelopes/chainless.json"
+run_cli bob mail show --message-id "$ENCRYPTED_MAIL_ID" --envelope > "$RUNTIME/envelopes/encrypted.json"
+# Unlike the recipient container, this outsider has no identity volume at all.
+# Its only bind mount is the exported messages; its HOME and cwd are fresh.
+verify_export() {
+  [[ -n "$CLI_IMAGE_ID" ]] || { echo "Cannot launch export verifier: CLI image ID is empty" >&2; return 1; }
+  docker run --rm --network "${PROJECT}_default" --dns "$DNS_IP" \
+    -v "$RUNTIME/envelopes:/envelopes:ro" --entrypoint python3 \
+    "$CLI_IMAGE_ID" /usr/local/bin/cross-registry-offline-verifier.py "$1" "$ALICE_HUMAN"
+}
+verify_export controls
+# These artifacts use the real second registry/controller and original sender
+# key. Their signatures are valid; they differ only at the claimed tree domain.
+compose run --rm -T --no-deps -v "$RUNTIME/envelopes:/envelopes" --entrypoint id-tree-verifier cli cross-domain-fixtures
+verify_export cross-domain
+cp "$WORK_DIR/alice/.aw/id-chain.json" "$WORK_DIR/alice-chain-original.json"
+for presentation in foreign-domain mixed-domains; do
+  python3 - "$RUNTIME/envelopes/$presentation.json" "$WORK_DIR/alice/.aw/id-chain.json" <<'PYDOMAIN'
+import json, sys
+from pathlib import Path
+export = json.loads(Path(sys.argv[1]).read_text())
+Path(sys.argv[2]).write_text(json.dumps(export["id_chain"], sort_keys=True, separators=(",", ":")))
+PYDOMAIN
+  run_cli alice who --json | python3 -c '
+import json,sys
+raw=sys.stdin.read(); result=json.loads(raw[raw.find("{"):])
+assert result["identity_valid"] is False and result["reason"] == "domain_mismatch", result
+assert result["human_id"] is None and result["kind"] is None and "chain" not in result, result
+'
+done
+mv "$WORK_DIR/alice-chain-original.json" "$WORK_DIR/alice/.aw/id-chain.json"
+[[ "$(who_json alice)" == "$ALICE_WHO" ]]
+echo "PASS: who refuses foreign enrollment and mixed-domain chains, then verifies the restored neighboring chain"
+compose stop awid-a
+verify_export unavailable
+compose start awid-a
+wait_health awid-a "$AWID_A_URL" awid-a
+publish_dns "$BOB_CONTROLLER" "$BOB_CONTROLLER"
+dns_changed=0
+for _ in $(seq 1 30); do
+  if ! seen="$(run_cli alice id namespace check-txt --domain alpha.example.com --json 2>&1)" \
+    && [[ "$seen" == *"DNS controller $BOB_CONTROLLER does not match local controller $ALICE_CONTROLLER"* ]]; then
+    dns_changed=1; break
+  fi
+  sleep 1
+done
+[[ "$dns_changed" == 1 ]] || { printf '%s\n' "$seen" >&2; exit 1; }
+verify_export dns-root
+publish_dns "$ALICE_CONTROLLER" "$BOB_CONTROLLER"
+# CoreDNS reload is asynchronous; establish restoration before later controls.
+dns_restored=0
+for _ in $(seq 1 30); do
+  if run_cli alice id namespace check-txt --domain alpha.example.com --json >/dev/null 2>&1; then
+    dns_restored=1; break
+  fi
+  sleep 1
+done
+[[ "$dns_restored" == 1 ]]
+
 echo "Proving team membership removal is not ID revocation"
 removed="$(run_cli alice id team remove-member --team alpha --namespace alpha.example.com --member alpha.example.com/alice --json)"
 removed_certificate="$(printf '%s' "$removed" | json_field certificate_id)"
@@ -574,5 +707,10 @@ removed_certificate="$(printf '%s' "$removed" | json_field certificate_id)"
 [[ "$(curl -sS "$AWID_A_URL/v1/namespaces/alpha.example.com/teams/alpha/certificates/$removed_certificate/status" | json_field status)" == revoked ]]
 [[ "$(who_json alice)" == "$ALICE_WHO" ]]
 echo "PASS: removing alice from team alpha revokes her team certificate and leaves her ID chain verified"
+
+# Self-revocation is ID authority, independent of the removed team membership.
+# Run it last so the other live-sender controls keep their valid neighboring case.
+run_cli alice id revoke "$ALICE_DID_AW" --json >/dev/null
+verify_export revoked
 
 echo "PASS: real DNS, Secret Service, PTY, constructor chains, unchanged resume, outsider verification, mail and chat across disjoint registries"

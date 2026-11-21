@@ -3,7 +3,6 @@
 import asyncio
 import base64
 import secrets
-import socket
 from functools import partial
 from urllib.parse import parse_qs, urlencode, urlsplit
 
@@ -34,6 +33,7 @@ from aweb_secrets.console_use_approvals import (
 )
 from aweb_secrets.owners import owner_scope
 from tests.console_home import no_banner
+from tests.console_network import passkey_origin as passkey_origin
 from tests.console_use_world import audit_for, mint
 from tests.test_approval_email import contents, mailer
 from tests.test_change_sets import ALICE, TEAM, Installations, enrol_owner
@@ -57,12 +57,15 @@ def script_delivery():
 
 
 @pytest.fixture
-async def entry_service(world, tmp_path, request, script_delivery):
+async def entry_service(world, tmp_path, request, script_delivery, console_tls, console_listener):
     w = world
     await apply_console_migrations(w.db)
     await apply_idempotency_migrations(w.db)
     await apply_ratelimit_migrations(w.db)
     uses = Uses(w, w.approvals, Clock(), Installations().grant)
+    sock = console_listener.socket
+    port, origin = console_listener.port, console_listener.origin
+    w.passkeys.rp = RelyingParty(origin=origin, name="Secrets")
     run = None
     if getattr(request, "param", "use") == "run":
         await enrol_owner(w, ALICE, "alice@acme.com")
@@ -71,11 +74,6 @@ async def entry_service(world, tmp_path, request, script_delivery):
         audit = run.arguments["use_audit"]
     else:
         audit, _ = audit_for(uses)
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.bind(("127.0.0.1", 0))
-    port = sock.getsockname()[1]
-    origin = f"http://localhost:{port}"
-    w.passkeys.rp = RelyingParty(origin=origin, name="Secrets")
 
     async def installation(installation_id, *, team_id: str):
         assert installation_id == w.admitted.installation_id
@@ -118,7 +116,7 @@ async def entry_service(world, tmp_path, request, script_delivery):
     human.include_router(console_use_approvals_router(services=typed))
     human.include_router(console_run_approvals_router(services=typed))
     app = split_origins(
-        FastAPI(), human, human_origin=origin, agent_origin=f"http://127.0.0.1:{port}"
+        FastAPI(), human, human_origin=origin, agent_origin=f"https://127.0.0.1:{port}"
     )
 
     async def slow_script(scope, receive, send):
@@ -129,7 +127,15 @@ async def entry_service(world, tmp_path, request, script_delivery):
             await release.wait()
         await app(scope, receive, send)
 
-    server = uvicorn.Server(uvicorn.Config(slow_script, log_level="warning", lifespan="off"))
+    server = uvicorn.Server(
+        uvicorn.Config(
+            slow_script,
+            log_level="warning",
+            lifespan="off",
+            ssl_certfile=str(console_tls.cert_file),
+            ssl_keyfile=str(console_tls.key_file),
+        )
+    )
     running = asyncio.create_task(server.serve(sockets=[sock]))
     try:
         async with asyncio.timeout(10):
@@ -245,7 +251,7 @@ async def existing_owner_page(world, context, origin):
                 "credential": {
                     "credentialId": base64.b64encode(credential.credential_id).decode(),
                     "isResidentCredential": True,
-                    "rpId": "localhost",
+                    "rpId": credential.rp_id,
                     "privateKey": base64.b64encode(
                         credential.key.private_bytes(
                             Encoding.DER, PrivateFormat.PKCS8, NoEncryption()

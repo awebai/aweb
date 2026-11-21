@@ -18,17 +18,17 @@ from awid.registry import CachedRegistryClient
 import awid.registry as registry_module
 import httpx
 from aweb.app_registry import get_installation_on
-from aweb_naapp.runtime.task_requests import app_request_credential, sign_stage_receipt
+from aweb_naapp.runtime.task_requests import AUTHORIZATION_PREFIX, app_request_credential, sign_stage_receipt
 
 from awid.signing import canonical_json_bytes, sign_message
 from aweb.app_credentials import APP_REQUEST, AppCredential
 from aweb.coordination.app_tasks import (
-    AUTHORIZATION_PREFIX, cancel_app_task_on, cancel_installation_requests_on,
+    cancel_app_task_on, cancel_installation_requests_on,
     create_app_task_on, prepare_app_task, read_app_request_on,
 )
 from aweb.service_errors import ConflictError, ForbiddenError, ValidationError
 from aweb.task_contracts import validate_app_task, strict_json_bytes
-from test_dashboard_privacy import privacy_app, TEAM  # noqa: F401
+from test_dashboard_privacy import privacy_app as privacy_app, TEAM
 from test_task_answers import _v2_request
 
 

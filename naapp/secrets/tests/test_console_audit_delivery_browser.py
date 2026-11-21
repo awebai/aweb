@@ -22,6 +22,7 @@ from aweb_naapp.outbox import (
 )
 from playwright.async_api import expect
 
+from tests.console_network import passkey_origin as passkey_origin
 from tests.test_console_access import DB_WRITE
 from tests.test_console_access_browser import browser as _browser
 from tests.test_console_access_browser import serving
@@ -59,10 +60,15 @@ async def revoke_db_write(page, origin):
 
 @pytest.mark.parametrize("width", [375, 1440])
 async def test_the_owner_sees_which_audit_target_stalls_and_which_events_were_never_delivered(
-    world, browser, tmp_path, width
+    world, browser, tmp_path, width, console_tls, console_listener
 ):
     registrations = Registrations({USE: (LOGS,), GOVERNANCE: (PRIMARY, SECONDARY)})
-    async with serving(world, pages=audit_pages(registrations)) as (_, origin):
+    async with serving(
+        world,
+        console_tls=console_tls,
+        console_listener=console_listener,
+        pages=audit_pages(registrations),
+    ) as (_, origin):
         db = world.db
         async with await browser.new_context(viewport={"width": width, "height": 1000}) as context:
             page, _, _ = await enrolled_page(world, context, origin)
@@ -152,10 +158,15 @@ async def test_the_owner_sees_which_audit_target_stalls_and_which_events_were_ne
 
 
 async def test_a_hook_without_a_registration_view_is_shown_as_unknown_not_healthy(
-    world, browser, tmp_path
+    world, browser, tmp_path, console_tls, console_listener
 ):
     registrations = Registrations({USE: (LOGS,), GOVERNANCE: None})
-    async with serving(world, pages=audit_pages(registrations)) as (_, origin):
+    async with serving(
+        world,
+        console_tls=console_tls,
+        console_listener=console_listener,
+        pages=audit_pages(registrations),
+    ) as (_, origin):
         async with await browser.new_context(viewport={"width": 375, "height": 1000}) as context:
             page, _, _ = await enrolled_page(world, context, origin)
             await page.goto(origin + "/audit-delivery")
@@ -176,11 +187,15 @@ async def test_a_hook_without_a_registration_view_is_shown_as_unknown_not_health
 
 @pytest.mark.parametrize("width", [375, 1440])
 async def test_the_owner_home_points_to_what_secrets_refuses_and_what_was_never_delivered(
-    world, browser, tmp_path, width
+    world, browser, tmp_path, width, console_tls, console_listener
 ):
     registrations = Registrations({USE: (LOGS,), GOVERNANCE: (PRIMARY,)})
     async with serving(
-        world, pages=audit_pages(registrations), banner=audit_banner(registrations)
+        world,
+        console_tls=console_tls,
+        console_listener=console_listener,
+        pages=audit_pages(registrations),
+        banner=audit_banner(registrations),
     ) as (_, origin):
         db = world.db
         async with await browser.new_context(viewport={"width": width, "height": 1000}) as context:

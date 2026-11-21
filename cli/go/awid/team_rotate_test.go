@@ -25,7 +25,9 @@ func TestListTeamSignedRecordsStopsAtThePageCap(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = NewAWIDRegistryClient(server.Client(), nil).ListTeamSignedRecords(context.Background(), server.URL, "endless.example", "ops", 0, key)
+	client := NewAWIDRegistryClient(server.Client(), nil)
+	routeUntrustedRegistriesToInjectedClient(client)
+	_, err = client.ListTeamSignedRecords(context.Background(), server.URL, "endless.example", "ops", 0, key)
 
 	if err == nil || !strings.Contains(err.Error(), "truncated") {
 		t.Fatalf("err = %v, want a truncated refusal", err)

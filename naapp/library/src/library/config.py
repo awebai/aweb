@@ -28,14 +28,12 @@ class Settings(BaseSettings):
     timestamp_skew_seconds: int = Field(
         default=MAX_TIMESTAMP_SKEW_SECONDS, ge=1, le=MAX_TIMESTAMP_SKEW_SECONDS
     )
+    # Staged team-key pin enforcement, the one name the aweb server and every
+    # naapp read: OFF logs team_key_pin_mismatch and serves the registry's key.
+    enforce_team_key_pins: bool = Field(default=False, validation_alias="AWEB_ENFORCE_TEAM_KEY_PINS")
     db_pool_min_connections: int = Field(default=1, ge=1)
     db_pool_max_connections: int = Field(default=5, ge=1)
     db_statement_cache_size: int = Field(default=0, ge=0)
-    app_id: str = Field(default="library")
-    app_events_origin: str | None = None
-    app_emit_kid: str | None = None
-    app_emit_key_seed_hex: str | None = None
-    app_emit_timeout_seconds: float = Field(default=3.0, gt=0)
 
     @field_validator("awid_service_token")
     @classmethod

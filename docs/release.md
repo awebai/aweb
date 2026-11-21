@@ -6,7 +6,7 @@ commit.
 
 | Tag | Published artifact |
 |---|---|
-| `server-vX.Y.Z` | PyPI `aweb` |
+| `server-vX.Y.Z` | PyPI `aweb`, and the `ghcr.io/awebai/aweb-server` image |
 | `awid-service-vX.Y.Z` | PyPI `awid-service` |
 | `aweb-naapp-vX.Y.Z` | PyPI `aweb-naapp`, the shared naapp toolkit in `naapp-lib/`, then its dev-only test support `aweb-naapp-testing` (`naapp-lib/testing/`) at the same version |
 | `awid-vX.Y.Z` | `ghcr.io/awebai/awid` image |
@@ -30,18 +30,36 @@ The runner and values manifests must have equal versions, and the runner must
 require exactly that values version. Neither image recipe nor these tag mappings
 alone qualifies a customer release or a target platform.
 
+## Approval service SDK check
+
+Before a server release, replace the approval service's temporary development
+AWID source pin with a released `awid-service` version that provides
+`get_team_certificate_status_fresh`, regenerate its lock and check normal
+service startup. The key holder always builds against this checkout's `awid`.
+
 ## Release candidates and the Cloud pair
 
 Python lanes also accept strict `X.Y.ZrcN` versions, with `N >= 1`:
 `server-v1.27.34rc1`, `awid-service-v0.5.32rc1`, and
-`aweb-naapp-v0.4.1rc1`, or `aweb-secrets-runner-v0.1.0rc1`, for example.
+`aweb-naapp-v0.4.1rc1`, or `aweb-secrets-runner-v0.1.0rc1`, for example. The
+registry image lane, whose version is awid's manifest, uses the same spelling:
+`awid-v0.5.40rc2`.
 The manifest versions, including `aweb-naapp-testing` or the runner's lockstep
 values package, must equal the tag. The aw spelling is SemVer:
 `aw-v1.36.48-rc.1`. Other artifact lanes continue to accept final versions only.
 
 The coordinator publishes these RCs first. The Cloud candidate pins the exact
 RC versions and must pass its ordinary pin gate against real services before
-OSS final publication and Cloud deployment. Python RCs publish to PyPI. Every
+OSS final publication and Cloud deployment. Python RCs publish to PyPI; server
+and registry RCs also publish the immutable RC image tag without moving
+`latest`. On every image lane only a final published by its own tag push
+moves `latest`. A `workflow_dispatch` of the image workflow publishes an
+existing tag's image again as a recovery (`--recovery`): it publishes and reads
+back the version only, rc or final, and reports `latest unchanged (recovery)`.
+Images are published by the tag workflow. A direct `publish_release.py` or
+`make release-publish` run without `--recovery` behaves like a tag push and
+moves `latest` for a final, with no serialization against workflow runs.
+Every
 aw RC npm package publishes with `--tag next`; final packages use `latest`
 unless the release explicitly stages the final on `next` as described below.
 The downstream `awebai/aw` workflow accepts `v*`, uses the synced
@@ -107,8 +125,10 @@ shared build commands in `scripts/publish_release.py`, root checkout filters
 Python's root `pyproject.toml`, `uv.toml`, `uv.lock`, `.python-version` and PyPI
 workflow; Go's root `go.work`, `go.work.sum`, aw release workflow and shared
 `scripts/npm-exact-publish.sh` packing recipe.
-Unrelated files elsewhere, including the root Makefile and another package's
-source, do not force a new RC of this package.
+The server image also bundles `awid/` and `naapp-lib/`, so those trees, the
+root `.dockerignore`, service image workflow and `scripts/oci-exact-publish.sh`
+are server RC inputs. Unbundled package source and unrelated files such as the
+root Makefile do not force a new RC.
 
 Within that scope, only manifest versions and exact dependency pins or
 lower-bound floors on promoted packages may move to the same final base.
@@ -397,3 +417,74 @@ ledger still serializes/reuses proof for a tree. An explicitly authorized
 concurrency proof uses separate `AWEB_GATE_LEDGER` directories for its two runs;
 it must not share either ledger or retained artifact directory. Resource labels,
 Compose project names, networks, workspaces and logs remain unique per run.
+
+## Server OCI image
+
+A `server-v*` tag dispatches both the Python and image publishers. The PyPI
+workflow selects `--only pypi`; the service image workflow selects `--only oci`,
+so each needs only its own registry credentials. Runnerless publication without
+`--only` publishes both. Both selectors still validate the tagged manifest and
+RC-to-final source identity before checking out that exact commit.
+
+A server tag publishes `ghcr.io/awebai/aweb-server`, the coordination server,
+from `server/Dockerfile` and the repository root. It builds Linux amd64 and
+arm64 into one OCI archive, checked before the registry is touched. The exact
+OCI helper validates the archive and each platform's version/source labels.
+Version tags are immutable: a conflicting digest refuses, an identical one is
+adopted, and each published index is read back. The printed `release-index`
+receipt carries the repository, digest, source SHA and version. Deployments pin
+`ghcr.io/awebai/aweb-server@sha256:...` from that receipt.
+
+`python3 scripts/test_server_image_publish.py` covers dispatch, identity,
+immutability, readback and archive handoff without registry writes.
+`make test-server-image-build` builds the archive through the same function,
+validates it with the exact helper, and runs the packaged imports and server CLI
+as the image's non-root user on the daemon's native platform. Runtime probes
+have a 120-second bound.
+A one-host PASS qualifies only the platform printed in its receipt.
+
+Complete platform qualification requires the same archive, index and source SHA
+on native Linux amd64 and native Linux arm64 hosts. On the authorized x86 build
+host (Docker buildx, skopeo and build support for both architectures):
+
+```sh
+AWEB_SERVER_IMAGE_ARCHIVE_OUT=/evidence/server.oci.tar make test-server-image-build
+```
+
+The output path must not already exist. Preserve the archive and its printed
+SHA-256/size/index/source receipt. Transfer it to the authorized ARM host and
+verify its file hash. From the **same source checkout SHA** on that host (Docker
+and skopeo; no build or emulated execution needed):
+
+```sh
+AWEB_SERVER_IMAGE_ARCHIVE_IN=/evidence/server.oci.tar make test-server-image-build
+```
+
+An input archive must exist: the ARM run never silently rebuilds it. Each host
+validates both platforms and their version/source labels before loading its
+native variant, and prints the same archive identity with its actual native
+platform. The external input/output archive survives test cleanup for transfer
+and audit; the operator owns its final removal. Probe containers and loaded
+image tags are removed by the test. With neither variable, the archive is
+temporary and removed after the one-host run. Input and output are exclusive.
+
+These tests do not publish to a registry. The tag publisher's authenticated
+readback establishes registry digest and source identity, not public pullability.
+
+Before the first server image release, the coordinator must arrange package
+provisioning and the release identity's access, so authenticated tag listing
+succeeds. An unavailable listing remains a refusal; a 403 or 404 is not
+permission to assume absence. GHCR's "name unknown" for a repository that does
+not exist yet is never taken as absence on its own either: a new repository is
+published only by a `workflow_dispatch` whose `first_publication` input names it
+(`--first-publication <repository>`), and then only if the listing says exactly
+that. A named repository that already lists tags refuses as "not a first
+publication"; a tag push never passes the flag.
+
+The coordinator must also arrange public package visibility and verify
+anonymous retrieval in an environment with no registry credentials. Read the
+immutable version tag, require its index digest to equal the publication receipt,
+and fetch both platform manifests, configs and layers by digest. Record that
+anonymous-read result alongside the source and digest receipt before declaring
+the server image publicly pullable. Authenticated publication success alone does
+not complete this acceptance step.

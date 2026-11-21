@@ -1,0 +1,21 @@
+# The team container and its only way out, in the model only when
+# deployment.yaml has an agents section: the rendered COMPOSE_FILE names it.
+#
+# Both are the OATS source's own services, from the checkout at the pinned
+# commit (agents.compose.oatsSource). The deployment owns the networks: egress
+# alone is on both agents and services, the agent only on agents, which is
+# internal and gives no route to the host. The adapter derives egress's policy
+# and the agent's resolv.conf before it starts them.
+services:
+  egress:
+    extends:
+      file: ${OATS_SOURCE:?OATS_SOURCE is required, agents.compose.oatsSource}/container/agent/egress/compose.egress.yaml
+      service: egress
+
+  agent:
+    extends:
+      file: ${OATS_SOURCE:?OATS_SOURCE is required, agents.compose.oatsSource}/container/agent/compose.agent.yaml
+      service: agent
+    depends_on:
+      egress:
+        condition: service_healthy

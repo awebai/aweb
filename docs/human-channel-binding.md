@@ -212,7 +212,7 @@ form, where needed, is `{domain, fingerprint}`. Private delivery/account storage
 may retain the address. The human identity is H (`did:aw`), not the email or
 fingerprint. Email ↔ H is the host's private verified-account association.
 
-The superseded [member attribution document](member-attribution.md#2-validated-email-and-privacy)
+The superseded [member attribution document](drafts/member-attribution.md#2-validated-email-and-privacy)
 contains a historical team-scoped fingerprint algorithm (lines 78–115); its own
 lines 3–6 forbid implementing that record. This contract does not revive it,
 freeze a new email fingerprint algorithm or add email to ID certificates/status.

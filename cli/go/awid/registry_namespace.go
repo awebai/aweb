@@ -6,9 +6,10 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net/http"
-	"sort"
 	"strings"
 	"time"
+
+	"github.com/awebai/aw/signaturewire"
 )
 
 type namespaceRegisterRequest struct {
@@ -27,6 +28,7 @@ type addressRegisterRequest struct {
 	CurrentDIDKey string `json:"current_did_key"`
 }
 
+// AtomicAddressClaimParams binds an address claim to both identity and namespace signatures.
 type AtomicAddressClaimParams struct {
 	Domain                        string
 	AddressName                   string
@@ -67,6 +69,7 @@ type atomicClaimDIDLogProof struct {
 	Signature      string  `json:"signature"`
 }
 
+// AtomicAddressClaimResult reports the registry decision and the resulting address, if committed.
 type AtomicAddressClaimResult struct {
 	Status           string           `json:"status"`
 	DryRun           bool             `json:"dry_run"`
@@ -92,6 +95,7 @@ type conditionalAddressDeleteRequest struct {
 	ExpectedCurrentDIDKey string `json:"expected_current_did_key"`
 }
 
+// NamespaceReverifyResult reports a namespace DNS recheck and any controller change.
 type NamespaceReverifyResult struct {
 	NamespaceID        string `json:"namespace_id"`
 	Domain             string `json:"domain"`
@@ -103,6 +107,7 @@ type NamespaceReverifyResult struct {
 	NewControllerDID   string `json:"new_controller_did,omitempty"`
 }
 
+// GetNamespaceAddress discovers the namespace registry and returns its address record and URL.
 func (c *RegistryClient) GetNamespaceAddress(ctx context.Context, domain, name string) (*RegistryAddress, string, error) {
 	registryURL, err := c.DiscoverRegistry(ctx, domain)
 	if err != nil {
@@ -111,6 +116,7 @@ func (c *RegistryClient) GetNamespaceAddress(ctx context.Context, domain, name s
 	return c.GetNamespaceAddressAt(ctx, registryURL, domain, name)
 }
 
+// GetNamespaceAddressSigned preserves the public signed-read API; address records are public reads.
 func (c *RegistryClient) GetNamespaceAddressSigned(
 	ctx context.Context,
 	domain, name string,
@@ -123,6 +129,7 @@ func (c *RegistryClient) GetNamespaceAddressSigned(
 	return c.GetNamespaceAddressAtSigned(ctx, registryURL, domain, name, signingKey)
 }
 
+// GetNamespaceAddressAt reads an address record from the explicitly selected registry.
 func (c *RegistryClient) GetNamespaceAddressAt(ctx context.Context, registryURL, domain, name string) (*RegistryAddress, string, error) {
 	var out RegistryAddress
 	path := "/v1/namespaces/" + urlPathEscape(canonicalizeDomain(domain)) + "/addresses/" + urlPathEscape(strings.TrimSpace(name))
@@ -132,6 +139,7 @@ func (c *RegistryClient) GetNamespaceAddressAt(ctx context.Context, registryURL,
 	return &out, registryURL, nil
 }
 
+// GetNamespaceAddressAtSigned preserves the signed-read API without adding authority to a public read.
 func (c *RegistryClient) GetNamespaceAddressAtSigned(
 	ctx context.Context,
 	registryURL, domain, name string,
@@ -140,6 +148,7 @@ func (c *RegistryClient) GetNamespaceAddressAtSigned(
 	return c.GetNamespaceAddressAt(ctx, registryURL, domain, name)
 }
 
+// RegisterNamespace discovers the registry and submits a controller-signed namespace registration.
 func (c *RegistryClient) RegisterNamespace(
 	ctx context.Context,
 	domain string,
@@ -154,6 +163,7 @@ func (c *RegistryClient) RegisterNamespace(
 	return namespace, registryURL, err
 }
 
+// RegisterNamespaceWithDeliveryOrigin registers a namespace with a signed default delivery origin.
 func (c *RegistryClient) RegisterNamespaceWithDeliveryOrigin(
 	ctx context.Context,
 	domain string,
@@ -169,6 +179,7 @@ func (c *RegistryClient) RegisterNamespaceWithDeliveryOrigin(
 	return namespace, registryURL, err
 }
 
+// RegisterNamespaceAt registers a namespace at the selected registry without a delivery origin.
 func (c *RegistryClient) RegisterNamespaceAt(
 	ctx context.Context,
 	registryURL string,
@@ -179,6 +190,7 @@ func (c *RegistryClient) RegisterNamespaceAt(
 	return c.RegisterNamespaceWithDeliveryOriginAt(ctx, registryURL, domain, controllerDID, signingKey, "")
 }
 
+// RegisterNamespaceWithDeliveryOriginAt verifies the signing key matches the controller before registration.
 func (c *RegistryClient) RegisterNamespaceWithDeliveryOriginAt(
 	ctx context.Context,
 	registryURL string,
@@ -199,28 +211,29 @@ func (c *RegistryClient) RegisterNamespaceWithDeliveryOriginAt(
 		return nil, err
 	}
 	defaultDeliveryOrigin = strings.TrimSpace(defaultDeliveryOrigin)
-	extraPayload := map[string]string(nil)
+	claims := map[string]any(nil)
 	if defaultDeliveryOrigin != "" {
 		canonicalOrigin, err := CanonicalServerOrigin(defaultDeliveryOrigin)
 		if err != nil {
 			return nil, fmt.Errorf("default delivery origin: %w", err)
 		}
 		defaultDeliveryOrigin = canonicalOrigin
-		extraPayload = map[string]string{"default_delivery_origin": defaultDeliveryOrigin}
+		claims = map[string]any{"default_delivery_origin": defaultDeliveryOrigin}
 	}
 
 	var out RegistryNamespace
-	if err := c.requestJSON(
+	if err := c.controllerWrite(
 		ctx,
 		http.MethodPost,
 		registryURL,
 		"/v1/namespaces",
-		signedNamespaceHeaders(domain, "register", signingKey, extraPayload),
+		domain, "register", claims,
 		namespaceRegisterRequest{
 			Domain:                domain,
 			ControllerDID:         controllerDID,
 			DefaultDeliveryOrigin: defaultDeliveryOrigin,
 		},
+		KeySigner(signingKey), nil,
 		&out,
 	); err != nil {
 		return nil, err
@@ -228,6 +241,7 @@ func (c *RegistryClient) RegisterNamespaceWithDeliveryOriginAt(
 	return &out, nil
 }
 
+// UpdateNamespaceDeliveryOrigin discovers the registry and signs a default delivery origin update.
 func (c *RegistryClient) UpdateNamespaceDeliveryOrigin(
 	ctx context.Context,
 	domain string,
@@ -242,6 +256,7 @@ func (c *RegistryClient) UpdateNamespaceDeliveryOrigin(
 	return namespace, registryURL, err
 }
 
+// UpdateNamespaceDeliveryOriginAt signs a canonical delivery origin update at the selected registry.
 func (c *RegistryClient) UpdateNamespaceDeliveryOriginAt(
 	ctx context.Context,
 	registryURL string,
@@ -262,18 +277,14 @@ func (c *RegistryClient) UpdateNamespaceDeliveryOriginAt(
 	}
 
 	var out RegistryNamespace
-	if err := c.requestJSON(
+	if err := c.controllerWrite(
 		ctx,
 		http.MethodPatch,
 		registryURL,
 		"/v1/namespaces/"+urlPathEscape(domain),
-		signedNamespaceHeaders(
-			domain,
-			"update_namespace",
-			controllerSigningKey,
-			map[string]string{"default_delivery_origin": canonicalOrigin},
-		),
+		domain, "update_namespace", map[string]any{"default_delivery_origin": canonicalOrigin},
 		namespaceUpdateRequest{DefaultDeliveryOrigin: canonicalOrigin},
+		KeySigner(controllerSigningKey), nil,
 		&out,
 	); err != nil {
 		return nil, err
@@ -281,6 +292,7 @@ func (c *RegistryClient) UpdateNamespaceDeliveryOriginAt(
 	return &out, nil
 }
 
+// DeleteNamespace discovers the registry and submits a controller-signed namespace deletion.
 func (c *RegistryClient) DeleteNamespace(
 	ctx context.Context,
 	domain string,
@@ -294,6 +306,7 @@ func (c *RegistryClient) DeleteNamespace(
 	return registryURL, c.DeleteNamespaceAt(ctx, registryURL, domain, controllerSigningKey, reason)
 }
 
+// DeleteNamespaceAt signs a namespace deletion at the selected registry, with an optional reason.
 func (c *RegistryClient) DeleteNamespaceAt(
 	ctx context.Context,
 	registryURL string,
@@ -314,17 +327,19 @@ func (c *RegistryClient) DeleteNamespaceAt(
 	if strings.TrimSpace(reason) != "" {
 		body = deleteReasonRequest{Reason: strings.TrimSpace(reason)}
 	}
-	return c.requestJSON(
+	return c.controllerWrite(
 		ctx,
 		http.MethodDelete,
 		registryURL,
 		path,
-		signedNamespaceHeaders(domain, "delete_namespace", controllerSigningKey, nil),
+		domain, "delete_namespace", nil,
 		body,
+		KeySigner(controllerSigningKey), nil,
 		nil,
 	)
 }
 
+// ReverifyNamespaceAt asks the selected registry to recheck namespace DNS authority.
 func (c *RegistryClient) ReverifyNamespaceAt(
 	ctx context.Context,
 	registryURL string,
@@ -350,6 +365,7 @@ func (c *RegistryClient) ReverifyNamespaceAt(
 	return &out, nil
 }
 
+// RegisterAddress discovers the registry and signs an address binding to a stable identity and current key.
 func (c *RegistryClient) RegisterAddress(
 	ctx context.Context,
 	domain string,
@@ -366,6 +382,7 @@ func (c *RegistryClient) RegisterAddress(
 	return address, registryURL, err
 }
 
+// RegisterAddressAt signs an address binding at the selected registry using namespace controller authority.
 func (c *RegistryClient) RegisterAddressAt(
 	ctx context.Context,
 	registryURL string,
@@ -397,17 +414,18 @@ func (c *RegistryClient) RegisterAddressAt(
 
 	path := "/v1/namespaces/" + urlPathEscape(domain) + "/addresses"
 	var out RegistryAddress
-	if err := c.requestJSON(
+	if err := c.controllerWrite(
 		ctx,
 		http.MethodPost,
 		registryURL,
 		path,
-		signedAddressHeaders(domain, name, "register_address", controllerSigningKey),
+		domain, "register_address", map[string]any{"name": name},
 		addressRegisterRequest{
 			Name:          name,
 			DIDAW:         didAW,
 			CurrentDIDKey: currentDIDKey,
 		},
+		KeySigner(controllerSigningKey), nil,
 		&out,
 	); err != nil {
 		return nil, err
@@ -415,6 +433,7 @@ func (c *RegistryClient) RegisterAddressAt(
 	return &out, nil
 }
 
+// ClaimIdentityAddressAt submits both authorities for one atomic identity and address claim.
 func (c *RegistryClient) ClaimIdentityAddressAt(
 	ctx context.Context,
 	registryURL string,
@@ -480,7 +499,7 @@ func (c *RegistryClient) ClaimIdentityAddressAt(
 		return nil, err
 	}
 	identitySignature := base64.RawStdEncoding.EncodeToString(
-		ed25519.Sign(params.IdentitySigningKey, []byte(identityCanonical)),
+		signaturewire.SignBytes(params.IdentitySigningKey, []byte(identityCanonical)),
 	)
 	identityProofHash, err := AtomicAddressClaimIdentityProofHash(identityCanonical, identitySignature)
 	if err != nil {
@@ -491,7 +510,7 @@ func (c *RegistryClient) ClaimIdentityAddressAt(
 		return nil, err
 	}
 	namespaceSignature := base64.RawStdEncoding.EncodeToString(
-		ed25519.Sign(params.NamespaceControllerSigningKey, []byte(namespaceCanonical)),
+		signaturewire.SignBytes(params.NamespaceControllerSigningKey, []byte(namespaceCanonical)),
 	)
 
 	body := atomicAddressClaimRequest{
@@ -551,7 +570,7 @@ func (c *RegistryClient) atomicAddressClaimDIDLogProof(ctx context.Context, regi
 			AuthorizedBy:   currentDIDKey,
 			Timestamp:      timestamp,
 			Signature: base64.RawStdEncoding.EncodeToString(
-				ed25519.Sign(signingKey, []byte(didLogPayload)),
+				signaturewire.SignBytes(signingKey, []byte(didLogPayload)),
 			),
 		}, nil
 	}
@@ -568,6 +587,7 @@ func (c *RegistryClient) atomicAddressClaimDIDLogProof(ctx context.Context, regi
 	return resolution.LogHead, nil
 }
 
+// DeleteAddress discovers the registry and submits a namespace-controller-signed address deletion.
 func (c *RegistryClient) DeleteAddress(
 	ctx context.Context,
 	domain string,
@@ -582,6 +602,7 @@ func (c *RegistryClient) DeleteAddress(
 	return registryURL, c.DeleteAddressAt(ctx, registryURL, domain, name, controllerSigningKey, reason)
 }
 
+// DeleteAddressAt signs deletion of the named address at the explicitly selected registry.
 func (c *RegistryClient) DeleteAddressAt(
 	ctx context.Context,
 	registryURL string,
@@ -607,17 +628,21 @@ func (c *RegistryClient) DeleteAddressAt(
 	if strings.TrimSpace(reason) != "" {
 		body = deleteReasonRequest{Reason: strings.TrimSpace(reason)}
 	}
-	return c.requestJSON(
+	return c.controllerWrite(
 		ctx,
 		http.MethodDelete,
 		registryURL,
 		path,
-		signedAddressHeaders(domain, name, "delete_address", controllerSigningKey),
+		domain, "delete_address", map[string]any{"name": name},
 		body,
+		KeySigner(controllerSigningKey), nil,
 		nil,
 	)
 }
 
+// DeleteAddressIfMatchesAt deletes only the exact address ID, stable identity
+// and current key supplied by the caller. The service compares all three
+// preconditions atomically; it never deletes a replacement address by name.
 func (c *RegistryClient) DeleteAddressIfMatchesAt(
 	ctx context.Context,
 	registryURL string,
@@ -629,6 +654,33 @@ func (c *RegistryClient) DeleteAddressIfMatchesAt(
 	controllerSigningKey ed25519.PrivateKey,
 	reason string,
 ) error {
+	return c.deleteMatchingAddress(ctx, addressMatchDeletion{
+		RegistryURL: registryURL, Domain: domain, Name: name,
+		AddressID: expectedAddressID, DIDAW: expectedDIDAW, CurrentDIDKey: expectedCurrentDIDKey,
+		ControllerKey: controllerSigningKey, Reason: reason,
+	})
+}
+
+type addressMatchDeletion struct {
+	RegistryURL   string
+	Domain        string
+	Name          string
+	AddressID     string
+	DIDAW         string
+	CurrentDIDKey string
+	ControllerKey ed25519.PrivateKey
+	Reason        string
+}
+
+func (c *RegistryClient) deleteMatchingAddress(ctx context.Context, input addressMatchDeletion) error {
+	registryURL := input.RegistryURL
+	domain := input.Domain
+	name := input.Name
+	expectedAddressID := input.AddressID
+	expectedDIDAW := input.DIDAW
+	expectedCurrentDIDKey := input.CurrentDIDKey
+	controllerSigningKey := input.ControllerKey
+	reason := input.Reason
 	domain = canonicalizeDomain(domain)
 	name = strings.TrimSpace(name)
 	expectedAddressID = strings.TrimSpace(expectedAddressID)
@@ -644,23 +696,25 @@ func (c *RegistryClient) DeleteAddressIfMatchesAt(
 		return fmt.Errorf("controller signing key is required")
 	}
 
-	preconditions := map[string]string{
+	claims := map[string]any{
+		"name":                     name,
 		"expected_address_id":      expectedAddressID,
 		"expected_did_aw":          expectedDIDAW,
 		"expected_current_did_key": expectedCurrentDIDKey,
 	}
-	return c.requestJSON(
+	return c.controllerWrite(
 		ctx,
 		http.MethodDelete,
 		registryURL,
 		"/v1/namespaces/"+urlPathEscape(domain)+"/addresses/"+urlPathEscape(name),
-		signedAddressHeadersWithFields(domain, name, "delete_address", controllerSigningKey, preconditions),
+		domain, "delete_address", claims,
 		conditionalAddressDeleteRequest{
 			Reason:                strings.TrimSpace(reason),
 			ExpectedAddressID:     expectedAddressID,
 			ExpectedDIDAW:         expectedDIDAW,
 			ExpectedCurrentDIDKey: expectedCurrentDIDKey,
 		},
+		KeySigner(controllerSigningKey), nil,
 		nil,
 	)
 }
@@ -674,84 +728,4 @@ func requireSigningKeyMatchesDID(signingKey ed25519.PrivateKey, expectedDID stri
 		return fmt.Errorf("signing key does not match %s", strings.TrimSpace(expectedDID))
 	}
 	return nil
-}
-
-func signedNamespaceHeaders(
-	domain string,
-	operation string,
-	signingKey ed25519.PrivateKey,
-	extraPayload map[string]string,
-) map[string]string {
-	timestamp := time.Now().UTC().Format(time.RFC3339)
-	fields := map[string]string{
-		"domain":    canonicalizeDomain(domain),
-		"operation": strings.TrimSpace(operation),
-		"timestamp": timestamp,
-	}
-	for key, value := range extraPayload {
-		fields[key] = strings.TrimSpace(value)
-	}
-	return signedCanonicalHeaders(fields, signingKey, timestamp)
-}
-
-func signedAddressHeaders(
-	domain string,
-	name string,
-	operation string,
-	signingKey ed25519.PrivateKey,
-) map[string]string {
-	return signedAddressHeadersWithFields(domain, name, operation, signingKey, nil)
-}
-
-func signedAddressHeadersWithFields(
-	domain string,
-	name string,
-	operation string,
-	signingKey ed25519.PrivateKey,
-	extra map[string]string,
-) map[string]string {
-	timestamp := time.Now().UTC().Format(time.RFC3339)
-	fields := map[string]string{
-		"domain":    canonicalizeDomain(domain),
-		"name":      strings.TrimSpace(name),
-		"operation": strings.TrimSpace(operation),
-		"timestamp": timestamp,
-	}
-	for key, value := range extra {
-		fields[key] = strings.TrimSpace(value)
-	}
-	return signedCanonicalHeaders(fields, signingKey, timestamp)
-}
-
-func signedCanonicalHeaders(fields map[string]string, signingKey ed25519.PrivateKey, timestamp string) map[string]string {
-	did := ComputeDIDKey(signingKey.Public().(ed25519.PublicKey))
-	payload := canonicalRegistryJSON(fields)
-	signature := base64.RawStdEncoding.EncodeToString(ed25519.Sign(signingKey, []byte(payload)))
-	return map[string]string{
-		"Authorization":    fmt.Sprintf("DIDKey %s %s", did, signature),
-		"X-AWEB-Timestamp": timestamp,
-	}
-}
-
-func canonicalRegistryJSON(fields map[string]string) string {
-	keys := make([]string, 0, len(fields))
-	for key := range fields {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-
-	var b strings.Builder
-	b.WriteByte('{')
-	for idx, key := range keys {
-		if idx > 0 {
-			b.WriteByte(',')
-		}
-		b.WriteByte('"')
-		b.WriteString(key)
-		b.WriteString(`":"`)
-		writeEscapedString(&b, fields[key])
-		b.WriteByte('"')
-	}
-	b.WriteByte('}')
-	return b.String()
 }

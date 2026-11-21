@@ -49,6 +49,15 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
 
     steps:
       - name: Checkout aweb
@@ -99,12 +108,16 @@ jobs:
           UV_FROZEN: "1"
         run: make lint
 
-      - name: Run shared runtime tests offline against real PostgreSQL
+      # The same path as make test-naapp: behind the test egress guard, which
+      # forwards the governance browser's RP host to loopback for Chromium and
+      # Playwright's driver, with Redis for the cached-registry tests.
+      - name: Run shared runtime tests offline against real PostgreSQL and Redis
         working-directory: naapp-lib
         env:
           UV_OFFLINE: "1"
           UV_FROZEN: "1"
-        run: make test
+          REDIS_URL: redis://localhost:6379/0
+        run: python3 ../scripts/test-egress/native.py -- make test
 
       - name: Install locked Folio dependencies
         working-directory: naapp/folio

@@ -162,7 +162,7 @@ async def setup(
         }
     )
     async with db.transaction() as tx:
-        await records.create_policy(tx, scope.installation_id, policy)
+        await records.create_policy(tx, scope.installation_id, policy, team_id=TEAM)
         sources = [(SecretRecord.from_after(record), credential, "grt_durable001" + variant)]
         if secondary is not None:
             sources.append((*secondary, "grt_durable002" + variant))

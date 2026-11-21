@@ -1,9 +1,11 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/awebai/aw/awconfig"
@@ -34,7 +36,23 @@ var rootCmd = &cobra.Command{
 	Short: "aweb CLI",
 	Long:  "aweb CLI\n\nSet AW_NO_UPDATE_CHECK=1 to disable automatic update checks.",
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-		if humanSelectionRequested() {
+		if _, independent := offlineCommands[cmd]; independent {
+			return nil // Export verification never selects or unlocks an acting human.
+		}
+		if cmd.Annotations[offlineIdentityInspectionAnnotation] == "true" {
+			return prepareOfflineIdentityInspection(cmd, args)
+		}
+		idSelection, err := prepareIDHumanSelection(cmd)
+		if err != nil {
+			return err
+		}
+		if idSelection && humanFlag != "" {
+			return nil
+		}
+		if cmd.Annotations[humanCommandAnnotation] != "" && !humanSelectionRequested() {
+			return usageError("select your human key with --human ID --human-domain DOMAIN; prepare it with aw id human init")
+		}
+		if humanSelectionRequested() && !idSelection {
 			return prepareHumanParticipation(cmd)
 		}
 		// Offline key preparation validates its explicit destination itself.
@@ -63,6 +81,10 @@ var rootCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		pendingExchange, err := pendingHostedExchangeTarget(cmd, home)
+		if err != nil {
+			return err
+		}
 		if home.External() {
 			// A fresh destination is meaningful only when explicitly named for an
 			// operation which creates identity state. An inherited selector is
@@ -75,7 +97,7 @@ var rootCmd = &cobra.Command{
 					keyOnlyTarget, _ = teamRequestKeyOnly(home.Root, path)
 				}
 			}
-			if !freshTarget && !keyOnlyTarget {
+			if !freshTarget && !keyOnlyTarget && !pendingExchange {
 				if err := validateSelectedIdentityHome(home); err != nil {
 					return err
 				}
@@ -87,12 +109,29 @@ var rootCmd = &cobra.Command{
 			activeIdentityHome = home
 		}
 		restoreIdentityHomeAfterCommand(cmd, identityHomeEnv, hadIdentityHomeEnv, previousActiveIdentityHome)
-		if cmd == idCreateCmd && (cmd.Flags().Changed("org") || cmd.Flags().Changed("owner-identity-home")) {
+		if pendingExchange {
+			return nil
+		}
+		if cmd == idCreateCmd && (cmd.Flags().Changed("org") || cmd.Flags().Changed("owner-identity-home") || cmd.Flags().Changed("no-address") || cmd.Flags().Changed("local")) {
 			// Validate the original creation association before any key renewal or network work.
 			return nil
 		}
-		if isAgentStatusCommand(cmd) || isActivityCommand(cmd) {
-			return nil // Producer commands never renew encryption keys or check updates.
+		if cmd == teamInstallCertCmd {
+			// Check the certificate before any key renewal or network work; a
+			// verified install ensures the encryption key itself.
+			return nil
+		}
+		if flag := cmd.Annotations[identityReadOnlyFlagAnnotation]; flag != "" {
+			readOnly, err := cmd.Flags().GetBool(flag)
+			if err != nil {
+				return err
+			}
+			if readOnly {
+				return nil
+			}
+		}
+		if isAgentStatusCommand(cmd) || isActivityCommand(cmd) || cmd.Annotations[identityNoRenewalAnnotation] == "true" {
+			return nil // Status producers and retirement must not renew credentials or check updates.
 		}
 		if !isTeamInviteInspectCommand(cmd) && cmd.Name() != "help" {
 			maybeRenewIdentityEncryptionAssertion(cmd.Context(), mustGetwd(), currentEncryptionKeyIdentityHome(), cmd.ErrOrStderr())
@@ -141,6 +180,7 @@ func init() {
 	// Cobra normally runs only the nearest persistent hook. Traversal makes the
 	// root identity selection run before commands with their own hooks.
 	cobra.EnableTraverseRunHooks = true
+	setCLIFlagErrorFunc(rootCmd, rootCmd.FlagErrorFunc())
 	rootCmd.AddGroup(
 		&cobra.Group{ID: groupWorkspace, Title: "Workspace Setup"},
 		&cobra.Group{ID: groupIdentity, Title: "Identity"},
@@ -286,6 +326,18 @@ func refuseUnknownSubcommands(cmd *cobra.Command) {
 	}
 }
 
+type cliFlagParsingError struct{ cause error }
+
+func (e *cliFlagParsingError) Error() string { return e.cause.Error() }
+func (e *cliFlagParsingError) Unwrap() error { return e.cause }
+
+// Mark errors at Cobra's ParseFlags callback, before command execution.
+func setCLIFlagErrorFunc(cmd *cobra.Command, classify func(*cobra.Command, error) error) {
+	cmd.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
+		return &cliFlagParsingError{cause: classify(cmd, err)}
+	})
+}
+
 func Execute() {
 	finishHTTPDiagnostics := awid.StartHTTPDiagnostics()
 	refuseUnknownSubcommands(rootCmd)
@@ -296,8 +348,7 @@ func Execute() {
 	if err != nil {
 		finishHTTPDiagnostics(err)
 		err = normalizeStatusCommandError(os.Args[1:], err)
-		reportCLIError(err, err.Error(), argsContainJSONFlag(os.Args[1:]))
-		os.Exit(exitCode(err))
+		os.Exit(exitCode(reportCLIError(err, err.Error(), argsContainJSONFlag(os.Args[1:]))))
 	}
 	defer restorePluginIdentityHome()
 	if code, dispatched := dispatchPluginIfRequested(os.Args[1:]); dispatched {
@@ -321,12 +372,21 @@ func Execute() {
 		if hint := checkVerificationRequired(err); hint != "" {
 			msg = hint
 		}
-		reportCLIError(err, msg, jsonFlag)
-		os.Exit(exitCode(err))
+		// docs/cli-command-reference.md, Errors under --json: flag refusals
+		// also carry an envelope, even when parsing stops before --json.
+		asJSON := jsonFlag
+		var flagErr *cliFlagParsingError
+		if errors.As(err, &flagErr) && !rootCmd.PersistentFlags().Changed("json") {
+			asJSON = argsContainJSONFlag(os.Args[1:])
+		}
+		os.Exit(exitCode(reportCLIError(err, msg, asJSON)))
 	}
 }
 
 func activateIdentityHomeForPluginDispatch(args []string) (func(), error) {
+	if namesOfflineCommand(args) {
+		return func() {}, nil
+	}
 	previous, existed := os.LookupEnv(awconfig.IdentityHomeEnv)
 	explicit := identityHomeForPluginDispatch(args)
 	home, err := awconfig.ResolveIdentityHome("", explicit)
@@ -439,12 +499,16 @@ func checkVersionFromHeader() {
 // reportCLIError prints a failed command's error on stderr and, under --json,
 // its error envelope on stdout. stdout carries one document: a command that
 // already printed its own output keeps it, without a second document.
-func reportCLIError(err error, msg string, asJSON bool) {
+func reportCLIError(err error, msg string, asJSON bool) error {
 	msg = codedRefusalText(err, msg)
 	writeCLIError(os.Stderr, msg)
-	if asJSON && !commandStdout.written {
-		writeCLIErrorEnvelope(commandStdout, err, msg)
+	if !commandStdout.written {
+		if writeErr := writeCLIErrorResult(commandStdout, cliErrorResult{Refusal: err, Message: msg, JSON: asJSON}); writeErr != nil {
+			writeCLIError(os.Stderr, writeErr.Error())
+			return errors.Join(err, writeErr)
+		}
 	}
+	return err
 }
 
 // codedRefusalText says a coded server refusal in the server's own words: the
@@ -479,17 +543,28 @@ func (t *trackedStdout) Fd() uintptr {
 	return os.Stdout.Fd()
 }
 
-// argsContainJSONFlag reads --json before flags are parsed.
+// argsContainJSONFlag reads the requested JSON mode before flags are parsed.
+// Repeated boolean assignments apply in order; -- ends flag selection.
 func argsContainJSONFlag(args []string) bool {
+	asJSON := false
 	for _, arg := range args {
 		if arg == "--" {
-			return false
+			break
 		}
 		if arg == "--json" {
-			return true
+			asJSON = true
+			continue
+		}
+		if value, assigned := strings.CutPrefix(arg, "--json="); assigned {
+			enabled, err := strconv.ParseBool(value)
+			if err != nil {
+				// Cobra reports the invalid value; retain the preceding mode.
+				return asJSON
+			}
+			asJSON = enabled
 		}
 	}
-	return false
+	return asJSON
 }
 
 // writeCLIError prints a command's error, which may carry a server's text.

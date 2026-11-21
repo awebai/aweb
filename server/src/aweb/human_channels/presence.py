@@ -9,11 +9,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
-import json
 from typing import TYPE_CHECKING, Protocol
 
-from nacl.signing import SigningKey
-from awid.did import did_from_public_key, public_key_from_did
+from awid.did import did_key_from_signing_key, public_key_from_did
 from awid.signing import canonical_json_bytes, sign_message, verify_did_key_signature
 from .contract import ContractError, ContractRecord, canonical_record, decode_record
 
@@ -139,7 +137,7 @@ def sign_presence_record(record: ContractRecord, signing_key: bytes) -> Contract
     raw = canonical_record(record)
     record = decode_record(record.schema, raw)
     try:
-        key_id = did_from_public_key(bytes(SigningKey(signing_key).verify_key))
+        key_id = did_key_from_signing_key(signing_key)
         if record.value['signing_key_id'] != key_id:
             raise ContractError('invalid', 'signing key')
         signature = sign_message(signing_key, raw)

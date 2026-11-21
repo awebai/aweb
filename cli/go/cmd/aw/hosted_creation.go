@@ -20,6 +20,7 @@ import (
 // canonical response is retained before registration, so a retry cannot replace
 // a certificate or its registration arguments after a partial remote effect.
 type hostedIDTreeRecovery struct {
+	InvitationID          string         `json:"invitation_id,omitempty" yaml:"invitation_id,omitempty"`
 	Mode                  string         `json:"mode,omitempty" yaml:"mode,omitempty"`
 	RequestID             string         `json:"request_id" yaml:"request_id"`
 	Domain                string         `json:"domain,omitempty" yaml:"domain,omitempty"`
@@ -45,7 +46,7 @@ func (tree *hostedIDTreeRecovery) request(chain map[string]any) *awid.IDTreeCrea
 	if tree == nil || tree.Domain == "" {
 		return nil
 	}
-	return &awid.IDTreeCreationRequest{Mode: tree.Mode, V: 1, RequestID: tree.RequestID, Domain: tree.Domain, Parent: tree.Parent, IDChain: chain}
+	return &awid.IDTreeCreationRequest{InvitationID: tree.InvitationID, Mode: tree.Mode, V: 1, RequestID: tree.RequestID, Domain: tree.Domain, Parent: tree.Parent, IDChain: chain}
 }
 
 func (tree *hostedIDTreeRecovery) retainResponse(response awid.IDTreeCreationResponse) error {
@@ -274,9 +275,10 @@ func finishHostedIDTree(ctx context.Context, tree *hostedIDTreeRecovery, respons
 }
 
 type apiKeyCreationTeam struct {
-	TeamID          string `json:"team_id"`
-	CanonicalTeamID string `json:"canonical_team_id"`
-	Domain          string `json:"-"`
+	CreationInvitation *awid.IDCreationInvitation `json:"creation_invitation,omitempty"`
+	TeamID             string                     `json:"team_id"`
+	CanonicalTeamID    string                     `json:"canonical_team_id"`
+	Domain             string                     `json:"-"`
 }
 
 func readAPIKeyCreationTeam(ctx context.Context, baseURL, apiKey string) (*apiKeyCreationTeam, error) {
@@ -311,6 +313,10 @@ func readAPIKeyCreationTeam(ctx context.Context, baseURL, apiKey string) (*apiKe
 		return nil, errors.New("selected API-key team has no canonical namespace authority; retry when team metadata is available")
 	}
 	selected.Domain = domain
+	selected.CreationInvitation, err = awid.DecodeIDCreationInvitation(raw)
+	if err != nil {
+		return nil, err
+	}
 	return &selected, nil
 }
 

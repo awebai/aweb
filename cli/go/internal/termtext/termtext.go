@@ -3,6 +3,7 @@
 package termtext
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"strings"
@@ -91,4 +92,27 @@ func terminalUnsafeRune(r rune, keepLayout bool) bool {
 		return true
 	}
 	return false
+}
+
+// JSON makes a compact JSON text from a server or a sender safe to print to
+// a terminal while keeping it JSON: every rune Line escapes is written as a
+// \uXXXX escape, and an invalid UTF-8 byte as �. In compact JSON such
+// runes can occur only inside strings, so the text decodes to the same
+// values, except that invalid bytes become U+FFFD as any JSON decoder makes
+// them.
+func JSON(compact []byte) []byte {
+	var out bytes.Buffer
+	for i := 0; i < len(compact); {
+		r, width := utf8.DecodeRune(compact[i:])
+		switch {
+		case r == utf8.RuneError && width == 1:
+			out.WriteString(`�`)
+		case terminalUnsafeRune(r, false):
+			fmt.Fprintf(&out, `\u%04x`, r)
+		default:
+			out.Write(compact[i : i+width])
+		}
+		i += width
+	}
+	return out.Bytes()
 }

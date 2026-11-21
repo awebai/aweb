@@ -13,6 +13,7 @@ from uuid import UUID
 
 import asyncpg.exceptions
 from fastapi import HTTPException
+from aweb.identity_address import require_address_evidence
 
 from awid.federation_errors import FederationAuthorityError
 from aweb.agent_wake import agent_wake_scope
@@ -95,7 +96,7 @@ class ChatSessionChanged(Exception):
 
 
 # What a send answers when the sender is not a participant of the session it wrote to.
-SENDER_NOT_IN_SESSION = "Failed to send message"
+SENDER_NOT_IN_SESSION = "Session not found"
 LOCAL_DID_KEY_RECIPIENT_UNREACHABLE = "Local did:key recipient requires local resolution or learned return route"
 
 
@@ -623,6 +624,7 @@ def _actor_did(auth: MessagingAuth) -> str:
 
 
 def _actor_alias(auth: MessagingAuth, actor_agent: dict[str, Any] | None) -> str:
+    require_address_evidence(auth)
     return (
         (auth.alias or "").strip()
         or (auth.address or "").strip()
@@ -1544,7 +1546,7 @@ async def _send_to_named_recipients(
                 message_id=pre_message_id,
             )
         if msg_row is None:
-            raise HTTPException(status_code=500, detail=SENDER_NOT_IN_SESSION)
+            raise HTTPException(status_code=404, detail=SENDER_NOT_IN_SESSION)
         await _record_successful_chat_contacts(
             db,
             owner_did=(auth.did_aw or actor_did).strip(),
@@ -1671,7 +1673,7 @@ async def _send_to_named_recipients(
             raise HTTPException(status_code=409, detail="message_id already exists")
         raise
     if msg_row is None:
-        raise HTTPException(status_code=500, detail=SENDER_NOT_IN_SESSION)
+        raise HTTPException(status_code=404, detail=SENDER_NOT_IN_SESSION)
 
     await _record_successful_chat_contacts(
         db,
@@ -1849,7 +1851,7 @@ async def _send_in_continued_session(
             raise HTTPException(status_code=409, detail="message_id already exists")
         raise
     if msg_row is None:
-        raise HTTPException(status_code=500, detail=SENDER_NOT_IN_SESSION)
+        raise HTTPException(status_code=404, detail=SENDER_NOT_IN_SESSION)
     if remote_recipients:
         await _record_successful_chat_contacts(
             db,

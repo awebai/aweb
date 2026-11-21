@@ -2,6 +2,8 @@
 
 from identity_binding_support import seed_verified_bindings
 
+from team_facts_fixtures import LegacyTeamFacts
+
 import json
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -34,7 +36,7 @@ from test_messages_http import (
 REGISTRY_ORIGIN = "https://registry.test"
 
 
-class _AddressRegistry:
+class _AddressRegistry(LegacyTeamFacts):
     """The AWID registry at its boundary: the home registry of every namespace, holding the bound addresses."""
 
     registry_url = REGISTRY_ORIGIN

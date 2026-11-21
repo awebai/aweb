@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -338,7 +339,7 @@ func (c *Client) prepareE2EEChatCreate(ctx context.Context, payload *ChatCreateS
 	}
 	now := time.Now().UTC().Truncate(time.Second)
 	if custody != nil {
-		envelope, err := c.createCustodyE2EEEnvelope(ctx, custody, "chat", "", payload.Message, messageID, sessionID, payload.ReplyTo, recipients, "", "")
+		envelope, err := c.createCustodyE2EEEnvelope(ctx, custody, custodyEnvelopeMessage{Kind: custodyChatMessage, Body: payload.Message, MessageID: messageID, ConversationID: sessionID, ReplyTo: payload.ReplyTo, Recipients: recipients})
 		if err != nil {
 			return err
 		}
@@ -416,7 +417,7 @@ func (c *Client) prepareE2EEChatSend(ctx context.Context, sessionID string, payl
 	}
 	now := time.Now().UTC().Truncate(time.Second)
 	if custody != nil {
-		envelope, err := c.createCustodyE2EEEnvelope(ctx, custody, "chat", "", payload.Body, messageID, strings.TrimSpace(sessionID), payload.ReplyTo, recipients, "", "")
+		envelope, err := c.createCustodyE2EEEnvelope(ctx, custody, custodyEnvelopeMessage{Kind: custodyChatMessage, Body: payload.Body, MessageID: messageID, ConversationID: strings.TrimSpace(sessionID), ReplyTo: payload.ReplyTo, Recipients: recipients})
 		if err != nil {
 			return err
 		}
@@ -1027,7 +1028,7 @@ func isCanonicalUUID(value string) bool {
 // that timestamp; if nil, no replay (server polls from now).
 // Uses a dedicated HTTP client without response timeout since SSE connections are long-lived.
 func (c *Client) ChatStream(ctx context.Context, sessionID string, deadline time.Time, after *time.Time) (*SSEStream, error) {
-	path := "/v1/chat/sessions/" + urlPathEscape(sessionID) + "/stream?deadline=" + urlQueryEscape(deadline.UTC().Format(time.RFC3339Nano))
+	path := chatStreamPath(sessionID, deadline)
 	if after != nil && !after.IsZero() {
 		// Truncate to second precision so the server replay query
 		// (WHERE created_at > $after) always includes our sent message.
@@ -1038,31 +1039,69 @@ func (c *Client) ChatStream(ctx context.Context, sessionID string, deadline time
 		// where sentAt and the signed timestamp land in the same second.
 		path += "&after=" + urlQueryEscape(after.Truncate(time.Second).Add(-time.Second).UTC().Format(time.RFC3339))
 	}
+	return c.openChatStream(ctx, path)
+}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+// ChatStreamAfterSeq opens an SSE stream for a session that delivers every
+// message and read receipt numbered after afterSeq. A client resumes a stream
+// the server ended this way without losing or repeating an event.
+func (c *Client) ChatStreamAfterSeq(ctx context.Context, sessionID string, deadline time.Time, afterSeq int64) (*SSEStream, error) {
+	return c.openChatStream(ctx, chatStreamPath(sessionID, deadline)+"&after_seq="+strconv.FormatInt(afterSeq, 10))
+}
+
+func chatStreamPath(sessionID string, deadline time.Time) string {
+	return "/v1/chat/sessions/" + urlPathEscape(sessionID) + "/stream?deadline=" + urlQueryEscape(deadline.UTC().Format(time.RFC3339Nano))
+}
+
+func (c *Client) openChatStream(ctx context.Context, path string) (*SSEStream, error) {
+	resp, err := c.openStream(ctx, path)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Accept", "text/event-stream")
-	req.Header.Set("Cache-Control", "no-cache")
-	setUserAgent(req, c.userAgent)
-	if err := c.signRequest(req, nil); err != nil {
-		return nil, err
-	}
+	return NewSSEStream(resp.Body), nil
+}
 
-	resp, err := DoNoRedirect(c.sseClient, req)
-	if err != nil {
-		return nil, err
-	}
-	if v := resp.Header.Get("X-Latest-Client-Version"); v != "" {
-		c.latestClientVersion.Store(v)
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+// openStream opens the SSE stream at path with the client's auth. A stream
+// refused for a team certificate under a superseded key is opened once more
+// with the certificate now recorded for the member.
+func (c *Client) openStream(ctx context.Context, path string) (*http.Response, error) {
+	for refreshed := false; ; refreshed = true {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Accept", "text/event-stream")
+		req.Header.Set("Cache-Control", "no-cache")
+		setUserAgent(req, c.userAgent)
+		if err := c.signRequest(req, nil); err != nil {
+			return nil, err
+		}
+
+		resp, err := DoNoRedirect(c.sseClient, req)
+		if err != nil {
+			return nil, err
+		}
+		if v := resp.Header.Get("X-Latest-Client-Version"); v != "" {
+			c.latestClientVersion.Store(v)
+		}
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			return resp, nil
+		}
+		if !refreshed {
+			retry, err := c.refreshSupersededTeamCertificate(ctx, resp)
+			if err != nil {
+				_ = resp.Body.Close()
+				return nil, err
+			}
+			if retry {
+				_ = resp.Body.Close()
+				continue
+			}
+		}
 		body := ReadErrorExcerpt(resp.Body)
 		_ = resp.Body.Close()
 		return nil, newAPIError(resp, body)
 	}
-	return NewSSEStream(resp.Body), nil
 }
 
 // ChatSendMessage sends a message in an existing chat session.

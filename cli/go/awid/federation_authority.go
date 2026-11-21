@@ -346,29 +346,53 @@ func isIsolatedFederationHost(host string) bool {
 		strings.HasSuffix(host, ".test") || strings.HasSuffix(host, ".test.local")
 }
 
-var forbiddenFederationPrefixes = []netip.Prefix{
-	netip.MustParsePrefix("100.64.0.0/10"),
-	netip.MustParsePrefix("192.0.2.0/24"),
-	netip.MustParsePrefix("198.18.0.0/15"),
-	netip.MustParsePrefix("198.51.100.0/24"),
-	netip.MustParsePrefix("203.0.113.0/24"),
-	netip.MustParsePrefix("240.0.0.0/4"),
-	netip.MustParsePrefix("2001:db8::/32"),
+// Both readers apply the public-address tables defined under outbound delivery
+// transport in docs/aweb-sot.md and covered by the federation-origin-ip-v1 vector.
+var (
+	nonPublicIPv4 = mustParsePrefixes(
+		"0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16",
+		"172.16.0.0/12", "192.0.0.0/24", "192.0.2.0/24", "192.168.0.0/16", "198.18.0.0/15",
+		"198.51.100.0/24", "203.0.113.0/24", "224.0.0.0/4", "240.0.0.0/4",
+	)
+	publicIPv4Exceptions = mustParsePrefixes("192.0.0.9/32", "192.0.0.10/32")
+	// Outside 2000::/3 every IPv6 address is reserved, private or multicast.
+	globalUnicastIPv6 = netip.MustParsePrefix("2000::/3")
+	// Inside 2000::/3: IETF protocol assignments (including Teredo), documentation
+	// and 6to4. NAT64 64:ff9b::/96 and 64:ff9b:1::/48 lie outside 2000::/3.
+	nonPublicIPv6        = mustParsePrefixes("2001::/23", "2001:db8::/32", "2002::/16", "3fff::/20")
+	publicIPv6Exceptions = mustParsePrefixes(
+		"2001:1::1/128", "2001:1::2/128", "2001:3::/32", "2001:4:112::/48", "2001:20::/28", "2001:30::/28",
+	)
+)
+
+func mustParsePrefixes(values ...string) []netip.Prefix {
+	prefixes := make([]netip.Prefix, len(values))
+	for i, value := range values {
+		prefixes[i] = netip.MustParsePrefix(value)
+	}
+	return prefixes
+}
+
+func prefixesContain(prefixes []netip.Prefix, addr netip.Addr) bool {
+	for _, prefix := range prefixes {
+		if prefix.Contains(addr) {
+			return true
+		}
+	}
+	return false
 }
 
 func federationIPAllowed(addr netip.Addr) bool {
 	if addr.Is4In6() {
 		addr = addr.Unmap()
 	}
-	if !addr.IsGlobalUnicast() || addr.IsPrivate() || addr.IsLoopback() || addr.IsLinkLocalUnicast() || addr.IsMulticast() || addr.IsUnspecified() {
+	if addr.Is4() {
+		return !prefixesContain(nonPublicIPv4, addr) || prefixesContain(publicIPv4Exceptions, addr)
+	}
+	if !globalUnicastIPv6.Contains(addr) {
 		return false
 	}
-	for _, prefix := range forbiddenFederationPrefixes {
-		if prefix.Contains(addr) {
-			return false
-		}
-	}
-	return true
+	return !prefixesContain(nonPublicIPv6, addr) || prefixesContain(publicIPv6Exceptions, addr)
 }
 
 func ValidateFederationResolvedIPs(values []string) ([]string, error) {

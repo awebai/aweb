@@ -28,8 +28,3 @@ def is_valid_role(role: str) -> bool:
     if len(words) > ROLE_MAX_WORDS:
         return False
     return all(ROLE_WORD_PATTERN.match(word) for word in words)
-
-
-def role_to_alias_prefix(role: str) -> str:
-    """Convert role to an alias-friendly prefix."""
-    return normalize_role(role).replace(" ", "-")

@@ -379,8 +379,9 @@ it.
 **The owner act is every naapp's root of trust for governance.** `aweb_naapp`
 defines three generic app-governance acts:
 
-- `app-role.designate` names a holder of an app-local role, such as a logs
-  reader (`logs.reader.<hex>`, §B5), a secrets approver or an owner-approver.
+- `app-role.designate` names a holder of an app-local role, such as a
+  secrets approver or an owner-approver. A logs reader is a human-role holder
+  instead (§B5).
   Its subject is `{app_id, installation_id, role, contact_sha256}`: the holder
   does not exist yet, so the act commits to the enrolment contact by its
   SHA-256 and carries no `subject_ref`;
@@ -965,7 +966,7 @@ Per team and chain epoch, under a row lock on the team's chain head:
   act, per-producer and per-hook `seq` gaps inside binding intervals, and
   conflicts. It also accepts **producer receipts and exported checkpoints as
   input**, and reports any receipt or checkpoint that the current chain
-  contradicts. `aw logs verify --bundle` checks an export offline, with no
+  contradicts. `aw audit verify --bundle` checks an export offline, with no
   server. **In flight (aweb-acgh.16.24):** the Go chain verifier
   (`cli/go/logschain`) passes `logs-chain-v1.json`; the `aw logs` command is
   not on main.
@@ -1029,10 +1030,13 @@ Two fields carry the honesty of the record:
 **In flight (aweb-acgh.16.22).** On main (`naapp/logs/src/aweb_logs/readers.py`,
 `reader_service.py`, `read_routes.py`):
 
-- the reader directory: random `logs.reader.<hex>` slots from
-  `POST /v1/reader-slots`, with an expired-slot sweep;
-- designation and revocation by owner act on the console origin;
-- passkey enrolment and login from B3, and console sessions;
+- the readers: the current holders of `logs.reader`
+  ([human-role holders](human-role-holders.md));
+- designation, credential replacement and revocation by human-role owner act,
+  through the shared owner-act delivery route on the console origin
+  ([owner-act delivery](../owner-act-delivery.md)), which binds the reader's
+  passkey;
+- passkey login from B3, and console sessions;
 - session-gated `GET /v1/events`, `GET /v1/tail` and `GET`/`POST /v1/verify`;
 - the console shell;
 - `POST /v1/reader-removals`, with last-reader protection
@@ -1041,7 +1045,7 @@ Two fields carry the honesty of the record:
 Not on main:
 
 - **In flight (aweb-acwd.2):** the production mount of these routes in
-  `create_app`, and the reader-slot and remove-reader manifest tools;
+  `create_app`, and the remove-reader manifest tool;
 - **Open (aweb-acgh.16.34):** delegated `verify` (`logs.verify.delegate`);
 - **Open (aweb-acgh.16.22, aweb-acgh.16.23):** on-demand checkpoints and
   export;
@@ -1053,22 +1057,25 @@ an MCP agent: both are custodial members signed through the host (§1). So
 "human-only" must rest on something other than a member signature:
 
 - **Readers are designated humans with passkeys.** The controller key stays
-  governance-only (§2): one `app-role.designate` owner act designates a
-  reader, including the owner. Each reader holds its own role slot
-  `logs.reader.<hex>`: a random 128-bit opaque value, bound before the owner
-  signs, so the role name reveals nothing about the reader. Removing the last
-  reader with team-auth alone is refused, counted across all slots. The reader
-  enrols a passkey on **logs' own origin** using
-  aweb-acgh.4's WebAuthn enrolment, recovery and audit, unchanged. This design
-  adds only the reader designation that authorizes enrolment. `query`, `tail`,
-  `verify` and `export` all run in a short-lived acgh.4 session on that
-  origin, never with a per-request controller signature. There is no member
-  signature and no hosted session.
-- **CLI. Open (aweb-acgh.16.24).** `aw logs query | tail | verify | export` completes a device-style
-  authorization on logs' origin with the reader's passkey. That yields a
-  short-lived read session bound to an ephemeral key the CLI generates.
-  Anything that can read that session while it lives can read the log, and
-  the doc says so.
+  governance-only (§2): one `human-role.designate` owner act designates a
+  current human member of the team, by principal, as a holder of
+  `logs.reader`, including the owner, and binds the exact passkey credential
+  the reader will use on **logs' console origin**. logs declares the role in
+  its manifest's `owner_acts`, with no notice contact. The act is delivered
+  to the console origin; `human-credential.replace` and `human-role.revoke`
+  replace the credential and end the holding. Removing the last reader with
+  team-auth alone is refused, counted across all holders. A reinstalled logs
+  is a new installation: the old installation's holdings end with it, and
+  their credentials and sessions are destroyed. `query`, `tail`, `verify` and
+  `export` all run in a short-lived acgh.4 session on that origin, never with
+  a per-request controller signature. There is no hosted session.
+- **CLI. Open (aweb-acgh.16.24).** `aw logs query | tail | verify | export`
+  starts a `session` handoff on logs' app origin, signed with team-auth as
+  the reader, and the reader approves it with their passkey on logs' console
+  origin ([the handoff](human-confirmation-from-aw.md#the-handoff)). Reads then
+  run in that short-lived session, bound to the ephemeral key `aw` holds in
+  memory, with no member signature per request. Anything that can read that
+  session while it lives can read the log.
 - **Surfaces and MCP.** A D1 surface is rendered by the host as a member, so
   it shows no log content and links out to logs' origin. By default MCP has no
   read tools, and log content never enters a model provider's context.

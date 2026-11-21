@@ -53,7 +53,7 @@ async def test_missing_or_unusable_installation_context_never_gets_fabricated(wo
             )
         elif change == "wrong_installation":
             await tx.execute(
-                "UPDATE {{tables.owner_principals}} SET installation_id='different-installation'"
+                "UPDATE {{tables.role_holdings}} SET installation_id='different-installation'"
             )
     with pytest.raises(ProofContextUnavailable) as refused:
         async with world.db.transaction() as tx:
@@ -99,11 +99,11 @@ async def test_confirmed_approver_binding_resolves_but_a_second_binding_never_wi
             # Simulate inconsistent persisted directory rows: the stale extra
             # binding must not be ignored in favor of the one fresh match.
             await tx.execute(
-                "INSERT INTO {{tables.owner_principals}} (scope,installation_id,team_id,principal_did)"
-                " VALUES($1,$2,$3,$4)",
+                "UPDATE {{tables.role_holdings}} SET b3_scope=$1,installation_id=$2"
+                " WHERE role=$3 AND principal_did=$4",
                 scope,
                 "different-installation",
-                TEAM,
+                "secrets.owner",
                 ALICE.principal_did,
             )
             with pytest.raises(ProofContextUnavailable):

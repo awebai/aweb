@@ -3,18 +3,44 @@
 from __future__ import annotations
 
 import os
+import runpy
 import subprocess
 import time
 from pathlib import Path
 
-import pytest
-import pytest_asyncio
-from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
+# xdist sets its worker identity before conftest imports. Bind services before
+# pgdbm/plugin imports and test modules can capture a parent endpoint.
+# This file is both tests.conftest and the CLI auth stack's top-level conftest.
+# Resolve our sibling by file, independent of the caller's package search path.
+runpy.run_path(str(Path(__file__).with_name("worker_services.py")))[
+    "configure_worker_environment"
+](os.environ)
 
-from awid.db_config import build_database_config
-from aweb_naapp.hooks.owner_act_nonces import apply_owner_act_migrations
+import pytest  # noqa: E402
+import pytest_asyncio  # noqa: E402
+from pgdbm import AsyncDatabaseManager, AsyncMigrationManager  # noqa: E402
+
+from awid.db_config import build_database_config  # noqa: E402
+from aweb_naapp.hooks.owner_act_nonces import apply_owner_act_migrations  # noqa: E402
 
 pytest_plugins = ("pgdbm.fixtures.conftest", "tests.real_stack")
+
+
+@pytest.fixture(scope="session")
+def server_js_runtime():
+    from tests.js_runtime_tree import prepare_runtime_tree, remove_runtime_tree, runtime_repo
+
+    source = Path(__file__).resolve().parents[2]
+    root = runtime_repo(source)
+    if root == source:
+        yield root
+        return
+    prepare_runtime_tree(source, root)
+    try:
+        yield root
+    finally:
+        remove_runtime_tree(root)
+
 
 os.environ.setdefault("APP_ENV", "testing")
 os.environ.setdefault("ENVIRONMENT", "testing")

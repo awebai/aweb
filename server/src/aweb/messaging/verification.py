@@ -106,22 +106,6 @@ def _encrypted_message_verification_status(row: dict[str, Any]) -> VerificationS
     return "verified"
 
 
-async def latest_message_verification_status(
-    db,
-    *,
-    conversation_id: str,
-    conversation_type: Literal["mail", "chat"] | None = None,
-) -> VerificationStatus | None:
-    latest = await _latest_message_verification_candidate(
-        db,
-        conversation_id=conversation_id,
-        conversation_type=conversation_type,
-    )
-    if not latest:
-        return None
-    return message_verification_status(latest)
-
-
 async def _latest_message_verification_candidate(
     db,
     *,

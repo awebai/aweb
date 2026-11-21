@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
+from team_facts_fixtures import legacy_team
 
 import httpx
 import pytest
@@ -27,10 +28,15 @@ from aweb.team_auth_deps import resolve_team_identity
 
 TEAM_ID = "backend:acme.com"
 MEMBER_DID_KEY = "did:key:z6MkRevocable"
+# A member accepted under its team's current key, as lookup_identity_agent_context reads it.
+CURRENT_KEY = {"accepted_team_did_key": "did:key:zTeam", "current_team_did_key": "did:key:zTeam"}
 
 
 def _request_with_revocations(result):
     registry = AsyncMock()
+    # Explicitly model the old SDK surface; AsyncMock invents new methods.
+    registry.get_team_revocations_for_certificates = None
+    registry.get_team_fresh = AsyncMock(side_effect=legacy_team)
     if isinstance(result, Exception):
         registry.get_team_revocations = AsyncMock(side_effect=result)
     else:
@@ -49,6 +55,7 @@ async def test_revoked_certificate_strips_team_context():
         "address": "acme.com/alice",
         "identity_scope": "global",
         "certificate_id": "cert-9",
+        **CURRENT_KEY,
     }
     out = await _enforce_current_membership(request, row)
     assert out["team_id"] is None
@@ -62,7 +69,7 @@ async def test_revoked_certificate_strips_team_context():
 @pytest.mark.asyncio
 async def test_live_certificate_keeps_team_context():
     request, _ = _request_with_revocations({"cert-other"})
-    row = {"team_id": TEAM_ID, "alias": "alice", "agent_id": "a", "certificate_id": "cert-9"}
+    row = {"team_id": TEAM_ID, "alias": "alice", "agent_id": "a", "certificate_id": "cert-9", **CURRENT_KEY}
     out = await _enforce_current_membership(request, row)
     assert out["team_id"] == TEAM_ID and out["alias"] == "alice"
 
@@ -70,7 +77,7 @@ async def test_live_certificate_keeps_team_context():
 @pytest.mark.asyncio
 async def test_row_without_recorded_certificate_passes_without_registry_call():
     request, registry = _request_with_revocations(set())
-    row = {"team_id": TEAM_ID, "alias": "alice", "agent_id": "a", "certificate_id": None}
+    row = {"team_id": TEAM_ID, "alias": "alice", "agent_id": "a", "certificate_id": None, **CURRENT_KEY}
     out = await _enforce_current_membership(request, row)
     assert out is row
     registry.get_team_revocations.assert_not_awaited()
@@ -88,7 +95,7 @@ async def test_row_without_team_context_passes_without_registry_call():
 @pytest.mark.asyncio
 async def test_registry_unavailable_fails_closed():
     request, _ = _request_with_revocations(httpx.ConnectError("registry down"))
-    row = {"team_id": TEAM_ID, "alias": "alice", "agent_id": "a", "certificate_id": "cert-9"}
+    row = {"team_id": TEAM_ID, "alias": "alice", "agent_id": "a", "certificate_id": "cert-9", **CURRENT_KEY}
     with pytest.raises(HTTPException) as excinfo:
         await _enforce_current_membership(request, row)
     assert excinfo.value.status_code == 503

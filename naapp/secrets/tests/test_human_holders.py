@@ -17,7 +17,8 @@ from pgdbm.core import TransactionManager
 from aweb_secrets.console import OwnerConsole
 from aweb_secrets.installation_lookup import InstallationLookup
 from aweb_secrets.owners import OWNER_ROLE, owner_scope
-from tests.test_owner_bootstrap import ALICE, BOB, TEAM, _apply, _enrol
+from tests.human_owner import apply_holder as _apply
+from tests.test_owner_bootstrap import ALICE, BOB, TEAM
 from tests.test_owner_bootstrap import world as world
 
 
@@ -53,8 +54,7 @@ async def hold(service, tx, target):
 
 @pytest.fixture
 async def enrolled(world):
-    await _apply(world, "app-role.designate", ALICE, "alice@example.com")
-    await _enrol(world, "alice@example.com")
+    await _apply(world, "human-role.designate", ALICE, "alice@example.com")
     return world
 
 
@@ -97,8 +97,9 @@ async def test_public_scope_cannot_select_another_holding(enrolled, public_scope
     assert (refused.value.status_code, refused.value.detail) == (403, "owner_required")
 
 
-async def test_held_unenrolled_designation_requires_a_new_console_session(world):
-    await _apply(world, "app-role.designate", ALICE, "alice@example.com")
+async def test_a_held_role_without_a_usable_credential_requires_a_new_console_session(world):
+    await _apply(world, "human-role.designate", ALICE, "alice@example.com")
+    await world.db.execute("UPDATE {{tables.passkey_credentials}} SET revoked_at=clock_timestamp()")
     with pytest.raises(HTTPException) as refused:
         await authority(world).session_target(PublicScope(), team_id=TEAM)
     assert (refused.value.status_code, refused.value.detail) == (401, "console_session_required")
@@ -142,7 +143,7 @@ async def test_generation_change_refuses_the_original_target(enrolled):
 async def test_recovery_does_not_retarget_the_original_subject(enrolled):
     service = authority(enrolled)
     target = await service.session_target(PublicScope(), team_id=TEAM)
-    await _apply(enrolled, "app-credential.recover", ALICE, "alice-new@example.com")
+    await _apply(enrolled, "human-credential.replace", ALICE, "alice-new@example.com")
     assert await enrolled.passkeys.recovery_pending_until(target.b3_scope) is not None
     assert await enrolled.directory.owner_of(enrolled.db, target.b3_scope) == ALICE
     assert await enrolled.passkeys.designated_approver(target.b3_scope) is None
@@ -157,7 +158,7 @@ async def test_recovery_does_not_retarget_the_original_subject(enrolled):
 async def test_recovery_between_projection_and_hold_requires_a_new_console_session(enrolled):
     service = authority(enrolled)
     target = await service.session_target(PublicScope(), team_id=TEAM)
-    await _apply(enrolled, "app-credential.recover", ALICE, "alice-new@example.com")
+    await _apply(enrolled, "human-credential.replace", ALICE, "alice-new@example.com")
     assert await enrolled.directory.owner_of(enrolled.db, target.b3_scope) == ALICE
     assert await enrolled.passkeys.recovery_pending_until(target.b3_scope) is not None
     async with enrolled.db.transaction() as tx:
@@ -170,7 +171,7 @@ async def test_recovery_between_projection_and_hold_requires_a_new_console_sessi
 async def test_lost_holding_before_b3_preparation_is_final_even_during_recovery(enrolled, regrant):
     service = authority(enrolled)
     target = await service.session_target(PublicScope(), team_id=TEAM)
-    await _apply(enrolled, "app-credential.recover", ALICE, "alice-new@example.com")
+    await _apply(enrolled, "human-credential.replace", ALICE, "alice-new@example.com")
     assert await enrolled.passkeys.recovery_pending_until(target.b3_scope) is not None
     async with enrolled.db.transaction() as tx:
         await unassign(tx, ALICE, OWNER_ROLE)
@@ -186,7 +187,7 @@ async def test_lost_holding_before_b3_preparation_is_final_even_during_recovery(
 async def test_revoked_holding_is_final_even_when_b3_requires_renewal(enrolled, recovering):
     scope = owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did)
     if recovering:
-        await _apply(enrolled, "app-credential.recover", ALICE, "alice-new@example.com")
+        await _apply(enrolled, "human-credential.replace", ALICE, "alice-new@example.com")
         assert await enrolled.passkeys.recovery_pending_until(scope) is not None
         assert await enrolled.passkeys.designated_approver(scope) is None
     else:
@@ -210,8 +211,7 @@ async def test_a_supplied_subject_cannot_rebind_the_projection(enrolled):
 async def test_preparation_returns_the_complete_union_for_downstream_reuse(enrolled):
     from aweb_naapp.roles import hold_role
 
-    await _apply(enrolled, "app-role.designate", BOB, "bob@example.com")
-    await _enrol(enrolled, "bob@example.com")
+    await _apply(enrolled, "human-role.designate", BOB, "bob@example.com")
     service = authority(enrolled)
     target = await service.session_target(PublicScope(), team_id=TEAM)
     bob = await service.session_target(PublicScope(principal=BOB.principal_did), team_id=TEAM)
@@ -336,8 +336,7 @@ async def test_prepared_authority_cannot_be_borrowed_by_another_tx_wrapper(enrol
 
 
 async def test_hold_serializes_withdrawal_without_locking_another_owner(enrolled):
-    await _apply(enrolled, "app-role.designate", BOB, "bob@example.com")
-    await _enrol(enrolled, "bob@example.com")
+    await _apply(enrolled, "human-role.designate", BOB, "bob@example.com")
     service = authority(enrolled)
     target = await service.session_target(PublicScope(), team_id=TEAM)
     writer_pid = asyncio.get_running_loop().create_future()

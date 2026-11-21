@@ -1538,7 +1538,7 @@ async def test_address_get_nonexistent_still_returns_404_after_reachability_remo
     missing_headers = _sign(other_key, other_did_key, domain=domain, operation="get_address", name="missing")
     missing_resp = await client.get(f"/v1/namespaces/{domain}/addresses/missing", headers=missing_headers)
     assert missing_resp.status_code == 404
-    assert missing_resp.json() == {"detail": "Address not found"}
+    assert missing_resp.json() == {"detail": {"code": "address_not_found", "message": "Address not found"}}
 
 
 @pytest.mark.asyncio

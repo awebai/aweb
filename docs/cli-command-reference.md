@@ -16,10 +16,10 @@ to refresh it.
 | Family | Commands |
 | --- | --- |
 | Workspace Setup | `check`, `claim-human`, `init`, `reset`, `service`, `workspace` |
-| Identity | `auth`, `custody`, `id`, `mcp-config`, `org`, `team`, `whoami` |
+| Identity | `auth`, `custody`, `id`, `mcp-config`, `org`, `team`, `verify`, `whoami` |
 | Messaging & Network | `a2a`, `beads-mail`, `chat`, `contacts`, `control`, `directory`, `events`, `gc-mail`, `heartbeat`, `inbound-mode`, `log`, `mail`, `room`, `wake` |
 | Coordination & Runtime | `activity`, `agent`, `instructions`, `lock`, `notify`, `role-name`, `roles`, `run`, `status`, `status-host`, `task`, `work` |
-| Utility | `completion`, `doctor`, `help`, `hooks`, `plugin`, `upgrade`, `version` |
+| Utility | `app`, `audit`, `completion`, `doctor`, `help`, `hooks`, `plugin`, `upgrade`, `validate`, `version` |
 | Additional Commands | `blueprint`, `session`, `who` |
 
 ## Global Flags
@@ -70,10 +70,13 @@ envelope.
 | `encryption_key_missing` | An encrypted message needs a local encryption private key this identity does not have. |
 | `decrypt_failed` | An encrypted message could not be opened or validated. |
 | `recipient_custodial_no_e2ee` | An end-to-end encrypted send names a hosted agent, whose signed encryption key assertion says aweb's service holds its key; nothing was sent. Send it again without `--e2ee`. |
-| `team_not_hosted` | `aw workspace delete` through an external identity home: the team is not hosted, so no cloud-held controller can release the alias. |
+| `team_not_hosted` | The hosted self-release path is unavailable for this team. Own non-hosted local retirement uses the controller receipt flow. |
 | `global_identity` | `aw workspace delete` through an external identity home: a global identity's alias is released by its team, not by itself. |
 | `not_own_workspace` | `aw workspace delete` through an external identity home names another workspace. |
 | `no_workspace_credential` | `aw workspace delete` through an external identity home has no member credential to act with. |
+
+Offline status, additional refusal codes, wake readiness and local retirement
+outcomes are documented in the [CLI integration contract](cli-integration-contract.md).
 
 `aw wake status --json` describes a receive stream's error the same way:
 beside the `stream_error` text, `stream_error_detail` holds its `code`,
@@ -150,12 +153,14 @@ Flags:
 - `--human-name string Human name (agents: explicit only; humans: AWEB_HUMAN or $USER)`
 - `--inbound-mode string Inbound delivery mode for a global identity (open|team-and-contacts|contacts-only). Only valid with --global.`
 - `--inject-docs Inject aw coordination instructions into CLAUDE.md and AGENTS.md`
+- `--invite string Join this invite with an independently selected creator`
 - `--join-from string Add an agent to a team by minting one invite from this existing workspace or identity home`
 - `--join-team string Team ID to use with --join-from when the source has more than one membership`
 - `--name string Identity/member name (global address name with --global, local routing name otherwise)`
 - `--new-account Explicitly create a new hosted aweb.ai account`
 - `--new-team Explicitly create a new self-hosted/BYOD team`
 - `--org string Organization slug or ID for --workspace-team`
+- `--parent string Same-machine creator home for a fresh child`
 - `--print-exports Print shell export lines after JSON output`
 - `--remove-notify-hook Remove only the exact aw notify PostToolUse hook from current directory and repository root settings, with backups (standalone local action)`
 - `--role string Compatibility alias for --role-name`
@@ -263,17 +268,20 @@ Flags:
 
 Delete a local workspace and its local identity.
 
-Deleting YOUR OWN workspace on a hosted team, with a local identity, retires you:
-the hosted team controller revokes your membership certificate, so your name
-becomes reusable by a later "aw team join". Any other target is a local delete
-only, and does not release the name.
+Deleting YOUR OWN workspace with a local identity can retire its membership.
+On a hosted team, the service controller revokes the membership certificate.
+On a non-hosted team, the command deletes the workspace while the member
+credential is valid, saves a local receipt, then revokes with the local team key.
+If revocation cannot finish, retain the home and receipt and follow next_step.
+Retrying uses the receipt and performs only the remaining controller operation.
 
 Read alias_released in the output, not identity_deleted. Deleting local state
 says nothing about the membership certificate, and an active certificate is what
 makes a rejoin under the same name fail. alias_released_reason says why:
 
   not_own_workspace        the target is not the workspace you are running as
-  team_not_hosted          self-hosted or BYOT; no cloud-held controller to revoke
+  controller_key_missing  workspace deleted; give next_step to the team key holder
+  retired_revocation_pending  workspace deleted; retry using the retained receipt
   global_identity          global identities are retired by team-authorized removal
   no_workspace_credential  no workspace-bound key and no team certificate in local
                            config to authenticate with
@@ -282,9 +290,8 @@ When this command can retire you, it does not fall back to a plain delete: a
 failure is reported as a failure, because a success report for a retirement that
 did not happen is what leaks names.
 
-With --identity-home, the only destructive operation admitted for an external
-principal is this own hosted local self-release path. Non-eligible external
-principals fail closed instead of falling back to generic workspace delete.
+With --identity-home, own local retirement uses the selected home. Global and
+other-member targets fail closed instead of falling back to generic deletion.
 
 Flags:
 - `-h, --help help for delete`
@@ -415,6 +422,7 @@ Subcommands:
 - `log` Show a global AWID DID log
 - `namespace` Protocol/admin namespace controller and address operations
 - `parent` Request and import your own certificate from a parent
+- `proof` Export a message signed by your human key with its saved evidence
 - `register` Register the current global identity at the configured registry
 - `request` Make a DIDKey-signed HTTP request with the local identity key
 - `resolve` Resolve a did:aw to its current did:key
@@ -422,6 +430,7 @@ Subcommands:
 - `rotate-key` Rotate the current global identity signing key at the registry
 - `show` Show the current identity and registry status
 - `sign` Sign user data with a domain-separated local identity signature
+- `status` Inspect local identity, membership, binding and unfinished initialization
 - `team` Team membership plus protocol/admin certificate operations
 - `verify` Verify the full audit log for a did:aw
 
@@ -479,6 +488,7 @@ Show the current team certificate
 
 Flags:
 - `-h, --help help for show`
+- `--team string Override the selected team_id for this command`
 
 ## `id child`
 
@@ -506,11 +516,15 @@ Sign the certificate for one received request and write the response
 terminal that its key fingerprint matches what the recipient told you over a
 separate trusted channel; nothing else approves it.
 
+When acting as a human, the first signature asks once for the selected person's
+keychain passphrase at a real terminal. Each signature is described; the key
+stays in memory for this command, including confirmation waits, and is wiped
+on success, error or interruption. Another command asks again.
+
 Flags:
-- `--as-root Act as the namespace root, with this machine's controller key`
-- `--domain string Namespace domain (with --as-root or --human)`
+- `--as-root Act as the namespace root of --domain, with this machine's controller key`
+- `--domain string Organization namespace for agent or --as-root operations; with --human, the person's domain, as --human-domain`
 - `-h, --help help for approve`
-- `--human string Act as this human on this machine (did:aw)`
 - `--out string Where to write the response (- for stdout) (default "-")`
 - `--registry string Registry origin for --as-root, when the domain's _awid record names none`
 
@@ -523,12 +537,16 @@ needs to export its request: invitation ID, parent, domain, kind and expiry.
 --recipient is your private note of who it is for; it is never exported.
 An invitation expires after --expires (7 days by default).
 
+When acting as a human, the first signature asks once for the selected person's
+keychain passphrase at a real terminal. Each signature is described; the key
+stays in memory for this command, including confirmation waits, and is wiped
+on success, error or interruption. Another command asks again.
+
 Flags:
-- `--as-root Act as the namespace root, with this machine's controller key`
-- `--domain string Namespace domain (with --as-root or --human)`
+- `--as-root Act as the namespace root of --domain, with this machine's controller key`
+- `--domain string Organization namespace for agent or --as-root operations; with --human, the person's domain, as --human-domain`
 - `--expires duration How long the invitation stays open (default 168h0m0s)`
 - `-h, --help help for invite`
-- `--human string Act as this human on this machine (did:aw)`
 - `--kind string Kind of the child: human or agent`
 - `--recipient string Your private note of who the invitation is for`
 - `--registry string Registry origin for --as-root, when the domain's _awid record names none`
@@ -539,11 +557,15 @@ Flags:
 
 List the requests bound to your invitations
 
+When acting as a human, the first signature asks once for the selected person's
+keychain passphrase at a real terminal. Each signature is described; the key
+stays in memory for this command, including confirmation waits, and is wiped
+on success, error or interruption. Another command asks again.
+
 Flags:
-- `--as-root Act as the namespace root, with this machine's controller key`
-- `--domain string Namespace domain (with --as-root or --human)`
+- `--as-root Act as the namespace root of --domain, with this machine's controller key`
+- `--domain string Organization namespace for agent or --as-root operations; with --human, the person's domain, as --human-domain`
 - `-h, --help help for pending`
-- `--human string Act as this human on this machine (did:aw)`
 - `--registry string Registry origin for --as-root, when the domain's _awid record names none`
 
 ## `id child receive`
@@ -552,11 +574,15 @@ Flags:
 
 Receive a child's request against one of your invitations
 
+When acting as a human, the first signature asks once for the selected person's
+keychain passphrase at a real terminal. Each signature is described; the key
+stays in memory for this command, including confirmation waits, and is wiped
+on success, error or interruption. Another command asks again.
+
 Flags:
-- `--as-root Act as the namespace root, with this machine's controller key`
-- `--domain string Namespace domain (with --as-root or --human)`
+- `--as-root Act as the namespace root of --domain, with this machine's controller key`
+- `--domain string Organization namespace for agent or --as-root operations; with --human, the person's domain, as --human-domain`
 - `-h, --help help for receive`
-- `--human string Act as this human on this machine (did:aw)`
 - `--registry string Registry origin for --as-root, when the domain's _awid record names none`
 
 ## `id child refuse`
@@ -565,11 +591,15 @@ Flags:
 
 Refuse one received request without signing
 
+When acting as a human, the first signature asks once for the selected person's
+keychain passphrase at a real terminal. Each signature is described; the key
+stays in memory for this command, including confirmation waits, and is wiped
+on success, error or interruption. Another command asks again.
+
 Flags:
-- `--as-root Act as the namespace root, with this machine's controller key`
-- `--domain string Namespace domain (with --as-root or --human)`
+- `--as-root Act as the namespace root of --domain, with this machine's controller key`
+- `--domain string Organization namespace for agent or --as-root operations; with --human, the person's domain, as --human-domain`
 - `-h, --help help for refuse`
-- `--human string Act as this human on this machine (did:aw)`
 - `--registry string Registry origin for --as-root, when the domain's _awid record names none`
 
 ## `id child show`
@@ -578,11 +608,15 @@ Flags:
 
 Show one received request and the fingerprint of its key
 
+When acting as a human, the first signature asks once for the selected person's
+keychain passphrase at a real terminal. Each signature is described; the key
+stays in memory for this command, including confirmation waits, and is wiped
+on success, error or interruption. Another command asks again.
+
 Flags:
-- `--as-root Act as the namespace root, with this machine's controller key`
-- `--domain string Namespace domain (with --as-root or --human)`
+- `--as-root Act as the namespace root of --domain, with this machine's controller key`
+- `--domain string Organization namespace for agent or --as-root operations; with --human, the person's domain, as --human-domain`
 - `-h, --help help for show`
-- `--human string Act as this human on this machine (did:aw)`
 - `--registry string Registry origin for --as-root, when the domain's _awid record names none`
 
 ## `id create`
@@ -605,12 +639,19 @@ or API key is used for that path. With --owner-identity-home, the existing
 organization owner's native key authorizes creation using its bound service;
 otherwise the host's human CLI login authorizes it.
 
+When acting as a human, the first signature asks once for the selected person's
+keychain passphrase at a real terminal. Each signature is described; the key
+stays in memory for this command, including confirmation waits, and is wiped
+on success, error or interruption. Another command asks again.
+
 Flags:
 - `--domain string Namespace domain for the global identity address`
 - `-h, --help help for create`
-- `--human-parent string did:aw of the issuing human (local key, or a registered account human with --org)`
+- `--human-parent string Parent person did:aw, who signs locally in --domain (--human ID --human-domain DOMAIN may also name them; with --org, a registered account human)`
 - `--inbound-mode string Hosted inbound delivery mode (default team-and-contacts; requires --org)`
+- `--local Create a key-only local identity (a did:key registered nowhere) in an explicit fresh --identity-home; resumable, and a rerun returns it`
 - `--name string Global identity name (address name under --domain)`
+- `--no-address Create a registered identity with no address in an explicit fresh --identity-home, registering its own did:aw at --registry; resumable`
 - `--org string Hosted organization slug or ID (human CLI login or explicit owner principal)`
 - `--owner-identity-home string Authorize --org creation with this owner's absolute native credential directory`
 - `--registry string Registry origin override (default: api.awid.ai)`
@@ -725,10 +766,82 @@ Flags:
 Human identities in a namespace's identity tree
 
 Subcommands:
+- `add` Ask your issuer to add a new person
+- `enroll` Enroll an approval key for your new or existing human ID
 - `init` Create your human ID in a namespace
+- `register` Register your issued human certificate with your own key
 
 Flags:
 - `-h, --help help for human`
+
+## `id human add`
+
+### `id human add`
+
+Run as a current person with --human ID --human-domain DOMAIN.
+With no human_approval requirement, the issuer returns a certificate without
+contacting an approval service or requiring your enrollment. Give it to the new
+person, who runs aw id human register FILE with their own human selector.
+If the organisation requires approval, you must be enrolled; the issuer asks
+for human approval through the existing 428 protocol. Review the exact act in your approval-service browser page. Every
+identity signature uses your keychain key, unlocked once at this terminal for
+this command, including the approval wait. The key is wiped at command exit.
+When approval is required, an agent requester uses the generic aw id request
+command instead; agents cannot use the unconfigured issuance path.
+
+The configured approval path returns a pending intent; it never enrolls the new person. The new
+person first prepares their own key with aw id human init and gives you its ID
+and key. Give them the resulting FILE. They run aw id human enroll --intent FILE
+--issuer URL with their own --human ID --human-domain DOMAIN, then register and
+confirm their approval key in the browser named by that signed intent.
+
+The first person is still bootstrapped by the organization's operator on the
+holder host. There is no operator network route.
+An expired approval can be archived with --restart to ask for a fresh approval.
+It never extends or reuses the old approval deadline.
+
+Flags:
+- `--approval-origin string Optional equality pin for your enrolled approval service`
+- `-h, --help help for add`
+- `--identity-key string New person's prepared identity did:key`
+- `--issuer string Issuer HTTPS origin; defaults to your saved enrollment`
+- `--out string New pending-intent file; default is JSON on stdout`
+- `--person string New person's prepared did:aw`
+- `--restart Archive an expired approval attempt and ask the issuer for a fresh request`
+
+## `id human enroll`
+
+### `id human enroll`
+
+Run this yourself with --human ID --human-domain DOMAIN at a terminal.
+Your identity key stays in the passphrase-protected OS keychain. For a new person,
+first run aw id human init and obtain a pending --intent FILE from your issuer.
+For an existing person, --issuer URL asks that issuer for an enrollment intent.
+After the first use, the issuer is remembered with your human record.
+The first signature asks once for your passphrase. The key stays unlocked in
+memory for this command, including browser and "type yes" waits, and is wiped
+when the command ends or is interrupted. Each signature is described on stderr.
+
+The signed intent supplies the approval service and RP ID; --approval-origin is
+an optional equality pin. You see the service before opening its enrollment page.
+Register and confirm your key in that browser, then continue at this terminal.
+Interrupted commands resume their original enrollment. After expiry, use --restart
+to preserve the old attempt and start again; a new person needs a fresh intent.
+Once confirmation is saved, resume activation without --restart, even after expiry.
+Register a second approval key in the same browser enrollment before continuing.
+Lost-key replacement is not implemented: loss of your only key requires the
+operator to issue a new ID and revoke the old one. Enrollment of an existing
+person never adds or changes a creation claim.
+
+Next: use aw id proof --message-file FILE --out proof.json, then give proof.json
+to anyone; they run plain aw verify proof.json on their machine.
+
+Flags:
+- `--approval-origin string Optional pin; must equal the service in the issuer's signed intent`
+- `-h, --help help for enroll`
+- `--intent string Pending signed enrollment intent handed to a new person by the issuer`
+- `--issuer string Your issuer's HTTPS origin; remembered after first use`
+- `--restart Archive an expired unconfirmed attempt and start fresh; never replace saved confirmation`
 
 ## `id human init`
 
@@ -736,10 +849,14 @@ Flags:
 
 Create your human ID in --domain. With --as-root the namespace controller on
 this machine issues its certificate now. Without it, the human is only
-prepared: an issuer elsewhere admits it through `aw id parent request`.
+prepared: give the public ID and key to your issuer. With a holder, its
+operator hands you an issued FILE for `aw id human register FILE`, or
+a pending intent for `aw id human enroll --intent FILE --issuer URL`.
+Enrollment asks you to register and confirm a key in the named browser.
+The existing `aw id parent request` exchange is also supported.
 
 The human key is kept in the OS keychain, encrypted under a passphrase you
-choose; every signature asks for that passphrase on the terminal. This needs
+choose; person commands unlock it once on the terminal and wipe it at exit. This needs
 a human at an interactive terminal: it refuses without one and inside an
 agent runtime. A run that fails resumes from where it stopped.
 
@@ -749,6 +866,21 @@ Flags:
 - `--domain string Namespace domain`
 - `-h, --help help for init`
 - `--registry string Registry origin, when the domain's _awid record names none (a record naming api.awid.ai counts as naming none)`
+
+## `id human register`
+
+### `id human register`
+
+Register the certificate handed to you by your organization's operator or
+approved issuer. Run this yourself with --human ID --human-domain DOMAIN at a
+terminal; unlock once with your keychain passphrase for this command. Prepare your human ID
+first with aw id human init. This registers your ID without enrolling an approval
+key. Afterwards you may optionally run aw id human enroll, or create a portable
+message with aw id proof --message-file FILE for anyone to check with aw verify.
+
+Flags:
+- `-h, --help help for register`
+- `--registry string Optional registry pin; must agree with the domain's DNS record`
 
 ## `id log`
 
@@ -933,6 +1065,8 @@ Request and import your own certificate from a parent
 
 Subcommands:
 - `import` Import the parent's response to your request and register it
+- `install` Install an already-issued chain for this home's own local key
+- `refresh` Refresh current registered ancestry without re-signing your certificate
 - `request` Export a certificate request against a parent's invitation
 
 Flags:
@@ -947,12 +1081,40 @@ chain and register it at AWID with your own key (--no-register leaves the
 registration pending). A failed registration keeps the signed response;
 run import again to retry it.
 
+When acting as a human, the first signature asks once for the selected person's
+keychain passphrase at a real terminal. Each signature is described; the key
+stays in memory for this command, including confirmation waits, and is wiped
+on success, error or interruption. Another command asks again.
+
 Flags:
-- `--domain string Namespace domain of the invitation`
+- `--domain string Organization namespace for agent operations; with --human, the person's domain, as --human-domain`
 - `-h, --help help for import`
-- `--human string Act as this human prepared on this machine (did:aw)`
 - `--no-register Install the certificate but leave its AWID registration pending`
 - `--registry string Registry origin, when the domain's _awid record names none (a record naming api.awid.ai counts as naming none)`
+
+## `id parent install`
+
+### `id parent install`
+
+Verify and install an already-issued public ID chain for this home's own did:key.
+The home must have no chain or the identical chain. This does not adopt or re-parent.
+
+Flags:
+- `--domain string Organization namespace for agent operations (defaults to the chain)`
+- `-h, --help help for install`
+- `--registry string Registry origin when DNS names none`
+
+## `id parent refresh`
+
+### `id parent refresh`
+
+Fetch and verify current registered ancestry, preserving local certificates below it.
+For a branch with only local ancestors, use parent request --resign with the parent.
+
+Flags:
+- `--domain string Organization namespace for agent operations (defaults to the chain)`
+- `-h, --help help for refresh`
+- `--registry string Registry origin when DNS names none`
 
 ## `id parent request`
 
@@ -966,17 +1128,41 @@ the fingerprint shown here through a different trusted channel.
 
 With --resign, a local agent (whose ID is its did:key) instead asks the parent
 of the certificate it carries to re-sign it with the parent's current key,
-after the parent rotated its key.
+after its key or ancestry changed.
+
+When acting as a human, the first signature asks once for the selected person's
+keychain passphrase at a real terminal. Each signature is described; the key
+stays in memory for this command, including confirmation waits, and is wiped
+on success, error or interruption. Another command asks again.
 
 Flags:
-- `--domain string Namespace domain of the invitation`
+- `--domain string Organization namespace for agent operations; with --human, the person's domain, as --human-domain`
 - `-h, --help help for request`
-- `--human string Act as this human prepared on this machine (did:aw)`
 - `--invitation-id string Invitation ID the parent gave you`
 - `--out string Where to write the request (- for stdout) (default "-")`
 - `--parent string did:aw or did:key of the parent identity`
 - `--resign Ask the parent to re-sign the certificate this local agent carries`
-- `--root-parent The parent is the namespace root of --domain`
+- `--root-parent The parent is the namespace root of the selected organization`
+
+## `id proof`
+
+### `id proof`
+
+Sign the text in --message-file with your human key at a terminal, asking for
+its keychain passphrase once for this command and wiping the key at exit.
+The JSON export carries your ID chain and any saved
+enrollment evidence. It needs no team or mail server. Missing enrollment is not
+a refusal and adds no evidence. Run with --human ID --human-domain DOMAIN.
+Saved evidence rides only in proof files; ordinary mail does not yet carry it.
+
+Next: give the output file to anyone. On another machine they run:
+  aw verify FILE
+No identity, credentials, initialization or registry flag is needed.
+
+Flags:
+- `-h, --help help for proof`
+- `--message-file string Text file to sign as your message`
+- `--out string New export file; default is JSON on stdout`
 
 ## `id register`
 
@@ -994,11 +1180,16 @@ Flags:
 Make a DIDKey-signed HTTP request with the local identity key
 
 Flags:
+- `--approval-admission string File containing this caller's public admission certificate/chain`
+- `--approval-origin string Known approval-service HTTPS origin for a needs-human response`
+- `--approval-record string Private file retaining the original approval request and receipt`
+- `--approval-requester string File containing this caller's canonical requester descriptor`
+- `--approval-resume Resume the original request from --approval-record`
 - `--body string Request body to send. Warning: double-quoted shell arguments expand backticks and $(...) before aw runs; use --body-file for Markdown or command examples`
 - `--body-file string Read request body from a file; safe for Markdown or command examples`
 - `--header stringArray Additional header in 'Name: Value' form`
 - `-h, --help help for request`
-- `--raw Print only the upstream response body`
+- `--raw Print only the upstream response body, byte for byte; the HTTP status line goes to stderr`
 - `--sign string Additional signed fields (requires --team-auth)`
 - `--sign-file string Read additional signed fields from a file (requires --team-auth)`
 - `--team-auth Attach the active team certificate and sign a team-bound request payload`
@@ -1018,18 +1209,22 @@ Flags:
 
 Revoke a registered identity under docs/id-certificates.md §3, signed by
 the current identity (itself, or its current child), by --human <did:aw>
---domain D for a human on this machine, or by --as-root --domain D for the
+--human-domain D for a human on this machine, or by --as-root --domain D for the
 namespace root. AWID decides whether the signer may revoke the identity.
 The revocation takes effect at AWID's serialization time; only --as-root
 may set an earlier --cutoff. This revokes ID-tree authority, not team
 membership, addresses or DID key history.
 
+When acting as a human, the first signature asks once for the selected person's
+keychain passphrase at a real terminal. Each signature is described; the key
+stays in memory for this command, including confirmation waits, and is wiped
+on success, error or interruption. Another command asks again.
+
 Flags:
-- `--as-root Revoke as the namespace root, with this machine's controller key`
+- `--as-root Revoke as the namespace root of --domain, with this machine's controller key`
 - `--cutoff string With --as-root: the earlier time (RFC 3339) the revocation takes effect from`
-- `--domain string Namespace domain (with --as-root or --human)`
+- `--domain string Organization namespace for agent or --as-root operations; with --human, the person's domain, as --human-domain`
 - `-h, --help help for revoke`
-- `--human string Revoke as this human on this machine (did:aw)`
 - `--registry string Registry origin for --as-root, when the domain's _awid record names none`
 
 ## `id rotate-key`
@@ -1083,6 +1278,16 @@ Flags:
 - `--payload string JSON object to sign`
 - `--payload-file string Read the JSON payload to sign from a file`
 
+## `id status`
+
+### `id status`
+
+Read recorded local initialization state without contacting a service. This does not prove live registry or server status. Missing state is reported as incomplete; unreadable or invalid state is an error.
+
+Flags:
+- `-h, --help help for status`
+- `--team string Override the selected team_id for this command`
+
 ## `id team`
 
 ### `id team`
@@ -1097,11 +1302,13 @@ holders, service projection, or diagnostics.
 Subcommands:
 - `accept-invite` Accept a team invite and receive a membership certificate
 - `add-member` Protocol/admin: add a member by signing a team certificate
+- `check-invite` Inspect a saved invite and check its exact attempted certificate online
 - `cleanup-cloud` Protocol/admin: delete aweb Cloud's BYOT projection after registry team deletion
 - `create` Create a hosted sibling team or a customer-controlled AWID team
 - `delete` Protocol/admin: delete an AWID team using the namespace controller key
 - `fetch-cert` Protocol/admin bridge: fetch and install an approved team certificate
 - `import-request` Protocol/admin: create a signed BYOT import request for aweb cloud
+- `install-cert` Install an issued team certificate file into an identity home
 - `invite` Generate an invite token for a team
 - `leave` Remove a team membership from this identity
 - `list` List team memberships for this identity
@@ -1110,6 +1317,8 @@ Subcommands:
 - `reissue-cert` Protocol/admin: mint and register a fresh certificate for the same member key
 - `remove-member` Protocol/admin: remove a member by revoking a team certificate
 - `request` Protocol/admin bridge: print the add-member command the team owner should run
+- `resume-invite` Resume the exact saved certificate into its original recipient home
+- `revoke-invite` Cancel an unused local controller invite; issued membership certificates remain valid
 - `rotate-key` Rotate the team controller key, re-signing the team's AWID records with it
 - `set-server` Publish the team's coordination server at AWID, signed by the team controller key
 - `show-server` Show and verify the team's published coordination server
@@ -1160,6 +1369,7 @@ Flags:
 - `--local Join with a local workspace identity (default)`
 - `--name string Member name for the accepting agent (defaults to identity name)`
 - `--no-address For --global, join with did:aw continuity but no member address`
+- `--parent string Same-machine creator home for a fresh child, independent of the invite`
 - `--token-file string Read the invite token from this file instead of an argument`
 - `--token-stdin Read one invite token from stdin through EOF (max 65536 bytes)`
 
@@ -1180,6 +1390,16 @@ Flags:
 - `--name string Member name to use with --did`
 - `--namespace string Namespace domain`
 - `--team string Team name`
+
+## `id team check-invite`
+
+### `id team check-invite`
+
+Inspect a saved invite and check its exact attempted certificate online
+
+Flags:
+- `-h, --help help for check-invite`
+- `--invite-id string Saved local invite_id to inspect`
 
 ## `id team cleanup-cloud`
 
@@ -1290,6 +1510,33 @@ Flags:
 - `--team string Team name`
 - `--timestamp string RFC3339 timestamp to sign (defaults to now; accepted for five minutes by cloud)`
 
+## `id team install-cert`
+
+### `id team install-cert`
+
+Install an issued team membership certificate file into the explicit
+--identity-home whose identity it names. The certificate is checked against
+the registry before anything is written; then `aw service init` connects
+the home's workspace.
+
+Running it again with the same certificate reports already_installed and
+completes an install that was interrupted. Refusals, with their --json codes:
+  certificate_invalid        the file is not a team certificate, or the registry reports
+                             a status for it that aw does not know
+  member_mismatch            it names another key, did:aw or scope than the home's identity
+  team_key_not_current       it is signed by a key that is not the team's current key
+  certificate_bad_signature  its signature does not verify under that key
+  certificate_revoked        the registry has revoked it
+  certificate_unregistered   the registry does not hold it for this member
+  certificate_conflict       the home holds another certificate for the team, or, for a
+                             local identity, any membership of another team
+  registry_unavailable       the registry could not be read; retrying may succeed
+
+Flags:
+- `--certificate string Certificate file to install`
+- `-h, --help help for install-cert`
+- `--registry string Registry origin the team is read from (default: the configured registry)`
+
 ## `id team invite`
 
 ### `id team invite`
@@ -1301,11 +1548,15 @@ Invites create local workspace members unless --member-global is set. Hosted tea
 invite authority; local-controller teams use the local team controller key.
 
 Flags:
+- `--expires duration Controller invite lifetime (default 24h; maximum 720h)`
+- `--for-human string Admit agents whose verified nearest human is this did:aw person`
 - `-h, --help help for invite`
 - `--member-global Create global member invite`
 - `--member-local Create local workspace member invite (default)`
 - `--namespace string Namespace domain`
+- `--preflight Show the mint authority without creating a token or child invitation`
 - `--team string Team name`
+- `--team-id string Canonical team ID; use instead of --team and --namespace`
 
 ## `id team leave`
 
@@ -1458,6 +1709,26 @@ Flags:
 - `--name string Suggested member name for the new team membership`
 - `--team string Canonical team ID (<name>:<domain>)`
 
+## `id team resume-invite`
+
+### `id team resume-invite`
+
+Resume the exact saved certificate into its original recipient home
+
+Flags:
+- `-h, --help help for resume-invite`
+- `--invite-id string Saved invite_id whose exact issuance is resumed`
+
+## `id team revoke-invite`
+
+### `id team revoke-invite`
+
+Cancel an unused local controller invite; issued membership certificates remain valid
+
+Flags:
+- `-h, --help help for revoke-invite`
+- `--invite-id string Local invite_id to cancel`
+
 ## `id team rotate-key`
 
 ### `id team rotate-key`
@@ -1467,9 +1738,11 @@ controller key. Every record the team key has signed at AWID (the team-server re
 custodian, member-custody and member-person records) is verified, re-signed by the
 new key and swapped with the key in one atomic request.
 
-Every member certificate is signed by the team key, so after a rotation all of them are
-invalid: re-issue each with `aw id team reissue-cert`. If the command is interrupted,
-run it again: it resumes with the same new key.
+Every member certificate is signed by the team key, so the same request gives each active
+member a fresh certificate under the new key, with the member's custody and person records:
+AWID revokes the old certificate and registers the new one with the key. Members' clients
+fetch their new certificate when a server refuses the old one. If the command is
+interrupted, run it again: it resumes with the same new key.
 
 Flags:
 - `-h, --help help for rotate-key`
@@ -1674,9 +1947,12 @@ Subcommands:
 - `inspect` Inspect an invite from stdin without redeeming it
 
 Flags:
+- `--expires duration Controller invite lifetime (default 24h; maximum 720h)`
+- `--for-human string Admit agents whose verified nearest human is this did:aw person`
 - `-h, --help help for invite`
 - `--member-global Create global member invite`
 - `--member-local Create local workspace member invite (default)`
+- `--preflight Show the mint authority without creating a token or child invitation`
 - `--team-id string Canonical team id (<name>:<namespace>) to invite from (defaults to active team)`
 
 ## `team invite inspect`
@@ -1721,6 +1997,7 @@ Flags:
 - `--name string Member name for the accepting agent (defaults to identity name)`
 - `--no-address For --global, join with did:aw continuity but no member address`
 - `--no-connect Install identity and membership without connecting this workspace`
+- `--parent string Same-machine creator home for a fresh child, independent of the invite`
 - `--setup-only Retry harness setup for the connected identity without accepting an invite`
 - `--token-file string Read the invite token from this file instead of an argument`
 - `--token-stdin Read the invite token from stdin instead of an argument`
@@ -1783,6 +2060,7 @@ Subcommands:
 - `refresh` Refresh a team member's profile and existing team-instructions block
 - `up` Launch local team agents in tmux
 - `agent-status` Read whether an agent still holds a certificate, a workspace, or task claims
+- `log-key` Manage the owner key that agents' local message logs are sealed to
 - `remove-agent` Retire an agent: release its claims, then revoke its certificate
 - `replace-key` Replace a local agent identity key under team-controller authority
 
@@ -1935,6 +2213,77 @@ Flags:
 - `-h, --help help for agent-status`
 - `--team-id string Canonical team id (<name>:<namespace>) to read from (defaults to active team)`
 
+## `team admin log-key`
+
+### `team admin log-key`
+
+Manage the owner key that agents' local message logs are sealed to
+
+Subcommands:
+- `create` Create (or rotate) the team's owner log key; prints its unsigned public record
+- `install` Install the team's owner log key record on this host; local logs are then sealed to it
+- `sign` Sign a log key record, or attach a signature made elsewhere
+- `signing-bytes` Print the exact bytes a team key signs for a log key record
+
+Flags:
+- `-h, --help help for log-key`
+- `--team string Override the selected team_id for this command`
+
+## `team admin log-key create`
+
+### `team admin log-key create`
+
+Create a new log key for the team on the machine where the owner reads the logs. The
+private key is kept in the OS keychain under a passphrase. The public record is written
+to --out (or stdout) unsigned: sign it with `aw team admin log-key sign` wherever the
+team controller key is held, then install it with `aw team admin log-key install` on
+each agent host. Running it again rotates the key; earlier keys stay in the keychain.
+
+Flags:
+- `-h, --help help for create`
+- `--out string Write the unsigned public record to this file instead of stdout`
+
+## `team admin log-key install`
+
+### `team admin log-key install`
+
+Install the team's owner log key record on this host; local logs are then sealed to it
+
+Flags:
+- `-h, --help help for install`
+
+## `team admin log-key sign`
+
+### `team admin log-key sign`
+
+Complete a log key record through exactly one route:
+  --team-key-did and --signature attach a signature produced elsewhere, after
+  verifying it over the record's signing bytes;
+  --offline-controller-key signs with the team controller key in ~/.awid/team-keys/
+  on this machine.
+With no route, or both, it refuses. The signed record is written to --out (or stdout).
+
+Flags:
+- `-h, --help help for sign`
+- `--offline-controller-key Sign with the team controller key in ~/.awid/team-keys/ on this machine`
+- `--out string Write the signed record to this file instead of stdout`
+- `--record string The log key record to sign`
+- `--signature string A signature produced elsewhere: unpadded standard base64 of the 64 Ed25519 bytes`
+- `--team-key-did string The did:key of the team key that produced --signature`
+
+## `team admin log-key signing-bytes`
+
+### `team admin log-key signing-bytes`
+
+Print, with no trailing newline, the bytes the team controller key --team-key-did signs
+for the record: the aweb.log-key/1 prefix and the canonical JSON of its unsigned fields.
+Use it to cross-check what any signer is asked to sign.
+
+Flags:
+- `-h, --help help for signing-bytes`
+- `--record string The log key record`
+- `--team-key-did string The did:key of the team key that will sign`
+
 ## `team admin remove-agent`
 
 ### `team admin remove-agent`
@@ -2029,6 +2378,27 @@ Flags:
 - `--old-did-key string Expected current local member did:key (required)`
 - `--registry string AWID registry URL override`
 - `--team-id string Canonical team id (<name>:<namespace>; defaults to active team)`
+
+## `verify`
+
+### `verify`
+
+Verify an exported signed message using only its original signed content,
+DNS and public registry reads. No identity, team, token or initialization is needed.
+FILE defaults to stdin; - also reads stdin. Export with:
+  aw mail show --message-id ID --envelope > message.json
+
+Print the same responsibility result as aw who, with invalid proof shown explicitly
+as invalid. --json retains the shared outcome and identity_valid fields: invalid
+proof has outcome unknown and identity_valid false. Lookup failures are unavailable,
+never valid. A verified signature alone does not establish a responsible human.
+Encrypted exports can be verified without decrypting their content.
+Exit 0 for valid or normal unknown results, 1 for invalid proof, 2 for unavailable
+evidence or unreadable input.
+
+Flags:
+- `-h, --help help for verify`
+- `--registry string Registry origin, when the domain's _awid record names none (same restriction as aw who)`
 
 ## `whoami`
 
@@ -2349,6 +2719,15 @@ aweb address like acme.aweb.ai/reviewer, or a did:aw identity. The
 resolved address is always shown: mail goes out under this workspace's
 cryptographically verified identity.
 
+A bare recipient name is looked up in the selected team. When that team's
+agent list and roster say the name is not there, this identity has other
+local team memberships, and --team is not given, aw looks in those teams:
+a name found in exactly one of them is sent from that team, which aw names
+on stderr; a name found in more than one needs --team. If any of those teams
+cannot be read, the send is refused rather than guessed. When the selected
+team itself cannot be read, aw stays in it, and the send confirms the
+recipient before delivery.
+
 Flags:
 - `--body string Alias for --message`
 - `--cc stringArray Not supported in v1: send to each recipient separately`
@@ -2512,6 +2891,15 @@ Flags:
 
 Send a message and leave the conversation. Warning: double-quoted shell arguments expand backticks and $(...) before aw runs; use --body-file for Markdown or command examples
 
+A bare recipient name is looked up in the selected team. When that team's
+agent list and roster say the name is not there, this identity has other
+local team memberships, and --team is not given, aw looks in those teams:
+a name found in exactly one of them is sent from that team, which aw names
+on stderr; a name found in more than one needs --team. If any of those teams
+cannot be read, the send is refused rather than guessed. When the selected
+team itself cannot be read, aw stays in it, and the send confirms the
+recipient before delivery.
+
 Flags:
 - `--body-file string Read message body from a file; safe for Markdown or command examples`
 - `--e2ee Send E2E encrypted chat; fails closed if encryption keys are missing`
@@ -2524,6 +2912,15 @@ Flags:
 ### `chat send-and-wait`
 
 Send a message and wait for a reply. Warning: double-quoted shell arguments expand backticks and $(...) before aw runs; use --body-file for Markdown or command examples
+
+A bare recipient name is looked up in the selected team. When that team's
+agent list and roster say the name is not there, this identity has other
+local team memberships, and --team is not given, aw looks in those teams:
+a name found in exactly one of them is sent from that team, which aw names
+on stderr; a name found in more than one needs --team. If any of those teams
+cannot be read, the send is refused rather than guessed. When the selected
+team itself cannot be read, aw stays in it, and the send confirms the
+recipient before delivery.
 
 Flags:
 - `--body-file string Read message body from a file; safe for Markdown or command examples`
@@ -2934,12 +3331,24 @@ Flags:
 
 Show local communication log
 
+Subcommands:
+- `read` Read sealed local logs with the owner's log keys from this machine's keychain
+
 Flags:
 - `--channel string Filter by channel (mail, chat, dm)`
 - `--from string Filter by sender (substring match)`
 - `-h, --help help for log`
 - `--limit int Max entries to show (default 20)`
 - `--team string Override the selected team_id for this command`
+
+## `log read`
+
+### `log read`
+
+Read sealed local logs with the owner's log keys from this machine's keychain
+
+Flags:
+- `-h, --help help for read`
 
 ## `mail`
 
@@ -3041,6 +3450,20 @@ is refused there. JSON returns message_id and conversation_id. A server that
 answers a new thread with another conversation_id fails without retry; the
 message may already have been sent into that conversation.
 
+With --human, unlock once at a real terminal for this command; each signature
+is described on stderr and the key is wiped at exit. Ordinary human mail
+carries the ID chain and no saved enrollment or creation evidence.
+Use aw id proof to export that evidence for someone else to verify.
+
+A bare recipient name is looked up in the selected team. When that team's
+agent list and roster say the name is not there, this identity has other
+local team memberships, and --team is not given, aw looks in those teams:
+a name found in exactly one of them is sent from that team, which aw names
+on stderr; a name found in more than one needs --team. If any of those teams
+cannot be read, the send is refused rather than guessed. When the selected
+team itself cannot be read, aw stays in it, and the send confirms the
+recipient before delivery.
+
 Flags:
 - `--body string Body. Warning: double-quoted shell arguments expand backticks and $(...) before aw runs; use --body-file for Markdown or command examples`
 - `--body-file string Read message body from a file; safe for Markdown or command examples`
@@ -3060,7 +3483,7 @@ Flags:
 
 Show mail by conversation or exact message ID.
 
-With --message-id, one unique message is selected. The conversation-window direction and 500-message ceiling below do not apply.
+With --message-id, one unique message is selected. The conversation-window direction and 500-message ceiling below do not apply. Add --envelope to export its original signed envelope as JSON for aw verify, without acknowledging it.
 
 With --conversation-id, --limit caps how many messages are returned and defaults to 200. The messages returned are the OLDEST ones, so on a conversation longer than the limit the newest messages are the ones missing - which is the opposite of what someone checking for recent mail expects.
 
@@ -3070,6 +3493,7 @@ To read a whole conversation, pass --limit above its length and check the return
 
 Flags:
 - `--conversation-id string Mail conversation to inspect`
+- `--envelope Export an exact message's original signed envelope as JSON for aw verify`
 - `-h, --help help for show`
 - `--limit int For --conversation-id, max messages from the OLDEST end; exact --message-id reads are not windowed (default 200)`
 - `--message-id string Legacy mail message to inspect`
@@ -3269,7 +3693,9 @@ Report per-home broker lifecycle, readiness, and delivery status
 
 Flags:
 - `-h, --help help for status`
+- `--home string Report readiness for this absolute instance home`
 - `--max-streams int Stream bound reported when the daemon is down (default 128)`
+- `--min-daemon-version string Required daemon release version for the readiness verdict`
 - `--state-dir string Broker state directory (default $AW_WAKE_STATE_DIR, else ~/.config/aw/wake)`
 
 ## `activity`
@@ -4017,6 +4443,150 @@ List ready tasks that are not already claimed by other workspaces
 Flags:
 - `-h, --help help for ready`
 
+## `app`
+
+### `app`
+
+Roles that an app's manifest declares under owner_acts are held by human members of the team.
+The team owner binds and unbinds holders with signed acts; a holder registers a passkey
+at the app's human origin in a browser that aw opens.
+
+Subcommands:
+- `credential` Register or replace a holder's passkey for an app role
+- `human` Run an action an app declares for its role holders, in a passkey session
+- `role` Designate or revoke a holder of an app role, as the team owner
+
+Flags:
+- `-h, --help help for app`
+
+## `app credential`
+
+### `app credential`
+
+Register or replace a holder's passkey for an app role
+
+Subcommands:
+- `register` Register a passkey for an app role, as the holder, and export it for the team owner
+- `replace` Replace a holder's passkey, as the team owner
+
+Flags:
+- `-h, --help help for credential`
+
+## `app credential register`
+
+### `app credential register`
+
+Opens the app's human origin in a browser, where you create a passkey, and writes the public
+credential with your team certificate to --out (or stdout). Read its fingerprint to the team
+owner over a channel your custodian does not control, such as in person or a call.
+
+Flags:
+- `-h, --help help for register`
+- `--out string Write the export to this file instead of stdout`
+- `--role string The app role, as its manifest names it`
+
+## `app credential replace`
+
+### `app credential replace`
+
+Signs human-credential.replace with the team's controller key. The current passkey is retired
+at once and the replacement takes effect after the app's cooling-off period.
+
+Flags:
+- `--credential string The holder's export from aw app credential register`
+- `-h, --help help for replace`
+- `--notice-contact string The notice contact, for a role that declares one`
+- `--principal string The holder's did:aw`
+- `--role string The app role, as its manifest names it`
+- `--yes Sign what is shown without asking`
+
+## `app human`
+
+### `app human`
+
+Runs one of the session actions an app's manifest declares under owner_acts.session_actions,
+in a console session that a browser passkey login opens for your holding of the action's role.
+`aw app human <app> --help` lists the declared actions. A protected field is typed at the
+terminal with echo off and has no flag; a one-time output is written only to the terminal.
+
+Flags:
+- `-h, --help help for human`
+
+## `app role`
+
+### `app role`
+
+Designate or revoke a holder of an app role, as the team owner
+
+Subcommands:
+- `designate` Designate a human member as a holder of an app role
+- `revoke` End a holder's holding of an app role
+
+Flags:
+- `-h, --help help for role`
+
+## `app role designate`
+
+### `app role designate`
+
+Signs human-role.designate with the team's controller key. Pass the holder's export with
+--credential and sign only after both clients show the same fingerprint. Without --credential,
+you are the holder: aw registers your passkey first, then signs.
+
+Flags:
+- `--credential string The holder's export from aw app credential register`
+- `-h, --help help for designate`
+- `--notice-contact string The notice contact, for a role that declares one`
+- `--principal string The holder's did:aw`
+- `--role string The app role, as its manifest names it`
+- `--yes Sign what is shown without asking`
+
+## `app role revoke`
+
+### `app role revoke`
+
+End a holder's holding of an app role
+
+Flags:
+- `-h, --help help for revoke`
+- `--principal string The holder's did:aw`
+- `--role string The app role, as its manifest names it`
+- `--yes Sign what is shown without asking`
+
+## `audit`
+
+### `audit`
+
+A team's audit log
+
+Subcommands:
+- `verify` Verify an exported team log offline
+
+Flags:
+- `-h, --help help for audit`
+
+## `audit verify`
+
+### `audit verify`
+
+Verify an exported team log (aweb.logs-export/1) offline, against the receipt and
+checkpoint keys you accept and the receipts and checkpoints you hold yourself.
+
+It reads only the files it is given: no workspace, identity or server.
+Give each key you accept, for receipts and for checkpoints; a key that signs
+both is given to both. Each --witness file holds one receipt or checkpoint per
+line, in an export's own line shape. --bundle - reads the export from stdin.
+
+Exits 0 when the bundle is intact, 1 when it is verified and not intact, and 2
+when it could not be verified.
+
+Flags:
+- `--bundle string The export to verify, or - for stdin`
+- `--checkpoint-key stringArray A did:key you accept for checkpoints (repeatable)`
+- `-h, --help help for verify`
+- `--receipt-key stringArray A did:key you accept for receipts (repeatable)`
+- `--witness stringArray A file of receipts and checkpoints you hold (repeatable)`
+
 ## `completion`
 
 ### `completion`
@@ -4376,6 +4946,47 @@ Upgrade aw to the latest version
 
 Flags:
 - `-h, --help help for upgrade`
+
+## `validate`
+
+### `validate`
+
+Query the CLI's identifier and URL rules without identity or network access
+
+Subcommands:
+- `alias` Check a workspace alias using the CLI's alias rule
+- `team-id` Parse and normalize a team ID using the SDK's input rule
+- `team-server-url` Query canonical team-server URL and audience spelling
+
+Flags:
+- `-h, --help help for validate`
+
+## `validate alias`
+
+### `validate alias`
+
+Check a workspace alias using the CLI's alias rule
+
+Flags:
+- `-h, --help help for alias`
+
+## `validate team-id`
+
+### `validate team-id`
+
+Parse and normalize a team ID using the SDK's input rule
+
+Flags:
+- `-h, --help help for team-id`
+
+## `validate team-server-url`
+
+### `validate team-server-url`
+
+Query canonical team-server URL and audience spelling
+
+Flags:
+- `-h, --help help for team-server-url`
 
 ## `version`
 

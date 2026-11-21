@@ -34,7 +34,8 @@ class GeneratedCopiesTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             paths = subprocess.check_output([
-                'git', 'ls-files', '-z', '--', 'Makefile', 'scripts/sync-skill-copies.sh',
+                'git', 'ls-files', '-z', '--', 'Makefile', 'server/pyproject.toml', 'awid/pyproject.toml',
+                'scripts/sync-skill-copies.sh',
                 'scripts/skill-packaging.mjs', 'skills', 'packages/codex-plugin',
                 'oats/.agents/capabilities/owned/aweb-tasks', 'docs', 'awid/site/static',
             ], cwd=ROOT).decode().split('\0')

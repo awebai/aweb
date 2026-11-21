@@ -16,6 +16,7 @@ from awid.signing import canonical_json_bytes, verify_did_key_signature
 from awid.team_ids import parse_team_id
 from aweb.config import get_settings
 from aweb.deps import get_db
+from aweb.team_key_pins import pinned_team_key_for_request
 
 router = APIRouter(prefix="/api/v1", tags=["service-registration"])
 
@@ -200,18 +201,16 @@ async def register_team_with_service(
     if registry_client is None:
         raise HTTPException(status_code=503, detail="AWID registry client is not configured")
 
-    registry_team = await registry_client.get_team(domain, team_name)
-    if registry_team is None:
+    # The team's key as this server holds it: the registry's answer, moved
+    # from an admitted key only by the namespace controller's act.
+    registry_key = await registry_client.get_team_public_key(domain, team_name)
+    if not registry_key:
         raise HTTPException(
             status_code=404,
             detail={"code": "awid_team_not_found", "message": "AWID team was not found."},
         )
-    team_controller_did = str(registry_team.team_did_key or "").strip()
-    if not team_controller_did:
-        raise HTTPException(
-            status_code=409,
-            detail={"code": "awid_team_missing_controller", "message": "AWID team is missing team_did_key."},
-        )
+    aweb_db = db.get_manager("aweb")
+    team_controller_did = await pinned_team_key_for_request(request, canonical_team_id, registry_key, db=aweb_db)
 
     try:
         enforce_timestamp_skew(body.timestamp)
@@ -235,7 +234,6 @@ async def register_team_with_service(
             detail={"code": "invalid_controller_signature", "message": "Team controller signature did not verify."},
         ) from exc
 
-    aweb_db = db.get_manager("aweb")
     team_created = await _ensure_service_registered_team(
         db=aweb_db,
         canonical_team_id=canonical_team_id,

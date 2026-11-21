@@ -6,6 +6,8 @@ import (
 	"encoding/base64"
 	"errors"
 	"net/http"
+	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,6 +26,7 @@ const (
 	doctorCheckIdentityLocalAddress        = "identity.local.address_expected"
 	doctorCheckIdentityLocalRegistrySource = "identity.local.registry_url_source"
 	doctorCheckIdentityLocalRegistry       = "identity.local.public_registry_not_expected"
+	doctorCheckIdentityLocalRegistryPinned = "identity.local.registry_url_pinned"
 	doctorCheckIdentityEncryptionState     = "identity.e2ee.encryption_state"
 	doctorCheckIdentityEncryptionPrivate   = "identity.e2ee.private_key"
 	doctorCheckIdentityEncryptionAssertion = "identity.e2ee.assertion"
@@ -477,6 +480,54 @@ func (r *doctorRunner) addRegistryURLSourceCheck(state *doctorIdentityState) {
 		return
 	}
 	r.add(localCheck(doctorCheckIdentityLocalRegistrySource, doctorStatusOK, nil, "Explicit awid registry URL is available.", "", map[string]any{"source": state.registryURLSource, "registry_url": state.registryURL}))
+	r.addRegistryPinningCheck(state)
+}
+
+// addRegistryPinningCheck reports how aw reaches the configured registry.
+// Only the built-in default, AWID_REGISTRY_URL and a registry flag on the
+// command line are reached with the CLI's own client; a registry known only
+// from stored files is reached at public addresses. No network is used: a
+// plainly private host (an address literal that is not public, localhost, a
+// single-label, .local or .internal name) is the case to warn about.
+func (r *doctorRunner) addRegistryPinningCheck(state *doctorIdentityState) {
+	registryURL := strings.TrimSpace(state.registryURL)
+	details := map[string]any{"source": state.registryURLSource, "registry_url": registryURL}
+	if state.registryURLSource == "AWID_REGISTRY_URL" || sameRegistryOrigin(registryURL, awid.DefaultAWIDRegistryURL) {
+		r.add(localCheck(doctorCheckIdentityLocalRegistryPinned, doctorStatusOK, nil, "The awid registry is reached with aw's own client.", "", details))
+		return
+	}
+	if registryHostPlainlyPrivate(registryURL) {
+		r.add(localCheck(doctorCheckIdentityLocalRegistryPinned, doctorStatusWarn, nil,
+			"The awid registry from "+state.registryURLSource+" is on a private host, and aw reaches a registry not named by AWID_REGISTRY_URL only at public addresses, so requests to it are refused.",
+			"For a private self-hosted registry, set AWID_REGISTRY_URL="+registryURL+".", details))
+		return
+	}
+	r.add(localCheck(doctorCheckIdentityLocalRegistryPinned, doctorStatusInfo, nil,
+		"The awid registry from "+state.registryURLSource+" is reached only at public addresses.",
+		"If it is a private self-hosted registry, set AWID_REGISTRY_URL to it.", details))
+}
+
+func sameRegistryOrigin(a, b string) bool {
+	pa, errA := url.Parse(strings.TrimSpace(a))
+	pb, errB := url.Parse(strings.TrimSpace(b))
+	return errA == nil && errB == nil && strings.EqualFold(pa.Scheme, pb.Scheme) && strings.EqualFold(pa.Host, pb.Host)
+}
+
+func registryHostPlainlyPrivate(raw string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(strings.TrimSuffix(parsed.Hostname(), "."))
+	if host == "" {
+		return false
+	}
+	if _, err := netip.ParseAddr(host); err == nil {
+		_, err := awid.ValidateFederationResolvedIPs([]string{host})
+		return err != nil
+	}
+	return host == "localhost" || strings.HasSuffix(host, ".localhost") || !strings.Contains(host, ".") ||
+		strings.HasSuffix(host, ".local") || strings.HasSuffix(host, ".internal")
 }
 
 func (r *doctorRunner) addRegistryChecks(state *doctorIdentityState) {
@@ -520,7 +571,7 @@ func (r *doctorRunner) addRegistryChecks(state *doctorIdentityState) {
 		return
 	}
 
-	client := awidDoctorRegistryClient{client: awid.NewAWIDRegistryClient(nil, nil)}
+	client := awidDoctorRegistryClient{client: newAWIDRegistryClient(nil, nil)}
 	r.runOnlineRegistryChecks(state, client)
 }
 

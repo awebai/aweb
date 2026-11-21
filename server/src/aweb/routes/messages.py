@@ -32,6 +32,7 @@ from aweb.messaging.verification import (
 )
 from aweb.service_errors import RESOURCE_NOT_FOUND_DETAIL
 
+from aweb.member_team_key import current_team_key_sql
 from aweb.messaging.sender_membership import SenderMembership, sender_memberships
 
 router = APIRouter(prefix="/v1/messages", tags=["aweb-mail"])
@@ -413,20 +414,6 @@ async def get_mail_conversation(
     raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
 
 
-def _recipient_transport_hint(payload: SendMessageRequest) -> str:
-    if payload.to_address is not None:
-        return "to_address"
-    if payload.to_stable_id is not None:
-        return "to_stable_id"
-    if payload.to_did is not None:
-        return "to_did"
-    if payload.to_agent_id is not None:
-        return "to_agent_id"
-    if payload.to_alias is not None:
-        return "to_alias"
-    return "mail"
-
-
 def _send_response(sent: SentMail) -> SendMessageResponse:
     return SendMessageResponse(**asdict(sent))
 
@@ -436,22 +423,6 @@ async def send_message(
     request: Request, payload: SendMessageRequest, db=Depends(get_db),
     auth: MessagingAuth = Depends(get_messaging_auth),
 ) -> SendMessageResponse:
-    from aweb.human_channels.http import ingress_requested, accept_native_http
-
-    if ingress_requested(request):
-        accepted = await accept_native_http(
-            request, payload, auth=auth, db=db, kind="mail"
-        )
-        row = await db.get_manager("aweb").fetch_one(
-            "SELECT created_at FROM {{tables.messages}} WHERE message_id=$1",
-            UUID(accepted["message_id"]),
-        )
-        return SendMessageResponse(
-            message_id=accepted["message_id"],
-            conversation_id=accepted["conversation_id"],
-            status="delivered",
-            delivered_at=row["created_at"].isoformat(),
-        )
     attachment_context = prepare_attachment_send(
         getattr(request.app.state, "attachment_backend", None), payload, auth,
     )
@@ -567,8 +538,12 @@ async def get_inbox(
                m.content_mode, m.message_version, m.encrypted_envelope,
                sender.agent_id AS sender_agent_id, sender.team_id AS sender_team_id,
                CASE WHEN sender.did_aw_verified_key = sender.did_key THEN sender.did_aw END AS sender_did_aw,
+               sender.did_key AS sender_did_key, sender.alias AS sender_alias,
+               sender.identity_scope AS sender_identity_scope, sender.address AS sender_address,
                sender.status AS sender_status, sender.deleted_at AS sender_deleted_at,
-               sender.certificate_id AS sender_certificate_id
+               sender.certificate_id AS sender_certificate_id,
+               sender.accepted_team_did_key AS sender_accepted_team_did_key,
+               {current_team_key_sql("sender")} AS sender_current_team_did_key
         FROM {{{{tables.messages}}}} m
         LEFT JOIN {{{{tables.agents}}}} sender ON sender.agent_id = m.from_agent_id
         {where_clause}
@@ -579,7 +554,10 @@ async def get_inbox(
         query_limit,
     )
     # The senders' agent rows, read with the page for their membership state.
-    sender_columns = ("agent_id", "team_id", "did_aw", "status", "deleted_at", "certificate_id")
+    sender_columns = (
+        "agent_id", "team_id", "did_aw", "did_key", "alias", "identity_scope", "address",
+        "status", "deleted_at", "certificate_id", "accepted_team_did_key", "current_team_did_key",
+    )
     sender_member_rows = list({
         str(row["sender_agent_id"]): {column: row[f"sender_{column}"] for column in sender_columns}
         for row in rows

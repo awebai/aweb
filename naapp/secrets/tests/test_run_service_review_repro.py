@@ -34,7 +34,7 @@ async def replace_run_grant(context, *, job=None, policy=None):
 
         old = json.loads(old)
         if policy is not None:
-            await records.create_policy(tx, scope.installation_id, policy)
+            await records.create_policy(tx, scope.installation_id, policy, team_id=TEAM)
             old["policy_digest"] = policy.digest
         if job is not None:
             await jobs.create_job(tx, scope.installation_id, TEAM, job)
@@ -195,7 +195,9 @@ async def test_policy_window_crossed_during_final_f6_tail_cannot_publish(uses):
         digest = await tx.fetch_value(
             "SELECT policy_digest FROM {{tables.grants}} WHERE grant_id='grt_durable001'"
         )
-        original = await records.policy(tx, uses.world.admitted.installation_id, digest)
+        original = await records.policy(
+            tx, uses.world.admitted.installation_id, digest, team_id=TEAM
+        )
     expiry = uses.clock().replace(second=0, microsecond=0) + timedelta(minutes=1)
     zone = "UTC" if expiry.date() == uses.clock().date() else "Etc/GMT+1"
     offset = timedelta(0) if zone == "UTC" else timedelta(hours=1)

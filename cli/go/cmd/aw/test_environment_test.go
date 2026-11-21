@@ -115,11 +115,65 @@ func restoreTestEnvironment(name, value string, existed bool) error {
 	return os.Unsetenv(name)
 }
 
+// isolateHostEnvironment makes the package's tests behave the same on a
+// developer's host as in the gate. Temporary directories are canonical, because
+// aw refuses identity homes, locks and custody paths under a symlinked parent
+// and macOS's /tmp and /var are symlinks. No agent runtime marker reaches a test
+// or a child aw process, so the agent running the tests does not decide what a
+// human-only command does. It returns the function that restores both.
+func isolateHostEnvironment() (func() error, error) {
+	saved := map[string]*string{}
+	save := func(name string) {
+		if value, ok := os.LookupEnv(name); ok {
+			saved[name] = &value
+		} else {
+			saved[name] = nil
+		}
+	}
+	restore := func() error {
+		var first error
+		for name, value := range saved {
+			var err error
+			if value == nil {
+				err = os.Unsetenv(name)
+			} else {
+				err = os.Setenv(name, *value)
+			}
+			if err != nil && first == nil {
+				first = err
+			}
+		}
+		return first
+	}
+	tmp, err := filepath.EvalSymlinks(os.TempDir())
+	if err != nil {
+		return nil, fmt.Errorf("resolve the temporary directory: %w", err)
+	}
+	save("TMPDIR")
+	if err := os.Setenv("TMPDIR", tmp); err != nil {
+		_ = restore()
+		return nil, err
+	}
+	for _, name := range agentRuntimeMarkers {
+		save(name)
+		if err := os.Unsetenv(name); err != nil {
+			_ = restore()
+			return nil, err
+		}
+	}
+	return restore, nil
+}
+
 func TestMain(m *testing.M) {
 	if runningAsHermeticClaude() {
 		os.Exit(0)
 	}
 	_ = os.Unsetenv(awconfig.IdentityHomeEnv)
+	restoreHost, err := isolateHostEnvironment()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "isolate cmd/aw tests from the host: %v\n", err)
+		os.Exit(1)
+	}
 
 	oldRunner := runClaudeChannelPluginCommand
 	oldPath, hadPath := os.LookupEnv("PATH")
@@ -220,6 +274,10 @@ func TestMain(m *testing.M) {
 	}
 	if err := os.RemoveAll(dir); err != nil {
 		fmt.Fprintf(os.Stderr, "remove hermetic Claude directory: %v\n", err)
+		code = 1
+	}
+	if err := restoreHost(); err != nil {
+		fmt.Fprintf(os.Stderr, "restore the host environment after cmd/aw tests: %v\n", err)
 		code = 1
 	}
 	os.Exit(code)

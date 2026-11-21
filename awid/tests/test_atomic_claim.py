@@ -2,7 +2,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from awid.atomic_claim import (
     AtomicAddressClaimFields,
     atomic_address_claim_identity_canonical,
@@ -13,7 +12,9 @@ from awid.atomic_claim import (
 
 
 def _vector() -> dict:
-    path = Path(__file__).parents[2] / "docs" / "vectors" / "atomic-address-claim-v1.json"
+    path = (
+        Path(__file__).parents[2] / "docs" / "vectors" / "atomic-address-claim-v1.json"
+    )
     return json.loads(path.read_text())
 
 
@@ -44,7 +45,9 @@ def test_atomic_address_claim_canonical_fixture():
     )
     assert identity_proof_hash == vector["identity_proof_hash"]
 
-    namespace_canonical = atomic_address_claim_namespace_canonical(fields, identity_proof_hash)
+    namespace_canonical = atomic_address_claim_namespace_canonical(
+        fields, identity_proof_hash
+    )
     assert namespace_canonical.decode() == vector["namespace_canonical"]
 
 
@@ -72,3 +75,21 @@ def test_atomic_address_claim_rejects_hosted_did_self_namespace():
     )
     with pytest.raises(ValueError, match="unsupported"):
         atomic_address_claim_identity_canonical(fields)
+
+
+def test_identity_proof_hash_uses_the_bytes_that_signature_verification_accepts():
+    from awid.did import did_key_from_signing_key
+    from awid.signing import VerifyResult, sign_message, verify_signature
+
+    vector = _vector()
+    canonical = atomic_address_claim_identity_canonical(_fields(vector))
+    key = bytes(range(32))
+    did = did_key_from_signing_key(key)
+    standard = sign_message(key, canonical)
+    urlsafe = standard.replace("+", "-").replace("/", "_")
+    assert urlsafe != standard  # The fixture exercises both alphabets.
+    assert verify_signature(did, canonical, standard) is VerifyResult.VERIFIED
+    assert verify_signature(did, canonical, urlsafe) is VerifyResult.VERIFIED
+    assert atomic_address_claim_identity_proof_hash(
+        canonical, urlsafe
+    ) == atomic_address_claim_identity_proof_hash(canonical, standard)

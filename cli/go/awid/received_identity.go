@@ -41,6 +41,7 @@ func (r *RegistryResolver) receivedRegistry(ctx context.Context, teamID string) 
 	if scoped == nil {
 		scoped = NewRegistryResolver(r.HTTPClient, r.DNSResolver)
 		scoped.Now = r.Now
+		scoped.inheritRegistryPolicy(r)
 		r.receivedRegistries[registryURL] = scoped
 	}
 	return registryURL, scoped, nil
@@ -61,7 +62,7 @@ func (c *Client) NormalizeReceivedSenderTrust(ctx context.Context, status Verifi
 		}
 		return c.NormalizeSenderTrust(ctx, status, reference, did, stableID, ra, repl, contact)
 	}
-	if status != Verified && status != VerifiedLegacy && status != VerifiedCustodial {
+	if !status.Trusted() {
 		return status, nil
 	}
 	if membership == nil || membership.State == "unknown" {
@@ -244,7 +245,7 @@ func (c *Client) receivedLocalSenderTrust(status VerificationStatus, address, di
 	if !crossTeam {
 		return status, false
 	}
-	if status != Verified && status != VerifiedLegacy && status != VerifiedCustodial {
+	if !status.Trusted() {
 		return status, true
 	}
 	if member == nil {
@@ -316,6 +317,7 @@ func (c *Client) ReceivedAddressIDTreeEnrollment(ctx context.Context, address, s
 	}
 	reader := NewAWIDRegistryClient(registry.HTTPClient, registry.DNSResolver)
 	reader.Now = registry.Now
+	reader.Resolver.inheritRegistryPolicy(registry)
 	key, err := reader.ResolveKeyAt(ctx, resolved.authority.RegistryURL, stableID)
 	if err != nil {
 		return unknown

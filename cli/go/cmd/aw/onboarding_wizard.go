@@ -443,7 +443,7 @@ func provisionBYODIdentity(req guidedOnboardingRequest, name, domain string) (*g
 		return nil, err
 	}
 
-	registry, err := newConfiguredRegistryClient(nil, "")
+	registry, err := newConfiguredRegistryClient(nil)
 	if err != nil {
 		return nil, err
 	}
@@ -476,20 +476,19 @@ func provisionBYODIdentity(req guidedOnboardingRequest, name, domain string) (*g
 		memberDIDAW = prepared.Plan.DIDAW
 		memberAddress = prepared.Plan.Address
 	}
-	team, err := bootstrapLocalTeamMemberWithScope(
-		ctx,
-		registry,
-		prepared.Plan.RegistryURL,
-		prepared.Plan.Domain,
-		guidedOnboardingDefaultTeamName,
-		"",
-		prepared.ControllerKey,
-		prepared.IdentityKey,
-		memberDIDAW,
-		memberAddress,
-		alias,
-		identityScope,
-	)
+	team, err := bootstrapLocalTeamMember(ctx, localTeamMemberBootstrap{
+		Registry:      registry,
+		RegistryURL:   prepared.Plan.RegistryURL,
+		Domain:        prepared.Plan.Domain,
+		TeamName:      guidedOnboardingDefaultTeamName,
+		DisplayName:   "",
+		ControllerKey: prepared.ControllerKey,
+		MemberKey:     prepared.IdentityKey,
+		MemberDIDAW:   memberDIDAW,
+		MemberAddress: memberAddress,
+		Alias:         alias,
+		Scope:         awid.IdentityScope(awid.NormalizeIdentityScope(identityScope)),
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -671,7 +670,7 @@ type hostedIdentityProvision struct {
 func provisionHostedIdentity(
 	onboardingURL, registryURL, username, alias string, global bool, inboundMode string,
 ) (hostedIdentityProvision, error) {
-	registry, err := newConfiguredRegistryClient(nil, "")
+	registry, err := newConfiguredRegistryClient(nil)
 	if err != nil {
 		return hostedIdentityProvision{}, err
 	}

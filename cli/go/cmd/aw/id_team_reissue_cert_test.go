@@ -564,7 +564,7 @@ func TestTeamReissueCertInstallsFreshBlobIntoReachableHome(t *testing.T) {
 		t.Fatalf("installed=%+v registered=%+v", installed, fresh)
 	}
 	teamPub := teamKey.Public().(ed25519.PublicKey)
-	if err := awid.VerifyTeamCertificate(installed, teamPub); err != nil {
+	if err := awid.CheckDecodedTeamCertificate(installed, awid.ComputeDIDKey(teamPub)); err != nil {
 		t.Fatalf("installed certificate does not verify against the team key: %v", err)
 	}
 }

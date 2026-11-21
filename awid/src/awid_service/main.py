@@ -98,11 +98,11 @@ def _make_library_lifespan(
     redis: Redis,
     rate_limiter=None,
 ):
+    """Use the embedding host's connections and logging configuration."""
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        json_format = os.getenv("AWID_LOG_JSON", "true").lower() == "true"
         settings = get_settings()
-        configure_logging(log_level=settings.log_level, json_format=json_format)
+        # Only standalone startup owns process-wide logging configuration.
         logger.info("Starting awid registry service (library mode)")
 
         app.state.redis = redis

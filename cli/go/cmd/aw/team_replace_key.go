@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +16,7 @@ import (
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/signaturewire"
 	"github.com/spf13/cobra"
 )
 
@@ -225,7 +225,7 @@ func runTeamHumanReplaceKey(cmd *cobra.Command, args []string) (runErr error) {
 	if registryURL == "" {
 		return usageError("no AWID registry URL is recorded for team %s; pass --registry", teamID)
 	}
-	registry := awid.NewAWIDRegistryClient(nil, nil)
+	registry := newAWIDRegistryClient(nil, nil)
 	if err := registry.SetFallbackRegistryURL(registryURL); err != nil {
 		return fmt.Errorf("invalid registry URL: %w", err)
 	}
@@ -434,7 +434,7 @@ func postLocalIdentityKeyReplacementOnce(ctx context.Context, serviceURL, alias 
 	if err != nil {
 		return nil, err
 	}
-	signature := base64.RawStdEncoding.EncodeToString(ed25519.Sign(teamKey, canonical))
+	signature := signaturewire.SignStd(teamKey, canonical)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(serviceURL, "/")+path, bytes.NewReader(body))
 	if err != nil {
 		return nil, err

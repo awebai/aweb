@@ -44,7 +44,7 @@ func TestHumanParticipationSelectorStopsAtBuiltins(t *testing.T) {
 	defer func() { humanFlag = oldID; humanDomainFlag = oldDomain }()
 	humanFlag = ""
 	humanDomainFlag = ""
-	args := []string{"id", "parent", "request", "--human", "did:aw:local", "--domain", "example.com"}
+	args := []string{"id", "parent", "request", "--human", "did:aw:local", "--human-domain", "example.com"}
 	got, err := humanSelectorsForPlugin(args)
 	if err != nil || humanFlag != "" || !reflect.DeepEqual(got, args) {
 		t.Fatalf("builtin selector intercepted: %v %v", got, err)

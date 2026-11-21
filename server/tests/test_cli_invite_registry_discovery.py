@@ -104,7 +104,10 @@ async def test_global_inviter_without_registry_pins_uses_real_discovery(
         team_keys.mkdir(parents=True)
         _pem(team_keys / f"{TEAM_NAME}.key", "ED25519 PRIVATE KEY", env.team_sk)
         child_env = {k: v for k, v in os.environ.items() if not k.startswith(("AW", "XDG_"))}
-        child_env.update(HOME=str(tmp_path), AW_NO_UPDATE_CHECK="1")
+        # The discovered registry is a loopback http listener that no
+        # AWID_REGISTRY_URL names; the CLI reaches it in isolated development.
+        child_env.update(HOME=str(tmp_path), AW_NO_UPDATE_CHECK="1",
+                         APP_ENV="development", AWEB_FEDERATION_TEST="1")
         calls.clear()
         async with public_default_probe() as (proxy, default_calls):
             child_env.update(HTTPS_PROXY=proxy, HTTP_PROXY=proxy, NO_PROXY="127.0.0.1,localhost")

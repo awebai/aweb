@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Literal
 
 from aweb_naapp.key_file import read_key_file
+from aweb_naapp.settings import mounted_value
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +77,8 @@ class EmailSettings:
         env = os.environ if environ is None else environ
 
         def required(name: str) -> str:
-            value = env.get(prefix + name, "").strip()
+            key = prefix + name
+            value = (mounted_value(key, env.get(key), env.get(key + "_FILE")) or "").strip()
             if not value:
                 raise ValueError(f"{prefix}{name} is required")
             return value

@@ -158,7 +158,7 @@ func executeWhoReceived(ctx context.Context, message awid.InboxMessage, opts who
 	if subject.ID == "" {
 		subject.ID = subject.DIDKey
 	}
-	authenticated := message.VerificationStatus == awid.Verified || message.VerificationStatus == awid.VerifiedLegacy || message.VerificationStatus == awid.VerifiedCustodial
+	authenticated := message.VerificationStatus.Trusted()
 	// Projection metadata may not replace the sender in independently signed bytes.
 	if message.SignedPayload != "" && message.ContentMode != awid.ContentModeEncryptedV2 {
 		var signed struct {
@@ -182,14 +182,6 @@ func executeWhoReceived(ctx context.Context, message awid.InboxMessage, opts who
 			return whoOutput{ID: subject.ID, IDChainResult: awid.VerifyIDChain(bundle, subject, nil, "")}, nil
 		}
 		domain, _ = plan["domain"].(string)
-	} else if strings.HasPrefix(subject.ID, "did:aw:") && opts.ReceivedEnrollment != nil {
-		enrollment := opts.ReceivedEnrollment(ctx, subject.ID, subject.DIDKey)
-		if enrollment.State == "not_enrolled" {
-			return whoOutput{ID: subject.ID, IDChainResult: awid.IDChainResult{Outcome: "unknown", Reason: "unregistered_identity"}}, nil
-		}
-		if enrollment.State == "enrolled" && enrollment.Domain != nil {
-			domain = *enrollment.Domain
-		}
 	}
 	return verifyWhoPresentation(ctx, subject, bundle, domain, opts)
 }

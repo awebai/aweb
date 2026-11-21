@@ -177,6 +177,7 @@ func TestPrivateTeamReadsSucceedWithMemberKey(t *testing.T) {
 	server := newPrivateGateRegistry(t, gate)
 
 	client := NewAWIDRegistryClient(nil, nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -201,6 +202,7 @@ func TestPrivateTeamReadsSucceedWithControllerKey(t *testing.T) {
 	server := newPrivateGateRegistry(t, gate)
 
 	client := NewAWIDRegistryClient(nil, nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -225,6 +227,7 @@ func TestPrivateTeamUnsignedReadIsTeamPrivateError(t *testing.T) {
 	server := newPrivateGateRegistry(t, gate)
 
 	client := NewAWIDRegistryClient(nil, nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -254,6 +257,7 @@ func TestPrivateTeamForeignKeyIsTeamPrivateError(t *testing.T) {
 	}
 
 	client := NewAWIDRegistryClient(nil, nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -273,6 +277,7 @@ func TestPublicTeamAnonymousReadIsUnchanged(t *testing.T) {
 	server := newPrivateGateRegistry(t, gate)
 
 	client := NewAWIDRegistryClient(nil, nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 

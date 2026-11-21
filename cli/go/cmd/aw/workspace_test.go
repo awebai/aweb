@@ -1227,7 +1227,7 @@ func TestAwWorkspaceAddWorktreeCreatesLocalSelfCustodialCLIWorkspaceWithTeamKey(
 	}
 
 	run := exec.CommandContext(ctx, bin, "workspace", "add-worktree", "developer")
-	run.Env = testCommandEnv(tmp)
+	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL)
 	run.Stdin = strings.NewReader("")
 	run.Dir = repo
 	out, err := run.CombinedOutput()
@@ -1244,11 +1244,11 @@ func TestAwWorkspaceAddWorktreeCreatesLocalSelfCustodialCLIWorkspaceWithTeamKey(
 	if registeredCert["identity_scope"] != awid.IdentityModeLocal {
 		t.Fatalf("registered lifetime=%v", registeredCert["identity_scope"])
 	}
-	if _, ok := registeredCert["member_did_aw"]; ok {
-		t.Fatalf("local CLI add-worktree cert should not include member_did_aw: %v", registeredCert["member_did_aw"])
+	if registeredCert["member_did_aw"] != nil {
+		t.Fatalf("local CLI add-worktree cert should carry no member_did_aw: %v", registeredCert["member_did_aw"])
 	}
-	if _, ok := registeredCert["member_address"]; ok {
-		t.Fatalf("local CLI add-worktree cert should not include member_address: %v", registeredCert["member_address"])
+	if registeredCert["member_address"] != nil {
+		t.Fatalf("local CLI add-worktree cert should carry no member_address: %v", registeredCert["member_address"])
 	}
 
 	child := filepath.Join(tmp, "repo-charlie")
@@ -1380,7 +1380,13 @@ func TestAwWorkspaceAddWorktreeWithoutIdentityUsesDiscoveryAndMailRoundTrip(t *t
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/agents":
-			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{Agents: []awid.AgentView{}})
+			mu.Lock()
+			agents := make([]awid.AgentView, 0, len(didToAlias))
+			for did, alias := range didToAlias {
+				agents = append(agents, awid.AgentView{AgentID: alias + "-agent", Alias: alias, DIDKey: did})
+			}
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{Agents: agents})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/conversations"):
 			_ = json.NewEncoder(w).Encode(awid.ConversationsResponse{})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/roles/active"):
@@ -1553,6 +1559,8 @@ func TestAwWorkspaceAddWorktreeWithoutIdentityUsesDiscoveryAndMailRoundTrip(t *t
 		run.Env = withoutEnvForTest(testCommandEnv(tmp), "AWEB_URL", "AWID_REGISTRY_URL")
 		if len(args) > 0 && args[0] == "mail" {
 			run.Env = append(run.Env, "AWID_REGISTRY_URL=http://127.0.0.1:1")
+		} else {
+			run.Env = append(run.Env, "AWID_REGISTRY_URL="+registryServer.URL)
 		}
 		run.Dir = dir
 		out, err := run.CombinedOutput()
@@ -1590,11 +1598,11 @@ func TestAwWorkspaceAddWorktreeWithoutIdentityUsesDiscoveryAndMailRoundTrip(t *t
 	if registeredChild == nil {
 		t.Fatal("expected child certificate registration")
 	}
-	if _, ok := registeredChild["member_did_aw"]; ok {
-		t.Fatalf("local child cert registration should omit member_did_aw: %v", registeredChild["member_did_aw"])
+	if registeredChild["member_did_aw"] != nil {
+		t.Fatalf("local child cert registration should carry no member_did_aw: %v", registeredChild["member_did_aw"])
 	}
-	if _, ok := registeredChild["member_address"]; ok {
-		t.Fatalf("local child cert registration should omit member_address: %v", registeredChild["member_address"])
+	if registeredChild["member_address"] != nil {
+		t.Fatalf("local child cert registration should carry no member_address: %v", registeredChild["member_address"])
 	}
 	mu.Unlock()
 
@@ -1737,7 +1745,13 @@ func TestAPIKeyBootstrapAddWorktreeMailRoundTrip(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/agents":
-			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{Agents: []awid.AgentView{}})
+			mu.Lock()
+			agents := make([]awid.AgentView, 0, len(didToAlias))
+			for did, alias := range didToAlias {
+				agents = append(agents, awid.AgentView{AgentID: alias + "-agent", Alias: alias, DIDKey: did})
+			}
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{Agents: agents})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/conversations"):
 			_ = json.NewEncoder(w).Encode(awid.ConversationsResponse{})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/roles/active"):
@@ -1930,228 +1944,6 @@ func didFromDIDKeyAuthorizationForTest(authHeader string) string {
 		return ""
 	}
 	return parts[1]
-}
-
-func TestAwWorkspaceAddWorktreeRevokesCertificateWhenConnectFails(t *testing.T) {
-	t.Parallel()
-
-	const origin = "https://github.com/acme/repo.git"
-	const teamID = "backend:source"
-
-	_, teamKey, err := awid.GenerateKeypair()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	parentPub, parentKey, err := awid.GenerateKeypair()
-	if err != nil {
-		t.Fatal(err)
-	}
-	parentDID := awid.ComputeDIDKey(parentPub)
-	parentStableID := awid.ComputeStableID(parentPub)
-
-	var registeredCert map[string]any
-	var revokedCert map[string]any
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/v1/did/" + parentStableID + "/key":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"did_aw":          parentStableID,
-				"current_did_key": parentDID,
-				"id_tree":         map[string]any{"enrolled": false},
-			})
-		case "/v1/roles/active":
-			requireCertificateAuthForTest(t, r)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"team_roles_id": "pol-1",
-				"roles": map[string]any{
-					"developer": map[string]any{"title": "Developer"},
-				},
-			})
-		case "/v1/agents/suggest-alias-prefix":
-			requireCertificateAuthForTest(t, r)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"team_id":     teamID,
-				"name_prefix": "charlie",
-			})
-		case "/v1/namespaces/source/teams/backend/certificates":
-			if err := json.NewDecoder(r.Body).Decode(&registeredCert); err != nil {
-				t.Fatalf("decode registered certificate: %v", err)
-			}
-			w.WriteHeader(http.StatusCreated)
-		case "/v1/namespaces/source/teams/backend/certificates/revoke":
-			if err := json.NewDecoder(r.Body).Decode(&revokedCert); err != nil {
-				t.Fatalf("decode revoked certificate: %v", err)
-			}
-			w.WriteHeader(http.StatusOK)
-		case "/v1/connect":
-			requireCertificateAuthForTest(t, r)
-			http.Error(w, "alias conflict", http.StatusConflict)
-		case "/v1/agents/heartbeat":
-			w.WriteHeader(http.StatusOK)
-		case "/v1/agents/me/encryption-key":
-			writePublishEncryptionKeyResponseForTest(t, w, "agent-3", teamID, "mallory")
-		default:
-			t.Fatalf("path=%s", r.URL.Path)
-		}
-	}))
-
-	tmp := t.TempDir()
-	bin := filepath.Join(tmp, "aw")
-	repo := filepath.Join(tmp, "repo")
-	if err := os.MkdirAll(repo, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	initGitRepoWithOriginAndCommit(t, repo, origin)
-	buildAwBinary(t, ctx, bin)
-
-	writeTeamKeyForTest(t, tmp, "source", "backend", teamKey)
-	writeStandaloneSelfCustodyIdentity(t, repo, "source/alice", parentDID, parentStableID, server.URL, parentKey)
-	writeWorkspaceBindingForTest(t, repo, workspaceBinding(server.URL, teamID, "alice", "source-1"))
-	if err := awconfig.SaveWorktreeContextTo(filepath.Join(repo, ".aw", "context"), &awconfig.WorktreeContext{}); err != nil {
-		t.Fatalf("seed .aw/context: %v", err)
-	}
-
-	run := exec.CommandContext(ctx, bin, "workspace", "add-worktree", "developer")
-	run.Env = testCommandEnv(tmp)
-	run.Stdin = strings.NewReader("")
-	run.Dir = repo
-	out, err := run.CombinedOutput()
-	if err == nil {
-		t.Fatalf("expected error, got success:\n%s", string(out))
-	}
-	if !strings.Contains(string(out), "connect new worktree") {
-		t.Fatalf("unexpected output:\n%s", string(out))
-	}
-	if registeredCert["certificate_id"] == nil || registeredCert["certificate_id"] == "" {
-		t.Fatalf("registered certificate_id=%v", registeredCert["certificate_id"])
-	}
-	if revokedCert["certificate_id"] != registeredCert["certificate_id"] {
-		t.Fatalf("revoked certificate_id=%v want %v", revokedCert["certificate_id"], registeredCert["certificate_id"])
-	}
-
-	child := filepath.Join(tmp, "repo-charlie")
-	if _, err := os.Stat(child); !os.IsNotExist(err) {
-		t.Fatalf("expected failed child worktree cleanup, stat err=%v", err)
-	}
-}
-
-func TestAwWorkspaceAddWorktreeRevokesCertificateWhenConnectAliasMismatches(t *testing.T) {
-	t.Parallel()
-
-	const origin = "https://github.com/acme/repo.git"
-	const teamID = "backend:source"
-
-	_, teamKey, err := awid.GenerateKeypair()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	parentPub, parentKey, err := awid.GenerateKeypair()
-	if err != nil {
-		t.Fatal(err)
-	}
-	parentDID := awid.ComputeDIDKey(parentPub)
-	parentStableID := awid.ComputeStableID(parentPub)
-
-	var registeredCert map[string]any
-	var revokedCert map[string]any
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/v1/did/" + parentStableID + "/key":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"did_aw":          parentStableID,
-				"current_did_key": parentDID,
-				"id_tree":         map[string]any{"enrolled": false},
-			})
-		case "/v1/roles/active":
-			requireCertificateAuthForTest(t, r)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"team_roles_id": "pol-1",
-				"roles": map[string]any{
-					"developer": map[string]any{"title": "Developer"},
-				},
-			})
-		case "/v1/agents/suggest-alias-prefix":
-			requireCertificateAuthForTest(t, r)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"team_id":     teamID,
-				"name_prefix": "charlie",
-			})
-		case "/v1/namespaces/source/teams/backend/certificates":
-			if err := json.NewDecoder(r.Body).Decode(&registeredCert); err != nil {
-				t.Fatalf("decode registered certificate: %v", err)
-			}
-			w.WriteHeader(http.StatusCreated)
-		case "/v1/namespaces/source/teams/backend/certificates/revoke":
-			if err := json.NewDecoder(r.Body).Decode(&revokedCert); err != nil {
-				t.Fatalf("decode revoked certificate: %v", err)
-			}
-			w.WriteHeader(http.StatusOK)
-		case "/v1/connect":
-			requireCertificateAuthForTest(t, r)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"team_id":      teamID,
-				"alias":        "mallory",
-				"agent_id":     "agent-3",
-				"workspace_id": "workspace-3",
-				"repo_id":      "repo-3",
-				"team_did_key": "did:key:z6MkTeam",
-				"role":         "developer",
-			})
-		case "/v1/agents/heartbeat":
-			w.WriteHeader(http.StatusOK)
-		case "/v1/agents/me/encryption-key":
-			writePublishEncryptionKeyResponseForTest(t, w, "agent-3", teamID, "mallory")
-		default:
-			t.Fatalf("path=%s", r.URL.Path)
-		}
-	}))
-
-	tmp := t.TempDir()
-	bin := filepath.Join(tmp, "aw")
-	repo := filepath.Join(tmp, "repo")
-	if err := os.MkdirAll(repo, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	initGitRepoWithOriginAndCommit(t, repo, origin)
-	buildAwBinary(t, ctx, bin)
-
-	writeTeamKeyForTest(t, tmp, "source", "backend", teamKey)
-	writeStandaloneSelfCustodyIdentity(t, repo, "source/alice", parentDID, parentStableID, server.URL, parentKey)
-	writeWorkspaceBindingForTest(t, repo, workspaceBinding(server.URL, teamID, "alice", "source-1"))
-	if err := awconfig.SaveWorktreeContextTo(filepath.Join(repo, ".aw", "context"), &awconfig.WorktreeContext{}); err != nil {
-		t.Fatalf("seed .aw/context: %v", err)
-	}
-
-	run := exec.CommandContext(ctx, bin, "workspace", "add-worktree", "developer")
-	run.Env = testCommandEnv(tmp)
-	run.Stdin = strings.NewReader("")
-	run.Dir = repo
-	out, err := run.CombinedOutput()
-	if err == nil {
-		t.Fatalf("expected error, got success:\n%s", string(out))
-	}
-	if !strings.Contains(string(out), `new workspace connected as name "mallory", expected "charlie"`) {
-		t.Fatalf("unexpected output:\n%s", string(out))
-	}
-	if registeredCert["certificate_id"] == nil || registeredCert["certificate_id"] == "" {
-		t.Fatalf("registered certificate_id=%v", registeredCert["certificate_id"])
-	}
-	if revokedCert["certificate_id"] != registeredCert["certificate_id"] {
-		t.Fatalf("revoked certificate_id=%v want %v", revokedCert["certificate_id"], registeredCert["certificate_id"])
-	}
-
-	child := filepath.Join(tmp, "repo-charlie")
-	if _, err := os.Stat(child); !os.IsNotExist(err) {
-		t.Fatalf("expected failed child worktree cleanup, stat err=%v", err)
-	}
 }
 
 func TestAwWorkspaceAddWorktreeRejectsAliasAlreadyInUse(t *testing.T) {

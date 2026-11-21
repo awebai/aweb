@@ -171,7 +171,7 @@ message-signing scheme (`docs/vectors/message-signing-v1.json`).
   bytes.
 - **`fixing`**: required unless `reachable` is `yes`. `fixing.by` is one of
   `automatic`, `operator`, `nobody` or `unknown`. `fixing.text` is optional, at
-  most 120 bytes, and may name a role ("Nactiva's operator") but not a contact
+  most 120 bytes, and may name a role ("Acme's operator") but not a contact
   detail.
 - **Types**: a present field must have its type. An explicit `null` is not
   an absent field: it is refused as `invalid_value`, as is any non-string
@@ -441,7 +441,7 @@ sees the whole picture.
   - `operator` when a remedy needs a person;
   - `nobody` for an intended stop or a retirement ("stopped on purpose");
   - `unknown` otherwise.
-- **`fixing.text`** names a role taken from deployment settings ("Nactiva's
+- **`fixing.text`** names a role taken from deployment settings ("Acme's
   operator", "aweb support").
 - **Language.** A deployment setting gives the status language (BCP 47, with
   an English fallback), and the publisher renders `reason.text` and

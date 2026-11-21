@@ -1,9 +1,10 @@
-"""secrets' manifest v2 template (secrets §13.1).
+"""secrets' agent template and owner declarations (secrets §13.1, human-role holders).
 
 The authoring source fixes tools, contexts, hook productions and key purposes.
 The shared runtime fills the deployment's app identity, origin and did:keys
 from configured key files, validates with the X8 interpreter, and serves the
-resolved bytes through the v2 catalog. No secret value enters a tool.
+resolved v2 and v3 variants through its catalog. The runtime adds OWNER_ACTS
+and the configured console origin to v3. No secret value enters a tool.
 """
 
 from __future__ import annotations
@@ -257,3 +258,114 @@ for _tool in MANIFEST["tools"]:
     _tool["invocation_contexts"] = (
         ["surface"] if _tool["name"] in {"propose-change", "activity"} else ["agent", "surface"]
     )
+
+
+# This is the only v3 addition. The shared runtime derives the variant from
+# MANIFEST and fills owner_acts.origin from the configured human origin.
+OWNER_ACTS: dict[str, Any] = {
+    "roles": [
+        {
+            "name": "secrets.owner",
+            "label": "Secrets owner",
+            "description": "Confirms changes to credentials, grants and policies with a passkey.",
+            "acts": ["human-credential.replace", "human-role.designate", "human-role.revoke"],
+            "notice_contact": True,
+        }
+    ],
+    "session_actions": [
+        {
+            "name": "draft-change",
+            "kind": "draft",
+            "role": "secrets.owner",
+            "method": "POST",
+            "path": "/installations/{installation_id}/change-sets",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "installation_id": _STRING,
+                    "changes": {"type": "array", "items": {"type": "object"}},
+                    "sealed": {"type": "array", "items": {"type": "object"}},
+                    "reason": _STRING,
+                },
+                "required": ["installation_id", "changes", "sealed", "reason"],
+            },
+            "params": _params("changes", "sealed", "reason", path=("installation_id",)),
+            "body": {"mode": "json"},
+        },
+        {
+            "name": "change-set",
+            "kind": "read",
+            "role": "secrets.owner",
+            "method": "GET",
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "input_schema": {
+                "type": "object",
+                "properties": {"installation_id": _STRING, "change_id": _STRING},
+                "required": ["installation_id", "change_id"],
+            },
+            "params": _params(path=("installation_id", "change_id")),
+        },
+        {
+            "name": "onepassword-token",
+            "kind": "stage",
+            "role": "secrets.owner",
+            "method": "POST",
+            "path": "/installations/{installation_id}/backend-credentials/onepassword/versions",
+            "input_schema": {
+                "type": "object",
+                "properties": {"installation_id": _STRING, "value": _STRING},
+                "required": ["installation_id", "value"],
+            },
+            "params": [
+                {"name": "installation_id", "in": "path"},
+                {"name": "value", "in": "body", "protected": True},
+            ],
+            "body": {"mode": "json"},
+        },
+        {
+            "name": "onepassword-reference",
+            "kind": "stage",
+            "role": "secrets.owner",
+            "method": "POST",
+            "path": "/installations/{installation_id}/onepassword/references",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "installation_id": _STRING,
+                    "secret": {"type": "object"},
+                    "reference": {"type": "object"},
+                    "credential_version": {"type": "integer"},
+                },
+                "required": ["installation_id", "secret", "reference", "credential_version"],
+            },
+            "params": _params(
+                "secret", "reference", "credential_version", path=("installation_id",)
+            ),
+            "body": {"mode": "json"},
+        },
+        {
+            "name": "confirm",
+            "kind": "confirm",
+            "role": "secrets.owner",
+            "method": "POST",
+            "path": "/installations/{installation_id}/change-sets/{change_id}/confirm",
+            "input_schema": {
+                "type": "object",
+                "properties": {"installation_id": _STRING, "change_id": _STRING},
+                "required": ["installation_id", "change_id"],
+            },
+            "params": _params(path=("installation_id", "change_id")),
+            "body": {"mode": "json"},
+            "terminal_output": ["/runner_registrations/*/registration_code"],
+            "completion": {
+                "read": "change-set",
+                "ready": {"member": "can_confirm", "in": [True]},
+                "done": {"member": "state", "in": ["applied"]},
+                "stop": [
+                    {"member": "state", "in": ["cancelled", "expired"]},
+                    {"member": "approval_state", "in": ["rejected", "revoked", "expired"]},
+                ],
+            },
+        },
+    ],
+}

@@ -6,7 +6,7 @@ release status and task id. This document is the source of truth for the bytes
 logs commits to and signs. Its vector is `docs/vectors/logs-chain-v1.json`. The
 Python implementation in `naapp/logs/src/aweb_logs/chain.py` and `verify.py`
 regenerates it byte for byte, and `naapp/logs/src/aweb_logs/ledger.py` stores
-the chain. The Go verifier in `cli/go/logschain`, which `aw logs verify
+the chain. The Go verifier in `cli/go/logschain`, which `aw audit verify
 --bundle` runs, passes it. **In flight (aweb-acgh.16.24):** `aw logs query`,
 `tail` and `export`. The design and its rationale are in
 [the audit substrate design](design/audit-substrate.md), §B3 and §B6.
@@ -133,8 +133,7 @@ of an empty epoch has `team_seq` 0 and the epoch's `genesis_hash`.
 epoch's previous checkpoint; the first checkpoint of an epoch has none. Logs
 issues checkpoints periodically while events arrive
 (`naapp/logs/src/aweb_logs/app.py`, `run_checkpoints`), and an export carries
-them. **Open (aweb-acgh.16.22, aweb-acgh.16.23):** checkpoints on demand and
-the route that serves an export.
+them. **Open (aweb-acgh.16.22):** checkpoints on demand.
 
 The receipt and checkpoint prefixes are unique to logs, so neither verifies as
 any other signed aweb object, and no other object verifies as either.
@@ -244,9 +243,12 @@ which explains a gap left by a revoked binding.
 ## Exporting a team's log: `aweb.logs-export/1`
 
 Logs writes an export with `export_bundle`
-(`naapp/logs/src/aweb_logs/export.py`). **Open (aweb-acgh.16.23):** the route
-that serves it. This section specifies what an export holds and how a holder
-verifies it, with no server. Its vector is `docs/vectors/logs-export-v1.json`.
+(`naapp/logs/src/aweb_logs/export.py`). A designated reader downloads it from
+logs' console origin as `GET /v1/export` (`application/jsonl`, streamed), in
+its passkey session, where the viewer links to it from its integrity page, or
+in the key-bound session its aw collects through the handoff. This section
+specifies what an export holds and how a holder verifies it, with no server.
+Its vector is `docs/vectors/logs-export-v1.json`.
 
 An export holds one team's whole log: every epoch from 1, each with its
 genesis, its stored events (skeleton, retained content or purge act, and key
@@ -341,6 +343,10 @@ is not the header's; `epoch_absent` when the bundle holds no epoch with its
 The report is:
 
 - `intact`: every epoch is intact and linked, and no witness is contradicted;
+- `attested_epochs`: the epoch numbers for which an accepted receipt or
+  checkpoint agrees with the represented chain, from the bundle or supplied
+  witnesses; an empty array when none does. This is separate from structural
+  `intact` and does not establish the producer's declared authority;
 - `accepted_keys`: `{"receipt": [...], "checkpoint": [...]}`, the keys given;
 - `epochs`: for each epoch in bundle order, its `chain_epoch`, the per-epoch
   report of `verify` (`intact`, `first_break`, `missing`, `purged`,
@@ -390,12 +396,15 @@ a producer's receipt. Logs answers every delivery it accepts, `appended` or
 `duplicate`, with `{"event_id", "disposition", "receipt"}`, and its `receipt` is
 this artefact object, so `{"receipt": <the ack's receipt>}` is a witness line.
 
-`aw logs verify --bundle FILE|- --receipt-key DID_KEY --checkpoint-key DID_KEY
+`aw audit verify --bundle FILE|- --receipt-key DID_KEY --checkpoint-key DID_KEY
 [--witness FILE]... [--json]` verifies a bundle offline: it reads only the
 files it is given and reaches no workspace, identity or server. It requires at
 least one key of each kind, each an Ed25519 `did:key`, and never takes a key
 from the bundle. `--bundle -` reads stdin; a witness file cannot. `--json`
-prints the report above. It exits 0 when the bundle is intact, 1 when it is
+prints the report above. Text output includes an `attested:` line naming those
+epochs, or `attested: none` with a command-independent instruction to supply an
+accepted receipt or checkpoint. Structural `intact: true` alone is not
+accepted-key attestation. It exits 0 when the bundle is intact, 1 when it is
 verified and not intact, and 2 when it could not be verified, with the error
 codes `usage`, `keys_invalid`, `input_unreadable`, `bundle_malformed`,
 `witness_malformed` and, for anything else, `verify_failed`.

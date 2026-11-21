@@ -6,6 +6,7 @@ package awid
 // its own signer issued.
 import (
 	"reflect"
+	"strings"
 	"time"
 )
 
@@ -20,10 +21,10 @@ type IDResignRequest struct {
 // ResignIDCertificate returns the re-signed certificate after recording it in
 // the issuance store. Every refusal happens before the signer runs.
 func ResignIDCertificate(req IDResignRequest, parentID string, evidence *IDChainEvidence, domain string, store IDIssuanceStore, sign IDCertificateSigner, now time.Time) (map[string]any, error) {
-	return resignIDCertificate(req, parentID, evidence, domain, store, sign, now, recordIssued(store, now))
+	return resignIDCertificate(req, parentID, nil, evidence, domain, store, sign, now, recordIssued(store, now))
 }
 
-func resignIDCertificate(req IDResignRequest, parentID string, evidence *IDChainEvidence, domain string, store IDIssuanceStore, sign IDCertificateSigner, now time.Time, commit func(map[string]any, string) error) (map[string]any, error) {
+func resignIDCertificate(req IDResignRequest, parentID string, parentChain []any, evidence *IDChainEvidence, domain string, store IDIssuanceStore, sign IDCertificateSigner, now time.Time, commit func(map[string]any, string) error) (map[string]any, error) {
 	old, err := idCertificateShape(req.Signed)
 	if err != nil {
 		return nil, err
@@ -39,14 +40,23 @@ func resignIDCertificate(req IDResignRequest, parentID string, evidence *IDChain
 	if !reflect.DeepEqual(old["parent"], map[string]any{"kind": "identity", "id": parentID}) {
 		return nil, idCertificateRefusal("resign_binding_mismatch")
 	}
-	parent, current, _, err := idSigningParent(parentID, evidence, domain)
+	var current string
+	var keyInHistory func(string) bool
+	if strings.HasPrefix(parentID, "did:key:") {
+		current, err = idIssuingKey(map[string]any{"kind": "identity", "id": parentID}, domain, "agent", parentChain, evidence)
+		keyInHistory = func(key string) bool { return key == parentID }
+	} else {
+		var parent *idStatusIdentity
+		parent, current, _, err = idSigningParent(parentID, evidence, domain)
+		keyInHistory = func(key string) bool { return parentKeyHistoryHas(parent, key) }
+	}
 	if err != nil {
 		return nil, err
 	}
 	if req.SubjectKey == "" || req.SubjectKey != old["id"] {
 		return nil, idCertificateRefusal("subject_mismatch")
 	}
-	if !parentKeyHistoryHas(parent, old["issuer_key"].(string)) {
+	if !keyInHistory(old["issuer_key"].(string)) {
 		return nil, idCertificateRefusal("invalid_signature")
 	}
 	if err = VerifyIDCertificate(req.Signed, old["issuer_key"].(string)); err != nil {
@@ -56,7 +66,7 @@ func resignIDCertificate(req IDResignRequest, parentID string, evidence *IDChain
 	if err != nil {
 		return nil, err
 	}
-	if err = idIssuanceRecorded(store, parent, oldID); err != nil {
+	if err = idIssuanceRecordedByKey(store, oldID, keyInHistory); err != nil {
 		return nil, err
 	}
 

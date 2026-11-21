@@ -1,5 +1,6 @@
 """The approved public pages lead into the actual, separate owner console."""
 
+import json
 import secrets
 from html.parser import HTMLParser
 from urllib.parse import parse_qs, urlsplit
@@ -38,9 +39,20 @@ async def test_actual_root_serves_public_docs_on_api_and_preserves_runtime_healt
         if path != "/":
             assert (await client.get(human + path)).status_code == 404
     assert api in (await client.get(api + "/llms.txt")).text
-    for path in ("/aweb-app.json", "/manifests/v2.json"):
+    # Each published variant at its own path: the current manifest (v3, with
+    # owner acts) at /aweb-app.json and /manifests/v3.json, and the v2
+    # variant derived from it at /manifests/v2.json.
+    runtime = service.runtime
+    assert runtime.manifest.manifest_version == 3
+    for path, served in (
+        ("/aweb-app.json", runtime.manifest_bytes),
+        ("/manifests/v3.json", runtime.manifest_variant_bytes(3)),
+        ("/manifests/v2.json", runtime.manifest_variant_bytes(2)),
+    ):
         manifest = await client.get(api + path)
-        assert manifest.status_code == 200 and manifest.content == service.runtime.manifest_bytes
+        assert manifest.status_code == 200 and manifest.content == served, path
+    assert runtime.manifest_variant_bytes(3) == runtime.manifest_bytes
+    assert json.loads(runtime.manifest_variant_bytes(2))["manifest_version"] == 2
     ready = await client.get(api + "/ready")
     assert ready.status_code == 200
     assert set(ready.json()["checks"]) == {"database", "outbox", "kms"}

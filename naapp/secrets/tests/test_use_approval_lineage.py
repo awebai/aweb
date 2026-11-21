@@ -78,7 +78,7 @@ async def child(
         )
         await records.create_secret(tx, INSTALLATION_ID, TEAM, secret)
         await records.set_active_version(tx, INSTALLATION_ID, TEAM, secret_id, 1)
-        await records.create_policy(tx, INSTALLATION_ID, policy)
+        await records.create_policy(tx, INSTALLATION_ID, policy, team_id=TEAM)
         await records.create_grant(tx, INSTALLATION_ID, TEAM, grant)
         await derived_lineage.record_lineage(
             tx,

@@ -191,3 +191,51 @@ async def apply_resigned_records(
             team_uuid, record[key_field], canonical_json_bytes(record).decode("utf-8"), signature,
             new_team_did_key, issued_at_of(record),
         )
+
+
+async def record_member_records(
+    tx, *, team_uuid, team_id: str, new_team_did_key: str, certificate_id: str, member_did_key: str,
+    custody: SignedRecord | None, person: SignedRecord | None, now: datetime,
+) -> None:
+    """Record a replacement member certificate's custody and person records in
+    the rotation's transaction: each verifies under the new key, names that
+    certificate and member, and a custody record names a registered custodian."""
+    for kind, entry in (("member_custody", custody), ("member_person", person)):
+        if entry is None:
+            continue
+        record = _verified(kind, entry, team_id=team_id, new_team_did_key=new_team_did_key, now=now)
+        if record.get("certificate_id") != certificate_id or record.get("member_did_key") != member_did_key:
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "record_invalid", "message": f"{kind}: record is for another certificate or member"},
+            )
+        canonical = canonical_json_bytes(record).decode("utf-8")
+        if kind == "member_custody":
+            custodian = await tx.fetch_one(
+                "SELECT record_json FROM {{tables.team_custodians}} WHERE team_uuid = $1 AND custodian_id = $2",
+                team_uuid, record.get("custodian_id"),
+            )
+            if custodian is None or not json.loads(custodian["record_json"])["issuer_did_keys"]:
+                raise HTTPException(
+                    status_code=409,
+                    detail={"code": "custodian_not_registered", "message": "The custodian is not registered for this team"},
+                )
+            await tx.execute(
+                """
+                INSERT INTO {{tables.member_custody}}
+                    (team_uuid, certificate_id, custodian_id, record_json, signature, team_did_key, issued_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                """,
+                team_uuid, certificate_id, record["custodian_id"], canonical, entry.signature,
+                new_team_did_key, issued_at_of(record),
+            )
+        else:
+            await tx.execute(
+                """
+                INSERT INTO {{tables.member_person}}
+                    (team_uuid, certificate_id, single_person, record_json, signature, team_did_key, issued_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                """,
+                team_uuid, certificate_id, record["single_person"], canonical, entry.signature,
+                new_team_did_key, issued_at_of(record),
+            )

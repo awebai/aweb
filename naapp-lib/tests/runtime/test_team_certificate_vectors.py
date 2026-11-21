@@ -15,6 +15,7 @@ from pathlib import Path
 import httpx
 import pytest
 from aweb_naapp_testing import utc_timestamp
+from aweb_naapp_testing.team_facts import legacy_certificate_status, legacy_team_response
 from awid.signing import canonical_json_bytes, sign_message
 from fastapi import FastAPI, Request
 
@@ -32,13 +33,21 @@ def _registry(case: dict) -> httpx.MockTransport:
     revoked = set(case["revoked_certificate_ids"])
 
     def answer(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/status"):
+            certificate_id = request.url.path.rsplit("/", 2)[-2]
+            if certificate_id not in case["registered_certificate_ids"]:
+                return httpx.Response(404)
+            return httpx.Response(200, json=legacy_certificate_status(
+                VECTORS["team_id"], certificate_id, team_did_key=case["team_did_key"],
+                revoked_at="2026-11-02T00:00:00Z" if certificate_id in revoked else None))
         if request.url.path.endswith("/certificates"):
             page = [
                 {"certificate_id": certificate_id, "revoked_at": "2026-11-02T00:00:00Z" if certificate_id in revoked else None}
                 for certificate_id in case["registered_certificate_ids"]
             ]
             return httpx.Response(200, json={"certificates": page, "has_more": False})
-        return httpx.Response(200, json={"team_did_key": case["team_did_key"]})
+        name, domain = VECTORS["team_id"].split(":", 1)
+        return httpx.Response(200, json=legacy_team_response(domain, name, team_did_key=case["team_did_key"]))
 
     return httpx.MockTransport(answer)
 

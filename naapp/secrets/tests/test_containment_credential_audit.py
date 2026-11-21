@@ -9,7 +9,7 @@ import httpx
 import pytest
 from aweb_naapp.console import apply_console_migrations
 from aweb_naapp.idempotency import apply_idempotency_migrations
-from aweb_naapp.roles import assign, principal_key
+from aweb_naapp.roles import unassign
 from aweb_naapp.runtime.installation import InstallationRefused
 from fastapi import FastAPI
 
@@ -17,12 +17,12 @@ from aweb_secrets.console import OwnerConsole, owner_console_router
 from aweb_secrets.containment import ContainmentRefused
 from aweb_secrets.containment_routes import containment_console_router
 from aweb_secrets.owners import OWNER_ROLE, owner_scope
+from tests.human_owner import canonical_actor
 from tests.test_change_sets import ALICE, ORIGIN, TEAM
 from tests.test_containment_console import login_session, sibling_session
 from tests.test_credential_audit import audit_for, events
 from tests.test_credential_narrowing import enrolled_target
 from tests.test_credential_narrowing import world as world
-from tests.test_use_approvals import REQUESTER
 
 
 async def caller(world, audit, *, owner=True):
@@ -37,16 +37,16 @@ async def caller(world, audit, *, owner=True):
         installation_id=world.admitted.installation_id, generation=world.admitted.generation
     )
     service.governance = partial(producer.enqueue, hook="post-governance-hook")
-    if owner:
+    if not owner:
         async with world.db.transaction() as tx:
-            await assign(tx, principal_key(REQUESTER), OWNER_ROLE)
+            await unassign(tx, ALICE, OWNER_ROLE)
     return service
 
 
 async def revoke(world, service, request_id, credential_id=None):
     return await service.by_member(
         grant=await world.fence.grants.grant_for(TEAM),
-        principal=REQUESTER,
+        principal=canonical_actor(world, ALICE),
         request_id=request_id,
         action="revoke-approver",
         target="finance",
@@ -96,8 +96,8 @@ async def test_member_keeps_original_authority_without_duplicate_or_audit_target
     assert [item["payload"]["act"] for item in recorded[before:]] == expected_acts(effect)
     for item in recorded[before:]:
         assert item["payload"]["authority"] == "team_cert"
-        assert item["actor"]["did_key"] == REQUESTER.did_key
-        assert item["actor"]["certificate_id"] == REQUESTER.certificate_id
+        assert item["actor"]["did_key"] == canonical_actor(world, ALICE).did_key
+        assert item["actor"]["certificate_id"] == canonical_actor(world, ALICE).certificate_id
         assert item["trace"] == {"id": request_id, "origin": "signed_request"}
     assert (await world.passkeys.designated_approver(approver.scope) is None) is (
         effect != "partial"

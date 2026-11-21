@@ -119,7 +119,8 @@ func TestRegisterIDCertificateSendsOneCoveringRequest(t *testing.T) {
 	defer server.Close()
 	bundle := testChainBundle(t)
 	calls := 0
-	client := &RegistryClient{HTTPClient: server.Client(), Now: func() time.Time { return time.Date(2026, 10, 26, 0, 2, 0, 0, time.UTC) }}
+	client := &RegistryClient{HTTPClient: server.Client(), Resolver: NewRegistryResolver(server.Client(), nil), Now: func() time.Time { return time.Date(2026, 10, 26, 0, 2, 0, 0, time.UTC) }}
+	routeUntrustedRegistriesToInjectedClient(client)
 	invitation := "10000000-0000-4000-8000-000000000001"
 	receipt, err := client.RegisterIDCertificateAt(context.Background(), server.URL, bundle, seedSigner(5, &calls), nil, &invitation)
 	if err != nil {
@@ -198,7 +199,9 @@ func TestRegisterIDCertificateSurfacesTheRegistryCode(t *testing.T) {
 	server := httptest.NewServer(sink)
 	defer server.Close()
 	calls := 0
-	_, err := (&RegistryClient{HTTPClient: server.Client()}).RegisterIDCertificateAt(context.Background(), server.URL, testChainBundle(t), seedSigner(5, &calls), nil, nil)
+	client := &RegistryClient{HTTPClient: server.Client(), Resolver: NewRegistryResolver(server.Client(), nil)}
+	routeUntrustedRegistriesToInjectedClient(client)
+	_, err := client.RegisterIDCertificateAt(context.Background(), server.URL, testChainBundle(t), seedSigner(5, &calls), nil, nil)
 	var registryErr *RegistryError
 	if !errors.As(err, &registryErr) || registryErr.StatusCode != 409 || !registryErr.HasCode("head_conflict") {
 		t.Fatalf("err=%v", err)
@@ -211,7 +214,9 @@ func TestRevokeIDCertificateSendsOneCoveringRequest(t *testing.T) {
 	defer server.Close()
 	calls := 0
 	head := "sha256:abc"
-	answer, err := (&RegistryClient{HTTPClient: server.Client()}).RevokeIDCertificateAt(context.Background(), server.URL, "example.com", "did:aw:2e2SPDJNyxg5Dt6EFJX3Tcn8Tauj", seedSigner(3, &calls), &head, nil)
+	client := &RegistryClient{HTTPClient: server.Client(), Resolver: NewRegistryResolver(server.Client(), nil)}
+	routeUntrustedRegistriesToInjectedClient(client)
+	answer, err := client.RevokeIDCertificateAt(context.Background(), server.URL, "example.com", "did:aw:2e2SPDJNyxg5Dt6EFJX3Tcn8Tauj", seedSigner(3, &calls), &head, nil)
 	if err != nil || answer["revoked_at"] == nil || calls != 1 {
 		t.Fatalf("answer=%v err=%v calls=%d", answer, err, calls)
 	}

@@ -21,10 +21,6 @@ class CreateDocumentRequest(BaseModel):
     template: DeclarativeTemplateRequest | None = None
 
 
-class AppendVersionRequest(BaseModel):
-    body: str
-
-
 class AppendTemplateVersionRequest(DeclarativeTemplateRequest):
     pass
 

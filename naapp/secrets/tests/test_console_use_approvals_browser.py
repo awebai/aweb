@@ -1,7 +1,6 @@
 """Real Chromium passkeys review frozen uses through the shipped UI."""
 
 import asyncio
-import socket
 
 import pytest
 import uvicorn
@@ -13,6 +12,7 @@ from playwright.async_api import Error as BrowserError
 from playwright.async_api import expect
 
 from aweb_secrets.use_approvals import UseApprovers, UsePolicies
+from tests.console_network import passkey_origin as passkey_origin
 from tests.console_use_world import mint
 from tests.test_change_sets import ALICE, Installations
 from tests.test_change_sets import world as _world
@@ -26,7 +26,7 @@ browser = _browser
 
 
 @pytest.fixture
-async def service(world):
+async def service(world, console_tls, console_listener):
     await apply_idempotency_migrations(world.db)
     await apply_ratelimit_migrations(world.db)
     clock = Clock()
@@ -40,14 +40,20 @@ async def service(world):
         clock=clock,
     )
     context = Uses(world, approvals, clock, Installations().grant)
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.bind(("127.0.0.1", 0))
-    port = sock.getsockname()[1]
-    origin = f"http://localhost:{port}"
+    sock = console_listener.socket
+    port, origin = console_listener.port, console_listener.origin
     world.passkeys.rp = RelyingParty(origin=origin, name="Secrets")
     # The same real branch is injected before serving. Mint uses it below.
-    app = await application(context, origin=origin, agent_origin=f"http://127.0.0.1:{port}")
-    server = uvicorn.Server(uvicorn.Config(app, log_level="warning", lifespan="off"))
+    app = await application(context, origin=origin, agent_origin=f"https://127.0.0.1:{port}")
+    server = uvicorn.Server(
+        uvicorn.Config(
+            app,
+            log_level="warning",
+            lifespan="off",
+            ssl_certfile=str(console_tls.cert_file),
+            ssl_keyfile=str(console_tls.key_file),
+        )
+    )
     task = asyncio.create_task(server.serve(sockets=[sock]))
     try:
         async with asyncio.timeout(10):

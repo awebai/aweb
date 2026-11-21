@@ -93,11 +93,12 @@ func TestExternalIdentityHomeOutboundMessagingSignsAsPrincipal(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/chat/pending":
 			_ = json.NewEncoder(w).Encode(awid.ChatPendingResponse{Pending: []awid.ChatPendingItem{{
 				SessionID: "session-1", TeamID: "runtime:aweb.test",
-				Participants: []string{"principal", "recipient"}, LastFrom: "recipient",
+				Participants: []string{"principal", "recipient"}, ParticipantDIDs: []string{principalDID, recipientDID}, LastFrom: "recipient",
 			}}})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/chat/sessions":
 			_ = json.NewEncoder(w).Encode(awid.ChatListSessionsResponse{Sessions: []awid.ChatSessionItem{{
 				SessionID: "session-1", TeamID: "runtime:aweb.test", Participants: []string{"principal", "recipient"},
+				ParticipantDIDs: []string{principalDID, recipientDID},
 			}}})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/chat/sessions":
 			_ = json.NewEncoder(w).Encode(awid.ChatCreateSessionResponse{SessionID: "session-1", MessageID: "chat-out"})

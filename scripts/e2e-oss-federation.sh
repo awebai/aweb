@@ -342,6 +342,7 @@ ns IN A 127.0.0.1
 _awid.alpha IN TXT "awid=v1; controller=$alpha_controller; registry=http://awid:8010;"
 _awid.beta IN TXT "awid=v1; controller=$beta_controller; registry=http://awid:8010;"
 EOF
+  chmod 0644 "$zone_tmp"
   mv "$zone_tmp" "$DNS_ZONE"
   sleep 2
 }
@@ -549,6 +550,10 @@ $TTL 1
 ns IN A 127.0.0.1
 EOF
 
+# CoreDNS reads these public inputs as its own container user.
+chmod 0755 "$DNS_DIR"
+chmod 0644 "$DNS_COREFILE" "$DNS_ZONE"
+
 echo "=== Phase 1: Write and start federation compose ==="
 cat > "$COMPOSE_FILE" <<EOF
 services:
@@ -588,6 +593,7 @@ services:
       AWID_REDIS_URL: redis://redis-awid:6379/0
       AWID_HOST: 0.0.0.0
       AWID_PORT: 8010
+      AWID_PUBLIC_ORIGINS: $AWID_URL
       AWID_DB_SCHEMA: awid
       AWID_RATE_LIMIT_DISABLED: "1"
       AWID_SERVICE_TOKEN: aweb-oss-federation-e2e-service-token-32-bytes

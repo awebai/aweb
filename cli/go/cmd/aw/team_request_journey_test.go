@@ -62,13 +62,18 @@ func TestPreparedWorkerControllerFetchAndConnect(t *testing.T) {
 				w.WriteHeader(400)
 				return
 			}
-			if err := awid.VerifyTeamCertificate(cert, pub); err != nil {
+			if err := awid.CheckDecodedTeamCertificate(cert, awid.ComputeDIDKey(pub)); err != nil {
 				t.Error(err)
 				w.WriteHeader(403)
 				return
 			}
 			stored.set(cert)
 			w.WriteHeader(201)
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/status") && strings.Contains(r.URL.Path, "/certificates/"):
+			// The team's current key, which fetch-cert checks the fetched certificate against.
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_id": "backend:acme.com", "team_did_key": awid.ComputeDIDKey(pub), "status": "active", "revoked_at": nil,
+			})
 		case r.Method == "GET" && strings.Contains(r.URL.Path, "/certificates/"):
 			registryCalls.Add(1)
 			cert := stored.get()
@@ -91,7 +96,7 @@ func TestPreparedWorkerControllerFetchAndConnect(t *testing.T) {
 		case r.Method == "POST" && r.URL.Path == "/v1/connect":
 			cert := requireCertificateAuthForTest(t, r)
 			registered := stored.get()
-			if registered == nil || cert.CertificateID != registered.CertificateID || awid.VerifyTeamCertificate(cert, pub) != nil {
+			if registered == nil || cert.CertificateID != registered.CertificateID || awid.CheckDecodedTeamCertificate(cert, awid.ComputeDIDKey(pub)) != nil {
 				t.Error("connect did not carry the controller-issued certificate")
 				w.WriteHeader(403)
 				return

@@ -21,6 +21,8 @@ fi
 log_dir="${CANDIDATE_LOG_DIR:?CANDIDATE_LOG_DIR is required}"
 stages="${1:-checks user-paths unit artifacts integration}"
 checks() {
+  run check-python-static
+  run check-product-table-writes
   cat "$log_dir/host-published-port.log"
   run check-generated-copies
   run test-generated-copies
@@ -52,6 +54,14 @@ user-paths() {
   run e2e-user-paths
 }
 unit() {
+  # These source checks belong to every unit proof, including unit-only runs.
+  # Refuse before node preparation or the expensive isolated product suites.
+  run test-identity-primitives
+  run test-vector-provenance
+  run test-sot-source-inventories
+  run test-python-locks
+  run lint-naapp
+  if [[ "$node_ready" == 0 ]]; then run _candidate-node-deps; fi
   run _candidate-unit-suites
 }
 artifacts() {
@@ -93,7 +103,7 @@ cli_ready=0
 for stage in $stages; do
   case "$stage" in checks|user-paths|unit|artifacts|integration) ;; *) echo "unknown candidate stage: $stage" >&2; exit 2;; esac
   case "$stage" in
-    unit|artifacts|integration)
+    artifacts|integration)
       if [[ "$node_ready" == 0 ]]; then run _candidate-node-deps; node_ready=1; fi ;;
   esac
   case "$stage" in
@@ -114,5 +124,6 @@ for stage in $stages; do
   fi
   printf '%s\t%s\t%s.log\t%ss\t%s\n' "$stage" "$result" "$stage" "$((SECONDS-started))" "$coverage" >> "$log_dir/summary.tsv"
   [[ "$status" == 0 ]] || exit "$status"
+  [[ "$stage" != unit ]] || node_ready=1
 done
 printf '\ncandidate suite PASSED\n'

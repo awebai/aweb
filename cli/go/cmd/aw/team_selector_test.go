@@ -592,6 +592,85 @@ func TestChatSendBareAliasRequiresTeamWhenFallbackIsAmbiguous(t *testing.T) {
 	}
 }
 
+// A failed agent-list lookup in one of the sender's other teams is a refusal:
+// the alias may be there, so the one team left where it was found is not
+// known to be the only match.
+func TestChatSendBareAliasRefusesWhenAnotherTeamLookupFails(t *testing.T) {
+	t.Parallel()
+
+	memberPub, memberKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberDID := awid.ComputeDIDKey(memberPub)
+	stableID := awid.ComputeStableID(memberPub)
+	var chatPosts atomic.Int32
+	apiServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/namespaces/acme.com/teams/backend/members/randy":
+			http.NotFound(w, r)
+		case "/v1/agents":
+			cert := requireCertificateAuthForTest(t, r)
+			agents := []map[string]any{}
+			switch cert.Team {
+			case "qa:acme.com":
+				http.Error(w, "agent list unavailable", http.StatusServiceUnavailable)
+				return
+			case "ops:acme.com":
+				agents = append(agents, map[string]any{
+					"agent_id": "agent-randy", "alias": "randy", "did_key": "did:key:z6Mkrandy", "status": "active",
+				})
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"team_id": cert.Team, "agents": agents})
+		case "/v1/chat/pending":
+			_ = json.NewEncoder(w).Encode(awid.ChatPendingResponse{Pending: []awid.ChatPendingItem{}})
+		case "/v1/chat/sessions":
+			if r.Method == http.MethodGet {
+				_ = json.NewEncoder(w).Encode(awid.ChatListSessionsResponse{Sessions: []awid.ChatSessionItem{}})
+				return
+			}
+			chatPosts.Add(1)
+			_ = json.NewEncoder(w).Encode(awid.ChatCreateSessionResponse{SessionID: "session-1", MessageID: "chat-1"})
+		case "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected api path=%s", r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(tmp), memberKey); err != nil {
+		t.Fatal(err)
+	}
+	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
+		DID: memberDID, StableID: stableID, Address: "acme.com/alice", Custody: awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal, CreatedAt: "2026-04-27T00:00:00Z",
+	})
+	writeTeamCertFixturesForTest(t, tmp, apiServer.URL, memberDID, stableID, []teamCertFixture{
+		{TeamID: "backend:acme.com", Alias: "alice", WorkspaceID: "ws-backend", Address: "acme.com/alice"},
+		{TeamID: "ops:acme.com", Alias: "ops-alice", WorkspaceID: "ws-ops", Address: "acme.com/ops-alice"},
+		{TeamID: "qa:acme.com", Alias: "qa-alice", WorkspaceID: "ws-qa", Address: "acme.com/qa-alice"},
+	})
+
+	run := exec.CommandContext(ctx, bin, "chat", "send-and-leave", "--plaintext", "randy", "hello")
+	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL="+apiServer.URL)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err == nil {
+		t.Fatalf("send succeeded although team qa:acme.com could not be searched:\n%s", out)
+	}
+	if got := string(out); !containsAll(got, `cannot confirm recipient "randy"`, "qa:acme.com", "lookup failed") {
+		t.Fatalf("unexpected output:\n%s", got)
+	}
+	if got := chatPosts.Load(); got != 0 {
+		t.Fatalf("chat posts=%d, want 0", got)
+	}
+}
+
 type teamCertFixture struct {
 	TeamID      string
 	Alias       string

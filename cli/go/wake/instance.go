@@ -21,21 +21,24 @@ type instanceRunner struct {
 	ownerID string // Managed-owner identity; never restored or reused across runner creation.
 	reg     Registration
 
-	persistMu    sync.Mutex
-	mu           sync.Mutex
-	state        InstanceState
-	admitted     map[string]bool
-	generation   int
-	events       chan eventOffer
-	updates      chan Registration
-	inactive     chan inactiveSignal
-	reactivate   chan reactivateRequest
-	pauses       chan pauseRequest
-	child        *ChannelCoreChild
-	pendingReg   *Registration
-	conflictHome string
-	cancel       context.CancelFunc
-	done         chan struct{}
+	persistMu  sync.Mutex
+	mu         sync.Mutex
+	state      InstanceState
+	admitted   map[string]bool
+	generation int
+	events     chan eventOffer
+	updates    chan Registration
+	inactive   chan inactiveSignal
+	reactivate chan reactivateRequest
+	pauses     chan pauseRequest
+	// livenessChanged asks the runner's writer to persist observed terminal
+	// liveness; one pending request covers every change made before it is taken.
+	livenessChanged chan struct{}
+	child           *ChannelCoreChild
+	pendingReg      *Registration
+	conflictHome    string
+	cancel          context.CancelFunc
+	done            chan struct{}
 	// startOnce keeps a registration reconciled before Broker.Run from being
 	// launched twice once the daemon context becomes available.
 	startOnce sync.Once
@@ -67,17 +70,18 @@ type reactivateRequest struct {
 
 func newInstanceRunner(b *Broker, reg Registration, state InstanceState) *instanceRunner {
 	return &instanceRunner{
-		broker:     b,
-		ownerID:    rand.Text(),
-		reg:        reg,
-		state:      state,
-		admitted:   map[string]bool{},
-		events:     make(chan eventOffer, 256),
-		updates:    make(chan Registration, 1),
-		inactive:   make(chan inactiveSignal, 1),
-		reactivate: make(chan reactivateRequest, 1),
-		pauses:     make(chan pauseRequest, 16),
-		done:       make(chan struct{}),
+		broker:          b,
+		ownerID:         rand.Text(),
+		reg:             reg,
+		state:           state,
+		admitted:        map[string]bool{},
+		events:          make(chan eventOffer, 256),
+		updates:         make(chan Registration, 1),
+		inactive:        make(chan inactiveSignal, 1),
+		reactivate:      make(chan reactivateRequest, 1),
+		pauses:          make(chan pauseRequest, 16),
+		livenessChanged: make(chan struct{}, 1),
+		done:            make(chan struct{}),
 	}
 }
 
@@ -168,6 +172,12 @@ func (r *instanceRunner) setConflictHome(home string) {
 	r.mu.Lock()
 	r.conflictHome = home
 	r.mu.Unlock()
+}
+
+func (r *instanceRunner) currentConflictHome() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.conflictHome
 }
 
 func (r *instanceRunner) reactivateRegistration() {
@@ -323,6 +333,15 @@ func (r *instanceRunner) run(ctx context.Context) {
 		r.mu.Unlock()
 		child = nil
 	}
+	// The liveness writer outlives the child, so the child's last observations
+	// are written before the runner reports done.
+	livenessStop := make(chan struct{})
+	livenessDone := make(chan struct{})
+	go func() {
+		defer close(livenessDone)
+		r.persistLiveness(livenessStop)
+	}()
+	defer func() { close(livenessStop); <-livenessDone }()
 	startChild()
 	defer stopChild()
 	if r.broker.cfg.Heartbeat != nil {
@@ -545,7 +564,29 @@ func (r *instanceRunner) recordChildLiveness(generation int, at time.Time, state
 	}
 	r.mu.Unlock()
 	if changed {
-		r.persist()
+		select {
+		case r.livenessChanged <- struct{}{}:
+		default:
+		}
+	}
+}
+
+// Liveness arrives on the channel-core child's status reader, which also
+// carries delivery control: snapshot requests and accepted input. A durable
+// write there would hold that control behind the disk, so it is written here.
+func (r *instanceRunner) persistLiveness(stop <-chan struct{}) {
+	for {
+		select {
+		case <-stop:
+			select {
+			case <-r.livenessChanged:
+				r.persist()
+			default:
+			}
+			return
+		case <-r.livenessChanged:
+			r.persist()
+		}
 	}
 }
 

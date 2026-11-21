@@ -79,7 +79,7 @@ class BackendReconciler:
                 return BackendReconciliation(False)
             # All active-version writers serialize with owner-confirmed writes.
             # The bump also makes pending change-set projections stale.
-            await bump_config_revision(tx, admitted.installation_id)
+            await bump_config_revision(tx, admitted.installation_id, team_id=admitted.team_id)
             new = await self._custody.stage_onepassword_observation(tx, observation)
             affected = await self._containment.replacement_consequences(
                 tx,
