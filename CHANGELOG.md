@@ -125,7 +125,7 @@
 - Chat reads set up decryption as mail reads do: with no local encryption key
   they print mail's warning and go on, and with an unreadable key state they
   fail instead of continuing. The chat pending preview, which decrypts without
-  verifying, shows its sender with a `[no verification]` tag. Who sees it:
+  verifying, shows its sender with an `[unverified]` tag. Who sees it:
   released aw.
 
 - `aw chat send-and-wait` accepts as the reply only a message whose signed
