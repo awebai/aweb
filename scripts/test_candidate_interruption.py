@@ -32,7 +32,6 @@ class CandidateInterruption(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         root = Path(temporary.name)
         logs = root / "stage-logs"
-        logs.mkdir()
         (root / "ledger-logs").mkdir()
         ledger = root / "ledger.tsv"
         ledger.touch()
@@ -45,6 +44,8 @@ class CandidateInterruption(unittest.TestCase):
             )
         child = """#!/usr/bin/env bash
 set -euo pipefail
+# This fixture exercises signal handling without a Docker data volume.
+wait_for_disk() { :; }
 run_candidate() {
  if [[ "$CLEANUP_CONTROL" == 1 ]]; then
   cleanup_control() {
