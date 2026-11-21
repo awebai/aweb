@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- `aw wake register`, `deregister`, `pause` and `resume` wait out a wake broker
+  restart (up to 15 s) instead of refusing with "daemon still owns its state",
+  so an OATS spawn or retire hook does not fail while the broker restarts.
+  Only a broker that holds its lock without answering for the whole wait is
+  refused; the error names its pid and says to restart it with `aw wake run`.
 - Provisioning and creator self-enrollment connect before publishing the member's E2E assertion. A failed connect or unconfirmed publication retains the identity and reports the exact recovery command instead of creation success.
 - On unverified A2A routes, a plain question shared by several live tasks is
   refused with task-specific reply forms. Questions use artifact name `question`;
