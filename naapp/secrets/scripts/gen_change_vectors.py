@@ -10,8 +10,7 @@ import json
 import sys
 
 from aweb_naapp.runtime.approvals import canonical_request
-from awid.did import did_from_public_key, stable_id_from_public_key
-from nacl.signing import SigningKey
+from awid.did import did_key_from_signing_key, stable_id_from_did_key
 
 from aweb_secrets.change import (
     AFTER_SHAPES,
@@ -27,10 +26,9 @@ from aweb_secrets.operation import OperationInvalid, OperationTemplate, operatio
 from aweb_secrets.policy import Policy
 
 # Fixture identities, derived from fixed seeds the way AWID derives them.
-_KEY_A = bytes(SigningKey(b"\x01" * 32).verify_key)
-DID_KEY_A = did_from_public_key(_KEY_A)
-DID_AW_A = stable_id_from_public_key(_KEY_A)
-DID_KEY_B = did_from_public_key(bytes(SigningKey(b"\x02" * 32).verify_key))
+DID_KEY_A = did_key_from_signing_key(b"\x01" * 32)
+DID_AW_A = stable_id_from_did_key(DID_KEY_A)
+DID_KEY_B = did_key_from_signing_key(b"\x02" * 32)
 CURRENT = {
     "installation_id": "inst_5d2a9c31",
     "install_generation": 3,

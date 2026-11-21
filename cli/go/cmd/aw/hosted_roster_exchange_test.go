@@ -26,26 +26,13 @@ import (
 // The hosted boundary is HTTP; the child's proof, parent approval, import and
 // chain verification run the production exchange, with no substituted signer.
 func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
-	for _, scenario := range []string{"global provision chained actor", "three children", "cert-only worktree", "cert-only revoked parent", "revoked parent", "different preview parent", "join-from workspace", "join-from identity home", "join-from revoked parent", "join-from retry preview", "join-from retry accept", "join-from retry connect", "join-from retry connect without saved key", "further-team external home", "further-team cross-machine recipe", "further-team retry", "further-team api-base alias", "further-team cleanup warning", "further-team own chain", "further-team parent source", "further-team parent source retry", "further-team add parent retry", "further-team parent signed retry", "further-team parent two children", "further-team parent host managed", "further-team other human fresh", "further-team independent init", "further-team own chain retry", "further-team explicit condition echo", "further-team explicit condition missing echo"} {
+	for _, scenario := range []string{"three children", "cert-only worktree", "cert-only revoked parent", "revoked parent", "different preview parent", "join-from workspace", "join-from identity home", "join-from revoked parent", "further-team external home", "further-team cross-machine recipe", "further-team retry", "further-team api-base alias", "further-team consumption failure", "further-team own chain", "further-team parent source", "further-team other human fresh", "further-team independent init", "further-team own chain retry", "further-team explicit condition echo", "further-team explicit condition missing echo"} {
 		t.Run(scenario, func(t *testing.T) {
 			resetTeamHumanCreateGlobals(t)
 			v := loadWhoVectors(t)
 			t.Setenv("HOME", t.TempDir())
 			t.Setenv("AW_CONFIG_PATH", "")
-			var warningLog *os.File
-			if scenario == "further-team cleanup warning" {
-				var err error
-				warningLog, err = os.CreateTemp(t.TempDir(), "stderr")
-				if err != nil {
-					t.Fatal(err)
-				}
-				oldStderr := os.Stderr
-				os.Stderr = warningLog
-				t.Cleanup(func() {
-					os.Stderr = oldStderr
-					warningLog.Close()
-				})
-			}
+
 			root := t.TempDir()
 			joinFrom := strings.HasPrefix(scenario, "join-from")
 			furtherTeam := strings.HasPrefix(scenario, "further-team")
@@ -73,16 +60,7 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 			status := v.Statuses["normal"]
 			worktree := strings.HasPrefix(scenario, "cert-only")
 			var revoked atomic.Bool
-			failedAfterSignature := false
 			registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if scenario == "further-team parent signed retry" && !failedAfterSignature {
-					entries, _ := filepath.Glob(filepath.Join(awconfig.IdentityIssuanceDir(filepath.Join(root, ".aw")), "*.json"))
-					if len(entries) > 0 {
-						failedAfterSignature = true
-						http.Error(w, "import unavailable after parent signed", 503)
-						return
-					}
-				}
 				if r.URL.Path != "/v1/id-certificates/status" {
 					t.Errorf("unexpected registry call %s", r.URL.Path)
 					http.NotFound(w, r)
@@ -100,7 +78,7 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 			serveRosterTXT(t, idCreateDNSRecordValue(v.Keys["root"].DIDKey, registryURL))
 			const team = "backend:example.com"
 			_, teamKey, _ := awid.GenerateKeypair()
-			previews, accepts, creates, connects := 0, 0, 0, 0
+			previews, accepts := 0, 0
 			var origin string
 			service := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
@@ -113,7 +91,6 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 				case "/v1/agents", "/api/v1/agents":
 					json.NewEncoder(w).Encode(awid.ListAgentsResponse{})
 				case "/api/v1/spawn/create-invite":
-					creates++
 					cert := requireCertificateAuthForTest(t, r)
 					if cert.MemberDIDKey != parent {
 						t.Error("invite did not use the parent identity")
@@ -125,10 +102,6 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 					json.NewEncoder(w).Encode(map[string]any{"invite_id": "11111111-1111-4111-8111-111111111111", "token": "aw_inv_native_roster", "for_human": echoedHuman, "id_tree": map[string]any{"v": 1, "issuer_id": parent, "domain": "example.com", "child_kind": "agent", "mode": "self_custodial"}})
 				case "/api/v1/spawn/invite-preview":
 					previews++
-					if scenario == "join-from retry preview" && previews == 1 {
-						http.Error(w, "preview unavailable", 503)
-						return
-					}
 					// Revoke after issuance, before completion must recheck it.
 					if strings.Contains(scenario, "revoked parent") {
 						revoked.Store(true)
@@ -144,18 +117,10 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 					if scenario == "further-team explicit condition echo" {
 						requiredHuman = v.Keys["alice"].DIDAW
 					}
-					mode := "self_custodial"
-					if scenario == "further-team parent host managed" {
-						mode = "host_managed"
-					}
-					json.NewEncoder(w).Encode(map[string]any{"invite_id": "11111111-1111-4111-8111-111111111111", "canonical_team_id": team, "identity_scope": "unknown", "server_url": origin, "status": "active", "for_human": requiredHuman, "id_tree": map[string]any{"v": 1, "issuer_id": pinned, "domain": "example.com", "child_kind": "agent", "mode": mode}})
+					json.NewEncoder(w).Encode(map[string]any{"invite_id": "11111111-1111-4111-8111-111111111111", "canonical_team_id": team, "identity_scope": "unknown", "server_url": origin, "status": "active", "for_human": requiredHuman, "id_tree": map[string]any{"v": 1, "issuer_id": pinned, "domain": "example.com", "child_kind": "agent", "mode": "self_custodial"}})
 				case "/api/v1/spawn/accept-invite":
 					accepts++
-					if scenario == "further-team parent two children" && accepts <= 2 {
-						http.Error(w, "pending", 503)
-						return
-					}
-					if (scenario == "further-team retry" || scenario == "further-team own chain retry" || scenario == "join-from retry accept" || scenario == "further-team parent source retry") && accepts == 1 {
+					if (scenario == "further-team retry" || scenario == "further-team own chain retry") && accepts == 1 {
 						http.Error(w, "retryable service failure", http.StatusServiceUnavailable)
 						return
 					}
@@ -167,7 +132,7 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 						http.Error(w, "bad request", 400)
 						return
 					}
-					independent := strings.HasPrefix(scenario, "further-team own chain") || strings.HasPrefix(scenario, "further-team parent") || scenario == "further-team add parent retry" || scenario == "further-team independent init"
+					independent := strings.HasPrefix(scenario, "further-team own chain") || scenario == "further-team parent source" || scenario == "further-team independent init"
 					if !independent && (req.IDTree == nil || req.IDTree.IDChain == nil || req.IDTree.Parent["id"] != parent || req.IDTree.Mode != "self_custodial") {
 						t.Error("hosted accept did not carry the parent-issued child chain")
 						http.Error(w, "missing chain", 422)
@@ -181,7 +146,7 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 							http.Error(w, "missing own chain", 422)
 							return
 						}
-						chain = req.IDChain
+						chain = *req.IDChain
 					} else {
 						chain = req.IDTree.IDChain
 						requestID = req.IDTree.RequestID
@@ -202,8 +167,8 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 					if err != nil || pending == nil || pending.DIDKey != req.DID || (!independent && pending.Tree.RequestID != requestID) {
 						t.Error("original child request/key not retained through exchange")
 					}
-					if scenario == "further-team cleanup warning" {
-						// The exchange has finished; make actual deletion fail even
+					if scenario == "further-team consumption failure" {
+						// The exchange has finished; make consumption recording fail even
 						// when tests run as root, without substituting filesystem calls.
 						dir, err := awconfig.DefaultTeamInvitesDir()
 						if err != nil {
@@ -228,11 +193,6 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 					encoded, _ := awid.EncodeTeamCertificateHeader(cert)
 					json.NewEncoder(w).Encode(map[string]any{"team_id": "cloud-team", "team_slug": "backend", "namespace": "example.com", "identity_id": "cloud-" + req.Alias, "alias": req.Alias, "server_url": origin, "did": req.DID, "identity_scope": "local", "custody": "self", "created": true, "team_cert": encoded, "id_chain": chain, "registration_request": nil})
 				case "/v1/connect":
-					connects++
-					if strings.HasPrefix(scenario, "join-from retry connect") && connects == 1 {
-						http.Error(w, "connect unavailable", 503)
-						return
-					}
 					json.NewEncoder(w).Encode(map[string]any{"workspace_id": "workspace-child", "agent_id": "cloud-child", "alias": "child", "team_id": team, "role": "developer", "server_url": origin})
 				case "/v1/agents/me/encryption-key", "/api/v1/agents/me/encryption-key":
 					writePublishEncryptionKeyResponseForTest(t, w, "cloud-child", team, "child")
@@ -250,19 +210,6 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 			}
 			writeTeamCertificateWorkspaceForTest(t, root, workspace, &testSelectionFixture{SigningKey: parentKey, IdentityScope: "local"})
 			writeWorkspaceBindingForTest(t, root, workspace)
-			if scenario == "global provision chained actor" {
-				_, err := createAndAcceptTeamInviteForEmptyAgent(root, childDir, "child", true)
-				if err == nil || !strings.Contains(err.Error(), "aw id team add-member") || !strings.Contains(err.Error(), "parent") {
-					t.Fatalf("global creation should refuse before effects: %v", err)
-				}
-				if _, err := os.Stat(filepath.Join(childDir, ".aw")); !os.IsNotExist(err) {
-					t.Fatalf("global child written before refusal: %v", err)
-				}
-				if creates != 0 || accepts != 0 {
-					t.Fatalf("hosted effects before refusal: %d/%d", creates, accepts)
-				}
-				return
-			}
 			if furtherTeam {
 				oldJSON, oldAlias, oldLocal, oldGlobal, oldHome := jsonFlag, teamAcceptAlias, teamAcceptLocal, teamAcceptGlobal, activeIdentityHome
 				t.Cleanup(func() {
@@ -296,7 +243,7 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
-				if scenario == "further-team cross-machine recipe" || strings.HasPrefix(scenario, "further-team parent") || scenario == "further-team add parent retry" {
+				if scenario == "further-team cross-machine recipe" {
 					if err := awconfig.DeleteTeamInvite(recordID); err != nil {
 						t.Fatal(err)
 					}
@@ -310,14 +257,12 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 					t.Setenv("AWEB_URL", origin)
 				}
 				teamAcceptAlias, teamAcceptLocal, teamAcceptGlobal = "child", true, false
-				acceptCalls := 0
 				accept := func() error {
-					acceptCalls++
 					var result error
 					withTestWorkingDir(t, childDir, func() {
 						cmd := authTestCmd(&bytes.Buffer{})
 						cmd.Flags().Bool("token-stdin", true, "")
-						if scenario == "further-team parent source" || (scenario == "further-team parent source retry" && acceptCalls == 1) || scenario == "further-team parent signed retry" || scenario == "further-team parent two children" || scenario == "further-team parent host managed" || (scenario == "further-team add parent retry" && acceptCalls > 1) {
+						if scenario == "further-team parent source" {
 							cmd.Flags().String("parent", root, "")
 						}
 						cmd.SetIn(strings.NewReader(token + "\n"))
@@ -330,39 +275,6 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 					return result
 				}
 				firstErr := accept()
-				if scenario == "further-team parent two children" {
-					if firstErr == nil {
-						t.Fatal("first child interruption missing")
-					}
-					firstHome := recipientHome
-					recipientHome = t.TempDir()
-					activeIdentityHome.Root = recipientHome
-					if err := accept(); err == nil {
-						t.Fatal("second child interruption missing")
-					}
-					first, _ := loadHostedInviteCreation(filepath.Join(firstHome, hostedInviteRecoveryFile))
-					second, _ := loadHostedInviteCreation(filepath.Join(recipientHome, hostedInviteRecoveryFile))
-					if first == nil || second == nil || first.DIDKey == second.DIDKey {
-						t.Fatal("multi-use invitation conflated child homes")
-					}
-					if err := accept(); err != nil {
-						t.Fatalf("second child resume: %v", err)
-					}
-					recipientHome = firstHome
-					activeIdentityHome.Root = firstHome
-					firstErr = accept()
-				}
-				if scenario == "further-team parent source retry" || scenario == "further-team add parent retry" || scenario == "further-team parent signed retry" {
-					if firstErr == nil {
-						t.Fatal("interruption missing")
-					}
-					t.Logf("initial interruption: %v", firstErr)
-					firstErr = accept()
-					entries, err := filepath.Glob(filepath.Join(awconfig.IdentityIssuanceDir(filepath.Join(root, ".aw")), "*.json"))
-					if err != nil || len(entries) != 1 {
-						t.Fatalf("retry caused multiple parent issuances: %v %v", entries, err)
-					}
-				}
 				if scenario == "further-team other human fresh" {
 					if firstErr == nil || !strings.Contains(firstErr.Error(), "human_mismatch") || accepts != 0 {
 						t.Fatalf("wrong-human fresh child reached membership: accepts=%d err=%v", accepts, firstErr)
@@ -461,6 +373,15 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 					}
 					firstErr = accept()
 				}
+				if scenario == "further-team consumption failure" {
+					if firstErr == nil || !strings.Contains(firstErr.Error(), "membership was issued, but recording consumed invite") {
+						t.Fatalf("consumption failure was hidden: %v", firstErr)
+					}
+					if _, err := awconfig.LoadTeamCertificateForTeamFromIdentityHome(recipientHome, team); err != nil {
+						t.Fatalf("issued certificate was lost: %v", err)
+					}
+					return
+				}
 				if firstErr != nil {
 					t.Fatalf("further-team accept: %v", firstErr)
 				}
@@ -483,16 +404,8 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 				if err != nil || verdict.Outcome != "nearest_human" {
 					t.Fatalf("selected home ancestry=%+v err=%v", verdict, err)
 				}
-				if scenario == "further-team cleanup warning" {
-					warning, err := os.ReadFile(warningLog.Name())
-					if err != nil || !strings.Contains(string(warning), "warning: failed to delete consumed invite "+recordID+":") {
-						t.Fatalf("missing cleanup warning: %q err=%v", warning, err)
-					}
-					if _, err := os.Stat(filepath.Join(recipientHome, hostedInviteRecoveryFile)); !os.IsNotExist(err) {
-						t.Fatalf("successful accept retained recovery: %v", err)
-					}
-				} else if _, err := awconfig.LoadTeamInvite(recordID); !os.IsNotExist(err) {
-					t.Fatalf("success retained link: %v", err)
+				if scenario != "further-team cross-machine recipe" {
+					requireConsumedInviteRecord(t, recordID)
 				}
 				return
 			}
@@ -510,60 +423,6 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 					var out bytes.Buffer
 					joinErr = runInitJoinFrom(authTestCmd(&out))
 				})
-				if strings.HasPrefix(scenario, "join-from retry") {
-					if joinErr == nil {
-						t.Fatal("first attempt unexpectedly succeeded")
-					}
-					if strings.Contains(joinErr.Error(), "aw_inv_native_roster") {
-						t.Fatal("error leaked bearer token")
-					}
-					info, err := os.Stat(filepath.Join(childDir, ".aw", initInviteRecoveryFile))
-					if err != nil || info.Mode().Perm() != 0600 {
-						t.Fatalf("private init recovery: %v %v", info, err)
-					}
-					home := filepath.Join(childDir, ".aw")
-					keyBefore, err := os.ReadFile(filepath.Join(home, "signing.key"))
-					if err != nil {
-						t.Fatal(err)
-					}
-					if scenario == "join-from retry connect without saved key" {
-						// Simulate death after membership persistence but before
-						// the final key-binding save in the outer init command.
-						path := filepath.Join(home, initInviteRecoveryFile)
-						state, err := loadInitInviteRecovery(path)
-						if err != nil || state == nil {
-							t.Fatalf("missing init selection: %v", err)
-						}
-						state.DIDKey = ""
-						if err := state.save(path); err != nil {
-							t.Fatal(err)
-						}
-						if _, err := awconfig.LoadTeamCertificateForTeam(childDir, team); err != nil {
-							t.Fatalf("missing persisted membership: %v", err)
-						}
-					}
-					withTestWorkingDir(t, childDir, func() {
-						initName = "different-child"
-						if err := runInitJoinFrom(authTestCmd(&bytes.Buffer{})); err == nil {
-							t.Fatal("changed selection resumed the original spawn")
-						}
-						initName = "child"
-						joinErr = runInitJoinFrom(authTestCmd(&bytes.Buffer{}))
-					})
-					if joinErr != nil {
-						t.Fatalf("same-directory retry: %v", joinErr)
-					}
-					keyAfter, err := os.ReadFile(filepath.Join(home, "signing.key"))
-					if err != nil || !bytes.Equal(keyBefore, keyAfter) {
-						t.Fatal("retry replaced child key")
-					}
-					if _, err := os.Stat(filepath.Join(home, initInviteRecoveryFile)); !os.IsNotExist(err) {
-						t.Fatalf("success retained bearer record: %v", err)
-					}
-					if creates != 1 {
-						t.Fatalf("minted %d invitations instead of resuming", creates)
-					}
-				}
 				if scenario == "join-from revoked parent" {
 					if joinErr == nil || accepts != 0 {
 						t.Fatalf("revoked source accepted: err=%v accepts=%d", joinErr, accepts)
@@ -577,14 +436,7 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 				if joinErr != nil {
 					t.Fatalf("hosted join-from failed: %v", joinErr)
 				}
-				wantAccepts, wantPreviews := 1, 1
-				if scenario == "join-from retry accept" {
-					wantAccepts = 2
-				}
-				if scenario == "join-from retry preview" {
-					wantPreviews = 2
-				}
-				if accepts != wantAccepts || previews != wantPreviews {
+				if accepts != 1 || previews != 1 {
 					t.Fatalf("accepts=%d previews=%d", accepts, previews)
 				}
 				chain, err := awconfig.LoadInstalledIDChain(filepath.Join(childDir, ".aw"))

@@ -71,7 +71,10 @@ type OpenResult struct {
 	// this result presented. Open still succeeds when it is set: the messages
 	// were delivered, they were just not acknowledged, so they will be
 	// presented again.
-	MarkReadError  string `json:"mark_read_error,omitempty"`
+	MarkReadError string `json:"mark_read_error,omitempty"`
+	// ReceiptError reports a failed local write without losing opened messages
+	// or conflating the cache with the server acknowledgement.
+	ReceiptError   string `json:"receipt_error,omitempty"`
 	SenderWaiting  bool   `json:"sender_waiting"`
 	UnreadWasEmpty bool   `json:"unread_was_empty,omitempty"`
 }

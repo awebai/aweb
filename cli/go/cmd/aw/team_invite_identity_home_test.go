@@ -77,7 +77,7 @@ func TestTeamInviteActsFromExternalIdentityHome(t *testing.T) {
 	principalBefore := snapshotJoinFiles(t, principal)
 	for _, cwd := range []string{empty, decoy} {
 		for _, source := range []string{"flag", "environment"} {
-			for _, surface := range [][]string{{"team", "invite"}, {"id", "team", "invite"}, {"team", "invite", "--member-global"}, {"id", "team", "invite", "--member-global"}} {
+			for _, surface := range [][]string{{"team", "invite"}, {"id", "team", "invite"}} {
 				t.Run(filepath.Base(cwd)+"/"+source+"/"+strings.Join(surface, "-"), func(t *testing.T) {
 					args := append(append([]string{}, surface...), "--json")
 					env := append(testCommandEnv(filepath.Join(root, "user-home")), "USERPROFILE="+filepath.Join(root, "user-home"), "AWEB_IDENTITY_HOME=", "AWEB_URL=", "AWID_REGISTRY_URL=", "AW_NO_UPDATE_CHECK=1")
@@ -100,8 +100,8 @@ func TestTeamInviteActsFromExternalIdentityHome(t *testing.T) {
 			}
 		}
 	}
-	if creates.Load() != 16 {
-		t.Fatalf("invite requests=%d want16", creates.Load())
+	if creates.Load() != 8 {
+		t.Fatalf("invite requests=%d want8", creates.Load())
 	}
 	if !reflect.DeepEqual(before, snapshotJoinFiles(t, decoy)) || !reflect.DeepEqual(principalBefore, snapshotJoinFiles(t, principal)) {
 		t.Fatal("invite changed principal or decoy files")
@@ -157,7 +157,7 @@ func TestTeamInviteGrantKeepsServerRefusal(t *testing.T) {
 	writeSelectionFixtureForTest(t, decoy, testSelectionFixture{AwebURL: server.URL, TeamID: "other:decoy.test", Alias: "decoy", SigningKey: key})
 	before := snapshotJoinFiles(t, decoy)
 	for _, source := range []string{"flag", "environment"} {
-		args := []string{"team", "invite", "--member-global", "--json"}
+		args := []string{"team", "invite", "--json"}
 		env := append(testCommandEnv(userHome), "USERPROFILE="+userHome, "AWEB_IDENTITY_HOME=", "AWEB_URL=", "AWID_REGISTRY_URL=", "AW_NO_UPDATE_CHECK=1")
 		if source == "flag" {
 			args = append([]string{"--identity-home", grant}, args...)
