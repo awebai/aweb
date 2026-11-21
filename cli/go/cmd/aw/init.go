@@ -735,8 +735,6 @@ func runInit(cmd *cobra.Command, args []string) error {
 			}
 			return runInitFromAPIKey(cmd, initAPIKeySelection{WorkingDir: creationDir, APIKey: apiKey, SelectedTeam: retained, Recovery: recovery})
 		}
-	}
-	if apiKey != "" {
 		base, err := resolveAPIKeyInitAwebURL()
 		if err != nil {
 			return err

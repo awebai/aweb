@@ -120,8 +120,8 @@ func (state *apiKeyPartialInitState) matchesAPIKey(apiKey string) bool {
 	return state.APIKeyFingerprint == apiKeyFingerprint(apiKey)
 }
 
-// checkAPIKeyInitRecoveryAuthority keeps a changed key local before selection
-// contacts the service (docs/hosted-global-bootstrap.md:180-190). The full
+// loadAPIKeyInitRecoveryForKey refuses a changed key before team selection can
+// contact the service (docs/hosted-global-bootstrap.md:180-190). The full
 // recovery context is checked again under the bootstrap lock before effects.
 func loadAPIKeyInitRecoveryForKey(in apiKeyInitAuthorityPreflight) (*apiKeyPartialInitState, error) {
 	path := apiKeyPartialInitPath(awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(in.WorkingDir)})
@@ -355,7 +355,7 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (out connectOutput, resultErr
 	return out, nil
 }
 
-// retainedAPIKeyCreationTeam reads the original team selection from the same
+// retainedAPIKeyCreationTeam uses the original team selection from the same
 // private journal as the child key and invitation. Released 1.36.58 writes both
 // team fields, so resumption does not need another teams/current read.
 func retainedAPIKeyCreationTeam(path string, state *apiKeyPartialInitState) (*apiKeyCreationTeam, error) {
