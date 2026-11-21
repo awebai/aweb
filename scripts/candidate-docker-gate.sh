@@ -172,7 +172,7 @@ python3 -c 'import fcntl; fcntl.flock(9, fcntl.LOCK_EX | fcntl.LOCK_NB)' 2>/dev/
 recorded() {
   awk -F'\t' -v key="$KEY" -v stage="$1" '$1 == key && $2 == stage' "$LEDGER" | tail -1
 }
-failed="$(awk -F'\t' -v key="$KEY" '$1 == key && $3 == "failed"' "$LEDGER" | tail -1)"
+failed="$(awk -F'\t' -v key="$KEY" '$1 == key && $3 == "failed" && index($2, "/") == 0' "$LEDGER" | tail -1)"
 if [[ -n "$failed" ]]; then
   printf 'gate: tree %s already FAILED %s (log %s).\n' "$TREE" "$(cut -f2 <<<"$failed")" "$(cut -f6 <<<"$failed")" >&2
   printf '%s\n' "Fix the code and gate the changed tree. For infrastructure failures only, the coordinator removes the failed ledger line and uses GATE_RERUN_REASON='<reason>'." >&2
@@ -313,14 +313,12 @@ printf 'NOT RELEVANT: OSS packages do not bundle Library; it is built only for i
 
 python3 "$ROOT/scripts/candidate-host-pressure.py" capture "$LOG_DIR/host-before.json"
 # The published socket belongs to the Docker host, not the bridge runner.
+host_port_status=0
 if [[ " $pending " == *" checks "* ]]; then
-  if ! AWEB_CANDIDATE_RESOURCE_LABEL="$resource_label" python3 \
+  AWEB_CANDIDATE_RESOURCE_LABEL="$resource_label" python3 \
     "$checkout/scripts/e2e/test_candidate_gate_docker_boundaries.py" \
-    --image unused HostPublishedPortTests -v > "$LOG_DIR/host-published-port.log" 2>&1; then
-    cp "$LOG_DIR/host-published-port.log" "$LOG_DIR/checks.log"
-    cat "$LOG_DIR/checks.log" >&2
-    exit 1
-  fi
+    --image unused HostPublishedPortTests -v > "$LOG_DIR/host-published-port.log" 2>&1 \
+    || host_port_status=$?
 fi
 mkdir -p "$buildx_config"
 printf 'builder\t%s\n' "$builder_name" >> "$LOG_DIR/owned-resources.tsv"
@@ -468,6 +466,7 @@ docker run --rm --init \
   -e A2A_GATEWAY_VERSION="${A2A_GATEWAY_VERSION:-}" \
   -e LIBRARY_E2E_BLUEPRINT_SRC="$LIBRARY_E2E_BLUEPRINT_SRC" \
   -e CANDIDATE_LOG_DIR="$LOG_DIR" \
+  -e CANDIDATE_HOST_PORT_STATUS="$host_port_status" \
   -e USER_PATHS_LATEST_METADATA="${USER_PATHS_LATEST_METADATA:-}" \
   -e USER_PATHS_LATEST_SHA256="${USER_PATHS_LATEST_SHA256:-}" \
   -e USER_PATHS_RESOLVE_SECONDS="${USER_PATHS_RESOLVE_SECONDS:-0}" \

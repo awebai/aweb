@@ -13,6 +13,7 @@ def collect_archive(archive, sha, destination):
     destination = Path(destination).resolve()
     destination.mkdir(parents=True, exist_ok=True, mode=0o700)
     stages = []
+    targets = []
     summaries = []
     links = []
     with tarfile.open(archive) as t:
@@ -54,14 +55,20 @@ def collect_archive(archive, sha, destination):
                         seconds = float(fields[3].removesuffix("s"))
                     except ValueError:
                         raise Infrastructure("invalid gate stage duration") from None
-                    stages.append(
-                        {
-                            "stage": fields[0],
-                            "status": fields[1],
-                            "seconds": seconds,
-                            "summary": item.name,
-                        }
-                    )
+                    stage, _, target = fields[0].partition("/")
+                    row = {
+                        "stage": stage,
+                        "status": fields[1],
+                        "seconds": seconds,
+                        "summary": item.name,
+                    }
+                    if target:
+                        targets.append({
+                            **row, "target": target, "log": fields[2],
+                            "detail": fields[4] if len(fields) > 4 else "",
+                        })
+                    else:
+                        stages.append(row)
     output = destination / "var/log/vm-gate/gate-output.log"
     if output.exists():
         for stage, log in re.findall(
@@ -89,6 +96,7 @@ def collect_archive(archive, sha, destination):
     return {
         "supervision": supervision,
         "stages": stages,
+        "targets": targets,
         "gate_summaries": summaries,
         "memory": memory,
         "archive_links_omitted": links,

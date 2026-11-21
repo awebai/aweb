@@ -2,12 +2,12 @@
 # Sourced by the tree-lock holder. Only this invocation's completed proof is reusable.
 candidate_recorded=0
 record_candidate_row() {
-  local stage="$1" result="$2" source="$3" log note=""
-  log="$LEDGER_LOGS/${KEY:0:12}-$stage-$run_id.log"
-  cp "$source" "$log" || return 1
-  [[ -z "${GATE_RERUN_REASON:-}" ]] || note="rerun after $GATE_RERUN_REASON"
+  local entry="$1" result="$2" log="$3" note="${4:-}"
+  if [[ -n "${GATE_RERUN_REASON:-}" ]]; then
+    note="${note:+$note, }rerun after $GATE_RERUN_REASON"
+  fi
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-    "$KEY" "$stage" "$result" "$SOURCE_SHA" "" "$log" "$OWNER" "$started" "$finished" "$note" >>"$LEDGER"
+    "$KEY" "$entry" "$result" "$SOURCE_SHA" "" "$log" "$OWNER" "$started" "$finished" "$note" >>"$LEDGER"
 }
 retain_candidate_evidence() {
   local relative source target="$LEDGER_LOGS/${KEY:0:12}-evidence-$run_id"
@@ -22,7 +22,9 @@ retain_candidate_evidence() {
   done
 }
 finalize_candidate() {
-  local status="$1" interrupted=0 stage
+  local status="$1" interrupted=0 incomplete=0 target_error=0 stage stage_log
+  local entry verdict relative elapsed note result target_log
+  local retained="$LEDGER_LOGS/${KEY:0:12}-evidence-$run_id"
   [[ "$candidate_recorded" == 0 ]] || return "$status"
   candidate_recorded=1
   finished="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -39,22 +41,49 @@ finalize_candidate() {
   fi
   retain_candidate_evidence || return 1
   for stage in $pending; do
-    if [[ -s "$LOG_DIR/$stage.log" && -f "$LOG_DIR/summary.tsv" ]] && \
-       awk -F'\t' -v stage="$stage" '$1 == stage && $2 == "PASSED" && $3 == stage ".log" && $4 ~ /^[0-9]+s$/ {n++} END {exit !(n == 1)}' "$LOG_DIR/summary.tsv"; then
-      record_candidate_row "$stage" passed "$LOG_DIR/$stage.log" || return 1
-    elif [[ "$interrupted" == 1 ]]; then
+    stage_log="$LEDGER_LOGS/${KEY:0:12}-$stage-$run_id.log"
+    if [[ ! -f "$LOG_DIR/$stage.log" ]]; then
+      if [[ "$interrupted" == 0 ]]; then
+        incomplete=1
+        printf 'gate: missing completed proof for %s\n' "$stage" >> "$run_log"
+      fi
       continue
-    elif [[ -s "$LOG_DIR/$stage.log" ]]; then
-      record_candidate_row "$stage" failed "$LOG_DIR/$stage.log" || return 1
+    fi
+    cp "$LOG_DIR/$stage.log" "$stage_log" || return 1
+    if [[ -s "$stage_log" && -f "$retained/summary.tsv" ]] && \
+       awk -F'\t' -v stage="$stage" '$1 == stage && $2 == "PASSED" && $3 == stage ".log" && $4 ~ /^[0-9]+s$/ {n++} END {exit !(n == 1)}' "$retained/summary.tsv"; then
+      record_candidate_row "$stage" passed "$stage_log" || return 1
+    elif [[ "$interrupted" == 0 ]]; then
+      record_candidate_row "$stage" failed "$stage_log" || return 1
       status=1
-      break
-    else
-      printf 'gate: missing completed proof for %s\n' "$stage" >> "$run_log"
-      record_candidate_row setup failed "$run_log" || return 1
-      status=1
-      break
     fi
   done
+  if [[ "$incomplete" == 1 ]]; then
+    record_candidate_row setup failed "$run_log" || return 1
+    status=1
+  fi
+  if [[ -f "$retained/summary.tsv" ]]; then
+    while IFS=$'\t' read -r entry verdict relative elapsed note; do
+      [[ "$entry" =~ ^(checks|user-paths|unit|artifacts|integration)/[A-Za-z0-9_.-]+$ ]] || continue
+      stage="${entry%%/*}"
+      [[ " $pending " == *" $stage "* ]] || continue
+      case "$relative" in
+        "$stage.log") target_log="$LEDGER_LOGS/${KEY:0:12}-$stage-$run_id.log" ;;
+        test-egress/suite.log) target_log="$retained/$relative" ;;
+        *) target_error=1; continue ;;
+      esac
+      if [[ ! -f "$target_log" ]]; then target_error=1; continue; fi
+      case "$verdict" in
+        PASSED) result=passed ;;
+        FAILED) result=failed ;;
+        SKIPPED) result=skipped ;;
+        *) target_error=1; continue ;;
+      esac
+      record_candidate_row "$entry" "$result" "$target_log" "${note:+$note, }${elapsed}" || return 1
+      if [[ "$result" != passed && "$interrupted" == 0 ]]; then status=1; fi
+    done < "$retained/summary.tsv"
+    if [[ "$target_error" != 0 && "$interrupted" == 0 ]]; then status=1; fi
+  fi
   # Cleanup remains an independent receipt on interrupted runs; a missing
   # verdict is not a product failure and cannot erase the raw interruption.
   if [[ "$interrupted" == 0 ]] && { [[ ! -f "$LOG_DIR/wrapper-verdict.log" ]] \

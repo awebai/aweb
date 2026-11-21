@@ -22,6 +22,7 @@ class CandidateInterruption(unittest.TestCase):
         empty_log=False,
         repeat=False,
         corrupt_summary=False,
+        target_summary=False,
         cleanup_control=False,
         parent_only=False,
         late_summary=False,
@@ -71,6 +72,11 @@ run_candidate() {
  if [[ "$CONTROL_STATUS" == 0 ]]; then
   printf 'integration\\tPASSED\\tintegration.log\\t1s\\t\\n' >> "$LOG_DIR/summary.tsv"
  fi
+ if [[ "$TARGET_SUMMARY" == 1 ]]; then
+  printf 'checks\\tFAILED\\tchecks.log\\t1s\\nartifacts\\tPASSED\\tartifacts.log\\t2s\\n' > "$LOG_DIR/summary.tsv"
+  printf 'checks/check-python-static\\tFAILED\\tchecks.log\\t1s\\texit 23\\nartifacts/build\\tPASSED\\tartifacts.log\\t2s\\n' >> "$LOG_DIR/summary.tsv"
+  printf 'integration/e2e-naapp\\tSKIPPED\\tintegration.log\\t0s\\tbuild FAILED\\n' >> "$LOG_DIR/summary.tsv"
+ fi
  if [[ "$CONTROL_SIGNAL" != 0 ]]; then
   sleep 30 & fake_stage=$!
   # Publish readiness only after cleanup can name the live child.
@@ -101,6 +107,7 @@ run_candidate() {
             CONTROL_SIGNAL=str(signal_number or 0),
             EMPTY_LOG=str(int(empty_log)),
             CORRUPT_SUMMARY=str(int(corrupt_summary)),
+            TARGET_SUMMARY=str(int(target_summary)),
             CLEANUP_CONTROL=str(int(cleanup_control)),
             LATE_SUMMARY=str(int(late_summary)),
         )
@@ -217,6 +224,20 @@ run_candidate() {
             [(r[1], r[2]) for r in rows],
             [("checks", "passed"), ("artifacts", "passed"), ("integration", "failed")],
         )
+
+    def test_target_rows_survive_failure_and_interruption(self):
+        for status in (1, 143):
+            with self.subTest(status=status):
+                code, rows, _, output = self.invoke(status=status, target_summary=True)
+                self.assertEqual(code, status, output)
+                by_entry = {row[1]: row for row in rows}
+                self.assertEqual(by_entry["artifacts"][2], "passed")
+                self.assertEqual(by_entry["checks/check-python-static"][2], "failed")
+                self.assertEqual(by_entry["artifacts/build"][2], "passed")
+                skipped = by_entry["integration/e2e-naapp"]
+                self.assertEqual(skipped[2], "skipped")
+                self.assertEqual(skipped[9], "build FAILED, 0s")
+                self.assertTrue(all(Path(row[5]).is_file() for row in rows))
 
     def test_full_child_log_and_summary_survive_in_ledger_evidence(self):
         for status in (0, 1, 143):
