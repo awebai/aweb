@@ -13,8 +13,11 @@ from aweb.auth_context import TeamIdentity
 from aweb.certificate_registration import configured_registration_mode
 from aweb.identity_grant_status import GrantValidityState, grant_validity
 from aweb.member_team_key import (
+    CURRENT_MEMBERSHIP_REQUIRED_DETAIL,
     GRANT_ISSUER_RECOVERY_DETAIL,
+    current_member,
     member_key_columns_sql,
+    read_member_projection,
 )
 from aweb.team_registry import native_database_manager
 
@@ -26,6 +29,7 @@ GRANT_TERMINAL_DETAILS = {
     "grant_revoked": "identity grant revoked",
     "grant_subject_inactive": "identity grant subject inactive",
     "grant_issuer_revoked": "identity grant issuer revoked. " + GRANT_ISSUER_RECOVERY_DETAIL,
+    "team_membership_not_current": CURRENT_MEMBERSHIP_REQUIRED_DETAIL,
 }
 
 
@@ -62,7 +66,25 @@ async def require_valid_stream_grant(request: Request, db, identity: TeamIdentit
 async def grant_terminal_reason(request: Request, db, identity: TeamIdentity) -> str | None:
     grant = identity.grant
     if grant is None:
-        return None
+        if not identity.certificate_id:
+            # An identity-only conversation is not a certificate-auth stream.
+            return None
+        from aweb.identity_auth_deps import current_membership
+
+        row = await read_member_projection(
+            native_database_manager(db), team_id=identity.team_id, agent_id=identity.agent_id,
+        )
+        if (
+            not row or not current_member(row) or row["did_key"] != identity.did_key
+            or not identity.verified_team_did_key
+            or identity.verified_team_did_key != row["current_team_did_key"]
+        ):
+            return "team_membership_not_current"
+        member = await current_membership(
+            application_registry_client(request.app.state),
+            {**dict(row), "certificate_id": identity.certificate_id}, request=request,
+        )
+        return None if member and member.get("team_id") else "team_membership_not_current"
     now = datetime.now(timezone.utc)
     if not grant.never_expires and _as_utc(grant.expires_at) <= now:
         return "grant_expired"
@@ -158,7 +180,7 @@ def status_event_allowed(identity: TeamIdentity, event: dict[str, Any]) -> bool:
 
 
 class NeverGrantStreamGuard:
-    """Retain finite-stream behavior; never grants revalidate at most every 30s."""
+    """Revalidate certificate and never-grant streams on the shared 30s cadence."""
 
     def __init__(self, request, db, identity, expiry_reason=grant_expiry_reason):
         self.request, self.db, self.identity = request, db, identity
@@ -167,7 +189,7 @@ class NeverGrantStreamGuard:
 
     async def reason(self):
         grant = self.identity.grant
-        if grant is None or not grant.never_expires:
+        if grant is not None and not grant.never_expires:
             return self.expiry_reason(self.identity)
         now = time.monotonic()
         if now - self.checked_at < GRANT_STREAM_RECHECK_SECONDS:
@@ -177,6 +199,6 @@ class NeverGrantStreamGuard:
             return await grant_terminal_reason(self.request, self.db, self.identity)
         except Exception:
             logging.getLogger(__name__).warning(
-                "Never-grant stream revalidation failed", exc_info=True
+                "Stream credential revalidation failed", exc_info=True
             )
             return "verification_unavailable"

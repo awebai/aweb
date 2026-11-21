@@ -19,6 +19,7 @@ import (
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/signaturewire"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
@@ -467,7 +468,7 @@ func postWorkspaceTeamEnroll(ctx context.Context, cfg cliAuthConfig, ensure *wor
 	if err != nil {
 		return nil, err
 	}
-	signature := base64.RawStdEncoding.EncodeToString(ed25519.Sign(material.SigningKey, []byte(canonical)))
+	signature := signaturewire.SignStd(material.SigningKey, []byte(canonical))
 	req := workspaceTeamEnrollRequest{
 		Org:                org,
 		WorkspaceKeyFormat: workspaceTeamKeyFormat,
@@ -815,7 +816,16 @@ func installWorkspaceTeamEnrollment(workingDir, identityHome, issuer string, mat
 	}
 	canonicalTeamID := strings.TrimSpace(enroll.CanonicalTeamID)
 	output := &teamAcceptInviteOutput{Status: "accepted", TeamID: canonicalTeamID, Alias: firstNonEmptyString(enroll.Alias, material.Alias), CertPath: awconfig.TeamCertificateRelativePath(canonicalTeamID), AwebURL: strings.TrimRight(issuer, "/")}
-	if err := recordAcceptedTeamMembership(workingDir, output, cert, registryURL, strings.TrimRight(issuer, "/"), recordMembershipOptions{IdentityHome: explicitEncryptionKeyIdentityHome(identityHome), SetActive: true, WriteWorkspaceBinding: false}); err != nil {
+	if err := recordAcceptedTeamMembership(acceptedTeamMembershipRequest{
+		WorkingDir:   workingDir,
+		Output:       output,
+		Certificate:  cert,
+		RegistryURL:  registryURL,
+		AwebURL:      strings.TrimRight(issuer, "/"),
+		IdentityHome: explicitEncryptionKeyIdentityHome(identityHome),
+		Activation:   membershipMakeActive,
+		Binding:      membershipLeaveWorkspaceBinding,
+	}); err != nil {
 		return err
 	}
 	return saveWorkspaceTeamBinding(identityHome, output, cert, strings.TrimRight(issuer, "/"))

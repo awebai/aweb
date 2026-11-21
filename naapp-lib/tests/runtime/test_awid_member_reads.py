@@ -52,20 +52,21 @@ def member_cache(registry, *credentials: Member, token: str | None = None) -> AW
     )
 
 
-def gated_reads(registry) -> list:
+def gated_reads(registry, *, start=0) -> list:
     return [
         request
-        for request in registry.transport.calls
+        for request in registry.transport.calls[start:]
         if request.url.path.endswith(("/teams/backend", "/teams/frontend", "/certificates"))
     ]
 
 
 async def test_a_member_credential_reads_its_private_teams_facts_without_a_token(registry):
     caller, service = await private_team(registry)
+    setup_reads = len(registry.transport.calls)
     facts = await member_cache(registry, service).get(TEAM_ID, "caller")
     assert facts.team_did_key == caller.team_did_key
     assert {"caller", "service"} <= facts.published_certificate_ids
-    reads = gated_reads(registry)
+    reads = gated_reads(registry, start=setup_reads)
     assert reads
     for request in reads:
         assert "X-AWID-Service-Token" not in request.headers
@@ -91,6 +92,7 @@ async def test_revoking_the_services_certificate_stops_its_reads(registry):
 async def test_a_credential_reads_only_its_own_team(registry):
     _, service = await private_team(registry)
     await private_team(registry, OTHER_TEAM_ID)
+    setup_reads = len(registry.transport.calls)
     cache = member_cache(registry, service)
     assert (await cache.get(TEAM_ID)).team_did_key
     with pytest.raises(HTTPException) as refused:
@@ -98,7 +100,9 @@ async def test_a_credential_reads_only_its_own_team(registry):
     assert refused.value.status_code == 403
     assert refused.value.detail["code"] == "team_private_unreadable"
     assert OTHER_TEAM_ID in refused.value.detail["message"]
-    other_reads = [r for r in registry.transport.calls if "/teams/frontend" in r.url.path]
+    other_reads = [
+        r for r in registry.transport.calls[setup_reads:] if "/teams/frontend" in r.url.path
+    ]
     assert other_reads
     # One team's credential is never sent with another team's reads.
     assert all("Authorization" not in r.headers for r in other_reads)
@@ -106,8 +110,9 @@ async def test_a_credential_reads_only_its_own_team(registry):
 
 async def test_the_token_keeps_precedence_over_a_member_credential(registry):
     _, service = await private_team(registry)
+    setup_reads = len(registry.transport.calls)
     await member_cache(registry, service, token=SERVICE_TOKEN).get(TEAM_ID, "caller")
-    for request in gated_reads(registry):
+    for request in gated_reads(registry, start=setup_reads):
         assert request.headers["X-AWID-Service-Token"] == SERVICE_TOKEN
         assert "Authorization" not in request.headers
 

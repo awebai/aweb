@@ -7,7 +7,7 @@ boundaries.
 """
 
 import asyncio
-from contextlib import AsyncExitStack, aclosing
+from contextlib import AsyncExitStack
 import json
 import os
 from datetime import datetime
@@ -19,26 +19,20 @@ import pytest
 import pytest_asyncio
 from redis.asyncio import Redis
 from awid.registry import RegistryClient
-from awid.external_authority import SystemTXTOutcomeResolver
-from awid.team_certificate import issue_team_certificate
-from aweb.embedding import OutboxRecoveryOwnership, embedded_aweb
+from aweb.api import create_app
 from aweb.db import DatabaseInfra
-from aweb.certificate_auth import CertificateAuthorityContext, verify_certificate_generation
-from aweb.identity_binding import observe_identity_binding
-from aweb.routes.connect import WorkspaceProfile, connect_agent
 from tests.real_stack import REGISTRY_URL
+from did_key_fixtures import named_did_key, named_signing_key
 
 from awid.signing import sign_message
 from aweb.coordination import tasks_service
-from aweb.internal_auth import (
-    ProxyHeaderTrust,
-    ProxyVerificationConfig,
-    build_internal_auth_header_value,
-)
+from aweb.internal_auth import build_internal_auth_header_value
 from aweb.mcp.server import create_mcp_app
 from aweb.mcp.signing import HostedMessageSigningResult, canonical_signed_payload
 from aweb.mutation_hooks import create_mutation_handler
 from test_messages_http import (
+    _encode_certificate,
+    _make_certificate,
     _make_keypair,
     _signed_team_headers,
 )
@@ -98,25 +92,37 @@ class _RecordingWakes:
 
 
 @pytest_asyncio.fixture
-async def server(real_stack, shared_test_pool):
+async def server(real_stack, shared_test_database, monkeypatch):
     """Actual registry admission, HTTP/MCP auth and Redis publications."""
+    # The VM uses pgdbm's configured fixture, without this local-runner marker.
+    monkeypatch.delenv("TEST_DATABASE_URL", raising=False)
+    monkeypatch.setenv("AWID_REGISTRY_URL", REGISTRY_URL)
+    monkeypatch.setenv("AWEB_DATABASE_URL", shared_test_database.dsn)
+    monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
+    monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", INTERNAL_SECRET)
     db = real_stack.aweb_db
-    namespace_key, _, namespace_did = _make_keypair()
-    team_key, _, team_did = _make_keypair()
-    registry = RegistryClient(
-        registry_url=REGISTRY_URL,
-        transport=real_stack.awid,
-        service_token=real_stack.service_token,
-    )
-    config = ProxyVerificationConfig(
-        trust=ProxyHeaderTrust.SHARED_SECRET,
-        shared_secret=INTERNAL_SECRET,
-    )
+    # The named team is stable across fixture instances. Do not model an
+    # unrelated controller rotation inside a shared serving-cache lifetime.
+    namespace_key = named_signing_key("mutation-parity-namespace")
+    namespace_did = named_did_key("mutation-parity-namespace")
+    team_key = named_signing_key("mutation-parity-team")
+    team_did = named_did_key("mutation-parity-team")
     async with (
-        aclosing(registry),
         Redis.from_url(os.environ["REDIS_URL"], decode_responses=True) as redis,
         AsyncExitStack() as cleanup,
     ):
+        infra = DatabaseInfra()
+        await infra.initialize(shared_pool=shared_test_database.pool)
+        cleanup.push_async_callback(infra.close)
+        app = create_app(
+            db_infra=infra,
+            redis=redis,
+            public_origin="http://test",
+            awid_transport=real_stack.awid,
+            host_runs_outbox_recovery=True,
+        )
+        await cleanup.enter_async_context(app.router.lifespan_context(app))
+        registry: RegistryClient = app.state.awid_registry_client
         await registry.register_namespace("local", namespace_did, namespace_key)
         await registry.register_team(
             domain="local",
@@ -127,60 +133,55 @@ async def server(real_stack, shared_test_pool):
             namespace_controller_signing_key=namespace_key,
         )
         keys, agents, workspaces, dids, certificates = {}, {}, {}, {}, {}
-        for alias in ("pilot", "bob"):
-            sk, _, did = _make_keypair()
-            keys[alias] = (sk, did)
-            mapping = await registry.register_did(did, sk)
-            dids[alias] = mapping.did_aw
-            await registry.register_address("local", alias, mapping.did_aw, namespace_key, current_did_key=did)
-            certificate, encoded = issue_team_certificate(
-                team_id=TEAM,
-                team_signing_key=team_key,
-                member_did_key=did,
-                member_did_aw=mapping.did_aw,
-                member_address=f"local/{alias}",
-                alias=alias,
-                identity_scope="global",
-            )
-            await registry.register_team_certificate(
-                "local",
-                "mutation-parity",
-                team_controller_signing_key=team_key,
-                certificate_id=certificate["certificate_id"],
-                member_did_key=did,
-                member_did_aw=mapping.did_aw,
-                member_address=f"local/{alias}",
-                alias=alias,
-                identity_scope="global",
-                certificate=encoded,
-            )
-            certificates[alias] = encoded
-            generation = await verify_certificate_generation(
-                context=CertificateAuthorityContext(
-                    db=db, registry_client=registry, txt_resolver=SystemTXTOutcomeResolver()
-                ),
-                team_id=TEAM,
-                encoded_certificate=encoded,
-                member_did_key=did,
-            )
-            binding = await observe_identity_binding(registry, did_key=did, did_aw=mapping.did_aw, address=f"local/{alias}")
-            connected = await connect_agent(
-                db=db,
-                generation=generation,
-                identity_binding=binding,
-                workspace_profile=WorkspaceProfile.HOSTED_MCP,
-                hostname="",
-                workspace_path="",
-                repo_origin="",
-                role="",
-                human_name="",
-                agent_type="agent",
-            )
-            agents[alias] = connected["agent_id"]
-            workspaces[alias] = UUID(connected["workspace_id"])
-        infra = DatabaseInfra()
-        await infra.initialize(shared_pool=shared_test_pool)
-        cleanup.push_async_callback(infra.close)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as connecting:
+            for alias in ("pilot", "bob"):
+                sk, _, did = _make_keypair()
+                keys[alias] = (sk, did)
+                mapping = await registry.register_did(did, sk)
+                dids[alias] = mapping.did_aw
+                await registry.register_address(
+                    "local", alias, mapping.did_aw, namespace_key, current_did_key=did
+                )
+                certificate = _make_certificate(
+                    team_key,
+                    team_did,
+                    did,
+                    team_id=TEAM,
+                    certificate_id=f"parity-{alias}",
+                    member_did_aw=mapping.did_aw,
+                    member_address=f"local/{alias}",
+                    alias=alias,
+                    identity_scope="global",
+                )
+                encoded = _encode_certificate(certificate)
+                await registry.register_team_certificate(
+                    "local",
+                    "mutation-parity",
+                    team_controller_signing_key=team_key,
+                    certificate_id=certificate["certificate_id"],
+                    member_did_key=did,
+                    member_did_aw=mapping.did_aw,
+                    member_address=f"local/{alias}",
+                    alias=alias,
+                    identity_scope="global",
+                    certificate=encoded,
+                )
+                certificates[alias] = encoded
+                body = b"{}"
+                response = await connecting.post(
+                    "/v1/connect",
+                    content=body,
+                    headers={
+                        **_signed_team_headers(sk, did, TEAM, encoded, body),
+                        "Content-Type": "application/json",
+                    },
+                )
+                assert response.status_code == 200, response.text
+                connected = response.json()
+                agents[alias] = connected["agent_id"]
+                workspaces[alias] = UUID(connected["workspace_id"])
         mutations, published = [], []
 
         async def record_mutation(event_type, context):
@@ -199,30 +200,19 @@ async def server(real_stack, shared_test_pool):
                 signature=sign_message(sk, signed.encode()),
             )
 
-        def mcp_factory(resources):
-            return create_mcp_app(
-                db_infra=resources.db_infra,
-                redis=resources.redis,
-                registry_client=resources.registry_client,
-                hosted_signer=signer,
-                public_origin=resources.public_origin,
-                proxy_verification=resources.proxy_verification,
-            )
-
-        resources = await cleanup.enter_async_context(
-            embedded_aweb(
-                db_infra=infra,
-                redis=redis,
-                registry_client=registry,
-                public_origin="http://test",
-                outbox_recovery=OutboxRecoveryOwnership.HOST,
-                mcp_factory=mcp_factory,
-                proxy_verification=config,
-                on_mutation=record_mutation,
-            )
+        # The library app owns its ordinary MCP mount; the host extends it
+        # through the released public constructor on the same serving clients.
+        mcp = create_mcp_app(
+            db_infra=infra,
+            redis=redis,
+            registry_client=registry,
+            hosted_signer=signer,
+            public_origin=app.state.public_origin,
         )
-        app = resources.api_app
-        app.mount("/mcp", resources.mcp_app)
+        app.mount("/parity-mcp", mcp)
+        await mcp.startup()
+        cleanup.push_async_callback(mcp.shutdown)
+        app.state.on_mutation = record_mutation
         async with redis.pubsub() as stream:
             await stream.psubscribe(
                 "events:*", f"team-events:{TEAM}", "chat-session:*", "parity-barrier:*"
@@ -264,7 +254,7 @@ async def server(real_stack, shared_test_pool):
                         ),
                     }
                     response = await client.post(
-                        "/mcp/",
+                        "/parity-mcp/",
                         headers=headers,
                         json={
                             "jsonrpc": "2.0",

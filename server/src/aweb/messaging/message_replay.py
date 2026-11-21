@@ -53,6 +53,7 @@ class StoredMessageClaim:
     artifact: PlaintextReplayArtifact | EncryptedReplayArtifact
     chat_controls: ChatReplayControls | None = None
     chat_participant_dids: frozenset[str] | None = None
+    chat_participant_current_keys: Mapping[str, str] | None = None
 
 
 def replay_artifact(
@@ -76,6 +77,11 @@ def _require_named_claim(claim: StoredMessageClaim) -> None:
         or not isinstance(claim.chat_participant_dids, frozenset)
     ):
         raise TypeError("Supply a frozen participant DID set only for a chat retry.")
+    if claim.chat_participant_current_keys is not None and (
+        claim.chat_participant_dids is None
+        or not isinstance(claim.chat_participant_current_keys, Mapping)
+    ):
+        raise TypeError("Current chat keys require the admitted participant DID set.")
     if claim.chat_controls is not None and (
         claim.kind is not MessageKind.CHAT
         or not isinstance(claim.chat_controls, ChatReplayControls)
@@ -96,6 +102,10 @@ class StoredMessageState(Enum):
     PARTICIPANTS_CHANGED = auto()
 
 
+class StoredMessageConflict(ConflictError):
+    """Only the canonical replay owner refused reuse of an accepted message ID."""
+
+
 @dataclass(frozen=True, kw_only=True)
 class StoredMessageLookup:
     state: StoredMessageState
@@ -103,11 +113,11 @@ class StoredMessageLookup:
 
     def refuse_conflicting_message_id(self) -> None:
         if self.state is StoredMessageState.PARTICIPANTS_CHANGED:
-            raise ConflictError(
+            raise StoredMessageConflict(
                 "The stored chat participants differ from the resolved recipients. Retry the original conversation and recipient identities unchanged."
             )
         if self.state is StoredMessageState.CONFLICT:
-            raise ConflictError(
+            raise StoredMessageConflict(
                 "message_id already exists for a different signed message. Retry the original request unchanged; choose a new message_id only if you intend to send a different message."
             )
 
@@ -198,7 +208,20 @@ async def read_stored_message(db, *, claim: StoredMessageClaim) -> StoredMessage
             "SELECT did FROM {{tables.chat_participants}} WHERE session_id=$1",
             row["session_id"],
         )
-        if {party["did"] for party in participants} != claim.chat_participant_dids:
+        remaining = set(claim.chat_participant_dids)
+        current_keys = claim.chat_participant_current_keys or {}
+        for party in participants:
+            did = party["did"]
+            matches = {
+                expected for expected in remaining
+                if did == expected or (
+                    did.startswith("did:key:") and current_keys.get(expected) == did
+                )
+            }
+            if len(matches) != 1:
+                return StoredMessageLookup(state=StoredMessageState.PARTICIPANTS_CHANGED)
+            remaining.remove(matches.pop())
+        if remaining:
             return StoredMessageLookup(state=StoredMessageState.PARTICIPANTS_CHANGED)
     return StoredMessageLookup(state=StoredMessageState.EXACT, message=dict(row))
 

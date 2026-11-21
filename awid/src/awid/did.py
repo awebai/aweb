@@ -6,8 +6,9 @@ import base64
 import hashlib
 
 import base58 as b58
-from nacl.bindings import crypto_core_ed25519_is_valid_point
 from nacl.signing import SigningKey
+
+from awid.signature_wire import prime_point
 
 _MULTICODEC_ED25519 = b"\xed\x01"
 _MULTICODEC_LEN = len(_MULTICODEC_ED25519)
@@ -52,7 +53,7 @@ def strict_ed25519_point(public_key: bytes) -> bool:
     Small-order, non-canonical and mixed-order points are refused: a
     mixed-order key can make signatures that plain verification accepts.
     """
-    return len(public_key) == _ED25519_KEY_LEN and bool(crypto_core_ed25519_is_valid_point(public_key))
+    return prime_point(public_key)
 
 
 def public_key_from_did(did: str) -> bytes:
@@ -105,9 +106,13 @@ def decode_public_key(encoded: str) -> bytes:
         try:
             raw = base64.b64decode(padded, validate=True)
         except Exception:
-            raise ValueError("public_key must be valid base64 (url-safe or standard) no-padding")
+            raise ValueError(
+                "public_key must be valid base64 (url-safe or standard) no-padding"
+            )
     if len(raw) != _ED25519_KEY_LEN:
-        raise ValueError(f"Decoded key must be {_ED25519_KEY_LEN} bytes, got {len(raw)}")
+        raise ValueError(
+            f"Decoded key must be {_ED25519_KEY_LEN} bytes, got {len(raw)}"
+        )
     return raw
 
 
@@ -139,11 +144,15 @@ def validate_stable_id(value: str) -> str:
     if not suffix:
         raise ValueError("stable_id suffix must not be empty")
     if len(suffix) > _STABLE_ID_ENCODED_MAX:
-        raise ValueError(f"stable_id suffix must be at most {_STABLE_ID_ENCODED_MAX} characters")
+        raise ValueError(
+            f"stable_id suffix must be at most {_STABLE_ID_ENCODED_MAX} characters"
+        )
     try:
         decoded = b58.b58decode(suffix)
     except Exception as exc:
         raise ValueError("stable_id suffix must be valid base58btc") from exc
     if len(decoded) != _STABLE_ID_BYTES_LEN:
-        raise ValueError(f"stable_id suffix must decode to {_STABLE_ID_BYTES_LEN} bytes")
+        raise ValueError(
+            f"stable_id suffix must decode to {_STABLE_ID_BYTES_LEN} bytes"
+        )
     return value

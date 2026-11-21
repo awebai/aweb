@@ -81,7 +81,9 @@ The identity-signed "my inbound mode" route uses the authenticated, AWID-bound
 `aweb.messaging.delivery_policy.authorize_delivery` owns this rule for native
 and federated sends. Same-team admission intersects all current active team
 memberships of both verified identities through the native member owner. A
-caller-selected team, retired row or superseded team key adds no membership.
+caller-selected team, retired row, superseded team key or revoked admitting
+certificate adds no membership. The same native certificate-standing owner used
+by authentication checks revocation and the staged registration requirement.
 Address residence and human classification remain independent of membership.
 Exact active identity-contact matching has one owner and retains contact locks
 through an existing delivery transaction. Send refusals end with a concrete
@@ -165,12 +167,12 @@ For a send to a global address (`domain/name`):
    `verified`. These checks preserve the original signed bytes and conversation
    ID.
    A thread participant is the identity (`did:aw` for a global identity), not
-   a per-team actor. The address selects that identity and its route, never a
-   different address from a membership projection. `agent_id` is nullable
-   display/admission metadata: explicit-address participants leave it null;
-   a team-scoped alias may record its selected membership. Read access and
-   continuation compare participant DIDs, not actor IDs or address equality.
-   Native admission's actor/team facts are a separate current membership
+   a per-team actor. The address selects identity and route, not a membership.
+   Originating address sends leave recipient membership metadata null; a team
+   alias may retain its selected member. Receiving services retain known native
+   row references for storage and delivery events, without identity/team authority.
+   Continuations preserve known references; access still compares participant DIDs.
+   Native admission's actor/team authority uses a separate current-membership
    projection for the target identity in the authenticated endpoint team.
 5. Federation delivery uses the resolved delivery origin and the target identity
    binding. The recipient server re-resolves the target address/key and fails
@@ -349,7 +351,12 @@ Receipts survive ordinary message garbage collection.
 For native signed mail, an exact retry whose identical signed payload is
 already stored returns that stored result before applying the attestation age
 limit. Signature, sender/recipient binding, encryption and current delivery
-admission checks still precede this lookup. A stored answer is not a new
+admission checks still precede returning the stored answer. An exact encrypted
+artifact may identify its own recorded mail target when the outer selector
+carries only the key and its protected routing binds the recorded stable
+identity. This lookup locates only that accepted target, supplies no new-send
+authority, and does not skip ordinary encryption freshness or current policy.
+A stored answer is not a new
 attestation; a new message still requires a timestamp within the accepted skew.
 Age refusal is HTTP 422 with the existing human `detail` plus a signing action
 and additive `X-AWEB-Error-Code: message_timestamp_outside_skew` header. Shape
@@ -365,6 +372,18 @@ mail retry retains the remote call to recover its original established response,
 then returns the existing local projection without another send event. Chat
 create and continuation return the identical accepted message from local storage
 after current admission; they do not repeat session, wait, contact or event effects.
+If an exact chat artifact's requested participants differ from the stored
+conversation, the caller is told to retry the original conversation and recipient
+identities unchanged. It must not choose a new message ID merely to recover a
+lost answer: that would submit another message. Choosing a new ID is appropriate
+only when intentionally sending a different signed artifact.
+A plaintext continuation compares the recorded session parties, including retained
+departure markers, rather than only today's delivery targets. Departed parties
+remain excluded from new delivery. A named retry can recognize an original local
+`did:key` party as the currently admitted global `did:aw` only when that identity's
+current key is still the exact recorded key; this acknowledgement does not rewrite
+participants or grant another membership. Signature and current admission checks
+remain in front of the answer; encrypted integrity and freshness checks are unchanged.
 Inside the existing encrypted window an exact encrypted chat retry also returns
 its stored message; it does not gain the plaintext age exemption. A changed
 artifact or missing proof is a new attestation and takes the age check, including

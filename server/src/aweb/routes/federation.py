@@ -12,10 +12,12 @@ from uuid import UUID, uuid4
 from awid.federation_errors import FederationAuthorityError
 from awid.log import canonical_server_origin
 from awid.registry import Address
+from aweb.service_errors import ConflictError
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
 from aweb.client_address import request_client_address
+from aweb.application_state import RegistryClientUnavailable, application_registry_client
 from aweb.message_vocabulary import MessageInputSource, observe_message_vocabulary
 from aweb.agent_wake import agent_wake_publisher, agent_wake_scope
 from aweb.awid_error_handling import AWID_DEPENDENCY_ERRORS
@@ -264,7 +266,7 @@ async def _local_envelope_recipient(
 ) -> Recipient:
     """Residence for a validated address or an already-authorized participant.
 
-    identity-messaging-contract.md:272-277 makes exact-DID residence
+    Continuations (docs/identity-messaging-contract.md:313-318) makes exact-DID residence
     independent of team membership. Neither read grants a team actor.
     """
     if address_binding is not None:
@@ -275,9 +277,12 @@ async def _local_envelope_recipient(
             address=envelope.target_address,
         )
     else:
-        projection = await read_participant_identity_projection(
-            db, participant_did=envelope.target_did_aw
-        )
+        try:
+            projection = await read_participant_identity_projection(
+                db, participant_did=envelope.target_did_aw
+            )
+        except ConflictError as exc:
+            raise FederationAuthorityError("federation_conversation_invalid") from exc
         recipient = Recipient.from_local_projection(projection) if projection is not None else None
     if recipient is None:
         raise FederationAuthorityError("recipient_identity_not_found")
@@ -343,9 +348,10 @@ async def receive_federated_message(
     db=Depends(get_db),
 ):
     try:
-        registry_client = getattr(request.app.state, "awid_registry_client", None)
-        if registry_client is None:
-            raise FederationAuthorityError("federation_authority_coordination_unavailable")
+        try:
+            registry_client = application_registry_client(request.app.state)
+        except RegistryClientUnavailable as exc:
+            raise FederationAuthorityError("federation_authority_coordination_unavailable") from exc
         (
             envelope,
             ingress_envelope_hash,
@@ -473,6 +479,7 @@ async def receive_federated_message(
                     id_chain=getattr(request.state, "id_chain", None),
                     recipient={},
                     authority_token=authority_token,
+                    registry_client=registry_client,
                     envelope_hash_override=ingress_envelope_hash,
                 )
             return result
@@ -495,6 +502,7 @@ async def receive_federated_message(
                 id_chain=getattr(request.state, "id_chain", None),
                 recipient=recipient,
                 authority_token=authority_token,
+                registry_client=registry_client,
                 stored_route_continuation=stored_route,
                 stored_route_snapshot=stored_route_snapshot,
                 envelope_hash_override=ingress_envelope_hash,

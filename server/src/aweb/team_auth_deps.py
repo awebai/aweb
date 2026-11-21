@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 
 from awid.dns_auth import enforce_timestamp_skew, parse_didkey_auth, require_timestamp
-from awid.registry import CachedRegistryClient
+from awid.registry import CachedRegistryClient, TeamCertificateStanding
 from awid.signing import verify_did_key_signature
 from awid.team_certificate import TeamCertificateError, decode_team_certificate
 from awid.team_ids import parse_team_id
@@ -40,13 +40,16 @@ from aweb.identity_scope import normalize_identity_scope
 from aweb.member_team_key import (
     CURRENT_MEMBERSHIP_REQUIRED_DETAIL,
     MemberProjection,
+    MemberReadLock,
+    current_member,
     member_row_active,
     read_member_projection,
 )
 from aweb.request_body import request_body_sha256
 from aweb.team_auth import certificate_refusal, parse_and_verify_certificate
 from aweb.team_auth_envelope import team_auth_signature_payload
-from aweb.team_key_pins import pinned_team_key_for_request
+from aweb.team_key_pins import AdmittedTeamKeys, pinned_team_key_for_request
+from aweb.team_registry import certificate_standing_after_miss
 from aweb.team_registry import (
     native_database_manager as _aweb_db,
 )
@@ -70,6 +73,16 @@ from aweb.team_registry import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _superseded_team_key() -> HTTPException:
+    return HTTPException(
+        status_code=401,
+        detail={
+            "code": "team_key_not_current",
+            "message": "The team certificate is under a superseded team key",
+        },
+    )
 
 
 async def resolve_team_identity(
@@ -127,6 +140,12 @@ async def resolve_team_identity(
     if not member_row_active(row):
         raise ValueError(CURRENT_MEMBERSHIP_REQUIRED_DETAIL)
 
+    # Only the key checked by the certificate verifier may reaccept a member.
+    # A stored accepted key is attribution, not a substitute for that proof.
+    verified_team_did_key = str(cert_info.get("verified_team_did_key") or "").strip()
+    if not verified_team_did_key:
+        raise ValueError(CURRENT_MEMBERSHIP_REQUIRED_DETAIL)
+
     binding = cert_info.get("identity_binding")
     if not isinstance(binding, IdentityBinding):
         binding = IdentityBinding()
@@ -146,26 +165,52 @@ async def resolve_team_identity(
             did_aw=row.get("did_aw") or "",
             address=row.get("address") or "",
         )
-    await refresh_projection_binding(db, agent_id=row["agent_id"], did_key=did_key, binding=binding)
-
     # identity.md:807-811: later grants must retain the exact certificate that
     # this verified request makes current for its subject.
     presented_certificate_id = (cert_info.get("certificate_id") or "").strip()
-    # The request verifier supplies its checked key. Direct parser consumers
-    # retain an already admitted key instead of clearing that evidence.
-    verified_team_did_key = (
-        cert_info.get("verified_team_did_key") or row.get("accepted_team_did_key") or ""
-    ).strip()
-    if presented_certificate_id and (
-        presented_certificate_id != (row.get("certificate_id") or "").strip()
-        or verified_team_did_key != (row.get("accepted_team_did_key") or "").strip()
-    ):
-        await db.execute(
-            "UPDATE {{tables.agents}} SET certificate_id = $2, accepted_team_did_key = $3 WHERE agent_id = $1",
-            row["agent_id"],
-            presented_certificate_id,
-            verified_team_did_key or None,
+    # A worker may still hold a verified old key in its memo, or a host may
+    # have read its snapshot before rotation. Recheck under the same locks
+    # that protect acceptance and binding writes; no registry read occurs here.
+    # A reader with cached/local binding evidence and the same credential
+    # does not write acceptance. Share its membership lock with delivery's
+    # policy locks, while retaining the transactional current-key check.
+    # If the credential changed, release SHARE before taking UPDATE so two
+    # readers never deadlock while upgrading their locks. Reread and validate
+    # again in that transaction; the earlier row grants no authority.
+    read_locks = (
+        (MemberReadLock.UPDATE,)
+        if binding.fresh_observation or (
+            presented_certificate_id and (
+                presented_certificate_id != (row.get("certificate_id") or "").strip()
+                or verified_team_did_key != (row.get("accepted_team_did_key") or "").strip()
+            )
         )
+        else (MemberReadLock.SHARE, MemberReadLock.UPDATE)
+    )
+    for read_lock in read_locks:
+        async with db.transaction() as tx:
+            row = await read_member_projection(
+                tx, team_id=team_id, did_key=did_key, read_lock=read_lock
+            )
+            if not row or not current_member({
+                **dict(row), "accepted_team_did_key": verified_team_did_key,
+            }):
+                raise ValueError(CURRENT_MEMBERSHIP_REQUIRED_DETAIL)
+            update_certificate = presented_certificate_id and (
+                presented_certificate_id != (row.get("certificate_id") or "").strip()
+                or verified_team_did_key != (row.get("accepted_team_did_key") or "").strip()
+            )
+            if read_lock is MemberReadLock.SHARE and update_certificate:
+                continue
+            await refresh_projection_binding(
+                tx, agent_id=row["agent_id"], did_key=did_key, binding=binding
+            )
+            if update_certificate:
+                await tx.execute(
+                    "UPDATE {{tables.agents}} SET certificate_id = $2, accepted_team_did_key = $3 WHERE agent_id = $1",
+                    row["agent_id"], presented_certificate_id, verified_team_did_key,
+                )
+            break
 
     return TeamIdentity(
         team_id=team_id,
@@ -176,6 +221,7 @@ async def resolve_team_identity(
         agent_id=str(row["agent_id"]),
         identity_scope=normalize_identity_scope(cert_info.get("identity_scope")),
         certificate_id=cert_info.get("certificate_id", ""),
+        verified_team_did_key=verified_team_did_key,
     )
 
 
@@ -316,7 +362,7 @@ async def _verify_admitting_certificate(
     revoked_certs = await _get_revoked_certificates(
         request, cert_team_id, certificate_ids=selected_certificate_ids
     )
-    # hosted-certificate-anchoring.md:286-294: enforcement and measurement
+    # docs/aweb-sot.md, Staged certificate-registration observations: enforcement and measurement
     # share a registration decision. OFF measurement follows artifact checks.
     registered_certs = (
         await _get_registered_certificates(request, cert_team_id)
@@ -357,11 +403,21 @@ async def _verify_admitting_certificate(
             if not isinstance(registry, CachedRegistryClient):
                 # An uncached registry client's initial list was already live.
                 raise
-            registered_certs = await registered_certificates(
+            certificate_id = cert_data["certificate_id"]
+            standing = await certificate_standing_after_miss(
                 registry,
                 cert_team_id,
-                missing_certificate_id=cert_data["certificate_id"],
+                certificate_id=certificate_id,
             )
+            if standing is TeamCertificateStanding.REVOKED:
+                raise TeamCertificateError("revoked") from None
+            if standing is not TeamCertificateStanding.ACTIVE:
+                raise
+            # The standing read can overlap a move of this server's admitted pin.
+            pin = await AdmittedTeamKeys(_aweb_db(db)).pin(cert_team_id)
+            if pin is not None and pin.team_did_key != team_key:
+                raise _superseded_team_key() from None
+            registered_certs = {certificate_id}
             result = check_certificate(team_key)
         else:
             if revocation_evidence is EvidenceMode.FRESH:
@@ -406,13 +462,7 @@ async def _verify_admitting_certificate(
         ):
             # A certificate under a key the team no longer holds: the member
             # fetches the certificate now recorded for it and continues.
-            raise HTTPException(
-                status_code=401,
-                detail={
-                    "code": "team_key_not_current",
-                    "message": "The team certificate is under a superseded team key",
-                },
-            ) from None
+            raise _superseded_team_key() from None
         if e.reason == "unregistered":
             logger.warning(
                 "certificate existence check failed: a certificate presented for team %s "

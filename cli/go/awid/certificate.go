@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"sort"
 	"strings"
 	"time"
+
+	"github.com/awebai/aw/canonicaljson"
+	"github.com/awebai/aw/signaturewire"
 )
 
 // TeamCertificate is a team membership proof signed by the team controller.
@@ -27,8 +29,52 @@ type TeamCertificate struct {
 	IssuedAt      string `json:"issued_at"`
 	Signature     string `json:"signature"`
 
-	scopeWireKey   string
-	legacyLifetime string
+	scopeWireKey          string
+	legacyLifetime        string
+	memberDIDAWPresence   certificateStringPresence
+	memberAddressPresence certificateStringPresence
+}
+
+type certificateStringPresence uint8
+
+const (
+	certificateStringAbsent certificateStringPresence = iota
+	certificateStringPresent
+	certificateStringNull
+)
+
+// certificateOptionalString preserves signed field presence and JSON null
+// (docs/awid-sot.md:784-791). Its wire value always comes from the current claim.
+type certificateOptionalString struct {
+	value    string
+	presence certificateStringPresence
+}
+
+func (s *certificateOptionalString) UnmarshalJSON(data []byte) error {
+	var value *string
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	*s = certificateOptionalString{presence: certificateStringNull}
+	if value != nil {
+		s.value = *value
+		s.presence = certificateStringPresent
+	}
+	return nil
+}
+
+func (s certificateOptionalString) MarshalJSON() ([]byte, error) {
+	if s.value == "" && s.presence == certificateStringNull {
+		return []byte("null"), nil
+	}
+	return json.Marshal(s.value)
+}
+
+func optionalCertificateMemberString(value string, presence certificateStringPresence) *certificateOptionalString {
+	if value == "" && presence == certificateStringAbsent {
+		return nil
+	}
+	return &certificateOptionalString{value: value, presence: presence}
 }
 
 // TeamCertificateFields are the inputs for signing a certificate.
@@ -75,8 +121,8 @@ func SignTeamCertificate(teamKey ed25519.PrivateKey, fields TeamCertificateField
 	memberDIDAW := strings.TrimSpace(fields.MemberDIDAW)
 	memberAddress := strings.TrimSpace(fields.MemberAddress)
 
-	payload := canonicalCertificatePayload(certID, fields.Team, teamDIDKey, fields.MemberDIDKey, memberDIDAW, memberAddress, fields.Alias, identityScope, issuedAt, false)
-	sig := ed25519.Sign(teamKey, []byte(payload))
+	payload := canonicalCertificatePayload(certificatePayloadFields{CertificateID: certID, TeamID: fields.Team, TeamDIDKey: teamDIDKey, MemberDIDKey: fields.MemberDIDKey, MemberDIDAW: memberDIDAW, MemberAddress: memberAddress, Alias: fields.Alias, Scope: identityScope, IssuedAt: issuedAt, ScopeField: certificateIdentityScopeField})
+	sig := signaturewire.SignBytes(teamKey, []byte(payload))
 
 	return &TeamCertificate{
 		Version:       1,
@@ -152,32 +198,32 @@ func DecodeTeamCertificateHeader(encoded string) (*TeamCertificate, error) {
 
 func (c TeamCertificate) MarshalJSON() ([]byte, error) {
 	type canonicalWire struct {
-		Version       int    `json:"version"`
-		CertificateID string `json:"certificate_id"`
-		Team          string `json:"team_id"`
-		TeamDIDKey    string `json:"team_did_key"`
-		MemberDIDKey  string `json:"member_did_key"`
-		MemberDIDAW   string `json:"member_did_aw,omitempty"`
-		MemberAddress string `json:"member_address,omitempty"`
-		Alias         string `json:"alias"`
-		IdentityScope string `json:"identity_scope"`
-		IssuedAt      string `json:"issued_at"`
-		Signature     string `json:"signature"`
+		Version       int                        `json:"version"`
+		CertificateID string                     `json:"certificate_id"`
+		Team          string                     `json:"team_id"`
+		TeamDIDKey    string                     `json:"team_did_key"`
+		MemberDIDKey  string                     `json:"member_did_key"`
+		MemberDIDAW   *certificateOptionalString `json:"member_did_aw,omitempty"`
+		MemberAddress *certificateOptionalString `json:"member_address,omitempty"`
+		Alias         string                     `json:"alias"`
+		IdentityScope string                     `json:"identity_scope"`
+		IssuedAt      string                     `json:"issued_at"`
+		Signature     string                     `json:"signature"`
 	}
 	identityScope := NormalizeIdentityScope(c.IdentityScope)
 	if c.scopeWireKey == "lifetime" {
 		type legacyWire struct {
-			Version       int    `json:"version"`
-			CertificateID string `json:"certificate_id"`
-			Team          string `json:"team_id"`
-			TeamDIDKey    string `json:"team_did_key"`
-			MemberDIDKey  string `json:"member_did_key"`
-			MemberDIDAW   string `json:"member_did_aw,omitempty"`
-			MemberAddress string `json:"member_address,omitempty"`
-			Alias         string `json:"alias"`
-			Lifetime      string `json:"lifetime"`
-			IssuedAt      string `json:"issued_at"`
-			Signature     string `json:"signature"`
+			Version       int                        `json:"version"`
+			CertificateID string                     `json:"certificate_id"`
+			Team          string                     `json:"team_id"`
+			TeamDIDKey    string                     `json:"team_did_key"`
+			MemberDIDKey  string                     `json:"member_did_key"`
+			MemberDIDAW   *certificateOptionalString `json:"member_did_aw,omitempty"`
+			MemberAddress *certificateOptionalString `json:"member_address,omitempty"`
+			Alias         string                     `json:"alias"`
+			Lifetime      string                     `json:"lifetime"`
+			IssuedAt      string                     `json:"issued_at"`
+			Signature     string                     `json:"signature"`
 		}
 		return json.Marshal(legacyWire{
 			Version:       c.Version,
@@ -185,8 +231,8 @@ func (c TeamCertificate) MarshalJSON() ([]byte, error) {
 			Team:          c.Team,
 			TeamDIDKey:    c.TeamDIDKey,
 			MemberDIDKey:  c.MemberDIDKey,
-			MemberDIDAW:   c.MemberDIDAW,
-			MemberAddress: c.MemberAddress,
+			MemberDIDAW:   optionalCertificateMemberString(c.MemberDIDAW, c.memberDIDAWPresence),
+			MemberAddress: optionalCertificateMemberString(c.MemberAddress, c.memberAddressPresence),
 			Alias:         c.Alias,
 			Lifetime:      c.legacyLifetime,
 			IssuedAt:      c.IssuedAt,
@@ -199,8 +245,8 @@ func (c TeamCertificate) MarshalJSON() ([]byte, error) {
 		Team:          c.Team,
 		TeamDIDKey:    c.TeamDIDKey,
 		MemberDIDKey:  c.MemberDIDKey,
-		MemberDIDAW:   c.MemberDIDAW,
-		MemberAddress: c.MemberAddress,
+		MemberDIDAW:   optionalCertificateMemberString(c.MemberDIDAW, c.memberDIDAWPresence),
+		MemberAddress: optionalCertificateMemberString(c.MemberAddress, c.memberAddressPresence),
 		Alias:         c.Alias,
 		IdentityScope: identityScope,
 		IssuedAt:      c.IssuedAt,
@@ -210,18 +256,18 @@ func (c TeamCertificate) MarshalJSON() ([]byte, error) {
 
 func (c *TeamCertificate) UnmarshalJSON(data []byte) error {
 	type wire struct {
-		Version       int    `json:"version"`
-		CertificateID string `json:"certificate_id"`
-		Team          string `json:"team_id"`
-		TeamDIDKey    string `json:"team_did_key"`
-		MemberDIDKey  string `json:"member_did_key"`
-		MemberDIDAW   string `json:"member_did_aw,omitempty"`
-		MemberAddress string `json:"member_address,omitempty"`
-		Alias         string `json:"alias"`
-		IdentityScope string `json:"identity_scope"`
-		Lifetime      string `json:"lifetime"`
-		IssuedAt      string `json:"issued_at"`
-		Signature     string `json:"signature"`
+		Version       int                       `json:"version"`
+		CertificateID string                    `json:"certificate_id"`
+		Team          string                    `json:"team_id"`
+		TeamDIDKey    string                    `json:"team_did_key"`
+		MemberDIDKey  string                    `json:"member_did_key"`
+		MemberDIDAW   certificateOptionalString `json:"member_did_aw,omitempty"`
+		MemberAddress certificateOptionalString `json:"member_address,omitempty"`
+		Alias         string                    `json:"alias"`
+		IdentityScope string                    `json:"identity_scope"`
+		Lifetime      string                    `json:"lifetime"`
+		IssuedAt      string                    `json:"issued_at"`
+		Signature     string                    `json:"signature"`
 	}
 	var w wire
 	if err := json.Unmarshal(data, &w); err != nil {
@@ -234,19 +280,21 @@ func (c *TeamCertificate) UnmarshalJSON(data []byte) error {
 		scopeWireKey = "lifetime"
 	}
 	*c = TeamCertificate{
-		Version:        w.Version,
-		CertificateID:  w.CertificateID,
-		Team:           w.Team,
-		TeamDIDKey:     w.TeamDIDKey,
-		MemberDIDKey:   w.MemberDIDKey,
-		MemberDIDAW:    w.MemberDIDAW,
-		MemberAddress:  w.MemberAddress,
-		Alias:          w.Alias,
-		IdentityScope:  identityScope,
-		IssuedAt:       w.IssuedAt,
-		Signature:      w.Signature,
-		scopeWireKey:   scopeWireKey,
-		legacyLifetime: strings.TrimSpace(w.Lifetime),
+		Version:               w.Version,
+		CertificateID:         w.CertificateID,
+		Team:                  w.Team,
+		TeamDIDKey:            w.TeamDIDKey,
+		MemberDIDKey:          w.MemberDIDKey,
+		MemberDIDAW:           w.MemberDIDAW.value,
+		MemberAddress:         w.MemberAddress.value,
+		Alias:                 w.Alias,
+		IdentityScope:         identityScope,
+		IssuedAt:              w.IssuedAt,
+		Signature:             w.Signature,
+		scopeWireKey:          scopeWireKey,
+		legacyLifetime:        strings.TrimSpace(w.Lifetime),
+		memberDIDAWPresence:   w.MemberDIDAW.presence,
+		memberAddressPresence: w.MemberAddress.presence,
 	}
 	return nil
 }
@@ -255,60 +303,44 @@ func (c *TeamCertificate) UnmarshalJSON(data []byte) error {
 // The payload must match exactly what the verifier reconstructs: the certificate
 // JSON (minus signature) serialized with sorted keys, no whitespace, and native
 // types (version as int, omitted empty optional fields).
-func canonicalCertificatePayload(certID, team, teamDIDKey, memberDIDKey, memberDIDAW, memberAddress, alias, scopeOrLifetime, issuedAt string, legacyLifetime bool) string {
-	type entry struct {
-		key string
-		val string // serialized JSON value (already quoted for strings)
-	}
+type certificateScopeField string
 
-	scopeKey := "identity_scope"
-	if legacyLifetime {
-		scopeKey = "lifetime"
-	}
-	entries := []entry{
-		{"alias", jsonString(alias)},
-		{"certificate_id", jsonString(certID)},
-		{"issued_at", jsonString(issuedAt)},
-		{scopeKey, jsonString(scopeOrLifetime)},
-	}
-	if memberAddress != "" {
-		entries = append(entries, entry{"member_address", jsonString(memberAddress)})
-	}
-	if memberDIDAW != "" {
-		entries = append(entries, entry{"member_did_aw", jsonString(memberDIDAW)})
-	}
-	entries = append(entries,
-		entry{"member_did_key", jsonString(memberDIDKey)},
-		entry{"team_did_key", jsonString(teamDIDKey)},
-		entry{"team_id", jsonString(team)},
-		entry{"version", "1"},
-	)
+const (
+	certificateIdentityScopeField certificateScopeField = "identity_scope"
+	certificateLifetimeField      certificateScopeField = "lifetime"
+)
 
-	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].key < entries[j].key
-	})
-
-	var b strings.Builder
-	b.WriteByte('{')
-	for i, e := range entries {
-		if i > 0 {
-			b.WriteByte(',')
-		}
-		b.WriteByte('"')
-		b.WriteString(e.key)
-		b.WriteString(`":`)
-		b.WriteString(e.val)
-	}
-	b.WriteByte('}')
-	return b.String()
+type certificatePayloadFields struct {
+	CertificateID string
+	TeamID        string
+	TeamDIDKey    string
+	MemberDIDKey  string
+	MemberDIDAW   string
+	MemberAddress string
+	Alias         string
+	Scope         string
+	IssuedAt      string
+	ScopeField    certificateScopeField
 }
 
-func jsonString(s string) string {
-	var b strings.Builder
-	b.WriteByte('"')
-	writeEscapedString(&b, s)
-	b.WriteByte('"')
-	return b.String()
+func canonicalCertificatePayload(certificate certificatePayloadFields) string {
+	fields := map[string]any{
+		"alias":                        certificate.Alias,
+		"certificate_id":               certificate.CertificateID,
+		"issued_at":                    certificate.IssuedAt,
+		string(certificate.ScopeField): certificate.Scope,
+		"member_did_key":               certificate.MemberDIDKey,
+		"team_did_key":                 certificate.TeamDIDKey,
+		"team_id":                      certificate.TeamID,
+		"version":                      1,
+	}
+	if certificate.MemberAddress != "" {
+		fields["member_address"] = certificate.MemberAddress
+	}
+	if certificate.MemberDIDAW != "" {
+		fields["member_did_aw"] = certificate.MemberDIDAW
+	}
+	return canonicaljson.Object(fields)
 }
 
 func firstNonEmpty(values ...string) string {

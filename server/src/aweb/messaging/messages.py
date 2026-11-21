@@ -63,15 +63,15 @@ async def authorize_message_delivery(
     recipient_agent: Mapping[str, Any],
     sender_did: str,
     sender_address: str | None,
-    sender_team_id: str | None = None,
-    sender_verified_team_id: str | None = None,
     sender_verified_dids: list[str] | tuple[str, ...] | None = None,
     stored_route_continuation: bool = False,
+    registry_client=None,
 ) -> None:
     """Compatibility entry; current memberships come only from the shared owner."""
     await authorize_delivery(
         db,
         recipient=recipient_agent,
+        registry_client=registry_client,
         sender=DeliverySender(
             did=sender_did,
             address=sender_address,
@@ -91,10 +91,9 @@ async def admit_message_delivery(
     to_agent_id: str | None,
     sender_did: str,
     sender_address: str | None,
-    team_id: str | None,
-    sender_verified_team_id: str | None,
     sender_verified_dids,
     stored_route_continuation: bool,
+    registry_client=None,
 ) -> None:
     """The recipient's delivery policy for this sender; raises when it refuses."""
     if recipient.get("external") and not (
@@ -118,10 +117,9 @@ async def admit_message_delivery(
         await authorize_message_delivery(
             db,
             recipient_agent=policy_recipient,
+            registry_client=registry_client,
             sender_did=sender_did,
             sender_address=sender_address,
-            sender_team_id=team_id,
-            sender_verified_team_id=sender_verified_team_id,
             sender_verified_dids=sender_verified_dids,
             stored_route_continuation=stored_route_continuation,
         )

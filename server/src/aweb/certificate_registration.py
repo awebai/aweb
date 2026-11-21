@@ -91,7 +91,7 @@ def evaluate_certificate_registration(
     certificate_id: str,
     mode: RegistrationMode,
 ) -> RegistrationDecision:
-    """Apply the staging rule in hosted-certificate-anchoring.md:286-294.
+    """Apply the staging rule in docs/aweb-sot.md, Staged certificate-registration observations.
 
     NOT_REQUIRED preserves ordinary flow while exposing would-refuse facts;
     unavailable evidence stays unknown instead of becoming an empty registry.
@@ -168,7 +168,7 @@ async def read_certificate_registration(
 ) -> RegistrationDecision:
     """Observe the staged requirement through the existing registry reader.
 
-    hosted-certificate-anchoring.md:286-294 requires useful off-mode counts
+    docs/aweb-sot.md, Staged certificate-registration observations requires useful off-mode counts
     without making measurement unavailability a new refusal. SDK cache/read
     freshness remains with registered_certificates; this adds no other cache.
     Invalid authority scope is rejected before acquisition, never counted as
@@ -178,7 +178,12 @@ async def read_certificate_registration(
 
     member_team_scope(team_id)
     try:
-        registered = await registered_certificates(registry_client, team_id)
+        # OFF measurement follows revocation verification, so the SDK active
+        # view avoids scanning that history. REQUIRED keeps the complete-list
+        # cache shared with signature-verified miss refreshes.
+        registered = await registered_certificates(
+            registry_client, team_id, active_only=mode is RegistrationMode.NOT_REQUIRED
+        )
     except HTTPException as exc:
         if exc.status_code < 500:
             raise

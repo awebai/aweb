@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from aweb.member_team_key import current_member_sql
+
 from aweb.identity_binding import IdentityProjectionField, verified_identity_field_sql
 from aweb.application_state import application_registry_client
 from aweb.grant_liveness_policy import GrantLivenessFailurePolicy
@@ -41,6 +43,7 @@ from aweb.deps import get_db, get_redis
 from aweb.grant_liveness import (
     cleanup_expired_grant_liveness,
     grant_liveness_expiry,
+    workspace_grant_liveness_join_sql,
 )
 from aweb.human_kind import agent_listing_predicate_sql, effective_agent_type
 from aweb.identity_address import require_address_evidence
@@ -320,7 +323,9 @@ async def suggest_alias_prefix(
     return SuggestAliasPrefixResponse(
         team_id=identity.team_id,
         name_prefix=names[0],
-        names=[SuggestAliasPrefixName(name=name) for name in names] if include_names else None,
+        names=[SuggestAliasPrefixName(name=name) for name in names]
+        if include_names
+        else None,
     )
 
 
@@ -344,13 +349,17 @@ async def _local_team_aliases(aweb_db, team_id: str) -> list[str]:
     return [str(r.get("alias") or "") for r in rows]
 
 
-async def _global_namespace_names(request: Request, identity: TeamIdentity) -> list[str]:
+async def _global_namespace_names(
+    request: Request, identity: TeamIdentity
+) -> list[str]:
     namespace, _team_name = parse_team_id(identity.team_id)
     registry_client = application_registry_client(request.app.state)
     try:
         addresses = await registry_client.list_addresses(namespace)
     except Exception as exc:
-        raise HTTPException(status_code=503, detail="awid_registry_unavailable") from exc
+        raise HTTPException(
+            status_code=503, detail="awid_registry_unavailable"
+        ) from exc
     names = []
     for address in addresses or []:
         if isinstance(address, dict):
@@ -476,7 +485,7 @@ async def list_agents(
             ORDER BY assertion_created_at DESC, not_before_at DESC, encryption_key_id DESC
             LIMIT 1
         ) e ON TRUE
-        WHERE a.team_id = $1 AND a.deleted_at IS NULL
+        WHERE a.team_id = $1 AND {current_member_sql("a")}
           AND {agent_listing_predicate_sql("a")}
         ORDER BY a.alias
         """,
@@ -484,18 +493,24 @@ async def list_agents(
     )
 
     workspace_rows = await aweb_db.fetch_all(
-        """SELECT w.workspace_id, w.agent_id, w.workspace_type, w.hostname,
-                  w.workspace_path, w.role AS ws_role, r.canonical_origin AS repo
-           FROM {{tables.workspaces}} w
-           LEFT JOIN {{tables.repos}} r ON r.id=w.repo_id AND r.deleted_at IS NULL
+        f"""SELECT w.workspace_id, w.agent_id, w.workspace_type, w.hostname,
+                  w.team_id, w.last_seen_at, w.workspace_path, w.role AS ws_role,
+                  r.canonical_origin AS repo, grant_liveness.*
+           FROM {{{{tables.workspaces}}}} w
+           LEFT JOIN {{{{tables.repos}}}} r ON r.id=w.repo_id AND r.deleted_at IS NULL
+           {workspace_grant_liveness_join_sql(workspace="w", ttl_seconds_parameter="$2")}
            WHERE w.team_id=$1 AND w.deleted_at IS NULL
-           ORDER BY w.last_seen_at DESC NULLS LAST, w.created_at DESC, w.workspace_id""",
+           ORDER BY w.last_seen_at DESC NULLS LAST, w.created_at DESC, w.workspace_id,
+                    grant_liveness.grant_liveness_last_seen_at DESC,
+                    grant_liveness.grant_liveness_grant_id""",
         identity.team_id,
+        get_presence_ttl_seconds(),
     )
     activity_by_id = await workspace_activity_by_id(
         aweb_db,
         redis,
         workspace_ids=[str(row["workspace_id"]) for row in workspace_rows],
+        workspace_rows=workspace_rows,
         registry_client=application_registry_client(request.app.state),
         request=request,
         failure_policy=GrantLivenessFailurePolicy.OMIT_UNPROVEN,
@@ -511,7 +526,9 @@ async def list_agents(
         activity = selected.activity if selected else None
         presence = activity.presence if activity else None
         online = activity is not None and activity.is_online(now=now)
-        status = activity.display_status(now=now) if activity else PresenceStatus.OFFLINE
+        status = (
+            activity.display_status(now=now) if activity else PresenceStatus.OFFLINE
+        )
         last_seen_at = activity.last_seen_at if activity else None
         last_seen = None
         role = (ctx.get("ws_role") if ctx else None) or (r.get("role") or None)
@@ -810,11 +827,16 @@ async def publish_encryption_key(
         projection = await read_member_projection(
             db, team_id=claims["team_id"], agent_id=agent_id
         )
-        if projection is None or not current_member(projection) or any(
-            (
-                projection["did_key"] != claims["member_did_key"],
-                projection["certificate_id"] != claims["certificate_id"],
-                projection["accepted_team_did_key"] != generation.verified_team_did_key,
+        if (
+            projection is None
+            or not current_member(projection)
+            or any(
+                (
+                    projection["did_key"] != claims["member_did_key"],
+                    projection["certificate_id"] != claims["certificate_id"],
+                    projection["accepted_team_did_key"]
+                    != generation.verified_team_did_key,
+                )
             )
         ):
             raise HTTPException(
@@ -1226,8 +1248,10 @@ async def send_control_signal(
 
     target = await aweb_db.fetch_one(
         """
-        SELECT agent_id FROM {{tables.agents}}
-        WHERE team_id = $1 AND alias = $2 AND deleted_at IS NULL
+        SELECT a.agent_id FROM {{tables.agents}} a
+        WHERE a.team_id = $1 AND a.alias = $2 AND """
+        + current_member_sql("a")
+        + """
         """,
         identity.team_id,
         alias,

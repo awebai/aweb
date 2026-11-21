@@ -4,11 +4,15 @@ from enum import StrEnum
 from http import HTTPStatus
 import logging
 
-from aweb.service_errors import ServiceError, ValidationError
+from aweb.service_errors import IdentityBindingError, ServiceError, ValidationError
 from aweb.messaging.kinds import MessageKind
 from aweb.messaging.recipient_bindings import RecipientSelectorField
 
 logger = logging.getLogger(__name__)
+
+
+class RecipientIdentityBindingError(IdentityBindingError):
+    """The recipient binding failed; sender authentication remains separate."""
 
 
 class DeliveryRefusalCode(StrEnum):
@@ -21,7 +25,8 @@ class DeliveryRefusalCode(StrEnum):
     RECIPIENT_POLICY_REJECTED = "recipient_policy_rejected"
     CONTACT_IDENTITY_BINDING_REQUIRED = "contact_identity_binding_required"
     CONVERSATION_EXISTS = "conversation_exists"
-    RECIPIENT_ADDRESS_NOT_FOUND = "recipient_address_not_found"
+    RECIPIENT_IDENTITY_NOT_FOUND = "recipient_identity_not_found"
+    REQUEST_INVALID = "request_invalid"
 
 
 CONTACT_REBIND_ACTION = "This address now belongs to a different identity. Check the contact and explicitly bind it again before sending."
@@ -61,11 +66,13 @@ class DeliveryRefusal(ServiceError):
 class RecipientAddressNotFound(DeliveryRefusal):
     """A recipient address has no usable route under the address binding rule."""
 
+    code: DeliveryRefusalCode
+
     def __init__(self, *, address: str) -> None:
         super().__init__(
             status_code=HTTPStatus.NOT_FOUND,
             detail=f"Recipient address not found: {address}. Check the address and try again.",
-            code=DeliveryRefusalCode.RECIPIENT_ADDRESS_NOT_FOUND,
+            code=DeliveryRefusalCode.RECIPIENT_IDENTITY_NOT_FOUND,
         )
 
 
@@ -84,7 +91,7 @@ class SignedRecipientMismatch(DeliveryRefusal):
 class MailConversationExists(DeliveryRefusal):
     """Retain the frozen collision detail and add a separate recovery action."""
 
-    code: DeliveryRefusalCode = DeliveryRefusalCode.CONVERSATION_EXISTS
+    code: DeliveryRefusalCode
     recovery_action = (
         "Continue the existing conversation or choose a new conversation_id and retry."
     )
@@ -128,9 +135,7 @@ def registry_dependency_refusal(exc: Exception, *, operation: str) -> DeliveryRe
     classification = classify_awid_dependency_error(exc, operation=operation)
     status_code = classification[0]
     logger.log(
-        logging.ERROR
-        if status_code == HTTPStatus.INTERNAL_SERVER_ERROR
-        else logging.WARNING,
+        logging.ERROR if status_code == HTTPStatus.INTERNAL_SERVER_ERROR else logging.WARNING,
         "delivery_registry_dependency_failed failure_type=%s status=%d",
         type(exc).__name__,
         status_code,
@@ -149,8 +154,7 @@ def signed_chat_payload_refusal(*, detail: str) -> DeliveryRefusal:
     """
     return DeliveryRefusal(
         status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
-        detail=detail.rstrip(".")
-        + ". Check the chat fields and sign the message again.",
+        detail=detail.rstrip(".") + ". Check the chat fields and sign the message again.",
     )
 
 
@@ -158,6 +162,22 @@ def encrypted_message_refusal(*, detail: str) -> DeliveryRefusal:
     """An encrypted artifact refusal never tells a timeout retry to duplicate it."""
     return DeliveryRefusal(
         status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+        code=DeliveryRefusalCode.REQUEST_INVALID,
         detail=detail.rstrip(".")
         + ". Check whether the original message was delivered before preparing a new encrypted message.",
+    )
+
+
+def unreachable_address_refusal(address: str) -> str:
+    """One not-routable action for address and other local-only selectors."""
+    if not address:
+        return (
+            "The recipient is not reachable from outside its team. "
+            "Use a teammate alias from inside its team, or ask the recipient "
+            "for a registered address and retry."
+        )
+    return (
+        f"{address} is not a registered address. A local identity has no address and "
+        "is reachable only from inside its own team, by alias; a global identity is "
+        "reachable by address once one is assigned. Check the address or use a teammate alias and retry."
     )

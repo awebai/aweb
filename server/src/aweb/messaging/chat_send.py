@@ -24,7 +24,7 @@ from dataclasses import dataclass, replace
 from enum import Enum, auto
 from aweb.messaging.recipient import Recipient
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, NoReturn
+from typing import Any, NoReturn
 from uuid import UUID
 
 import asyncpg.exceptions
@@ -42,7 +42,7 @@ from aweb.message_vocabulary import MessageInputSource, observe_message_vocabula
 from aweb.identity_address import require_address_evidence
 
 from aweb.agent_wake import agent_wake_scope
-from aweb.attachment_service import attachment_retry, refuse_remote_attachments
+from aweb.attachment_service import confirm_accepted_attachment_refs, refuse_remote_attachments
 from aweb.db import TransactionInfra
 from aweb.e2ee_messages import (
     E2EEEnvelopeError,
@@ -99,6 +99,7 @@ from aweb.messaging.contacts import (
     resolve_local_namespace_controller_did,
     upsert_successful_identity_contact,
 )
+from aweb.messaging.chat_models import CreateSessionRequest, SendMessageRequest
 from aweb.messaging.conversations import close_conversation
 from aweb.messaging.encryption_custody import require_non_custodial_recipients
 from aweb.messaging.mail_routing import _require_live_mail_participant
@@ -124,17 +125,14 @@ from aweb.messaging.signatures import (
     require_verified_message_signature,
 )
 from aweb.messaging.verification import require_conversation_not_legacy_bound
+from aweb.messaging.refusals import RecipientIdentityBindingError
 from aweb.service_errors import (
     ConflictError,
     IdentityBindingCode,
-    IdentityBindingError,
     ForbiddenError,
     NotFoundError,
     ValidationError,
 )
-
-if TYPE_CHECKING:
-    from aweb.messaging.chat_models import CreateSessionRequest, SendMessageRequest
 
 logger = logging.getLogger(__name__)
 
@@ -241,9 +239,7 @@ def validate_encrypted_chat_payload(
             detail="encrypted_envelope is required for encrypted chat",
         )
     if _chat_payload_body(payload):
-        raise encrypted_message_refusal(
-            detail="Encrypted chat payload body must be empty"
-        )
+        raise encrypted_message_refusal(detail="Encrypted chat payload body must be empty")
     if payload.signature or payload.signed_payload:
         raise DeliveryRefusal(
             status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
@@ -432,15 +428,14 @@ async def deliver_federated_chat(
     local = await local_recipient_for_own_route(db, route, runtime)
     if local is not None:
         if envelope.target_current_did_key != local.get("did_key"):
-            raise IdentityBindingError(IdentityBindingCode.MISMATCH)
+            raise RecipientIdentityBindingError(IdentityBindingCode.MISMATCH)
         await require_agent_chat(db, [local])
         await authorize_message_delivery(
             db,
+            registry_client=runtime.registry_client,
             recipient_agent=local,
             sender_did=sender_routing_did,
             sender_address=sender_address,
-            sender_team_id=auth.team_id,
-            sender_verified_team_id=auth.verified_team_id,
             sender_verified_dids=auth_dids(auth),
             stored_route_continuation=True,
         )
@@ -732,6 +727,17 @@ async def _stored_exact_chat_send(
             conversation_id=session_id,
             chat_participant_dids=frozenset(actor_dids)
             | frozenset(row.get("did") or _target_did(row) for row in recipient_rows),
+            # Admitted current keys can identify an original local-key party
+            # after that same key is registered globally. No row is rewritten.
+            chat_participant_current_keys={
+                actor_dids[0]: auth.did_key,
+                **{
+                    row.get("did") or _target_did(row): str(
+                        row.get("did_key") or row.get("current_did_key") or ""
+                    )
+                    for row in recipient_rows
+                },
+            },
             chat_controls=ChatReplayControls(
                 sender_leaving=payload.leaving,
                 hang_on=payload.hang_on,
@@ -755,6 +761,20 @@ async def _stored_exact_chat_send(
             and payload.signature is not None
             and not _payload_is_encrypted(payload)
         ):
+            if isinstance(payload, SendMessageRequest) and session_id is not None:
+                # Continued plaintext replay runs before new-message attestation
+                # so retained departed parties can acknowledge their artifact.
+                # A different artifact must still verify before the age-only
+                # carrier tells its sender that re-signing is appropriate.
+                await _validate_continued_chat_attestation(
+                    db,
+                    auth,
+                    payload=payload,
+                    actor_did=actor_dids[0],
+                    sender_address=_sender_address(auth),
+                    session_uuid=session_id,
+                    recipient_rows=recipient_rows,
+                )
             _parse_signed_timestamp(str(payload.timestamp))
         lookup.refuse_conflicting_message_id()
     row = lookup.message
@@ -771,8 +791,9 @@ async def _stored_exact_chat_send(
         _parse_signed_timestamp(str(payload.timestamp))
     else:
         if payload.signature is None or payload.timestamp is None:
-            raise RuntimeError(
-                "An exact plaintext replay must retain its signature and timestamp"
+            raise DeliveryRefusal(
+                status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+                detail="message_id and timestamp are required when signature is provided",
             )
         if payload.from_did not in auth_dids(auth):
             raise DeliveryRefusal(
@@ -803,7 +824,7 @@ async def _stored_exact_chat_send(
             hang_on=payload.hang_on,
         )
     # Only an admitted, integrity-checked exact retry may consume its bound refs.
-    await attachment_retry(db, payload, MessageKind.CHAT)
+    await confirm_accepted_attachment_refs(db, kind=MessageKind.CHAT, message_id=row["message_id"])
     return row
 
 
@@ -1023,12 +1044,14 @@ def _is_stale_delivery_origin_status(status_code: int) -> bool:
     return status_code in {404, 410, 421}
 
 
-async def resolve_actor_agent(db, actor_dids: list[str]) -> Mapping[str, Any] | None:
+async def resolve_actor_agent(
+    db, actor_dids: list[str], *, team_id: str | None = None
+) -> Mapping[str, Any] | None:
     """Find a local sender projection for the adapter's authenticated DIDs."""
     for did in actor_dids:
         if not did:
             continue
-        actor_agent = await resolve_agent_by_did(db, did)
+        actor_agent = await resolve_agent_by_did(db, did, team_id=team_id)
         if actor_agent is not None and actor_agent.get("agent_id") is not None:
             return actor_agent
     return None
@@ -1136,7 +1159,9 @@ async def _resolve_named_recipients(
                 resolved[target_did] = row
 
     for did in to_dids:
-        row = await resolve_agent_by_did(db, did)
+        row = await resolve_agent_by_did(
+            db, did, team_id=auth.team_id if did.startswith("did:key:") else None
+        )
         if row is None and did.startswith("did:aw:"):
             _raise_bare_did_chat_first_contact_unsupported()
         if row is None:
@@ -1175,27 +1200,24 @@ async def _resolve_named_recipients(
         try:
             await authorize_message_delivery(
                 db,
+                registry_client=runtime.registry_client,
                 recipient_agent=row,
                 sender_did=actor_did,
                 sender_address=sender_address,
-                sender_team_id=auth.team_id,
-                sender_verified_team_id=auth.verified_team_id,
                 sender_verified_dids=auth_dids(auth),
             )
         except DeliveryPolicyRefused:
             raise
         except (ValidationError, NotFoundError, ForbiddenError) as exc:
-            if (
-                isinstance(exc, ForbiddenError)
-                and row.get("address") in to_addresses
-                and row.get("identity_scope") == "local"
-                and not row.get("has_global_claim")
-                and not row.get("did_aw")
-            ):
-                raise FederationAuthorityError("local_recipient_route_missing") from exc
             raise DeliveryRefusal(status_code=exc.status_code, detail=exc.detail) from exc
 
     return list(resolved.values())
+
+
+@dataclass(frozen=True, kw_only=True)
+class _SessionRecipients:
+    active: tuple[Recipient, ...]
+    recorded: tuple[Recipient, ...]
 
 
 async def _resolve_session_recipient_rows(
@@ -1203,7 +1225,7 @@ async def _resolve_session_recipient_rows(
     *,
     session_id: UUID,
     actor_dids: list[str],
-) -> list[Recipient]:
+) -> _SessionRecipients:
     aweb_db = db.get_manager("aweb")
     left_dids = (await _left_dids_by_session(db, [session_id])).get(str(session_id), set())
     rows = await aweb_db.fetch_all(
@@ -1232,8 +1254,6 @@ async def _resolve_session_recipient_rows(
         policy: Mapping[str, Any] = resolved or (policy_rows[0] if policy_rows else {})
         resolved_projection: Mapping[str, Any] = resolved or {}
         participant_did = (participant.get("did") or "").strip()
-        if participant_did in left_dids:
-            continue
         participant_alias = (participant.get("alias") or "").strip()
         participant_address = (participant.get("address") or "").strip()
         recipient_rows.append(
@@ -1261,12 +1281,16 @@ async def _resolve_session_recipient_rows(
                 "_policy_recipients": policy_rows,
             }
         )
-    return [
+    recorded = tuple(
         Recipient.from_remote_projection(row)
         if row.get("delivery_origin")
         else Recipient.from_local_projection(row)
         for row in recipient_rows
-    ]
+    )
+    return _SessionRecipients(
+        active=tuple(row for row in recorded if row.did not in left_dids),
+        recorded=recorded,
+    )
 
 
 class ChatSessionSelection(Enum):
@@ -1300,6 +1324,7 @@ class ChatTarget:
     actor_did: str = ""
     session_selection: ChatSessionSelection = ChatSessionSelection.REQUEST_DEFAULT
     shared_session_id: UUID | None = None
+    recorded_recipients: tuple[Recipient, ...] | None = None
 
     def __init__(
         self,
@@ -1310,6 +1335,7 @@ class ChatTarget:
         actor_did: str = "",
         session_selection: ChatSessionSelection = ChatSessionSelection.REQUEST_DEFAULT,
         shared_session_id: UUID | None = None,
+        recorded_recipients: Sequence[Mapping[str, Any]] | None = None,
     ) -> None:
         _require_chat_session_selection(session_selection)
         object.__setattr__(
@@ -1322,6 +1348,14 @@ class ChatTarget:
         object.__setattr__(self, "actor_did", actor_did)
         object.__setattr__(self, "session_selection", session_selection)
         object.__setattr__(self, "shared_session_id", shared_session_id)
+        # Historical parties bind a plaintext replay, never new delivery.
+        object.__setattr__(
+            self,
+            "recorded_recipients",
+            tuple(Recipient.from_delivery_projection(row) for row in recorded_recipients)
+            if recorded_recipients is not None
+            else None,
+        )
 
 
 @dataclass(frozen=True)
@@ -1443,9 +1477,10 @@ async def _resolve_session_target(
     actor_did = await resolve_session_actor_did(db, session_id=session_uuid, actor_dids=actor_dids)
     if not actor_did:
         raise DeliveryRefusal(status_code=HTTPStatus.NOT_FOUND, detail="Session not found")
-    recipient_rows = await _resolve_session_recipient_rows(
+    session_recipients = await _resolve_session_recipient_rows(
         db, session_id=session_uuid, actor_dids=actor_dids
     )
+    recipient_rows = list(session_recipients.active)
     # Succession is mail-only. Retired humans get a mail-directed refusal;
     # retired agents retain the existing chat behavior for live group members.
     for row in recipient_rows:
@@ -1498,11 +1533,10 @@ async def _resolve_session_target(
         for policy_recipient in policy_rows:
             await authorize_message_delivery(
                 db,
+                registry_client=runtime.registry_client,
                 recipient_agent=policy_recipient,
                 sender_did=actor_did,
                 sender_address=sender_address,
-                sender_team_id=auth.team_id,
-                sender_verified_team_id=auth.verified_team_id,
                 sender_verified_dids=auth_dids(auth),
                 stored_route_continuation=True,
             )
@@ -1511,6 +1545,10 @@ async def _resolve_session_target(
         source=source,
         session_id=session_uuid,
         actor_did=actor_did,
+        recorded_recipients=tuple(
+            next((live for live in recipient_rows if live.did == row.did), row)
+            for row in session_recipients.recorded
+        ),
     )
 
 
@@ -1543,8 +1581,6 @@ async def _dispatch_chat(
     payload: CreateSessionRequest | SendMessageRequest,
     runtime: MessagingRuntime,
 ) -> SentChat:
-    from aweb.messaging.chat_models import CreateSessionRequest, SendMessageRequest
-
     if target.session_id is not None:
         if not isinstance(payload, SendMessageRequest):
             raise TypeError("A continued chat target requires SendMessageRequest")
@@ -1554,7 +1590,9 @@ async def _dispatch_chat(
     return await _send_to_named_recipients(db, auth, target, payload, runtime)
 
 
-async def _authorize_local_chat_commit(db, *, auth: MessagingAuth, target: ChatTarget) -> None:
+async def _authorize_local_chat_commit(
+    db, *, auth: MessagingAuth, target: ChatTarget, runtime: MessagingRuntime
+) -> None:
     """Hold native policy rows through the write, using the one delivery rule.
 
     docs/identity-messaging-contract.md:69-87 applies current policy even to a
@@ -1579,7 +1617,13 @@ async def _authorize_local_chat_commit(db, *, auth: MessagingAuth, target: ChatT
         )
         selected = policies if attempt is DeliveryAttempt.STORED_ROUTE else (recipient,)
         for policy in selected:
-            await authorize_delivery(db, recipient=policy, sender=sender, attempt=attempt)
+            await authorize_delivery(
+                db,
+                recipient=policy,
+                sender=sender,
+                attempt=attempt,
+                registry_client=runtime.registry_client,
+            )
     await require_agent_chat(db, target.recipients)
 
 
@@ -1598,7 +1642,9 @@ async def _send_local_chat(
         with agent_wake_scope(runtime.agent_wake_publisher):
             async with db.get_manager("aweb").transaction() as tx:
                 send_db = TransactionInfra(db, tx)
-                await _authorize_local_chat_commit(send_db, auth=auth, target=target)
+                await _authorize_local_chat_commit(
+                    send_db, auth=auth, target=target, runtime=runtime
+                )
                 sent = await _dispatch_chat(
                     send_db,
                     auth=auth,
@@ -1611,13 +1657,17 @@ async def _send_local_chat(
             raise
         async with db.get_manager("aweb").transaction() as tx:
             send_db = TransactionInfra(db, tx)
-            await _authorize_local_chat_commit(send_db, auth=auth, target=target)
+            await _authorize_local_chat_commit(send_db, auth=auth, target=target, runtime=runtime)
             stored = await _stored_exact_chat_send(
                 send_db,
                 payload,
                 auth=auth,
                 session_id=target.session_id,
-                recipient_rows=target.recipients,
+                recipient_rows=(
+                    target.recorded_recipients
+                    if not _payload_is_encrypted(payload) and target.recorded_recipients is not None
+                    else target.recipients
+                ),
                 actor_dids=participant_dids(auth),
             )
             if stored is None:
@@ -1661,7 +1711,7 @@ async def _send_to_named_recipients(
 ) -> SentChat:
     actor_dids = participant_dids(auth)
     actor_did = actor_dids[0]
-    actor_agent = await resolve_actor_agent(db, actor_dids)
+    actor_agent = await resolve_actor_agent(db, actor_dids, team_id=auth.team_id)
     actor_agent_id = auth.agent_id or (str(actor_agent["agent_id"]) if actor_agent else None)
     actor_alias = _actor_alias(auth, actor_agent)
     sender_address = _sender_address(auth)
@@ -1706,18 +1756,13 @@ async def _send_to_named_recipients(
     if existing_message is not None:
         transport = (
             MessageTransport.FEDERATED
-            if any(
-                row.get("external") or _target_delivery_origin(row)
-                for row in target_rows
-            )
+            if any(row.get("external") or _target_delivery_origin(row) for row in target_rows)
             else MessageTransport.LOCAL
         )
         return SentChat(
             session_id=existing_message["session_id"],
             message=dict(existing_message),
-            participants=participant_rows
-            if transport is MessageTransport.FEDERATED
-            else None,
+            participants=participant_rows if transport is MessageTransport.FEDERATED else None,
             federated=transport is MessageTransport.FEDERATED,
         )
     validation_conversation_id = (
@@ -2279,7 +2324,7 @@ async def _send_in_continued_session(
     registry_client = runtime.registry_client
     id_chain = auth.id_chain
     actor_dids = participant_dids(auth)
-    actor_agent = await resolve_actor_agent(db, actor_dids)
+    actor_agent = await resolve_actor_agent(db, actor_dids, team_id=auth.team_id)
     actor_agent_id = auth.agent_id or (str(actor_agent["agent_id"]) if actor_agent else None)
     sender_address = _sender_address(auth)
     session_uuid = target.session_id
@@ -2288,26 +2333,75 @@ async def _send_in_continued_session(
     actor_did = target.actor_did
     recipient_rows = target.recipients
 
-    pre_message_id, encrypted_metadata = await _validate_continued_chat_attestation(
-        db,
-        auth,
-        payload=payload,
-        actor_did=actor_did,
-        sender_address=sender_address,
-        session_uuid=session_uuid,
-        recipient_rows=recipient_rows,
+    encrypted = _payload_is_encrypted(payload)
+    replay_recipients = (
+        target.recorded_recipients if target.recorded_recipients is not None else recipient_rows
     )
+    validation_recipients = recipient_rows
+    # An exact artifact can retain departed parties for validation of its
+    # receipt, never for a new send. The canonical owner alone compares bytes;
+    # ordinary encryption/custody/freshness still precede the stored answer.
+    if encrypted and payload.message_id is not None:
+        candidate = await read_stored_message(
+            db,
+            claim=StoredMessageClaim(
+                kind=MessageKind.CHAT,
+                message_id=UUID(payload.message_id),
+                sender_did=actor_dids[0],
+                conversation_id=session_uuid,
+                artifact=replay_artifact(
+                    content_mode=payload.content_mode,
+                    encrypted_envelope=payload.encrypted_envelope,
+                    signature=payload.signature,
+                    signed_payload=payload.signed_payload,
+                ),
+            ),
+        )
+        if candidate.state is StoredMessageState.EXACT:
+            validation_recipients = replay_recipients
+    if encrypted:
+        pre_message_id, encrypted_metadata = await _validate_continued_chat_attestation(
+            db,
+            auth,
+            payload=payload,
+            actor_did=actor_did,
+            sender_address=sender_address,
+            session_uuid=session_uuid,
+            recipient_rows=validation_recipients,
+        )
 
     existing_message = await _stored_exact_chat_send(
         db,
         payload,
         auth=auth,
         session_id=session_uuid,
-        recipient_rows=recipient_rows,
+        recipient_rows=replay_recipients,
         actor_dids=actor_dids,
     )
     if existing_message is not None:
         return SentChat(session_id=session_uuid, message=dict(existing_message))
+    if encrypted and validation_recipients is not recipient_rows:
+        # If the candidate disappeared before the final read, no receipt is
+        # returned. Revalidate active recipients before any new-message effect.
+        pre_message_id, encrypted_metadata = await _validate_continued_chat_attestation(
+            db,
+            auth,
+            payload=payload,
+            actor_did=actor_did,
+            sender_address=sender_address,
+            session_uuid=session_uuid,
+            recipient_rows=recipient_rows,
+        )
+    if not encrypted:
+        pre_message_id, encrypted_metadata = await _validate_continued_chat_attestation(
+            db,
+            auth,
+            payload=payload,
+            actor_did=actor_did,
+            sender_address=sender_address,
+            session_uuid=session_uuid,
+            recipient_rows=recipient_rows,
+        )
 
     remote_recipients: list[Mapping[str, Any]] = [
         row for row in recipient_rows if _target_delivery_origin(row)
@@ -2410,7 +2504,7 @@ async def _send_in_continued_session(
             payload,
             auth=auth,
             session_id=session_uuid,
-            recipient_rows=recipient_rows,
+            recipient_rows=replay_recipients,
             actor_dids=actor_dids,
         )
         if stored is None:

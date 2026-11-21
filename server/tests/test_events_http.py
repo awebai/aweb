@@ -608,6 +608,9 @@ async def test_events_stream_emits_one_mail_event_when_only_unread_count_changes
     async with _http_events(env) as (frames, _):
         initial = [await _next_named(frames, "actionable_mail") for _ in range(2)]
         assert {item["unread_count"] for item in initial} == {2}
+        # Finish the opening snapshot before changing the real inbox.
+        async with asyncio.timeout(5):
+            assert (await anext(frames))[0] == "keepalive"
         ack = await request_as(
             env,
             alias="bob",

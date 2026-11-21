@@ -127,6 +127,7 @@ class NativeMessagingService:
         db,
         *,
         authority: NativeMessagingAuthority,
+        registry_client=None,
         service: ContractRecord,
         publisher=None,
         attachment_backend=None,
@@ -134,6 +135,7 @@ class NativeMessagingService:
     ):
         self.db = db
         self.authority = authority
+        self.registry_client = registry_client
         self.service = _snapshot(service, "ServiceBinding")
         self.publisher = publisher
         self.attachment_backend = attachment_backend
@@ -371,13 +373,17 @@ class NativeMessagingService:
         try:
             await authorize_message_delivery(
                 db,
+                registry_client=self.registry_client,
                 recipient_agent=recipient,
                 sender_did=_principal(auth),
                 sender_address=auth.address,
-                sender_team_id=auth.team_id,
-                sender_verified_team_id=auth.verified_team_id,
                 sender_verified_dids=auth_dids(auth),
             )
+        except HTTPException as error:
+            raise ContractError(
+                "authority_unavailable" if error.status_code >= 500 else "forbidden",
+                str(error.detail),
+            ) from error
         except ServiceError as error:
             raise ContractError("forbidden", error.detail) from error
 

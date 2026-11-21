@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from fastapi import HTTPException, Request
 
 from awid.team_ids import parse_team_id
+from aweb.application_state import application_registry_client
 from aweb.app_credentials import (
     APP_REQUEST,
     PURPOSES,
@@ -25,7 +26,8 @@ from aweb.service_errors import (
 from aweb.task_contracts import validate_app_task
 from awid.team_certificate import TeamCertificateError
 from aweb.team_auth import certificate_refusal, parse_and_verify_certificate
-from aweb.team_key_pins import pinned_team_key_for_request
+from aweb.certificate_evidence import EvidenceMode
+from aweb.team_registry import resolve_team_key
 from .tasks_service import (
     _allocate_root_task_seq_on,
     _allocate_task_number_on,
@@ -72,14 +74,10 @@ async def app_request_transport_on(request: Request, tx) -> tuple[AppCredential,
 
 
 async def _current_certificates(request, team_id):
-    registry = getattr(request.app.state, "awid_registry_client", None)
     try:
         domain, name = parse_team_id(team_id)
-        if registry is None:
-            raise RuntimeError("registry absent")
-        return await registry.list_team_certificates_fresh(
-            domain, name, active_only=True
-        )
+        registry = application_registry_client(request.app.state)
+        return await registry.list_team_certificates_fresh(domain, name, active_only=True)
     except Exception as exc:
         raise HTTPException(status_code=503, detail="authority_unavailable") from exc
 
@@ -97,22 +95,22 @@ async def verify_authorization_certificate(request, authorization):
     payload = authorization["payload"]
     try:
         domain, name = parse_team_id(payload["team_id"])
-        registry = request.app.state.awid_registry_client
+        registry = application_registry_client(request.app.state)
         # C2 requires live authority even when the app otherwise uses a
         # CachedRegistryClient. Never use its stale/outage-grace reads here.
-        team_key = await registry.get_team_public_key_fresh(domain, name)
+        team_key = await resolve_team_key(request, payload["team_id"], evidence=EvidenceMode.FRESH)
         select = getattr(registry, "get_team_revocations_for_certificates", None)
         revoked = (
             await select(domain, name, [payload["certificate_id"]], fresh=True)
             if callable(select)
             else await registry.get_team_revocations_fresh(domain, name)
         )
+    except HTTPException as exc:
+        if exc.status_code == 401:
+            raise
+        raise HTTPException(status_code=503, detail="authority_unavailable") from exc
     except Exception as exc:
         raise HTTPException(status_code=503, detail="authority_unavailable") from exc
-    if team_key:
-        team_key = await pinned_team_key_for_request(
-            request, payload["team_id"], team_key
-        )
     certificates = await _current_certificates(request, payload["team_id"])
     try:
         info = parse_and_verify_certificate(
@@ -125,10 +123,7 @@ async def verify_authorization_certificate(request, authorization):
     except TeamCertificateError as exc:
         raise certificate_refusal(exc) from exc
     # The team key is the payload's team's: the certificate must name that team.
-    if (
-        info["team_id"] != payload["team_id"]
-        or info["certificate_id"] != payload["certificate_id"]
-    ):
+    if info["team_id"] != payload["team_id"] or info["certificate_id"] != payload["certificate_id"]:
         raise HTTPException(status_code=401, detail="signature_invalid")
     matches = [
         c

@@ -16,6 +16,7 @@ import pytest
 from starlette.requests import Request
 from aweb.member_team_key import read_member_projection
 
+from aweb.application_state import application_registry_client
 from aweb.identity_auth_deps import current_membership
 from aweb.messaging.delivery_policy import has_current_shared_team
 from aweb.messaging.participants import messaging_participants_by_aliases
@@ -281,9 +282,7 @@ async def test_a_grant_ends_with_its_issuing_certificate_and_does_not_return(pin
     next_sk, next_did = await _change_key(env)
     refused = await _use_grant(env, grant)
     assert refused.status_code == 403, refused.text
-    assert refused.json()["detail"].endswith(
-        "Ask the issuer for a new grant, or enable renewal on launch and restart the seat if you use OATS."
-    )
+    assert refused.json()["detail"] == 'grant issuing certificate revoked. This grant was issued from a certificate that is no longer current. Ask the issuer for a new grant, or enable renewal on launch and restart the seat if you use OATS.'
 
     assert (
         await _connect(env, member, _certificate(next_sk, next_did, member, "granter-2"))
@@ -380,6 +379,7 @@ async def test_same_team_delivery_needs_the_sender_under_the_current_key(pinning
     async def same_team():
         return await has_current_shared_team(
             env.infra,
+            registry_client=application_registry_client(env.app.state),
             recipient={"did_key": recipient[1]},
             sender_dids=[sender[1]],
         )

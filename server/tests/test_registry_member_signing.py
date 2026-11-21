@@ -52,7 +52,7 @@ async def test_server_without_service_token_signs_all_private_and_fresh_reads(mo
             payload=f"{request.headers['x-aweb-timestamp']}\nGET\n{request.url.path}".encode())
         paths.append(str(request.url))
         if request.url.path.endswith("/revocations"):
-            return httpx.Response(200, json={"revocations": [], "has_more": not bool(request.url.params.get("cursor")), "next_cursor": "page2"})
+            return httpx.Response(200, json={"revocations": [], "has_more": not bool(request.url.params.get("cursor")), "next_cursor": None if request.url.params.get("cursor") else "page2"})
         if request.url.path.endswith("/certificates"):
             return httpx.Response(200, json={"certificates": [], "has_more": False})
         if "/members/" in request.url.path:

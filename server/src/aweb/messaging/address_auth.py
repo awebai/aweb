@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+from aweb.messaging.refusals import RecipientIdentityBindingError
+
+from aweb.messaging.refusals import unreachable_address_refusal as unreachable_address_refusal
+
 import json
 import logging
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Mapping
+from collections.abc import Set
 
 from awid.federation_errors import FederationAuthorityError
 from awid.registry import Address
@@ -61,7 +66,7 @@ async def local_recipient_for_address_binding(
 ) -> Recipient | None:
     """Find residence for an independently admitted address identity.
 
-    docs/identity-messaging-contract.md:272-277: "locality is residence of that
+    Continuations (docs/identity-messaging-contract.md:313-318): "locality is residence of that
     exact DID, independent of a membership's superseded key or invalidated marker."
     The registry supplies the canonical DID and current signature key. A local
     membership's old key/verification marker cannot decide whether that DID
@@ -90,7 +95,7 @@ def requires_registry_address_binding(row: Mapping[str, Any] | None) -> bool:
     return str((row or {}).get("identity_scope") or "").strip().lower() == "global"
 
 
-def refuse_same_origin_nonresident(delivery_origin: str, *, origins: set[str]) -> None:
+def refuse_same_origin_nonresident(delivery_origin: str, *, origins: Set[str]) -> None:
     """After an exact-DID residence miss, an own-origin route is not external."""
     if is_own_origin(delivery_origin, origins):
         logging.getLogger(__name__).warning(
@@ -126,16 +131,14 @@ async def local_recipient_for_own_route(
         projection = await read_participant_identity_projection(db, participant_did=did)
         recipient = Recipient.from_local_projection(projection) if projection is not None else None
     if recipient is None:
-        logging.getLogger(__name__).warning(
-            "Refusing same-origin nonresident recipient: recipient_identity_not_found"
-        )
-        raise RecipientNotResidentError()
+        refuse_same_origin_nonresident(origin, origins=runtime.public_origins)
+        return None
     if did.startswith("did:aw:"):
         # As with a stable-only signed continuation, discover the current key
         # through the existing binding authority, outside database transactions.
         # This validation context never repairs a participant or agent marker.
         if runtime.registry_client is None:
-            raise IdentityBindingError(IdentityBindingCode.UNAVAILABLE)
+            raise RecipientIdentityBindingError(IdentityBindingCode.UNAVAILABLE)
         try:
             resolution = await runtime.registry_client.resolve_key_fresh(did)
         except AWID_DEPENDENCY_ERRORS as exc:
@@ -145,29 +148,22 @@ async def local_recipient_for_own_route(
                     "Own-route recipient binding unavailable failure_type=%s",
                     type(exc).__name__,
                 )
-            raise IdentityBindingError(
+            raise RecipientIdentityBindingError(
                 IdentityBindingCode.MISMATCH if mismatch else IdentityBindingCode.UNAVAILABLE
             ) from exc
         address = str(route.get("address") or "")
-        binding = await observe_current_identity_binding(
-            runtime.registry_client,
-            runtime.identity_binding_cache,
-            did_key=resolution.current_did_key,
-            did_aw=did,
-            address=address if "/" in address else "",
-        )
+        try:
+            binding = await observe_current_identity_binding(
+                runtime.registry_client,
+                runtime.identity_binding_cache,
+                did_key=resolution.current_did_key,
+                did_aw=did,
+                address=address if "/" in address else "",
+            )
+        except IdentityBindingError as exc:
+            raise RecipientIdentityBindingError(exc.code, headers=exc.headers) from exc
         recipient = replace(recipient, did_key=binding.did_key)
     return recipient
-
-
-def unreachable_address_refusal(address: str) -> str:
-    """Why a full address reaches no one, in words that do not say whether a
-    local identity holds that name."""
-    return (
-        f"{address} is not a registered address. A local identity has no address and "
-        "is reachable only from inside its own team, by alias; a global identity is "
-        "reachable by address once one is assigned. Check the address or use a teammate alias and retry."
-    )
 
 
 def verified_signed_payload_json(

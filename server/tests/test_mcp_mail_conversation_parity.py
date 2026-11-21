@@ -698,8 +698,16 @@ async def test_mcp_handle_address_outside_the_senders_team_needs_its_registry_bi
     server = mail_server
     await register_messaging_team(server.fixture, team_id="home:jane.aweb.ai")
     c3po = await admit_messaging_actor(server.fixture, alias="c3po", team_id="home:jane.aweb.ai")
+    # An admitted member's unbound stored address claim supplies no registry authority.
+    await server.db.execute(
+        "UPDATE {{tables.agents}} SET address='jane.aweb.ai/c3po' WHERE agent_id=$1",
+        UUID(c3po.agent_id),
+    )
     refused = await server.mcp_mail(to="@jane/c3po", plaintext=True)
-    assert refused == {"error": unreachable_address_refusal("jane.aweb.ai/c3po")}
+    assert refused == {
+        "error": unreachable_address_refusal("jane.aweb.ai/c3po"),
+        "reason": "recipient_identity_not_found",
+    }
     assert await _mail_state(server) == (0, 0)
     controller = await server.fixture.registry.ensure_namespace(domain="jane.aweb.ai")
     await server.registry.register_address(
@@ -937,10 +945,8 @@ NEXT_ACTIONS = [
         LocalRecipientNotFoundError,
         {"address": "example.test/member"},
         {
-            "error": "Recipient not found. Check the address. "
-            "Check the name; if the agent exists, ask it to reconnect with a current team certificate.",
+            "error": unreachable_address_refusal("example.test/member"),
             "reason": "recipient_identity_not_found",
-            "retryable": False,
         },
     ),
     (
@@ -1037,13 +1043,14 @@ def test_mcp_mail_codes_keep_their_code_and_add_a_recovery_action():
         "message": "The federation service cannot complete this send now. Wait briefly and retry.",
     }
     # An address the registry does not bind is refused in the words for a name nobody holds.
-    for refusal in (
-        _authority_refusal("recipient_identity_not_found"),
-        _authority_refusal("local_recipient_route_missing"),
-        RecipientAddressNotFound(address="a.test/b"),
+    for refusal, reason in (
+        (_authority_refusal("recipient_identity_not_found"), "recipient_identity_not_found"),
+        (_authority_refusal("local_recipient_route_missing"), "recipient_identity_not_found"),
+        (RecipientAddressNotFound(address="a.test/b"), "recipient_identity_not_found"),
     ):
         assert json.loads(send_refusal(refusal, address="a.test/b")) == {
             "error": unreachable_address_refusal("a.test/b"),
+            "reason": reason,
         }
 
 

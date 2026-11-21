@@ -33,13 +33,10 @@ def _controller_headers(sk, did, payload):
 
 
 async def register_namespace_controller(env, did: str) -> None:
-    await env.registry_db.execute(
-        # Most callers retain the controller established by the shared fixture.
-        # The adversarial registry-operator case deliberately replaces this row;
-        # its independent DNS answer stays with the actual namespace controller.
-        "UPDATE {{tables.dns_namespaces}} SET controller_did=$1 WHERE domain='example.test'",
-        did,
-    )
+    """Reuse the independent namespace controller retained by the producer."""
+    controller = await env.registry.ensure_namespace(domain="example.test")
+    assert bytes(controller) == env.namespace_sk
+    assert did == env.namespace_did
 
 
 async def rotate_team_key(env, controller_sk, controller_did, new_team_did: str) -> None:
@@ -193,7 +190,11 @@ async def test_rotation_by_a_controller_dns_does_not_name_is_refused(pinning):
     env = pinning
     # The registry's own namespace row names a controller DNS does not.
     registry_sk, _, registry_did = _make_keypair()
-    await register_namespace_controller(env, registry_did)
+    # Model a dishonest registry row while independent DNS retains the actual controller.
+    await env.registry_db.execute(
+        "UPDATE {{tables.dns_namespaces}} SET controller_did=$1 WHERE domain='example.test'",
+        registry_did,
+    )
     next_sk, _, next_did = _make_keypair()
     await rotate_team_key(env, registry_sk, registry_did, next_did)
 
@@ -314,12 +315,12 @@ async def test_an_embedding_app_without_a_resolver_still_authenticates(pinning):
 
 
 @pytest.mark.asyncio
-async def test_a_warm_request_under_the_pinned_key_reads_no_pin(pinning):
+async def test_a_warm_old_key_request_refuses_after_another_worker_moves_the_pin(pinning):
     env = pinning
     member = _member(env.team_sk, env.team_did, "warm")
     assert (await _connect(env, member)).status_code == 200
-    # Another process's act moves the stored pin; this server read the pin within
-    # the last 60 s, and a request under the key it read takes no further read.
+    # Another process moves the native pin while this worker holds its old
+    # verifier memo. Current certificate acceptance must recheck the locked pin.
     elsewhere = _make_keypair()[2]
     await env.db.execute(
         "UPDATE {{tables.teams}} SET team_did_key = $1 WHERE team_id = $2", elsewhere, TEAM
@@ -327,4 +328,8 @@ async def test_a_warm_request_under_the_pinned_key_reads_no_pin(pinning):
 
     roster = await _roster(env, member)
 
-    assert roster.status_code == 200, roster.text
+    assert roster.status_code == 403, roster.text
+    assert roster.json()["detail"] == (
+        "Team membership is no longer current. "
+        "Reconnect with a certificate issued under the team's current key."
+    )

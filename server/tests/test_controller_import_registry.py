@@ -1,15 +1,19 @@
 """Ordinary imports acquire exact fresh metadata from the real registry."""
 
+import json
+import logging
 from contextlib import aclosing
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from datetime import datetime, timezone
 
+import httpx
 import pytest
 from awid.did import did_key_from_signing_key
 from awid.external_authority import SystemTXTOutcomeResolver
 from awid.registry import RegistryClient
-from awid.team_control_requests import TeamImportRequest
+from awid.signing import sign_message
 from awid.team_certificate import issue_team_certificate
+from awid.team_control_requests import TeamImportRequest
 
 from aweb.controller_import import (
     VerifiedControllerImportMember,
@@ -17,9 +21,12 @@ from aweb.controller_import import (
 )
 from aweb.team_control_authority import (
     TeamControlAuthorityContext,
+    TeamControlRegistryDataInvalid,
     TeamControlRequestInvalid,
     TeamControlRequestReason,
+    TeamControlTeamNotFound,
 )
+from aweb.team_control_error_transport import team_control_error_response
 from tests.real_stack import REGISTRY_URL
 
 
@@ -104,10 +111,10 @@ async def test_owner_snapshot_retains_revoked_planning_but_only_live_admission(
         proof = await verify_controller_import(
             context=context(real_stack, sdk),
             request=request,
-            controller_signature=request.sign(signing_key=controller),
+            controller_signature=sign_message(controller, request.signing_bytes()),
         )
     assert proof.request is request
-    assert proof.controller_signature == request.sign(signing_key=controller)
+    assert proof.controller_signature == sign_message(controller, request.signing_bytes())
     assert proof.request.organization_id == "organization-1"
     assert proof.request.team_id is None
     assert proof.team.team_id == "import:local"
@@ -153,7 +160,7 @@ async def test_member_signed_selector_request_is_not_controller_import_authority
             await verify_controller_import(
                 context=context(real_stack, sdk),
                 request=request,
-                controller_signature=request.sign(signing_key=member),
+                controller_signature=sign_message(member, request.signing_bytes()),
             )
     assert error.value.reason is TeamControlRequestReason.SIGNATURE_INVALID
     assert error.value.message == (
@@ -168,7 +175,7 @@ async def test_pre_rotation_import_signature_cannot_accept_new_controller_roster
 ):
     sdk, namespace, old_controller, _ = await registered_import_team(real_stack)
     request = import_request()
-    signature = request.sign(signing_key=old_controller)
+    signature = sign_message(old_controller, request.signing_bytes())
     async with aclosing(sdk):
         await sdk.rotate_team_key(
             "local",
@@ -183,3 +190,74 @@ async def test_pre_rotation_import_signature_cannot_accept_new_controller_roster
                 controller_signature=signature,
             )
     assert error.value.reason is TeamControlRequestReason.SIGNATURE_INVALID
+
+
+@pytest.mark.asyncio
+async def test_unregistered_team_is_not_an_import_outage(real_stack):
+    sdk, _, controller, _ = await registered_import_team(real_stack)
+    request = replace(import_request(), awid_team_id="missing:local")
+    async with aclosing(sdk):
+        with pytest.raises(TeamControlTeamNotFound) as refusal:
+            await verify_controller_import(
+                context=context(real_stack, sdk),
+                request=request,
+                controller_signature=sign_message(controller, request.signing_bytes()),
+            )
+    response = team_control_error_response(refusal.value)
+    assert response.status_code == 404
+    assert json.loads(response.body) == {
+        "detail": {
+            "code": "awid_team_not_found",
+            "message": (
+                "The AWID team is not registered. "
+                "Select a registered team or register it before importing."
+            ),
+        }
+    }
+
+
+@pytest.mark.asyncio
+async def test_invalid_roster_is_a_nonretryable_import_refusal(
+    real_stack, monkeypatch, caplog
+):
+    sdk, _, controller, _ = await registered_import_team(real_stack)
+    request = import_request()
+    bad_response_seen = False
+
+    def corrupt_issued_time(http_request, http_response):
+        nonlocal bad_response_seen
+        if http_request.method != "GET" or not http_request.url.path.endswith("/certificates"):
+            return None
+        assert http_response.status_code == 200
+        body = http_response.json()
+        body["certificates"][0]["issued_at"] = "missing timezone"
+        bad_response_seen = True
+        return httpx.Response(200, json=body)
+
+    monkeypatch.setattr(real_stack.awid, "fault", corrupt_issued_time)
+    async with aclosing(sdk):
+        with pytest.raises(TeamControlRegistryDataInvalid) as refusal:
+            await verify_controller_import(
+                context=context(real_stack, sdk),
+                request=request,
+                controller_signature=sign_message(controller, request.signing_bytes()),
+            )
+    assert bad_response_seen
+    response = team_control_error_response(refusal.value)
+    assert response.status_code == 422
+    assert json.loads(response.body) == {
+        "detail": {
+            "code": "team_control_registry_data_invalid",
+            "message": (
+                "AWID returned invalid team or certificate data. "
+                "Ask the registry operator to correct the team record before importing."
+            ),
+        }
+    }
+    records = [
+        record for record in caplog.records
+        if record.name == "aweb.team_control_error_transport" and record.levelno == logging.ERROR
+    ]
+    assert len(records) == 1
+    assert records[0].exc_info is not None
+    assert records[0].exc_info[1].__cause__ is not None

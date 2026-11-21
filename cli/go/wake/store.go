@@ -83,6 +83,7 @@ func NewStore(dir string) (*Store, error) {
 		if err := os.MkdirAll(filepath.Join(abs, sub), 0o700); err != nil {
 			return nil, err
 		}
+		warnWakeDirectory(filepath.Join(abs, sub))
 	}
 	return s, nil
 }

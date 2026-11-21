@@ -3,6 +3,7 @@
 from datetime import datetime, timezone
 
 import pytest
+from awid.signing import sign_message
 from awid.team_control_requests import TeamImportRequest
 
 from aweb.controller_import import verify_controller_import
@@ -23,7 +24,7 @@ async def test_import_cannot_accept_signed_metadata_when_current_controller_is_u
         dry_run=False,
         timestamp=datetime.now(timezone.utc).isoformat(),
     )
-    signature = request.sign(signing_key=bytes([81]) * 32)
+    signature = sign_message(bytes([81]) * 32, request.signing_bytes())
     async with unreachable_context() as context:
         with pytest.raises(TeamControlAuthorityUnavailable):
             await verify_controller_import(
@@ -43,7 +44,7 @@ async def test_import_rejects_stale_signed_request_before_acquisition():
             await verify_controller_import(
                 context=context,
                 request=request,
-                controller_signature=request.sign(signing_key=bytes([81]) * 32),
+                controller_signature=sign_message(bytes([81]) * 32, request.signing_bytes()),
             )
     assert error.value.reason is TeamControlRequestReason.TIMESTAMP_INVALID
 
@@ -60,6 +61,6 @@ async def test_import_rejects_noncanonical_team_before_acquisition():
             await verify_controller_import(
                 context=context,
                 request=request,
-                controller_signature=request.sign(signing_key=bytes([81]) * 32),
+                controller_signature=sign_message(bytes([81]) * 32, request.signing_bytes()),
             )
     assert error.value.reason is TeamControlRequestReason.TEAM_SCOPE_INVALID

@@ -349,12 +349,6 @@
     },
     {
       "tool": "mypy",
-      "file": "server/src/aweb/messaging/address_auth.py",
-      "code": "arg-type",
-      "count": 1
-    },
-    {
-      "tool": "mypy",
       "file": "server/src/aweb/messaging/chat_send.py",
       "code": "arg-type",
       "count": 1
@@ -525,7 +519,7 @@
       "tool": "ruff",
       "file": "awid/src/awid/registry.py",
       "code": "BLE001",
-      "count": 7
+      "count": 5
     },
     {
       "tool": "ruff",
@@ -788,6 +782,12 @@
     {
       "tool": "ruff",
       "file": "server/src/aweb/mcp/tools/room.py",
+      "code": "BLE001",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/message_vocabulary.py",
       "code": "BLE001",
       "count": 1
     },
@@ -1100,12 +1100,6 @@
     {
       "tool": "ruff",
       "file": "server/tests/test_awid_registry_client.py",
-      "code": "F401",
-      "count": 1
-    },
-    {
-      "tool": "ruff",
-      "file": "server/tests/test_awid_registry_client.py",
       "code": "F841",
       "count": 2
     },
@@ -1172,12 +1166,6 @@
     {
       "tool": "ruff",
       "file": "server/tests/test_cli_human_reply.py",
-      "code": "F401",
-      "count": 1
-    },
-    {
-      "tool": "ruff",
-      "file": "server/tests/test_cli_invite_registry_discovery.py",
       "code": "F401",
       "count": 1
     },
@@ -1371,12 +1359,6 @@
       "tool": "ruff",
       "file": "server/tests/test_mail_unread_count.py",
       "code": "F401",
-      "count": 3
-    },
-    {
-      "tool": "ruff",
-      "file": "server/tests/test_mcp_mutation_hook_parity.py",
-      "code": "B905",
       "count": 1
     },
     {
@@ -1419,7 +1401,7 @@
       "tool": "ruff",
       "file": "server/tests/test_participant_identity_authority.py",
       "code": "F401",
-      "count": 4
+      "count": 3
     },
     {
       "tool": "ruff",
@@ -1550,18 +1532,6 @@
     {
       "tool": "ruff",
       "file": "server/tests/test_team_documents_http.py",
-      "code": "F401",
-      "count": 1
-    },
-    {
-      "tool": "ruff",
-      "file": "server/tests/test_team_room_notices.py",
-      "code": "F401",
-      "count": 1
-    },
-    {
-      "tool": "ruff",
-      "file": "server/tests/test_team_room_tree_stream.py",
       "code": "F401",
       "count": 1
     },

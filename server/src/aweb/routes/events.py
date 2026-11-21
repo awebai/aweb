@@ -705,7 +705,7 @@ async def _sse_agent_events(
                     - (datetime.now(timezone.utc) - last_heartbeat_at).total_seconds(),
                 ),
             ]
-            if identity.grant is not None and identity.grant.never_expires:
+            if identity.grant is None or identity.grant.never_expires:
                 due.append(guard.checked_at + GRANT_STREAM_RECHECK_SECONDS)
             if pending - {"room"}:
                 due.append(retry_at)

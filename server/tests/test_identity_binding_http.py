@@ -290,7 +290,7 @@ async def test_old_projections_require_verification_before_stable_resolution(
         from aweb.identity_metadata import lookup_identity_metadata_by_did
 
         assert other_team not in await current_member_team_ids_for_identity(
-            env.infra, [stable, bob.did]
+            env.infra, [stable, bob.did], registry_client=registry
         )
         metadata = await lookup_identity_metadata_by_did(env.infra, [other_key])
         assert not metadata[other_key].get("stable_id")

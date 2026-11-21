@@ -712,31 +712,38 @@ async def test_mcp_refusals_of_an_unknown_chat_recipient_read_as_the_routes_do(
 ):
     server = chat_server
 
-    assert await server.mcp_chat("pilot", to="nobody", message="hello", plaintext=True) == {
+    assert await server.mcp_chat(
+        "pilot", to="nobody", message="hello", plaintext=True
+    ) == {
         "error": "Recipient name does not identify a current member of the team: nobody. "
         "Check the name; if the agent exists, ask it to reconnect with a current team certificate.",
     }
-    assert await server.mcp_chat("pilot", to="did:aw:nobody", message="hello", plaintext=True) == {
+    assert await server.mcp_chat(
+        "pilot", to="did:aw:nobody", message="hello", plaintext=True
+    ) == {
         "error": "Bare did:aw first-contact is unsupported; use to_addresses=domain/name "
         "or continue an existing session",
     }
-    assert await server.mcp_chat("pilot", to="pilot", message="hello", plaintext=True) == {
+    assert await server.mcp_chat(
+        "pilot", to="pilot", message="hello", plaintext=True
+    ) == {
         "error": "Self-chat is not supported. Choose another recipient and retry.",
     }
     assert await server.mcp_chat(
         "pilot", to="acme.com/nobody", message="hello", plaintext=True
     ) == {
-        "error": "Recipient not found. Check the address acme.com/nobody. "
-        "Check the name; if the agent exists, ask it to reconnect with a current team certificate.",
+        "error": unreachable_address_refusal("acme.com/nobody"),
         "reason": "recipient_identity_not_found",
-        "retryable": False,
     }
     assert await server.mcp_chat(
         "pilot", conversation_id=str(uuid4()), message="hello", plaintext=True
     ) == {
         "error": "Session not found",
     }
-    assert await server.db.fetch_all("SELECT message_id FROM {{tables.chat_messages}}") == []
+    assert (
+        await server.db.fetch_all("SELECT message_id FROM {{tables.chat_messages}}")
+        == []
+    )
 
 
 def _sender():
@@ -993,10 +1000,8 @@ NEXT_ACTIONS = [
         LocalRecipientNotFoundError,
         {"address": "example.test/member"},
         {
-            "error": "Recipient not found. Check the address. "
-            "Check the name; if the agent exists, ask it to reconnect with a current team certificate.",
+            "error": unreachable_address_refusal("example.test/member"),
             "reason": "recipient_identity_not_found",
-            "retryable": False,
         },
     ),
     (
@@ -1087,13 +1092,14 @@ def test_mcp_chat_codes_keep_their_code_and_add_a_recovery_action():
         "message": "The federation service cannot complete this send now. Wait briefly and retry.",
     }
     # An address that reaches no one is refused in the words for a name nobody holds.
-    for refusal in (
-        _authority_refusal("recipient_identity_not_found"),
-        _authority_refusal("local_recipient_route_missing"),
-        RecipientAddressNotFound(address="a.test/b"),
+    for refusal, reason in (
+        (_authority_refusal("recipient_identity_not_found"), "recipient_identity_not_found"),
+        (_authority_refusal("local_recipient_route_missing"), "recipient_identity_not_found"),
+        (RecipientAddressNotFound(address="a.test/b"), "recipient_identity_not_found"),
     ):
         assert json.loads(_send_refusal(refusal, address="a.test/b")) == {
             "error": unreachable_address_refusal("a.test/b"),
+            "reason": reason,
         }
     # A refusal with no next action keeps the route's detail.
     assert json.loads(_send_refusal(_refusal(404, "Unknown aliases: nobody"))) == {

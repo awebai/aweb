@@ -12,6 +12,29 @@ import test_server_local as local
 
 
 class LocalControls(unittest.TestCase):
+    def test_naapp_packages_run_through_the_selected_local_environment(self):
+        for label, package in (("naapp-lib", "naapp-lib"), ("logs", "naapp/logs")):
+            with self.subTest(suite=label):
+                commands = []
+
+                def record(command, **kwargs):
+                    commands.append((command, kwargs["env"]))
+                    return subprocess.CompletedProcess(command, 0)
+
+                environment = {"AWEB_TEST_SERVICES": "1", "TEST_DB_PORT": "15432"}
+                with patch.object(local, "invoke", side_effect=record):
+                    status = local.run_suites(
+                        suite=local.Suite(label), workers=4,
+                        arguments=["-k", "current_key"], environ=environment,
+                    )
+                self.assertEqual(status, 0)
+                self.assertEqual(len(commands), 1)
+                command, selected = commands[0]
+                self.assertEqual(command, ["make", "test-naapp", f"NAAPP_PACKAGES={package}"])
+                self.assertEqual(selected["AWEB_TEST_SERVICES"], "1")
+                self.assertEqual(selected["TEST_DB_PORT"], "15432")
+                self.assertEqual(selected["PYTEST_ADDOPTS"], "-k current_key")
+
     def test_host_database_and_nonlocal_endpoints_refuse(self):
         for env in (
             {"TEST_DATABASE_URL": "postgresql://localhost:5432/test"},
@@ -69,6 +92,29 @@ class LocalControls(unittest.TestCase):
         for value in ("0.0.0.0:5544", "127.0.0.1:5432", "remote:5544", "127.0.0.1:0"):
             with self.subTest(value=value), self.assertRaises(local.Refused):
                 local.published_port(value)
+        self.assertEqual(local.published_port("127.0.0.1:5544\n"), 5544)
+
+    def test_rejected_port_readback_retains_bounded_escaped_evidence(self):
+        responses = (
+            "",
+            "invalid IP:0\n",
+            "warning: readback diagnostic\n127.0.0.1:5544\n",
+            "127.0.0.1:5544\n127.0.0.1:5545\n",
+            "0.0.0.0:5544\n",
+            "x" * 600,
+        )
+        for response in responses:
+            with self.subTest(response=response):
+                with self.assertRaises(local.Refused) as raised:
+                    local.published_port(response)
+                message = str(raised.exception)
+                self.assertIn(repr(response[:512]), message)
+                self.assertIn(f"{len(response)} characters", message)
+                self.assertNotIn("\n", message)
+                self.assertLess(len(message), 800)
+                self.assertTrue(
+                    message.endswith("Inspect the local Docker port binding and rerun.")
+                )
         self.assertEqual(local.published_port("127.0.0.1:5544\n"), 5544)
 
     def test_local_worker_map_binds_each_worker_and_refuses_shared_ports(self):

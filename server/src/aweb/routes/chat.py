@@ -331,7 +331,7 @@ async def pending(
         raise HTTPException(
             status_code=401, detail="Authenticated identity is missing a routing DID"
         )
-    actor_agent = await resolve_actor_agent(db, actor_dids)
+    actor_agent = await resolve_actor_agent(db, actor_dids, team_id=auth.team_id)
     actor_agent_id = auth.agent_id or (str(actor_agent["agent_id"]) if actor_agent else None)
 
     conversations_by_session: dict[str, dict[str, Any]] = {}
@@ -677,7 +677,7 @@ async def _sse_events(
     async def _stream_grant_reason():
         nonlocal next_grant_check
         reason = grant_expiry_reason(auth)
-        if reason or auth.grant is None:
+        if reason:
             return reason
         if time.monotonic() < next_grant_check:
             return None

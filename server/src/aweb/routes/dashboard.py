@@ -6,6 +6,9 @@ All endpoints are read-only.
 
 from __future__ import annotations
 
+from aweb.member_team_key import current_member_sql
+
+from aweb.application_state import application_registry_client
 from aweb.identity_binding import IdentityProjectionField, verified_identity_field_sql
 
 from aweb.human_kind import agent_listing_predicate_sql, effective_agent_type
@@ -29,14 +32,12 @@ from aweb.coordination.tasks_service import list_tasks_paginated
 from aweb.awid_error_handling import (
     AWID_DEPENDENCY_ERRORS,
     awid_dependency_http_exception,
-    awid_registry_not_configured_exception,
 )
 from aweb.config import get_settings
 from aweb.deps import get_db, get_redis
 from aweb.events import (
     team_events_channel_name,
 )
-from aweb.application_state import application_registry_client
 from aweb.grant_liveness_policy import GrantLivenessFailurePolicy
 from aweb.presence_transitions import team_online_aliases
 from aweb.workspace_activity import latest_workspace_activity, workspace_activity_by_id
@@ -132,11 +133,7 @@ async def _get_team_visibility(request: Request, team_id: str) -> str:
     except ValueError:
         return "private"
 
-    registry_client = getattr(request.app.state, "awid_registry_client", None)
-    if registry_client is None:
-        raise awid_registry_not_configured_exception(
-            operation="AWID dashboard team visibility lookup"
-        )
+    registry_client = application_registry_client(request.app.state)
 
     try:
         team = await registry_client.get_team(domain, team_name)
@@ -366,7 +363,7 @@ async def list_team_agents(request: Request, team_id: str, db=Depends(get_db)) -
         SELECT a.agent_id, a.alias, a.did_key, a.human_name, {verified_identity_field_sql(IdentityProjectionField.ADDRESS, agent="a")} AS address, a.agent_type, a.human_verified_key,
                a.role, a.status, a.identity_scope, a.created_at
         FROM {{{{tables.agents}}}} a
-        WHERE a.team_id = $1 AND a.deleted_at IS NULL
+        WHERE a.team_id = $1 AND {current_member_sql("a")}
           AND {agent_listing_predicate_sql("a")}
         ORDER BY a.alias
         """,
@@ -460,8 +457,8 @@ async def get_team_agent(
         f"""
         SELECT agent_id, alias, did_key, {verified_identity_field_sql(IdentityProjectionField.STABLE_DID)} AS did_aw, {verified_identity_field_sql(IdentityProjectionField.ADDRESS)} AS address, role, status, identity_scope,
                human_name, agent_type, human_verified_key, created_at
-        FROM {{{{tables.agents}}}}
-        WHERE team_id = $1 AND alias = $2 AND deleted_at IS NULL
+        FROM {{{{tables.agents}}}} a
+        WHERE a.team_id = $1 AND a.alias = $2 AND {current_member_sql("a")}
           AND {agent_listing_predicate_sql()}
         """,
         team_id,
@@ -592,6 +589,10 @@ async def stream_team_events(
     if redis is None:
         raise HTTPException(status_code=503, detail="Redis unavailable")
 
+    # Configuration refusals must precede SSE headers; the snapshot still
+    # follows the subscription and performs the actual evidence reads.
+    application_registry_client(request.app.state)
+
     return StreamingResponse(
         _sse_dashboard_events(request=request, db=db, redis=redis, team_id=team_id),
         media_type="text/event-stream",
@@ -669,7 +670,8 @@ async def get_team_status(request: Request, team_id: str, db=Depends(get_db)) ->
     aweb_db = db.get_manager("aweb")
 
     agent_count_row = await aweb_db.fetch_one(
-        "SELECT COUNT(*)::int AS cnt FROM {{tables.agents}} WHERE team_id = $1 AND deleted_at IS NULL",
+        "SELECT COUNT(*)::int AS cnt FROM {{tables.agents}} a WHERE a.team_id = $1 AND "
+        + current_member_sql("a"),
         team_id,
     )
     agent_count = agent_count_row["cnt"] if agent_count_row else 0
@@ -754,7 +756,8 @@ async def get_usage(
 
     # Count active agents
     agent_row = await aweb_db.fetch_one(
-        "SELECT COUNT(*)::int AS cnt FROM {{tables.agents}} WHERE team_id = $1 AND deleted_at IS NULL",
+        "SELECT COUNT(*)::int AS cnt FROM {{tables.agents}} a WHERE a.team_id = $1 AND "
+        + current_member_sql("a"),
         team_id,
     )
     active_agents = agent_row["cnt"] if agent_row else 0

@@ -7,11 +7,12 @@ from starlette.routing import Mount
 
 
 @asynccontextmanager
-async def mounted_mcp(app, *, db_infra, redis, registry_client):
+async def mounted_mcp(app, *, db_infra, redis, registry_client, hosted_signer=None):
     runtime = create_mcp_app(
         db_infra=db_infra,
         redis=redis,
         registry_client=registry_client,
+        hosted_signer=hosted_signer,
         public_origin=getattr(app.state, "public_origin", None),
         streamable_http_path="/",
     )

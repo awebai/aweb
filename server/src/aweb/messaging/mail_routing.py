@@ -238,7 +238,7 @@ async def explicit_mail_target_matches_participant(
         if str(participant.get("agent_id") or "") == selected_id:
             # This is a consistency check against the already-authorized
             # participant, not a new member selector or routing authority.
-            checks.append(True)
+            selected_identity_matches = True
         else:
             selected = await read_member_projection(db.get_manager("aweb"), agent_id=selected_id)
             projected = (
@@ -247,7 +247,8 @@ async def explicit_mail_target_matches_participant(
                 else {}
             )
             selected_did = str(projected.get("did_aw") or projected.get("did_key") or "")
-            checks.append(selected_did == participant_did)
+            selected_identity_matches = selected_did == participant_did
+        checks.append(selected_identity_matches)
     if to_alias is not None and str(to_alias).strip():
         checks.append(participant_alias == str(to_alias).strip())
     if to_stable_id is not None and str(to_stable_id).strip():
@@ -258,13 +259,10 @@ async def explicit_mail_target_matches_participant(
         checks.append(address_matches)
     if to_did is not None and str(to_did).strip():
         supplied_did = str(to_did).strip()
-        # docs/identity-messaging-contract.md:134-140: a thread retains this
-        # participant's key reference. Matching it identifies the same party;
-        # current signature, encryption and delivery admission still run.
-        recorded_key = str(participant.get("current_did_key") or "").strip()
-        did_matches = participant_did == supplied_did or (
-            bool(recorded_key) and recorded_key == supplied_did
-        )
+        # A retained key is read attribution, not a stable send selector.
+        # Explicit stable/address/agent bindings below retain the released
+        # continuation behavior (docs/identity-messaging-contract.md:149-175).
+        did_matches = participant_did == supplied_did
         # Signed clients often include the recipient's current did:key as an
         # extra binding while the conversation participant stores the stable
         # did:aw. Accept that only when another stable participant field has

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from aweb.messaging.refusals import RecipientIdentityBindingError
+
 import json
 import logging
 from collections.abc import Mapping, Sequence
@@ -22,7 +24,6 @@ from typing import TYPE_CHECKING, Any, TypedDict, NoReturn
 from uuid import UUID
 
 import asyncpg
-from awid.federation_errors import FederationAuthorityError
 from awid.registry import RegistryError
 from aweb.messaging.refusals import (
     encrypted_message_refusal,
@@ -42,12 +43,9 @@ from aweb.messaging.message_replay import (
 )
 
 from aweb.agent_wake import agent_wake_scope
-from aweb.attachment_service import refuse_remote_attachments
-from aweb.awid_error_handling import (
-    AWID_DEPENDENCY_ERRORS,
-)
+from aweb.attachment_service import confirm_accepted_attachment_refs, refuse_remote_attachments
+from aweb.awid_error_handling import AWID_DEPENDENCY_ERRORS
 from aweb.message_vocabulary import MessageInputSource, observe_message_vocabulary
-from aweb.attachment_service import attachment_retry
 from aweb.db import TransactionInfra
 from aweb.e2ee_messages import (
     E2EEEnvelopeError,
@@ -893,7 +891,7 @@ async def _stored_exact_send(db, *, payload, sender_did: str) -> MailReplayLooku
     row = lookup.message
     # All callers validate encryption and current delivery policy before this
     # lookup. Bound attachment refs therefore cannot bypass ordinary admission.
-    await attachment_retry(db, payload, MessageKind.MAIL)
+    await confirm_accepted_attachment_refs(db, kind=MessageKind.MAIL, message_id=row["message_id"])
     return MailReplayLookup(
         stored=SentMail(
             message_id=str(row["message_id"]),
@@ -959,18 +957,18 @@ async def _continuation_signature_recipient(
     if not signed_stable and isinstance(signed_to, str) and signed_to.startswith("did:aw:"):
         signed_stable = signed_to
     if not stable.startswith("did:aw:") or signed_stable != stable:
-        raise IdentityBindingError(IdentityBindingCode.MISMATCH)
+        raise RecipientIdentityBindingError(IdentityBindingCode.MISMATCH)
     address = str(participant.get("address") or "")
     signed_address = signed_to if isinstance(signed_to, str) and "/" in signed_to else ""
     if signed_address and signed_address != address:
-        raise IdentityBindingError(IdentityBindingCode.MISMATCH)
+        raise RecipientIdentityBindingError(IdentityBindingCode.MISMATCH)
     if not signed_key and isinstance(signed_to, str) and signed_to.startswith("did:key:"):
         signed_key = signed_to
     if not signed_key:
         # Released clients may sign only the stable DID on a stored route.
         # Discover its current key solely for validation, never for delivery.
         if runtime.registry_client is None:
-            raise IdentityBindingError(IdentityBindingCode.UNAVAILABLE)
+            raise RecipientIdentityBindingError(IdentityBindingCode.UNAVAILABLE)
         try:
             resolved = await runtime.registry_client.resolve_key_fresh(stable)
             signed_key = resolved.current_did_key
@@ -985,22 +983,25 @@ async def _continuation_signature_recipient(
                 if exc.status_code == 404
                 else IdentityBindingCode.UNAVAILABLE
             )
-            raise IdentityBindingError(code) from exc
+            raise RecipientIdentityBindingError(code) from exc
         except AWID_DEPENDENCY_ERRORS as exc:
             logging.getLogger(__name__).warning(
                 "Stored mail signature binding dependency failed failure_type=%s",
                 type(exc).__name__,
             )
-            raise IdentityBindingError(IdentityBindingCode.UNAVAILABLE) from exc
+            raise RecipientIdentityBindingError(IdentityBindingCode.UNAVAILABLE) from exc
     if not isinstance(signed_key, str) or not signed_key.startswith("did:key:"):
-        raise IdentityBindingError(IdentityBindingCode.MISMATCH)
-    await observe_current_identity_binding(
-        runtime.registry_client,
-        runtime.identity_binding_cache,
-        did_key=signed_key,
-        did_aw=stable,
-        address=signed_address,
-    )
+        raise RecipientIdentityBindingError(IdentityBindingCode.MISMATCH)
+    try:
+        await observe_current_identity_binding(
+            runtime.registry_client,
+            runtime.identity_binding_cache,
+            did_key=signed_key,
+            did_aw=stable,
+            address=signed_address,
+        )
+    except IdentityBindingError as exc:
+        raise RecipientIdentityBindingError(exc.code, headers=exc.headers) from exc
     # This copy is passed only to the payload validator. The original recipient,
     # participant agent_id, policy rows and all projection markers stay intact.
     return {**recipient, "did_aw": stable, "did_key": signed_key, "address": address}
@@ -1012,6 +1013,7 @@ async def _commit_mail_continuation(
     message: MailStorageInput,
     recipient: Mapping[str, Any],
     sender: DeliverySender,
+    registry_client,
 ) -> StoredMail:
     """Recheck stored-route policy and commit the message under its read locks."""
     if message.conversation_id is None:
@@ -1020,13 +1022,12 @@ async def _commit_mail_continuation(
         send_db = TransactionInfra(db, tx)
         await admit_message_delivery(
             send_db,
+            registry_client=registry_client,
             recipient=recipient,
             recipient_did=message.recipient.did,
             to_agent_id=message.recipient.agent_id,
             sender_did=sender.did,
             sender_address=sender.address,
-            team_id=message.local_team_id,
-            sender_verified_team_id=None,
             sender_verified_dids=sender.verified_dids,
             stored_route_continuation=True,
         )
@@ -1167,13 +1168,12 @@ async def send_mail_conversation_continuation(
     # Admission comes before any replay, as for any send.
     await admit_message_delivery(
         db,
+        registry_client=runtime.registry_client,
         recipient=recipient,
         recipient_did=recipient_participant["did"],
         to_agent_id=recipient.get("agent_id"),
         sender_did=sender_did,
         sender_address=sender_address,
-        team_id=continuation.conversation.get("team_id") or auth.team_id,
-        sender_verified_team_id=auth.verified_team_id,
         sender_verified_dids=auth_dids(auth),
         stored_route_continuation=True,
     )
@@ -1186,6 +1186,7 @@ async def send_mail_conversation_continuation(
             message_id, server_received_at = await _commit_mail_continuation(
                 db,
                 recipient=recipient,
+                registry_client=runtime.registry_client,
                 sender=DeliverySender(
                     did=sender_did,
                     address=sender_address,
@@ -1416,6 +1417,73 @@ async def resolve_mail_target(
     )
 
 
+async def _accepted_encrypted_mail_target_matches_participant(
+    db,
+    *,
+    payload: SendMessageRequest,
+    sender_did: str,
+    participant: Mapping[str, Any],
+) -> bool:
+    """Locate an accepted key-only target, without answering or admitting a send.
+
+    Released encrypted attachment retries can omit the outer stable selector.
+    Their exact accepted artifact and protected stable binding identify only
+    the same recorded party. Ordinary crypto, freshness and current policy
+    still run before the stored answer; a new artifact gains no selector.
+    """
+    if (
+        payload.content_mode != ContentMode.ENCRYPTED
+        or payload.encrypted_envelope is None
+        or payload.to_did is None
+        or payload.message_id is None
+        or payload.conversation_id is None
+        or any(
+            value is not None
+            for value in (
+                payload.to_agent_id,
+                payload.to_alias,
+                payload.to_address,
+                payload.to_stable_id,
+            )
+        )
+    ):
+        return False
+    routing = payload.encrypted_envelope.get("routing")
+    stable_did = str(participant.get("did") or "")
+    if (
+        not isinstance(routing, Mapping)
+        or not stable_did.startswith("did:aw:")
+        or routing.get("to_stable_id") != stable_did
+        or routing.get("to_did") != payload.to_did.strip()
+    ):
+        return False
+    try:
+        message_id = UUID(payload.message_id)
+        conversation_id = UUID(payload.conversation_id)
+    except ValueError:
+        return False
+    accepted = await read_stored_message(
+        db,
+        claim=StoredMessageClaim(
+            kind=MessageKind.MAIL,
+            message_id=message_id,
+            sender_did=sender_did,
+            conversation_id=conversation_id,
+            artifact=replay_artifact(
+                content_mode=payload.content_mode,
+                encrypted_envelope=payload.encrypted_envelope,
+                signature=payload.signature,
+                signed_payload=payload.signed_payload,
+            ),
+        ),
+    )
+    return (
+        accepted.state is StoredMessageState.EXACT
+        and accepted.message is not None
+        and accepted.message.get("to_did") == stable_did
+    )
+
+
 async def _resolve_requested_mail_continuation(
     db,
     *,
@@ -1463,6 +1531,13 @@ async def _resolve_requested_mail_continuation(
                 to_stable_id=payload.to_stable_id,
                 to_address=payload.to_address,
             )
+            if not target_matches:
+                target_matches = await _accepted_encrypted_mail_target_matches_participant(
+                    db,
+                    payload=payload,
+                    sender_did=sender_did,
+                    participant=requested_continuation.recipient_participant,
+                )
             if (
                 not target_matches
                 and payload.encrypted_envelope is None
@@ -1520,7 +1595,11 @@ async def _resolve_new_mail_target(
 
     if payload.to_address is None and payload.to_stable_id is not None:
         recipient_did = payload.to_stable_id.strip()
-        recipient = await resolve_agent_by_did(db, recipient_did)
+        recipient = await resolve_agent_by_did(
+            db,
+            recipient_did,
+            team_id=auth.team_id if recipient_did.startswith("did:key:") else None,
+        )
         if recipient is not None:
             recipient = identity_recipient(recipient)
         if recipient is None:
@@ -1528,7 +1607,11 @@ async def _resolve_new_mail_target(
                 _raise_bare_did_first_contact_unsupported()
             raise recipient_not_found()
         if payload.to_did is not None and payload.to_did.strip():
-            bound_recipient = await resolve_agent_by_did(db, payload.to_did.strip())
+            bound_recipient = await resolve_agent_by_did(
+                db,
+                payload.to_did.strip(),
+                team_id=auth.team_id if payload.to_did.strip().startswith("did:key:") else None,
+            )
             if not _recipient_identity_matches(bound_recipient, recipient):
                 raise recipient_selector_mismatch(
                     supplied=RecipientSelectorField.DID,
@@ -1547,7 +1630,11 @@ async def _resolve_new_mail_target(
         to_alias = recipient.get("alias")
     elif payload.to_address is None and payload.to_did is not None:
         requested_recipient_did = payload.to_did.strip()
-        recipient = await resolve_agent_by_did(db, requested_recipient_did)
+        recipient = await resolve_agent_by_did(
+            db,
+            requested_recipient_did,
+            team_id=auth.team_id if requested_recipient_did.startswith("did:key:") else None,
+        )
         if recipient is not None:
             recipient = identity_recipient(recipient)
         if recipient is None:
@@ -1719,6 +1806,7 @@ class _LocalMailCommit:
 async def _commit_new_local_mail(
     db,
     *,
+    runtime: MessagingRuntime,
     auth: MessagingAuth,
     target: MailTarget,
     payload: SendMessageRequest,
@@ -1742,11 +1830,10 @@ async def _commit_new_local_mail(
         # that commits it, keeping membership/contact locks until delivery.
         await authorize_message_delivery(
             send_db,
+            registry_client=runtime.registry_client,
             recipient_agent=recipient,
             sender_did=sender_did,
             sender_address=sender_address,
-            sender_team_id=auth.team_id,
-            sender_verified_team_id=auth.verified_team_id,
             sender_verified_dids=auth_dids(auth),
         )
         # If an explicit recipient is present, conversation_id is a caller-chosen
@@ -1920,11 +2007,10 @@ async def _send_mail_to_resolved_target(
         if not recipient.get("external"):
             await authorize_message_delivery(
                 db,
+                registry_client=runtime.registry_client,
                 recipient_agent=recipient,
                 sender_did=sender_did,
                 sender_address=sender_address,
-                sender_team_id=auth.team_id,
-                sender_verified_team_id=auth.verified_team_id,
                 sender_verified_dids=auth_dids(auth),
             )
         encrypted_metadata = _validate_encrypted_payload(
@@ -1951,6 +2037,7 @@ async def _send_mail_to_resolved_target(
                 # delivery leaves no conversation behind.
                 committed = await _commit_new_local_mail(
                     db,
+                    runtime=runtime,
                     auth=auth,
                     target=target,
                     payload=payload,
@@ -1976,15 +2063,6 @@ async def _send_mail_to_resolved_target(
     except DeliveryPolicyRefused:
         raise
     except (ValidationError, NotFoundError, ForbiddenError, ConflictError) as exc:
-        if (
-            isinstance(exc, ForbiddenError)
-            and payload.to_address
-            and recipient is not None
-            and recipient.get("identity_scope") == "local"
-            and not recipient.get("has_global_claim")
-            and not recipient.get("did_aw")
-        ):
-            raise FederationAuthorityError("local_recipient_route_missing") from exc
         raise DeliveryRefusal(status_code=exc.status_code, detail=exc.detail) from exc
 
     await record_successful_contact_side_effect(

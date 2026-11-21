@@ -13,6 +13,13 @@ from test_messages_http import _signed_identity_headers
 from test_team_key_pinning import pinning as pinning
 
 
+@pytest.fixture(autouse=True)
+def proxy_settings_before_application_construction(monkeypatch):
+    """The real application may capture these settings when its fixture starts."""
+    monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "true")
+    monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", "r2-disposable-proxy-secret")
+
+
 class MessageTransport(StrEnum):
     MAIL = "mail"
     CHAT = "chat"
@@ -146,10 +153,8 @@ def _proxy_headers(actor_id):
 
 
 @pytest.mark.asyncio
-async def test_trusted_proxy_does_not_restore_superseded_actor(pinning, monkeypatch):
+async def test_trusted_proxy_does_not_restore_superseded_actor(pinning):
     env = pinning
-    monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "true")
-    monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", "r2-disposable-proxy-secret")
     member = _new_member("proxyactor")
     assert (
         await _connect(env, member, _certificate(env.team_sk, env.team_did, member, "proxy-before"))
@@ -204,10 +209,7 @@ async def test_room_rechecks_current_membership_after_request_authentication(pin
     next_sk, next_did = await _change_key(env)
     with pytest.raises(ForbiddenError) as refused:
         await room_metadata(env.infra, actor)
-    assert refused.value.detail == (
-        "Team membership is no longer current. "
-        "Reconnect with a certificate issued under the team's current key."
-    )
+    assert refused.value.detail == "Room requires current team membership"
     assert (
         await _connect(env, member, _certificate(next_sk, next_did, member, "room-after"))
     ).status_code == 200
