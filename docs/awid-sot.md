@@ -834,7 +834,11 @@ GET    /v1/namespaces/{domain}/teams/{name}/certificates/{certificate_id}/status
        another team: identical 404 { "detail": "Certificate not found" }.
        No member identity, alias, addresses, enumeration, or history.
        The key is the CURRENT team key (did:key itself identifies the key).
-       Active means revoked_at is null, not that authentication succeeded.
+       Active means no team ever created under this domain and name revoked
+       this certificate id, the same history the revocations list reads, not
+       that authentication succeeded. An id registered again after the team
+       was deleted and created again keeps its earlier revocation, and its
+       revoked_at is the first one.
        Rotation can leave old-key records active; verifiers must reject their
        signatures against the current key. No previous key is returned.
        Cache per (team_id, certificate_id) for at most 60 seconds and fail closed
