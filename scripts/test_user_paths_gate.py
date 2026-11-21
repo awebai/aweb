@@ -1,4 +1,4 @@
-"""The early user-path stage must stop the train on a failed real journey."""
+"""The early user-path stage must record a failed real journey."""
 
 import os
 from pathlib import Path
@@ -186,7 +186,7 @@ class UserPathsAdmission(unittest.TestCase):
                 self.assertEqual(failed["status"], "FAILED")
                 self.assertNotIn("known_issue", failed)
 
-    def test_failure_is_a_failed_second_stage_and_stops_unit(self):
+    def test_user_path_failure_reports_failed_stage_and_runs_unit(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             make = root / "make"
@@ -214,10 +214,11 @@ class UserPathsAdmission(unittest.TestCase):
                 text=True,
             )
             self.assertEqual(result.returncode, 86, result.stdout + result.stderr)
-            self.assertNotIn("_candidate-unit-suites", (root / "calls").read_text())
+            self.assertIn("_candidate-unit-suites", (root / "calls").read_text())
             summary = (root / "summary.tsv").read_text()
             self.assertIn("checks\tPASSED", summary)
             self.assertIn("user-paths\tFAILED", summary)
+            self.assertIn("unit\tPASSED", summary)
 
     def test_passing_stage_summary_still_exposes_incomplete_human_coverage(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -238,7 +239,7 @@ class UserPathsAdmission(unittest.TestCase):
                 text=True,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
-            row = (root / "summary.tsv").read_text().strip().split("\t")
+            row = (root / "summary.tsv").read_text().splitlines()[-1].split("\t")
             self.assertEqual(row[:2], ["user-paths", "PASSED"])
             self.assertEqual(row[-1], "incomplete: human paths not covered")
 
@@ -441,7 +442,7 @@ if args[:2] in [['network','create'],['volume','create']]: print('owned');sys.ex
                         all(len(row.split("\t")) == 10 for row in rows), rows
                     )
                     self.assertEqual({row.split("\t")[6] for row in rows}, {"501"})
-                    return rows
+                    return [row for row in rows if "/" not in row.split("\t")[1]]
 
                 try:
                     invoke("checks")
