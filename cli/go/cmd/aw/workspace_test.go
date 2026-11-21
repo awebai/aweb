@@ -2647,6 +2647,45 @@ func TestResolveWorkspaceTeamRegistryURLFallsBackToServiceDiscovery(t *testing.T
 	}
 }
 
+func TestResolveWorkspaceTeamRegistryURLUsesActorRegistryForRecordedTeam(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AWID_REGISTRY_URL", "https://process-registry.example")
+	const teamID = "backend:team.example"
+	const actorRegistry = "https://actor-registry.example"
+	actor := t.TempDir()
+	writeIdentityForTest(t, actor, awconfig.WorktreeIdentity{
+		DID:           "did:key:z6MkMember",
+		Address:       "identity.example/alice",
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		RegistryURL:   actorRegistry,
+	})
+	for _, tc := range []struct {
+		name       string
+		storedTeam string
+		want       string
+	}{
+		{name: "selected team", storedTeam: teamID, want: actorRegistry},
+		{name: "other team in same namespace", storedTeam: "other:team.example", want: "https://process-registry.example"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			writeTeamStateForTest(t, actor, awconfig.TeamState{
+				ActiveTeam: tc.storedTeam,
+				Memberships: []awconfig.TeamMembership{{
+					TeamID:   tc.storedTeam,
+					CertPath: awconfig.TeamCertificateRelativePath(tc.storedTeam),
+				}},
+			})
+			registryURL, err := resolveWorkspaceTeamRegistryURL(context.Background(), registryAuthorityRequest{
+				WorkingDir: t.TempDir(), IdentityHome: awconfig.WorktreeIdentityHome(actor), Domain: "team.example", TeamID: teamID,
+			})
+			if err != nil || registryURL != tc.want {
+				t.Fatalf("registry_url=%q, want %q: %v", registryURL, tc.want, err)
+			}
+		})
+	}
+}
+
 func TestResolveWorkspaceTeamRegistryURLPrefersControllerRegistryOverIdentity(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

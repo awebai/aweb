@@ -1020,7 +1020,7 @@ func fetchWorkspaceTeamAliases(client *aweb.Client, workspaceID string) (map[str
 }
 
 func resolveWorkspaceTeamRegistryURL(ctx context.Context, req registryAuthorityRequest) (string, error) {
-	req.Kind = registryTeamRoute
+	req.Kind = registryWorkspaceTeamRoute
 	url, err := resolveRegistryAuthority(ctx, req)
 	if err != nil || url != "" {
 		return url, err

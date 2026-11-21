@@ -20,6 +20,7 @@ const (
 	registryIdentityLookup
 	registryInviteIssuerRoute
 	registryTeamRoute
+	registryWorkspaceTeamRoute
 	registryDeliveryTeamRoute
 	registryAddressClaimRoute
 )
@@ -76,7 +77,7 @@ func resolveRegistryAuthority(ctx context.Context, req registryAuthorityRequest)
 			return awid.CanonicalRegistryServerOrigin(membership.RegistryURL)
 		}
 		return strings.TrimSpace(os.Getenv("AWID_REGISTRY_URL")), nil
-	case registryTeamRoute, registryAddressClaimRoute:
+	case registryTeamRoute, registryWorkspaceTeamRoute, registryAddressClaimRoute:
 		if override != "" {
 			return awid.CanonicalRegistryServerOrigin(override)
 		}
@@ -115,7 +116,10 @@ func resolveRegistryAuthority(ctx context.Context, req registryAuthorityRequest)
 		}
 		if identity != nil {
 			identityDomain, _, addressed := awconfig.CutIdentityAddress(identity.Address)
-			if (strings.EqualFold(identityDomain, domain) || (!addressed && membership != nil)) && strings.TrimSpace(identity.RegistryURL) != "" {
+			// Workspace operations use the selected actor's recorded registry when
+			// its exact team membership carries no registry of its own.
+			usesMemberRegistry := membership != nil && (!addressed || req.Kind == registryWorkspaceTeamRoute)
+			if (strings.EqualFold(identityDomain, domain) || usesMemberRegistry) && strings.TrimSpace(identity.RegistryURL) != "" {
 				return awid.CanonicalRegistryServerOrigin(identity.RegistryURL)
 			}
 		}
@@ -150,9 +154,7 @@ func resolveRegistryAuthority(ctx context.Context, req registryAuthorityRequest)
 	}
 }
 
-// Only the exact selected team can supply a membership pin. An identity
-// registry serves the identity's address domain, or an addressless identity's
-// already recorded team.
+// Only the exact selected team can supply a membership pin.
 func recordedRegistryMembership(req registryAuthorityRequest) (*awconfig.TeamMembership, error) {
 	if req.TeamID == "" || (req.IdentityHome == "" && req.WorkingDir == "") {
 		return nil, nil
