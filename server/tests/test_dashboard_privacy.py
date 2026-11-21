@@ -77,14 +77,6 @@ async def pre_chat_coverage_privacy_app(shared_test_pool, monkeypatch, chat_cove
         yield env
 
 
-@pytest_asyncio.fixture
-async def dashboard_standing_app(shared_test_pool, monkeypatch):
-    async with privacy_stack(
-        shared_test_pool, monkeypatch, outbox_recovery=OutboxRecoveryOwnership.HOST
-    ) as env:
-        yield env
-
-
 @asynccontextmanager
 async def privacy_stack(
     shared_test_pool, monkeypatch, tls=None, *,
@@ -424,61 +416,6 @@ async def test_team_stream_suppresses_old_publishers_and_keeps_task_activity(pri
         }
         await env.redis.publish(team_events_channel_name(TEAM), json.dumps(control))
         assert await _next_event(lines) == control
-
-
-@pytest.mark.asyncio
-async def test_dashboard_stream_ends_at_the_real_jwt_expiry(dashboard_standing_app):
-    env = dashboard_standing_app
-    token = _make_jwt([TEAM], lifetime_seconds=3)
-    path = f"/v1/teams/{TEAM}/events/stream"
-    headers = {"X-Dashboard-Token": token}
-    async with env.client.stream("GET", path, headers=headers) as response:
-        assert response.status_code == 200
-        lines = response.aiter_lines()
-        assert (await _next_event(lines))["type"] == "connected"
-        assert (await _next_event(lines))["type"] == "snapshot"
-        async with asyncio.timeout(5):
-            assert [line async for line in lines if line.startswith("data:")] == []
-    refused = await env.client.get(path, headers=headers)
-    assert refused.status_code == 401, refused.text
-    assert refused.json()["detail"] == "Dashboard token expired"
-
-
-@pytest.mark.asyncio
-async def test_dashboard_stream_rechecks_standing_after_membership_removal(
-    dashboard_standing_app, monkeypatch
-):
-    env = dashboard_standing_app
-    member = env.actors["alice"]
-    # The production default is shared with the native status stream. Shorten
-    # the interval here so the HTTP test can await a real removal and EOF.
-    monkeypatch.setattr("aweb.routes.dashboard.STREAM_AUTHORITY_RECHECK_SECONDS", 0.25)
-
-    async def standing(*, team_id: str, user_id: str) -> bool:
-        return bool(await env.db.fetch_value(
-            "SELECT deleted_at IS NULL FROM {{tables.agents}} WHERE team_id=$1 AND agent_id=$2",
-            team_id, UUID(user_id),
-        ))
-
-    env.app.state.dashboard_user_has_team_access = standing
-    path = f"/v1/teams/{TEAM}/events/stream"
-    headers = {"X-Dashboard-Token": _make_jwt([TEAM], str(member.id))}
-    async with env.client.stream("GET", path, headers=headers) as response:
-        assert response.status_code == 200
-        lines = response.aiter_lines()
-        assert (await _next_event(lines))["type"] == "connected"
-        assert (await _next_event(lines))["type"] == "snapshot"
-        removed = await env.client.delete(
-            f"/v1/workspaces/{member.workspace}",
-            headers=_signed_team_headers(member.sk, member.did, TEAM, member.certificate),
-        )
-        assert removed.status_code == 200, removed.text
-        assert removed.json()["identity_deleted"] is True
-        async with asyncio.timeout(3):
-            async for _ in lines:
-                pass
-    refused = await env.client.get(path, headers=headers)
-    assert refused.status_code == 403, refused.text
 
 
 @pytest.mark.asyncio

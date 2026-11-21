@@ -1,155 +1,92 @@
-"""Maintenance through real PostgreSQL, Redis, AWID, and HTTP writes."""
+"""Maintenance orchestration tests; authority stays with the real owner tests."""
 
-import asyncio
-import json
-import socket
+from unittest.mock import AsyncMock
 
 import pytest
-import pytest_asyncio
-from awid.registry import RegistryClient
-from fastapi import HTTPException
 
 from aweb.application_state import RegistryClientUnavailable
-from aweb.embedding import OutboxRecoveryOwnership
-from aweb.events import team_events_channel_name
 from aweb.maintenance import (
     NativeMaintenanceError,
     NativeMaintenanceStage,
     run_native_maintenance,
 )
-from aweb.presence import clear_workspace_presence
-from aweb.presence_transitions import PresenceReconciliationError
-from test_coordination_state_http import request_as
-from test_dashboard_privacy import TEAM, privacy_stack
-from test_workspace_liveness_http import (
-    GrantHeartbeatRoute,
-    _root_last_seen,
-    _send_grant_heartbeat,
-)
-
-
-@pytest_asyncio.fixture
-async def maintenance_app(shared_test_pool, monkeypatch):
-    async with privacy_stack(
-        shared_test_pool, monkeypatch, outbox_recovery=OutboxRecoveryOwnership.HOST
-    ) as env:
-        yield env
+from aweb.presence_transitions import PresenceReconciliationResult
 
 
 @pytest.mark.asyncio
-async def test_native_maintenance_publishes_presence_during_outbox_recovery(
-    maintenance_app,
+@pytest.mark.parametrize(
+    "outbox_fails,presence_fails",
+    [(False, False), (True, False), (False, True), (True, True)],
+)
+async def test_each_stage_is_attempted_with_the_same_borrowed_resources(
+    monkeypatch, outbox_fails, presence_fails
 ):
-    env = maintenance_app
-    assert await _root_last_seen(env) is None
-    await clear_workspace_presence(
-        env.redis, [str(actor.workspace) for actor in env.actors.values()]
+    from types import SimpleNamespace
+
+    db, redis, registry, callback = object(), object(), object(), object()
+    infra = SimpleNamespace(get_manager=lambda name: db if name == "aweb" else None)
+    outbox_error = RuntimeError("outbox publisher unavailable")
+    presence_error = RuntimeError("grant evidence unavailable")
+    presence_result = PresenceReconciliationResult(3, 1, 2)
+    outboxes = AsyncMock(side_effect=outbox_error if outbox_fails else None)
+    presence = AsyncMock(
+        side_effect=presence_error if presence_fails else None,
+        return_value=presence_result,
     )
+    monkeypatch.setattr("aweb.maintenance.recover_outboxes", outboxes)
+    monkeypatch.setattr("aweb.maintenance.reconcile_presence", presence)
     arguments = dict(
-        db_infra=env.infra,
-        redis=env.redis,
-        registry_client=env.app.state.awid_registry_client,
-        on_mutation=env.app.state.on_mutation,
+        db_infra=infra, redis=redis, registry_client=registry, on_mutation=callback
     )
-    await run_native_maintenance(**arguments)
-    async with env.redis.pubsub() as subscriber:
-        await subscriber.subscribe(team_events_channel_name(TEAM))
-        subscribed = await subscriber.get_message(timeout=3)
-        assert subscribed is not None and subscribed["type"] == "subscribe"
-        response = await request_as(
-            env, alias="alice", method="POST", path="/v1/agents/heartbeat"
+    if outbox_fails or presence_fails:
+        with pytest.raises(NativeMaintenanceError) as refused:
+            await run_native_maintenance(**arguments)
+        expected = []
+        if outbox_fails:
+            expected.append((NativeMaintenanceStage.OUTBOX_RECOVERY, outbox_error))
+        if presence_fails:
+            expected.append(
+                (NativeMaintenanceStage.PRESENCE_RECONCILIATION, presence_error)
+            )
+        assert [
+            (failure.stage, failure.error) for failure in refused.value.failures
+        ] == expected
+        assert refused.value.completed_stages == frozenset(NativeMaintenanceStage) - {
+            stage for stage, _ in expected
+        }
+        assert str(refused.value).endswith(
+            "Restore the named stage's database, registry or publisher dependency and retry maintenance; inspect failures for the cause."
         )
-        assert response.status_code == 200, response.text
-        assert (
-            await run_native_maintenance(**arguments)
-        ).presence.events_published == 1
-        assert (
-            await run_native_maintenance(**arguments)
-        ).presence.events_published == 0
-        deleted = await request_as(
-            env, alias="alice", method="DELETE",
-            path=f"/v1/workspaces/{env.actors['alice'].workspace}",
-        )
-        assert deleted.status_code == 200, deleted.text
-        assert (
-            await run_native_maintenance(**arguments)
-        ).presence.events_published == 1
-        received = []
-        async with asyncio.timeout(3):
-            async for frame in subscriber.listen():
-                if frame["type"] != "message":
-                    continue
-                event = json.loads(frame["data"])
-                if event["type"] in {"agent.online", "agent.offline"}:
-                    received.append((event["type"], event["alias"]))
-                    if len(received) == 2:
-                        break
-    assert received == [("agent.online", "alice"), ("agent.offline", "alice")]
+    else:
+        assert (await run_native_maintenance(**arguments)).presence is presence_result
+    outboxes.assert_awaited_once_with(aweb_db=db, redis=redis, on_mutation=callback)
+    presence.assert_awaited_once_with(infra, redis, registry_client=registry)
 
 
 @pytest.mark.asyncio
 async def test_missing_registry_reports_presence_failure_after_outbox_progress(
-    maintenance_app,
+    monkeypatch,
 ):
-    env = maintenance_app
+    from types import SimpleNamespace
+
+    infra = SimpleNamespace(get_manager=lambda name: None)
+    outboxes = AsyncMock()
+    presence = AsyncMock()
+    monkeypatch.setattr("aweb.maintenance.recover_outboxes", outboxes)
+    monkeypatch.setattr("aweb.maintenance.reconcile_presence", presence)
     with pytest.raises(NativeMaintenanceError) as refused:
         await run_native_maintenance(
-            db_infra=env.infra,
-            redis=env.redis,
-            registry_client=None,
-            on_mutation=env.app.state.on_mutation,
+            db_infra=infra, redis=None, registry_client=None, on_mutation=None
         )
+    outboxes.assert_awaited_once()
+    presence.assert_not_awaited()
     assert refused.value.completed_stages == frozenset(
         {NativeMaintenanceStage.OUTBOX_RECOVERY}
     )
-    (failure,) = refused.value.failures
-    assert failure.stage is NativeMaintenanceStage.PRESENCE_RECONCILIATION
-    assert isinstance(failure.error, RegistryClientUnavailable)
-
-
-@pytest.mark.asyncio
-async def test_registry_connection_failure_preserves_the_presence_projection(
-    maintenance_app,
-):
-    env = maintenance_app
-    assert await _root_last_seen(env) is None
-    await _send_grant_heartbeat(env, path=GrantHeartbeatRoute.AGENT)
-    arguments = dict(
-        db_infra=env.infra, redis=env.redis, on_mutation=env.app.state.on_mutation
+    assert len(refused.value.failures) == 1
+    assert (
+        refused.value.failures[0].stage
+        is NativeMaintenanceStage.PRESENCE_RECONCILIATION
     )
-    await run_native_maintenance(
-        **arguments, registry_client=env.app.state.awid_registry_client
-    )
-    async with env.redis.pubsub() as subscriber:
-        await subscriber.subscribe(team_events_channel_name(TEAM))
-        await subscriber.get_message(timeout=3)
-        with socket.socket() as unavailable_endpoint:
-            unavailable_endpoint.bind(("127.0.0.1", 0))
-            port = unavailable_endpoint.getsockname()[1]
-            registry = RegistryClient(
-                registry_url=f"http://127.0.0.1:{port}", timeout_seconds=1
-            )
-            try:
-                with pytest.raises(NativeMaintenanceError) as refused:
-                    await run_native_maintenance(**arguments, registry_client=registry)
-            finally:
-                await registry.aclose()
-        assert refused.value.completed_stages == frozenset(
-            {NativeMaintenanceStage.OUTBOX_RECOVERY}
-        )
-        (failure,) = refused.value.failures
-        assert failure.stage is NativeMaintenanceStage.PRESENCE_RECONCILIATION
-        assert isinstance(failure.error, PresenceReconciliationError)
-        (team_failure,) = failure.error.failures
-        assert team_failure.team_id == TEAM
-        assert isinstance(team_failure.error, HTTPException)
-        assert team_failure.error.status_code == 503
-
-        # Redis delivers a barrier after any effects of the failed run.
-        await env.redis.publish(team_events_channel_name(TEAM), "maintenance-barrier")
-        frame = await subscriber.get_message(ignore_subscribe_messages=True, timeout=3)
-        assert frame and frame["data"] == "maintenance-barrier"
-    restored = await run_native_maintenance(
-        **arguments, registry_client=env.app.state.awid_registry_client
-    )
-    assert restored.presence.events_published == 0
+    assert isinstance(refused.value.failures[0].error, RegistryClientUnavailable)
+    assert refused.value.failures[0].error.message == RegistryClientUnavailable.message

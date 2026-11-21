@@ -1385,16 +1385,6 @@ The JWT validation is local (no awid call at request time). aweb does
 query awid for team metadata (team_did_key, revocation list, visibility)
 but those reads are cached.
 
-Dashboard SSE requires a verified JWT for the requested team, including on
-public teams. It ends no later than JWT expiry or 300 seconds after admission,
-whichever comes first. A host that owns dashboard membership installs
-`dashboard_user_has_team_access(*, team_id: str, user_id: str) -> bool` as an
-async callback on the native API application's state before serving. It
-receives the canonical route team and verified JWT user. SSE checks it at
-admission and every 30 seconds. A denial or an unavailable standing check
-closes the stream. A standalone JWT deployment uses token expiry and the same
-stream cap.
-
 **Public-team anonymous bypass.** When the requested team_id
 resolves (via the cached team metadata above) to `visibility = "public"`,
 aweb allows the dashboard read **without** a valid `X-Dashboard-Token`.

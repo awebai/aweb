@@ -328,7 +328,6 @@ class TestDashboardJWT:
         result = verify_dashboard_token(token, _JWT_SECRET)
         assert result["user_id"] == "user-123"
         assert "backend:acme.com" in result["team_ids"]
-        assert result["expires_at"] == payload["exp"]
 
     def test_expired_jwt_rejected(self):
         from aweb.team_auth import verify_dashboard_token

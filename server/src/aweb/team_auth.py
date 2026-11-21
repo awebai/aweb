@@ -115,7 +115,7 @@ def verify_dashboard_token(
         required_team: If provided, verify the token grants access to this team.
 
     Returns:
-        Dict with user_id, team_ids and the verified expiry as Unix seconds.
+        Dict with user_id, team_ids.
 
     Raises:
         ValueError: If the token is invalid, expired, or unauthorized.
@@ -149,5 +149,4 @@ def verify_dashboard_token(
     return {
         "user_id": user_id,
         "team_ids": team_ids,
-        "expires_at": int(payload["exp"]),
     }

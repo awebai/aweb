@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from aweb.member_team_key import current_member_sql
 
-from aweb.application_state import application_registry_client, native_application_state
+from aweb.application_state import application_registry_client
 from aweb.identity_binding import IdentityProjectionField, verified_identity_field_sql
 
 from aweb.human_kind import agent_listing_predicate_sql, effective_agent_type
@@ -16,11 +16,9 @@ from aweb.human_kind import agent_listing_predicate_sql, effective_agent_type
 import asyncio
 import json
 import logging
-import time
-from contextlib import AsyncExitStack
 from datetime import datetime, timezone
 from uuid import UUID
-from typing import Any, Optional, Protocol
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
@@ -41,10 +39,6 @@ from aweb.events import (
     team_events_channel_name,
 )
 from aweb.grant_liveness_policy import GrantLivenessFailurePolicy
-from aweb.grant_streams import (
-    STREAM_AUTHORITY_RECHECK_SECONDS,
-    STREAM_MAX_DURATION_SECONDS,
-)
 from aweb.presence_transitions import team_online_aliases
 from aweb.workspace_activity import latest_workspace_activity, workspace_activity_by_id
 from aweb.redis_subscriptions import raw_subscription
@@ -56,10 +50,6 @@ logger = logging.getLogger(__name__)
 
 DASHBOARD_KEEPALIVE_SECONDS = 30.0
 DASHBOARD_PUBSUB_POLL_SECONDS = 1.0
-
-
-class DashboardTeamStanding(Protocol):
-    async def __call__(self, *, team_id: str, user_id: str) -> bool: ...
 
 
 # ---------------------------------------------------------------------------
@@ -300,91 +290,38 @@ async def _build_dashboard_snapshot(
     return snapshot.model_dump()
 
 
-async def _sse_dashboard_events(
-    *,
-    request: Request,
-    db,
-    redis,
-    team_id: str,
-    user_id: str,
-    deadline: float,
-    recheck_at: float,
-    standing: DashboardTeamStanding | None,
-):
-    loop = asyncio.get_running_loop()
-
-    def read_limit() -> float:
-        return min(deadline, recheck_at) if standing is not None else deadline
-
-    async def may_publish() -> bool:
-        nonlocal recheck_at
-        now = loop.time()
-        if now >= deadline:
-            return False
-        if standing is None or now < recheck_at:
-            return True
-        recheck_at = now + STREAM_AUTHORITY_RECHECK_SECONDS
-        try:
-            async with asyncio.timeout_at(read_limit()):
-                allowed = await standing(team_id=team_id, user_id=user_id)
-                return allowed and loop.time() < deadline
-        except Exception:
-            logger.exception("Dashboard stream standing unavailable for team %s", team_id)
-            return False
-
+async def _sse_dashboard_events(*, request: Request, db, redis, team_id: str):
     channel = team_events_channel_name(team_id)
-    async with AsyncExitStack() as resources:
-        try:
-            async with asyncio.timeout_at(read_limit()):
-                pubsub = await resources.enter_async_context(raw_subscription(redis, channel))
-        except TimeoutError:
-            return
-        if not await may_publish():
-            return
+    async with raw_subscription(redis, channel) as pubsub:
         yield ": keepalive\n\n"
-        if not await may_publish():
-            return
         yield _format_sse(
             "connected",
             {"type": "connected", "team_id": team_id, "timestamp": _utc_now_iso()},
         )
 
-        try:
-            async with asyncio.timeout_at(read_limit()):
-                snapshot = await _build_dashboard_snapshot(
-                    db, redis, team_id=team_id, request=request
-                )
-        except TimeoutError:
-            return
-        if not await may_publish():
-            return
+        snapshot = await _build_dashboard_snapshot(
+            db, redis, team_id=team_id, request=request
+        )
         yield _format_sse("snapshot", {"type": "snapshot", **snapshot})
 
+        loop = asyncio.get_running_loop()
         last_keepalive = loop.time()
 
-        while await may_publish():
-            cap = asyncio.timeout_at(read_limit())
-            try:
-                async with cap:
-                    if await request.is_disconnected():
-                        return
-                    message = await pubsub.get_message(
-                        ignore_subscribe_messages=True,
-                        timeout=DASHBOARD_PUBSUB_POLL_SECONDS,
-                    )
-            except TimeoutError:
-                if cap.expired():
-                    continue
-                logger.warning("Dashboard team-events pubsub read timed out", exc_info=True)
+        while True:
+            if await request.is_disconnected():
                 return
+
+            try:
+                message = await pubsub.get_message(
+                    ignore_subscribe_messages=True,
+                    timeout=DASHBOARD_PUBSUB_POLL_SECONDS,
+                )
             except Exception:
                 logger.warning(
                     "Dashboard team-events pubsub read failed", exc_info=True
                 )
                 return
 
-            if not await may_publish():
-                return
             now = loop.time()
 
             if message and message.get("type") == "message":
@@ -406,7 +343,7 @@ async def _sse_dashboard_events(
                 if not event_type.startswith(("message.", "chat.")):
                     yield _format_sse(event_type, payload)
 
-            if now - last_keepalive >= DASHBOARD_KEEPALIVE_SECONDS and await may_publish():
+            if now - last_keepalive >= DASHBOARD_KEEPALIVE_SECONDS:
                 yield ": keepalive\n\n"
                 last_keepalive = now
 
@@ -648,44 +585,16 @@ async def stream_team_events(
     db=Depends(get_db),
     redis=Depends(get_redis),
 ):
-    auth = await _require_dashboard_auth(request, team_id, allow_public=False)
+    await _require_dashboard_auth(request, team_id, allow_public=False)
     if redis is None:
         raise HTTPException(status_code=503, detail="Redis unavailable")
 
     # Configuration refusals must precede SSE headers; the snapshot still
     # follows the subscription and performs the actual evidence reads.
     application_registry_client(request.app.state)
-    user_id = auth["user_id"]
-    loop = asyncio.get_running_loop()
-    started_at = loop.time()
-    deadline = started_at + min(auth["expires_at"] - time.time(), STREAM_MAX_DURATION_SECONDS)
-    recheck_at = started_at + STREAM_AUTHORITY_RECHECK_SECONDS
-    state = native_application_state(request.app.state)
-    standing: DashboardTeamStanding | None = getattr(
-        state, "dashboard_user_has_team_access", None
-    )
-    if standing is not None:
-        try:
-            async with asyncio.timeout_at(min(deadline, recheck_at)):
-                allowed = await standing(team_id=team_id, user_id=user_id)
-        except TimeoutError as exc:
-            if loop.time() >= deadline:
-                raise HTTPException(status_code=401, detail="Dashboard token expired") from exc
-            logger.exception("Dashboard stream standing timed out for team %s", team_id)
-            raise HTTPException(status_code=503, detail="Dashboard team standing unavailable") from exc
-        except Exception as exc:
-            logger.exception("Dashboard stream standing unavailable for team %s", team_id)
-            raise HTTPException(status_code=503, detail="Dashboard team standing unavailable") from exc
-        if not allowed:
-            raise HTTPException(status_code=403, detail="Not authorized for this team")
-    if loop.time() >= deadline:
-        raise HTTPException(status_code=401, detail="Dashboard token expired")
 
     return StreamingResponse(
-        _sse_dashboard_events(
-            request=request, db=db, redis=redis, team_id=team_id, user_id=user_id,
-            deadline=deadline, recheck_at=recheck_at, standing=standing,
-        ),
+        _sse_dashboard_events(request=request, db=db, redis=redis, team_id=team_id),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
