@@ -2,6 +2,7 @@
 
 import json
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -14,26 +15,34 @@ import test_server_local as local
 class LocalControls(unittest.TestCase):
     def test_naapp_packages_run_through_the_selected_local_environment(self):
         for label, package in (("naapp-lib", "naapp-lib"), ("logs", "naapp/logs")):
-            with self.subTest(suite=label):
+            with self.subTest(suite=label), tempfile.TemporaryDirectory() as directory:
                 commands = []
 
-                def record(command, **kwargs):
-                    commands.append((command, kwargs["env"]))
+                def record(command, *, environ, log):
+                    commands.append((command, environ, log))
                     return subprocess.CompletedProcess(command, 0)
 
-                environment = {"AWEB_TEST_SERVICES": "1", "TEST_DB_PORT": "15432"}
-                with patch.object(local, "invoke", side_effect=record):
+                reports = os.path.realpath(os.path.join(directory, "reports"))
+                environment = {
+                    "AWEB_TEST_SERVICES": "1",
+                    "TEST_DB_PORT": "15432",
+                    "LOCAL_TEST_REPORT_DIR": reports,
+                }
+                with patch.object(local, "run_logged_suite", side_effect=record):
                     status = local.run_suites(
                         suite=local.Suite(label), workers=4,
                         arguments=["-k", "current_key"], environ=environment,
                     )
                 self.assertEqual(status, 0)
                 self.assertEqual(len(commands), 1)
-                command, selected = commands[0]
+                command, selected, log = commands[0]
                 self.assertEqual(command, ["make", "test-naapp", f"NAAPP_PACKAGES={package}"])
                 self.assertEqual(selected["AWEB_TEST_SERVICES"], "1")
                 self.assertEqual(selected["TEST_DB_PORT"], "15432")
-                self.assertEqual(selected["PYTEST_ADDOPTS"], "-k current_key")
+                self.assertEqual(
+                    shlex.split(selected["PYTEST_ADDOPTS"])[:2], ["-k", "current_key"]
+                )
+                self.assertEqual(str(log), os.path.join(reports, label, "pytest.log"))
 
     def test_host_database_and_nonlocal_endpoints_refuse(self):
         for env in (

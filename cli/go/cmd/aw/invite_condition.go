@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -96,20 +97,6 @@ func unjoinedChainSigningKey(home string) (ed25519.PrivateKey, error) {
 	return key, nil
 }
 
-func requestedInviteHuman(values []string) (*string, error) {
-	if len(values) == 0 {
-		return nil, nil
-	}
-	if len(values) != 1 {
-		return nil, usageError("one --for-human value is required")
-	}
-	if err := validateInviteHuman(values[0]); err != nil {
-		return nil, err
-	}
-	value := values[0]
-	return &value, nil
-}
-
 // --parent names an explicit local creator. The private invitation and child
 // request are retained so a failed join resumes with that same key and parent.
 func completeExplicitInviteParent(ctx context.Context, wd, home, token, parentHome string) error {
@@ -179,12 +166,50 @@ func prepareInviteChildIdentity(home string) error {
 	return awconfig.SaveWorktreeIdentityTo(path, &awconfig.WorktreeIdentity{DID: awid.ComputeDIDKey(key.Public().(ed25519.PublicKey)), IdentityScope: awid.IdentityModeLocal, Custody: awid.CustodySelf, CreatedAt: time.Now().UTC().Format(time.RFC3339)})
 }
 
-func consumedInviteParent(token, parentHome string) {
+func teamInviteParentRecordID(token, parentHome string) string {
 	if parentHome == "" {
-		return
+		return ""
 	}
-	id := "creator-" + strings.TrimPrefix(hostedTeamInviteRecordID(token), "hosted-")
-	if err := awconfig.DeleteTeamInvite(id); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to delete consumed invite %s: %v\n", id, err)
+	return "creator-" + strings.TrimPrefix(hostedTeamInviteRecordID(token), "hosted-")
+}
+
+func consumedInviteParent(token, parentHome string) error {
+	id := teamInviteParentRecordID(token, parentHome)
+	if id == "" {
+		return nil
+	}
+	return recordConsumedTeamInvite(id)
+}
+
+// recordConsumedTeamInvite retains the irreversible issuance consequence, with
+// no remaining bearer secret, before the accepting operation reports success.
+func recordConsumedTeamInvite(id string) error {
+	if err := awconfig.ConsumeTeamInvite(awconfig.ConsumeTeamInviteInput{InviteID: id, Now: time.Now()}); err != nil {
+		return fmt.Errorf("membership was issued, but recording consumed invite %s failed: %w; retain the identity home and reconcile this invite before retrying", id, err)
+	}
+	return nil
+}
+
+type issuedInvitePersistenceFailure struct {
+	Cause       error
+	Invite      *awconfig.TeamInvite
+	Certificate *awid.TeamCertificate
+	RegistryURL string
+}
+
+// An issued certificate outlives a failed recipient write. Recovery fetches that
+// exact certificate with the retained member key (docs/awid-sot.md:128-132).
+func issuedInvitePersistenceRefusal(failure issuedInvitePersistenceFailure) error {
+	recovery := formatShellCommand([]string{
+		"aw", "id", "team", "fetch-cert", "--namespace", failure.Invite.Domain,
+		"--team", failure.Invite.TeamName, "--cert-id", failure.Certificate.CertificateID,
+		"--registry", failure.RegistryURL,
+	})
+	return retainIdentityForRecovery(withErrorCode("certificate_persistence_incomplete", fmt.Errorf("membership certificate %s was issued but could not be saved: %w; retain the recipient key, repair its certificate path, and run `%s` from the same identity home", failure.Certificate.CertificateID, failure.Cause, recovery)))
+}
+
+func closeTeamInviteLock(lock io.Closer) {
+	if err := lock.Close(); err != nil {
+		fmt.Fprintf(os.Stderr, "close local invite lock: %v\n", err)
 	}
 }

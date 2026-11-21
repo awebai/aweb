@@ -300,11 +300,10 @@ var wakeDeregisterCmd = &cobra.Command{
 			if err != nil {
 				return err
 			}
-			printOutput(receipt, func(v any) string {
+			return printOutput(receipt, func(v any) string {
 				r := v.(*wake.ManagedStopReceipt)
 				return fmt.Sprintf("managed worker joined: home=%s generation=%d completed_at=%s; accepted input completion NOT certified", r.Receiver.Registration.Home, r.Receiver.Generation, r.CompletedAt.Format(time.RFC3339Nano))
 			})
-			return nil
 		}
 		if wakeDeregisterExpected != "" {
 			return usageError("--expect-registration requires --require-managed-stop")
@@ -356,29 +355,7 @@ var wakeResumeCmd = &cobra.Command{
 var wakeStatusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Report per-home broker lifecycle, readiness, and delivery status",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		store, err := wakeStore()
-		if err != nil {
-			return err
-		}
-		var status wake.Status
-		resp, callErr := wake.Call(store.SocketPath(), wake.ControlRequest{Op: wake.OpStatus})
-		switch {
-		case callErr == nil && resp.Status != nil:
-			status = *resp.Status
-		case callErr != nil && errors.Is(callErr, wake.ErrDaemonDown):
-			status, err = wake.StatusFromStore(store, wakeMaxStreams)
-			if err != nil {
-				return err
-			}
-		case callErr != nil:
-			return callErr
-		}
-		// Only the daemon's own report counts; an older daemon stays unknown.
-		status.ClassifyDaemonVersion()
-		printOutput(status, formatWakeStatus)
-		return nil
-	},
+	RunE:  runWakeStatus,
 }
 
 func wakeSetPaused(cmd *cobra.Command, home string, paused bool) error {

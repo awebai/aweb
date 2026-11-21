@@ -6,6 +6,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import socket
+import struct
 import subprocess
 import tempfile
 import time
@@ -13,6 +15,7 @@ import unittest
 import uuid
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
@@ -418,8 +421,90 @@ def read_published_response(port: str) -> str:
         return response.read(4096).decode("utf-8")
 
 
+# A published socket can precede its service. urllib wraps connect errors
+# in URLError, but response reads can raise ConnectionResetError directly
+# (including http.client.RemoteDisconnected).
+STARTUP_READ_ERRORS = (
+    urllib.error.URLError,
+    TimeoutError,
+    ConnectionResetError,
+    ConnectionRefusedError,
+)
+
+
 class HostPublishedPortTests(unittest.TestCase):
     """Only the host-side checks preflight invokes this real-socket test."""
+
+    def test_initial_disconnect_waits_for_service_startup(self) -> None:
+        self.assert_startup_disconnect_recovers()
+
+    def test_initial_reset_waits_for_service_startup(self) -> None:
+        self.assert_startup_disconnect_recovers(reset=True)
+
+    def assert_startup_disconnect_recovers(self, *, reset: bool = False) -> None:
+        real_run = run
+        real_read = read_published_response
+        original: str | None = None
+        startup_errors: list[type[Exception]] = []
+
+        def held_startup(
+            *args: str, check: bool = True, env: dict[str, str] | None = None,
+            timeout: float | None = None,
+        ) -> subprocess.CompletedProcess[str]:
+            nonlocal original
+            if args[:2] == ("docker", "run"):
+                name = args[args.index("--name") + 1]
+                if name.startswith("aweb-publish-original-"):
+                    original = name
+                    args = (*args[:-1],
+                            "while [ ! -e /tmp/release-startup ]; do sleep 0.05; done; "
+                            + args[-1])
+            return real_run(*args, check=check, env=env, timeout=timeout)
+
+        def read_from_resetting_peer() -> str:
+            # Docker Desktop can turn a backend reset into EOF. Make the
+            # first request to a real abortive TCP peer while nginx is held.
+            # All later requests still use nginx's Docker-published port.
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+                listener.bind(("127.0.0.1", 0))
+                listener.listen()
+                listener.settimeout(2)
+
+                def reset_peer() -> None:
+                    peer, _ = listener.accept()
+                    with peer:
+                        peer.settimeout(2)
+                        self.assertEqual(peer.recv(1), b"G")
+                        peer.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER,
+                                        struct.pack("ii", 1, 0))
+
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    done = executor.submit(reset_peer)
+                    try:
+                        return real_read(str(listener.getsockname()[1]))
+                    finally:
+                        done.result()
+
+        def release_after_first_read(port: str) -> str:
+            try:
+                if reset and not startup_errors:
+                    return read_from_resetting_peer()
+                return real_read(port)
+            except STARTUP_READ_ERRORS as error:
+                if not startup_errors:
+                    startup_errors.append(type(error))
+                    if original is None:
+                        raise AssertionError("original service was not launched") from error
+                    real_run("docker", "exec", original, "touch", "/tmp/release-startup", timeout=10)
+                raise
+
+        # Release held nginx on the first transport error, then run every
+        # competition assertion against the actual Docker-published socket.
+        with patch.dict(globals(), run=held_startup, read_published_response=release_after_first_read):
+            self.test_docker_assigned_published_port_is_reserved_by_its_service()
+        self.assertEqual(len(startup_errors), 1)
+        if reset:
+            self.assertIs(startup_errors[0], ConnectionResetError)
 
     def test_docker_assigned_published_port_is_reserved_by_its_service(self) -> None:
         self.assertNotIn("CANDIDATE_RUNNER_NAME", os.environ,
@@ -461,7 +546,7 @@ class HostPublishedPortTests(unittest.TestCase):
                 try:
                     response = read_published_response(port)
                     break
-                except (urllib.error.URLError, TimeoutError) as error:
+                except STARTUP_READ_ERRORS as error:
                     if time.monotonic() >= deadline:
                         self.fail(f"original host publication never became reachable: {error}")
                     time.sleep(0.1)

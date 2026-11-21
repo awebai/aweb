@@ -34,11 +34,19 @@ from urllib.parse import quote, urlsplit
 
 import httpx
 from awid.did import did_key_from_signing_key, public_key_from_did, validate_stable_id
+from awid.dns_auth import DIDKeyHeaderProfile, parse_didkey_auth
 from awid.external_authority import SystemTXTOutcomeResolver, TXTOutcomeResolver
 from awid.log import canonical_server_origin
 from awid.registry_auth import RegistryRequestAuth
+from awid.request_auth import (
+    RequestAuthProfile,
+    decode_signed_payload_header,
+    team_auth_signature_payload,
+)
+from awid.request_auth import (
+    raw_request_target as _raw_request_target,
+)
 from awid.signing import (
-    canonical_json_bytes,
     verify_did_key_signature,
 )
 from awid.team_certificate import (
@@ -56,6 +64,7 @@ from awid.team_key_acts import (
     TeamKeyUnverified,
     pinned_team_key,
 )
+from awid.utc_timestamps import parse_zoned_timestamp
 from fastapi import HTTPException, Request
 from pgdbm import AsyncDatabaseManager
 
@@ -730,26 +739,27 @@ async def _did_aw_registry_verified(
 
 
 def _parse_didkey_auth(header: str) -> tuple[str, str]:
-    parts = header.strip().split()
-    if len(parts) != 3 or parts[0] != "DIDKey":
-        raise HTTPException(status_code=401, detail="Invalid Authorization header")
-    did_key, signature = parts[1].strip(), parts[2].strip()
+    try:
+        did_key, signature = parse_didkey_auth(
+            header, profile=DIDKeyHeaderProfile.WHITESPACE_SEPARATED
+        )
+    except HTTPException as exc:
+        raise HTTPException(status_code=401, detail="Invalid Authorization header") from exc
     if not did_key.startswith("did:key:") or not signature:
         raise HTTPException(status_code=401, detail="Invalid DIDKey Authorization header")
     return did_key, signature
 
 
 def _parse_rfc3339_utc(value: str) -> datetime:
-    text = value.strip()
-    if text.endswith("Z"):
-        text = text[:-1] + "+00:00"
     try:
-        parsed = datetime.fromisoformat(text)
+        return parse_zoned_timestamp(value)
     except ValueError as exc:
-        raise HTTPException(status_code=401, detail="Invalid X-AWEB-Timestamp") from exc
-    if parsed.tzinfo is None:
-        raise HTTPException(status_code=401, detail="X-AWEB-Timestamp must include timezone")
-    return parsed.astimezone(UTC)
+        detail = (
+            "X-AWEB-Timestamp must include timezone"
+            if "timezone" in str(exc)
+            else "Invalid X-AWEB-Timestamp"
+        )
+        raise HTTPException(status_code=401, detail=detail) from exc
 
 
 def _certificate_refusal(error: TeamCertificateError) -> HTTPException:
@@ -776,11 +786,9 @@ def _decode_signed_payload_header(value: str) -> bytes:
     text = value.strip()
     if not text:
         raise HTTPException(status_code=401, detail="Missing X-AWEB-Signed-Payload")
-    if "=" in text or _B64URL_NO_PADDING.fullmatch(text) is None:
-        raise HTTPException(status_code=401, detail="Invalid X-AWEB-Signed-Payload")
     try:
-        return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
-    except Exception as exc:
+        return decode_signed_payload_header(text, profile=RequestAuthProfile.NAAPP_V2)
+    except ValueError as exc:
         raise HTTPException(status_code=401, detail="Invalid X-AWEB-Signed-Payload") from exc
 
 
@@ -792,36 +800,10 @@ def signed_payload_bytes(request: Request) -> bytes:
 
 
 def raw_request_target(request: Request) -> str:
-    raw_path_value = request.scope.get("raw_path")
-    if isinstance(raw_path_value, bytes):
-        try:
-            path = raw_path_value.decode("ascii")
-        except UnicodeDecodeError as exc:
-            raise HTTPException(status_code=400, detail="Request target is not ASCII") from exc
-    elif raw_path_value:
-        path = str(raw_path_value)
-    else:
-        path = quote(str(request.scope.get("path") or request.url.path or "/"), safe="/%")
-
-    root_path = str(request.scope.get("root_path") or "")
-    if root_path and not path.startswith(root_path):
-        encoded_root = quote(root_path.rstrip("/"), safe="/%")
-        path = encoded_root + (path if path.startswith("/") else f"/{path}")
-
-    if not path.startswith("/"):
-        path = f"/{path}"
-
-    query_string = request.scope.get("query_string") or b""
-    if isinstance(query_string, bytes):
-        try:
-            query = query_string.decode("ascii")
-        except UnicodeDecodeError as exc:
-            raise HTTPException(status_code=400, detail="Request target is not ASCII") from exc
-    else:
-        query = str(query_string)
-    if query:
-        return f"{path}?{query}"
-    return path
+    try:
+        return _raw_request_target(request)
+    except UnicodeDecodeError as exc:
+        raise HTTPException(status_code=400, detail="Request target is not ASCII") from exc
 
 
 def _verified_signed_payload(
@@ -834,44 +816,29 @@ def _verified_signed_payload(
     team_id: str,
     body: bytes,
 ) -> dict[str, Any]:
-    canonical = signed_payload_bytes(request)
+    # The decoder retains this consumer's strict v2-only wire policy. Request
+    # binding and purpose separation are owned by awid, as on the server.
     try:
-        payload = json.loads(canonical)
-        # A value that does not encode, such as a lone surrogate, can never be
-        # the canonical bytes the member signed.
-        recanonical = canonical_json_bytes(payload) if isinstance(payload, dict) else None
-    except (ValueError, TypeError, RecursionError) as exc:
-        raise HTTPException(status_code=401, detail="Invalid X-AWEB-Signed-Payload") from exc
-    if recanonical != canonical:
-        raise HTTPException(status_code=401, detail="Invalid X-AWEB-Signed-Payload")
-
-    if payload.get("v") != TEAM_AUTH_ENVELOPE_V2:
-        raise HTTPException(status_code=401, detail="Unsupported team-auth envelope version")
-
-    expected = {
-        "body_sha256": hashlib.sha256(body).hexdigest(),
-        "method": request.method.upper(),
-        "path": raw_request_target(request),
-        "team_id": team_id,
-        "timestamp": header_timestamp.strip(),
-    }
-    for field, expected_value in expected.items():
-        if str(payload.get(field) or "").strip() != expected_value:
-            raise HTTPException(
-                status_code=401, detail="Signed request payload does not match request"
-            )
-
-    try:
-        configured_audience = canonical_server_origin(public_origin)
-        signed_audience = canonical_server_origin(str(payload.get("aud") or "").strip())
-    except Exception as exc:
-        raise HTTPException(
-            status_code=401, detail="Signed request payload audience is invalid"
-        ) from exc
-    if signed_audience != configured_audience:
-        raise HTTPException(
-            status_code=401, detail="Signed request payload audience is not allowed"
+        envelope = team_auth_signature_payload(
+            request,
+            team_id=team_id,
+            timestamp=header_timestamp.strip(),
+            body_sha256=hashlib.sha256(body).hexdigest(),
+            allowed_audiences=[public_origin],
+            profile=RequestAuthProfile.NAAPP_V2,
         )
+    except UnicodeDecodeError as exc:
+        raise HTTPException(status_code=400, detail="Request target is not ASCII") from exc
+    except (ValueError, TypeError, RecursionError) as exc:
+        detail = str(exc)
+        if detail == "missing X-AWEB-Signed-Payload header":
+            detail = "Missing X-AWEB-Signed-Payload"
+        elif detail == "invalid X-AWEB-Signed-Payload header":
+            detail = "Invalid X-AWEB-Signed-Payload"
+        else:
+            detail = detail[:1].upper() + detail[1:]
+        raise HTTPException(status_code=401, detail=detail) from exc
+    canonical, payload = envelope.canonical_payload, envelope.payload
 
     try:
         verify_did_key_signature(did_key=did_key, payload=canonical, signature_b64=signature)
