@@ -2,9 +2,7 @@
 
 An agent's host publishes signed activity while the agent works (aweb-acah.2,
 docs/agent-activity.md). The server verifies it, relays it with a per-agent
-revision, and keeps only the latest event for at most 60 seconds. Fixture
-provisioning and removing the app's Redis for the unavailable case are the
-only direct state changes.
+revision, and keeps only the latest event for at most 60 seconds.
 """
 
 from __future__ import annotations
