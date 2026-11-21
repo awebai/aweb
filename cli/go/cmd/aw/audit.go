@@ -49,7 +49,7 @@ func init() {
 	auditVerifyCmd.Flags().StringArrayVar(&auditVerifyReceiptKeys, "receipt-key", nil, "A did:key you accept for receipts (repeatable)")
 	auditVerifyCmd.Flags().StringArrayVar(&auditVerifyCheckpointKeys, "checkpoint-key", nil, "A did:key you accept for checkpoints (repeatable)")
 	auditVerifyCmd.Flags().StringArrayVar(&auditVerifyWitnesses, "witness", nil, "A file of receipts and checkpoints you hold (repeatable)")
-	auditVerifyCmd.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
+	setCLIFlagErrorFunc(auditVerifyCmd, func(_ *cobra.Command, err error) error {
 		return auditVerifyError("usage", "%v", err)
 	})
 	auditCmd.AddCommand(auditVerifyCmd)

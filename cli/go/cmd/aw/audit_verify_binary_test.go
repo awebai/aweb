@@ -408,6 +408,44 @@ func TestAuditVerifyGivesEveryOtherFailureExitTwo(t *testing.T) {
 	}
 }
 
+func TestAuditVerifyFlagErrorsRespectJSONOutputSelection(t *testing.T) {
+	w := newAuditVerifyWorld(t)
+	t.Run("json_is_a_bundle_value", func(t *testing.T) {
+		run := w.run(nil, "--bundle", "--json", "--receipt-key", "did:key:x")
+		if run.code != 2 || strings.TrimSpace(run.stdout) != "" || !strings.Contains(run.stderr, "did:key:x") {
+			t.Fatalf("expected the text key refusal: exit %d, stdout %q, stderr %q", run.code, run.stdout, run.stderr)
+		}
+	})
+	for _, tc := range []struct {
+		name string
+		args []string
+		json bool
+	}{
+		{"json_after_error", []string{"--no-such-flag", "--json"}, true},
+		{"json_true_after_error", []string{"--no-such-flag", "--json=true"}, true},
+		{"json_before_error", []string{"--json", "--no-such-flag"}, true},
+		{"json_false_after_error", []string{"--no-such-flag", "--json=false"}, false},
+		{"json_disabled_before_error", []string{"--json", "--json=false", "--no-such-flag"}, false},
+		{"json_disabled_after_error", []string{"--no-such-flag", "--json", "--json=false"}, false},
+		{"parsed_json_false_wins", []string{"--json=false", "--no-such-flag", "--json"}, false},
+		{"json_after_separator", []string{"--no-such-flag", "--", "--json"}, false},
+		{"json_before_separator", []string{"--json", "--no-such-flag", "--", "--json=false"}, true},
+		{"no_json", []string{"--no-such-flag"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			run := w.run(nil, tc.args...)
+			if tc.json {
+				requireErrorCode(t, run, "usage")
+			} else if run.code != 2 || strings.TrimSpace(run.stdout) != "" {
+				t.Fatalf("text refusal: exit %d, stdout %q, stderr %q", run.code, run.stdout, run.stderr)
+			}
+			if !strings.Contains(run.stderr, "unknown flag: --no-such-flag") {
+				t.Fatalf("flag refusal lost its diagnostic: %q", run.stderr)
+			}
+		})
+	}
+}
+
 func TestAuditVerifyWritesOnlyTheReportToStdout(t *testing.T) {
 	w := newAuditVerifyWorld(t)
 	c := loadLogsExportVector(t).named(t, "truncated_tail_contradicts_a_later_receipt")

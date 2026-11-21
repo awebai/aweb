@@ -33,6 +33,7 @@ from awid.e2ee_keys import build_encryption_key_assertion
 from awid.signing import canonical_json_bytes, sign_message
 from aweb.e2ee_messages import encrypt_e2ee_mail, generate_x25519_keypair
 from test_addressless_sender_cli import _registry_http
+from test_agent_status_host_http import _team_request
 from test_cli_human_reply import _cli, _pem, _reply_context
 import test_dashboard_privacy
 from test_dashboard_privacy import TEAM, _request
@@ -245,10 +246,24 @@ async def _local_sender_mail(
             certificate_id=certificate_id,
         )
     elif sender_retired:
-        retired = await _request(
-            env, "alice", "DELETE", f"/v1/workspaces/{env.actors['alice'].workspace}"
+        alice = env.actors["alice"]
+        certificate = alice.certificate
+        if cross_team:
+            certificate = _encode_certificate(_make_certificate(
+                sender_team_sk,
+                sender_team_did,
+                alice.did,
+                team_id=sender_team,
+                alias="alice",
+                certificate_id="privacy-alice",
+                identity_scope="local",
+            ))
+        retired = await _team_request(
+            env, "alice", "DELETE", f"/v1/workspaces/{alice.workspace}",
+            team_id=sender_team, certificate=certificate,
         )
         assert retired.status_code == 200, retired.text
+        assert retired.json()["identity_deleted"] is True, retired.text
 
     identity_home = tmp_path / ".aw"
     identity_home.mkdir(mode=0o700)

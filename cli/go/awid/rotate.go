@@ -5,9 +5,10 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"fmt"
-	"sort"
-	"strings"
 	"time"
+
+	"github.com/awebai/aw/canonicaljson"
+	"github.com/awebai/aw/signaturewire"
 )
 
 // RotateKeyRequest is the input to Client.RotateKey.
@@ -50,7 +51,7 @@ func (c *Client) RotateKey(ctx context.Context, req *RotateKeyRequest) (*RotateK
 
 	// Sign the rotation payload with the old (current) key.
 	payload := CanonicalRotationJSON(c.did, req.NewDID, ts)
-	sig := ed25519.Sign(c.signingKey, []byte(payload))
+	sig := signaturewire.SignBytes(c.signingKey, []byte(payload))
 
 	wire := &rotateKeyWireRequest{
 		Custody:           req.Custody,
@@ -70,31 +71,7 @@ func (c *Client) RotateKey(ctx context.Context, req *RotateKeyRequest) (*RotateK
 // CanonicalRotationJSON builds the canonical JSON for rotation signing.
 // Fields: new_did, old_did, timestamp — sorted lexicographically.
 func CanonicalRotationJSON(oldDID, newDID, timestamp string) string {
-	type field struct {
-		key   string
-		value string
-	}
-	fields := []field{
-		{"new_did", newDID},
-		{"old_did", oldDID},
-		{"timestamp", timestamp},
-	}
-	sort.Slice(fields, func(i, j int) bool { return fields[i].key < fields[j].key })
-
-	var b strings.Builder
-	b.WriteByte('{')
-	for i, f := range fields {
-		if i > 0 {
-			b.WriteByte(',')
-		}
-		b.WriteByte('"')
-		b.WriteString(f.key)
-		b.WriteString(`":"`)
-		writeEscapedString(&b, f.value)
-		b.WriteByte('"')
-	}
-	b.WriteByte('}')
-	return b.String()
+	return canonicaljson.Object(map[string]any{"new_did": newDID, "old_did": oldDID, "timestamp": timestamp})
 }
 
 // RotateKeyCustodialRequest is the input to Client.RotateKeyCustodial.
@@ -130,16 +107,16 @@ func (c *Client) RotateKeyCustodial(ctx context.Context, req *RotateKeyCustodial
 // Returns the signature as base64 (RFC 4648, no padding).
 func SignRotation(oldKey ed25519.PrivateKey, oldDID, newDID, timestamp string) (string, error) {
 	payload := CanonicalRotationJSON(oldDID, newDID, timestamp)
-	sig := ed25519.Sign(oldKey, []byte(payload))
+	sig := signaturewire.SignBytes(oldKey, []byte(payload))
 	return base64.RawStdEncoding.EncodeToString(sig), nil
 }
 
 // VerifyRotationSignature verifies a rotation_signature using the old public key.
 func VerifyRotationSignature(oldPub ed25519.PublicKey, oldDID, newDID, timestamp, signature string) (bool, error) {
-	sig, err := base64.RawStdEncoding.DecodeString(signature)
+	sig, err := signaturewire.DecodeStd(signature)
 	if err != nil {
 		return false, fmt.Errorf("decode rotation signature: %w", err)
 	}
 	payload := CanonicalRotationJSON(oldDID, newDID, timestamp)
-	return ed25519.Verify(oldPub, []byte(payload), sig), nil
+	return signaturewire.Verify(signaturewire.Proof{PublicKey: oldPub, Payload: []byte(payload), Signature: sig}), nil
 }

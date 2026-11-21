@@ -80,7 +80,7 @@ func formatVectorEnvelope(t *testing.T, in envelopeVectorInput) string {
 
 func fencedJSON(t *testing.T, body, fence string) map[string]any {
 	t.Helper()
-	block, found := extractFence(body, fence)
+	block, found := extractFence(fenceInput{Body: body, Label: fence})
 	if !found {
 		t.Fatalf("envelope missing %s fence:\n%s", fence, body)
 	}
