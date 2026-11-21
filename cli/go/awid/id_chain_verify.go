@@ -121,11 +121,7 @@ func checkCurrentIDChain(status *idStatusSnapshot, certificates []IDCertificateV
 		if err != nil {
 			return nil, err
 		}
-		digest, err := certificate.CertificateID()
-		if err != nil {
-			return nil, err
-		}
-		if row.CurrentCertificateID != digest {
+		if !idCurrentCertificateMatches(certificate.Fields(), row.CurrentCertificateID) {
 			return nil, idCertificateRefusal(IDRefusalSupersededCertificate)
 		}
 	}

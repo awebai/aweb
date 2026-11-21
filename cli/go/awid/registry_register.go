@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/awebai/aw/canonicaljson"
 )
 
 type didRegisterRequest struct {
@@ -50,12 +52,6 @@ func stableIdentityStateHash(stableID string, did string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func canonicalStateJSON(stableID string, did string) string {
-	var b strings.Builder
-	b.WriteByte('{')
-	writeJSONField(&b, "current_did_key", did)
-	b.WriteByte(',')
-	writeJSONField(&b, "did_aw", stableID)
-	b.WriteByte('}')
-	return b.String()
+func canonicalStateJSON(stableID, did string) string {
+	return canonicaljson.Object(map[string]any{"current_did_key": did, "did_aw": stableID})
 }

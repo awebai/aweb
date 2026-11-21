@@ -21,6 +21,33 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// serveProvisionedConnectForTest extends creator-focused HTTP fixtures with
+// admission before publication (docs/identity.md:514-519). Server authority is
+// exercised by the real-command world; this response preserves these fixtures'
+// certificate subject while their placement and recovery assertions run.
+func serveProvisionedConnectForTest(t *testing.T, w http.ResponseWriter, r *http.Request) bool {
+	t.Helper()
+	if r.Method != http.MethodPost || (r.URL.Path != "/v1/connect" && r.URL.Path != "/api/v1/connect") {
+		return false
+	}
+	certificate := requireCertificateAuthForTest(t, r)
+	var request connectRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		t.Fatal(err)
+	}
+	if request.WorkspacePath == "" {
+		t.Fatal("provisioned connect must identify its workspace")
+	}
+	if err := json.NewEncoder(w).Encode(connectResponse{
+		TeamID: certificate.Team, Alias: certificate.Alias,
+		AgentID: "agent-" + certificate.Alias, WorkspaceID: "workspace-" + certificate.Alias,
+		TeamDIDKey: certificate.TeamDIDKey,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return true
+}
+
 func resetTeamHumanCreateGlobals(t *testing.T) {
 	t.Helper()
 	// The roster path materializes an agent home, which sets up the Claude Code
@@ -1752,6 +1779,9 @@ func TestTeamHumanCreateExistingSelfCustodialIdentityCreatesTeam(t *testing.T) {
 		if serveUnadvertisedHealth(w, r) {
 			return
 		}
+		if serveProvisionedConnectForTest(t, w, r) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
 			certificate := requireCertificateAuthForTest(t, r)
@@ -1866,6 +1896,9 @@ func TestTeamHumanCreateBYOTWithAgentsCreatesTeamAndRoster(t *testing.T) {
 			return
 		}
 
+		if serveProvisionedConnectForTest(t, w, r) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
 			certificate := requireCertificateAuthForTest(t, r)
@@ -2017,6 +2050,9 @@ func TestTeamHumanCreateBYOTFirstAgentGlobalMintsWithNamespaceAuthority(t *testi
 		if serveUnadvertisedHealth(w, r) {
 			return
 		}
+		if serveProvisionedConnectForTest(t, w, r) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
 			certificate := requireCertificateAuthForTest(t, r)
@@ -2137,6 +2173,9 @@ func TestTeamHumanCreateBYOTEnrollsCreatorAndPreservesExistingMembership(t *test
 	var certCalls int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if serveUnadvertisedHealth(w, r) {
+			return
+		}
+		if serveProvisionedConnectForTest(t, w, r) {
 			return
 		}
 		switch {
@@ -2260,6 +2299,9 @@ func TestTeamHumanAddProfileFailureRetainsAdmittedHome(t *testing.T) {
 			return
 		}
 
+		if serveProvisionedConnectForTest(t, w, r) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
 			_ = json.NewEncoder(w).Encode(map[string]any{"aweb_url": serverURL, "registry_url": serverURL})
@@ -2369,6 +2411,9 @@ func TestTeamHumanAddHostedProfileFailureRetainsConnectedIdentity(t *testing.T) 
 	removeCalls := 0
 	var server *httptest.Server
 	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
+		if serveProvisionedConnectForTest(t, w, r) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
 			_ = json.NewEncoder(w).Encode(map[string]any{"aweb_url": serverURL, "registry_url": serverURL})
@@ -2457,9 +2502,86 @@ func TestTeamHumanAddHostedProfileFailureRetainsConnectedIdentity(t *testing.T) 
 	if _, err := awid.LoadSigningKey(awconfig.WorktreeSigningKeyPath(agentHome)); err != nil {
 		t.Fatalf("hosted setup failure lost member credential: %v", err)
 	}
-	cert, err := awconfig.LoadTeamCertificateForTeam(agentHome, teamID)
-	if err != nil || cert.CertificateID != justCreatedCertID {
-		t.Fatalf("hosted setup failure lost certificate: %v", err)
+}
+
+func TestTeamHumanAddHostedProfileRollbackFailureIsLoud(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	root := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AW_CONFIG_PATH", "")
+	t.Chdir(root)
+
+	teamID := "default:rollback-fail.aweb.ai"
+	_, hostedTeamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	justCreatedCertID := ""
+	var server *httptest.Server
+	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
+		if serveProvisionedConnectForTest(t, w, r) {
+			return
+		}
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
+			_ = json.NewEncoder(w).Encode(map[string]any{"aweb_url": serverURL, "registry_url": serverURL})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/create-invite":
+			_ = json.NewEncoder(w).Encode(map[string]any{"invite_id": "invite-1", "token": "aw_inv_hosted_rollback_fail_token", "server_url": serverURL})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/invite-preview":
+			writeLegacyHostedPreviewForTest(t, w, r, teamID, serverURL)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/accept-invite":
+			var req map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatal(err)
+			}
+			didKey, _ := req["did"].(string)
+			cert, err := awid.SignTeamCertificate(hostedTeamKey, awid.TeamCertificateFields{Team: teamID, MemberDIDKey: didKey, Alias: "developer", IdentityScope: awid.IdentityModeLocal})
+			if err != nil {
+				t.Fatal(err)
+			}
+			justCreatedCertID = cert.CertificateID
+			encoded, err := awid.EncodeTeamCertificateHeader(cert)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_id": "server-team-id", "team_slug": "default", "namespace": "rollback-fail.aweb.ai",
+				"identity_id": "agent-developer", "alias": "developer", "server_url": serverURL,
+				"did": didKey, "custody": "self", "identity_scope": "local", "access_mode": "open", "created": true,
+				"team_cert": encoded,
+			})
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-developer", teamID, "developer")
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/agents":
+			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/blueprints/aweb.engineering/profiles/developer":
+			http.Error(w, `{"detail":"catalog unavailable"}`, http.StatusServiceUnavailable)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/teams/default:rollback-fail.aweb.ai/agents/remove-member":
+			http.Error(w, `{"detail":"remove failed"}`, http.StatusServiceUnavailable)
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	})
+	defer server.Close()
+	t.Setenv("AWEB_URL", server.URL)
+	t.Setenv(libraryURLEnvVar, server.URL)
+	oldInitAwebURL := initAwebURL
+	initAwebURL = server.URL
+	t.Cleanup(func() { initAwebURL = oldInitAwebURL })
+	workspace := workspaceBinding(server.URL, teamID, "owner", "workspace-owner")
+	workspace.APIKey = "aw_sk_owner"
+	writeWorkspaceBindingForTest(t, root, workspace)
+
+	err = runTeamHumanAdd(nil, []string{"developer@aweb.engineering/developer:local"})
+	if err == nil {
+		t.Fatal("expected materialize + rollback failure")
+	}
+	text := err.Error()
+	for _, want := range []string{"GET " + server.URL + "/v1/blueprints/aweb.engineering/profiles/developer returned 503", "server-side member rollback failed", "requires --api-key or AWEB_API_KEY", "workspace-bound API keys cannot remove hosted team members", justCreatedCertID, "aw id team remove-member --team default --namespace rollback-fail.aweb.ai --cert-id"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("error missing %q:\n%s", want, text)
+		}
 	}
 }
 

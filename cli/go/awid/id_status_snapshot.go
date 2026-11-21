@@ -356,8 +356,7 @@ func (snapshot *idStatusSnapshot) checkIdentityCertificates(row *idStatusIdentit
 		}
 	}
 	current := row.Certificates[len(row.Certificates)-1]
-	digest, err := current.certificate.CertificateID()
-	if err != nil || current.SupersededAt != nil || row.CurrentCertificateID != digest {
+	if current.SupersededAt != nil || !idCurrentCertificateMatches(current.certificate.Fields(), row.CurrentCertificateID) {
 		return idStatusRefusal("identity current certificate head")
 	}
 	return nil

@@ -178,23 +178,14 @@ func validateInitOutcomeFlags(input initInviteInput) error {
 	if activeIdentityHome.Source == awconfig.IdentityHomeEnvVar && initWorkspaceTeam {
 		return usageError("workspace-team creation requires an explicit --identity-home target; refusing to extend inherited identity home %s", activeIdentityHome.Root)
 	}
-	if strings.TrimSpace(activeIdentityHome.Root) != "" && activeIdentityHome.External() && !initWorkspaceTeam {
-		// A native acting workspace may create into the clean cwd. Other init
-		// outcomes keep the existing external-destination refusal.
-		if len(outcomes) == 0 && !initBYOD && initDomain == "" && initUsername == "" {
-			wd, err := os.Getwd()
-			if err != nil {
-				return err
-			}
-			creator, err := resolveAgentCreation(agentCreationRequest{WorkingDir: wd})
-			if err != nil {
-				return err
-			}
-			if creator.Mode == creationAuthorityInvitation || creator.Mode == creationAuthorityController {
-				return nil
-			}
+	if strings.TrimSpace(initJoinFrom) != "" && activeIdentityHome.External() {
+		if activeIdentityHome.Source != awconfig.IdentityHomeFlag {
+			return usageError("join-from creation requires an explicit fresh --identity-home target; refusing to change inherited identity home %s", activeIdentityHome.Root)
 		}
-		return usageError("aw init with --identity-home is only supported for --workspace-team; refusing to use an external identity home for account, team, or add-agent init")
+		return nil
+	}
+	if strings.TrimSpace(activeIdentityHome.Root) != "" && activeIdentityHome.External() && !initWorkspaceTeam {
+		return usageError("aw init with --identity-home is only supported for --workspace-team or explicit fresh --join-from; refusing to use an external identity home for account, team, or add-agent init")
 	}
 	return nil
 }
@@ -453,13 +444,20 @@ func runInitIndependentInvite(cmd *cobra.Command, input initInviteInput) error {
 	if err != nil {
 		return err
 	}
-	return acceptInitInviteAndConnect(cmd, wd, raw, origin, initParent)
+	return acceptInitInviteAndConnect(cmd, initInviteConnection{WorkingDir: wd, Token: raw, PreferredAwebURL: origin, ParentHome: initParent})
 }
 
 func runInitJoinFrom(cmd *cobra.Command) error {
 	wd, err := os.Getwd()
 	if err != nil {
 		return err
+	}
+	home, err := identityHomeForDir(wd)
+	if err != nil {
+		return err
+	}
+	if home.External() && home.Source != awconfig.IdentityHomeFlag {
+		return usageError("join-from creation requires an explicit fresh --identity-home target; refusing to change inherited identity home %s", home.Root)
 	}
 	sourceWorkingDir, sourceIdentityHome, teamID, err := resolveInitJoinSource(strings.TrimSpace(initJoinFrom), strings.TrimSpace(initJoinTeam))
 	if err != nil {
@@ -495,7 +493,7 @@ func runInitAdmissionTeamID(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	return acceptInitInviteAndConnect(cmd, wd, resp.Token, resp.ServerURL)
+	return acceptInitInviteAndConnect(cmd, initInviteConnection{WorkingDir: wd, Token: resp.Token, PreferredAwebURL: resp.ServerURL})
 }
 
 // Admission init uses an existing cli.team_admission login and never starts
@@ -528,7 +526,7 @@ func ensureTeamAdmissionAuthForInit(cmd *cobra.Command) error {
 }
 
 func initInviteIdentityScope() string {
-	return string(identityScopeFromFlags(identityScopeFlags{Global: initGlobal}))
+	return string(inviteMemberScopeFromFlags(inviteMemberScopeFlags{Global: initGlobal}))
 }
 
 // Local init creates a key; global init reuses the selected identity and key.
@@ -556,40 +554,55 @@ func validateGlobalInitTarget(workingDir string) error {
 	return nil
 }
 
-func acceptInitInviteAndConnect(cmd *cobra.Command, workingDir, token, preferredAwebURL string, parentHome ...string) error {
-	parent := ""
-	if len(parentHome) > 0 {
-		parent = parentHome[0]
-	}
-	return acceptInitInviteAndConnectWithSource(cmd, workingDir, token, preferredAwebURL, parent, false)
+type initInviteConnection struct {
+	ParentFromSource bool
+	WorkingDir       string
+	IdentityHome     string
+	Token            string
+	PreferredAwebURL string
+	ParentHome       string
 }
 
-func acceptInitInviteAndConnectWithSource(cmd *cobra.Command, workingDir, token, preferredAwebURL, parent string, parentFromSource bool) error {
-	alias := resolveAliasValue(resolveInitLocalName())
-	accepted, err := acceptAndStoreTeamInvite(workingDir, token, teamAcceptInviteOptions{
-		ParentHome:       parent,
-		ParentFromSource: parentFromSource,
-		Name:             alias,
-		Scope:            initInviteIdentityScope(),
-		AwebURL:          strings.TrimSpace(preferredAwebURL),
-	}, teamInviteStoreOptions{IdentityHome: currentEncryptionKeyIdentityHome(), SetActive: true})
+func acceptInitInviteAndConnect(cmd *cobra.Command, request initInviteConnection) error {
+	workingDir := request.WorkingDir
+	home, err := awconfig.ResolveIdentityHome(workingDir, firstNonEmptyString(request.IdentityHome, identityHomeFlag))
 	if err != nil {
 		return err
 	}
-	awebURL := firstNonEmptyString(strings.TrimSpace(preferredAwebURL), strings.TrimSpace(accepted.AwebURL), strings.TrimSpace(accepted.Output.AwebURL))
+	alias := resolveAliasValue(resolveInitLocalName())
+	accepted, err := acceptAndStoreTeamInvite(teamInviteStoreRequest{
+		Acceptance: teamInviteAcceptanceRequest{
+			WorkingDir: workingDir,
+			Token:      request.Token,
+			Options: teamAcceptInviteOptions{
+				IdentityHome:     externalIdentityHomeRoot(home),
+				ParentHome:       request.ParentHome,
+				ParentFromSource: request.ParentFromSource,
+				Name:             alias,
+				Scope:            initInviteIdentityScope(),
+				AwebURL:          strings.TrimSpace(request.PreferredAwebURL),
+			},
+		},
+		Store: teamInviteStoreOptions{IdentityHome: resolvedEncryptionKeyIdentityHome(home), Activation: membershipMakeActive},
+	})
+	if err != nil {
+		return err
+	}
+	awebURL := acceptedInviteServiceURL(teamInviteConnectionTarget{Token: request.Token, PreferredURL: request.PreferredAwebURL, Accepted: accepted})
 	if awebURL == "" {
 		return usageError("accepted invite did not include an aweb URL; rerun aw init with --aweb-url")
 	}
-	return connectInitAcceptedInvite(cmd, workingDir, awebURL)
+	return connectInitAcceptedInvite(cmd, workingDir, awebURL, home)
 }
 
-func connectInitAcceptedInvite(cmd *cobra.Command, workingDir, awebURL string) error {
+func connectInitAcceptedInvite(cmd *cobra.Command, workingDir, awebURL string, home awconfig.IdentityHome) error {
 	identity := initConnectIdentity(initIdentityInput{ContextFile: requestedInitContextPolicy(), Role: initRole, HumanName: initHumanName, AgentType: initAgentType})
 	result, err := initCertificateConnectWithOptions(workingDir, awebURL, certificateConnectOptions{
-		ContextFile: identity.ContextFile,
-		Role:        identity.Role,
-		HumanName:   identity.HumanName,
-		AgentType:   identity.AgentType,
+		IdentityHome: home.Root,
+		ContextFile:  identity.ContextFile,
+		Role:         identity.Role,
+		HumanName:    identity.HumanName,
+		AgentType:    identity.AgentType,
 	})
 	if err != nil {
 		return err
@@ -758,7 +771,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 			oldHome := activeIdentityHome
 			activeIdentityHome = awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(creationDir)}
 			defer func() { activeIdentityHome = oldHome }()
-			return acceptInitInviteAndConnect(cmd, creationDir, invite.Token, invite.AwebURL)
+			return acceptInitInviteAndConnect(cmd, initInviteConnection{WorkingDir: creationDir, Token: invite.Token, PreferredAwebURL: invite.AwebURL})
 		}
 	}
 	if apiKey != "" {
@@ -1351,6 +1364,12 @@ func channelReady(result *claudeHooksResult) bool {
 // next steps, so text output ends with the steps and the guide. --json
 // prints one document.
 func printInitOutcome(out connectOutput, result *initResult, workingDir string, setup func() (initSetupDone, error)) error {
+	outputFailure := func(err error) error {
+		if err == nil {
+			return nil
+		}
+		return fmt.Errorf("write init result: %w. Check the output destination and inspect the connected identity before retrying init.", err)
+	}
 	if jsonFlag {
 		done, err := setup()
 		if err != nil {
@@ -1358,20 +1377,17 @@ func printInitOutcome(out connectOutput, result *initResult, workingDir string, 
 		}
 		out.NextSteps = initNextStepsAfter(result, workingDir, done)
 		out.Guide = initGuideURL
-		if err := printOutput(out, formatConnect); err != nil {
-			return err
-		}
-		return nil
+		return outputFailure(printOutput(out, formatConnect))
 	}
-	if err := printOutput(out, formatConnect); err != nil {
-		return err
-	}
+	outputErr := printOutput(out, formatConnect)
 	done, err := setup()
 	if err != nil {
-		return err
+		return errors.Join(err, outputFailure(outputErr))
 	}
-	_, err = fmt.Fprint(commandStdout, formatInitNextSteps(initNextStepsAfter(result, workingDir, done), !done.ChannelGuidancePrinted))
-	return err
+	if outputErr == nil {
+		_, outputErr = fmt.Fprint(commandStdout, formatInitNextSteps(initNextStepsAfter(result, workingDir, done), !done.ChannelGuidancePrinted))
+	}
+	return outputFailure(outputErr)
 }
 
 // initDefaultSetup injects the default docs and runs the requested post-init

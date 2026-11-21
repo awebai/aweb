@@ -6,14 +6,15 @@ package strictjson
 
 import (
 	"bytes"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"regexp"
-	"sort"
 	"strconv"
+
+	"github.com/awebai/aw/canonicaljson"
+	"github.com/awebai/aw/signaturewire"
 )
 
 // MaxSafeInteger is the largest integer every consumer reads exactly.
@@ -166,88 +167,82 @@ func checkASCII(s string) error {
 // json.dumps(sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 // produces the same bytes for every value this accepts.
 func Canonical(value any) ([]byte, error) {
-	var buf bytes.Buffer
-	if err := writeCanonical(&buf, value); err != nil {
+	normalized, err := canonicalValue(value)
+	if err != nil {
 		return nil, err
 	}
-	return buf.Bytes(), nil
+	return canonicaljson.Strict(normalized)
 }
 
-func writeCanonical(buf *bytes.Buffer, value any) error {
+// EqualValues compares owner-act values under the same ASCII/no-null profile
+// as Canonical, delegating comparison to the shared canonical owner.
+func EqualValues(input canonicaljson.Comparison) (bool, error) {
+	expected, err := canonicalValue(input.Expected)
+	if err != nil {
+		return false, err
+	}
+	actual, err := canonicalValue(input.Actual)
+	if err != nil {
+		return false, err
+	}
+	return canonicaljson.EqualValues(canonicaljson.Comparison{Expected: expected, Actual: actual})
+}
+
+// Validation is this family's ASCII/no-null policy; serialization is shared.
+func canonicalValue(value any) (any, error) {
 	switch v := value.(type) {
 	case map[string]any:
-		keys := make([]string, 0, len(v))
-		for key := range v {
-			keys = append(keys, key)
+		out := make(map[string]any, len(v))
+		for key, item := range v {
+			if err := checkASCII(key); err != nil {
+				return nil, err
+			}
+			checked, err := canonicalValue(item)
+			if err != nil {
+				return nil, err
+			}
+			out[key] = checked
 		}
-		sort.Strings(keys)
-		buf.WriteByte('{')
-		for i, key := range keys {
-			if i > 0 {
-				buf.WriteByte(',')
-			}
-			if err := writeString(buf, key); err != nil {
-				return err
-			}
-			buf.WriteByte(':')
-			if err := writeCanonical(buf, v[key]); err != nil {
-				return err
-			}
-		}
-		buf.WriteByte('}')
+		return out, nil
 	case []any:
-		buf.WriteByte('[')
+		out := make([]any, len(v))
 		for i, item := range v {
-			if i > 0 {
-				buf.WriteByte(',')
+			checked, err := canonicalValue(item)
+			if err != nil {
+				return nil, err
 			}
-			if err := writeCanonical(buf, item); err != nil {
-				return err
-			}
+			out[i] = checked
 		}
-		buf.WriteByte(']')
+		return out, nil
 	case []string:
-		items := make([]any, len(v))
+		out := make([]any, len(v))
 		for i, item := range v {
-			items[i] = item
+			checked, err := canonicalValue(item)
+			if err != nil {
+				return nil, err
+			}
+			out[i] = checked
 		}
-		return writeCanonical(buf, items)
+		return out, nil
 	case string:
-		return writeString(buf, v)
-	case bool:
-		if v {
-			buf.WriteString("true")
-		} else {
-			buf.WriteString("false")
+		if err := checkASCII(v); err != nil {
+			return nil, err
 		}
+		return v, nil
+	case bool:
+		return v, nil
 	case int:
-		return writeCanonical(buf, int64(v))
+		return canonicalValue(int64(v))
 	case int64:
 		if v > MaxSafeInteger || v < -MaxSafeInteger {
-			return Refuse("invalid_value", "integer outside the safe range: %d", v)
+			return nil, Refuse("invalid_value", "integer outside the safe range: %d", v)
 		}
-		buf.WriteString(strconv.FormatInt(v, 10))
+		return v, nil
 	case nil:
-		return Refuse("null_value", "null is never a value")
+		return nil, Refuse("null_value", "null is never a value")
 	default:
-		return Refuse("invalid_value", "unsupported value %T", value)
+		return nil, Refuse("invalid_value", "unsupported value %T", value)
 	}
-	return nil
-}
-
-func writeString(buf *bytes.Buffer, s string) error {
-	if err := checkASCII(s); err != nil {
-		return err
-	}
-	buf.WriteByte('"')
-	for i := 0; i < len(s); i++ {
-		if s[i] == '"' || s[i] == '\\' {
-			buf.WriteByte('\\')
-		}
-		buf.WriteByte(s[i])
-	}
-	buf.WriteByte('"')
-	return nil
 }
 
 // ParseCanonicalObject parses data strictly and requires it to be a JSON
@@ -282,7 +277,7 @@ func DecodeSignature(signature string) ([]byte, error) {
 	if len(signature) != SignatureLength {
 		return nil, Refuse("signature_encoding", "a signature is %d characters", SignatureLength)
 	}
-	sig, err := base64.RawStdEncoding.Strict().DecodeString(signature)
+	sig, err := signaturewire.DecodeStdStrict(signature)
 	if err != nil || len(sig) != 64 {
 		return nil, Refuse("signature_encoding", "not unpadded standard base64 with zero trailing bits")
 	}
@@ -292,7 +287,7 @@ func DecodeSignature(signature string) ([]byte, error) {
 // DecodeBase64URL accepts exactly one spelling: the URL alphabet, no padding,
 // zero trailing bits.
 func DecodeBase64URL(text, what string) ([]byte, error) {
-	data, err := base64.RawURLEncoding.Strict().DecodeString(text)
+	data, err := signaturewire.DecodeURLStrict(text)
 	if err != nil {
 		return nil, Refuse("invalid_value", "%s is not strict unpadded base64url", what)
 	}

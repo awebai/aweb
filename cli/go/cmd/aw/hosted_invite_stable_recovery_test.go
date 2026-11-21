@@ -105,7 +105,7 @@ func TestHostedInviteResumesStable58CreationSelection(t *testing.T) {
 				if err := os.WriteFile(filepath.Join(root, hostedInviteRecoveryFile), raw, 0600); err != nil {
 					t.Fatal(err)
 				}
-				got, err := acceptHostedTeamInviteWithDetails(wd, "aw_inv_stable", teamAcceptInviteOptions{Name: "child", Scope: "local", AwebURL: service.URL, Registry: registry, TXTResolver: resolver})
+				got, err := acceptHostedTeamInviteWithDetails(teamInviteAcceptanceRequest{WorkingDir: wd, Token: "aw_inv_stable", Options: teamAcceptInviteOptions{Name: "child", Scope: "local", AwebURL: service.URL, Registry: registry, TXTResolver: resolver}})
 				if err != nil || got == nil || got.Output.Responsibility.Outcome != "nearest_human" {
 					t.Fatalf("stable interrupted creation did not finish: %+v %v", got, err)
 				}

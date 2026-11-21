@@ -67,7 +67,8 @@ type SpawnInvitePreviewResponse struct {
 // SpawnAcceptInviteRequest binds an invitation to the joining key and any
 // supplied child chain. Membership admission and ancestry are separate checks.
 type SpawnAcceptInviteRequest struct {
-	IDChain            map[string]any                   `json:"id_chain,omitempty"`
+	// Keep the request comparable, as in aw-v1.36.58. A nil pointer omits the chain.
+	IDChain            *map[string]any                  `json:"id_chain,omitempty"`
 	IDTree             *IDTreeCreationRequest           `json:"id_tree,omitempty"`
 	Token              string                           `json:"token"`
 	Alias              string                           `json:"alias,omitempty"`

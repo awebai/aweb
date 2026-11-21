@@ -2,36 +2,45 @@
 
 ## Unreleased
 
-- `aw claim-human --controller-claim-file` carries a shared controller-signed claim artifact after checking integrity, normalized target and timestamp. Member authentication remains required; Cloud alone checks current controller authority. Controller pin refusals preserve the server's administrator and key-change recovery guidance.
+- Provisioning and creator self-enrollment connect before publishing the member's E2E assertion. A failed connect or unconfirmed publication retains the identity and reports the exact recovery command instead of creation success.
+- On unverified A2A routes, a plain question shared by several live tasks is
+  refused with task-specific reply forms. Questions use artifact name `question`;
+  completed answers retain `answer`.
 
-- `aw init --write-context=false` leaves the context pointer untouched through signup, joins, API-key bootstrap and reconnect. `--server-name` help distinguishes a workspace server label from auth/admission service selection.
+- Concurrent `aw a2a send` calls retain each task token. Credential-file failures
+  are reported without overwriting unreadable YAML; a task already delivered is
+  still returned with its token when saving fails.
 
-- Provisioning and creator self-enrollment connect before publishing the member's E2E assertion. A failed connect or unconfirmed publication retains the identity and reports the exact recovery command instead of creation success. Later profile/worktree failures also retain the member; retrying setup reuses its installed key and certificate.
+- On verified A2A routes, a plain `QUESTION:` from the target is no longer
+  accepted as a verified task reply. Use the task-bearing fenced `a2a-reply`
+  form with `state: input_required` to ask a question (aw 1.19.0 or later).
+  Initial task instructions and refusal feedback show the exact form. Signed
+  task-bearing legacy fences remain accepted; explicitly unverified routes
+  keep their policy and label.
+- A managed provider that advertises recipient identity but omits it from a
+  send receipt now returns an actionable provider fault and a failed task,
+  rather than leaving the task waiting for replies it cannot bind.
 
-- CLI signup retains its original signer and request before submission and its received credential before connect. `aw init` resumes that attempt; doctor names unfinished recovery without exposing secrets.
+- A2A routes require an agent with a public address. Native gateway startup
+  refuses local identities, including team aliases that resolve to one, before
+  opening its listener. The same check runs before each native bridge send;
+  `-check` continues to validate configuration offline.
 
-- Local child creation uses indexed request lookup instead of rereading the issuer's invitation and re-sign history. Existing records and older writers remain readable.
+- The A2A gateway no longer returns a public route's task when given only its
+  task ID. Callers must send the task token returned by `SendMessage` in
+  `X-A2A-Task-Token`; task IDs are identifiers rather than authorization.
+- A2A credentials and managed-provider tokens require HTTPS, with HTTP allowed
+  on literal loopback IP addresses for local development. Use
+  `http://127.0.0.1` instead of `http://localhost` for those local endpoints.
 
-- Hosted invites prepare their creator exchange before minting; a later local link-save failure warns while preserving the created token.
-
-- `aw claim-human` reports an observed email delivery failure with retry guidance; JSON output retains the optional delivery fields.
-
-- Addressed `aw id create` saves its private key before registry writes and
-  resumes an uncertain claim with that same key and selection. Human certificate
-  registration checks the current issuing authority before asking the person
-  to sign or registering anything.
-
-- New agents use their creator's signed invitation instead of a stored
-  workspace API key. Explicit person setup keys retain the API path; missing
-  or unknown server key-kind metadata keeps older-server behavior.
-  `aw team admin create` with an agent's key now stops and explains how to
-  found a team. Extend names its sole discovered creator and asks the operator
-  to choose when several agent homes qualify; directory order never decides.
-- `aw workspace add-worktree` now honors a supplied `AWEB_API_KEY`; an
-  expired key left in the shell stops creation instead of using the workspace.
-  The refusal explains that unsetting it restores the signed invitation path.
-- Membership-only joins say that an existing identity keeps its parentage;
-  global invite condition selection requires authoritative enrollment evidence.
+- Retain the Go entry points `blueprint.CanonicalImportPayload`,
+  `logschain.VerifyChain`, `chat.LoadDeliveredIDs` and
+  `chat.FilterDeliveredMessages` in this release. They are removal candidates
+  for a future release, pending measurement of downstream usage.
+- `aw id request --raw` writes the response body to stdout byte for byte, so
+  `--raw > chart.png` saves an image intact. It no longer appends a newline to
+  a body that lacks one; JSON printed to a terminal may now end without one.
+  The `HTTP <status>` line stays on stderr.
 
 - `aw` reports JSON error code `alias_conflict` for HTTP 409 `alias_taken`, preserving the server's `reason` and `detail`.
 - AWID cache invalidation for identity-tree, address and team-certificate

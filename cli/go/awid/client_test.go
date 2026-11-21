@@ -12,13 +12,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/awebai/aw/internal/testcapture"
 )
 
 type stubIdentityResolver struct {
@@ -2351,11 +2350,41 @@ func TestTraceLogsRedactedHTTPAndAPIErrorRequestID(t *testing.T) {
 	}
 }
 
-// captureStderrForTest delegates complete stderr capture to the shared owner.
+// captureStderrForTest drains stderr while the producer runs.
 // Callers must run serially because os.Stderr belongs to the whole process.
 func captureStderrForTest(t *testing.T, fn func()) string {
 	t.Helper()
-	return testcapture.Stderr(t, fn)
+	old := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Drain while the producer runs: HTTP tracing can exceed a pipe's capacity.
+	// The buffered result also lets cleanup finish if fn terminates this test.
+	type capturedOutput struct {
+		data []byte
+		err  error
+	}
+	result := make(chan capturedOutput, 1)
+	go func() {
+		data, readErr := io.ReadAll(r)
+		result <- capturedOutput{data: data, err: errors.Join(readErr, r.Close())}
+	}()
+	func() {
+		os.Stderr = w
+		defer func() {
+			os.Stderr = old
+			if err := w.Close(); err != nil {
+				t.Errorf("close captured stderr writer: %v", err)
+			}
+		}()
+		fn()
+	}()
+	captured := <-result
+	if captured.err != nil {
+		t.Fatal(captured.err)
+	}
+	return string(captured.data)
 }
 
 func TestNewWithIdentitySetsFields(t *testing.T) {
@@ -2890,12 +2919,15 @@ func TestSendMessageByIdentityUsesToDID(t *testing.T) {
 		return &ResolvedIdentity{DID: recipientCurrentDID, StableID: recipientDID}, nil
 	}})
 
-	_, err = c.SendMessageByIdentity(context.Background(), &SendMessageRequest{
+	response, err := c.SendMessageByIdentity(context.Background(), &SendMessageRequest{
 		ToDID: recipientDID,
 		Body:  "hello direct",
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if response.RecipientDID != recipientCurrentDID || response.RecipientStableID != recipientDID {
+		t.Fatalf("response must carry exactly the signed recipient: %#v", response)
 	}
 
 	gotBody := captured()
@@ -2912,7 +2944,10 @@ func TestSendMessageByIdentityUsesToDID(t *testing.T) {
 	if !ok || sp == "" {
 		t.Fatal("signed_payload missing")
 	}
-	sig := gotBody["signature"].(string)
+	sig, ok := gotBody["signature"].(string)
+	if !ok {
+		t.Fatal("signature missing")
+	}
 	status, err := VerifySignedPayload(sp, sig, did, did)
 	if err != nil {
 		t.Fatalf("VerifySignedPayload: %v", err)
@@ -8031,5 +8066,17 @@ func TestClientJSONCaptureAfterCompressionAdvertisement(t *testing.T) {
 	status, err := VerifySignedPayload(body["signed_payload"].(string), body["signature"].(string), did, did)
 	if err != nil || status != Verified {
 		t.Fatalf("verification=%v %v", status, err)
+	}
+}
+
+func TestCaptureStderrDrainsLargeTrace(t *testing.T) {
+	payload := strings.Repeat("redacted trace line\n", 1<<16)
+	captured := captureStderrForTest(t, func() {
+		if _, err := io.WriteString(os.Stderr, payload); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if captured != payload {
+		t.Fatalf("captured %d bytes, want the complete %d-byte trace", len(captured), len(payload))
 	}
 }

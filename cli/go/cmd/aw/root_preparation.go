@@ -87,13 +87,28 @@ func rootPreparationForCommand(command *cobra.Command) (rootPreparationMode, err
 			return "", fmt.Errorf("invalid command preparation mode %q for %s", mode, current.CommandPath())
 		}
 	}
+	if command.Annotations[identityNoRenewalAnnotation] == "true" {
+		return rootPreparationLocalOnly, nil
+	}
+	if flag := command.Annotations[identityReadOnlyFlagAnnotation]; flag != "" {
+		readOnly, err := command.Flags().GetBool(flag)
+		if err != nil {
+			return "", err
+		}
+		if readOnly {
+			return rootPreparationLocalOnly, nil
+		}
+	}
 	if command.Name() == "help" {
 		return rootPreparationNoRenewal, nil
 	}
 	return rootPreparationFull, nil
 }
 
-func prepareRootCommand(command *cobra.Command, _ []string) error {
+func prepareRootCommand(command *cobra.Command, args []string) error {
+	if command.Annotations[offlineIdentityInspectionAnnotation] == "true" {
+		return prepareOfflineIdentityInspection(command, args)
+	}
 	mode, err := rootPreparationForCommand(command)
 	if err != nil || mode == rootPreparationOffline {
 		return err

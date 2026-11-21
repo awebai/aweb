@@ -6,7 +6,7 @@ import (
 )
 
 func TestRecoveryProgressHasOneClosedVocabulary(t *testing.T) {
-	for _, state := range []RecoveryState{RecoveryPrepared, RecoveryAttempted, RecoveryConfirmed} {
+	for _, state := range []RecoveryState{RecoveryAttempted, RecoveryConfirmed} {
 		progress := RecoveryProgress{Version: 1, State: state}
 		if err := progress.Validate(); err != nil {
 			t.Fatal(err)
@@ -20,7 +20,7 @@ func TestRecoveryProgressHasOneClosedVocabulary(t *testing.T) {
 			t.Fatalf("progress round trip: %v", err)
 		}
 	}
-	for _, progress := range []RecoveryProgress{{}, {Version: 1}, {Version: 2, State: RecoveryAttempted}, {Version: 1, State: RecoveryState("unused")}, {Version: 1, State: RecoveryState("future")}} {
+	for _, progress := range []RecoveryProgress{{}, {Version: 1}, {Version: 2, State: RecoveryAttempted}, {Version: 1, State: RecoveryState("prepared")}, {Version: 1, State: RecoveryState("unused")}, {Version: 1, State: RecoveryState("future")}} {
 		if err := progress.Validate(); err == nil {
 			t.Fatalf("unknown progress was treated as a known attempt: %+v", progress)
 		}

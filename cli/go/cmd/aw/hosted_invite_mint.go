@@ -13,33 +13,11 @@ import (
 	"github.com/awebai/aw/awid"
 )
 
-// createHostedTeamInvite creates a single-use hosted invite and returns the
-// service's response, which carries its expiry.
-func createHostedTeamInvite(workingDir, identityHome, teamID string, localMember bool, forHuman ...string) (*awid.SpawnCreateInviteResponse, error) {
-	requested, err := requestedInviteHuman(forHuman)
-	if err != nil {
-		return nil, err
-	}
-	domain, team, err := awid.ParseTeamID(teamID)
-	if err != nil {
-		return nil, err
-	}
-	scope := inviteMemberGlobal
-	if localMember {
-		scope = inviteMemberLocal
-	}
-	return createHostedTeamInviteFromPlan(teamInviteMintRequest{
-		Plan: teamInvitePlan{Kind: inviteAuthorityHosted, Source: teamInviteSource{
-			WorkingDir: workingDir, Home: awconfig.IdentityHome{Root: identityHome, Source: awconfig.IdentityHomeFlag}, Domain: domain, Team: team,
-		}}, Scope: scope, ForHuman: requested,
-	})
-}
-
-// createHostedTeamInviteFromPlan prepares the creator's exchange before minting
+// createHostedTeamInvite prepares the creator's exchange before minting
 // a bearer (docs/id-tree-invite-issuance.md:16-24). Once minted, a failure to
 // retain its local link cannot undo the service effect or discard its token.
-func createHostedTeamInviteFromPlan(request teamInviteMintRequest) (*awid.SpawnCreateInviteResponse, error) {
-	if err := request.Scope.validate(); err != nil {
+func createHostedTeamInvite(request teamInviteMintRequest) (*awid.SpawnCreateInviteResponse, error) {
+	if err := validateInviteMemberScope(request.Scope); err != nil {
 		return nil, err
 	}
 	if request.ForHuman != nil {

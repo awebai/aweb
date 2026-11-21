@@ -181,10 +181,3 @@ func loadOptionalTeamState(location teamMembershipLocation) (*awconfig.TeamState
 	}
 	return nil, err
 }
-
-func (options teamInviteStoreOptions) membershipActivation() membershipActivation {
-	if options.SetActive {
-		return membershipMakeActive
-	}
-	return membershipPreserveActive
-}

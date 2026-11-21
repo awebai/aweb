@@ -1,7 +1,5 @@
 package awid
 
-import "encoding/json"
-
 // IDCertificateRequestOperation names the two subject-proven exchange requests.
 type IDCertificateRequestOperation string
 
@@ -153,12 +151,3 @@ func (response IDCertificateResponseView) RequestID() string { return response.r
 
 // Chain returns immutable checked certificate views, without current authority.
 func (response IDCertificateResponseView) Chain() IDChain { return response.chain }
-
-// Bundle supplies an independent chain for released map-based evidence,
-// registration and installation APIs. No owned signed field is exposed.
-func (chain IDChain) Bundle() map[string]any {
-	if len(chain.certificates) == 0 {
-		return nil
-	}
-	return map[string]any{"v": json.Number("1"), "type": "aweb.id-chain", "certificates": chain.SignedCertificates()}
-}

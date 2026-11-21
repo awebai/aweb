@@ -1,7 +1,5 @@
 package awid
 
-import "encoding/base64"
-
 // IDCertificateKind identifies the subject certified by an ID certificate.
 type IDCertificateKind string
 
@@ -40,6 +38,7 @@ type IDCertificateView struct {
 	kind      IDCertificateKind
 	parent    IDCertificateParent
 	issuerKey string
+	issuedAt  string
 	fields    map[string]any
 	signed    map[string]any
 }
@@ -58,6 +57,9 @@ func (certificate IDCertificateView) Parent() IDCertificateParent { return certi
 
 // IssuerKey is the key that signed this certificate, not a current-key verdict.
 func (certificate IDCertificateView) IssuerKey() string { return certificate.issuerKey }
+
+// IssuedAt is the exact signed UTC timestamp, without reformatting.
+func (certificate IDCertificateView) IssuedAt() string { return certificate.issuedAt }
 
 // Signed returns an independent copy of the certificate and its signature for
 // existing map-based consumers. Changing it does not change this view.
@@ -78,7 +80,7 @@ func (certificate IDCertificateView) CertificateID() (string, error) {
 // IDChain is an immutable view of a checked ID-chain bundle. It preserves the
 // released map/header APIs while keeping unchecked JSON out of typed consumers.
 type IDChain struct {
-	canonical    []byte
+	bundle       map[string]any
 	certificates []IDCertificateView
 }
 
@@ -91,7 +93,7 @@ func IDChainFromBundle(bundle map[string]any) (IDChain, error) {
 		return IDChain{}, err
 	}
 	if len(canonical) > IDChainMaxBytes {
-		return IDChain{}, idCertificateRefusal(IDRefusalBundleTooLarge)
+		return IDChain{}, idCertificateRefusal("bundle_too_large")
 	}
 	if err := idCertificateBundleShape(bundle); err != nil {
 		return IDChain{}, err
@@ -99,13 +101,13 @@ func IDChainFromBundle(bundle map[string]any) (IDChain, error) {
 	snapshot := copyIDObject(bundle)
 	entries, ok := snapshot["certificates"].([]any)
 	if !ok {
-		return IDChain{}, idCertificateRefusal(IDRefusalInvalidShape)
+		return IDChain{}, idCertificateRefusal("invalid_shape")
 	}
-	chain := IDChain{canonical: canonical, certificates: make([]IDCertificateView, 0, len(entries))}
+	chain := IDChain{bundle: snapshot, certificates: make([]IDCertificateView, 0, len(entries))}
 	for _, entry := range entries {
 		signed, ok := entry.(map[string]any)
 		if !ok {
-			return IDChain{}, idCertificateRefusal(IDRefusalInvalidShape)
+			return IDChain{}, idCertificateRefusal("invalid_shape")
 		}
 		certificate, err := checkedIDCertificateView(signed)
 		if err != nil {
@@ -140,14 +142,12 @@ func (chain IDChain) SignedCertificates() []any {
 	return signed
 }
 
+// Bundle returns an independent snapshot for the released map-based APIs.
+func (chain IDChain) Bundle() map[string]any { return copyIDObject(chain.bundle) }
+
 // Header returns the canonical X-AWID-ID-Chain encoding without changing any
 // certificate's signed fields or signature.
-func (chain IDChain) Header() (string, error) {
-	if len(chain.certificates) == 0 {
-		return "", idCertificateRefusal(IDRefusalInvalidShape)
-	}
-	return base64.RawURLEncoding.EncodeToString(chain.canonical), nil
-}
+func (chain IDChain) Header() (string, error) { return EncodeIDChainHeader(chain.bundle) }
 
 func checkedIDCertificateView(signed map[string]any) (IDCertificateView, error) {
 	fields, err := idCertificateShape(signed)
@@ -158,17 +158,18 @@ func checkedIDCertificateView(signed map[string]any) (IDCertificateView, error) 
 	domain, domainOK := fields["domain"].(string)
 	kind, kindOK := fields["kind"].(string)
 	issuerKey, issuerOK := fields["issuer_key"].(string)
+	issuedAt, issuedOK := fields["issued_at"].(string)
 	parent, parentOK := fields["parent"].(map[string]any)
-	if !idOK || !domainOK || !kindOK || !issuerOK || !parentOK {
-		return IDCertificateView{}, idCertificateRefusal(IDRefusalInvalidShape)
+	if !idOK || !domainOK || !kindOK || !issuerOK || !issuedOK || !parentOK {
+		return IDCertificateView{}, idCertificateRefusal("invalid_shape")
 	}
 	parentID, parentIDOK := parent["id"].(string)
 	parentKind, parentKindOK := parent["kind"].(string)
 	if !parentIDOK || !parentKindOK {
-		return IDCertificateView{}, idCertificateRefusal(IDRefusalInvalidShape)
+		return IDCertificateView{}, idCertificateRefusal("invalid_shape")
 	}
 	return IDCertificateView{
-		id: id, domain: domain, kind: IDCertificateKind(kind), issuerKey: issuerKey,
+		id: id, domain: domain, kind: IDCertificateKind(kind), issuerKey: issuerKey, issuedAt: issuedAt,
 		parent: IDCertificateParent{id: parentID, kind: IDParentKind(parentKind)}, fields: fields, signed: signed,
 	}, nil
 }

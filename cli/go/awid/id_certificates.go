@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -263,9 +262,9 @@ func idCertificateDecodeB64(value string) ([]byte, error) {
 	if !idCertificateB64URL.MatchString(value) {
 		return nil, idCertificateRefusal(IDRefusalInvalidEncoding)
 	}
-	b, e := base64.RawURLEncoding.Strict().DecodeString(value)
-	if e != nil || base64.RawURLEncoding.EncodeToString(b) != value {
-		return nil, idCertificateRefusal(IDRefusalInvalidEncoding)
+	b, e := signaturewire.DecodeCanonicalURL(value)
+	if e != nil {
+		return nil, idCertificateRefusal("invalid_encoding")
 	}
 	return b, nil
 }
@@ -308,7 +307,7 @@ func idSignatureBytes(signature any) ([]byte, error) {
 // wrong length is refused here, whatever the caller checked.
 func idStrictVerify(key string, b []byte, payload func() ([]byte, error)) error {
 	if !signaturewire.ValidIDSignatureShape(b) {
-		return idCertificateRefusal(IDRefusalInvalidSignature)
+		return idCertificateRefusal("invalid_signature")
 	}
 	k, e := ExtractPublicKey(key)
 	if e != nil {
@@ -319,7 +318,7 @@ func idStrictVerify(key string, b []byte, payload func() ([]byte, error)) error 
 		return e
 	}
 	if !signaturewire.Verify(signaturewire.Proof{PublicKey: k, Payload: message, Signature: b}) {
-		return idCertificateRefusal(IDRefusalInvalidSignature)
+		return idCertificateRefusal("invalid_signature")
 	}
 	return nil
 }

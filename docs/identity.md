@@ -632,8 +632,8 @@ messages unrecoverable.
 
 ### Provisioned members and encryption discovery
 
-Provisioning through a creator's invitation, a person's setup key, worktree
-creation and creator self-enrollment connect the accepted member to its aweb service before publishing its E2E key assertion.
+Provisioning through a creator's invitation and creator self-enrollment connect
+the accepted member to its aweb service before publishing its E2E key assertion.
 A local workspace binding alone does not establish server admission. Provisioning
 reports success only after the service confirms publication for that member.
 
@@ -648,29 +648,6 @@ and reports that this attempt did not publish the key. Run the exact
 the refusal. If connection completed but publication is unconfirmed, run the
 reported `aw --identity-home <member-home> id encryption-key setup` command.
 Neither recovery requires a replacement identity or another invitation.
-After admission, a profile, requested-team check or worktree setup failure also
-keeps the member's home and credentials. It never tries registry-only revocation
-as a substitute for coordination cleanup. The refusal names a concrete
-`aw team admin add --home <home> <selected-spec>` retry using the same creation
-authority. Reuse requires the same installed member key, team, name and scope;
-normal admission still checks current authority. To abandon the member, use the
-ordered `aw team admin remove-agent` operation from its controller workspace.
-A failed `workspace add-worktree` also retains an issued member and its git
-worktree for reconciliation instead of revoking its registry certificate and
-deleting the credential. Its refusal names the existing child's connect command.
-
-API-key creation keeps its original partial-init journal after preparation,
-including when submission loses its response. Outer roster and worktree cleanup
-must retain that directory. The refusal identifies the child directory and its
-`aw init` command; keep the original service, API-key and registry selections.
-Once connection credentials are saved, a later context-file or required-key
-publication failure keeps those credentials and encryption keys; it completes
-through the printed connection or key-publication command, not identity-creation
-replay. The completed partial-init record is removed.
-Quarantined material remains for operator reconciliation and is never restored
-automatically. These recoveries keep the original key and request; they do not
-create a replacement identity.
-
 Membership-only joins continue to install their membership before their separate
 connection step.
 

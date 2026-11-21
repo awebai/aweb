@@ -59,21 +59,25 @@ var workspaceMigrateMultiTeamCmd = &cobra.Command{
 }
 
 var workspaceDeleteCmd = &cobra.Command{
-	Use:   "delete <workspace-id-or-name>",
-	Short: "Delete a local workspace and its local identity, retiring yourself when it is your own",
+	Annotations: map[string]string{identityNoRenewalAnnotation: "true"},
+	Use:         "delete <workspace-id-or-name>",
+	Short:       "Delete a local workspace and its local identity, retiring yourself when it is your own",
 	Long: `Delete a local workspace and its local identity.
 
-Deleting YOUR OWN workspace on a hosted team, with a local identity, retires you:
-the hosted team controller revokes your membership certificate, so your name
-becomes reusable by a later "aw team join". Any other target is a local delete
-only, and does not release the name.
+Deleting YOUR OWN workspace with a local identity can retire its membership.
+On a hosted team, the service controller revokes the membership certificate.
+On a non-hosted team, the command deletes the workspace while the member
+credential is valid, saves a local receipt, then revokes with the local team key.
+If revocation cannot finish, retain the home and receipt and follow next_step.
+Retrying uses the receipt and performs only the remaining controller operation.
 
 Read alias_released in the output, not identity_deleted. Deleting local state
 says nothing about the membership certificate, and an active certificate is what
 makes a rejoin under the same name fail. alias_released_reason says why:
 
   not_own_workspace        the target is not the workspace you are running as
-  team_not_hosted          self-hosted or BYOT; no cloud-held controller to revoke
+  controller_key_missing  workspace deleted; give next_step to the team key holder
+  retired_revocation_pending  workspace deleted; retry using the retained receipt
   global_identity          global identities are retired by team-authorized removal
   no_workspace_credential  no workspace-bound key and no team certificate in local
                            config to authenticate with
@@ -82,9 +86,8 @@ When this command can retire you, it does not fall back to a plain delete: a
 failure is reported as a failure, because a success report for a retirement that
 did not happen is what leaks names.
 
-With --identity-home, the only destructive operation admitted for an external
-principal is this own hosted local self-release path. Non-eligible external
-principals fail closed instead of falling back to generic workspace delete.`,
+With --identity-home, own local retirement uses the selected home. Global and
+other-member targets fail closed instead of falling back to generic deletion.`,
 	Args: cobra.ExactArgs(1),
 	RunE: runWorkspaceDelete,
 }
@@ -101,7 +104,7 @@ type workspaceStatusOutput struct {
 	Workspace          aweb.WorkspaceInfo                `json:"workspace"`
 	ContextKind        string                            `json:"context_kind"`
 	Locks              []aweb.ReservationView            `json:"locks,omitempty"`
-	Team               []aweb.WorkspaceInfo              `json:"team,omitempty"`
+	Team               []aweb.WorkspaceInfo              `json:"team"`
 	TeamHasMore        bool                              `json:"team_has_more"`
 	TeamLimit          int                               `json:"team_limit"`
 	TeamLocks          map[string][]aweb.ReservationView `json:"team_locks,omitempty"`
@@ -145,7 +148,10 @@ type workspaceDeleteOutput struct {
 	// field rather than silently reading a missing one.
 	AliasReleased bool `json:"alias_released"`
 	// Why. Empty only when nothing was attempted.
-	AliasReleasedReason string `json:"alias_released_reason,omitempty"`
+	AliasReleasedReason string            `json:"alias_released_reason,omitempty"`
+	RetirementCode      retirementOutcome `json:"retirement_code,omitempty"`
+	ReceiptPath         string            `json:"receipt_path,omitempty"`
+	NextStep            string            `json:"next_step,omitempty"`
 }
 
 var saveWorktreeWorkspaceTo = awconfig.SaveWorktreeWorkspaceTo
@@ -291,7 +297,7 @@ func runWorkspaceStatus(cmd *cobra.Command, args []string) error {
 		EscalationsPending: statusResp.EscalationsPending,
 		ConflictCount:      len(statusResp.Conflicts),
 	}, formatWorkspaceStatus); err != nil {
-		return err
+		return fmt.Errorf("write workspace status: %w. Check the output destination, then rerun aw workspace status.", err)
 	}
 
 	// Opportunistically clean up workspaces whose directories have disappeared.
@@ -311,12 +317,19 @@ func loadCurrentWorkspaceAndTeamState(workingDir, identityHome string) (*awconfi
 // workspaceDeleteRefusal refuses a delete through an external identity home.
 // Its alias-release reason is also its --json error code.
 func workspaceDeleteRefusal(selection *awconfig.Selection, reason string) error {
-	return withErrorCode(reason, usageError("refusing aw workspace delete through external identity home for principal %s; only own hosted local self-release is supported for an external identity home (reason: %s)", externalIdentityRef(awconfig.IdentityHome{Root: selection.IdentityHome}), reason))
+	if reason == aliasReleaseNotHosted {
+		// Released OATS matches this exact sentence before handing off to the controller.
+		return withErrorCode(reason, usageError("refusing aw workspace delete through external identity home for principal %s; only own hosted local self-release is supported for an external identity home (reason: %s)", externalIdentityRef(awconfig.IdentityHome{Root: selection.IdentityHome}), reason))
+	}
+	return withErrorCode(reason, usageError("refusing aw workspace delete through external identity home for principal %s; only own local retirement is supported for an external identity home (reason: %s). Select that local member's own retained identity home, or ask its team controller for team-authorized removal.", externalIdentityRef(awconfig.IdentityHome{Root: selection.IdentityHome}), reason))
 }
 
 func runWorkspaceDelete(cmd *cobra.Command, args []string) error {
 	workingDir, err := os.Getwd()
 	if err != nil {
+		return err
+	}
+	if resumed, err := resumeLocalControllerRetirement(localRetirementRequest{Command: cmd, WorkingDir: workingDir, Target: strings.TrimSpace(args[0])}); resumed || err != nil {
 		return err
 	}
 	client, selection, err := resolveClientSelectionForDir(workingDir)
@@ -379,6 +392,9 @@ func runWorkspaceDelete(cmd *cobra.Command, args []string) error {
 	// held, and falling back to the plain delete would reproduce the exact defect
 	// this change exists to fix - a success report for a retirement that did not
 	// happen.
+	if handled, err := retireLocalControllerMember(localRetirementRequest{Command: cmd, WorkingDir: workingDir, Target: workspaceID, Client: client, Selection: selection}); handled || err != nil {
+		return err
+	}
 	plan := planSelfRetire(workingDir, selection, workspaceID)
 	if selection != nil && selection.ExternalIdentityHome && !plan.eligible {
 		return workspaceDeleteRefusal(selection, plan.reason)
@@ -398,7 +414,7 @@ func runWorkspaceDelete(cmd *cobra.Command, args []string) error {
 				retired.AliasReleasedReason,
 			)
 		}
-		if err := printOutput(workspaceDeleteOutput{
+		return writeWorkspaceDeleteOutput(workspaceDeleteOutput{
 			WorkspaceID: retired.WorkspaceID,
 			Alias:       retired.Alias,
 			// Empty on purpose: the retirement response does not carry the
@@ -409,10 +425,7 @@ func runWorkspaceDelete(cmd *cobra.Command, args []string) error {
 			IdentityDeleted:     true,
 			AliasReleased:       true,
 			AliasReleasedReason: retired.AliasReleasedReason,
-		}, formatWorkspaceDelete); err != nil {
-			return err
-		}
-		return nil
+		})
 	}
 
 	ctx, cancel := commandAPIContext(cmd)
@@ -427,7 +440,7 @@ func runWorkspaceDelete(cmd *cobra.Command, args []string) error {
 	if deleteResp == nil {
 		return fmt.Errorf("workspace %s not found or already deleted", workspaceID)
 	}
-	if err := printOutput(workspaceDeleteOutput{
+	return writeWorkspaceDeleteOutput(workspaceDeleteOutput{
 		WorkspaceID: deleteResp.WorkspaceID,
 		Alias:       deleteResp.Alias,
 		DeletedAt:   deleteResp.DeletedAt,
@@ -437,10 +450,7 @@ func runWorkspaceDelete(cmd *cobra.Command, args []string) error {
 		IdentityDeleted:     deleteResp.IdentityDeleted,
 		AliasReleased:       false,
 		AliasReleasedReason: plan.reason,
-	}, formatWorkspaceDelete); err != nil {
-		return err
-	}
-	return nil
+	})
 }
 
 func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
@@ -609,14 +619,8 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 		Branch:       branchName,
 		WorktreePath: worktreePath,
 	}
-	if jsonFlag {
-		if err := printJSON(output); err != nil {
-			return err
-		}
-	} else {
-		if err := printOutput(output, formatWorkspaceAddWorktree); err != nil {
-			return err
-		}
+	if err := printOutput(output, formatWorkspaceAddWorktree); err != nil {
+		return fmt.Errorf("write add-worktree result: %w. Check the output destination and inspect the created worktree at %s before retrying.", err, worktreePath)
 	}
 	return nil
 }
@@ -655,11 +659,8 @@ func runWorkspaceMigrateMultiTeam(cmd *cobra.Command, args []string) error {
 		if activeMembership := awconfig.ActiveMembershipFor(workspace, teamState); activeMembership != nil {
 			output.CertPath = strings.TrimSpace(activeMembership.CertPath)
 		}
-		if err := printOutput(output, formatWorkspaceMigrateMultiTeam); err != nil {
-			return err
-		}
-		return nil
-	} else if err != nil && !errors.Is(err, awconfig.ErrLegacyWorkspaceSingleTeam) {
+		return writeWorkspaceMigrationResult(output)
+	} else if err != nil && !strings.Contains(err.Error(), awconfig.LegacyWorkspaceSingleTeamError()) {
 		return err
 	}
 
@@ -667,8 +668,12 @@ func runWorkspaceMigrateMultiTeam(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	return writeWorkspaceMigrationResult(output)
+}
+
+func writeWorkspaceMigrationResult(output workspaceMigrateMultiTeamOutput) error {
 	if err := printOutput(output, formatWorkspaceMigrateMultiTeam); err != nil {
-		return err
+		return fmt.Errorf("write workspace migration result: %w. Check the output destination and run aw workspace status to inspect the workspace.", err)
 	}
 	return nil
 }
@@ -837,6 +842,15 @@ func formatWorkspaceDelete(v any) string {
 	}
 	if strings.TrimSpace(out.DeletedAt) != "" {
 		sb.WriteString(fmt.Sprintf("Deleted at: %s\n", out.DeletedAt))
+	}
+	if out.RetirementCode != "" {
+		fmt.Fprintf(&sb, "Retirement: %s\n", out.RetirementCode)
+	}
+	if out.ReceiptPath != "" {
+		fmt.Fprintf(&sb, "Receipt: %s\n", out.ReceiptPath)
+	}
+	if out.NextStep != "" {
+		fmt.Fprintf(&sb, "%s\n", out.NextStep)
 	}
 	return sb.String()
 }

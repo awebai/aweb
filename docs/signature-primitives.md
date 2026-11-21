@@ -62,7 +62,10 @@ wire objects, safe-integer objects and local digests that escape line separators
 Typed builders own field presence and null/omission choices. `canonical-json-v1`
 and the existing artifact vectors retain their bytes. The standalone Secrets
 runner retains its dependency boundary and runs the common Unicode and URL-codec
-vectors against its own installation.
+vectors against its own installation. Its `signature_wire` module checks
+canonical nonidentity prime-subgroup points for A and R and the scalar bound
+before calling its existing cryptography backend. It runs the shared point
+and signature vectors too.
 
 ## Shared Python producers
 
@@ -97,6 +100,8 @@ Go's private PEM writer and codec live in `awid/keys.go`; Ed25519 team,
 namespace, identity and session keys share them. X25519 uses the same private
 PEM writer. Writes are atomic, files are 0600 and newly created private parent
 directories are 0700. Exclusive creation preserves an existing occupant.
+Python consumers of the CLI Ed25519 PEM use
+`awid.signing.load_signing_key_pem`. Callers still own path and permission checks.
 
 On POSIX platforms, readers retain mounted-secret compatibility. Windows access
 continues to follow profile ACLs rather than POSIX mode diagnostics.

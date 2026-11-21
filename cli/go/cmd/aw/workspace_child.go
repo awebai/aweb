@@ -2,11 +2,12 @@ package main
 
 import (
 	"fmt"
-	"github.com/awebai/aw/awconfig"
-	"github.com/awebai/aw/awid"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/awebai/aw/awconfig"
+	"github.com/awebai/aw/awid"
 )
 
 // worktreeAgentCreation keeps the creator, new home and cleanup context
@@ -54,10 +55,14 @@ func addWorktreeViaLocalTeamKey(input worktreeAgentCreation) (connectOutput, err
 		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
 		return connectOutput{}, fmt.Errorf("create local team invite for %s: %w", teamID, err)
 	}
-	_, err = acceptTeamInviteWithDetails(worktreePath, created.Token, teamAcceptInviteOptions{
-		IdentityHome: filepath.Join(filepath.Clean(worktreePath), ".aw"),
-		Name:         alias,
-		Scope:        awid.IdentityModeLocal,
+	_, err = acceptTeamInviteWithDetails(teamInviteAcceptanceRequest{
+		WorkingDir: worktreePath,
+		Token:      created.Token,
+		Options: teamAcceptInviteOptions{
+			IdentityHome: filepath.Join(filepath.Clean(worktreePath), ".aw"),
+			Name:         alias,
+			Scope:        awid.IdentityModeLocal,
+		},
 	})
 	if err != nil {
 		if !retainUnfinishedProvisioningIdentity(err) {
@@ -65,6 +70,7 @@ func addWorktreeViaLocalTeamKey(input worktreeAgentCreation) (connectOutput, err
 		}
 		return connectOutput{}, fmt.Errorf("accept team invite in new worktree: %w", err)
 	}
+
 	retain := func(step string, cause error) (connectOutput, error) {
 		return connectOutput{}, retainWorktreeSetupFailure(worktreeSetupFailure{Creation: input, Cause: fmt.Errorf("%s: %w", step, cause), AwebURL: sourceServerURL})
 	}
@@ -164,7 +170,14 @@ func addWorktreeViaPrimaryInvite(input worktreeAgentCreation) (connectOutput, er
 		awebURL = strings.TrimSpace(sourceServerURL)
 	}
 	awebURL = awebURLOrDefault(awebURL)
-	if err := upsertAcceptedTeamMembershipState(teamMembershipStateUpdate{Location: teamMembershipLocation{WorkingDir: worktreePath}, Output: accepted.Output, Certificate: accepted.Certificate, RegistryURL: accepted.RegistryURL, AwebURL: awebURL, Activation: membershipMakeActive}); err != nil {
+	if err := upsertAcceptedTeamMembershipState(teamMembershipStateUpdate{
+		Location:    teamMembershipLocation{WorkingDir: worktreePath, IdentityHome: ""},
+		Output:      accepted.Output,
+		Certificate: accepted.Certificate,
+		RegistryURL: accepted.RegistryURL,
+		AwebURL:     awebURL,
+		Activation:  membershipMakeActive,
+	}); err != nil {
 		return connectOutput{}, retainProvisionedRecordFailure(provisionedRecordFailure{Home: awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(worktreePath)}, Certificate: *accepted.Certificate, RegistryURL: accepted.RegistryURL, AwebURL: awebURL, Cause: err})
 	}
 

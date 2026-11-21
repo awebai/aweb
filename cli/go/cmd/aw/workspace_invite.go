@@ -19,7 +19,6 @@ func createWorkspaceTeamInviteAt(workingDir, identityHome string) (workspaceTeam
 }
 
 func createWorkspaceTeamInviteForTeamAt(workingDir, identityHome, explicitTeamID, scope string) (workspaceTeamInvite, error) {
-	localMember := scope == awid.IdentityModeLocal
 	workspace, teamState, rootDir, err := loadCurrentWorkspaceAndTeamState(workingDir, identityHome)
 	if err != nil {
 		return workspaceTeamInvite{}, err
@@ -43,27 +42,24 @@ func createWorkspaceTeamInviteForTeamAt(workingDir, identityHome, explicitTeamID
 		awebURL = strings.TrimSpace(workspace.AwebURL)
 	}
 
-	hasTeamKey, err := awconfig.TeamKeyExists(domain, team)
+	home := awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(workingDir)}
+	if identityHome != "" {
+		home = awconfig.IdentityHome{Root: identityHome, Source: awconfig.IdentityHomeFlag}
+	}
+	plan, err := planTeamInvite(teamInviteSource{WorkingDir: workingDir, Home: home, Domain: domain, Team: team, AwebURL: awebURL})
 	if err != nil {
 		return workspaceTeamInvite{}, err
 	}
-	var token, expiry string
-	if hasTeamKey {
-		registryURL := registryURLForTeamInviteAt(rootDir, identityHome, domain, awebURL)
-		_, token, err = createTeamInviteTokenAt(domain, team, registryURL, awebURL, localMember, workingDir, identityHome)
-	} else if strings.TrimSpace(awebURL) != "" {
-		var created *awid.SpawnCreateInviteResponse
-		created, err = createHostedTeamInvite(workingDir, identityHome, teamID, localMember)
-		if err == nil {
-			token, expiry = created.Token, created.ExpiresAt
-		}
-	} else {
-		_, token, err = createTeamInviteTokenAt(domain, team, "", awebURL, localMember, workingDir, identityHome)
+	// Hosted minting uses the selected service's authority and needs no
+	// controller registry discovery (docs/byot-onboarding-contract.md:36-46).
+	if plan.Kind == inviteAuthorityController {
+		plan.Source.RegistryURL = registryURLForTeamInviteAt(rootDir, identityHome, domain, awebURL)
 	}
+	created, err := mintPlannedTeamInvite(teamInviteMintRequest{Plan: plan, Scope: teamInviteMemberScope(scope)})
 	if err != nil {
 		return workspaceTeamInvite{}, err
 	}
-	return workspaceTeamInvite{Token: token, AwebURL: awebURL, ExpiresAt: expiry}, nil
+	return workspaceTeamInvite{Token: created.Token, AwebURL: awebURL, ExpiresAt: created.ExpiresAt}, nil
 }
 
 type workspaceInviteAcceptance struct {

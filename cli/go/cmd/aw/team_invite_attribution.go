@@ -141,6 +141,9 @@ func prepareTeamInviteAuthority(ctx context.Context, input teamInviteAuthorityRe
 	if err != nil {
 		return nil, nil, fmt.Errorf("inviter cannot select its identity registry: %w", err)
 	}
+	if chain == nil && input.Child == inviteMembershipOnly {
+		return nil, nil, nil
+	}
 	if chain == nil {
 		resolution, err := identityKeyRoute(ctx, identity, opts.RegistryURL)
 		if err != nil {
@@ -196,7 +199,11 @@ func prepareTeamInviteAuthority(ctx context.Context, input teamInviteAuthorityRe
 	if err := issuer.invitations.PutInvitation(inv); err != nil {
 		return nil, nil, err
 	}
-	return &awconfig.TeamInviteIDChild{InvitationID: out.InvitationID, Parent: out.Parent["id"].(string), Domain: out.Domain, IssuerHome: home, RegistryURL: issuer.registryURL}, verdict.HumanID, nil
+	parentID, validParent := out.Parent["id"].(string)
+	if !validParent || parentID == "" {
+		return nil, nil, errors.New("child invitation has no issuer ID; retain its record and restore the issuer's original chain before retrying")
+	}
+	return &awconfig.TeamInviteIDChild{InvitationID: out.InvitationID, Parent: parentID, Domain: out.Domain, IssuerHome: home, RegistryURL: issuer.registryURL}, verdict.HumanID, nil
 }
 
 func checkSelectedTeamInviteIssuer(ctx context.Context, issuer *selectedChildIssuer) error {
@@ -320,7 +327,11 @@ func completeHostedProvisioningIDChild(ctx context.Context, anchorDir, issuerHom
 // The caller owns both homes and explicitly provisions a new agent. Ordinary
 // invite accept never guesses where another participant's signer might live.
 func acceptProvisionedTeamInvite(anchorDir, issuerHome, childDir, token string, opts teamAcceptInviteOptions) (*acceptedTeamInvite, error) {
-	accepted, err := acceptTeamInviteWithDetails(childDir, token, opts)
+	accepted, err := acceptTeamInviteWithDetails(teamInviteAcceptanceRequest{
+		WorkingDir: childDir,
+		Token:      token,
+		Options:    opts,
+	})
 	var pending *hostedInviteSignaturePendingError
 	if !errors.As(err, &pending) {
 		return accepted, err
@@ -340,7 +351,11 @@ func acceptProvisionedTeamInvite(anchorDir, issuerHome, childDir, token string, 
 	}
 	// Resume with the original child key, request UUID and successful preview.
 	// No Cloud acceptance was sent while the native signature was pending.
-	return acceptTeamInviteWithDetails(childDir, token, opts)
+	return acceptTeamInviteWithDetails(teamInviteAcceptanceRequest{
+		WorkingDir: childDir,
+		Token:      token,
+		Options:    opts,
+	})
 }
 
 // Reserve a fresh recipient before minting its key. A prepared identity joins

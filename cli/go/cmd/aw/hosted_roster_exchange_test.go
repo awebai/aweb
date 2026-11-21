@@ -46,6 +46,7 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 		"further-team retry",
 		"further-team api-base alias",
 		"further-team cleanup warning",
+		"further-team consumption failure",
 		"further-team own chain",
 		"further-team parent source",
 		"further-team other human fresh",
@@ -237,7 +238,7 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 							http.Error(w, "missing own chain", 422)
 							return
 						}
-						chain = req.IDChain
+						chain = *req.IDChain
 					} else {
 						chain = req.IDTree.IDChain
 						requestID = req.IDTree.RequestID
@@ -258,8 +259,8 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 					if err != nil || pending == nil || pending.DIDKey != req.DID || (!independent && pending.Tree.RequestID != requestID) {
 						t.Error("original child request/key not retained through exchange")
 					}
-					if scenario == "further-team cleanup warning" {
-						// The exchange has finished; make actual deletion fail even
+					if scenario == "further-team consumption failure" {
+						// The exchange has finished; make consumption recording fail even
 						// when tests run as root, without substituting filesystem calls.
 						dir, err := awconfig.DefaultTeamInvitesDir()
 						if err != nil {
@@ -557,6 +558,15 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 					}
 					firstErr = accept()
 				}
+				if scenario == "further-team consumption failure" {
+					if firstErr == nil || !strings.Contains(firstErr.Error(), "membership was issued, but recording consumed invite") {
+						t.Fatalf("consumption failure was hidden: %v", firstErr)
+					}
+					if _, err := awconfig.LoadTeamCertificateForTeamFromIdentityHome(recipientHome, team); err != nil {
+						t.Fatalf("issued certificate was lost: %v", err)
+					}
+					return
+				}
 				if firstErr != nil {
 					t.Fatalf("further-team accept: %v", firstErr)
 				}
@@ -579,16 +589,8 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 				if err != nil || verdict.Outcome != "nearest_human" {
 					t.Fatalf("selected home ancestry=%+v err=%v", verdict, err)
 				}
-				if scenario == "further-team cleanup warning" {
-					warning, err := os.ReadFile(warningLog.Name())
-					if err != nil || !strings.Contains(string(warning), "warning: failed to delete consumed invite "+recordID+":") {
-						t.Fatalf("missing cleanup warning: %q err=%v", warning, err)
-					}
-					if _, err := os.Stat(filepath.Join(recipientHome, hostedInviteRecoveryFile)); !os.IsNotExist(err) {
-						t.Fatalf("successful accept retained recovery: %v", err)
-					}
-				} else if _, err := awconfig.LoadTeamInvite(recordID); !os.IsNotExist(err) {
-					t.Fatalf("success retained link: %v", err)
+				if scenario != "further-team cross-machine recipe" {
+					requireConsumedInviteRecord(t, recordID)
 				}
 				return
 			}

@@ -2,13 +2,11 @@ package awconfig
 
 import "errors"
 
-// RecoveryState distinguishes durable preparation, a possibly applied request,
-// and a retained confirmed result. Operation owners define their exact payloads.
+// RecoveryState distinguishes a possibly applied request and a retained
+// confirmed result. Operation owners define their exact payloads.
 type RecoveryState string
 
 const (
-	// RecoveryPrepared has retained the original selection before submission.
-	RecoveryPrepared RecoveryState = "prepared"
 	// RecoveryAttempted may have reached the remote effect and needs exact replay.
 	RecoveryAttempted RecoveryState = "attempted"
 	// RecoveryConfirmed retains the result needed to complete local installation.
@@ -37,7 +35,7 @@ func (progress RecoveryProgress) Validate() error {
 		return ErrRecoveryVersion
 	}
 	switch progress.State {
-	case RecoveryPrepared, RecoveryAttempted, RecoveryConfirmed:
+	case RecoveryAttempted, RecoveryConfirmed:
 		return nil
 	default:
 		return ErrRecoveryState

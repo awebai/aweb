@@ -122,7 +122,12 @@ func runRecoverableJoinFrom(cmd *cobra.Command, wd, source, sourceHome, team str
 			return releaseErr
 		}
 		if scope == awid.IdentityModeGlobal || !released {
-			if err := ensureInitInviteTarget(wd); err != nil {
+			if home.External() {
+				err = ensureIdentityCreationTargetClean(home)
+			} else {
+				err = ensureInitInviteTarget(wd)
+			}
+			if err != nil {
 				return err
 			}
 		}
@@ -132,7 +137,7 @@ func runRecoverableJoinFrom(cmd *cobra.Command, wd, source, sourceHome, team str
 		}
 		invite, err := createWorkspaceTeamInviteForTeamAt(source, sourceHome, team, scope)
 		if err != nil {
-			return fmt.Errorf("%w; alternatively use --admission-team-id %s with host authorization", err, team)
+			return withErrorCode(codeInviteNotCreated, fmt.Errorf("%w; alternatively use --admission-team-id %s with host authorization", err, team))
 		}
 		prior = &initInviteRecovery{MintedKey: errors.Is(keyErr, os.ErrNotExist), Source: source, SourceHome: sourceHome, TeamID: team, Alias: alias, Scope: scope, Token: invite.Token, Origin: invite.AwebURL, ExpiresAt: invite.ExpiresAt}
 		if err := prior.save(path); err != nil {
@@ -168,7 +173,7 @@ func runRecoverableJoinFrom(cmd *cobra.Command, wd, source, sourceHome, team str
 				return err
 			}
 		}
-		if err := connectInitAcceptedInvite(cmd, wd, prior.Origin); err != nil {
+		if err := connectInitAcceptedInvite(cmd, wd, prior.Origin, home); err != nil {
 			return err
 		}
 		return removeInitInviteRecovery(path)
@@ -188,7 +193,7 @@ func runRecoverableJoinFrom(cmd *cobra.Command, wd, source, sourceHome, team str
 			if uncertain {
 				return uncertainHostedInviteError(home.Root, team, errors.New("invite expired"))
 			}
-			if err := discardHostedInviteAttempt(recoveryPath); err != nil {
+			if err := discardHostedInviteAttempt(recoveryPath, acceptanceMintedKey{Home: home}); err != nil {
 				return err
 			}
 			if err := releaseInitInviteRecovery(path, wd, home.Root); err != nil {
@@ -197,7 +202,7 @@ func runRecoverableJoinFrom(cmd *cobra.Command, wd, source, sourceHome, team str
 			return errors.New("invite expired; pending selection released, retry init for a new invite")
 		}
 	}
-	err = acceptInitInviteAndConnectWithSource(cmd, wd, prior.Token, prior.Origin, "", prior.ParentFromSource)
+	err = acceptInitInviteAndConnect(cmd, initInviteConnection{WorkingDir: wd, IdentityHome: externalIdentityHomeRoot(home), Token: prior.Token, PreferredAwebURL: prior.Origin, ParentFromSource: prior.ParentFromSource})
 	// Save the generated child binding even when preview or acceptance failed.
 	if key, keyErr := awid.LoadSigningKey(filepath.Join(home.Root, "signing.key")); keyErr == nil {
 		prior.DIDKey = awid.ComputeDIDKey(key.Public().(ed25519.PublicKey))

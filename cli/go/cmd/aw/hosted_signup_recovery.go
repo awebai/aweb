@@ -28,6 +28,8 @@ type hostedSignupContext struct {
 	RegistryURL   string `json:"registry_url"`
 }
 
+const hostedSignupPrepared awconfig.RecoveryState = "prepared"
+
 type hostedSignupRecovery struct {
 	awconfig.RecoveryProgress
 	Context     hostedSignupContext `json:"context"`
@@ -65,7 +67,7 @@ func loadHostedSignupRecovery(workingDir string) (*hostedSignupRecovery, error) 
 	if err := json.Unmarshal(raw, &state); err != nil {
 		return nil, errors.New("signup recovery is malformed; retain signup-recovery.json for reconciliation")
 	}
-	if err := state.Validate(); err != nil {
+	if err := state.validateProgress(); err != nil {
 		return nil, err
 	}
 	if state.Context.WorkingDir != workingDir || state.Context.OnboardingURL == "" || state.Context.AwebURL == "" {
@@ -78,6 +80,13 @@ func loadHostedSignupRecovery(workingDir string) (*hostedSignupRecovery, error) 
 		return nil, errors.New("signup recovery result is inconsistent; retain signup-recovery.json for reconciliation")
 	}
 	return &state, nil
+}
+
+func (state *hostedSignupRecovery) validateProgress() error {
+	if state.Version == 1 && state.State == hostedSignupPrepared {
+		return nil
+	}
+	return state.RecoveryProgress.Validate()
 }
 
 func (state *hostedSignupRecovery) save() error {
@@ -151,7 +160,7 @@ func prepareHostedSignup(input hostedSignupCreation) (*hostedSignupRecovery, err
 	if err != nil {
 		return nil, err
 	}
-	state = &hostedSignupRecovery{RecoveryProgress: awconfig.RecoveryProgress{Version: 1, State: awconfig.RecoveryPrepared}, Context: input.Context, SigningSeed: hex.EncodeToString(key.Seed()), RequestJSON: body}
+	state = &hostedSignupRecovery{RecoveryProgress: awconfig.RecoveryProgress{Version: 1, State: hostedSignupPrepared}, Context: input.Context, SigningSeed: hex.EncodeToString(key.Seed()), RequestJSON: body}
 	if err := state.save(); err != nil {
 		return nil, err
 	}

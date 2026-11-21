@@ -469,10 +469,17 @@ func provisionBYODIdentity(req guidedOnboardingRequest, name, domain string) (*g
 		memberAddress = prepared.Plan.Address
 	}
 	team, err := bootstrapLocalTeamMember(ctx, localTeamMemberBootstrap{
-		Registry: registry, RegistryURL: prepared.Plan.RegistryURL, Domain: prepared.Plan.Domain,
-		TeamName: guidedOnboardingDefaultTeamName, ControllerKey: prepared.ControllerKey,
-		MemberKey: prepared.IdentityKey, MemberDIDAW: memberDIDAW, MemberAddress: memberAddress,
-		Alias: alias, Scope: identityScope,
+		Registry:      registry,
+		RegistryURL:   prepared.Plan.RegistryURL,
+		Domain:        prepared.Plan.Domain,
+		TeamName:      guidedOnboardingDefaultTeamName,
+		DisplayName:   "",
+		ControllerKey: prepared.ControllerKey,
+		MemberKey:     prepared.IdentityKey,
+		MemberDIDAW:   memberDIDAW,
+		MemberAddress: memberAddress,
+		Alias:         alias,
+		Scope:         identityScope,
 	})
 	if err != nil {
 		return nil, err

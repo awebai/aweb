@@ -612,7 +612,7 @@ func TestInitGlobalJoinRequiresExistingGlobalIdentity(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	workingDir := t.TempDir()
 
-	err := acceptInitInviteAndConnect(authTestCmd(&bytes.Buffer{}), workingDir, "aw_inv_no_identity", "https://app.aweb.ai")
+	err := acceptInitInviteAndConnect(authTestCmd(&bytes.Buffer{}), initInviteConnection{WorkingDir: workingDir, Token: "aw_inv_no_identity", PreferredAwebURL: "https://app.aweb.ai"})
 	if err == nil || !strings.Contains(err.Error(), "aw id create") {
 		t.Fatalf("expected existing global identity guidance, got %v", err)
 	}

@@ -337,12 +337,19 @@ func recordTeamCertificate(workingDir, identityHome string, cert *awid.TeamCerti
 				return err
 			}
 		}
-		if err := upsertAcceptedTeamMembershipState(teamMembershipStateUpdate{Location: teamMembershipLocation{WorkingDir: workingDir, IdentityHome: identityHome}, Output: &teamAcceptInviteOutput{
-			Status:   status,
-			TeamID:   cert.Team,
-			Alias:    strings.TrimSpace(cert.Alias),
-			CertPath: awconfig.TeamCertificateRelativePath(cert.Team),
-		}, Certificate: cert, RegistryURL: registryURL, AwebURL: "", Activation: membershipPreserveActive}); err != nil {
+		if err := upsertAcceptedTeamMembershipState(teamMembershipStateUpdate{
+			Location: teamMembershipLocation{WorkingDir: workingDir, IdentityHome: identityHome},
+			Output: &teamAcceptInviteOutput{
+				Status:   status,
+				TeamID:   cert.Team,
+				Alias:    strings.TrimSpace(cert.Alias),
+				CertPath: awconfig.TeamCertificateRelativePath(cert.Team),
+			},
+			Certificate: cert,
+			RegistryURL: registryURL,
+			AwebURL:     "",
+			Activation:  membershipPreserveActive,
+		}); err != nil {
 			return err
 		}
 	}

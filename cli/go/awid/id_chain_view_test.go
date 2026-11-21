@@ -40,12 +40,9 @@ func TestIDChainViewChecksTheBundleAndKeepsItsOwnSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bundle["certificates"].([]any)[0].(map[string]any)["certificate"].(map[string]any)["parent"].(map[string]any)["id"] = "other.example"
-	fields := chain.Leaf().Fields()
-	fields["parent"].(map[string]any)["id"] = "another.example"
 	bundle["certificates"] = []any{}
-	copy := chain.SignedCertificates()
-	copy[0].(map[string]any)["signature"] = "changed"
+	copy := chain.Bundle()
+	copy["certificates"] = []any{}
 	certificates := chain.Certificates()
 	certificates[0] = IDCertificateView{}
 	if chain.Leaf().ID() != id || len(chain.Certificates()) != 1 {

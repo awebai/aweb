@@ -159,11 +159,18 @@ func initCertificateConnectWithOptions(workingDir, awebURL string, opts certific
 		// over any registry/aweb URLs an earlier join stored. The worktree binding
 		// (role, workspace id) is written separately below because it is unique to
 		// the connect step.
-		if err := upsertAcceptedTeamMembershipState(teamMembershipStateUpdate{Location: teamMembershipLocation{WorkingDir: workingDir, IdentityHome: identityHome}, Output: &teamAcceptInviteOutput{
-			TeamID:   resp.TeamID,
-			Alias:    resp.Alias,
-			CertPath: filepath.ToSlash(certPath),
-		}, Certificate: cert, RegistryURL: "", AwebURL: "", Activation: membershipMakeActive}); err != nil {
+		if err := upsertAcceptedTeamMembershipState(teamMembershipStateUpdate{
+			Location: teamMembershipLocation{WorkingDir: workingDir, IdentityHome: identityHome},
+			Output: &teamAcceptInviteOutput{
+				TeamID:   resp.TeamID,
+				Alias:    resp.Alias,
+				CertPath: filepath.ToSlash(certPath),
+			},
+			Certificate: cert,
+			RegistryURL: "",
+			AwebURL:     "",
+			Activation:  membershipMakeActive,
+		}); err != nil {
 			return err
 		}
 		workspaceState.AwebURL = awebURL

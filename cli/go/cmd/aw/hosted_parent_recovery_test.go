@@ -34,7 +34,7 @@ func TestHostedExplicitParentSurvivesPreviewOutage(t *testing.T) {
 		t.Fatal(err)
 	}
 	for attempt := 0; attempt < 2; attempt++ {
-		if _, err := acceptHostedTeamInviteWithDetails(wd, "aw_inv_explicit_retry", opts); err == nil {
+		if _, err := acceptHostedTeamInviteWithDetails(teamInviteAcceptanceRequest{WorkingDir: wd, Token: "aw_inv_explicit_retry", Options: opts}); err == nil {
 			t.Fatal("unavailable preview or unavailable explicit parent did not refuse")
 		}
 		state, err := loadHostedInviteCreation(filepath.Join(wd, ".aw", hostedInviteRecoveryFile))

@@ -27,6 +27,7 @@ const (
 	doctorCheckCertificateTeamDIDKey    = "local.team_certificate.team_did_key_valid"
 	doctorCheckCertificateSignature     = "local.team_certificate.signature_valid"
 	doctorCheckSigningKeyExists         = "local.signing_key.exists"
+	doctorCheckSigningKeyPermissions    = "local.signing_key.permissions"
 	doctorCheckSigningKeyParse          = "local.signing_key.parse"
 	doctorCheckSigningKeyMatchesCert    = "local.signing_key.matches_certificate"
 	doctorCheckIdentityLocalYAML        = "local.identity_yaml.local_not_required"
@@ -65,6 +66,8 @@ type doctorLocalState struct {
 }
 
 func (r *doctorRunner) runLocalChecks() {
+	r.runPrivateRootPermissionsChecks()
+	r.runAdditionalPrivateKeyPermissionsChecks()
 	state := doctorLocalState{
 		workingDir:     r.workingDir,
 		identityHome:   r.identityHome,
@@ -504,6 +507,15 @@ func (r *doctorRunner) runSigningKeyFileChecks(state *doctorLocalState) {
 	}
 	r.add(localPathCheck(doctorCheckSigningKeyExists, doctorStatusOK, state.signingKeyPath, "Signing key file is present.", "", map[string]any{"state": "present"}))
 
+	if command, err := awid.PrivateKeyPermissionFix(state.signingKeyPath); err == nil {
+		if command != "" {
+			check := localPathCheck(doctorCheckSigningKeyPermissions, doctorStatusWarn, state.signingKeyPath, "Signing key is readable by group or others.", "Run "+command+".", nil)
+			check.Fix = safeDoctorFixInfo(doctorCheckSigningKeyPermissions)
+			r.add(check)
+		} else {
+			r.add(localPathCheck(doctorCheckSigningKeyPermissions, doctorStatusOK, state.signingKeyPath, "Signing key permissions protect it from group and other readers.", "", nil))
+		}
+	}
 	signingKey, err := awid.LoadSigningKey(state.signingKeyPath)
 	if err != nil {
 		check := localPathCheck(

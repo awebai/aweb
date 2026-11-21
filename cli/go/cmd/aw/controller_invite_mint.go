@@ -3,16 +3,17 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/awebai/aw/awconfig"
-	"github.com/awebai/aw/awid"
 	"strings"
 	"time"
+
+	"github.com/awebai/aw/awconfig"
+	"github.com/awebai/aw/awid"
 )
 
 // createControllerTeamInvite binds the local bearer to the issuer's saved
 // lifetime and routing (docs/identity.md). The token contains no expiry authority.
 func createControllerTeamInvite(request teamInviteMintRequest) (mintedTeamInvite, error) {
-	if err := request.Scope.validate(); err != nil {
+	if err := validateInviteMemberScope(request.Scope); err != nil {
 		return mintedTeamInvite{}, err
 	}
 	source := request.Plan.Source
@@ -31,7 +32,7 @@ func createControllerTeamInvite(request teamInviteMintRequest) (mintedTeamInvite
 		return mintedTeamInvite{}, err
 	}
 	if !exists {
-		return mintedTeamInvite{}, usageError("no team key for %s/%s; run `aw id team create` first", domain, team)
+		return mintedTeamInvite{}, withErrorCode(codeControllerKeyMissing, usageError("no team key for %s/%s; run `aw id team create` first", domain, team))
 	}
 
 	requested := request.ForHuman
@@ -40,7 +41,7 @@ func createControllerTeamInvite(request teamInviteMintRequest) (mintedTeamInvite
 			return mintedTeamInvite{}, err
 		}
 	}
-	lifetime, err := awconfig.ResolveTeamInviteLifetime(awconfig.TeamInviteLifetimeRequest{Now: time.Now(), Duration: request.ExpiresAfter})
+	lifetime, err := resolveControllerInviteLifetime(awconfig.TeamInviteLifetimeRequest{Now: time.Now(), Duration: request.ExpiresAfter})
 	if err != nil {
 		return mintedTeamInvite{}, err
 	}
@@ -94,24 +95,11 @@ func createControllerTeamInvite(request teamInviteMintRequest) (mintedTeamInvite
 	return mintedTeamInvite{InviteID: inviteID, Token: token, ExpiresAt: invite.ExpiresAt, ForHuman: required}, nil
 }
 
-func createTeamInviteTokenAt(domain, team, registryURL, awebURL string, local bool, workingDir, identityHome string, forHuman ...string) (string, string, error) {
-	requested, err := requestedInviteHuman(forHuman)
+// The awconfig owner decides duration; this boundary supplies its CLI remedy.
+func resolveControllerInviteLifetime(input awconfig.TeamInviteLifetimeRequest) (awconfig.TeamInviteLifetime, error) {
+	lifetime, err := awconfig.ResolveTeamInviteLifetime(input)
 	if err != nil {
-		return "", "", err
+		return lifetime, fmt.Errorf("%w; use --expires between 0 and %s (0 selects %s), then retry", err, awconfig.MaximumTeamInviteLifetime, awconfig.DefaultTeamInviteLifetime)
 	}
-	home, err := identityHomeForTarget(workingDir, identityHome)
-	if err != nil {
-		return "", "", err
-	}
-	scope := inviteMemberGlobal
-	if local {
-		scope = inviteMemberLocal
-	}
-	created, err := createControllerTeamInvite(teamInviteMintRequest{Plan: teamInvitePlan{Kind: inviteAuthorityController, Source: teamInviteSource{
-		WorkingDir: workingDir, Home: home, Domain: domain, Team: team, RegistryURL: registryURL, AwebURL: awebURL,
-	}}, Scope: scope, ForHuman: requested})
-	if err != nil {
-		return "", "", err
-	}
-	return created.InviteID, created.Token, nil
+	return lifetime, nil
 }

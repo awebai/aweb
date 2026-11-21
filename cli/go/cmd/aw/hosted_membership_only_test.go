@@ -94,7 +94,7 @@ func TestHostedExistingGlobalPinnedInviteDoesNotCreateParentage(t *testing.T) {
 					}
 				}
 				join := func() error {
-					_, err := acceptHostedTeamInviteWithDetails(wd, "aw_inv_existing", opts)
+					_, err := acceptHostedTeamInviteWithDetails(teamInviteAcceptanceRequest{WorkingDir: wd, Token: "aw_inv_existing", Options: opts})
 					return err
 				}
 				err = join()
