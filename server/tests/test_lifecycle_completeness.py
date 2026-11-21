@@ -371,36 +371,39 @@ async def test_concurrent_terminal_disposition_cannot_be_restored_by_prepared_re
 
 @pytest.mark.asyncio
 async def test_omitted_team_retry_uses_retained_workspace_team_binding(
-    aweb_cloud_db, lifecycle_redis
+    privacy_app,
 ):
     """A released embedding retry stays scoped after its workspace is deleted."""
-    db = aweb_cloud_db.aweb_db
-    team, agent, workspace = await _seed_workspace_with_claim(db)
-    await db.execute(
-        "UPDATE {{tables.workspaces}} SET deleted_at=NOW() WHERE workspace_id=$1", workspace
+    env = privacy_app
+    member = env.actors["alice"]
+    actor = LifecycleActor(actor_id="owner", actor_type="system", authority="embedding")
+    registry = env.app.state.awid_registry_client
+    request = LifecycleCascadeRequest(
+        operation="cleanup_agent_coordination_state",
+        actor=actor,
+        team_id=TEAM,
+        target_workspace_ids=(str(member.workspace),),
     )
+    removed = await apply_lifecycle_cascade(env.db, env.redis, request, registry_client=registry)
+    assert removed.errors == ()
+    assert removed.workspace_changes
     result = await apply_lifecycle_cascade(
-        db,
-        lifecycle_redis,
-        LifecycleCascadeRequest(
-            operation="cleanup_agent_coordination_state",
-            actor=LifecycleActor(actor_id="owner", actor_type="system", authority="embedding"),
-            target_workspace_ids=(str(workspace),),
-        ),
-        registry_client=None,
+        env.db, env.redis, replace(request, team_id=None), registry_client=registry
     )
     assert result.errors == ()
     assert result.workspace_changes == ()
     assert result.identity_deleted is False
     assert (
-        await db.fetch_value("SELECT deleted_at FROM {{tables.agents}} WHERE agent_id=$1", agent)
+        await env.db.fetch_value(
+            "SELECT deleted_at FROM {{tables.agents}} WHERE agent_id=$1", member.id
+        )
         is None
     )
     assert (
-        await db.fetch_value(
-            "SELECT team_id FROM {{tables.workspaces}} WHERE workspace_id=$1", workspace
+        await env.db.fetch_value(
+            "SELECT team_id FROM {{tables.workspaces}} WHERE workspace_id=$1", member.workspace
         )
-        == team
+        == TEAM
     )
 
 
