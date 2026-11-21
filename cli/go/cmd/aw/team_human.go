@@ -2604,10 +2604,14 @@ func runTeamHumanRemoveAgent(cmd *cobra.Command, args []string) error {
 		if regErr != nil {
 			return regErr
 		}
+		signers, signersErr := teamReadSigners(workingDir, domain, name)
+		if signersErr != nil {
+			return signersErr
+		}
 		verified, err = verifyRetirementTarget(
 			ctx, client, registry, resolveTeamRemoveRegistryURL(registry),
 			domain, name, teamRemoveMember, alias,
-			teamReadSigners(workingDir, domain, name),
+			signers,
 		)
 		if err != nil {
 			return err

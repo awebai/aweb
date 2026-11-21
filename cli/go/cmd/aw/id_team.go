@@ -1563,7 +1563,10 @@ func runTeamMembers(cmd *cobra.Command, args []string) error {
 	}
 	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
-	signers := teamReadSigners(workingDir, domain, team)
+	signers, err := teamReadSigners(workingDir, domain, team)
+	if err != nil {
+		return err
+	}
 	var certs []awid.RegistryCertificate
 	if _, err := readSignedTeamState(signers, func(key ed25519.PrivateKey) error {
 		var listErr error

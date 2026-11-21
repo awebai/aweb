@@ -215,6 +215,16 @@ func executeTeamSetServer(ctx context.Context, opts teamServerOptions) (teamServ
 	}, nil
 }
 
+// teamServerReadKey is the key that signs the read of a team's current key:
+// a private team's is readable with the local team key, a public team's
+// anonymously, so with no local team key the read goes out unsigned.
+func teamServerReadKey(domain, teamName string) (ed25519.PrivateKey, error) {
+	if teamKey, err := awconfig.LoadTeamKey(domain, teamName); err == nil {
+		return teamKey, nil
+	}
+	return nil, nil
+}
+
 func executeTeamShowServer(ctx context.Context, opts teamServerOptions) (teamServerOutput, error) {
 	registry, registryURL, domain, teamName, err := teamServerTarget(ctx, opts)
 	if err != nil {
@@ -228,11 +238,9 @@ func executeTeamShowServer(ctx context.Context, opts teamServerOptions) (teamSer
 		}
 		return teamServerOutput{}, fmt.Errorf("read team server for %s: %w", teamID, err)
 	}
-	// A private team's current key is readable with the local team key; a
-	// public team's anonymously.
-	var readKey ed25519.PrivateKey
-	if teamKey, err := awconfig.LoadTeamKey(domain, teamName); err == nil {
-		readKey = teamKey
+	readKey, err := teamServerReadKey(domain, teamName)
+	if err != nil {
+		return teamServerOutput{}, err
 	}
 	team, err := registry.GetTeam(ctx, registryURL, domain, teamName, readKey)
 	if err != nil {

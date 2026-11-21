@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/awebai/aw/awid"
@@ -40,11 +41,18 @@ func TestUnconfirmedTeamKeyIsKeptAsideAndRestored(t *testing.T) {
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("set-aside key mode=%v, want 0600", info.Mode().Perm())
 	}
-	if exists, err := TeamKeyExists("acme.com", "ops"); err != nil || exists {
-		t.Fatalf("team key exists=%v err=%v, want the key moved aside", exists, err)
+	// Every reader of the team key sees the set-aside key and refuses, naming
+	// the registration that settles it.
+	const settle = "aw id team create --namespace acme.com --name ops"
+	if exists, err := TeamKeyExists("acme.com", "ops"); !errors.Is(err, ErrTeamKeyUnconfirmed) || exists {
+		t.Fatalf("TeamKeyExists exists=%v err=%v, want ErrTeamKeyUnconfirmed", exists, err)
+	} else if !strings.Contains(err.Error(), settle) {
+		t.Fatalf("TeamKeyExists refusal %q does not name %q", err, settle)
 	}
 	if _, err := LoadTeamKey("acme.com", "ops"); !errors.Is(err, ErrTeamKeyUnconfirmed) {
 		t.Fatalf("LoadTeamKey err=%v, want ErrTeamKeyUnconfirmed", err)
+	} else if !strings.Contains(err.Error(), settle) {
+		t.Fatalf("LoadTeamKey refusal %q does not name %q", err, settle)
 	}
 
 	if err := RestoreUnconfirmedTeamKey("acme.com", "ops"); err != nil {
