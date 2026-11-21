@@ -211,13 +211,18 @@ func hostedInviteSubmissionBefore(creation *hostedInviteCreation) hostedInviteSu
 	return hostedSubmissionNotAttempted
 }
 
-// Only a known pre-submission refusal may release the selection (docs/identity.md:235-245).
+// Release only a definite refusal without an earlier unresolved submission.
+// Retained 4xx errors explain how to reconcile the same identity and invite.
 func finishHostedInviteRefusal(request hostedInviteAcceptanceRequest, history hostedInviteSubmissionHistory, cause error) error {
-	if request.Creation.ResponseJSON != "" || history == hostedSubmissionAttempted {
-		return cause
+	localMismatch := awid.IDCertificateErrorCode(cause) == "human_mismatch"
+	if request.Creation.ResponseJSON == "" && history != hostedSubmissionAttempted &&
+		(history == hostedSubmissionNotAttempted || localMismatch) {
+		cause = releaseRefusedHostedInvite(request.RecoveryPath, acceptanceMintedKey{Home: request.Home}, cause)
 	}
-	if history == hostedSubmissionNotAttempted || awid.IDCertificateErrorCode(cause) == "human_mismatch" {
-		return releaseRefusedHostedInvite(request.RecoveryPath, acceptanceMintedKey{Home: request.Home}, cause)
+	if status, ok := awid.HTTPStatusCode(cause); ok && status >= 400 && status < 500 {
+		if _, err := os.Stat(request.RecoveryPath); err == nil {
+			return uncertainHostedInviteError(request.Home.Root, request.Creation.TeamID, cause)
+		}
 	}
 	return cause
 }

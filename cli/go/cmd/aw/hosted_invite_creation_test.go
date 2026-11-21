@@ -273,11 +273,21 @@ func TestHostedInviteLocalChainVerifiesAndResumesWithoutSecondAccept(t *testing.
 			defer server.Close()
 			origin = server.URL
 			opts := teamAcceptInviteOptions{Name: "child", Scope: "local", AwebURL: origin, Registry: registry, TXTResolver: resolver}
-			accepted, err := acceptHostedTeamInviteWithDetails(teamInviteAcceptanceRequest{
-				WorkingDir: dir,
-				Token:      "aw_inv_typed_local",
-				Options:    opts,
-			})
+			if scenario == "released fresh key" {
+				releasedKey = refuseFirstHostedInviteForFreshKey(t, dir, opts)
+			}
+			invitation := teamInviteAcceptanceRequest{WorkingDir: dir, Token: "aw_inv_typed_local", Options: opts}
+			accepted, err := acceptHostedTeamInviteWithDetails(invitation)
+			if scenario == "preview retry" {
+				if err == nil || accepts != 0 {
+					t.Fatal("preview outage submitted membership")
+				}
+				pending, loadErr := loadHostedInviteCreation(filepath.Join(dir, ".aw", hostedInviteRecoveryFile))
+				if loadErr != nil || pending == nil || pending.MintedKey == nil || !*pending.MintedKey {
+					t.Fatalf("preview retry lost fresh-key provenance: %+v %v", pending, loadErr)
+				}
+				accepted, err = acceptHostedTeamInviteWithDetails(invitation)
+			}
 			if scenario == "native issued later" {
 				if err == nil || accepts != 0 {
 					t.Fatal("native issuer absence did not pend before membership")
@@ -538,7 +548,7 @@ func TestHostedInviteGlobalRegistrationRetainsPerChildInvitation(t *testing.T) {
 			}))
 			defer server.Close()
 			origin = server.URL
-			opts := teamAcceptInviteOptions{Name: "child", Scope: "global", NoAddress: true, AwebURL: origin, Registry: registry, TXTResolver: resolver}
+			opts := teamAcceptInviteOptions{ParentFromSource: true, Name: "child", Scope: "global", NoAddress: true, AwebURL: origin, Registry: registry, TXTResolver: resolver}
 			firstAccepted, err := acceptHostedTeamInviteWithDetails(teamInviteAcceptanceRequest{
 				WorkingDir: dir,
 				Token:      "aw_inv_typed_global",

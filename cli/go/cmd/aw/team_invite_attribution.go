@@ -126,9 +126,6 @@ func prepareTeamInviteAuthority(ctx context.Context, input teamInviteAuthorityRe
 	if err != nil {
 		return nil, nil, fmt.Errorf("inviter cannot select its identity registry: %w", err)
 	}
-	if chain == nil && input.Child == inviteMembershipOnly {
-		return nil, nil, nil
-	}
 	if chain == nil {
 		resolution, err := identityKeyRoute(ctx, identity, opts.RegistryURL)
 		if err != nil {
