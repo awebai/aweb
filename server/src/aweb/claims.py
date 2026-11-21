@@ -90,18 +90,6 @@ def claim_focus_task_ref(task_ref: str, apex_task_ref: Optional[str]) -> str:
     return apex_task_ref or task_ref
 
 
-async def resolve_task_claim_apex(
-    db_infra: DatabaseInfrastructure,
-    team_id: str,
-    task_ref: str,
-    max_depth: int = 20,
-) -> Optional[str]:
-    """Walk native tasks parent_task_id chain to find the sticky focus apex."""
-    return await resolve_task_claim_apex_on(
-        db_infra.get_manager("aweb"), team_id, task_ref, max_depth=max_depth
-    )
-
-
 async def resolve_task_claim_apex_on(
     aweb_db,
     team_id: str,
