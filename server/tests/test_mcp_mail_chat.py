@@ -1755,6 +1755,12 @@ async def test_mcp_chat_send_uses_hosted_encryptor_by_default_for_trusted_proxy(
         ),
     )
 
+    # Hosted custody prepares the sender's key before the tool stamps the
+    # message, so its assertion never postdates the message it encrypts.
+    alice_identity = _custodial_identity(alice_sk, alice_did, "did:aw:alice", "acme.com/alice")
+    bob_identity = _custodial_identity(
+        named_signing_key("z6MkBob"), named_did_key("z6MkBob"), "did:aw:bob", "acme.com/bob",
+    )
     seen: list[dict] = []
 
     async def _encryptor(**kwargs) -> dict:
@@ -1763,11 +1769,7 @@ async def test_mcp_chat_send_uses_hosted_encryptor_by_default_for_trusted_proxy(
             "content_mode": "encrypted_v2",
             "message_version": 2,
             "encrypted_envelope": _hosted_chat_envelope(
-                kwargs["payload"],
-                sender=_custodial_identity(alice_sk, alice_did, "did:aw:alice", "acme.com/alice"),
-                recipients=[_custodial_identity(
-                    named_signing_key("z6MkBob"), named_did_key("z6MkBob"), "did:aw:bob", "acme.com/bob",
-                )],
+                kwargs["payload"], sender=alice_identity, recipients=[bob_identity],
             ),
         }
 
@@ -1862,6 +1864,12 @@ async def test_mcp_chat_continuation_encryptor_gets_active_recipient_identities(
         ),
     )
 
+    # Hosted custody prepares the sender's key before the tool stamps the
+    # message, so its assertion never postdates the message it encrypts.
+    alice_identity = _custodial_identity(alice_sk, alice_did, "did:aw:alice", "acme.com/alice")
+    bob_identity = _custodial_identity(
+        named_signing_key("z6MkBob"), named_did_key("z6MkBob"), "did:aw:bob", "acme.com/bob",
+    )
     seen: list[dict] = []
 
     async def _encryptor(**kwargs) -> dict:
@@ -1870,11 +1878,7 @@ async def test_mcp_chat_continuation_encryptor_gets_active_recipient_identities(
             "content_mode": "encrypted_v2",
             "message_version": 2,
             "encrypted_envelope": _hosted_chat_envelope(
-                kwargs["payload"],
-                sender=_custodial_identity(alice_sk, alice_did, "did:aw:alice", "acme.com/alice"),
-                recipients=[_custodial_identity(
-                    named_signing_key("z6MkBob"), named_did_key("z6MkBob"), "did:aw:bob", "acme.com/bob",
-                )],
+                kwargs["payload"], sender=alice_identity, recipients=[bob_identity],
             ),
         }
 
