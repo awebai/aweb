@@ -2217,6 +2217,11 @@ Revocation without a key rotation removes authentication and delivery standing.
 Roster, assignee, room fan-out and alias projections use the admitted member
 row and current team key until its recorded admission changes.
 
+Native app-task authorization still uses the fresh registry certificate list
+to bind an originator or target before the server has a local attribution row
+(`server/src/aweb/coordination/app_tasks.py:110–137`). It checks the same
+certificate standing and requires fresh registry evidence for the app act.
+
 A task claim conflicts with a new claimant only while its holder remains a
 current member. The claim owner releases a non-current holder's claim through
 its normal claim/focus release operation in the new claim transaction. Key
@@ -2233,7 +2238,9 @@ off-mode observation is not a promise of no existence read. The read uses the
 existing SDK active-certificate view after revocation checks, without a new
 cache. An unavailable observation remains unknown and cannot turn an otherwise
 valid off-mode operation into a refusal. Enforcing mode retains its complete
-registration-list and signature-verified miss-refresh owners. This
+registration-list and signature-verified miss-refresh owners. AWID's
+`evaluate_team_certificate_standing` applies the same acquired revocation and
+registration facts to the server, registry SDK and checked artifact path. This
 staged measurement does not change request or certificate authority.
 
 ### Controller-key acquisition and request validation
