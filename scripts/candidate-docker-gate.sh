@@ -76,7 +76,9 @@ canonical_git_input() {
 }
 LIBRARY_E2E_BLUEPRINT_SRC="$(canonical_git_input blueprints "$LIBRARY_E2E_BLUEPRINT_SRC")"
 run_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
-LOG_DIR="/tmp/aweb-candidate-gate-$SOURCE_SHA-$run_id"
+log_root="${AWEB_GATE_RUN_LOG_ROOT:-/tmp}"
+[[ "$log_root" == /* && -d "$log_root" ]] || refuse "AWEB_GATE_RUN_LOG_ROOT must be an existing absolute directory"
+LOG_DIR="${log_root%/}/aweb-candidate-gate-$SOURCE_SHA-$run_id"
 [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || refuse "CANDIDATE_SOURCE_SHA must be a full lowercase SHA"
 [[ -z "$(git -C "$ROOT" status --porcelain --untracked-files=all)" ]] \
   || refuse "source checkout is dirty or has untracked files"
@@ -172,9 +174,13 @@ python3 -c 'import fcntl; fcntl.flock(9, fcntl.LOCK_EX | fcntl.LOCK_NB)' 2>/dev/
 recorded() {
   awk -F'\t' -v key="$KEY" -v stage="$1" '$1 == key && $2 == stage' "$LEDGER" | tail -1
 }
-failed="$(awk -F'\t' -v key="$KEY" '$1 == key && $3 == "failed" && index($2, "/") == 0' "$LEDGER" | tail -1)"
+failed="$(awk -F'\t' -v key="$KEY" -v tree="$TREE" '
+  $1 == key && $3 == "failed" && index($2, "/") == 0 {
+    printf "gate: tree %s already FAILED %s (log %s).\n", tree, $2, $6
+  }
+' "$LEDGER")"
 if [[ -n "$failed" ]]; then
-  printf 'gate: tree %s already FAILED %s (log %s).\n' "$TREE" "$(cut -f2 <<<"$failed")" "$(cut -f6 <<<"$failed")" >&2
+  printf '%s\n' "$failed" >&2
   printf '%s\n' "Fix the code and gate the changed tree. For infrastructure failures only, the coordinator removes the failed ledger line and uses GATE_RERUN_REASON='<reason>'." >&2
   exit 1
 fi
@@ -200,6 +206,7 @@ run_candidate() {
 set -euo pipefail
 command -v docker >/dev/null || refuse "docker is unavailable"
 wait_for_disk
+mkdir -- "$LOG_DIR" || refuse "could not allocate run logs: $LOG_DIR"
 
 if ! work="$(mktemp -d "/tmp/aweb-candidate-work.XXXXXX")"; then
   refuse "could not allocate the candidate work directory"
@@ -241,9 +248,6 @@ suite_projects=(
   "$gate_run_id-library"
 )
 # Install cleanup before the first Docker allocation. Logs outlive the run.
-[[ "$LOG_DIR" == "/tmp/aweb-candidate-gate-$SOURCE_SHA-$run_id" ]] || refuse "unsafe log directory"
-rm -rf -- "$LOG_DIR"
-mkdir -p "$LOG_DIR"
 : > "$LOG_DIR/owned-resources.tsv"
 printf '%s\n' "$run_id" > "$LOG_DIR/run-id"
 printf '%s\n' "$SYNCHRONIZED_MAIN_SHA" > "$LOG_DIR/synchronized-main-sha"

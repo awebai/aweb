@@ -400,11 +400,14 @@ if args[:2] in [['network','create'],['volume','create']]: print('owned');sys.ex
                     )
                 }
                 (root / "home").mkdir()
+                run_logs = root / "run-logs"
+                run_logs.mkdir()
                 env.pop("OATS_INSTANCE", None)
                 env.update(
                     PATH=f"{commands}:{env['PATH']}",
                     AWEB_GATE_LEDGER=str(root / "ledger.tsv"),
                     AWEB_GATE_LOG_DIR=str(root / "logs"),
+                    AWEB_GATE_RUN_LOG_ROOT=str(run_logs),
                     CLI_VERSION="1.36.54",
                     A2A_GATEWAY_VERSION="1.27.6",
                     HOME=str(root / "home"),
@@ -437,75 +440,75 @@ if args[:2] in [['network','create'],['volume','create']]: print('owned');sys.ex
                     self.assertEqual({row.split("\t")[6] for row in rows}, {"501"})
                     return [row for row in rows if "/" not in row.split("\t")[1]]
 
-                try:
-                    invoke("checks")
-                    self.assertEqual(len(ledger_rows()), 1)
-                    self.assertEqual(
-                        (root / "id-lookups").read_text().splitlines()[:2],
-                        ["-un", "-u"],
-                    )
-                    self.assertTrue(
-                        list(
-                            (repo / "scripts/__pycache__").glob(
-                                "fetch_released_aw.*.pyc"
-                            )
+                invoke("checks")
+                self.assertEqual(len(ledger_rows()), 1)
+                self.assertEqual(
+                    (root / "id-lookups").read_text().splitlines()[:2],
+                    ["-un", "-u"],
+                )
+                self.assertTrue(
+                    list(
+                        (repo / "scripts/__pycache__").glob(
+                            "fetch_released_aw.*.pyc"
                         )
                     )
-                    self.assertEqual(
-                        git("status", "--porcelain", "--untracked-files=all"), ""
-                    )
-                    invoke(None)
-                    ledger = ledger_rows()
-                    self.assertEqual(len(ledger), 5, ledger)
-                    self.assertEqual(len({row.split("\t")[0] for row in ledger}), 1)
-                    receipt = json.loads((root / "snapshot.json").read_text())
-                    # The frozen input names its source: a registry gitHead here.
-                    expected = (
-                        json.dumps(dict(metadata, source="gitHead"), sort_keys=True)
-                        + "\n"
-                    ).encode()
-                    digest = hashlib.sha256(expected).hexdigest()
-                    self.assertEqual(receipt["body"].encode(), expected)
-                    self.assertEqual(receipt["digest"], digest)
-                    self.assertEqual(receipt["declared"], digest)
-                    tree = git("rev-parse", "HEAD^{tree}")
-                    main = git("rev-parse", "refs/remotes/origin/main")
-                    external = f"CLI_VERSION=1.36.54\nA2A_GATEWAY_VERSION=1.27.6\nSYNCHRONIZED_MAIN_SHA={main}\nRELEASED_AW={digest}\n"
-                    self.assertEqual(
-                        ledger[0].split("\t")[0],
-                        tree + "-" + hashlib.sha256(external.encode()).hexdigest(),
-                    )
-                    reused = invoke(None)
-                    self.assertIn("no stages run", reused)
-                    self.assertEqual(reused.count("NOT COVERED: pending aweb-actu"), 12)
-                    self.assertIn("incomplete: human paths not covered", reused)
-                    self.assertEqual(len(ledger_rows()), 5)
-                    # A new reviewed main baseline also invalidates cached checks,
-                    # even when the candidate source tree and artifact are unchanged.
-                    next_main = git(
-                        "commit-tree", tree, "-p", main, "-m", "next reviewed main"
-                    )
-                    git("update-ref", "refs/remotes/origin/main", next_main)
-                    invoke("checks")
-                    rebound = ledger_rows()
-                    self.assertEqual(len(rebound), 6)
-                    self.assertNotEqual(
-                        rebound[-1].split("\t")[0], ledger[0].split("\t")[0]
-                    )
-                    # Changing only the frozen artifact invalidates the key.
-                    metadata["version"] = "1.36.55"
-                    invoke("checks")
-                    changed = ledger_rows()
-                    self.assertEqual(len(changed), 7)
-                    self.assertNotEqual(
-                        changed[-1].split("\t")[0], ledger[0].split("\t")[0]
-                    )
-                    self.assertEqual(server.requests, ["/@awebai%2faw/latest"] * 5)
-                finally:
-                    for logs in Path("/tmp").glob(
-                        "aweb-candidate-gate-" + git("rev-parse", "HEAD") + "-*"
-                    ):
-                        shutil.rmtree(logs, ignore_errors=True)
+                )
+                self.assertEqual(
+                    git("status", "--porcelain", "--untracked-files=all"), ""
+                )
+                invoke(None)
+                ledger = ledger_rows()
+                self.assertEqual(len(ledger), 5, ledger)
+                self.assertEqual(len({row.split("\t")[0] for row in ledger}), 1)
+                receipt = json.loads((root / "snapshot.json").read_text())
+                # The frozen input names its source: a registry gitHead here.
+                expected = (
+                    json.dumps(dict(metadata, source="gitHead"), sort_keys=True)
+                    + "\n"
+                ).encode()
+                digest = hashlib.sha256(expected).hexdigest()
+                self.assertEqual(receipt["body"].encode(), expected)
+                self.assertEqual(receipt["digest"], digest)
+                self.assertEqual(receipt["declared"], digest)
+                tree = git("rev-parse", "HEAD^{tree}")
+                main = git("rev-parse", "refs/remotes/origin/main")
+                external = f"CLI_VERSION=1.36.54\nA2A_GATEWAY_VERSION=1.27.6\nSYNCHRONIZED_MAIN_SHA={main}\nRELEASED_AW={digest}\n"
+                self.assertEqual(
+                    ledger[0].split("\t")[0],
+                    tree + "-" + hashlib.sha256(external.encode()).hexdigest(),
+                )
+                reused = invoke(None)
+                self.assertIn("no stages run", reused)
+                self.assertEqual(reused.count("NOT COVERED: pending aweb-actu"), 12)
+                self.assertIn("incomplete: human paths not covered", reused)
+                self.assertEqual(len(ledger_rows()), 5)
+                # A new reviewed main baseline also invalidates cached checks,
+                # even when the candidate source tree and artifact are unchanged.
+                next_main = git(
+                    "commit-tree", tree, "-p", main, "-m", "next reviewed main"
+                )
+                git("update-ref", "refs/remotes/origin/main", next_main)
+                invoke("checks")
+                rebound = ledger_rows()
+                self.assertEqual(len(rebound), 6)
+                self.assertNotEqual(
+                    rebound[-1].split("\t")[0], ledger[0].split("\t")[0]
+                )
+                # Changing only the frozen artifact invalidates the key.
+                metadata["version"] = "1.36.55"
+                invoke("checks")
+                changed = ledger_rows()
+                self.assertEqual(len(changed), 7)
+                self.assertNotEqual(
+                    changed[-1].split("\t")[0], ledger[0].split("\t")[0]
+                )
+                self.assertEqual(server.requests, ["/@awebai%2faw/latest"] * 5)
+                owned_runs = list(run_logs.iterdir())
+                self.assertEqual(len(owned_runs), 4)
+                for run in owned_runs:
+                    run_id = (run / "run-id").read_text().strip()
+                    self.assertEqual(run.name, f"aweb-candidate-gate-{git('rev-parse', 'HEAD')}-{run_id}")
+                    self.assertTrue((run / "owned-resources.tsv").is_file())
         finally:
             server.shutdown()
             thread.join()

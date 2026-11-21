@@ -139,6 +139,83 @@ Cleanup removes only this run's project, resources and scratch homes, preserving
 the prepared images. It verifies absence and surfaces cleanup failures. No
 retry or coverage reduction makes a stage pass.
 
+## Released clients against the server RC
+
+Run this mode after the server RC image has been published and before final
+promotion. Stage the prepared user-paths runtime for the reviewed harness tree,
+PostgreSQL 17, Redis 7, and the immutable RC image. This path compares the OSS
+server package embedded in the current production deployment with the published
+RC in equivalent private fixture worlds. It exercises neither production
+traffic nor the deployment's hosted application configuration.
+
+Pass a `server-artifacts.json` with these fields:
+
+```json
+{
+  "baseline": {
+    "version": "1.2.3",
+    "source_sha": "<40 lowercase hex characters>",
+    "wheel_sha256": "sha256:<64 lowercase hex characters>"
+  },
+  "rc": {
+    "version": "1.2.4rc1",
+    "source_sha": "<40 lowercase hex characters>",
+    "image": "ghcr.io/awebai/aweb-server@sha256:<64 lowercase hex characters>"
+  }
+}
+```
+
+The baseline also requires an operator readback from the current deployed
+service, independent of the RC manifest. Record `service`, `deployment_id`,
+`deployed_image` (immutable digest), `deployed_source_sha`, `observed_at` (ISO
+8601 with timezone), `production_aweb_version`, `package_lock` (Git `commit`,
+`path`, and `blob` at that deployment), and `packages`. The package object
+contains `aweb` and `awid-service`, each with
+`version`, `sha256`, and `url` for the PyPI wheel identified by the deployed
+lock. Record the live aweb package version from the deployment before looking
+up its exact wheel pin at that lock. Do not substitute an arbitrary package
+with the same version label.
+
+```sh
+USER_PATHS_RC_MANIFEST=/absolute/path/to/server-artifacts.json \
+USER_PATHS_PRODUCTION_READBACK=/absolute/path/to/production-readback.json \
+USER_PATHS_RUNTIME_IMAGE=<prepared-runtime-id> \
+CANDIDATE_LOG_DIR=/absolute/path/to/new-run-evidence make e2e-user-paths
+```
+
+The lane matches the live baseline readback and checks both `server-v` tag
+commits. It checks the published RC registry digest against the declared image,
+then the staged OCI labels. It checks the baseline wheel bytes against the
+deployment's lock, installs them offline and checks the running imports. Each
+role starts with fresh PostgreSQL, Redis, DNS and identity volumes. Both roles
+use the same checksum-verified npm-latest `aw`, channel, and OATS kernel. During
+artifact staging, the lane selects the latest stable aweb provider tag, checks
+the fetched tag commit, and records its archive SHA256.
+
+- Released `aw` joins and reads mail/chat through its public CLI. An independent
+  terminal uses explicit `aw wake register` to prove native presentation for
+  that actor. The actor then retires its local workspace.
+- The published channel process connects over its declared MCP stdio entrypoint
+  and presents live mail and chat. After closing that process, the lane queues
+  unread mail and relaunches the plugin. The plugin must wake the idle MCP host
+  on reconnect with that exact mail and settle the delivery. The released CLI
+  performs the channel workspace's join and retirement.
+- The released OATS kernel and provider join, launch a different real tmux
+  instance, receive real mail and chat through their wake path, and retire
+  through the provider. The terminal captures presentation without a model
+  call. For a customer-controlled team, the public controller command
+  completes separate certificate revocation when the provider reports it.
+
+The output includes per-runtime user-visible observations and source and
+artifact provenance. `rc-compatibility.json` lists every changed, missing or
+failed observation. The comparison omits generated message, identity and
+session identifiers and timing metadata after the flow verifies the relevant
+bindings. The run retains the public CLI reads, raw channel notifications
+and native OATS receipts. Review the inventory with Antares before promoting
+the RC. A missing case, a failed step or an observed difference leaves the
+comparison red. The existing source-based lane keeps its standing scope and
+ledger separately from this published-artifact qualification.
+
 ## Reviewed released-client issue budget
 
 There are no reviewed released-client issues. npm `latest` aw 1.36.55 carries

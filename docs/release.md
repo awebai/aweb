@@ -197,9 +197,18 @@ environment variable is set. Passes are reused across callers with equal inputs.
 A recorded failure blocks every stage for those inputs: fix the code and gate
 the changed tree. For infrastructure failures only, the coordinator removes the
 failed stage ledger lines and supplies `GATE_RERUN_REASON='<reason>'`; the next recorded
-result retains that reason. Cleanup failures also block reuse. After an interruption, completed stages are
-reusable only if the wrapper records successful cleanup. A missing cleanup
+result retains that reason. A refusal lists all failed stages and their retained
+logs. Cleanup failures also block reuse. After an interruption, completed stages
+are reusable only if the wrapper records successful cleanup. A missing cleanup
 verdict is recorded as a cleanup failure.
+
+On the ccx33 unit profile, the Secrets package uses two whole-module shards
+on separate Postgres and Redis pairs already owned by the isolated runner. The
+measured partition is in `candidate-gate/secrets-shards.json`. The runner
+compares the ordered shard collections to the unsharded collection under the
+same unit selector before it executes either shard. Both shard outcomes and
+logs reach the unit stage. The portable profile and the standalone package
+target still run the complete Secrets unit suite in one process.
 
 `main` may move while the gate runs. The tested SHA and its local tags do not.
 
@@ -234,8 +243,11 @@ absence, and removes the temporary root and buildx configuration. It never
 prunes or restarts shared Docker. The suite's existing 10GB prune applies only
 to its own builder during the run; that builder is removed at the end.
 
-Evidence stays in `/tmp/aweb-candidate-gate-<SHA>-<run-id>/`: `owned-resources.tsv`, raw
-host snapshots, `host-before.json`, `host-after.json`, and
+Evidence stays in a directory created for the invocation under
+`/tmp/aweb-candidate-gate-<SHA>-<run-id>/` by default. A caller with its own
+scratch directory may set `AWEB_GATE_RUN_LOG_ROOT` to that existing absolute
+directory. Raw logs include `owned-resources.tsv`, host snapshots,
+`host-before.json`, `host-after.json`, and
 `host-recovery.json`. On macOS, cleanup passes only if Docker VM total `lsof`
 rows return to at most their baseline plus 5,000. The host-wide `kern.num_files`
 count and its delta are diagnostic evidence only: unrelated sessions on a shared
@@ -424,6 +436,18 @@ ledger still serializes/reuses proof for a tree. An explicitly authorized
 concurrency proof uses separate `AWEB_GATE_LEDGER` directories for its two runs;
 it must not share either ledger or retained artifact directory. Resource labels,
 Compose project names, networks, workspaces and logs remain unique per run.
+
+### User-path event evidence
+
+The real channel receiver appends one UTF-8 JSON object followed by a newline
+for each event. Journey readers consume only newline-terminated records: an
+unfinished trailing record is pending evidence, including when its final UTF-8
+character is incomplete. It cannot establish delivery or fail a case merely
+because the reader observed an append in progress. A malformed complete record
+still fails and identifies the retained log and record to inspect. The existing
+delivery deadline and receiver-liveness checks remain in force; an incomplete
+record cannot extend the deadline or qualify a missing event. Normal delivery
+and failure cleanup use the same record reader.
 
 ## Server OCI image
 

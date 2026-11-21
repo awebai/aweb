@@ -1,7 +1,7 @@
 .PHONY: test lint e2e
 
 test:
-	uv run pytest -q -m "not e2e"
+	$(if $(AWEB_SECRETS_SHARD_SERVICES),python3 ../../scripts/secrets_shards.py -- uv run --no-sync,uv run) pytest -q -m "not e2e"
 
 # The H owner-acts journey: the real aw against AWID, aweb and this app's
 # production image, with the holder's human key in a real Secret Service.

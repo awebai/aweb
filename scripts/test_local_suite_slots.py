@@ -24,8 +24,22 @@ if importlib.util.find_spec("local_suite_slots") is not None:
     import local_suite_slots
     local_suite_slots.SLOT_DIRECTORY = Path(sys.argv[1])
 os.umask(0o077)
+runner = sys.argv[2]
+if runner in ("slot-whole", "slot-focused"):
+    scope = local_suite_slots.Scope(runner.removeprefix("slot-"))
+    with local_suite_slots.suite_slot(
+        scope=scope, label=local_suite_slots.SuiteLabel.SERVER, root=Path.cwd(),
+    ):
+        print("ACTIVE", flush=True)
+        raise SystemExit(int(sys.stdin.readline()))
+if runner == "portable":
+    import runpy
+    path = Path.cwd() / "scripts/test-egress/docker.py"
+    evidence = Path(sys.argv[1]).parent
+    sys.argv = [str(path), "--evidence", str(evidence)]
+    runpy.run_path(str(path), run_name="__main__")
 import test_server_local as local
-if sys.argv[2] == "server":
+if runner == "server":
     @contextmanager
     def services(**kwargs):
         print("ACTIVE", flush=True)
@@ -69,7 +83,7 @@ class SlotProcesses(unittest.TestCase):
         if slot_count is not None:
             env["AWEB_LOCAL_SUITE_SLOTS"] = slot_count
         process = subprocess.Popen(
-            [sys.executable, "-c", DRIVER, str(self.directory), runner.value],
+            [sys.executable, "-c", DRIVER, str(self.directory), str(runner)],
             cwd=ROOT,
             env=env,
             stdin=subprocess.PIPE,
@@ -113,10 +127,10 @@ class SlotProcesses(unittest.TestCase):
             ):
                 return line, lines
 
-    def holders(self):
+    def holders(self, *, runner=SuiteLabel.SERVER):
         holders = []
         for _ in range(3):
-            process, events = self.start()
+            process, events = self.start(runner=runner)
             self.assertEqual(self.event(events)[0], "ACTIVE")
             self.assertIsNone(process.poll())
             holders.append((process, events))
@@ -147,17 +161,44 @@ class SlotProcesses(unittest.TestCase):
         self.assertEqual(self.event(events)[0], "ACTIVE")
         self.release(fourth)
 
-    def test_focused_selection_bypasses_full_slots_but_verbosity_does_not(self):
-        self.holders()
-        focused, events = self.start(selection="tests/test_mail.py -q")
-        self.assertEqual(self.event(events)[0], "ACTIVE")
+    def test_focused_scope_waits_for_a_whole_slot(self):
+        holders = self.holders(runner="slot-whole")
+        focused, events = self.start(runner="slot-focused")
+        line, trace = self.event(events)
+        self.assertTrue(line.startswith("Waiting for local suite slot"), trace)
+        self.assertIsNone(focused.poll())
+        self.release(holders[0][0])
+        line, trace = self.event(events)
+        self.assertEqual(line, "ACTIVE", trace)
+        self.assertTrue(any("acquired: server" in event for event in trace), trace)
+        holder = json.loads((self.directory / "slot-0.lock").read_text())
+        self.assertEqual(holder["label"], "server")
+        self.assertEqual(holder["scope"], "focused")
         self.release(focused)
-        whole, events = self.start(selection="-q --durations=0")
-        self.assertTrue(
-            self.event(events)[0].startswith("Waiting for local suite slot")
+
+    @unittest.skipUnless(
+        sys.platform == "darwin", "Portable slot admission is on macOS"
+    )
+    def test_portable_runner_waits_before_entering_its_run(self):
+        holders = self.holders(runner="slot-whole")
+        portable, events = self.start(runner="portable")
+        line, trace = self.event(events)
+        self.assertTrue(line.startswith("Waiting for local suite slot"), trace)
+        self.assertIsNone(portable.poll())
+        self.release(holders[0][0])
+        line, trace = self.event(events)
+        self.assertEqual(line, "EOF", trace)
+        # An existing evidence directory refuses before any Docker call.
+        self.assertEqual(portable.wait(timeout=5), 1)
+        acquired = next(
+            i for i, event in enumerate(trace) if "acquired: portable" in event
         )
-        whole.terminate()
-        self.assertEqual(whole.wait(timeout=5), 143)
+        released = next(
+            i for i, event in enumerate(trace) if "released: portable" in event
+        )
+        refusal = next(i for i, event in enumerate(trace) if "FileExistsError" in event)
+        self.assertLess(acquired, released)
+        self.assertLess(released, refusal)
 
     def test_reporting_combinations_wait_when_all_slots_are_held(self):
         self.holders()
@@ -258,7 +299,7 @@ class SelectionScope(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertFalse(os.get_inheritable(stream.fileno()))
 
-    def test_only_actual_selection_bypasses_whole_suite_admission(self):
+    def test_only_actual_selection_is_classified_as_focused(self):
         for arguments in (
             [],
             ["tests"],

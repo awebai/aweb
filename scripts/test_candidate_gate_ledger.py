@@ -521,7 +521,19 @@ candidate-gate:
         if "build FAILED" not in skipped[9]:
             raise AssertionError(f"skip has no build failure detail: {skipped}")
         refused = invoke("refused-tree", *gate, stages="integration", success=False)
-        assert "already FAILED integration" in refused and "GATE_RERUN_REASON" in refused
+        failure_lines = [line for line in refused.splitlines() if "already FAILED" in line]
+        expected_failures = [
+            (stage, log)
+            for _, stage, result, _, _, log, *_ in failed_rows
+            if "/" not in stage and result == "failed"
+        ]
+        if len(failure_lines) != len(expected_failures):
+            raise AssertionError(f"incomplete failed-stage refusal: {refused}")
+        for line, (stage, log) in zip(failure_lines, expected_failures, strict=True):
+            if not line.endswith(f"already FAILED {stage} (log {log})."):
+                raise AssertionError(f"failed stage or log omitted: {refused}")
+        if "GATE_RERUN_REASON" not in refused:
+            raise AssertionError(f"infrastructure recovery instructions omitted: {refused}")
         assert ledger.read_text() == before
         # Every executed gate has real cleanup evidence; successful stage rows
         # retain their own logs after later invocations reuse/replace run roots.
