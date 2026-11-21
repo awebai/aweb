@@ -150,14 +150,23 @@ class Runtime:
     def _import_logs(self, lease):
         logs = self.directory / "evidence/var/log/vm-gate/ledger-gate-logs"
         target = Path(self.config["ledger"]).parent / "gate-logs"
-        target.mkdir(parents=True, exist_ok=True, mode=0o700)
         with lease.writer():
-            for path in logs.glob("*"):
-                if not path.is_file():
+            if logs.is_symlink() or target.is_symlink():
+                raise Infrastructure("unexpected symlink in gate logs")
+            target.mkdir(parents=True, exist_ok=True, mode=0o700)
+            for path in sorted(logs.rglob("*")):
+                dest = target / path.relative_to(logs)
+                if dest.is_symlink() or path.is_symlink():
+                    raise Infrastructure("unexpected symlink in gate logs")
+                if path.is_dir() and (not dest.exists() or dest.is_dir()):
+                    dest.mkdir(exist_ok=True, mode=0o700)
                     continue
-                dest = target / path.name
+                if not path.is_file():
+                    raise Infrastructure(
+                        "unexpected gate log entry or directory conflict"
+                    )
                 if dest.exists():
-                    if dest.read_bytes() != path.read_bytes():
+                    if not dest.is_file() or dest.read_bytes() != path.read_bytes():
                         raise Infrastructure(
                             "canonical gate log conflicts with retained VM log"
                         )
