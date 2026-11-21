@@ -437,28 +437,25 @@ before its `active_from`, which the caller compares with an event's
 
 ## Approvals and passkeys
 
-`Passkeys.complete_enrolment(token, credential, fence=...)`,
-`Passkeys.prove_contact(token, fence=...)`,
-`Passkeys.change_contact(scope, new_contact, proof, fence=...)` and
-`Passkeys.cancel_pending_contact(scope, proof, fence=...)` accept an optional
+`Passkeys.complete_enrolment(token, credential, fence=...)` and
+`Passkeys.prove_contact(token, fence=...)` accept an optional
 `PasskeyEffectFence` for the app's completion authority. Prefetch network/registration context first.
 B3 calls `await fence.prepare(tx)` before its first effect statement, then
 performs the effect and audit in that same transaction, then calls
 `await fence.check(tx)` immediately before commit. The app holds its installation
 authority in prepare; check reads without new locks/network and samples live
 time last. Original completion association, current designation/contact/recovery
-and capability expiry are the app's checks. A required app sink must refuse a
-positive completion if its expected fence was omitted or unprepared.
+and capability expiry are the app's checks. After `check`, B3 rechecks its own
+deadlines on live time (the enrolment challenge and link; the contact proof and
+the pending change's time) and refuses if a lock wait outlasted them. A
+required app sink must refuse a positive completion if its expected fence was
+omitted or unprepared.
 
 Expected fence refusals use `EnrolmentRefused` or `ContactChangeRefused` for the
 operation. Refusal rolls back link/proof-token consumption, credential/contact
 state and audit together. Enrolment's pre-effect WebAuthn challenge stays spent:
 retry requests new enrolment options and a new registration response with the
-still-valid unused link. A contact change's or cancellation's passkey assertion
-is verified and recorded before the effect and also stays spent: retry requests
-new options and a new assertion. Notices go out only after commit, so a refused
-change or cancellation tells nobody. Cancellation only narrows, and B3 gates it
-on nothing but the fence. Contact-proof retry requires fresh authority/expiry
+still-valid unused link. Contact-proof retry requires fresh authority/expiry
 checks. Any other exception from a fence propagates unchanged. There is no token
 release or automatic replay. These callbacks change
 neither LOGIN/APPROVE evidence nor the current-approver API below.
@@ -700,19 +697,17 @@ the approval, decision, policy and the app's own origin.
   approval takes locks in the same order: fence, authority hold, then the
   approval. Retiring approvals before removing the authority inverts that
   order and can deadlock with such a path.
-- A contact change needs the approver's own passkey, takes effect after a delay
-  (at least 24 h) and is notified to the old and the new contact. An owner can
-  also schedule one through an owner-confirmed change, with
-  `change_contact_by_owner(tx, scope=..., new_contact=..., evidence=...)` on an
-  `OwnerApproval` admitted in that transaction. The delay and notices are the
-  same, and the notices go out with `send_notices` after the commit. It
+- An owner schedules an approver's contact change through an owner-confirmed
+  change, with `change_contact_by_owner(tx, scope=..., new_contact=...,
+  evidence=...)` on an `OwnerApproval` admitted in that transaction. It takes
+  effect after a delay (at least 24 h) and is notified to the old and the new
+  contact; the notices go out with `send_notices` after the commit. It
   changes the contact only: no passkey is enrolled at the new contact without
-  a recovery. The last owner's own contact is refused (`last_owner_protected`).
-  Only one change may be pending at a time (`contact_change_pending`). The
-  approver cancels a pending change from either path with their own passkey
-  (`contact_cancel_options`, `cancel_pending_contact`), and the cancel wins.
-- A new contact counts only once its holder proves it. Every contact change,
-  from either path, sends a single-use proof to the new contact alone, through
+  a recovery. The last owner's own contact is refused (`last_owner_protected`),
+  as is a scope whose approver has no contact (`contact_not_declared`). Only
+  one change may be pending at a time (`contact_change_pending`).
+- A new contact counts only once its holder proves it. Every contact change
+  sends a single-use proof to the new contact alone, through
   `PasskeyDelivery.deliver_contact_proof`, bound to that contact's digest. The
   holder confirms it with `prove_contact(token)` before the change's time; a
   change still unproven by then lapses, and the old contact stays. A contact
