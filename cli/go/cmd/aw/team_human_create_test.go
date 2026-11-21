@@ -1173,7 +1173,6 @@ func TestTeamHumanCreateAPIKeyToleratesAPISuffixedAwebURL(t *testing.T) {
 
 			t.Setenv("AWEB_API_KEY", apiKey)
 			t.Setenv("AWEB_URL", server.URL+tc.suffix)
-			t.Setenv("AWID_REGISTRY_URL", "")
 			t.Chdir(t.TempDir())
 			jsonFlag = true
 
@@ -1647,6 +1646,8 @@ func TestTeamHumanCreateFirstAgentGlobalHostedBootstrapAllowed(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)
 	t.Setenv(initAPIKeyEnvVar, "")
+	// The hosted bootstrap is allowed when no registry is named.
+	t.Setenv("AWID_REGISTRY_URL", "")
 	teamHumanCreateFirstGlobal = true
 	teamHumanCreateServiceURL = "https://app.example"
 	teamHumanCreateUsername = "eng-user"

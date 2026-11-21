@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from aweb.task_refs import TaskTitleFields, task_title_join
+from aweb.member_team_key import current_member_sql
+
+import asyncio
 import time
 from collections import OrderedDict
 from contextlib import aclosing
@@ -19,17 +23,18 @@ from aweb.internal_auth import INTERNAL_AUTH_HEADER
 from ..db import DatabaseInfra, get_db_infra
 from ..events import EventCategory, stream_events_multi
 from ._reservation_utils import reservation_metadata
-from ..grant_liveness import valid_grant_liveness_by_workspace
+from aweb.application_state import application_registry_client
+from aweb.grant_liveness_policy import GrantLivenessFailurePolicy
+from aweb.workspace_activity import workspace_activity_by_id
 from ..grant_streams import (
+    STREAM_MAX_DURATION_SECONDS,
     allowed_status_categories,
     clamp_deadline_to_grant,
     NeverGrantStreamGuard,
     grant_terminal_sse,
     require_valid_stream_grant,
+    requires_stream_recheck,
     status_event_allowed,
-)
-from ..presence import (
-    list_agent_presences_by_workspace_ids,
 )
 from ..redis_client import get_redis
 from ..input_validation import is_valid_canonical_origin
@@ -49,12 +54,14 @@ class _WorkspaceIDsCacheEntry:
     limit: int
 
 
-_WORKSPACE_IDS_CACHE: OrderedDict[
-    tuple[int, str], _WorkspaceIDsCacheEntry
-] = OrderedDict()
+_WORKSPACE_IDS_CACHE: OrderedDict[tuple[int, str], _WorkspaceIDsCacheEntry] = (
+    OrderedDict()
+)
 
 
-def _get_workspace_ids_cache_key(db_infra: DatabaseInfra, team_id: str) -> tuple[int, str]:
+def _get_workspace_ids_cache_key(
+    db_infra: DatabaseInfra, team_id: str
+) -> tuple[int, str]:
     # Scope cache to the DatabaseInfra instance to avoid cross-DB bleed.
     return (id(db_infra), team_id)
 
@@ -87,34 +94,6 @@ def _update_workspace_ids_cache(
     _WORKSPACE_IDS_CACHE.move_to_end(key)
     while len(_WORKSPACE_IDS_CACHE) > WORKSPACE_IDS_CACHE_MAX_SIZE:
         _WORKSPACE_IDS_CACHE.popitem(last=False)
-
-
-def _title_join(
-    alias: str,
-    team_id_col: str,
-    task_ref_col: str,
-    *,
-    include_type: bool = False,
-    guard_col: str | None = None,
-) -> str:
-    """Lateral join resolving title (+ optional type) from aweb tasks.
-
-    Matches task_ref (e.g. 'myteam-42') against team_id and task_ref_suffix
-    by reconstructing the full ref from the team slug and suffix.
-    """
-    select_expr = "t.title, t.task_type AS issue_type" if include_type else "t.title AS title"
-
-    guard = f"\n                  AND {guard_col} IS NOT NULL" if guard_col else ""
-
-    return f"""
-        LEFT JOIN LATERAL (
-            SELECT {select_expr}
-            FROM {{{{tables.tasks}}}} t
-            WHERE t.team_id = {team_id_col}
-              AND {task_ref_col} = (split_part({team_id_col}, ':', 1) || '-' || t.task_ref_suffix)
-              AND t.deleted_at IS NULL{guard}
-            LIMIT 1
-        ) {alias} ON true"""
 
 
 async def get_all_workspace_ids_from_db(
@@ -347,14 +326,14 @@ async def status(
             "timestamp": now.isoformat(),
         }
 
-    # Agent presences from Redis (filtered by workspace_ids from database).
-    all_presences: List[Dict[str, str]] = []
-    if redis and workspace_ids:
-        all_presences = await list_agent_presences_by_workspace_ids(redis, workspace_ids)
-    presence_by_workspace = {
-        p.get("workspace_id", ""): p for p in all_presences if p.get("workspace_id")
-    }
-    grant_liveness_by_workspace = await valid_grant_liveness_by_workspace(aweb_db, workspace_ids)
+    activity_by_id = await workspace_activity_by_id(
+        aweb_db,
+        redis,
+        workspace_ids=workspace_ids,
+        registry_client=application_registry_client(request.app.state),
+        request=request,
+        failure_policy=GrantLivenessFailurePolicy.OMIT_UNPROVEN,
+    )
 
     workspace_rows = await aweb_db.fetch_all(
         f"""
@@ -373,9 +352,11 @@ async def status(
             focus_info.title AS focus_task_title,
             focus_info.issue_type AS focus_task_type
         FROM {{{{tables.workspaces}}}} w
+        JOIN {{{{tables.agents}}}} a ON a.agent_id=w.agent_id AND a.team_id=w.team_id
         LEFT JOIN {{{{tables.repos}}}} r ON w.repo_id = r.id AND r.deleted_at IS NULL
-        {_title_join("focus_info", "w.team_id", "w.focus_task_ref", include_type=True, guard_col="w.focus_task_ref")}
+        {task_title_join(alias="focus_info", team_id_col="w.team_id", task_ref_col="w.focus_task_ref", fields=TaskTitleFields.TITLE_AND_TYPE)}
         WHERE w.team_id = $1
+          AND {current_member_sql("a")}
           AND w.deleted_at IS NULL
           AND w.workspace_id = ANY($2::uuid[])
         ORDER BY w.updated_at DESC, w.alias ASC
@@ -383,13 +364,17 @@ async def status(
         team_id,
         workspace_ids,
     )
+    if "workspace_count" in workspace_info:
+        workspace_info["workspace_count"] = len(workspace_rows)
     workspace_rows_by_id = {str(row["workspace_id"]): row for row in workspace_rows}
     ordered_workspace_ids = [
         ws_id for ws_id in workspace_ids if ws_id in workspace_rows_by_id
     ] or [str(row["workspace_id"]) for row in workspace_rows]
     workspace_ids_by_agent: Dict[str, List[str]] = {}
     for row in workspace_rows:
-        workspace_ids_by_agent.setdefault(str(row["agent_id"]), []).append(str(row["workspace_id"]))
+        workspace_ids_by_agent.setdefault(str(row["agent_id"]), []).append(
+            str(row["workspace_id"])
+        )
     agent_ids = list(workspace_ids_by_agent)
 
     claim_rows = await aweb_db.fetch_all(
@@ -413,8 +398,8 @@ async def status(
             WHERE team_id = $1
             GROUP BY team_id, task_ref
         ) counts ON c.team_id = counts.team_id AND c.task_ref = counts.task_ref
-        {_title_join("claim_info", "c.team_id", "c.task_ref")}
-        {_title_join("apex_info", "c.team_id", "c.apex_task_ref", include_type=True, guard_col="c.apex_task_ref")}
+        {task_title_join(alias="claim_info", team_id_col="c.team_id", task_ref_col="c.task_ref")}
+        {task_title_join(alias="apex_info", team_id_col="c.team_id", task_ref_col="c.apex_task_ref", fields=TaskTitleFields.TITLE_AND_TYPE)}
         WHERE c.team_id = $1
           AND c.workspace_id = ANY($2::uuid[])
         ORDER BY c.claimed_at DESC
@@ -481,7 +466,9 @@ async def status(
             "holder_alias": row["holder_alias"],
             "acquired_at": row["acquired_at"].isoformat(),
             "expires_at": row["expires_at"].isoformat(),
-            "ttl_remaining_seconds": max(int((row["expires_at"] - now).total_seconds()), 0),
+            "ttl_remaining_seconds": max(
+                int((row["expires_at"] - now).total_seconds()), 0
+            ),
             "reason": reason,
             "metadata": metadata,
         }
@@ -494,8 +481,8 @@ async def status(
         row = workspace_rows_by_id.get(ws_id)
         if row is None:
             continue
-        presence = presence_by_workspace.get(ws_id, {})
-        grant_liveness = {} if presence else grant_liveness_by_workspace.get(ws_id, {})
+        activity = activity_by_id.get(ws_id)
+        presence = (activity.presence or {}) if activity else {}
         agent_role = presence.get("role") or row["role"] or None
         agent = {
             "workspace_id": ws_id,
@@ -503,7 +490,7 @@ async def status(
             "human_name": presence.get("human_name") or row["human_name"] or None,
             "role": agent_role,
             "role_name": agent_role,
-            "status": presence.get("status") or ("active" if grant_liveness else "offline"),
+            "status": activity.display_status(now=now) if activity else "offline",
             "canonical_origin": presence.get("canonical_origin") or row["repo"] or None,
             "hostname": row["hostname"] or None,
             "workspace_path": row["workspace_path"] or None,
@@ -511,18 +498,17 @@ async def status(
             "focus_task_ref": row["focus_task_ref"],
             "focus_task_title": row["focus_task_title"],
             "focus_task_type": row["focus_task_type"],
-            "focus_updated_at": row["focus_updated_at"].isoformat() if row["focus_updated_at"] else None,
+            "focus_updated_at": row["focus_updated_at"].isoformat()
+            if row["focus_updated_at"]
+            else None,
             "apex_task_ref": apex_by_workspace.get(ws_id, {}).get("apex_task_ref"),
             "apex_title": apex_by_workspace.get(ws_id, {}).get("apex_title"),
             "apex_type": apex_by_workspace.get(ws_id, {}).get("apex_type"),
             "claims": claims_by_workspace.get(ws_id, []),
             "reservations": reservations_by_workspace.get(ws_id, []),
-            "last_seen": presence.get("last_seen")
-            or (
-                grant_liveness["last_seen_at"].astimezone(timezone.utc).isoformat()
-                if grant_liveness
-                else (row["last_seen_at"].isoformat() if row["last_seen_at"] else None)
-            ),
+            "last_seen": activity.last_seen_at.isoformat()
+            if activity and activity.last_seen_at
+            else None,
         }
         agents.append(agent)
 
@@ -559,12 +545,16 @@ async def status(
     }
 
 
-async def _messaging_workspace_ids(request: Request, db_infra, identity: TeamIdentity) -> set[str]:
+async def _messaging_workspace_ids(
+    request: Request, db_infra, identity: TeamIdentity
+) -> set[str]:
     # An embedding host may authorize a public coordination reader. Its signed
     # internal principal must never acquire messaging visibility, even if an
     # attribution UUID happens to have workspace rows. This is deny-only: the
     # header cannot establish identity or grant access in standalone aweb.
-    if request.headers.get(INTERNAL_AUTH_HEADER, "").startswith(f"v2:{identity.team_id}:p:"):
+    if request.headers.get(INTERNAL_AUTH_HEADER, "").startswith(
+        f"v2:{identity.team_id}:p:"
+    ):
         return set()
     try:
         actor_id = UUID(identity.agent_id)
@@ -605,7 +595,8 @@ async def status_stream(
         description="Maximum workspaces to subscribe to (ignored when workspace_id is specified)",
     ),
     event_types: Optional[str] = Query(
-        None, description="Comma-separated event categories to filter (e.g., 'message,task')"
+        None,
+        description="Comma-separated event categories to filter (e.g., 'message,task')",
     ),
     redis: Redis = Depends(get_redis),
     db_infra: DatabaseInfra = Depends(get_db_infra),
@@ -713,7 +704,9 @@ async def status_stream(
                 detail=f"Invalid event types: {invalid}. Valid types: {sorted(VALID_SSE_EVENT_TYPES)}",
             )
 
-    messaging_workspace_ids = await _messaging_workspace_ids(request, db_infra, identity)
+    messaging_workspace_ids = await _messaging_workspace_ids(
+        request, db_infra, identity
+    )
 
     def event_visible(event: dict[str, Any]) -> bool:
         category = str(event.get("type", "")).split(".", 1)[0]
@@ -721,7 +714,7 @@ async def status_stream(
             return str(event.get("workspace_id", "")) in messaging_workspace_ids
         return True
 
-    if identity.grant is None:
+    if not requires_stream_recheck(identity):
         return StreamingResponse(
             stream_events_multi(
                 redis,
@@ -740,16 +733,22 @@ async def status_stream(
 
     allowed_grant_categories = allowed_status_categories(identity)
     if allowed_grant_categories is not None:
-        event_type_set = (event_type_set or set(VALID_SSE_EVENT_TYPES)) & allowed_grant_categories
+        event_type_set = (
+            event_type_set or set(VALID_SSE_EVENT_TYPES)
+        ) & allowed_grant_categories
 
     await require_valid_stream_grant(request, db_infra, identity)
     deadline = clamp_deadline_to_grant(
-        datetime.now(timezone.utc) + timedelta(seconds=300), identity
+        datetime.now(timezone.utc) + timedelta(seconds=STREAM_MAX_DURATION_SECONDS), identity
+    )
+    stream_limit = asyncio.get_running_loop().time() + max(
+        0, (deadline - datetime.now(timezone.utc)).total_seconds()
     )
 
-    async def _grant_guarded_status_stream():
+    async def _authority_guarded_status_stream():
         guard = NeverGrantStreamGuard(request, db_infra, identity)
         terminal = None
+
         async def _disconnected_or_deadline():
             nonlocal terminal
             terminal = await guard.reason()
@@ -759,32 +758,43 @@ async def status_stream(
                 return True
             return datetime.now(timezone.utc) >= deadline
 
-        reason = terminal or await guard.reason()
-        if reason:
-            yield grant_terminal_sse(reason)
-            return
-        async with aclosing(stream_events_multi(
-            redis,
-            workspace_ids,
-            event_type_set,
-            # Empty-workspace streams otherwise sleep 30s past a near expiry.
-            keepalive_seconds=30 if workspace_ids else 1,
-            check_disconnected=_disconnected_or_deadline,
-            event_filter=(lambda event: event_visible(event) and status_event_allowed(identity, event)),
-        )) as items:
-            async for item in items:
-                terminal = await guard.reason()
-                if terminal:
+        async with aclosing(
+            stream_events_multi(
+                redis,
+                workspace_ids,
+                event_type_set,
+                # Empty-workspace streams otherwise sleep 30s past a near expiry.
+                keepalive_seconds=30 if workspace_ids else 1,
+                check_disconnected=_disconnected_or_deadline,
+                event_filter=(
+                    lambda event: (
+                        event_visible(event) and status_event_allowed(identity, event)
+                    )
+                ),
+            )
+        ) as items:
+            while asyncio.get_running_loop().time() < stream_limit:
+                cap = asyncio.timeout_at(stream_limit)
+                try:
+                    async with cap:
+                        # This includes idle PubSub waits and any standing or
+                        # disconnect check performed while obtaining an item.
+                        item = await anext(items)
+                        terminal = await guard.reason()
+                except StopAsyncIteration:
                     break
-                if datetime.now(timezone.utc) >= deadline:
+                except TimeoutError:
+                    if not cap.expired():
+                        raise
+                    return
+                if terminal or datetime.now(timezone.utc) >= deadline:
                     break
                 yield item
-        reason = terminal or await guard.reason()
-        if reason:
-            yield grant_terminal_sse(reason)
+        if terminal:
+            yield grant_terminal_sse(terminal)
 
     return StreamingResponse(
-        _grant_guarded_status_stream(),
+        _authority_guarded_status_stream(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

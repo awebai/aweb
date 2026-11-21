@@ -154,6 +154,48 @@ func TestAnAdmittedLocalCertificateIsInstalledIntoAKeyOnlyHome(t *testing.T) {
 	assertCredentialGeneration(t, home, 1)
 }
 
+func TestInstallCertDoesNotRecordTheRegistryUsedOnlyForDiscovery(t *testing.T) {
+	_, teamKey, _ := awid.GenerateKeypair()
+	registry := newCertificateRegistry(t, teamKey)
+	home, didKey := keyOnlyHome(t)
+	cert := signedMemberCertificate(t, teamKey, didKey, "", awid.IdentityModeLocal)
+	registry.register(cert, false)
+	request := installRequest(t, registry, home, certificateFile(t, cert))
+	request.RegistryURL = ""
+	if err := request.Registry.SetFallbackRegistryURL(registry.server.URL); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := installTeamCertificateFile(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	state, err := loadOptionalTeamState(teamMembershipLocation{WorkingDir: request.WorkingDir, IdentityHome: home})
+	if err != nil || state == nil {
+		t.Fatalf("membership state: %v, %v", state, err)
+	}
+	if membership := state.Membership(installTeamID); membership == nil || membership.RegistryURL != "" {
+		t.Fatalf("membership saved a discovery origin: %+v", membership)
+	}
+}
+
+func TestInstallCertWithoutRegistryStartsWithTeamDiscovery(t *testing.T) {
+	_, teamKey, _ := awid.GenerateKeypair()
+	home, didKey := keyOnlyHome(t)
+	cert := signedMemberCertificate(t, teamKey, didKey, "", awid.IdentityModeLocal)
+	root := t.TempDir()
+	dns, reads := serveWorktreeDiscoveryRefusal(t, "", "example.com")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestAPIKeyWorktreeCommandHelper$", "--",
+		"--json", "--identity-home", home, "id", "team", "install-cert", "--certificate", certificateFile(t, cert))
+	command.Dir = root
+	command.Env = append(withoutEnvForTest(testCommandEnv(root), "AWID_REGISTRY_URL", "HTTPS_PROXY", "NO_PROXY"),
+		"AW_TEST_WORKTREE_DNS="+dns, "AW_TEST_WORKTREE_DISCOVERY=1", "HTTPS_PROXY=http://127.0.0.1:1")
+	out, err := command.CombinedOutput()
+	if err == nil || reads.Load() == 0 || !strings.Contains(string(out), "discover the registry for example.com") {
+		t.Fatalf("err=%v TXT reads=%d output=%s, want discovery refusal", err, reads.Load(), out)
+	}
+}
+
 // assertCredentialGeneration requires home's committed credential generation
 // to be want, with no update incomplete.
 func assertCredentialGeneration(t *testing.T, home string, want int64) {
@@ -277,6 +319,9 @@ func TestACertificateThatIsNotThisHomesCurrentMembershipIsRefusedAndNothingInsta
 		_, err := installTeamCertificateFile(context.Background(), installRequest(t, registry, home, path))
 		if code := errorCodeOf(err); code != tc.code {
 			t.Errorf("%s: code %q, err %v", name, code, err)
+		}
+		if (tc.code == "certificate_revoked" || name == "a status aw does not know") && (err == nil || !strings.Contains(err.Error(), "ask the team's owner")) {
+			t.Errorf("%s: missing next action: %v", name, err)
 		}
 		if !maps.Equal(contents, homeContents(t, home)) {
 			t.Errorf("%s: the refusal changed the home", name)
@@ -491,7 +536,7 @@ func TestRecordingAnInstalledCertificateWithNoRegistryKeepsTheMembershipsRegistr
 	if _, err := installTeamCertificateFile(context.Background(), installRequest(t, registry, home, certificateFile(t, cert))); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := commitTeamCertificate(t.TempDir(), home, "fetch-cert", cert, "", "", func() (string, error) { return "already_installed", nil }); err != nil {
+	if _, err := commitTeamCertificate(certificateCommit{WorkingDir: t.TempDir(), IdentityHome: home, Command: "fetch-cert", Certificate: cert, RegistryURL: "", WorkspacePath: "", Decide: func() (certificateInstallStatus, error) { return certificateAlreadyInstalled, nil }}); err != nil {
 		t.Fatal(err)
 	}
 	state, err := awconfig.LoadTeamStateFromIdentityHome(home)

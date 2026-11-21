@@ -116,6 +116,7 @@ func upsertAcceptedTeamMembershipState(request teamMembershipStateUpdate) error 
 		teamState = &awconfig.TeamState{}
 	}
 	registryURL, awebURL := request.RegistryURL, request.AwebURL
+	keyEvidence := output.TeamKey
 	joinedAt := strings.TrimSpace(cert.IssuedAt)
 	if existing := teamState.Membership(strings.TrimSpace(output.TeamID)); existing != nil {
 		if strings.TrimSpace(registryURL) == "" {
@@ -124,12 +125,16 @@ func upsertAcceptedTeamMembershipState(request teamMembershipStateUpdate) error 
 		if strings.TrimSpace(awebURL) == "" {
 			awebURL = strings.TrimSpace(existing.AwebURL)
 		}
+		if keyEvidence == nil && existing.TeamKey != nil && existing.TeamKey.DIDKey == cert.TeamDIDKey {
+			keyEvidence = existing.TeamKey
+		}
 		if strings.TrimSpace(existing.JoinedAt) != "" {
 			joinedAt = strings.TrimSpace(existing.JoinedAt)
 		}
 	}
 	teamState.AddMembership(awconfig.TeamMembership{
-		TeamID: strings.TrimSpace(output.TeamID), Alias: strings.TrimSpace(output.Alias),
+		TeamKey: keyEvidence,
+		TeamID:  strings.TrimSpace(output.TeamID), Alias: strings.TrimSpace(output.Alias),
 		CertPath: filepath.ToSlash(strings.TrimSpace(output.CertPath)), JoinedAt: joinedAt,
 		RegistryURL: strings.TrimSpace(registryURL), AwebURL: strings.TrimSpace(awebURL),
 	})

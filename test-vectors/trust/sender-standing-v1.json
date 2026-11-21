@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "description": "Certificate evidence in required-registration mode, server sender projection, and cross-team received-message trust when the reader uses that projection.",
+  "cases": [
+    {"id": "registered", "registered": true, "revoked": false, "certificate_refusal": null, "go_current_certificate_code": "", "state": "active", "verification_status": "verified"},
+    {"id": "unregistered", "registered": false, "revoked": false, "certificate_refusal": "unregistered", "go_current_certificate_code": "certificate_unregistered", "state": "inactive", "verification_status": "identity_mismatch"},
+    {"id": "revoked", "registered": true, "revoked": true, "certificate_refusal": "revoked", "go_current_certificate_code": "certificate_revoked", "state": "inactive", "verification_status": "identity_mismatch"}
+  ]
+}

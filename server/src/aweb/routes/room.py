@@ -4,7 +4,9 @@ from fastapi import APIRouter, Depends, Query, Request
 
 from aweb.agent_wake import agent_wake_publisher, agent_wake_scope
 from aweb.deps import get_db
+from aweb.hooks import mutation_callback
 from aweb.messaging.room import (
+    ROOM_CURRENT_MEMBERSHIP_REQUIRED_DETAIL,
     RoomPost,
     room_metadata,
     read_room,
@@ -16,8 +18,16 @@ from aweb.team_auth_deps import team_identity_with_grant_scope
 from aweb.messaging.room_notices import pending_room_notices, ack_room_notice
 
 router = APIRouter(prefix="/v1/room", tags=["room"])
-_read = team_identity_with_grant_scope("chat.read")
-_post = team_identity_with_grant_scope("chat.send")
+_read = team_identity_with_grant_scope(
+    "chat.read",
+    membership_refusal_detail=ROOM_CURRENT_MEMBERSHIP_REQUIRED_DETAIL,
+)
+# Public host admission dependency: wraps the same authenticated identity once.
+# Hosts may bind a pre-post quota check without replacing membership authority.
+room_post_identity = team_identity_with_grant_scope(
+    "chat.send",
+    membership_refusal_detail=ROOM_CURRENT_MEMBERSHIP_REQUIRED_DETAIL,
+)
 
 
 @router.get("")
@@ -61,10 +71,17 @@ async def exact(
 
 @router.post("/messages")
 async def post(
-    payload: RoomPost, request: Request, db=Depends(get_db), actor=Depends(_post)
+    payload: RoomPost,
+    request: Request,
+    db=Depends(get_db),
+    actor=Depends(room_post_identity),
 ):
     with agent_wake_scope(agent_wake_publisher(request.app.state)):
         output = await post_room_message(
-            db, actor, payload, id_chain=getattr(request.state, "id_chain", None)
+            db,
+            actor,
+            payload,
+            id_chain=getattr(request.state, "id_chain", None),
+            on_mutation=mutation_callback(request),
         )
     return await present_room(db, request, output)

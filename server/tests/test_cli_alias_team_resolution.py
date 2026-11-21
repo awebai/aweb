@@ -26,6 +26,8 @@ from tests.test_addressless_sender_cli import _registry_http
 from tests.test_dashboard_privacy import TEAM, privacy_app as privacy_app  # noqa: F401
 from tests.test_messages_http import _encode_certificate, _make_certificate, _make_keypair, _signed_identity_headers
 
+__all__ = ["privacy_app"]
+
 
 @asynccontextmanager
 async def unavailable_origin():
@@ -327,7 +329,7 @@ async def test_bare_alias_never_changes_team_on_unknown_roster(privacy_app, tmp_
         if condition in ("available", "https"):
             # The live human lookup becomes a direct-DID send: participants
             # are literal identities, not actor pointers (canonical contract:
-            # docs/identity-messaging-contract.md:77-82,113-120).
+            # Global And Local Identities (docs/identity-messaging-contract.md:124-144)).
             assert stored["to_agent_id"] is None, dict(stored)
         else:
             assert stored["to_agent_id"] == expected.id, dict(stored)

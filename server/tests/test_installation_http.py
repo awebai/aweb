@@ -11,6 +11,7 @@ import test_verified_installations as store_fixture
 from fastapi import FastAPI
 from test_app_manifest_fetch import digest
 
+from aweb.internal_auth import ProxyVerificationConfig
 from aweb.internal_auth import build_internal_auth_header_value
 from aweb.routes.app_hooks import router as hooks_router
 from aweb.routes.apps import router
@@ -50,6 +51,7 @@ async def client(db, origin, monkeypatch):
         ))
 
     inner = FastAPI()
+    ProxyVerificationConfig.capture().install(inner)
     inner.state.db = Managers()
     inner.state.public_origin = "http://test"
     inner.state.install_admin_policy = policy
@@ -207,9 +209,9 @@ async def forwarded_agent(db, *, status="active", removed=False, team=TEAM):
         team, namespace, team.split(":", 1)[0],
     )
     await db.execute(
-        "INSERT INTO {{tables.agents}} (agent_id, team_id, did_key, alias, identity_scope, status, deleted_at) "
+        "INSERT INTO {{tables.agents}} (agent_id, team_id, did_key, alias, identity_scope, status, deleted_at, inbound_mode) "
         "VALUES ($1, $2, 'did:key:z6MkggGwZHMkBygNAy7tZGtCZxrkWBHQ5fpEm6fSAxfkuvqE' /* z6MkAlice */, 'alice', 'local', $3, "
-        "CASE WHEN $4 THEN NOW() END)",
+        "CASE WHEN $4 THEN NOW() END, 'open')",
         ACTOR, team, status, removed,
     )
 

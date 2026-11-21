@@ -8,7 +8,8 @@ is never accepted for another, even when one physical key serves several.
 
 from __future__ import annotations
 
-import hashlib
+from aweb.request_body import request_body_sha256
+
 import json
 import re
 from collections.abc import Awaitable, Callable
@@ -20,7 +21,11 @@ from awid.dns_auth import enforce_timestamp_skew, require_timestamp
 from awid.log import canonical_server_origin, require_canonical_server_origin
 from awid.signing import canonical_json_bytes, verify_did_key_signature
 
-from aweb.app_registry import get_active_app_emit_key, get_active_app_key, validate_team_id
+from aweb.app_registry import (
+    get_active_app_emit_key,
+    get_active_app_key,
+    validate_team_id,
+)
 from aweb.config import get_settings
 from aweb.team_auth_envelope import decode_signed_payload_header, raw_request_target
 
@@ -64,16 +69,26 @@ class AppCredential:
     installation_generation: int | None = None
 
 
-async def _emit_key(db, *, purpose: str, team_id: str, app_id: str, kid: str, did_key: str) -> dict | None:
+async def _emit_key(
+    db, *, purpose: str, team_id: str, app_id: str, kid: str, did_key: str
+) -> dict | None:
     """A v1 event_emitters key, or a v2 app key that declares app-event."""
-    row = await get_active_app_emit_key(db, team_id=team_id, app_id=app_id, kid=kid, did_key=did_key)
+    row = await get_active_app_emit_key(
+        db, team_id=team_id, app_id=app_id, kid=kid, did_key=did_key
+    )
     if row is not None:
         return row
-    return await get_active_app_key(db, team_id=team_id, app_id=app_id, kid=kid, did_key=did_key, purpose=purpose)
+    return await get_active_app_key(
+        db, team_id=team_id, app_id=app_id, kid=kid, did_key=did_key, purpose=purpose
+    )
 
 
-async def _app_key(db, *, purpose: str, team_id: str, app_id: str, kid: str, did_key: str) -> dict | None:
-    return await get_active_app_key(db, team_id=team_id, app_id=app_id, kid=kid, did_key=did_key, purpose=purpose)
+async def _app_key(
+    db, *, purpose: str, team_id: str, app_id: str, kid: str, did_key: str
+) -> dict | None:
+    return await get_active_app_key(
+        db, team_id=team_id, app_id=app_id, kid=kid, did_key=did_key, purpose=purpose
+    )
 
 
 PURPOSES: dict[str, AppCredentialPurpose] = {
@@ -117,7 +132,9 @@ def _allowed_audiences(request: Request) -> set[str]:
     return {canonical_server_origin(configured or get_settings().public_origin)}
 
 
-async def verify_app_credential(request: Request, db, purpose: str, *, installation: dict | None = None) -> AppCredential:
+async def verify_app_credential(
+    request: Request, db, purpose: str, *, installation: dict | None = None
+) -> AppCredential:
     """Verify an app credential for exactly ``purpose``.
 
     The Authorization prefix selects nothing: it must be the purpose's own
@@ -130,7 +147,7 @@ async def verify_app_credential(request: Request, db, purpose: str, *, installat
     auth = (request.headers.get("Authorization") or "").strip()
     if not auth.startswith(spec.prefix):
         raise HTTPException(status_code=401, detail=f"Missing {label} Authorization header")
-    parts = auth[len(spec.prefix):].strip().split()
+    parts = auth[len(spec.prefix) :].strip().split()
     if len(parts) != 2:
         raise HTTPException(status_code=401, detail=f"Malformed {label} Authorization header")
     did_key, signature_b64 = parts
@@ -143,17 +160,18 @@ async def verify_app_credential(request: Request, db, purpose: str, *, installat
     timestamp = require_timestamp(request)
     enforce_timestamp_skew(timestamp)
 
-    body_sha256 = getattr(request.state, "body_sha256", None)
-    if body_sha256 is None:
-        body_sha256 = hashlib.sha256(getattr(request.state, "cached_body", b"") or b"").hexdigest()
+    body_sha256 = request_body_sha256(request)
 
     try:
-        canonical = decode_signed_payload_header(str(request.headers.get("X-AWEB-Signed-Payload") or "").strip())
+        canonical = decode_signed_payload_header(
+            str(request.headers.get("X-AWEB-Signed-Payload") or "").strip()
+        )
     except ValueError as exc:
         raise HTTPException(status_code=401, detail=f"Invalid {label} signed payload") from exc
     try:
         if purpose == APP_REQUEST:
             from aweb.task_contracts import strict_json_bytes
+
             payload = strict_json_bytes(canonical)
         else:
             payload = json.loads(canonical)
@@ -175,21 +193,41 @@ async def verify_app_credential(request: Request, db, purpose: str, *, installat
         "timestamp": timestamp,
     }
     if purpose == APP_REQUEST:
-        if set(payload) != set(expected) | {"aud", "installation_id", "installation_generation"}:
+        if set(payload) != set(expected) | {
+            "aud",
+            "installation_id",
+            "installation_generation",
+        }:
             raise HTTPException(status_code=401, detail="Invalid app request signed payload")
-        if type(payload.get("installation_generation")) is not int or type(payload.get("v")) is not int:
+        if (
+            type(payload.get("installation_generation")) is not int
+            or type(payload.get("v")) is not int
+        ):
             raise HTTPException(status_code=401, detail="Invalid app request signed payload")
     for field, expected_value in expected.items():
         if payload.get(field) != expected_value:
-            raise HTTPException(status_code=401, detail=f"{label.capitalize()} signed payload does not match request")
+            raise HTTPException(
+                status_code=401,
+                detail=f"{label.capitalize()} signed payload does not match request",
+            )
 
     aud = str(payload.get("aud") or "").strip()
     try:
-        canonical_aud = require_canonical_server_origin(aud) if purpose == APP_REQUEST else canonical_server_origin(aud)
+        canonical_aud = (
+            require_canonical_server_origin(aud)
+            if purpose == APP_REQUEST
+            else canonical_server_origin(aud)
+        )
     except Exception as exc:
-        raise HTTPException(status_code=401, detail=f"{label.capitalize()} signed payload audience is invalid") from exc
+        raise HTTPException(
+            status_code=401,
+            detail=f"{label.capitalize()} signed payload audience is invalid",
+        ) from exc
     if canonical_aud not in _allowed_audiences(request):
-        raise HTTPException(status_code=401, detail=f"{label.capitalize()} signed payload audience is not allowed")
+        raise HTTPException(
+            status_code=401,
+            detail=f"{label.capitalize()} signed payload audience is not allowed",
+        )
 
     try:
         verify_did_key_signature(did_key=did_key, payload=canonical, signature_b64=signature_b64)
@@ -197,17 +235,28 @@ async def verify_app_credential(request: Request, db, purpose: str, *, installat
         raise HTTPException(status_code=401, detail=f"Invalid {label} signature") from exc
 
     if purpose == APP_REQUEST:
-        if (installation is None or installation["state"] != "active" or not installation.get("origin_verified", False)
-                or payload["installation_id"] != str(installation["installation_id"])
-                or payload["installation_generation"] != installation["generation"]):
+        if (
+            installation is None
+            or installation["state"] != "active"
+            or not installation.get("origin_verified", False)
+            or payload["installation_id"] != str(installation["installation_id"])
+            or payload["installation_generation"] != installation["generation"]
+        ):
             raise HTTPException(status_code=403, detail="scope_denied")
 
-    row = await spec.lookup_key(db, purpose=purpose, team_id=team_id, app_id=app_id, kid=kid, did_key=did_key)
+    row = await spec.lookup_key(
+        db, purpose=purpose, team_id=team_id, app_id=app_id, kid=kid, did_key=did_key
+    )
     if row is None:
         raise HTTPException(status_code=403, detail=spec.key_not_registered)
 
     return AppCredential(
-        purpose=purpose, team_id=team_id, app_id=app_id, kid=kid, did_key=did_key, digest=row["digest"],
+        purpose=purpose,
+        team_id=team_id,
+        app_id=app_id,
+        kid=kid,
+        did_key=did_key,
+        digest=row["digest"],
         installation_id=str(installation["installation_id"]) if purpose == APP_REQUEST else None,
         installation_generation=installation["generation"] if purpose == APP_REQUEST else None,
     )

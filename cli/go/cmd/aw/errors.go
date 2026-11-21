@@ -68,6 +68,10 @@ func errorCodeOf(err error) string {
 	if errors.As(err, &coded) {
 		return coded.code
 	}
+	var certificate *awid.CurrentTeamCertificateError
+	if errors.As(err, &certificate) {
+		return string(certificate.Code)
+	}
 	return ""
 }
 

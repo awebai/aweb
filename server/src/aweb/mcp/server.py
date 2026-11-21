@@ -13,55 +13,38 @@ from __future__ import annotations
 import asyncio
 from typing import Any, Optional
 
+from awid.registry import RegistryClient
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from redis.asyncio import Redis
 
-from awid.registry import RegistryClient
 from aweb.config import get_awid_registry_url
-from aweb.db import DatabaseInfra
+from aweb.db import DatabaseInfrastructure
 from aweb.federation.transport import delivery_transport
+from aweb.internal_auth import ProxyVerificationConfig
 from aweb.mcp.auth import MCPAuthMiddleware
+from aweb.mcp.compatibility import observe_compatibility_tool_call
 from aweb.mcp.notifications import append_pending_nudge
-from aweb.mcp.signing import HostedMessageDecryptor, HostedMessageEncryptor, HostedMessageSigner
-from aweb.mcp.tools.agents import heartbeat as _heartbeat_impl
-from aweb.mcp.tools.agents import list_agents as _list_agents_impl
-from aweb.mcp.tools.chat import chat_history as _chat_history_impl
-from aweb.mcp.tools.chat import chat_pending as _chat_pending_impl
-from aweb.mcp.tools.chat import chat_read as _chat_read_impl
-from aweb.mcp.tools.chat import chat_send as _chat_send_impl
-from aweb.mcp.tools.contacts import add_contact_by_email as _add_contact_by_email_impl
-from aweb.mcp.tools.contacts import add_contact_by_handle as _add_contact_by_handle_impl
-from aweb.mcp.tools.contacts import contacts_add as _contacts_add_impl
-from aweb.mcp.tools.contacts import contacts_remove as _contacts_remove_impl
-from aweb.mcp.tools.contacts import contacts_list as _contacts_list_impl
-from aweb.mcp.tools.contacts import list_contacts_tool as _list_contacts_tool_impl
-from aweb.mcp.tools.contacts import send_message_to_contact as _send_message_to_contact_impl
-from aweb.mcp.tools.contacts import read_messages_from_contact as _read_messages_from_contact_impl
-from aweb.mcp.tools.identity import whoami as _whoami_impl
-from aweb.mcp.tools.mail import check_inbox as _check_inbox_impl
-from aweb.mcp.tools.mail import list_threads as _list_threads_impl
-from aweb.mcp.tools.mail import send_mail as _send_mail_impl
-from aweb.mcp.tools.room import room_read as _room_read_impl, room_post as _room_post_impl, room_pending as _room_pending_impl
-from aweb.messaging.room import ROOM_DISCLOSURE
-from aweb.mcp.tools.team_instructions import instructions_history as _instructions_history_impl
-from aweb.mcp.tools.team_instructions import instructions_show as _instructions_show_impl
-from aweb.mcp.tools.team_roles import roles_show as _roles_show_impl
-from aweb.mcp.tools.team_roles import roles_list as _roles_list_impl
-from aweb.mcp.tools.tasks import task_claim as _task_claim_impl
-from aweb.mcp.tools.tasks import task_close as _task_close_impl
-from aweb.mcp.tools.tasks import task_comment_add as _task_comment_add_impl
-from aweb.mcp.tools.tasks import task_comment_list as _task_comment_list_impl
-from aweb.mcp.tools.tasks import task_create as _task_create_impl
-from aweb.mcp.tools.tasks import task_get as _task_get_impl
-from aweb.mcp.tools.tasks import task_list as _task_list_impl
-from aweb.mcp.tools.tasks import task_reopen as _task_reopen_impl
-from aweb.mcp.tools.tasks import task_ready as _task_ready_impl
-from aweb.mcp.tools.tasks import task_update as _task_update_impl
-from aweb.mcp.tools.work import work_active as _work_active_impl
-from aweb.mcp.tools.work import work_blocked as _work_blocked_impl
-from aweb.mcp.tools.work import work_ready as _work_ready_impl
-from aweb.mcp.tools.workspace import workspace_status as _workspace_status_impl
+from aweb.mcp.registration import (
+    agents,
+    chat,
+    contacts,
+    identity,
+    instructions,
+    mail,
+    roles,
+    room,
+    tasks,
+    work,
+    workspace,
+)
+from aweb.mcp.registration.dependencies import ToolDependencies
+from aweb.mcp.signing import (
+    HostedMessageDecryptor,
+    HostedMessageEncryptor,
+    HostedMessageSigner,
+)
+
 
 class NormalizeMountedMCPPathMiddleware:
     """Rewrite exact /mcp requests to /mcp/ before FastAPI routing.
@@ -103,7 +86,13 @@ class ManagedMCPApp:
         self._started = asyncio.Event()
         self._shutdown = asyncio.Event()
 
+    @property
+    def is_running(self) -> bool:
+        """Whether this resource has an active serving task."""
+        return self._started.is_set() and self._runner_task is not None and not self._runner_task.done()
+
     async def startup(self) -> None:
+        """Start the mounted MCP session manager and wait until it can serve."""
         if self._runner_task is not None:
             return
 
@@ -121,6 +110,7 @@ class ManagedMCPApp:
             await asyncio.sleep(0)
 
     async def shutdown(self) -> None:
+        """Stop and await the mounted MCP session manager owned by this wrapper."""
         if self._runner_task is None:
             return
         self._shutdown.set()
@@ -144,7 +134,7 @@ class ManagedMCPApp:
 
 def register_tools(
     mcp: FastMCP,
-    db_infra: DatabaseInfra,
+    db_infra: DatabaseInfrastructure,
     redis: Optional[Redis],
     registry_client: RegistryClient,
     federation_authority=None,
@@ -167,677 +157,29 @@ def register_tools(
     federation_mail_transport = delivery_transport(federation_authority, federation_mail_transport)
     federation_chat_transport = delivery_transport(federation_authority, federation_chat_transport)
 
-    # -- Identity --
-
-    @mcp.tool(
-        name="whoami",
-        description="Show the authenticated agent identity and team scope.",
+    dependencies = ToolDependencies(
+        db_infra=db_infra,
+        redis=redis,
+        registry_client=registry_client,
+        federation_authority=federation_authority,
+        hosted_signer=hosted_signer,
+        hosted_encryptor=hosted_encryptor,
+        hosted_decryptor=hosted_decryptor,
+        federation_mail_transport=federation_mail_transport,
+        federation_chat_transport=federation_chat_transport,
+        public_origin=public_origin,
     )
-    async def whoami() -> str:
-        return await _whoami_impl(db_infra)
-
-    # -- Team room --
-
-    @mcp.tool(
-        name="room_pending",
-        description="Check your pending team room notices without acknowledging mail or chat. Read posts with room_read.",
-    )
-    async def room_pending() -> str:
-        return await _room_pending_impl(db_infra)
-
-    @mcp.tool(
-        name="room_read",
-        description=(
-            "Read the shared team room, oldest first. All current members can read retained "
-            "history, including posts made before they joined. Explicit read only; follow "
-            "next_cursor when has_more is true."
-        ),
-    )
-    async def room_read(after: str | None = None, limit: int = 50) -> str:
-        return await _room_read_impl(db_infra, after=after, limit=limit)
-
-    @mcp.tool(
-        name="room_post",
-        description=(
-            "Post a signed announcement to the shared team room. " + ROOM_DISCLOSURE
-            + " Hosted MCP signs as the authenticated actor. Self-custodial callers supply "
-            "signed_post. E2E rooms are unsupported. Other current members receive one notice per post; no reply is expected."
-        ),
-    )
-    async def room_post(
-        body: str = "", subject: str = "", e2ee: bool = False,
-        signed_post: dict[str, Any] | None = None,
-    ) -> str:
-        return await _room_post_impl(
-            db_infra, hosted_signer=hosted_signer, body=body, subject=subject,
-            e2ee=e2ee, signed_post=signed_post,
-        )
-
-    # -- Mail --
-
-    @mcp.tool(
-        name="send_mail",
-        description=(
-            "Send async mail with a required body by recipient, or continue an existing "
-            "mail conversation by conversation_id. A recipient send starts a new thread. "
-            "Use list_threads to find a conversation to continue. Hosted custodial sends use managed "
-            "encryption by default when the recipient has an encryption key. The hosted "
-            "service can read the mail; this is not end-to-end encryption. Set plaintext=true "
-            "to store message content unencrypted."
-        ),
-    )
-    async def send_mail(
-        to: str = "",
-        body: str = "",
-        conversation_id: str = "",
-        subject: str = "",
-        priority: str = "normal",
-        plaintext: bool = False,
-    ) -> str:
-        return await _send_mail_impl(
-            db_infra,
-            registry_client=registry_client,
-            federation_authority=federation_authority,
-            hosted_signer=hosted_signer,
-            hosted_encryptor=hosted_encryptor,
-            to=to,
-            conversation_id=conversation_id,
-            subject=subject,
-            body=body,
-            priority=priority,
-            plaintext=plaintext,
-            federation_transport=federation_mail_transport,
-            public_origin=public_origin,
-        )
-
-    @mcp.tool(
-        name="list_threads",
-        description=(
-            "List your mail threads without acknowledging messages, newest activity first. "
-            "Returns title (first-message subject; empty for E2EE), first_message_id, "
-            "participants, last activity, unread count and conversation_id. Filters only "
-            "narrow your participant access. Continue a chosen thread with send_mail conversation_id."
-        ),
-    )
-    async def list_threads(
-        limit: int = 50, cursor: str = "", participant_did: str = "",
-        participant_address: str = "",
-    ) -> str:
-        return await _list_threads_impl(
-            db_infra, limit=limit, cursor=cursor, participant_did=participant_did,
-            participant_address=participant_address,
-        )
-
-    @mcp.tool(
-        name="check_mail",
-        description=(
-            "Check hosted mail. The tool marks returned unread messages read before returning. "
-            "The hosted service decrypts managed encrypted mail for this MCP session; "
-            "self-custodial encrypted content remains metadata-only."
-        ),
-    )
-    async def check_mail(
-        unread_only: bool = True, limit: int = 50, include_bodies: bool = True
-    ) -> str:
-        return await _check_inbox_impl(
-            db_infra,
-            hosted_decryptor=hosted_decryptor,
-            unread_only=unread_only,
-            limit=limit,
-            include_bodies=include_bodies,
-        )
-
-    # -- Agents --
-
-    @mcp.tool(
-        name="list_agents",
-        description="List all agents in the current team with online status.",
-    )
-    async def list_agents() -> str:
-        return await _list_agents_impl(db_infra, redis)
-
-    @mcp.tool(
-        name="heartbeat",
-        description="Send a heartbeat to maintain agent presence (online status).",
-    )
-    async def heartbeat() -> str:
-        return await _heartbeat_impl(db_infra, redis)
-
-    # -- Chat --
-
-    @mcp.tool(
-        name="send_chat",
-        description=(
-            "Send a real-time chat message to an agent. Humans are reached by mail; "
-            "chat to an authoritative human refuses recipient_human_mail_only. Provide to for a routable address, "
-            "DID, hosted handle, or same-team local alias, or conversation_id "
-            "to reply in an existing conversation. Set wait=true to block until "
-            "the other agent replies (recommended for conversations). Hosted "
-            "custodial sends use managed encryption by default. The hosted service can read "
-            "the chat; this is not end-to-end encryption. Set plaintext=true to store "
-            "message content unencrypted."
-        ),
-    )
-    async def send_chat(
-        to: str = "",
-        message: str = "",
-        conversation_id: str = "",
-        wait: bool = False,
-        wait_seconds: int = 120,
-        leaving: bool = False,
-        hang_on: bool = False,
-        plaintext: bool = False,
-    ) -> str:
-        recipient_ref = to.strip()
-        to_alias = ""
-        to_did = ""
-        to_address = ""
-        if recipient_ref.startswith("did:aw:") or recipient_ref.startswith("did:key:"):
-            to_did = recipient_ref
-        elif "/" in recipient_ref or recipient_ref.startswith("@"):
-            to_address = recipient_ref
-        else:
-            to_alias = recipient_ref
-        return await _chat_send_impl(
-            db_infra,
-            redis,
-            registry_client=registry_client,
-            federation_authority=federation_authority,
-            hosted_signer=hosted_signer,
-            hosted_encryptor=hosted_encryptor,
-            hosted_decryptor=hosted_decryptor,
-            message=message,
-            to_alias=to_alias,
-            to_did=to_did,
-            to_address=to_address,
-            session_id=conversation_id,
-            wait=wait,
-            wait_seconds=wait_seconds,
-            leaving=leaving,
-            hang_on=hang_on,
-            plaintext=plaintext,
-            federation_transport=federation_chat_transport,
-            public_origin=public_origin,
-        )
-
-    @mcp.tool(
-        name="check_chats",
-        description="List chat conversations with unread messages waiting for you.",
-    )
-    async def check_chats() -> str:
-        return await _chat_pending_impl(db_infra, redis, hosted_decryptor=hosted_decryptor)
-
-    @mcp.tool(
-        name="read_chat",
-        description="Get message history for a chat session.",
-    )
-    async def read_chat(
-        conversation_id: str,
-        unread_only: bool = False,
-        limit: int = 50,
-    ) -> str:
-        return await _chat_history_impl(
-            db_infra,
-            session_id=conversation_id,
-            unread_only=unread_only,
-            limit=limit,
-            hosted_decryptor=hosted_decryptor,
-        )
-
-    @mcp.tool(
-        name="mark_chat_read",
-        description=(
-            "Mark chat messages read using up_to_message_id, message_ids, or both; "
-            "message_ids takes precedence."
-        ),
-    )
-    async def mark_chat_read(
-        conversation_id: str,
-        up_to_message_id: str | None = None,
-        message_ids: list[str] | None = None,
-    ) -> str:
-        return await _chat_read_impl(
-            db_infra,
-            session_id=conversation_id,
-            up_to_message_id=up_to_message_id,
-            message_ids=message_ids,
-            redis=redis,
-        )
-
-    # -- Tasks --
-
-    @mcp.tool(
-        name="task_create",
-        description="Create a task in the current team.",
-    )
-    async def task_create(
-        title: str,
-        description: str = "",
-        notes: str = "",
-        priority: int = 2,
-        task_type: str = "task",
-        labels: list[str] | None = None,
-        parent_task_id: str = "",
-        assignee: str = "",
-    ) -> str:
-        return await _task_create_impl(
-            db_infra,
-            title=title,
-            description=description,
-            notes=notes,
-            priority=priority,
-            task_type=task_type,
-            labels=labels,
-            parent_task_id=parent_task_id,
-            assignee=assignee,
-        )
-
-    @mcp.tool(
-        name="task_list",
-        description="List tasks in the current team.",
-    )
-    async def task_list(
-        status: str = "",
-        assignee: str = "",
-        task_type: str = "",
-        priority: int = -1,
-        labels: list[str] | None = None,
-    ) -> str:
-        return await _task_list_impl(
-            db_infra,
-            status=status,
-            assignee=assignee,
-            task_type=task_type,
-            priority=priority,
-            labels=labels,
-        )
-
-    @mcp.tool(
-        name="task_ready",
-        description="List ready tasks in the current team.",
-    )
-    async def task_ready(unclaimed_only: bool = True) -> str:
-        return await _task_ready_impl(db_infra, unclaimed_only=unclaimed_only)
-
-    @mcp.tool(
-        name="task_get",
-        description="Get a task by ref or UUID.",
-    )
-    async def task_get(ref: str) -> str:
-        return await _task_get_impl(db_infra, ref=ref)
-
-    @mcp.tool(
-        name="task_close",
-        description="Close a task by ref or UUID.",
-    )
-    async def task_close(ref: str) -> str:
-        return await _task_close_impl(db_infra, ref=ref)
-
-    @mcp.tool(
-        name="task_update",
-        description="Update task fields such as status, title, notes, assignee, or labels.",
-    )
-    async def task_update(
-        ref: str,
-        status: str = "",
-        title: str = "",
-        description: str = "",
-        notes: str = "",
-        task_type: str = "",
-        priority: int = -1,
-        labels: list[str] | None = None,
-        assignee: str = "",
-    ) -> str:
-        return await _task_update_impl(
-            db_infra,
-            ref=ref,
-            status=status,
-            title=title,
-            description=description,
-            notes=notes,
-            task_type=task_type,
-            priority=priority,
-            labels=labels,
-            assignee=assignee,
-        )
-
-    @mcp.tool(
-        name="task_reopen",
-        description="Reopen a closed task.",
-    )
-    async def task_reopen(ref: str) -> str:
-        return await _task_reopen_impl(db_infra, ref=ref)
-
-    @mcp.tool(
-        name="task_claim",
-        description="Claim a task by marking it in progress for the current agent.",
-    )
-    async def task_claim(ref: str) -> str:
-        return await _task_claim_impl(db_infra, ref=ref)
-
-    @mcp.tool(
-        name="task_comment_add",
-        description="Add a comment to a task.",
-    )
-    async def task_comment_add(ref: str, body: str) -> str:
-        return await _task_comment_add_impl(db_infra, ref=ref, body=body)
-
-    @mcp.tool(
-        name="task_comment_list",
-        description="List comments on a task.",
-    )
-    async def task_comment_list(ref: str) -> str:
-        return await _task_comment_list_impl(db_infra, ref=ref)
-
-    # -- Roles --
-
-    @mcp.tool(
-        name="instructions_show",
-        description="Show the active shared team instructions or a requested instructions version.",
-    )
-    async def instructions_show(team_instructions_id: str = "") -> str:
-        return await _instructions_show_impl(
-            db_infra, team_instructions_id=team_instructions_id
-        )
-
-    @mcp.tool(
-        name="instructions_history",
-        description="List recent shared team instructions versions.",
-    )
-    async def instructions_history(limit: int = 20) -> str:
-        return await _instructions_history_impl(db_infra, limit=limit)
-
-    @mcp.tool(
-        name="roles_show",
-        description="Show the active team roles bundle and the current agent's selected role.",
-    )
-    async def roles_show(only_selected: bool = False) -> str:
-        return await _roles_show_impl(db_infra, only_selected=only_selected)
-
-    @mcp.tool(
-        name="roles_list",
-        description="List available roles from the active team roles bundle.",
-    )
-    async def roles_list() -> str:
-        return await _roles_list_impl(db_infra)
-
-    # -- Work --
-
-    @mcp.tool(
-        name="work_ready",
-        description="List ready tasks that are not already claimed by another workspace.",
-    )
-    async def work_ready() -> str:
-        return await _work_ready_impl(db_infra)
-
-    @mcp.tool(
-        name="work_active",
-        description="List active in-progress work across the team.",
-    )
-    async def work_active() -> str:
-        return await _work_active_impl(db_infra)
-
-    @mcp.tool(
-        name="work_blocked",
-        description="List blocked tasks in the current team.",
-    )
-    async def work_blocked() -> str:
-        return await _work_blocked_impl(db_infra)
-
-    # -- Workspace --
-
-    @mcp.tool(
-        name="workspace_status",
-        description="Show self/team coordination status for the current agent.",
-    )
-    async def workspace_status(limit: int = 15) -> str:
-        return await _workspace_status_impl(db_infra, redis, limit=limit)
-
-    # -- Contacts --
-
-    @mcp.tool(
-        name="list_contacts",
-        description="List saved contacts for the authenticated identity.",
-    )
-    async def list_contacts() -> str:
-        return await _list_contacts_tool_impl(db_infra)
-
-    @mcp.tool(
-        name="add_contact",
-        description="Add a contact by routable address.",
-    )
-    async def add_contact(address: str, label: str = "") -> str:
-        return await _contacts_add_impl(
-            db_infra, contact_address=address, label=label, federation_authority=federation_authority,
-        )
-
-    @mcp.tool(
-        name="add_contact_by_handle",
-        description="Add a pending contact by @handle or @handle/agent.",
-    )
-    async def add_contact_by_handle(handle: str, label: str = "") -> str:
-        return await _add_contact_by_handle_impl(db_infra, handle=handle, label=label)
-
-    @mcp.tool(
-        name="remove_contact",
-        description="Remove a saved contact.",
-    )
-    async def remove_contact(contact_id: str) -> str:
-        return await _contacts_remove_impl(db_infra, contact_id=contact_id)
-
-    @mcp.tool(
-        name="read_contact_messages",
-        description=(
-            "Read hosted mail or chat messages exchanged with a saved contact. "
-            "Encrypted E2E mail content is returned as metadata only; read it in a local aw client."
-        ),
-    )
-    async def read_contact_messages(
-        contact_id: str,
-        channel: str = "mail",
-        limit: int = 50,
-    ) -> str:
-        return await _read_messages_from_contact_impl(
-            db_infra,
-            registry_client=registry_client,
-            contact_id=contact_id,
-            channel=channel,
-            limit=limit,
-        )
-
-    # -- Legacy compatibility aliases --
-    #
-    # Hosted MCP clients can cache a tool list across deploys. Keep the old
-    # names as thin delegates so existing ChatGPT/Claude sessions do not fail
-    # with "Unknown tool" while new docs and clients use the canonical verbs.
-
-    @mcp.tool(
-        name="check_inbox",
-        description=(
-            "Legacy compatibility alias for check_mail. Prefer check_mail. It marks returned "
-            "unread messages read before returning. The hosted service decrypts managed "
-            "encrypted mail for this MCP session; it is readable by that service."
-        ),
-    )
-    async def check_inbox(
-        unread_only: bool = True, limit: int = 50, include_bodies: bool = True
-    ) -> str:
-        return await _check_inbox_impl(
-            db_infra,
-            hosted_decryptor=hosted_decryptor,
-            unread_only=unread_only,
-            limit=limit,
-            include_bodies=include_bodies,
-        )
-
-    @mcp.tool(
-        name="chat_send",
-        description="Legacy compatibility alias for send_chat. Prefer send_chat.",
-    )
-    async def chat_send(
-        message: str = "",
-        to_alias: str = "",
-        to_did: str = "",
-        to_address: str = "",
-        session_id: str = "",
-        wait: bool = False,
-        wait_seconds: int = 120,
-        leaving: bool = False,
-        hang_on: bool = False,
-        plaintext: bool = False,
-    ) -> str:
-        return await _chat_send_impl(
-            db_infra,
-            redis,
-            registry_client=registry_client,
-            federation_authority=federation_authority,
-            hosted_signer=hosted_signer,
-            hosted_encryptor=hosted_encryptor,
-            hosted_decryptor=hosted_decryptor,
-            message=message,
-            to_alias=to_alias,
-            to_did=to_did,
-            to_address=to_address,
-            session_id=session_id,
-            wait=wait,
-            wait_seconds=wait_seconds,
-            leaving=leaving,
-            hang_on=hang_on,
-            plaintext=plaintext,
-            federation_transport=federation_chat_transport,
-            public_origin=public_origin,
-        )
-
-    @mcp.tool(
-        name="chat_pending",
-        description="Legacy compatibility alias for check_chats. Prefer check_chats.",
-    )
-    async def chat_pending() -> str:
-        return await _chat_pending_impl(db_infra, redis, hosted_decryptor=hosted_decryptor)
-
-    @mcp.tool(
-        name="chat_history",
-        description="Legacy compatibility alias for read_chat. Prefer read_chat.",
-    )
-    async def chat_history(
-        session_id: str,
-        unread_only: bool = False,
-        limit: int = 50,
-    ) -> str:
-        return await _chat_history_impl(
-            db_infra,
-            session_id=session_id,
-            unread_only=unread_only,
-            limit=limit,
-            hosted_decryptor=hosted_decryptor,
-        )
-
-    @mcp.tool(
-        name="chat_read",
-        description=(
-            "Legacy compatibility alias for mark_chat_read. Accepts up_to_message_id, "
-            "message_ids, or both; message_ids takes precedence."
-        ),
-    )
-    async def chat_read(
-        session_id: str,
-        up_to_message_id: str | None = None,
-        message_ids: list[str] | None = None,
-    ) -> str:
-        return await _chat_read_impl(
-            db_infra,
-            session_id=session_id,
-            up_to_message_id=up_to_message_id,
-            message_ids=message_ids,
-            redis=redis,
-        )
-
-    @mcp.tool(
-        name="contacts_list",
-        description="Legacy compatibility alias for list_contacts. Prefer list_contacts.",
-    )
-    async def contacts_list() -> str:
-        return await _contacts_list_impl(db_infra)
-
-    @mcp.tool(
-        name="contacts_add",
-        description="Legacy compatibility alias for add_contact. Prefer add_contact.",
-    )
-    async def contacts_add(contact_address: str, label: str = "") -> str:
-        return await _contacts_add_impl(
-            db_infra, contact_address=contact_address, label=label, federation_authority=federation_authority,
-        )
-
-    @mcp.tool(
-        name="contacts_remove",
-        description="Legacy compatibility alias for remove_contact. Prefer remove_contact.",
-    )
-    async def contacts_remove(contact_id: str) -> str:
-        return await _contacts_remove_impl(db_infra, contact_id=contact_id)
-
-    @mcp.tool(
-        name="add_contact_by_email",
-        description="Legacy compatibility alias for email contact requests.",
-    )
-    async def add_contact_by_email(email: str, label: str = "") -> str:
-        return await _add_contact_by_email_impl(db_infra, email=email, label=label)
-
-    @mcp.tool(
-        name="send_message_to_contact",
-        description=(
-            "Legacy compatibility alias for hosted server-readable mail or chat to a saved contact. "
-            "This hosted MCP tool is not E2E; use local aw clients for E2E messaging."
-        ),
-    )
-    async def send_message_to_contact(
-        contact_id: str,
-        message: str,
-        subject: str = "",
-        channel: str = "mail",
-        priority: str = "normal",
-        wait: bool = False,
-        wait_seconds: int = 120,
-    ) -> str:
-        return await _send_message_to_contact_impl(
-            db_infra,
-            redis=redis,
-            registry_client=registry_client,
-            federation_authority=federation_authority,
-            hosted_signer=hosted_signer,
-            hosted_encryptor=hosted_encryptor,
-            contact_id=contact_id,
-            message=message,
-            subject=subject,
-            channel=channel,
-            priority=priority,
-            wait=wait,
-            wait_seconds=wait_seconds,
-            federation_mail_transport=federation_mail_transport,
-            federation_chat_transport=federation_chat_transport,
-            public_origin=public_origin,
-        )
-
-    @mcp.tool(
-        name="read_messages_from_contact",
-        description=(
-            "Legacy compatibility alias for read_contact_messages. "
-            "Prefer read_contact_messages. Hosted MCP cannot decrypt E2E contents."
-        ),
-    )
-    async def read_messages_from_contact(
-        contact_id: str,
-        channel: str = "mail",
-        limit: int = 50,
-    ) -> str:
-        return await _read_messages_from_contact_impl(
-            db_infra,
-            registry_client=registry_client,
-            contact_id=contact_id,
-            channel=channel,
-            limit=limit,
-        )
-
-
+    identity.register_tools(mcp, dependencies)
+    room.register_tools(mcp, dependencies)
+    mail.register_tools(mcp, dependencies)
+    agents.register_tools(mcp, dependencies)
+    chat.register_tools(mcp, dependencies)
+    tasks.register_tools(mcp, dependencies)
+    instructions.register_tools(mcp, dependencies)
+    roles.register_tools(mcp, dependencies)
+    work.register_tools(mcp, dependencies)
+    workspace.register_tools(mcp, dependencies)
+    contacts.register_tools(mcp, dependencies)
 
 class _NudgingFastMCP(FastMCP):
     def __init__(self, *args, db_infra, **kwargs):
@@ -845,13 +187,15 @@ class _NudgingFastMCP(FastMCP):
         super().__init__(*args, **kwargs)
 
     async def call_tool(self, name, arguments):
+        """Execute the registered tool and append the current pending-notice hint."""
+        observe_compatibility_tool_call(tool_name=name)
         result = await super().call_tool(name, arguments)
         return await append_pending_nudge(result, self._nudge_db)
 
 
 def create_mcp_app(
     *,
-    db_infra: DatabaseInfra,
+    db_infra: DatabaseInfrastructure,
     redis: Optional[Redis] = None,
     registry_client: RegistryClient | None = None,
     federation_authority=None,
@@ -862,6 +206,7 @@ def create_mcp_app(
     federation_chat_transport=None,
     public_origin: str | None = None,
     streamable_http_path: str = "/",
+    proxy_verification: ProxyVerificationConfig | None = None,
 ) -> Any:
     """Create an MCP ASGI app for aweb tools.
 
@@ -873,6 +218,7 @@ def create_mcp_app(
     When mounted at ``/mcp`` with the default ``streamable_http_path="/"``,
     the external MCP endpoint is ``/mcp/``.
     """
+    proxy_configuration = ProxyVerificationConfig.capture(proxy_verification)
     normalized_path = streamable_http_path.strip() or "/"
     if not normalized_path.startswith("/"):
         normalized_path = f"/{normalized_path}"
@@ -911,4 +257,4 @@ def create_mcp_app(
     # mounted sub-applications do not receive lifespan events from FastAPI.
     # Wrap the app so the parent can start/stop the session manager explicitly.
     inner = mcp.streamable_http_app()
-    return ManagedMCPApp(MCPAuthMiddleware(inner, db_infra), mcp.session_manager)
+    return ManagedMCPApp(MCPAuthMiddleware(inner, db_infra, proxy_verification=proxy_configuration), mcp.session_manager)

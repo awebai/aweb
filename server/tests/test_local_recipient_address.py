@@ -20,6 +20,8 @@ from awid.signing import canonical_json_bytes, sign_message
 from test_dashboard_privacy import privacy_app  # noqa: F401
 from test_messages_http import _signed_team_headers, _make_certificate, _encode_certificate
 
+__all__ = ["privacy_app"]
+
 
 @pytest_asyncio.fixture
 async def local_mail(privacy_app, monkeypatch):
@@ -174,15 +176,14 @@ async def test_unverified_home_namespace_does_not_supply_authority(local_mail, c
 @pytest.mark.asyncio
 async def test_home_registry_outage_remains_retryable(local_mail):
     from aweb.messaging.address_auth import namespace_uses_home_registry
-    from awid.federation_errors import FederationAuthorityError
+    from aweb.messaging.refusals import DeliveryRefusal
 
     registry = RegistryClient(registry_url="http://127.0.0.1:1")
     try:
-        with pytest.raises(FederationAuthorityError) as refused:
+        with pytest.raises(DeliveryRefusal) as refused:
             await namespace_uses_home_registry(local_mail.env.infra, registry, "local")
-        assert refused.value.reason == "sender_registry_unavailable"
-        assert refused.value.http_status == 503
-        assert refused.value.retryable is True
+        assert refused.value.status_code == 503
+        assert "Retry when the registry is available" in refused.value.detail
         assert local_mail.queries == []
         assert await local_mail.env.db.fetch_value("SELECT COUNT(*) FROM {{tables.messages}}") == 0
     finally:

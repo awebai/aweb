@@ -78,18 +78,23 @@
     },
     {
       "source": "server/src/aweb/messaging/mail_send.py",
-      "function": "deliver_remote_mail_and_project_locally",
+      "function": "_send_mail_to_resolved_target",
       "event": "message.sent"
     },
     {
       "source": "server/src/aweb/messaging/mail_send.py",
-      "function": "send_mail",
+      "function": "deliver_remote_mail_and_project_locally",
       "event": "message.sent"
     },
     {
       "source": "server/src/aweb/messaging/mail_send.py",
       "function": "send_mail_conversation_continuation",
       "event": "message.sent"
+    },
+    {
+      "source": "server/src/aweb/messaging/room.py",
+      "function": "post_room_message",
+      "event": "room.message_sent"
     },
     {
       "source": "server/src/aweb/routes/agent_status.py",

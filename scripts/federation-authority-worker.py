@@ -235,7 +235,7 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
                 delivery_origin=os.environ["HARNESS_DELIVERY_ORIGIN"],
             )
             try:
-                token = await core.resolve_and_commit(
+                committed = await core.resolve_evidence_and_commit(
                     claim,
                     resolver,
                     authority_generation=args.generation,
@@ -245,7 +245,7 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
                 await resolver.aclose()
             return {
                 "status": "resolved",
-                "token": asdict(token),
+                "token": asdict(committed.token),
                 "dns_queries": dns.queries,
                 "host_queries": hosts.queries,
                 "approved_answers": hosts.answers,

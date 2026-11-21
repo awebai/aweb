@@ -13,15 +13,50 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 import anyio
-from redis.asyncio import Redis
+from redis.asyncio import ConnectionPool, Redis
 from redis.asyncio.client import PubSub
 
 logger = logging.getLogger(__name__)
 
 # Releases outlive a cancelled caller; the loop holds only weak task references.
 _releases: set[asyncio.Task] = set()
+
+
+@asynccontextmanager
+async def raw_subscription(redis: Redis, *channels: str) -> AsyncIterator[PubSub]:
+    """Subscribe to the selected backend with a private byte-decoding pool.
+
+    Malformed UTF-8 remains one caller-visible frame. The serving pool's
+    encoder is never changed, and the private connection is closed on exit.
+    """
+    serving_pool = redis.connection_pool
+    pool = ConnectionPool(
+        connection_class=serving_pool.connection_class,
+        max_connections=1,
+        **{**serving_pool.connection_kwargs, "decode_responses": False},
+    )
+    client = Redis(connection_pool=pool)
+    pubsub = None
+    try:
+        pubsub = await open_subscription(client, *channels)
+        yield pubsub
+    finally:
+
+        async def close() -> None:
+            try:
+                await release_subscription(pubsub, *channels)
+            finally:
+                await client.aclose(close_connection_pool=True)
+
+        release = asyncio.ensure_future(close())
+        _releases.add(release)
+        release.add_done_callback(_releases.discard)
+        with anyio.CancelScope(shield=True):
+            await asyncio.shield(release)
 
 
 async def open_subscription(redis: Redis, *channels: str) -> PubSub:

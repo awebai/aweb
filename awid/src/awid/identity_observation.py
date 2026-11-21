@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from enum import StrEnum
 from types import MappingProxyType
 from typing import Any, Literal
 
@@ -29,8 +30,10 @@ class IdentityObservationRefused(ValueError):
     """A binding mismatch or unavailable evidence; no web-framework dependency."""
 
     def __init__(
-        self, code: Literal["identity_binding_mismatch", "identity_binding_unavailable"],
-        *, retry_after_seconds: float | None = None,
+        self,
+        code: Literal["identity_binding_mismatch", "identity_binding_unavailable"],
+        *,
+        retry_after_seconds: float | None = None,
     ) -> None:
         if code not in ("identity_binding_mismatch", "identity_binding_unavailable"):
             raise ValueError("unknown identity observation refusal")
@@ -122,6 +125,14 @@ async def observe_identity_binding(
     )
 
 
+class IdentityKind(StrEnum):
+    """An exact-subject verifier's kind tag; it carries no authority itself."""
+
+    HUMAN = "human"
+    AGENT = "agent"
+    UNKNOWN = "unknown"
+
+
 @dataclass(frozen=True)
 class IdentityKindObservation:
     """Trusted in-process verifier output, not a request DTO or credential."""
@@ -134,8 +145,19 @@ class IdentityKindObservation:
     evidence_age_seconds: float | None = field(default=None, compare=False)
 
     @property
+    def kind(self) -> IdentityKind:
+        """Name only verified kind; preserve the complete observation as proof."""
+        if self.result["identity_valid"] is not True:
+            return IdentityKind.UNKNOWN
+        if self.result["kind"] == IdentityKind.HUMAN.value:
+            return IdentityKind.HUMAN
+        if self.result["kind"] == IdentityKind.AGENT.value:
+            return IdentityKind.AGENT
+        return IdentityKind.UNKNOWN
+
+    @property
     def is_human(self) -> bool:
-        return self.result["identity_valid"] is True and self.result["kind"] == "human"
+        return self.kind is IdentityKind.HUMAN
 
 
 def unverified_kind(reason: str) -> dict[str, Any]:

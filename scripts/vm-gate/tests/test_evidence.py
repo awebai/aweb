@@ -1,11 +1,12 @@
-from pathlib import Path
 import io
 import json
 import tarfile
 import tempfile
 import unittest
-from vm_gate.evidence import collect_archive
+from pathlib import Path
+
 from vm_gate.errors import Infrastructure
+from vm_gate.evidence import collect_archive
 
 SHA = "a" * 40
 
@@ -68,6 +69,14 @@ class EvidenceTests(unittest.TestCase):
             collect_archive(archive, SHA, Path(self.tmp.name) / "out")
         self.assertFalse((Path(self.tmp.name) / "escaped").exists())
 
+    def test_summary_preserves_child_exit_beside_conservative_interruption(self):
+        receipt = {"raw_exit": 143, "child_exit": 0, "signal": 15, "interrupted": True}
+        archive = self.archive(
+            {"var/log/vm-gate/supervisor-receipt.json": json.dumps(receipt)}
+        )
+        result = collect_archive(archive, SHA, Path(self.tmp.name) / "out")
+        self.assertEqual(result["supervision"], receipt)
+
     def test_memory_uses_concurrent_current_sum_not_sum_of_individual_highwaters(self):
         samples = [
             {
@@ -93,6 +102,33 @@ class EvidenceTests(unittest.TestCase):
             result["memory"]["concurrent_cgroup_current_peak_sum_bytes"], 40
         )
         self.assertEqual(result["memory"]["host_sampled_used_peak_bytes"], 60 * 1024)
+
+    def test_incomplete_last_memory_line_does_not_discard_completed_stage_evidence(
+        self,
+    ):
+        memory = (
+            json.dumps(
+                {
+                    "meminfo_kib": {"MemTotal": 100, "MemAvailable": 40},
+                    "containers": [{"memory.current": "12"}],
+                }
+            )
+            + '\n{"time":'
+        )
+        archive = self.archive(
+            {
+                f"tmp/aweb-candidate-gate-{SHA}/summary.tsv": "checks\tPASSED\tchecks.log\t1s\n",
+                f"tmp/aweb-candidate-gate-{SHA}/checks.log": "completed checks\n",
+                "var/log/vm-gate/memory.jsonl": memory,
+            }
+        )
+        result = collect_archive(archive, SHA, Path(self.tmp.name) / "out")
+        self.assertEqual(result["stages"][0]["status"], "PASSED")
+        self.assertEqual(
+            result["memory"]["concurrent_cgroup_current_peak_sum_bytes"], 12
+        )
+        self.assertEqual(result["memory"]["host_sample_errors"], 1)
+        self.assertIsNone(result["memory"]["sample_completeness"][1]["expected"])
 
 
 if __name__ == "__main__":

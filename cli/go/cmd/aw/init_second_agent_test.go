@@ -138,6 +138,9 @@ func TestInitTeamAPIKeySecondAgentCommand(t *testing.T) {
 			if err != nil || state.ActiveTeam != team || len(state.Memberships) != 1 {
 				t.Fatalf("persisted team=%+v: %v", state, err)
 			}
+			if evidence := state.ActiveMembership().TeamKey; evidence == nil || evidence.State != awid.TeamKeyUnconfirmed || evidence.DIDKey != awid.ComputeDIDKey(teamPub) {
+				t.Fatalf("pending private team key was lost or promoted: %+v", evidence)
+			}
 			cert, err := awid.LoadTeamCertificate(awconfig.TeamCertificatePath(dir, team))
 			if err != nil || cert.Team != team || cert.Alias != tc.alias {
 				t.Fatalf("persisted cert=%+v: %v", cert, err)
