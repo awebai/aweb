@@ -13,11 +13,12 @@ AppArmor ABI 4.0. The guest operator stages the reviewed profile at
 is root:root mode 0755 and the file is root:root mode 0444.
 [Proof profile](aweb-secrets-oci-proof.apparmor)
 
-The proof user needs Docker access and non-interactive sudo for exactly these
-commands against the staged profile.
+The proof user needs Docker access and non-interactive sudo to manage the staged
+profile and read back its kernel state.
 
 ```sudoers
 gateuser ALL=(root) NOPASSWD: /usr/sbin/apparmor_parser --add --skip-cache /usr/local/share/aweb-oci-proof/aweb-secrets-oci-proof.apparmor, /usr/sbin/apparmor_parser --remove --skip-cache /usr/local/share/aweb-oci-proof/aweb-secrets-oci-proof.apparmor
+gateuser ALL=(root) NOPASSWD: /usr/bin/cat /sys/kernel/security/apparmor/profiles
 ```
 
 Run the proof from the runner package directory in the guest.

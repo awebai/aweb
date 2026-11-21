@@ -24,11 +24,16 @@ parse_profile() {
   return "$parser_status"
 }
 
+read_profiles() {
+  sudo -n -- /usr/bin/cat "$kernel_profiles"
+}
+
 cleanup_profile() {
   proof_status=$?
   trap - EXIT
   parse_profile --remove sudo -n --
-  if grep -Fq "$profile (" "$kernel_profiles"; then
+  profiles=$(read_profiles)
+  if printf '%s\n' "$profiles" | grep -Fq "$profile ("; then
     refuse "OCI proof AppArmor profile is still loaded after removal"
   fi
   printf 'Removed AppArmor profile: %s\n' "$profile"
@@ -43,8 +48,8 @@ case "$security_options" in
   *name=apparmor*) ;;
   *) refuse "The local Docker daemon must support AppArmor for the OCI proof" ;;
 esac
-[ -r "$kernel_profiles" ] || refuse "Cannot read the guest AppArmor profiles"
-if grep -Fq "$profile (" "$kernel_profiles"; then
+profiles=$(read_profiles)
+if printf '%s\n' "$profiles" | grep -Fq "$profile ("; then
   refuse "The OCI proof AppArmor profile is already loaded"
 fi
 [ ! -L "$profile_dir" ] && [ -d "$profile_dir" ] &&
@@ -65,7 +70,8 @@ parse_profile --add sudo -n --
 trap cleanup_profile EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-grep -Fx "$profile (enforce)" "$kernel_profiles" ||
+profiles=$(read_profiles)
+printf '%s\n' "$profiles" | grep -Fx "$profile (enforce)" ||
   refuse "The OCI proof AppArmor profile must be loaded in enforce mode"
 
 docker --host "$docker_socket" run --rm --init --network none --cap-drop ALL \
