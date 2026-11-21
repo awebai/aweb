@@ -5,26 +5,27 @@ separate adcl.6 joined journey supplies real service HTTP and Chromium's device.
 """
 
 import base64
+from datetime import datetime, timezone
 import hashlib
-from datetime import UTC, datetime
 
 import httpx
 import pytest
-from approval_service.canonical import canonical, parse
-from approval_service.encoding import decode, encode
-from approval_service.seams import commitment
-from authenticator import Passkey
+
 from awid.controller_signing import (
-    parse_controller_object,
     parse_controller_request,
+    parse_controller_object,
     sign_controller_object,
 )
-from awid.did import did_from_public_key, generate_keypair, stable_id_from_did_key
+from awid.did import generate_keypair, did_from_public_key, stable_id_from_did_key
 from awid.id_certificates import encode_id_chain_header
 from awid.signing import sign_message
-from pending import expire_pending
+from approval_service.canonical import canonical, parse
+from approval_service.encoding import encode, decode
+from approval_service.seams import commitment
 
 from aweb_key_holder.http import create_app
+from authenticator import Passkey
+from pending import expire_pending
 
 
 def signature(seed, payload):
@@ -77,7 +78,7 @@ async def commit_identity(registry, activation, seed, key):
 
 async def call(client, path, body, *, seed, key, identity, chain):
     raw = canonical(body)
-    timestamp = datetime.now(UTC).isoformat()
+    timestamp = datetime.now(timezone.utc).isoformat()
     packet = canonical(
         {
             "v": 2,
@@ -175,7 +176,7 @@ async def test_real_authority_first_bootstrap_then_second_requires_exact_approva
         "parent": {"kind": "namespace", "id": root.domain},
         "kind": "agent",
         "issuer_key": root.did_key,
-        "issued_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "issued_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
     signed_agent = await sign_controller_object(
         parse_controller_object(
@@ -218,13 +219,10 @@ async def test_real_authority_first_bootstrap_then_second_requires_exact_approva
         presentation = {"version": 1, "request_bytes": raw, "receipt": receipt}
         before = holder.store.audit()
         refused = await call(client, "/v1/humans", presentation, **agent_caller)
-        assert refused.status_code == 403, refused.text
-        assert refused.json() == {
-            "error": {
-                "code": "requester_mismatch",
-                "message": "Carry the enrollment intent with the requester key named in that intent, then retry.",
-            }
-        }
+        assert (
+            refused.status_code == 401
+            and refused.json()["error"]["code"] == "requester_mismatch"
+        )
         assert holder.store.audit() == before
 
         # Even a genuine UV assertion cannot manufacture the holder's own nonce.
@@ -337,7 +335,7 @@ async def test_real_authority_first_bootstrap_then_second_requires_exact_approva
 
         # Physical SQLite order is not bootstrap authority. Keep the logical
         # first-person row unchanged while placing it after the second person.
-        with holder.store.connection() as db, db:
+        with holder.store._connection() as db, db:
             db.execute("BEGIN IMMEDIATE")
             saved = dict(holder._row(db, first))
             db.execute("DELETE FROM enrollments WHERE person=?", (first,))

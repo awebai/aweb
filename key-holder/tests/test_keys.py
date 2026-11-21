@@ -7,6 +7,7 @@ import subprocess
 from dataclasses import asdict, replace
 
 import pytest
+from aweb_key_holder.keys import KeyStore, Refused
 from awid.controller_signing import (
     ControllerSigningContext,
     parse_controller_object,
@@ -16,8 +17,6 @@ from awid.did import public_key_from_did, stable_id_from_did_key
 from nacl.exceptions import CryptoError
 from nacl.public import PrivateKey, SealedBox
 from nacl.signing import VerifyKey
-
-from aweb_key_holder.keys import KeyStore, Refused
 
 
 @pytest.fixture

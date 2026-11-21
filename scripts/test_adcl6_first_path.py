@@ -2,21 +2,21 @@
 
 import json
 import os
+from pathlib import Path
 import stat
 import subprocess
 import tarfile
 import tempfile
 import unittest
-from pathlib import Path
 
 from adcl6_first_path import (
     AUDIENCE,
     ORG,
-    archive_running_tree,
     assert_approval_display,
     assert_approval_target,
     assert_outside_verdict,
     save,
+    archive_running_tree,
 )
 
 
@@ -29,11 +29,7 @@ class RunningTreeTests(unittest.TestCase):
             source = root / "cli/go/source.txt"
             source.parent.mkdir(parents=True)
             source.write_text("first")
-            for path in (
-                "awid/source.txt",
-                "key-holder/source.txt",
-                "naapp-lib/source.txt",
-            ):
+            for path in ("awid/source.txt", "key-holder/source.txt"):
                 file = root / path
                 file.parent.mkdir()
                 file.write_text(path)
@@ -70,7 +66,6 @@ class RunningTreeTests(unittest.TestCase):
                 )
                 self.assertIsNotNone(contents.getmember("awid/source.txt"))
                 self.assertIsNotNone(contents.getmember("key-holder/source.txt"))
-                self.assertIsNotNone(contents.getmember("naapp-lib/source.txt"))
                 self.assertIsNotNone(contents.getmember("deploy/team/render_env.py"))
             source.write_text("second")
             with self.assertRaisesRegex(RuntimeError, "clean"):

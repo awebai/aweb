@@ -265,18 +265,15 @@ func TestTOFUConformanceVectors(t *testing.T) {
 				meta.DID = vector.FromDID
 			}
 
-			got := client.checkTOFUPinWithMeta(
-				context.Background(),
-				VerificationStatus(vector.InitialStatus),
-				vector.RawAddress,
-				vector.TrustAddress,
-				vector.FromDID,
-				vector.FromStableID,
-				rotation,
-				replacement,
-				meta,
-				vector.RegistryConfirmedCurrentKey,
-			)
+			keyEvidence := currentKeyUnconfirmed
+			if vector.RegistryConfirmedCurrentKey {
+				keyEvidence = currentKeyConfirmedByRegistry
+			}
+			got := client.checkResolvedSenderPin(context.Background(), resolvedSenderPinCheck{
+				Status: VerificationStatus(vector.InitialStatus), RawAddress: vector.RawAddress,
+				TrustAddress: vector.TrustAddress, FromDID: vector.FromDID, FromStableID: vector.FromStableID,
+				Rotation: rotation, Replacement: replacement, Metadata: meta, CurrentKey: keyEvidence,
+			})
 			if got != VerificationStatus(vector.ExpectedStatus) {
 				t.Fatalf("status=%q, want %q", got, vector.ExpectedStatus)
 			}

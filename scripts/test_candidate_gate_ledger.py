@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Exercise the real Docker gate and RC with small Git, SQL, image and Redis stages."""
+
 from __future__ import annotations
 
 import os
@@ -9,6 +10,7 @@ import shutil
 import sys
 import tempfile
 
+from collections.abc import Callable
 from contextlib import contextmanager
 import errno
 import socket
@@ -27,14 +29,23 @@ def held_library_default():
                 raise
         yield
 
+
 ROOT = Path(__file__).resolve().parents[1]
 STAGES = "checks user-paths unit artifacts integration"
 # The targets the fixture gives real recipes: the stage assertions below
 # use real tools and services, never a replacement runner.
-REAL_RECIPES = frozenset({
-    "test-shipping", "_candidate-node-deps", "build", "_candidate-unit-suites",
-    "_candidate-artifact-server", "freshness", "e2e-naapp", "cli-e2e",
-})
+REAL_RECIPES = frozenset(
+    {
+        "test-shipping",
+        "_candidate-node-deps",
+        "build",
+        "_candidate-unit-suites",
+        "_candidate-artifact-server",
+        "freshness",
+        "e2e-naapp",
+        "cli-e2e",
+    }
+)
 
 
 def source_checks() -> list[str]:
@@ -55,13 +66,53 @@ def run(root: Path, *args: str, env: dict[str, str] | None = None):
     environment = dict(os.environ if env is None else env)
     for name in ("MAKEFLAGS", "MAKELEVEL", "MAKEOVERRIDES", "MFLAGS"):
         environment.pop(name, None)
-    return run_fixture(args, cwd=root, env=environment, text=True, capture_output=True, timeout=900)
+    return run_fixture(
+        args, cwd=root, env=environment, text=True, capture_output=True, timeout=900
+    )
 
 
 def checked(root: Path, *args: str):
     result = run(root, *args)
     assert result.returncode == 0, result.stdout + result.stderr
     return result.stdout.strip()
+
+
+def verify_same_tree_commit_cache(
+    *,
+    repo: Path,
+    ledger: Path,
+    run_fixed_baseline_gate: Callable[[], str],
+    run_full_gate: Callable[[], str],
+) -> list[str]:
+    """Same-tree reuse also requires the same reviewed main (docs/python-static-analysis.md)."""
+    previous_rows = ledger.read_text().splitlines()
+    previous_main = checked(repo, "git", "rev-parse", "refs/remotes/origin/main")
+    previous_tree = checked(repo, "git", "rev-parse", "HEAD^{tree}")
+    checked(repo, "git", "commit", "--allow-empty", "-qm", "same tree new commit")
+    assert checked(repo, "git", "rev-parse", "HEAD^{tree}") == previous_tree
+
+    # Explicit all-stage selection uses the already synchronized baseline.
+    assert "no stages run" in run_fixed_baseline_gate()
+    assert (
+        checked(repo, "git", "rev-parse", "refs/remotes/origin/main") == previous_main
+    )
+    assert ledger.read_text().splitlines() == previous_rows
+
+    # The full entry synchronizes the fixture's advanced main before key lookup.
+    assert "no stages run" not in run_full_gate()
+    current_main = checked(repo, "git", "rev-parse", "refs/remotes/origin/main")
+    assert current_main != previous_main
+    assert current_main == checked(repo, "git", "rev-parse", "HEAD")
+    rows = ledger.read_text().splitlines()
+    assert rows[: len(previous_rows)] == previous_rows
+    fresh = [row.split("\t") for row in rows[len(previous_rows) :]]
+    assert len(fresh) == len(STAGES.split())
+    assert {row[1] for row in fresh} == set(STAGES.split())
+    assert all(row[2] == "passed" for row in fresh)
+    fresh_keys = {row[0] for row in fresh}
+    assert len(fresh_keys) == 1
+    assert fresh_keys.isdisjoint(row.split("\t")[0] for row in previous_rows)
+    return rows
 
 
 def main() -> None:
@@ -73,13 +124,24 @@ def main() -> None:
     print(f"Ledger integration evidence: {evidence}", flush=True)
     with tempfile.TemporaryDirectory(prefix="aweb-ledger-proof.") as temporary:
         repo = Path(temporary)
-        for name in ("candidate-docker-gate.sh", "candidate-suite.sh", "candidate-cleanup.sh",
-                     "candidate-host-pressure.py", "candidate-network.py", "fetch_released_aw.py", "next_tag_version.py", "release_candidate.py", "release_versions.py"):
+        for name in (
+            "candidate-docker-gate.sh",
+            "candidate-suite.sh",
+            "candidate-cleanup.sh",
+            "candidate-host-pressure.py",
+            "candidate-network.py",
+            "fetch_released_aw.py",
+            "next_tag_version.py",
+            "release_candidate.py",
+            "release_versions.py",
+        ):
             destination = repo / "scripts" / name
             destination.parent.mkdir(exist_ok=True)
             shutil.copy2(ROOT / "scripts" / name, destination)
         (repo / "candidate-gate/bin").mkdir(parents=True)
-        shutil.copy2(ROOT / "candidate-gate/bin/docker", repo / "candidate-gate/bin/docker")
+        shutil.copy2(
+            ROOT / "candidate-gate/bin/docker", repo / "candidate-gate/bin/docker"
+        )
         (repo / "candidate-gate/Dockerfile").write_text(
             "FROM docker:27-cli\n"
             "RUN apk add --no-cache bash git make python3 postgresql-client redis "
@@ -89,17 +151,23 @@ def main() -> None:
             'FROM busybox:1.37\nRUN test "$((6*7))" = 42\n'
         )
         (repo / "naapp/library/test-vectors/blueprints/team").mkdir(parents=True)
-        (repo / "naapp/library/test-vectors/blueprints/team/proof").write_text("fixture\n")
+        (repo / "naapp/library/test-vectors/blueprints/team/proof").write_text(
+            "fixture\n"
+        )
         shutil.copy2(ROOT / "docker-compose.e2e.yml", repo / "docker-compose.e2e.yml")
         shutil.copytree(ROOT / "scripts/e2e/initdb", repo / "scripts/e2e/initdb")
         # The real wrapper's host preflight must execute the real probe from
         # this committed fixture checkout, just as it does for a candidate.
-        shutil.copy2(ROOT / "scripts/e2e/test_candidate_gate_docker_boundaries.py",
-                     repo / "scripts/e2e/test_candidate_gate_docker_boundaries.py")
+        shutil.copy2(
+            ROOT / "scripts/e2e/test_candidate_gate_docker_boundaries.py",
+            repo / "scripts/e2e/test_candidate_gate_docker_boundaries.py",
+        )
         (repo / "server").mkdir()
-        (repo / "server/pyproject.toml").write_text('[project]\nname="ledger-proof"\nversion="1.2.3"\n')
+        (repo / "server/pyproject.toml").write_text(
+            '[project]\nname="ledger-proof"\nversion="1.2.3"\n'
+        )
         recipes = f".PHONY: candidate-gate {' '.join(SOURCE_CHECKS)}\n{' '.join(SOURCE_CHECKS)}:\n\t@git diff --exit-code\n"
-        recipes += '''test-shipping:
+        recipes += """test-shipping:
 \t@python3 -c 'assert 6 * 7 == 42'
 _candidate-node-deps:
 \t@echo node >> "$$CANDIDATE_LOG_DIR/setup.log"
@@ -123,7 +191,7 @@ e2e-naapp:
 \t@python3 -c 'import os; rows=[row.split() for row in os.environ["NAAPP_E2E_ALLOCATIONS"].splitlines()]; assert [row[0] for row in rows] == ["proof/first", "proof/second"]; assert all(row[2:] == ["8010", "5432"] for row in rows); assert all(row[1].startswith("aweb-candidate-") and "-naapp-" in row[1] for row in rows); assert "AWEB_DOCKER_PUBLISHED_HOST" not in os.environ'
 candidate-gate:
 \tbash scripts/candidate-docker-gate.sh
-'''
+"""
         (repo / "Makefile").write_text(recipes)
         init_fixture_repo(repo)
         checked(repo, "git", "config", "user.name", "gate integration")
@@ -131,21 +199,35 @@ candidate-gate:
         checked(repo, "git", "add", ".")
         checked(repo, "git", "commit", "-qm", "small real gate stages")
         checked(repo, "git", "remote", "add", "origin", str(repo))
-        env = {key: value for key, value in os.environ.items()
-               if key in {"AWEB_GATE_MIN_FREE_GB", "AWEB_GATE_RESERVE_GB"}
-               or not key.startswith(("AWEB_CANDIDATE_", "AWEB_GATE_", "CANDIDATE_", "GATE_", "LIBRARY_E2E_"))}
-        env.update(AWEB_GATE_LEDGER=str(evidence / "ledger.tsv"),
-                   AWEB_GATE_LOG_DIR=str(evidence / "logs"),
-                   CLI_VERSION="1.2.3", A2A_GATEWAY_VERSION="1.2.3",
-                   AWEB_CANDIDATE_RUNNER_MEMORY="1g", AWEB_CANDIDATE_BUILDER_MEMORY="1g")
+        checked(repo, "git", "fetch", "--quiet", "origin", "main")
+        env = {
+            key: value
+            for key, value in os.environ.items()
+            if key in {"AWEB_GATE_MIN_FREE_GB", "AWEB_GATE_RESERVE_GB"}
+            or not key.startswith(
+                ("AWEB_CANDIDATE_", "AWEB_GATE_", "CANDIDATE_", "GATE_", "LIBRARY_E2E_")
+            )
+        }
+        env.update(
+            AWEB_GATE_LEDGER=str(evidence / "ledger.tsv"),
+            AWEB_GATE_LOG_DIR=str(evidence / "logs"),
+            CLI_VERSION="1.2.3",
+            A2A_GATEWAY_VERSION="1.2.3",
+            AWEB_CANDIDATE_RUNNER_MEMORY="1g",
+            AWEB_CANDIDATE_BUILDER_MEMORY="1g",
+        )
 
-        def invoke(name: str, *args: str, stages: str | None = None, success: bool = True):
+        def invoke(
+            name: str, *args: str, stages: str | None = None, success: bool = True
+        ):
             settings = dict(env)
             if stages is not None:
                 settings["AWEB_CANDIDATE_STAGES"] = stages
             result = run(repo, *args, env=settings)
             (evidence / f"{name}.log").write_text(result.stdout + result.stderr)
-            assert (result.returncode == 0) == success, f"{name}: see {evidence}/{name}.log"
+            assert (result.returncode == 0) == success, (
+                f"{name}: see {evidence}/{name}.log"
+            )
             return result.stdout + result.stderr
 
         gate = ("bash", "scripts/candidate-docker-gate.sh")
@@ -153,7 +235,9 @@ candidate-gate:
         # Library builds from the candidate checkout itself; a separate Library
         # source is no longer an input, so naming one is refused, not ignored.
         env["LIBRARY_E2E_LIBRARY_CONTEXT"] = str(repo / "naapp/library")
-        refused_library = invoke("library-context", *gate, stages="checks", success=False)
+        refused_library = invoke(
+            "library-context", *gate, stages="checks", success=False
+        )
         assert "LIBRARY_E2E_LIBRARY_CONTEXT" in refused_library and not ledger.exists()
         del env["LIBRARY_E2E_LIBRARY_CONTEXT"]
         invoke("first-checks", *gate, stages="checks")
@@ -164,28 +248,58 @@ candidate-gate:
         with held_library_default():
             invoke("missing-only", "make", "candidate-gate")
         rows = ledger.read_text().splitlines()
-        assert len(rows) == len(STAGES.split()) and {row.split("\t")[1] for row in rows} == set(STAGES.split())
+        assert len(rows) == len(STAGES.split()) and {
+            row.split("\t")[1] for row in rows
+        } == set(STAGES.split())
         assert all(row.split("\t")[2] == "passed" for row in rows)
         assert "no stages run" in invoke("same-tree-direct", *gate)
-        # New commit metadata with the identical tree does not invalidate proof.
-        checked(repo, "git", "commit", "--allow-empty", "-qm", "same tree new commit")
-        assert "no stages run" in invoke("same-tree-commit", "make", "candidate-gate")
-        refused_final = invoke("final-without-rc", sys.executable, "scripts/release_candidate.py",
-                               "aw-v1.2.3", stages="checks", success=False)
+        rows = verify_same_tree_commit_cache(
+            repo=repo,
+            ledger=ledger,
+            run_fixed_baseline_gate=lambda: invoke(
+                "same-tree-fixed-baseline", *gate, stages=STAGES
+            ),
+            run_full_gate=lambda: invoke("same-tree-commit", "make", "candidate-gate"),
+        )
+        refused_final = invoke(
+            "final-without-rc",
+            sys.executable,
+            "scripts/release_candidate.py",
+            "aw-v1.2.3",
+            stages="checks",
+            success=False,
+        )
         assert "final requires a prior RC" in refused_final
-        assert run(repo, "git", "rev-parse", "--verify", "refs/tags/aw-v1.2.3").returncode != 0
+        assert (
+            run(repo, "git", "rev-parse", "--verify", "refs/tags/aw-v1.2.3").returncode
+            != 0
+        )
         assert ledger.read_text().splitlines() == rows
         checked(repo, "git", "tag", "aw-v1.2.3-rc.1")
         # The real RC must require all stages despite an inherited focused selector.
-        output = invoke("rc-reuse", sys.executable, "scripts/release_candidate.py", "aw-v1.2.3", stages="checks")
-        assert "no stages run" in output and "checks user-paths unit artifacts integration" in output
-        assert checked(repo, "git", "rev-parse", "aw-v1.2.3^{commit}") == checked(repo, "git", "rev-parse", "HEAD")
+        output = invoke(
+            "rc-reuse",
+            sys.executable,
+            "scripts/release_candidate.py",
+            "aw-v1.2.3",
+            stages="checks",
+        )
+        assert (
+            "no stages run" in output
+            and "checks user-paths unit artifacts integration" in output
+        )
+        assert checked(repo, "git", "rev-parse", "aw-v1.2.3^{commit}") == checked(
+            repo, "git", "rev-parse", "HEAD"
+        )
         assert ledger.read_text().splitlines() == rows
         # An effective version is an external input, even with an unchanged tree.
         env["CLI_VERSION"] = "1.2.4"
         invoke("version-input", *gate, stages="checks")
         version_rows = ledger.read_text().splitlines()
-        assert len(version_rows) == len(rows) + 1 and version_rows[-1].split("\t")[0] != rows[0].split("\t")[0]
+        assert (
+            len(version_rows) == len(rows) + 1
+            and version_rows[-1].split("\t")[0] != rows[-1].split("\t")[0]
+        )
         env["CLI_VERSION"] = "1.2.3"
         (repo / "Makefile").write_text(recipes.replace("6 * 7 == 42", "7 * 6 == 42"))
         checked(repo, "git", "commit", "-qam", "changed tree")
@@ -203,9 +317,20 @@ candidate-gate:
         # retain their own logs after later invocations reuse/replace run roots.
         for row in ledger.read_text().splitlines():
             assert Path(row.split("\t")[5]).is_file()
-        assert all("candidate gate cleanup PASSED" in (evidence / f"{name}.log").read_text()
-                   for name in ("first-checks", "missing-only", "version-input", "changed-tree", "failed-tree"))
-    print("PASS: real Docker stages, missing-only execution, make/direct/RC reuse, changed tree/version, failed-tree refusal")
+        assert all(
+            "candidate gate cleanup PASSED" in (evidence / f"{name}.log").read_text()
+            for name in (
+                "first-checks",
+                "missing-only",
+                "same-tree-commit",
+                "version-input",
+                "changed-tree",
+                "failed-tree",
+            )
+        )
+    print(
+        "PASS: real Docker stages, missing-only execution, make/direct/RC reuse, changed main/tree/version, failed-tree refusal"
+    )
 
 
 if __name__ == "__main__":

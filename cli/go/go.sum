@@ -6,8 +6,8 @@ github.com/alecthomas/chroma/v2 v2.14.0 h1:R3+wzpnUArGcQz7fCETQBzO5n9IMNi13iIs46
 github.com/alecthomas/chroma/v2 v2.14.0/go.mod h1:QolEbTfmUHIMVpBqxeDnNBj2uoeI4EbYP4i6n68SG4I=
 github.com/alecthomas/repr v0.4.0 h1:GhI2A8MACjfegCPVq9f1FLvIBS+DrQ2KQBFZP1iFzXc=
 github.com/alecthomas/repr v0.4.0/go.mod h1:Fr0507jx4eOXV7AlPV6AVZLYrLIuIeSOWtW57eE/O/4=
-github.com/awebai/approval-service v0.0.0-20261119162832-f3e90494fde4 h1:WqUX6ot12gnYFO694NGo3lNbtpBuOf+qjufF+wzKpmE=
-github.com/awebai/approval-service v0.0.0-20261119162832-f3e90494fde4/go.mod h1:vP15UqpJWIjCzvgW+ioO7e0oqyq2qVheI1hcCvNTBiw=
+github.com/awebai/approval-service v0.0.0-20261116175516-aa736fbd4164 h1:l0DkeY2lKmFENnabsn21W7wb2JpxPorGWJ0KMkui0lg=
+github.com/awebai/approval-service v0.0.0-20261116175516-aa736fbd4164/go.mod h1:vP15UqpJWIjCzvgW+ioO7e0oqyq2qVheI1hcCvNTBiw=
 github.com/aymanbagabas/go-osc52/v2 v2.0.1 h1:HwpRHbFMcZLEVr42D4p7XBqjyuxQH5SMiErDT4WkJ2k=
 github.com/aymanbagabas/go-osc52/v2 v2.0.1/go.mod h1:uYgXzlJ7ZpABp8OJ+exZzJJhRNQ2ASbcXHWsFqH8hp8=
 github.com/aymanbagabas/go-udiff v0.3.1 h1:LV+qyBQ2pqe0u42ZsUEtPiCaUoqgA9gYRDs3vj1nolY=
