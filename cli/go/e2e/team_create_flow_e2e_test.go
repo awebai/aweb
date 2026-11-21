@@ -196,9 +196,14 @@ func TestRealStackTeamCreateRosterMaterializesAndConnects(t *testing.T) {
 		"--registry", awidURL())
 	replaceCmd.Dir = repo
 	replaceCmd.Env = env
-	replaceOut, err := replaceCmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("replace key in real materialized local home: %v\n%s", err, replaceOut)
+	var replaceOut, replaceErr bytes.Buffer
+	replaceCmd.Stdout = &replaceOut
+	replaceCmd.Stderr = &replaceErr
+	if err := replaceCmd.Run(); err != nil {
+		t.Fatalf("replace key in real materialized local home: %v\nstdout:\n%s\nstderr:\n%s", err, replaceOut.String(), replaceErr.String())
+	}
+	if !bytes.Contains(replaceErr.Bytes(), []byte("The new key will not have the old key's mail or chat conversations.")) {
+		t.Fatalf("replace-key did not warn on stderr: %s", replaceErr.String())
 	}
 	var replaced struct {
 		NewDIDKey       string `json:"new_did_key"`
@@ -206,8 +211,8 @@ func TestRealStackTeamCreateRosterMaterializesAndConnects(t *testing.T) {
 		CertificatePath string `json:"certificate_path"`
 		EncryptionKeyID string `json:"encryption_key_id"`
 	}
-	if err := json.Unmarshal(replaceOut, &replaced); err != nil {
-		t.Fatalf("decode replace-key output: %v\n%s", err, replaceOut)
+	if err := json.Unmarshal(replaceOut.Bytes(), &replaced); err != nil {
+		t.Fatalf("decode replace-key output: %v\n%s", err, replaceOut.String())
 	}
 	if replaced.NewDIDKey == "" || replaced.NewDIDKey == oldIdentity.DIDKey || replaced.SigningKeyPath == "" || replaced.CertificatePath == "" || replaced.EncryptionKeyID == "" {
 		t.Fatalf("incomplete replace-key output: %+v", replaced)

@@ -225,9 +225,8 @@ async def test_flag_on_revoked_certificate_keeps_revocation_verdict(monkeypatch,
 
     assert excinfo.value.status_code == 401
     assert excinfo.value.detail == "revoked"
-    # The registered set is an input of the one check, read with the revoked
-    # set before it runs.
-    assert registry.list_calls == 1
+    # A definitive revocation needs no registration read or miss refresh.
+    assert registry.list_calls == 0
 
 
 @pytest.mark.asyncio
