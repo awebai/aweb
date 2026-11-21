@@ -38,7 +38,7 @@ async def register_global_identity(env, actor, address=""):
     domain, name = address.split("/", 1)
     controller = await env.registry.ensure_namespace(domain=domain)
     registered = await registry.register_address(
-        domain, name, identity.did_aw, bytes(controller), current_did_key=actor.did
+        domain, name, identity.did_aw, controller, current_did_key=actor.did
     )
     assert registered.did_aw == identity.did_aw
     assert f"{registered.domain}/{registered.name}" == address

@@ -16,6 +16,7 @@ from awid.did import did_from_public_key
 from awid.identity_observation import IdentityKind
 from awid_service.testing import Registry
 from aweb.application_state import application_registry_client
+from aweb.lifecycle import LifecycleActor, LifecycleCascadeRequest, apply_lifecycle_cascade
 from aweb.routes.connect import ConnectResponse
 from test_messages_http import (
     _encode_certificate,
@@ -57,7 +58,7 @@ async def register_messaging_team(env: MessagingFixture, *, team_id: str) -> Non
             display_name=name,
             team_did_key=env.team_did,
             visibility="public",
-            namespace_controller_signing_key=bytes(controller),
+            namespace_controller_signing_key=controller,
         )
     else:
         assert existing.team_did_key == env.team_did
@@ -75,7 +76,7 @@ async def _certify_kind(
 
     domain = f"messaging-kind-{uuid4().hex}.test"
     await env.registry.ensure_namespace(
-        domain=domain, controller=SigningKey(bytes.fromhex(ROOT["seed_hex"]))
+        domain=domain, controller=bytes.fromhex(ROOT["seed_hex"])
     )
     certificate = _signed_fixture_certificate(
         "alice" if kind is IdentityKind.HUMAN else "root-agent",
@@ -138,7 +139,7 @@ async def admit_messaging_actor(
         domain, name = address.split("/", 1)
         controller = await env.registry.ensure_namespace(domain=domain)
         await registry.register_address(
-            domain, name, stable_id, bytes(controller), current_did_key=did_key
+            domain, name, stable_id, controller, current_did_key=did_key
         )
     if kind is not IdentityKind.UNKNOWN:
         await _certify_kind(env, kind=kind, stable_id=stable_id, key=key)
@@ -191,6 +192,56 @@ async def admit_messaging_actor(
         workspace_id=str(UUID(connected.workspace_id)),
         certificate=certificate,
     )
+
+
+async def set_messaging_inbound_mode(
+    env: MessagingFixture, actor: RegisteredMessagingActor, mode: str
+) -> None:
+    body = json.dumps({"inbound_mode": mode}).encode()
+    response = await env.client.patch(
+        "/v1/agents/me/inbound-mode",
+        content=body,
+        headers={
+            **_signed_team_headers(
+                actor.signing_key, actor.did_key, actor.team_id, actor.certificate, body
+            ),
+            "Content-Type": "application/json",
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["inbound_mode"] == mode
+
+
+async def archive_messaging_actor(db, redis, *, team_id: str, agent_id) -> None:
+    result = await apply_lifecycle_cascade(
+        db,
+        redis,
+        LifecycleCascadeRequest(
+            operation="archive_global_agent",
+            actor=LifecycleActor(None, "support", "support"),
+            team_id=team_id,
+            target_agent_id=str(agent_id),
+            workspace_scope="all_for_agent",
+            require_identity_scope="global",
+        ),
+    )
+    assert result.identity_archived, result.errors
+
+
+async def remove_messaging_agent_from_sessions(db, redis, *, team_id: str, agent_id) -> None:
+    result = await apply_lifecycle_cascade(
+        db,
+        redis,
+        LifecycleCascadeRequest(
+            operation="cleanup_agent_coordination_state",
+            actor=LifecycleActor(None, "support", "support"),
+            team_id=team_id,
+            target_agent_id=str(agent_id),
+            workspace_scope="all_for_agent",
+        ),
+    )
+    assert not result.errors, result.errors
+    assert result.chat_participant_cleanup_count == 1
 
 
 @contextmanager

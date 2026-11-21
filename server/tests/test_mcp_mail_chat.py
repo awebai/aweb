@@ -1881,11 +1881,11 @@ async def test_mcp_chat_continuation_encryptor_gets_active_recipient_identities(
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.chat_participants}} (session_id, did, agent_id, alias, address, left_at)
+        INSERT INTO {{tables.chat_participants}} (session_id, did, agent_id, alias, address)
         VALUES
-            ($1, 'did:aw:alice', $2, 'alice', 'acme.com/alice', NULL),
-            ($1, 'did:aw:bob', $3, 'bob', 'acme.com/bob', NULL),
-            ($1, 'did:aw:carol', $4, 'carol', 'acme.com/carol', NOW())
+            ($1, 'did:aw:alice', $2, 'alice', 'acme.com/alice'),
+            ($1, 'did:aw:bob', $3, 'bob', 'acme.com/bob'),
+            ($1, 'did:aw:carol', $4, 'carol', 'acme.com/carol')
         """,
         session_id,
         alice_agent_id,
@@ -1893,6 +1893,11 @@ async def test_mcp_chat_continuation_encryptor_gets_active_recipient_identities(
         carol_agent_id,
     )
 
+    from messaging_actor_support import archive_messaging_actor
+
+    await archive_messaging_actor(
+        aweb_cloud_db.aweb_db, None, team_id=team_id, agent_id=carol_agent_id
+    )
     monkeypatch.setattr(
         chat_tools,
         "get_auth",

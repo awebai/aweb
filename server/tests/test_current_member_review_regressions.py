@@ -628,7 +628,7 @@ async def test_federation_participant_conflict_uses_the_federation_refusal_owner
 async def test_mcp_recipient_binding_mismatch_describes_the_recipient(route_pair, monkeypatch):
     from dataclasses import replace
 
-    from awid.did import did_from_public_key
+    from awid.did import did_key_from_signing_key
     from mcp_runtime_fixtures import mounted_mcp
     from messaging_actor_support import admit_messaging_actor
     from test_current_member_selector_surfaces import Actor, _tool
@@ -651,10 +651,10 @@ async def test_mcp_recipient_binding_mismatch_describes_the_recipient(route_pair
     mapping = await registry.register_did(alice.did_key, alice.signing_key)
     assert mapping.did_aw == alice.stable_id
     await registry.register_address(
-        domain, name, alice.stable_id, bytes(controller), current_did_key=alice.did_key,
+        domain, name, alice.stable_id, controller, current_did_key=alice.did_key,
     )
     route_pair.dns.records[(f"_awid.{domain}", "TXT")] = [
-        f'"awid=v1;controller={did_from_public_key(bytes(controller.verify_key))};registry={target.registry_origin}"'
+        f'"awid=v1;controller={did_key_from_signing_key(controller)};registry={target.registry_origin}"'
     ]
     await admit_messaging_actor(
         world.target.env, alias="movedalice", team_id=bob.team_id,

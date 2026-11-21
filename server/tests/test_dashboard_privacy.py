@@ -38,7 +38,7 @@ from aweb.mutation_hooks import create_mutation_handler
 from aweb.internal_auth import build_internal_auth_header_value
 from aweb.routes.status import status_stream
 from aweb.team_auth_deps import TeamIdentity
-from awid.did import did_from_public_key
+from awid.did import did_key_from_signing_key
 from awid.ratelimit import MemoryFixedWindowRateLimiter
 from awid.registry import RegistryClient
 from awid_service.db import AwidDatabaseInfra
@@ -68,10 +68,18 @@ async def privacy_app(shared_test_pool, monkeypatch):
         yield env
 
 
+@pytest_asyncio.fixture
+async def pre_chat_coverage_privacy_app(shared_test_pool, monkeypatch, chat_coverage_upgrade):
+    async with privacy_stack(
+        shared_test_pool, monkeypatch, database=chat_coverage_upgrade.infra
+    ) as env:
+        yield env
+
+
 @asynccontextmanager
 async def privacy_stack(
     shared_test_pool, monkeypatch, tls=None, *,
-    aliases=("alice", "bob", "carol"), team_visibility="public",
+    aliases=("alice", "bob", "carol"), team_visibility="public", database=None,
 ):
     """The real apps behind one HTTP server; tls is (host, Certificates covering
     host) to serve over TLS, so the server's public origin is https."""
@@ -85,7 +93,7 @@ async def privacy_stack(
         decode_responses=True,
     ) as redis:
         await redis.ping()
-        db = DatabaseInfra()
+        db = database if database is not None else DatabaseInfra()
         await db.initialize(shared_pool=shared_test_pool)
         registry_db = AwidDatabaseInfra(schema="privacy_registry")
         await registry_db.initialize(shared_pool=shared_test_pool)
@@ -143,7 +151,7 @@ async def privacy_stack(
                 display_name=TEAM_NAME,
                 team_did_key=team_did,
                 visibility=team_visibility,
-                namespace_controller_signing_key=bytes(namespace_key),
+                namespace_controller_signing_key=namespace_key,
             )
             actors = {}
             for alias in aliases:
@@ -226,8 +234,8 @@ async def privacy_stack(
                         dispatched=dispatched,
                         app=app,
                         infra=db,
-                        namespace_sk=bytes(namespace_key),
-                        namespace_did=did_from_public_key(bytes(namespace_key.verify_key)),
+                        namespace_sk=namespace_key,
+                        namespace_did=did_key_from_signing_key(namespace_key),
                         team_sk=team_sk,
                         team_did=team_did,
                     )
@@ -239,7 +247,8 @@ async def privacy_stack(
                 await registry.aclose()
                 await fixture_registry.aclose()
         await registry_db.close()
-        await db.close()
+        if database is None:
+            await db.close()
 
 
 async def _request(env, actor, method, path, body=None):

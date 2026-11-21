@@ -35,7 +35,7 @@ from awid.attestation_records import (
     TEAM_CUSTODIAN,
     sign_record,
 )
-from awid.did import did_key_from_signing_key
+from awid.did import did_key_from_signing_key, generate_keypair
 from awid.external_authority import DNSLookup
 from awid.id_tree_requests import covering_payload
 from awid.dns_verify import DomainAuthority, DnsVerificationError, DomainVerifier
@@ -155,7 +155,7 @@ class Registry:
     db: AsyncDatabaseManager
     transport: ServiceTransport
     registry_url: str = REGISTRY_URL
-    _namespace_keys: dict[str, SigningKey] = field(default_factory=dict, repr=False)
+    _namespace_keys: dict[str, bytes] = field(default_factory=dict, repr=False)
     _certificate_authority: dict[tuple[str, str], _CertificateAuthority] = field(
         default_factory=dict, repr=False
     )
@@ -166,8 +166,8 @@ class Registry:
         self,
         *,
         domain: str,
-        controller: SigningKey | None = None,
-    ) -> SigningKey:
+        controller: bytes | None = None,
+    ) -> bytes:
         """Register namespace authority through AWID; retain only fixture-owned custody.
 
         docs/identity.md:95-100 separates namespace authority from the team key.
@@ -177,7 +177,7 @@ class Registry:
         client = self._client()
         known = await client.get_namespace(domain)
         if known is not None:
-            if key is None or known.controller_did != _did_key(key):
+            if key is None or known.controller_did != did_key_from_signing_key(key):
                 raise ValueError(
                     f"Namespace {domain} has a different controller. "
                     "Pass its current signing key as controller=."
@@ -185,7 +185,7 @@ class Registry:
             self._namespace_keys[domain] = key
             return key
         if key is None:
-            key = SigningKey.generate()
+            key, _ = generate_keypair()
         self._namespace_keys[domain] = key
         if get_domain_verifier not in self.app.dependency_overrides:
             async def get_namespace_verifier() -> DomainVerifier:
@@ -193,7 +193,7 @@ class Registry:
 
             self.app.dependency_overrides[get_domain_verifier] = get_namespace_verifier
         try:
-            await client.register_namespace(domain, _did_key(key), bytes(key))
+            await client.register_namespace(domain, did_key_from_signing_key(key), key)
         except Exception:
             del self._namespace_keys[domain]
             raise
@@ -208,7 +208,7 @@ class Registry:
                 "Register the namespace through ensure_namespace first."
             )
         return DomainAuthority(
-            controller_did=_did_key(key),
+            controller_did=did_key_from_signing_key(key),
             registry_url=self.registry_url,
             dns_name=f"_awid.{domain}",
         )
@@ -223,14 +223,17 @@ class Registry:
     ) -> None:
         """Create the team by its namespace controller, per docs/identity.md:95-100."""
         name, domain = team_id.split(":", 1)
-        controller = await self.ensure_namespace(domain=domain, controller=namespace_controller)
+        controller = await self.ensure_namespace(
+            domain=domain,
+            controller=bytes(namespace_controller) if namespace_controller is not None else None,
+        )
         await self._client().register_team(
             domain=domain,
             name=name,
             display_name=name,
             team_did_key=team_did_key,
             visibility=visibility,
-            namespace_controller_signing_key=bytes(controller),
+            namespace_controller_signing_key=controller,
         )
 
     async def rotate_team_key(self, team_id: str, team_did_key: str) -> None:
@@ -252,12 +255,12 @@ class Registry:
         namespace controller (registered for the domain if it has none), so
         AWID keeps the act a pinned server checks against DNS (dns_naming)."""
         name, domain = team_id.split(":", 1)
-        await self.ensure_namespace(domain=domain, controller=controller)
+        namespace_key = await self.ensure_namespace(domain=domain, controller=bytes(controller))
         await self._client().rotate_team_key(
             domain,
             name,
             new_team_did_key=team_did_key,
-            namespace_controller_signing_key=bytes(controller),
+            namespace_controller_signing_key=namespace_key,
         )
 
     async def add_certificate(self, cert: dict[str, Any], *, team_key: SigningKey) -> None:

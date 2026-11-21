@@ -147,15 +147,13 @@ async def test_pinned_released_payload_bytes_verify_with_the_transport_subject(
             "The message signature does not verify. Sign the message again with the authenticated sender's key and resend it."
         )
     assert (
-        await env.db.fetch_value("SELECT count(*) FROM {{tables." + table + "}}") == 0
+        await env.db.fetch_value(f"SELECT count(*) FROM {{{{tables.{table}}}}}") == 0
     )
     assert env.dispatched == []
     accepted = await post(wire)
     assert accepted.status_code == 200, accepted.text
     stored = await env.db.fetch_one(
-        "SELECT from_did,body,signature,signed_payload FROM {{tables."
-        + table
-        + "}} WHERE message_id=$1",
+        f"SELECT from_did,body,signature,signed_payload FROM {{{{tables.{table}}}}} WHERE message_id=$1",
         UUID(wire["message_id"]),
     )
     assert stored["from_did"] == sender.did
@@ -166,12 +164,10 @@ async def test_pinned_released_payload_bytes_verify_with_the_transport_subject(
     assert repeated.status_code == 200, repeated.text
     assert repeated.json()["message_id"] == accepted.json()["message_id"]
     assert await env.db.fetch_one(
-        "SELECT from_did,body,signature,signed_payload FROM {{tables."
-        + table
-        + "}} WHERE message_id=$1",
+        f"SELECT from_did,body,signature,signed_payload FROM {{{{tables.{table}}}}} WHERE message_id=$1",
         UUID(wire["message_id"]),
     ) == dict(stored)
     assert (
-        await env.db.fetch_value("SELECT count(*) FROM {{tables." + table + "}}") == 1
+        await env.db.fetch_value(f"SELECT count(*) FROM {{{{tables.{table}}}}}") == 1
     )
     assert len(env.dispatched) == 1

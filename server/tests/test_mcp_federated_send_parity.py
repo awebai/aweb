@@ -319,7 +319,7 @@ async def test_mcp_federated_mail_sends_the_envelope_the_route_sends(server):
         message_id = UUID(delivery.body["envelope"]["message_id"])
         table = "messages" if delivery.body["envelope"]["type"] == "mail" else "chat_messages"
         row = await server.remote_db.fetch_one(
-            "SELECT body, signed_payload FROM {{tables." + table + "}} WHERE message_id=$1",
+            f"SELECT body, signed_payload FROM {{{{tables.{table}}}}} WHERE message_id=$1",
             message_id,
         )
         assert row["body"] == "status"
@@ -345,7 +345,7 @@ async def test_mcp_federated_chat_sends_the_envelope_the_route_sends(server):
         message_id = UUID(delivery.body["envelope"]["message_id"])
         table = "messages" if delivery.body["envelope"]["type"] == "mail" else "chat_messages"
         row = await server.remote_db.fetch_one(
-            "SELECT body, signed_payload FROM {{tables." + table + "}} WHERE message_id=$1",
+            f"SELECT body, signed_payload FROM {{{{tables.{table}}}}} WHERE message_id=$1",
             message_id,
         )
         assert row["body"] == "status"

@@ -18,7 +18,6 @@ from aweb.messaging.message_replay import (
     read_stored_message,
     replay_artifact,
 )
-from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from enum import Enum, auto
@@ -1075,25 +1074,6 @@ def _target_did_refs(row: Mapping[str, Any]) -> set[str]:
     }
 
 
-async def _left_dids_by_session(db, session_ids: list[UUID]) -> dict[str, set[str]]:
-    if not session_ids:
-        return {}
-    aweb_db = db.get_manager("aweb")
-    rows = await aweb_db.fetch_all(
-        """
-        SELECT session_id, did
-        FROM {{tables.chat_participants}}
-        WHERE session_id = ANY($1::uuid[])
-          AND left_at IS NOT NULL
-        """,
-        session_ids,
-    )
-    left: dict[str, set[str]] = defaultdict(set)
-    for row in rows:
-        left[str(row["session_id"])].add(str(row["did"]))
-    return left
-
-
 async def _resolve_named_recipients(
     db,
     *,
@@ -1213,20 +1193,13 @@ async def _resolve_named_recipients(
     return list(resolved.values())
 
 
-@dataclass(frozen=True, kw_only=True)
-class _SessionRecipients:
-    active: tuple[Recipient, ...]
-    recorded: tuple[Recipient, ...]
-
-
 async def _resolve_session_recipient_rows(
     db,
     *,
     session_id: UUID,
     actor_dids: list[str],
-) -> _SessionRecipients:
+) -> list[Recipient]:
     aweb_db = db.get_manager("aweb")
-    left_dids = (await _left_dids_by_session(db, [session_id])).get(str(session_id), set())
     rows = await aweb_db.fetch_all(
         """
         SELECT did, agent_id, alias, address, delivery_origin, current_did_key
@@ -1280,16 +1253,12 @@ async def _resolve_session_recipient_rows(
                 "_policy_recipients": policy_rows,
             }
         )
-    recorded = tuple(
+    return [
         Recipient.from_remote_projection(row)
         if row.get("delivery_origin")
         else Recipient.from_local_projection(row)
         for row in recipient_rows
-    )
-    return _SessionRecipients(
-        active=tuple(row for row in recorded if row.did not in left_dids),
-        recorded=recorded,
-    )
+    ]
 
 
 class ChatSessionSelection(Enum):
@@ -1323,7 +1292,6 @@ class ChatTarget:
     actor_did: str = ""
     session_selection: ChatSessionSelection = ChatSessionSelection.REQUEST_DEFAULT
     shared_session_id: UUID | None = None
-    recorded_recipients: tuple[Recipient, ...] | None = None
 
     def __init__(
         self,
@@ -1334,7 +1302,6 @@ class ChatTarget:
         actor_did: str = "",
         session_selection: ChatSessionSelection = ChatSessionSelection.REQUEST_DEFAULT,
         shared_session_id: UUID | None = None,
-        recorded_recipients: Sequence[Mapping[str, Any]] | None = None,
     ) -> None:
         _require_chat_session_selection(session_selection)
         object.__setattr__(
@@ -1347,14 +1314,6 @@ class ChatTarget:
         object.__setattr__(self, "actor_did", actor_did)
         object.__setattr__(self, "session_selection", session_selection)
         object.__setattr__(self, "shared_session_id", shared_session_id)
-        # Historical parties bind a plaintext replay, never new delivery.
-        object.__setattr__(
-            self,
-            "recorded_recipients",
-            tuple(Recipient.from_delivery_projection(row) for row in recorded_recipients)
-            if recorded_recipients is not None
-            else None,
-        )
 
 
 @dataclass(frozen=True)
@@ -1476,10 +1435,9 @@ async def _resolve_session_target(
     actor_did = await resolve_session_actor_did(db, session_id=session_uuid, actor_dids=actor_dids)
     if not actor_did:
         raise DeliveryRefusal(status_code=HTTPStatus.NOT_FOUND, detail="Session not found")
-    session_recipients = await _resolve_session_recipient_rows(
+    recipient_rows = await _resolve_session_recipient_rows(
         db, session_id=session_uuid, actor_dids=actor_dids
     )
-    recipient_rows = list(session_recipients.active)
     # Succession is mail-only. Retired humans get a mail-directed refusal;
     # retired agents retain the existing chat behavior for live group members.
     for row in recipient_rows:
@@ -1544,10 +1502,6 @@ async def _resolve_session_target(
         source=source,
         session_id=session_uuid,
         actor_did=actor_did,
-        recorded_recipients=tuple(
-            next((live for live in recipient_rows if live.did == row.did), row)
-            for row in session_recipients.recorded
-        ),
     )
 
 
@@ -1663,11 +1617,7 @@ async def _send_local_chat(
                 payload,
                 auth=auth,
                 session_id=target.session_id,
-                recipient_rows=(
-                    target.recorded_recipients
-                    if not _payload_is_encrypted(payload) and target.recorded_recipients is not None
-                    else target.recipients
-                ),
+                recipient_rows=target.recipients,
                 actor_dids=participant_dids(auth),
             )
             if stored is None:
@@ -2334,55 +2284,7 @@ async def _send_in_continued_session(
     recipient_rows = target.recipients
 
     encrypted = _payload_is_encrypted(payload)
-    replay_recipients = (
-        target.recorded_recipients if target.recorded_recipients is not None else recipient_rows
-    )
-    validation_recipients = recipient_rows
-    # An exact artifact can retain departed parties for validation of its
-    # receipt, never for a new send. The canonical owner alone compares bytes;
-    # ordinary encryption/custody/freshness still precede the stored answer.
-    if encrypted and payload.message_id is not None:
-        candidate = await read_stored_message(
-            db,
-            claim=StoredMessageClaim(
-                kind=MessageKind.CHAT,
-                message_id=UUID(payload.message_id),
-                sender_did=actor_dids[0],
-                conversation_id=session_uuid,
-                artifact=replay_artifact(
-                    content_mode=payload.content_mode,
-                    encrypted_envelope=payload.encrypted_envelope,
-                    signature=payload.signature,
-                    signed_payload=payload.signed_payload,
-                ),
-            ),
-        )
-        if candidate.state is StoredMessageState.EXACT:
-            validation_recipients = replay_recipients
     if encrypted:
-        pre_message_id, encrypted_metadata = await _validate_continued_chat_attestation(
-            db,
-            auth,
-            payload=payload,
-            actor_did=actor_did,
-            sender_address=sender_address,
-            session_uuid=session_uuid,
-            recipient_rows=validation_recipients,
-        )
-
-    existing_message = await _stored_exact_chat_send(
-        db,
-        payload,
-        auth=auth,
-        session_id=session_uuid,
-        recipient_rows=replay_recipients,
-        actor_dids=actor_dids,
-    )
-    if existing_message is not None:
-        return SentChat(session_id=session_uuid, message=dict(existing_message))
-    if encrypted and validation_recipients is not recipient_rows:
-        # If the candidate disappeared before the final read, no receipt is
-        # returned. Revalidate active recipients before any new-message effect.
         pre_message_id, encrypted_metadata = await _validate_continued_chat_attestation(
             db,
             auth,
@@ -2392,6 +2294,17 @@ async def _send_in_continued_session(
             session_uuid=session_uuid,
             recipient_rows=recipient_rows,
         )
+
+    existing_message = await _stored_exact_chat_send(
+        db,
+        payload,
+        auth=auth,
+        session_id=session_uuid,
+        recipient_rows=recipient_rows,
+        actor_dids=actor_dids,
+    )
+    if existing_message is not None:
+        return SentChat(session_id=session_uuid, message=dict(existing_message))
     if not encrypted:
         pre_message_id, encrypted_metadata = await _validate_continued_chat_attestation(
             db,
@@ -2504,7 +2417,7 @@ async def _send_in_continued_session(
             payload,
             auth=auth,
             session_id=session_uuid,
-            recipient_rows=replay_recipients,
+            recipient_rows=recipient_rows,
             actor_dids=actor_dids,
         )
         if stored is None:

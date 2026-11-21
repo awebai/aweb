@@ -3203,18 +3203,22 @@ class CachedRegistryClient(RegistryClient):
                         admission = await self._admit_team_certificate_read(
                             window_key, allow_point=True
                         )
-                        if admission == 0:
-                            standing = await self._cache_exact_team_certificate_standing(
-                                domain,
-                                name,
-                                certificate_id=certificate_id,
-                                registry_url=registry_url,
-                                cache_key=point_key,
-                            )
-                            await self._remember_team_read_origin(domain, name, origin)
-                            return standing
-                        refresh = self._team_certificate_miss_refreshes.get(observation_key)
-                        if admission < 0 or refresh is None or refresh.task.done():
+                        # A list producer may have started while we awaited
+                        # Redis. Join it even if the admission window rolled.
+                        refresh = self._team_certificate_miss_refreshes.get(
+                            observation_key
+                        )
+                        if refresh is None or refresh.task.done():
+                            if admission == 0:
+                                standing = await self._cache_exact_team_certificate_standing(
+                                    domain,
+                                    name,
+                                    certificate_id=certificate_id,
+                                    registry_url=registry_url,
+                                    cache_key=point_key,
+                                )
+                                await self._remember_team_read_origin(domain, name, origin)
+                                return standing
                             task = asyncio.create_task(
                                 self._refresh_missing_team_certificate(
                                     domain,
