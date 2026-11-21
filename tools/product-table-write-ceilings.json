@@ -324,6 +324,9 @@
     "server/tests/test_workspaces_delete_http.py": 37
   },
   "marked_files": {},
+  "marked_nonliteral_files": {
+    "naapp/logs/tests/test_governance.py": 1
+  },
   "nonliteral_files": {
     "awid/tests/test_id_enrollment_resolution.py": 1,
     "awid/tests/test_schema.py": 4,

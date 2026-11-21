@@ -504,7 +504,9 @@ async def test_earlier_epochs_governance_is_read_by_its_own_index(world: World):
     async with world.db.transaction() as tx:
         await tx.execute("SET LOCAL enable_seqscan = off")
         [explained] = json.loads(
-            await tx.fetch_value("EXPLAIN (FORMAT JSON) " + GOVERNANCE_BEFORE, TEAM_ID, 2)
+            await tx.fetch_value(  # nonliteral-call: EXPLAIN of GOVERNANCE_BEFORE
+                "EXPLAIN (FORMAT JSON) " + GOVERNANCE_BEFORE, TEAM_ID, 2
+            )
         )
     assert "idx_chain_events_governance" in index_names(explained["Plan"])
 
