@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-19
+* **Harvest**: OKF proposal from seat aweb-protocol-expert-team-key-trust with one backing note, task aweb-adkq; the fixture and roster claims were checked against aweb main at ecb9d825a. The fixture fix is on the source's review branch, not on main.
+* **Creation**: lesson [diagnose a red real-path test's world before the product; an E2EE test ends with the recipient reading](/aweb-protocol-expert/lessons/diagnose-the-test-world-before-the-product.md), which refines [tests exercise the real authority](/aweb-protocol-expert/decisions/tests-exercise-the-real-authority.md) without superseding it.
+
 ## 2026-11-06
 * **Fix**: review of the db-access proposal on npm gitHead, PubSub release and stream checkouts: hosted specifics in [stream bodies leave the request connection scope](/aweb-protocol-expert/lessons/stream-bodies-leave-the-request-connection-scope.md) and [an npm tarball publish records no gitHead](/aweb-protocol-expert/lessons/npm-tarball-publish-records-no-githead.md) are stated generically or dropped, as the OSS and Cloud boundary requires.
 * **Update**: [SSE cleanup is cancelled on client disconnect](/aweb-protocol-expert/lessons/sse-cleanup-is-cancelled-on-disconnect.md) and [a PubSub release survives any cancellation](/aweb-protocol-expert/decisions/pubsub-release-survives-any-cancellation.md) link each other: the AnyIO shield covers Starlette's disconnect, not native task cancellation.
