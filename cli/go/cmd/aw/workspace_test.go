@@ -1934,7 +1934,7 @@ func TestAPIKeyBootstrapAddWorktreeMailRoundTrip(t *testing.T) {
 func TestAPIKeyWorktreeCommandHelper(t *testing.T) {
 	address := os.Getenv("AW_TEST_WORKTREE_DNS")
 	if address == "" {
-		return
+		t.Skip("subprocess helper requires the parent test's worktree DNS fixture")
 	}
 	if os.Getenv("AW_TEST_WORKTREE_DISCOVERY") == "1" {
 		if err := os.Unsetenv("AWID_REGISTRY_URL"); err != nil {
