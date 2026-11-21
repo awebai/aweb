@@ -123,16 +123,16 @@ func (state *apiKeyPartialInitState) matchesAPIKey(apiKey string) bool {
 // checkAPIKeyInitRecoveryAuthority keeps a changed key local before selection
 // contacts the service (docs/hosted-global-bootstrap.md:180-190). The full
 // recovery context is checked again under the bootstrap lock before effects.
-func checkAPIKeyInitRecoveryAuthority(in apiKeyInitAuthorityPreflight) error {
+func loadAPIKeyInitRecoveryForKey(in apiKeyInitAuthorityPreflight) (*apiKeyPartialInitState, error) {
 	path := apiKeyPartialInitPath(awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(in.WorkingDir)})
 	state, err := loadAPIKeyPartialInit(path)
 	if err != nil || state == nil {
-		return err
+		return state, err
 	}
 	if !state.matchesAPIKey(in.APIKey) {
-		return usageError("partial API-key init state at %s was created for a different bootstrap context (api_key_fingerprint differs); retry the original command or remove the file explicitly", path)
+		return nil, usageError("partial API-key init state at %s was created for a different bootstrap context (api_key_fingerprint differs); retry the original command or remove the file explicitly", path)
 	}
-	return nil
+	return state, nil
 }
 
 func resolveInitAPIKey() string {
@@ -358,10 +358,9 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (out connectOutput, resultErr
 // retainedAPIKeyCreationTeam reads the original team selection from the same
 // private journal as the child key and invitation. Released 1.36.58 writes both
 // team fields, so resumption does not need another teams/current read.
-func retainedAPIKeyCreationTeam(path string) (*apiKeyCreationTeam, error) {
-	state, err := loadAPIKeyPartialInit(path)
-	if err != nil || state == nil {
-		return nil, err
+func retainedAPIKeyCreationTeam(path string, state *apiKeyPartialInitState) (*apiKeyCreationTeam, error) {
+	if state == nil {
+		return nil, nil
 	}
 	if strings.TrimSpace(state.TeamIDHint) == "" || strings.TrimSpace(state.CanonicalTeamID) == "" {
 		return nil, usageError("partial API-key creation at %s is missing its original team selection; retain the file for reconciliation", path)
@@ -373,7 +372,12 @@ func retainedAPIKeyCreationTeam(path string) (*apiKeyCreationTeam, error) {
 }
 
 func selectAPIKeyInitTeam(req apiKeyInitRequest) (apiKeyInitRequest, error) {
-	selectedTeam, err := retainedAPIKeyCreationTeam(apiKeyPartialInitPath(awconfig.IdentityHome{Root: req.IdentityHome}))
+	path := apiKeyPartialInitPath(awconfig.IdentityHome{Root: req.IdentityHome})
+	state, err := loadAPIKeyPartialInit(path)
+	if err != nil {
+		return apiKeyInitRequest{}, err
+	}
+	selectedTeam, err := retainedAPIKeyCreationTeam(path, state)
 	if err != nil {
 		return apiKeyInitRequest{}, err
 	}

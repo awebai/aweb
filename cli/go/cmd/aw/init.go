@@ -723,15 +723,17 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	apiKey := resolveInitAPIKey()
 	if apiKey != "" {
-		if err := checkAPIKeyInitRecoveryAuthority(apiKeyInitAuthorityPreflight{WorkingDir: creationDir, APIKey: apiKey}); err != nil {
-			return err
-		}
-		retained, err := retainedAPIKeyCreationTeam(apiKeyPartialInitPath(awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(creationDir)}))
+		recovery, err := loadAPIKeyInitRecoveryForKey(apiKeyInitAuthorityPreflight{WorkingDir: creationDir, APIKey: apiKey})
 		if err != nil {
 			return err
 		}
-		if retained != nil {
-			return runInitFromAPIKey(cmd, initAPIKeySelection{WorkingDir: creationDir, APIKey: apiKey, SelectedTeam: retained})
+		if recovery != nil {
+			home := awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(creationDir)}
+			retained, err := retainedAPIKeyCreationTeam(apiKeyPartialInitPath(home), recovery)
+			if err != nil {
+				return err
+			}
+			return runInitFromAPIKey(cmd, initAPIKeySelection{WorkingDir: creationDir, APIKey: apiKey, SelectedTeam: retained, Recovery: recovery})
 		}
 	}
 	var apiSelected *apiKeyCreationTeam
@@ -913,10 +915,16 @@ type initAPIKeySelection struct {
 	WorkingDir   string
 	APIKey       string
 	SelectedTeam *apiKeyCreationTeam
+	Recovery     *apiKeyPartialInitState
 }
 
 func runInitFromAPIKey(cmd *cobra.Command, selected initAPIKeySelection) error {
 	identity := initConnectIdentity(initIdentityInput{ContextFile: requestedInitContextPolicy(), Role: initRole, HumanName: initHumanName, AgentType: initAgentType})
+	// A roster request can omit agent_type. Preserve that exact wire choice
+	// on native recovery unless the operator explicitly supplies a value.
+	if selected.Recovery != nil && firstNonEmpty(initAgentType, os.Getenv("AWEB_AGENT_TYPE")) == "" {
+		identity.AgentType = selected.Recovery.AgentType
+	}
 	creationDir, apiKey, apiSelected := selected.WorkingDir, selected.APIKey, selected.SelectedTeam
 	wd := creationDir
 	awebURL, err := resolveAPIKeyInitAwebURL()
