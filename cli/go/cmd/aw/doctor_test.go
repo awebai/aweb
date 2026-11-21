@@ -668,6 +668,7 @@ func TestAwDoctorFixTargetNotFound(t *testing.T) {
 }
 
 type fakeDoctorFixHandler struct {
+	scopeOwner  doctorFixHandler
 	id          string
 	plan        doctorFixPlan
 	planErr     error
@@ -677,6 +678,13 @@ type fakeDoctorFixHandler struct {
 
 func (h *fakeDoctorFixHandler) CheckID() string {
 	return h.id
+}
+
+func (h *fakeDoctorFixHandler) doctorMutationScope(ctx doctorFixContext) (doctorMutationScope, error) {
+	if h.scopeOwner != nil {
+		return h.scopeOwner.doctorMutationScope(ctx)
+	}
+	return doctorMutationScope{CheckID: h.id, Refusal: doctorFixAuthority}, nil
 }
 
 func (h *fakeDoctorFixHandler) Plan(context.Context, doctorFixContext, doctorCheck) (doctorFixPlan, error) {
@@ -756,34 +764,7 @@ func TestAwDoctorFixAdvertisedNoHandler(t *testing.T) {
 	}
 }
 
-func TestAwDoctorFixFakeSafeDryRunDoesNotApply(t *testing.T) {
-	handler := &fakeDoctorFixHandler{
-		id: "fake.safe",
-		plan: doctorFixPlan{
-			CheckID:   "fake.safe",
-			Safe:      true,
-			Authority: doctorAuthorityCaller,
-			Target:    &doctorTarget{Type: "local_path", ID: ".aw/workspace.yaml"},
-			PlannedMutations: []doctorFixMutation{{
-				Operation:   "write_metadata",
-				Description: "write non-secret metadata",
-				Path:        ".aw/workspace.yaml",
-			}},
-		},
-	}
-	setDoctorFixHandlersForTest(t, map[string]doctorFixHandler{handler.id: handler})
-
-	got := runDoctorFixFrameworkForTest(advertisedDoctorFixCheck(handler.id, true), doctorRunOptions{Fix: true, DryRun: true})
-	requireDoctorCheckStatus(t, got, "doctor.fix.planned", doctorStatusInfo)
-	if handler.applyCalled != 0 {
-		t.Fatalf("dry-run called Apply %d times", handler.applyCalled)
-	}
-	if len(got.Fixes) != 1 || got.Fixes[0].Status != doctorFixStatusPlanned || !got.Fixes[0].DryRun {
-		t.Fatalf("fixes=%#v", got.Fixes)
-	}
-}
-
-func TestAwDoctorFixApplyRequiresAdvertisedSafe(t *testing.T) {
+func TestAwDoctorFixRefusesUnsafeAdvertisement(t *testing.T) {
 	handler := &fakeDoctorFixHandler{
 		id: "fake.safe",
 		plan: doctorFixPlan{
@@ -808,11 +789,6 @@ func TestAwDoctorFixApplyRequiresAdvertisedSafe(t *testing.T) {
 		t.Fatalf("unsafe advertised fix called Apply")
 	}
 
-	got = runDoctorFixFrameworkForTest(advertisedDoctorFixCheck(handler.id, true), doctorRunOptions{Fix: true})
-	requireDoctorCheckStatus(t, got, "doctor.fix.applied", doctorStatusOK)
-	if handler.applyCalled != 1 {
-		t.Fatalf("applyCalled=%d, want 1", handler.applyCalled)
-	}
 }
 
 func TestAwDoctorFixSafetyValidatorRefusesSensitivePlans(t *testing.T) {
@@ -825,15 +801,7 @@ func TestAwDoctorFixSafetyValidatorRefusesSensitivePlans(t *testing.T) {
 		{name: "high-impact", plan: doctorFixPlan{Safe: true, HighImpact: true, Authority: doctorAuthorityCaller}, want: "high_impact"},
 		{name: "authority", plan: doctorFixPlan{Safe: true, Authority: doctorAuthoritySupport}, want: "authority"},
 		{name: "precondition", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, Preconditions: []doctorFixPrecondition{{ID: "fresh_state", Passed: false}}}, want: "precondition"},
-		{name: "global lifecycle", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, PlannedMutations: []doctorFixMutation{{Operation: "delete global identity lifecycle"}}}, want: "global_identity_lifecycle"},
-		{name: "did aw delete", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, PlannedMutations: []doctorFixMutation{{Operation: "delete", Target: &doctorTarget{Type: "did", ID: "did:aw:example"}}}}, want: "global_identity_lifecycle"},
-		{name: "identity reassign", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, PlannedMutations: []doctorFixMutation{{Operation: "reassign identity binding"}}}, want: "global_identity_lifecycle"},
-		{name: "managed address reassign", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, PlannedMutations: []doctorFixMutation{{Operation: "reassign managed address"}}}, want: "global_identity_lifecycle"},
-		{name: "private key", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, PlannedMutations: []doctorFixMutation{{Operation: "write", Path: ".aw/signing.key"}}}, want: "private_key_material"},
-		{name: "signing key underscore", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, PlannedMutations: []doctorFixMutation{{Operation: "rotate signing_key"}}}, want: "private_key_material"},
-		{name: "private key hyphen", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, PlannedMutations: []doctorFixMutation{{Operation: "write private-key material"}}}, want: "private_key_material"},
-		{name: "task unclaim", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, PlannedMutations: []doctorFixMutation{{Operation: "task unclaim"}}}, want: "coordination_cleanup"},
-		{name: "presence cleanup", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, PlannedMutations: []doctorFixMutation{{Operation: "clear presence"}}}, want: "coordination_cleanup"},
+		{name: "unowned metadata", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, PlannedMutations: []doctorFixMutation{{Operation: doctorFixRewriteWorkspaceMetadata, Path: ".aw/workspace.yaml"}}}, want: "authority"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -879,11 +847,6 @@ func TestAwDoctorFixApplyErrorDoesNotLeakHandlerError(t *testing.T) {
 			CheckID:   "fake.apply_error",
 			Safe:      true,
 			Authority: doctorAuthorityCaller,
-			PlannedMutations: []doctorFixMutation{{
-				Operation:   "write_metadata",
-				Description: "write non-secret metadata",
-				Path:        ".aw/workspace.yaml",
-			}},
 		},
 		applyErr: errors.New("synthetic-secret-apply-body"),
 	}

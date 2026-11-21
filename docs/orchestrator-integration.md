@@ -239,10 +239,9 @@ intended lifecycle; a missing runtime or path is not itself retirement evidence.
 
 ### Local-identity workspace cleanup
 
-A local member can delete its own workspace immediately. Another member can
-clean it up only when its recorded activity is stale. `aw workspace delete`
-is not a general self-custodial-home retirement command. Inspect identity scope
-and workspace state first:
+`aw workspace delete` cleans up local-identity workspaces. A local member can
+delete its own workspace immediately; another member's workspace is subject to
+the server's stale-activity rule. Inspect identity scope and workspace state:
 
 ```bash
 aw whoami --json
@@ -260,13 +259,12 @@ The current server refuses cleanup rather than guessing:
 - `local_workspace_still_active` means another member is trying to delete a
   local workspace whose activity is within the presence TTL (1,800 seconds by
   default, configured by `AWEB_PRESENCE_TTL_SECONDS`). Stop the target runtime,
-  retain its identity home, and wait until that activity is stale before retrying
-  through the other member. This waiting period does not apply when the target
-  member authenticates to delete its own workspace.
+  retain its identity home, and wait until the activity is stale before retrying.
+  An immediate retry must not be treated as cleanup progress.
 
-After stopping the local member's runtime, run from its retained identity home
-to delete its own workspace immediately. Cleanup through another authorized
-member's identity home requires the target workspace's activity to be stale:
+From the retained identity home, retire its own local workspace. To clean up
+another local workspace, use an authorized member's identity home after the
+target workspace is stopped and its activity is stale:
 
 ```bash
 aw workspace delete <workspace-id-or-name> --json
@@ -277,6 +275,24 @@ and releases its task claims. Inspect the structured result, including whether
 identity cleanup was established. On any refusal, error, or indeterminate result,
 persist an explicit partial retirement state and retain the identity home; never
 turn an incomplete result into permission to delete local credentials.
+
+For non-hosted own-member retirement with a local controller key, `retirement_code` distinguishes
+`retired_and_revoked`, `retired_revocation_pending`, and
+`retired_key_holder_required`. Only the first reports `alias_released: true`.
+The latter two exit nonzero and supply `next_step` with the exact key-holder
+command. The CLI prepares the receipt before deleting and durably records
+service-confirmed cleanup before revoking the certificate. A retry matches the
+original team, member, workspace and certificate. A prepared receipt retries
+the exact workspace operation; after confirmed cleanup, a retry needs only the
+controller operation. The private receipt contains no keys or tokens.
+
+Without the local controller key, the implicit workspace command deletes only
+the workspace and reports `alias_released: false` with reason `team_not_hosted`.
+For an explicitly selected external identity home, the command refuses before
+deleting, with JSON code `team_not_hosted` and the released stderr sentence
+used by OATS. The controller handles the remaining team cleanup. Hosted
+self-retirement keeps its existing service-authorized flow. Global identity
+and other-member removal stay separate.
 
 ### Team-authorized retirement
 

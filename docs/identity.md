@@ -511,6 +511,27 @@ Run `aw id encryption-key setup` to repair or publish missing key state, and
 `.aw/encryption-keys/`; losing archived encryption keys makes old encrypted
 messages unrecoverable.
 
+### Provisioned members and encryption discovery
+
+Provisioning through a creator's invitation and creator self-enrollment connect
+the accepted member to its aweb service before publishing its E2E key assertion.
+A local workspace binding alone does not establish server admission. Provisioning
+reports success only after the service confirms publication for that member.
+
+If the accepted certificate is installed but local membership recording fails,
+repair the reported file error and use the printed `id team install-cert` command
+for that same certificate, followed by `workspace connect`. The outer creation
+command retains its home throughout that repair.
+
+A connect failure retains the created home, signing key and accepted certificate
+and reports that this attempt did not publish the key. Run the exact
+`aw --identity-home <member-home> workspace connect --service <url>` command in
+the refusal. If connection completed but publication is unconfirmed, run the
+reported `aw --identity-home <member-home> id encryption-key setup` command.
+Neither recovery requires a replacement identity or another invitation.
+Membership-only joins continue to install their membership before their separate
+connection step.
+
 ## Team membership and authentication
 
 Identity and team membership are separate:
