@@ -317,6 +317,9 @@ remains a hidden, warning compatibility alias for `--name`. New requests,
 registry storage, and product language use `name` as the concept and
 `identity_scope=local|global` for scope.
 
+For a fully unowned team, see [how the controller signs a claim and an existing
+member submits it](unowned-team-claim.md).
+
 ### Hosted organization setup (including Omarchy)
 
 A person already signed in can create a managed organization without a namespace

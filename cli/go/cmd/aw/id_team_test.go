@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -742,64 +743,71 @@ func TestRunTeamImportRequestMissingKeyUsesBYOTGuidance(t *testing.T) {
 }
 
 func TestBuildTeamImportRequestOutputSignsCanonicalACPayload(t *testing.T) {
-	teamKey := ed25519.NewKeyFromSeed([]byte{
-		0, 1, 2, 3, 4, 5, 6, 7,
-		8, 9, 10, 11, 12, 13, 14, 15,
-		16, 17, 18, 19, 20, 21, 22, 23,
-		24, 25, 26, 27, 28, 29, 30, 31,
-	})
-	pub := teamKey.Public().(ed25519.PublicKey)
-	out, err := buildTeamImportRequestOutput(
-		teamKey,
-		"research:acme.com",
-		"org-1",
-		"",
-		true,
-		"2026-05-09T12:00:00Z",
-	)
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "docs", "vectors", "team-control-requests-v1.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	wantCanonical := `{"awid_team_id":"research:acme.com","dry_run":true,"operation":"byoidt_import","organization_id":"org-1","team_id":"","timestamp":"2026-05-09T12:00:00Z"}`
-	if out.CanonicalPayload != wantCanonical {
-		t.Fatalf("canonical payload mismatch:\n got: %s\nwant: %s", out.CanonicalPayload, wantCanonical)
+	var vector struct {
+		SeedHex string `json:"seed_hex"`
+		Signer  string `json:"signer_did_key"`
+		Cases   []struct {
+			Name  string `json:"name"`
+			Input struct {
+				AWIDTeamID     string `json:"awid_team_id"`
+				OrganizationID string `json:"organization_id"`
+				TeamID         string `json:"team_id"`
+				DryRun         bool   `json:"dry_run"`
+				Timestamp      string `json:"timestamp"`
+			} `json:"input"`
+			Payload   string `json:"canonical_payload"`
+			Signature string `json:"signature"`
+		} `json:"import_cases"`
 	}
-	if out.ControllerDID != awid.ComputeDIDKey(pub) {
-		t.Fatalf("controller did=%q want %q", out.ControllerDID, awid.ComputeDIDKey(pub))
-	}
-	if out.ControllerDID != "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd" {
-		t.Fatalf("controller did interop vector changed: %q", out.ControllerDID)
-	}
-	const wantSignature = "wJ9qUNecyxiqSF45ALU6upFloyUPiQW1RXkste671QcTjBM9nGqN9ngTcgGwVX2OO+s4gQ/yFIXKL7OewHelBw"
-	if out.ControllerSignature != wantSignature {
-		t.Fatalf("signature mismatch:\n got: %s\nwant: %s", out.ControllerSignature, wantSignature)
-	}
-	sig, err := base64.RawStdEncoding.DecodeString(out.ControllerSignature)
-	if err != nil {
-		t.Fatalf("decode signature: %v", err)
-	}
-	if !ed25519.Verify(pub, []byte(out.CanonicalPayload), sig) {
-		t.Fatal("controller signature does not verify")
-	}
-	if got := out.RequestBody["organization_id"]; got != "org-1" {
-		t.Fatalf("request organization_id=%v", got)
-	}
-	if got := out.RequestBody["team_id"]; got != nil {
-		t.Fatalf("empty cloud team id should encode as nil request field, got %v", got)
-	}
-	if got := out.RequestBody["controller_signature"]; got != out.ControllerSignature {
-		t.Fatalf("request signature=%v want %s", got, out.ControllerSignature)
-	}
-	if _, ok := out.RequestBody["access_mode"]; ok {
-		t.Fatal("request body must not include stale unsigned access_mode")
-	}
-	encoded, err := json.Marshal(out)
-	if err != nil {
+	if err := json.Unmarshal(raw, &vector); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(encoded), "access_mode") {
-		t.Fatalf("import-request output must not expose stale access_mode, got %s", encoded)
+	seed, err := hex.DecodeString(vector.SeedHex)
+	if err != nil || len(seed) != ed25519.SeedSize || len(vector.Cases) != 4 {
+		t.Fatalf("incomplete import vector: %v", err)
+	}
+	key := ed25519.NewKeyFromSeed(seed)
+	for _, tc := range vector.Cases {
+		t.Run(tc.Name, func(t *testing.T) {
+			in := tc.Input
+			out, err := buildTeamImportRequestOutput(key, in.AWIDTeamID, in.OrganizationID, in.TeamID, in.DryRun, in.Timestamp)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if out.CanonicalPayload != tc.Payload || out.ControllerDID != vector.Signer || out.ControllerSignature != tc.Signature {
+				t.Fatalf("released import proof changed: %+v", out)
+			}
+			signature, err := base64.RawStdEncoding.DecodeString(out.ControllerSignature)
+			if err != nil || !ed25519.Verify(key.Public().(ed25519.PublicKey), []byte(out.CanonicalPayload), signature) {
+				t.Fatal("controller signature does not verify")
+			}
+			for field, input := range map[string]string{"organization_id": in.OrganizationID, "team_id": in.TeamID} {
+				var want any
+				if trimmed := strings.TrimSpace(input); trimmed != "" {
+					want = trimmed
+				}
+				if got := out.RequestBody[field]; got != want {
+					t.Fatalf("request %s=%v want %v", field, got, want)
+				}
+			}
+			if got := out.RequestBody["controller_signature"]; got != out.ControllerSignature {
+				t.Fatalf("request signature=%v want %s", got, out.ControllerSignature)
+			}
+			if _, ok := out.RequestBody["access_mode"]; ok {
+				t.Fatal("request body must not include stale unsigned access_mode")
+			}
+			encoded, err := json.Marshal(out)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(encoded), "access_mode") {
+				t.Fatalf("import-request output must not expose stale access_mode, got %s", encoded)
+			}
+		})
 	}
 }
 

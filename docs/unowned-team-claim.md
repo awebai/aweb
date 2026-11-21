@@ -6,7 +6,31 @@ supplies the canonical team and the prospective owner's normalized email and
 username. The host owns account authorization and rechecks ownership under its
 final locks.
 
-`awid.unowned_team_claim` owns the canonical artifact. The top-level object has
+From the machine with the team controller key, produce the artifact with
+`aw id team claim-human-request`. Use the prospective owner's username and email.
+
+```sh
+aw id team claim-human-request --namespace acme.com --team research \
+  --username owner --email owner@example.com > controller-claim.json
+```
+
+The command reads the local team controller key and writes JSON. The prospective
+owner submits it from an existing member's identity home within five minutes.
+
+```sh
+aw claim-human --username owner --email owner@example.com \
+  --controller-claim-file controller-claim.json
+```
+
+Both commands trim and lowercase the supplied username and email. The member
+signs the submission, and the host verifies the artifact against the current
+registry controller. Without the flag, `aw claim-human` uses its existing
+member-authenticated request.
+
+The Python `awid.unowned_team_claim` module and the Go `awid` package implement
+the canonical artifact. Their shared [team-control request vector](
+vectors/team-control-requests-v1.json) pins the signed bytes and the purpose
+boundary with ordinary import. The top-level object has
 exactly `request`, `signer_did_key`, and `signature`. The canonical UTF-8 JSON
 `request` is the Ed25519 preimage and has exactly these text fields:
 
