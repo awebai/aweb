@@ -583,7 +583,7 @@ The gateway does not require synchronous agent liveness for `SendMessage` to
 succeed when `configuration.returnImmediately: true`.
 
 For the current async path, A2A clients SHOULD send
-`configuration.returnImmediately: true`. In that case the gateway returns after creating/updating the task and sending the durable aweb bridge message.
+`configuration.returnImmediately: true`. In that case the gateway returns after creating the task and sending the durable aweb bridge message. Current task-continuation limits are stated in Appendix C.
 
 If `configuration.returnImmediately` is absent or false, the gateway follows A2A semantics by waiting until the task reaches a terminal or interrupted state. If the route response wait timeout expires before an agent reply, the gateway returns the current non-terminal task state, usually `TASK_STATE_WORKING`, and leaves the task pollable until task TTL expiry. The route response timeout is only an HTTP wait bound; it is not a terminal task failure.
 
@@ -632,6 +632,13 @@ Required semantic sections, in this order:
 1. **Task metadata**: a fenced `a2a-task` block whose JSON object carries at least `task_id`, `route_id`, `target_address`, `state`, and `request_id`; `context_id`, `gateway_identity`, and `caller_scope` when present.
 2. **Reply instructions with a ready-to-fill template**: a fenced `a2a-reply` block prefilled with the actual `task_id` (and `context_id` whenever the task has one), a `state` field, and a text artifact placeholder, plus the allowed reply state values (`completed`, `input_required`, `failed`, `rejected`) and a statement that replies without a valid `a2a-reply` block do not change the task.
 3. **Customer text, last, under an explicit untrusted heading** (for example `Customer message (untrusted):`). The untrusted content MUST be the final section so that message content cannot spoof the instructions above it.
+
+The gateway generates `request_id` for each RPC and returns it in the HTTP
+`X-Request-ID` response header. The JSON-RPC envelope still carries the caller's
+RPC `id`. In signed mail, a `context_id` of up to 128 ASCII letters, digits, or
+`._:-` characters passes through as a token. Other context values use a bounded
+digest token. Echo the `context_id` from the provided reply form. The original
+caller `contextId` remains available in A2A task responses and list filters.
 
 Example:
 
@@ -704,12 +711,12 @@ Allowed `state` values in the block:
 
 These are gateway-local bridge values, not the A2A wire object itself. The gateway accepts the lower-case aliases for zero-SDK agent ergonomics and the exact `TASK_STATE_*` names for future helpers/tooling.
 
-Reply binding rules:
+Reply binding rules on routes requiring verified replies (explicitly unverified routes follow Appendix C):
 
 - `a2a-reply.task_id` is required and must equal the current task id.
 - `a2a-reply.context_id` is required when the inbound task included a context id and must match it.
 - A missing or mismatched `task_id`/`context_id` is rejected or ignored; it never mutates the task.
-- Terminal task states are final. A later agent reply after `TASK_STATE_COMPLETED`, `TASK_STATE_INPUT_REQUIRED`, `TASK_STATE_AUTH_REQUIRED`, `TASK_STATE_FAILED`, `TASK_STATE_CANCELED`, or `TASK_STATE_REJECTED` is ignored/logged or starts a new task explicitly; it never revives or mutates the terminal task.
+- Terminal task states are final. A later agent reply after `TASK_STATE_COMPLETED`, `TASK_STATE_FAILED`, `TASK_STATE_CANCELED`, or `TASK_STATE_REJECTED` is ignored/logged or starts a new task explicitly; it never revives or mutates the terminal task.
 - `TASK_STATE_AUTH_REQUIRED` is a gateway-generated route/auth state in v1, not an agent reply alias. A route/auth flow that lets agents request auth must define that explicitly in a later contract amendment.
 - Unfenced prose, partial thoughts, or malformed fenced blocks may be logged as non-terminal status, but the task remains `TASK_STATE_WORKING` until a valid `a2a-reply`, cancellation, or timeout.
 
@@ -927,3 +934,131 @@ A future `https://aweb.ai/a2a/binding/v1` could map A2A operations onto signed a
 
 This is not part of the current gateway surface. It should be specified only if
 external A2A SDKs or clients need it.
+
+## Appendix C: Admission, reply identity, and diagnostics
+
+Route authentication is checked for all four RPC methods before accessing task
+state. An unauthenticated `SendMessage` retains the `TASK_STATE_AUTH_REQUIRED`
+response shape but creates no stored task and issues no task bearer token. A
+public route still issues an opaque token on successful send; task IDs alone
+never authorize reads or cancellation. Configured concurrent-task limits are
+atomic per route. Expiry removes stored records, and completion, cancellation,
+and task expiry stop bridge polling and remove its thread state. A shorter
+poll timeout stops automatic polling while retaining the live task's
+conversation binding for a later cancellation or reply until task expiry.
+On normal shutdown, the gateway stops accepting HTTP requests, drains admitted
+requests, stops managed configuration refresh, and waits for reply workers to
+finish their audit writes before exiting.
+
+A route needs a global agent with a public address. A local identity is not an
+A2A target: local agents cannot be reached from outside their team. A gateway
+resolves the target to its identity at configuration or startup and refuses a
+local identity, including one reached through another address or alias. A local
+agent's ability to receive a reply in a conversation it initiated does not grant
+a public A2A entry point. Native `-check` remains an offline configuration check;
+normal startup validates enabled targets before opening the listener.
+Startup requires the target registry to be reachable. A failed resolution stops
+startup for all routes; configure a supervisor to restart the gateway so it can
+retry after registry connectivity recovers. This may be a transient outage,
+not an invalid route configuration.
+
+Before a native bridge sends, it resolves the recipient through aw mail's
+identity resolver, requires a public target, and sends to that exact DID and stable ID. A plaintext Go send receipt
+includes additive `recipient_did` and `recipient_stable_id` fields containing the
+exact signed recipient claims. A managed provider advertises
+`capabilities: ["recipient_identity_v1"]` in its runtime configuration and
+returns these same fields from its actual signed send. A provider without this
+capability cannot configure an active route requiring verified replies; the
+error names the provider and the upgrade needed. Explicitly setting
+`require_verified_replies: false` and `allow_unverified_local_reply: true`
+preserves an unverified route on such a provider. The explicit requirement wins
+when both settings are true.
+
+A provider declaring `recipient_identity_v1` must supply the recipient in its
+send receipt. An omitted recipient is a provider fault: the gateway audits the
+reason, marks the task failed, and returns its failed task and recovery detail
+in the RPC error data. It does not poll an unbound task or blame the target for
+replying from the wrong identity. The provider must repair the response before
+retrying. A provider without the capability is refused before durable send on
+verified routes; the refusal names the provider and needed upgrade. Every
+failed bridge task send is audited.
+
+Reply messages pass through aw mail's signature, display-binding, and sender
+verification code, including messages fetched through a managed provider.
+Every task-changing verified reply must come from the identity recorded at
+creation and use one signed `a2a-reply` fence naming its `task_id` and required
+`context_id`. A question uses `state: input_required` and its question text in
+`text` or a text artifact, exactly as a final answer uses `state: completed`.
+A signed conversation alone cannot identify a task when the provider reuses a
+conversation. A plain `QUESTION:` therefore cannot update a verified task,
+even with a conversation-bound signature or only one live task.
+
+The initial task message teaches the exact task-bearing question form. A
+refused plain question leaves all tasks unchanged, records the reason, and
+sends the known target correction instructions in the original conversation.
+Those instructions show the exact fenced question form and say to use aw
+1.19.0 or later. A task-bearing signed legacy fence remains accepted.
+`allow_question_reply` keeps its plain `QUESTION:` compatibility behavior only
+on routes explicitly configured as unverified. With verified replies required,
+questions are allowed in the fenced form; the flag never relaxes verification.
+The combination is valid and requires no configuration refusal. Explicit
+unverified routes report
+`metadata.reply_verification: "unverified"`; the CLI displays that label.
+On verified routes, only a complete standalone `a2a-reply` fence counts as a reply. Quoted fences,
+fences nested inside another code block, and ambiguous multiple reply blocks
+cannot supply the answer.
+
+`CancelTask` commits local cancellation even if the agent's cancellation notice
+cannot be sent. In that case it returns `cancel_notification_failed`, names the
+canceled task and state, and asks the caller to contact the agent; it does not
+claim the agent was notified.
+The notice uses the original conversation from the delivery receipt. A missing
+binding leaves the task canceled locally and does not attempt mail delivery.
+
+The public `/config` retains the diagnostic object shape with an empty `routes`
+array and no default-route selector. Operators set `operator_token_env` to the
+name of an environment variable holding a diagnostics token. A request with
+`Authorization: Bearer <operator token>` receives full route diagnostics. The
+token itself is never included. `-check` still prints full diagnostics locally.
+
+The outbound CLI requires the card and selected RPC interface to use the same
+origin before selecting a stored credential. Credential-bearing RPC requests,
+managed configuration fetches, and managed bridge requests require HTTPS and
+keep redirects on that origin. Literal loopback IP addresses support HTTP for
+local development. A DNS name, including `localhost`, does not grant that
+exception. Ordinary server requests have bounded header, body, write, and idle
+times; an A2A wait extends its write deadline to its configured response budget.
+
+The plaintext bridge, per-request registry readiness check, and best-effort
+audit observer retain their existing contracts. Authentication refusals are
+recorded as refusals rather than successful task sends.
+
+The CLI keeps task bearer tokens in the invoking instance's
+`.aw/a2a-credentials.yaml`, separately from static route credentials in a selected
+identity home. Task-token writes are atomic and serialized within that instance.
+An unreadable or malformed credential file is an error, not an empty file. If
+persistence fails after delivery, `aw a2a send` still returns the delivered task
+and its token, and warns on stderr how to retain access and repair the file.
+
+On an explicitly unverified route, a plain question may select a task only when
+exactly one eligible tracked task is in the conversation. If several tasks are
+eligible, the gateway refuses it without changing any task and sends the target
+the fenced forms naming those tasks, as it does on a verified route.
+An input-required reply carries its text artifacts with the name `question`,
+including a plain question accepted by an unverified route. Completed replies
+keep the name `answer`.
+
+This gateway does not support A2A task continuation. A caller answers an
+`INPUT_REQUIRED` question by sending its answer as a new task. The question task
+stays interrupted until cancellation or task expiry. The bridge stops polling
+for replies and retains the original conversation for the cancellation notice. A later
+fenced `completed` reply from the target does not move it. Each accepted
+`SendMessage` creates a new task; `contextId` is correlation, not resumption.
+For `AUTH_REQUIRED`, fix the route authentication and start a new task.
+Authentication refusals are ephemeral and have no retained task, as above.
+
+The Go A2A client and gateway refuse overflow before decoding a JSON prefix. Agent Card
+responses allow 2 MiB, A2A RPC responses 4 MiB, and managed configuration,
+managed bridge and registry health responses 1 MiB. Inbound RPC bodies use the
+route's configured byte limit. A complete body exactly at its limit is accepted;
+a valid prefix cannot hide trailing bytes beyond that limit.

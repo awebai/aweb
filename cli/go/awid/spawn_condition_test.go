@@ -39,3 +39,13 @@ func TestSpawnInviteConditionAndMembershipChainWire(t *testing.T) {
 		})
 	}
 }
+
+func TestReleasedSpawnInviteRequestOmitsUnprovidedChain(t *testing.T) {
+	got, err := json.Marshal(SpawnAcceptInviteRequest{Token: "fixture", DID: "did:key:member"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `{"token":"fixture","did":"did:key:member"}`; string(got) != want {
+		t.Fatalf("released unconditioned request = %s, want %s", got, want)
+	}
+}

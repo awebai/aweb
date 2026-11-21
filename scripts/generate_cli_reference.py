@@ -18,7 +18,9 @@ class RootCoverageError(RuntimeError):
 
 def cli_environment() -> dict[str, str]:
     """Reference generation must not select the runner's aweb identity or policy."""
-    return {key: value for key, value in os.environ.items() if not key.startswith("AWEB_")}
+    return {
+        key: value for key, value in os.environ.items() if not key.startswith("AWEB_")
+    }
 
 
 def run_help(binary: Path, path: Sequence[str]) -> str:
@@ -245,10 +247,13 @@ def render_reference(binary: Path) -> str:
             "| `encryption_key_missing` | An encrypted message needs a local encryption private key this identity does not have. |",
             "| `decrypt_failed` | An encrypted message could not be opened or validated. |",
             "| `recipient_custodial_no_e2ee` | An end-to-end encrypted send names a hosted agent, whose signed encryption key assertion says aweb's service holds its key; nothing was sent. Send it again without `--e2ee`. |",
-            "| `team_not_hosted` | `aw workspace delete` through an external identity home: the team is not hosted, so no cloud-held controller can release the alias. |",
+            "| `team_not_hosted` | The hosted self-release path is unavailable for this team. Own non-hosted local retirement uses the controller receipt flow. |",
             "| `global_identity` | `aw workspace delete` through an external identity home: a global identity's alias is released by its team, not by itself. |",
             "| `not_own_workspace` | `aw workspace delete` through an external identity home names another workspace. |",
             "| `no_workspace_credential` | `aw workspace delete` through an external identity home has no member credential to act with. |",
+            "",
+            "Offline status, additional refusal codes, wake readiness and local retirement",
+            "outcomes are documented in the [CLI integration contract](cli-integration-contract.md).",
             "",
             "`aw wake status --json` describes a receive stream's error the same way:",
             "beside the `stream_error` text, `stream_error_detail` holds its `code`,",
