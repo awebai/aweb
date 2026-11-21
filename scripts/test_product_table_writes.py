@@ -177,7 +177,7 @@ async def f(db, schema):
         self.assertEqual(result.returncode, 1)
         self.assertIn("test_new.py", result.stdout)
 
-    def test_real_stage_refuses_before_later_targets_and_accepts_neighbor(self):
+    def test_real_stage_records_violation_alongside_later_targets(self):
         log = self.root / "logs"
         log.mkdir()
         (log / "host-published-port.log").write_text("fixture host preflight\n")
@@ -208,9 +208,10 @@ async def f(db, schema):
                 )
                 calls = (self.root / "calls").read_text().splitlines()
                 self.assertEqual(calls[0], "check-python-static")
-                self.assertEqual("test-shipping" in calls, expected == 0)
+                self.assertIn("test-shipping", calls)
                 self.assertIn(
-                    "PASSED" if expected == 0 else "FAILED",
+                    "checks/check-product-table-writes\t"
+                    + ("PASSED" if expected == 0 else "FAILED"),
                     (log / "summary.tsv").read_text(),
                 )
 
