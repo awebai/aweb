@@ -127,9 +127,10 @@ team-architecture flows:
 By default, init creates or updates the clearly marked aweb section in
 AGENTS.md or CLAUDE.md. Use --do-not-touch-agents-md to skip that file update.
 
-With a team API key, another dashboard-created agent or an aw team invite joins
-this same team. Without a key, creating a new account/team in a fresh directory
-creates a separate team; use aw team invite / aw team join to join this one.
+A supplied AWEB_API_KEY, including a workspace key returned by CLI signup,
+joins the team selected by the service. An aw team invite can also join it.
+Creating a new account/team in a fresh directory creates a separate team.
+Use aw team invite / aw team join to add a member to that team.
 
 The channel plugin or host wake broker is the preferred notification path.
 --setup-hooks explicitly enables a Claude Code chat-only polling fallback:
@@ -139,12 +140,8 @@ for backed-up removal of exact aw notify PostToolUse entries from the current
 directory's and, inside a git repo, the repository root's .claude/settings.json.
 Init and upgrades never remove them implicitly.
 
-Creation authority comes from the creator's native signing workspace, never its stored workspace API key. A supplied person's setup key takes the API path. A supplied workspace key uses the signing workspace for the requested team. Older servers and unknown api_key_kind values keep the existing API path.
-
-Using this workspace's signed invitation; the supplied agent API key is not creating the child.
-
-This is an agent's workspace key. Run creation from that agent's workspace, or use a setup key from the dashboard. To create here from another workspace, use aw init --join-from <workspace>.
-A selected native workspace (--identity-home or AWEB_IDENTITY_HOME) may create a child into a clean current directory; its own home is never overwritten.
+Use --join-from to create a child in a fresh directory from a selected native
+creator workspace.
 
 Flags:
 - `--admission-team-id string Add an agent through host human admission for this explicit team ID`
@@ -250,11 +247,7 @@ Legacy convenience for existing users: create a sibling git worktree and initial
 
 New setup flows should prefer explicit git worktree/filesystem steps followed by aw init, invite/join, or service init primitives unless this command is reduced to a transparent wrapper with no identity/team orchestration.
 
-Creation authority comes from the creator's native signing workspace, never its stored workspace API key. A supplied person's setup key takes the API path. A supplied workspace key uses the signing workspace for the requested team. Older servers and unknown api_key_kind values keep the existing API path.
-
-Using this workspace's signed invitation; the supplied agent API key is not creating the child.
-
-This is an agent's workspace key. Run creation from that agent's workspace, or use a setup key from the dashboard. To create here from another workspace, use aw init --join-from <workspace>.
+If the service cannot report the team for AWEB_API_KEY, creation uses the current workspace's existing authority.
 
 Flags:
 - `-h, --help help for add-worktree`
@@ -2140,7 +2133,7 @@ Deprecated --profile is accepted as --agent for transition; @VERSION is dropped.
 With --org, create a hosted team using human CLI authorization and return an invite.
 This explicit mode creates no local identity or profile; accept the invite separately.
 
-An agent's workspace key cannot found a new team. Use a setup key from the dashboard, a namespace controller with aw team admin create --byot --namespace <domain>, or the signed aw id team create --hosted operation.
+In a fresh directory, a supplied AWEB_API_KEY uses the service's workspace bootstrap.
 
 Flags:
 - `--agent stringArray Agent spec [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME] or NAME[:local|global]`

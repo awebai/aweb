@@ -63,8 +63,8 @@ func TestPostAPIKeyWorkspaceInitMalformedConflictKeepsGenericError(t *testing.T)
 
 func TestInitAPIKeyAliasCreatesLocalSelfCustodialCLIWorkspace(t *testing.T) {
 	t.Parallel()
-	for _, personCommand := range []bool{false, true} {
-		t.Run(fmt.Sprint("person-command-", personCommand), func(t *testing.T) {
+	for _, keyKind := range []creationKeyKind{creationKeyKindUnspecified, creationKeyKindPerson, creationKeyKindWorkspace} {
+		t.Run(firstNonEmpty(string(keyKind), "legacy"), func(t *testing.T) {
 
 			const apiKey = "aw_sk_test_ephemeral"
 
@@ -95,8 +95,8 @@ func TestInitAPIKeyAliasCreatesLocalSelfCustodialCLIWorkspace(t *testing.T) {
 
 			var server *httptest.Server
 			server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
-				if personCommand && r.URL.Path == "/api/v1/teams/current" {
-					json.NewEncoder(w).Encode(map[string]any{"team_id": "11111111-1111-4111-8111-111111111111", "canonical_team_id": "backend:acme.com", "api_key_kind": "person"})
+				if keyKind != creationKeyKindUnspecified && r.URL.Path == "/api/v1/teams/current" {
+					json.NewEncoder(w).Encode(map[string]any{"team_id": "11111111-1111-4111-8111-111111111111", "canonical_team_id": "backend:acme.com", "api_key_kind": keyKind})
 					return
 				}
 				if serveAPIKeyCreationTeamRead(w, r, "backend:acme.com") {
@@ -194,7 +194,7 @@ func TestInitAPIKeyAliasCreatesLocalSelfCustodialCLIWorkspace(t *testing.T) {
 					})
 				case "/v1/agents/heartbeat":
 					w.WriteHeader(http.StatusOK)
-				case "/api/v1/agents/me/encryption-key":
+				case "/v1/agents/me/encryption-key", "/api/v1/agents/me/encryption-key":
 					writePublishEncryptionKeyResponseForTest(t, w, "agent-1", "backend:acme.com", "alice")
 				default:
 					t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
@@ -206,12 +206,12 @@ func TestInitAPIKeyAliasCreatesLocalSelfCustodialCLIWorkspace(t *testing.T) {
 				t.Fatal(err)
 			}
 			var result connectOutput
-			if personCommand {
+			if keyKind != creationKeyKindUnspecified {
 				bin := filepath.Join(t.TempDir(), "aw")
 				buildAwBinary(t, context.Background(), bin)
-				command := exec.Command(bin, "init", "--aweb-url", externalLikeTestURL(t, server.URL), "--name", "requested-alias", "--role", "backend", "--json", "--do-not-touch-agents-md")
+				command := exec.Command(bin, "init", "--name", "requested-alias", "--role", "backend", "--json", "--do-not-touch-agents-md")
 				command.Dir = tmp
-				command.Env = append(testCommandEnv(t.TempDir()), "AWEB_API_KEY="+apiKey)
+				command.Env = append(testCommandEnv(t.TempDir()), "AWEB_URL="+externalLikeTestURL(t, server.URL), "AWEB_API_KEY="+apiKey)
 				var stderr bytes.Buffer
 				command.Stderr = &stderr
 				output, err := command.Output()
@@ -343,8 +343,6 @@ func TestInitAPIKeyAliasCreatesLocalSelfCustodialCLIWorkspace(t *testing.T) {
 }
 
 func TestInitAPIKeyGlobalNameCreatesSelfCustodialGlobalCLIIdentity(t *testing.T) {
-	t.Setenv("AWID_REGISTRY_URL", "http://127.0.0.1:1")
-
 	const apiKey = "aw_sk_test_persistent"
 
 	teamPub, teamKey, err := awid.GenerateKeypair()
@@ -358,7 +356,8 @@ func TestInitAPIKeyGlobalNameCreatesSelfCustodialGlobalCLIIdentity(t *testing.T)
 	var registeredDIDKey string
 	var server *httptest.Server
 	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
-		if serveAPIKeyCreationTeamRead(w, r, "default:alice.aweb.ai") {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/teams/current" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"team_id": "11111111-1111-4111-8111-111111111111", "canonical_team_id": "default:alice.aweb.ai", "api_key_kind": "workspace"})
 			return
 		}
 		switch {
@@ -443,20 +442,20 @@ func TestInitAPIKeyGlobalNameCreatesSelfCustodialGlobalCLIIdentity(t *testing.T)
 	})
 
 	tmp := t.TempDir()
-	setInitAWIDRegistryFlagForTest(t, server.URL)
-	result, err := runAPIKeyBootstrapInit(apiKeyInitRequest{
-		WorkingDir:  tmp,
-		AwebURL:     externalLikeTestURL(t, server.URL),
-		RegistryURL: server.URL,
-		APIKey:      apiKey,
-		Name:        "alice",
-		Role:        "backend",
-		HumanName:   "Alice",
-		AgentType:   "codex",
-		Global:      true,
-	})
+	bin := filepath.Join(t.TempDir(), "aw")
+	buildAwBinary(t, t.Context(), bin)
+	command := exec.CommandContext(t.Context(), bin, "init", "--global", "--name", "alice", "--do-not-touch-agents-md", "--json", "--role", "backend", "--human-name", "Alice", "--agent-type", "codex")
+	command.Dir = tmp
+	command.Env = append(testCommandEnv(t.TempDir()), "AWEB_URL="+externalLikeTestURL(t, server.URL), "AWEB_API_KEY="+apiKey, "AWID_REGISTRY_URL="+server.URL)
+	var stderr bytes.Buffer
+	command.Stderr = &stderr
+	raw, err := command.Output()
 	if err != nil {
-		t.Fatalf("runAPIKeyBootstrapInit global: %v", err)
+		t.Fatalf("OATS resident init: %v\n%s", err, stderr.String())
+	}
+	var result connectOutput
+	if err := json.Unmarshal(raw, &result); err != nil {
+		t.Fatalf("decode init output %s: %v", raw, err)
 	}
 
 	if got, want := strings.Join(requestOrder[:3], ","), "register_identity,did_full,workspace_init"; got != want {

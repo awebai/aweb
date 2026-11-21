@@ -35,7 +35,6 @@ func TestCreationAuthorityDecision(t *testing.T) {
 		{"unknown field older behavior", creationAuthorityInput{SuppliedKey: true, KeyKind: "future", SourceTeam: "dev:example.com"}, creationAuthorityAPI, "", ""},
 		{"stale team kind is unknown", creationAuthorityInput{SuppliedKey: true, KeyKind: "team", SourceTeam: "dev:example.com"}, creationAuthorityAPI, "", ""},
 		{"local controller", creationAuthorityInput{SourceTeam: "dev:example.com", LocalController: true}, creationAuthorityController, "", ""},
-		{"founding with workspace key", creationAuthorityInput{SuppliedKey: true, KeyKind: creationKeyKindWorkspace, Founding: true, SourceTeam: "dev:example.com"}, creationAuthorityUnselected, "", "An agent's workspace key cannot found a new team. Use a setup key from the dashboard, a namespace controller with aw team admin create --byot --namespace <domain>, or the signed aw id team create --hosted operation."},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := decideCreationAuthority(tc.input)
@@ -58,10 +57,8 @@ func TestCreationCommandsWorkspaceKeyWithoutSignerRefuseBeforeWrites(t *testing.
 		args []string
 		want string
 	}{
-		{"init", []string{"init", "--name", "child", "--json", "--do-not-touch-agents-md"}, creationA5},
 		{"add", []string{"team", "admin", "add", "child:local", "--json"}, creationA5},
 		{"extend", []string{"team", "admin", "extend", "child:local", "--api-key", "aw_sk_agent", "--json"}, creationA5},
-		{"create", []string{"team", "admin", "create", "newteam", "--json"}, creationFoundingRefusal},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -198,39 +195,6 @@ func TestInitExternalCreationRequiresExplicitJoinAndPreservesCreatorKeyRefusal(t
 	_, err = resolveAgentCreation(agentCreationRequest{WorkingDir: source})
 	if err == nil || err.Error() != "workspace signing key does not match its team certificate" {
 		t.Fatalf("creator resolution hid the key mismatch: %v", err)
-	}
-}
-
-func TestAddWorktreeExpiredSuppliedKeyExplainsWorkspaceFallback(t *testing.T) {
-	const want = "The supplied API key is invalid, expired or revoked (HTTP 401). Unset AWEB_API_KEY to use this workspace's signed invitation, or supply a current setup key."
-	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/v1/roles/active":
-			json.NewEncoder(w).Encode(map[string]any{"roles": map[string]any{"developer": map[string]any{"title": "Developer"}}})
-		case "/api/v1/teams/current":
-			http.Error(w, "API key expired", 401)
-		default:
-			t.Errorf("unexpected preflight request %s", r.URL.Path)
-			http.Error(w, "unexpected", 500)
-		}
-	}))
-	repo := filepath.Join(t.TempDir(), "repo")
-	if err := os.MkdirAll(repo, 0700); err != nil {
-		t.Fatal(err)
-	}
-	initGitRepoWithOriginAndCommit(t, repo, "https://example.com/repo.git")
-	writeWorkspaceBindingForTest(t, repo, workspaceBinding(server.URL, "dev:example.com", "source", "workspace-source"))
-	bin := filepath.Join(t.TempDir(), "aw")
-	buildAwBinary(t, context.Background(), bin)
-	command := exec.Command(bin, "workspace", "add-worktree", "developer")
-	command.Dir = repo
-	command.Env = append(testCommandEnv(t.TempDir()), "AWEB_API_KEY=expired-key-fixture")
-	raw, err := command.CombinedOutput()
-	if err == nil || !strings.Contains(string(raw), want) {
-		t.Fatalf("error=%v output=%s", err, raw)
-	}
-	if entries, err := os.ReadDir(filepath.Dir(repo)); err != nil || len(entries) != 1 {
-		t.Fatalf("worktree created before key refusal: %v %v", entries, err)
 	}
 }
 

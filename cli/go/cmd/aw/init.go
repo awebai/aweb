@@ -31,9 +31,10 @@ team-architecture flows:
 By default, init creates or updates the clearly marked aweb section in
 AGENTS.md or CLAUDE.md. Use --do-not-touch-agents-md to skip that file update.
 
-With a team API key, another dashboard-created agent or an aw team invite joins
-this same team. Without a key, creating a new account/team in a fresh directory
-creates a separate team; use aw team invite / aw team join to join this one.
+A supplied AWEB_API_KEY, including a workspace key returned by CLI signup,
+joins the team selected by the service. An aw team invite can also join it.
+Creating a new account/team in a fresh directory creates a separate team.
+Use aw team invite / aw team join to add a member to that team.
 
 The channel plugin or host wake broker is the preferred notification path.
 --setup-hooks explicitly enables a Claude Code chat-only polling fallback:
@@ -41,7 +42,10 @@ notices arrive after tool calls, with no mail or idle wake-up support.
 After confirming channel/broker delivery, use --remove-notify-hook on its own
 for backed-up removal of exact aw notify PostToolUse entries from the current
 directory's and, inside a git repo, the repository root's .claude/settings.json.
-Init and upgrades never remove them implicitly.` + "\n\n" + creationAuthorityHelp + "\nA selected native workspace (--identity-home or AWEB_IDENTITY_HOME) may create a child into a clean current directory; its own home is never overwritten.",
+Init and upgrades never remove them implicitly.
+
+Use --join-from to create a child in a fresh directory from a selected native
+creator workspace.`,
 	RunE: runInit,
 }
 
@@ -727,26 +731,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		if recovery != nil {
-			home := awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(creationDir)}
-			retained, err := retainedAPIKeyCreationTeam(apiKeyPartialInitPath(home), recovery)
-			if err != nil {
-				return err
-			}
-			return runInitFromAPIKey(cmd, initAPIKeySelection{WorkingDir: creationDir, APIKey: apiKey, SelectedTeam: retained, Recovery: recovery})
-		}
-		base, err := resolveAPIKeyInitAwebURL()
-		if err != nil {
-			return err
-		}
-		creation, err := resolveAgentCreation(agentCreationRequest{WorkingDir: creationDir, APIKey: apiKey, AwebURL: base})
-		if err != nil {
-			return err
-		}
-		if creation.Mode == creationAuthorityInvitation || creation.Mode == creationAuthorityController {
-			return usageError("creation requires a fresh target directory; use aw init --join-from <workspace> in the new directory")
-		}
-		return runInitFromAPIKey(cmd, initAPIKeySelection{WorkingDir: creationDir, APIKey: apiKey, SelectedTeam: creation.SelectedTeam})
+		return runInitFromAPIKey(cmd, initAPIKeySelection{WorkingDir: creationDir, APIKey: apiKey, Recovery: recovery})
 	}
 
 	if connected, err := runInitFromExistingCertificate(cmd); connected == initDispatchComplete || err != nil {
@@ -884,10 +869,9 @@ func runInitAddons() error {
 }
 
 type initAPIKeySelection struct {
-	WorkingDir   string
-	APIKey       string
-	SelectedTeam *apiKeyCreationTeam
-	Recovery     *apiKeyPartialInitState
+	WorkingDir string
+	APIKey     string
+	Recovery   *apiKeyPartialInitState
 }
 
 func runInitFromAPIKey(cmd *cobra.Command, selected initAPIKeySelection) error {
@@ -897,8 +881,7 @@ func runInitFromAPIKey(cmd *cobra.Command, selected initAPIKeySelection) error {
 	if selected.Recovery != nil && firstNonEmpty(initAgentType, os.Getenv("AWEB_AGENT_TYPE")) == "" {
 		identity.AgentType = selected.Recovery.AgentType
 	}
-	creationDir, apiKey, apiSelected := selected.WorkingDir, selected.APIKey, selected.SelectedTeam
-	wd := creationDir
+	wd, apiKey := selected.WorkingDir, selected.APIKey
 	awebURL, err := resolveAPIKeyInitAwebURL()
 	if err != nil {
 		return err
@@ -919,7 +902,7 @@ func runInitFromAPIKey(cmd *cobra.Command, selected initAPIKeySelection) error {
 	}
 	requestedAlias := resolveAliasValue(resolveInitLocalName())
 	result, err := runAPIKeyBootstrapInit(apiKeyInitRequest{
-		ContextFile: identity.ContextFile, SelectedTeam: apiSelected,
+		ContextFile:  identity.ContextFile,
 		WorkingDir:   wd,
 		IdentityHome: identityHome.Root,
 		AwebURL:      awebURL,

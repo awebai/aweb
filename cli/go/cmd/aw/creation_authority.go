@@ -12,7 +12,6 @@ import (
 
 const creationWorkspaceNotice = "Using this workspace's signed invitation; the supplied agent API key is not creating the child."
 const creationA5 = "This is an agent's workspace key. Run creation from that agent's workspace, or use a setup key from the dashboard. To create here from another workspace, use aw init --join-from <workspace>."
-const creationFoundingRefusal = "An agent's workspace key cannot found a new team. Use a setup key from the dashboard, a namespace controller with aw team admin create --byot --namespace <domain>, or the signed aw id team create --hosted operation."
 
 type creationAuthorityMode string
 
@@ -36,7 +35,6 @@ type agentCreationRequest struct {
 	APIKey        string
 	AwebURL       string
 	RequestedTeam string
-	Founding      bool
 	SelectedTeam  *apiKeyCreationTeam
 }
 
@@ -46,7 +44,6 @@ type creationAuthorityInput struct {
 	SourceTeam      string
 	RequestedTeam   string
 	LocalController bool
-	Founding        bool
 }
 
 type creationAuthority struct {
@@ -62,9 +59,6 @@ type creationAuthority struct {
 func decideCreationAuthority(in creationAuthorityInput) (creationAuthority, error) {
 	if in.SuppliedKey && in.KeyKind != creationKeyKindWorkspace {
 		return creationAuthority{Mode: creationAuthorityAPI}, nil
-	}
-	if in.SuppliedKey && in.Founding {
-		return creationAuthority{}, fmt.Errorf("%s", creationFoundingRefusal)
 	}
 	if in.SourceTeam != "" && (in.RequestedTeam == "" || in.SourceTeam == in.RequestedTeam) {
 		mode := creationAuthorityInvitation
@@ -90,7 +84,7 @@ func decideCreationAuthority(in creationAuthorityInput) (creationAuthority, erro
 // Issuer ancestry and current membership authority are verified by the existing
 // invitation path when it signs; this preflight only selects that path.
 func resolveAgentCreation(request agentCreationRequest) (creationAuthority, error) {
-	input := creationAuthorityInput{SuppliedKey: strings.TrimSpace(request.APIKey) != "", RequestedTeam: request.RequestedTeam, Founding: request.Founding}
+	input := creationAuthorityInput{SuppliedKey: strings.TrimSpace(request.APIKey) != "", RequestedTeam: request.RequestedTeam}
 	selected := request.SelectedTeam
 	if input.SuppliedKey {
 		if selected == nil {
@@ -104,7 +98,7 @@ func resolveAgentCreation(request agentCreationRequest) (creationAuthority, erro
 		}
 
 		input.KeyKind = selected.APIKeyKind
-		if input.KeyKind != creationKeyKindWorkspace || request.Founding {
+		if input.KeyKind != creationKeyKindWorkspace {
 			decision, err := decideCreationAuthority(input)
 			decision.SelectedTeam = selected
 			return decision, err

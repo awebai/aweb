@@ -1125,7 +1125,16 @@ func TestAwWorkspaceAddWorktreeRejectsTrackedAwebRuntimeState(t *testing.T) {
 
 func TestAwWorkspaceAddWorktreeCreatesLocalSelfCustodialCLIWorkspaceWithTeamKey(t *testing.T) {
 	t.Parallel()
+	for _, status := range []int{0, http.StatusUnauthorized, http.StatusNotFound} {
+		t.Run(firstNonEmpty(http.StatusText(status), "no ambient key"), func(t *testing.T) {
+			testHeadlessControllerWorktree(t, status)
+		})
+	}
+}
 
+func testHeadlessControllerWorktree(t *testing.T, teamReadStatus int) {
+	t.Helper()
+	const ambientKey = "aw_sk_unreadable"
 	const origin = "https://github.com/acme/repo.git"
 	const teamID = "backend:source"
 
@@ -1148,6 +1157,13 @@ func TestAwWorkspaceAddWorktreeCreatesLocalSelfCustodialCLIWorkspaceWithTeamKey(
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/api/v1/teams/current":
+			if teamReadStatus == 0 || r.Method != http.MethodGet || r.Header.Get("Authorization") != "Bearer "+ambientKey {
+				t.Error("unexpected API-key team read")
+				http.Error(w, "unexpected team read", http.StatusInternalServerError)
+				return
+			}
+			http.Error(w, http.StatusText(teamReadStatus), teamReadStatus)
 		case "/v1/did/" + parentStableID + "/key":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"did_aw":          parentStableID,
@@ -1228,6 +1244,9 @@ func TestAwWorkspaceAddWorktreeCreatesLocalSelfCustodialCLIWorkspaceWithTeamKey(
 
 	run := exec.CommandContext(ctx, bin, "workspace", "add-worktree", "developer")
 	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL)
+	if teamReadStatus != 0 {
+		run.Env = append(run.Env, "AWEB_API_KEY="+ambientKey)
+	}
 	run.Stdin = strings.NewReader("")
 	run.Dir = repo
 	out, err := run.CombinedOutput()
@@ -2009,8 +2028,16 @@ func TestAwWorkspaceAddWorktreeRejectsAliasAlreadyInUse(t *testing.T) {
 
 func TestAwWorkspaceAddWorktreeExternalIdentityHomeUsesHostedInviteWithoutTeamKeyOrAPIKey(t *testing.T) {
 	t.Parallel()
-	for _, storedKey := range []string{"", "aw_sk_stored_workspace_key"} {
-		t.Run("stored-key-"+storedKey, func(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		storedKey  string
+		ambientKey string
+	}{
+		{name: "cert-only"},
+		{name: "stored workspace key", storedKey: "aw_sk_stored_workspace_key"},
+		{name: "ambient key unreadable", ambientKey: "aw_sk_other_workspace"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
 
 			const origin = "https://github.com/acme/repo.git"
 			const teamID = "default:acme.aweb.ai"
@@ -2028,6 +2055,11 @@ func TestAwWorkspaceAddWorktreeExternalIdentityHomeUsesHostedInviteWithoutTeamKe
 
 			server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
+				case "/api/v1/teams/current":
+					if test.ambientKey == "" || r.Method != http.MethodGet || r.Header.Get("Authorization") != "Bearer "+test.ambientKey {
+						t.Error("unexpected API-key team read")
+					}
+					http.NotFound(w, r)
 				case "/v1/roles/active":
 					_ = json.NewEncoder(w).Encode(map[string]any{
 						"team_roles_id": "roles-1",
@@ -2148,7 +2180,7 @@ func TestAwWorkspaceAddWorktreeExternalIdentityHomeUsesHostedInviteWithoutTeamKe
 			// No local team key and no API key: this matches hosted worktree agents
 			// created by `aw team bootstrap` through the primary-workspace invite path.
 			binding := workspaceBinding(server.URL, teamID, "dev", "ws-dev")
-			binding.APIKey = storedKey
+			binding.APIKey = test.storedKey
 			writeWorkspaceBindingForTest(t, principalDir, binding)
 			if err := awconfig.SaveWorktreeContextTo(filepath.Join(identityHome, "context"), &awconfig.WorktreeContext{}); err != nil {
 				t.Fatalf("seed principal context: %v", err)
@@ -2170,7 +2202,7 @@ func TestAwWorkspaceAddWorktreeExternalIdentityHomeUsesHostedInviteWithoutTeamKe
 			shadowBefore := fileDigestsForTest(t, filepath.Join(repo, ".aw"))
 
 			run := exec.CommandContext(ctx, bin, "--identity-home", identityHome, "workspace", "add-worktree", "frontend")
-			run.Env = testCommandEnv(tmp)
+			run.Env = append(testCommandEnv(tmp), "AWEB_API_KEY="+test.ambientKey)
 			run.Stdin = strings.NewReader("")
 			run.Dir = repo
 			out, err := run.CombinedOutput()

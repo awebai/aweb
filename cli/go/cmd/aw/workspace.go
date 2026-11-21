@@ -2,10 +2,8 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -36,7 +34,8 @@ var workspaceAddWorktreeCmd = &cobra.Command{
 	Use:   "add-worktree [role]",
 	Short: "Legacy convenience: create a sibling git worktree and coordination workspace",
 	Long: "Legacy convenience for existing users: create a sibling git worktree and initialize a new coordination workspace in it.\n\n" +
-		"New setup flows should prefer explicit git worktree/filesystem steps followed by aw init, invite/join, or service init primitives unless this command is reduced to a transparent wrapper with no identity/team orchestration.\n\n" + creationAuthorityHelp,
+		"New setup flows should prefer explicit git worktree/filesystem steps followed by aw init, invite/join, or service init primitives unless this command is reduced to a transparent wrapper with no identity/team orchestration.\n\n" +
+		"If the service cannot report the team for AWEB_API_KEY, creation uses the current workspace's existing authority.",
 	Args: cobra.RangeArgs(0, 1),
 	RunE: runWorkspaceAddWorktree,
 }
@@ -524,15 +523,28 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 		return usageError("current worktree is missing aweb_url; run `aw init` first")
 	}
 
-	creation, err := resolveAgentCreation(agentCreationRequest{WorkingDir: workingDir, APIKey: resolveInitAPIKey(), AwebURL: sourceServerURL, RequestedTeam: teamID})
-	if err != nil {
-		var refusal *apiKeyTeamReadError
-		if errors.As(err, &refusal) && refusal.status == http.StatusUnauthorized {
-			return fmt.Errorf("The supplied API key is invalid, expired or revoked (HTTP 401). Unset AWEB_API_KEY to use this workspace's signed invitation, or supply a current setup key.")
+	apiKey := resolveInitAPIKey()
+	authority := agentCreationRequest{WorkingDir: workingDir, APIKey: apiKey, AwebURL: sourceServerURL, RequestedTeam: teamID}
+	useWorkspaceFallback := false
+	if apiKey != "" {
+		ctx, cancel := commandAPIContext(cmd)
+		selected, readErr := readAPIKeyCreationTeam(ctx, sourceServerURL, apiKey)
+		cancel()
+		authority.SelectedTeam = selected
+		if readErr != nil {
+			debugLog("API-key team unavailable for add-worktree: %v", readErr)
+			useWorkspaceFallback = true
+			apiKey = strings.TrimSpace(state.APIKey)
 		}
-		return err
 	}
-	printCreationAuthority(creation)
+	var creation creationAuthority
+	if !useWorkspaceFallback {
+		creation, err = resolveAgentCreation(authority)
+		if err != nil {
+			return err
+		}
+		printCreationAuthority(creation)
+	}
 
 	alias := strings.TrimSpace(workspaceAddAlias)
 	aliasExplicit := alias != ""
@@ -608,10 +620,21 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("check team key: %w", err)
 	}
 
+	if useWorkspaceFallback {
+		// The team read is optional. Use the original workspace authority order
+		// when the service cannot identify the ambient key's team.
+		switch {
+		case hasTeamKey:
+			creation.Mode = creationAuthorityController
+		case apiKey != "":
+			creation.Mode = creationAuthorityAPI
+		}
+	}
+
 	child := worktreeAgentCreation{
 		WorkingDir: workingDir, CreatorHome: home, WorktreePath: worktreePath, RepoRoot: root,
 		BranchName: branchName, BranchCreated: branchCreated, ServerURL: sourceServerURL, TeamID: teamID,
-		Alias: alias, Role: role, Workspace: state, APIKey: resolveInitAPIKey(), SelectedTeam: creation.SelectedTeam,
+		Alias: alias, Role: role, Workspace: state, APIKey: apiKey, SelectedTeam: creation.SelectedTeam,
 	}
 	if creation.Mode == creationAuthorityController && hasTeamKey {
 		_, err = addWorktreeViaLocalTeamKey(child)

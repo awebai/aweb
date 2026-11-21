@@ -2,11 +2,14 @@
 
 ## Unreleased
 
-- A workspace API key cannot create another agent through the API. `aw team
-  admin create` refuses a workspace key. `add` and `extend` use workspace-signed
-  creation when acting as an agent. `extend` uses the sole discovered creator
-  workspace and asks you to select one when several qualify. Use a person's
-  setup key for API-key creation.
+- `aw init` and `aw team admin create` accept a supplied workspace API key
+  for the service bootstrap, including keys returned by CLI signup.
+  `aw workspace add-worktree` uses the existing workspace authority when
+  the service cannot read the team for the exported key.
+- `aw team admin add` and `extend` use workspace-signed creation when a
+  supplied workspace key identifies a matching creator. `extend` uses the
+  sole discovered creator workspace and asks you to select one when several
+  qualify. A person's setup key works for API-key creation.
 - `aw team admin extend` refuses before admitting any agent if the API key's
   team differs from `--team-id` or the active workspace team asserted with
   `AWEB_API_KEY`. The error names both teams.

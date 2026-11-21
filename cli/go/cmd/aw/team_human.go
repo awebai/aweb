@@ -117,7 +117,8 @@ var teamHumanCreateCmd = &cobra.Command{
 		"--home with a single spec uses that spec for the root workspace profile.\n" +
 		"Deprecated --profile is accepted as --agent for transition; @VERSION is dropped.\n\n" +
 		"With --org, create a hosted team using human CLI authorization and return an invite.\n" +
-		"This explicit mode creates no local identity or profile; accept the invite separately.\n\n" + creationFoundingRefusal,
+		"This explicit mode creates no local identity or profile; accept the invite separately.\n\n" +
+		"In a fresh directory, a supplied AWEB_API_KEY uses the service's workspace bootstrap.",
 	Args: cobra.ExactArgs(1),
 	RunE: runTeamHumanCreate,
 }
@@ -633,25 +634,6 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 	}
 	if strings.TrimSpace(teamHumanCreateNamespace) != "" || strings.TrimSpace(teamHumanCreateRegistryURL) != "" {
 		return usageError("aw team admin create does not use --namespace or --registry in the local empty-profile path")
-	}
-	// Only the first-member API branch selects a key. Existing namespace
-	// founding (and explicit BYOT above) retains its own controller authority.
-	creationTarget := wd
-	if createHomeOverride != "" {
-		creationTarget = createHomeOverride
-	}
-	existingCreator, err := teamCreateHasIdentityMaterial(creationTarget)
-	if err != nil {
-		return err
-	}
-	if !existingCreator && resolveInitAPIKey() != "" {
-		base, err := resolveAPIKeyInitAwebURL()
-		if err != nil {
-			return err
-		}
-		if _, err := resolveAgentCreation(agentCreationRequest{WorkingDir: creationTarget, APIKey: resolveInitAPIKey(), AwebURL: base, Founding: true}); err != nil {
-			return err
-		}
 	}
 	if createHomeOverride != "" {
 		if err := os.MkdirAll(createHomeOverride, 0o755); err != nil {

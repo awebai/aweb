@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1098,7 +1099,7 @@ func TestTeamHumanCreateHostedRegistryUsesGuidedOnboardingWhenNoIdentity(t *test
 	}
 }
 
-func TestTeamHumanCreateAPIKeyToleratesAPISuffixedAwebURL(t *testing.T) {
+func TestHeadlessTeamAdminCreateAcceptsWorkspaceKey(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		suffix string
@@ -1107,8 +1108,6 @@ func TestTeamHumanCreateAPIKeyToleratesAPISuffixedAwebURL(t *testing.T) {
 		{name: "apisuffixed", suffix: "/api"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			resetTeamHumanCreateGlobals(t)
-
 			const apiKey = "aw_sk_create_apikey"
 			teamPub, teamKey, err := awid.GenerateKeypair()
 			if err != nil {
@@ -1116,15 +1115,19 @@ func TestTeamHumanCreateAPIKeyToleratesAPISuffixedAwebURL(t *testing.T) {
 			}
 			teamDIDKey := awid.ComputeDIDKey(teamPub)
 
-			var initPaths []string
+			var initPosts atomic.Int32
 			var server *httptest.Server
 			server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
-				if serveAPIKeyCreationTeamRead(w, r, "backend:acme.com") {
+				if r.Method == http.MethodGet && r.URL.Path == "/api/v1/teams/current" {
+					_ = json.NewEncoder(w).Encode(map[string]any{"team_id": "11111111-1111-4111-8111-111111111111", "canonical_team_id": "backend:acme.com", "api_key_kind": "workspace"})
 					return
 				}
 				switch r.URL.Path {
 				case "/api/v1/workspaces/init":
-					initPaths = append(initPaths, r.URL.Path)
+					initPosts.Add(1)
+					if r.Method != http.MethodPost || r.Header.Get("Authorization") != "Bearer "+apiKey {
+						t.Error("workspace init did not use the supplied workspace key")
+					}
 					var body map[string]any
 					if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 						t.Fatal(err)
@@ -1174,17 +1177,21 @@ func TestTeamHumanCreateAPIKeyToleratesAPISuffixedAwebURL(t *testing.T) {
 				}
 			})
 
-			t.Setenv("AWEB_API_KEY", apiKey)
-			t.Setenv("AWEB_URL", server.URL+tc.suffix)
-			t.Setenv("AWID_REGISTRY_URL", "")
-			t.Chdir(t.TempDir())
-			jsonFlag = true
-
-			if err := runTeamHumanCreate(nil, []string{"eng"}); err != nil {
-				t.Fatalf("runTeamHumanCreate with AWEB_URL=%q: %v", server.URL+tc.suffix, err)
+			dir := t.TempDir()
+			bin := filepath.Join(t.TempDir(), "aw")
+			buildAwBinary(t, t.Context(), bin)
+			cmd := exec.CommandContext(t.Context(), bin, "team", "admin", "create", "eng", "--json")
+			cmd.Dir = dir
+			cmd.Env = append(testCommandEnv(t.TempDir()), "AWEB_API_KEY="+apiKey, "AWEB_URL="+server.URL+tc.suffix)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("headless team create: %v\n%s", err, out)
 			}
-			if len(initPaths) != 1 || initPaths[0] != "/api/v1/workspaces/init" {
-				t.Fatalf("workspace init paths=%v want [/api/v1/workspaces/init]", initPaths)
+			cert, err := awid.LoadTeamCertificate(awconfig.TeamCertificatePath(dir, "backend:acme.com"))
+			if err != nil || cert.Alias != "eng" || cert.Team != "backend:acme.com" {
+				t.Fatalf("create did not persist the expected membership: %+v, %v", cert, err)
+			}
+			if count := initPosts.Load(); count != 1 {
+				t.Fatalf("workspace init requests=%d, want 1", count)
 			}
 		})
 	}
