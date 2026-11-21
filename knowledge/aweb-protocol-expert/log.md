@@ -1,5 +1,10 @@
 # Knowledge log
 
+## 2026-11-18
+* **Harvest**: OKF proposal from seat aweb-protocol-expert-delivery with two backing notes; both rulings are delegated and source-reported, neither implementation is landed or runtime-proven. Ruling and message identifiers and hosted plan names are omitted.
+* **Creation**: decision [retention ends an owner's interest, not another party's read](/aweb-protocol-expert/decisions/retention-ends-an-owners-interest-not-another-partys-read.md), with the rejected per-party read cutoff.
+* **Update**: [an exact-retry answer sits after validation](/aweb-protocol-expert/lessons/exact-retry-answers-after-validation.md) narrows "every validation": the new-send timestamp age window does not apply to the same sender's stored identical signed payload, while signature, signed-field, recipient and current authorization checks still precede the stored answer.
+
 ## 2026-11-06
 * **Fix**: review of the db-access proposal on npm gitHead, PubSub release and stream checkouts: hosted specifics in [stream bodies leave the request connection scope](/aweb-protocol-expert/lessons/stream-bodies-leave-the-request-connection-scope.md) and [an npm tarball publish records no gitHead](/aweb-protocol-expert/lessons/npm-tarball-publish-records-no-githead.md) are stated generically or dropped, as the OSS and Cloud boundary requires.
 * **Update**: [SSE cleanup is cancelled on client disconnect](/aweb-protocol-expert/lessons/sse-cleanup-is-cancelled-on-disconnect.md) and [a PubSub release survives any cancellation](/aweb-protocol-expert/decisions/pubsub-release-survives-any-cancellation.md) link each other: the AnyIO shield covers Starlette's disconnect, not native task cancellation.
