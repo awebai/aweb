@@ -16,7 +16,7 @@ from awid.signing import canonical_json_bytes, verify_did_key_signature
 from awid.team_ids import parse_team_id
 from aweb.config import get_settings
 from aweb.deps import get_db
-from aweb.team_key_pins import pinned_team_key_for_request
+from aweb.team_registry import resolve_team_key
 
 router = APIRouter(prefix="/api/v1", tags=["service-registration"])
 
@@ -183,7 +183,10 @@ async def register_team_with_service(
     except ValueError as exc:
         raise HTTPException(
             status_code=422,
-            detail={"code": "validation_error", "message": "awid_team_id must be formatted as <team>:<domain>."},
+            detail={
+                "code": "validation_error",
+                "message": "awid_team_id must be formatted as <team>:<domain>.",
+            },
         ) from exc
 
     service_url = body.service_url.strip().rstrip("/")
@@ -197,21 +200,6 @@ async def register_team_with_service(
             },
         )
 
-    registry_client = getattr(request.app.state, "awid_registry_client", None)
-    if registry_client is None:
-        raise HTTPException(status_code=503, detail="AWID registry client is not configured")
-
-    # The team's key as this server holds it: the registry's answer, moved
-    # from an admitted key only by the namespace controller's act.
-    registry_key = await registry_client.get_team_public_key(domain, team_name)
-    if not registry_key:
-        raise HTTPException(
-            status_code=404,
-            detail={"code": "awid_team_not_found", "message": "AWID team was not found."},
-        )
-    aweb_db = db.get_manager("aweb")
-    team_controller_did = await pinned_team_key_for_request(request, canonical_team_id, registry_key, db=aweb_db)
-
     try:
         enforce_timestamp_skew(body.timestamp)
     except HTTPException as exc:
@@ -222,17 +210,32 @@ async def register_team_with_service(
                 "message": "Signed registration request expired. Regenerate it and try again.",
             },
         ) from exc
-    try:
-        verify_did_key_signature(
-            did_key=team_controller_did,
-            payload=_team_service_register_signature_payload(body),
-            signature_b64=body.controller_signature,
-        )
-    except ValueError as exc:
+
+    def check_controller_signature(team_controller_did: str) -> None:
+        try:
+            verify_did_key_signature(
+                did_key=team_controller_did,
+                payload=_team_service_register_signature_payload(body),
+                signature_b64=body.controller_signature,
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "invalid_controller_signature",
+                    "message": "Team controller signature did not verify.",
+                },
+            ) from exc
+
+    aweb_db = db.get_manager("aweb")
+    team_controller_did = await resolve_team_key(
+        request, canonical_team_id, db=aweb_db, check_key=check_controller_signature
+    )
+    if not team_controller_did:
         raise HTTPException(
-            status_code=422,
-            detail={"code": "invalid_controller_signature", "message": "Team controller signature did not verify."},
-        ) from exc
+            status_code=404,
+            detail={"code": "awid_team_not_found", "message": "AWID team was not found."},
+        )
 
     team_created = await _ensure_service_registered_team(
         db=aweb_db,

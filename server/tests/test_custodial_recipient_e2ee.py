@@ -326,5 +326,6 @@ async def test_federation_preserves_managed_hosted_delivery(aweb_cloud_db, kind)
     result = await deliver_federated_phase_b(
         _DB(manager), envelope=envelope, signature=encrypted["signature"],
         recipient=recipient, authority_token=token,
+        registry_client=None,
     )
     assert result["message_id"] == envelope.message_id

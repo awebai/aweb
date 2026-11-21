@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+from aweb.member_team_key import current_member_sql
+
+from aweb.identity_binding import verified_key_sql
+
 import logging
 import re
+from enum import Enum, auto
 from uuid import UUID
 
 from aweb.messaging.handle_addresses import normalize_hosted_handle_reference
@@ -16,7 +21,9 @@ CONTACT_STATUSES = {"pending", "active"}
 logger = logging.getLogger(__name__)
 
 
-def normalize_owner_dids(*, owner_did: str | None = None, owner_dids: list[str] | None = None) -> list[str]:
+def normalize_owner_dids(
+    *, owner_did: str | None = None, owner_dids: list[str] | None = None
+) -> list[str]:
     values: list[str] = []
     if owner_did is not None:
         values.append(owner_did)
@@ -124,7 +131,9 @@ async def add_handle_contact(
     return _contact_row_to_dict(row)
 
 
-async def list_contacts(db, *, owner_did: str | None = None, owner_dids: list[str] | None = None) -> list[dict]:
+async def list_contacts(
+    db, *, owner_did: str | None = None, owner_dids: list[str] | None = None
+) -> list[dict]:
     """List all contacts for an identity."""
     aweb_db = db.get_manager("aweb")
     owner_keys = normalize_owner_dids(owner_did=owner_did, owner_dids=owner_dids)
@@ -149,7 +158,9 @@ async def list_contacts(db, *, owner_did: str | None = None, owner_dids: list[st
     return [_contact_row_to_dict(r) for r in rows]
 
 
-async def get_contact_addresses(db, *, owner_did: str | None = None, owner_dids: list[str] | None = None) -> set[str]:
+async def get_contact_addresses(
+    db, *, owner_did: str | None = None, owner_dids: list[str] | None = None
+) -> set[str]:
     """Return all contact_address values for an identity."""
     aweb_db = db.get_manager("aweb")
     owner_keys = normalize_owner_dids(owner_did=owner_did, owner_dids=owner_dids)
@@ -169,6 +180,48 @@ async def get_contact_addresses(db, *, owner_did: str | None = None, owner_dids:
     return {r["contact_address"] for r in rows}
 
 
+class IdentityContactMatch(Enum):
+    MATCHED = auto()
+    NEEDS_BINDING = auto()
+    NOT_FOUND = auto()
+
+
+async def identity_contact_match(
+    db,
+    *,
+    owner_dids: list[str],
+    address: str | None,
+    sender_did: str,
+) -> IdentityContactMatch:
+    """Read exact active identity bindings, retaining locks in a caller transaction.
+
+    Global And Local Identities (docs/identity-messaging-contract.md:88-91,108-110) excludes
+    pending/handle/domain
+    matches. A legacy address without an identity needs explicit rebinding.
+    """
+    owner_keys = normalize_owner_dids(owner_dids=owner_dids)
+    addr = normalize_hosted_handle_reference(address or "")
+    bound_did = sender_did.strip()
+    if not owner_keys or not addr or not bound_did:
+        return IdentityContactMatch.NOT_FOUND
+    rows = await db.get_manager("aweb").fetch_all(
+        """
+        SELECT contact_did_aw FROM {{tables.contacts}}
+        WHERE owner_did = ANY($1::text[])
+          AND reference_type = 'identity' AND status = 'active'
+          AND contact_address = $2
+        ORDER BY contact_id FOR UPDATE
+        """,
+        owner_keys,
+        addr,
+    )
+    if any(row["contact_did_aw"] == bound_did for row in rows):
+        return IdentityContactMatch.MATCHED
+    if any(row["contact_did_aw"] is None for row in rows):
+        return IdentityContactMatch.NEEDS_BINDING
+    return IdentityContactMatch.NOT_FOUND
+
+
 async def has_exact_active_identity_contact(
     db,
     *,
@@ -177,34 +230,16 @@ async def has_exact_active_identity_contact(
     contact_address: str | None,
     contact_did_aw: str | None = None,
 ) -> bool:
-    """Return whether owner has an exact active identity contact.
-
-    This helper is intentionally narrower than ``is_address_in_contacts``: it
-    does not allow domain-level matching, pending rows, handle rows, labels, or
-    display names to authorize delivery.
-    """
-    owner_keys = normalize_owner_dids(owner_did=owner_did, owner_dids=owner_dids)
-    addr = normalize_hosted_handle_reference(contact_address or "")
-    bound_did = str(contact_did_aw or "").strip()
-    if not owner_keys or not addr or not bound_did:
-        return False
-    aweb_db = db.get_manager("aweb")
-    row = await aweb_db.fetch_one(
-        """
-        SELECT 1
-        FROM {{tables.contacts}}
-        WHERE owner_did = ANY($1::text[])
-          AND reference_type = 'identity'
-          AND status = 'active'
-          AND contact_address = $2
-          AND contact_did_aw = $3
-        LIMIT 1
-        """,
-        owner_keys,
-        addr,
-        bound_did,
+    """Compatibility query delegating to the exact identity-contact owner."""
+    return (
+        await identity_contact_match(
+            db,
+            owner_dids=normalize_owner_dids(owner_did=owner_did, owner_dids=owner_dids),
+            address=contact_address,
+            sender_did=contact_did_aw or "",
+        )
+        is IdentityContactMatch.MATCHED
     )
-    return row is not None
 
 
 async def resolve_local_namespace_controller_did(
@@ -238,8 +273,7 @@ async def resolve_local_namespace_controller_did(
         return None
     if (
         resolved is None
-        or str(getattr(resolved, "did_aw", "") or "").strip()
-        != str(contact_did_aw or "").strip()
+        or str(getattr(resolved, "did_aw", "") or "").strip() != str(contact_did_aw or "").strip()
         or str(getattr(resolved, "current_did_key", "") or "").strip()
         != str(contact_current_did_key or "").strip()
         or namespace is None
@@ -386,18 +420,18 @@ async def resolve_handle_contact_agent(
     if agent_name is not None:
         address = f"{namespace}/{agent_name}"
         row = await aweb_db.fetch_one(
-            """
+            f"""
             SELECT a.agent_id, a.team_id, a.did_key, a.did_aw, a.address, a.alias,
                    a.identity_scope, a.status, a.created_at,
                    MAX(w.last_seen_at) AS last_seen_at
-            FROM {{tables.agents}} a
-            LEFT JOIN {{tables.workspaces}} w
+            FROM {{{{tables.agents}}}} a
+            LEFT JOIN {{{{tables.workspaces}}}} w
               ON w.agent_id = a.agent_id
              AND w.deleted_at IS NULL
             WHERE a.deleted_at IS NULL
-              AND a.status = 'active'
+              AND {current_member_sql("a")}
               AND a.identity_scope = 'global'
-              AND a.did_aw_verified_key = a.did_key
+              AND {verified_key_sql("a")}
               AND a.address = $1
             GROUP BY a.agent_id, a.team_id, a.did_key, a.did_aw, a.address, a.alias,
                      a.identity_scope, a.status, a.created_at
@@ -408,18 +442,18 @@ async def resolve_handle_contact_agent(
         )
     else:
         row = await aweb_db.fetch_one(
-            """
+            f"""
             SELECT a.agent_id, a.team_id, a.did_key, a.did_aw, a.address, a.alias,
                    a.identity_scope, a.status, a.created_at,
                    MAX(w.last_seen_at) AS last_seen_at
-            FROM {{tables.agents}} a
-            LEFT JOIN {{tables.workspaces}} w
+            FROM {{{{tables.agents}}}} a
+            LEFT JOIN {{{{tables.workspaces}}}} w
               ON w.agent_id = a.agent_id
              AND w.deleted_at IS NULL
             WHERE a.deleted_at IS NULL
-              AND a.status = 'active'
+              AND {current_member_sql("a")}
               AND a.identity_scope = 'global'
-              AND a.did_aw_verified_key = a.did_key
+              AND {verified_key_sql("a")}
               AND a.address LIKE $1
             GROUP BY a.agent_id, a.team_id, a.did_key, a.did_aw, a.address, a.alias,
                      a.identity_scope, a.status, a.created_at
@@ -460,7 +494,13 @@ def is_address_in_contacts(address: str, contact_addresses: set[str]) -> bool:
     return False
 
 
-async def remove_contact(db, *, owner_did: str | None = None, owner_dids: list[str] | None = None, contact_id: str) -> None:
+async def remove_contact(
+    db,
+    *,
+    owner_did: str | None = None,
+    owner_dids: list[str] | None = None,
+    contact_id: str,
+) -> None:
     """Remove a contact by ID. Idempotent (no error if not found).
 
     Raises ValidationError on invalid contact_id format.
@@ -515,9 +555,7 @@ def _contact_row_to_dict(row) -> dict:
         "contact_did_aw": row.get("contact_did_aw"),
         "binding_controller_did": row.get("binding_controller_did"),
         "binding_accepted_at": (
-            row["binding_accepted_at"].isoformat()
-            if row.get("binding_accepted_at")
-            else None
+            row["binding_accepted_at"].isoformat() if row.get("binding_accepted_at") else None
         ),
         "label": row["label"],
         "created_at": row["created_at"].isoformat(),

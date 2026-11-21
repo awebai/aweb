@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/awebai/aw/awconfig"
@@ -43,7 +44,18 @@ func TestHostedInviteRefusalReleasesAttemptButInterruptionRetainsIt(t *testing.T
 				original[name] = raw
 			}
 			registryUnavailable := scenario == "registry unavailable"
+			teamPublic, teamKey, keyErr := awid.GenerateKeypair()
+			if keyErr != nil {
+				t.Fatal(keyErr)
+			}
+			var receivedMember atomic.Pointer[awid.TeamCertificate]
 			registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if cert := receivedMember.Load(); cert != nil && strings.HasSuffix(r.URL.Path, "/certificates/"+cert.CertificateID+"/status") {
+					if err := json.NewEncoder(w).Encode(awid.TeamCertificateStatus{TeamID: cert.Team, TeamDIDKey: awid.ComputeDIDKey(teamPublic), Status: "active"}); err != nil {
+						t.Error(err)
+					}
+					return
+				}
 				if r.URL.Path != "/v1/id-certificates/status" {
 					t.Errorf("unexpected registry path: %s", r.URL.Path)
 					http.NotFound(w, r)
@@ -62,7 +74,7 @@ func TestHostedInviteRefusalReleasesAttemptButInterruptionRetainsIt(t *testing.T
 			previews, accepts := 0, 0
 			refuseRetry := false
 			var origin string
-			_, teamKey, _ := awid.GenerateKeypair()
+
 			service := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
 				case "/api/v1/spawn/invite-preview":
@@ -99,6 +111,7 @@ func TestHostedInviteRefusalReleasesAttemptButInterruptionRetainsIt(t *testing.T
 						t.Error(err)
 						return
 					}
+					receivedMember.Store(cert)
 					encoded, _ := awid.EncodeTeamCertificateHeader(cert)
 					json.NewEncoder(w).Encode(map[string]any{"team_id": "cloud-team", "team_slug": "backend", "namespace": "example.com", "identity_id": "cloud-child", "alias": "child", "server_url": origin, "did": req.DID, "stable_id": req.StableID, "identity_scope": "global", "custody": "self", "created": true, "team_cert": encoded, "id_chain": req.IDChain, "registration_request": nil})
 				default:

@@ -145,7 +145,10 @@ async def test_federation_transaction_keeps_first_admitted_chain_on_replay(aweb_
     # Phase A is a fixture fact here; HTTP original-author admission is tested
     # above and the real cross-registry journey covers the complete transport.
     recipient, token = await _seed_recipient_and_authority(db, envelope)
-    options = dict(envelope=envelope, signature='preserved-signature', recipient=recipient, authority_token=token)
+    options = dict(
+        envelope=envelope, signature='preserved-signature', recipient=recipient,
+        authority_token=token, registry_client=None,
+    )
     first = await deliver_federated_phase_b(_DB(db), id_chain=chain, **options)
     replay = await deliver_federated_phase_b(_DB(db), id_chain=None, **options)
     assert replay == first

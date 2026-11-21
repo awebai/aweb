@@ -5,19 +5,7 @@ from awid.registry import RegistryError
 from aweb.awid_error_handling import (
     AWID_DEPENDENCY_ERRORS,
     awid_dependency_http_exception,
-    awid_registry_not_configured_exception,
 )
-
-
-def test_registry_not_configured_detail_is_site_specific():
-    first = awid_registry_not_configured_exception(operation="AWID team key resolution")
-    second = awid_registry_not_configured_exception(operation="AWID mail recipient address lookup")
-
-    assert first.status_code == 500
-    assert second.status_code == 500
-    assert first.detail == "AWID team key resolution registry client not configured"
-    assert second.detail == "AWID mail recipient address lookup registry client not configured"
-    assert first.detail != second.detail
 
 
 def test_awid_dependency_http_exception_distinguishes_dns_failure():

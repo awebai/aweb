@@ -6,6 +6,8 @@ verified certificate, creates or updates a workspace.
 
 from __future__ import annotations
 
+from aweb.member_team_key import current_member_sql
+
 import uuid
 from typing import Any
 
@@ -258,6 +260,23 @@ async def _ensure_agent(
     return str(row["agent_id"])
 
 
+async def _lock_reconnecting_workspace(db, *, team_id: str, alias: str) -> None:
+    """Take the selected workspace before member writes, matching lifecycle order.
+
+    docs/aweb-sot.md:1242-1244 locks cleanup workspaces before member/claim
+    mutations. A reconnect must not hold its agent while waiting for a cleanup
+    that already holds this workspace and needs that agent. These storage locks
+    grant no identity or membership authority.
+    """
+    await db.fetch_all(
+        "SELECT workspace_id FROM {{tables.workspaces}} "
+        "WHERE team_id=$1 AND alias=$2 AND deleted_at IS NULL "
+        "ORDER BY workspace_id FOR UPDATE",
+        team_id,
+        alias,
+    )
+
+
 async def _ensure_workspace(
     db: AsyncDatabaseManager,
     team_id: str,
@@ -407,6 +426,8 @@ async def connect_agent(
     team_id = cert_info["team_id"]
     alias = cert_info["alias"]
     did_key = cert_info["did_key"]
+    # Cloud v0.8.80 immediate_connect_bootstrap.py supplies this input alias;
+    # normalized native certificate results expose only identity_scope.
     identity_scope = normalize_identity_scope(
         cert_info.get("identity_scope") or cert_info.get("lifetime")
     )
@@ -439,6 +460,7 @@ async def connect_agent(
 
     async with db.transaction() as tx:
         await _ensure_team(tx, team_id, team_did_key)
+        await _lock_reconnecting_workspace(tx, team_id=team_id, alias=alias)
 
         agent_id = await _ensure_agent(
             tx,
@@ -559,7 +581,8 @@ async def get_team_info(request: Request, db=Depends(get_db)) -> TeamInfoRespons
         raise HTTPException(status_code=404, detail="Team not found")
 
     count = await aweb_db.fetch_one(
-        "SELECT COUNT(*)::int AS cnt FROM {{tables.agents}} WHERE team_id = $1 AND deleted_at IS NULL",
+        "SELECT COUNT(*)::int AS cnt FROM {{tables.agents}} a WHERE a.team_id = $1 AND "
+        + current_member_sql("a"),
         identity.team_id,
     )
 

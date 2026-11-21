@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Removed an unused chat departure-marker check.
+- Old chat history with valid participant snapshots is migrated to canonical
+  conversations, preserving exact participants, routes and readable single-party
+  sessions. Existing active pairs retain routing precedence; older replaced
+  pairs stay closed and readable. Empty or blank-DID/alias snapshots are retained
+  unchanged, with their existing direct-history reader authorization. Sends no
+  longer repair these records at runtime.
+- Grant-home clients aw1.34.6–1.36.1 signed message envelopes with the session
+  key; those sends were already refused by the server's sender-identity check.
+  Upgrade aw if that client reports a sender mismatch. The new plaintext
+  signature verification does not create that pre-existing refusal.
+
 - Provisioning and creator self-enrollment connect before publishing the member's E2E assertion. A failed connect or unconfirmed publication retains the identity and reports the exact recovery command instead of creation success.
 - On unverified A2A routes, a plain question shared by several live tasks is
   refused with task-specific reply forms. Questions use artifact name `question`;

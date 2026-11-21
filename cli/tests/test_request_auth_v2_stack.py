@@ -12,6 +12,7 @@ import subprocess
 import pytest
 
 from conftest import aw_cli_binary, shared_test_pool  # noqa: F401
+from conftest import shared_test_database as shared_test_database
 from awid.did import stable_id_from_did_key
 from awid.signing import canonical_json_bytes, sign_message
 from test_dashboard_privacy import TEAM, _request, privacy_app  # noqa: F401
