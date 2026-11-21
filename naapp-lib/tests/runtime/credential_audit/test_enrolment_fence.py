@@ -53,7 +53,12 @@ async def enrol(client, token: str, device: SoftAuthenticator):
 
 async def test_the_fence_holds_installation_authority_before_b3_takes_any_lock(world: World):
     scope, token = await designated(world)
-    subject = (await world.passkeys.designated_approver(scope)).subject
+    # Designated but not yet enrolled: read the scope's live approver row.
+    subject = await world.db.fetch_value(
+        "SELECT subject FROM {{tables.passkey_approvers}} WHERE scope=$1 AND superseded_at IS NULL",
+        scope,
+    )
+    assert subject is not None
     registration = SoftAuthenticator(ORIGIN).create(await world.passkeys.enrolment_options(token))
     # As the console does: prepare (which refreshes the installation) first.
     prepared = await world.recorder.prepare_enrolment(token)
