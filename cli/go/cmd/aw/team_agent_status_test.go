@@ -96,8 +96,7 @@ func newAgentStores(t *testing.T) *agentStores {
 
 func (s *agentStores) read(t *testing.T) teamAgentStatusOutput {
 	t.Helper()
-	resetTeamRemoveMemberGlobals(t)
-	teamRemoveRegistryURL = s.registry.URL
+	t.Setenv("AWID_REGISTRY_URL", s.registry.URL)
 
 	client, err := aweb.New(s.coordination.URL)
 	if err != nil {
@@ -215,8 +214,7 @@ func TestAgentStatusWillNotReadAHostedRegistrySilenceAsAnAbsentCertificate(t *te
 	stores := newAgentStores(t)
 	stores.certificateActive = false
 	stores.workspacePresent = false
-	resetTeamRemoveMemberGlobals(t)
-	teamRemoveRegistryURL = stores.registry.URL
+	t.Setenv("AWID_REGISTRY_URL", stores.registry.URL)
 
 	client, err := aweb.New(stores.coordination.URL)
 	if err != nil {

@@ -134,8 +134,7 @@ func (f *privateTeamRegistry) verifyPathSignature(r *http.Request) (string, bool
 // and the workspace's did:key.
 func seedTeamReadWorkspace(t *testing.T, fake *privateTeamRegistry) (string, string) {
 	t.Helper()
-	resetTeamRemoveMemberGlobals(t)
-	teamRemoveRegistryURL = fake.server.URL
+	t.Setenv("AWID_REGISTRY_URL", fake.server.URL)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv(awconfig.IdentityHomeEnv, "")
 
@@ -222,8 +221,7 @@ func TestAgentStatusFallsBackToTheTeamControllerKeyOnAPrivateTeam(t *testing.T) 
 // HTTP status the operator has to interpret.
 func TestAgentStatusExplainsAPrivateTeamItCannotSignFor(t *testing.T) {
 	fake := newPrivateTeamRegistry(t, "did:key:z6MkController", nil, "retiree")
-	resetTeamRemoveMemberGlobals(t)
-	teamRemoveRegistryURL = fake.server.URL
+	t.Setenv("AWID_REGISTRY_URL", fake.server.URL)
 
 	out := teamAgentStatusOutput{TeamID: "backend:acme.com", Alias: "retiree"}
 	readAgentCertificateState(context.Background(), &out, "acme.com", "backend", false, nil)
@@ -255,8 +253,7 @@ func TestAgentStatusExplainsAPrivateTeamItCannotSignFor(t *testing.T) {
 func TestAgentStatusReadsAPublicTeamAnonymouslyAsBefore(t *testing.T) {
 	fake := newPrivateTeamRegistry(t, "did:key:z6MkController", nil, "retiree")
 	fake.visibility = "public"
-	resetTeamRemoveMemberGlobals(t)
-	teamRemoveRegistryURL = fake.server.URL
+	t.Setenv("AWID_REGISTRY_URL", fake.server.URL)
 
 	out := teamAgentStatusOutput{TeamID: "backend:acme.com", Alias: "retiree"}
 	readAgentCertificateState(context.Background(), &out, "acme.com", "backend", false, nil)

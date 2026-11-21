@@ -119,6 +119,13 @@ func resolveRegistryAuthority(ctx context.Context, req registryAuthorityRequest)
 				return awid.CanonicalRegistryServerOrigin(identity.RegistryURL)
 			}
 		}
+		configured, err := resolveRegistryURLSetting(registryURLSettingInput{})
+		if err != nil {
+			return "", err
+		}
+		if configured != "" {
+			return awid.CanonicalRegistryServerOrigin(configured)
+		}
 		serviceURL := strings.TrimSpace(req.AwebURL)
 		if serviceURL == "" && membership != nil {
 			serviceURL = strings.TrimSpace(membership.AwebURL)
