@@ -214,6 +214,12 @@ def main():
         (evidence / 'network.json').write_text(docker('network', 'inspect', token))
         (evidence / 'runner.json').write_text(docker('inspect', runner))
         command_env = ['-e', 'CANDIDATE_LOG_DIR=/tmp'] if args.collect_summary else []
+        if args.collect_summary and args.server_workers:
+            shard_services = [
+                {key: plan[key] for key in ('postgres_port', 'redis_port')}
+                for plan in services[:2]
+            ]
+            command_env += ['-e', 'AWEB_SECRETS_SHARD_SERVICES=' + json.dumps(shard_services)]
         with (evidence / 'suite.log').open('w') as log:
             result = subprocess.run(['docker', 'exec', *command_env, runner, *(args.command or ['make', 'TEST_EGRESS_RUNNER=', *args.targets])], stdout=log, stderr=subprocess.STDOUT)
         print(f'Test child exit status: {result.returncode}; evidence: {evidence}', flush=True)
