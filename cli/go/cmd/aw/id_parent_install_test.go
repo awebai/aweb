@@ -72,7 +72,7 @@ func TestParentInstallExistingCertificateForSameLocalKeyOnly(t *testing.T) {
 		t.Helper()
 		invitation, err := executeIDChildInvite(t.Context(), issuer, "agent", "install recipient", time.Hour)
 		if err != nil {
-			t.Fatal(err)
+			t.Fatalf("invite child: %v", err)
 		}
 		parent := ""
 		asRoot := false
@@ -90,15 +90,15 @@ func TestParentInstallExistingCertificateForSameLocalKeyOnly(t *testing.T) {
 		}
 		_, request, err := executeIDParentRequest(idParentOptions{IdentityHome: home, WorkingDir: filepath.Dir(home), Domain: domain}, invitation.InvitationID, parent, asRoot)
 		if err != nil {
-			t.Fatal(err)
+			t.Fatalf("request parent certificate: %v", err)
 		}
 		received, err := executeIDChildReceive(t.Context(), issuer, request)
 		if err != nil {
-			t.Fatal(err)
+			t.Fatalf("receive parent request: %v", err)
 		}
 		response, err := executeIDChildApprove(t.Context(), issuer, received.RequestID)
 		if err != nil {
-			t.Fatal(err)
+			t.Fatalf("approve parent request: %v", err)
 		}
 		parsed, err := awid.ParseIDCertificateResponse(response)
 		if err != nil {
@@ -110,17 +110,24 @@ func TestParentInstallExistingCertificateForSameLocalKeyOnly(t *testing.T) {
 		}
 		return chain, response
 	}
+	newParent := func() idChildOptions {
+		t.Helper()
+		home := newHome(t, newKey(), awid.IdentityModeGlobal)
+		_, response := issue(root, home)
+		if _, err := executeIDParentImport(t.Context(), idParentOptions{IdentityHome: home, WorkingDir: filepath.Dir(home), Domain: domain, RegistryURL: registryURL, TXTResolver: resolver}, response); err != nil {
+			t.Fatalf("register parent's issued certificate: %v", err)
+		}
+		return idChildOptions{IdentityHome: home, WorkingDir: filepath.Dir(home), RegistryURL: registryURL, TXTResolver: resolver, Now: time.Now}
+	}
+	// The namespace approver reads status for its child, so start with
+	// registered agent parents. Each agent then proves its own chain to issue
+	// certificates to local keys, which have no registry identity row.
+	parent, otherParent := newParent(), newParent()
 	subjectKey := newKey()
 	subjectHome := newHome(t, subjectKey, awid.IdentityModeLocal)
-	chain, _ := issue(root, subjectHome)
-	otherKeyChain, _ := issue(root, newHome(t, newKey(), awid.IdentityModeLocal))
-	parentHome := newHome(t, newKey(), awid.IdentityModeLocal)
-	_, parentResponse := issue(root, parentHome)
-	if _, err := executeIDParentImport(t.Context(), idParentOptions{IdentityHome: parentHome, WorkingDir: filepath.Dir(parentHome), Domain: domain, RegistryURL: registryURL, TXTResolver: resolver}, parentResponse); err != nil {
-		t.Fatalf("import local parent's issued certificate: %v", err)
-	}
-	parent := idChildOptions{IdentityHome: parentHome, WorkingDir: filepath.Dir(parentHome), RegistryURL: registryURL, TXTResolver: resolver, Now: time.Now}
-	otherParentChain, _ := issue(parent, subjectHome)
+	chain, _ := issue(parent, subjectHome)
+	otherKeyChain, _ := issue(parent, newHome(t, newKey(), awid.IdentityModeLocal))
+	otherParentChain, _ := issue(otherParent, subjectHome)
 
 	for _, scenario := range []string{"empty", "identical", "another-chain", "another-key", "registered", "unavailable"} {
 		t.Run(scenario, func(t *testing.T) {
