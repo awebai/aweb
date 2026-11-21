@@ -4093,7 +4093,15 @@ async function fetchHistory(client, sessionId, unreadOnly = false, limit = 50, m
     `/v1/chat/sessions/${encodeURIComponent(sessionId)}/messages?${params}`
   );
   for (const msg of resp.messages) {
+    const rowConversation = msg.conversation_id;
+    if (rowConversation && rowConversation !== sessionId) {
+      msg.projected_from_did = msg.from_did;
+      msg.verification_status = "failed";
+      continue;
+    }
+    msg.conversation_id = sessionId;
     if (!displayMatchesSignedClaims2(msg)) {
+      msg.conversation_id = rowConversation;
       msg.projected_from_did = msg.from_did;
       msg.verification_status = "failed";
       continue;
@@ -9642,7 +9650,7 @@ var SenderTrustManager = class {
     });
   }
   async resolveTrustMetadata(verificationStatus, rawAddress, fromStableID, toDID, toStableID, context) {
-    const status2 = this.checkRecipientBinding(verificationStatus, toDID, toStableID);
+    const status2 = this.checkRecipientBinding(statusToCheck(verificationStatus), toDID, toStableID);
     const trimmedAddress = rawAddress.trim();
     const local = context && !fromStableID && this.prepareReceivedLocalSender(status2, context);
     if (local) {
@@ -9724,9 +9732,9 @@ var SenderTrustManager = class {
       );
       resolved = this.consumeResolvedMetadata(rawAddress, prepared);
     }
-    return this.normalizeTrustDecision(
+    return checkedAsVerified(verificationStatus, (status2) => this.normalizeTrustDecision(
       store,
-      verificationStatus,
+      status2,
       rawAddress,
       fromDID,
       fromStableID,
@@ -9735,12 +9743,13 @@ var SenderTrustManager = class {
       rotationAnnouncement,
       replacementAnnouncement,
       resolved
-    );
+    ));
   }
   async normalizeResolvedTrust(store, verificationStatus, rawAddress, fromDID, fromStableID, toDID, toStableID, rotationAnnouncement, replacementAnnouncement, _verificationAddress, resolvedMetadata) {
-    return this.normalizeTrustDecision(
+    const resolved = this.consumeResolvedMetadata(rawAddress, resolvedMetadata);
+    return checkedAsVerified(verificationStatus, (status2) => this.normalizeTrustDecision(
       store,
-      verificationStatus,
+      status2,
       rawAddress,
       fromDID,
       fromStableID,
@@ -9748,8 +9757,8 @@ var SenderTrustManager = class {
       toStableID,
       rotationAnnouncement,
       replacementAnnouncement,
-      this.consumeResolvedMetadata(rawAddress, resolvedMetadata)
-    );
+      resolved
+    ));
   }
   consumeResolvedMetadata(rawAddress, resolvedMetadata) {
     if (!resolvedMetadata || !this.preparedMetadata.delete(resolvedMetadata)) return void 0;
@@ -10350,6 +10359,13 @@ function canonicalReplacementJSON(address, controllerDID, oldDID, newDID, timest
 }
 function b64Decode3(value) {
   return decodeRawStdBase64(value);
+}
+function statusToCheck(status2) {
+  return status2 === "verified_legacy" ? "verified" : status2;
+}
+function checkedAsVerified(status2, check) {
+  const result = check(statusToCheck(status2));
+  return status2 === "verified_legacy" && result.status === "verified" ? { ...result, status: "verified_legacy" } : result;
 }
 function releaseTeamNamePin(store, rawAddress, trustAddress, now) {
   if (!isTeamScopedName(rawAddress)) return false;
