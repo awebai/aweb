@@ -480,26 +480,12 @@ func TestResolveMailWakeSkipsSelfAuthoredMessageByAddress(t *testing.T) {
 	}
 }
 
-func TestFormatFallbackCommsContextPrefersFromAddress(t *testing.T) {
-	t.Parallel()
-
-	chatCtx := formatFallbackCommsContext(awid.AgentEvent{
-		Type:        awid.AgentEventActionableChat,
-		FromAlias:   "alice",
-		FromAddress: "otherco/alice",
-	})
-	if !strings.Contains(chatCtx, "from otherco/alice (chat)") {
-		t.Fatalf("expected chat fallback to prefer address, got %q", chatCtx)
-	}
-
-	mailCtx := formatFallbackCommsContext(awid.AgentEvent{
-		Type:        awid.AgentEventActionableMail,
-		FromAlias:   "alice",
-		FromAddress: "otherco/alice",
-		Subject:     "hello",
-	})
-	if !strings.Contains(mailCtx, "from otherco/alice (mail)") {
-		t.Fatalf("expected mail fallback to prefer address, got %q", mailCtx)
+func TestFormatFallbackCommsContextUsesMetadataOnlyRecovery(t *testing.T) {
+	for _, kind := range []awid.AgentEventType{awid.AgentEventActionableChat, awid.AgentEventActionableMail} {
+		text := formatFallbackCommsContext(awid.AgentEvent{Type: kind, FromAlias: "ATTACK_ALIAS", FromAddress: "ATTACK_ADDRESS", Subject: "ATTACK_SUBJECT"})
+		if strings.Contains(text, "ATTACK_") || !strings.Contains(text, "Read pending") {
+			t.Fatalf("unsafe or unactionable fallback: %s", text)
+		}
 	}
 }
 
@@ -1057,14 +1043,14 @@ func TestResolveChatWakePendingFallsBackToEventFromAddress(t *testing.T) {
 		FromAlias:   "carol",
 		FromAddress: "otherco/carol",
 	})
-	if err != nil {
-		t.Fatal(err)
+	if err == nil {
+		t.Fatalf("unavailable history was replaced with unsigned preview: %+v", result)
 	}
-	if result.Skip {
-		t.Fatalf("expected wake, got %+v", result)
+	if result.CycleContext != "" || result.AfterDelivery != nil {
+		t.Fatalf("unavailable history produced delivery: %+v", result)
 	}
-	if !strings.Contains(result.CycleContext, "from otherco/carol (chat)") {
-		t.Fatalf("expected pending wake context to fall back to event from_address, got %q", result.CycleContext)
+	if !strings.Contains(err.Error(), "Retry with aw chat history") {
+		t.Fatalf("missing recovery action: %v", err)
 	}
 }
 
@@ -1138,14 +1124,14 @@ func TestResolveChatWakeForAliasPendingFallsBackToStableID(t *testing.T) {
 		FromAlias:   "",
 		FromAddress: "",
 	})
-	if err != nil {
-		t.Fatal(err)
+	if err == nil {
+		t.Fatalf("unavailable history was replaced with unsigned preview: %+v", result)
 	}
-	if result.Skip {
-		t.Fatalf("expected wake, got %+v", result)
+	if result.CycleContext != "" || result.AfterDelivery != nil {
+		t.Fatalf("unavailable history produced delivery: %+v", result)
 	}
-	if !strings.Contains(result.CycleContext, "from did:aw:carol (chat)") {
-		t.Fatalf("expected pending wake context to preserve stable identity fallback, got %q", result.CycleContext)
+	if !strings.Contains(err.Error(), "Retry with aw chat history") {
+		t.Fatalf("missing recovery action: %v", err)
 	}
 }
 
@@ -1185,17 +1171,14 @@ func TestResolveChatWakeForAliasPendingPrefersParticipantStableIDOverLastFromCur
 		FromAlias:   "",
 		FromAddress: "",
 	})
-	if err != nil {
-		t.Fatal(err)
+	if err == nil {
+		t.Fatalf("unavailable history was replaced with unsigned preview: %+v", result)
 	}
-	if result.Skip {
-		t.Fatalf("expected wake, got %+v", result)
+	if result.CycleContext != "" || result.AfterDelivery != nil {
+		t.Fatalf("unavailable history produced delivery: %+v", result)
 	}
-	if !strings.Contains(result.CycleContext, "from did:aw:carol (chat)") {
-		t.Fatalf("expected pending wake context to prefer participant stable identity, got %q", result.CycleContext)
-	}
-	if strings.Contains(result.CycleContext, "did:key:z6MkCarolCurrent") {
-		t.Fatalf("pending wake context should not leak current did, got %q", result.CycleContext)
+	if !strings.Contains(err.Error(), "Retry with aw chat history") {
+		t.Fatalf("missing recovery action: %v", err)
 	}
 }
 
@@ -1237,17 +1220,14 @@ func TestResolveChatWakeForAliasPendingFallsBackToEventStableIDWhenPendingIsAmbi
 		FromStableID: "did:aw:carol",
 		FromDID:      "did:key:z6MkCarolCurrent",
 	})
-	if err != nil {
-		t.Fatal(err)
+	if err == nil {
+		t.Fatalf("unavailable history was replaced with unsigned preview: %+v", result)
 	}
-	if result.Skip {
-		t.Fatalf("expected wake, got %+v", result)
+	if result.CycleContext != "" || result.AfterDelivery != nil {
+		t.Fatalf("unavailable history produced delivery: %+v", result)
 	}
-	if strings.Contains(result.CycleContext, "from another agent (chat)") {
-		t.Fatalf("expected event stable id to disambiguate sparse pending wake, got %q", result.CycleContext)
-	}
-	if !strings.Contains(result.CycleContext, "from did:aw:carol (chat)") {
-		t.Fatalf("expected pending wake context to use event stable identity fallback, got %q", result.CycleContext)
+	if !strings.Contains(err.Error(), "Retry with aw chat history") {
+		t.Fatalf("missing recovery action: %v", err)
 	}
 }
 
@@ -1395,11 +1375,14 @@ func TestResolveChatWakeForAliasDoesNotSkipPendingFallbackForDifferentIdentitySa
 		SessionID: "s1",
 		FromAlias: "rose",
 	})
-	if err != nil {
-		t.Fatal(err)
+	if err == nil {
+		t.Fatalf("unavailable history was replaced with unsigned preview: %+v", result)
 	}
-	if result.Skip {
-		t.Fatalf("expected pending fallback from different identity with same alias to wake, got %+v", result)
+	if result.CycleContext != "" || result.AfterDelivery != nil {
+		t.Fatalf("unavailable history produced delivery: %+v", result)
+	}
+	if !strings.Contains(err.Error(), "Retry with aw chat history") {
+		t.Fatalf("missing recovery action: %v", err)
 	}
 }
 
@@ -1603,18 +1586,21 @@ func TestResolveChatWakeForAliasDoesNotSkipPendingFallbackForDifferentAddressHan
 		SessionID: "s1",
 		FromAlias: "rose",
 	})
-	if err != nil {
-		t.Fatal(err)
+	if err == nil {
+		t.Fatalf("unavailable history was replaced with unsigned preview: %+v", result)
 	}
-	if result.Skip {
-		t.Fatalf("expected different-address same-handle pending fallback to wake, got %+v", result)
+	if result.CycleContext != "" || result.AfterDelivery != nil {
+		t.Fatalf("unavailable history produced delivery: %+v", result)
+	}
+	if !strings.Contains(err.Error(), "Retry with aw chat history") {
+		t.Fatalf("missing recovery action: %v", err)
 	}
 }
 
 func TestResolveChatWakePropagatesLocalDeliveryMarkFailure(t *testing.T) {
 	deliveredDir := deliveredIDsTestPath(t)
 	deliveredPath := filepath.Join(deliveredDir, ".aw", chat.DeliveredIDsFileName)
-	if err := os.MkdirAll(deliveredPath, 0o700); err != nil {
+	if err := os.MkdirAll(deliveredPath+".lock", 0o700); err != nil {
 		t.Fatal(err)
 	}
 	var markedRead bool
@@ -1762,8 +1748,6 @@ func TestResolveChatWakeFailedMarkReadLeavesMessageRetryable(t *testing.T) {
 	}
 }
 
-// The agent acts on what it is handed, so it must be told when nothing
-// establishes who wrote a message.
 func TestSenderVerificationNoteMarksEveryUnverifiedStatusAsUntrusted(t *testing.T) {
 	for _, status := range []awid.VerificationStatus{awid.Failed, awid.IdentityMismatch, awid.Unverified} {
 		note := senderVerificationNote(status)
@@ -1774,7 +1758,7 @@ func TestSenderVerificationNoteMarksEveryUnverifiedStatusAsUntrusted(t *testing.
 	if note := senderVerificationNote(awid.VerificationStale); !strings.Contains(note, "retry verification") {
 		t.Errorf("stale note=%q", note)
 	}
-	for _, status := range []awid.VerificationStatus{awid.Verified, awid.VerifiedCustodial, awid.VerifiedLegacy, ""} {
+	for _, status := range []awid.VerificationStatus{awid.Verified, awid.VerifiedCustodial, awid.VerifiedLegacy} {
 		if note := senderVerificationNote(status); note != "" {
 			t.Errorf("%q note=%q, want none", status, note)
 		}
@@ -1786,18 +1770,18 @@ func TestChatWakeTellsTheAgentWhichMessagesHaveNoVerifiedSender(t *testing.T) {
 		{MessageID: "m1", FromAgent: "alice", Body: "signed and confirmed", VerificationStatus: awid.Verified},
 		{MessageID: "m2", FromAgent: "alice", Body: "text under a signature that does not match", VerificationStatus: awid.Failed},
 	}
-	resolution := chatWakeResolution(nil, "session", messages, awid.AgentEvent{})
+	resolution := chatWakeResolution(nil, "43583126-b052-4bce-97fb-1baa85a90eed", messages, awid.AgentEvent{})
 
-	verified, failed, found := strings.Cut(resolution.CycleContext, "text under a signature that does not match")
-	if !found {
-		t.Fatalf("the second message is missing: %q", resolution.CycleContext)
+	if !strings.Contains(resolution.CycleContext, "signed and confirmed") {
+		t.Fatal("verified message was withheld")
 	}
-	if strings.Contains(verified, "untrusted") {
-		t.Fatalf("the verified message was marked untrusted: %q", verified)
+	if strings.Contains(resolution.CycleContext, "text under a signature that does not match") {
+		t.Fatalf("failed body reached provider: %s", resolution.CycleContext)
 	}
-	if !strings.Contains(failed, senderVerificationNote(awid.Failed)) {
-		t.Fatalf("the failed message carries no note: %q", failed)
+	if !strings.Contains(resolution.CycleContext, "aw chat history") || !strings.Contains(resolution.CycleContext, "failed") {
+		t.Fatalf("missing reason/recovery: %s", resolution.CycleContext)
 	}
+
 }
 
 func TestMailWakeTellsTheAgentWhenTheSenderIsNotVerified(t *testing.T) {

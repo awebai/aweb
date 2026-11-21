@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +13,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/awebai/aw/signaturewire"
 )
 
 // aweb.team-server/1: a team-key-signed binding of a team to its coordination
@@ -97,7 +98,7 @@ func SignTeamServerRecord(teamKey ed25519.PrivateKey, record map[string]any) (st
 	if err != nil {
 		return "", err
 	}
-	return base64.RawStdEncoding.EncodeToString(ed25519.Sign(teamKey, signingBytes)), nil
+	return signaturewire.SignStd(teamKey, signingBytes), nil
 }
 
 func isLoopbackHost(host string) bool {
@@ -194,7 +195,7 @@ func decodeTeamServerSignature(signature string) ([]byte, error) {
 	if len(signature) != 86 {
 		return nil, fmt.Errorf("signature must be 86 characters of unpadded standard base64")
 	}
-	return base64.RawStdEncoding.Strict().DecodeString(signature)
+	return signaturewire.DecodeStdStrict(signature)
 }
 
 // VerifyTeamServerRecord verifies one record for teamID against the team's
@@ -247,7 +248,7 @@ func VerifyTeamServerRecord(record map[string]any, signature, teamID, currentTea
 	if err != nil {
 		return nil, teamServerRefusal("record_invalid", "record cannot be canonicalized")
 	}
-	if !ed25519.Verify(publicKey, signingBytes, signatureBytes) {
+	if !signaturewire.Verify(signaturewire.Proof{PublicKey: publicKey, Payload: signingBytes, Signature: signatureBytes}) {
 		return nil, teamServerRefusal("signature_invalid", "signature does not verify against the team key")
 	}
 	serverURL, audience, err := CanonicalTeamServerURL(strs["server_url"])

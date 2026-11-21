@@ -29,10 +29,11 @@ COPY scripts/federation-cli-user.py /tmp/federation-cli-user.py
 RUN python3 /tmp/federation-cli-user.py "$FIXTURE_UID" "$FIXTURE_GID" && rm /tmp/federation-cli-user.py
 COPY --from=build /out/aw /usr/local/bin/aw
 COPY --from=build /out/id-tree-verifier /usr/local/bin/id-tree-verifier
-COPY scripts/cross-registry-human-journey.py /usr/local/bin/cross-registry-human-journey.py
-COPY scripts/cross-registry-offline-verifier.py /usr/local/bin/cross-registry-offline-verifier.py
+COPY --chmod=0644 scripts/cross-registry-human-journey.py /usr/local/bin/cross-registry-human-journey.py
+COPY --chmod=0644 scripts/cross-registry-offline-verifier.py /usr/local/bin/cross-registry-offline-verifier.py
 COPY --from=channel-build /journey/channel-core/dist /journey/channel-core/dist
 COPY --from=channel-build /journey/channel-core/node_modules /journey/channel-core/node_modules
-COPY channel-core/package.json /journey/channel-core/package.json
-COPY scripts/cross-registry-inbound-verifier.mjs /journey/scripts/cross-registry-inbound-verifier.mjs
+COPY --chmod=0644 channel-core/package.json /journey/channel-core/package.json
+COPY --chmod=0644 scripts/cross-registry-inbound-verifier.mjs /journey/scripts/cross-registry-inbound-verifier.mjs
+RUN chmod 0755 /journey/scripts
 ENTRYPOINT ["/usr/local/bin/aw"]
