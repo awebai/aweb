@@ -35,13 +35,13 @@ def mcp_auth_error_response(
 
 async def _binding_handler(request: Request, error: Exception) -> JSONResponse:
     if not isinstance(error, IdentityBindingError):
-        raise TypeError("Identity-binding handler received a different exception type")
+        raise error
     return identity_binding_error_response(error)
 
 
 async def _registry_handler(request: Request, error: Exception) -> JSONResponse:
     if not isinstance(error, RegistryClientUnavailable):
-        raise TypeError("Registry handler received a different exception type")
+        raise error
     return registry_client_error_response(error)
 
 

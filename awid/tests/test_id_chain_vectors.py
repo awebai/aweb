@@ -3,6 +3,7 @@
 import copy
 import json
 from pathlib import Path
+from typing import Any
 import pytest
 from awid.id_certificates import (
     IDChainEvidence,
@@ -15,27 +16,22 @@ from awid.id_certificates import (
 from awid.identity_observation import IdentityKind, IdentityKindObservation
 
 V = json.loads(
-    (
-        Path(__file__).resolve().parents[2] / "docs/vectors/id-certificates-v1.json"
-    ).read_text()
+    (Path(__file__).resolve().parents[2] / "docs/vectors/id-certificates-v1.json").read_text()
 )
 
 
 def inputs(case):
     status = copy.deepcopy(V["status_fixtures"][case["status"]])
     subject = dict(case["subject"], **case.get("subject_patch", {}))
-    bundle = {
+    bundle: dict[str, object] | None = {
         "v": 1,
         "type": "aweb.id-chain",
-        "certificates": [
-            copy.deepcopy(V["certificates"][n]["signed"]) for n in case["chain"]
-        ],
+        "certificates": [copy.deepcopy(V["certificates"][n]["signed"]) for n in case["chain"]],
     }
     if not case["chain"] or case.get("presented_chain") is False:
         bundle = None
-    epoch = next(
-        (e for e in reversed(status["namespace"]["epochs"]) if e["retired_at"] is None),
-        {},
+    epoch: dict[str, Any] = next(
+        (e for e in reversed(status["namespace"]["epochs"]) if e["retired_at"] is None), {}
     )
     authority = case.get(
         "namespace_authority",
@@ -82,25 +78,18 @@ def test_final_identity_tree_verification_and_request_decision(case):
             == case["expected_request"][key]
         )
     if "tree_lookup" in case:
-        assert (status_request(bundle, subject, domain=domain) is not None) == case[
-            "tree_lookup"
-        ]
+        assert (status_request(bundle, subject, domain=domain) is not None) == case["tree_lookup"]
     if "expected_cache_mode" in case:
         c = case["cache"]
         assert status_cache_mode(c["age_seconds"]) == case["expected_cache_mode"]
 
 
 def test_omitted_global_domain_requires_private_resolution_input():
-    subject = V["verification_cases"][0]["subject"] | {
-        "id": V["keys"]["global_agent"]["did_aw"]
-    }
+    subject = V["verification_cases"][0]["subject"] | {"id": V["keys"]["global_agent"]["did_aw"]}
     with pytest.raises(IDCertificateError) as exc:
         status_request(None, subject)
     assert exc.value.code == "evidence_unavailable"
-    assert (
-        verify_id_chain(None, subject=subject, evidence=None)["reason"]
-        == "evidence_unavailable"
-    )
+    assert verify_id_chain(None, subject=subject, evidence=None)["reason"] == "evidence_unavailable"
 
 
 def test_status_request_only_sends_global_ids_in_chain_order():
@@ -125,9 +114,7 @@ def test_ancestry_does_not_reuse_decode_time_claimed_issuer_verdict():
     signed = bundle["certificates"][-1]
     verify_id_certificate(signed, issuer_key=signed["certificate"]["issuer_key"])
     assert (
-        verify_id_chain(bundle, subject=subject, evidence=evidence, domain=domain)[
-            "reason"
-        ]
+        verify_id_chain(bundle, subject=subject, evidence=evidence, domain=domain)["reason"]
         == "stale_issuer_key"
     )
 
@@ -162,9 +149,7 @@ def test_invalid_status_never_confers_authority(mutation):
             "effective_from": "2026-10-26T00:11:00.000000Z",
         }
     assert (
-        verify_id_chain(bundle, subject=subject, evidence=evidence, domain=domain)[
-            "reason"
-        ]
+        verify_id_chain(bundle, subject=subject, evidence=evidence, domain=domain)["reason"]
         == "evidence_unavailable"
     )
 
@@ -194,9 +179,7 @@ def test_final_vector_names_include_the_isolated_authority_boundaries():
     ],
 )
 def test_delegation_must_bind_the_discovered_parent_to_the_child(change):
-    case = next(
-        c for c in V["verification_cases"] if c["name"] == "delegated-child-authorized"
-    )
+    case = next(c for c in V["verification_cases"] if c["name"] == "delegated-child-authorized")
     bundle, subject, evidence, domain = inputs(case)
     witness = evidence.status["namespace"]["delegation"]
     if change == "missing":
@@ -212,8 +195,6 @@ def test_delegation_must_bind_the_discovered_parent_to_the_child(change):
     elif change == "extra":
         witness["unrecognized"] = True
     assert (
-        verify_id_chain(bundle, subject=subject, evidence=evidence, domain=domain)[
-            "reason"
-        ]
+        verify_id_chain(bundle, subject=subject, evidence=evidence, domain=domain)["reason"]
         == "evidence_unavailable"
     )

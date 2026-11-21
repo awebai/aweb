@@ -44,6 +44,7 @@ async def _deliver_fixture_mail(db, **fields):
         sender_address=fields.get("sender_address"),
         sender_verified_dids=fields.get("sender_verified_dids"),
         stored_route_continuation=fields.get("stored_route_continuation", False),
+        registry_client=None,
     )
     content = (
         EncryptedMailContent(
@@ -762,4 +763,5 @@ async def test_contacts_only_rejects_verified_teammate_before_contact(aweb_cloud
             sender_did="did:aw:teammate",
             sender_address="acme.com/teammate",
             stored_route_continuation=True,
+            registry_client=None,
         )

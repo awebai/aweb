@@ -9,6 +9,7 @@ from aweb.agent_wake import agent_wake_publisher
 from aweb.application_state import RegistryClientUnavailable, application_registry_client
 from aweb.identity_auth_deps import MessagingAuth
 from aweb.identity_binding import identity_binding_cache
+from aweb.identity_scope import normalize_identity_scope
 from aweb.mcp.auth import AuthContext
 from aweb.federation.origins import application_public_origins
 from aweb.mcp.mutations import current_mutation_callback
@@ -25,6 +26,9 @@ def mcp_sender_budget_key(auth: AuthContext) -> str:
 
 
 def mcp_messaging_auth(auth: AuthContext) -> MessagingAuth:
+    """Retain native credential evidence; adapt existing host metadata callers."""
+    if auth.messaging_auth is not None:
+        return auth.messaging_auth
     return MessagingAuth(
         did_key=(auth.did_key or "").strip(),
         did_aw=(auth.did_aw or "").strip() or None,
@@ -32,7 +36,13 @@ def mcp_messaging_auth(auth: AuthContext) -> MessagingAuth:
         team_id=auth.team_id,
         alias=auth.alias,
         agent_id=auth.agent_id,
-        identity_scope=auth.identity_scope,
+        identity_scope=(
+            normalize_identity_scope(auth.identity_scope)
+            if auth.identity_scope is not None
+            else None
+        ),
+        certificate_id=auth.certificate_id,
+        verified_team_id=auth.team_id if auth.certificate_id else None,
         address_resolution=auth.address_resolution,
     )
 
@@ -84,7 +94,5 @@ def mcp_messaging_runtime(
 def registry_delivery_origin(resolution) -> str:
     delivery = getattr(resolution, "delivery", None)
     return str(
-        getattr(resolution, "delivery_origin", None)
-        or getattr(delivery, "origin", "")
-        or ""
+        getattr(resolution, "delivery_origin", None) or getattr(delivery, "origin", "") or ""
     ).strip()

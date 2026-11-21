@@ -28,11 +28,11 @@ from typing import Any, NoReturn
 from uuid import UUID
 
 import asyncpg.exceptions
+from awid.federation_errors import FederationAuthorityError
 from aweb.messaging.refusals import (
     encrypted_message_refusal,
     DeliveryRefusalCode,
     signed_chat_payload_refusal,
-    registry_configuration_refusal,
     registry_dependency_refusal,
 )
 from aweb.messaging.refusals import DeliveryRefusal, SignedRecipientMismatch
@@ -40,8 +40,8 @@ from http import HTTPStatus
 from aweb.message_vocabulary import MessageInputSource, observe_message_vocabulary
 from aweb.identity_address import require_address_evidence
 
-from awid.federation_errors import FederationAuthorityError
 from aweb.agent_wake import agent_wake_scope
+from aweb.application_state import RegistryClientUnavailable
 from aweb.attachment_service import confirm_accepted_attachment_refs, refuse_remote_attachments
 from aweb.db import TransactionInfra
 from aweb.e2ee_messages import (
@@ -61,7 +61,8 @@ from aweb.federation.replay import (
     read_plaintext_projection,
 )
 from aweb.federation.mail import FederatedMailDeliveryError, deliver_federated_message
-from aweb.hooks import fire_mutation_callback, HeldMutationEvents
+from aweb.hooks import fire_mutation_callback
+from aweb.hooks import HeldMutationEvents
 from aweb.member_team_key import MemberReadLock
 from aweb.messaging.delivery_policy import (
     DeliveryAttempt,
@@ -72,6 +73,10 @@ from aweb.event_types import MutationEventType
 from aweb.message_events import ChatMessageSentContext
 from aweb.messaging.kinds import ContentModeValue, MessageTransport
 from aweb.identity_auth_deps import MessagingAuth, auth_dids, participant_dids
+from aweb.member_team_key import (
+    read_participant_identity_projection,
+    recipient_not_found,
+)
 from aweb.messaging.address_auth import (
     identity_recipient,
     local_recipient_for_own_route,
@@ -84,7 +89,6 @@ from aweb.messaging.alias_targets import (
 from aweb.messaging.chat import (
     ensure_session,
     find_session_between,
-    resolve_agent_by_did,
     resolve_session_actor_did,
     send_in_session,
     validate_session_id,
@@ -106,6 +110,7 @@ from aweb.messaging.participants import (
     messaging_participant_by_alias,
     messaging_participants_by_aliases,
 )
+from aweb.messaging.recipient_lookup import resolve_agent_by_did, resolve_recipient_by_did
 from aweb.messaging.recipient_bindings import signed_recipient_matches
 from aweb.messaging.kinds import MessageKind
 from aweb.messaging.recipients import (
@@ -120,8 +125,10 @@ from aweb.messaging.signatures import (
     require_verified_message_signature,
 )
 from aweb.messaging.verification import require_conversation_not_legacy_bound
+from aweb.messaging.refusals import RecipientIdentityBindingError
 from aweb.service_errors import (
     ConflictError,
+    IdentityBindingCode,
     ForbiddenError,
     NotFoundError,
     ValidationError,
@@ -232,9 +239,7 @@ def validate_encrypted_chat_payload(
             detail="encrypted_envelope is required for encrypted chat",
         )
     if _chat_payload_body(payload):
-        raise encrypted_message_refusal(
-            detail="Encrypted chat payload body must be empty"
-        )
+        raise encrypted_message_refusal(detail="Encrypted chat payload body must be empty")
     if payload.signature or payload.signed_payload:
         raise DeliveryRefusal(
             status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
@@ -299,9 +304,7 @@ async def resolve_stored_remote_chat_route(
             status_code=HTTPStatus.FAILED_DEPENDENCY,
             detail="Remote chat recipient has no stored routable identity",
         )
-    current_did = str(
-        recipient.get("current_did_key") or recipient.get("did_key") or ""
-    ).strip()
+    current_did = str(recipient.get("current_did_key") or recipient.get("did_key") or "").strip()
     if not current_did:
         raise DeliveryRefusal(
             status_code=HTTPStatus.FAILED_DEPENDENCY,
@@ -387,9 +390,7 @@ async def deliver_federated_chat(
             body="" if _payload_is_encrypted(payload) else _chat_payload_body(payload),
             message_id=str(payload.message_id),
             timestamp=str(payload.timestamp),
-            signed_payload=None
-            if _payload_is_encrypted(payload)
-            else str(payload.signed_payload),
+            signed_payload=None if _payload_is_encrypted(payload) else str(payload.signed_payload),
             conversation_id=session_id,
             content_mode=payload.content_mode,
             message_version=payload.message_version,
@@ -422,19 +423,16 @@ async def deliver_federated_chat(
                 _parse_signed_timestamp(str(payload.timestamp))
                 projection.refuse_conflicting_message_id()
     except FederationEnvelopeError as exc:
-        raise DeliveryRefusal(
-            status_code=HTTPStatus.UNPROCESSABLE_ENTITY, detail=str(exc)
-        ) from exc
+        raise DeliveryRefusal(status_code=HTTPStatus.UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
 
     local = await local_recipient_for_own_route(db, route, runtime)
     if local is not None:
         if envelope.target_current_did_key != local.get("did_key"):
-            raise DeliveryRefusal(
-                status_code=HTTPStatus.FORBIDDEN, detail="identity_binding_mismatch"
-            )
+            raise RecipientIdentityBindingError(IdentityBindingCode.MISMATCH)
         await require_agent_chat(db, [local])
         await authorize_message_delivery(
             db,
+            registry_client=runtime.registry_client,
             recipient_agent=local,
             sender_did=sender_routing_did,
             sender_address=sender_address,
@@ -488,12 +486,9 @@ def _parse_signed_timestamp(value: str) -> datetime:
     except FederationEnvelopeError as exc:
         raise DeliveryRefusal(
             status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
-            detail=str(exc)
-            + ". Sign the message again with the current UTC time and retry.",
+            detail=str(exc) + ". Sign the message again with the current UTC time and retry.",
             code=DeliveryRefusalCode.TIMESTAMP_OUTSIDE_SKEW,
-            headers={
-                "X-AWEB-Error-Code": DeliveryRefusalCode.TIMESTAMP_OUTSIDE_SKEW.value
-            },
+            headers={"X-AWEB-Error-Code": DeliveryRefusalCode.TIMESTAMP_OUTSIDE_SKEW.value},
         ) from exc
     return dt
 
@@ -556,9 +551,7 @@ def _validate_signed_chat_payload(
     if recipient_rows:
         candidate_lists = []
         if not has_cross_team_alias:
-            candidate_lists.append(
-                [(row.get("alias") or "").strip() for row in recipient_rows]
-            )
+            candidate_lists.append([(row.get("alias") or "").strip() for row in recipient_rows])
         candidate_lists.extend(
             (
                 [(row.get("address") or "").strip() for row in recipient_rows],
@@ -576,18 +569,13 @@ def _validate_signed_chat_payload(
     ):
         raise SignedRecipientMismatch(kind=MessageKind.CHAT)
     if payload.get("body") != body:
-        raise signed_chat_payload_refusal(
-            detail="signed_payload body must match the chat message"
-        )
+        raise signed_chat_payload_refusal(detail="signed_payload body must match the chat message")
     if payload.get("from_did") != from_did:
         raise signed_chat_payload_refusal(
             detail="signed_payload from_did must match the authenticated sender"
         )
     signed_from_stable_id = str(payload.get("from_stable_id") or "").strip()
-    if (
-        signed_from_stable_id
-        and signed_from_stable_id != str(from_stable_id or "").strip()
-    ):
+    if signed_from_stable_id and signed_from_stable_id != str(from_stable_id or "").strip():
         raise signed_chat_payload_refusal(
             detail="signed_payload from_stable_id must match the authenticated sender"
         )
@@ -602,17 +590,11 @@ def _validate_signed_chat_payload(
     signed_conversation_id = str(payload.get("conversation_id") or "").strip()
     if conversation_id is not None:
         if not signed_conversation_id:
-            raise signed_chat_payload_refusal(
-                detail="signed_payload conversation_id is required"
-            )
+            raise signed_chat_payload_refusal(detail="signed_payload conversation_id is required")
         if signed_conversation_id != conversation_id:
-            raise signed_chat_payload_refusal(
-                detail="signed_payload conversation_id must match"
-            )
+            raise signed_chat_payload_refusal(detail="signed_payload conversation_id must match")
     elif signed_conversation_id:
-        raise signed_chat_payload_refusal(
-            detail="signed_payload conversation_id must match"
-        )
+        raise signed_chat_payload_refusal(detail="signed_payload conversation_id must match")
     if payload.get("wait_seconds") != wait_seconds:
         raise signed_chat_payload_refusal(
             detail="signed_payload wait_seconds must match the chat message"
@@ -702,8 +684,7 @@ def _sender_bound_fresh_session(
         return (
             payload.signature is not None
             and payload.from_did in auth_dids(auth)
-            and _signed_payload_conversation_id(payload.signed_payload)
-            == str(session_id)
+            and _signed_payload_conversation_id(payload.signed_payload) == str(session_id)
         )
     envelope = payload.encrypted_envelope or {}
     sender = envelope.get("from")
@@ -731,7 +712,8 @@ async def _stored_exact_chat_send(
 ):
     """Acknowledge one accepted artifact after ordinary request validation.
 
-    docs/identity-messaging-contract.md:354-370 exempts exact plaintext retries
+    Receiver-Wide Replay And Contact Compatibility
+    (docs/identity-messaging-contract.md:366-374) exempts exact plaintext retries
     from age only. The shared owner decides sameness; this adapter retains chat
     request binding, current sender key and encrypted expiry checks.
     """
@@ -836,17 +818,14 @@ async def _stored_exact_chat_send(
             reply_to=payload.reply_to,
             conversation_id=(
                 str(row["session_id"])
-                if session_id is not None
-                or _signed_payload_conversation_id(payload.signed_payload)
+                if session_id is not None or _signed_payload_conversation_id(payload.signed_payload)
                 else None
             ),
             sender_leaving=payload.leaving,
             hang_on=payload.hang_on,
         )
     # Only an admitted, integrity-checked exact retry may consume its bound refs.
-    await confirm_accepted_attachment_refs(
-        db, kind=MessageKind.CHAT, message_id=row["message_id"]
-    )
+    await confirm_accepted_attachment_refs(db, kind=MessageKind.CHAT, message_id=row["message_id"])
     return row
 
 
@@ -891,9 +870,7 @@ async def _resolve_remote_chat_route(
             detail="Remote chat recipient has an incomplete authority route",
         )
     if registry_client is None:
-        raise registry_configuration_refusal(
-            operation="AWID remote chat route resolution"
-        )
+        raise RegistryClientUnavailable()
     try:
         if "/" in address:
             domain, name = address.split("/", 1)
@@ -967,9 +944,7 @@ async def _resolve_remote_chat_route(
     if resolved_origin and (
         resolved_origin != _target_delivery_origin(recipient)
         or target_current_did
-        != str(
-            recipient.get("current_did_key") or recipient.get("did_key") or ""
-        ).strip()
+        != str(recipient.get("current_did_key") or recipient.get("did_key") or "").strip()
     ):
         await _update_chat_participant_route(
             db,
@@ -1070,13 +1045,15 @@ def _is_stale_delivery_origin_status(status_code: int) -> bool:
     return status_code in {404, 410, 421}
 
 
-async def resolve_actor_agent(db, actor_dids: list[str]) -> Mapping[str, Any] | None:
+async def resolve_actor_agent(
+    db, actor_dids: list[str], *, team_id: str | None = None
+) -> Mapping[str, Any] | None:
     """Find a local sender projection for the adapter's authenticated DIDs."""
     for did in actor_dids:
         if not did:
             continue
-        actor_agent = await resolve_agent_by_did(db, did)
-        if actor_agent is not None:
+        actor_agent = await resolve_agent_by_did(db, did, team_id=team_id)
+        if actor_agent is not None and actor_agent.get("agent_id") is not None:
             return actor_agent
     return None
 
@@ -1162,9 +1139,7 @@ async def _resolve_named_recipients(
                 registry_client=runtime.registry_client,
             )
             if row is None:
-                raise DeliveryRefusal(
-                    status_code=HTTPStatus.NOT_FOUND, detail=f"Unknown aliases: {alias}"
-                )
+                raise recipient_not_found(label=alias)
             target_rows.append(row)
         if local_aliases:
             local_rows = await messaging_participants_by_aliases(
@@ -1175,14 +1150,9 @@ async def _resolve_named_recipients(
                 registry_client=runtime.registry_client,
             )
             resolved_aliases = {row["alias"] for row in local_rows}
-            missing = [
-                alias for alias in local_aliases if alias not in resolved_aliases
-            ]
+            missing = [alias for alias in local_aliases if alias not in resolved_aliases]
             if missing:
-                raise DeliveryRefusal(
-                    status_code=HTTPStatus.NOT_FOUND,
-                    detail=f"Unknown aliases: {', '.join(missing)}",
-                )
+                raise recipient_not_found(label=", ".join(missing))
             target_rows.extend(local_rows)
         for row in target_rows:
             target_did = (row.get("did_aw") or row.get("did_key") or "").strip()
@@ -1190,14 +1160,11 @@ async def _resolve_named_recipients(
                 resolved[target_did] = row
 
     for did in to_dids:
-        row = await resolve_agent_by_did(db, did)
+        row = await resolve_recipient_by_did(db, did, sender_team_id=auth.team_id)
         if row is None and did.startswith("did:aw:"):
             _raise_bare_did_chat_first_contact_unsupported()
         if row is None:
-            raise DeliveryRefusal(
-                status_code=HTTPStatus.NOT_FOUND,
-                detail=f"Recipient agent not found: {did}",
-            )
+            raise recipient_not_found(label=did)
         resolved[did] = identity_recipient(row)
 
     for address in to_addresses:
@@ -1232,6 +1199,7 @@ async def _resolve_named_recipients(
         try:
             await authorize_message_delivery(
                 db,
+                registry_client=runtime.registry_client,
                 recipient_agent=row,
                 sender_did=actor_did,
                 sender_address=sender_address,
@@ -1240,9 +1208,7 @@ async def _resolve_named_recipients(
         except DeliveryPolicyRefused:
             raise
         except (ValidationError, NotFoundError, ForbiddenError) as exc:
-            raise DeliveryRefusal(
-                status_code=exc.status_code, detail=exc.detail
-            ) from exc
+            raise DeliveryRefusal(status_code=exc.status_code, detail=exc.detail) from exc
 
     return list(resolved.values())
 
@@ -1260,9 +1226,7 @@ async def _resolve_session_recipient_rows(
     actor_dids: list[str],
 ) -> _SessionRecipients:
     aweb_db = db.get_manager("aweb")
-    left_dids = (await _left_dids_by_session(db, [session_id])).get(
-        str(session_id), set()
-    )
+    left_dids = (await _left_dids_by_session(db, [session_id])).get(str(session_id), set())
     rows = await aweb_db.fetch_all(
         """
         SELECT did, agent_id, alias, address, delivery_origin, current_did_key
@@ -1277,11 +1241,14 @@ async def _resolve_session_recipient_rows(
     recipient_rows: list[dict[str, Any]] = []
     for row in rows:
         participant = dict(row)
-        resolved = await resolve_agent_by_did(db, participant.get("did") or "")
-        if resolved is not None:
-            resolved = identity_recipient(
-                resolved, str(participant.get("address") or "")
-            )
+        projection = await read_participant_identity_projection(
+            db, participant_did=participant.get("did") or ""
+        )
+        resolved = (
+            identity_recipient(projection, str(participant.get("address") or ""))
+            if projection is not None
+            else None
+        )
         policy_rows = await policy_rows_for_participant(db, participant)
         policy: Mapping[str, Any] = resolved or (policy_rows[0] if policy_rows else {})
         resolved_projection: Mapping[str, Any] = resolved or {}
@@ -1296,10 +1263,8 @@ async def _resolve_session_recipient_rows(
                 "address": (resolved_projection.get("address") or "").strip()
                 or participant_address
                 or _address_from_alias(participant_alias),
-                "delivery_origin": (participant.get("delivery_origin") or "").strip()
-                or None,
-                "current_did_key": (participant.get("current_did_key") or "").strip()
-                or None,
+                "delivery_origin": (participant.get("delivery_origin") or "").strip() or None,
+                "current_did_key": (participant.get("current_did_key") or "").strip() or None,
                 "did_aw": (resolved_projection.get("did_aw") or "").strip()
                 or (participant_did if participant_did.startswith("did:aw:") else ""),
                 "did_key": (resolved_projection.get("did_key") or "").strip()
@@ -1307,9 +1272,7 @@ async def _resolve_session_recipient_rows(
                 or (participant_did if participant_did.startswith("did:key:") else ""),
                 "agent_id": (resolved_projection.get("agent_id") if resolved else None),
                 "team_id": (resolved_projection.get("team_id") if resolved else None),
-                "inbound_mode": (
-                    resolved_projection.get("inbound_mode") if resolved else None
-                ),
+                "inbound_mode": (resolved_projection.get("inbound_mode") if resolved else None),
                 "local_resolved": resolved is not None,
                 "identity_scope": policy.get("identity_scope"),
                 "has_global_claim": policy.get("has_global_claim"),
@@ -1386,9 +1349,11 @@ class ChatTarget:
         object.__setattr__(self, "shared_session_id", shared_session_id)
         # Historical parties bind a plaintext replay, never new delivery.
         object.__setattr__(
-            self, "recorded_recipients",
+            self,
+            "recorded_recipients",
             tuple(Recipient.from_delivery_projection(row) for row in recorded_recipients)
-            if recorded_recipients is not None else None,
+            if recorded_recipients is not None
+            else None,
         )
 
 
@@ -1445,9 +1410,7 @@ async def resolve_chat_targets(
             db, auth, selector, runtime, source, actor_dids=actor_dids
         )
 
-    requested_session_id = (
-        UUID(selector.session_id) if selector.session_id is not None else None
-    )
+    requested_session_id = UUID(selector.session_id) if selector.session_id is not None else None
     if requested_session_id is not None:
         await validate_session_id(
             db,
@@ -1508,17 +1471,11 @@ async def _resolve_session_target(
         "SELECT 1 FROM {{tables.chat_sessions}} WHERE session_id = $1", session_uuid
     )
     if not sess:
-        raise DeliveryRefusal(
-            status_code=HTTPStatus.NOT_FOUND, detail="Session not found"
-        )
+        raise DeliveryRefusal(status_code=HTTPStatus.NOT_FOUND, detail="Session not found")
 
-    actor_did = await resolve_session_actor_did(
-        db, session_id=session_uuid, actor_dids=actor_dids
-    )
+    actor_did = await resolve_session_actor_did(db, session_id=session_uuid, actor_dids=actor_dids)
     if not actor_did:
-        raise DeliveryRefusal(
-            status_code=HTTPStatus.NOT_FOUND, detail="Session not found"
-        )
+        raise DeliveryRefusal(status_code=HTTPStatus.NOT_FOUND, detail="Session not found")
     session_recipients = await _resolve_session_recipient_rows(
         db, session_id=session_uuid, actor_dids=actor_dids
     )
@@ -1531,9 +1488,9 @@ async def _resolve_session_target(
     for index, row in enumerate(recipient_rows):
         local = await local_recipient_for_own_route(db, row, runtime)
         if local is not None:
-            recipient_rows[index] = Recipient.from_delivery_projection(
-                row
-            ).with_local_identity(local)
+            recipient_rows[index] = Recipient.from_delivery_projection(row).with_local_identity(
+                local
+            )
     await require_agent_chat(db, recipient_rows)
     for row in recipient_rows:
         if (
@@ -1575,6 +1532,7 @@ async def _resolve_session_target(
         for policy_recipient in policy_rows:
             await authorize_message_delivery(
                 db,
+                registry_client=runtime.registry_client,
                 recipient_agent=policy_recipient,
                 sender_did=actor_did,
                 sender_address=sender_address,
@@ -1609,15 +1567,9 @@ async def send_chat(
         source=MessageInputSource.CHAT_SEND,
         content_mode=payload.content_mode,
     )
-    if any(
-        row.get("external") or _target_delivery_origin(row) for row in target.recipients
-    ):
-        return await _dispatch_chat(
-            db, auth=auth, target=target, payload=payload, runtime=runtime
-        )
-    return await _send_local_chat(
-        db, auth=auth, target=target, payload=payload, runtime=runtime
-    )
+    if any(row.get("external") or _target_delivery_origin(row) for row in target.recipients):
+        return await _dispatch_chat(db, auth=auth, target=target, payload=payload, runtime=runtime)
+    return await _send_local_chat(db, auth=auth, target=target, payload=payload, runtime=runtime)
 
 
 async def _dispatch_chat(
@@ -1638,11 +1590,12 @@ async def _dispatch_chat(
 
 
 async def _authorize_local_chat_commit(
-    db, *, auth: MessagingAuth, target: ChatTarget
+    db, *, auth: MessagingAuth, target: ChatTarget, runtime: MessagingRuntime
 ) -> None:
     """Hold native policy rows through the write, using the one delivery rule.
 
-    docs/identity-messaging-contract.md:69-87 applies current policy even to a
+    Global And Local Identities (docs/identity-messaging-contract.md:68-99) applies current
+    policy even to a
     stored participant. Raw claim matches provide locks/policy only; a new
     send retains its independently admitted recipient identity and route.
     """
@@ -1665,7 +1618,11 @@ async def _authorize_local_chat_commit(
         selected = policies if attempt is DeliveryAttempt.STORED_ROUTE else (recipient,)
         for policy in selected:
             await authorize_delivery(
-                db, recipient=policy, sender=sender, attempt=attempt
+                db,
+                recipient=policy,
+                sender=sender,
+                attempt=attempt,
+                registry_client=runtime.registry_client,
             )
     await require_agent_chat(db, target.recipients)
 
@@ -1685,7 +1642,9 @@ async def _send_local_chat(
         with agent_wake_scope(runtime.agent_wake_publisher):
             async with db.get_manager("aweb").transaction() as tx:
                 send_db = TransactionInfra(db, tx)
-                await _authorize_local_chat_commit(send_db, auth=auth, target=target)
+                await _authorize_local_chat_commit(
+                    send_db, auth=auth, target=target, runtime=runtime
+                )
                 sent = await _dispatch_chat(
                     send_db,
                     auth=auth,
@@ -1698,7 +1657,7 @@ async def _send_local_chat(
             raise
         async with db.get_manager("aweb").transaction() as tx:
             send_db = TransactionInfra(db, tx)
-            await _authorize_local_chat_commit(send_db, auth=auth, target=target)
+            await _authorize_local_chat_commit(send_db, auth=auth, target=target, runtime=runtime)
             stored = await _stored_exact_chat_send(
                 send_db,
                 payload,
@@ -1752,16 +1711,12 @@ async def _send_to_named_recipients(
 ) -> SentChat:
     actor_dids = participant_dids(auth)
     actor_did = actor_dids[0]
-    actor_agent = await resolve_actor_agent(db, actor_dids)
-    actor_agent_id = auth.agent_id or (
-        str(actor_agent["agent_id"]) if actor_agent else None
-    )
+    actor_agent = await resolve_actor_agent(db, actor_dids, team_id=auth.team_id)
+    actor_agent_id = auth.agent_id or (str(actor_agent["agent_id"]) if actor_agent else None)
     actor_alias = _actor_alias(auth, actor_agent)
     sender_address = _sender_address(auth)
 
-    requested_session_id = (
-        UUID(payload.session_id) if payload.session_id is not None else None
-    )
+    requested_session_id = UUID(payload.session_id) if payload.session_id is not None else None
     target_rows = list(target.recipients)
     if _payload_is_encrypted(payload):
         await require_non_custodial_recipients(
@@ -1780,9 +1735,7 @@ async def _send_to_named_recipients(
         {
             "did": _target_did(row),
             "did_key": (row.get("did_key") or "").strip() or None,
-            "current_did_key": (
-                row.get("did_key") or row.get("current_did_key") or ""
-            ).strip()
+            "current_did_key": (row.get("did_key") or row.get("current_did_key") or "").strip()
             or None,
             "agent_id": str(row["agent_id"]) if row.get("agent_id") else None,
             "alias": (row.get("alias") or "").strip() or _target_did(row),
@@ -1803,26 +1756,19 @@ async def _send_to_named_recipients(
     if existing_message is not None:
         transport = (
             MessageTransport.FEDERATED
-            if any(
-                row.get("external") or _target_delivery_origin(row)
-                for row in target_rows
-            )
+            if any(row.get("external") or _target_delivery_origin(row) for row in target_rows)
             else MessageTransport.LOCAL
         )
         return SentChat(
             session_id=existing_message["session_id"],
             message=dict(existing_message),
-            participants=participant_rows
-            if transport is MessageTransport.FEDERATED
-            else None,
+            participants=participant_rows if transport is MessageTransport.FEDERATED else None,
             federated=transport is MessageTransport.FEDERATED,
         )
     validation_conversation_id = (
         str(requested_session_id) if requested_session_id is not None else None
     )
-    signed_requested_session_id = _sender_bound_fresh_session(
-        payload, auth, requested_session_id
-    )
+    signed_requested_session_id = _sender_bound_fresh_session(payload, auth, requested_session_id)
     if target.session_selection is ChatSessionSelection.REUSE_PAIR:
         requested_session_id = await _reuse_or_create_session(
             db,
@@ -1853,10 +1799,7 @@ async def _send_to_named_recipients(
                     )
                 except NotFoundError:
                     logger.debug("chat_session_already_closed")
-            elif (
-                requested_session_id is not None
-                and requested_session_id != existing_session_id
-            ):
+            elif requested_session_id is not None and requested_session_id != existing_session_id:
                 raise DeliveryRefusal(
                     status_code=HTTPStatus.CONFLICT,
                     detail="Existing active chat session found; continue that session instead",
@@ -1872,9 +1815,7 @@ async def _send_to_named_recipients(
                         detail="Signed chat message must bind the existing session_id",
                     )
     external_targets = [
-        row
-        for row in target_rows
-        if row.get("external") or _target_delivery_origin(row)
+        row for row in target_rows if row.get("external") or _target_delivery_origin(row)
     ]
     if external_targets:
         return await _send_to_remote_named_chat(
@@ -2013,9 +1954,7 @@ async def _send_to_remote_named_chat(
         route=route,
         session_id=str(requested_session_id),
     )
-    remote_session_id = str(
-        remote.get("session_id") or remote.get("conversation_id") or ""
-    ).strip()
+    remote_session_id = str(remote.get("session_id") or remote.get("conversation_id") or "").strip()
     remote_message_id = str(remote.get("message_id") or "").strip()
     if remote_session_id != str(requested_session_id):
         raise DeliveryRefusal(
@@ -2062,9 +2001,7 @@ async def _send_to_remote_named_chat(
             federated=True,
         )
     if msg_row is None:
-        raise DeliveryRefusal(
-            status_code=HTTPStatus.NOT_FOUND, detail=SENDER_NOT_IN_SESSION
-        )
+        raise DeliveryRefusal(status_code=HTTPStatus.NOT_FOUND, detail=SENDER_NOT_IN_SESSION)
     await _record_successful_chat_contacts(
         db,
         owner_did=(auth.did_aw or actor_did).strip(),
@@ -2130,9 +2067,7 @@ async def _store_remote_chat_create(
                 sender_agent_id=actor_agent_id,
                 sender_address=sender_address,
                 body=payload.message,
-                reply_to=uuid_mod.UUID(payload.reply_to)
-                if payload.reply_to is not None
-                else None,
+                reply_to=uuid_mod.UUID(payload.reply_to) if payload.reply_to is not None else None,
                 leaving=payload.leaving,
                 hang_on=payload.hang_on,
                 signature=payload.signature,
@@ -2261,9 +2196,7 @@ async def _send_to_local_named_chat(
             sender_agent_id=actor_agent_id,
             sender_address=sender_address,
             body=payload.message,
-            reply_to=uuid_mod.UUID(payload.reply_to)
-            if payload.reply_to is not None
-            else None,
+            reply_to=uuid_mod.UUID(payload.reply_to) if payload.reply_to is not None else None,
             leaving=payload.leaving,
             hang_on=payload.hang_on,
             signature=payload.signature,
@@ -2275,9 +2208,7 @@ async def _send_to_local_named_chat(
             message_id=pre_message_id,
         )
     if msg_row is None:
-        raise DeliveryRefusal(
-            status_code=HTTPStatus.NOT_FOUND, detail=SENDER_NOT_IN_SESSION
-        )
+        raise DeliveryRefusal(status_code=HTTPStatus.NOT_FOUND, detail=SENDER_NOT_IN_SESSION)
 
     await _record_wait(
         db,
@@ -2393,7 +2324,7 @@ async def _send_in_continued_session(
     registry_client = runtime.registry_client
     id_chain = auth.id_chain
     actor_dids = participant_dids(auth)
-    actor_agent = await resolve_actor_agent(db, actor_dids)
+    actor_agent = await resolve_actor_agent(db, actor_dids, team_id=auth.team_id)
     actor_agent_id = auth.agent_id or (str(actor_agent["agent_id"]) if actor_agent else None)
     sender_address = _sender_address(auth)
     session_uuid = target.session_id

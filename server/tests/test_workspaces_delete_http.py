@@ -1,345 +1,172 @@
-"""HTTP-level regression tests for workspace coordination routes."""
+"""Workspace consumers use actual registry admission, native HTTP and Redis."""
 
-from __future__ import annotations
-
-from team_facts_fixtures import legacy_registry
-
-from identity_binding_support import seed_verified_bindings
-
-import base64
+import asyncio
 import json
+import os
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock
-from uuid import uuid4
+from types import SimpleNamespace
+from urllib.parse import quote, urlsplit, urlunsplit
+from uuid import UUID, uuid4
 
+import httpx
 import pytest
-from fastapi import FastAPI
-from httpx import ASGITransport, AsyncClient
-from nacl.signing import SigningKey
+import pytest_asyncio
+from redis.asyncio import Redis
 
-from awid.did import did_from_public_key
-from awid.signing import canonical_json_bytes, sign_message
-from aweb.coordination.routes.workspaces import router as workspaces_router
-
-
-def _make_keypair():
-    sk = SigningKey.generate()
-    pk = bytes(sk.verify_key)
-    did_key = did_from_public_key(pk)
-    return bytes(sk), pk, did_key
-
-
-def _make_certificate(team_sk, team_did_key, member_did_key, **kwargs):
-    cert = {
-        "version": 1,
-        "certificate_id": kwargs.get("certificate_id", "cert-001"),
-        "team_id": kwargs.get("team_id", "backend:acme.com"),
-        "team_did_key": team_did_key,
-        "member_did_key": member_did_key,
-        "member_did_aw": "",
-        "member_address": "",
-        "alias": kwargs.get("alias", "bob"),
-        "identity_scope": kwargs.get("identity_scope", "local"),
-        "issued_at": datetime.now(timezone.utc).isoformat(),
-    }
-    cert["signature"] = sign_message(team_sk, canonical_json_bytes(cert))
-    return cert
+from aweb.api import create_app
+from aweb.events import team_events_channel_name
+from aweb.lifecycle import replay_lifecycle_side_effects
+from aweb.outbox_recovery import stop_outbox_recovery
+from aweb.presence import clear_workspace_presence
+from messaging_actor_support import (
+    admit_messaging_actor,
+    register_messaging_team,
+    messaging_actor_headers,
+)
+from test_agents_suggest_alias_http import request_as, _global_actor
+from test_dashboard_privacy import TEAM, privacy_stack
+from test_team_room import admit_room_member
 
 
-def _encode_certificate(cert):
-    return base64.b64encode(json.dumps(cert).encode()).decode()
+@pytest_asyncio.fixture
+async def workspace_stack(shared_test_pool, shared_test_database, monkeypatch):
+    monkeypatch.setenv("AWEB_DATABASE_URL", shared_test_database.dsn)
+    async with privacy_stack(shared_test_pool, monkeypatch) as env:
+        for alias in ("alice", "bob"):
+            await admit_room_member(env, alias=alias)
+        # The original fixtures contain exactly the two selected live members.
+        await env.db.execute(
+            "UPDATE {{tables.workspaces}} SET deleted_at=NOW() WHERE team_id=$1 AND alias='carol'",
+            TEAM,
+        )
+        await env.db.execute(
+            "UPDATE {{tables.agents}} SET deleted_at=NOW() WHERE team_id=$1 AND alias='carol'",
+            TEAM,
+        )
+        yield env
 
 
-def _signed_request(agent_sk, agent_did_key, team_id, body_bytes=b""):
-    import hashlib
-
-    timestamp = datetime.now(timezone.utc).isoformat()
-    body_sha256 = hashlib.sha256(body_bytes).hexdigest()
-    payload_bytes = canonical_json_bytes(
-        {
-            "body_sha256": body_sha256,
-            "team_id": team_id,
-            "timestamp": timestamp,
-        }
+async def _new_member(env, alias):
+    member = await admit_messaging_actor(env, alias=alias, team_id=TEAM, local=True)
+    workspace = await env.db.fetch_value(
+        "SELECT workspace_id FROM {{tables.workspaces}} WHERE agent_id=$1 AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1",
+        UUID(member.agent_id),
     )
-    sig = sign_message(agent_sk, payload_bytes)
-    return {
-        "Authorization": f"DIDKey {agent_did_key} {sig}",
-        "X-AWEB-Timestamp": timestamp,
-    }
+    actor = SimpleNamespace(
+        sk=member.signing_key,
+        did=member.did_key,
+        certificate=member.certificate,
+        id=UUID(member.agent_id),
+        workspace=workspace,
+    )
+    env.actors[alias] = actor
+    return actor
 
 
-def _build_test_app(aweb_db, team_did_key, redis=None):
-    app = FastAPI()
-    app.include_router(workspaces_router)
-
-    class _DbShim:
-        def get_manager(self, name="aweb"):
-            return aweb_db
-
-    import hashlib as _hashlib
-
-    @app.middleware("http")
-    async def cache_body(request, call_next):
-        if request.method in {"GET", "HEAD", "OPTIONS"}:
-            request.state.cached_body = b""
-            request.state.body_sha256 = _hashlib.sha256(b"").hexdigest()
-            return await call_next(request)
-
-        original_receive = request._receive
-        body = await request.body()
-        request.state.cached_body = body
-        request.state.body_sha256 = _hashlib.sha256(body).hexdigest()
-        replayed = False
-
-        async def _receive():
-            nonlocal replayed
-            if not replayed:
-                replayed = True
-                return {"type": "http.request", "body": body, "more_body": False}
-            while True:
-                message = await original_receive()
-                if message["type"] == "http.disconnect":
-                    return message
-                if message["type"] == "http.request" and not message.get("more_body", False):
-                    continue
-                return message
-
-        request._receive = _receive
-        return await call_next(request)
-
-    app.state.db = _DbShim()
-    app.state.redis = redis
-
-    registry = AsyncMock()
-    registry.get_team_public_key = AsyncMock(return_value=team_did_key)
-    registry.get_team_revocations = AsyncMock(return_value=set())
-    app.state.awid_registry_client = legacy_registry(registry)
-    return app
+async def _stale(env, actor, *, days=0):
+    seen = datetime.now(timezone.utc) - (
+        timedelta(days=days) if days else timedelta(hours=2)
+    )
+    await env.db.execute(
+        "UPDATE {{tables.workspaces}} SET last_seen_at=$1 WHERE workspace_id=$2",
+        seen,
+        actor.workspace,
+    )
+    await clear_workspace_presence(env.redis, [str(actor.workspace), str(actor.id)])
+    return seen
 
 
-class _FakeRedisPipeline:
-    def __init__(self, redis):
-        self.redis = redis
-        self.actions = []
-
-    def hgetall(self, key):
-        self.actions.append(("hgetall", key))
-        return self
-
-    def exists(self, key):
-        self.actions.append(("exists", key))
-        return self
-
-    def delete(self, key):
-        self.actions.append(("delete", key))
-        return self
-
-    def srem(self, key, member):
-        self.actions.append(("srem", key, member))
-        return self
-
-    async def execute(self):
-        self.redis.pipeline_actions.extend(self.actions)
-        results = []
-        for action, key, *_ in self.actions:
-            if action == "hgetall":
-                results.append(self.redis.presence.get(key, {}))
-            elif action == "exists":
-                results.append(int(key in self.redis.presence))
-            else:
-                results.append(1)
-        return results
+async def _claims(env, alias, count):
+    refs = []
+    for index in range(count):
+        made = await request_as(
+            env,
+            alias=alias,
+            method="POST",
+            path="/v1/tasks",
+            payload={"title": f"Workspace claim {index}"},
+        )
+        assert made.status_code == 200, made.text
+        ref = made.json()["task_ref"]
+        claimed = await request_as(
+            env,
+            alias=alias,
+            method="PATCH",
+            path=f"/v1/tasks/{ref}",
+            payload={"status": "in_progress"},
+        )
+        assert claimed.status_code == 200, claimed.text
+        refs.append(ref)
+    return refs
 
 
-class _FakeRedis:
-    def __init__(self):
-        self.published = []
-        self.pipeline_actions = []
-        self.presence = {}
-        self.cleaned_presence_ids = []
+async def _rows(env, actor):
+    workspace = await env.db.fetch_one(
+        "SELECT * FROM {{tables.workspaces}} WHERE workspace_id=$1", actor.workspace
+    )
+    agent = await env.db.fetch_one(
+        "SELECT * FROM {{tables.agents}} WHERE agent_id=$1", actor.id
+    )
+    return workspace, agent
 
-    async def publish(self, channel, message):
-        self.published.append((channel, json.loads(message)))
-        return 1
 
-    async def exists(self, key):
-        return int(key in self.presence)
+async def _delete(env, caller, workspace):
+    return await request_as(
+        env, alias=caller, method="DELETE", path=f"/v1/workspaces/{workspace}"
+    )
 
-    async def scan_iter(self, match):
-        if False:
-            yield match
 
-    async def sismember(self, key, member):
-        return False
-
-    async def smembers(self, key):
-        if key.startswith("idx:team_workspaces:"):
-            return {
-                presence["workspace_id"]
-                for presence in self.presence.values()
-                if presence.get("workspace_id")
-            }
-        return set()
-
-    async def get(self, key):
-        return None
-
-    async def hset(self, key, mapping):
-        self.presence[key] = dict(mapping)
-        return len(mapping)
-
-    def pipeline(self, transaction=True):
-        return _FakeRedisPipeline(self)
-
-    async def eval(self, script, number_of_keys, *args):
-        assert number_of_keys == 2
-        primary_key, coordinates_key, workspace_id, all_index_key = args
-        self.cleaned_presence_ids.append(workspace_id)
-        self.presence.pop(primary_key, None)
-        self.presence.pop(coordinates_key, None)
-        self.pipeline_actions.extend([
-            ("srem", all_index_key, workspace_id),
-            ("delete", primary_key),
-            ("delete", coordinates_key),
-        ])
-        return 1
+async def _hide_initial(env):
+    await env.db.execute(
+        "UPDATE {{tables.workspaces}} SET deleted_at=NOW() WHERE team_id=$1", TEAM
+    )
+    await env.db.execute(
+        "UPDATE {{tables.agents}} SET deleted_at=NOW() WHERE team_id=$1", TEAM
+    )
+    await clear_workspace_presence(
+        env.redis, [str(actor.workspace) for actor in env.actors.values()]
+    )
 
 
 @pytest.mark.asyncio
-async def test_team_roster_prioritizes_live_presence_and_reports_truncation(aweb_cloud_db):
-    team_sk, _, team_did_key = _make_keypair()
-    agent_sk, _, agent_did_key = _make_keypair()
-    team_id = "backend:acme.com"
-    now = datetime.now(timezone.utc)
-
-    cert = _make_certificate(
-        team_sk,
-        team_did_key,
-        agent_did_key,
-        team_id=team_id,
-        alias="live-0",
-        identity_scope="local",
-    )
-    headers = _signed_request(agent_sk, agent_did_key, team_id)
-    headers["X-AWID-Team-Certificate"] = _encode_certificate(cert)
-
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ($1, $2, $3, $4)
-        """,
-        team_id,
-        "acme.com",
-        "backend",
-        team_did_key,
-    )
-
-    redis = _FakeRedis()
-    active_aliases = {f"live-{index}" for index in range(5)}
-    self_workspace_id = None
-    for index, alias in enumerate(sorted(active_aliases)):
-        workspace_id = uuid4()
-        agent_id = uuid4()
-        did_key = agent_did_key if alias == "live-0" else _make_keypair()[2]
-        if alias == "live-0":
-            self_workspace_id = workspace_id
-        await aweb_cloud_db.aweb_db.execute(
-            """
-            INSERT INTO {{tables.agents}}
-                (agent_id, team_id, did_key, alias, identity_scope, status)
-            VALUES ($1, $2, $3, $4, 'local', 'active')
-            """,
-            agent_id,
-            team_id,
-            did_key,
-            alias,
+async def test_team_roster_prioritizes_live_presence_and_reports_truncation(
+    workspace_stack,
+):
+    env = workspace_stack
+    await _hide_initial(env)
+    active_aliases = {f"live-{i}" for i in range(5)}
+    for alias in sorted(active_aliases):
+        actor = await _new_member(env, alias)
+        heartbeat = await request_as(
+            env,
+            alias=alias,
+            method="POST",
+            path="/v1/workspaces/heartbeat",
+            payload={"workspace_id": str(actor.workspace), "alias": alias},
         )
-        await aweb_cloud_db.aweb_db.execute(
-            """
-            INSERT INTO {{tables.workspaces}}
-                (workspace_id, team_id, agent_id, alias, last_seen_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $5)
-            """,
-            workspace_id,
-            team_id,
-            agent_id,
-            alias,
-            now - timedelta(seconds=index),
-        )
-        redis.presence[f"presence:{workspace_id}"] = {
-            "workspace_id": str(workspace_id),
-            "alias": alias,
-            "team_id": team_id,
-            "status": "active",
-            "last_seen": (now - timedelta(seconds=index)).isoformat(),
-        }
-
-    stale_seen_at = now - timedelta(days=60)
+        assert heartbeat.status_code == 200, heartbeat.text
     for index in range(10):
         alias = f"stale-{index}"
-        workspace_id = uuid4()
-        agent_id = uuid4()
-        await aweb_cloud_db.aweb_db.execute(
-            """
-            INSERT INTO {{tables.agents}}
-                (agent_id, team_id, did_key, alias, identity_scope, status)
-            VALUES ($1, $2, $3, $4, 'local', 'active')
-            """,
-            agent_id,
-            team_id,
-            _make_keypair()[2],
-            alias,
+        actor = await _new_member(env, alias)
+        await _claims(env, alias, 1)
+        seen = await _stale(env, actor, days=60)
+        await env.db.execute(
+            "UPDATE {{tables.task_claims}} SET claimed_at=$1 WHERE workspace_id=$2",
+            seen,
+            actor.workspace,
         )
-        await aweb_cloud_db.aweb_db.execute(
-            """
-            INSERT INTO {{tables.workspaces}}
-                (workspace_id, team_id, agent_id, alias, last_seen_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $5)
-            """,
-            workspace_id,
-            team_id,
-            agent_id,
-            alias,
-            stale_seen_at,
-        )
-        await aweb_cloud_db.aweb_db.execute(
-            """
-            INSERT INTO {{tables.task_claims}}
-                (team_id, workspace_id, alias, human_name, task_ref, claimed_at)
-            VALUES ($1, $2, $3, '', $4, $5)
-            """,
-            team_id,
-            workspace_id,
-            alias,
-            f"backend-stale-{index}",
-            stale_seen_at,
-        )
-
-    app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key, redis=redis)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.get(
-            "/v1/workspaces/team",
-            params={
-                "include_claims": "true",
-                "include_presence": "true",
-                "only_with_claims": "false",
-                "always_include_workspace_id": str(self_workspace_id),
-                "limit": 5,
-            },
-            headers=headers,
-        )
-        response_without_presence = await client.get(
-            "/v1/workspaces/team",
-            params={
-                "include_claims": "true",
-                "include_presence": "false",
-                "only_with_claims": "false",
-                "limit": 5,
-            },
-            headers=headers,
-        )
-
+    base = "/v1/workspaces/team?include_claims=true&only_with_claims=false&limit=5"
+    response = await request_as(
+        env,
+        alias="live-0",
+        method="GET",
+        path=base
+        + f"&include_presence=true&always_include_workspace_id={env.actors['live-0'].workspace}",
+    )
+    response_without_presence = await request_as(
+        env, alias="live-0", method="GET", path=base + "&include_presence=false"
+    )
     assert response.status_code == 200, response.text
     data = response.json()
     assert data["has_more"] is True
@@ -350,107 +177,34 @@ async def test_team_roster_prioritizes_live_presence_and_reports_truncation(aweb
 
 
 @pytest.mark.asyncio
-async def test_team_roster_keeps_live_presence_outside_sql_candidate_window(aweb_cloud_db):
-    team_sk, _, team_did_key = _make_keypair()
-    agent_sk, _, agent_did_key = _make_keypair()
-    team_id = "backend:acme.com"
-    now = datetime.now(timezone.utc)
-
-    cert = _make_certificate(
-        team_sk,
-        team_did_key,
-        agent_did_key,
-        team_id=team_id,
-        alias="live",
-        identity_scope="local",
+async def test_team_roster_keeps_live_presence_outside_sql_candidate_window(
+    workspace_stack,
+):
+    env = workspace_stack
+    await _hide_initial(env)
+    live = await _new_member(env, "live")
+    await env.db.execute(
+        "UPDATE {{tables.workspaces}} SET last_seen_at=NOW()-INTERVAL '60 days' WHERE workspace_id=$1",
+        live.workspace,
     )
-    headers = _signed_request(agent_sk, agent_did_key, team_id)
-    headers["X-AWID-Team-Certificate"] = _encode_certificate(cert)
-
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ($1, $2, $3, $4)
-        """,
-        team_id,
-        "acme.com",
-        "backend",
-        team_did_key,
+    heartbeat = await request_as(
+        env, alias="live", method="POST", path="/v1/agents/heartbeat"
     )
-
-    live_workspace_id = uuid4()
-    live_agent_id = uuid4()
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, alias, identity_scope, status)
-        VALUES ($1, $2, $3, 'live', 'local', 'active')
-        """,
-        live_agent_id,
-        team_id,
-        agent_did_key,
+    assert heartbeat.status_code == 200, heartbeat.text
+    # Keep genuine fresh presence while the persisted SQL observation is old.
+    await env.db.execute(
+        "UPDATE {{tables.workspaces}} SET last_seen_at=NOW()-INTERVAL '60 days' WHERE workspace_id=$1",
+        live.workspace,
     )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.workspaces}}
-            (workspace_id, team_id, agent_id, alias, last_seen_at, updated_at)
-        VALUES ($1, $2, $3, 'live', $4, $4)
-        """,
-        live_workspace_id,
-        team_id,
-        live_agent_id,
-        now - timedelta(days=60),
-    )
-
-    redis = _FakeRedis()
-    redis.presence[f"presence:{live_workspace_id}"] = {
-        "workspace_id": str(live_workspace_id),
-        "alias": "live",
-        "team_id": team_id,
-        "status": "active",
-        "last_seen": now.isoformat(),
-    }
-
     for index in range(5):
-        alias = f"offline-{index}"
-        workspace_id = uuid4()
-        agent_id = uuid4()
-        await aweb_cloud_db.aweb_db.execute(
-            """
-            INSERT INTO {{tables.agents}}
-                (agent_id, team_id, did_key, alias, identity_scope, status)
-            VALUES ($1, $2, $3, $4, 'local', 'active')
-            """,
-            agent_id,
-            team_id,
-            _make_keypair()[2],
-            alias,
-        )
-        await aweb_cloud_db.aweb_db.execute(
-            """
-            INSERT INTO {{tables.workspaces}}
-                (workspace_id, team_id, agent_id, alias, last_seen_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $5)
-            """,
-            workspace_id,
-            team_id,
-            agent_id,
-            alias,
-            now - timedelta(seconds=index),
-        )
-
-    app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key, redis=redis)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.get(
-            "/v1/workspaces/team",
-            params={
-                "include_presence": "true",
-                "only_with_claims": "false",
-                "limit": 1,
-            },
-            headers=headers,
-        )
-
+        actor = await _new_member(env, f"offline-{index}")
+        await _stale(env, actor)
+    response = await request_as(
+        env,
+        alias="live",
+        method="GET",
+        path="/v1/workspaces/team?include_presence=true&only_with_claims=false&limit=1",
+    )
     assert response.status_code == 200, response.text
     data = response.json()
     assert data["has_more"] is True
@@ -458,971 +212,421 @@ async def test_team_roster_keeps_live_presence_outside_sql_candidate_window(aweb
     assert data["workspaces"][0]["status"] == "active"
 
 
-@pytest.mark.asyncio
-async def test_delete_workspace_recovers_post_commit_presence_failure(aweb_cloud_db, monkeypatch):
-    team_sk, _, team_did_key = _make_keypair()
-    agent_sk, _, agent_did_key = _make_keypair()
-    _, _, target_did_key = _make_keypair()
-    team_id = "backend:acme.com"
-    workspace_id = uuid4()
-    agent_id = uuid4()
-    authority_agent_id = uuid4()
-
-    cert = _make_certificate(
-        team_sk,
-        team_did_key,
-        agent_did_key,
-        team_id=team_id,
-        alias="provisioner",
-        identity_scope="local",
+@asynccontextmanager
+async def _redis_without_delete(env):
+    # Existing R14 real-service fault: one temporary ACL denies only DEL.
+    username, password = f"cleanup-{uuid4().hex}", uuid4().hex
+    await env.redis.execute_command(
+        "ACL", "SETUSER", username, "on", f">{password}", "~*", "&*", "+@all", "-del"
     )
-    headers = _signed_request(agent_sk, agent_did_key, team_id)
-    headers["X-AWID-Team-Certificate"] = _encode_certificate(cert)
-
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ($1, $2, $3, $4)
-        """,
-        team_id,
-        "acme.com",
-        "backend",
-        team_did_key,
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, alias, identity_scope, role)
-        VALUES ($1, $2, $3, $4, 'local', 'developer')
-        """,
-        agent_id,
-        team_id,
-        target_did_key,
-        "bob",
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, alias, identity_scope, role)
-        VALUES ($1, $2, $3, $4, 'local', 'developer')
-        """,
-        authority_agent_id,
-        team_id,
-        agent_did_key,
-        "provisioner",
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.workspaces}}
-            (workspace_id, team_id, agent_id, alias, workspace_path, last_seen_at)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        """,
-        workspace_id,
-        team_id,
-        agent_id,
-        "bob",
-        "/tmp/gone-worktree",
-        datetime.now(timezone.utc) - timedelta(hours=1),
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.task_claims}}
-            (team_id, workspace_id, alias, human_name, task_ref, claimed_at)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        """,
-        team_id,
-        workspace_id,
-        "bob",
-        "",
-        "backend-1",
-        datetime.now(timezone.utc),
-    )
-
-    redis = _FakeRedis()
-    from aweb import lifecycle
-
-    original_clear = lifecycle.clear_workspace_presence
-    clear_calls = 0
-
-    async def _fail_after_sql_once(redis_client, workspace_ids):
-        nonlocal clear_calls
-        clear_calls += 1
-        if clear_calls == 1:
-            raise ConnectionError("simulated Redis failure after SQL commit")
-        return await original_clear(redis_client, workspace_ids)
-
-    monkeypatch.setattr(lifecycle, "clear_workspace_presence", _fail_after_sql_once)
-    app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key, redis=redis)
-    async with AsyncClient(
-        transport=ASGITransport(app=app),
-        base_url="http://test",
-    ) as client:
-        failed = await client.delete(f"/v1/workspaces/{workspace_id}", headers=headers)
-        resp = await client.delete(f"/v1/workspaces/{workspace_id}", headers=headers)
-
-    assert failed.status_code == 503, failed.text
-    assert failed.json()["detail"]["code"] == "post_commit_cleanup_pending"
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert body["workspace_id"] == str(workspace_id)
-    assert body["alias"] == "bob"
-    assert body["identity_deleted"] is True
-
-    workspace_row = await aweb_cloud_db.aweb_db.fetch_one(
-        """
-        SELECT deleted_at FROM {{tables.workspaces}}
-        WHERE workspace_id = $1
-        """,
-        workspace_id,
-    )
-    agent_row = await aweb_cloud_db.aweb_db.fetch_one(
-        """
-        SELECT deleted_at, status FROM {{tables.agents}}
-        WHERE agent_id = $1
-        """,
-        agent_id,
-    )
-    claims_row = await aweb_cloud_db.aweb_db.fetch_one(
-        """
-        SELECT COUNT(*) AS count FROM {{tables.task_claims}}
-        WHERE workspace_id = $1
-        """,
-        workspace_id,
-    )
-
-    assert workspace_row["deleted_at"] is not None
-    assert agent_row["deleted_at"] is not None
-    assert agent_row["status"] == "deleted"
-    assert claims_row["count"] == 0
-    assert any(
-        channel == f"events:{workspace_id}"
-        and payload["type"] == "task.unclaimed"
-        and payload["workspace_id"] == str(workspace_id)
-        and payload["task_ref"] == "backend-1"
-        and payload["alias"] == "bob"
-        for channel, payload in redis.published
-    )
-    assert any(
-        channel == f"team-events:{team_id}"
-        and payload["type"] == "task.unclaimed"
-        and payload["team_id"] == team_id
-        and payload["task_ref"] == "backend-1"
-        and payload["alias"] == "bob"
-        for channel, payload in redis.published
-    )
-    assert ("delete", f"presence:{workspace_id}") in redis.pipeline_actions
-    assert ("srem", "idx:all_workspaces", str(workspace_id)) in redis.pipeline_actions
-    assert set(redis.cleaned_presence_ids) == {str(workspace_id), str(agent_id)}
-
-
-@pytest.mark.asyncio
-async def test_delete_workspace_rejects_persistent_identity(aweb_cloud_db):
-    team_sk, _, team_did_key = _make_keypair()
-    agent_sk, _, agent_did_key = _make_keypair()
-    team_id = "backend:acme.com"
-    workspace_id = uuid4()
-    agent_id = uuid4()
-
-    cert = _make_certificate(
-        team_sk,
-        team_did_key,
-        agent_did_key,
-        team_id=team_id,
-        alias="maintainer",
-        identity_scope="global",
-    )
-    headers = _signed_request(agent_sk, agent_did_key, team_id)
-    headers["X-AWID-Team-Certificate"] = _encode_certificate(cert)
-
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ($1, $2, $3, $4)
-        """,
-        team_id,
-        "acme.com",
-        "backend",
-        team_did_key,
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, role)
-        VALUES ($1, $2, $3, $4, $5, $6, 'global', 'developer')
-        """,
-        agent_id,
-        team_id,
-        agent_did_key,
-        "did:aw:maintainer",
-        "acme.com/maintainer",
-        "maintainer",
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.workspaces}}
-            (workspace_id, team_id, agent_id, alias, workspace_path, last_seen_at)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        """,
-        workspace_id,
-        team_id,
-        agent_id,
-        "maintainer",
-        "/tmp/gone-worktree",
-        datetime.now(timezone.utc) - timedelta(hours=1),
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.task_claims}}
-            (team_id, workspace_id, alias, human_name, task_ref, claimed_at)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        """,
-        team_id,
-        workspace_id,
-        "maintainer",
-        "",
-        "backend-2",
-        datetime.now(timezone.utc),
-    )
-
-    app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
-    seed_verified_bindings(app, ("did:aw:maintainer", agent_did_key, "acme.com/maintainer"))
-    async with AsyncClient(
-        transport=ASGITransport(app=app),
-        base_url="http://test",
-    ) as client:
-        resp = await client.delete(f"/v1/workspaces/{workspace_id}", headers=headers)
-
-    assert resp.status_code == 409
-    body = resp.json()
-    assert body["detail"]["code"] == "global_identity_not_cleanup_eligible"
-    assert body["detail"]["workspace_id"] == str(workspace_id)
-    assert body["detail"]["identity_id"] == str(agent_id)
-    assert body["detail"]["identity_scope"] == "global"
-
-    workspace_row = await aweb_cloud_db.aweb_db.fetch_one(
-        """
-        SELECT deleted_at FROM {{tables.workspaces}}
-        WHERE workspace_id = $1
-        """,
-        workspace_id,
-    )
-    agent_row = await aweb_cloud_db.aweb_db.fetch_one(
-        """
-        SELECT deleted_at, status, did_key, did_aw, address, identity_scope FROM {{tables.agents}}
-        WHERE agent_id = $1
-        """,
-        agent_id,
-    )
-    claims_row = await aweb_cloud_db.aweb_db.fetch_one(
-        """
-        SELECT COUNT(*) AS count FROM {{tables.task_claims}}
-        WHERE workspace_id = $1
-        """,
-        workspace_id,
-    )
-    assert workspace_row["deleted_at"] is None
-    assert agent_row["deleted_at"] is None
-    assert agent_row["status"] == "active"
-    assert agent_row["did_key"] == agent_did_key
-    assert agent_row["did_aw"] == "did:aw:maintainer"
-    assert agent_row["address"] == "acme.com/maintainer"
-    assert agent_row["identity_scope"] == "global"
-    assert claims_row["count"] == 1
-
-
-@pytest.mark.asyncio
-async def test_delete_workspace_unknown_identity_scope_fails_closed(aweb_cloud_db):
-    team_sk, _, team_did_key = _make_keypair()
-    agent_sk, _, agent_did_key = _make_keypair()
-    team_id = "backend:acme.com"
-    workspace_id = uuid4()
-    missing_agent_id = uuid4()
-
-    cert = _make_certificate(
-        team_sk,
-        team_did_key,
-        agent_did_key,
-        team_id=team_id,
-        alias="orphan",
-        identity_scope="local",
-    )
-    headers = _signed_request(agent_sk, agent_did_key, team_id)
-    headers["X-AWID-Team-Certificate"] = _encode_certificate(cert)
-
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ($1, $2, $3, $4)
-        """,
-        team_id,
-        "acme.com",
-        "backend",
-        team_did_key,
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}}
-            (team_id, did_key, alias, identity_scope, role)
-        VALUES ($1, $2, $3, 'local', 'developer')
-        """,
-        team_id,
-        agent_did_key,
-        "caller",
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.workspaces}}
-            (workspace_id, team_id, agent_id, alias, workspace_path, last_seen_at)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        """,
-        workspace_id,
-        team_id,
-        missing_agent_id,
-        "orphan",
-        "/tmp/gone-worktree",
-        datetime.now(timezone.utc) - timedelta(hours=1),
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.task_claims}}
-            (team_id, workspace_id, alias, human_name, task_ref, claimed_at)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        """,
-        team_id,
-        workspace_id,
-        "orphan",
-        "",
-        "backend-3",
-        datetime.now(timezone.utc),
-    )
-
-    app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
-    async with AsyncClient(
-        transport=ASGITransport(app=app),
-        base_url="http://test",
-    ) as client:
-        resp = await client.delete(f"/v1/workspaces/{workspace_id}", headers=headers)
-
-    assert resp.status_code == 409
-    body = resp.json()
-    assert body["detail"]["code"] == "unknown_identity_scope_no_cleanup"
-    assert body["detail"]["workspace_id"] == str(workspace_id)
-    assert body["detail"]["identity_id"] == str(missing_agent_id)
-    assert body["detail"]["identity_scope"] == "unknown"
-
-    workspace_row = await aweb_cloud_db.aweb_db.fetch_one(
-        """
-        SELECT deleted_at FROM {{tables.workspaces}}
-        WHERE workspace_id = $1
-        """,
-        workspace_id,
-    )
-    claims_row = await aweb_cloud_db.aweb_db.fetch_one(
-        """
-        SELECT COUNT(*) AS count FROM {{tables.task_claims}}
-        WHERE workspace_id = $1
-        """,
-        workspace_id,
-    )
-    assert workspace_row["deleted_at"] is None
-    assert claims_row["count"] == 1
-
-
-async def _seed_local_member(aweb_cloud_db, *, team_id, team_did_key, agent_did_key, alias, last_seen_at):
-    """One live local member: agent row plus its workspace, seen at last_seen_at."""
-    agent_id = uuid4()
-    workspace_id = uuid4()
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, alias, identity_scope, role)
-        VALUES ($1, $2, $3, $4, 'local', 'developer')
-        """,
-        agent_id,
-        team_id,
-        agent_did_key,
-        alias,
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.workspaces}}
-            (workspace_id, team_id, agent_id, alias, workspace_path, last_seen_at)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        """,
-        workspace_id,
-        team_id,
-        agent_id,
-        alias,
-        f"/tmp/{alias}-worktree",
-        last_seen_at,
-    )
-    return agent_id, workspace_id
-
-
-@pytest.mark.asyncio
-async def test_delete_workspace_rejects_recent_ephemeral_workspace_of_another_agent(aweb_cloud_db):
-    """A live teammate cannot be removed out from under its session.
-
-    This test previously used ONE agent for both the caller and the workspace,
-    so it was a self-delete and it asserted a self-delete was refused. That is no
-    longer the contract (see the self-delete test below), but the protection it
-    was really about - not deleting somebody ELSE's live workspace - still holds
-    and is what this now exercises. The scenario is corrected rather than the
-    test deleted: dropping it would remove the only coverage of that protection.
-    """
-    team_sk, _, team_did_key = _make_keypair()
-    caller_sk, _, caller_did_key = _make_keypair()
-    _, _, victim_did_key = _make_keypair()
-    team_id = "backend:acme.com"
-
-    cert = _make_certificate(
-        team_sk,
-        team_did_key,
-        caller_did_key,
-        team_id=team_id,
-        alias="caller",
-        identity_scope="local",
-    )
-    headers = _signed_request(caller_sk, caller_did_key, team_id)
-    headers["X-AWID-Team-Certificate"] = _encode_certificate(cert)
-
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ($1, $2, $3, $4)
-        """,
-        team_id,
-        "acme.com",
-        "backend",
-        team_did_key,
-    )
-    await _seed_local_member(
-        aweb_cloud_db,
-        team_id=team_id,
-        team_did_key=team_did_key,
-        agent_did_key=caller_did_key,
-        alias="caller",
-        last_seen_at=datetime.now(timezone.utc) - timedelta(minutes=5),
-    )
-    victim_agent_id, victim_workspace_id = await _seed_local_member(
-        aweb_cloud_db,
-        team_id=team_id,
-        team_did_key=team_did_key,
-        agent_did_key=victim_did_key,
-        alias="bot",
-        last_seen_at=datetime.now(timezone.utc) - timedelta(minutes=5),
-    )
-
-    app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
-    async with AsyncClient(
-        transport=ASGITransport(app=app),
-        base_url="http://test",
-    ) as client:
-        resp = await client.delete(f"/v1/workspaces/{victim_workspace_id}", headers=headers)
-
-    assert resp.status_code == 409
-    assert resp.json()["detail"]["code"] == "local_workspace_still_active"
-
-    workspace_row = await aweb_cloud_db.aweb_db.fetch_one(
-        """
-        SELECT deleted_at FROM {{tables.workspaces}}
-        WHERE workspace_id = $1
-        """,
-        victim_workspace_id,
-    )
-    agent_row = await aweb_cloud_db.aweb_db.fetch_one(
-        """
-        SELECT deleted_at FROM {{tables.agents}}
-        WHERE agent_id = $1
-        """,
-        victim_agent_id,
-    )
-    assert workspace_row["deleted_at"] is None
-    assert agent_row["deleted_at"] is None
-
-
-@pytest.mark.asyncio
-async def test_delete_workspace_allows_agent_to_delete_its_own_recent_workspace(aweb_cloud_db):
-    """A member retiring itself deletes promptly (aweb-aaqg).
-
-    The presence TTL exists so a live teammate is not removed out from under its
-    session. An agent deleting its OWN workspace learns nothing from waiting: its
-    session is over because it says so. Before this, an instance-lifetime member
-    retiring itself was refused `local_workspace_still_active` for the full
-    1,800-second TTL, which is not prompt retirement. The hosted cloud overlay
-    already made this distinction; this brings self-hosted to the same rule.
-    """
-    team_sk, _, team_did_key = _make_keypair()
-    agent_sk, _, agent_did_key = _make_keypair()
-    team_id = "backend:acme.com"
-
-    cert = _make_certificate(
-        team_sk,
-        team_did_key,
-        agent_did_key,
-        team_id=team_id,
-        alias="bot",
-        identity_scope="local",
-    )
-    headers = _signed_request(agent_sk, agent_did_key, team_id)
-    headers["X-AWID-Team-Certificate"] = _encode_certificate(cert)
-
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ($1, $2, $3, $4)
-        """,
-        team_id,
-        "acme.com",
-        "backend",
-        team_did_key,
-    )
-    # Heartbeating seconds ago: firmly inside the TTL, so this fails without the
-    # self-delete exemption rather than passing because the row looked stale.
-    agent_id, workspace_id = await _seed_local_member(
-        aweb_cloud_db,
-        team_id=team_id,
-        team_did_key=team_did_key,
-        agent_did_key=agent_did_key,
-        alias="bot",
-        last_seen_at=datetime.now(timezone.utc) - timedelta(seconds=5),
-    )
-
-    app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
-    async with AsyncClient(
-        transport=ASGITransport(app=app),
-        base_url="http://test",
-    ) as client:
-        resp = await client.delete(f"/v1/workspaces/{workspace_id}", headers=headers)
-
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert body["workspace_id"] == str(workspace_id)
-    assert body["identity_deleted"] is True
-
-    workspace_row = await aweb_cloud_db.aweb_db.fetch_one(
-        """
-        SELECT deleted_at FROM {{tables.workspaces}}
-        WHERE workspace_id = $1
-        """,
-        workspace_id,
-    )
-    agent_row = await aweb_cloud_db.aweb_db.fetch_one(
-        """
-        SELECT deleted_at FROM {{tables.agents}}
-        WHERE agent_id = $1
-        """,
-        agent_id,
-    )
-    assert workspace_row["deleted_at"] is not None
-    assert agent_row["deleted_at"] is not None
-
-
-@pytest.mark.asyncio
-async def test_delete_workspace_rejects_cross_team_request(aweb_cloud_db):
-    team_a_sk, _, team_a_did_key = _make_keypair()
-    team_b_sk, _, team_b_did_key = _make_keypair()
-    agent_sk, _, agent_did_key = _make_keypair()
-    team_a_address = "backend:acme.com"
-    team_b_address = "dev:other.example"
-    workspace_id = uuid4()
-    agent_id = uuid4()
-
-    cert = _make_certificate(
-        team_b_sk,
-        team_b_did_key,
-        agent_did_key,
-        team_id=team_b_address,
-        alias="eve",
-        identity_scope="local",
-    )
-    headers = _signed_request(agent_sk, agent_did_key, team_b_address)
-    headers["X-AWID-Team-Certificate"] = _encode_certificate(cert)
-
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ($1, $2, $3, $4), ($5, $6, $7, $8)
-        """,
-        team_a_address,
-        "acme.com",
-        "backend",
-        team_a_did_key,
-        team_b_address,
-        "other.example",
-        "dev",
-        team_b_did_key,
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, alias, identity_scope, role)
-        VALUES ($1, $2, $3, $4, 'local', 'developer')
-        """,
-        agent_id,
-        team_a_address,
-        agent_did_key,
-        "alice",
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}}
-            (team_id, did_key, alias, identity_scope, role)
-        VALUES ($1, $2, $3, 'local', 'developer')
-        """,
-        team_b_address,
-        agent_did_key,
-        "eve",
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.workspaces}}
-            (workspace_id, team_id, agent_id, alias, workspace_path, last_seen_at)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        """,
-        workspace_id,
-        team_a_address,
-        agent_id,
-        "alice",
-        "/tmp/team-a-worktree",
-        datetime.now(timezone.utc) - timedelta(hours=1),
-    )
-
-    app = _build_test_app(aweb_cloud_db.aweb_db, team_b_did_key)
-    async with AsyncClient(
-        transport=ASGITransport(app=app),
-        base_url="http://test",
-    ) as client:
-        resp = await client.delete(f"/v1/workspaces/{workspace_id}", headers=headers)
-
-    assert resp.status_code == 404
-
-    workspace_row = await aweb_cloud_db.aweb_db.fetch_one(
-        """
-        SELECT deleted_at FROM {{tables.workspaces}}
-        WHERE workspace_id = $1
-        """,
-        workspace_id,
-    )
-    agent_row = await aweb_cloud_db.aweb_db.fetch_one(
-        """
-        SELECT deleted_at FROM {{tables.agents}}
-        WHERE agent_id = $1
-        """,
-        agent_id,
-    )
-    assert workspace_row["deleted_at"] is None
-    assert agent_row["deleted_at"] is None
-
-
-async def _seed_local_workspace_with_claims(
-    aweb_cloud_db, team_sk, team_did_key, agent_sk, agent_did_key, *, task_refs
-):
-    """Seed a stale local workspace holding one claim per task ref.
-
-    Identity scope is set explicitly to local, and asserted by the caller, so a
-    test built on this fixture cannot pass through the blank-scope re-entry path
-    that returns success without running the cascade.
-    """
-    team_id = "backend:acme.com"
-    workspace_id = uuid4()
-    agent_id = uuid4()
-
-    cert = _make_certificate(
-        team_sk,
-        team_did_key,
-        agent_did_key,
-        team_id=team_id,
-        alias="retiree",
-        identity_scope="local",
-    )
-    headers = _signed_request(agent_sk, agent_did_key, team_id)
-    headers["X-AWID-Team-Certificate"] = _encode_certificate(cert)
-
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ($1, $2, $3, $4)
-        """,
-        team_id,
-        "acme.com",
-        "backend",
-        team_did_key,
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, alias, identity_scope, role)
-        VALUES ($1, $2, $3, $4, 'local', 'developer')
-        """,
-        agent_id,
-        team_id,
-        agent_did_key,
-        "retiree",
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.workspaces}}
-            (workspace_id, team_id, agent_id, alias, workspace_path, last_seen_at)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        """,
-        workspace_id,
-        team_id,
-        agent_id,
-        "retiree",
-        "/tmp/retiree-worktree",
-        datetime.now(timezone.utc) - timedelta(hours=1),
-    )
-    for task_ref in task_refs:
-        await aweb_cloud_db.aweb_db.execute(
-            """
-            INSERT INTO {{tables.task_claims}}
-                (team_id, workspace_id, alias, human_name, task_ref, claimed_at)
-            VALUES ($1, $2, $3, $4, $5, $6)
-            """,
-            team_id,
-            workspace_id,
-            "retiree",
-            "",
-            task_ref,
-            datetime.now(timezone.utc),
+    try:
+        parts = urlsplit(os.environ["REDIS_URL"])
+        endpoint = urlunsplit(
+            parts._replace(
+                netloc=f"{quote(username)}:{quote(password)}@{parts.netloc.rsplit('@', 1)[-1]}"
+            )
         )
-    return team_id, agent_id, workspace_id, headers
+        async with Redis.from_url(endpoint, decode_responses=True) as restricted:
+            await restricted.ping()
+            yield restricted
+    finally:
+        await env.redis.execute_command("ACL", "DELUSER", username)
 
 
 @pytest.mark.asyncio
-async def test_delete_workspace_reports_the_claims_it_released(aweb_cloud_db):
-    team_sk, _, team_did_key = _make_keypair()
-    agent_sk, _, agent_did_key = _make_keypair()
-    _, agent_id, workspace_id, headers = await _seed_local_workspace_with_claims(
-        aweb_cloud_db,
-        team_sk,
-        team_did_key,
-        agent_sk,
-        agent_did_key,
-        task_refs=("backend-11", "backend-12", "backend-13"),
+async def test_delete_workspace_recovers_post_commit_presence_failure(workspace_stack):
+    env = workspace_stack
+    bob = env.actors["bob"]
+    refs = await _claims(env, "bob", 1)
+    seen = await _stale(env, bob)
+    # Historical pre-coordinate presence includes the old identity-keyed entry.
+    for key in (str(bob.workspace), str(bob.id)):
+        await env.redis.hset(
+            f"presence:{key}",
+            mapping={
+                "workspace_id": key,
+                "alias": "bob",
+                "team_id": TEAM,
+                "last_seen": seen.isoformat(),
+            },
+        )
+        await env.redis.sadd("idx:all_workspaces", key)
+        assert await env.redis.exists(f"presence:{key}") == 1
+    await stop_outbox_recovery(env.app)
+    channels = [f"events:{bob.workspace}", team_events_channel_name(TEAM)]
+    async with env.redis.pubsub() as pubsub:
+        await pubsub.subscribe(*channels)
+        async with _redis_without_delete(env) as restricted:
+            app = create_app(
+                db_infra=env.infra,
+                redis=restricted,
+                public_origin=str(env.client.base_url).rstrip("/"),
+                host_runs_outbox_recovery=True,
+            )
+            app.state.db = env.infra
+            app.state.redis = restricted
+            app.state.awid_registry_client = env.app.state.awid_registry_client
+            app.state.on_mutation = env.app.state.on_mutation
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url=str(env.client.base_url),
+            ) as client:
+                alice = env.actors["alice"]
+                from test_messages_http import _signed_team_headers
+
+                failed = await client.delete(
+                    f"/v1/workspaces/{bob.workspace}",
+                    headers=_signed_team_headers(
+                        alice.sk, alice.did, TEAM, alice.certificate
+                    ),
+                )
+                assert failed.status_code == 503, failed.text
+                assert failed.json()["detail"]["code"] == "post_commit_cleanup_pending"
+                app.state.redis = env.redis
+                response = await client.delete(
+                    f"/v1/workspaces/{bob.workspace}",
+                    headers=_signed_team_headers(
+                        alice.sk, alice.did, TEAM, alice.certificate
+                    ),
+                )
+                assert response.status_code == 200, response.text
+                body = response.json()
+                assert body["workspace_id"] == str(bob.workspace)
+                assert body["alias"] == "bob"
+                assert body["identity_deleted"] is True
+            for operation in await env.db.fetch_all(
+                "SELECT DISTINCT operation_id FROM {{tables.lifecycle_side_effect_outbox}} WHERE team_id=$1 AND delivered_at IS NULL",
+                TEAM,
+            ):
+                replay = await replay_lifecycle_side_effects(
+                    env.db, env.redis, operation_id=str(operation["operation_id"])
+                )
+                assert replay.pending_count == 0
+        received = []
+        async with asyncio.timeout(5):
+            async for item in pubsub.listen():
+                if item["type"] == "message":
+                    event = json.loads(item["data"])
+                    if event.get("type") == "task.unclaimed":
+                        received.append((item["channel"], event))
+                        if {channel for channel, event in received} == set(channels):
+                            break
+    workspace, agent = await _rows(env, bob)
+    assert workspace["deleted_at"] is not None
+    assert agent["deleted_at"] is not None
+    assert agent["status"] == "deleted"
+    assert (
+        await env.db.fetch_value(
+            "SELECT count(*) FROM {{tables.task_claims}} WHERE workspace_id=$1",
+            bob.workspace,
+        )
+        == 0
+    )
+    assert any(
+        channel == channels[0]
+        and event["workspace_id"] == str(bob.workspace)
+        and event["task_ref"] == refs[0]
+        and event["alias"] == "bob"
+        for channel, event in received
+    )
+    assert any(
+        channel == channels[1]
+        and event["team_id"] == TEAM
+        and event["task_ref"] == refs[0]
+        and event["alias"] == "bob"
+        for channel, event in received
+    )
+    for key in (str(bob.workspace), str(bob.id)):
+        assert await env.redis.exists(f"presence:{key}") == 0
+        assert not await env.redis.sismember("idx:all_workspaces", key)
+
+
+@pytest.mark.asyncio
+async def test_delete_workspace_rejects_persistent_identity(workspace_stack):
+    env = workspace_stack
+    alice = env.actors["alice"]
+    stable = await _global_actor(env, "alice", address="example.test/alice")
+    await _claims(env, "alice", 1)
+    response = await _delete(env, "alice", alice.workspace)
+    assert response.status_code == 409, response.text
+    detail = response.json()["detail"]
+    assert detail["code"] == "global_identity_not_cleanup_eligible"
+    assert detail["workspace_id"] == str(alice.workspace)
+    assert detail["identity_id"] == str(alice.id)
+    assert detail["identity_scope"] == "global"
+    workspace, agent = await _rows(env, alice)
+    assert workspace["deleted_at"] is None
+    assert agent["deleted_at"] is None
+    assert agent["status"] == "active"
+    assert agent["did_key"] == alice.did
+    assert agent["did_aw"] == stable
+    assert agent["address"] == "example.test/alice"
+    assert agent["identity_scope"] == "global"
+    assert (
+        await env.db.fetch_value(
+            "SELECT count(*) FROM {{tables.task_claims}} WHERE workspace_id=$1",
+            alice.workspace,
+        )
+        == 1
     )
 
-    scope_before = await aweb_cloud_db.aweb_db.fetch_value(
-        "SELECT identity_scope FROM {{tables.agents}} WHERE agent_id = $1",
-        agent_id,
+
+@pytest.mark.asyncio
+async def test_delete_workspace_unknown_identity_scope_fails_closed(workspace_stack):
+    env = workspace_stack
+    workspace_id, missing_agent_id = uuid4(), uuid4()
+    # Deliberately corrupt historical storage: no member is bound to this seat.
+    await env.db.execute(
+        "INSERT INTO {{tables.workspaces}} (workspace_id,team_id,agent_id,alias,last_seen_at) VALUES ($1,$2,$3,'orphan',NOW()-INTERVAL '2 hours')",
+        workspace_id,
+        TEAM,
+        missing_agent_id,
+    )
+    await env.db.execute(
+        "INSERT INTO {{tables.task_claims}} (team_id,workspace_id,alias,task_ref) VALUES ($1,$2,'orphan','orphan-unknown')",
+        TEAM,
+        workspace_id,
+    )
+    response = await _delete(env, "alice", workspace_id)
+    assert response.status_code == 409, response.text
+    detail = response.json()["detail"]
+    assert detail["code"] == "unknown_identity_scope_no_cleanup"
+    assert detail["workspace_id"] == str(workspace_id)
+    assert detail["identity_id"] == str(missing_agent_id)
+    assert detail["identity_scope"] == "unknown"
+    assert (
+        await env.db.fetch_value(
+            "SELECT deleted_at FROM {{tables.workspaces}} WHERE workspace_id=$1",
+            workspace_id,
+        )
+        is None
+    )
+    assert (
+        await env.db.fetch_value(
+            "SELECT count(*) FROM {{tables.task_claims}} WHERE workspace_id=$1",
+            workspace_id,
+        )
+        == 1
+    )
+
+
+@pytest.mark.asyncio
+async def test_delete_workspace_rejects_recent_ephemeral_workspace_of_another_agent(
+    workspace_stack,
+):
+    env = workspace_stack
+    bob = env.actors["bob"]
+    await env.db.execute(
+        "UPDATE {{tables.workspaces}} SET last_seen_at=NOW() WHERE workspace_id=$1",
+        bob.workspace,
+    )
+    response = await _delete(env, "alice", bob.workspace)
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "local_workspace_still_active"
+    workspace, agent = await _rows(env, bob)
+    assert workspace["deleted_at"] is None
+    assert agent["deleted_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_delete_workspace_allows_agent_to_delete_its_own_recent_workspace(
+    workspace_stack,
+):
+    env = workspace_stack
+    alice = env.actors["alice"]
+    await env.db.execute(
+        "UPDATE {{tables.workspaces}} SET last_seen_at=NOW() WHERE workspace_id=$1",
+        alice.workspace,
+    )
+    response = await _delete(env, "alice", alice.workspace)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["workspace_id"] == str(alice.workspace)
+    assert body["identity_deleted"] is True
+    workspace, agent = await _rows(env, alice)
+    assert workspace["deleted_at"] is not None
+    assert agent["deleted_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_delete_workspace_rejects_cross_team_request(workspace_stack):
+    env = workspace_stack
+    alice = env.actors["alice"]
+    neighbor = f"neighbor-{uuid4().hex}:example.test"
+    await register_messaging_team(env, team_id=neighbor)
+    foreign = await admit_messaging_actor(
+        env, alias="eve", team_id=neighbor, local=True
+    )
+    response = await env.client.delete(
+        f"/v1/workspaces/{alice.workspace}", headers=messaging_actor_headers(foreign)
+    )
+    assert response.status_code == 404, response.text
+    workspace, agent = await _rows(env, alice)
+    assert workspace["deleted_at"] is None
+    assert agent["deleted_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_delete_workspace_reports_the_claims_it_released(workspace_stack):
+    env = workspace_stack
+    alice = env.actors["alice"]
+    await _claims(env, "alice", 3)
+    scope_before = await env.db.fetch_value(
+        "SELECT identity_scope FROM {{tables.agents}} WHERE agent_id=$1", alice.id
     )
     assert scope_before == "local"
-
-    app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key, redis=_FakeRedis())
-    async with AsyncClient(
-        transport=ASGITransport(app=app),
-        base_url="http://test",
-    ) as client:
-        resp = await client.delete(f"/v1/workspaces/{workspace_id}", headers=headers)
-
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-
-    remaining = await aweb_cloud_db.aweb_db.fetch_value(
-        "SELECT COUNT(*) FROM {{tables.task_claims}} WHERE workspace_id = $1",
-        workspace_id,
-    )
-    assert remaining == 0
-    assert body["claims_released"] == 3
-
-
-@pytest.mark.asyncio
-async def test_delete_workspace_reports_zero_claims_when_it_released_none(aweb_cloud_db):
-    team_sk, _, team_did_key = _make_keypair()
-    agent_sk, _, agent_did_key = _make_keypair()
-    _, _, workspace_id, headers = await _seed_local_workspace_with_claims(
-        aweb_cloud_db,
-        team_sk,
-        team_did_key,
-        agent_sk,
-        agent_did_key,
-        task_refs=(),
-    )
-
-    app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key, redis=_FakeRedis())
-    async with AsyncClient(
-        transport=ASGITransport(app=app),
-        base_url="http://test",
-    ) as client:
-        resp = await client.delete(f"/v1/workspaces/{workspace_id}", headers=headers)
-
-    assert resp.status_code == 200, resp.text
-    assert resp.json()["claims_released"] == 0
-
-
-async def _seed_two_members_for_ownership(aweb_cloud_db):
-    """A team with a certified caller and another member whose seat it targets."""
-    team_sk, _, team_did_key = _make_keypair()
-    caller_sk, _, caller_did_key = _make_keypair()
-    _, _, owner_did_key = _make_keypair()
-    team_id = "backend:acme.com"
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ($1, $2, $3, $4)
-        """,
-        team_id,
-        "acme.com",
-        "backend",
-        team_did_key,
-    )
-    seen_at = datetime.now(timezone.utc) - timedelta(hours=2)
-    _, caller_workspace_id = await _seed_local_member(
-        aweb_cloud_db,
-        team_id=team_id,
-        team_did_key=team_did_key,
-        agent_did_key=caller_did_key,
-        alias="caller",
-        last_seen_at=seen_at,
-    )
-    _, owner_workspace_id = await _seed_local_member(
-        aweb_cloud_db,
-        team_id=team_id,
-        team_did_key=team_did_key,
-        agent_did_key=owner_did_key,
-        alias="bot",
-        last_seen_at=seen_at,
-    )
-    cert = _make_certificate(
-        team_sk,
-        team_did_key,
-        caller_did_key,
-        team_id=team_id,
-        alias="caller",
-        identity_scope="local",
-    )
-
-    def caller_headers(body_bytes):
-        headers = _signed_request(caller_sk, caller_did_key, team_id, body_bytes)
-        headers["X-AWID-Team-Certificate"] = _encode_certificate(cert)
-        headers["Content-Type"] = "application/json"
-        return headers
-
-    return team_did_key, caller_workspace_id, owner_workspace_id, seen_at, caller_headers
-
-
-async def _workspace_row(aweb_cloud_db, workspace_id):
-    return await aweb_cloud_db.aweb_db.fetch_one(
-        """
-        SELECT hostname, workspace_path, role, last_seen_at, focus_task_ref
-        FROM {{tables.workspaces}}
-        WHERE workspace_id = $1
-        """,
-        workspace_id,
-    )
-
-
-def _record_presence_updates(monkeypatch):
-    from aweb.coordination.routes import workspaces as workspaces_routes
-
-    calls = []
-
-    async def _record(_redis, **kwargs):
-        calls.append(kwargs)
-        return datetime.now(timezone.utc).isoformat()
-
-    monkeypatch.setattr(workspaces_routes, "update_agent_presence", _record)
-    return calls
-
-
-@pytest.mark.asyncio
-async def test_workspace_heartbeat_refuses_another_members_workspace(aweb_cloud_db, monkeypatch, caplog):
-    """A certified member cannot keep another member's seat looking alive."""
-    team_did_key, _, owner_workspace_id, seen_at, caller_headers = await _seed_two_members_for_ownership(
-        aweb_cloud_db
-    )
-    monkeypatch.setenv("AWEB_DATABASE_URL", "postgresql://unused/test")
-    presence_updates = _record_presence_updates(monkeypatch)
-    body = json.dumps(
-        {"workspace_id": str(owner_workspace_id), "alias": "bot", "hostname": "attacker-host"},
-        separators=(",", ":"),
-    ).encode()
-
-    app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.post("/v1/workspaces/heartbeat", content=body, headers=caller_headers(body))
-
-    assert resp.status_code == 403, resp.text
-    assert resp.json()["detail"] == f"Workspace {owner_workspace_id} belongs to another agent."
-    row = await _workspace_row(aweb_cloud_db, owner_workspace_id)
-    assert row["hostname"] is None
-    assert row["last_seen_at"] == seen_at
-    assert presence_updates == []
-    assert [record.getMessage() for record in caplog.records if record.levelname == "WARNING"] == [
-        "Workspace heartbeat refused: workspace belongs to another agent"
-    ]
-
-
-@pytest.mark.asyncio
-async def test_workspace_heartbeat_refreshes_the_callers_own_workspace(aweb_cloud_db, monkeypatch):
-    team_did_key, caller_workspace_id, _, seen_at, caller_headers = await _seed_two_members_for_ownership(
-        aweb_cloud_db
-    )
-    monkeypatch.setenv("AWEB_DATABASE_URL", "postgresql://unused/test")
-    presence_updates = _record_presence_updates(monkeypatch)
-    body = json.dumps(
-        {"workspace_id": str(caller_workspace_id), "alias": "caller", "hostname": "caller-host"},
-        separators=(",", ":"),
-    ).encode()
-
-    app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.post("/v1/workspaces/heartbeat", content=body, headers=caller_headers(body))
-
-    assert resp.status_code == 200, resp.text
-    row = await _workspace_row(aweb_cloud_db, caller_workspace_id)
-    assert row["hostname"] == "caller-host"
-    assert row["last_seen_at"] > seen_at
-    assert [call["workspace_id"] for call in presence_updates] == [str(caller_workspace_id)]
-
-
-@pytest.mark.asyncio
-async def test_workspace_patch_refuses_another_members_workspace(aweb_cloud_db, caplog):
-    """A certified member cannot overwrite another member's seat metadata."""
-    team_did_key, _, owner_workspace_id, _, caller_headers = await _seed_two_members_for_ownership(
-        aweb_cloud_db
-    )
-    body = json.dumps(
-        {"hostname": "attacker-host", "workspace_path": "/tmp/elsewhere", "focus_task_ref": "backend-x"},
-        separators=(",", ":"),
-    ).encode()
-
-    app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.patch(
-            f"/v1/workspaces/{owner_workspace_id}", content=body, headers=caller_headers(body)
+    response = await _delete(env, "alice", alice.workspace)
+    assert response.status_code == 200, response.text
+    assert (
+        await env.db.fetch_value(
+            "SELECT count(*) FROM {{tables.task_claims}} WHERE workspace_id=$1",
+            alice.workspace,
         )
+        == 0
+    )
+    assert response.json()["claims_released"] == 3
 
-    assert resp.status_code == 403, resp.text
-    assert resp.json()["detail"] == f"Workspace {owner_workspace_id} belongs to another agent."
-    row = await _workspace_row(aweb_cloud_db, owner_workspace_id)
+
+@pytest.mark.asyncio
+async def test_delete_workspace_reports_zero_claims_when_it_released_none(
+    workspace_stack,
+):
+    env = workspace_stack
+    response = await _delete(env, "alice", env.actors["alice"].workspace)
+    assert response.status_code == 200, response.text
+    assert response.json()["claims_released"] == 0
+
+
+async def _ownership_pair(env):
+    caller = await _new_member(env, "caller")
+    owner = await _new_member(env, "bot")
+    seen = await _stale(env, owner)
+    await _stale(env, caller)
+    await env.db.execute(
+        "UPDATE {{tables.workspaces}} SET hostname=NULL,workspace_path='/tmp/bot-worktree',focus_task_ref=NULL WHERE workspace_id=$1",
+        owner.workspace,
+    )
+    return caller, owner, seen
+
+
+@pytest.mark.asyncio
+async def test_workspace_heartbeat_refuses_another_members_workspace(
+    workspace_stack, caplog
+):
+    env = workspace_stack
+    _, owner, seen = await _ownership_pair(env)
+    presence = await env.redis.hgetall(f"presence:{owner.workspace}")
+    response = await request_as(
+        env,
+        alias="caller",
+        method="POST",
+        path="/v1/workspaces/heartbeat",
+        payload={
+            "workspace_id": str(owner.workspace),
+            "alias": "bot",
+            "hostname": "attacker-host",
+        },
+    )
+    assert response.status_code == 403, response.text
+    assert (
+        response.json()["detail"]
+        == f"Workspace {owner.workspace} belongs to another agent."
+    )
+    row = await env.db.fetch_one(
+        "SELECT hostname,last_seen_at FROM {{tables.workspaces}} WHERE workspace_id=$1",
+        owner.workspace,
+    )
+    assert row["hostname"] is None
+    assert row["last_seen_at"] == seen
+    assert await env.redis.hgetall(f"presence:{owner.workspace}") == presence
+    assert [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelname == "WARNING"
+    ] == ["Workspace heartbeat refused: workspace belongs to another agent"]
+
+
+@pytest.mark.asyncio
+async def test_workspace_heartbeat_refreshes_the_callers_own_workspace(workspace_stack):
+    env = workspace_stack
+    caller, _, _ = await _ownership_pair(env)
+    seen = await _stale(env, caller)
+    response = await request_as(
+        env,
+        alias="caller",
+        method="POST",
+        path="/v1/workspaces/heartbeat",
+        payload={
+            "workspace_id": str(caller.workspace),
+            "alias": "caller",
+            "hostname": "caller-host",
+        },
+    )
+    assert response.status_code == 200, response.text
+    row = await env.db.fetch_one(
+        "SELECT hostname,last_seen_at FROM {{tables.workspaces}} WHERE workspace_id=$1",
+        caller.workspace,
+    )
+    assert row["hostname"] == "caller-host"
+    assert row["last_seen_at"] > seen
+    presence = await env.redis.hgetall(f"presence:{caller.workspace}")
+    assert presence["workspace_id"] == str(caller.workspace)
+    assert presence["alias"] == "caller"
+    assert presence["team_id"] == TEAM
+
+
+@pytest.mark.asyncio
+async def test_workspace_patch_refuses_another_members_workspace(
+    workspace_stack, caplog
+):
+    env = workspace_stack
+    _, owner, _ = await _ownership_pair(env)
+    response = await request_as(
+        env,
+        alias="caller",
+        method="PATCH",
+        path=f"/v1/workspaces/{owner.workspace}",
+        payload={
+            "hostname": "attacker-host",
+            "workspace_path": "/tmp/attacker-worktree",
+            "focus_task_ref": "other-task",
+        },
+    )
+    assert response.status_code == 403, response.text
+    assert (
+        response.json()["detail"]
+        == f"Workspace {owner.workspace} belongs to another agent."
+    )
+    row = await env.db.fetch_one(
+        "SELECT hostname,workspace_path,focus_task_ref FROM {{tables.workspaces}} WHERE workspace_id=$1",
+        owner.workspace,
+    )
     assert row["hostname"] is None
     assert row["workspace_path"] == "/tmp/bot-worktree"
     assert row["focus_task_ref"] is None
-    assert [record.getMessage() for record in caplog.records if record.levelname == "WARNING"] == [
-        "Workspace update refused: workspace belongs to another agent"
-    ]
+    assert [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelname == "WARNING"
+    ] == ["Workspace update refused: workspace belongs to another agent"]
 
 
 @pytest.mark.asyncio
-async def test_workspace_patch_updates_the_callers_own_workspace(aweb_cloud_db):
-    team_did_key, caller_workspace_id, _, _, caller_headers = await _seed_two_members_for_ownership(
-        aweb_cloud_db
+async def test_workspace_patch_updates_the_callers_own_workspace(workspace_stack):
+    env = workspace_stack
+    caller, _, _ = await _ownership_pair(env)
+    response = await request_as(
+        env,
+        alias="caller",
+        method="PATCH",
+        path=f"/v1/workspaces/{caller.workspace}",
+        payload={"hostname": "caller-host", "focus_task_ref": "backend-y"},
     )
-    body = json.dumps(
-        {"hostname": "caller-host", "focus_task_ref": "backend-y"},
-        separators=(",", ":"),
-    ).encode()
-
-    app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.patch(
-            f"/v1/workspaces/{caller_workspace_id}", content=body, headers=caller_headers(body)
-        )
-
-    assert resp.status_code == 200, resp.text
-    assert resp.json()["updated"] is True
-    row = await _workspace_row(aweb_cloud_db, caller_workspace_id)
+    assert response.status_code == 200, response.text
+    assert response.json()["updated"] is True
+    row = await env.db.fetch_one(
+        "SELECT hostname,focus_task_ref FROM {{tables.workspaces}} WHERE workspace_id=$1",
+        caller.workspace,
+    )
     assert row["hostname"] == "caller-host"
     assert row["focus_task_ref"] == "backend-y"

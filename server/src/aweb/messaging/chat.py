@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from aweb.messaging.kinds import ContentMode
 from aweb.messaging.chat_storage import (
     store_chat as _store_chat,
@@ -19,16 +20,19 @@ from aweb.agent_wake import agent_wake_scope, record_did_wakes
 
 import logging
 from datetime import datetime, timezone
-import json
 from typing import Any
 from uuid import UUID
 
 import asyncpg
 from pgdbm.errors import QueryError
 
-from aweb.service_errors import ConflictError, NotFoundError, ServiceError
 from aweb.messaging.conversations import (
     find_active_one_to_one_conversation_between,
+)
+from aweb.service_errors import (
+    ConflictError,
+    NotFoundError,
+    ServiceError,
 )
 
 # Public Python port: native chat_send/human_channels.native and Cloud
@@ -50,9 +54,7 @@ def _json_object(value: Any) -> Any:
     return value
 
 
-async def resolve_session_actor_did(
-    db_infra, *, session_id: UUID, actor_dids: list[str]
-) -> str:
+async def resolve_session_actor_did(db_infra, *, session_id: UUID, actor_dids: list[str]) -> str:
     """Return the caller's participant DID in a chat session, or "" when it is not a participant."""
     if not actor_dids:
         return ""
@@ -91,9 +93,7 @@ async def record_chat_session_wakes(aweb_db, *, session_id: UUID) -> None:
     record_did_wakes((row["did"] for row in rows), "chat")
 
 
-async def wake_chat_session_participants(
-    aweb_db, publisher, *, session_id: UUID
-) -> None:
+async def wake_chat_session_participants(aweb_db, publisher, *, session_id: UUID) -> None:
     """Wake every participant after a change only Redis records: waiting
     presence changes sender_waiting and lifts a viewer's own suppression."""
     if publisher is None:
@@ -226,9 +226,7 @@ async def ensure_session(
                 "alias": (row.get("alias") or did).strip(),
                 "address": (row.get("address") or "").strip() or None,
                 "delivery_origin": delivery_origin,
-                "current_did_key": (
-                    row.get("current_did_key") or row.get("did_key") or ""
-                ).strip()
+                "current_did_key": (row.get("current_did_key") or row.get("did_key") or "").strip()
                 or None,
                 "transport_hint": transport_hint
                 or ("federation:" + delivery_origin if delivery_origin else "local"),
@@ -242,9 +240,7 @@ async def ensure_session(
     ]  # Supplied by the authenticated adapter, never by target resolution.
     actor_dids = [actor["did"]]
     if session_id is not None:
-        exists = await _chat_session_state(
-            db, session_id=session_id, actor_dids=actor_dids
-        )
+        exists = await _chat_session_state(db, session_id=session_id, actor_dids=actor_dids)
         if exists:
             return UUID(str(session_id))
 
@@ -273,9 +269,7 @@ async def ensure_session(
                 raise ServiceError("Failed to create chat session")
             session_id = row["session_id"]
             created_by_did = (
-                created_by
-                if created_by.startswith("did:")
-                else normalized_participants[0]["did"]
+                created_by if created_by.startswith("did:") else normalized_participants[0]["did"]
             )
 
             for participant in normalized_participants:
@@ -430,9 +424,7 @@ async def get_pending_conversations(
             "last_from_address": row["last_from_address"] or "",
             "last_from_did": row.get("last_from_did"),
             "last_from_agent_id": (
-                str(row["last_from_agent_id"])
-                if row.get("last_from_agent_id")
-                else None
+                str(row["last_from_agent_id"]) if row.get("last_from_agent_id") else None
             ),
             "unread_count": int(row["unread_count"] or 0),
             "last_activity": row["last_activity"],
@@ -441,9 +433,7 @@ async def get_pending_conversations(
             else None,
             "wait_started_at": row.get("wait_started_at"),
             "wait_started_by": (
-                str(row["wait_started_by"])
-                if row.get("wait_started_by") is not None
-                else None
+                str(row["wait_started_by"]) if row.get("wait_started_by") is not None else None
             ),
             "extended_wait_seconds": int(row["extended_wait_seconds"] or 0),
         }
@@ -535,9 +525,7 @@ async def get_message_history(
             "message_id": str(row["message_id"]),
             "seq": row["seq"],
             "from_agent_id": (
-                str(row["from_agent_id"])
-                if row.get("from_agent_id") is not None
-                else None
+                str(row["from_agent_id"]) if row.get("from_agent_id") is not None else None
             ),
             "from_did": row.get("from_did"),
             "from_alias": row["from_alias"],
@@ -545,9 +533,7 @@ async def get_message_history(
             "body": row["body"],
             "created_at": row["created_at"],
             "sender_leaving": bool(row["sender_leaving"]),
-            "reply_to": str(row["reply_to"])
-            if row.get("reply_to") is not None
-            else None,
+            "reply_to": str(row["reply_to"]) if row.get("reply_to") is not None else None,
             "signature": row.get("signature"),
             "signed_payload": row.get("signed_payload"),
             "id_chain": _json_object(row.get("id_chain")),
@@ -573,9 +559,7 @@ async def mark_messages_read(
     if not message_ids:
         raise ValidationError("message_ids is required")
     if len(message_ids) > MAX_CHAT_MARK_READ_IDS:
-        raise ValidationError(
-            f"message_ids cannot exceed {MAX_CHAT_MARK_READ_IDS} items"
-        )
+        raise ValidationError(f"message_ids cannot exceed {MAX_CHAT_MARK_READ_IDS} items")
     requested_ids = list(dict.fromkeys(UUID(message_id) for message_id in message_ids))
 
     is_participant = await aweb_db.fetch_one(

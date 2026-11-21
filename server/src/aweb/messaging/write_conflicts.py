@@ -7,8 +7,9 @@ from pgdbm.errors import QueryError
 def is_unique_write_conflict(error: BaseException) -> bool:
     """Recognize raw transaction errors and pgdbm 0.5.0's chained wrapper.
 
-    Exact-retry race recovery (docs/identity-messaging-contract.md:354-365)
-    rereads only after a committed winner's unique-key collision.
+    Exact-retry race recovery rereads only after a committed winner's
+    unique-key collision. See Receiver-Wide Replay And Contact Compatibility
+    (docs/identity-messaging-contract.md:351-374).
     """
     cause = error.__cause__ if isinstance(error, QueryError) else error
     return isinstance(cause, asyncpg.exceptions.UniqueViolationError)

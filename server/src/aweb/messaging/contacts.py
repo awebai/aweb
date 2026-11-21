@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from aweb.member_team_key import current_member_sql
+
+from aweb.identity_binding import verified_key_sql
+
 import logging
 import re
 from enum import Enum, auto
@@ -58,9 +62,7 @@ async def add_contact(
     if bound_did is not None and not bound_did.startswith("did:aw:"):
         raise ValidationError("Invalid contact_did_aw format")
     if (bound_did is None) != (controller_did is None):
-        raise ValidationError(
-            "Identity-bound contacts require DID and controller proof"
-        )
+        raise ValidationError("Identity-bound contacts require DID and controller proof")
     if controller_did is not None and not controller_did.startswith("did:key:z"):
         raise ValidationError("Invalid binding_controller_did format")
 
@@ -193,7 +195,8 @@ async def identity_contact_match(
 ) -> IdentityContactMatch:
     """Read exact active identity bindings, retaining locks in a caller transaction.
 
-    docs/identity-messaging-contract.md:85-91 excludes pending/handle/domain
+    Global And Local Identities (docs/identity-messaging-contract.md:88-91,108-110) excludes
+    pending/handle/domain
     matches. A legacy address without an identity needs explicit rebinding.
     """
     owner_keys = normalize_owner_dids(owner_dids=owner_dids)
@@ -270,8 +273,7 @@ async def resolve_local_namespace_controller_did(
         return None
     if (
         resolved is None
-        or str(getattr(resolved, "did_aw", "") or "").strip()
-        != str(contact_did_aw or "").strip()
+        or str(getattr(resolved, "did_aw", "") or "").strip() != str(contact_did_aw or "").strip()
         or str(getattr(resolved, "current_did_key", "") or "").strip()
         != str(contact_current_did_key or "").strip()
         or namespace is None
@@ -374,14 +376,8 @@ async def bind_contact_identity(
         current_did = str(current.get("contact_did_aw") or "").strip() or None
         if current_did != expected:
             raise ConflictError("Contact identity binding changed")
-        if (
-            current_did is not None
-            and current_did != bound_did
-            and not replacement_accepted
-        ):
-            raise ConflictError(
-                "Contact identity replacement requires explicit acceptance"
-            )
+        if current_did is not None and current_did != bound_did and not replacement_accepted:
+            raise ConflictError("Contact identity replacement requires explicit acceptance")
         row = await tx.fetch_one(
             """
             UPDATE {{tables.contacts}}
@@ -424,18 +420,18 @@ async def resolve_handle_contact_agent(
     if agent_name is not None:
         address = f"{namespace}/{agent_name}"
         row = await aweb_db.fetch_one(
-            """
+            f"""
             SELECT a.agent_id, a.team_id, a.did_key, a.did_aw, a.address, a.alias,
                    a.identity_scope, a.status, a.created_at,
                    MAX(w.last_seen_at) AS last_seen_at
-            FROM {{tables.agents}} a
-            LEFT JOIN {{tables.workspaces}} w
+            FROM {{{{tables.agents}}}} a
+            LEFT JOIN {{{{tables.workspaces}}}} w
               ON w.agent_id = a.agent_id
              AND w.deleted_at IS NULL
             WHERE a.deleted_at IS NULL
-              AND a.status = 'active'
+              AND {current_member_sql("a")}
               AND a.identity_scope = 'global'
-              AND a.did_aw_verified_key = a.did_key
+              AND {verified_key_sql("a")}
               AND a.address = $1
             GROUP BY a.agent_id, a.team_id, a.did_key, a.did_aw, a.address, a.alias,
                      a.identity_scope, a.status, a.created_at
@@ -446,18 +442,18 @@ async def resolve_handle_contact_agent(
         )
     else:
         row = await aweb_db.fetch_one(
-            """
+            f"""
             SELECT a.agent_id, a.team_id, a.did_key, a.did_aw, a.address, a.alias,
                    a.identity_scope, a.status, a.created_at,
                    MAX(w.last_seen_at) AS last_seen_at
-            FROM {{tables.agents}} a
-            LEFT JOIN {{tables.workspaces}} w
+            FROM {{{{tables.agents}}}} a
+            LEFT JOIN {{{{tables.workspaces}}}} w
               ON w.agent_id = a.agent_id
              AND w.deleted_at IS NULL
             WHERE a.deleted_at IS NULL
-              AND a.status = 'active'
+              AND {current_member_sql("a")}
               AND a.identity_scope = 'global'
-              AND a.did_aw_verified_key = a.did_key
+              AND {verified_key_sql("a")}
               AND a.address LIKE $1
             GROUP BY a.agent_id, a.team_id, a.did_key, a.did_aw, a.address, a.alias,
                      a.identity_scope, a.status, a.created_at
@@ -478,9 +474,7 @@ async def resolve_handle_contact_agent(
         "identity_scope": row["identity_scope"],
         "status": row["status"],
         "created_at": row["created_at"].isoformat(),
-        "last_seen_at": row["last_seen_at"].isoformat()
-        if row["last_seen_at"]
-        else None,
+        "last_seen_at": row["last_seen_at"].isoformat() if row["last_seen_at"] else None,
     }
 
 
@@ -538,11 +532,7 @@ def _normalize_handle_namespace(handle_namespace: str) -> str:
     namespace = normalize_hosted_handle_reference(handle_namespace)
     if namespace.startswith("@"):
         raise ValidationError("Invalid handle_namespace format")
-    if (
-        not namespace
-        or "/" in namespace
-        or not HANDLE_NAMESPACE_PATTERN.match(namespace)
-    ):
+    if not namespace or "/" in namespace or not HANDLE_NAMESPACE_PATTERN.match(namespace):
         raise ValidationError("Invalid handle_namespace format")
     return namespace
 
@@ -565,9 +555,7 @@ def _contact_row_to_dict(row) -> dict:
         "contact_did_aw": row.get("contact_did_aw"),
         "binding_controller_did": row.get("binding_controller_did"),
         "binding_accepted_at": (
-            row["binding_accepted_at"].isoformat()
-            if row.get("binding_accepted_at")
-            else None
+            row["binding_accepted_at"].isoformat() if row.get("binding_accepted_at") else None
         ),
         "label": row["label"],
         "created_at": row["created_at"].isoformat(),

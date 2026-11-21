@@ -227,7 +227,7 @@ async def lab(tmp_path, registry, aw_binary, human_fixture_binary, monkeypatch, 
                 inputs[PREFIX + "COORDINATION_ORIGIN"],
                 file_key=actor != "HUMAN",
             )
-            await registry.add_certificate(cert)
+            await registry.add_certificate(cert, team_key=member.team_key)
             members[actor] = member
         yield inputs, members, registry
     finally:

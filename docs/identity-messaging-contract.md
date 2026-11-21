@@ -81,7 +81,9 @@ The identity-signed "my inbound mode" route uses the authenticated, AWID-bound
 `aweb.messaging.delivery_policy.authorize_delivery` owns this rule for native
 and federated sends. Same-team admission intersects all current active team
 memberships of both verified identities through the native member owner. A
-caller-selected team, retired row or superseded team key adds no membership.
+caller-selected team, retired row, superseded team key or revoked admitting
+certificate adds no membership. The same native certificate-standing owner used
+by authentication checks revocation and the staged registration requirement.
 Address residence and human classification remain independent of membership.
 Exact active identity-contact matching has one owner and retains contact locks
 through an existing delivery transaction. Send refusals end with a concrete
@@ -165,12 +167,12 @@ For a send to a global address (`domain/name`):
    `verified`. These checks preserve the original signed bytes and conversation
    ID.
    A thread participant is the identity (`did:aw` for a global identity), not
-   a per-team actor. The address selects that identity and its route, never a
-   different address from a membership projection. `agent_id` is nullable
-   display/admission metadata: explicit-address participants leave it null;
-   a team-scoped alias may record its selected membership. Read access and
-   continuation compare participant DIDs, not actor IDs or address equality.
-   Native admission's actor/team facts are a separate current membership
+   a per-team actor. The address selects identity and route, not a membership.
+   Originating address sends leave recipient membership metadata null; a team
+   alias may retain its selected member. Receiving services retain known native
+   row references for storage and delivery events, without identity/team authority.
+   Continuations preserve known references; access still compares participant DIDs.
+   Native admission's actor/team authority uses a separate current-membership
    projection for the target identity in the authenticated endpoint team.
 5. Federation delivery uses the resolved delivery origin and the target identity
    binding. The recipient server re-resolves the target address/key and fails

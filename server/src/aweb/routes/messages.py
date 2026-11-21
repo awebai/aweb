@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from aweb.identity_binding import IdentityProjectionField, verified_identity_field_sql
+
 from aweb.messaging.kinds import ContentMode
 
 from aweb.messaging.mail_models import SendMessageRequest as SendMessageRequest
@@ -124,9 +126,7 @@ async def _inbox_response_from_rows(
         ],
     )
 
-    memberships = await sender_memberships(
-        request, db, rows, member_rows=sender_member_rows
-    )
+    memberships = await sender_memberships(request, db, rows, member_rows=sender_member_rows)
     attachment_refs = await attachment_references_by_message(
         db,
         "mail",
@@ -151,12 +151,8 @@ async def _inbox_response_from_rows(
                     (str(r.get("team_id") or ""), str(r.get("from_agent_id") or ""))
                 ],
                 message_id=str(r["message_id"]),
-                conversation_id=(
-                    str(r["conversation_id"]) if r.get("conversation_id") else None
-                ),
-                from_agent_id=(
-                    str(r["from_agent_id"]) if r.get("from_agent_id") else None
-                ),
+                conversation_id=(str(r["conversation_id"]) if r.get("conversation_id") else None),
+                from_agent_id=(str(r["from_agent_id"]) if r.get("from_agent_id") else None),
                 from_alias=r["from_alias"],
                 to_alias=r["to_alias"],
                 subject=(r["subject"] if content_mode == ContentMode.PLAINTEXT else ""),
@@ -171,14 +167,10 @@ async def _inbox_response_from_rows(
                 created_at=r["created_at"].isoformat(),
                 from_did=from_did or None,
                 to_did=to_did or None,
-                from_stable_id=(
-                    identity_map.get(from_did, {}).get("stable_id") or None
-                ),
+                from_stable_id=(identity_map.get(from_did, {}).get("stable_id") or None),
                 to_stable_id=(identity_map.get(to_did, {}).get("stable_id") or None),
                 from_address=(
-                    r.get("from_address")
-                    or identity_map.get(from_did, {}).get("address")
-                    or None
+                    r.get("from_address") or identity_map.get(from_did, {}).get("address") or None
                 ),
                 to_address=(identity_map.get(to_did, {}).get("address") or None),
                 signature=r.get("signature"),
@@ -227,9 +219,7 @@ def _mail_conversation_boundary(
         # timezone offsets at datetime's minimum/maximum supported year.
         return created_at.astimezone(timezone.utc), message_id
     except (KeyError, TypeError, ValueError, AttributeError, OverflowError) as exc:
-        raise HTTPException(
-            status_code=422, detail="Invalid mail conversation cursor"
-        ) from exc
+        raise HTTPException(status_code=422, detail="Invalid mail conversation cursor") from exc
 
 
 @router.get("/conversations/{conversation_id}", response_model=MailConversationResponse)
@@ -278,9 +268,7 @@ async def get_mail_conversation(
         if not participant:
             raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
         if conversation["conversation_type"] != "mail":
-            raise HTTPException(
-                status_code=422, detail="Conversation is not a mail conversation"
-            )
+            raise HTTPException(status_code=422, detail="Conversation is not a mail conversation")
         # A cursor selects a position, never an identity or authorization scope.
         # Keep the participant check above on every page, even for forged cursors.
         if after is not None and (cursor is not None or order != "asc"):
@@ -314,9 +302,7 @@ async def get_mail_conversation(
         )
         has_more = len(rows) > limit
         rows = rows[:limit]
-        next_cursor = (
-            _mail_conversation_cursor(conv_uuid, order, rows[-1]) if has_more else None
-        )
+        next_cursor = _mail_conversation_cursor(conv_uuid, order, rows[-1]) if has_more else None
         # The polling watermark never advances beyond a returned row. Empty
         # polls preserve it so the client can keep waiting at the same boundary.
         after_cursor = after
@@ -377,9 +363,7 @@ async def send_message(
         with attachment_context:
             return await send_message(request, payload, db=db, auth=auth)
     runtime = messaging_runtime(request.app.state)
-    sender = replace(
-        auth, id_chain=getattr(getattr(request, "state", None), "id_chain", None)
-    )
+    sender = replace(auth, id_chain=getattr(getattr(request, "state", None), "id_chain", None))
     target = await resolve_mail_target(
         db,
         sender,
@@ -452,9 +436,7 @@ async def get_inbox(
     exact_message_id: UUID | None = None
     if message_id is not None and message_id.strip():
         if cursor:
-            raise HTTPException(
-                status_code=422, detail="cursor cannot be combined with message_id"
-            )
+            raise HTTPException(status_code=422, detail="cursor cannot be combined with message_id")
         try:
             exact_message_id = UUID(message_id.strip())
         except Exception:
@@ -475,20 +457,15 @@ async def get_inbox(
             where_clause += " AND m.read_at IS NULL"
         if cursor_data is not None:
             try:
-                cursor_created_at = datetime.fromisoformat(
-                    str(cursor_data["created_at"])
-                )
+                cursor_created_at = datetime.fromisoformat(str(cursor_data["created_at"]))
                 cursor_message_id = UUID(str(cursor_data["message_id"]))
             except (KeyError, TypeError, ValueError) as exc:
-                raise HTTPException(
-                    status_code=422, detail="Invalid inbox cursor"
-                ) from exc
+                raise HTTPException(status_code=422, detail="Invalid inbox cursor") from exc
             if cursor_created_at.tzinfo is None:
                 cursor_created_at = cursor_created_at.replace(tzinfo=timezone.utc)
             params.extend([cursor_created_at, cursor_message_id])
             where_clause += (
-                f" AND (m.created_at, m.message_id) < "
-                f"(${len(params) - 1}, ${len(params)})"
+                f" AND (m.created_at, m.message_id) < (${len(params) - 1}, ${len(params)})"
             )
 
     query_limit = 1 if exact_message_id is not None else page_limit + 1
@@ -499,7 +476,7 @@ async def get_inbox(
                m.from_did, m.to_did, m.signature, m.signed_payload, m.id_chain, m.conversation_id,
                m.content_mode, m.message_version, m.encrypted_envelope,
                sender.agent_id AS sender_agent_id, sender.team_id AS sender_team_id,
-               CASE WHEN sender.did_aw_verified_key = sender.did_key THEN sender.did_aw END AS sender_did_aw,
+               {verified_identity_field_sql(IdentityProjectionField.STABLE_DID, agent="sender")} AS sender_did_aw,
                sender.did_key AS sender_did_key, sender.alias AS sender_alias,
                sender.identity_scope AS sender_identity_scope, sender.address AS sender_address,
                sender.status AS sender_status, sender.deleted_at AS sender_deleted_at,
@@ -540,8 +517,7 @@ async def get_inbox(
         }.values()
     )
     rows = [
-        {key: value for key, value in row.items() if not key.startswith("sender_")}
-        for row in rows
+        {key: value for key, value in row.items() if not key.startswith("sender_")} for row in rows
     ]
 
     has_more = exact_message_id is None and len(rows) > page_limit

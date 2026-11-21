@@ -10,7 +10,9 @@ from uuid import UUID, uuid4
 import asyncpg
 import pytest
 
+from aweb.federation.errors import LocalRecipientNotFoundError
 from aweb.mcp.tools.refusals import SendRefusalMode
+from aweb.service_errors import IdentityBindingCode, IdentityBindingError
 from aweb.messaging.refusals import RecipientAddressNotFound
 import pytest_asyncio
 from pgdbm.errors import QueryError
@@ -755,7 +757,7 @@ async def test_mcp_mail_reaches_another_team_of_the_senders_organization_by_alia
 async def test_mcp_refusals_of_an_unknown_recipient_read_as_the_routes_do(mail_server):
     server = mail_server
     assert await server.mcp_mail(to="nobody", plaintext=True) == {
-        "error": "Recipient agent not found. Check the recipient or ask them to reconnect, then retry."
+        "error": "Recipient name does not identify a current member of the team. Check the name; if the agent exists, ask it to reconnect with a current team certificate."
     }
     assert await server.mcp_mail(to="did:aw:nobody", plaintext=True) == {
         "error": "Bare did:aw first-contact is unsupported; use to_address=domain/name "
@@ -940,6 +942,14 @@ def _binding_refusal(status, code):
 # (the refusal the send raises, what the tool knows about the send, what the tool answers)
 NEXT_ACTIONS = [
     (
+        LocalRecipientNotFoundError,
+        {"address": "example.test/member"},
+        {
+            "error": unreachable_address_refusal("example.test/member"),
+            "reason": "recipient_identity_not_found",
+        },
+    ),
+    (
         lambda: _authority_refusal("sender_registry_unavailable"),
         {"address": "jane.aweb.ai/c3po"},
         {
@@ -974,18 +984,20 @@ NEXT_ACTIONS = [
         },
     ),
     (
-        lambda: _binding_refusal(403, "identity_binding_mismatch"),
+        lambda: IdentityBindingError(IdentityBindingCode.MISMATCH),
         {},
         {
-            "error": "this recipient's identity or key no longer matches the registry; check the address and resend",
+            "error": "The claimed identity and signing key do not match. "
+            "Check the identity and its current public-key binding, "
+            "then correct the request and retry.",
             "reason": "identity_binding_mismatch",
         },
     ),
     (
-        lambda: _binding_refusal(503, "identity_binding_unavailable"),
+        lambda: IdentityBindingError(IdentityBindingCode.UNAVAILABLE),
         {},
         {
-            "error": "the registry can't confirm this recipient's key right now; try again shortly",
+            "error": "Identity verification is unavailable. Retry when the identity registry is available.",
             "reason": "identity_binding_unavailable",
         },
     ),

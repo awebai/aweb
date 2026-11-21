@@ -53,6 +53,12 @@ class ForbiddenError(ServiceError):
         super().__init__(detail)
 
 
+class CurrentMembershipRefusal(ForbiddenError):
+    """A current-member refusal with a stable reason beside its string detail."""
+
+    reason = "team_membership_not_current"
+
+
 class BadRequestError(ServiceError):
     status_code: int = 400
 
@@ -70,9 +76,7 @@ class IdentityBindingCode(StrEnum):
 class IdentityBindingError(ServiceError):
     """Native binding refusal; HTTP and MCP adapters retain its reason and retry hint."""
 
-    def __init__(
-        self, code: IdentityBindingCode, *, headers: dict[str, str] | None = None
-    ):
+    def __init__(self, code: IdentityBindingCode, *, headers: dict[str, str] | None = None):
         self.code = IdentityBindingCode(code)
         self.status_code = 403 if self.code is IdentityBindingCode.MISMATCH else 503
         self.headers = headers

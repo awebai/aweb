@@ -4,10 +4,7 @@ import httpx
 import pytest
 
 from awid.registry import RegistryError
-from aweb.messaging.refusals import (
-    registry_configuration_refusal,
-    registry_dependency_refusal,
-)
+from aweb.messaging.refusals import registry_dependency_refusal
 
 
 @pytest.mark.parametrize(
@@ -39,13 +36,3 @@ def test_delivery_registry_refusal_keeps_status_and_action_without_input_text(
     assert "request-content-marker" not in caplog.text
     assert f"failure_type={type(error).__name__} status={status}" in caplog.text
     assert all(record.exc_info is None for record in caplog.records)
-
-
-def test_delivery_registry_configuration_refusal_explains_operator_recovery():
-    refusal = registry_configuration_refusal(
-        operation="AWID messaging recipient address lookup"
-    )
-    assert refusal.status_code == 500
-    assert refusal.detail == (
-        "AWID messaging recipient address lookup registry client not configured. Ask the server operator to configure the registry and retry."
-    )

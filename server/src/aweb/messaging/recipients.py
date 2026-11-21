@@ -6,13 +6,12 @@ import logging
 from dataclasses import dataclass, replace
 from collections.abc import Mapping
 
-from aweb.messaging.refusals import (
-    registry_configuration_refusal,
-    RecipientAddressNotFound,
-)
+from aweb.application_state import RegistryClientUnavailable
+from aweb.messaging.refusals import RecipientAddressNotFound
 from aweb.messaging.refusals import DeliveryRefusal
 from http import HTTPStatus
 from awid.federation_errors import FederationAuthorityError
+from aweb.federation.errors import LocalRecipientNotFoundError
 
 from aweb.awid_error_handling import (
     AWID_DEPENDENCY_ERRORS,
@@ -95,7 +94,8 @@ async def resolve_address_recipient(
 ) -> Recipient:
     """Resolve once, keeping any saved identity constraint through the send.
 
-    docs/identity-messaging-contract.md:122-145 requires an exact bound identity.
+    Global And Local Identities (docs/identity-messaging-contract.md:116-144) requires an
+    exact bound identity.
     A saved constraint stays attached to the one admitted identity; a second
     address resolution cannot silently replace it before signing or delivery.
     """
@@ -127,7 +127,8 @@ async def _resolve_address_identity(
 ) -> Recipient:
     """Return the exact admitted identity and route for the sender's address.
 
-    Implements docs/identity-messaging-contract.md:120-145,208-222.
+    Implements Global And Local Identities (docs/identity-messaging-contract.md:116-144) and
+    Strict Cross-Registry Sender Authority (docs/identity-messaging-contract.md:206-222).
 
     Local visibility, signed identity binding and strict authority discovery are
     shared by both message kinds. The returned participant is identity-scoped;
@@ -156,9 +157,7 @@ async def _resolve_address_identity(
             and bool(signed.get("to_did") or signed.get("to_stable_id"))
             and not bound
         )
-        if bound or (
-            local_recipient_visible_to_auth(local, auth) and not needs_current
-        ):
+        if bound or (local_recipient_visible_to_auth(local, auth) and not needs_current):
             recipient = identity_recipient(local, address)
             return replace(recipient, requires_local_address_authority=True)
 
@@ -167,9 +166,7 @@ async def _resolve_address_identity(
     resolution = None
     if home_namespace:
         try:
-            resolution = await registry.resolve_address(
-                domain, name, did_key=auth.did_key
-            )
+            resolution = await registry.resolve_address(domain, name, did_key=auth.did_key)
         except AWID_DEPENDENCY_ERRORS as exc:
             logger.warning(
                 "Messaging home address lookup unavailable failure_type=%s",
@@ -219,11 +216,9 @@ async def _resolve_address_identity(
     local = await _local_recipient_at_address(db, domain=domain, name=name)
     if local is None:
         if await namespace_exists(db, domain):
-            raise FederationAuthorityError("recipient_identity_not_found")
+            raise LocalRecipientNotFoundError(address=address)
         if registry is None:
-            raise registry_configuration_refusal(
-                operation="AWID messaging recipient address lookup"
-            )
+            raise RegistryClientUnavailable()
         raise RecipientAddressNotFound(address=address)
     if (
         registry is not None

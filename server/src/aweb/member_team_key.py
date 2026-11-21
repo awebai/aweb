@@ -11,8 +11,9 @@ member until each is accepted under the new key.
 
 from __future__ import annotations
 
+import logging
 import re
-from collections.abc import Iterator, Mapping
+from collections.abc import Collection, Iterator, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum, StrEnum, auto
@@ -20,31 +21,50 @@ from types import MappingProxyType
 from typing import Any
 from uuid import UUID
 
-from awid.team_ids import parse_team_id
+from fastapi import HTTPException, Request
 
-from aweb.service_errors import AuthenticationError, NotFoundError
+from aweb.certificate_registration import (
+    RegistrationState,
+    configured_registration_mode,
+    read_certificate_registration,
+)
+from aweb.identity_scope import IdentityScope
+from aweb.member_status import MemberStatus as MemberStatus
+from aweb.service_errors import NotFoundError
+from aweb.team_registry import revoked_certificates
+from aweb.team_scope import member_team_scope as member_team_scope
 
+logger = logging.getLogger(__name__)
 
 class MemberReadLock(Enum):
     """Row protection requested inside the caller's existing transaction."""
 
     NONE = auto()
     SHARE = auto()
+    UPDATE = auto()
 
 
-class MemberStatus(StrEnum):
-    ACTIVE = "active"
-    RETIRED = "retired"
-    ARCHIVED = "archived"
-    DELETED = "deleted"
-
-
-RECIPIENT_RECONNECT_DETAIL = "Check the name; if the agent exists, ask it to reconnect with a current team certificate."
+RECIPIENT_RECONNECT_DETAIL = (
+    "Check the name; if the agent exists, ask it to reconnect with a current team certificate."
+)
 
 
 CURRENT_MEMBERSHIP_REQUIRED_DETAIL = (
     "Team membership is no longer current. "
     "Reconnect with a certificate issued under the team's current key."
+)
+
+
+class CurrentMembershipRequired(ValueError):
+    """The native certificate could not establish a current team member."""
+
+    def __init__(self, detail: str = CURRENT_MEMBERSHIP_REQUIRED_DETAIL) -> None:
+        super().__init__(detail)
+
+
+GRANT_ISSUER_RECOVERY_DETAIL = (
+    "This grant was issued from a certificate that is no longer current. "
+    "Ask the issuer for a new grant, or enable renewal on launch and restart the seat if you use OATS."
 )
 
 
@@ -54,19 +74,6 @@ def recipient_not_found(*, label: str | None = None) -> NotFoundError:
     if label:
         detail += f": {label}"
     return NotFoundError(detail + ". " + RECIPIENT_RECONNECT_DETAIL)
-
-
-def member_team_scope(team_id: str) -> tuple[str, str]:
-    """Require the team:domain scope in docs/identity.md:93-95.
-
-    A malformed authority scope never means an empty revocation list.
-    """
-    try:
-        return parse_team_id(team_id)
-    except ValueError as exc:
-        raise AuthenticationError(
-            "Team identity is invalid. Reconnect using a certificate for a canonical team ID."
-        ) from exc
 
 
 _MEMBER_COLUMNS = (
@@ -88,7 +95,7 @@ _MEMBER_COLUMNS = (
 )
 
 
-def member_projection_columns_sql(agent: str) -> str:
+def member_projection_columns_sql(agent: str, *, team: str | None = None) -> str:
     """Canonical native member columns for a SELECT, including a host's JOIN.
 
     The alias is a source-code SQL identifier, never request input. Hosts keep
@@ -96,8 +103,11 @@ def member_projection_columns_sql(agent: str) -> str:
     """
     if not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", agent):
         raise ValueError("Invalid member projection SQL alias")
+    if team is not None and not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", team):
+        raise ValueError("Invalid team projection SQL alias")
     columns = ", ".join(f"{agent}.{column}" for column in _MEMBER_COLUMNS)
-    return f"{columns}, {current_team_key_sql(agent)} AS current_team_did_key"
+    current_key = f"{team}.team_did_key" if team else current_team_key_sql(agent)
+    return f"{columns}, {current_key} AS current_team_did_key"
 
 
 @dataclass(frozen=True)
@@ -107,7 +117,7 @@ class MemberProjection(Mapping[str, Any]):
     Raw claims remain available for policy classification. Consumers obtain
     attributed identity through ``verified_identity``; eligibility remains the
     member owner's decision. Missing columns are not replaced with NULL.
-    docs/identity.md:569-585 separates verified projection from policy claims.
+    docs/identity.md:598-609 separates verified projection from policy claims.
     """
 
     _row: Mapping[str, Any]
@@ -117,30 +127,25 @@ class MemberProjection(Mapping[str, Any]):
         columns = (*_MEMBER_COLUMNS, "current_team_did_key")
         missing = [column for column in columns if column not in source]
         if missing:
-            raise ValueError(
-                "Incomplete native member projection: " + ", ".join(missing)
-            )
+            raise ValueError("Incomplete native member projection: " + ", ".join(missing))
         values = {column: source[column] for column in columns}
         for column in columns:
             if column in ("agent_id", "deleted_at"):
                 continue
             if values[column] is not None and not isinstance(values[column], str):
-                raise ValueError(
-                    f"Native member projection column {column} must be text or NULL"
-                )
+                raise ValueError(f"Native member projection column {column} must be text or NULL")
         # PostgreSQL row_to_json/to_jsonb encodes UUIDs/timestamps as strings.
         # A host's joined snapshot and the native SELECT have one public shape.
         values["agent_id"] = UUID(str(values["agent_id"]))
+        # These are NOT NULL constrained native columns, not optional host overlays.
+        values["status"] = MemberStatus(values["status"])
+        values["identity_scope"] = IdentityScope(values["identity_scope"])
         if isinstance(values["deleted_at"], str):
             values["deleted_at"] = datetime.fromisoformat(
                 values["deleted_at"].replace("Z", "+00:00")
             )
-        if values["deleted_at"] is not None and not isinstance(
-            values["deleted_at"], datetime
-        ):
-            raise ValueError(
-                "Native member projection deleted_at must be a timestamp or NULL"
-            )
+        if values["deleted_at"] is not None and not isinstance(values["deleted_at"], datetime):
+            raise ValueError("Native member projection deleted_at must be a timestamp or NULL")
         object.__setattr__(self, "_row", MappingProxyType(values))
 
     @classmethod
@@ -168,6 +173,7 @@ async def read_member_projection(
     team_id: str | None = None,
     did_key: str | None = None,
     agent_id: str | UUID | None = None,
+    read_lock: MemberReadLock = MemberReadLock.NONE,
 ) -> MemberProjection | None:
     """Read the same native row an embedding host can include in its snapshot.
 
@@ -179,20 +185,55 @@ async def read_member_projection(
     """
     if (did_key is None) == (agent_id is None) or (did_key is not None and not team_id):
         raise ValueError("Select a native member by team and did_key, or by agent_id")
+    if not isinstance(read_lock, MemberReadLock):
+        raise TypeError("Member reads require a named MemberReadLock")
+    locked = read_lock is not MemberReadLock.NONE
+    join_sql = " JOIN {{tables.teams}} t ON t.team_id=a.team_id" if locked else ""
+    lock_sql = ""
+    if locked:
+        lock_sql = (
+            " FOR SHARE OF t FOR UPDATE OF a"
+            if read_lock is MemberReadLock.UPDATE
+            else " FOR SHARE OF t, a"
+        )
     selector = "a.agent_id=$1::uuid" if agent_id is not None else "a.did_key=$1"
     selected = UUID(str(agent_id)) if agent_id is not None else did_key
     row = await db.fetch_one(
         "SELECT "
-        + member_projection_columns_sql("a")
+        + member_projection_columns_sql("a", team="t" if locked else None)
         + """
         FROM {{tables.agents}} a
-        WHERE """
+        """
+        + join_sql
+        + " WHERE "
         + selector
-        + " AND ($2::text IS NULL OR a.team_id=$2)",
+        + " AND ($2::text IS NULL OR a.team_id=$2)"
+        + lock_sql,
         selected,
         team_id,
     )
     return MemberProjection.from_row(row) if row is not None else None
+
+
+async def lock_member_projections(tx, *, agent_ids: list[UUID]) -> list[MemberProjection]:
+    """Read complete native actor facts under caller-owned row locks.
+
+    Actor-ID ordering preserves the public embedding transaction contract.
+    Callers apply current_member and compare their retained identity facts;
+    these row locks do not grant a team or participant identity.
+    """
+    if not agent_ids:
+        return []
+    rows = await tx.fetch_all(
+        "SELECT "
+        + member_projection_columns_sql("a")
+        + """
+        FROM {{tables.agents}} a WHERE a.agent_id=ANY($1::uuid[])
+        ORDER BY a.agent_id FOR UPDATE OF a
+        """,
+        sorted(set(agent_ids)),
+    )
+    return [MemberProjection.from_row(row) for row in rows]
 
 
 def current_team_key_sql(agent: str) -> str:
@@ -211,29 +252,30 @@ def member_key_current_sql(agent: str) -> str:
     return f"({agent}.accepted_team_did_key = {current_team_key_sql(agent)})"
 
 
-def member_key_current(row) -> bool:
+def member_key_current(row, *, checked_key: str | None = None) -> bool:
     """Whether the member ``row`` (an agents row read with
     member_key_columns_sql) was accepted under its team's current key. A row
     read without those columns is not."""
-    accepted = str(row.get("accepted_team_did_key") or "").strip()
-    return (
-        bool(accepted)
-        and accepted == str(row.get("current_team_did_key") or "").strip()
-    )
+    accepted = checked_key if checked_key is not None else str(row.get("accepted_team_did_key") or "").strip()
+    return bool(accepted) and accepted == str(row.get("current_team_did_key") or "").strip()
 
 
-def current_member(row: Mapping[str, Any] | None) -> bool:
+def member_row_active(row: Mapping[str, Any] | None) -> bool:
+    """Read native status/deletion only, never identity or current-key authority.
+
+    migrations/aweb/001_initial.sql:42-45 defines native row state separately
+    from any certificate proof.
+    """
+    return bool(row and row.get("status") == MemberStatus.ACTIVE and row.get("deleted_at") is None)
+
+
+def current_member(row: Mapping[str, Any] | None, *, checked_key: str | None = None) -> bool:
     """An active live member admitted under the team's current key.
 
     Migration 052:1-4 and docs/design/team-room-v1.md:16-21 require current
     membership; the identity's independent residence is not this question.
     """
-    return bool(
-        row
-        and row.get("status") == MemberStatus.ACTIVE.value
-        and row.get("deleted_at") is None
-        and member_key_current(row)
-    )
+    return member_row_active(row) and member_key_current(row, checked_key=checked_key)
 
 
 def current_member_sql(agent: str) -> str:
@@ -256,17 +298,22 @@ async def current_member_projections(
 ) -> list[MemberProjection]:
     """Select members by identity or membership without a newest-row winner.
 
-    docs/identity.md:93-107 scopes a member name to a team. Verified global
+    docs/identity.md:93-102 scopes a member name to a team. Verified global
     claims are selected through identity_binding, never raw metadata.
     SHARE holds eligible rows through the caller's transaction, preserving
-    delivery policy through commit (identity-messaging-contract.md:314-320).
+    delivery policy through commit under Global And Local Identities
+    (docs/identity-messaging-contract.md:94-99).
     It creates no transaction and adds no lock to the ordinary default read.
     """
     from aweb.identity_binding import verified_key_sql
 
     if not isinstance(read_lock, MemberReadLock):
         raise TypeError("Member reads require a named MemberReadLock")
-    lock_sql = " FOR SHARE OF a" if read_lock is MemberReadLock.SHARE else ""
+    lock_sql = {
+        MemberReadLock.NONE: "",
+        MemberReadLock.SHARE: " FOR SHARE OF a",
+        MemberReadLock.UPDATE: " FOR UPDATE OF a",
+    }[read_lock]
     if all(value is None for value in (agent_id, team_id, aliases, dids, namespace)):
         raise ValueError("Select a current member by identity, team, name or namespace")
     manager = db.get_manager("aweb") if hasattr(db, "get_manager") else db
@@ -312,7 +359,8 @@ async def read_participant_identity_projection(
 ) -> dict[str, Any] | None:
     """Read identity for an already-authorized participant, never a team actor.
 
-    docs/identity-messaging-contract.md:96-116 keeps participation independent
+    Global And Local Identities (docs/identity-messaging-contract.md:124-144)
+    keeps participation independent
     of current membership. A new first-contact lookup must use the member
     selectors or independently verify its address route instead.
     """
@@ -334,9 +382,7 @@ async def read_participant_identity_projection(
     projections = [MemberProjection.from_row(row) for row in rows]
     if not projections:
         return None
-    identities = {
-        (row.verified_identity().get("did_aw"), row["did_key"]) for row in projections
-    }
+    identities = {(row.verified_identity().get("did_aw"), row["did_key"]) for row in projections}
     if len(identities) != 1:
         raise ConflictError(
             "Participant identity is ambiguous. Reconnect with current identity credentials."
@@ -348,19 +394,100 @@ async def read_participant_identity_projection(
     return recipient
 
 
+class CertificateStandingState(StrEnum):
+    ACTIVE = "active"
+    REVOKED = "revoked"
+    UNREGISTERED = "unregistered"
+    UNAVAILABLE = "unavailable"
+
+
+@dataclass(frozen=True)
+class CertificateStanding:
+    state: CertificateStandingState
+    unavailable_cause: Exception | None = None
+
+
+async def read_certificate_standings(
+    registry_client,
+    team_id: str,
+    certificate_ids: Collection[str],
+    *,
+    request: Request | None = None,
+) -> dict[str, CertificateStanding]:
+    """Read revocation once for a team's admitting certificates, then registration.
+
+    Global And Local Identities (docs/identity-messaging-contract.md:81-86)
+    gives the same standing rule to request, stream, and delivery membership.
+    """
+    revoked = await revoked_certificates(
+        registry_client, team_id, certificate_ids=list(certificate_ids)
+    )
+    mode = configured_registration_mode()
+    result = {}
+    for certificate_id in certificate_ids:
+        if certificate_id in revoked:
+            result[certificate_id] = CertificateStanding(CertificateStandingState.REVOKED)
+            continue
+        registration = await read_certificate_registration(
+            registry_client=registry_client, team_id=team_id, certificate_id=certificate_id,
+            mode=mode, request=request,
+        )
+        if registration.allows_registration:
+            result[certificate_id] = CertificateStanding(CertificateStandingState.ACTIVE)
+        elif registration.state is RegistrationState.UNAVAILABLE:
+            result[certificate_id] = CertificateStanding(
+                CertificateStandingState.UNAVAILABLE, registration.unavailable_cause
+            )
+        else:
+            result[certificate_id] = CertificateStanding(CertificateStandingState.UNREGISTERED)
+    return result
+
+
+async def current_membership(
+    registry_client, row: Mapping[str, Any] | None, *, request: Request | None = None
+) -> Mapping[str, Any] | None:
+    """Keep exact identity facts and strip team context from an ineligible member."""
+    if not row or not (team_id := str(row.get("team_id") or "").strip()):
+        return row
+    if not current_member(row):
+        reason = "the member is inactive or was accepted under a superseded key"
+    else:
+        certificate_id = str(row.get("certificate_id") or "").strip()
+        if not certificate_id:
+            return row
+        standings = await read_certificate_standings(
+            registry_client, team_id, [certificate_id], request=request
+        )
+        standing = standings[certificate_id]
+        if standing.state is CertificateStandingState.ACTIVE:
+            return row
+        if standing.state is CertificateStandingState.UNAVAILABLE:
+            raise HTTPException(
+                status_code=503,
+                detail="Certificate registration is unavailable. Retry in a moment.",
+            ) from standing.unavailable_cause
+        reason = f"certificate {certificate_id} is {standing.state}"
+    logger.warning("Team context stripped for alias %r in %s: %s", row.get("alias"), team_id, reason)
+    return {**row, "team_id": None, "alias": None, "agent_id": None}
+
+
 async def current_member_team_ids_for_identity(
-    db, dids: list[str], *, read_lock: MemberReadLock = MemberReadLock.NONE
+    db, dids: list[str], *, registry_client, read_lock: MemberReadLock = MemberReadLock.NONE
 ) -> set[str]:
-    """All current memberships of the exact verified identity, for R5 policy."""
+    """Current memberships with the admitting certificate's live standing.
+
+    Apply SDK revocation and staged registration policy after selecting each
+    admitted membership under the current key.
+    """
     selected = [did.strip() for did in dids if did and did.strip()]
     if not selected:
         return set()
-    return {
-        row["team_id"]
-        for row in await current_member_projections(
-            db, dids=selected, read_lock=read_lock
-        )
-    }
+    teams = set()
+    for row in await current_member_projections(db, dids=selected, read_lock=read_lock):
+        standing = await current_membership(registry_client, dict(row))
+        if standing is not None and standing.get("team_id"):
+            teams.add(standing["team_id"])
+    return teams
 
 
 def grant_issuer_current(row) -> bool:
@@ -368,9 +495,27 @@ def grant_issuer_current(row) -> bool:
     (certificate_id and member_key_columns_sql), still has its issuing
     certificate: the subject is a member under the current key and that
     member's certificate is the one the grant was issued from. A credential
-    issued from a superseded certificate does not return."""
+    issued from a superseded certificate does not return: reaccepting the
+    member does not renew an earlier delegation (Session grants, docs/identity.md:807-811).
+    """
     if not member_key_current(row):
         return False
     issuer = str(row.get("issued_by_certificate_id") or "").strip()
     current = str(row.get("certificate_id") or "").strip()
-    return not issuer or not current or issuer == current
+    return not issuer or issuer == current
+
+
+def grant_issuer_current_sql(*, agent: str, grant: str) -> str:
+    """The SQL form of grant_issuer_current for joined presence readers.
+
+    Session grants (docs/identity.md:807-811) retains exact issuing-certificate equality after
+    reacceptance. Legacy issuer-ID-less grants keep their existing lifetime.
+    Both aliases are source-code identifiers, never request values.
+    """
+    for alias in (agent, grant):
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", alias):
+            raise ValueError("Invalid grant eligibility SQL alias")
+    current_key = member_key_current_sql(agent)
+    issuer = f"NULLIF(BTRIM({grant}.issued_by_certificate_id), '')"
+    current = f"NULLIF(BTRIM({agent}.certificate_id), '')"
+    return f"({current_key} AND ({issuer} IS NULL OR {issuer}={current}))"

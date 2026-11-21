@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import json
 
+from aweb.identity_scope import normalize_identity_scope
 from aweb.mcp.auth import AuthContext, get_auth
 from aweb.team_auth_deps import TeamIdentity
 
-TEAM_CONTEXT_ERROR = json.dumps({"error": "This tool requires team context. Use a team certificate."})
+TEAM_CONTEXT_ERROR = json.dumps(
+    {"error": "This tool requires team context. Use a team certificate."}
+)
 
 
 def require_team_context() -> tuple[AuthContext | None, str | None]:
@@ -24,7 +27,7 @@ def team_identity(auth: AuthContext) -> TeamIdentity:
         did_aw=auth.did_aw or "",
         address=auth.address or "",
         agent_id=auth.agent_id or "",
-        identity_scope=auth.identity_scope or "",
+        identity_scope=normalize_identity_scope(auth.identity_scope),
         certificate_id=auth.certificate_id or "",
         address_resolution=auth.address_resolution,
     )

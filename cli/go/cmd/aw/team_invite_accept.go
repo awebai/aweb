@@ -337,6 +337,16 @@ func completeHostedInviteResponse(ctx context.Context, responseRequest hostedInv
 	if err := creation.save(recoveryPath); err != nil {
 		return nil, err
 	}
+	if responseRequest.Registry == nil {
+		responseRequest.Registry, err = newConfiguredRegistryClient(nil)
+		if err != nil {
+			return nil, err
+		}
+	}
+	keyObservation, err := responseRequest.Registry.CheckTeamCertificateCurrentKey(ctx, awid.CurrentTeamCertificateCheck{Certificate: cert})
+	if err != nil {
+		return nil, fmt.Errorf("hosted membership is not current: %w; ask the team controller for a current certificate", err)
+	}
 	responsibility, err := verifyHostedInviteAcceptedAttribution(ctx, responseRequest)
 	if err != nil {
 		return nil, err
@@ -381,6 +391,7 @@ func completeHostedInviteResponse(ctx context.Context, responseRequest hostedInv
 	return &acceptedTeamInvite{
 		Output: &teamAcceptInviteOutput{
 			IDRegistration: registration,
+			TeamKey:        &keyObservation.Evidence,
 			Responsibility: responsibility,
 			Status:         "accepted",
 			TeamID:         cert.Team,
@@ -388,6 +399,7 @@ func completeHostedInviteResponse(ctx context.Context, responseRequest hostedInv
 			CertPath:       awconfig.TeamCertificateRelativePath(cert.Team),
 		},
 		Certificate: cert,
+		RegistryURL: keyObservation.RegistryURL,
 		AwebURL:     serverURL,
 		Domain:      strings.TrimSpace(resp.Namespace),
 		TeamName:    strings.TrimSpace(resp.TeamSlug),

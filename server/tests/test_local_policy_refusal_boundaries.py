@@ -106,7 +106,8 @@ async def test_http_local_agent_id_keeps_team_scoped_404_and_member_neighbor(mai
     )
     assert refused.status_code == 404, refused.text
     assert refused.json() == {
-        "detail": "Recipient agent not found. Check the recipient or ask them to reconnect, then retry."
+        "detail": "Recipient name does not identify a current member of the team. "
+        "Check the name; if the agent exists, ask it to reconnect with a current team certificate."
     }
     assert await env.db.fetch_value("SELECT count(*) FROM {{tables.messages}}") == 0
     accepted = await env.client.post(

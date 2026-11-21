@@ -4,11 +4,15 @@ from enum import StrEnum
 from http import HTTPStatus
 import logging
 
-from aweb.service_errors import ServiceError, ValidationError
+from aweb.service_errors import IdentityBindingError, ServiceError, ValidationError
 from aweb.messaging.kinds import MessageKind
 from aweb.messaging.recipient_bindings import RecipientSelectorField
 
 logger = logging.getLogger(__name__)
+
+
+class RecipientIdentityBindingError(IdentityBindingError):
+    """The recipient binding failed; sender authentication remains separate."""
 
 
 class DeliveryRefusalCode(StrEnum):
@@ -111,17 +115,6 @@ def recipient_selector_mismatch(
     )
 
 
-def registry_configuration_refusal(*, operation: str) -> DeliveryRefusal:
-    """Keep the registry's configuration diagnosis in the service carrier."""
-    from aweb.awid_error_handling import awid_registry_not_configured_detail
-
-    return DeliveryRefusal(
-        status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
-        detail=awid_registry_not_configured_detail(operation=operation)
-        + ". Ask the server operator to configure the registry and retry.",
-    )
-
-
 def registry_dependency_refusal(exc: Exception, *, operation: str) -> DeliveryRefusal:
     """Use the shared upstream classifier without importing HTTP into delivery."""
     from aweb.awid_error_handling import classify_awid_dependency_error
@@ -131,9 +124,7 @@ def registry_dependency_refusal(exc: Exception, *, operation: str) -> DeliveryRe
     classification = classify_awid_dependency_error(exc, operation=operation)
     status_code = classification[0]
     logger.log(
-        logging.ERROR
-        if status_code == HTTPStatus.INTERNAL_SERVER_ERROR
-        else logging.WARNING,
+        logging.ERROR if status_code == HTTPStatus.INTERNAL_SERVER_ERROR else logging.WARNING,
         "delivery_registry_dependency_failed failure_type=%s status=%d",
         type(exc).__name__,
         status_code,
@@ -148,12 +139,11 @@ def signed_chat_payload_refusal(*, detail: str) -> DeliveryRefusal:
     """Keep signed chat field failures actionable at every send/retry boundary.
 
     Implements the sender-artifact checks in
-    docs/identity-messaging-contract.md:154-166.
+    Direct Address Send Protocol (docs/identity-messaging-contract.md:156-168).
     """
     return DeliveryRefusal(
         status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
-        detail=detail.rstrip(".")
-        + ". Check the chat fields and sign the message again.",
+        detail=detail.rstrip(".") + ". Check the chat fields and sign the message again.",
     )
 
 

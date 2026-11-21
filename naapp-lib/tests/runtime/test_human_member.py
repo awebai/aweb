@@ -94,7 +94,7 @@ async def test_an_agent_with_a_human_parent_is_not_a_human_holder(human, registr
     )
     agent_id = (await client.register_did(agent.did_key, bytes(agent.member_key))).did_aw
     agent.extra_cert_fields = {"member_did_aw": agent_id}
-    await registry.add_certificate(agent.certificate())
+    await registry.add_certificate(agent.certificate(), team_key=agent.team_key)
     fields = {
         "v": 1,
         "type": "aweb.id-certificate",

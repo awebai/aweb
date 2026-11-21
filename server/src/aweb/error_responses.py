@@ -7,7 +7,11 @@ from fastapi.responses import JSONResponse
 from aweb.messaging.refusals import DeliveryRefusal, DeliveryRefusalCode, RecipientAddressNotFound
 from aweb.federation.errors import FederationPolicyRefused, authority_error_body
 from aweb.messaging.delivery_policy import DeliveryPolicyRefused
-from aweb.service_errors import ServiceError, INTERNAL_SERVICE_ERROR_MESSAGE
+from aweb.service_errors import (
+    INTERNAL_SERVICE_ERROR_MESSAGE,
+    CurrentMembershipRefusal,
+    ServiceError,
+)
 from aweb.auth_error_transport import install_auth_error_handlers
 
 logger = logging.getLogger(__name__)
@@ -57,6 +61,8 @@ async def service_error_handler(request: Request, exc: Exception) -> JSONRespons
     content = {"detail": exc.detail}
     if isinstance(exc, (DeliveryPolicyRefused, RecipientAddressNotFound)):
         content["reason"] = exc.code.value
+    elif isinstance(exc, CurrentMembershipRefusal):
+        content["reason"] = exc.reason
     if exc.recovery_action is not None:
         content["recovery_action"] = exc.recovery_action
     return JSONResponse(

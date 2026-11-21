@@ -6,14 +6,13 @@ from time import monotonic
 from types import SimpleNamespace
 from aweb.identity_binding import IdentityBinding
 from awid.registry import IDTreeEnrollment
-from aweb.team_auth_deps import TeamIdentity
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 import pytest
 from test_mcp_mail_conversation_parity import mail_server as mail_server
 import httpx
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
 from starlette.requests import Request
 
 from awid.did import did_from_public_key, generate_keypair
@@ -22,7 +21,7 @@ from awid.registry import Address, AddressDelivery, Namespace
 from awid.signing import sign_message
 from aweb.e2ee_messages import encrypt_e2ee_chat, generate_x25519_keypair
 from aweb.internal_auth import build_internal_auth_header_value
-from aweb.identity_auth_deps import IdentityAuth
+from aweb.identity_auth_deps import MessagingAuth
 from aweb.mcp import auth as mcp_auth
 from aweb.mcp.auth import AuthContext
 from aweb.mcp.mutations import reset_mutation_callback, set_mutation_callback
@@ -36,6 +35,9 @@ from aweb.mcp.tools import mail as mail_tools
 from did_key_fixtures import named_did_key, named_signing_key
 from test_messages_http import _encrypted_mail_envelope
 from team_facts_fixtures import legacy_registry
+from messaging_actor_support import admit_messaging_actor
+from test_dashboard_privacy import TEAM as PRIVACY_TEAM
+from test_dashboard_privacy import privacy_app as privacy_app
 
 
 class DBInfra:
@@ -48,9 +50,7 @@ class DBInfra:
         return self._aweb_db
 
 
-def _custodial_identity(
-    signing_key: bytes, did: str, stable_id: str, address: str
-) -> dict:
+def _custodial_identity(signing_key: bytes, did: str, stable_id: str, address: str) -> dict:
     """An identity as hosted custody holds it: its signing key and an encryption key it asserts."""
     return {
         "signing_key": signing_key,
@@ -67,9 +67,7 @@ def _custodial_identity(
     }
 
 
-def _hosted_chat_envelope(
-    payload: dict, *, sender: dict, recipients: list[dict]
-) -> dict:
+def _hosted_chat_envelope(payload: dict, *, sender: dict, recipients: list[dict]) -> dict:
     """The encrypted envelope hosted custody returns for the fields the tool hands it."""
     return encrypt_e2ee_chat(
         sender=sender,
@@ -106,21 +104,23 @@ async def _insert_mcp_chat_agents(
     )
 
 
-def _request_with_headers(headers: dict[str, str], *, verified_bindings=()) -> Request:
+def _request_with_headers(
+    headers: dict[str, str], *, verified_bindings=(), app: FastAPI | None = None
+) -> Request:
     return Request(
         {
             "type": "http",
             "method": "GET",
             "path": "/mcp",
             "query_string": b"",
-            "headers": [
-                (key.lower().encode(), value.encode()) for key, value in headers.items()
-            ],
+            "headers": [(key.lower().encode(), value.encode()) for key, value in headers.items()],
             "scheme": "http",
             "server": ("testserver", 80),
             "client": ("127.0.0.1", 12345),
             "http_version": "1.1",
-            "app": SimpleNamespace(
+            "app": app
+            if app is not None
+            else SimpleNamespace(
                 state=SimpleNamespace(
                     awid_registry_client=legacy_registry(),
                     identity_binding_cache=OrderedDict(
@@ -208,8 +208,8 @@ async def test_mcp_auth_prefers_certificate_identity_fields(aweb_cloud_db, monke
         "alice",
     )
 
-    async def _fake_get_team_identity(_request, _db_infra):
-        return TeamIdentity(
+    async def _fake_get_messaging_auth(_request, _db_infra):
+        return MessagingAuth(
             team_id=team_id,
             did_key=did_key,
             alias="alice",
@@ -220,7 +220,7 @@ async def test_mcp_auth_prefers_certificate_identity_fields(aweb_cloud_db, monke
             certificate_id="cert-1",
         )
 
-    monkeypatch.setattr(mcp_auth, "get_team_identity", _fake_get_team_identity)
+    monkeypatch.setattr(mcp_auth, "get_messaging_auth", _fake_get_messaging_auth)
 
     middleware = mcp_auth.MCPAuthMiddleware(
         app=lambda *_args, **_kwargs: None, db_infra=DBInfra(aweb_cloud_db.aweb_db)
@@ -269,8 +269,8 @@ async def test_mcp_auth_accepts_raw_manager(aweb_cloud_db, monkeypatch):
         "alice",
     )
 
-    async def _fake_get_team_identity(_request, _db_infra):
-        return TeamIdentity(
+    async def _fake_get_messaging_auth(_request, _db_infra):
+        return MessagingAuth(
             team_id=team_id,
             did_key=did_key,
             alias="alice",
@@ -281,7 +281,7 @@ async def test_mcp_auth_accepts_raw_manager(aweb_cloud_db, monkeypatch):
             certificate_id="cert-1",
         )
 
-    monkeypatch.setattr(mcp_auth, "get_team_identity", _fake_get_team_identity)
+    monkeypatch.setattr(mcp_auth, "get_messaging_auth", _fake_get_messaging_auth)
 
     middleware = mcp_auth.MCPAuthMiddleware(
         app=lambda *_args, **_kwargs: None, db_infra=aweb_cloud_db.aweb_db
@@ -301,120 +301,66 @@ async def test_mcp_auth_accepts_raw_manager(aweb_cloud_db, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_mcp_auth_enriches_identity_auth_from_agent_row(
-    aweb_cloud_db, monkeypatch
-):
-    team_id = "ops:gsk.aweb.ai"
-    agent_id = uuid4()
-    did_key = named_did_key("z6MkGsk")
+async def test_mcp_auth_retains_the_shared_identity_member_context(privacy_app):
+    from test_messages_http import _signed_identity_headers
 
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ($1, 'gsk.aweb.ai', 'ops', 'did:key:z6MkkopcdRMf2qPVBdcugyhrVQorfEfz2uUigTwZDvZ15poA' /* z6MkTeam */)
-        """,
-        team_id,
+    env = privacy_app
+    actor = await admit_messaging_actor(
+        env, alias="shared-context", team_id=PRIVACY_TEAM, local=True,
     )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, alias, identity_scope, status)
-        VALUES ($1, $2, $3, 'gsk', 'local', 'active')
-        """,
-        agent_id,
-        team_id,
-        did_key,
+    request = _request_with_headers(
+        _signed_identity_headers(actor.signing_key, actor.did_key, "")
     )
-
-    async def _fake_resolve_identity_auth(_request):
-        return IdentityAuth(did_key=did_key, did_aw=None, address=None)
-
-    monkeypatch.setattr(mcp_auth, "resolve_identity_auth", _fake_resolve_identity_auth)
-
-    middleware = mcp_auth.MCPAuthMiddleware(
-        app=lambda *_args, **_kwargs: None, db_infra=DBInfra(aweb_cloud_db.aweb_db)
-    )
-    ctx = await middleware._resolve_auth(
-        _request_with_headers({"Authorization": f"DIDKey {did_key} signature"})
-    )
+    request.scope["app"] = env.app
+    middleware = mcp_auth.MCPAuthMiddleware(app=env.app, db_infra=env.infra)
+    ctx = await middleware._resolve_auth(request)
 
     assert ctx is not None
-    assert ctx.did_key == did_key
-    assert ctx.team_id == team_id
-    assert ctx.agent_id == str(agent_id)
-    assert ctx.alias == "gsk"
-    assert ctx.certificate_id is None
+    assert (ctx.did_key, ctx.team_id, ctx.agent_id, ctx.alias, ctx.certificate_id) == (
+        actor.did_key, PRIVACY_TEAM, actor.agent_id, "shared-context", None,
+    )
 
 
 @pytest.mark.asyncio
-async def test_mcp_auth_accepts_trusted_proxy_headers(aweb_cloud_db, monkeypatch):
-    team_id = "ops:acme.com"
-    agent_id = uuid4()
-    workspace_id = uuid4()
+async def test_mcp_auth_accepts_trusted_proxy_headers(privacy_app, monkeypatch):
+    env = privacy_app
+    actor = await admit_messaging_actor(
+        env, alias="proxy-alice", team_id=PRIVACY_TEAM, address="example.test/proxy-alice"
+    )
+    workspace_id = await env.db.fetch_val(
+        "SELECT workspace_id FROM {{tables.workspaces}} WHERE agent_id=$1", UUID(actor.agent_id)
+    )
+    assert workspace_id is not None
     secret = "proxy-secret"
-
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ($1, 'acme.com', 'ops', 'did:key:z6MkkopcdRMf2qPVBdcugyhrVQorfEfz2uUigTwZDvZ15poA' /* z6MkTeam */)
-        """,
-        team_id,
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, did_aw_verified_key)
-        VALUES ($1, $2, 'did:key:z6MkggGwZHMkBygNAy7tZGtCZxrkWBHQ5fpEm6fSAxfkuvqE' /* z6MkAlice */, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'active', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN 'did:key:z6MkggGwZHMkBygNAy7tZGtCZxrkWBHQ5fpEm6fSAxfkuvqE' /* z6MkAlice */ END)
-        """,
-        agent_id,
-        team_id,
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.workspaces}}
-            (workspace_id, team_id, agent_id, alias, workspace_type)
-        VALUES ($1, $2, $3, 'alice', 'hosted_mcp')
-        """,
-        workspace_id,
-        team_id,
-        agent_id,
-    )
-
     monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
     monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", secret)
-
     user_id = str(uuid4())
-    middleware = mcp_auth.MCPAuthMiddleware(
-        app=lambda *_args, **_kwargs: None, db_infra=DBInfra(aweb_cloud_db.aweb_db)
-    )
+    middleware = mcp_auth.MCPAuthMiddleware(app=env.app, db_infra=env.infra)
     ctx = await middleware._resolve_auth(
         _request_with_headers(
             {
-                "X-Team-ID": team_id,
+                "X-Team-ID": PRIVACY_TEAM,
                 "X-User-ID": user_id,
-                "X-AWEB-Actor-ID": str(agent_id),
+                "X-AWEB-Actor-ID": actor.agent_id,
                 "X-AWEB-Auth": build_internal_auth_header_value(
                     secret=secret,
-                    team_id=team_id,
+                    team_id=PRIVACY_TEAM,
                     principal_type="u",
                     principal_id=user_id,
-                    actor_id=str(agent_id),
+                    actor_id=actor.agent_id,
                 ),
             },
-            verified_bindings=[
-                ("did:aw:alice", named_did_key("z6MkAlice"), "acme.com/alice")
-            ],
+            app=env.app,
         )
     )
-
     assert ctx is not None
-    assert ctx.team_id == team_id
-    assert ctx.agent_id == str(agent_id)
+    assert ctx.team_id == PRIVACY_TEAM
+    assert ctx.agent_id == actor.agent_id
     assert ctx.workspace_id == str(workspace_id)
-    assert ctx.alias == "alice"
-    assert ctx.did_key == named_did_key("z6MkAlice")
-    assert ctx.did_aw == "did:aw:alice"
-    assert ctx.address == "acme.com/alice"
+    assert ctx.alias == "proxy-alice"
+    assert ctx.did_key == actor.did_key
+    assert ctx.did_aw == actor.stable_id
+    assert ctx.address == actor.address
 
 
 @pytest.mark.asyncio
@@ -482,9 +428,7 @@ async def test_mcp_auth_refuses_a_forwarded_actor_that_is_not_an_active_member(
                         actor_id=str(agent_id),
                     ),
                 },
-                verified_bindings=[
-                    ("did:aw:alice", named_did_key("z6MkAlice"), "acme.com/alice")
-                ],
+                verified_bindings=[("did:aw:alice", named_did_key("z6MkAlice"), "acme.com/alice")],
             )
         )
     assert refused.value.status_code == 403
@@ -524,9 +468,7 @@ async def test_mcp_auth_rejects_bad_trusted_proxy_signature(aweb_cloud_db, monke
 
 
 @pytest.mark.asyncio
-async def test_mcp_auth_fails_when_proxy_trust_enabled_without_secret(
-    aweb_cloud_db, monkeypatch
-):
+async def test_mcp_auth_fails_when_proxy_trust_enabled_without_secret(aweb_cloud_db, monkeypatch):
     monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
     monkeypatch.delenv("AWEB_INTERNAL_AUTH_SECRET", raising=False)
 
@@ -566,9 +508,7 @@ async def test_mcp_auth_fails_when_proxy_trust_enabled_without_secret(
         "no-colon",
     ],
 )
-async def test_mcp_auth_rejects_invalid_proxy_team_id(
-    aweb_cloud_db, monkeypatch, bad_team_id
-):
+async def test_mcp_auth_rejects_invalid_proxy_team_id(aweb_cloud_db, monkeypatch, bad_team_id):
     secret = "proxy-secret"
     actor_id = str(uuid4())
     user_id = str(uuid4())
@@ -600,9 +540,7 @@ async def test_mcp_auth_rejects_invalid_proxy_team_id(
 
 
 @pytest.mark.asyncio
-async def test_mcp_auth_ignores_trusted_proxy_headers_when_not_enabled(
-    aweb_cloud_db, monkeypatch
-):
+async def test_mcp_auth_ignores_trusted_proxy_headers_when_not_enabled(aweb_cloud_db, monkeypatch):
     secret = "proxy-secret"
     monkeypatch.delenv("AWEB_TRUST_PROXY_HEADERS", raising=False)
     monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", secret)
@@ -652,9 +590,7 @@ def test_canonical_signed_payload_filters_unsigned_fields():
 
 
 @pytest.mark.asyncio
-async def test_mcp_send_mail_uses_hosted_signer_for_trusted_proxy(
-    aweb_cloud_db, monkeypatch
-):
+async def test_mcp_send_mail_uses_hosted_signer_for_trusted_proxy(aweb_cloud_db, monkeypatch):
     team_id = "ops:acme.com"
     alice_agent_id = uuid4()
     workspace_id = uuid4()
@@ -941,9 +877,7 @@ async def test_mcp_send_mail_continues_conversation_without_recipient_rediscover
 
     class _NoRediscoveryRegistry:
         async def resolve_address(self, *_args, **_kwargs):
-            raise AssertionError(
-                "continuation must not rediscover the recipient address"
-            )
+            raise AssertionError("continuation must not rediscover the recipient address")
 
     result = json.loads(
         await mail_tools.send_mail(
@@ -974,9 +908,7 @@ async def test_mcp_send_mail_continues_conversation_without_recipient_rediscover
 
 
 @pytest.mark.asyncio
-async def test_mcp_send_mail_continues_federated_conversation(
-    aweb_cloud_db, monkeypatch
-):
+async def test_mcp_send_mail_continues_federated_conversation(aweb_cloud_db, monkeypatch):
     team_id = "ops:acme.com"
     alice_agent_id = uuid4()
     workspace_id = uuid4()
@@ -1042,9 +974,7 @@ async def test_mcp_send_mail_continues_federated_conversation(
 
     class _Registry:
         async def resolve_key(self, did_aw: str):
-            raise AssertionError(
-                "mail continuation must use stored participant current did:key"
-            )
+            raise AssertionError("mail continuation must use stored participant current did:key")
 
     remote_calls: list[dict] = []
 
@@ -1128,9 +1058,7 @@ async def test_mcp_send_mail_continues_federated_conversation(
 
 
 @pytest.mark.asyncio
-async def test_mcp_send_mail_continues_first_legacy_bound_conversation(
-    aweb_cloud_db, monkeypatch
-):
+async def test_mcp_send_mail_continues_first_legacy_bound_conversation(aweb_cloud_db, monkeypatch):
     team_id = "ops:acme.com"
     alice_agent_id = uuid4()
     bob_agent_id = uuid4()
@@ -1315,9 +1243,7 @@ async def test_mcp_send_mail_accepts_external_to_address_without_local_agent(
     )
 
     class _Registry:
-        async def resolve_address(
-            self, domain: str, name: str, *, did_key: str | None = None
-        ):
+        async def resolve_address(self, domain: str, name: str, *, did_key: str | None = None):
             assert (domain, name, did_key) == ("otherco.com", "bob", alice_did)
             return Address(
                 address_id="addr-2",
@@ -1431,9 +1357,7 @@ async def test_mcp_send_mail_uses_same_team_local_persistent_when_awid_misses(
     )
 
     class _Registry:
-        async def resolve_address(
-            self, domain: str, name: str, *, did_key: str | None = None
-        ):
+        async def resolve_address(self, domain: str, name: str, *, did_key: str | None = None):
             assert (domain, name, did_key) == ("acme.com", "bob", alice_did)
             return None
 
@@ -1504,9 +1428,7 @@ async def test_mcp_send_mail_requires_current_local_address_authority(
         async def registry_audience(self, domain: str):
             return "https://registry.test"
 
-        async def resolve_address(
-            self, domain: str, name: str, *, did_key: str | None = None
-        ):
+        async def resolve_address(self, domain: str, name: str, *, did_key: str | None = None):
             return await self.resolve_address_fresh(domain, name)
 
         async def resolve_address_fresh(
@@ -1605,9 +1527,7 @@ async def test_mcp_send_mail_fails_closed_for_trusted_proxy_without_encryptor(
     )
 
     assert result["error"] == "hosted custodial encryptor is not configured"
-    count = await aweb_cloud_db.aweb_db.fetch_val(
-        "SELECT COUNT(*) FROM {{tables.messages}}"
-    )
+    count = await aweb_cloud_db.aweb_db.fetch_val("SELECT COUNT(*) FROM {{tables.messages}}")
     assert count == 0
 
 
@@ -1666,16 +1586,12 @@ async def test_mcp_send_mail_fails_closed_for_trusted_proxy_without_workspace_id
     )
 
     assert result["error"] == "hosted custodial signer requires workspace_id"
-    count = await aweb_cloud_db.aweb_db.fetch_val(
-        "SELECT COUNT(*) FROM {{tables.messages}}"
-    )
+    count = await aweb_cloud_db.aweb_db.fetch_val("SELECT COUNT(*) FROM {{tables.messages}}")
     assert count == 0
 
 
 @pytest.mark.asyncio
-async def test_mcp_chat_send_rejects_legacy_bound_session_continuation(
-    aweb_cloud_db, monkeypatch
-):
+async def test_mcp_chat_send_rejects_legacy_bound_session_continuation(aweb_cloud_db, monkeypatch):
     team_id = "ops:acme.com"
     alice_agent_id = uuid4()
     bob_agent_id = uuid4()
@@ -1761,16 +1677,12 @@ async def test_mcp_chat_send_rejects_legacy_bound_session_continuation(
     )
 
     assert "conversation_id" in result["error"]
-    count = await aweb_cloud_db.aweb_db.fetch_val(
-        "SELECT COUNT(*) FROM {{tables.chat_messages}}"
-    )
+    count = await aweb_cloud_db.aweb_db.fetch_val("SELECT COUNT(*) FROM {{tables.chat_messages}}")
     assert count == 1
 
 
 @pytest.mark.asyncio
-async def test_mcp_chat_send_uses_hosted_signer_for_trusted_proxy(
-    aweb_cloud_db, monkeypatch
-):
+async def test_mcp_chat_send_uses_hosted_signer_for_trusted_proxy(aweb_cloud_db, monkeypatch):
     team_id = "ops:acme.com"
     alice_agent_id = uuid4()
     workspace_id = uuid4()
@@ -1841,9 +1753,7 @@ async def test_mcp_chat_send_uses_hosted_signer_for_trusted_proxy(
     assert seen[0]["payload"]["sender_leaving"] is True
     assert seen[0]["payload"]["hang_on"] is True
 
-    row = await aweb_cloud_db.aweb_db.fetch_one(
-        "SELECT * FROM {{tables.chat_messages}}"
-    )
+    row = await aweb_cloud_db.aweb_db.fetch_one("SELECT * FROM {{tables.chat_messages}}")
     assert row["from_did"] == "did:aw:alice"
     assert row["hang_on"] is True
     assert row["signature"]
@@ -1893,9 +1803,7 @@ async def test_mcp_chat_send_uses_hosted_encryptor_by_default_for_trusted_proxy(
             "message_version": 2,
             "encrypted_envelope": _hosted_chat_envelope(
                 kwargs["payload"],
-                sender=_custodial_identity(
-                    alice_sk, alice_did, "did:aw:alice", "acme.com/alice"
-                ),
+                sender=_custodial_identity(alice_sk, alice_did, "did:aw:alice", "acme.com/alice"),
                 recipients=[
                     _custodial_identity(
                         named_signing_key("z6MkBob"),
@@ -1925,9 +1833,7 @@ async def test_mcp_chat_send_uses_hosted_encryptor_by_default_for_trusted_proxy(
     assert seen[0]["payload"]["body"] == "secret chat"
     assert seen[0]["recipients"][0]["agent_id"] == str(bob_agent_id)
 
-    row = await aweb_cloud_db.aweb_db.fetch_one(
-        "SELECT * FROM {{tables.chat_messages}}"
-    )
+    row = await aweb_cloud_db.aweb_db.fetch_one("SELECT * FROM {{tables.chat_messages}}")
     assert row["body"] == ""
     assert row["content_mode"] == "encrypted_v2"
     assert row["message_version"] == 2
@@ -2011,9 +1917,7 @@ async def test_mcp_chat_continuation_encryptor_gets_active_recipient_identities(
             "message_version": 2,
             "encrypted_envelope": _hosted_chat_envelope(
                 kwargs["payload"],
-                sender=_custodial_identity(
-                    alice_sk, alice_did, "did:aw:alice", "acme.com/alice"
-                ),
+                sender=_custodial_identity(alice_sk, alice_did, "did:aw:alice", "acme.com/alice"),
                 recipients=[
                     _custodial_identity(
                         named_signing_key("z6MkBob"),
@@ -2038,16 +1942,13 @@ async def test_mcp_chat_continuation_encryptor_gets_active_recipient_identities(
 
     assert "error" not in result, result
     assert len(seen) == 1
-    assert [recipient.get("did_aw") for recipient in seen[0]["recipients"]] == [
-        "did:aw:bob"
-    ]
+    assert [recipient.get("did_aw") for recipient in seen[0]["recipients"]] == ["did:aw:bob"]
     assert [recipient.get("did_key") for recipient in seen[0]["recipients"]] == [
         named_did_key("z6MkBob")
     ]
     assert [recipient.get("agent_id") for recipient in seen[0]["recipients"]] == [None]
     assert all(
-        recipient.get("agent_id") != str(carol_agent_id)
-        for recipient in seen[0]["recipients"]
+        recipient.get("agent_id") != str(carol_agent_id) for recipient in seen[0]["recipients"]
     )
 
 
@@ -2094,9 +1995,7 @@ async def test_mcp_chat_send_accepts_external_to_address_without_local_agent(
     )
 
     class _Registry:
-        async def resolve_address(
-            self, domain: str, name: str, *, did_key: str | None = None
-        ):
+        async def resolve_address(self, domain: str, name: str, *, did_key: str | None = None):
             assert (domain, name, did_key) == ("otherco.com", "bob", alice_did)
             return Address(
                 address_id="addr-2",
@@ -2211,9 +2110,7 @@ async def test_mcp_chat_send_uses_same_team_local_persistent_when_awid_misses(
     )
 
     class _Registry:
-        async def resolve_address(
-            self, domain: str, name: str, *, did_key: str | None = None
-        ):
+        async def resolve_address(self, domain: str, name: str, *, did_key: str | None = None):
             assert (domain, name, did_key) == ("acme.com", "bob", alice_did)
             return None
 
@@ -2283,9 +2180,7 @@ async def test_mcp_chat_send_requires_current_local_address_authority(
         async def registry_audience(self, domain: str):
             return "https://registry.test"
 
-        async def resolve_address(
-            self, domain: str, name: str, *, did_key: str | None = None
-        ):
+        async def resolve_address(self, domain: str, name: str, *, did_key: str | None = None):
             return await self.resolve_address_fresh(domain, name)
 
         async def resolve_address_fresh(
@@ -2335,9 +2230,7 @@ async def test_mcp_chat_send_requires_current_local_address_authority(
 
 
 @pytest.mark.asyncio
-async def test_mcp_chat_send_existing_session_uses_hosted_signer(
-    aweb_cloud_db, monkeypatch
-):
+async def test_mcp_chat_send_existing_session_uses_hosted_signer(aweb_cloud_db, monkeypatch):
     team_id = "ops:acme.com"
     alice_agent_id = uuid4()
     workspace_id = uuid4()
@@ -2420,9 +2313,7 @@ async def test_mcp_chat_send_existing_session_uses_hosted_signer(
     assert seen[0]["payload"]["hang_on"] is True
     assert seen[0]["payload"]["to"] == "bob"
     assert seen[0]["payload"]["to_did"] == named_did_key("z6MkBob")
-    row = await aweb_cloud_db.aweb_db.fetch_one(
-        "SELECT * FROM {{tables.chat_messages}}"
-    )
+    row = await aweb_cloud_db.aweb_db.fetch_one("SELECT * FROM {{tables.chat_messages}}")
     assert row["from_did"] == "did:aw:alice"
     assert row["signature"]
     assert row["signed_payload"] == canonical_signed_payload(seen[0]["payload"])
@@ -2493,9 +2384,7 @@ async def test_mcp_chat_send_continues_federated_session(aweb_cloud_db, monkeypa
 
     class _Registry:
         async def resolve_key(self, did_aw: str):
-            raise AssertionError(
-                "chat continuation must use stored participant current did:key"
-            )
+            raise AssertionError("chat continuation must use stored participant current did:key")
 
     remote_calls: list[dict] = []
 
@@ -2576,9 +2465,7 @@ async def test_mcp_chat_send_continues_federated_session(aweb_cloud_db, monkeypa
 
 
 @pytest.mark.asyncio
-async def test_mcp_chat_send_rejects_forged_hosted_signature(
-    aweb_cloud_db, monkeypatch
-):
+async def test_mcp_chat_send_rejects_forged_hosted_signature(aweb_cloud_db, monkeypatch):
     team_id = "ops:acme.com"
     alice_agent_id = uuid4()
     workspace_id = uuid4()
@@ -2628,9 +2515,7 @@ async def test_mcp_chat_send_rejects_forged_hosted_signature(
     )
 
     assert result["error"] == "hosted custodial signer returned invalid signature"
-    count = await aweb_cloud_db.aweb_db.fetch_val(
-        "SELECT COUNT(*) FROM {{tables.chat_messages}}"
-    )
+    count = await aweb_cloud_db.aweb_db.fetch_val("SELECT COUNT(*) FROM {{tables.chat_messages}}")
     assert count == 0
 
 
@@ -2679,15 +2564,12 @@ async def test_mcp_global_inbox_does_not_read_or_ack_a_key_only_identity(
     )
     assert len(read_rows) == 2
     assert all(
-        (row["read_at"] is not None) == (row["to_did"] == "did:aw:alice")
-        for row in read_rows
+        (row["read_at"] is not None) == (row["to_did"] == "did:aw:alice") for row in read_rows
     )
 
 
 @pytest.mark.asyncio
-async def test_mcp_check_inbox_returns_encrypted_mail_metadata_only(
-    aweb_cloud_db, monkeypatch
-):
+async def test_mcp_check_inbox_returns_encrypted_mail_metadata_only(aweb_cloud_db, monkeypatch):
     encrypted_message_id = uuid4()
     await aweb_cloud_db.aweb_db.execute(
         """
@@ -2743,9 +2625,7 @@ async def test_mcp_check_inbox_returns_encrypted_mail_metadata_only(
 
 
 @pytest.mark.asyncio
-async def test_mcp_check_inbox_decrypts_hosted_custodial_encrypted_mail(
-    aweb_cloud_db, monkeypatch
-):
+async def test_mcp_check_inbox_decrypts_hosted_custodial_encrypted_mail(aweb_cloud_db, monkeypatch):
     encrypted_message_id = uuid4()
     workspace_id = uuid4()
     await aweb_cloud_db.aweb_db.execute(
@@ -2865,9 +2745,7 @@ async def test_mcp_chat_pending_does_not_expand_global_identity_to_current_key(
         ),
     )
 
-    data = json.loads(
-        await chat_tools.chat_pending(DBInfra(aweb_cloud_db.aweb_db), None)
-    )
+    data = json.loads(await chat_tools.chat_pending(DBInfra(aweb_cloud_db.aweb_db), None))
 
     assert data["pending"] == []
     monkeypatch.setattr(
@@ -2880,9 +2758,7 @@ async def test_mcp_chat_pending_does_not_expand_global_identity_to_current_key(
             did_key=named_did_key("z6MkAliceCurrent"),
         ),
     )
-    data = json.loads(
-        await chat_tools.chat_pending(DBInfra(aweb_cloud_db.aweb_db), None)
-    )
+    data = json.loads(await chat_tools.chat_pending(DBInfra(aweb_cloud_db.aweb_db), None))
     assert len(data["pending"]) == 1
     assert data["pending"][0]["session_id"] == str(session_id)
     assert data["pending"][0]["conversation_id"] == str(session_id)
@@ -3051,9 +2927,7 @@ async def test_mcp_chat_global_history_and_ack_refuse_key_only_participation(
     )
     assert read == {"error": "Session not found"}
     assert (
-        await aweb_cloud_db.aweb_db.fetch_val(
-            "SELECT count(*) FROM {{tables.chat_message_reads}}"
-        )
+        await aweb_cloud_db.aweb_db.fetch_val("SELECT count(*) FROM {{tables.chat_message_reads}}")
         == 0
     )
     monkeypatch.setattr(
@@ -3086,9 +2960,7 @@ async def test_mcp_chat_global_history_and_ack_refuse_key_only_participation(
 
 
 @pytest.mark.asyncio
-async def test_mcp_contacts_accept_equivalent_identity_owner_did(
-    aweb_cloud_db, monkeypatch
-):
+async def test_mcp_contacts_accept_equivalent_identity_owner_did(aweb_cloud_db, monkeypatch):
     contact_id = uuid4()
     did_key = named_did_key("z6MkAliceCurrent")
     did_aw = "did:aw:alice"
@@ -3115,9 +2987,7 @@ async def test_mcp_contacts_accept_equivalent_identity_owner_did(
         ),
     )
 
-    listed = json.loads(
-        await contacts_tools.contacts_list(DBInfra(aweb_cloud_db.aweb_db))
-    )
+    listed = json.loads(await contacts_tools.contacts_list(DBInfra(aweb_cloud_db.aweb_db)))
     assert [item["contact_address"] for item in listed["contacts"]] == ["acme.com/bob"]
 
     removed = json.loads(
@@ -3301,9 +3171,7 @@ async def test_mcp_send_mail_continuation_reevaluates_recipient_inbound_policy(
 
     class _NoRediscoveryRegistry:
         async def resolve_address(self, *_args, **_kwargs):
-            raise AssertionError(
-                "continuation must not rediscover the recipient address"
-            )
+            raise AssertionError("continuation must not rediscover the recipient address")
 
     result = json.loads(
         await mail_tools.send_mail(
@@ -3323,9 +3191,7 @@ async def test_mcp_send_mail_continuation_reevaluates_recipient_inbound_policy(
         "SELECT count(*) AS n FROM {{tables.messages}} WHERE conversation_id = $1",
         conversation_id,
     )
-    assert (stored["n"] > 0) is expect_delivered, (
-        f"{case}: message rows disagree with the verdict"
-    )
+    assert (stored["n"] > 0) is expect_delivered, f"{case}: message rows disagree with the verdict"
 
 
 @pytest.mark.asyncio
@@ -3517,27 +3383,16 @@ async def test_mcp_same_team_contacts_only(
             session_id=result["session_id"],
             message="still a contact",
         )
-        active = json.loads(
-            await chat_tools.chat_send(DBInfra(manager), **continuation_args)
-        )
+        active = json.loads(await chat_tools.chat_send(DBInfra(manager), **continuation_args))
         assert "error" not in active, active
-        before = await manager.fetch_value(
-            "SELECT COUNT(*) FROM {{tables.chat_messages}}"
-        )
-        await manager.execute(
-            "DELETE FROM {{tables.contacts}} WHERE owner_did='did:aw:bob'"
-        )
-        removed = json.loads(
-            await chat_tools.chat_send(DBInfra(manager), **continuation_args)
-        )
+        before = await manager.fetch_value("SELECT COUNT(*) FROM {{tables.chat_messages}}")
+        await manager.execute("DELETE FROM {{tables.contacts}} WHERE owner_did='did:aw:bob'")
+        removed = json.loads(await chat_tools.chat_send(DBInfra(manager), **continuation_args))
         assert removed == {
             "error": "Recipient only accepts messages from exact active contacts. Ask the recipient to add your exact address as a contact or check their inbound policy.",
             "reason": "recipient_policy_rejected",
         }
-        assert (
-            await manager.fetch_value("SELECT COUNT(*) FROM {{tables.chat_messages}}")
-            == before
-        )
+        assert await manager.fetch_value("SELECT COUNT(*) FROM {{tables.chat_messages}}") == before
 
 
 @pytest.mark.asyncio

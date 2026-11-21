@@ -2,122 +2,92 @@
 
 from __future__ import annotations
 
-from team_facts_fixtures import legacy_registry
+import asyncio
+from contextlib import asynccontextmanager
+import pytest_asyncio
+from test_agents_suggest_alias_http import request_as
+from test_dashboard_privacy import TEAM, privacy_stack
+from test_agents_suggest_alias_http import _global_actor
+from test_messages_http import (
+    _encode_certificate as _encode_certificate,
+    _make_certificate as _make_certificate,
+    _signed_team_headers,
+)
 
-from identity_binding_support import seed_verified_bindings
 
-import base64
 import json
 from datetime import datetime, timedelta, timezone
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
-from fastapi import FastAPI
-from httpx import ASGITransport, AsyncClient
-from nacl.signing import SigningKey
 
-from awid.did import did_from_public_key
-from awid.signing import canonical_json_bytes, sign_message
 import aweb.routes.events as events_module
 from aweb.messaging.participant_succession import MailSuccessionScope
-from aweb.routes.events import router as events_router
 from aweb.team_auth_deps import TeamIdentity
 
 
-def _make_keypair():
-    sk = SigningKey.generate()
-    pk = bytes(sk.verify_key)
-    did_key = did_from_public_key(pk)
-    return bytes(sk), pk, did_key
+@pytest_asyncio.fixture
+async def privacy_app(shared_test_pool, monkeypatch):
+    async with privacy_stack(
+        shared_test_pool,
+        monkeypatch,
+    ) as env:
+        monkeypatch.setattr(events_module, "EVENTS_RECONCILE_INTERVAL", 0.01)
+        monkeypatch.setattr(events_module, "EVENTS_HEARTBEAT_INTERVAL", 0.05)
+        yield env
 
 
-def _make_certificate(team_sk, team_did_key, member_did_key, **kwargs):
-    cert = {
-        "version": 1,
-        "certificate_id": kwargs.get("certificate_id", "cert-001"),
-        "team_id": kwargs.get("team_id", "backend:acme.com"),
-        "team_did_key": team_did_key,
-        "member_did_key": member_did_key,
-        "member_did_aw": kwargs.get("member_did_aw", ""),
-        "member_address": kwargs.get("member_address", ""),
-        "alias": kwargs.get("alias", "bob"),
-        "identity_scope": kwargs.get("identity_scope", "global"),
-        "issued_at": datetime.now(timezone.utc).isoformat(),
-    }
-    payload = canonical_json_bytes(cert)
-    cert["signature"] = sign_message(team_sk, payload)
-    return cert
+async def _http_frames(lines):
+    event = None
+    async for line in lines:
+        if line.startswith(":"):
+            yield "keepalive", None
+        elif line.startswith("event: "):
+            event = line[7:]
+        elif line.startswith("data: "):
+            yield event, json.loads(line[6:])
+            event = None
 
 
-def _encode_certificate(cert):
-    return base64.b64encode(json.dumps(cert).encode()).decode()
+async def _next_named(frames, expected):
+    async with asyncio.timeout(5):
+        async for name, data in frames:
+            if name == expected:
+                return data
+    raise AssertionError(f"stream ended before {expected}")
 
 
-def _signed_request(agent_sk, agent_did_key, team_id, body_bytes=b""):
-    import hashlib
+@asynccontextmanager
+async def _http_events(env):
+    actor = env.actors["bob"]
+    deadline = datetime.now(timezone.utc) + timedelta(seconds=60)
+    async with env.client.stream(
+        "GET",
+        "/v1/events/stream",
+        params={"deadline": deadline.isoformat()},
+        headers=_signed_team_headers(actor.sk, actor.did, TEAM, actor.certificate),
+    ) as response:
+        assert response.status_code == 200, await response.aread()
+        frames = _http_frames(response.aiter_lines())
+        connected = await _next_named(frames, "connected")
+        try:
+            yield frames, connected
+        finally:
+            await frames.aclose()
 
-    timestamp = datetime.now(timezone.utc).isoformat()
-    body_sha256 = hashlib.sha256(body_bytes).hexdigest()
-    payload_bytes = canonical_json_bytes({
-        "body_sha256": body_sha256,
-        "team_id": team_id,
-        "timestamp": timestamp,
-    })
-    sig = sign_message(agent_sk, payload_bytes)
-    return {
-        "Authorization": f"DIDKey {agent_did_key} {sig}",
-        "X-AWEB-Timestamp": timestamp,
-    }
 
-
-def _build_test_app(aweb_db, team_did_key):
-    app = FastAPI()
-    app.include_router(events_router)
-
-    class _DbShim:
-        def get_manager(self, name="aweb"):
-            return aweb_db
-
-    import hashlib as _hashlib
-    from unittest.mock import AsyncMock
-
-    @app.middleware("http")
-    async def cache_body(request, call_next):
-        if request.method in {"GET", "HEAD", "OPTIONS"}:
-            request.state.cached_body = b""
-            request.state.body_sha256 = _hashlib.sha256(b"").hexdigest()
-            return await call_next(request)
-
-        original_receive = request._receive
-        body = await request.body()
-        request.state.cached_body = body
-        request.state.body_sha256 = _hashlib.sha256(body).hexdigest()
-        replayed = False
-
-        async def _receive():
-            nonlocal replayed
-            if not replayed:
-                replayed = True
-                return {"type": "http.request", "body": body, "more_body": False}
-            while True:
-                message = await original_receive()
-                if message["type"] == "http.disconnect":
-                    return message
-                if message["type"] == "http.request" and not message.get("more_body", False):
-                    continue
-                return message
-
-        request._receive = _receive
-        return await call_next(request)
-
-    app.state.db = _DbShim()
-    app.state.redis = None
-
-    registry = AsyncMock()
-    registry.get_team_public_key = AsyncMock(return_value=team_did_key)
-    registry.get_team_revocations = AsyncMock(return_value=set())
-    app.state.awid_registry_client = legacy_registry(registry)
-    return app
+async def _send_mail(env, subject):
+    # The certified sender reaches the actual writer; notifications are its work.
+    bob = env.actors["bob"]
+    response = await request_as(
+        env,
+        alias="alice",
+        method="POST",
+        path="/v1/messages",
+        payload={"to_did": bob.did, "subject": subject, "body": "hello"},
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
 
 
 async def _create_test_event_recipient(aweb_db):
@@ -136,7 +106,8 @@ async def _create_test_event_recipient(aweb_db):
         agent_id,
     )
     await aweb_db.execute(
-        "UPDATE {{tables.agents}} SET did_aw_verified_key=did_key WHERE agent_id=$1", agent_id,
+        "UPDATE {{tables.agents}} SET did_aw_verified_key=did_key WHERE agent_id=$1",
+        agent_id,
     )
     return agent_id
 
@@ -179,226 +150,72 @@ async def _open_test_event_stream(aweb_db, agent_id, monkeypatch, *, redis=None)
 
 
 @pytest.mark.asyncio
-async def test_events_stream_includes_existing_unread_mail(aweb_cloud_db):
-    team_sk, _, team_did_key = _make_keypair()
-    alice_sk, _, alice_did_key = _make_keypair()
-    bob_sk, _, bob_did_key = _make_keypair()
-
-    cert = _make_certificate(
-        team_sk,
-        team_did_key,
-        bob_did_key,
-        team_id="backend:acme.com",
-        alias="bob",
-        identity_scope="global",
-        member_did_aw="did:aw:bob",
+async def test_events_stream_includes_existing_unread_mail(privacy_app):
+    env = privacy_app
+    await _global_actor(env, "alice", address="example.test/alice")
+    await _global_actor(env, "bob")
+    message_id = uuid4()
+    # Historical key-addressed mail remains a supported read shape.
+    await env.db.execute(
+        "INSERT INTO {{tables.messages}} "
+        "(message_id,from_did,to_did,from_alias,to_alias,subject,body,team_id,from_agent_id,to_agent_id) "
+        "VALUES ($1,$2,$3,'alice','bob','hello','hello',$4,$5,$6)",
+        message_id,
+        env.actors["alice"].did,
+        env.actors["bob"].did,
+        TEAM,
+        env.actors["alice"].id,
+        env.actors["bob"].id,
     )
-    cert_header = _encode_certificate(cert)
-
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ($1, $2, $3, $4)
-        """,
-        "backend:acme.com",
-        "acme.com",
-        "backend",
-        team_did_key,
-    )
-
-    alice = await aweb_cloud_db.aweb_db.fetch_one(
-        """
-        INSERT INTO {{tables.agents}} (team_id, did_key, alias, address, identity_scope, role)
-        VALUES ($1, $2, 'alice', 'acme.com/alice', 'global', 'developer')
-        RETURNING agent_id
-        """,
-        "backend:acme.com",
-        alice_did_key,
-    )
-    bob = await aweb_cloud_db.aweb_db.fetch_one(
-        """
-        INSERT INTO {{tables.agents}} (team_id, did_key, alias, identity_scope, role)
-        VALUES ($1, $2, 'bob', 'global', 'developer')
-        RETURNING agent_id
-        """,
-        "backend:acme.com",
-        bob_did_key,
-    )
-
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.messages}}
-            (from_did, to_did, from_alias, to_alias, subject, body, team_id, from_agent_id, to_agent_id)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-        """,
-        alice_did_key,
-        bob_did_key,
-        "alice",
-        "bob",
-        "",
-        "hello from alice",
-        "backend:acme.com",
-        alice["agent_id"],
-        bob["agent_id"],
-    )
-
-    await aweb_cloud_db.aweb_db.execute(
-        "UPDATE {{tables.agents}} SET did_aw_verified_key=did_key WHERE agent_id=$1", alice["agent_id"],
-    )
-    app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
-    seed_verified_bindings(app, ("did:aw:bob", bob_did_key, ""))
-    deadline = (datetime.now(timezone.utc) + timedelta(seconds=2)).isoformat()
-    headers = _signed_request(bob_sk, bob_did_key, "backend:acme.com")
-    headers["X-AWID-Team-Certificate"] = cert_header
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.get("/v1/events/stream", params={"deadline": deadline}, headers=headers)
-
-    assert resp.status_code == 200
-    assert "event: connected" in resp.text
-    assert '"team_id": "backend:acme.com"' in resp.text
-    assert "event: actionable_mail" in resp.text
-    assert '"from_alias": "alice"' in resp.text
-    assert f'"from_did": "{alice_did_key}"' in resp.text
-    assert '"from_address": "acme.com/alice"' in resp.text
+    async with _http_events(env) as (frames, connected):
+        assert connected["team_id"] == TEAM
+        event = await _next_named(frames, "actionable_mail")
+    assert event["message_id"] == str(message_id)
+    assert event["from_alias"] == "alice"
+    assert event["from_did"] == env.actors["alice"].did
+    assert event["from_address"] == "example.test/alice"
 
 
 @pytest.mark.asyncio
-async def test_events_stream_sends_idle_heartbeats(aweb_cloud_db, monkeypatch):
-    team_sk, _, team_did_key = _make_keypair()
-    bob_sk, _, bob_did_key = _make_keypair()
-
-    cert = _make_certificate(
-        team_sk,
-        team_did_key,
-        bob_did_key,
-        team_id="backend:acme.com",
-        alias="bob",
-        identity_scope="global",
-        member_did_aw="did:aw:bob",
-    )
-    cert_header = _encode_certificate(cert)
-
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ($1, $2, $3, $4)
-        """,
-        "backend:acme.com",
-        "acme.com",
-        "backend",
-        team_did_key,
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}} (team_id, did_key, alias, identity_scope, role)
-        VALUES ($1, $2, 'bob', 'global', 'developer')
-        """,
-        "backend:acme.com",
-        bob_did_key,
-    )
-
-    monkeypatch.setattr(events_module, "EVENTS_RECONCILE_INTERVAL", 0.01)
-    monkeypatch.setattr(events_module, "EVENTS_HEARTBEAT_INTERVAL", 0.01)
-
-    app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
-    seed_verified_bindings(app, ("did:aw:bob", bob_did_key, ""))
-    deadline = (datetime.now(timezone.utc) + timedelta(seconds=0.5)).isoformat()
-    headers = _signed_request(bob_sk, bob_did_key, "backend:acme.com")
-    headers["X-AWID-Team-Certificate"] = cert_header
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.get("/v1/events/stream", params={"deadline": deadline}, headers=headers)
-
-    assert resp.status_code == 200
-    assert resp.text.count(": keepalive") >= 2
+async def test_events_stream_sends_idle_heartbeats(privacy_app):
+    async with _http_events(privacy_app) as (frames, _):
+        for _ in range(2):
+            async with asyncio.timeout(5):
+                name, data = await anext(frames)
+            assert name == "keepalive"
+            assert data is None
 
 
 @pytest.mark.asyncio
-async def test_events_stream_matches_unread_mail_across_viewer_dids(aweb_cloud_db):
-    team_sk, _, team_did_key = _make_keypair()
-    alice_sk, _, alice_did_key = _make_keypair()
-    bob_sk, _, bob_did_key = _make_keypair()
-
-    cert = _make_certificate(
-        team_sk,
-        team_did_key,
-        bob_did_key,
-        team_id="backend:acme.com",
-        alias="bob",
-        identity_scope="global",
-        member_did_aw="did:aw:bob",
+async def test_events_stream_matches_unread_mail_across_viewer_dids(privacy_app):
+    env = privacy_app
+    alice = await _global_actor(env, "alice", address="example.test/alice")
+    bob = await _global_actor(env, "bob")
+    message_id = uuid4()
+    # A retained historical row names the stable recipient, while admission
+    # presents its current signing key. The reader must query both identities.
+    await env.db.execute(
+        "INSERT INTO {{tables.messages}} "
+        "(message_id,from_did,to_did,from_alias,to_alias,subject,body,team_id,from_agent_id,to_agent_id) "
+        "VALUES ($1,$2,$3,'alice','bob','','hello stable bob',$4,$5,$6)",
+        message_id,
+        alice,
+        bob,
+        TEAM,
+        env.actors["alice"].id,
+        env.actors["bob"].id,
     )
-    cert_header = _encode_certificate(cert)
-
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ($1, $2, $3, $4)
-        """,
-        "backend:acme.com",
-        "acme.com",
-        "backend",
-        team_did_key,
-    )
-
-    alice = await aweb_cloud_db.aweb_db.fetch_one(
-        """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, address, identity_scope, role)
-        VALUES ($1, $2, $3, 'alice', 'acme.com/alice', 'global', 'developer')
-        RETURNING agent_id
-        """,
-        "backend:acme.com",
-        alice_did_key,
-        "did:aw:alice",
-    )
-    bob = await aweb_cloud_db.aweb_db.fetch_one(
-        """
-        INSERT INTO {{tables.agents}} (team_id, did_key, alias, identity_scope, role)
-        VALUES ($1, $2, 'bob', 'global', 'developer')
-        RETURNING agent_id
-        """,
-        "backend:acme.com",
-        bob_did_key,
-    )
-
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.messages}}
-            (from_did, to_did, from_alias, to_alias, subject, body, team_id, from_agent_id, to_agent_id)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-        """,
-        "did:aw:alice",
-        "did:aw:bob",
-        "alice",
-        "bob",
-        "",
-        "hello stable bob",
-        "backend:acme.com",
-        alice["agent_id"],
-        bob["agent_id"],
-    )
-
-    await aweb_cloud_db.aweb_db.execute(
-        "UPDATE {{tables.agents}} SET did_aw_verified_key=did_key WHERE agent_id=$1", alice["agent_id"],
-    )
-    app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
-    seed_verified_bindings(app, ("did:aw:bob", bob_did_key, ""))
-    deadline = (datetime.now(timezone.utc) + timedelta(seconds=2)).isoformat()
-    headers = _signed_request(bob_sk, bob_did_key, "backend:acme.com")
-    headers["X-AWID-Team-Certificate"] = cert_header
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.get("/v1/events/stream", params={"deadline": deadline}, headers=headers)
-
-    assert resp.status_code == 200
-    assert "event: actionable_mail" in resp.text
-    assert '"from_alias": "alice"' in resp.text
-    assert '"from_address": "acme.com/alice"' in resp.text
+    async with _http_events(env) as (frames, _):
+        event = await _next_named(frames, "actionable_mail")
+    assert event["message_id"] == str(message_id)
+    assert event["from_alias"] == "alice"
+    assert event["from_address"] == "example.test/alice"
 
 
 @pytest.mark.asyncio
-async def test_current_actionable_mail_includes_from_stable_id_for_current_sender_key(aweb_cloud_db):
+async def test_current_actionable_mail_includes_from_stable_id_for_current_sender_key(
+    aweb_cloud_db,
+):
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
@@ -445,7 +262,9 @@ async def test_current_actionable_mail_includes_from_stable_id_for_current_sende
 
 
 @pytest.mark.asyncio
-async def test_current_actionable_mail_prefers_stored_sender_address_without_local_metadata(aweb_cloud_db):
+async def test_current_actionable_mail_prefers_stored_sender_address_without_local_metadata(
+    aweb_cloud_db,
+):
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.messages}}
@@ -510,108 +329,46 @@ async def test_current_actionable_mail_redacts_encrypted_subject(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
-async def test_events_stream_matches_pending_chat_across_viewer_dids(aweb_cloud_db):
-    team_sk, _, team_did_key = _make_keypair()
-    alice_sk, _, alice_did_key = _make_keypair()
-    bob_sk, _, bob_did_key = _make_keypair()
-
-    cert = _make_certificate(
-        team_sk,
-        team_did_key,
-        bob_did_key,
-        team_id="backend:acme.com",
-        alias="bob",
-        identity_scope="global",
-        member_did_aw="did:aw:bob",
+async def test_events_stream_matches_pending_chat_across_viewer_dids(privacy_app):
+    env = privacy_app
+    alice = await _global_actor(env, "alice", address="example.test/alice")
+    bob = await _global_actor(env, "bob")
+    session_id = uuid4()
+    # Retained stable-DID participants are read through current key admission.
+    await env.db.execute(
+        "INSERT INTO {{tables.chat_sessions}} (session_id,team_id,created_by) VALUES ($1,$2,$3)",
+        session_id,
+        TEAM,
+        alice,
     )
-    cert_header = _encode_certificate(cert)
-
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ($1, $2, $3, $4)
-        """,
-        "backend:acme.com",
-        "acme.com",
-        "backend",
-        team_did_key,
+    await env.db.execute(
+        "INSERT INTO {{tables.chat_participants}} (session_id,did,agent_id,alias) "
+        "VALUES ($1,$2,$3,'alice'),($1,$4,$5,'bob')",
+        session_id,
+        alice,
+        env.actors["alice"].id,
+        bob,
+        env.actors["bob"].id,
     )
-
-    alice = await aweb_cloud_db.aweb_db.fetch_one(
-        """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, address, identity_scope, role)
-        VALUES ($1, $2, $3, 'alice', 'acme.com/alice', 'global', 'developer')
-        RETURNING agent_id
-        """,
-        "backend:acme.com",
-        alice_did_key,
-        "did:aw:alice",
+    await env.db.execute(
+        "INSERT INTO {{tables.chat_messages}} (session_id,from_agent_id,from_did,from_alias,body) "
+        "VALUES ($1,$2,$3,'alice','hello stable bob')",
+        session_id,
+        env.actors["alice"].id,
+        alice,
     )
-    bob = await aweb_cloud_db.aweb_db.fetch_one(
-        """
-        INSERT INTO {{tables.agents}} (team_id, did_key, alias, identity_scope, role)
-        VALUES ($1, $2, 'bob', 'global', 'developer')
-        RETURNING agent_id
-        """,
-        "backend:acme.com",
-        bob_did_key,
-    )
-    session = await aweb_cloud_db.aweb_db.fetch_one(
-        """
-        INSERT INTO {{tables.chat_sessions}} (team_id, created_by)
-        VALUES ($1, $2)
-        RETURNING session_id
-        """,
-        "backend:acme.com",
-        "did:aw:alice",
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.chat_participants}} (session_id, did, agent_id, alias)
-        VALUES
-            ($1, $2, $3, 'alice'),
-            ($1, $4, $5, 'bob')
-        """,
-        session["session_id"],
-        "did:aw:alice",
-        alice["agent_id"],
-        "did:aw:bob",
-        bob["agent_id"],
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.chat_messages}} (session_id, from_agent_id, from_did, from_alias, body)
-        VALUES ($1, $2, $3, $4, $5)
-        """,
-        session["session_id"],
-        alice["agent_id"],
-        "did:aw:alice",
-        "alice",
-        "hello stable bob",
-    )
-
-    await aweb_cloud_db.aweb_db.execute(
-        "UPDATE {{tables.agents}} SET did_aw_verified_key=did_key WHERE agent_id=$1", alice["agent_id"],
-    )
-    app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
-    seed_verified_bindings(app, ("did:aw:bob", bob_did_key, ""))
-    deadline = (datetime.now(timezone.utc) + timedelta(seconds=2)).isoformat()
-    headers = _signed_request(bob_sk, bob_did_key, "backend:acme.com")
-    headers["X-AWID-Team-Certificate"] = cert_header
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.get("/v1/events/stream", params={"deadline": deadline}, headers=headers)
-
-    assert resp.status_code == 200
-    assert "event: actionable_chat" in resp.text
-    assert f'"conversation_id": "{session["session_id"]}"' in resp.text
-    assert '"from_alias": "alice"' in resp.text
-    assert '"from_did": "did:aw:alice"' in resp.text
-    assert '"from_address": "acme.com/alice"' in resp.text
+    async with _http_events(env) as (frames, _):
+        event = await _next_named(frames, "actionable_chat")
+    assert event["conversation_id"] == str(session_id)
+    assert event["from_alias"] == "alice"
+    assert event["from_did"] == alice
+    assert event["from_address"] == "example.test/alice"
 
 
 @pytest.mark.asyncio
-async def test_current_actionable_chat_uses_per_session_participant_lists(aweb_cloud_db, monkeypatch):
+async def test_current_actionable_chat_uses_per_session_participant_lists(
+    aweb_cloud_db, monkeypatch
+):
     class _DbShim:
         def __init__(self, aweb_db):
             self._aweb_db = aweb_db
@@ -669,7 +426,9 @@ async def test_current_actionable_chat_uses_per_session_participant_lists(aweb_c
 
     seen: dict[str, list[str]] = {}
 
-    async def _fake_get_waiting_agents(_redis, session_id: str, participant_dids: list[str]):
+    async def _fake_get_waiting_agents(
+        _redis, session_id: str, participant_dids: list[str]
+    ):
         seen[session_id] = list(participant_dids)
         return list(participant_dids)
 
@@ -699,18 +458,26 @@ async def test_current_actionable_chat_uses_per_session_participant_lists(aweb_c
     }
     assert all(item["sender_waiting"] is True for item in actionable)
     by_session = {item["session_id"]: item for item in actionable}
-    assert by_session["11111111-1111-4111-8111-111111111111"]["from_address"] == "acme.com/alice"
-    assert by_session["11111111-1111-4111-8111-111111111111"]["participant_addresses"] == [
-        "acme.com/alice"
-    ]
-    assert by_session["22222222-2222-4222-8222-222222222222"]["from_address"] == "frontend~carol"
-    assert by_session["22222222-2222-4222-8222-222222222222"]["participant_addresses"] == [
-        "frontend~carol"
-    ]
+    assert (
+        by_session["11111111-1111-4111-8111-111111111111"]["from_address"]
+        == "acme.com/alice"
+    )
+    assert by_session["11111111-1111-4111-8111-111111111111"][
+        "participant_addresses"
+    ] == ["acme.com/alice"]
+    assert (
+        by_session["22222222-2222-4222-8222-222222222222"]["from_address"]
+        == "frontend~carol"
+    )
+    assert by_session["22222222-2222-4222-8222-222222222222"][
+        "participant_addresses"
+    ] == ["frontend~carol"]
 
 
 @pytest.mark.asyncio
-async def test_current_actionable_chat_includes_from_stable_id_for_current_sender_key(aweb_cloud_db, monkeypatch):
+async def test_current_actionable_chat_includes_from_stable_id_for_current_sender_key(
+    aweb_cloud_db, monkeypatch
+):
     class _DbShim:
         def __init__(self, aweb_db):
             self._aweb_db = aweb_db
@@ -753,7 +520,9 @@ async def test_current_actionable_chat_includes_from_stable_id_for_current_sende
         uuid4(),
     )
 
-    async def _fake_get_waiting_agents(_redis, _session_id: str, participant_dids: list[str]):
+    async def _fake_get_waiting_agents(
+        _redis, _session_id: str, participant_dids: list[str]
+    ):
         return list(participant_dids)
 
     monkeypatch.setattr(events_module, "get_waiting_agents", _fake_get_waiting_agents)
@@ -778,147 +547,93 @@ async def test_current_actionable_chat_includes_from_stable_id_for_current_sende
 
 
 @pytest.mark.asyncio
-async def test_events_stream_emits_only_new_arrival_for_full_mail_window(
-    aweb_cloud_db,
-    monkeypatch,
-):
+async def test_events_stream_emits_only_new_arrival_for_full_mail_window(privacy_app):
+    env = privacy_app
+    alice = await _global_actor(env, "alice")
+    bob = await _global_actor(env, "bob")
     created_at = datetime.now(timezone.utc) - timedelta(hours=1)
-    recipient_agent_id = await _create_test_event_recipient(aweb_cloud_db.aweb_db)
-    for i in range(50):
-        await aweb_cloud_db.aweb_db.execute(
-            """
-            INSERT INTO {{tables.messages}}
-                (message_id, from_did, to_did, from_alias, to_alias, subject, body, created_at)
-            VALUES ($1, 'did:aw:alice', 'did:aw:bob', 'alice', 'bob', $2, $3, $4)
-            """,
-            f"00000000-0000-4000-8000-{i + 1:012d}",
-            f"old-{i}",
-            f"old-body-{i}",
-            created_at + timedelta(minutes=i),
+    old_ids = [uuid4() for _ in range(50)]
+    for index, message_id in enumerate(old_ids):
+        # Historical null-conversation rows remain supported input to reads.
+        await env.db.execute(
+            "INSERT INTO {{tables.messages}} "
+            "(message_id,from_did,to_did,from_alias,to_alias,subject,body,created_at) "
+            "VALUES ($1,$2,$3,'alice','bob',$4,'old body',$5)",
+            message_id,
+            alice,
+            bob,
+            f"old-{index}",
+            created_at + timedelta(seconds=index),
         )
-
-    stream = await _open_test_event_stream(
-        aweb_cloud_db.aweb_db,
-        recipient_agent_id,
-        monkeypatch,
-    )
-    initial_events = [
-        json.loads((await anext(stream)).split("data: ", 1)[1]) for _ in range(50)
-    ]
-    assert all(item["conversation_id"] == item["message_id"] for item in initial_events)
-
-    newest_message_id = "ffffffff-ffff-4fff-8fff-ffffffffffff"
-    newest_conversation_id = "99999999-9999-4999-8999-999999999999"
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.conversations}} (
-            conversation_id, conversation_type, created_by_did, created_at, updated_at
-        )
-        VALUES ($1, 'mail', 'did:aw:alice', $2, $2)
-        """,
-        newest_conversation_id,
-        created_at + timedelta(hours=2),
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.messages}}
-            (message_id, conversation_id, from_did, to_did, from_alias, to_alias, subject, body, created_at)
-        VALUES ($1, $2, 'did:aw:alice', 'did:aw:bob', 'alice', 'bob', 'newest', 'newest-body', $3)
-        """,
-        newest_message_id,
-        newest_conversation_id,
-        created_at + timedelta(hours=2),
-    )
-
-    changed = json.loads((await anext(stream)).split("data: ", 1)[1])
-    assert await anext(stream) == ": keepalive\n\n"
-    await stream.aclose()
-
-    assert changed["message_id"] == newest_message_id
+    async with _http_events(env) as (frames, _):
+        initial = [await _next_named(frames, "actionable_mail") for _ in range(50)]
+        assert all(item["conversation_id"] == item["message_id"] for item in initial)
+        # The real writer also advances the recipient change counter/pubsub.
+        newest = await _send_mail(env, "newest")
+        changed = await _next_named(frames, "actionable_mail")
+        async with asyncio.timeout(5):
+            assert (await anext(frames))[0] == "keepalive"
+    assert changed["message_id"] == newest["message_id"]
     assert changed["unread_count"] == 51
     current = await events_module._current_actionable_mail(
-        aweb_cloud_db.aweb_db,
-        inbox_dids=["did:aw:bob"],
+        env.db,
+        inbox_dids=[bob],
         mail_scope=MailSuccessionScope(),
     )
-    newest = next(item for item in current if item["message_id"] == newest_message_id)
-    assert newest["conversation_id"] == newest_conversation_id
-
-    all_message_ids = {
-        *(f"00000000-0000-4000-8000-{i + 1:012d}" for i in range(50)),
-        newest_message_id,
-    }
-    presented_ids = {item["message_id"] for item in current}
-    omitted_ids = all_message_ids - presented_ids
-    assert len(omitted_ids) == 1
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        UPDATE {{tables.messages}}
-        SET read_at = NOW()
-        WHERE message_id = ANY($1::uuid[])
-        """,
-        [UUID(message_id) for message_id in presented_ids],
+    assert (
+        next(item for item in current if item["message_id"] == newest["message_id"])[
+            "conversation_id"
+        ]
+        == newest["conversation_id"]
     )
-
+    all_ids = {*(str(value) for value in old_ids), newest["message_id"]}
+    presented = {item["message_id"] for item in current}
+    omitted = all_ids - presented
+    assert len(omitted) == 1
+    for message_id in presented:
+        response = await request_as(
+            env,
+            alias="bob",
+            method="POST",
+            path=f"/v1/messages/{message_id}/ack",
+            payload={},
+        )
+        assert response.status_code == 200, response.text
     after_ack = await events_module._current_actionable_mail(
-        aweb_cloud_db.aweb_db,
-        inbox_dids=["did:aw:bob"],
+        env.db,
+        inbox_dids=[bob],
         mail_scope=MailSuccessionScope(),
     )
-    assert {item["message_id"] for item in after_ack} == omitted_ids
+    assert {item["message_id"] for item in after_ack} == omitted
 
 
 @pytest.mark.asyncio
 async def test_events_stream_emits_one_mail_event_when_only_unread_count_changes(
-    aweb_cloud_db,
-    monkeypatch,
+    privacy_app,
 ):
-    recipient_agent_id = await _create_test_event_recipient(aweb_cloud_db.aweb_db)
-    message_ids = [uuid4(), uuid4()]
-    created_at = datetime.now(timezone.utc) - timedelta(minutes=1)
-    for index, message_id in enumerate(message_ids):
-        await aweb_cloud_db.aweb_db.execute(
-            """
-            INSERT INTO {{tables.messages}}
-                (message_id, from_did, to_did, from_alias, to_alias, subject, body, created_at)
-            VALUES ($1, 'did:aw:alice', 'did:aw:bob', 'alice', 'bob', 'subject', 'body', $2)
-            """,
-            message_id,
-            created_at + timedelta(seconds=index),
+    env = privacy_app
+    await _global_actor(env, "alice")
+    await _global_actor(env, "bob")
+    messages = [await _send_mail(env, f"message-{index}") for index in range(2)]
+    async with _http_events(env) as (frames, _):
+        initial = [await _next_named(frames, "actionable_mail") for _ in range(2)]
+        assert {item["unread_count"] for item in initial} == {2}
+        # Finish the opening snapshot before changing the real inbox.
+        async with asyncio.timeout(5):
+            assert (await anext(frames))[0] == "keepalive"
+        ack = await request_as(
+            env,
+            alias="bob",
+            method="POST",
+            path=f"/v1/messages/{messages[0]['message_id']}/ack",
+            payload={},
         )
-
-    stream = await _open_test_event_stream(
-        aweb_cloud_db.aweb_db,
-        recipient_agent_id,
-        monkeypatch,
-    )
-    initial_events = [
-        json.loads((await anext(stream)).split("data: ", 1)[1]) for _ in range(2)
-    ]
-    assert {event["unread_count"] for event in initial_events} == {2}
-    # Finish the opening snapshot before changing its data: after its last
-    # event yield, that iteration can still owe the client a heartbeat.
-    assert await anext(stream) == ": keepalive\n\n"
-
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        UPDATE {{tables.messages}}
-        SET read_at = NOW()
-        WHERE message_id = $1
-        """,
-        message_ids[0],
-    )
-
-    count_update_frame = await anext(stream)
-    assert count_update_frame.startswith("event: actionable_mail\n"), count_update_frame
-    assert json.loads(count_update_frame.split("data: ", 1)[1])["unread_count"] == 1
-    assert await anext(stream) == ": keepalive\n\n"
-    await stream.aclose()
-
-    assert count_update_frame.startswith("event: actionable_mail\n")
-    count_update = json.loads(count_update_frame.split("data: ", 1)[1])
-    assert count_update["message_id"] == str(message_ids[1])
-    assert count_update["unread_count"] == 1
+        assert ack.status_code == 200, ack.text
+        update = await _next_named(frames, "actionable_mail")
+        async with asyncio.timeout(5):
+            assert (await anext(frames))[0] == "keepalive"
+    assert update["message_id"] == messages[1]["message_id"]
+    assert update["unread_count"] == 1
 
 
 @pytest.mark.xfail(
@@ -1025,22 +740,27 @@ async def test_events_stream_defers_recipient_wait_until_next_poll(
             """
             INSERT INTO {{tables.chat_sessions}} (session_id, team_id, created_by)
             VALUES ($1, 'backend:acme.com', 'did:aw:alice')
-            """, session_id,
+            """,
+            session_id,
         )
         await db.execute(
             """
             INSERT INTO {{tables.chat_participants}} (session_id, did, alias)
             VALUES ($1, 'did:aw:bob', 'bob'), ($1, 'did:aw:alice', 'alice')
-            """, session_id,
+            """,
+            session_id,
         )
         await db.execute(
             """
             INSERT INTO {{tables.chat_messages}} (session_id, from_did, from_alias, body)
             VALUES ($1, 'did:aw:alice', 'alice', 'unread message')
-            """, session_id,
+            """,
+            session_id,
         )
         if sender_waiting:
-            await waiting_module.register_waiting(redis, str(session_id), "did:aw:alice")
+            await waiting_module.register_waiting(
+                redis, str(session_id), "did:aw:alice"
+            )
     await waiting_module.register_waiting(redis, str(engaged), recipient_did)
     stream = await _open_test_event_stream(db, agent_id, monkeypatch, redis=redis)
     try:
@@ -1055,7 +775,9 @@ async def test_events_stream_defers_recipient_wait_until_next_poll(
                 initial_chat.append(json.loads(chunk.split("data: ", 1)[1]))
         assert [e["session_id"] for e in initial_chat] == [str(other)]
         assert initial_chat[0]["sender_waiting"] is sender_waiting
-        assert initial_chat[0]["wake_mode"] == ("interrupt" if sender_waiting else "prompt")
+        assert initial_chat[0]["wake_mode"] == (
+            "interrupt" if sender_waiting else "prompt"
+        )
 
         if release_wait == "unregister":
             await waiting_module.unregister_waiting(redis, str(engaged), recipient_did)
@@ -1063,7 +785,9 @@ async def test_events_stream_defers_recipient_wait_until_next_poll(
             now[0] += 91  # Beyond the real helper's freshness window, no sleep.
             if sender_waiting:
                 for session_id in (engaged, other):
-                    await waiting_module.register_waiting(redis, str(session_id), "did:aw:alice")
+                    await waiting_module.register_waiting(
+                        redis, str(session_id), "did:aw:alice"
+                    )
 
         resumed = json.loads((await anext(stream)).split("data: ", 1)[1])
         assert resumed["type"] == "actionable_chat"

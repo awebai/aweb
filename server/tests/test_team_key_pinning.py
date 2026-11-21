@@ -10,14 +10,18 @@ from __future__ import annotations
 
 import json
 import logging
+from contextlib import aclosing
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import httpx
 import pytest
-
-from awid_service.testing import TXTAnswers
+from aweb.api import create_app
+from awid.registry import CachedRegistryClient
 from awid.signing import canonical_json_bytes, sign_message
-from test_dashboard_privacy import TEAM, TEAM_NAME, privacy_app  # noqa: F401
+from awid_service.testing import TXTAnswers
+from test_dashboard_privacy import TEAM, TEAM_NAME
+from test_dashboard_privacy import privacy_app as privacy_app
 from test_messages_http import (
     _encode_certificate,
     _make_certificate,
@@ -144,8 +148,14 @@ async def test_substituted_registry_team_key_does_not_admit_a_forged_member(pinn
     roster = await _roster(env, forger)
 
     assert (connected.status_code, roster.status_code) == (401, 401), (connected.text, roster.text)
-    assert connected.json()["detail"] == "team_key_unverified"
-    assert roster.json()["detail"] == "team_key_unverified"
+    assert (
+        connected.json()["detail"]
+        == "team_key_unverified: The team key change could not be verified. Ask the team administrator to verify the namespace controller's current key-change record, then retry."
+    )
+    assert (
+        roster.json()["detail"]
+        == "team_key_unverified: The team key change could not be verified. Ask the team administrator to verify the namespace controller's current key-change record, then retry."
+    )
     assert (
         await env.db.fetch_value(
             "SELECT count(*) FROM {{tables.agents}} WHERE team_id = $1 AND did_key = $2",
@@ -195,7 +205,10 @@ async def test_rotation_by_a_controller_dns_does_not_name_is_refused(pinning):
     response = await _connect(env, _member(next_sk, next_did, "mallory"))
 
     assert response.status_code == 401, response.text
-    assert response.json()["detail"] == "team_key_unverified"
+    assert (
+        response.json()["detail"]
+        == "team_key_unverified: The team key change could not be verified. Ask the team administrator to verify the namespace controller's current key-change record, then retry."
+    )
     assert (await _pin(env))["team_did_key"] == env.team_did
 
 
@@ -222,7 +235,10 @@ async def test_an_older_act_cannot_roll_the_pin_back(pinning):
     response = await _connect(env, _member(first_sk, first_did, "grace"))
 
     assert response.status_code == 401, response.text
-    assert response.json()["detail"] == "team_key_unverified"
+    assert (
+        response.json()["detail"]
+        == "team_key_unverified: The team key change could not be verified. Ask the team administrator to verify the namespace controller's current key-change record, then retry."
+    )
     assert (await _pin(env))["team_did_key"] == second_did
 
 
@@ -303,17 +319,41 @@ async def test_an_embedding_app_without_a_resolver_still_authenticates(pinning):
 
 
 @pytest.mark.asyncio
-async def test_a_warm_request_under_the_pinned_key_reads_no_pin(pinning):
+async def test_a_warm_old_key_request_refuses_after_another_worker_moves_the_pin(pinning, monkeypatch):
     env = pinning
+    fresh_registry = env.app.state.awid_registry_client
     member = _member(env.team_sk, env.team_did, "warm")
-    assert (await _connect(env, member)).status_code == 200
-    # Another process's act moves the stored pin; this server read the pin within
-    # the last 60 s, and a request under the key it read takes no further read.
-    elsewhere = _make_keypair()[2]
-    await env.db.execute(
-        "UPDATE {{tables.teams}} SET team_did_key = $1 WHERE team_id = $2", elsewhere, TEAM
+    async with aclosing(CachedRegistryClient(
+        registry_url="https://pinning-cache.test", redis_client=env.redis,
+        transport=env.registry.transport,
+    )) as cached_registry:
+        monkeypatch.setattr(env.app.state, "awid_registry_client", cached_registry)
+        assert (await _connect(env, member)).status_code == 200
+        assert (await _roster(env, member)).status_code == 200
+        await register_namespace_controller(env, env.namespace_did)
+        next_sk, _, next_did = _make_keypair()
+        await rotate_team_key(env, env.namespace_sk, env.namespace_did, next_did)
+
+        # This worker starts after rotation and shares the serving database.
+        worker_app = create_app()
+        worker_app.state.db = env.infra
+        worker_app.state.redis = env.redis
+        worker_app.state.awid_registry_client = fresh_registry
+        worker_app.state.awid_txt_resolver = env.dns
+        worker_app.state.public_origin = env.app.state.public_origin
+        worker_app.state.on_mutation = env.app.state.on_mutation
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=worker_app), base_url=env.client.base_url,
+        ) as worker:
+            moved = await _connect(SimpleNamespace(client=worker), _member(next_sk, next_did, "moved"))
+            assert moved.status_code == 200, moved.text
+        assert (await _pin(env))["team_did_key"] == next_did
+        assert await cached_registry.get_team_public_key("example.test", TEAM_NAME) == env.team_did
+
+        roster = await _roster(env, member)
+
+    assert roster.status_code == 403, roster.text
+    assert roster.json()["detail"] == (
+        "Team membership is no longer current. "
+        "Reconnect with a certificate issued under the team's current key."
     )
-
-    roster = await _roster(env, member)
-
-    assert roster.status_code == 200, roster.text

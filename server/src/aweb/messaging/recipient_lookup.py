@@ -1,13 +1,13 @@
-"""Shared native messaging identity lookups; reads grant no membership."""
+"""Current-member selection for native messaging; residence is independent."""
 
 from __future__ import annotations
 
+from dataclasses import replace
 from uuid import UUID
 
-from aweb.identity_binding import verified_key_sql
-from aweb.member_team_key import MemberProjection, member_projection_columns_sql
+from aweb.member_team_key import MemberProjection, current_member_projections
 from aweb.messaging.recipient import Recipient
-from aweb.service_errors import ValidationError
+from aweb.service_errors import ConflictError, ValidationError
 
 
 def _agent_uuid(agent_id: str) -> UUID:
@@ -19,52 +19,55 @@ def _agent_uuid(agent_id: str) -> UUID:
         ) from exc
 
 
-async def get_agent_by_id(
-    db, *, agent_id: str, team_id: str | None = None
+async def get_agent_by_id(db, *, agent_id: str, team_id: str | None = None) -> Recipient | None:
+    """Select an exact current member, using the shared member rule.
+
+    This roster selector is distinct from an independently admitted identity's
+    residence or existing participation. Those reads do not require membership.
+    """
+    rows = await current_member_projections(db, agent_id=_agent_uuid(agent_id), team_id=team_id)
+    return Recipient.from_member_projection(rows[0]) if rows else None
+
+
+async def resolve_agent_by_did(db, did: str, *, team_id: str | None = None) -> Recipient | None:
+    """Resolve a current agent with the supplied team as an authority constraint."""
+    rows = await current_member_projections(db, dids=[did], team_id=team_id)
+    return _recipient_from_rows(rows)
+
+
+async def resolve_recipient_by_did(
+    db, did: str, *, sender_team_id: str | None
 ) -> Recipient | None:
-    """Read an exact nondeleted row; optional team scope never chooses a team.
+    """Resolve a delivery identity, using the sender's team for ambiguous local keys.
 
-    docs/identity-messaging-contract.md:96-116 keeps this projection distinct
-    from the current-member and delivery-policy decisions made by its caller.
+    An unambiguous verified global identity retains its cross-team binding.
+    See Global And Local Identities (docs/identity-messaging-contract.md:124-144).
     """
-    row = await db.get_manager("aweb").fetch_one(
-        "SELECT "
-        + member_projection_columns_sql("a")
-        + """
-        FROM {{tables.agents}} a
-        WHERE a.agent_id=$1 AND ($2::text IS NULL OR a.team_id=$2)
-          AND a.deleted_at IS NULL
-        """,
-        _agent_uuid(agent_id),
-        team_id,
-    )
-    return (
-        Recipient.from_member_projection(MemberProjection.from_row(row))
-        if row
-        else None
-    )
+    rows = await current_member_projections(db, dids=[did])
+    if (
+        sender_team_id
+        and did.startswith("did:key:")
+        and len(rows) > 1
+        and not _one_verified_global_identity(rows)
+    ):
+        rows = [row for row in rows if row["team_id"] == sender_team_id]
+    return _recipient_from_rows(rows)
 
 
-async def resolve_agent_by_did(db, did: str) -> Recipient | None:
-    """Read a visible identity using R2's canonical verified-key projection.
+def _one_verified_global_identity(rows: list[MemberProjection]) -> bool:
+    identities = {(row.verified_identity().get("did_aw"), row["did_key"]) for row in rows}
+    return len(identities) == 1 and bool(next(iter(identities))[0])
 
-    This retains the existing native lookup ordering. It grants no current
-    membership; R2 owns the subsequent member-selector consumer migration.
-    """
-    row = await db.get_manager("aweb").fetch_one(
-        "SELECT "
-        + member_projection_columns_sql("a")
-        + f"""
-        FROM {{{{tables.agents}}}} a
-        WHERE a.deleted_at IS NULL
-          AND ((a.did_aw=$1 AND {verified_key_sql("a")}) OR a.did_key=$1)
-        ORDER BY CASE WHEN a.did_aw=$1 THEN 0 ELSE 1 END, a.created_at DESC
-        LIMIT 1
-        """,
-        did,
-    )
-    return (
-        Recipient.from_member_projection(MemberProjection.from_row(row))
-        if row
-        else None
-    )
+
+def _recipient_from_rows(rows: list[MemberProjection]) -> Recipient | None:
+    if not rows:
+        return None
+    recipient = Recipient.from_member_projection(rows[0])
+    if len(rows) == 1:
+        return recipient
+    if not _one_verified_global_identity(rows):
+        raise ConflictError(
+            "Identity matches several current memberships. Select a team member name or address."
+        )
+    # Several memberships of one verified identity choose no team or address.
+    return replace(recipient.as_identity(), address=None, alias=recipient.did_aw)

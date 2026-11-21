@@ -10,6 +10,7 @@ import asyncio
 import json
 import time
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import httpx
@@ -36,16 +37,24 @@ def status_cache(registry) -> AWIDTeamCache:
 
 
 def certificate_pages(registry) -> list[httpx.Request]:
-    return [r for r in registry.transport.calls if r.url.path.endswith("/certificates")]
+    return [
+        r
+        for r in registry.transport.calls
+        if r.method == "GET" and r.url.path.endswith("/certificates")
+    ]
 
 
 async def add_filler_certificates(registry, member, first, last):
-    await registry.db.execute(
-        "INSERT INTO {{tables.team_certificates}} (team_uuid, certificate_id, member_did_key, alias, issued_at) "
-        "SELECT team_uuid, 'filler-' || n, $1, 'filler-' || n, '2026-01-01'::timestamptz + n * interval '1 second' "
-        "FROM {{tables.teams}} CROSS JOIN generate_series($2::int, $3::int) AS n",
-        member.did_key, first, last,
-    )
+    """Register every history entry through the same signed certificate writer."""
+    for number in range(first, last + 1):
+        issued = datetime(2025, 12, 31, tzinfo=UTC) + timedelta(seconds=number)
+        filler = replace(
+            member,
+            certificate_id=f"filler-{number}",
+            alias=f"filler-{number}",
+            extra_cert_fields={"issued_at": issued.isoformat().replace("+00:00", "Z")},
+        )
+        await registry.add_certificate(filler.certificate(), team_key=filler.team_key)
 
 
 @pytest.fixture(params=["public", "private"])
@@ -54,10 +63,9 @@ async def team(registry, request) -> Member:
     member = Member(team_id=TEAM_ID, certificate_id="target", alias="target")
     await registry.add_team(TEAM_ID, member.team_did_key, visibility=request.param)
     await add_filler_certificates(registry, member, 1, 200)
-    await registry.db.execute(
-        "INSERT INTO {{tables.team_certificates}} (team_uuid, certificate_id, member_did_key, alias, issued_at) "
-        "SELECT team_uuid, 'target', $1, 'target', '2026-01-02' FROM {{tables.teams}}", member.did_key,
-    )
+    await registry.add_certificate(member.certificate(), team_key=member.team_key)
+    # From this boundary, counters describe verification, not SDK world creation.
+    registry.transport.calls.clear()
     return member
 
 
@@ -71,15 +79,21 @@ def get_items(member):
 @pytest.mark.parametrize("revoked", [False, True])
 async def test_history_finds_the_certificate_beyond_the_first_page(registry, team, revoked):
     if revoked:
-        await registry.revoke("target")
+        await registry.revoke("target", team_id=TEAM_ID)
+    # Revocation is arrangement; history authorization is the operation below.
+    registry.transport.calls.clear()
     cache = history_cache(registry)
     async with relying_app(registry, public_origin=ORIGIN, cache=cache) as (client, _):
         response = await client.get("/v1/items", headers=get_items(team))
     assert response.status_code == (401 if revoked else 200), response.text
     pages = certificate_pages(registry)
     assert len(pages) == 2 and pages[1].url.params["cursor"]
-    assert all(r.headers.get("X-AWID-Service-Token") == SERVICE_TOKEN for r in registry.transport.calls)
-    assert cache._cache[TEAM_ID].revoked_certificate_ids == (frozenset({"target"}) if revoked else frozenset())
+    assert all(
+        r.headers.get("X-AWID-Service-Token") == SERVICE_TOKEN for r in registry.transport.calls
+    )
+    assert cache._cache[TEAM_ID].revoked_certificate_ids == (
+        frozenset({"target"}) if revoked else frozenset()
+    )
 
 
 async def test_history_refuses_a_certificate_awid_never_published(registry, team):
@@ -104,6 +118,7 @@ async def test_history_page_bound_fails_closed_without_caching_partial_facts(reg
         assert not cache._cache
         assert len(certificate_pages(registry)) == 100
         # The last permitted page is accepted when it completes the history.
+        # unreachable-state: corrupt history loses one retained certificate; current registry never deletes certificate history.
         await registry.db.execute("DELETE FROM {{tables.team_certificates}} WHERE certificate_id = 'filler-1'")
         assert (await client.get("/v1/items", headers=get_items(team))).status_code == 503
         assert len(certificate_pages(registry)) == 100
@@ -263,7 +278,7 @@ async def test_history_new_member_refreshes_before_the_cached_team_expires(regis
     async with relying_app(registry, public_origin=ORIGIN, cache=cache) as (client, _):
         assert (await client.get("/v1/items", headers=get_items(team))).status_code == 200
         old_facts = cache._cache[TEAM_ID]
-        await registry.add_certificate(newcomer.certificate())
+        await registry.add_certificate(newcomer.certificate(), team_key=newcomer.team_key)
         history_clock[0] += seconds_to_ns(1)
         responses = await asyncio.gather(
             *(client.get("/v1/items", headers=get_items(newcomer)) for _ in range(8))
@@ -318,7 +333,7 @@ async def test_history_unknown_refresh_limit_is_per_team(registry, team, history
     cache = history_cache(registry)
     other = Member(team_id="other:example.com", certificate_id="other-target", alias="other")
     await registry.add_team(other.team_id, other.team_did_key)
-    await registry.add_certificate(other.certificate())
+    await registry.add_certificate(other.certificate(), team_key=other.team_key)
     await cache.get(TEAM_ID, team.certificate_id)
     await cache.get(other.team_id, other.certificate_id)
     await cache.get(TEAM_ID, "unknown")

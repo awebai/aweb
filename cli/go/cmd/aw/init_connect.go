@@ -19,17 +19,18 @@ import (
 
 // connectOutput is the JSON output for `aw init` when using certificate auth.
 type connectOutput struct {
-	IDRegistration string              `json:"id_registration,omitempty"`
-	Responsibility *awid.IDChainResult `json:"responsibility,omitempty"`
-	Status         string              `json:"status"`
-	TeamID         string              `json:"team_id"`
-	Alias          string              `json:"alias"`
-	AwebURL        string              `json:"aweb_url"`
-	AgentID        string              `json:"-"`
-	WorkspaceID    string              `json:"workspace_id,omitempty"`
-	StableID       string              `json:"stable_id,omitempty"`
-	Address        string              `json:"address,omitempty"`
-	IdentityScope  string              `json:"identity_scope,omitempty"`
+	TeamKey        *awid.TeamKeyEvidence `json:"team_key,omitempty"`
+	IDRegistration string                `json:"id_registration,omitempty"`
+	Responsibility *awid.IDChainResult   `json:"responsibility,omitempty"`
+	Status         string                `json:"status"`
+	TeamID         string                `json:"team_id"`
+	Alias          string                `json:"alias"`
+	AwebURL        string                `json:"aweb_url"`
+	AgentID        string                `json:"-"`
+	WorkspaceID    string                `json:"workspace_id,omitempty"`
+	StableID       string                `json:"stable_id,omitempty"`
+	Address        string                `json:"address,omitempty"`
+	IdentityScope  string                `json:"identity_scope,omitempty"`
 	// NextSteps are aw init's next steps for the path it took; Guide is the
 	// page that walks through them.
 	NextSteps []initNextStep `json:"next_steps,omitempty"`
@@ -59,6 +60,7 @@ type connectRequest struct {
 }
 
 type certificateConnectOptions struct {
+	TeamKeyObservation    *awid.TeamCertificateKeyObservation
 	EncryptionPublication encryptionPublicationPolicy
 	Role                  string
 	HumanName             string
@@ -159,11 +161,12 @@ func initCertificateConnectWithOptions(workingDir, awebURL string, opts certific
 			Location: teamMembershipLocation{WorkingDir: workingDir, IdentityHome: identityHome},
 			Output: &teamAcceptInviteOutput{
 				TeamID:   resp.TeamID,
+				TeamKey:  teamKeyEvidence(opts.TeamKeyObservation),
 				Alias:    resp.Alias,
 				CertPath: filepath.ToSlash(certPath),
 			},
 			Certificate: cert,
-			RegistryURL: "",
+			RegistryURL: teamKeyRegistry(opts.TeamKeyObservation),
 			AwebURL:     "",
 			Activation:  membershipMakeActive,
 		}); err != nil {
@@ -216,6 +219,7 @@ func initCertificateConnectWithOptions(workingDir, awebURL string, opts certific
 
 	identityScope := awid.NormalizeIdentityScope(cert.IdentityScope)
 	return connectOutput{
+		TeamKey:       teamKeyEvidence(opts.TeamKeyObservation),
 		Status:        "connected",
 		TeamID:        resp.TeamID,
 		Alias:         resp.Alias,
@@ -384,6 +388,9 @@ func formatConnect(v any) string {
 	sb.WriteString(fmt.Sprintf("Team:        %s\n", out.TeamID))
 	sb.WriteString(fmt.Sprintf("Name:        %s\n", out.Alias))
 	sb.WriteString(fmt.Sprintf("Aweb URL:    %s\n", out.AwebURL))
+	if text := teamKeyConfirmationText(out.TeamKey); text != "" {
+		sb.WriteString(text + "\n")
+	}
 	if out.IDRegistration != "" {
 		sb.WriteString(fmt.Sprintf("ID registration: %s\n", out.IDRegistration))
 	}

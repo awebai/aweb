@@ -18,22 +18,22 @@ from awid.log import canonical_server_origin
 from awid.signing import canonical_json_bytes, verify_did_key_signature
 from fastapi import HTTPException, Request
 
-from aweb.auth_context import GRANT_SCOPE_ANY, GrantContext
+from aweb.application_state import application_registry_client
+from aweb.auth_context import GRANT_SCOPE_ANY, GrantContext, MessagingAuth, TeamIdentity
 from aweb.auth_context import GRANT_SCOPES as GRANT_SCOPES
-from aweb.config import get_settings, require_registered_certificates
-from aweb.member_team_key import grant_issuer_current, member_key_columns_sql
+from aweb.certificate_registration import configured_registration_mode
+from aweb.config import get_settings
 from aweb.grant_expiry import never_expires
-from aweb.identity_auth_deps import MessagingAuth
-from aweb.identity_binding import refresh_projection_binding, verify_identity_binding
 from aweb.id_chain_auth import authenticate_id_chain
-from aweb.team_auth_deps import (
-    TeamIdentity,
-    _aweb_db,
-    _get_registered_certificates,
-    _get_revoked_certificates,
+from aweb.identity_binding import refresh_projection_binding, verify_identity_binding
+from aweb.identity_grant_status import GrantValidityState, grant_validity
+from aweb.member_team_key import (
+    GRANT_ISSUER_RECOVERY_DETAIL,
+    member_key_columns_sql,
 )
 from aweb.request_body import request_body_sha256
 from aweb.team_auth_envelope import decode_signed_payload_header, raw_request_target
+from aweb.team_registry import native_database_manager
 
 GRANT_AUTH_SCHEME = "AWEB-Grant "
 GRANT_AUTH_PREFIX = "AWEB-Grant DIDKey "
@@ -113,15 +113,11 @@ async def _verify_identity_grant_row(
 ) -> tuple[dict, GrantContext]:
     auth = (request.headers.get("Authorization") or "").strip()
     if not auth.startswith(GRANT_AUTH_PREFIX):
-        raise HTTPException(
-            status_code=401, detail="Missing identity grant Authorization header"
-        )
+        raise HTTPException(status_code=401, detail="Missing identity grant Authorization header")
     rest = auth[len(GRANT_AUTH_PREFIX) :].strip()
     parts = rest.split()
     if len(parts) != 2:
-        raise HTTPException(
-            status_code=401, detail="Malformed identity grant Authorization header"
-        )
+        raise HTTPException(status_code=401, detail="Malformed identity grant Authorization header")
     did_key, signature_b64 = parts
 
     grant_id = (request.headers.get("X-AWEB-Grant-ID") or "").strip()
@@ -178,13 +174,13 @@ async def _verify_identity_grant_row(
     except ValueError as exc:
         raise HTTPException(status_code=403, detail=_GENERIC_DETAIL) from exc
 
-    aweb_db = _aweb_db(db)
+    aweb_db = native_database_manager(db)
     row = await aweb_db.fetch_one(
         """
         SELECT g.team_id, g.grant_did_key, g.scopes, g.issued_at, g.expires_at, g.revoked_at,
                g.issued_by_certificate_id,
                a.did_key AS subject_did_key, a.did_aw, a.address, a.alias,
-               a.agent_id, a.identity_scope, a.status, a.deleted_at,
+               a.agent_id, a.identity_scope, a.status AS subject_status, a.deleted_at AS subject_deleted_at,
                a.certificate_id, """
         + member_key_columns_sql("a")
         + """
@@ -196,52 +192,14 @@ async def _verify_identity_grant_row(
     )
     if row is None or row["grant_did_key"] != did_key:
         raise HTTPException(status_code=403, detail=_GENERIC_DETAIL)
-    if row["revoked_at"] is not None:
-        raise HTTPException(status_code=403, detail="grant revoked")
-    if not never_expires(row.get("issued_at"), row["expires_at"]) and row[
-        "expires_at"
-    ] <= datetime.now(UTC):
-        raise HTTPException(status_code=403, detail="grant expired")
-    if row["status"] != "active" or row["deleted_at"] is not None:
-        raise HTTPException(status_code=403, detail=_GENERIC_DETAIL)
-    if not grant_issuer_current(row):
-        raise HTTPException(status_code=403, detail="grant issuing certificate revoked")
-    # A grant is a delegation from a membership; revoking the issuing
-    # certificate must end the delegation with it (aweb-abfn). Grants minted
-    # before issued_by_certificate_id was recorded cannot be checked and are
-    # bounded by their own expiry. Registry unavailability fails closed with
-    # the same 503 the certificate-presenting path raises.
-    issuing_certificate_id = (row.get("issued_by_certificate_id") or "").strip()
-    if issuing_certificate_id:
-        revoked_certs = await _get_revoked_certificates(
-            request, row["team_id"], certificate_ids=[issuing_certificate_id]
-        )
-        if issuing_certificate_id in revoked_certs:
-            raise HTTPException(
-                status_code=403, detail="grant issuing certificate revoked"
-            )
-        # Staged existence requirement (default OFF): an unregistered issuing
-        # certificate is unrevocable, so with
-        # AWEB_REQUIRE_REGISTERED_CERTIFICATES on it must exist at the
-        # registry or the delegation ends, mirroring the certificate paths.
-        # Ordering preserved: revocation keeps its own distinct verdict above.
-        if require_registered_certificates():
-            registered_certs = await _get_registered_certificates(
-                request, row["team_id"]
-            )
-            if issuing_certificate_id not in registered_certs:
-                raise HTTPException(
-                    status_code=403, detail="grant issuing certificate not registered"
-                )
+    issuing_certificate_id = await _require_request_grant_validity(request, row)
 
     required = (
         required_grant_scope(request.method, _app_relative_path(request))
         if required_scope is _USE_PATH_SCOPE
         else required_scope
     )
-    scopes = tuple(
-        str(scope).strip() for scope in (row["scopes"] or []) if str(scope).strip()
-    )
+    scopes = tuple(str(scope).strip() for scope in (row["scopes"] or []) if str(scope).strip())
     if required != GRANT_SCOPE_ANY and required is not None and required not in scopes:
         raise HTTPException(status_code=403, detail=_OUT_OF_SCOPE_DETAIL)
 
@@ -270,6 +228,39 @@ async def _verify_identity_grant_row(
     return dict(row), grant
 
 
+async def _require_request_grant_validity(request: Request, row) -> str:
+    """Map the common grant observation to the released request refusals."""
+    observation = await grant_validity(
+        row=row,
+        now=datetime.now(UTC),
+        registry_client=application_registry_client(request.app.state),
+        registration_mode=configured_registration_mode(),
+        request=request,
+    )
+    observation.raise_if_unavailable()
+    state = observation.state
+    if state is GrantValidityState.REVOKED:
+        raise HTTPException(status_code=403, detail="grant revoked")
+    if state is GrantValidityState.EXPIRED:
+        raise HTTPException(status_code=403, detail="grant expired")
+    if state is GrantValidityState.SUBJECT_INACTIVE:
+        raise HTTPException(status_code=403, detail=_GENERIC_DETAIL)
+    if state in (
+        GrantValidityState.ISSUER_SUPERSEDED,
+        GrantValidityState.ISSUER_REVOKED,
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="grant issuing certificate revoked. " + GRANT_ISSUER_RECOVERY_DETAIL,
+        )
+    if state is GrantValidityState.ISSUER_UNREGISTERED:
+        raise HTTPException(
+            status_code=403,
+            detail="grant issuing certificate not registered. " + GRANT_ISSUER_RECOVERY_DETAIL,
+        )
+    return str(row.get("issued_by_certificate_id") or "").strip()
+
+
 async def verify_identity_grant_auth(request: Request, db) -> MessagingAuth:
     row, grant = await _verify_identity_grant_row(request, db)
     return MessagingAuth(
@@ -290,9 +281,7 @@ async def verify_identity_grant_auth(request: Request, db) -> MessagingAuth:
 async def verify_identity_grant_team_identity(
     request: Request, db, *, required_scope: str
 ) -> TeamIdentity:
-    row, grant = await _verify_identity_grant_row(
-        request, db, required_scope=required_scope
-    )
+    row, grant = await _verify_identity_grant_row(request, db, required_scope=required_scope)
     return TeamIdentity(
         team_id=row["team_id"],
         alias=row["alias"],

@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from awid.did import did_from_public_key, generate_keypair
+from awid.did import did_from_public_key
 from awid.dns_verify import DomainAuthority
 from awid.id_certificates import id_certificate_signing_bytes
 from awid.registry import RegistryClient
@@ -60,7 +60,7 @@ class HumanNamespace:
         client = self.client
         principal = (await client.register_did(member.did_key, bytes(member.member_key))).did_aw
         member.extra_cert_fields = {"member_did_aw": principal}
-        await self.registry.add_certificate(member.certificate())
+        await self.registry.add_certificate(member.certificate(), team_key=member.team_key)
         fields = {
             "v": 1,
             "type": "aweb.id-certificate",
@@ -92,16 +92,10 @@ class HumanNamespace:
 async def human_namespace(registry: Registry, domain: str) -> AsyncGenerator[HumanNamespace]:
     """Register ``domain``'s namespace once, under a new controller, for the
     humans the caller registers in it."""
-    controller_seed, controller_public = generate_keypair()
-    controller_did = did_from_public_key(controller_public)
-
-    async def authority(name: str) -> DomainAuthority:
-        assert name == domain
-        return DomainAuthority(
-            controller_did=controller_did,
-            registry_url=REGISTRY_URL,
-            dns_name=f"_awid.{name}",
-        )
+    controller = await registry.ensure_namespace(domain=domain)
+    controller_seed = bytes(controller)
+    controller_did = did_from_public_key(bytes(controller.verify_key))
+    authority = registry.namespace_authority
 
     registry.app.dependency_overrides[get_domain_verifier] = lambda: authority
     registry.app.state.awid_public_origins = (REGISTRY_URL,)
@@ -113,7 +107,6 @@ async def human_namespace(registry: Registry, domain: str) -> AsyncGenerator[Hum
             domain_verifier=authority,
         )
     ) as client:
-        await client.register_namespace(domain, controller_did, controller_seed)
         yield HumanNamespace(registry, client, controller_seed, controller_did, domain, authority)
 
 

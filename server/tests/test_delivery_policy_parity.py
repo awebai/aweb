@@ -77,6 +77,7 @@ async def test_inbound_policy_uses_all_current_active_memberships(
                     envelope=envelope,
                     recipient=recipient,
                     stored_route_continuation=False,
+                    registry_client=None,
                 )
             else:
                 await authorize_message_delivery(
@@ -85,6 +86,7 @@ async def test_inbound_policy_uses_all_current_active_memberships(
                     sender_did=sender_did,
                     sender_address=envelope.sender_address,
                     sender_verified_dids=[sender_did, sender_key],
+                    registry_client=None,
                 )
     except ForbiddenError as exc:
         allowed = False
@@ -148,6 +150,7 @@ async def test_federation_shared_team_membership_stays_locked_until_delivery_com
                 envelope=envelope,
                 recipient=dict(recipient),
                 stored_route_continuation=False,
+                registry_client=None,
             )
             authorized.set()
             await finish.wait()
@@ -184,6 +187,7 @@ async def test_federation_shared_team_membership_stays_locked_until_delivery_com
                 envelope=envelope,
                 recipient=dict(recipient),
                 stored_route_continuation=False,
+                registry_client=None,
             )
     assert refused.value.detail.endswith(
         "Ask the recipient to add your exact address as a contact or check their inbound policy."

@@ -40,7 +40,6 @@ from aweb.e2ee_messages import (
     E2EE_SUITE,
     E2EEEnvelopeError,
     _envelope_map,
-    encrypted_message_storage_metadata,
     _hash_canonical,
     _key_wrap_map,
     validate_e2ee_mail_envelope,
@@ -570,7 +569,8 @@ async def _admit_registered_local(node):
 async def _mirror_retained_local_history(world, *, conversation_id, local, kind):
     """Retired local-key route input only; today's API cannot create this history.
 
-    docs/identity-messaging-contract.md:257-263 retains exact saved routes without
+    Strict Cross-Registry Sender Authority (docs/identity-messaging-contract.md:259-263)
+    retains exact saved routes without
     authorizing local-key first contact. The global peer was registered/admitted.
     """
     from aweb.messaging.kinds import MessageKind
@@ -4334,72 +4334,45 @@ async def test_messages_inbox_filters_by_message_id(registered_mail_actors):
 
 
 @pytest.mark.asyncio
-async def test_send_message_mutation_context_includes_from_did_aw(aweb_cloud_db):
-    alice_sk, _, alice_did_key = _make_keypair()
-    captured: dict[str, dict] = {}
+async def test_send_message_mutation_context_includes_from_did_aw(
+    registered_mail_actors,
+):
+    from messaging_actor_support import (
+        register_messaging_actors,
+        set_messaging_inbound_mode,
+    )
 
-    async def _capture(event_type: str, context: dict) -> None:
+    env, actors = registered_mail_actors
+    alice, bob = (actors["alice"], actors["bob"])
+    others = await register_messaging_actors(
+        env, team_id="ops:otherco.com", aliases=("bob",), local=False
+    )
+    bob = others["bob"]
+    await set_messaging_inbound_mode(env, bob, mode="open")
+    app = env.app
+    alice_sk, alice_did_key = (alice.signing_key, alice.did_key)
+    captured = {}
+    original_mutation = app.state.on_mutation
+
+    async def _capture(event_type, context):
         captured["event_type"] = event_type
         captured["context"] = dict(context)
+        return await original_mutation(event_type, context)
 
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6MknPNGi33ZA1E96cTvr2J1CmyppaBCCL2a56qAnPfFVfQo' /* team-1 */)
-        """
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6Mksty56NE8sLwnubZAGcm16vuLQnaMnSqUcsGmGygSk8mF' /* team-2 */)
-        """
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES
-            ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN $1 END),
-            ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */ END)
-        """,
-        alice_did_key,
-    )
-
-    registry = AsyncMock()
-    registry.resolve_key = AsyncMock(
-        return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key)
-    )
-    registry.list_did_addresses = AsyncMock(
-        return_value=[
-            Address(
-                address_id="addr-1",
-                domain="acme.com",
-                name="alice",
-                did_aw="did:aw:alice",
-                current_did_key=alice_did_key,
-                reachability="public",
-                created_at=datetime.now(timezone.utc).isoformat(),
-            )
-        ]
-    )
-    app = _build_test_app(
-        aweb_cloud_db.aweb_db,
-        registry,
-        verified_bindings=(("did:aw:alice", alice_did_key, "acme.com/alice"),),
-    )
     app.state.on_mutation = _capture
-
-    payload = {"to_did": "did:aw:bob", "subject": "hello", "body": "hi"}
+    payload = {"to_did": bob.stable_id, "subject": "hello", "body": "hi"}
     body = json.dumps(payload).encode()
     headers = {
-        **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body),
+        **_signed_identity_headers(alice_sk, alice_did_key, alice.stable_id, body),
         "Content-Type": "application/json",
     }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post("/v1/messages", headers=headers, content=body)
-
     assert resp.status_code == 200, resp.text
     assert captured["event_type"] == "message.sent"
-    assert captured["context"]["from_did_aw"] == "did:aw:alice"
+    assert captured["context"]["from_did_aw"] == alice.stable_id
 
 
 @pytest.mark.asyncio
@@ -4440,161 +4413,88 @@ async def test_messages_inbox_requires_timestamp(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
-async def test_send_message_accepts_identity_auth(aweb_cloud_db):
-    alice_sk, _, alice_did_key = _make_keypair()
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
-        """
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'team_and_contacts', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */ END)
-        """
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.contacts}} (
-            owner_did, contact_address, contact_did_aw,
-            binding_controller_did, binding_accepted_at, label
-        ) VALUES (
-            'did:aw:bob', 'acme.com/alice', 'did:aw:alice',
-            'did:key:z6MksdtzGW313q4RQicECqqpSv25FBPhcJBcGAXMZ5RbRPQ7' /* z6Mktestcontroller */, clock_timestamp(), 'Alice'
-        )
-        """
+async def test_send_message_accepts_identity_auth(registered_mail_actors):
+    from types import SimpleNamespace
+    from messaging_actor_support import (
+        register_messaging_actors,
+        set_messaging_inbound_mode,
+        add_messaging_contact,
     )
 
-    registry = AsyncMock()
-    registry.resolve_key = AsyncMock(
-        return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key)
+    env, actors = registered_mail_actors
+    alice, bob = (actors["alice"], actors["bob"])
+    others = await register_messaging_actors(
+        env, team_id="ops:otherco.com", aliases=("bob",), local=False
     )
-    registry.list_did_addresses = AsyncMock(
-        return_value=[
-            Address(
-                address_id="addr-1",
-                domain="acme.com",
-                name="alice",
-                did_aw="did:aw:alice",
-                current_did_key=alice_did_key,
-                reachability="public",
-                created_at=datetime.now(timezone.utc).isoformat(),
-            )
-        ]
-    )
-    registry.list_team_certificates = AsyncMock(return_value=[])
-    app = _build_test_app(
-        aweb_cloud_db.aweb_db,
-        registry,
-        verified_bindings=(("did:aw:alice", alice_did_key, "acme.com/alice"),),
-    )
-
-    payload = {"to_did": "did:aw:bob", "subject": "hello", "body": "hi"}
+    bob = others["bob"]
+    await set_messaging_inbound_mode(env, bob, mode="team_and_contacts")
+    await add_messaging_contact(env, bob, address=alice.address, key_owner=False)
+    app = env.app
+    aweb_cloud_db = SimpleNamespace(aweb_db=env.db)
+    alice_sk, alice_did_key = (alice.signing_key, alice.did_key)
+    payload = {"to_did": bob.stable_id, "subject": "hello", "body": "hi"}
     body_bytes = json.dumps(payload).encode()
     headers = {
-        **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body_bytes),
+        **_signed_identity_headers(
+            alice_sk, alice_did_key, alice.stable_id, body_bytes
+        ),
         "Content-Type": "application/json",
     }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post("/v1/messages", content=body_bytes, headers=headers)
-
     assert resp.status_code == 200, resp.text
     row = await aweb_cloud_db.aweb_db.fetch_one(
         "SELECT from_did, from_address, to_did FROM {{tables.messages}} WHERE subject = 'hello'"
     )
-    assert row["from_did"] == "did:aw:alice"
-    assert row["from_address"] == "acme.com/alice"
-    assert row["to_did"] == "did:aw:bob"
+    assert row["from_did"] == alice.stable_id
+    assert row["from_address"] == alice.address
+    assert row["to_did"] == bob.stable_id
 
 
 @pytest.mark.asyncio
-async def test_send_message_accepts_external_to_address_without_local_agent(
-    aweb_cloud_db,
-):
-    alice_sk, _, alice_did_key = _make_keypair()
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:acme.com', 'acme.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
-        """
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES ('ops:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN $1 END)
-        """,
-        alice_did_key,
-    )
+async def test_send_message_accepts_external_to_address_without_local_agent(route_pair):
+    from types import SimpleNamespace
 
-    registry = AsyncMock()
-    registry.resolve_key = AsyncMock(
-        return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key)
-    )
-    registry.resolve_address = AsyncMock(
-        return_value=Address(
-            address_id="addr-2",
-            domain="otherco.com",
-            name="bob",
-            did_aw="did:aw:bob",
-            current_did_key=named_did_key("bob"),
-            reachability="public",
-            created_at=datetime.now(timezone.utc).isoformat(),
-            delivery=AddressDelivery(origin="https://remote.example"),
+    world = await _registered_routing_pair(route_pair)
+    alice, bob = (world.source.actor, world.target.actor)
+    alice_sk, alice_did_key = (alice.signing_key, alice.did_key)
+    app = world.source.node.server.app
+    aweb_cloud_db = SimpleNamespace(aweb_db=world.source.node.db)
+    await app.state.awid_registry_client.register_did(bob.did_key, bob.signing_key)
+    assert (
+        await world.source.node.db.fetch_value(
+            "SELECT count(*) FROM {{tables.agents}} WHERE did_aw=$1", bob.stable_id
         )
+        == 0
     )
-    registry.list_did_addresses = AsyncMock(
-        return_value=[
-            Address(
-                address_id="addr-1",
-                domain="acme.com",
-                name="alice",
-                did_aw="did:aw:alice",
-                current_did_key=alice_did_key,
-                reachability="public",
-                created_at=datetime.now(timezone.utc).isoformat(),
-            )
-        ]
-    )
-    registry.list_team_certificates = AsyncMock(return_value=[])
-    app = _build_test_app(
-        aweb_cloud_db.aweb_db,
-        registry,
-        verified_bindings=(("did:aw:alice", alice_did_key, "acme.com/alice"),),
-    )
-    app.state.federation_mail_transport = httpx.MockTransport(
-        lambda request: httpx.Response(
-            200,
-            json={
-                "message_id": json.loads(request.content)["envelope"]["message_id"],
-                "conversation_id": json.loads(request.content)["envelope"]["conversation_id"],
-                "status": "delivered",
-                "delivered_at": json.loads(request.content)["envelope"]["timestamp"],
-            },
-        )
-    )
-
     message_id = str(uuid4())
     conversation_id = str(uuid4())
-    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    timestamp = (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
     signed_payload = canonical_json_bytes(
         {
             "body": "hello",
             "conversation_id": conversation_id,
-            "from": "acme.com/alice",
+            "from": alice.address,
             "from_did": alice_did_key,
-            "from_stable_id": "did:aw:alice",
+            "from_stable_id": alice.stable_id,
             "message_id": message_id,
             "subject": "external",
             "timestamp": timestamp,
-            "to": "otherco.com/bob",
-            "to_did": named_did_key("bob"),
-            "to_stable_id": "did:aw:bob",
+            "to": bob.address,
+            "to_did": bob.did_key,
+            "to_stable_id": bob.stable_id,
             "type": "mail",
         }
     ).decode()
     payload = {
-        "to_address": "otherco.com/bob",
+        "to_address": bob.address,
         "subject": "external",
         "body": "hello",
         "conversation_id": conversation_id,
@@ -4606,135 +4506,89 @@ async def test_send_message_accepts_external_to_address_without_local_agent(
     }
     body_bytes = json.dumps(payload).encode()
     headers = {
-        **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body_bytes),
+        **_signed_identity_headers(
+            alice_sk, alice_did_key, alice.stable_id, body_bytes
+        ),
         "Content-Type": "application/json",
     }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        send_resp = await client.post("/v1/messages", content=body_bytes, headers=headers)
-
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        send_resp = await client.post(
+            "/v1/messages", content=body_bytes, headers=headers
+        )
     assert send_resp.status_code == 200, send_resp.text
-    row = await aweb_cloud_db.aweb_db.fetch_one(
-        """
+    row = await aweb_cloud_db.aweb_db.fetch_one("""
         SELECT from_did, to_did, to_agent_id, to_alias
         FROM {{tables.messages}}
         WHERE subject = 'external'
-        """
-    )
-    assert row["from_did"] == "did:aw:alice"
-    assert row["to_did"] == "did:aw:bob"
+        """)
+    assert row["from_did"] == alice.stable_id
+    assert row["to_did"] == bob.stable_id
     assert row["to_agent_id"] is None
     assert row["to_alias"] == "bob"
-
-    async def _bob_auth():
-        return MessagingAuth(
-            did_key=named_did_key("bob"),
-            did_aw="did:aw:bob",
-            address="otherco.com/bob",
-            team_id="ops:otherco.com",
-            alias="bob",
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        inbox_resp = await client.get(
+            "/v1/messages/inbox",
+            headers=_signed_identity_headers(
+                bob.signing_key, bob.did_key, bob.stable_id
+            ),
         )
-
-    app.dependency_overrides[get_messaging_auth] = _bob_auth
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        inbox_resp = await client.get("/v1/messages/inbox")
-
     assert inbox_resp.status_code == 200, inbox_resp.text
     inbox = inbox_resp.json()
-    assert inbox["messages"][0]["to_did"] == "did:aw:bob"
+    assert inbox["messages"][0]["to_did"] == bob.stable_id
     assert inbox["messages"][0]["to_alias"] == "bob"
 
 
 @pytest.mark.asyncio
 async def test_identity_scoped_send_by_address_allows_persistent_multi_membership(
-    aweb_cloud_db,
+    route_pair,
 ):
-    alice_sk, _, alice_did_key = _make_keypair()
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES
-            ('ops:acme.com', 'acme.com', 'ops', 'did:key:z6MkiK4DciFkG7Sqj2U35cBvNezhk22uso3u8NQ6CKHQZxBb' /* team-ops */),
-            ('dev:acme.com', 'acme.com', 'dev', 'did:key:z6MkjkW6jdKyexH7sPtnYBPBkGWpnrAutvuQR9nAyA5Geg1H' /* team-dev */)
-        """
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES
-            ('ops:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN $1 END),
-            ('dev:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN $1 END)
-        """,
-        alice_did_key,
-    )
+    from types import SimpleNamespace
+    from messaging_actor_support import register_messaging_team, admit_messaging_actor
 
-    registry = AsyncMock()
-    registry.resolve_key = AsyncMock(
-        return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key)
+    world = await _registered_routing_pair(route_pair)
+    alice, bob = (world.source.actor, world.target.actor)
+    alice_sk, alice_did_key = (alice.signing_key, alice.did_key)
+    app = world.source.node.server.app
+    aweb_cloud_db = SimpleNamespace(aweb_db=world.source.node.db)
+    second_team = "dev:" + alice.address.split("/", 1)[0]
+    await register_messaging_team(world.source.env, team_id=second_team)
+    second = await admit_messaging_actor(
+        world.source.env,
+        team_id=second_team,
+        alias="alice",
+        existing_identity=alice,
     )
-    registry.resolve_address = AsyncMock(
-        return_value=Address(
-            address_id="addr-bob",
-            domain="otherco.com",
-            name="bob",
-            did_aw="did:aw:bob",
-            current_did_key=named_did_key("bob"),
-            reachability="public",
-            created_at=datetime.now(timezone.utc).isoformat(),
-            delivery=AddressDelivery(origin="https://remote.example"),
-        )
-    )
-    registry.list_did_addresses = AsyncMock(
-        return_value=[
-            Address(
-                address_id="addr-alice",
-                domain="acme.com",
-                name="alice",
-                did_aw="did:aw:alice",
-                current_did_key=alice_did_key,
-                reachability="public",
-                created_at=datetime.now(timezone.utc).isoformat(),
-            )
-        ]
-    )
-    registry.list_team_certificates = AsyncMock(return_value=[])
-    app = _build_test_app(
-        aweb_cloud_db.aweb_db,
-        registry,
-        verified_bindings=(("did:aw:alice", alice_did_key, "acme.com/alice"),),
-    )
-    app.state.federation_mail_transport = httpx.MockTransport(
-        lambda request: httpx.Response(
-            200,
-            json={
-                "message_id": json.loads(request.content)["envelope"]["message_id"],
-                "conversation_id": json.loads(request.content)["envelope"]["conversation_id"],
-                "status": "delivered",
-                "delivered_at": json.loads(request.content)["envelope"]["timestamp"],
-            },
-        )
-    )
-
+    assert second.stable_id == alice.stable_id
     message_id = str(uuid4())
     conversation_id = str(uuid4())
-    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    timestamp = (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
     signed_payload = canonical_json_bytes(
         {
             "body": "hello",
             "conversation_id": conversation_id,
-            "from": "acme.com/alice",
+            "from": alice.address,
             "from_did": alice_did_key,
-            "from_stable_id": "did:aw:alice",
+            "from_stable_id": alice.stable_id,
             "message_id": message_id,
             "subject": "multi membership external",
             "timestamp": timestamp,
-            "to": "otherco.com/bob",
-            "to_did": named_did_key("bob"),
-            "to_stable_id": "did:aw:bob",
+            "to": bob.address,
+            "to_did": bob.did_key,
+            "to_stable_id": bob.stable_id,
             "type": "mail",
         }
     ).decode()
     payload = {
-        "to_address": "otherco.com/bob",
+        "to_address": bob.address,
         "subject": "multi membership external",
         "body": "hello",
         "conversation_id": conversation_id,
@@ -4746,86 +4600,58 @@ async def test_identity_scoped_send_by_address_allows_persistent_multi_membershi
     }
     body_bytes = json.dumps(payload).encode()
     headers = {
-        **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body_bytes),
+        **_signed_identity_headers(
+            alice_sk, alice_did_key, alice.stable_id, body_bytes
+        ),
         "Content-Type": "application/json",
     }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        send_resp = await client.post("/v1/messages", content=body_bytes, headers=headers)
-
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        send_resp = await client.post(
+            "/v1/messages", content=body_bytes, headers=headers
+        )
     assert send_resp.status_code == 200, send_resp.text
-    row = await aweb_cloud_db.aweb_db.fetch_one(
-        """
+    row = await aweb_cloud_db.aweb_db.fetch_one("""
         SELECT team_id, from_agent_id, from_alias, from_did, from_address, to_did, to_alias
         FROM {{tables.messages}}
         WHERE subject = 'multi membership external'
-        """
-    )
+        """)
     assert row["team_id"] is None
     assert row["from_agent_id"] is None
-    assert row["from_alias"] == "acme.com/alice"
-    assert row["from_did"] == "did:aw:alice"
-    assert row["from_address"] == "acme.com/alice"
-    assert row["to_did"] == "did:aw:bob"
+    assert row["from_alias"] == alice.address
+    assert row["from_did"] == alice.stable_id
+    assert row["from_address"] == alice.address
+    assert row["to_did"] == bob.stable_id
     assert row["to_alias"] == "bob"
 
 
 @pytest.mark.asyncio
 async def test_team_auth_alias_send_resolves_active_team_with_persistent_multi_membership(
-    aweb_cloud_db,
+    registered_mail_actors,
 ):
-    ops_team_sk, _, ops_team_did_key = _make_keypair()
-    alice_sk, _, alice_did_key = _make_keypair()
-    _, _, bob_did_key = _make_keypair()
+    from types import SimpleNamespace
+    from messaging_actor_support import admit_messaging_actor, register_messaging_team
 
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES
-            ('ops:acme.com', 'acme.com', 'ops', $1),
-            ('dev:acme.com', 'acme.com', 'dev', 'did:key:z6MkjkW6jdKyexH7sPtnYBPBkGWpnrAutvuQR9nAyA5Geg1H' /* team-dev */)
-        """,
-        ops_team_did_key,
+    env, actors = registered_mail_actors
+    app = env.app
+    aweb_cloud_db = SimpleNamespace(aweb_db=env.db)
+    alice, bob = (actors["alice"], actors["bob"])
+    await register_messaging_team(env, team_id="dev:acme.com")
+    other_alice = await admit_messaging_actor(
+        env, team_id="dev:acme.com", alias="alice", existing_identity=alice
     )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES
-            ('ops:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN $1 END),
-            ('dev:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN $1 END),
-            ('ops:acme.com', $2, 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN $2 END),
-            ('dev:acme.com', 'did:key:z6MktkWsbcrrt7rt7N4iwSGS5ija9qZGNE4dbezDyMAVJzfA' /* dev-bob */, 'did:aw:dev-bob', 'acme.com/dev-bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:dev-bob', '') IS NOT NULL THEN 'did:key:z6MktkWsbcrrt7rt7N4iwSGS5ija9qZGNE4dbezDyMAVJzfA' /* dev-bob */ END)
-        """,
-        alice_did_key,
-        bob_did_key,
+    other_bob = await admit_messaging_actor(
+        env, team_id="dev:acme.com", alias="bob", address="acme.com/dev-bob"
     )
-    alice_ops_row = await aweb_cloud_db.aweb_db.fetch_one(
-        """
-        SELECT agent_id
-        FROM {{tables.agents}}
-        WHERE team_id = 'ops:acme.com' AND alias = 'alice'
-        """
+    assert other_alice.stable_id == alice.stable_id
+    assert other_bob.stable_id != bob.stable_id
+    alice_ops_row = await env.db.fetch_one(
+        "SELECT agent_id FROM {{tables.agents}} WHERE team_id=$1 AND alias='alice'",
+        alice.team_id,
     )
     assert alice_ops_row is not None
-
-    cert = _make_certificate(
-        ops_team_sk,
-        ops_team_did_key,
-        alice_did_key,
-        team_id="ops:acme.com",
-        alias="alice",
-        member_did_aw="did:aw:alice",
-        member_address="acme.com/alice",
-    )
-    registry = AsyncMock()
-    registry.get_team_public_key = AsyncMock(return_value=ops_team_did_key)
-    registry.get_team_revocations = AsyncMock(return_value=set())
-    registry.list_team_certificates = AsyncMock(return_value=[])
-    app = _build_test_app(
-        aweb_cloud_db.aweb_db,
-        registry,
-        verified_bindings=(("did:aw:alice", alice_did_key, "acme.com/alice"),),
-    )
-
+    alice_sk, alice_did_key = (alice.signing_key, alice.did_key)
     payload = {
         "to_alias": "bob",
         "subject": "multi membership team auth",
@@ -4834,98 +4660,75 @@ async def test_team_auth_alias_send_resolves_active_team_with_persistent_multi_m
     body_bytes = json.dumps(payload).encode()
     headers = {
         **_signed_team_headers(
-            alice_sk,
-            alice_did_key,
-            "ops:acme.com",
-            _encode_certificate(cert),
-            body_bytes,
+            alice_sk, alice_did_key, alice.team_id, alice.certificate, body_bytes
         ),
         "Content-Type": "application/json",
     }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        send_resp = await client.post("/v1/messages", content=body_bytes, headers=headers)
-
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        send_resp = await client.post(
+            "/v1/messages", content=body_bytes, headers=headers
+        )
     assert send_resp.status_code == 200, send_resp.text
-    row = await aweb_cloud_db.aweb_db.fetch_one(
-        """
+    row = await aweb_cloud_db.aweb_db.fetch_one("""
         SELECT team_id, from_agent_id, from_alias, from_did, from_address, to_did, to_alias
         FROM {{tables.messages}}
         WHERE subject = 'multi membership team auth'
-        """
-    )
-    assert row["team_id"] == "ops:acme.com"
+        """)
+    assert row["team_id"] == alice.team_id
     assert row["from_agent_id"] == alice_ops_row["agent_id"]
     assert row["from_alias"] == "alice"
-    assert row["from_did"] == "did:aw:alice"
-    assert row["from_address"] == "acme.com/alice"
-    assert row["to_did"] == "did:aw:bob"
+    assert row["from_did"] == alice.stable_id
+    assert row["from_address"] == alice.address
+    assert row["to_did"] == bob.stable_id
     assert row["to_alias"] == "bob"
 
 
 @pytest.mark.asyncio
 async def test_send_message_to_stable_id_transport_routes_stable_and_accepts_current_binding(
-    aweb_cloud_db,
+    registered_mail_actors,
 ):
-    alice_sk, _, alice_did_key = _make_keypair()
-    _, _, bob_did_key = _make_keypair()
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
-        """
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES ('ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN $1 END)
-        """,
-        bob_did_key,
+    from types import SimpleNamespace
+    from messaging_actor_support import (
+        register_messaging_actors,
+        set_messaging_inbound_mode,
     )
 
-    registry = AsyncMock()
-    registry.resolve_key = AsyncMock(
-        return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key)
+    env, actors = registered_mail_actors
+    alice, bob = (actors["alice"], actors["bob"])
+    others = await register_messaging_actors(
+        env, team_id="ops:otherco.com", aliases=("bob",), local=False
     )
-    registry.list_did_addresses = AsyncMock(
-        return_value=[
-            Address(
-                address_id="addr-1",
-                domain="acme.com",
-                name="alice",
-                did_aw="did:aw:alice",
-                current_did_key=alice_did_key,
-                reachability="public",
-                created_at=datetime.now(timezone.utc).isoformat(),
-            )
-        ]
-    )
-    registry.list_team_certificates = AsyncMock(return_value=[])
-    app = _build_test_app(
-        aweb_cloud_db.aweb_db,
-        registry,
-        verified_bindings=(("did:aw:alice", alice_did_key, "acme.com/alice"),),
-    )
-
+    bob = others["bob"]
+    await set_messaging_inbound_mode(env, bob, mode="open")
+    app = env.app
+    aweb_cloud_db = SimpleNamespace(aweb_db=env.db)
+    alice_sk, alice_did_key = (alice.signing_key, alice.did_key)
+    bob_did_key = bob.did_key
     payload = {
         "to_did": bob_did_key,
-        "to_stable_id": "did:aw:bob",
+        "to_stable_id": bob.stable_id,
         "subject": "hello stable transport",
         "body": "hi",
     }
     body_bytes = json.dumps(payload).encode()
     headers = {
-        **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body_bytes),
+        **_signed_identity_headers(
+            alice_sk, alice_did_key, alice.stable_id, body_bytes
+        ),
         "Content-Type": "application/json",
     }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post("/v1/messages", content=body_bytes, headers=headers)
-
     assert resp.status_code == 200, resp.text
     row = await aweb_cloud_db.aweb_db.fetch_one(
         "SELECT from_did, to_did FROM {{tables.messages}} WHERE subject = 'hello stable transport'"
     )
-    assert row["from_did"] == "did:aw:alice"
-    assert row["to_did"] == "did:aw:bob"
+    assert row["from_did"] == alice.stable_id
+    assert row["to_did"] == bob.stable_id
 
 
 @pytest.mark.asyncio
@@ -5236,7 +5039,6 @@ async def test_receive_old_v1_federated_mail_ignores_deprecated_fields_and_deliv
     alice, bob = (world.source.actor, world.target.actor)
     alice_sk, alice_did_key = (alice.signing_key, alice.did_key)
     bob_did_key = bob.did_key
-    bob_agent_id = bob.agent_id
     app = world.target.node.server.app
     aweb_cloud_db = SimpleNamespace(aweb_db=world.target.node.db)
     payload = _federated_mail_payload(
@@ -5279,20 +5081,16 @@ async def test_receive_old_v1_federated_mail_ignores_deprecated_fields_and_deliv
     assert row["from_did"] == alice.stable_id
     assert row["to_did"] == bob.stable_id
     assert row["from_address"] == alice.address
-    assert str(row["to_agent_id"]) == bob_agent_id
+    assert row["to_agent_id"] == UUID(bob.agent_id)
     assert row["signature"] == payload["signature"]
     assert row["signed_payload"] == envelope["signed_payload"]
     participants = await _conversation_participants(
         aweb_cloud_db.aweb_db, envelope["conversation_id"]
     )
-    sender_participant = next(
-        (item for item in participants if item["did"] == alice.stable_id)
-    )
+    sender_participant = next((item for item in participants if item["did"] == alice.stable_id))
     assert sender_participant["address"] == alice.address
     assert sender_participant["delivery_origin"] == world.source.node.origin
-    assert (
-        sender_participant["transport_hint"] == f"federation:{world.source.node.origin}"
-    )
+    assert sender_participant["transport_hint"] == f"federation:{world.source.node.origin}"
 
 
 @pytest.mark.asyncio
@@ -6858,119 +6656,147 @@ async def test_receive_federated_mail_allows_explicit_inbound_mode_open(route_pa
 
 
 
+@pytest_asyncio.fixture
+async def registered_selector_pair(shared_test_pool, monkeypatch):
+    from messaging_actor_support import admit_messaging_actor, register_messaging_team
+    from test_dashboard_privacy import privacy_stack
+
+    async with privacy_stack(shared_test_pool, monkeypatch) as env:
+        domain = f"selector-{uuid4().hex}.test"
+        primary, secondary = f"ops:{domain}", f"stable:{domain}"
+        for team in (primary, secondary):
+            await register_messaging_team(env, team_id=team)
+        sender = await admit_messaging_actor(
+            env, alias="alice", team_id=primary, address=f"{domain}/alice"
+        )
+        recipient = await admit_messaging_actor(
+            env, alias="bob", team_id=primary, address=f"{domain}/bob"
+        )
+        yield env, sender, recipient, secondary
+
+
+async def _send_registered_selector_mail(env, sender, payload):
+    body = json.dumps(payload).encode()
+    return await env.client.post(
+        "/v1/messages",
+        content=body,
+        headers={
+            **_signed_team_headers(
+                sender.signing_key, sender.did_key, sender.team_id, sender.certificate, body
+            ),
+            "Content-Type": "application/json",
+        },
+    )
+
+
 @pytest.mark.asyncio
 async def test_send_message_accepts_to_stable_id_did_binding_with_duplicate_identity_rows(
-    aweb_cloud_db,
+    registered_selector_pair,
 ):
-    _, _, bob_old_did_key = _make_keypair()
-    _, _, bob_current_did_key = _make_keypair()
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES
-            ('stable:identity.local', 'identity.local', 'stable', 'did:key:z6MkiaaDnotCpnwVHYrGYjT1pbYPxbMcPbysqfiGpJZSZtAg' /* team-stable */),
-            ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkjcDPjZawPWvfr97BGyobCr6SkdZYyrxYu8CBESNWJyZi' /* team-address */)
-        """
+    env, sender, recipient, secondary = registered_selector_pair
+    registry = env.app.state.awid_registry_client
+    current_key, _, current_did = _make_keypair()
+    await registry.rotate_key(recipient.stable_id, current_did, recipient.signing_key, current_key)
+    certificate_fields = _make_certificate(
+        env.team_sk,
+        env.team_did,
+        current_did,
+        team_id=secondary,
+        alias="bob-current",
+        identity_scope="global",
+        member_did_aw=recipient.stable_id,
+        member_address=recipient.address,
+        certificate_id=f"selector-current-{uuid4()}",
     )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, created_at, did_aw_verified_key)
-        VALUES
-            ('ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', '2026-04-25T00:00:00Z', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN $1 END),
-            ('stable:identity.local', $2, 'did:aw:bob', NULL, 'bob-stable', 'global', 'developer', 'open', '2026-04-26T00:00:00Z', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN $2 END)
-        """,
-        bob_old_did_key,
-        bob_current_did_key,
+    certificate = _encode_certificate(certificate_fields)
+    name, domain = secondary.split(":", 1)
+    await registry.register_team_certificate(
+        domain,
+        name,
+        team_controller_signing_key=env.team_sk,
+        certificate_id=certificate_fields["certificate_id"],
+        member_did_key=current_did,
+        member_did_aw=recipient.stable_id,
+        member_address=recipient.address,
+        alias="bob-current",
+        identity_scope="global",
+        certificate=certificate,
     )
-
-    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
-
-    async def _send_auth_override():
-        return MessagingAuth(
-            did_key=named_did_key("z6MkAliceCurrent"),
-            did_aw="did:aw:alice",
-            address="acme.com/alice",
-        )
-
-    app.dependency_overrides[get_messaging_auth] = _send_auth_override
-
+    connected = await env.client.post(
+        "/v1/connect",
+        content=b"{}",
+        headers={
+            **_signed_team_headers(current_key, current_did, secondary, certificate, b"{}"),
+            "Content-Type": "application/json",
+        },
+    )
+    assert connected.status_code == 200, connected.text
+    policy = b'{"inbound_mode":"open"}'
+    configured = await env.client.patch(
+        "/v1/agents/me/inbound-mode",
+        content=policy,
+        headers={
+            **_signed_team_headers(current_key, current_did, secondary, certificate, policy),
+            "Content-Type": "application/json",
+        },
+    )
+    assert configured.status_code == 200, configured.text
+    old = await env.db.fetch_one(
+        "SELECT did_aw_verified_key FROM {{tables.agents}} WHERE agent_id=$1",
+        UUID(recipient.agent_id),
+    )
+    assert old["did_aw_verified_key"] is None
     payload = {
-        "to_did": bob_old_did_key,
-        "to_stable_id": "did:aw:bob",
+        "to_did": recipient.did_key,
+        "to_stable_id": recipient.stable_id,
         "subject": "duplicate did binding rows",
         "body": "hi",
     }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.post("/v1/messages", json=payload)
-
-    assert resp.status_code == 200, resp.text
-    row = await aweb_cloud_db.aweb_db.fetch_one(
-        """
-        SELECT to_did, to_agent_id, to_alias
-        FROM {{tables.messages}}
-        WHERE subject = 'duplicate did binding rows'
-        """
+    obsolete = await _send_registered_selector_mail(env, sender, payload)
+    assert obsolete.status_code == 422, obsolete.text
+    assert "to_did" in obsolete.text
+    assert await env.db.fetch_value("SELECT count(*) FROM {{tables.messages}}") == 0
+    response = await _send_registered_selector_mail(env, sender, {**payload, "to_did": current_did})
+    assert response.status_code == 200, response.text
+    row = await env.db.fetch_one(
+        "SELECT to_did,to_agent_id,to_alias FROM {{tables.messages}} WHERE message_id=$1",
+        UUID(response.json()["message_id"]),
     )
-    assert row["to_did"] == "did:aw:bob"
+    assert row["to_did"] == recipient.stable_id
     assert row["to_agent_id"] is None
-    assert row["to_alias"] == "bob-stable"
+    assert row["to_alias"] == "bob-current"
 
 
 @pytest.mark.asyncio
 async def test_send_message_accepts_to_stable_id_alias_binding_with_duplicate_identity_rows(
-    aweb_cloud_db,
+    registered_selector_pair,
 ):
-    _, _, bob_did_key = _make_keypair()
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES
-            ('stable:identity.local', 'identity.local', 'stable', 'did:key:z6MkiaaDnotCpnwVHYrGYjT1pbYPxbMcPbysqfiGpJZSZtAg' /* team-stable */),
-            ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkjcDPjZawPWvfr97BGyobCr6SkdZYyrxYu8CBESNWJyZi' /* team-address */)
-        """
+    from messaging_actor_support import admit_messaging_actor
+
+    env, sender, recipient, secondary = registered_selector_pair
+    duplicate = await admit_messaging_actor(
+        env,
+        alias="bob-secondary",
+        team_id=secondary,
+        signing_key=recipient.signing_key,
     )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, created_at, did_aw_verified_key)
-        VALUES
-            ('ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', '2026-04-25T00:00:00Z', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN $1 END),
-            ('stable:identity.local', $1, 'did:aw:bob', NULL, 'bob-stable', 'global', 'developer', 'open', '2026-04-26T00:00:00Z', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN $1 END)
-        """,
-        bob_did_key,
-    )
-
-    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
-
-    async def _send_auth_override():
-        return MessagingAuth(
-            did_key=named_did_key("z6MkAliceCurrent"),
-            did_aw="did:aw:alice",
-            address="acme.com/alice",
-            team_id="ops:otherco.com",
-        )
-
-    app.dependency_overrides[get_messaging_auth] = _send_auth_override
-
+    assert duplicate.stable_id == recipient.stable_id
+    assert duplicate.agent_id != recipient.agent_id
     payload = {
         "to_alias": "bob",
-        "to_stable_id": "did:aw:bob",
-        "subject": "duplicate stable alias binding rows",
+        "to_stable_id": recipient.stable_id,
+        "subject": "duplicate alias binding rows",
         "body": "hi",
     }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.post("/v1/messages", json=payload)
-
-    assert resp.status_code == 200, resp.text
-    row = await aweb_cloud_db.aweb_db.fetch_one(
-        """
-        SELECT to_did, to_agent_id, to_alias
-        FROM {{tables.messages}}
-        WHERE subject = 'duplicate stable alias binding rows'
-        """
+    response = await _send_registered_selector_mail(env, sender, payload)
+    assert response.status_code == 200, response.text
+    row = await env.db.fetch_one(
+        "SELECT to_did,to_agent_id,to_alias FROM {{tables.messages}} WHERE message_id=$1",
+        UUID(response.json()["message_id"]),
     )
-    assert row["to_did"] == "did:aw:bob"
+    assert row["to_did"] == recipient.stable_id
     assert row["to_agent_id"] is None
-    assert row["to_alias"] == "bob-stable"
+    assert row["to_alias"] == recipient.stable_id
 
 
 @pytest.mark.asyncio
@@ -7142,7 +6968,8 @@ async def test_send_message_accepts_signed_local_address_binding_without_registr
         bob_did_key,
     )
 
-    # docs/identity-messaging-contract.md:149-161: verified signed local binding needs no registry read.
+    # Direct Address Send Protocol (docs/identity-messaging-contract.md:148-163): verified
+    # signed local binding needs no registry read.
     registry = AsyncMock()
     app = _build_test_app(aweb_cloud_db.aweb_db, registry)
 
@@ -7346,59 +7173,34 @@ async def test_send_message_rejects_mismatched_to_alias_and_to_did(aweb_cloud_db
 
 @pytest.mark.asyncio
 async def test_send_message_accepts_to_did_alias_binding_with_duplicate_identity_rows(
-    aweb_cloud_db,
+    registered_selector_pair,
 ):
-    _, _, bob_did_key = _make_keypair()
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES
-            ('stable:identity.local', 'identity.local', 'stable', 'did:key:z6MkiaaDnotCpnwVHYrGYjT1pbYPxbMcPbysqfiGpJZSZtAg' /* team-stable */),
-            ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkjcDPjZawPWvfr97BGyobCr6SkdZYyrxYu8CBESNWJyZi' /* team-address */)
-        """
+    from messaging_actor_support import admit_messaging_actor
+
+    env, sender, recipient, secondary = registered_selector_pair
+    duplicate = await admit_messaging_actor(
+        env,
+        alias="bob-secondary",
+        team_id=secondary,
+        signing_key=recipient.signing_key,
     )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, created_at, did_aw_verified_key)
-        VALUES
-            ('ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', '2026-04-25T00:00:00Z', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN $1 END),
-            ('stable:identity.local', $1, 'did:aw:bob', NULL, 'bob-stable', 'global', 'developer', 'open', '2026-04-26T00:00:00Z', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN $1 END)
-        """,
-        bob_did_key,
-    )
-
-    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
-
-    async def _send_auth_override():
-        return MessagingAuth(
-            did_key=named_did_key("z6MkAliceCurrent"),
-            did_aw="did:aw:alice",
-            address="acme.com/alice",
-            team_id="ops:otherco.com",
-        )
-
-    app.dependency_overrides[get_messaging_auth] = _send_auth_override
-
+    assert duplicate.stable_id == recipient.stable_id
+    assert duplicate.agent_id != recipient.agent_id
     payload = {
-        "to_did": "did:aw:bob",
+        "to_did": recipient.stable_id,
         "to_alias": "bob",
-        "subject": "duplicate did alias binding rows",
+        "subject": "duplicate alias binding rows",
         "body": "hi",
     }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.post("/v1/messages", json=payload)
-
-    assert resp.status_code == 200, resp.text
-    row = await aweb_cloud_db.aweb_db.fetch_one(
-        """
-        SELECT to_did, to_agent_id, to_alias
-        FROM {{tables.messages}}
-        WHERE subject = 'duplicate did alias binding rows'
-        """
+    response = await _send_registered_selector_mail(env, sender, payload)
+    assert response.status_code == 200, response.text
+    row = await env.db.fetch_one(
+        "SELECT to_did,to_agent_id,to_alias FROM {{tables.messages}} WHERE message_id=$1",
+        UUID(response.json()["message_id"]),
     )
-    assert row["to_did"] == "did:aw:bob"
+    assert row["to_did"] == recipient.stable_id
     assert row["to_agent_id"] is None
-    assert row["to_alias"] == "bob-stable"
+    assert row["to_alias"] == recipient.stable_id
 
 
 @pytest.mark.asyncio
@@ -7704,206 +7506,99 @@ async def test_send_message_accepts_to_agent_id_alias_binding_with_duplicate_ide
 
 @pytest.mark.asyncio
 async def test_send_message_team_and_contacts_accepts_equivalent_owner_did(
-    aweb_cloud_db,
+    registered_mail_actors,
 ):
-    alice_sk, _, alice_did_key = _make_keypair()
-    _, _, bob_did_key = _make_keypair()
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
-        """
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES ('ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'team_and_contacts', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN $1 END)
-        """,
-        bob_did_key,
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.contacts}} (
-            owner_did, contact_address, contact_did_aw,
-            binding_controller_did, binding_accepted_at, label
-        ) VALUES (
-            $1, 'acme.com/alice', 'did:aw:alice',
-            'did:key:z6MksdtzGW313q4RQicECqqpSv25FBPhcJBcGAXMZ5RbRPQ7' /* z6Mktestcontroller */, clock_timestamp(), 'Alice'
-        )
-        """,
-        bob_did_key,
+    from types import SimpleNamespace
+    from messaging_actor_support import (
+        register_messaging_actors,
+        set_messaging_inbound_mode,
+        add_messaging_contact,
     )
 
-    registry = AsyncMock()
-    registry.resolve_key = AsyncMock(
-        return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key)
+    env, actors = registered_mail_actors
+    alice, bob = (actors["alice"], actors["bob"])
+    others = await register_messaging_actors(
+        env, team_id="ops:otherco.com", aliases=("bob",), local=False
     )
-    registry.list_did_addresses = AsyncMock(
-        return_value=[
-            Address(
-                address_id="addr-1",
-                domain="acme.com",
-                name="alice",
-                did_aw="did:aw:alice",
-                current_did_key=alice_did_key,
-                reachability="public",
-                created_at=datetime.now(timezone.utc).isoformat(),
-            )
-        ]
-    )
-    registry.list_team_certificates = AsyncMock(return_value=[])
-    app = _build_test_app(
-        aweb_cloud_db.aweb_db,
-        registry,
-        verified_bindings=(("did:aw:alice", alice_did_key, "acme.com/alice"),),
-    )
-
+    bob = others["bob"]
+    await set_messaging_inbound_mode(env, bob, mode="team_and_contacts")
+    await add_messaging_contact(env, bob, address=alice.address, key_owner=True)
+    app = env.app
+    aweb_cloud_db = SimpleNamespace(aweb_db=env.db)
+    alice_sk, alice_did_key = (alice.signing_key, alice.did_key)
     payload = {
-        "to_did": "did:aw:bob",
+        "to_did": bob.stable_id,
         "subject": "hello via legacy owner",
         "body": "hi",
     }
     body_bytes = json.dumps(payload).encode()
     headers = {
-        **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body_bytes),
+        **_signed_identity_headers(
+            alice_sk, alice_did_key, alice.stable_id, body_bytes
+        ),
         "Content-Type": "application/json",
     }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post("/v1/messages", content=body_bytes, headers=headers)
-
     assert resp.status_code == 200, resp.text
     row = await aweb_cloud_db.aweb_db.fetch_one(
         "SELECT from_did, to_did FROM {{tables.messages}} WHERE subject = 'hello via legacy owner'"
     )
-    assert row["from_did"] == "did:aw:alice"
-    assert row["to_did"] == "did:aw:bob"
+    assert row["from_did"] == alice.stable_id
+    assert row["to_did"] == bob.stable_id
 
 
 @pytest.mark.asyncio
-async def test_send_message_accepts_team_auth(aweb_cloud_db):
-    team_sk, _, team_did_key = _make_keypair()
-    alice_sk, _, alice_did_key = _make_keypair()
-    bob_sk, _, bob_did_key = _make_keypair()
-    del bob_sk
+async def test_send_message_accepts_team_auth(registered_mail_actors):
+    from messaging_actor_support import set_messaging_inbound_mode
 
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', $1)
-        """,
-        team_did_key,
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES
-            ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN $1 END),
-            ('backend:acme.com', $2, 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN $2 END)
-        """,
-        alice_did_key,
-        bob_did_key,
-    )
-
-    cert = _make_certificate(
-        team_sk,
-        team_did_key,
-        alice_did_key,
-        team_id="backend:acme.com",
-        alias="alice",
-        member_did_aw="did:aw:alice",
-        member_address="acme.com/alice",
-    )
-    cert_header = _encode_certificate(cert)
-    registry = AsyncMock()
-    registry.get_team_public_key = AsyncMock(return_value=team_did_key)
-    registry.get_team_revocations = AsyncMock(return_value=set())
-    registry.list_team_certificates = AsyncMock(
-        return_value=[_cert("cert-1", "did:aw:alice", alice_did_key, "alice")]
-    )
-    app = _build_test_app(
-        aweb_cloud_db.aweb_db,
-        registry,
-        verified_bindings=(("did:aw:alice", alice_did_key, "acme.com/alice"),),
-    )
-
+    env, actors = registered_mail_actors
+    alice, bob = (actors["alice"], actors["bob"])
+    await set_messaging_inbound_mode(env, bob, mode="open")
+    app = env.app
+    alice_sk, alice_did_key = (alice.signing_key, alice.did_key)
+    cert_header = alice.certificate
     payload = {"to_alias": "bob", "subject": "hello", "body": "hi"}
     body_bytes = json.dumps(payload).encode()
     headers = {
         **_signed_team_headers(
-            alice_sk, alice_did_key, "backend:acme.com", cert_header, body_bytes
+            alice_sk, alice_did_key, alice.team_id, cert_header, body_bytes
         ),
         "Content-Type": "application/json",
     }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post("/v1/messages", content=body_bytes, headers=headers)
-
     assert resp.status_code == 200, resp.text
 
 
 @pytest.mark.asyncio
 async def test_send_message_team_and_contacts_accepts_verified_same_team_non_contact_http(
-    aweb_cloud_db,
+    registered_mail_actors,
 ):
-    """aapq: HTTP-level regression — a same-team valid team certificate
-    authorizes delivery into a team_and_contacts recipient even without
-    an exact active contact."""
-    team_sk, _, team_did_key = _make_keypair()
-    alice_sk, _, alice_did_key = _make_keypair()
-    _, _, bob_did_key = _make_keypair()
+    from messaging_actor_support import set_messaging_inbound_mode
 
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', $1)
-        """,
-        team_did_key,
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES
-            ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN $1 END),
-            ('backend:acme.com', $2, 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'developer', 'team_and_contacts', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN $2 END)
-        """,
-        alice_did_key,
-        bob_did_key,
-    )
-
-    await _admit_seeded_team_members(
-        aweb_cloud_db.aweb_db, team_id="backend:acme.com", team_did_key=team_did_key
-    )
-
-    cert = _make_certificate(
-        team_sk,
-        team_did_key,
-        alice_did_key,
-        team_id="backend:acme.com",
-        alias="alice",
-        member_did_aw="did:aw:alice",
-        member_address="acme.com/alice",
-    )
-    cert_header = _encode_certificate(cert)
-    registry = AsyncMock()
-    registry.get_team_public_key = AsyncMock(return_value=team_did_key)
-    registry.get_team_revocations = AsyncMock(return_value=set())
-    registry.list_team_certificates = AsyncMock(return_value=[])
-    app = _build_test_app(
-        aweb_cloud_db.aweb_db,
-        registry,
-        verified_bindings=(("did:aw:alice", alice_did_key, "acme.com/alice"),),
-    )
-
+    env, actors = registered_mail_actors
+    alice, bob = (actors["alice"], actors["bob"])
+    await set_messaging_inbound_mode(env, bob, mode="team_and_contacts")
+    app = env.app
+    alice_sk, alice_did_key = (alice.signing_key, alice.did_key)
+    cert_header = alice.certificate
     payload = {"to_alias": "bob", "subject": "team delivery", "body": "hi"}
     body_bytes = json.dumps(payload).encode()
     headers = {
         **_signed_team_headers(
-            alice_sk, alice_did_key, "backend:acme.com", cert_header, body_bytes
+            alice_sk, alice_did_key, alice.team_id, cert_header, body_bytes
         ),
         "Content-Type": "application/json",
     }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post("/v1/messages", content=body_bytes, headers=headers)
-
     assert resp.status_code == 200, resp.text
 
 
@@ -8038,65 +7733,28 @@ async def test_send_message_rejects_invalid_tilde_alias_targets(
 
 @pytest.mark.asyncio
 async def test_ephemeral_team_auth_mail_routes_by_did_key_and_inboxes_by_identity_did_key(
-    aweb_cloud_db,
+    registered_mail_actors,
 ):
-    team_sk, _, team_did_key = _make_keypair()
-    alice_sk, _, alice_did_key = _make_keypair()
-    bob_sk, _, bob_did_key = _make_keypair()
+    from types import SimpleNamespace
+    from messaging_actor_support import register_messaging_actors
 
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('default:local', 'local', 'default', $1)
-        """,
-        team_did_key,
+    env, actors = registered_mail_actors
+    app = env.app
+    aweb_cloud_db = SimpleNamespace(aweb_db=env.db)
+    locals = await register_messaging_actors(
+        env, team_id="default:local.test", aliases=("alice", "bob"), local=True
     )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES
-            ('default:local', $1, NULL, NULL, 'alice', 'local', 'developer', 'open', CASE WHEN NULLIF(NULL, '') IS NOT NULL THEN $1 END),
-            ('default:local', $2, NULL, NULL, 'bob', 'local', 'developer', 'open', CASE WHEN NULLIF(NULL, '') IS NOT NULL THEN $2 END)
-        """,
-        alice_did_key,
-        bob_did_key,
-    )
-
-    alice_cert = _make_certificate(
-        team_sk,
-        team_did_key,
-        alice_did_key,
-        team_id="default:local",
-        alias="alice",
-        identity_scope="local",
-    )
-    bob_cert = _make_certificate(
-        team_sk,
-        team_did_key,
-        bob_did_key,
-        team_id="default:local",
-        alias="bob",
-        identity_scope="local",
-    )
-    registry = AsyncMock()
-    registry.get_team_public_key = AsyncMock(return_value=team_did_key)
-    registry.get_team_revocations = AsyncMock(return_value=set())
-    registry.list_team_certificates = AsyncMock(return_value=[])
-    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
-
+    alice, bob = (locals["alice"], locals["bob"])
+    alice_sk, alice_did_key = (alice.signing_key, alice.did_key)
+    bob_sk, bob_did_key = (bob.signing_key, bob.did_key)
     alice_payload = {"to_alias": "bob", "subject": "local to bob", "body": "hello bob"}
     alice_body = json.dumps(alice_payload).encode()
     alice_headers = {
         **_signed_team_headers(
-            alice_sk,
-            alice_did_key,
-            "default:local",
-            _encode_certificate(alice_cert),
-            alice_body,
+            alice_sk, alice_did_key, alice.team_id, alice.certificate, alice_body
         ),
         "Content-Type": "application/json",
     }
-
     bob_payload = {
         "to_alias": "alice",
         "subject": "local to alice",
@@ -8105,19 +7763,19 @@ async def test_ephemeral_team_auth_mail_routes_by_did_key_and_inboxes_by_identit
     bob_body = json.dumps(bob_payload).encode()
     bob_headers = {
         **_signed_team_headers(
-            bob_sk,
-            bob_did_key,
-            "default:local",
-            _encode_certificate(bob_cert),
-            bob_body,
+            bob_sk, bob_did_key, alice.team_id, bob.certificate, bob_body
         ),
         "Content-Type": "application/json",
     }
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        alice_send = await client.post("/v1/messages", content=alice_body, headers=alice_headers)
-        bob_send = await client.post("/v1/messages", content=bob_body, headers=bob_headers)
-
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        alice_send = await client.post(
+            "/v1/messages", content=alice_body, headers=alice_headers
+        )
+        bob_send = await client.post(
+            "/v1/messages", content=bob_body, headers=bob_headers
+        )
         alice_inbox = await client.get(
             "/v1/messages/inbox",
             headers=_signed_identity_headers(alice_sk, alice_did_key, ""),
@@ -8126,31 +7784,28 @@ async def test_ephemeral_team_auth_mail_routes_by_did_key_and_inboxes_by_identit
             "/v1/messages/inbox",
             headers=_signed_identity_headers(bob_sk, bob_did_key, ""),
         )
-
     assert alice_send.status_code == 200, alice_send.text
     assert bob_send.status_code == 200, bob_send.text
     assert alice_inbox.status_code == 200, alice_inbox.text
     assert bob_inbox.status_code == 200, bob_inbox.text
-
-    messages = await aweb_cloud_db.aweb_db.fetch_all(
-        """
+    messages = await aweb_cloud_db.aweb_db.fetch_all("""
         SELECT from_did, from_address, to_did, subject
         FROM {{tables.messages}}
         WHERE subject IN ('local to bob', 'local to alice')
         ORDER BY subject
-        """
-    )
+        """)
     assert [row["subject"] for row in messages] == ["local to alice", "local to bob"]
     assert messages[0]["from_did"] == bob_did_key
-    assert messages[0]["from_address"] == "local/bob"
+    assert messages[0]["from_address"] == "local.test/bob"
     assert messages[0]["to_did"] == alice_did_key
     assert messages[1]["from_did"] == alice_did_key
-    assert messages[1]["from_address"] == "local/alice"
+    assert messages[1]["from_address"] == "local.test/alice"
     assert messages[1]["to_did"] == bob_did_key
-
     alice_body_json = alice_inbox.json()
     bob_body_json = bob_inbox.json()
-    assert [item["subject"] for item in alice_body_json["messages"]] == ["local to alice"]
+    assert [item["subject"] for item in alice_body_json["messages"]] == [
+        "local to alice"
+    ]
     assert [item["subject"] for item in bob_body_json["messages"]] == ["local to bob"]
     assert alice_body_json["messages"][0]["to_did"] == alice_did_key
     assert alice_body_json["messages"][0]["to_stable_id"] is None
@@ -8159,49 +7814,37 @@ async def test_ephemeral_team_auth_mail_routes_by_did_key_and_inboxes_by_identit
 
 
 @pytest.mark.asyncio
-async def test_identity_auth_mail_derives_sender_address_from_agent_row(aweb_cloud_db):
-    alice_sk, _, alice_did_key = _make_keypair()
-    _, _, bob_did_key = _make_keypair()
+async def test_identity_auth_mail_derives_sender_address_from_agent_row(
+    registered_mail_actors,
+):
+    from types import SimpleNamespace
+    from messaging_actor_support import register_messaging_actors
 
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:gsk.aweb.ai', 'gsk.aweb.ai', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
-        """
+    env, actors = registered_mail_actors
+    app = env.app
+    aweb_cloud_db = SimpleNamespace(aweb_db=env.db)
+    locals = await register_messaging_actors(
+        env, team_id="ops:gsk.aweb.ai", aliases=("gsk", "amy"), local=True
     )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES
-            ('ops:gsk.aweb.ai', $1, NULL, NULL, 'gsk', 'local', 'developer', 'open', CASE WHEN NULLIF(NULL, '') IS NOT NULL THEN $1 END),
-            ('ops:gsk.aweb.ai', $2, NULL, NULL, 'amy', 'local', 'developer', 'open', CASE WHEN NULLIF(NULL, '') IS NOT NULL THEN $2 END)
-        """,
-        alice_did_key,
-        bob_did_key,
-    )
-
-    registry = AsyncMock()
-    registry.list_did_addresses = AsyncMock(return_value=[])
-    registry.list_team_certificates = AsyncMock(return_value=[])
-    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
-
+    alice, bob = (locals["gsk"], locals["amy"])
+    alice_sk, alice_did_key = (alice.signing_key, alice.did_key)
+    bob_did_key = bob.did_key
     payload = {"to_did": bob_did_key, "subject": "identity sender", "body": "hello"}
     body_bytes = json.dumps(payload).encode()
     headers = {
         **_signed_identity_headers(alice_sk, alice_did_key, "", body_bytes),
         "Content-Type": "application/json",
     }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post("/v1/messages", content=body_bytes, headers=headers)
-
     assert resp.status_code == 200, resp.text
-    row = await aweb_cloud_db.aweb_db.fetch_one(
-        """
+    row = await aweb_cloud_db.aweb_db.fetch_one("""
         SELECT from_did, from_alias, from_address, to_did
         FROM {{tables.messages}}
         WHERE subject = 'identity sender'
-        """
-    )
+        """)
     assert row["from_did"] == alice_did_key
     assert row["from_alias"] == "gsk"
     assert row["from_address"] == "gsk.aweb.ai/gsk"
@@ -8210,91 +7853,71 @@ async def test_identity_auth_mail_derives_sender_address_from_agent_row(aweb_clo
 
 @pytest.mark.asyncio
 async def test_send_message_team_auth_uses_cert_identity_when_agent_row_is_partial(
-    aweb_cloud_db,
+    registered_mail_actors,
 ):
-    team_sk, _, team_did_key = _make_keypair()
-    alice_sk, _, alice_did_key = _make_keypair()
-    _, _, bob_did_key = _make_keypair()
+    from types import SimpleNamespace
+    from messaging_actor_support import (
+        set_messaging_inbound_mode,
+        add_messaging_contact,
+    )
 
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', $1)
-        """,
-        team_did_key,
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES
-            ('backend:acme.com', $1, NULL, NULL, 'alice', 'global', 'developer', 'open', CASE WHEN NULLIF(NULL, '') IS NOT NULL THEN $1 END),
-            ('backend:acme.com', $2, 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'developer', 'team_and_contacts', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN $2 END)
-        """,
-        alice_did_key,
-        bob_did_key,
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.contacts}} (owner_did, contact_address, label)
-        VALUES ('did:aw:bob', 'acme.com/alice', 'Alice')
-        """
-    )
-    alice_row = await aweb_cloud_db.aweb_db.fetch_one(
-        """
-        SELECT agent_id
-        FROM {{tables.agents}}
-        WHERE team_id = 'backend:acme.com' AND alias = 'alice'
-        """
+    env, actors = registered_mail_actors
+    alice, bob = (actors["alice"], actors["bob"])
+    await set_messaging_inbound_mode(env, bob, mode="team_and_contacts")
+    await add_messaging_contact(env, bob, address=alice.address)
+    app = env.app
+    aweb_cloud_db = SimpleNamespace(aweb_db=env.db)
+    alice_sk, alice_did_key = (alice.signing_key, alice.did_key)
+    cert_header = alice.certificate
+    alice_row = await env.db.fetch_one(
+        "SELECT agent_id FROM {{tables.agents}} WHERE team_id=$1 AND alias='alice'",
+        alice.team_id,
     )
     assert alice_row is not None
-
-    await _admit_seeded_team_members(
-        aweb_cloud_db.aweb_db, team_id="backend:acme.com", team_did_key=team_did_key
+    # unreachable-state: old incomplete member projection lost DID/address metadata retained in its valid certificate.
+    await env.db.execute(
+        "UPDATE {{tables.agents}} SET did_aw=NULL, address=NULL, did_aw_verified_key=NULL WHERE agent_id=$1",
+        UUID(alice.agent_id),
     )
-
-    cert = _make_certificate(
-        team_sk,
-        team_did_key,
-        alice_did_key,
-        team_id="backend:acme.com",
-        alias="alice",
-        member_did_aw="did:aw:alice",
-        member_address="acme.com/alice",
-    )
-    cert_header = _encode_certificate(cert)
-    registry = AsyncMock()
-    registry.get_team_public_key = AsyncMock(return_value=team_did_key)
-    registry.get_team_revocations = AsyncMock(return_value=set())
-    registry.list_team_certificates = AsyncMock(return_value=[])
-    app = _build_test_app(
-        aweb_cloud_db.aweb_db,
-        registry,
-        verified_bindings=(("did:aw:alice", alice_did_key, "acme.com/alice"),),
-    )
-
     payload = {"to_alias": "bob", "subject": "hello partial", "body": "hi"}
     body_bytes = json.dumps(payload).encode()
     headers = {
         **_signed_team_headers(
-            alice_sk, alice_did_key, "backend:acme.com", cert_header, body_bytes
+            alice_sk, alice_did_key, alice.team_id, cert_header, body_bytes
         ),
         "Content-Type": "application/json",
     }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post("/v1/messages", content=body_bytes, headers=headers)
-
     assert resp.status_code == 200, resp.text
     row = await aweb_cloud_db.aweb_db.fetch_one(
         "SELECT from_agent_id, from_did FROM {{tables.messages}} WHERE subject = 'hello partial'"
     )
     assert row["from_agent_id"] == alice_row["agent_id"]
-    assert row["from_did"] == "did:aw:alice"
+    assert row["from_did"] == alice.stable_id
 
 
 @pytest.mark.asyncio
-async def test_global_inbox_does_not_include_current_key_identity(aweb_cloud_db):
-    bob_sk, _, bob_did_key = _make_keypair()
+async def test_global_inbox_does_not_include_current_key_identity(
+    registered_mail_actors,
+):
+    from types import SimpleNamespace
 
+    env, actors = registered_mail_actors
+    app = env.app
+    aweb_cloud_db = SimpleNamespace(aweb_db=env.db)
+    alice = actors["alice"]
+    bob_sk, _, bob_did_key = _make_keypair()
+    mapping = await env.app.state.awid_registry_client.register_did(bob_did_key, bob_sk)
+    assert (
+        await env.db.fetch_value(
+            "SELECT count(*) FROM {{tables.agents}} WHERE did_aw=$1", mapping.did_aw
+        )
+        == 0
+    )
+    # unreachable-state: historical did:key mail predates global enrollment and must remain separate from the did:aw inbox.
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.messages}} (
@@ -8310,30 +7933,21 @@ async def test_global_inbox_does_not_include_current_key_identity(aweb_cloud_db)
             'hi',
             'normal'
         )
-        """,
+        """.replace("did:aw:alice", alice.stable_id),
         bob_did_key,
     )
-
-    registry = AsyncMock()
-    registry.resolve_key = AsyncMock(
-        return_value=KeyResolution(did_aw="did:aw:bob", current_did_key=bob_did_key)
-    )
-    registry.list_did_addresses = AsyncMock(return_value=[])
-    app = _build_test_app(
-        aweb_cloud_db.aweb_db,
-        registry,
-        verified_bindings=(("did:aw:bob", bob_did_key, "acme.com/bob"),),
-    )
-
-    headers = _signed_identity_headers(bob_sk, bob_did_key, "did:aw:bob")
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    headers = _signed_identity_headers(bob_sk, bob_did_key, mapping.did_aw)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.get("/v1/messages/inbox", headers=headers)
-
     assert resp.status_code == 200, resp.text
     messages = resp.json()["messages"]
     assert messages == []
     local_headers = _signed_identity_headers(bob_sk, bob_did_key, "")
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         local = await client.get("/v1/messages/inbox", headers=local_headers)
     assert local.status_code == 200, local.text
     assert [item["body"] for item in local.json()["messages"]] == ["hi"]
@@ -8403,137 +8017,90 @@ async def test_messages_inbox_and_ack_accept_persistent_cert_auth(shared_test_po
 
 @pytest.mark.asyncio
 async def test_exact_message_read_is_participant_visible_side_effect_free_and_cert_authenticated(
-    aweb_cloud_db,
+    registered_mail_actors,
 ):
-    team_sk, _, team_did_key = _make_keypair()
-    alice_sk, _, alice_did_key = _make_keypair()
-    bob_sk, _, bob_did_key = _make_keypair()
-    carol_sk, _, carol_did_key = _make_keypair()
-    local_bob_sk, _, local_bob_did_key = _make_keypair()
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', $1)
-        """,
-        team_did_key,
-    )
-    for alias, did_key in (
-        ("alice", alice_did_key),
-        ("bob", bob_did_key),
-        ("carol", carol_did_key),
-    ):
-        await aweb_cloud_db.aweb_db.execute(
-            """
-            INSERT INTO {{tables.agents}}
-                (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-            VALUES ('backend:acme.com', $1, $2, $3, $4, 'global', 'developer', 'open', CASE WHEN NULLIF($2, '') IS NOT NULL THEN $1 END)
-            """,
-            did_key,
-            f"did:aw:{alias}",
-            f"acme.com/{alias}",
-            alias,
-        )
+    from types import SimpleNamespace
+    from messaging_actor_support import messaging_actor_headers, send_messaging_mail
 
+    env, actors = registered_mail_actors
+    app = env.app
+    aweb_cloud_db = SimpleNamespace(aweb_db=env.db)
+    alice, bob, carol = (actors["alice"], actors["bob"], actors["carol"])
+    alice_sk, alice_did_key = (alice.signing_key, alice.did_key)
+    bob_sk, bob_did_key = (bob.signing_key, bob.did_key)
+    local_bob_sk, _, local_bob_did_key = _make_keypair()
     encrypted_id = "66666666-6666-4666-8666-666666666666"
     encrypted_conversation_id = "77777777-7777-4777-8777-777777777777"
     encrypted = _encrypted_mail_envelope(
         sender_sk=alice_sk,
         sender_did=alice_did_key,
-        sender_stable_id="did:aw:alice",
+        sender_stable_id=alice.stable_id,
         recipient_did=bob_did_key,
-        recipient_stable_id="did:aw:bob",
+        recipient_stable_id=bob.stable_id,
         message_id=encrypted_id,
         conversation_id=encrypted_conversation_id,
     )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.messages}} (
-            message_id, from_did, to_did, from_alias, to_alias,
-            subject, body, priority, content_mode, message_version, encrypted_envelope
-        ) VALUES
-            ('55555555-5555-4555-8555-555555555555', 'did:aw:alice', 'did:aw:bob',
-             'alice', 'bob', 'global plaintext', 'hello', 'normal', 'legacy_plaintext_v1', 1, NULL),
-            ('88888888-8888-4888-8888-888888888888', $1, $2,
-             'alice', 'bob', 'legacy local plaintext', 'hello', 'normal', 'legacy_plaintext_v1', 1, NULL)
-        """,
-        alice_did_key,
+    await send_messaging_mail(
+        env,
+        alice,
+        payload={
+            "to_alias": "bob",
+            "subject": "global plaintext",
+            "body": "hello",
+            "message_id": "55555555-5555-4555-8555-555555555555",
+        },
+    )
+    # unreachable-state: retained local-key plaintext mail has no current resident recipient; present send cannot create that row.
+    await env.db.execute(
+        "INSERT INTO {{tables.messages}} (message_id,from_did,to_did,from_alias,to_alias,subject,body,priority) VALUES ('88888888-8888-4888-8888-888888888888',$1,$2,'alice','bob','legacy local plaintext','hello','normal')",
+        alice.did_key,
         local_bob_did_key,
     )
-    encrypted_storage = encrypted_message_storage_metadata(encrypted)
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.messages}} (
-            message_id, from_did, to_did, from_alias, to_alias,
-            subject, body, priority, content_mode, message_version, encrypted_envelope,
-            encrypted_ciphertext, encrypted_key_wraps, encrypted_ciphertext_hash,
-            encrypted_ciphertext_size, encrypted_key_wraps_hash, encrypted_inner_header_hash,
-            encrypted_suite, encrypted_signing_key_id, signed_envelope_hash
-        ) VALUES (
-            $1, $2, $3, 'alice', 'bob', '', '', 'normal', 'encrypted_v2', 2, $4::jsonb,
-            $5, $6::jsonb, $7, $8, $9, $10, $11, $12, $13
-        )
-        """,
-        UUID(encrypted_id),
-        "did:aw:alice",
-        "did:aw:bob",
-        json.dumps(encrypted),
-        encrypted_storage["encrypted_ciphertext"],
-        json.dumps(encrypted_storage["encrypted_key_wraps"]),
-        encrypted_storage["encrypted_ciphertext_hash"],
-        encrypted_storage["encrypted_ciphertext_size"],
-        encrypted_storage["encrypted_key_wraps_hash"],
-        encrypted_storage["encrypted_inner_header_hash"],
-        encrypted_storage["encrypted_suite"],
-        encrypted_storage["encrypted_signing_key_id"],
-        encrypted_storage["signed_envelope_hash"],
+    recipient_assertion = build_encryption_key_assertion(
+        signing_key=bob_sk,
+        identity_did=bob_did_key,
+        identity_stable_id=bob.stable_id,
+        encryption_public_key=b"r" * 32,
+        now=datetime.fromisoformat(encrypted["created_at"].replace("Z", "+00:00")),
     )
-
-    def cert_headers(alias, signing_key, did_key):
-        cert = _make_certificate(
-            team_sk,
-            team_did_key,
-            did_key,
-            alias=alias,
-            member_did_aw=f"did:aw:{alias}",
-            member_address=f"acme.com/{alias}",
-        )
-        return _signed_team_headers(
-            signing_key,
-            did_key,
-            "backend:acme.com",
-            _encode_certificate(cert),
-        )
-
-    registry = AsyncMock()
-    registry.get_team_public_key = AsyncMock(return_value=team_did_key)
-    registry.get_team_revocations = AsyncMock(return_value=set())
-    app = _build_test_app(
-        aweb_cloud_db.aweb_db,
-        registry,
-        verified_bindings=(
-            ("did:aw:alice", alice_did_key, "acme.com/alice"),
-            ("did:aw:bob", bob_did_key, "acme.com/bob"),
-            ("did:aw:carol", carol_did_key, "acme.com/carol"),
-        ),
+    await _publish_registered_encryption_key(
+        SimpleNamespace(actor=bob, node=SimpleNamespace(client=env.client)),
+        recipient_assertion,
     )
-    alice_headers = cert_headers("alice", alice_sk, alice_did_key)
-    bob_headers = cert_headers("bob", bob_sk, bob_did_key)
-    carol_headers = cert_headers("carol", carol_sk, carol_did_key)
+    await send_messaging_mail(
+        env,
+        alice,
+        payload={
+            "to_alias": "bob",
+            "subject": "",
+            "body": "",
+            "message_id": encrypted_id,
+            "conversation_id": encrypted_conversation_id,
+            "content_mode": "encrypted_v2",
+            "message_version": 2,
+            "encrypted_envelope": encrypted,
+        },
+    )
+    alice_headers = messaging_actor_headers(alice)
+    bob_headers = messaging_actor_headers(bob)
+    carol_headers = messaging_actor_headers(carol)
     absent_id = "99999999-9999-4999-8999-999999999999"
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         sender_global = await client.get(
             "/v1/messages/55555555-5555-4555-8555-555555555555", headers=alice_headers
         )
         recipient_local = await client.get(
             "/v1/messages/88888888-8888-4888-8888-888888888888", headers=bob_headers
         )
-        # A separate local identity is still authorized by its literal key.
         local_key_read = await client.get(
             "/v1/messages/88888888-8888-4888-8888-888888888888",
             headers=_signed_identity_headers(local_bob_sk, local_bob_did_key, ""),
         )
-        sender_encrypted = await client.get(f"/v1/messages/{encrypted_id}", headers=alice_headers)
+        sender_encrypted = await client.get(
+            f"/v1/messages/{encrypted_id}", headers=alice_headers
+        )
         unrelated = await client.get(
             "/v1/messages/55555555-5555-4555-8555-555555555555", headers=carol_headers
         )
@@ -8545,7 +8112,6 @@ async def test_exact_message_read_is_participant_visible_side_effect_free_and_ce
         recipient_ack = await client.post(
             "/v1/messages/55555555-5555-4555-8555-555555555555/ack", headers=bob_headers
         )
-
     assert sender_global.status_code == 200, sender_global.text
     assert sender_global.json()["subject"] == "global plaintext"
     assert recipient_local.status_code == 404, recipient_local.text
@@ -8568,66 +8134,43 @@ async def test_exact_message_read_is_participant_visible_side_effect_free_and_ce
 
 
 @pytest.mark.asyncio
-async def test_messages_inbox_and_ack_accept_ephemeral_cert_auth(aweb_cloud_db):
-    team_sk, _, team_did_key = _make_keypair()
-    alice_sk, _, alice_did_key = _make_keypair()
+async def test_messages_inbox_and_ack_accept_ephemeral_cert_auth(
+    registered_mail_actors,
+):
+    from types import SimpleNamespace
+    from messaging_actor_support import register_messaging_actors, send_messaging_mail
 
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('default:local', 'local', 'default', $1)
-        """,
-        team_did_key,
+    env, actors = registered_mail_actors
+    app = env.app
+    aweb_cloud_db = SimpleNamespace(aweb_db=env.db)
+    locals = await register_messaging_actors(
+        env, team_id="default:local.test", aliases=("alice", "bob"), local=True
     )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES ('default:local', $1, NULL, NULL, 'alice', 'local', 'developer', 'open', CASE WHEN NULLIF(NULL, '') IS NOT NULL THEN $1 END)
-        """,
-        alice_did_key,
+    alice, bob = (locals["alice"], locals["bob"])
+    alice_sk, alice_did_key = (alice.signing_key, alice.did_key)
+    cert_header = alice.certificate
+    await send_messaging_mail(
+        env,
+        bob,
+        payload={
+            "to_alias": "alice",
+            "subject": "ephemeral cert inbox",
+            "body": "hello",
+            "message_id": "44444444-4444-4444-4444-444444444444",
+        },
     )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.messages}} (
-            message_id, from_did, to_did, from_alias, to_alias, subject, body, priority
-        )
-        VALUES (
-            '44444444-4444-4444-4444-444444444444',
-            'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */,
-            $1,
-            'bob',
-            'alice',
-            'ephemeral cert inbox',
-            'hello',
-            'normal'
-        )
-        """,
-        alice_did_key,
-    )
-
-    cert = _make_certificate(
-        team_sk,
-        team_did_key,
-        alice_did_key,
-        team_id="default:local",
-        alias="alice",
-        identity_scope="local",
-    )
-    cert_header = _encode_certificate(cert)
-    registry = AsyncMock()
-    registry.get_team_public_key = AsyncMock(return_value=team_did_key)
-    registry.get_team_revocations = AsyncMock(return_value=set())
-    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
-
-    headers = _signed_team_headers(alice_sk, alice_did_key, "default:local", cert_header)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    headers = _signed_team_headers(alice_sk, alice_did_key, alice.team_id, cert_header)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         inbox_resp = await client.get("/v1/messages/inbox", headers=headers)
         ack_resp = await client.post(
             "/v1/messages/44444444-4444-4444-4444-444444444444/ack", headers=headers
         )
-
     assert inbox_resp.status_code == 200, inbox_resp.text
-    assert [item["subject"] for item in inbox_resp.json()["messages"]] == ["ephemeral cert inbox"]
+    assert [item["subject"] for item in inbox_resp.json()["messages"]] == [
+        "ephemeral cert inbox"
+    ]
     assert inbox_resp.json()["messages"][0]["to_did"] == alice_did_key
     assert ack_resp.status_code == 200, ack_resp.text
     row = await aweb_cloud_db.aweb_db.fetch_one(
@@ -8876,55 +8419,36 @@ async def test_cross_team_same_registry_address_send_creates_bound_contact_witho
 
 @pytest.mark.asyncio
 async def test_send_message_to_did_does_not_create_unresolved_identity_contact(
-    aweb_cloud_db,
+    registered_mail_actors,
 ):
-    alice_sk, _, alice_did_key = _make_keypair()
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
-        """
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */ END)
-        """
+    from types import SimpleNamespace
+    from messaging_actor_support import (
+        register_messaging_actors,
+        set_messaging_inbound_mode,
     )
 
-    registry = AsyncMock()
-    registry.resolve_key = AsyncMock(
-        return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key)
+    env, actors = registered_mail_actors
+    alice, bob = (actors["alice"], actors["bob"])
+    others = await register_messaging_actors(
+        env, team_id="ops:otherco.com", aliases=("bob",), local=False
     )
-    registry.list_did_addresses = AsyncMock(
-        return_value=[
-            Address(
-                address_id="addr-1",
-                domain="acme.com",
-                name="alice",
-                did_aw="did:aw:alice",
-                current_did_key=alice_did_key,
-                reachability="public",
-                created_at=datetime.now(timezone.utc).isoformat(),
-            )
-        ]
-    )
-    registry.list_team_certificates = AsyncMock(return_value=[])
-    app = _build_test_app(
-        aweb_cloud_db.aweb_db,
-        registry,
-        verified_bindings=(("did:aw:alice", alice_did_key, "acme.com/alice"),),
-    )
-
-    payload = {"to_did": "did:aw:bob", "subject": "allowed", "body": "hi"}
+    bob = others["bob"]
+    await set_messaging_inbound_mode(env, bob, mode="open")
+    app = env.app
+    aweb_cloud_db = SimpleNamespace(aweb_db=env.db)
+    alice_sk, alice_did_key = (alice.signing_key, alice.did_key)
+    payload = {"to_did": bob.stable_id, "subject": "allowed", "body": "hi"}
     body_bytes = json.dumps(payload).encode()
     headers = {
-        **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body_bytes),
+        **_signed_identity_headers(
+            alice_sk, alice_did_key, alice.stable_id, body_bytes
+        ),
         "Content-Type": "application/json",
     }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post("/v1/messages", content=body_bytes, headers=headers)
-
     assert resp.status_code == 200, resp.text
     contact_count = await aweb_cloud_db.aweb_db.fetch_value(
         """
@@ -8933,168 +8457,128 @@ async def test_send_message_to_did_does_not_create_unresolved_identity_contact(
           AND contact_address = 'otherco.com/bob'
           AND reference_type = 'identity'
           AND status = 'active'
-        """
+        """.replace("otherco.com/bob", bob.address).replace(
+            "did:aw:alice", alice.stable_id
+        )
     )
     assert contact_count == 0
 
 
 @pytest.mark.asyncio
 async def test_send_message_to_global_address_team_and_contacts_rejects_non_contact(
-    aweb_cloud_db,
+    registered_mail_actors,
 ):
-    alice_sk, _, alice_did_key = _make_keypair()
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
-        """
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES ('ops:otherco.com', 'did:key:z6Mkew8S3h9YHwt6fZR2TCkNVuyLd7zJ5nkTtjsZH4FhepWa' /* bob-contacts */, 'did:aw:bob-contacts', 'otherco.com/bob-contacts', 'bob-contacts', 'global', 'developer', 'team_and_contacts', CASE WHEN NULLIF('did:aw:bob-contacts', '') IS NOT NULL THEN 'did:key:z6Mkew8S3h9YHwt6fZR2TCkNVuyLd7zJ5nkTtjsZH4FhepWa' /* bob-contacts */ END)
-        """
+    from types import SimpleNamespace
+    from messaging_actor_support import (
+        register_messaging_actors,
+        set_messaging_inbound_mode,
     )
 
-    registry = AsyncMock()
-    registry.resolve_key = AsyncMock(
-        return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key)
+    env, actors = registered_mail_actors
+    alice, bob = (actors["alice"], actors["bob"])
+    others = await register_messaging_actors(
+        env, team_id="ops:otherco.com", aliases=("bob-contacts",), local=False
     )
-    registry.resolve_address = AsyncMock(
-        return_value=Address(
-            address_id="addr-contacts",
-            domain="otherco.com",
-            name="bob-contacts",
-            did_aw="did:aw:bob-contacts",
-            current_did_key=named_did_key("bob-contacts"),
-            reachability="public",
-            created_at=datetime.now(timezone.utc).isoformat(),
-        )
-    )
-    registry.list_did_addresses = AsyncMock(return_value=[])
-    registry.list_team_certificates = AsyncMock(return_value=[])
-    app = _build_test_app(
-        aweb_cloud_db.aweb_db,
-        registry,
-        verified_bindings=(("did:aw:alice", alice_did_key, "acme.com/alice"),),
-    )
-
-    payload = {
-        "to_address": "otherco.com/bob-contacts",
-        "subject": "blocked",
-        "body": "hi",
-    }
+    bob = others["bob-contacts"]
+    await set_messaging_inbound_mode(env, bob, mode="team_and_contacts")
+    app = env.app
+    aweb_cloud_db = SimpleNamespace(aweb_db=env.db)
+    alice_sk, alice_did_key = (alice.signing_key, alice.did_key)
+    payload = {"to_address": bob.address, "subject": "blocked", "body": "hi"}
     body_bytes = json.dumps(payload).encode()
     headers = {
-        **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body_bytes),
+        **_signed_identity_headers(
+            alice_sk, alice_did_key, alice.stable_id, body_bytes
+        ),
         "Content-Type": "application/json",
     }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post("/v1/messages", content=body_bytes, headers=headers)
-
     assert resp.status_code == 403, resp.text
     assert "exact active contacts" in resp.text
     message_count = await aweb_cloud_db.aweb_db.fetch_value(
         """
         SELECT COUNT(*) FROM {{tables.messages}}
         WHERE to_did = 'did:aw:bob-contacts'
-        """
+        """.replace("did:aw:bob-contacts", bob.stable_id).replace(
+            "did:aw:bob", bob.stable_id
+        )
     )
     assert message_count == 0
 
 
 @pytest.mark.asyncio
 async def test_send_message_to_global_address_allows_explicit_inbound_mode_open(
-    aweb_cloud_db,
+    registered_mail_actors,
 ):
-    alice_sk, _, alice_did_key = _make_keypair()
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
-        """
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */ END)
-        """
+    from messaging_actor_support import (
+        register_messaging_actors,
+        set_messaging_inbound_mode,
     )
 
-    registry = AsyncMock()
-    registry.resolve_key = AsyncMock(
-        return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key)
+    env, actors = registered_mail_actors
+    alice, bob = (actors["alice"], actors["bob"])
+    others = await register_messaging_actors(
+        env, team_id="ops:otherco.com", aliases=("bob",), local=False
     )
-    registry.resolve_address = AsyncMock(
-        return_value=Address(
-            address_id="addr-2",
-            domain="otherco.com",
-            name="bob",
-            did_aw="did:aw:bob",
-            current_did_key=named_did_key("bob"),
-            reachability="public",
-            created_at=datetime.now(timezone.utc).isoformat(),
-        )
-    )
-    registry.list_did_addresses = AsyncMock(return_value=[])
-    registry.list_team_certificates = AsyncMock(return_value=[])
-    app = _build_test_app(
-        aweb_cloud_db.aweb_db,
-        registry,
-        verified_bindings=(("did:aw:alice", alice_did_key, "acme.com/alice"),),
-    )
-
-    payload = {"to_address": "otherco.com/bob", "subject": "allowed", "body": "hi"}
+    bob = others["bob"]
+    await set_messaging_inbound_mode(env, bob, mode="open")
+    app = env.app
+    alice_sk, alice_did_key = (alice.signing_key, alice.did_key)
+    payload = {"to_address": bob.address, "subject": "allowed", "body": "hi"}
     body_bytes = json.dumps(payload).encode()
     headers = {
-        **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body_bytes),
+        **_signed_identity_headers(
+            alice_sk, alice_did_key, alice.stable_id, body_bytes
+        ),
         "Content-Type": "application/json",
     }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post("/v1/messages", content=body_bytes, headers=headers)
-
     assert resp.status_code == 200, resp.text
 
 
 @pytest.mark.asyncio
 async def test_send_message_global_recipient_null_inbound_mode_fails_migration_required(
-    aweb_cloud_db,
+    registered_mail_actors,
 ):
-    alice_sk, _, alice_did_key = _make_keypair()
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
-        """
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES ('ops:otherco.com', 'did:key:z6Mks2kyCw17zj4tBNJLsa65sw7bXG1WYbtv2mDD9PXVqQUf' /* bob-migration */, 'did:aw:bob-migration', 'otherco.com/bob-migration', 'bob-migration', 'global', 'developer', NULL, CASE WHEN NULLIF('did:aw:bob-migration', '') IS NOT NULL THEN 'did:key:z6Mks2kyCw17zj4tBNJLsa65sw7bXG1WYbtv2mDD9PXVqQUf' /* bob-migration */ END)
-        """
+    from types import SimpleNamespace
+    from messaging_actor_support import (
+        register_messaging_actors,
+        set_messaging_inbound_mode,
     )
 
-    registry = AsyncMock()
-    registry.resolve_key = AsyncMock(
-        return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key)
+    env, actors = registered_mail_actors
+    alice, bob = (actors["alice"], actors["bob"])
+    others = await register_messaging_actors(
+        env, team_id="ops:otherco.com", aliases=("bob-migration",), local=False
     )
-    registry.list_did_addresses = AsyncMock(return_value=[])
-    registry.list_team_certificates = AsyncMock(return_value=[])
-    app = _build_test_app(
-        aweb_cloud_db.aweb_db,
-        registry,
-        verified_bindings=(("did:aw:alice", alice_did_key, "acme.com/alice"),),
+    bob = others["bob-migration"]
+    await set_messaging_inbound_mode(env, bob, mode="open")
+    app = env.app
+    aweb_cloud_db = SimpleNamespace(aweb_db=env.db)
+    alice_sk, alice_did_key = (alice.signing_key, alice.did_key)
+    # unreachable-state: pre-migration global member has NULL inbound_mode; current admission supplies a policy.
+    await env.db.execute(
+        "UPDATE {{tables.agents}} SET inbound_mode = NULL WHERE agent_id=$1",
+        UUID(bob.agent_id),
     )
-
-    payload = {"to_did": "did:aw:bob-migration", "subject": "blocked", "body": "hi"}
+    payload = {"to_did": bob.stable_id, "subject": "blocked", "body": "hi"}
     body_bytes = json.dumps(payload).encode()
     headers = {
-        **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body_bytes),
+        **_signed_identity_headers(
+            alice_sk, alice_did_key, alice.stable_id, body_bytes
+        ),
         "Content-Type": "application/json",
     }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post("/v1/messages", content=body_bytes, headers=headers)
-
     assert resp.status_code == 403, resp.text
     assert "inbound_mode migration required" in resp.text
     contact_count = await aweb_cloud_db.aweb_db.fetch_value(
@@ -9102,54 +8586,33 @@ async def test_send_message_global_recipient_null_inbound_mode_fails_migration_r
         SELECT COUNT(*) FROM {{tables.contacts}}
         WHERE owner_did = 'did:aw:alice'
           AND contact_address = 'otherco.com/bob-migration'
-        """
+        """.replace("otherco.com/bob-migration", bob.address)
+        .replace("otherco.com/bob", bob.address)
+        .replace("did:aw:alice", alice.stable_id)
     )
     assert contact_count == 0
 
 
 @pytest.mark.asyncio
-async def test_send_message_to_address_local_ephemeral_without_route_is_not_routable(
-    registered_mail_actors,
-):
+async def test_send_message_to_address_local_ephemeral_without_route_is_not_routable(registered_mail_actors):
     from types import SimpleNamespace
     from aweb.application_state import application_registry_client
     from test_local_policy_refusal_boundaries import admitted_local_recipient
-
     env, actors = registered_mail_actors
-    alice = actors["alice"]
-    server = SimpleNamespace(
-        fixture=env, registry=application_registry_client(env.app.state)
-    )
-    bob = await admitted_local_recipient(server, team="eng:otherco.com", alias="bob")
-    body = json.dumps({"to_address": "otherco.com/bob", "subject": "blocked", "body": "hi"}).encode()
-    refused = await env.client.post(
-        "/v1/messages",
-        content=body,
-        headers={
-            **_signed_identity_headers(alice.signing_key, alice.did_key, alice.stable_id, body),
-            "Content-Type": "application/json",
-        },
-    )
+    alice = actors['alice']
+    server = SimpleNamespace(fixture=env, registry=application_registry_client(env.app.state))
+    bob = await admitted_local_recipient(server, team='eng:otherco.com', alias='bob')
+    body = json.dumps({'to_address': 'otherco.com/bob', 'subject': 'blocked', 'body': 'hi'}).encode()
+    refused = await env.client.post('/v1/messages', content=body, headers={**_signed_identity_headers(alice.signing_key, alice.did_key, alice.stable_id, body), 'Content-Type': 'application/json'})
     assert refused.status_code == 404, refused.text
-    assert refused.json()["reason"] == "local_recipient_route_missing"
-    assert refused.json()["retryable"] is False
-    assert refused.json()["detail"] == (
-        "otherco.com/bob is not a registered address. A local identity has no address and "
-        "is reachable only from inside its own team, by alias; a global identity is "
-        "reachable by address once one is assigned. Check the address or use a teammate alias and retry."
-    )
-    assert await env.db.fetch_value("SELECT count(*) FROM {{tables.messages}}") == 0
-    member_body = json.dumps({"to_alias": "bob", "subject": "same-team", "body": "allowed"}).encode()
-    accepted = await env.client.post(
-        "/v1/messages",
-        content=member_body,
-        headers={
-            **_signed_team_headers(bob.sk, bob.did, bob.team, bob.certificate, member_body),
-            "Content-Type": "application/json",
-        },
-    )
+    assert refused.json()['reason'] == 'local_recipient_route_missing'
+    assert refused.json()['retryable'] is False
+    assert refused.json()['detail'] == 'otherco.com/bob is not a registered address. A local identity has no address and is reachable only from inside its own team, by alias; a global identity is reachable by address once one is assigned. Check the address or use a teammate alias and retry.'
+    assert await env.db.fetch_value('SELECT count(*) FROM {{tables.messages}}') == 0
+    member_body = json.dumps({'to_alias': 'bob', 'subject': 'same-team', 'body': 'allowed'}).encode()
+    accepted = await env.client.post('/v1/messages', content=member_body, headers={**_signed_team_headers(bob.sk, bob.did, bob.team, bob.certificate, member_body), 'Content-Type': 'application/json'})
     assert accepted.status_code == 200, accepted.text
-    assert await env.db.fetch_value("SELECT to_did FROM {{tables.messages}}") == bob.did
+    assert await env.db.fetch_value('SELECT to_did FROM {{tables.messages}}') == bob.did
 
 
 @pytest.mark.asyncio
@@ -9382,86 +8845,97 @@ async def test_send_message_to_stable_id_address_binding_uses_local_persistent_w
 @pytest.mark.parametrize("recipient_identity_scope", ["global", "local"])
 @pytest.mark.asyncio
 async def test_send_message_to_private_address_uses_client_recipient_binding(
-    aweb_cloud_db,
-    recipient_identity_scope,
+    registered_mail_actors, recipient_identity_scope
 ):
-    alice_sk, _, alice_did_key = _make_keypair()
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
-        """
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */, 'did:aw:bob', 'otherco.com/bob', 'bob', $1, 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */ END)
-        """,
-        recipient_identity_scope,
+    from types import SimpleNamespace
+    from messaging_actor_support import (
+        register_messaging_actors,
+        set_messaging_inbound_mode,
+        record_registry_requests,
     )
 
-    registry = AsyncMock()
-    registry.resolve_key = AsyncMock(
-        return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key)
+    env, actors = registered_mail_actors
+    alice, bob = (actors["alice"], actors["bob"])
+    sender_actors = await register_messaging_actors(
+        env, team_id="sender:acme.com", aliases=("alice",), addressed=False
     )
-    registry.resolve_address = AsyncMock(return_value=None)
-    registry.list_did_addresses = AsyncMock(return_value=[])
-    registry.list_team_certificates = AsyncMock(return_value=[])
-    app = _build_test_app(
-        aweb_cloud_db.aweb_db,
-        registry,
-        verified_bindings=(("did:aw:alice", alice_did_key, "acme.com/alice"),),
+    alice = sender_actors["alice"]
+    others = await register_messaging_actors(
+        env, team_id="ops:otherco.com", aliases=("bob",), local=False
     )
-
-    message_id = str(uuid4())
-    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
-    signed_payload = canonical_json_bytes(
-        {
-            "body": "hi",
-            "from": "did:aw:alice",
-            "from_did": "did:aw:alice",
-            "from_stable_id": "did:aw:alice",
-            "message_id": message_id,
-            "priority": "normal",
+    bob = others["bob"]
+    await set_messaging_inbound_mode(env, bob, mode="open")
+    app = env.app
+    aweb_cloud_db = SimpleNamespace(aweb_db=env.db)
+    alice_sk, alice_did_key = (alice.signing_key, alice.did_key)
+    if recipient_identity_scope == "local":
+        # unreachable-state: old local-scope storage retains a verified global binding; current admission sets global scope.
+        await env.db.execute(
+            "UPDATE {{tables.agents}} SET identity_scope='local' WHERE agent_id=$1",
+            UUID(bob.agent_id),
+        )
+    with record_registry_requests(env) as registry_calls:
+        message_id = str(uuid4())
+        timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+        signed_payload = canonical_json_bytes(
+            {
+                "body": "hi",
+                "from": alice.stable_id,
+                "from_did": alice.stable_id,
+                "from_stable_id": alice.stable_id,
+                "message_id": message_id,
+                "priority": "normal",
+                "subject": f"private bound {recipient_identity_scope}",
+                "timestamp": timestamp,
+                "to": bob.address,
+                "to_did": bob.did_key,
+                "to_stable_id": bob.stable_id,
+                "type": "mail",
+            }
+        )
+        payload = {
+            "to_address": bob.address,
+            "to_stable_id": bob.stable_id,
             "subject": f"private bound {recipient_identity_scope}",
+            "body": "hi",
+            "from_did": alice.stable_id,
+            "message_id": message_id,
             "timestamp": timestamp,
-            "to": "otherco.com/bob",
-            "to_did": named_did_key("bob"),
-            "to_stable_id": "did:aw:bob",
-            "type": "mail",
+            "signature": sign_message(alice_sk, signed_payload),
+            "signed_payload": signed_payload.decode(),
         }
-    )
-    payload = {
-        "to_address": "otherco.com/bob",
-        "to_stable_id": "did:aw:bob",
-        "subject": f"private bound {recipient_identity_scope}",
-        "body": "hi",
-        "from_did": "did:aw:alice",
-        "message_id": message_id,
-        "timestamp": timestamp,
-        "signature": sign_message(alice_sk, signed_payload),
-        "signed_payload": signed_payload.decode(),
-    }
-    body_bytes = json.dumps(payload).encode()
-    headers = {
-        **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body_bytes),
-        "Content-Type": "application/json",
-    }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.post("/v1/messages", content=body_bytes, headers=headers)
-
-    assert resp.status_code == 200, resp.text
-    registry.resolve_address.assert_not_awaited()
-    row = await aweb_cloud_db.aweb_db.fetch_one(
-        """
+        body_bytes = json.dumps(payload).encode()
+        headers = {
+            **_signed_identity_headers(
+                alice_sk, alice_did_key, alice.stable_id, body_bytes
+            ),
+            "Content-Type": "application/json",
+        }
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(
+                "/v1/messages", content=body_bytes, headers=headers
+            )
+        assert resp.status_code == 200, resp.text
+        row = await aweb_cloud_db.aweb_db.fetch_one(
+            """
         SELECT to_did, to_alias
         FROM {{tables.messages}}
         WHERE message_id = $1
         """,
-        UUID(message_id),
-    )
-    assert row["to_did"] == "did:aw:bob"
-    assert row["to_alias"] == "bob"
+            UUID(message_id),
+        )
+        assert row["to_did"] == bob.stable_id
+        assert row["to_alias"] == "bob"
+        assert any(
+            (
+                method == "GET"
+                and path
+                == "/v1/namespaces/" + bob.address.replace("/", "/addresses/", 1)
+                for method, path in registry_calls
+            )
+        )
 
 
 @pytest.mark.asyncio

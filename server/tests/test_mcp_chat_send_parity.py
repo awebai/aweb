@@ -13,7 +13,9 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from aweb.federation.errors import LocalRecipientNotFoundError
 from aweb.mcp.tools.refusals import SendRefusalMode
+from aweb.service_errors import IdentityBindingCode, IdentityBindingError
 from aweb.messaging.refusals import RecipientAddressNotFound
 import pytest_asyncio
 from fastapi import HTTPException
@@ -710,14 +712,21 @@ async def test_mcp_refusals_of_an_unknown_chat_recipient_read_as_the_routes_do(
 ):
     server = chat_server
 
-    assert await server.mcp_chat("pilot", to="nobody", message="hello", plaintext=True) == {
-        "error": "Unknown aliases: nobody",
+    assert await server.mcp_chat(
+        "pilot", to="nobody", message="hello", plaintext=True
+    ) == {
+        "error": "Recipient name does not identify a current member of the team: nobody. "
+        "Check the name; if the agent exists, ask it to reconnect with a current team certificate.",
     }
-    assert await server.mcp_chat("pilot", to="did:aw:nobody", message="hello", plaintext=True) == {
+    assert await server.mcp_chat(
+        "pilot", to="did:aw:nobody", message="hello", plaintext=True
+    ) == {
         "error": "Bare did:aw first-contact is unsupported; use to_addresses=domain/name "
         "or continue an existing session",
     }
-    assert await server.mcp_chat("pilot", to="pilot", message="hello", plaintext=True) == {
+    assert await server.mcp_chat(
+        "pilot", to="pilot", message="hello", plaintext=True
+    ) == {
         "error": "Self-chat is not supported. Choose another recipient and retry.",
     }
     assert await server.mcp_chat(
@@ -731,7 +740,10 @@ async def test_mcp_refusals_of_an_unknown_chat_recipient_read_as_the_routes_do(
     ) == {
         "error": "Session not found",
     }
-    assert await server.db.fetch_all("SELECT message_id FROM {{tables.chat_messages}}") == []
+    assert (
+        await server.db.fetch_all("SELECT message_id FROM {{tables.chat_messages}}")
+        == []
+    )
 
 
 def _sender():
@@ -985,6 +997,14 @@ def _refusal(status, detail):
 # (the refusal the send raises, what the tool knows about the send, what the tool answers)
 NEXT_ACTIONS = [
     (
+        LocalRecipientNotFoundError,
+        {"address": "example.test/member"},
+        {
+            "error": unreachable_address_refusal("example.test/member"),
+            "reason": "recipient_identity_not_found",
+        },
+    ),
+    (
         lambda: _authority_refusal("sender_registry_unavailable"),
         {"address": "jane.aweb.ai/c3po"},
         {
@@ -1019,18 +1039,20 @@ NEXT_ACTIONS = [
         },
     ),
     (
-        lambda: _refusal(403, "identity_binding_mismatch"),
+        lambda: IdentityBindingError(IdentityBindingCode.MISMATCH),
         {},
         {
-            "error": "this recipient's identity or key no longer matches the registry; check the address and resend",
+            "error": "The claimed identity and signing key do not match. "
+            "Check the identity and its current public-key binding, "
+            "then correct the request and retry.",
             "reason": "identity_binding_mismatch",
         },
     ),
     (
-        lambda: _refusal(503, "identity_binding_unavailable"),
+        lambda: IdentityBindingError(IdentityBindingCode.UNAVAILABLE),
         {},
         {
-            "error": "the registry can't confirm this recipient's key right now; try again shortly",
+            "error": "Identity verification is unavailable. Retry when the identity registry is available.",
             "reason": "identity_binding_unavailable",
         },
     ),

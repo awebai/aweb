@@ -106,7 +106,7 @@ async def privacy_stack(shared_test_pool, monkeypatch, tls=None):
             namespace_key = await fixture_registry.ensure_namespace(domain="example.test")
             registry = RegistryClient(
                 registry_url="http://registry.test",
-                transport=httpx.ASGITransport(app=registry_app),
+                transport=fixture_registry.transport,
                 service_token=service_token,
                 domain_verifier=fixture_registry.namespace_authority,
             )
