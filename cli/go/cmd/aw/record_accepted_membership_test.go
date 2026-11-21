@@ -1,12 +1,10 @@
 package main
 
 import (
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
+	"crypto/ed25519"
 	"os"
 	"path/filepath"
-	"sync/atomic"
+	"strings"
 	"testing"
 
 	"github.com/awebai/aw/awconfig"
@@ -19,24 +17,36 @@ import (
 // what an accept/enroll path leaves on disk before recording the membership.
 func writeSelfCustodyIdentityForTest(t *testing.T, workingDir, teamID string) (*teamAcceptInviteOutput, *awid.TeamCertificate) {
 	t.Helper()
-	memberPub, memberKey, err := awid.GenerateKeypair()
-	if err != nil {
-		t.Fatalf("generate member keypair: %v", err)
-	}
+	memberKey := newKey(t)
 	_, teamKey, err := awid.GenerateKeypair()
 	if err != nil {
 		t.Fatalf("generate team keypair: %v", err)
 	}
-	memberDID := awid.ComputeDIDKey(memberPub)
 	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
 		Team:          teamID,
-		MemberDIDKey:  memberDID,
+		MemberDIDKey:  didOf(memberKey),
 		Alias:         "bob",
 		IdentityScope: awid.IdentityModeLocal,
 	})
 	if err != nil {
 		t.Fatalf("sign team certificate: %v", err)
 	}
+	return writeSelfCustodyIdentityWithCertificate(t, workingDir, memberKey, cert), cert
+}
+
+// writeWorldMemberIdentityForTest is writeSelfCustodyIdentityForTest for a
+// member of world's team whose certificate the registry holds.
+func writeWorldMemberIdentityForTest(t *testing.T, world *realCommandWorld, workingDir string) (*teamAcceptInviteOutput, *awid.TeamCertificate) {
+	t.Helper()
+	memberKey := newKey(t)
+	cert := world.registerMemberCertificate(t, awid.TeamCertificateFields{MemberDIDKey: didOf(memberKey), Alias: "bob", IdentityScope: awid.IdentityModeLocal})
+	return writeSelfCustodyIdentityWithCertificate(t, workingDir, memberKey, cert), cert
+}
+
+func writeSelfCustodyIdentityWithCertificate(t *testing.T, workingDir string, memberKey ed25519.PrivateKey, cert *awid.TeamCertificate) *teamAcceptInviteOutput {
+	t.Helper()
+	teamID := cert.Team
+	memberDID := didOf(memberKey)
 	certPath, err := awconfig.SaveTeamCertificateForTeam(workingDir, teamID, cert)
 	if err != nil {
 		t.Fatalf("write team certificate: %v", err)
@@ -58,9 +68,9 @@ func writeSelfCustodyIdentityForTest(t *testing.T, workingDir, teamID string) (*
 	return &teamAcceptInviteOutput{
 		Status:   "accepted",
 		TeamID:   teamID,
-		Alias:    "bob",
+		Alias:    cert.Alias,
 		CertPath: certPath,
-	}, cert
+	}
 }
 
 func workspaceYAMLExists(t *testing.T, workingDir string) bool {
@@ -96,7 +106,7 @@ func TestRecordAcceptedTeamMembershipJoinLeavesNoWorkspaceBinding(t *testing.T) 
 	teamID := "default:gracehosted.aweb.ai"
 	output, cert := writeSelfCustodyIdentityForTest(t, dir, teamID)
 
-	if err := recordAcceptedTeamMembership(dir, output, cert, "", "https://app.aweb.ai", recordMembershipOptions{IdentityHome: currentEncryptionKeyIdentityHome(), SetActive: true}); err != nil {
+	if err := recordAcceptedTeamMembership(acceptedTeamMembershipRequest{WorkingDir: dir, Output: output, Certificate: cert, RegistryURL: "", AwebURL: "https://app.aweb.ai", IdentityHome: currentEncryptionKeyIdentityHome(), Activation: membershipMakeActive}); err != nil {
 		t.Fatalf("record accepted membership: %v", err)
 	}
 
@@ -121,25 +131,14 @@ func TestRecordAcceptedTeamMembershipProvisionWritesTargetEncryptionKeyNotOperat
 	if err != nil {
 		t.Fatal(err)
 	}
-	// aweb-abfd: provisioning must also publish the target's encryption-key
-	// assertion; a key whose assertion is only local cannot be discovered by
-	// any counterparty. The fake service records the publish.
-	var publishCalls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key" {
-			publishCalls.Add(1)
-			_ = json.NewEncoder(w).Encode(map[string]any{"agent_id": "a", "team_id": "default:gracehosted.aweb.ai", "alias": "bob"})
-			return
-		}
-		http.NotFound(w, r)
-	}))
-	t.Cleanup(server.Close)
-	awebURL := server.URL
+	world := newRealCommandWorld(t)
+	awebURL := world.Stack.ServerURL
 
 	dir := filepath.Join(root, "target")
 	operatorDir := filepath.Join(root, "operator")
-	teamID := "default:gracehosted.aweb.ai"
-	output, cert := writeSelfCustodyIdentityForTest(t, dir, teamID)
+	teamID := world.TeamID
+	output, cert := writeWorldMemberIdentityForTest(t, world, dir)
+	// The operator never reaches the service; its identity stays local.
 	_, _ = writeSelfCustodyIdentityForTest(t, operatorDir, teamID)
 	operatorIdentityHome := awconfig.WorktreeIdentityHome(operatorDir)
 	t.Setenv(awconfig.IdentityHomeEnv, operatorIdentityHome)
@@ -153,8 +152,8 @@ func TestRecordAcceptedTeamMembershipProvisionWritesTargetEncryptionKeyNotOperat
 	targetEncryptionStatePath := awconfig.WorktreeEncryptionStatePath(dir)
 	operatorEncryptionStatePath := awconfig.WorktreeEncryptionStatePath(operatorDir)
 
-	if err := recordAcceptedTeamMembership(dir, output, cert, "", awebURL, recordMembershipOptions{
-		IdentityHome: explicitEncryptionKeyIdentityHome(awconfig.WorktreeIdentityHome(dir)), SetActive: true, WriteWorkspaceBinding: true,
+	if err := recordAcceptedTeamMembership(acceptedTeamMembershipRequest{WorkingDir: dir, Output: output, Certificate: cert, RegistryURL: "", AwebURL: awebURL,
+		IdentityHome: explicitEncryptionKeyIdentityHome(awconfig.WorktreeIdentityHome(dir)), Activation: membershipMakeActive, Binding: membershipWriteWorkspaceBinding,
 	}); err != nil {
 		t.Fatalf("record accepted membership: %v", err)
 	}
@@ -181,17 +180,23 @@ func TestRecordAcceptedTeamMembershipProvisionWritesTargetEncryptionKeyNotOperat
 		t.Fatalf("load workspace binding: %v", err)
 	}
 	if workspace.AwebURL != awebURL {
-		t.Fatalf("workspace aweb_url=%q want fake service URL", workspace.AwebURL)
+		t.Fatalf("workspace aweb_url=%q want the service URL", workspace.AwebURL)
 	}
 	if workspace.Membership(teamID) == nil {
 		t.Fatalf("workspace binding missing membership cache: %#v", workspace)
 	}
 	membership := teamState.Membership(teamID)
 	if membership.AwebURL != awebURL {
-		t.Fatalf("teams.yaml membership aweb_url=%q want fake service URL", membership.AwebURL)
+		t.Fatalf("teams.yaml membership aweb_url=%q want the service URL", membership.AwebURL)
 	}
-	if publishCalls.Load() == 0 {
-		t.Fatal("provision did not publish the encryption-key assertion to the service (aweb-abfd)")
+	// aweb-abfd: provisioning must also publish the target's encryption-key
+	// assertion; a key whose assertion is only local cannot be discovered by
+	// any counterparty. A teammate's encrypted mail reaches bob only through
+	// the published key.
+	alice := world.addLocalMember(t, "alice")
+	world.requireCommand(t, alice.Home, "mail", "send", "--to", "bob", "--subject", "after-provision", "--body", "sealed for bob")
+	if inbox := world.requireCommand(t, awconfig.WorktreeIdentityHome(dir), "mail", "inbox"); !strings.Contains(inbox, "sealed for bob") {
+		t.Fatalf("bob cannot read mail sealed to the published key: %s", inbox)
 	}
 	targetState, targetStateErr = awconfig.LoadEncryptionKeyStateFrom(targetEncryptionStatePath)
 	if targetStateErr != nil || targetState.ActiveRecord() == nil {
@@ -213,13 +218,13 @@ func TestRecordAcceptedTeamMembershipPreservesJoinedAt(t *testing.T) {
 
 	const originalJoinedAt = "2026-01-01T00:00:00Z"
 	cert.IssuedAt = originalJoinedAt
-	if err := recordAcceptedTeamMembership(dir, output, cert, "", "https://app.aweb.ai", recordMembershipOptions{IdentityHome: currentEncryptionKeyIdentityHome(), SetActive: true}); err != nil {
+	if err := recordAcceptedTeamMembership(acceptedTeamMembershipRequest{WorkingDir: dir, Output: output, Certificate: cert, RegistryURL: "", AwebURL: "https://app.aweb.ai", IdentityHome: currentEncryptionKeyIdentityHome(), Activation: membershipMakeActive}); err != nil {
 		t.Fatalf("record first membership: %v", err)
 	}
 
 	// Re-accept with a newer certificate (a later IssuedAt, e.g. a rotation).
 	cert.IssuedAt = "2026-06-01T00:00:00Z"
-	if err := recordAcceptedTeamMembership(dir, output, cert, "", "https://app.aweb.ai", recordMembershipOptions{IdentityHome: currentEncryptionKeyIdentityHome(), SetActive: true}); err != nil {
+	if err := recordAcceptedTeamMembership(acceptedTeamMembershipRequest{WorkingDir: dir, Output: output, Certificate: cert, RegistryURL: "", AwebURL: "https://app.aweb.ai", IdentityHome: currentEncryptionKeyIdentityHome(), Activation: membershipMakeActive}); err != nil {
 		t.Fatalf("re-record membership: %v", err)
 	}
 
@@ -241,25 +246,16 @@ func TestRecordAcceptedTeamMembershipPreservesJoinedAt(t *testing.T) {
 // key so it can do E2E messaging. recordAcceptedTeamMembership guarantees it.
 func TestRecordAcceptedTeamMembershipEnsuresEncryptionKeyForCreator(t *testing.T) {
 	dir := t.TempDir()
-	teamID := "default:byotcreator.example.com"
-	output, cert := writeSelfCustodyIdentityForTest(t, dir, teamID)
+	world := newRealCommandWorld(t)
+	output, cert := writeWorldMemberIdentityForTest(t, world, dir)
 
 	if _, err := os.Stat(awconfig.WorktreeEncryptionStatePath(dir)); !os.IsNotExist(err) {
 		t.Fatalf("precondition: encryption state should be absent, stat err=%v", err)
 	}
 
-	// A fake service, never the production URL: with the binding written, the
-	// aweb-abfd wiring publishes the encryption-key assertion to this URL.
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key" {
-			_, _ = w.Write([]byte("{}"))
-			return
-		}
-		http.NotFound(w, r)
-	}))
-	t.Cleanup(server.Close)
-
-	if err := recordAcceptedTeamMembership(dir, output, cert, "", server.URL, recordMembershipOptions{IdentityHome: currentEncryptionKeyIdentityHome(), SetActive: true, WriteWorkspaceBinding: true}); err != nil {
+	// The real service, never the production URL: with the binding written,
+	// the aweb-abfd wiring publishes the encryption-key assertion to it.
+	if err := recordAcceptedTeamMembership(acceptedTeamMembershipRequest{WorkingDir: dir, Output: output, Certificate: cert, RegistryURL: "", AwebURL: world.Stack.ServerURL, IdentityHome: currentEncryptionKeyIdentityHome(), Activation: membershipMakeActive, Binding: membershipWriteWorkspaceBinding}); err != nil {
 		t.Fatalf("record accepted membership: %v", err)
 	}
 	requireEncryptionKeyRecordForTest(t, dir)

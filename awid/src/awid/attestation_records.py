@@ -16,9 +16,15 @@ from datetime import datetime
 from typing import Any
 
 from nacl.exceptions import BadSignatureError
-from nacl.signing import SigningKey, VerifyKey
 
 from awid.did import public_key_from_did
+from awid.signature_wire import (
+    Base64Profile,
+    NoncanonicalBase64,
+    decode_base64,
+    sign_bytes,
+    verify_bytes,
+)
 from awid.signing import canonical_json_bytes
 from awid.team_ids import parse_team_id
 from awid.utc_timestamps import parse_utc_seconds
@@ -62,22 +68,29 @@ def _from_b64url(value: str, error: type[ValueError]) -> bytes:
     if not isinstance(value, str) or not _B64URL.fullmatch(value):
         raise error("invalid base64url")
     try:
-        decoded = base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+        return decode_base64(value, profile=Base64Profile.CANONICAL_URL)
+    except NoncanonicalBase64 as exc:
+        raise error("non-canonical base64url") from exc
     except (binascii.Error, ValueError) as exc:
         raise error("invalid base64url") from exc
-    if _b64url(decoded) != value:
-        raise error("non-canonical base64url")
-    return decoded
 
 
 def sign_record(signing_key: bytes, payload: dict[str, Any]) -> str:
     """Sign a record or attestation payload; returns base64url without padding."""
-    return _b64url(SigningKey(signing_key).sign(signing_bytes(payload)).signature)
+    return _b64url(
+        sign_bytes(key=signing_key, payload=signing_bytes(payload))
+    )
 
 
-def _verify(did_key: str, payload: dict[str, Any], signature: bytes, error: type[ValueError]) -> None:
+def _verify(
+    did_key: str, payload: dict[str, Any], signature: bytes, error: type[ValueError]
+) -> None:
     try:
-        VerifyKey(public_key_from_did(did_key)).verify(signing_bytes(payload), signature)
+        verify_bytes(
+            key=public_key_from_did(did_key),
+            payload=signing_bytes(payload),
+            signature=signature,
+        )
     except (BadSignatureError, ValueError) as exc:
         raise error("signature does not verify") from exc
 
@@ -86,7 +99,9 @@ def _parse_timestamp(value: Any, error: type[ValueError]) -> datetime:
     try:
         return parse_utc_seconds(value)
     except ValueError as exc:
-        raise error("timestamp must be RFC 3339 UTC with Z and second precision") from exc
+        raise error(
+            "timestamp must be RFC 3339 UTC with Z and second precision"
+        ) from exc
 
 
 def _require_did_key(value: Any, error: type[ValueError]) -> None:
@@ -98,7 +113,9 @@ def _require_did_key(value: Any, error: type[ValueError]) -> None:
         raise error("invalid did:key") from exc
 
 
-def _require_keys(payload: Any, required: set[str], optional: set[str], error: type[ValueError]) -> None:
+def _require_keys(
+    payload: Any, required: set[str], optional: set[str], error: type[ValueError]
+) -> None:
     if not isinstance(payload, dict):
         raise error("expected an object")
     keys = set(payload)
@@ -107,7 +124,11 @@ def _require_keys(payload: Any, required: set[str], optional: set[str], error: t
 
 
 def _require_common(record: dict[str, Any], record_type: str) -> None:
-    if record.get("v") != 1 or type(record.get("v")) is not int or record.get("type") != record_type:
+    if (
+        record.get("v") != 1
+        or type(record.get("v")) is not int
+        or record.get("type") != record_type
+    ):
         raise RecordError("wrong record type or version")
     team_id = record.get("team_id")
     try:
@@ -120,7 +141,9 @@ def _require_common(record: dict[str, Any], record_type: str) -> None:
 
 def _require_member(record: dict[str, Any]) -> None:
     certificate_id = record.get("certificate_id")
-    if not isinstance(certificate_id, str) or not _CERTIFICATE_ID.fullmatch(certificate_id):
+    if not isinstance(certificate_id, str) or not _CERTIFICATE_ID.fullmatch(
+        certificate_id
+    ):
         raise RecordError("invalid certificate_id")
     _require_did_key(record.get("member_did_key"), RecordError)
 
@@ -134,25 +157,41 @@ _COMMON = {"v", "type", "team_id", "team_did_key", "issued_at"}
 
 
 def validate_team_custodian(record: Any) -> None:
-    _require_keys(record, _COMMON | {"custodian_id", "issuer_did_keys"}, set(), RecordError)
+    _require_keys(
+        record, _COMMON | {"custodian_id", "issuer_did_keys"}, set(), RecordError
+    )
     _require_common(record, TEAM_CUSTODIAN)
     _require_custodian_id(record["custodian_id"], RecordError)
     keys = record["issuer_did_keys"]
-    if not isinstance(keys, list) or len(keys) > 2 or len(set(map(str, keys))) != len(keys):
+    if (
+        not isinstance(keys, list)
+        or len(keys) > 2
+        or len(set(map(str, keys))) != len(keys)
+    ):
         raise RecordError("issuer_did_keys must hold zero to two distinct keys")
     for key in keys:
         _require_did_key(key, RecordError)
 
 
 def validate_member_custody(record: Any) -> None:
-    _require_keys(record, _COMMON | {"certificate_id", "member_did_key", "custodian_id"}, set(), RecordError)
+    _require_keys(
+        record,
+        _COMMON | {"certificate_id", "member_did_key", "custodian_id"},
+        set(),
+        RecordError,
+    )
     _require_common(record, MEMBER_CUSTODY)
     _require_member(record)
     _require_custodian_id(record["custodian_id"], RecordError)
 
 
 def validate_member_person(record: Any) -> None:
-    _require_keys(record, _COMMON | {"certificate_id", "member_did_key", "single_person"}, set(), RecordError)
+    _require_keys(
+        record,
+        _COMMON | {"certificate_id", "member_did_key", "single_person"},
+        set(),
+        RecordError,
+    )
     _require_common(record, MEMBER_PERSON)
     _require_member(record)
     if not isinstance(record["single_person"], bool):
@@ -168,7 +207,9 @@ _RECORD_VALIDATORS = {
 
 def validate_record(record: Any) -> None:
     """Validate any of the three team-signed records by its declared type."""
-    validator = _RECORD_VALIDATORS.get(record.get("type") if isinstance(record, dict) else None)
+    validator = _RECORD_VALIDATORS.get(
+        record.get("type") if isinstance(record, dict) else None
+    )
     if validator is None:
         raise RecordError("unknown record type")
     validator(record)
@@ -187,18 +228,34 @@ def verify_record(record: Any, signature: str, *, team_did_key: str) -> None:
 
 def validate_attestation(payload: Any) -> None:
     required = {
-        "v", "type", "team_id", "certificate_id", "member_did_key", "custody",
-        "custodian_id", "issuer_did_key", "channel", "session_id", "iat", "exp",
+        "v",
+        "type",
+        "team_id",
+        "certificate_id",
+        "member_did_key",
+        "custody",
+        "custodian_id",
+        "issuer_did_key",
+        "channel",
+        "session_id",
+        "iat",
+        "exp",
         "request_binding",
     }
     _require_keys(payload, required, {"human_principal"}, AttestationError)
-    if payload["v"] != 1 or type(payload["v"]) is not int or payload["type"] != PRINCIPAL_ATTESTATION:
+    if (
+        payload["v"] != 1
+        or type(payload["v"]) is not int
+        or payload["type"] != PRINCIPAL_ATTESTATION
+    ):
         raise AttestationError("wrong attestation type or version")
     try:
         parse_team_id(payload["team_id"])
     except Exception as exc:
         raise AttestationError("invalid team_id") from exc
-    if not isinstance(payload["certificate_id"], str) or not _CERTIFICATE_ID.fullmatch(payload["certificate_id"]):
+    if not isinstance(payload["certificate_id"], str) or not _CERTIFICATE_ID.fullmatch(
+        payload["certificate_id"]
+    ):
         raise AttestationError("invalid certificate_id")
     _require_did_key(payload["member_did_key"], AttestationError)
     _require_did_key(payload["issuer_did_key"], AttestationError)
@@ -208,12 +265,16 @@ def validate_attestation(payload: Any) -> None:
     if payload["channel"] not in CHANNELS:
         raise AttestationError("unknown channel")
     for field in ("session_id", "human_principal"):
-        if field in payload and (not isinstance(payload[field], str) or not _HANDLE.fullmatch(payload[field])):
+        if field in payload and (
+            not isinstance(payload[field], str) or not _HANDLE.fullmatch(payload[field])
+        ):
             raise AttestationError(f"invalid {field}")
     # The lifetime rule is a time check (attestation_expired), made by the verifier.
     _parse_timestamp(payload["iat"], AttestationError)
     _parse_timestamp(payload["exp"], AttestationError)
-    if not isinstance(payload["request_binding"], str) or not _SHA256_HEX.fullmatch(payload["request_binding"]):
+    if not isinstance(payload["request_binding"], str) or not _SHA256_HEX.fullmatch(
+        payload["request_binding"]
+    ):
         raise AttestationError("request_binding must be 64 lowercase hex")
 
 
@@ -252,7 +313,7 @@ def _strict_object(raw: bytes) -> dict[str, Any]:
 def encode_attestation_header(issuer_key: bytes, payload: dict[str, Any]) -> str:
     """Build the header value ``base64url(payload).base64url(signature)``."""
     validate_attestation(payload)
-    signature = SigningKey(issuer_key).sign(signing_bytes(payload)).signature
+    signature = sign_bytes(key=issuer_key, payload=signing_bytes(payload))
     return f"{_b64url(canonical_json_bytes(payload))}.{_b64url(signature)}"
 
 
@@ -262,7 +323,10 @@ def decode_attestation_header(value: str) -> tuple[dict[str, Any], bytes]:
     The signature is not verified here: :func:`verify_attestation_signature`
     does that, so a caller can order the checks as the contract requires.
     """
-    if not isinstance(value, str) or len(value.encode("utf-8")) > ATTESTATION_HEADER_MAX_BYTES:
+    if (
+        not isinstance(value, str)
+        or len(value.encode("utf-8")) > ATTESTATION_HEADER_MAX_BYTES
+    ):
         raise AttestationError("attestation header is too large")
     parts = value.split(".")
     if len(parts) != 2:

@@ -54,8 +54,11 @@ var introspectCmd = &cobra.Command{
 		if out.Address == "" {
 			out.Address = deriveIdentityAddress(sel.Domain, alias)
 		}
-		grant, isGrantHome := activeGrantHome()
-		if isGrantHome {
+		grant, err := loadSelectedGrantHome()
+		if err != nil {
+			return err
+		}
+		if grant != nil {
 			out.GrantID = strings.TrimSpace(grant.GrantID)
 			out.GrantStatus = "active"
 			if expires, ok := parseTimeBestEffort(grant.ExpiresAt); ok && time.Now().After(expires) {
@@ -68,7 +71,7 @@ var introspectCmd = &cobra.Command{
 		defer cancel()
 		// Inbound mode is root-identity state; grant scopes cannot read it, so
 		// a grant home reports the subject identity plus grant status only.
-		if !isGrantHome {
+		if grant == nil {
 			if inbound, err := c.Client.GetMyInboundMode(ctx); err == nil && inbound != nil {
 				configurable := inbound.Configurable
 				out.InboundMode = strings.TrimSpace(inbound.InboundMode)
@@ -78,8 +81,7 @@ var introspectCmd = &cobra.Command{
 				out.InboundModeError = err.Error()
 			}
 		}
-		printOutput(out, formatIntrospect)
-		return nil
+		return printOutput(out, formatIntrospect)
 	},
 }
 

@@ -39,11 +39,17 @@ func TestExternalIdentityHomeSplitsStaticA2ACredentialsFromInstanceTaskTokens(t 
 		t.Fatal(err)
 	}
 	t.Setenv(awconfig.IdentityHomeEnv, principal)
-	credential := loadA2ACredentialBestEffortForDir(instance, "https://gateway.example/card", "https://gateway.example/rpc")
+	credential, err := loadA2ACredentialForDir(instance, a2aCredentialQuery{CardURL: "https://gateway.example/card", RPCURL: "https://gateway.example/rpc"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if credential.APIKey != "principal-static" || credential.CallerID != "principal" || credential.TaskToken != "" {
 		t.Fatalf("static credential=%#v", credential)
 	}
-	token := loadA2ATaskTokenBestEffortForDir(instance, "https://gateway.example/card", "https://gateway.example/rpc", "task-1")
+	token, err := loadA2ATaskTokenForDir(instance, a2aCredentialQuery{CardURL: "https://gateway.example/card", RPCURL: "https://gateway.example/rpc", TaskID: "task-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if token != "instance-task" {
 		t.Fatalf("task token=%q want instance-task", token)
 	}

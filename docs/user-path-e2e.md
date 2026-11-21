@@ -11,6 +11,13 @@ databases and the pgcrypto extension; the products run their own migrations.
 Each lane provisions actors using the public CLI: controller preparation and
 real TXT verification, identity creation, team creation/invitation/acceptance,
 workspace initialization, delivery-origin publication and encryption-key setup.
+Actor setup probes and retains that lane's own `aw id create --help`. It uses
+`--root-parent` when advertised, and omits it for older clients such as 1.36.40
+that create identities without that option. Bootstrap and all messaging still
+use the selected client; this is not head-client bootstrap followed by older
+messaging. It does not claim parent-certificate issuance by clients that lack
+that feature. Unrecognized help or a failed creation stops setup.
+
 The two local actors are distinct identities in the first global actor's team.
 Private homes are created by that CLI on a run-owned Linux Docker volume whose
 empty parent is owned by the client UID. Evidence and artifacts use the host
@@ -160,5 +167,8 @@ from that wheel, and runs the fresh-chat order control. It is a historical
 failure measurement, never an expected-failure row in the gate.
 `USER_PATHS_CANDIDATE_BIN` with `USER_PATHS_CANDIDATE_SHA` runs the two local
 plaintext-then-v2 directions on separate fresh actor sets using that exact
-candidate binary and its checked source stamp. Both diagnostic modes refuse
+candidate binary and its checked source stamp. `make build` stamps the current
+Git commit into `aw version` while retaining the `dev` version label. The guard
+still requires the selected full source SHA; an unstamped `aw dev` is not proof
+of that source. Both diagnostic modes refuse
 to run under `CANDIDATE_SOURCE_SHA`; neither qualifies the standing matrix.
