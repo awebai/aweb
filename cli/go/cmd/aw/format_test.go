@@ -446,8 +446,6 @@ func TestFormatChatHistoryPrefersFromAddress(t *testing.T) {
 				FromAgent:   "carol",
 				FromAddress: "otherco/carol",
 				Body:        "hello",
-				// History always carries a verdict; these tests are about the label.
-				VerificationStatus: awid.Verified,
 			},
 		},
 	}
@@ -470,8 +468,6 @@ func TestFormatChatHistoryFallsBackToStableID(t *testing.T) {
 				FromAddress:  "",
 				FromStableID: "did:aw:carol",
 				Body:         "hello",
-				// History always carries a verdict; these tests are about the label.
-				VerificationStatus: awid.Verified,
 			},
 		},
 	}
