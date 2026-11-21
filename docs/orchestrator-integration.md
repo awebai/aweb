@@ -292,9 +292,30 @@ Without the local controller key, the implicit workspace command deletes only
 the workspace and reports `alias_released: false` with reason `team_not_hosted`.
 For an explicitly selected external identity home, the command refuses before
 deleting, with JSON code `team_not_hosted` and the released stderr sentence
-used by OATS. The controller handles the remaining team cleanup. Hosted
-self-retirement keeps its existing service-authorized flow. Global identity
-and other-member removal stay separate.
+used by OATS. The controller handles the remaining team cleanup. Global
+identity and other-member removal stay separate.
+
+For hosted self-retirement, the service may retain the removal intent after
+accepting it with a valid member credential. Its operation owner completes the
+intent under service authorization, even if revocation succeeds before the
+workspace cleanup is recorded and the member never retries.
+
+A retry with the revoked certificate is refused with HTTP 401. When the
+verifier refuses it for revocation and the certificate fingerprint, team,
+method, raw request target, and body match the retained signed intent, the
+service returns the following detail.
+
+| `detail.code` | `detail.removal_status` | `detail.message` |
+| --- | --- | --- |
+| `self_removal_accepted` | `pending` | Self-removal was accepted and is being completed. No further action is required. |
+| `self_removal_accepted` | `complete` | Self-removal is complete. No further action is required. |
+
+The match only selects the response. Ordinary requests with a revoked
+certificate and retries with a different certificate, team, method, target,
+or body receive the ordinary refusal.
+Released `aw` exits nonzero, displays the service's sentence, and reports
+`error.reason: "self_removal_accepted"` and `error.http_status: 401` with
+`--json`. Keep the identity home on this refusal.
 
 ### Team-authorized retirement
 

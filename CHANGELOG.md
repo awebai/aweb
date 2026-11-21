@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- When a hosted service adopts owner-completed self-removal, an exact retry
+  after certificate revocation receives HTTP 401 `self_removal_accepted` if
+  the service retained the original accepted request. Previously the retry
+  could finish the removal and report a successful workspace deletion.
+  Released `aw` now receives the service's pending or complete message,
+  which says no further action is required. It exits nonzero and carries the
+  code in `--json` as `error.reason`. This release also reports it as
+  `error.code` and prints the service's sentence on its own.
+
 - Team controllers can sign a team claim with `aw id team claim-human-request`.
   An existing member can submit the signed file with
   `aw claim-human --controller-claim-file`.

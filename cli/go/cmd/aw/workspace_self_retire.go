@@ -55,6 +55,10 @@ const (
 // team's owner has to.
 const callerCertificateRevoked = "certificate_revoked"
 
+// selfRemovalAccepted reports the status of an earlier hosted removal after
+// the retrying member's revoked credential was refused.
+const selfRemovalAccepted = "self_removal_accepted"
+
 type selfRetireResponse struct {
 	Status              string `json:"status"`
 	TeamID              string `json:"team_id"`

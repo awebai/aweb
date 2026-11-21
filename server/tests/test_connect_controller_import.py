@@ -7,6 +7,7 @@ import pytest
 
 from awid.did import did_key_from_signing_key
 from awid.registry import RegistryClient
+from awid.signing import sign_message
 from awid.team_certificate import issue_team_certificate
 
 from aweb.certificate_auth import verify_certificate_generation
@@ -62,7 +63,7 @@ async def checked_member(stack):
         proof = await verify_controller_import(
             context=context(stack, sdk),
             request=request,
-            controller_signature=request.sign(signing_key=controller),
+            controller_signature=sign_message(controller, request.signing_bytes()),
         )
     return proof.members[0], namespace, controller, member
 
@@ -260,7 +261,7 @@ async def test_controller_move_after_import_snapshot_refuses_old_projection(
         current = await verify_controller_import(
             context=context(real_stack, sdk),
             request=request,
-            controller_signature=request.sign(signing_key=next_controller),
+            controller_signature=sign_message(next_controller, request.signing_bytes()),
         )
     planned = PlannedIdentityIds(agent_id=uuid4(), workspace_id=uuid4())
     with pytest.raises(ConnectIdentityRefusal) as refusal:
@@ -311,7 +312,7 @@ async def test_import_global_claims_still_require_actual_independent_binding(rea
         batch = await verify_controller_import(
             context=context(real_stack, sdk),
             request=request,
-            controller_signature=request.sign(signing_key=controller),
+            controller_signature=sign_message(controller, request.signing_bytes()),
         )
         proof = next(
             x for x in batch.members if x.certificate.certificate_id == "global-certificate"

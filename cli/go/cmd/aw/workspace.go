@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -403,6 +404,12 @@ func runWorkspaceDelete(cmd *cobra.Command, args []string) error {
 		retired, retireErr := postSelfRetire(ctx, client, plan)
 		cancel()
 		if retireErr != nil {
+			status, _ := awid.HTTPStatusCode(retireErr)
+			if plan.certificate && status == http.StatusUnauthorized && awid.RefusalCode(retireErr) == selfRemovalAccepted {
+				if _, message, ok := awid.CodedRefusal(retireErr); ok {
+					return withErrorCode(selfRemovalAccepted, &plainRefusal{text: message, err: retireErr})
+				}
+			}
 			return fmt.Errorf("workspace not retired: %w", retireErr)
 		}
 		if !retired.AliasReleased {
