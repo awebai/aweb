@@ -10,8 +10,11 @@ import os
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
+import httpx
 import pytest
 
+from aweb.events import chat_session_channel_name
+from aweb.routes import chat as chat_routes
 from awid.signing import canonical_json_bytes, sign_message, verify_signature, VerifyResult
 from test_addressless_sender_cli import _registry_http
 from test_cli_human_reply import _pem
@@ -56,6 +59,65 @@ async def _aw(binary, context, *args):
     stdout, stderr = await asyncio.wait_for(process.communicate(), 30)
     assert process.returncode == 0, stderr.decode()
     return json.loads(stdout)
+
+
+@pytest.mark.asyncio
+async def test_headless_aw_chat_wait_survives_a_registry_outage(
+    privacy_app, tmp_path, aw_cli_binary, monkeypatch
+):
+    env = privacy_app
+    monkeypatch.setattr(chat_routes, "STREAM_AUTHORITY_RECHECK_SECONDS", 0.1)
+    async with _registry_http(env.registry_app) as (registry_url, _):
+        alice = _client_home(env, tmp_path, "alice", registry_url)
+        body = tmp_path / "body.txt"
+        body.write_text("Open the headless conversation")
+        initial = await _aw(
+            aw_cli_binary, alice, "chat", "send-and-wait", "bob",
+            "--wait", "0", "--start-conversation", "--body-file", str(body), "--json",
+        )
+        session = initial["session_id"]
+        channel = chat_session_channel_name(session)
+        cwd, child = alice
+        listening = await asyncio.create_subprocess_exec(
+            str(aw_cli_binary), "chat", "listen", "bob", "--wait", "10", "--json",
+            cwd=cwd, env=child, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            async with asyncio.timeout(5):
+                while not dict(await env.redis.pubsub_numsub(channel))[channel]:
+                    await asyncio.sleep(0.01)
+
+            refused_read = asyncio.Event()
+
+            def unavailable(request, response):
+                if request.url.path.endswith("/revocations"):
+                    refused_read.set()
+                    return httpx.Response(503, json={"detail": "temporarily unavailable"})
+                return response
+
+            # The real AWID route becomes unavailable only after the chat
+            # stream has passed admission and subscribed to live messages.
+            with monkeypatch.context() as outage:
+                outage.setattr(env.registry.transport, "fault", unavailable)
+                await asyncio.wait_for(refused_read.wait(), 5)
+
+            reply = await _request(
+                env, "bob", "POST", f"/v1/chat/sessions/{session}/messages",
+                {"body": "Reply after AWID became reachable"},
+            )
+            assert reply.status_code == 200, reply.text
+            stdout, stderr = await asyncio.wait_for(listening.communicate(), 12)
+            assert listening.returncode == 0, stderr.decode()
+            result = json.loads(stdout)
+            assert result["session_id"] == session
+            assert any(
+                event.get("body") == "Reply after AWID became reachable"
+                for event in result["events"]
+            ), result
+        finally:
+            if listening.returncode is None:
+                listening.kill()
+                await listening.wait()
 
 
 @pytest.mark.asyncio
