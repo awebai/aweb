@@ -20,6 +20,8 @@ from test_messages_http import (
     _signed_team_headers,
 )
 
+__all__ = ["privacy_app"]
+
 
 class SenderTransport(StrEnum):
     HTTP = "http"
@@ -95,7 +97,8 @@ async def _send(
 async def test_identity_sender_uses_its_single_current_context_not_first_registered_address(
     privacy_app, transport
 ):
-    # trust-model.md:186-191 and identity-messaging-contract.md:381-382.
+    # trust-model.md:186-191 and Receiver-Wide Replay And Contact Compatibility
+    # (docs/identity-messaging-contract.md:382-386).
     # Namespace is a fixture precondition; DID/address creation, native
     # admission and both message transports use real production routes.
     env = privacy_app
@@ -242,7 +245,7 @@ async def test_identity_sender_uses_its_single_current_context_not_first_registe
             assert "sender_context_required" in refused.text
             assert "X-AWID-Team-Certificate" in refused.text
             assert "pass --team" in refused.text
-            assert "upgrade aw 1.36.58" in refused.text
+            assert "aw 1.36.59 or later" in refused.text
             assert (
                 await env.db.fetch_value(
                     "SELECT count(*) FROM {{tables.messages}} WHERE from_did=$1",

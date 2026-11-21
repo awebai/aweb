@@ -12,7 +12,7 @@ from fastapi import HTTPException
 
 from aweb.agent_wake import agent_wake_scope
 from aweb.id_chain_auth import authenticate_id_chain
-from aweb.identity_auth_deps import current_membership
+from aweb.member_team_key import current_membership
 from aweb.application_state import application_registry_client
 from aweb.identity_binding import verify_identity_binding
 from aweb.mcp.auth import current_agent_wake_publisher, get_auth

@@ -711,12 +711,10 @@ async def _load_current_agent_inbound_mode(
             inbound_mode = await effective_inbound_mode(aweb_db, row["did_aw"])
         except ForbiddenError as exc:
             raise HTTPException(
-                status_code=409, detail="Agent inbound_mode migration required"
+                status_code=409, detail="Agent inbound policy is unavailable"
             ) from exc
     if inbound_mode not in INBOUND_MODES:
-        raise HTTPException(
-            status_code=409, detail="Agent inbound_mode migration required"
-        )
+        raise HTTPException(status_code=409, detail="Agent inbound policy is unavailable")
     return AgentInboundModeResponse(
         agent_id=str(row["agent_id"]),
         team_id=str(row["team_id"]),

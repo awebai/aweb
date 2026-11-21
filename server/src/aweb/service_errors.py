@@ -53,6 +53,12 @@ class ForbiddenError(ServiceError):
         super().__init__(detail)
 
 
+class CurrentMembershipRefusal(ForbiddenError):
+    """A current-member refusal with a stable reason beside its string detail."""
+
+    reason = "team_membership_not_current"
+
+
 class BadRequestError(ServiceError):
     status_code: int = 400
 

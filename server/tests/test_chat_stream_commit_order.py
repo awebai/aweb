@@ -26,23 +26,21 @@ import pytest
 
 import aweb.messaging.chat as chat_service
 import aweb.messaging.chat_storage as chat_storage
+from aweb.application_state import application_registry_client
 from aweb.db import TransactionInfra
 from aweb.events import publish_chat_session_signal
 from aweb.federation.delivery import deliver_federated_phase_b
 from aweb.mcp.tools import chat as chat_tools
 from test_agent_wake_latency import mcp_call, wake_app  # noqa: F401  (fixtures)
 from test_dashboard_privacy import TEAM, _request, privacy_app  # noqa: F401  (fixture)
-from messaging_actor_support import admit_privacy_actor
-from identity_binding_support import register_global_identity
-from aweb.application_state import application_registry_client
-from aweb.federation.activation import build_federation_authority_activation
-from aweb.federation.authority import AuthorityClaim
-from aweb.federation.envelope import verify_federation_envelope_integrity
-from aweb.routes.federation import _stored_route_participants
-from test_cli_never_grants import registry_listener
-from test_chat_http import _federated_chat_payload
-from uuid import uuid4
+from test_federation_activation_delivery import (
+    _envelope,
+    _seed_sender_authority,
+    _seed_stored_route,
+)
 from test_messages_http import _signed_team_headers
+
+__all__ = ["mcp_call", "privacy_app", "wake_app"]
 
 # The stream polls at least every 2 s without a wake; anything committed is
 # delivered well inside this.
@@ -343,38 +341,22 @@ async def test_read_receipt_stamped_by_a_slow_clock_is_delivered(
 @pytest.mark.asyncio
 async def test_federated_message_committed_after_the_stream_opened_is_delivered(
     privacy_app,
-    monkeypatch,
 ):  # noqa: F811
-    """Federated delivery stamps with the writer clock inside its transaction.
+    """Federated delivery stamps with the database clock inside its transaction.
 
     The delivery is held at its before_commit seam, after the stamp and with the
     session row locked, while bob's stream opens; it commits afterwards.
     """
     env = privacy_app
-    bob = await admit_privacy_actor(env, "bob", local=True)
-    sender = env.actors["alice"]
-    sender_address = "remote.test/alice"
-    sender_did = await register_global_identity(env, sender, sender_address)
-    registry = application_registry_client(env.app.state)
-    controller = await env.registry.ensure_namespace(domain="remote.test")
-    sender_origin = "https://remote-aweb.test"
-    await registry.update_namespace_delivery_origin(
-        "remote.test", bytes(controller), sender_origin
+    bob = env.actors["bob"]
+    envelope = _envelope(kind="chat").model_copy(
+        update={
+            "target_did_aw": bob.did,
+            "target_current_did_key": bob.did,
+            "body": "stamped before the stream opened",
+        }
     )
-    wire = _federated_chat_payload(
-        sender_sk=sender.sk,
-        sender_did_key=sender.did,
-        sender_did_aw=sender_did,
-        sender_address=sender_address,
-        sender_delivery_origin=sender_origin,
-        target_address="example.test/bob",
-        target_did_aw=bob.did,
-        target_did_key=bob.did,
-        target_delivery_origin=str(env.client.base_url).rstrip("/"),
-        body="stamped before the stream opened",
-        conversation_id=str(uuid4()),
-    )
-    envelope = verify_federation_envelope_integrity(wire["envelope"], wire["signature"])
+    token = await _seed_sender_authority(env.db, envelope)
     recipient = dict(
         await env.db.fetch_one(
             "SELECT agent_id, team_id, did_key, did_aw, address, alias, inbound_mode "
@@ -382,104 +364,52 @@ async def test_federated_message_committed_after_the_stream_opened_is_delivered(
             bob.id,
         )
     )
-    # The retained local-key route is historical storage, not current first contact.
-    # Construct it with the canonical chat writer; actual sender authority below
-    # is still acquired from the live registry and fenced by the production owner.
-    await chat_service.ensure_session(
-        env.infra,
-        team_id=TEAM,
-        created_by=sender_did,
-        session_id=UUID(envelope.conversation_id),
-        participant_rows=[
-            {
-                "did": sender_did,
-                "alias": "alice",
-                "address": sender_address,
-                "delivery_origin": sender_origin,
-                "current_did_key": sender.did,
-            },
-            {
-                "did": bob.did,
-                "agent_id": str(bob.id),
-                "alias": "bob",
-                "address": "example.test/bob",
-                "current_did_key": bob.did,
-            },
-        ],
-    )
-    stored_route = await _stored_route_participants(env.infra, envelope)
-    monkeypatch.setenv("APP_ENV", "development")
-    monkeypatch.setenv("AWEB_FEDERATION_TEST", "1")
-    monkeypatch.setenv("AWEB_FEDERATION_TEST_DEFAULT_REGISTRY", "1")
-    async with registry_listener(env) as (_registry, registry_origin):
-        monkeypatch.setenv("AWID_REGISTRY_URL", registry_origin)
-        authority = build_federation_authority_activation(
+    stored_route = await _seed_stored_route(env.db, envelope, recipient)
+    # Bob's first certificate-signed request records the certificate on his
+    # agent row, which the held delivery locks; make that request beforehand.
+    async with _bob_stream(env, envelope.conversation_id) as first_request:
+        assert first_request.status_code == 200
+    stamped = asyncio.Event()
+    stream_open = asyncio.Event()
+
+    async def hold_commit():
+        stamped.set()
+        await stream_open.wait()
+
+    delivery = asyncio.create_task(
+        deliver_federated_phase_b(
             env.infra,
-            public_origin=str(env.client.base_url).rstrip("/"),
+            envelope=envelope,
+            signature="signed-chat",
+            recipient=recipient,
+            authority_token=token,
+            registry_client=application_registry_client(env.app.state),
+            stored_route_continuation=True,
+            stored_route_snapshot=stored_route,
+            before_commit=hold_commit,
         )
-        authorized = await authority.authorize(
-            AuthorityClaim(
-                canonical_address=sender_address,
-                did_aw=sender_did,
-                current_did_key=sender.did,
-                delivery_origin=sender_origin,
-            ),
-            source_ip="127.0.0.1",
-        )
-        token = authorized.token
-        try:
-            # Bob's first certificate-signed request records the certificate on his
-            # agent row, which the held delivery locks; make that request beforehand.
-            async with _bob_stream(env, envelope.conversation_id) as first_request:
-                assert first_request.status_code == 200
-            stamped = asyncio.Event()
-            stream_open = asyncio.Event()
-
-            async def hold_commit():
-                stamped.set()
-                await stream_open.wait()
-
-            delivery = asyncio.create_task(
-                deliver_federated_phase_b(
-                    env.infra,
-                    envelope=envelope,
-                    signature=wire["signature"],
-                    registry_client=registry,
-                    recipient=recipient,
-                    authority_token=token,
-                    stored_route_continuation=True,
-                    stored_route_snapshot=stored_route,
-                    before_commit=hold_commit,
-                )
+    )
+    try:
+        async with asyncio.timeout(DELIVERY_BOUND_SECONDS):
+            await asyncio.wait(
+                {asyncio.ensure_future(stamped.wait()), delivery},
+                return_when=asyncio.FIRST_COMPLETED,
             )
-            try:
-                async with asyncio.timeout(DELIVERY_BOUND_SECONDS):
-                    await asyncio.wait(
-                        {asyncio.ensure_future(stamped.wait()), delivery},
-                        return_when=asyncio.FIRST_COMPLETED,
-                    )
-                assert not delivery.done(), delivery.result()
-                async with _bob_live_frames(
-                    env, envelope.conversation_id, "message"
-                ) as frames:
-                    stream_open.set()
-                    await delivery
-                    await publish_chat_session_signal(
-                        env.redis,
-                        session_id=envelope.conversation_id,
-                        signal_type="message",
-                    )
-                    late_commit = await _expect_frame(
-                        frames,
-                        "the federated message committed after the stream opened",
-                    )
-            finally:
-                stream_open.set()
-                await asyncio.gather(delivery, return_exceptions=True)
-            assert late_commit["message_id"] == envelope.message_id
-            assert late_commit["body"] == "stamped before the stream opened"
-        finally:
-            await authority.resolver.aclose()
+        assert not delivery.done(), delivery.result()
+        async with _bob_live_frames(env, envelope.conversation_id, "message") as frames:
+            stream_open.set()
+            await delivery
+            await publish_chat_session_signal(
+                env.redis, session_id=envelope.conversation_id, signal_type="message"
+            )
+            late_commit = await _expect_frame(
+                frames, "the federated message committed after the stream opened"
+            )
+    finally:
+        stream_open.set()
+        await asyncio.gather(delivery, return_exceptions=True)
+    assert late_commit["message_id"] == envelope.message_id
+    assert late_commit["body"] == "stamped before the stream opened"
 
 
 @pytest.mark.asyncio

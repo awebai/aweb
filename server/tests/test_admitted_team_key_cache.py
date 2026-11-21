@@ -11,6 +11,8 @@ from test_member_team_key import _certificate, _change_key, _connect, _new_membe
 from test_messages_http import _signed_team_headers
 from test_team_key_pinning import pinning as pinning
 
+__all__ = ["pinning"]
+
 
 @pytest.mark.asyncio
 async def test_cached_key_refresh_admits_only_the_real_controller_rotation(pinning):

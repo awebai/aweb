@@ -12,16 +12,20 @@ from test_cli_never_grants import registry_listener
 from test_dashboard_privacy import TEAM, privacy_app as privacy_app
 from test_messages_http import _signed_team_headers
 
+__all__ = ["privacy_app"]
+
 
 @asynccontextmanager
 async def _authority(env, monkeypatch):
+    monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.setenv("AWID_ALLOW_INSECURE_DELIVERY_ORIGIN", "1")
+    await register_global_identity(env, env.actors["bob"], "foreign.test/bob")
+    origin = str(env.client.base_url).rstrip("/")
+    controller = await env.registry.ensure_namespace(domain="foreign.test")
+    await env.app.state.awid_registry_client.update_namespace_delivery_origin(
+        "foreign.test", controller, origin
+    )
     async with registry_listener(env) as (_, registry_origin):
-        await register_global_identity(env, env.actors["bob"], "foreign.test/bob")
-        origin = str(env.client.base_url).rstrip("/")
-        await env.registry_db.execute(
-            "UPDATE {{tables.dns_namespaces}} SET default_delivery_origin=$1", origin
-        )
-        monkeypatch.setenv("APP_ENV", "development")
         monkeypatch.setenv("AWEB_FEDERATION_TEST", "1")
         monkeypatch.setenv("AWEB_FEDERATION_TEST_DEFAULT_REGISTRY", "1")
         monkeypatch.setenv("AWID_REGISTRY_URL", registry_origin)
@@ -40,6 +44,7 @@ async def test_outbound_resolution_reuses_fresh_cohort_and_refreshes_expired(
     privacy_app, monkeypatch
 ):
     env = privacy_app
+    monkeypatch.setenv("AWEB_FEDERATION_AUTHORITY_REUSE_SECONDS", "5")
     async with _authority(env, monkeypatch) as authority:
         first = await authority.resolve_contact(
             "foreign.test/bob", source_ip="203.0.113.1"
@@ -58,10 +63,10 @@ async def test_outbound_resolution_reuses_fresh_cohort_and_refreshes_expired(
             "SELECT bucket_key FROM {{tables.federation_authority_token_buckets}} WHERE bucket_kind='source_ip'",
         )
         assert [row["bucket_key"] for row in sources] == ["203.0.113.1"]
-        await env.db.execute(
-            "UPDATE {{tables.federation_address_authority_cohorts}} "
-            "SET authoritative_read_completed_at=authoritative_read_completed_at-INTERVAL '2 minutes', "
-            "expires_at=expires_at-INTERVAL '2 minutes'",
+        await env.db.fetch_value(
+            "SELECT pg_sleep(GREATEST(0, EXTRACT(EPOCH FROM expires_at - clock_timestamp()))) "
+            "FROM {{tables.federation_address_authority_cohorts}} WHERE canonical_address=$1",
+            "foreign.test/bob",
         )
         refreshed = await authority.resolve_contact(
             "foreign.test/bob", source_ip="203.0.113.3"

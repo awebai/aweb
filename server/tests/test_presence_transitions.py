@@ -96,11 +96,11 @@ async def test_presence_is_published_once_with_concurrent_maintenance_and_no_das
         )
         assert await _through_barrier(env, stream) == []
 
-        await env.db.execute(
-            "UPDATE {{tables.workspaces}} SET last_seen_at=$1 WHERE workspace_id=$2",
-            datetime.now(UTC) - timedelta(days=2),
-            env.actors["alice"].workspace,
+        deleted = await request_as(
+            env, alias="alice", method="DELETE",
+            path=f"/v1/workspaces/{env.actors['alice'].workspace}",
         )
+        assert deleted.status_code == 200, deleted.text
         await reconcile_presence(
             env.infra, env.redis, registry_client=env.app.state.awid_registry_client
         )
@@ -116,10 +116,11 @@ async def test_presence_reconciles_after_a_period_without_subscribers(privacy_ap
     await reconcile_presence(
         env.infra, env.redis, registry_client=env.app.state.awid_registry_client
     )
-    await env.db.execute(
-        "UPDATE {{tables.workspaces}} SET deleted_at=NOW() WHERE team_id=$1",
-        TEAM,
-    )
+    for alias, actor in env.actors.items():
+        deleted = await request_as(
+            env, alias=alias, method="DELETE", path=f"/v1/workspaces/{actor.workspace}"
+        )
+        assert deleted.status_code == 200, deleted.text
     async with env.redis.pubsub() as stream:
         await stream.subscribe(team_events_channel_name(TEAM))
         result = await reconcile_presence(

@@ -1,6 +1,6 @@
 """Saved-contact sends through mounted MCP, real HTTP/AWID, PostgreSQL and Redis.
 
-SQL provisions identities only. No authentication, resolver or delivery mocks.
+Identities, membership and address custody go through product routes.
 """
 
 from __future__ import annotations
@@ -10,16 +10,19 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from aweb.application_state import application_registry_client
 from aweb.federation.activation import build_federation_authority_activation
 from aweb.mcp.server import create_mcp_app
-from identity_binding_support import register_global_identity
+from messaging_actor_support import (
+    admit_messaging_actor,
+    archive_messaging_actor,
+    register_messaging_team,
+)
 from test_cli_never_grants import registry_listener
 from test_dashboard_privacy import TEAM, privacy_app as privacy_app
-from test_messages_http import (
-    _encode_certificate,
-    _make_certificate,
-    _signed_team_headers,
-)
+from test_messages_http import _signed_team_headers
+
+__all__ = ["privacy_app"]
 
 
 @pytest.mark.asyncio
@@ -29,36 +32,25 @@ async def test_mounted_mcp_send_to_saved_contact(
     privacy_app, monkeypatch, channel, reassigned
 ):
     env = privacy_app
-    alice, bob = env.actors["alice"], env.actors["bob"]
-    async with registry_listener(env) as (registry, registry_origin):
-        for name, actor in env.actors.items():
-            address = f"example.test/{name}"
-            stable = await register_global_identity(env, actor, address)
-            await env.db.execute(
-                """UPDATE {{tables.agents}} SET did_aw=$1, address=$2,
-                   identity_scope='global', did_aw_verified_key=did_key WHERE agent_id=$3""",
-                stable,
-                address,
-                actor.id,
-            )
-            actor.certificate = _encode_certificate(
-                _make_certificate(
-                    env.team_sk,
-                    env.team_did,
-                    actor.did,
-                    team_id=TEAM,
-                    alias=name,
-                    identity_scope="global",
-                    member_did_aw=stable,
-                    member_address=address,
-                )
-            )
-        origin = str(env.client.base_url).rstrip("/")
-        await env.registry_db.execute(
-            "UPDATE {{tables.dns_namespaces}} SET default_delivery_origin=$1, last_verified_at=clock_timestamp()",
-            origin,
+    monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.setenv("AWID_ALLOW_INSECURE_DELIVERY_ORIGIN", "1")
+    actors = {
+        name: await admit_messaging_actor(
+            env,
+            alias=name,
+            team_id=TEAM,
+            signing_key=actor.sk,
+            address=f"example.test/{name}",
         )
-        monkeypatch.setenv("APP_ENV", "development")
+        for name, actor in env.actors.items()
+    }
+    alice, bob, carol = (actors[name] for name in ("alice", "bob", "carol"))
+    origin = str(env.client.base_url).rstrip("/")
+    controller_client = env.app.state.awid_registry_client
+    await controller_client.update_namespace_delivery_origin(
+        "example.test", env.namespace_sk, origin
+    )
+    async with registry_listener(env) as (registry, registry_origin):
         monkeypatch.setenv("AWEB_FEDERATION_TEST", "1")
         monkeypatch.setenv("AWEB_FEDERATION_TEST_DEFAULT_REGISTRY", "1")
         monkeypatch.setenv("AWID_REGISTRY_URL", registry_origin)
@@ -90,7 +82,11 @@ async def test_mounted_mcp_send_to_saved_contact(
                     content=body,
                     headers={
                         **_signed_team_headers(
-                            alice.sk, alice.did, TEAM, alice.certificate, body
+                            alice.signing_key,
+                            alice.did_key,
+                            alice.team_id,
+                            alice.certificate,
+                            body,
                         ),
                         "Content-Type": "application/json",
                         "Accept": "application/json, text/event-stream",
@@ -111,24 +107,20 @@ async def test_mounted_mcp_send_to_saved_contact(
                 # in another team. Contact lookup and send must not resolve the
                 # same name under different visibility rules and change identity.
                 other_team = f"contact-{uuid4().hex[:12]}:example.test"
-                await env.db.execute(
-                    "INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key) "
-                    "VALUES ($1, 'example.test', $2, $3)",
-                    other_team,
-                    other_team.split(":", 1)[0],
-                    env.team_did,
+                await register_messaging_team(env, team_id=other_team)
+                await admit_messaging_actor(
+                    env,
+                    alias="bob",
+                    team_id=other_team,
+                    signing_key=bob.signing_key,
+                    address=bob.address,
                 )
-                await env.db.execute(
-                    "UPDATE {{tables.agents}} SET team_id=$1 WHERE agent_id=$2",
-                    other_team,
-                    bob.id,
+                await archive_messaging_actor(
+                    env.db, env.redis, team_id=bob.team_id, agent_id=bob.agent_id,
+                    registry_client=application_registry_client(env.app.state),
                 )
-                carol_did = await env.db.fetch_value(
-                    "SELECT did_aw FROM {{tables.agents}} WHERE agent_id=$1",
-                    env.actors["carol"].id,
-                )
-                await registry.reassign_address(
-                    "example.test", "bob", carol_did, env.namespace_sk
+                await controller_client.reassign_address(
+                    "example.test", "bob", carol.stable_id, env.namespace_sk
                 )
                 refused = await call(
                     "send_message_to_contact",
@@ -144,7 +136,7 @@ async def test_mounted_mcp_send_to_saved_contact(
                 for table in ("messages", "chat_messages"):
                     assert (
                         await env.db.fetch_value(
-                            "SELECT count(*) FROM {{tables." + table + "}}"
+                            f"SELECT count(*) FROM {{{{tables.{table}}}}}"
                         )
                         == 0
                     )
@@ -170,7 +162,7 @@ async def test_mounted_mcp_send_to_saved_contact(
                 conversation = current
                 table = "messages" if channel == "mail" else "chat_messages"
                 row = await env.db.fetch_one(
-                    "SELECT * FROM {{tables." + table + "}} WHERE message_id=$1",
+                    f"SELECT * FROM {{{{tables.{table}}}}} WHERE message_id=$1",
                     UUID(sent["message_id"]),
                 )
                 assert row is not None

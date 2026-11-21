@@ -99,7 +99,7 @@ async def test_custom_callback_names_and_additive_fields_remain_open(caplog):
 async def test_native_failed_outcome_survives_the_shared_callback_adapter():
     incomplete = MutationDeliveryOutcome(
         status=MutationDeliveryStatus.FAILED,
-        failed_stages=(MutationDeliveryStage.TASK_CLAIM_RELEASE,),
+        failed_stages=(MutationDeliveryStage.PUBLICATION,),
     )
 
     async def callback(name, context):
@@ -118,23 +118,25 @@ async def test_native_failed_outcome_survives_the_shared_callback_adapter():
 
 
 @pytest.mark.asyncio
-async def test_native_claim_release_failure_is_not_a_successful_callback():
+async def test_native_claim_release_announcement_failure_is_not_a_successful_callback():
     from aweb.db import DatabaseInfra
     from aweb.mutation_hooks import create_mutation_handler
 
-    # A real uninitialized native DB resource fails at the release boundary;
-    # no substitute registry/database implementation supplies an outcome.
+    # A real uninitialized DB resource cannot enrich the committed claim
+    # release for publication.
     handler = create_mutation_handler(None, DatabaseInfra())
     outcome = await fire_mutation_callback(
         handler,
         "task.deleted",
         {
             "task_id": "8f1bbc04-b998-4680-bc82-cc3de1bd714d",
+            "team_id": "test:aweb.example",
             "task_ref": "t-1234",
+            "released_claim_workspace_ids": ["22222222-2222-2222-2222-222222222222"],
         },
     )
     assert outcome.status is MutationDeliveryStatus.FAILED
-    assert outcome.failed_stages == (MutationDeliveryStage.TASK_CLAIM_RELEASE,)
+    assert outcome.failed_stages == (MutationDeliveryStage.PUBLICATION,)
 
 
 @pytest.mark.asyncio

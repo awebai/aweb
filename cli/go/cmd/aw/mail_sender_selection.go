@@ -57,6 +57,35 @@ func resolveMailSenderClientSelection() (*aweb.Client, *awconfig.Selection, erro
 	return mailSenderFromMembership(selection, home, member)
 }
 
+func resolveMailContinuationClientSelection() (*aweb.Client, *awconfig.Selection, error) {
+	client, selection, err := resolveMailSenderClientSelection()
+	var mismatch *awid.TeamCertificateKeyMismatchError
+	if !errors.As(err, &mismatch) {
+		return client, selection, err
+	}
+	recovery := fmt.Errorf("%w; ask the team controller to reissue a certificate for the current signing key", err)
+	if strings.TrimSpace(teamFlag) != "" || activeHuman != nil {
+		return nil, nil, recovery
+	}
+	// A global participant keeps its own conversation after key rotation. Use
+	// the current identity credential so the server verifies the did:aw and
+	// stored participant route again. This grants no team authority.
+	identity, err := resolveIdentity()
+	if err != nil || identity.IdentityScope != awid.IdentityModeGlobal || identity.Custody != awid.CustodySelf ||
+		!strings.HasPrefix(identity.StableID, "did:aw:") || identity.StableID != mismatch.MemberDIDAW || identity.DID != mismatch.SigningDIDKey {
+		return nil, nil, recovery
+	}
+	client, selection, err = resolveIdentityMessagingClientSelection()
+	if err != nil {
+		return nil, nil, err
+	}
+	if client.StableID() != identity.StableID || client.DID() != identity.DID {
+		return nil, nil, recovery
+	}
+	selection.DID = client.DID()
+	return client, selection, nil
+}
+
 func mailSenderFromMembership(selection *awconfig.Selection, home awconfig.IdentityHome, member *awconfig.TeamMembership) (*aweb.Client, *awconfig.Selection, error) {
 	certPath, err := awconfig.IdentityHomeStoredPath(home, member.CertPath)
 	if err != nil {

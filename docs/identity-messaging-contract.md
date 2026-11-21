@@ -73,7 +73,9 @@ or invalid row policy fails closed with the migration-required refusal. A mode
 change by the identity updates all those rows; a new membership inherits the
 current effective mode. Team ownership alone does not authorize a policy change.
 A global-scope row without a raw `did:aw` has no link to other memberships:
-its policy is its own explicit mode, with NULL or invalid still migration-required.
+its policy is its own explicit mode. Migration 056 backfills legacy NULL rows
+to `contacts_only` and preserves explicitly selected policies. The old rows
+were closed to delivery and their original policy cannot be recovered.
 This does not grant it authority to set an identity-wide policy.
 The identity-signed "my inbound mode" route uses the authenticated, AWID-bound
 `did:aw` for the change; a stored membership claim cannot select its write scope.
@@ -377,9 +379,8 @@ conversation, the caller is told to retry the original conversation and recipien
 identities unchanged. It must not choose a new message ID merely to recover a
 lost answer: that would submit another message. Choosing a new ID is appropriate
 only when intentionally sending a different signed artifact.
-A plaintext continuation compares the recorded session parties, including retained
-departure markers, rather than only today's delivery targets. Departed parties
-remain excluded from new delivery. A named retry can recognize an original local
+A departed party is removed from the session's participants. A plaintext
+continuation compares the recorded parties that remain. A named retry can recognize an original local
 `did:key` party as the currently admitted global `did:aw` only when that identity's
 current key is still the exact recorded key; this acknowledgement does not rewrite
 participants or grant another membership. Signature and current admission checks
@@ -579,10 +580,14 @@ display/routing label: neither client looks up its address or alias or creates a
 global address pin. Same-team locals retain the authenticated live roster path;
 global `did:aw` senders retain their existing key/log and address checks.
 
-Both clients implement this decision matrix, exercised by
-`TestReceivedLocalSenderMatrix` and channel-core's `cross-team received local
-sender` tests. Real two-team mail tests cover a global resident grant, plaintext
-and encrypted-v2, CLI reads, channel presentation and wake presentation.
+The [`sender-standing-v1` vector](../test-vectors/trust/sender-standing-v1.json)
+pins the same registered, unregistered and revoked evidence in the native
+Python server, Python AWID certificate helper and Go registry status reader.
+Go and channel-core also consume the resulting server projection and check
+the received-message outcomes in the matrix below. Channel-core has no
+certificate on these reads and uses the delivery server's standing
+attestation. Real two-team mail tests cover plaintext and encrypted-v2,
+including CLI reads, channel presentation and wake presentation.
 
 | Evidence after signature and recipient checks | Result |
 | --- | --- |

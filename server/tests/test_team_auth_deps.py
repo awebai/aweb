@@ -20,6 +20,8 @@ from nacl.signing import SigningKey
 from starlette.requests import Request
 from test_dashboard_privacy import privacy_app as privacy_app
 
+__all__ = ["privacy_app"]
+
 
 def _make_keypair():
     sk = SigningKey.generate()
@@ -408,8 +410,8 @@ async def test_identity_auth_refuses_corrupt_duplicate_local_memberships(privacy
     )
     await env.db.execute(
         "INSERT INTO {{tables.agents}} "
-        "(team_id, did_key, alias, identity_scope, status, accepted_team_did_key) "
-        "VALUES ($1, $2, 'bob', 'local', 'active', $3)",
+        "(team_id, did_key, alias, identity_scope, status, accepted_team_did_key, inbound_mode) "
+        "VALUES ($1, $2, 'bob', 'local', 'active', $3, 'open')",
         duplicate_team,
         member.did,
         env.team_did,

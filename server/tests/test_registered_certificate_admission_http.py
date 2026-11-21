@@ -7,20 +7,24 @@ Only DNS selects the disposable registry authority, as in the human-kind tests.
 import asyncio
 import json
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
 from time import monotonic
 from uuid import UUID, uuid4
 
 import httpx
 import pytest
 from aweb.api import _build_awid_registry_client
-from aweb.team_key_pins import pinned_team_key
+from aweb.team_key_pins import AdmittedTeamKeys, pinned_team_key
 from awid.dns_verify import DomainAuthority
 from awid_service.deps import get_domain_verifier
 from awid_service.testing import TXTAnswers
+from dashboard_test_support import _make_jwt
 from test_cli_never_grants import registry_listener
 from test_dashboard_privacy import TEAM, TEAM_NAME, privacy_app  # noqa: F401
 from test_id_chain_request_auth import ALICE, ROOT, _fixture_signer, _signed_fixture_certificate
 from test_messages_http import _encode_certificate, _make_certificate, _make_keypair, _signed_team_headers
+
+__all__ = ["privacy_app"]
 
 
 class _CountLists(httpx.AsyncHTTPTransport):
@@ -59,7 +63,7 @@ async def _local_admissions(env, monkeypatch):
     async with registry_listener(env) as (writer, origin):
         async def exact_dns(selected):
             assert selected == domain
-            return DomainAuthority(env.team_did, origin, "_awid." + domain)
+            return DomainAuthority(env.namespace_did, origin, "_awid." + domain)
 
         env.registry_app.dependency_overrides[get_domain_verifier] = lambda: exact_dns
         monkeypatch.setenv("AWID_REGISTRY_URL", origin)
@@ -68,7 +72,6 @@ async def _local_admissions(env, monkeypatch):
         object.__setattr__(cached, "_domain_verifier", exact_dns)
         env.app.state.awid_registry_client = cached
         try:
-            await writer.register_namespace(domain, env.team_did, env.team_sk)
             await cached.list_team_certificates(domain, TEAM_NAME, active_only=False)
             transport.reads = 0
             body = b"{}"
@@ -110,14 +113,22 @@ async def _local_admissions(env, monkeypatch):
                 )
 
             async def rotate():
+                pin = await AdmittedTeamKeys(env.db).pin(TEAM)
+                assert pin is not None and pin.change_time_floor is not None
+                # SDK controller acts use whole seconds. Sign after the floor
+                # recorded by the live team admission.
+                earliest = pin.change_time_floor.replace(microsecond=0) + timedelta(seconds=1)
+                delay = (earliest - datetime.now(UTC)).total_seconds()
+                if delay > 0:
+                    await asyncio.sleep(delay)
                 next_key = _make_keypair()[2]
                 await writer.rotate_team_key(
                     domain, TEAM_NAME, new_team_did_key=next_key,
-                    namespace_controller_signing_key=env.team_sk,
+                    namespace_controller_signing_key=env.namespace_sk,
                 )
                 assert await pinned_team_key(
                     db=env.db, registry_client=writer, team_id=TEAM, served_key=next_key,
-                    txt_resolver=TXTAnswers({"_awid.example.test": env.team_did}),
+                    txt_resolver=TXTAnswers({"_awid.example.test": env.namespace_did}),
                 ) == next_key
 
             yield member, connect, revoke, rotate, transport
@@ -311,6 +322,12 @@ async def test_newly_admitted_global_human_connects_behind_warm_strict_list(
             assert row["certificate_id"] == certificate_id
             assert row["agent_type"] == "human"
             assert row["human_verified_key"] == ALICE["did_key"]
+            dashboard = await env.client.get(
+                f"/v1/teams/{TEAM}/agents",
+                headers={"X-Dashboard-Token": _make_jwt([TEAM])},
+            )
+            assert dashboard.status_code == 200, dashboard.text
+            assert {agent["alias"] for agent in dashboard.json()["agents"]} == set(env.actors)
             again = await env.client.post("/v1/connect", content=body, headers=headers)
             assert again.status_code == 200, again.text
             assert transport.reads == reads_before + 1

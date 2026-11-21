@@ -10,9 +10,11 @@ import pytest
 
 from awid.signing import canonical_json_bytes, sign_message
 from aweb.mcp.server import create_mcp_app
-from identity_binding_support import register_global_identity
+from messaging_actor_support import admit_messaging_actor
 from test_dashboard_privacy import TEAM, privacy_app as privacy_app
 from test_messages_http import _signed_team_headers
+
+__all__ = ["privacy_app"]
 
 
 async def _send(env, payload):
@@ -28,19 +30,26 @@ async def _send(env, payload):
     )
 
 
+async def _self_delete_workspace(env, actor):
+    deleted = await env.client.delete(
+        f"/v1/workspaces/{actor.workspace}",
+        headers=_signed_team_headers(actor.sk, actor.did, TEAM, actor.certificate),
+    )
+    assert deleted.status_code == 200, deleted.text
+    assert deleted.json()["identity_deleted"]
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("selector", ["to_did", "to_stable_id", "to_address"])
 async def test_matching_agent_selector_preserves_identity_participant(privacy_app, selector):
     env = privacy_app
     bob = env.actors["bob"]
     if selector == "to_stable_id":
-        stable = await register_global_identity(env, bob)
-        await env.db.execute(
-            "UPDATE {{tables.agents}} SET did_aw=$1, did_aw_verified_key=did_key, identity_scope='global' WHERE agent_id=$2",
-            stable,
-            bob.id,
+        recipient = await admit_messaging_actor(
+            env, alias="bob", team_id=TEAM, signing_key=bob.sk
         )
-        target = stable
+        assert recipient.agent_id == str(bob.id)
+        target = recipient.stable_id
     else:
         target = bob.did if selector == "to_did" else "example.test/bob"
     payload = {
@@ -84,17 +93,15 @@ async def test_mail_selector_disagreement_is_actionable_without_affecting_matchi
     refs = {}
     for name in ("bob", "carol"):
         actor = env.actors[name]
-        stable = await register_global_identity(env, actor)
-        await env.db.execute(
-            "UPDATE {{tables.agents}} SET did_aw=$1,did_aw_verified_key=did_key,identity_scope='global' WHERE agent_id=$2",
-            stable,
-            actor.id,
+        recipient = await admit_messaging_actor(
+            env, alias=name, team_id=TEAM, signing_key=actor.sk
         )
+        assert recipient.agent_id == str(actor.id)
         refs[name] = dict(
             to_agent_id=str(actor.id),
             to_alias=name,
             to_did=actor.did,
-            to_stable_id=stable,
+            to_stable_id=recipient.stable_id,
             to_address="example.test/" + name,
         )
     matching = {
@@ -156,11 +163,10 @@ async def test_mail_missing_native_recipient_explains_reconnection_and_keeps_liv
     privacy_app,
 ):
     env = privacy_app
-    await env.db.execute(
-        "UPDATE {{tables.agents}} SET deleted_at=NOW() WHERE agent_id=$1",
-        env.actors["carol"].id,
+    await _self_delete_workspace(env, env.actors["carol"])
+    refused = await _send(
+        env, {"to_did": env.actors["carol"].did, "body": "Unavailable identity"}
     )
-    refused = await _send(env, {"to_did": env.actors["carol"].did, "body": "Unavailable identity"})
     assert refused.status_code == 404, refused.text
     assert refused.json()["detail"] == (
         "Recipient name does not identify a current member of the team. Check the name; if the agent exists, ask it to reconnect with a current team certificate."
@@ -279,7 +285,12 @@ async def test_plaintext_send_verifies_signature_before_any_effect(
             "conversation_participants",
             "message_ingress_receipts",
         ):
-            assert await env.db.fetch_value("SELECT count(*) FROM {{tables." + table + "}}") == 0
+            assert (
+                await env.db.fetch_value(
+                    f"SELECT count(*) FROM {{{{tables.{table}}}}}"
+                )
+                == 0
+            )
 
 
 @pytest.mark.asyncio
@@ -287,10 +298,7 @@ async def test_mounted_mcp_mail_reports_the_same_removed_sender_state(privacy_ap
     env = privacy_app
     sent = await _send(env, {"to_alias": "bob", "body": "before sender retirement"})
     assert sent.status_code == 200, sent.text
-    await env.db.execute(
-        "UPDATE {{tables.agents}} SET status='retired' WHERE agent_id=$1",
-        env.actors["alice"].id,
-    )
+    await _self_delete_workspace(env, env.actors["alice"])
     bob = env.actors["bob"]
     headers = _signed_team_headers(bob.sk, bob.did, TEAM, bob.certificate)
     inbox = await env.client.get("/v1/messages/inbox", headers=headers)

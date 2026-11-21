@@ -13,7 +13,7 @@ import os
 import httpx
 import pytest
 import pytest_asyncio
-from awid.did import did_from_public_key
+from awid.did import did_from_public_key, generate_keypair
 from awid.registry import RegistryClient, RegistryError
 from awid.signing import canonical_json_bytes, sign_message
 from awid.team_server_record import verify_team_server_record
@@ -218,18 +218,19 @@ async def test_the_registry_without_redis_is_live_and_not_ready(database_url) ->
 @pytest.mark.asyncio
 async def test_fixture_namespace_custody_cannot_silently_change(database_url):
     async with running_registry(database_url) as registry:
-        original = SigningKey.generate()
+        original, public_key = generate_keypair()
         assert (
             await registry.ensure_namespace(domain="example.com", controller=original) is original
         )
         assert await registry.ensure_namespace(domain="example.com") is original
+        other, _ = generate_keypair()
         with pytest.raises(ValueError) as refused:
-            await registry.ensure_namespace(domain="example.com", controller=SigningKey.generate())
+            await registry.ensure_namespace(domain="example.com", controller=other)
         assert str(refused.value).endswith("Pass its current signing key as controller=.")
         namespace = await RegistryClient(
             registry_url=REGISTRY_URL, transport=registry.transport
         ).get_namespace("example.com")
-        assert namespace.controller_did == _did_key(original)
+        assert namespace.controller_did == did_from_public_key(public_key)
 
 
 @pytest.mark.asyncio

@@ -96,6 +96,8 @@ from awid.registry_types import (
 )
 from awid.signature_wire import sign_bytes
 from awid.signing import canonical_json_bytes, sign_message, verify_did_key_signature
+from awid.team_certificate import TeamCertificateStanding as TeamCertificateStanding
+from awid.team_certificate import evaluate_team_certificate_standing
 from awid.team_ids import build_team_id
 from awid.utc_timestamps import parse_utc_seconds
 
@@ -241,12 +243,6 @@ _CACHE_GENERATION_TTL_SECONDS = 3600
 _MICROSECONDS = 1_000_000
 
 
-class TeamCertificateStanding(StrEnum):
-    ACTIVE = "active"
-    REVOKED = "revoked"
-    UNREGISTERED = "unregistered"
-
-
 @dataclass(frozen=True)
 class _TeamCertificateObservation:
     started_us: int
@@ -254,9 +250,9 @@ class _TeamCertificateObservation:
 
     def standing(self, certificate_id: str) -> TeamCertificateStanding:
         revoked = self.revoked_by_id.get(certificate_id)
-        if revoked is None:
-            return TeamCertificateStanding.UNREGISTERED
-        return TeamCertificateStanding.REVOKED if revoked else TeamCertificateStanding.ACTIVE
+        return evaluate_team_certificate_standing(
+            revoked=revoked is True, registered=revoked is not None,
+        )
 
 
 @dataclass(frozen=True)
@@ -716,9 +712,13 @@ class RegistryClient:
 
         try:
             registry_override = await discover_registry_override(domain)
-        except DnsLookupError:
+        except DnsLookupError as exc:
             if not fallback_on_dns_error:
-                raise
+                raise RegistryError(
+                    "AWID registry discovery is unavailable",
+                    status_code=503,
+                    code="unavailable",
+                ) from exc
             logger.debug(
                 "AWID registry override lookup failed for %s; using configured registry %s",
                 domain,
@@ -1692,10 +1692,7 @@ class RegistryClient:
         GET /v1/namespaces/{domain}/teams/{name}
         Returns team_did_key or None if team not found.
         """
-        team = await self.get_team(domain, name)
-        if team is None:
-            return None
-        return team.team_did_key
+        return await self.get_team_public_key_fresh(domain, name)
 
     async def get_team_public_key_fresh(
         self,
@@ -1707,20 +1704,14 @@ class RegistryClient:
         """Read current team authority, without cached or outage-grace data.
 
         registry_origin is an optional trusted-host pin, never caller wire
-        authority. Omitting it retains existing domain discovery semantics.
+        authority. Without a pin, require successful registry selection.
         """
-        if registry_origin is not None:
-            # An operator-pinned reader selects its destination once. Do not
-            # re-discover it between an adapter's route check and this read.
-            data = await self._request_optional_json(
-                "GET",
-                f"/v1/namespaces/{domain}/teams/{name}",
-                registry_url=canonical_server_origin(registry_origin),
-            )
-            return _team_from_json(data).team_did_key if data is not None else None
-        # Bind to the HTTP implementation: self.get_team() can dispatch to
-        # CachedRegistryClient's stale-while-revalidate path.
-        team = await RegistryClient.get_team(self, domain, name)
+        registry_url = (
+            canonical_server_origin(registry_origin)
+            if registry_origin is not None
+            else await self._registry_url_for_domain(domain, fallback_on_dns_error=False)
+        )
+        team = await self._get_team_at_origin(domain=domain, name=name, registry_url=registry_url)
         return team.team_did_key if team is not None else None
 
     async def get_team(self, domain: str, name: str) -> Team | None:
@@ -1826,7 +1817,9 @@ class RegistryClient:
         an empty set; every other failure propagates, so a caller never observes a partial page-through and
         can never mistake one for current data.
         """
-        registry_url = registry_url or await self._registry_url_for_domain(domain)
+        registry_url = registry_url or await self._registry_url_for_domain(
+            domain, fallback_on_dns_error=False
+        )
         base_path = f"/v1/namespaces/{domain}/teams/{name}/revocations"
         revoked: set[str] = set()
         newest: datetime | None = None
@@ -2605,11 +2598,15 @@ class CachedRegistryClient(RegistryClient):
         """Locate origin-scoped evidence without renewing its freshness or grace.
 
         DNS recovery may change the origin. A lookup outage can point the key
-        and CRL readers back to the last origin only to check their own grace.
+        and CRL readers back to the last origin only to check their own grace;
+        without eligible evidence they fail closed.
         Explicit resolver/transport policies keep their original selection.
         """
         if not self._uses_dns_registry_discovery() or self.registry_origin_context is not None:
-            return _TeamReadOrigin(registry_url=await self._registry_url_for_domain(domain))
+            registry_url = await self._registry_url_for_domain(
+                domain, fallback_on_dns_error=outage_grace_seconds == 0
+            )
+            return _TeamReadOrigin(registry_url=registry_url)
 
         route_key = self._team_registry_route_key(domain, name)
         _, route = await self._read_registry_cache_route(route_key)
@@ -2619,20 +2616,16 @@ class CachedRegistryClient(RegistryClient):
 
         try:
             origin = await self._registry_url_for_domain(domain, fallback_on_dns_error=False)
-        except DnsLookupError as exc:
-            if outage_grace_seconds:
-                _, route = await self._read_registry_cache_route(route_key)
-            if (
-                route is not None
-                and outage_grace_seconds
-                and 0 <= _cache_now() - route.fetched_at <= outage_grace_seconds
-            ):
-                error = RegistryError(str(exc), status_code=503, code="unavailable")
-                error.__cause__ = exc
-                return _TeamReadOrigin(registry_url=route.registry_url, lookup_error=error)
-            # A DNS outage can select the configured fallback for this read,
-            # but cannot install it as the newly discovered owner.
-            return _TeamReadOrigin(registry_url=canonical_server_origin(self.registry_url))
+        except RegistryError as exc:
+            if not isinstance(exc.__cause__, DnsLookupError):
+                raise
+            if not outage_grace_seconds:
+                # A discovery failure cannot install a new locator.
+                return _TeamReadOrigin(registry_url=canonical_server_origin(self.registry_url))
+            _, route = await self._read_registry_cache_route(route_key)
+            if route is not None and 0 <= _cache_now() - route.fetched_at <= outage_grace_seconds:
+                return _TeamReadOrigin(registry_url=route.registry_url, lookup_error=exc)
+            raise
 
         discovery_id = uuid4().hex
         confirmed = await self._update_registry_route(
@@ -3203,18 +3196,22 @@ class CachedRegistryClient(RegistryClient):
                         admission = await self._admit_team_certificate_read(
                             window_key, allow_point=True
                         )
-                        if admission == 0:
-                            standing = await self._cache_exact_team_certificate_standing(
-                                domain,
-                                name,
-                                certificate_id=certificate_id,
-                                registry_url=registry_url,
-                                cache_key=point_key,
-                            )
-                            await self._remember_team_read_origin(domain, name, origin)
-                            return standing
-                        refresh = self._team_certificate_miss_refreshes.get(observation_key)
-                        if admission < 0 or refresh is None or refresh.task.done():
+                        # A list producer may have started while we awaited
+                        # Redis. Join it even if the admission window rolled.
+                        refresh = self._team_certificate_miss_refreshes.get(
+                            observation_key
+                        )
+                        if refresh is None or refresh.task.done():
+                            if admission == 0:
+                                standing = await self._cache_exact_team_certificate_standing(
+                                    domain,
+                                    name,
+                                    certificate_id=certificate_id,
+                                    registry_url=registry_url,
+                                    cache_key=point_key,
+                                )
+                                await self._remember_team_read_origin(domain, name, origin)
+                                return standing
                             task = asyncio.create_task(
                                 self._refresh_missing_team_certificate(
                                     domain,
@@ -3396,7 +3393,7 @@ class CachedRegistryClient(RegistryClient):
                 "Invalid AWID certificate status response", status_code=502
             ) from exc
         if status is None:
-            standing = TeamCertificateStanding.UNREGISTERED
+            standing = evaluate_team_certificate_standing(revoked=False, registered=False)
             ttl = _TEAM_CERTIFICATES_NEGATIVE_TTL_SECONDS
         else:
             if not isinstance(status, dict):
@@ -3411,10 +3408,8 @@ class CachedRegistryClient(RegistryClient):
                 or (revoked_at is not None and not isinstance(revoked_at, str))
             ):
                 raise RegistryError("Invalid AWID certificate status response", status_code=502)
-            standing = (
-                TeamCertificateStanding.REVOKED
-                if state == "revoked"
-                else TeamCertificateStanding.ACTIVE
+            standing = evaluate_team_certificate_standing(
+                revoked=state == "revoked", registered=True,
             )
             ttl = _TEAM_CERTIFICATES_POINT_TTL_SECONDS
         # A point observation never changes the age or completeness of a list.

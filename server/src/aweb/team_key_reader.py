@@ -1,10 +1,10 @@
 """Borrow SDK controller evidence and apply the single native pin owner."""
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 
 from awid.external_authority import TXTOutcomeResolver
-from awid.registry import RegistryClient
-from awid.team_key_acts import TeamKeyMemo
+from awid.registry import CachedRegistryClient, RegistryClient
+from awid.team_key_acts import TeamKeyMemo, TeamKeyUnverified
 from pgdbm import AsyncDatabaseManager
 
 from aweb.certificate_evidence import EvidenceMode
@@ -14,14 +14,14 @@ from aweb.team_scope import member_team_scope
 
 async def read_team_key(
     *,
-    db: AsyncDatabaseManager | None = None,
+    db: AsyncDatabaseManager,
     registry_client: RegistryClient,
-    txt_resolver: TXTOutcomeResolver | None = None,
+    txt_resolver: TXTOutcomeResolver,
     team_id: str,
     evidence: EvidenceMode,
     pin_memo: TeamKeyMemo | None = None,
     check_key: Callable[[str], None] | None = None,
-    pin_key: Callable[[str, str], Awaitable[str]] | None = None,
+    rejected_key: str | None = None,
 ) -> str:
     """Read SDK controller evidence and admit it through the single pin owner.
 
@@ -29,28 +29,27 @@ async def read_team_key(
     retains cached age/grace or performs fresh acquisition; this function
     neither constructs a client nor reads a registration list. Generation
     callers retain raw SDK/pin failures for their own policy adapter. A
-    controller request can check its signature before the pin changes; owner-act
-    consumers can retain their existing bound native pin callback.
+    controller request can check its signature before the pin changes. An
+    already-rejected certificate key uses the SDK's bounded refresh path.
     """
-    if pin_key is None and (db is None or txt_resolver is None):
-        raise TypeError("Team key reads require the native pin resources")
-    if pin_key is not None and (db is not None or txt_resolver is not None or pin_memo is not None):
-        raise TypeError("Use either native pin resources or their bound callback")
     domain, name = member_team_scope(team_id)
     if not isinstance(evidence, EvidenceMode):
         raise TypeError("Team key reads require a named EvidenceMode")
-    if evidence is EvidenceMode.FRESH:
+    if rejected_key is not None:
+        if not isinstance(registry_client, CachedRegistryClient):
+            return ""
+        key = await registry_client.refresh_team_key_after_signature_failure(
+            domain, name, rejected_key=rejected_key
+        )
+    elif evidence is EvidenceMode.FRESH:
         key = await registry_client.get_team_public_key_fresh(domain, name)
     else:
         key = await registry_client.get_team_public_key(domain, name)
-    if not key:
+    if not key or key == rejected_key:
         return ""
     if check_key is not None:
         check_key(key)
-    if pin_key is not None:
-        return await pin_key(team_id, key)
-    assert db is not None and txt_resolver is not None
-    return await pinned_team_key(
+    admitted_key = await pinned_team_key(
         db=db,
         registry_client=registry_client,
         txt_resolver=txt_resolver,
@@ -58,3 +57,6 @@ async def read_team_key(
         served_key=key,
         pin_memo=pin_memo,
     )
+    if check_key is not None and admitted_key != key:
+        raise TeamKeyUnverified(team_id, "key_mismatch")
+    return admitted_key

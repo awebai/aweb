@@ -18,6 +18,8 @@ from test_cli_human_reply import _pem
 from test_dashboard_privacy import TEAM, _request, privacy_app  # noqa: F401
 from test_messages_http import _signed_team_headers
 
+__all__ = ["privacy_app"]
+
 
 def _client_home(env, root, alias, registry_url):
     actor = env.actors[alias]

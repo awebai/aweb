@@ -8,12 +8,14 @@ registry serves without such an act stays refused.
 from __future__ import annotations
 
 import asyncio
+from contextlib import aclosing
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
+from awid.registry import CachedRegistryClient
 from awid.signing import canonical_json_bytes, sign_message
-from test_dashboard_privacy import TEAM
+from test_dashboard_privacy import TEAM, TEAM_NAME
 from test_dashboard_privacy import privacy_app as privacy_app
 from test_messages_http import _make_keypair
 from test_team_key_pinning import (  # noqa: F401
@@ -22,6 +24,8 @@ from test_team_key_pinning import (  # noqa: F401
     register_namespace_controller,
     rotate_team_key,
 )
+
+__all__ = ["pinning"]
 
 SERVICE = "https://aweb.example.test"
 
@@ -93,6 +97,34 @@ async def test_registration_under_a_key_with_no_controller_act_is_refused(regist
         response.json()["detail"]
         == "team_key_unverified: The team key change could not be verified. Ask the team administrator to verify the namespace controller's current key-change record, then retry."
     )
+    assert await _held_key(env) == env.team_did
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("dry_run", [False, True])
+async def test_registration_refuses_a_served_key_that_does_not_match_the_admitted_key(
+    registering, dry_run,
+):
+    env = registering
+    await register_namespace_controller(env, env.namespace_did)
+    assert (await _register(env, env.team_sk)).status_code == 200
+    stale_sk, _, stale_did = _make_keypair()
+    await rotate_team_key(env, env.namespace_sk, env.namespace_did, stale_did)
+    async with aclosing(CachedRegistryClient(
+        registry_url=f"http://registration-cache-{dry_run}.test".lower(),
+        redis_client=env.redis,
+        transport=env.registry.transport,
+    )) as registry:
+        assert await registry.get_team_public_key("example.test", TEAM_NAME) == stale_did
+        env.app.state.awid_registry_client = registry
+        # Another real rotation leaves the SDK cache behind the live act. The
+        # server never admitted the intermediate key.
+        _, _, current_did = _make_keypair()
+        await rotate_team_key(env, env.namespace_sk, env.namespace_did, current_did)
+        stale = await _register(env, stale_sk, dry_run=dry_run)
+
+    assert stale.status_code == 401, stale.text
+    assert stale.json()["detail"].startswith("team_key_unverified: ")
     assert await _held_key(env) == env.team_did
 
 

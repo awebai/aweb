@@ -24,6 +24,8 @@ from test_same_origin_delivery import (
     same_origin_registry_socket as same_origin_registry_socket,
 )
 
+__all__ = ["foreign_receiver", "same_origin"]
+
 
 class ResidenceAdmission(StrEnum):
     CURRENT_MEMBER = "current-member"
@@ -122,11 +124,17 @@ async def test_federation_first_contact_and_new_continuation_keep_identity_resid
     second_response, second = await same_origin.send(kind, "global", continuation=first)
     assert second_response.status_code == 200, second_response.text
     assert second.message_id != first.message_id
-    table = "messages" if kind == "mail" else "chat_messages"
-    rows = await foreign_receiver.db.fetch_all(
-        "SELECT message_id,from_did FROM {{tables." + table + "}} WHERE message_id=ANY($1::uuid[])",
-        [first.message_id, second.message_id],
-    )
+    message_ids = [first.message_id, second.message_id]
+    if kind == "mail":
+        rows = await foreign_receiver.db.fetch_all(
+            "SELECT message_id, from_did FROM {{tables.messages}} WHERE message_id=ANY($1::uuid[])",
+            message_ids,
+        )
+    else:
+        rows = await foreign_receiver.db.fetch_all(
+            "SELECT message_id, from_did FROM {{tables.chat_messages}} WHERE message_id=ANY($1::uuid[])",
+            message_ids,
+        )
     assert {row["message_id"] for row in rows} == {first.message_id, second.message_id}
     assert {row["from_did"] for row in rows} == {first.signed["from_stable_id"]}
     assert foreign_receiver.statuses == [200, 200]
@@ -289,64 +297,71 @@ async def test_encrypted_federation_uses_identity_assertion_after_member_superse
         assertion=assertion,
     )
     assert response.status_code == 200, response.text
-    table = "messages" if kind == "mail" else "chat_messages"
-    stored = await foreign_receiver.db.fetch_one(
-        "SELECT content_mode,from_did FROM {{tables." + table + "}} WHERE message_id=$1::uuid",
-        response.json()["message_id"],
-    )
+    message_id = response.json()["message_id"]
+    if kind == "mail":
+        stored = await foreign_receiver.db.fetch_one(
+            "SELECT content_mode, from_did FROM {{tables.messages}} WHERE message_id=$1::uuid",
+            message_id,
+        )
+    else:
+        stored = await foreign_receiver.db.fetch_one(
+            "SELECT content_mode, from_did FROM {{tables.chat_messages}} WHERE message_id=$1::uuid",
+            message_id,
+        )
     assert stored["content_mode"] == "encrypted_v2"
     assert stored["from_did"] == first.signed["from_stable_id"]
     assert envelope["recipients"][0]["encryption_key_id"] == assertion["encryption_key_id"]
-    # Explicit storage tampering is a negative boundary, not normal setup.
-    original = await foreign_receiver.db.fetch_value(
-        "SELECT assertion_canonical FROM {{tables.agent_encryption_keys}} "
-        "WHERE agent_id=$1 AND encryption_key_id=$2",
-        same_origin.target.id,
-        assertion["encryption_key_id"],
-    )
-    await foreign_receiver.db.execute(
-        "UPDATE {{tables.agent_encryption_keys}} SET assertion_canonical='{}' "
-        "WHERE encryption_key_id=$1",
-        assertion["encryption_key_id"],
-    )
-    invalid, _ = await _send_encrypted_continuation(
-        same_origin,
-        first=first,
-        kind=kind,
-        assertion=assertion,
-    )
+    from aweb.e2ee_messages import generate_x25519_keypair
+    from aweb.federation import delivery
+    from awid.e2ee_keys import build_encryption_key_assertion
+
+    expires = datetime.fromisoformat(assertion["expires_at"].replace("Z", "+00:00"))
+
+    class ReceiverClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return expires.astimezone(tz)
+
+    # The sender constructs its envelope while the key is valid. The resident
+    # assertion expires at the receiver before that envelope is admitted.
+    with monkeypatch.context() as clock:
+        clock.setattr(delivery, "datetime", ReceiverClock)
+        invalid, _ = await _send_encrypted_continuation(
+            same_origin,
+            first=first,
+            kind=kind,
+            assertion=assertion,
+        )
     assert invalid.status_code == 422, invalid.text
     assert "recipient_encryption_assertion_invalid_or_stale" in invalid.text
-    await foreign_receiver.db.execute(
-        "UPDATE {{tables.agent_encryption_keys}} SET assertion_canonical=$2 "
-        "WHERE encryption_key_id=$1",
-        assertion["encryption_key_id"],
-        original,
-    )
-    # Explicit corruption models a revoked key at the receiver; the next
-    # distinct message must fail, even though the conversation already exists.
-    await foreign_receiver.db.execute(
-        "UPDATE {{tables.agent_encryption_keys}} SET revoked_at=clock_timestamp() "
-        "WHERE encryption_key_id=$1",
-        assertion["encryption_key_id"],
+
+    # A correctly signed key still needs publication by the receiving member.
+    _, unpublished_key = generate_x25519_keypair()
+    unpublished = build_encryption_key_assertion(
+        signing_key=same_origin.target.sk,
+        identity_did=same_origin.target.did,
+        identity_stable_id=same_origin.target_did,
+        encryption_public_key=unpublished_key,
     )
     refused, _ = await _send_encrypted_continuation(
         same_origin,
         first=first,
         kind=kind,
-        assertion=assertion,
+        assertion=unpublished,
     )
     assert refused.status_code == 424, refused.text
     assert "recipient_encryption_assertion_missing" in refused.text
-    assert (
-        await foreign_receiver.db.fetch_value(
-            "SELECT count(*) FROM {{tables." + table + "}} WHERE conversation_id=$1"
-            if kind == "mail"
-            else "SELECT count(*) FROM {{tables.chat_messages}} WHERE session_id=$1",
+    if kind == "mail":
+        count = await foreign_receiver.db.fetch_value(
+            "SELECT count(*) FROM {{tables.messages}} WHERE conversation_id=$1",
             first.conversation_id,
         )
-        == 2
-    )
+    else:
+        count = await foreign_receiver.db.fetch_value(
+            "SELECT count(*) FROM {{tables.chat_messages}} WHERE session_id=$1",
+            first.conversation_id,
+        )
+    assert count == 2
 
 
 async def _require_identity_wakes(fixture, *, kind):

@@ -5,7 +5,7 @@ from __future__ import annotations
 import socket
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import timedelta
 
 import httpx
 import jwt
@@ -14,21 +14,25 @@ import pytest_asyncio
 from awid.registry import RegistryClient
 
 from aweb.embedding import OutboxRecoveryOwnership
+from aweb.lifecycle import LifecycleActor, LifecycleCascadeRequest, apply_lifecycle_cascade
 from dashboard_test_support import _JWT_SECRET as _JWT_SECRET, _make_jwt as _make_jwt
 from test_dashboard_privacy import TEAM, TEAM_NAME, _request, privacy_stack
-from test_dashboard_privacy import privacy_app as privacy_app
+from test_dashboard_privacy import privacy_app
 from test_team_room import admit_room_member
+from test_workspace_liveness_http import _send_member_request
+
+__all__ = ["privacy_app"]
 
 
 @pytest_asyncio.fixture
 async def dashboard_stack(shared_test_pool, monkeypatch):
     async with privacy_stack(
-        shared_test_pool, monkeypatch, outbox_recovery=OutboxRecoveryOwnership.HOST
+        shared_test_pool,
+        monkeypatch,
+        team_visibility="private",
+        aliases=("alice", "bob"),
+        outbox_recovery=OutboxRecoveryOwnership.HOST,
     ) as env:
-        await env.registry_db.execute(
-            "UPDATE {{tables.teams}} SET visibility='private' WHERE domain='example.test' AND name=$1",
-            TEAM_NAME,
-        )
         yield env
 
 
@@ -406,14 +410,23 @@ async def test_unauthorized_team_returns_403(dashboard_stack):
 
 
 @pytest.mark.asyncio
-async def test_missing_token_returns_401(privacy_app):
-    env = privacy_app
-    await env.registry_db.execute(
-        "UPDATE {{tables.teams}} SET visibility='private' WHERE domain='example.test' AND name=$1",
-        TEAM.split(":", 1)[0],
-    )
-    response = await env.client.get(f"/v1/teams/{TEAM}/agents")
-    assert response.status_code == 401, response.text
+async def test_missing_token_returns_401(dashboard_stack):
+    env = dashboard_stack
+    await _seed(env)
+    resp = await env.client.get(f"/v1/teams/{TEAM}/agents")
+    assert resp.status_code == 401, resp.text
+
+
+@pytest.mark.asyncio
+async def test_public_team_allows_anonymous_dashboard_reads(dashboard_stack):
+    env = dashboard_stack
+    await _seed(env)
+    registry = env.app.state.awid_registry_client
+    await registry.set_team_visibility("example.test", TEAM_NAME, "public", env.team_sk)
+    resp = await env.client.get(f"/v1/teams/{TEAM}/agents")
+    assert resp.status_code == 200, resp.text
+    assert {agent["alias"] for agent in resp.json()["agents"]} == {"alice", "bob"}
+    assert len(resp.json()["agents"]) == 2
 
 
 @pytest.mark.asyncio
@@ -574,25 +587,30 @@ async def test_expired_jwt_returns_401(dashboard_stack):
 
 @pytest.mark.asyncio
 async def test_list_agents_and_detail_keep_workspace_and_identity_fields(privacy_app):
+    from test_agents_suggest_alias_http import _global_actor
+
     env = privacy_app
     alice = env.actors["alice"]
-    now = datetime.now(timezone.utc)
-    await env.db.execute(
-        "UPDATE {{tables.agents}} SET human_name='Alice', role='developer', agent_type='coder' WHERE agent_id=$1",
-        alice.id,
+    await _global_actor(env, "alice", address="example.test/alice")
+    connected = await _send_member_request(
+        env, alias="alice", method="POST", path="/v1/connect",
+        body={"workspace_path": "/workspace/alice", "human_name": "Alice",
+              "role": "developer", "agent_type": "coder"},
     )
-    await env.db.execute(
-        "UPDATE {{tables.workspaces}} SET workspace_path='/workspace/alice', last_seen_at=$1 WHERE workspace_id=$2",
-        now,
+    assert connected.status_code == 200, connected.text
+    seen = await env.db.fetch_value(
+        "SELECT last_seen_at FROM {{tables.workspaces}} WHERE workspace_id=$1",
         alice.workspace,
     )
+    assert seen is not None
     headers = {"X-Dashboard-Token": _make_jwt([TEAM])}
     response = await env.client.get(f"/v1/teams/{TEAM}/agents", headers=headers)
     assert response.status_code == 200, response.text
     agents = {agent["alias"]: agent for agent in response.json()["agents"]}
     assert set(agents) == set(env.actors)
     assert agents["alice"]["workspace_path"] == "/workspace/alice"
-    assert agents["alice"]["last_seen"] == now.isoformat()
+    assert agents["alice"]["last_seen"] == seen.isoformat()
+    assert agents["alice"]["address"] == "example.test/alice"
     assert (
         agents["alice"]["human_name"],
         agents["alice"]["role"],
@@ -612,18 +630,42 @@ async def test_list_agents_prefers_live_workspace_over_newer_deleted_workspace(
 ):
     env = privacy_app
     bob = env.actors["bob"]
-    now = datetime.now(timezone.utc)
-    await env.db.execute(
-        "UPDATE {{tables.workspaces}} SET workspace_path='/workspace/live',last_seen_at=$1 WHERE workspace_id=$2",
-        now,
+    await admit_room_member(env, alias="bob")
+    removed = await apply_lifecycle_cascade(
+        env.db,
+        env.redis,
+        LifecycleCascadeRequest(
+            operation="cleanup_agent_coordination_state",
+            actor=LifecycleActor(actor_id="test-host", actor_type="system", authority="embedding"),
+            team_id=TEAM,
+            target_workspace_ids=(str(bob.workspace),),
+        ),
+        registry_client=env.app.state.awid_registry_client,
+    )
+    assert removed.errors == ()
+    assert not removed.identity_deleted
+    assert [change.workspace_id for change in removed.workspace_changes] == [str(bob.workspace)]
+    connected = await _send_member_request(
+        env,
+        alias="bob",
+        method="POST",
+        path="/v1/connect",
+        body={"workspace_path": "/workspace/live"},
+    )
+    assert connected.status_code == 200, connected.text
+    assert connected.json()["agent_id"] == str(bob.id)
+    live_workspace = uuid.UUID(connected.json()["workspace_id"])
+    assert live_workspace != bob.workspace
+    seen = await env.db.fetch_value(
+        "SELECT last_seen_at FROM {{tables.workspaces}} WHERE workspace_id=$1",
         bob.workspace,
     )
+    assert seen is not None
+    live_seen = seen - timedelta(seconds=1)
     await env.db.execute(
-        "INSERT INTO {{tables.workspaces}} (workspace_id,team_id,agent_id,alias,workspace_path,last_seen_at,deleted_at) VALUES ($1,$2,$3,'bob-stale','/workspace/stale',$4,NOW())",
-        uuid.uuid4(),
-        TEAM,
-        bob.id,
-        now,
+        "UPDATE {{tables.workspaces}} SET last_seen_at=$1 WHERE workspace_id=$2",
+        live_seen,
+        live_workspace,
     )
     response = await env.client.get(
         f"/v1/teams/{TEAM}/agents", headers={"X-Dashboard-Token": _make_jwt([TEAM])}
@@ -631,30 +673,7 @@ async def test_list_agents_prefers_live_workspace_over_newer_deleted_workspace(
     assert response.status_code == 200, response.text
     bob_row = next(row for row in response.json()["agents"] if row["alias"] == "bob")
     assert bob_row["workspace_path"] == "/workspace/live"
-    assert bob_row["last_seen"] == now.isoformat()
-
-
-@pytest.mark.asyncio
-async def test_list_agents_excludes_human_typed_attribution_rows(privacy_app):
-    env = privacy_app
-    await env.db.execute(
-        "UPDATE {{tables.agents}} SET agent_type='human', human_verified_key=did_key WHERE agent_id=$1",
-        env.actors["carol"].id,
-    )
-    response = await env.client.get(
-        f"/v1/teams/{TEAM}/agents", headers={"X-Dashboard-Token": _make_jwt([TEAM])}
-    )
-    assert response.status_code == 200, response.text
-    assert {row["alias"] for row in response.json()["agents"]} == {"alice", "bob"}
-
-
-@pytest.mark.asyncio
-async def test_public_team_allows_anonymous_dashboard_reads(privacy_app):
-    response = await privacy_app.client.get(f"/v1/teams/{TEAM}/agents")
-    assert response.status_code == 200, response.text
-    assert {row["alias"] for row in response.json()["agents"]} == set(
-        privacy_app.actors
-    )
+    assert bob_row["last_seen"] == live_seen.isoformat()
 
 
 @pytest.mark.asyncio

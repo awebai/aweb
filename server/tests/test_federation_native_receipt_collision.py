@@ -82,6 +82,7 @@ async def test_native_message_receipt_blocks_federation_before_storage_or_outbox
             recipient=recipient,
             authority_token=token,
             stored_route_continuation=True,
+            registry_client=None,
         )
     assert refused.value.reason == "federation_message_replay_conflict"
     assert refused.value.http_status == 409
@@ -102,7 +103,7 @@ async def test_native_message_receipt_blocks_federation_before_storage_or_outbox
     table = "messages" if kind == "mail" else "chat_messages"
     assert (
         await manager.fetch_value(
-            "SELECT count(*) FROM {{tables." + table + "}} WHERE message_id=$1",
+            f"SELECT count(*) FROM {{{{tables.{table}}}}} WHERE message_id=$1",
             message_id,
         )
         == 1

@@ -21,11 +21,10 @@ from aweb.messaging import chat, conversations
 from awid.signing import sign_message
 from test_agent_status_host_http import _team_request
 from test_dashboard import _make_jwt
-import test_dashboard_privacy
-from test_dashboard_privacy import TEAM, _request
+from test_dashboard_privacy import TEAM, _request, privacy_app
 from test_messages_http import _make_keypair
 
-privacy_app = test_dashboard_privacy.privacy_app
+__all__ = ["privacy_app"]
 
 
 def _wire(response):

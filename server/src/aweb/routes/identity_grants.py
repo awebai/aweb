@@ -23,7 +23,7 @@ from aweb.grant_expiry import add_years, expiry_label, never_expires
 from aweb.deps import get_db
 from aweb.identity_grant_auth import GRANT_AUTH_SCHEME, GRANT_SCOPES
 from aweb.identity_grant_status import effective_grant_status, grant_status
-from aweb.member_team_key import member_key_columns_sql
+from aweb.member_team_key import current_member_sql, member_key_columns_sql
 from aweb.team_auth_deps import TeamIdentity, get_team_identity
 
 router = APIRouter(prefix="/v1/identity-grants", tags=["identity-grants"])
@@ -99,15 +99,15 @@ async def mint_identity_grant(
         raise HTTPException(status_code=403, detail="grants can only be minted with a team certificate")
     manager = db.get_manager("aweb")
     subject = await manager.fetch_one(
-        """
-        SELECT agent_id, alias, did_aw, status
-        FROM {{tables.agents}}
-        WHERE agent_id = $1 AND team_id = $2 AND deleted_at IS NULL
+        f"""
+        SELECT a.agent_id, a.alias, a.did_aw
+        FROM {{{{tables.agents}}}} a
+        WHERE a.agent_id = $1 AND a.team_id = $2 AND {current_member_sql("a")}
         """,
         identity.agent_id,
         identity.team_id,
     )
-    if not subject or subject["status"] != "active":
+    if not subject:
         raise HTTPException(status_code=403, detail="subject identity is not active")
     subject_did_aw = (identity.did_aw or "").strip() or None
 

@@ -44,6 +44,8 @@ from test_mcp_mutation_hook_parity import TEAM as PROXY_TEAM
 
 proxy_server = proxy_fixtures.server
 
+__all__ = ["mail_server", "privacy_app"]
+
 
 class DBInfra:
     def __init__(self, aweb_db):
@@ -193,8 +195,8 @@ async def test_mcp_auth_prefers_certificate_identity_fields(aweb_cloud_db, monke
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, alias, identity_scope, status)
-        VALUES ($1, $2, $3, $4, 'global', 'active')
+            (agent_id, team_id, did_key, alias, identity_scope, status, inbound_mode)
+        VALUES ($1, $2, $3, $4, 'global', 'active', 'open')
         """,
         agent_id,
         team_id,
@@ -265,8 +267,8 @@ async def test_mcp_auth_accepts_raw_manager(aweb_cloud_db, monkeypatch):
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, alias, identity_scope, status)
-        VALUES ($1, $2, $3, $4, 'global', 'active')
+            (agent_id, team_id, did_key, alias, identity_scope, status, inbound_mode)
+        VALUES ($1, $2, $3, $4, 'global', 'active', 'open')
         """,
         agent_id,
         team_id,
@@ -379,8 +381,8 @@ async def test_mcp_auth_refuses_a_forwarded_actor_that_is_not_an_active_member(
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, did_aw_verified_key)
-        VALUES ($1, $2, 'did:key:z6MkggGwZHMkBygNAy7tZGtCZxrkWBHQ5fpEm6fSAxfkuvqE' /* z6MkAlice */, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', $3, 'did:key:z6MkggGwZHMkBygNAy7tZGtCZxrkWBHQ5fpEm6fSAxfkuvqE' /* z6MkAlice */)
+            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, did_aw_verified_key, inbound_mode)
+        VALUES ($1, $2, 'did:key:z6MkggGwZHMkBygNAy7tZGtCZxrkWBHQ5fpEm6fSAxfkuvqE' /* z6MkAlice */, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', $3, 'did:key:z6MkggGwZHMkBygNAy7tZGtCZxrkWBHQ5fpEm6fSAxfkuvqE' /* z6MkAlice */, 'open')
         """,
         agent_id,
         team_id,
@@ -1873,11 +1875,11 @@ async def test_mcp_chat_continuation_encryptor_gets_active_recipient_identities(
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.chat_participants}} (session_id, did, agent_id, alias, address, left_at)
+        INSERT INTO {{tables.chat_participants}} (session_id, did, agent_id, alias, address)
         VALUES
-            ($1, 'did:aw:alice', $2, 'alice', 'acme.com/alice', NULL),
-            ($1, 'did:aw:bob', $3, 'bob', 'acme.com/bob', NULL),
-            ($1, 'did:aw:carol', $4, 'carol', 'acme.com/carol', NOW())
+            ($1, 'did:aw:alice', $2, 'alice', 'acme.com/alice'),
+            ($1, 'did:aw:bob', $3, 'bob', 'acme.com/bob'),
+            ($1, 'did:aw:carol', $4, 'carol', 'acme.com/carol')
         """,
         session_id,
         alice_agent_id,
@@ -1885,6 +1887,15 @@ async def test_mcp_chat_continuation_encryptor_gets_active_recipient_identities(
         carol_agent_id,
     )
 
+    from messaging_actor_support import archive_messaging_actor
+
+    await archive_messaging_actor(
+        aweb_cloud_db.aweb_db,
+        None,
+        team_id=team_id,
+        agent_id=carol_agent_id,
+        registry_client=None,
+    )
     monkeypatch.setattr(
         chat_tools,
         "get_auth",

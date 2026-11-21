@@ -3,6 +3,7 @@ from __future__ import annotations
 from aweb.task_refs import TaskTitleFields, task_title_join
 from aweb.member_team_key import current_member_sql
 
+import asyncio
 import time
 from collections import OrderedDict
 from contextlib import aclosing
@@ -26,11 +27,13 @@ from aweb.application_state import application_registry_client
 from aweb.grant_liveness_policy import GrantLivenessFailurePolicy
 from aweb.workspace_activity import workspace_activity_by_id
 from ..grant_streams import (
+    STREAM_MAX_DURATION_SECONDS,
     allowed_status_categories,
     clamp_deadline_to_grant,
     NeverGrantStreamGuard,
     grant_terminal_sse,
     require_valid_stream_grant,
+    requires_stream_recheck,
     status_event_allowed,
 )
 from ..redis_client import get_redis
@@ -711,7 +714,7 @@ async def status_stream(
             return str(event.get("workspace_id", "")) in messaging_workspace_ids
         return True
 
-    if identity.grant is None:
+    if not requires_stream_recheck(identity):
         return StreamingResponse(
             stream_events_multi(
                 redis,
@@ -736,10 +739,13 @@ async def status_stream(
 
     await require_valid_stream_grant(request, db_infra, identity)
     deadline = clamp_deadline_to_grant(
-        datetime.now(timezone.utc) + timedelta(seconds=300), identity
+        datetime.now(timezone.utc) + timedelta(seconds=STREAM_MAX_DURATION_SECONDS), identity
+    )
+    stream_limit = asyncio.get_running_loop().time() + max(
+        0, (deadline - datetime.now(timezone.utc)).total_seconds()
     )
 
-    async def _grant_guarded_status_stream():
+    async def _authority_guarded_status_stream():
         guard = NeverGrantStreamGuard(request, db_infra, identity)
         terminal = None
 
@@ -752,10 +758,6 @@ async def status_stream(
                 return True
             return datetime.now(timezone.utc) >= deadline
 
-        reason = terminal or await guard.reason()
-        if reason:
-            yield grant_terminal_sse(reason)
-            return
         async with aclosing(
             stream_events_multi(
                 redis,
@@ -771,19 +773,28 @@ async def status_stream(
                 ),
             )
         ) as items:
-            async for item in items:
-                terminal = await guard.reason()
-                if terminal:
+            while asyncio.get_running_loop().time() < stream_limit:
+                cap = asyncio.timeout_at(stream_limit)
+                try:
+                    async with cap:
+                        # This includes idle PubSub waits and any standing or
+                        # disconnect check performed while obtaining an item.
+                        item = await anext(items)
+                        terminal = await guard.reason()
+                except StopAsyncIteration:
                     break
-                if datetime.now(timezone.utc) >= deadline:
+                except TimeoutError:
+                    if not cap.expired():
+                        raise
+                    return
+                if terminal or datetime.now(timezone.utc) >= deadline:
                     break
                 yield item
-        reason = terminal or await guard.reason()
-        if reason:
-            yield grant_terminal_sse(reason)
+        if terminal:
+            yield grant_terminal_sse(terminal)
 
     return StreamingResponse(
-        _grant_guarded_status_stream(),
+        _authority_guarded_status_stream(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

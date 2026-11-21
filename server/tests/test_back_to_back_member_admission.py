@@ -18,9 +18,11 @@ from test_messages_http import (
     _signed_team_headers,
 )
 
+__all__ = ["privacy_app"]
+
 
 @pytest.mark.asyncio
-async def test_three_registered_members_connect_with_the_bounded_team_miss_retry(
+async def test_back_to_back_admissions_are_visible_in_the_authenticated_roster(
     privacy_app, monkeypatch
 ):
     # B7 bounds signature-verified misses by team, including independent IDs.
@@ -75,7 +77,7 @@ async def test_three_registered_members_connect_with_the_bounded_team_miss_retry
                     response = await env.client.post("/v1/connect", content=body, headers=headers)
                 return response
 
-            connected_ids = []
+            expected_roster = []
             try:
                 for alias in ("alice", "bob", "carol"):
                     signing_key, _, did_key = _make_keypair()
@@ -103,23 +105,28 @@ async def test_three_registered_members_connect_with_the_bounded_team_miss_retry
                     )
                     response = await connect_after_miss_window(signing_key, did_key, header)
                     assert response.status_code == 200, response.text
-                    connected_ids.append(cert["certificate_id"])
+                    agent_id = response.json()["agent_id"]
+                    expected_roster.append((alias, agent_id, did_key))
                     row = await env.db.fetch_one(
                         "SELECT certificate_id, accepted_team_did_key FROM {{tables.agents}} "
                         "WHERE agent_id=$1::uuid AND team_id=$2",
-                        response.json()["agent_id"],
+                        agent_id,
                         team_id,
                     )
                     assert row["certificate_id"] == cert["certificate_id"]
                     assert row["accepted_team_did_key"] == env.team_did
-                assert {
-                    cert.certificate_id
-                    for cert in await reader.list_team_certificates(
-                        "example.test",
-                        name,
-                        active_only=False,
-                    )
-                } == set(connected_ids)
+                # The team roster projects admitted local members even when an
+                # exact certificate lookup leaves a cached AWID list untouched.
+                roster = await env.client.get(
+                    "/v1/agents",
+                    headers=_signed_team_headers(signing_key, did_key, team_id, header),
+                )
+                assert roster.status_code == 200, roster.text
+                assert roster.json()["team_id"] == team_id
+                assert [
+                    (agent["alias"], agent["agent_id"], agent["did_key"])
+                    for agent in roster.json()["agents"]
+                ] == expected_roster
                 # A different, correctly signed but unregistered certificate is
                 # a definite refusal, not another member's refresh suppression.
                 signing_key, _, did_key = _make_keypair()

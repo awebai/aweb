@@ -12,10 +12,12 @@ from nacl.signing import SigningKey
 
 from awid.e2ee_keys import build_encryption_key_assertion, canonical_encryption_assertion, encryption_key_id
 from awid.signing import sign_message
+from aweb.lifecycle_agent import AgentDisposition, apply_agent_disposition_on
 from aweb.routes.agents import EncryptionKeyAssertion, publish_encryption_key
 from aweb.routes.connect import connect_agent
 from aweb.team_auth import parse_and_verify_certificate
 from aweb.team_auth_deps import TeamIdentity, resolve_team_identity
+from aweb.team_key_pins import AdmittedTeamKeys, TeamKeyPin
 import test_certificate_projection
 from test_messages_http import _encode_certificate, _make_certificate, _make_keypair
 
@@ -167,16 +169,19 @@ async def test_generation_publication_refuses_unmatched_or_ineligible_projection
     )
     async with env.stack.aweb_db.transaction() as tx:
         await connect_agent(**{**env.arguments, "db": tx})
+        team_id = env.initial.certificate.claims["team_id"]
         if conflict == "retired":
-            await tx.execute(
-                "UPDATE {{tables.agents}} SET status='retired' WHERE agent_id=$1",
-                env.planned.agent_id,
-            )
-        if conflict == "stale-key":
-            # Genuine earlier generation does not bypass current eligibility.
-            await tx.execute(
-                "UPDATE {{tables.agents}} SET accepted_team_did_key=NULL WHERE agent_id=$1",
-                env.planned.agent_id,
+            assert await apply_agent_disposition_on(
+                tx, agent_ids=[env.planned.agent_id], team_id=team_id,
+                disposition=AgentDisposition.RETIRED, deleted_at=datetime.now(timezone.utc),
+            ) == 1
+        elif conflict == "stale-key":
+            keys = AdmittedTeamKeys(tx)
+            before = await keys.pin(team_id)
+            assert before is not None
+            assert await keys.move(
+                team_id, expected=before,
+                new=TeamKeyPin(_make_keypair()[2], datetime.now(timezone.utc)),
             )
         with pytest.raises(HTTPException) as refused:
             await publish_encryption_key(

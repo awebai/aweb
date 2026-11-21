@@ -223,47 +223,6 @@ async def get_agent_presence(
     return data
 
 
-async def list_agent_presences(
-    redis: Redis,
-    workspace_id: Optional[str] = None,
-) -> List[Dict[str, str]]:
-    """
-    List agent presence records.
-
-    Uses the all_workspaces secondary index for O(M) lookup where M is the
-    number of active workspaces, instead of O(N) SCAN over all Redis keys.
-
-    Args:
-        workspace_id: If provided, return the presence for this workspace only.
-                      Otherwise, list all presences.
-    """
-    if workspace_id:
-        # One agent per workspace - direct lookup
-        key = _presence_key(workspace_id)
-        data: Dict[str, str] = await redis.hgetall(key)
-        return [data] if data else []
-
-    # List all presences using secondary index (avoids SCAN)
-    idx_key = _all_workspaces_index_key()
-    workspace_ids = await _filter_valid_workspace_ids(redis, idx_key)
-
-    if not workspace_ids:
-        return []
-
-    # Batch fetch all presence hashes with pipeline (N round-trips → 1)
-    pipe = redis.pipeline()
-    for ws_id in workspace_ids:
-        pipe.hgetall(_presence_key(ws_id))
-    presence_data = await pipe.execute()
-
-    results: List[Dict[str, str]] = []
-    for data in presence_data:
-        if data:
-            results.append(data)
-
-    return results
-
-
 async def list_agent_presences_by_workspace_ids(
     redis: Redis,
     workspace_ids: List[str],
@@ -288,83 +247,6 @@ async def list_agent_presences_by_workspace_ids(
             results.append(data)
 
     return results
-
-
-async def _filter_valid_workspace_ids(
-    redis: Redis,
-    idx_key: str,
-) -> List[str]:
-    """
-    Filter workspace_ids from a secondary index, removing stale entries.
-
-    Uses Redis pipeline to batch EXISTS checks (N+1 round-trips → 2:
-    one SMEMBERS + one pipeline for all EXISTS checks).
-
-    Stale entries (presence expired but index entry remains) are lazily
-    removed from the index. There's a theoretical race where a workspace
-    could be removed from the index just as it refreshes presence, but
-    the entry gets re-added on next presence update.
-
-    Args:
-        redis: Redis client.
-        idx_key: Key for the secondary index (Set).
-
-    Returns:
-        List of workspace_ids with active presence.
-    """
-    members = await redis.smembers(idx_key)
-    if not members:
-        return []
-
-    # Normalize to strings
-    workspace_ids = [
-        ws_id.decode("utf-8") if isinstance(ws_id, bytes) else ws_id
-        for ws_id in members
-    ]
-
-    # Batch EXISTS checks with pipeline (N round-trips → 1)
-    pipe = redis.pipeline()
-    for ws_id in workspace_ids:
-        pipe.exists(_presence_key(ws_id))
-    exists_results = await pipe.execute()
-
-    # Separate valid and stale workspace_ids
-    valid_workspace_ids: List[str] = []
-    stale_workspace_ids: List[str] = []
-    for ws_id, exists in zip(workspace_ids, exists_results):
-        if exists:
-            valid_workspace_ids.append(ws_id)
-        else:
-            stale_workspace_ids.append(ws_id)
-
-    # Lazy cleanup: remove stale entries from index
-    if stale_workspace_ids:
-        cleanup_pipe = redis.pipeline()
-        for ws_id in stale_workspace_ids:
-            cleanup_pipe.srem(idx_key, ws_id)
-        await cleanup_pipe.execute()
-
-    return valid_workspace_ids
-
-
-async def get_workspace_ids_by_team_id(
-    redis: Redis,
-    team_id: str,
-) -> List[str]:
-    """
-    Get all workspace_ids that belong to a team by address.
-
-    Uses secondary index for O(1) lookup. Stale entries (presence expired but
-    index entry remains) are filtered out and lazily removed from the index.
-
-    Args:
-        team_id: Team address string.
-
-    Returns:
-        List of workspace_ids in the team.
-    """
-    idx_key = _team_workspaces_index_key(team_id)
-    return await _filter_valid_workspace_ids(redis, idx_key)
 
 
 async def clear_workspace_presence(

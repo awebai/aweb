@@ -178,7 +178,7 @@ async def _chat_session_state(db, *, session_id: UUID, actor_dids: list[str]) ->
         SELECT s.session_id, c.conversation_type,
                EXISTS (
                    SELECT 1 FROM {{tables.chat_participants}} p
-                   WHERE p.session_id = s.session_id AND p.left_at IS NULL
+                   WHERE p.session_id = s.session_id
                      AND p.did = ANY($2::text[])
                ) AS caller_participant
         FROM {{tables.conversations}} c
@@ -308,12 +308,11 @@ async def get_pending_conversations(
     participant_did: str,
     participant_agent_id: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Read pending chat state for the caller's participant DIDs, including departed sessions."""
+    """Read pending chat state for the caller's participant DIDs, from current session participants."""
     aweb_db = db.get_manager("aweb")
     participant_agent_uuid = parse_optional_uuid(participant_agent_id)
     # Materialize the viewer's session set before the per-session work. Keep
-    # the existing did-first preference and include departed participants;
-    # left_at is not a pending-conversation authorization or unread filter.
+    # the existing DID-first preference.
     rows = await aweb_db.fetch_all(
         """
         WITH mine AS MATERIALIZED (

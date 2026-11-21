@@ -6,26 +6,38 @@ import json
 from pathlib import Path
 
 import pytest
-from awid.team_certificate import TeamCertificateError, TeamCertificateReason
+from awid.team_certificate import (
+    TeamCertificateError,
+    TeamCertificateReason,
+    check_team_certificate_evidence,
+    verify_team_certificate_claims,
+)
 from httpx import ASGITransport, AsyncClient
 
 from aweb.api import create_app
-from aweb.team_auth import certificate_refusal, parse_and_verify_certificate
+from aweb.team_auth import certificate_refusal
 
 VECTORS = json.loads(
     (Path(__file__).resolve().parents[2] / "docs/vectors/team-certificate-verification-v1.json").read_text()
 )
 
 
+def _check(case: dict, *, registered: bool) -> None:
+    claims = verify_team_certificate_claims(
+        case["certificate_header"],
+        subject_did_key=case["request_did_key"],
+        team_did_key=case["team_did_key"],
+    )
+    check_team_certificate_evidence(
+        claims,
+        revoked_certificate_ids=case["revoked_certificate_ids"],
+        registered_certificate_ids=case["registered_certificate_ids"] if registered else None,
+    )
+
+
 def _verdict(case: dict, *, registered: bool) -> dict | None:
     try:
-        parse_and_verify_certificate(
-            case["certificate_header"],
-            request_did_key=case["request_did_key"],
-            team_did_key=case["team_did_key"],
-            revoked_certificate_ids=case["revoked_certificate_ids"],
-            registered_certificate_ids=case["registered_certificate_ids"] if registered else None,
-        )
+        _check(case, registered=registered)
     except TeamCertificateError as refused:
         return {"reason": refused.reason, **({"field": refused.field} if refused.field else {})}
     return None
@@ -50,13 +62,7 @@ def test_every_refusal_is_an_invalid_credential_with_a_diagnostic() -> None:
         if case["expected"] is None:
             continue
         with pytest.raises(TeamCertificateError) as refused:
-            parse_and_verify_certificate(
-                case["certificate_header"],
-                request_did_key=case["request_did_key"],
-                team_did_key=case["team_did_key"],
-                revoked_certificate_ids=case["revoked_certificate_ids"],
-                registered_certificate_ids=case["registered_certificate_ids"],
-            )
+            _check(case, registered=True)
         answer = certificate_refusal(refused.value)
         assert answer.status_code == 401, case["name"]
         assert answer.certificate_error is refused.value
@@ -82,13 +88,7 @@ async def test_verified_revoked_certificate_has_named_http_refusal() -> None:
     @app.post("/certificate")
     async def authorize() -> None:
         try:
-            parse_and_verify_certificate(
-                case["certificate_header"],
-                request_did_key=case["request_did_key"],
-                team_did_key=case["team_did_key"],
-                revoked_certificate_ids=case["revoked_certificate_ids"],
-                registered_certificate_ids=case["registered_certificate_ids"],
-            )
+            _check(case, registered=True)
         except TeamCertificateError as exc:
             raise certificate_refusal(exc) from None
         pytest.fail("revoked certificate was accepted")

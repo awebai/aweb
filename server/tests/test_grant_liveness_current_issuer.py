@@ -5,10 +5,13 @@ from __future__ import annotations
 import base64
 import json
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from enum import StrEnum
 
 import pytest
+from aweb.certificate_registration import RegistrationMode
 from aweb.grant_liveness import valid_grant_liveness_by_workspace
+from aweb.identity_grant_status import GrantValidityState, grant_validity
 from test_dashboard_privacy import TEAM
 from test_dashboard_privacy import privacy_app as privacy_app
 from test_identity_grants import _grant_headers, _session_keypair
@@ -16,12 +19,13 @@ from test_member_team_key import _certificate, _change_key, _connect, _new_membe
 from test_messages_http import _signed_team_headers
 from test_team_key_pinning import pinning as pinning
 
+__all__ = ["pinning"]
+
 
 class IssuerReacceptance(StrEnum):
     SUPERSEDED = "superseded"
     REACCEPTED = "reaccepted"
     REGISTRY_REVOKED = "registry-revoked"
-    CURRENT_CERTIFICATE_MISSING = "current-certificate-missing"
 
 
 @dataclass(frozen=True)
@@ -111,13 +115,6 @@ async def test_grant_liveness_and_request_auth_share_current_issuer_eligibility(
             team_controller_signing_key=env.team_sk,
             certificate_id=claims["certificate_id"],
         )
-    elif issuer is IssuerReacceptance.CURRENT_CERTIFICATE_MISSING:
-        # Historical/corrupt missing-current evidence after actual issuance and
-        # authenticated heartbeat. It cannot revive an issuer-bound grant.
-        await env.db.execute(
-            "UPDATE {{tables.agents}} SET certificate_id=NULL WHERE agent_id=$1",
-            member_row["agent_id"],
-        )
     else:
         next_sk, next_did = await _change_key(env)
     if issuer is IssuerReacceptance.REACCEPTED:
@@ -144,3 +141,25 @@ async def test_grant_liveness_and_request_auth_share_current_issuer_eligibility(
     assert workspace not in await valid_grant_liveness_by_workspace(
         env.db, [workspace], registry_client=env.app.state.awid_registry_client
     )
+
+
+@pytest.mark.asyncio
+async def test_historical_missing_certificate_cannot_keep_grant_valid():
+    now = datetime.now(timezone.utc)
+    observation = await grant_validity(
+        row={
+            "issued_at": now - timedelta(minutes=1),
+            "expires_at": now + timedelta(minutes=1),
+            "revoked_at": None,
+            "subject_status": "active",
+            "subject_deleted_at": None,
+            "accepted_team_did_key": "same-current-key",
+            "current_team_did_key": "same-current-key",
+            "issued_by_certificate_id": "original-certificate",
+            "certificate_id": None,
+        },
+        now=now,
+        registry_client=None,
+        registration_mode=RegistrationMode.REQUIRED,
+    )
+    assert observation.state is GrantValidityState.ISSUER_SUPERSEDED

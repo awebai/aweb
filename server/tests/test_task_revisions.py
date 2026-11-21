@@ -20,7 +20,9 @@ from aweb.coordination.tasks_service import create_task, get_task, update_task
 from test_task_human_assignment_events import _member
 from test_tasks_http import TEAM_ID, _DbShim, _seed_team, member_identity
 from test_coordination_state_http import request_as
-from test_dashboard_privacy import privacy_app as privacy_app
+from test_dashboard_privacy import privacy_app
+
+__all__ = ["privacy_app"]
 
 ALICE = member_identity()
 

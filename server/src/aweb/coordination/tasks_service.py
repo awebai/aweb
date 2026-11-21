@@ -3,6 +3,7 @@ from __future__ import annotations
 from aweb.event_types import MutationEventType
 from aweb.hook_contexts import (
     TaskAssigneeChangedContext,
+    TaskClaimReplacedContext,
     TaskCommentAddedContext,
     TaskCreatedContext,
     TaskDeletedContext,
@@ -198,9 +199,9 @@ async def get_task_answer_on(
 async def _read_answer_member_principal_on(tx, *, agent_id: str, team_id: str):
     """Read the answer actor under the existing shared member lock."""
     return await tx.fetch_one(
-        f"""SELECT {verified_principal_did_sql()} AS principal_did, certificate_id
-           FROM {{{{tables.agents}}}} WHERE agent_id = $1 AND team_id = $2
-             AND deleted_at IS NULL AND status = 'active' FOR SHARE""",
+        f"""SELECT {verified_principal_did_sql(agent="a")} AS principal_did, a.certificate_id
+           FROM {{{{tables.agents}}}} a WHERE a.agent_id = $1 AND a.team_id = $2
+             AND {current_member_sql("a")} FOR SHARE OF a""",
         UUID(agent_id),
         team_id,
     )
@@ -209,10 +210,10 @@ async def _read_answer_member_principal_on(tx, *, agent_id: str, team_id: str):
 async def _read_claimant_principal_on(tx, *, team_id: str, alias: str):
     """Read a claim's principal under the existing shared member lock."""
     return await tx.fetch_one(
-        f"""SELECT {verified_principal_did_sql()} AS principal_did
-           FROM {{{{tables.agents}}}}
-           WHERE team_id = $1 AND alias = $2 AND deleted_at IS NULL
-           FOR SHARE""",
+        f"""SELECT {verified_principal_did_sql(agent="a")} AS principal_did
+           FROM {{{{tables.agents}}}} a
+           WHERE a.team_id = $1 AND a.alias = $2 AND {current_member_sql("a")}
+           FOR SHARE OF a""",
         team_id,
         alias,
     )
@@ -290,9 +291,12 @@ async def answer_task_on(
     await lock_task_claim_workspaces_on(
         tx,
         team_id=team_id,
-        task_ref=format_task_ref(
-            team_slug=_get_team_slug(team_id), task_ref_suffix=task["task_ref_suffix"]
-        ),
+        task_refs=[
+            format_task_ref(
+                team_slug=_get_team_slug(team_id),
+                task_ref_suffix=task["task_ref_suffix"],
+            )
+        ],
     )
     principal = actor.did_aw or actor.did_key
     member = await _read_answer_member_principal_on(
@@ -623,6 +627,13 @@ async def resolve_task_ref(
     raise NotFoundError("Task not found")
 
 
+async def _lock_task_hierarchy_on(tx, *, team_id: str) -> None:
+    await tx.fetch_value(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+        f"task-parent-hierarchy:{team_id}",
+    )
+
+
 async def create_task(
     db,
     *,
@@ -647,6 +658,8 @@ async def create_task(
     task_ref_suffix: str | None = None
 
     async with aweb_db.transaction() as tx:
+        if parent_task_id:
+            await _lock_task_hierarchy_on(tx, team_id=team_id)
         assignee_did = None
         if assignee_alias:
             assignee_alias, assignee_did = await _resolve_assignee_on(
@@ -1449,25 +1462,68 @@ async def update_task(
             resolved_parent_task_id = None
 
     async with aweb_db.transaction() as tx:
-        if resolved_parent_task_id is not _UNSET:
-            # Parent mutations form one integrity domain per team. Serialize
-            # check-and-write so concurrent valid snapshots cannot commit a cycle.
-            await tx.fetch_value(
-                "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
-                f"task-parent-hierarchy:{team_id}",
-            )
+        if resolved_parent_task_id is not _UNSET or status == "closed":
+            # Keep the subtree stable while locking it, and serialize cycle checks.
+            await _lock_task_hierarchy_on(tx, team_id=team_id)
 
-        current = await tx.fetch_one(
+        # Every task row this mutation may touch is locked before its first
+        # workspace lock. In particular, a child writer can finish even when
+        # it shares the parent's claimant workspace.
+        parent_id = (
+            resolved_parent_task_id if isinstance(resolved_parent_task_id, UUID) else None
+        )
+        locked_tasks = await tx.fetch_all(
             """
-            SELECT task_id, status, assignee_alias, task_ref_suffix, assignee_did, app_request
+            WITH RECURSIVE subtree AS (
+                SELECT task_id FROM {{tables.tasks}}
+                WHERE task_id = $1 AND team_id = $2 AND deleted_at IS NULL
+                UNION
+                SELECT t.task_id FROM {{tables.tasks}} t
+                JOIN subtree s ON t.parent_task_id = s.task_id
+                WHERE $3 AND t.team_id = $2 AND t.deleted_at IS NULL
+            )
+            SELECT task_id, status, assignee_alias, task_ref_suffix, assignee_did,
+                   app_request, parent_task_id, title
             FROM {{tables.tasks}}
-            WHERE task_id = $1 AND deleted_at IS NULL
-            FOR UPDATE
+            WHERE team_id = $2 AND deleted_at IS NULL
+              AND (task_id IN (SELECT task_id FROM subtree) OR task_id = $4)
+            ORDER BY task_id FOR UPDATE
             """,
             task_id,
+            team_id,
+            status == "closed",
+            parent_id,
         )
-        if not current:
+        current = next((row for row in locked_tasks if row["task_id"] == task_id), None)
+        if current is None:
             raise NotFoundError("Task not found")
+        if parent_id is not None and not any(
+            row["task_id"] == parent_id for row in locked_tasks
+        ):
+            raise ValidationError("Parent task not found in this team")
+
+        descendants_to_close = []
+        if status == "closed":
+            open_children: dict[UUID | None, list[Any]] = {}
+            for row in locked_tasks:
+                if row["task_id"] != task_id and row["status"] != "closed":
+                    open_children.setdefault(row["parent_task_id"], []).append(row)
+            descendants_to_close.extend(open_children.get(task_id, []))
+            for row in descendants_to_close:
+                descendants_to_close.extend(open_children.get(row["task_id"], []))
+        current_ref = format_task_ref(
+            team_slug=slug, task_ref_suffix=current["task_ref_suffix"]
+        )
+        auto_closed = [
+            {
+                "task_id": str(row["task_id"]),
+                "task_ref": format_task_ref(
+                    team_slug=slug, task_ref_suffix=row["task_ref_suffix"]
+                ),
+                "title": row["title"],
+            }
+            for row in descendants_to_close
+        ]
 
         sets: list[str] = ["updated_at = $2"]
         params: list[Any] = [task_id, now]
@@ -1535,14 +1591,11 @@ async def update_task(
                 idx += 1
 
         if status == "in_progress":
-            task_ref = format_task_ref(
-                team_slug=slug, task_ref_suffix=current["task_ref_suffix"]
-            )
             claim_workspace_id = await acquire_task_claim_on(
                 tx,
                 team_id=team_id,
                 actor_agent_id=actor.agent_id,
-                task_ref=task_ref,
+                task_ref=current_ref,
                 now=now,
                 released_workspace_ids=released_claim_workspace_ids,
             )
@@ -1550,9 +1603,7 @@ async def update_task(
             await lock_task_claim_workspaces_on(
                 tx,
                 team_id=team_id,
-                task_ref=format_task_ref(
-                    team_slug=slug, task_ref_suffix=current["task_ref_suffix"]
-                ),
+                task_refs=[current_ref, *(row["task_ref"] for row in auto_closed)],
             )
 
         if assignee_alias is not _UNSET:
@@ -1576,7 +1627,7 @@ async def update_task(
                 params.append(resolved_assignee_did)
                 idx += 1
 
-        auto_closed: list[dict[str, Any]] = []
+        descendant_claim_releases: list[list[str]] = []
         if status is not None:
             if status == "in_progress":
                 claimant = await _read_claimant_principal_on(
@@ -1607,49 +1658,17 @@ async def update_task(
                 params.append(now)
                 idx += 1
 
-                descendant_rows = await tx.fetch_all(
-                    """
-                    WITH RECURSIVE descendants AS (
-                        SELECT task_id FROM {{tables.tasks}}
-                        WHERE parent_task_id = $1 AND deleted_at IS NULL AND status != 'closed'
-                        UNION ALL
-                        SELECT t.task_id FROM {{tables.tasks}} t
-                        JOIN descendants d ON t.parent_task_id = d.task_id
-                        WHERE t.deleted_at IS NULL AND t.status != 'closed'
-                    )
-                    SELECT task_id FROM descendants
-                    """,
-                    task_id,
-                )
-
-                if descendant_rows:
-                    desc_ids = [r["task_id"] for r in descendant_rows]
+                if descendants_to_close:
                     await tx.execute(
                         """
                         UPDATE {{tables.tasks}}
                         SET status = 'closed', closed_by_alias = $2, closed_at = $3, updated_at = $3
                         WHERE task_id = ANY($1::uuid[])
                         """,
-                        desc_ids,
+                        [row["task_id"] for row in descendants_to_close],
                         actor_alias,
                         now,
                     )
-                    closed_rows = await tx.fetch_all(
-                        "SELECT task_id, task_number, task_ref_suffix, title FROM {{tables.tasks}} WHERE task_id = ANY($1::uuid[])",
-                        desc_ids,
-                    )
-                    for cr in closed_rows:
-                        auto_closed.append(
-                            {
-                                "task_id": str(cr["task_id"]),
-                                "task_ref": format_task_ref(
-                                    team_slug=slug,
-                                    task_ref_suffix=cr["task_ref_suffix"],
-                                ),
-                                "title": cr["title"],
-                            }
-                        )
-
         written = await tx.fetch_one(
             f"""UPDATE {{{{tables.tasks}}}} SET {", ".join(sets)} WHERE task_id = $1
                 RETURNING task_id, task_ref_suffix, title, status, assignee_alias, parent_task_id""",
@@ -1661,6 +1680,10 @@ async def update_task(
         # A status change to anything but in_progress ends every claim on the
         # task, in this transaction. The release follows the status write
         # because a released workspace keeps its focus only on an open task.
+        for row in auto_closed:
+            descendant_claim_releases.append(
+                await release_task_claims_on(tx, team_id=team_id, task_ref=row["task_ref"])
+            )
         if (
             status is not None
             and status != current["status"]
@@ -1669,9 +1692,7 @@ async def update_task(
             released_claim_workspace_ids = await release_task_claims_on(
                 tx,
                 team_id=team_id,
-                task_ref=format_task_ref(
-                    team_slug=slug, task_ref_suffix=current["task_ref_suffix"]
-                ),
+                task_ref=current_ref,
             )
 
     # RETURNING freezes exactly what this transaction committed. A later writer
@@ -1683,11 +1704,13 @@ async def update_task(
     )
     new_assignee = written["assignee_alias"]
     old_status = current["status"]
-    if status is not None and status != old_status:
+    status_changed = status is not None and status != old_status
+    if status_changed or released_claim_workspace_ids:
+        context_type = TaskStatusChangedContext if status_changed else TaskClaimReplacedContext
         await fire_mutation_callback(
             on_mutation,
-            MutationEventType.TASK_STATUS_CHANGED.value,
-            TaskStatusChangedContext(
+            context_type.event_type.value,
+            context_type(
                 task_id=written_task_id,
                 team_id=team_id,
                 task_ref=written_ref,
@@ -1735,6 +1758,27 @@ async def update_task(
                 assignee_alias=new_assignee,
             ).to_context(),
         )
+    for row, closed, released in zip(
+        descendants_to_close, auto_closed, descendant_claim_releases, strict=True
+    ):
+        await fire_mutation_callback(
+            on_mutation,
+            MutationEventType.TASK_STATUS_CHANGED.value,
+            TaskStatusChangedContext(
+                task_id=closed["task_id"],
+                team_id=team_id,
+                task_ref=closed["task_ref"],
+                title=closed["title"],
+                old_status=row["status"],
+                new_status="closed",
+                assignee_alias=row["assignee_alias"],
+                parent_task_id=str(row["parent_task_id"]),
+                actor_agent_id=actor.agent_id,
+                actor_alias=actor.alias,
+                actor_did_aw=actor.did_aw,
+                released_claim_workspace_ids=released,
+            ).to_context(),
+        )
     result = await get_task(db, team_id=team_id, ref=str(task_id))
     if auto_closed:
         result["auto_closed"] = auto_closed
@@ -1748,11 +1792,7 @@ async def soft_delete_task(
     on_mutation: MutationCallback | None,
     ref: str,
 ) -> dict[str, Any]:
-    """Commit deletion, then explicitly report incomplete hook-owned cleanup.
-
-    A repeated DELETE retries the same hook on the already deleted team-scoped
-    row. Descendant claims retain their documented separate policy.
-    """
+    """Commit deletion and claim release together, then announce the release."""
     team_id = actor.team_id
     task_id = await resolve_task_ref(
         db,
@@ -1764,67 +1804,46 @@ async def soft_delete_task(
     now = datetime.now(timezone.utc)
     async with aweb_db.transaction() as tx:
         row = await tx.fetch_one(
-            """SELECT task_id, task_ref_suffix, deleted_at FROM {{tables.tasks}}
+            """SELECT task_id, task_ref_suffix, title, deleted_at FROM {{tables.tasks}}
                WHERE task_id=$1 AND team_id=$2 FOR UPDATE""",
             task_id,
             team_id,
         )
         if not row:
             raise NotFoundError("Task not found")
+        task_ref = format_task_ref(
+            team_slug=_get_team_slug(team_id), task_ref_suffix=row["task_ref_suffix"]
+        )
         if row["deleted_at"] is None:
             await tx.execute(
                 "UPDATE {{tables.tasks}} SET deleted_at=$2, updated_at=$2 WHERE task_id=$1",
                 task_id,
                 now,
             )
+        # Also reconcile any claim retained by an older server's delete path.
+        released_claim_workspace_ids = await release_task_claims_on(
+            tx, team_id=team_id, task_ref=task_ref
+        )
     result = {
         "status": "deleted",
         "task_id": str(task_id),
-        "task_ref": format_task_ref(
-            team_slug=_get_team_slug(team_id), task_ref_suffix=row["task_ref_suffix"]
-        ),
+        "task_ref": task_ref,
     }
     outcome = await fire_mutation_callback(
         on_mutation,
         MutationEventType.TASK_DELETED.value,
         TaskDeletedContext(
             task_id=result["task_id"],
+            team_id=team_id,
             task_ref=result["task_ref"],
+            title=row["title"],
             actor_agent_id=actor.agent_id,
             actor_did_aw=actor.did_aw,
+            released_claim_workspace_ids=released_claim_workspace_ids,
         ).to_context(),
     )
     if outcome.status is MutationDeliveryStatus.DEFERRED:
-        return {**result, "cleanup_status": MutationDeliveryStatus.DEFERRED.value}
-    try:
-        remaining = await aweb_db.fetch_value(
-            "SELECT COUNT(*) FROM {{tables.task_claims}} WHERE team_id=$1 AND task_ref=$2",
-            team_id,
-            result["task_ref"],
-        )
-    except Exception as exc:
-        logger.error(
-            "Cannot verify claim cleanup after task deletion %s", task_id, exc_info=True
-        )
-        raise TaskDeletionIncompleteError(
-            {
-                **result,
-                "code": "task_deleted_cleanup_pending",
-                "message": "Task deletion committed; claim cleanup could not be verified. Retry this DELETE when the dependency recovers.",
-            }
-        ) from exc
-    if remaining:
-        logger.error(
-            "Task deletion %s committed with %s claims still held", task_id, remaining
-        )
-        raise TaskDeletionIncompleteError(
-            {
-                **result,
-                "code": "task_deleted_cleanup_pending",
-                "remaining_claims": remaining,
-                "message": "Task deletion committed; claim cleanup is incomplete. Restore the deletion callback and retry this DELETE.",
-            }
-        )
+        return {**result, "notification_status": MutationDeliveryStatus.DEFERRED.value}
     if outcome.status is MutationDeliveryStatus.FAILED:
         raise TaskDeletionIncompleteError(
             {

@@ -14,7 +14,6 @@ from awid.dns_auth import enforce_timestamp_skew
 from awid.log import canonical_server_origin
 from awid.signing import canonical_json_bytes, verify_did_key_signature
 from awid.team_ids import parse_team_id
-from aweb.application_state import RegistryClientUnavailable
 from aweb.config import get_settings
 from aweb.deps import get_db
 from aweb.team_admission import admit_team
@@ -218,14 +217,9 @@ async def register_team_with_service(
             ) from exc
 
     aweb_db = db.get_manager("aweb")
-    try:
-        team_controller_did = await resolve_team_key(
-            request, canonical_team_id, db=aweb_db, check_key=check_controller_signature
-        )
-    except RegistryClientUnavailable as exc:
-        raise HTTPException(
-            status_code=503, detail="AWID registry client is not configured"
-        ) from exc
+    team_controller_did = await resolve_team_key(
+        request, canonical_team_id, db=aweb_db, check_key=check_controller_signature
+    )
     if not team_controller_did:
         raise HTTPException(
             status_code=404,

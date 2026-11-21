@@ -1,14 +1,15 @@
 """Current membership through actual selectors, transports and controller rotation.
 
-Membership is not identity residence: Direct Address Send Protocol and
-Continuations, docs/identity-messaging-contract.md:167-174,311-316. A global
+Membership is not identity residence: Direct Address Send Protocol
+(docs/identity-messaging-contract.md:169-176) and
+Continuations (docs/identity-messaging-contract.md:313-318). A global
 address remains reachable while the old team membership disappears. Missing
 selector fields are rejected rather than introducing a new API to this test.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 import base64
 import json
@@ -19,6 +20,7 @@ from awid.identity_observation import IdentityKind
 from awid.signing import sign_message
 
 from aweb.application_state import application_registry_client
+from aweb.lifecycle import LifecycleActor, LifecycleCascadeRequest, apply_lifecycle_cascade
 from aweb.mcp.signing import HostedMessageSigningResult, canonical_signed_payload
 from mcp_runtime_fixtures import mounted_mcp
 from messaging_actor_support import admit_messaging_actor
@@ -40,6 +42,8 @@ from test_messages_http import (
     _signed_team_headers,
 )
 from test_team_key_pinning import pinning as pinning
+
+__all__ = ["pinning"]
 
 
 class Surface(StrEnum):
@@ -76,6 +80,12 @@ class Operation(StrEnum):
     HANDLE = "handle-contact"
 
 
+class MembershipChange(StrEnum):
+    ROTATION = "rotation"
+    ARCHIVE = "archive"
+    DELETE = "delete"
+
+
 @dataclass(frozen=True)
 class Case:
     operation: Operation
@@ -83,16 +93,19 @@ class Case:
     selector: Selector = Selector.ALIAS
     global_residence: bool = False
     superseded_sender: bool = False
+    change: MembershipChange = MembershipChange.ROTATION
 
     @property
     def id(self):
         suffix = "-identity-residence" if self.global_residence else ""
         if self.superseded_sender:
             suffix += "-superseded-sender"
+        if self.change is not MembershipChange.ROTATION:
+            suffix += f"-{self.change}"
         return f"{self.operation}-{self.surface}-{self.selector}{suffix}"
 
 
-CASES = (
+SEND_CASES = (
     [
         Case(operation, surface, selector)
         for operation in (Operation.MAIL, Operation.CHAT)
@@ -110,6 +123,11 @@ CASES = (
         for operation in (Operation.MAIL, Operation.CHAT)
         for surface in (Surface.HTTP, Surface.MCP)
     ]
+)
+
+
+CASES = (
+    SEND_CASES
     + [
         Case(Operation.TASK, surface, selector)
         for surface in (Surface.HTTP, Surface.MCP)
@@ -135,9 +153,13 @@ CASES = (
     + [Case(Operation.NOTICE_COUNT, Surface.NATIVE)]
     + [Case(Operation.CHAT, Surface.HTTP, Selector.AGENT_ID)]
     + [
-        Case(operation, surface, superseded_sender=True)
+        replace(case, global_residence=False, superseded_sender=True) for case in SEND_CASES
+    ]
+    + [
+        Case(operation, surface, change=change)
         for operation in (Operation.MAIL, Operation.CHAT)
         for surface in (Surface.HTTP, Surface.MCP)
+        for change in (MembershipChange.ARCHIVE, MembershipChange.DELETE)
     ]
 )
 
@@ -297,7 +319,10 @@ async def _effect_counts(env):
     return tuple(
         [
             await env.db.fetch_value(f"SELECT count(*) FROM {{{{tables.{table}}}}}")
-            for table in ("messages", "chat_messages", "tasks", "control_signals")
+            for table in (
+                "messages", "chat_messages", "conversations", "chat_sessions", "contacts",
+                "message_ingress_receipts", "tasks", "control_signals",
+            )
         ]
     )
 
@@ -446,6 +471,46 @@ async def _probe(env, case, sender, target, *, phase, team_key):
     raise AssertionError(case)
 
 
+def _expected_refusal(case, target):
+    op = case.operation
+    if case.superseded_sender:
+        if case.selector in (Selector.ALIAS, Selector.QUALIFIED_ALIAS):
+            if case.surface is Surface.MCP:
+                detail = "Alias delivery requires team context" if op is Operation.MAIL else "to_alias requires team context"
+            else:
+                detail = "to_alias requires team context" if op is Operation.MAIL else "to_aliases requires team context"
+            return 422, None, detail
+        if case.selector in (Selector.DID_AW, Selector.ADDRESS):
+            return 403, "recipient_policy_rejected", (
+                "Recipient only accepts messages from verified team members or exact active contacts. "
+                "Ask the recipient to add your exact address as a contact or check their inbound policy."
+            )
+        return 404, "local_recipient_route_missing", (
+            "The recipient is not reachable from outside its team. Use a teammate alias from inside its team, "
+            "or ask the recipient for a registered address and retry."
+        )
+    if op in (Operation.MAIL, Operation.CHAT):
+        if case.selector is Selector.DID_AW:
+            destination = (
+                "to_address=domain/name or continue an existing conversation" if op is Operation.MAIL
+                else "to_addresses=domain/name or continue an existing session"
+            )
+            return 422, None, f"Bare did:aw first-contact is unsupported; use {destination}"
+        label = f": {_reference(target, case.selector)}" if op is Operation.CHAT else ""
+        return 404, None, (
+            f"Recipient name does not identify a current member of the team{label}. "
+            "Check the name; if the agent exists, ask it to reconnect with a current team certificate."
+        )
+    return {
+        Operation.TASK: (422, None, "Assignee agent not found in this team"),
+        Operation.DASHBOARD_DETAIL: (404, None, "Agent not found"),
+        Operation.CONTROL: (404, None, "Agent not found"),
+        Operation.STATUS_HOST: (404, None, "agent_not_found: Agent not found"),
+        Operation.STATUS_PUBLISH: (404, None, "agent_not_found: Agent not found"),
+        Operation.HANDLE: (404, None, "No active agent found for handle contact"),
+    }[op]
+
+
 def _check(result, case, target, *, current, phase):
     op = case.operation
     data = result if isinstance(result, dict) else result.json()
@@ -489,30 +554,27 @@ def _check(result, case, target, *, current, phase):
             Operation.DASHBOARD_COUNT: "agent_count",
             Operation.USAGE_COUNT: "active_agents",
         }[op]
-        if phase:
-            assert data[key] == (3 if current else 2), context
-        else:
-            assert data[key] >= 2, context
+        assert data[key] == (5 if phase == 0 else 3 if current else 2), context
         return
     if op in (Operation.ROOM, Operation.NOTICE_COUNT):
         assert data["target_notices"] == int(current), context
         return
-    if isinstance(result, dict):
-        assert ("error" not in data) is current, context
-        if current and op in (Operation.MAIL, Operation.CHAT):
-            assert data.get("message_id"), context
-    else:
-        if current:
-            assert result.status_code == 200, context
+    if current:
+        if isinstance(result, dict):
+            assert "error" not in data, context
         else:
-            status = (
-                422
-                if op is Operation.TASK
-                or case.superseded_sender
-                or case.selector is Selector.DID_AW
-                else 404
-            )
-            assert result.status_code == status, context
+            assert result.status_code == 200, context
+        if op in (Operation.MAIL, Operation.CHAT):
+            assert data.get("message_id"), context
+        return
+    status, reason, detail = _expected_refusal(case, target)
+    if isinstance(result, dict):
+        assert data["error"] == detail, context
+    else:
+        assert result.status_code == status, context
+        assert data["detail"] == detail, context
+    if reason is not None:
+        assert data["reason"] == reason, context
 
 
 async def _assert_send_effect(env, result, case, sender, target):
@@ -567,11 +629,17 @@ async def _capture_room_actor(env, actor):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("case", CASES, ids=lambda case: case.id)
-async def test_selector_and_surface_recheck_membership_after_product_rotation(pinning, case):
+async def test_selector_and_surface_recheck_membership_after_product_change(pinning, case):
     env = pinning
     sender = await _admit(env, "matrixsender")
-    global_target = case.selector in (Selector.DID_AW, Selector.ADDRESS)
+    global_target = case.selector in (Selector.DID_AW, Selector.ADDRESS) or case.change is MembershipChange.ARCHIVE
     target = await _admit(env, "matrixtarget", global_identity=global_target)
+    if case.superseded_sender and global_target:
+        restricted = await _http(
+            env, target, "PATCH", "/v1/agents/me/inbound-mode",
+            {"inbound_mode": "team_and_contacts"},
+        )
+        assert restricted.status_code == 200, restricted.text
     if case.operation is Operation.STATUS_PUBLISH:
         await _designate(env, target.alias, sender.alias)
 
@@ -614,8 +682,29 @@ async def test_selector_and_surface_recheck_membership_after_product_rotation(pi
         before = await _probe(env, case, sender, target, phase=0, team_key=key)
         _check(before, case, target, current=True, phase=0)
         await _assert_send_effect(env, before, case, sender, target)
-        key = await _change_key(env)
-        await _readmit(env, target if case.superseded_sender else sender, key)
+        if case.change is MembershipChange.ARCHIVE:
+            result = await apply_lifecycle_cascade(
+                env.db, env.redis,
+                LifecycleCascadeRequest(
+                    operation="archive_global_agent",
+                    actor=LifecycleActor(actor_id=None, actor_type="support", authority="operator"),
+                    team_id=TEAM, target_agent_id=str(target.id),
+                    workspace_scope="all_for_agent", require_identity_scope="global",
+                ),
+                registry_client=application_registry_client(env.app.state),
+            )
+            assert result.errors == () and result.identity_archived
+        elif case.change is MembershipChange.DELETE:
+            workspace_id = await env.db.fetch_value(
+                "SELECT workspace_id FROM {{tables.workspaces}} WHERE agent_id=$1 AND deleted_at IS NULL",
+                target.id,
+            )
+            deleted = await _http(env, target, "DELETE", f"/v1/workspaces/{workspace_id}")
+            assert deleted.status_code == 200, deleted.text
+            assert deleted.json()["identity_deleted"] is True
+        else:
+            key = await _change_key(env)
+            await _readmit(env, target if case.superseded_sender else sender, key)
         counts = await _effect_counts(env)
         after = await _probe(env, case, sender, target, phase=1, team_key=key)
         _check(after, case, target, current=case.global_residence, phase=1)
@@ -627,9 +716,49 @@ async def test_selector_and_surface_recheck_membership_after_product_rotation(pi
             Operation.CONTROL,
         ):
             assert await _effect_counts(env) == counts
+        if case.change is not MembershipChange.ROTATION:
+            return
         await _readmit(env, sender if case.superseded_sender else target, key)
         if case.operation is Operation.NOTICE_COUNT:
             env.matrix_target_identity = await _capture_room_actor(env, target)
         restored = await _probe(env, case, sender, target, phase=2, team_key=key)
         _check(restored, case, target, current=True, phase=2)
         await _assert_send_effect(env, restored, case, sender, target)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", [Operation.MAIL, Operation.CHAT])
+@pytest.mark.parametrize("surface", [Surface.HTTP, Surface.MCP])
+async def test_address_residence_alone_does_not_admit_a_team_restricted_target(
+    pinning, operation, surface,
+):
+    env = pinning
+    sender = await _admit(env, "restrictedsender")
+    target = await _admit(env, "restrictedtarget", global_identity=True)
+    configured = await _http(
+        env, target, "PATCH", "/v1/agents/me/inbound-mode",
+        {"inbound_mode": "team_and_contacts"},
+    )
+    assert configured.status_code == 200, configured.text
+    case = Case(operation, surface, Selector.ADDRESS)
+    async with mounted_mcp(
+        env.app, db_infra=env.infra, redis=env.redis,
+        registry_client=application_registry_client(env.app.state),
+    ):
+        before = await _probe(env, case, sender, target, phase=0, team_key=(env.team_sk, env.team_did))
+        _check(before, case, target, current=True, phase=0)
+        await _assert_send_effect(env, before, case, sender, target)
+        key = await _change_key(env)
+        await _readmit(env, sender, key)
+        effects = await _effect_counts(env)
+        refused = await _probe(env, case, sender, target, phase=1, team_key=key)
+        if surface is Surface.HTTP:
+            assert refused.status_code == 403, refused.text
+            data = refused.json()
+            detail = data["detail"]
+        else:
+            data = refused
+            detail = data["error"]
+        assert data["reason"] == "recipient_policy_rejected", data
+        assert "only accepts messages from verified team members or exact active contacts" in detail
+        assert await _effect_counts(env) == effects

@@ -731,7 +731,7 @@ async def _plan_chat_participant_count(db, agent_ids: list[UUID], team_id: str) 
         FROM {{tables.chat_participants}} p
         JOIN {{tables.chat_sessions}} s
           ON s.session_id = p.session_id
-        WHERE p.agent_id = ANY($1::uuid[]) AND p.left_at IS NULL
+        WHERE p.agent_id = ANY($1::uuid[])
           AND s.team_id = $2
         """,
         agent_ids,
@@ -759,15 +759,15 @@ async def _release_reservations(db, agent_ids: list[UUID], team_id: str) -> int:
 async def _cleanup_chat_participants(
     db, agent_ids: list[UUID], team_id: str
 ) -> tuple[tuple[tuple[str, str], ...], int]:
+    """Remove live session membership and retain canonical conversation history."""
     if not agent_ids:
         return (), 0
     rows = await db.fetch_all(
         """
-        UPDATE {{tables.chat_participants}} p
-        SET left_at = NOW()
-        FROM {{tables.chat_sessions}} s
+        DELETE FROM {{tables.chat_participants}} p
+        USING {{tables.chat_sessions}} s
         WHERE p.session_id = s.session_id
-          AND p.agent_id = ANY($1::uuid[]) AND p.left_at IS NULL
+          AND p.agent_id = ANY($1::uuid[])
           AND s.team_id = $2
         RETURNING p.session_id, p.did
         """,
@@ -861,7 +861,7 @@ async def plan_lifecycle_cascade(
     request: LifecycleCascadeRequest,
     *,
     redis: Redis | None = None,
-    registry_client: RegistryClient | None = None,
+    registry_client: RegistryClient | None,
     request_context: Request | None = None,
 ) -> LifecycleCascadeResult:
     """Return planned coordination lifecycle effects without mutating state.
@@ -1327,7 +1327,7 @@ async def apply_local_workspace_cleanup(
     target: LocalWorkspaceTarget,
     actor: LifecycleActor,
     deleted_at: datetime,
-    registry_client: RegistryClient | None = None,
+    registry_client: RegistryClient | None,
     request_context: Request | None = None,
 ) -> LifecycleCascadeResult:
     """Clean self immediately, or a stale local peer, through the same cascade.
@@ -1576,7 +1576,7 @@ async def apply_lifecycle_cascade(
     redis: Redis | None,
     request: LifecycleCascadeRequest,
     *,
-    registry_client: RegistryClient | None = None,
+    registry_client: RegistryClient | None,
     request_context: Request | None = None,
 ) -> LifecycleCascadeResult:
     """Apply the coordination lifecycle cascade and report post-commit status.

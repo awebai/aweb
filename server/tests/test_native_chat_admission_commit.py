@@ -11,9 +11,14 @@ import pytest
 
 from awid.signing import canonical_json_bytes, sign_message
 from aweb.event_types import MutationEventType
-from identity_binding_support import register_global_identity
 from test_dashboard_privacy import _request, privacy_app as privacy_app
-from test_native_mail_admission_commit import PolicyChange, connect_policy_members
+from test_native_mail_admission_commit import (
+    PolicyChange,
+    apply_test_policy_change,
+    prepare_test_policy_members,
+)
+
+__all__ = ["privacy_app"]
 
 
 class ChatPath(Enum):
@@ -30,17 +35,9 @@ async def test_native_chat_admission_stays_locked_through_the_actual_message_com
     change,
 ):
     env = privacy_app
-    await connect_policy_members(env)
-    bob = env.actors["bob"]
-    stable = await register_global_identity(env, bob)
-    await env.db.execute(
-        "UPDATE {{tables.agents}} SET did_aw=$1,did_aw_verified_key=did_key,"
-        "identity_scope='global',inbound_mode='team_and_contacts' WHERE agent_id=$2",
-        stable,
-        bob.id,
-    )
+    bob = await prepare_test_policy_members(env)
     url = "/v1/chat/sessions"
-    payload = {"to_dids": [bob.did], "message": "Held chat"}
+    payload = {"to_dids": [bob.did_key], "message": "Held chat"}
     count_before = 0
     if path is ChatPath.CONTINUATION:
         initial = await _request(env, "alice", "POST", url, payload)
@@ -49,17 +46,6 @@ async def test_native_chat_admission_stays_locked_through_the_actual_message_com
         payload = {"body": "Held continuation"}
         count_before = 1
     events_before = list(env.dispatched)
-    statement, actor_id = (
-        (
-            "UPDATE {{tables.agents}} SET status='retired' WHERE agent_id=$1",
-            env.actors["alice"].id,
-        )
-        if change is PolicyChange.SENDER_RETIREMENT
-        else (
-            "UPDATE {{tables.agents}} SET inbound_mode='contacts_only' WHERE agent_id=$1",
-            bob.id,
-        )
-    )
     async with env.db.transaction() as blocker:
         await blocker.execute("LOCK TABLE {{tables.chat_messages}} IN SHARE MODE")
         sending = asyncio.create_task(_request(env, "alice", "POST", url, payload))
@@ -78,7 +64,7 @@ async def test_native_chat_admission_stays_locked_through_the_actual_message_com
             async with env.db.transaction() as changing:
                 await changing.execute("SET LOCAL lock_timeout='200ms'")
                 with pytest.raises(asyncpg.LockNotAvailableError):
-                    await changing.execute(statement, actor_id)
+                    await apply_test_policy_change(changing, env, change, bob)
         except BaseException:
             sending.cancel()
             await asyncio.gather(sending, return_exceptions=True)
@@ -90,7 +76,8 @@ async def test_native_chat_admission_stays_locked_through_the_actual_message_com
         == count_before + 1
     )
     assert len(env.dispatched) == len(events_before) + 1
-    await env.db.execute(statement, actor_id)
+    async with env.db.transaction() as changing:
+        await apply_test_policy_change(changing, env, change, bob)
     if change is PolicyChange.RECIPIENT_MODE:
         refused = await _request(env, "alice", "POST", url, payload)
         assert refused.status_code == 403, refused.text
@@ -184,8 +171,6 @@ async def test_native_chat_signature_refusal_rolls_back_session_and_success_hook
             "chat_read_receipts",
         ):
             assert (
-                await env.db.fetch_value(
-                    "SELECT count(*) FROM {{tables." + table + "}}"
-                )
+                await env.db.fetch_value(f"SELECT count(*) FROM {{{{tables.{table}}}}}")
                 == 0
             )

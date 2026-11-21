@@ -24,6 +24,8 @@ from test_messages_http import (
     _signed_team_headers,
 )
 
+__all__ = ["privacy_app"]
+
 
 async def request(env, actor, method, path, payload=None, *, certificate=None, did_aw=None):
     body = json.dumps(payload).encode() if payload is not None else b""
@@ -468,8 +470,8 @@ async def test_cached_prior_key_cannot_change_routing_markers(privacy_app):
         new_sk, _, new_key = _make_keypair()
         await registry.rotate_key(stable, new_key, bob.sk, new_sk)
         new_row = await env.db.fetch_one(
-            "INSERT INTO {{tables.agents}} (team_id,did_key,did_aw,alias,identity_scope) "
-            "VALUES ($1,$2,$3,'new-bob','global') RETURNING agent_id",
+            "INSERT INTO {{tables.agents}} (team_id,did_key,did_aw,alias,identity_scope, inbound_mode) "
+            "VALUES ($1,$2,$3,'new-bob','global', 'open') RETURNING agent_id",
             TEAM,
             new_key,
             stable,
@@ -519,8 +521,8 @@ async def test_operator_verification_restores_only_bound_projections(privacy_app
             )
         _, _, claimless_key = _make_keypair()
         await env.db.execute(
-            "INSERT INTO {{tables.agents}} (team_id,did_key,alias,identity_scope) "
-            "VALUES ($1,$2,'claimless','global')",
+            "INSERT INTO {{tables.agents}} (team_id,did_key,alias,identity_scope, inbound_mode) "
+            "VALUES ($1,$2,'claimless','global', 'open')",
             TEAM,
             claimless_key,
         )

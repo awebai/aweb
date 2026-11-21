@@ -408,7 +408,7 @@ func runTeamInstallCert(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	registryURL := strings.TrimSpace(teamInstallCertRegistry)
+	registryURL := firstNonEmptyString(teamInstallCertRegistry, os.Getenv("AWID_REGISTRY_URL"))
 	if registryURL != "" {
 		if registryURL, err = awid.CanonicalServerOrigin(registryURL); err != nil {
 			return usageError("--registry: %v", err)
@@ -416,8 +416,6 @@ func runTeamInstallCert(cmd *cobra.Command, _ []string) error {
 		if err := registry.TrustRegistryOrigin(registryURL); err != nil {
 			return err
 		}
-	} else {
-		registryURL = strings.TrimSpace(registry.DefaultRegistryURL)
 	}
 	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()

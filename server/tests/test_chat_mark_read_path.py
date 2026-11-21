@@ -7,6 +7,8 @@ import pytest
 
 from test_dashboard_privacy import _request, privacy_app as privacy_app
 
+__all__ = ["privacy_app"]
+
 
 @pytest.mark.asyncio
 async def test_mark_read_malformed_path_is_actionable_and_existing_session_still_reads(

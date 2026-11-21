@@ -2,29 +2,33 @@
 
 import asyncio
 import json
-from uuid import UUID, uuid4
+from datetime import UTC, datetime, timedelta
+from uuid import UUID
 
 import pytest
 from aweb.events import team_events_channel_name
 from test_dashboard_privacy import TEAM
-from test_dashboard_privacy import privacy_app as privacy_app
-from test_workspace_liveness_http import _send_member_request
+from test_dashboard_privacy import privacy_app
+from test_workspace_liveness_http import _connect_registered_member, _send_member_request
+
+__all__ = ["privacy_app"]
 
 
-async def _acquire_lock(env, *, alias: str, resource_key: str) -> None:
+async def _acquire_lock(env, *, alias: str, resource_key: str, team_id: str = TEAM) -> None:
     response = await _send_member_request(
         env,
         alias=alias,
         method="POST",
         path="/v1/reservations",
         body={"resource_key": resource_key, "ttl_seconds": 600},
+        team_id=team_id,
     )
     assert response.status_code == 200, response.text
 
 
-async def _connect_repo_workspaces(env) -> UUID:
+async def _connect_repo_workspaces(env, *aliases: str) -> UUID:
     repo_id = None
-    for alias in ("alice", "bob", "carol"):
+    for alias in aliases:
         response = await _send_member_request(
             env,
             alias=alias,
@@ -49,13 +53,13 @@ async def _connect_repo_workspaces(env) -> UUID:
 
 
 @pytest.mark.asyncio
-async def test_repo_delete_applies_self_or_stale_rule_and_reports_live_peer_skipped(privacy_app):
+async def test_repo_delete_applies_self_or_stale_rule_and_reports_live_peer_skipped(privacy_app, monkeypatch):
     """Antares 9a131b85: repo deletion obeys the single-workspace cleanup rule."""
     env = privacy_app
-    repo_id = await _connect_repo_workspaces(env)
-    await env.db.execute(
-        "UPDATE {{tables.workspaces}} SET last_seen_at=NOW()-INTERVAL '2 hours' "
-        "WHERE workspace_id=$1",
+    monkeypatch.setenv("AWEB_PRESENCE_TTL_SECONDS", "10")
+    repo_id = await _connect_repo_workspaces(env, "bob")
+    bob_seen = await env.db.fetch_value(
+        "SELECT last_seen_at FROM {{tables.workspaces}} WHERE workspace_id=$1",
         env.actors["bob"].workspace,
     )
     for alias in ("bob", "carol"):
@@ -72,6 +76,9 @@ async def test_repo_delete_applies_self_or_stale_rule_and_reports_live_peer_skip
         body={"status": "in_progress"},
     )
     assert claimed.status_code == 200, claimed.text
+    stale_at = bob_seen + timedelta(seconds=10)
+    await asyncio.sleep(max(0, (stale_at - datetime.now(UTC)).total_seconds()) + 0.05)
+    assert await _connect_repo_workspaces(env, "alice", "carol") == repo_id
     response = await _send_member_request(
         env, alias="alice", method="DELETE", path=f"/v1/repos/{repo_id}"
     )
@@ -227,25 +234,14 @@ async def test_empty_prefix_emergency_revoke_keeps_another_teams_reservations(pr
     env = privacy_app
     for alias in ("bob", "carol"):
         await _acquire_lock(env, alias=alias, resource_key=f"all/{alias}")
-    other_team = "neighbor:other.example"
-    other_agent = uuid4()
-    await env.db.execute(
-        "INSERT INTO {{tables.teams}} (team_id,namespace,team_name,team_did_key) "
-        "VALUES ($1,'other.example','neighbor','did:key:z6Mkotherteam')",
-        other_team,
+    other_team = "cleanup-neighbor:example.test"
+    await env.app.state.awid_registry_client.register_team(
+        domain="example.test", name="cleanup-neighbor", display_name="Cleanup neighbor",
+        team_did_key=env.team_did, visibility="public",
+        namespace_controller_signing_key=env.namespace_sk,
     )
-    await env.db.execute(
-        "INSERT INTO {{tables.agents}} (agent_id,team_id,did_key,alias) "
-        "VALUES ($1,$2,'did:key:z6Mkother','other')",
-        other_agent,
-        other_team,
-    )
-    await env.db.execute(
-        "INSERT INTO {{tables.reservations}} (team_id,resource_key,holder_alias,holder_agent_id,expires_at) "
-        "VALUES ($1,'all/other','other',$2,NOW()+INTERVAL '1 hour')",
-        other_team,
-        other_agent,
-    )
+    await _connect_registered_member(env, alias="other", team_id=other_team)
+    await _acquire_lock(env, alias="other", resource_key="all/other", team_id=other_team)
     response = await _send_member_request(
         env,
         alias="alice",

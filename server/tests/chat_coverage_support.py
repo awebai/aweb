@@ -1,14 +1,16 @@
-"""Run the shipped data migration on a historical session fixture."""
+"""Staged product migrations for pre-055 chat history tests."""
 
-from pathlib import Path
+import pytest_asyncio
+from aweb_naapp.hooks.owner_act_nonces import apply_owner_act_migrations
+from tests.product_migration_support import stage_aweb_upgrade
 
-import aweb
+COVERAGE_MIGRATION = "055_chat_conversation_coverage.sql"
 
 
-async def migrate_chat_conversation_coverage(database) -> None:
-    migration = (
-        Path(aweb.__file__).parent
-        / "migrations/aweb/055_chat_conversation_coverage.sql"
-    )
-    async with database.transaction() as transaction:
-        await transaction.execute(migration.read_text())
+@pytest_asyncio.fixture
+async def chat_coverage_upgrade(shared_test_pool, tmp_path):
+    async with stage_aweb_upgrade(
+        shared_test_pool, tmp_path / "chat-coverage-migrations", COVERAGE_MIGRATION
+    ) as upgrade:
+        await apply_owner_act_migrations(upgrade.infra.get_manager())
+        yield upgrade

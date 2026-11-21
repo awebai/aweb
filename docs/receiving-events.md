@@ -304,10 +304,9 @@ suppresses a repeated event whose type and `message_id` are among the newest
 
 The pending-chat query first selects the viewer's participant rows by DID or
 stable agent ID, preferring an exact DID match within each session. It then
-aggregates participants and reads messages only for those sessions. Existing
-semantics include departed participants; this optimization does not add a
-`left_at` filter, change unread receipts, or change encrypted-message redaction.
-The mail query is unchanged.
+aggregates participants and reads messages only for those sessions. Current
+participant rows determine session membership. The query preserves unread
+receipts and encrypted-message redaction.
 
 Migration `019_chat_participant_lookup.sql` adds DID and non-null agent-ID
 indexes supporting that lookup. It does not rewrite existing migrations or

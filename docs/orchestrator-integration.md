@@ -262,7 +262,8 @@ The current server refuses cleanup rather than guessing:
   default, configured by `AWEB_PRESENCE_TTL_SECONDS`). Stop the target runtime,
   retain its identity home, and wait until that activity is stale before retrying
   through the other member. This waiting period does not apply when the target
-  member authenticates to delete its own workspace.
+  member authenticates to delete its own workspace. An immediate retry while the
+  target is still active does not establish cleanup progress.
 
 After stopping the local member's runtime, run from its retained identity home
 to delete its own workspace immediately. Cleanup through another authorized

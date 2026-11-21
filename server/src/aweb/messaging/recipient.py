@@ -21,7 +21,7 @@ class RecipientResidence(Enum):
 class Recipient(Mapping[str, Any]):
     """An already-resolved delivery projection, never evidence of membership.
 
-    docs/identity-messaging-contract.md:285-309 keeps stored participation and
+    Continuations (docs/identity-messaging-contract.md:282-318) keeps stored participation and
     independently validated residence separate from team authority. A local
     identity can have neither an agent nor a team. Only the resolver chooses
     residence; absent actor IDs do not imply federation.

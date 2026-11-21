@@ -309,7 +309,8 @@ async def identity_contact_match(
 ) -> IdentityContactMatch:
     """Read exact active identity bindings, retaining locks in a caller transaction.
 
-    docs/identity-messaging-contract.md:85-91 excludes pending/handle/domain
+    Global And Local Identities (docs/identity-messaging-contract.md:88-91,108-110) excludes
+    pending/handle/domain
     matches. A legacy address without an identity needs explicit rebinding.
     """
     owner_keys = normalize_owner_dids(owner_dids=owner_dids)

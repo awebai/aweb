@@ -40,6 +40,7 @@ async def _leave_undelivered_federation_row(aweb_db) -> str:
     await deliver_federated_phase_b(
         _DB(aweb_db), envelope=envelope, signature="signed-message",
         recipient=recipient, authority_token=token,
+        registry_client=None,
     )
     return envelope.message_id
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from aweb.human_kind import agent_listing_predicate_sql
+from aweb.member_team_key import current_member_sql
 from aweb.task_refs import task_title_join
 
 import json
@@ -37,10 +38,10 @@ async def workspace_status(
             w.human_name,
             COALESCE(w.role, a.role) AS role
         FROM {{{{tables.workspaces}}}} w
-        JOIN {{{{tables.agents}}}} a ON a.agent_id = w.agent_id
+        JOIN {{{{tables.agents}}}} a ON a.agent_id = w.agent_id AND a.team_id = w.team_id
         WHERE w.team_id = $1
           AND w.deleted_at IS NULL
-          AND a.deleted_at IS NULL
+          AND {current_member_sql("a")}
           AND {agent_listing_predicate_sql("a")}
         ORDER BY w.alias
         """,
@@ -59,19 +60,23 @@ async def workspace_status(
 
     claim_rows = await aweb_db.fetch_all(
         f"""
+        WITH current_claims AS (
+            SELECT c.* FROM {{{{tables.task_claims}}}} c
+            WHERE c.team_id = $1 AND c.workspace_id = ANY($2::UUID[])
+        )
         SELECT c.task_ref, c.workspace_id, c.alias, c.human_name, c.claimed_at, c.team_id,
                counts.claimant_count, task_info.title
-        FROM {{{{tables.task_claims}}}} c
+        FROM current_claims c
         JOIN (
             SELECT team_id, task_ref, COUNT(*) AS claimant_count
-            FROM {{{{tables.task_claims}}}}
+            FROM current_claims
             GROUP BY team_id, task_ref
         ) counts ON c.team_id = counts.team_id AND c.task_ref = counts.task_ref
         {task_title_join(alias="task_info", team_id_col="c.team_id", task_ref_col="c.task_ref")}
-        WHERE c.team_id = $1
         ORDER BY c.claimed_at DESC
         """,
         auth.team_id,
+        [row["workspace_id"] for row in workspaces],
     )
 
     claims_by_workspace = {}

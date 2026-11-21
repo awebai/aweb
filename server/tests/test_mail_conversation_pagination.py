@@ -9,6 +9,8 @@ import pytest
 from awid.pagination import encode_cursor
 from test_dashboard_privacy import TEAM, _request, privacy_app  # noqa: F401
 
+__all__ = ["privacy_app"]
+
 
 async def _conversation(env, count=507):
     sent = await _request(env, "alice", "POST", "/v1/messages", {

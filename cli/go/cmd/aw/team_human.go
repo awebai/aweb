@@ -683,11 +683,15 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
+		selectedRegistryURL, err := resolveConfiguredInitAWIDRegistryURL()
+		if err != nil {
+			return err
+		}
 		result, err := runAPIKeyBootstrapInit(apiKeyInitRequest{
 			WorkingDir:   wd,
 			IdentityHome: identityHome.Root,
 			AwebURL:      apiKeyAwebURL,
-			RegistryURL:  registryURL,
+			RegistryURL:  selectedRegistryURL,
 			APIKey:       apiKey,
 			Name:         apiName,
 			Alias:        apiAlias,
@@ -1411,7 +1415,7 @@ func bootstrapTeamHumanAddAgentWithAPIKey(homeDir string, plan teamHumanAddedAge
 	if err != nil {
 		return nil, err
 	}
-	registryURL, err := resolveInitAWIDRegistryURL()
+	registryURL, err := resolveConfiguredInitAWIDRegistryURL()
 	if err != nil {
 		return nil, err
 	}
@@ -2144,7 +2148,7 @@ func justCreatedTeamMemberRollbackTargetFromAccepted(accepted *acceptedTeamInvit
 	target := justCreatedTeamMemberRollbackTarget{
 		CertificateID: strings.TrimSpace(accepted.Certificate.CertificateID),
 		MemberAddress: strings.TrimSpace(accepted.Certificate.MemberAddress),
-		RegistryURL:   strings.TrimSpace(accepted.RegistryURL),
+		RegistryURL:   firstNonEmptyString(accepted.RegistryURL, accepted.observedRegistryURL),
 		AwebURL:       strings.TrimSpace(accepted.AwebURL),
 	}
 	if accepted.Output != nil {

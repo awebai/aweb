@@ -8,6 +8,7 @@ from uuid import UUID
 
 import pytest
 from aweb.coordination.tasks_service import answer_task_on, update_task
+from aweb.identity_binding import verified_principal_did_sql
 from aweb.team_auth_deps import get_team_identity
 from starlette.requests import Request
 from test_cli_never_grants import registry_listener
@@ -21,25 +22,12 @@ from test_messages_http import (
 )
 from test_task_answers import _v2_request
 
+__all__ = ["privacy_app"]
+
 
 class SubjectProjection(StrEnum):
     LOCAL = "local"
     VERIFIED_GLOBAL = "verified-global"
-    LEGACY_RAW_CLAIM = "legacy-raw-claim"
-
-
-async def _tamper_unverified_claim(env, registry):
-    # Explicit unsupported legacy/tampering state: another identity's raw
-    # claim is not binding evidence and must never become Bob's principal.
-    other = env.actors["carol"]
-    unrelated = (await registry.register_did(other.did, other.sk)).did_aw
-    await env.db.execute(
-        "UPDATE {{tables.agents}} SET did_aw=$2,address=NULL,identity_scope='global',"
-        "did_aw_verified_key=NULL WHERE agent_id=$1",
-        env.actors["bob"].id,
-        unrelated,
-    )
-    return unrelated
 
 
 async def _connected_subject(env, registry, *, projection: SubjectProjection):
@@ -60,8 +48,6 @@ async def _connected_subject(env, registry, *, projection: SubjectProjection):
             )
         )
     assert (await _connect(env, (actor.sk, actor.did, "bob"), actor.certificate)).status_code == 200
-    if projection is SubjectProjection.LEGACY_RAW_CLAIM:
-        await _tamper_unverified_claim(env, registry)
     return expected
 
 
@@ -100,7 +86,26 @@ async def test_task_assignment_uses_the_verified_member_principal(privacy_app, p
 
 
 @pytest.mark.asyncio
-async def test_task_claim_rechecks_principal_without_adopting_a_raw_claim(privacy_app):
+async def test_historical_unverified_claim_keeps_the_literal_local_principal(privacy_app):
+    env = privacy_app
+    async with registry_listener(env) as (registry, _):
+        principal = await _connected_subject(env, registry, projection=SubjectProjection.LOCAL)
+        other = env.actors["carol"]
+        unrelated = (await registry.register_did(other.did, other.sk)).did_aw
+        # The current admission path cannot store this historical projection.
+        # Feed it to the exact SQL owner shared by task writes.
+        row = await env.db.fetch_one(
+            f"""SELECT {verified_principal_did_sql()} AS principal_did
+                FROM (VALUES ($1::text, $2::text, NULL::text))
+                   AS history(did_key, did_aw, did_aw_verified_key)""",
+            principal,
+            unrelated,
+        )
+        assert row["principal_did"] == principal
+
+
+@pytest.mark.asyncio
+async def test_task_claim_uses_the_verified_local_principal(privacy_app):
     env = privacy_app
     async with registry_listener(env) as (registry, _):
         principal = await _connected_subject(env, registry, projection=SubjectProjection.LOCAL)
@@ -109,7 +114,6 @@ async def test_task_claim_rechecks_principal_without_adopting_a_raw_claim(privac
             env, "alice", "POST", "/v1/tasks", {"title": "Claim by exact actor"}
         )
         assert made.status_code == 200, made.text
-        await _tamper_unverified_claim(env, registry)
         claimed = await update_task(
             env.infra,
             actor=actor,
@@ -121,7 +125,7 @@ async def test_task_claim_rechecks_principal_without_adopting_a_raw_claim(privac
 
 
 @pytest.mark.asyncio
-async def test_task_answer_rechecks_principal_without_adopting_a_raw_claim(privacy_app):
+async def test_task_answer_uses_the_verified_local_principal(privacy_app):
     env = privacy_app
     async with registry_listener(env) as (registry, _):
         principal = await _connected_subject(env, registry, projection=SubjectProjection.LOCAL)
@@ -135,7 +139,6 @@ async def test_task_answer_rechecks_principal_without_adopting_a_raw_claim(priva
         )
         assert made.status_code == 200, made.text
         task = made.json()
-        await _tamper_unverified_claim(env, registry)
         text = "Answer from the same authenticated local key"
         async with env.db.transaction() as transaction:
             receipt = await answer_task_on(

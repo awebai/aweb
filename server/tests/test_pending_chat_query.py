@@ -25,10 +25,10 @@ async def seed(db):
         VALUES ('query:example.test', 'example.test', 'query', 'did:key:team')""")
     agent = uuid4()
     await db.execute("""INSERT INTO {{tables.agents}}
-        (agent_id, team_id, did_key, alias, identity_scope)
-        VALUES ($1, 'query:example.test', 'did:key:viewer', 'viewer', 'local')""", agent)
+        (agent_id, team_id, did_key, alias, identity_scope, inbound_mode)
+        VALUES ($1, 'query:example.test', 'did:key:viewer', 'viewer', 'local', 'open')""", agent)
     sessions = {}
-    for index, kind in enumerate(['dual', 'agent_only', 'left', 'wait', 'encrypted', 'read', 'own_wait', 'expired', 'empty']):
+    for index, kind in enumerate(['dual', 'agent_only', 'unread', 'wait', 'encrypted', 'read', 'own_wait', 'expired', 'empty']):
         sid = uuid4()
         sessions[kind] = sid
         await db.execute("""INSERT INTO {{tables.chat_sessions}}
@@ -39,11 +39,10 @@ async def seed(db):
             agent if kind == 'own_wait' else None)
         did = 'did:key:old' if kind == 'agent_only' else 'did:key:viewer'
         await db.execute("""INSERT INTO {{tables.chat_participants}}
-            (session_id, did, agent_id, alias, address, left_at)
-            VALUES ($1, $2, $3, 'viewer', NULL,
-                    CASE WHEN $4::boolean THEN NOW() ELSE NULL END),
-                   ($1, 'did:key:other', NULL, 'other', 'example.test/other', NULL)""",
-            sid, did, agent, kind == 'left')
+            (session_id, did, agent_id, alias, address)
+            VALUES ($1, $2, $3, 'viewer', NULL),
+                   ($1, 'did:key:other', NULL, 'other', 'example.test/other')""",
+            sid, did, agent)
         if kind == 'dual':
             await db.execute("""INSERT INTO {{tables.chat_participants}}
                 (session_id, did, agent_id, alias) VALUES ($1, 'did:aw:viewer', $2, 'viewer-stable')""", sid, agent)
@@ -78,9 +77,9 @@ async def test_pending_query_matches_only_the_callers_participant_did(aweb_cloud
     db = aweb_cloud_db.aweb_db
     agent, sessions = await seed(db)
     for did, actor, expected in [
-        ('did:key:viewer', agent, ('left', 'wait', 'encrypted')),
+        ('did:key:viewer', agent, ('unread', 'wait', 'encrypted')),
         ('did:aw:viewer', agent, ('dual',)),
-        ('did:key:viewer', None, ('left', 'wait', 'encrypted', 'own_wait')),
+        ('did:key:viewer', None, ('unread', 'wait', 'encrypted', 'own_wait')),
         ('did:key:old', None, ('agent_only',)),
         ('did:key:absent', agent, ()),
     ]:
@@ -89,10 +88,10 @@ async def test_pending_query_matches_only_the_callers_participant_did(aweb_cloud
         assert {row['session_id'] for row in rows} == {sessions[k] for k in expected}
     query, args = await query_and_args('did:key:viewer', agent)
     rows = {row['session_id']: row for row in await db.fetch_all(query, *args)}
-    assert set(rows) == {sessions[k] for k in ('left', 'wait', 'encrypted')}
+    assert set(rows) == {sessions[k] for k in ('unread', 'wait', 'encrypted')}
     assert rows[sessions['wait']]['extended_wait_seconds'] == 300
     assert rows[sessions['wait']]['unread_count'] == 0
-    assert rows[sessions['left']]['unread_count'] == 1
+    assert rows[sessions['unread']]['unread_count'] == 1
     assert rows[sessions['encrypted']]['last_message'] == ''
     assert rows[sessions['encrypted']]['last_message_version'] == 2
 

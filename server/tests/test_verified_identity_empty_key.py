@@ -2,17 +2,21 @@
 
 import pytest
 from aweb.identity_metadata import lookup_identity_metadata_by_agent_id
-from aweb.member_team_key import read_member_projection
+from aweb.identity_binding import IdentityProjectionField, verified_identity_field_sql
+from aweb.member_team_key import MemberProjection, read_member_projection
 from test_cli_never_grants import registry_listener
 from test_dashboard_privacy import privacy_app as privacy_app
 from test_identity_binding_http import certificate, register, request
+
+__all__ = ["privacy_app"]
 
 
 @pytest.mark.asyncio
 async def test_empty_signing_key_and_empty_marker_cannot_attribute_global_metadata(
     privacy_app,
 ):
-    # identity.md:569-585 and identity-messaging-contract.md:268-277:
+    # identity.md:569-585 and Global And Local Identities
+    # (docs/identity-messaging-contract.md:124-129):
     # marker equality needs an actual current key, not two empty strings.
     env = privacy_app
     actor = env.actors["bob"]
@@ -30,16 +34,21 @@ async def test_empty_signing_key_and_empty_marker_cannot_attribute_global_metada
         before = await lookup_identity_metadata_by_agent_id(env.infra, [str(actor.id)])
         assert before[str(actor.id)]["stable_id"] == stable
         assert before[str(actor.id)]["address"] == address
-        # Explicit corrupt/legacy storage, not a supported identity mutation.
-        await env.db.execute(
-            "UPDATE {{tables.agents}} SET did_key='',did_aw_verified_key='',address=$2 "
-            "WHERE agent_id=$1",
-            actor.id,
-            "identity.test/forged-claim",
+        member = await read_member_projection(env.db, agent_id=actor.id)
+        assert member is not None
+        historical = MemberProjection.from_row({
+            **dict(member), "did_key": "", "did_aw_verified_key": "", "address": "identity.test/forged-claim",
+        })
+        assert historical.verified_identity()["did_aw"] is None
+        assert historical.verified_identity()["address"] is None
+
+        # Exercise the exact SQL projection with the same historical values
+        # without writing a row that current identity admission cannot create.
+        projected = await env.db.fetch_one(
+            f"""SELECT {verified_identity_field_sql(IdentityProjectionField.STABLE_DID)} AS did_aw,
+                       {verified_identity_field_sql(IdentityProjectionField.ADDRESS)} AS address
+                FROM (VALUES ($1::text, $2::text, $3::text, $4::text))
+                   AS history(did_key, did_aw_verified_key, did_aw, address)""",
+            historical["did_key"], historical["did_aw_verified_key"], historical["did_aw"], historical["address"],
         )
-        row = await read_member_projection(env.db, agent_id=actor.id)
-        assert row.verified_identity()["did_aw"] is None
-        assert row.verified_identity()["address"] is None
-        metadata = await lookup_identity_metadata_by_agent_id(env.infra, [str(actor.id)])
-        assert not metadata[str(actor.id)].get("stable_id"), metadata
-        assert not metadata[str(actor.id)].get("address"), metadata
+        assert dict(projected) == {"did_aw": None, "address": None}

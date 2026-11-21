@@ -115,17 +115,6 @@ def recipient_selector_mismatch(
     )
 
 
-def registry_configuration_refusal(*, operation: str) -> DeliveryRefusal:
-    """Keep the registry's configuration diagnosis in the service carrier."""
-    from aweb.awid_error_handling import awid_registry_not_configured_detail
-
-    return DeliveryRefusal(
-        status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
-        detail=awid_registry_not_configured_detail(operation=operation)
-        + ". Ask the server operator to configure the registry and retry.",
-    )
-
-
 def registry_dependency_refusal(exc: Exception, *, operation: str) -> DeliveryRefusal:
     """Use the shared upstream classifier without importing HTTP into delivery."""
     from aweb.awid_error_handling import classify_awid_dependency_error
@@ -150,7 +139,7 @@ def signed_chat_payload_refusal(*, detail: str) -> DeliveryRefusal:
     """Keep signed chat field failures actionable at every send/retry boundary.
 
     Implements the sender-artifact checks in
-    docs/identity-messaging-contract.md:154-166.
+    Direct Address Send Protocol (docs/identity-messaging-contract.md:156-168).
     """
     return DeliveryRefusal(
         status_code=HTTPStatus.UNPROCESSABLE_ENTITY,

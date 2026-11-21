@@ -10,10 +10,13 @@ import subprocess
 from uuid import uuid4
 
 import pytest
+from awid.team_certificate import issue_team_certificate
 from test_cli_never_grants import registry_listener
 from test_dashboard_privacy import TEAM, TEAM_NAME
 from test_dashboard_privacy import privacy_app as privacy_app
-from test_messages_http import _encode_certificate, _make_certificate, _make_keypair
+from test_messages_http import _make_keypair
+
+__all__ = ["privacy_app"]
 
 
 @pytest.fixture(scope="session")
@@ -58,22 +61,21 @@ async def _fetch(binary, *, registry_origin, member_seed, certificate_id):
 
 
 @pytest.mark.asyncio
-async def test_go_fetch_refuses_a_blob_signed_by_another_key_after_registered_control(
+async def test_go_fetch_refuses_unrevoked_certificate_after_controller_rotation(
     privacy_app,
     current_certificate_fetch_probe,
 ):
     # team-auth-envelope-v2.md:64-69: active status never replaces signature
-    # verification under the current team key. Explicit registry storage
-    # tampering models the artifact substitution; neither service is mocked.
+    # verification under the current team key. A namespace controller can
+    # change that key without revoking the previously registered certificate.
     env = privacy_app
     member_sk, _, member_did = _make_keypair()
     certificate_id = "fetch-" + uuid4().hex
     alias = "fetch-" + uuid4().hex[:12]
-    certificate = _make_certificate(
-        env.team_sk,
-        env.team_did,
-        member_did,
+    _, certificate = issue_team_certificate(
         team_id=TEAM,
+        team_signing_key=env.team_sk,
+        member_did_key=member_did,
         alias=alias,
         identity_scope="local",
         certificate_id=certificate_id,
@@ -89,7 +91,7 @@ async def test_go_fetch_refuses_a_blob_signed_by_another_key_after_registered_co
             member_address=None,
             alias=alias,
             identity_scope="local",
-            certificate=_encode_certificate(certificate),
+            certificate=certificate,
         )
         valid = await _fetch(
             current_certificate_fetch_probe,
@@ -98,20 +100,12 @@ async def test_go_fetch_refuses_a_blob_signed_by_another_key_after_registered_co
             certificate_id=certificate_id,
         )
         assert valid == {"certificate_id": certificate_id}, valid
-        replacement_sk, _, replacement_did = _make_keypair()
-        substituted = _make_certificate(
-            replacement_sk,
-            replacement_did,
-            member_did,
-            team_id=TEAM,
-            alias=alias,
-            identity_scope="local",
-            certificate_id=certificate_id,
-        )
-        await env.registry_db.execute(
-            "UPDATE {{tables.team_certificates}} SET certificate=$2 WHERE certificate_id=$1",
-            certificate_id,
-            _encode_certificate(substituted),
+        _, _, replacement_did = _make_keypair()
+        await registry.rotate_team_key(
+            "example.test",
+            TEAM_NAME,
+            new_team_did_key=replacement_did,
+            namespace_controller_signing_key=env.namespace_sk,
         )
         status = await registry.get_team_certificate_status_fresh(
             "example.test",
@@ -119,7 +113,7 @@ async def test_go_fetch_refuses_a_blob_signed_by_another_key_after_registered_co
             certificate_id,
         )
         assert status is not None
-        assert status["team_did_key"] == env.team_did
+        assert status["team_did_key"] == replacement_did
         assert status["status"] == "active"
         refused = await _fetch(
             current_certificate_fetch_probe,

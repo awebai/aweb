@@ -28,6 +28,8 @@ from test_cli_never_grants import registry_listener
 from test_dashboard_privacy import privacy_app as privacy_app
 from test_messages_http import _signed_identity_headers
 
+__all__ = ["privacy_app"]
+
 VECTORS = json.loads(
     (Path(__file__).resolve().parents[2] / "docs/vectors/id-certificates-v1.json").read_text()
 )

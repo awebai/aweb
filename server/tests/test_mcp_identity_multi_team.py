@@ -17,6 +17,8 @@ from test_messages_http import (
     _signed_team_headers,
 )
 
+__all__ = ["privacy_app"]
+
 
 async def _connect_global_member(env, *, actor, team_id: str, stable_did: str) -> str:
     certificate = _encode_certificate(
@@ -77,7 +79,8 @@ async def _call_tool(env, *, actor, stable_did: str, name: str, certificate=None
 @pytest.mark.asyncio
 @pytest.mark.parametrize("membership_count", [1, 2], ids=["one-team", "two-teams"])
 async def test_global_identity_reads_use_same_auth_for_http_and_mcp(privacy_app, membership_count):
-    # Source model: identity-messaging-contract.md:68-94,253-286. A global
+    # Source model: Global And Local Identities (docs/identity-messaging-contract.md:124-144)
+    # and Continuations (docs/identity-messaging-contract.md:282-296). A global
     # participant is one DID; two memberships do not require a team choice
     # for its inbox. A presented team certificate still selects that team.
     env = privacy_app

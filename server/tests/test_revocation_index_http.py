@@ -9,6 +9,8 @@ from awid.registry import CachedRegistryClient, RegistryError
 from test_dashboard_privacy import TEAM, TEAM_NAME, privacy_app  # noqa: F401
 from test_messages_http import _signed_team_headers
 
+__all__ = ["privacy_app"]
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("history,strict", [(0, False), (1000, True), (100000, False)])

@@ -9,6 +9,8 @@ from test_dashboard_privacy import privacy_app as privacy_app
 from test_member_team_key import _connect
 from test_messages_http import _signed_identity_headers
 
+__all__ = ["privacy_app"]
+
 
 class AuthenticationCredential(StrEnum):
     CERTIFICATE = "certificate"
@@ -22,7 +24,7 @@ async def test_off_mode_authentication_counts_a_valid_unregistered_certificate(
     monkeypatch,
     credential,
 ):
-    # hosted-certificate-anchoring.md:286-294 and Antares2c74f907:
+    # Staged certificate-registration observations (docs/aweb-sot.md:2176-2186):
     # measure a usable would-refuse fact without failing the legacy flow.
     env = privacy_app
     actor = env.actors["alice"]

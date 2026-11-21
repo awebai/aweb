@@ -13,6 +13,8 @@ from aweb.mcp.notifications import append_pending_nudge
 from test_messages_http import _insert_agent, _insert_team
 from test_mcp_mutation_hook_parity import server as server
 
+__all__ = ["server"]
+
 
 class CountDB:
     def __init__(self, counts):

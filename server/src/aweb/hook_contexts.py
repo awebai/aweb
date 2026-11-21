@@ -137,6 +137,13 @@ class TaskStatusChangedContext(CoordinationContext):
 
 
 @dataclass(frozen=True, kw_only=True)
+class TaskClaimReplacedContext(TaskStatusChangedContext):
+    """Committed claim facts from an update that kept the same task status."""
+
+    event_type: ClassVar[MutationEventType] = MutationEventType.TASK_UPDATED
+
+
+@dataclass(frozen=True, kw_only=True)
 class TaskAssigneeChangedContext(CoordinationContext):
     """Producer projection for task.assignee_changed."""
 
@@ -158,9 +165,14 @@ class TaskDeletedContext(CoordinationContext):
 
     event_type: ClassVar[MutationEventType] = MutationEventType.TASK_DELETED
     task_id: str | None | AbsentContextField = AbsentContextField.ABSENT
+    team_id: str | None | AbsentContextField = AbsentContextField.ABSENT
     task_ref: str | None | AbsentContextField = AbsentContextField.ABSENT
+    title: str | None | AbsentContextField = AbsentContextField.ABSENT
     actor_agent_id: str | None | AbsentContextField = AbsentContextField.ABSENT
     actor_did_aw: str | None | AbsentContextField = AbsentContextField.ABSENT
+    released_claim_workspace_ids: list[str] | AbsentContextField = (
+        AbsentContextField.ABSENT
+    )
 
 
 @dataclass(frozen=True, kw_only=True)

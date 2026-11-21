@@ -20,7 +20,7 @@ import pytest_asyncio
 import uvicorn
 from nacl.signing import SigningKey
 
-from awid.did import did_from_public_key
+from awid.did import did_key_from_signing_key
 from awid.dns_verify import DomainAuthority
 from awid.external_authority import DNSLookup
 from awid.registry import CachedRegistryClient
@@ -48,6 +48,8 @@ from test_messages_http import (
     _signed_team_headers,
     _signed_identity_headers,
 )
+
+__all__ = ["privacy_app"]
 
 
 @pytest.fixture(scope="module")
@@ -126,7 +128,7 @@ async def same_origin(privacy_app, monkeypatch, same_origin_registry_socket):
         namespace_controllers = {
             human_domain: ROOT["did_key"],
             "example.test": env.namespace_did,
-            "recipient.test": did_from_public_key(bytes(recipient_namespace_key.verify_key)),
+            "recipient.test": did_key_from_signing_key(recipient_namespace_key),
         }
 
         async def exact_dns(domain):

@@ -17,7 +17,7 @@ from starlette.requests import Request
 from aweb.member_team_key import read_member_projection
 
 from aweb.application_state import application_registry_client
-from aweb.identity_auth_deps import current_membership
+from aweb.member_team_key import current_membership
 from aweb.messaging.delivery_policy import has_current_shared_team
 from aweb.messaging.participants import messaging_participants_by_aliases
 from aweb.messaging.sender_membership import sender_memberships
@@ -36,6 +36,8 @@ from test_team_key_pinning import (
     register_namespace_controller,
     rotate_team_key,
 )  # noqa: F401
+
+__all__ = ["pinning"]
 
 MIGRATIONS = Path(__file__).resolve().parents[1] / "src" / "aweb" / "migrations" / "aweb"
 
@@ -219,7 +221,7 @@ async def test_a_member_row_written_without_the_key_takes_the_teams_key_of_that_
     did = _make_keypair()[2]
 
     await env.db.execute(
-        "INSERT INTO {{tables.agents}} (team_id, did_key, alias, identity_scope) VALUES ($1, $2, 'written', 'local')",
+        "INSERT INTO {{tables.agents}} (team_id, did_key, alias, identity_scope, inbound_mode) VALUES ($1, $2, 'written', 'local', 'open')",
         TEAM,
         did,
     )
@@ -406,8 +408,8 @@ async def test_a_member_row_written_with_a_certificate_but_no_key_is_not_a_membe
 
     # Nothing verified this certificate under the team's key, so no key is recorded for it.
     await env.db.execute(
-        "INSERT INTO {{tables.agents}} (team_id, did_key, alias, identity_scope, certificate_id) "
-        "VALUES ($1, $2, 'unverified', 'local', 'unverified-1')",
+        "INSERT INTO {{tables.agents}} (team_id, did_key, alias, identity_scope, certificate_id, inbound_mode) "
+        "VALUES ($1, $2, 'unverified', 'local', 'unverified-1', 'open')",
         TEAM,
         did,
     )

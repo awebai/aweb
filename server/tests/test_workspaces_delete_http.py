@@ -12,8 +12,10 @@ import pytest
 from aweb.presence import update_agent_presence
 from test_coordination_state_http import request_as
 from test_dashboard_privacy import TEAM
-from test_dashboard_privacy import privacy_app as privacy_app
+from test_dashboard_privacy import privacy_app
 from test_messages_http import _encode_certificate, _make_certificate, _make_keypair
+
+__all__ = ["privacy_app"]
 
 
 async def _connect_member(env, *, alias):

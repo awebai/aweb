@@ -154,9 +154,13 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (out connectOutput, resultErr
 		alias = "" // cloud rejects alias for global identity bootstrap
 	}
 
-	registry, err := newRegistryClientWithPreferredBaseURL(strings.TrimSpace(req.RegistryURL))
+	selectedRegistryURL := firstNonEmptyString(strings.TrimSpace(req.RegistryURL), strings.TrimSpace(os.Getenv("AWID_REGISTRY_URL")))
+	registry, err := newRegistryClientWithPreferredBaseURL(selectedRegistryURL)
 	if err != nil {
 		return connectOutput{}, err
+	}
+	if selectedRegistryURL != "" {
+		selectedRegistryURL = registry.DefaultRegistryURL
 	}
 	if previous, loadErr := loadAPIKeyPartialInit(apiKeyPartialInitPath(req.WorkingDir, req.IdentityHome)); loadErr != nil {
 		return connectOutput{}, loadErr
@@ -278,7 +282,7 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (out connectOutput, resultErr
 	}
 	admissionContext, admissionCancel := commandAPIContext(nil)
 	defer admissionCancel()
-	keyObservation, err := registry.CheckTeamCertificateCurrentKey(admissionContext, awid.CurrentTeamCertificateCheck{RegistryURL: req.RegistryURL, Certificate: cert})
+	keyObservation, err := registry.CheckTeamCertificateCurrentKey(admissionContext, awid.CurrentTeamCertificateCheck{RegistryURL: selectedRegistryURL, Certificate: cert})
 	if err != nil {
 		return connectOutput{}, fmt.Errorf("workspace certificate is not current: %w; ask the team controller for a current certificate", err)
 	}
@@ -304,13 +308,14 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (out connectOutput, resultErr
 	if err != nil {
 		return connectOutput{}, err
 	}
-	if err := persistAPIKeyBootstrapState(req.WorkingDir, req.IdentityHome, req.RegistryURL, signingKey, didKey, stableID, cert, global); err != nil {
+	if err := persistAPIKeyBootstrapState(req.WorkingDir, req.IdentityHome, selectedRegistryURL, signingKey, didKey, stableID, cert, global); err != nil {
 		rollbackAwTree(req.WorkingDir, snapshot, req.IdentityHome)
 		return connectOutput{}, err
 	}
 
 	out, err = initCertificateConnectWithOptions(req.WorkingDir, serverURL, certificateConnectOptions{
 		TeamKeyObservation: keyObservation,
+		TeamRegistryURL:    selectedRegistryURL,
 		Role:               strings.TrimSpace(req.Role),
 		HumanName:          strings.TrimSpace(req.HumanName),
 		AgentType:          strings.TrimSpace(req.AgentType),

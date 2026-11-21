@@ -90,18 +90,6 @@ def claim_focus_task_ref(task_ref: str, apex_task_ref: Optional[str]) -> str:
     return apex_task_ref or task_ref
 
 
-async def resolve_task_claim_apex(
-    db_infra: DatabaseInfrastructure,
-    team_id: str,
-    task_ref: str,
-    max_depth: int = 20,
-) -> Optional[str]:
-    """Walk native tasks parent_task_id chain to find the sticky focus apex."""
-    return await resolve_task_claim_apex_on(
-        db_infra.get_manager("aweb"), team_id, task_ref, max_depth=max_depth
-    )
-
-
 async def resolve_task_claim_apex_on(
     aweb_db,
     team_id: str,
@@ -191,7 +179,7 @@ async def lock_task_claim_workspaces_on(
     tx,
     *,
     team_id: str,
-    task_ref: str,
+    task_refs: list[str],
     workspace_id: str | None = None,
     actor_agent_id: str | None = None,
 ):
@@ -204,13 +192,13 @@ async def lock_task_claim_workspaces_on(
           ($4::uuid IS NOT NULL AND w.agent_id=$4 AND w.deleted_at IS NULL)
           OR EXISTS (
             SELECT 1 FROM {{tables.task_claims}} c
-            WHERE c.team_id=$1 AND c.task_ref=$2 AND c.workspace_id=w.workspace_id
+            WHERE c.team_id=$1 AND c.task_ref=ANY($2::text[]) AND c.workspace_id=w.workspace_id
               AND ($3::uuid IS NULL OR c.workspace_id=$3)
           ))
         ORDER BY w.workspace_id FOR UPDATE
         """,
         team_id,
-        task_ref,
+        task_refs,
         UUID(workspace_id) if workspace_id else None,
         UUID(actor_agent_id) if actor_agent_id else None,
     )
@@ -234,7 +222,7 @@ async def acquire_task_claim_on(
     locked = await lock_task_claim_workspaces_on(
         tx,
         team_id=team_id,
-        task_ref=task_ref,
+        task_refs=[task_ref],
         actor_agent_id=actor_agent_id,
     )
     released = await release_noncurrent_task_claims_on(
@@ -313,43 +301,19 @@ async def acquire_task_claim_on(
     return None
 
 
-async def release_task_claims(
-    db_infra: DatabaseInfrastructure,
-    *,
-    team_id: str,
-    task_ref: str,
-    workspace_id: str | None = None,
-) -> list[str]:
-    """Release claims on a task and update affected workspaces' focus.
-
-    If workspace_id is provided, only that workspace's claim is removed.
-    If workspace_id is None, all claims on the task are removed.
-
-    This is used when
-    a task is closed/deleted, since any workspace's claim becomes stale.
-
-    Returns the workspace_id strings of affected claimants.
-    """
-    aweb_db = db_infra.get_manager("aweb")
-    async with aweb_db.transaction() as tx:
-        return await release_task_claims_on(
-            tx, team_id=team_id, task_ref=task_ref, workspace_id=workspace_id
-        )
-
-
 async def release_task_claims_on(
     tx, *, team_id: str, task_ref: str, workspace_id: str | None = None
 ) -> list[str]:
     """Release claims and focus with workspace-before-claim lock ordering.
 
-    Status writers hold the task row; deletion hooks act on a deleted task.
+    Status and deletion writers hold the task row.
     Lock workspaces in UUID order, matching acquisition and lifecycle cleanup,
     before deleting claims (docs/aweb-sot.md:1151–1166).
     """
     await lock_task_claim_workspaces_on(
         tx,
         team_id=team_id,
-        task_ref=task_ref,
+        task_refs=[task_ref],
         workspace_id=workspace_id,
     )
     released_focus_by_workspace: dict[str, str] = {}

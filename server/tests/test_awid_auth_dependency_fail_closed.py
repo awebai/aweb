@@ -5,7 +5,8 @@ import pytest
 from aweb import identity_auth_deps
 from aweb.identity_address import AddressResolution
 from aweb.service_errors import IdentityBindingError
-from aweb.team_auth_deps import _get_revoked_certificates, _resolve_team_key
+from aweb.team_auth_deps import _resolve_team_key
+from aweb.team_registry import revoked_certificates
 from awid.registry import (
     CachedRegistryClient,
     KeyResolution,
@@ -109,12 +110,10 @@ async def test_team_key_resolution_unexpected_error_fails_closed():
 
 @pytest.mark.asyncio
 async def test_team_revocation_check_error_never_returns_empty_set():
-    request = _request_with_registry(
-        _FailingTeamRegistry(RuntimeError("revocation lookup exploded"))
-    )
+    registry = _FailingTeamRegistry(RuntimeError("revocation lookup exploded"))
 
     with pytest.raises(HTTPException) as raised:
-        await _get_revoked_certificates(request, "backend:acme.com")
+        await revoked_certificates(registry, "backend:acme.com")
 
     assert raised.value.status_code == 500
     assert (
@@ -125,10 +124,10 @@ async def test_team_revocation_check_error_never_returns_empty_set():
 
 @pytest.mark.asyncio
 async def test_team_revocation_check_upstream_failure_is_retryable_503_and_still_denies():
-    request = _request_with_registry(_FailingTeamRegistry(httpx.ConnectError("connect refused")))
+    registry = _FailingTeamRegistry(httpx.ConnectError("connect refused"))
 
     with pytest.raises(HTTPException) as raised:
-        await _get_revoked_certificates(request, "backend:acme.com")
+        await revoked_certificates(registry, "backend:acme.com")
 
     assert raised.value.status_code == 503
     assert (
@@ -286,9 +285,7 @@ async def test_a_stalled_registry_revocation_check_is_retryable_503_and_still_de
         registry = RegistryClient(registry_url=url, timeout_seconds=0.3)
         try:
             with pytest.raises(HTTPException) as raised:
-                await _get_revoked_certificates(
-                    _request_with_registry(registry), "backend:acme.com"
-                )
+                await revoked_certificates(registry, "backend:acme.com")
         finally:
             await registry.aclose()
 

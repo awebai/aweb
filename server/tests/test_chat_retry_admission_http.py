@@ -8,9 +8,12 @@ import pytest
 from nacl.signing import SigningKey
 from awid.signing import canonical_json_bytes, sign_message
 
+from messaging_actor_support import messaging_actor_headers, remove_messaging_agent_from_sessions
 from test_mcp_chat_send_parity import chat_server as chat_server
 from test_mcp_mail_conversation_parity import mail_server as mail_server
 from test_messages_http import _signed_identity_headers
+
+__all__ = ["chat_server", "mail_server"]
 
 
 @pytest.mark.asyncio
@@ -79,6 +82,83 @@ def _accepted_plaintext_request(row):
 
 
 @pytest.mark.asyncio
+async def test_chat_cleanup_preserves_history_but_rejects_a_changed_live_replay(chat_server):
+    env = chat_server
+    pilot, bob = env.actors["pilot"], env.actors["bob"]
+    session_id, message_id = await env.first_chat(
+        "mcp", "pilot", "accepted original", to_alias="bob"
+    )
+    row = await env.db.fetch_one(
+        "SELECT * FROM {{tables.chat_messages}} WHERE message_id=$1", UUID(message_id)
+    )
+    payload = _accepted_plaintext_request(row)
+    payload["message"] = payload.pop("body")
+    payload.update(session_id=session_id, to_dids=[env.dids["bob"]])
+    raw = json.dumps(payload).encode()
+
+    async def retry():
+        return await env.client.post(
+            "/v1/chat/sessions",
+            content=raw,
+            headers={
+                **messaging_actor_headers(pilot, body=raw, team=False),
+                "X-Team-ID": pilot.team_id,
+            },
+        )
+
+    mail_body = json.dumps({
+        "to_did": bob.stable_id, "subject": "Existing thread", "body": "retained mail",
+    }).encode()
+    mail = await env.client.post(
+        "/v1/messages", content=mail_body,
+        headers=messaging_actor_headers(pilot, body=mail_body, team=False),
+    )
+    assert mail.status_code == 200, mail.text
+
+    async def history(params=None):
+        response = await env.client.get(
+            "/v1/conversations", params=params,
+            headers=messaging_actor_headers(pilot, team=False),
+        )
+        assert response.status_code == 200, response.text
+        return {item["conversation_type"]: item for item in response.json()["conversations"]}
+
+    before = (await history())["chat"]
+    assert before["conversation_id"] == session_id
+    assert bob.stable_id in before["participant_dids"]
+    assert bob.address in before["participant_addresses"]
+
+    accepted = await retry()
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["message_id"] == message_id
+    await remove_messaging_agent_from_sessions(
+        env.db, env.fixture.redis, team_id=pilot.team_id, agent_id=bob.agent_id,
+        registry_client=env.registry,
+    )
+    refused = await retry()
+    assert refused.status_code == 409, refused.text
+    assert "The stored chat participants differ from the resolved recipients" in refused.text
+    assert await env.db.fetch_value(
+        "SELECT count(*) FROM {{tables.chat_messages}} WHERE session_id=$1", UUID(session_id)
+    ) == 1
+
+    for params in (None, {"participant_did": bob.stable_id}, {"participant_address": bob.address}):
+        filtered = await history(params)
+        assert set(filtered) == {"mail", "chat"}
+        after = filtered["chat"]
+        assert after["conversation_id"] == session_id
+        for field in ("participants", "participant_dids", "participant_addresses", "participant_details"):
+            assert after[field] == before[field]
+
+    departed = await env.client.get(
+        "/v1/conversations", params={"conversation_type": "chat"},
+        headers=messaging_actor_headers(bob, team=False),
+    )
+    assert departed.status_code == 200, departed.text
+    assert departed.json()["conversations"] == []
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("valid_signature", [False, True])
 async def test_changed_continued_chat_proof_verifies_before_the_age_only_refusal(
     chat_server, valid_signature
@@ -129,40 +209,6 @@ async def test_changed_continued_chat_proof_verifies_before_the_age_only_refusal
     repeated = await post(_accepted_plaintext_request(row))
     assert repeated.status_code == 200, repeated.text
     assert repeated.json()["message_id"] == message_id
-    assert await env.db.fetch_value("SELECT count(*) FROM {{tables.chat_messages}}") == 2
-    assert env.mutations == before
-
-
-@pytest.mark.asyncio
-async def test_exact_continued_plaintext_retry_survives_retained_departure(chat_server):
-    env = chat_server
-    session_id, _ = await env.first_chat("mcp", "pilot", "opened", to_alias="bob")
-    message_id = await env.continued_chat("mcp", "pilot", session_id, "accepted original")
-    row = await env.db.fetch_one(
-        "SELECT * FROM {{tables.chat_messages}} WHERE message_id=$1", UUID(message_id)
-    )
-    # Current sends' `leaving` flag ends a wait; it does not write left_at.
-    # Exercise the retained legacy departure shape on actual accepted parties.
-    await env.db.execute(
-        "UPDATE {{tables.chat_participants}} SET left_at=NOW() WHERE session_id=$1 AND did=$2",
-        UUID(session_id),
-        env.dids["bob"],
-    )
-    before = list(env.mutations)
-    payload = _accepted_plaintext_request(row)
-    raw = json.dumps(payload).encode()
-    sk, did = env.keys["pilot"]
-    repeated = await env.client.post(
-        f"/v1/chat/sessions/{session_id}/messages",
-        content=raw,
-        headers={
-            **_signed_identity_headers(sk, did, env.dids["pilot"], raw),
-            "Content-Type": "application/json",
-        },
-    )
-    assert repeated.status_code == 200, repeated.text
-    assert repeated.json()["message_id"] == message_id
-    assert repeated.json()["conversation_id"] == session_id
     assert await env.db.fetch_value("SELECT count(*) FROM {{tables.chat_messages}}") == 2
     assert env.mutations == before
 

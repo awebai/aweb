@@ -9,7 +9,6 @@ from uuid import UUID
 
 from awid.did import did_from_public_key
 from aweb.service_errors import NotFoundError
-from chat_coverage_support import migrate_chat_conversation_coverage
 from aweb.messaging.chat import (
     ensure_session,
     get_pending_conversations,
@@ -49,8 +48,8 @@ async def _setup_team_and_agents(aweb_db, team_id="backend:acme.com"):
 
     alice = await aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, identity_scope, did_aw_verified_key)
-        VALUES ($1, $2, 'did:aw:alice', 'alice', 'global', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN $2 END)
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, identity_scope, did_aw_verified_key, inbound_mode)
+        VALUES ($1, $2, 'did:aw:alice', 'alice', 'global', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN $2 END, 'open')
         RETURNING agent_id
         """,
         team_id,
@@ -58,8 +57,8 @@ async def _setup_team_and_agents(aweb_db, team_id="backend:acme.com"):
     )
     bob = await aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, identity_scope, did_aw_verified_key)
-        VALUES ($1, $2, 'did:aw:bob', 'bob', 'global', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN $2 END)
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, identity_scope, did_aw_verified_key, inbound_mode)
+        VALUES ($1, $2, 'did:aw:bob', 'bob', 'global', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN $2 END, 'open')
         RETURNING agent_id
         """,
         team_id,
@@ -181,8 +180,8 @@ async def test_ensure_session_isolates_reused_alias(aweb_cloud_db, replaced_inde
     )
     replacement = await aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, address, identity_scope, did_aw_verified_key)
-        VALUES ($1, $2, $3, $4, $5, 'global', CASE WHEN NULLIF($3, '') IS NOT NULL THEN $2 END)
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, address, identity_scope, did_aw_verified_key, inbound_mode)
+        VALUES ($1, $2, $3, $4, $5, 'global', CASE WHEN NULLIF($3, '') IS NOT NULL THEN $2 END, 'open')
         RETURNING *
         """,
         old["team_id"],
@@ -228,8 +227,8 @@ async def test_ensure_session_isolates_reused_alias(aweb_cloud_db, replaced_inde
 
 
 @pytest.mark.asyncio
-async def test_legacy_session_does_not_adopt_a_new_local_key(aweb_cloud_db):
-    aweb_db = aweb_cloud_db.aweb_db
+async def test_legacy_session_does_not_adopt_a_new_local_key(pre_chat_coverage_db, chat_coverage_upgrade):
+    aweb_db = pre_chat_coverage_db.aweb_db
     alice, bob = await _setup_team_and_agents(aweb_db)
     # A new local key is a new identity; the retained actor ID grants no continuity.
     await aweb_db.execute(
@@ -261,7 +260,7 @@ async def test_legacy_session_does_not_adopt_a_new_local_key(aweb_cloud_db):
             participant["agent_id"],
             participant["did_key"],
         )
-    await migrate_chat_conversation_coverage(aweb_db)
+    await chat_coverage_upgrade.apply()
     new_session = await ensure_session(
         _DbShim(aweb_db),
         team_id="backend:acme.com",
@@ -279,19 +278,20 @@ async def test_legacy_session_does_not_adopt_a_new_local_key(aweb_cloud_db):
 
 @pytest.mark.asyncio
 async def test_ensure_session_reuses_the_migrated_chat_conversation(
-    aweb_cloud_db,
+    pre_chat_coverage_db,
+    chat_coverage_upgrade,
 ):
-    db_shim = _DbShim(aweb_cloud_db.aweb_db)
-    alice, bob = await _setup_team_and_agents(aweb_cloud_db.aweb_db)
+    db_shim = _DbShim(pre_chat_coverage_db.aweb_db)
+    alice, bob = await _setup_team_and_agents(pre_chat_coverage_db.aweb_db)
 
-    session = await aweb_cloud_db.aweb_db.fetch_one(
+    session = await pre_chat_coverage_db.aweb_db.fetch_one(
         """
         INSERT INTO {{tables.chat_sessions}} (team_id, created_by)
         VALUES ('backend:acme.com', 'alice')
         RETURNING session_id
         """
     )
-    await aweb_cloud_db.aweb_db.execute(
+    await pre_chat_coverage_db.aweb_db.execute(
         """
         INSERT INTO {{tables.chat_participants}} (session_id, did, agent_id, alias, address)
         VALUES
@@ -303,7 +303,7 @@ async def test_ensure_session_reuses_the_migrated_chat_conversation(
         bob["agent_id"],
     )
 
-    await migrate_chat_conversation_coverage(aweb_cloud_db.aweb_db)
+    await chat_coverage_upgrade.apply()
     reused = await ensure_session(
         db_shim,
         team_id="backend:acme.com",
@@ -312,7 +312,7 @@ async def test_ensure_session_reuses_the_migrated_chat_conversation(
     )
 
     assert reused == session["session_id"]
-    conversation = await aweb_cloud_db.aweb_db.fetch_one(
+    conversation = await pre_chat_coverage_db.aweb_db.fetch_one(
         """
         SELECT conversation_id, conversation_type
         FROM {{tables.conversations}}
@@ -320,7 +320,7 @@ async def test_ensure_session_reuses_the_migrated_chat_conversation(
         """,
         reused,
     )
-    participants = await aweb_cloud_db.aweb_db.fetch_all(
+    participants = await pre_chat_coverage_db.aweb_db.fetch_all(
         """
         SELECT did, transport_hint
         FROM {{tables.conversation_participants}}
@@ -418,8 +418,8 @@ async def test_send_non_participant_returns_none(aweb_cloud_db):
     charlie_did = _make_did_key()
     charlie = await aweb_cloud_db.aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, identity_scope, did_aw_verified_key)
-        VALUES ('backend:acme.com', $1, 'did:aw:charlie', 'charlie', 'local', CASE WHEN NULLIF('did:aw:charlie', '') IS NOT NULL THEN $1 END)
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, identity_scope, did_aw_verified_key, inbound_mode)
+        VALUES ('backend:acme.com', $1, 'did:aw:charlie', 'charlie', 'local', CASE WHEN NULLIF('did:aw:charlie', '') IS NOT NULL THEN $1 END, 'open')
         RETURNING agent_id
         """,
         charlie_did,
@@ -544,8 +544,8 @@ async def test_ensure_session_reuses_the_same_identity_across_membership_project
     alice_new_did_key = _make_did_key()
     old_row = await aweb_cloud_db.aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, identity_scope, did_aw_verified_key)
-        VALUES ('backend:acme.com', $1, $2, 'alice-old', 'global', CASE WHEN NULLIF($2, '') IS NOT NULL THEN $1 END)
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, identity_scope, did_aw_verified_key, inbound_mode)
+        VALUES ('backend:acme.com', $1, $2, 'alice-old', 'global', CASE WHEN NULLIF($2, '') IS NOT NULL THEN $1 END, 'open')
         RETURNING agent_id
         """,
         alice_old_did_key,
@@ -553,8 +553,8 @@ async def test_ensure_session_reuses_the_same_identity_across_membership_project
     )
     new_row = await aweb_cloud_db.aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, identity_scope, did_aw_verified_key)
-        VALUES ('ops:acme.com', $1, $2, 'alice-new', 'global', CASE WHEN NULLIF($2, '') IS NOT NULL THEN $1 END)
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, identity_scope, did_aw_verified_key, inbound_mode)
+        VALUES ('ops:acme.com', $1, $2, 'alice-new', 'global', CASE WHEN NULLIF($2, '') IS NOT NULL THEN $1 END, 'open')
         RETURNING agent_id
         """,
         alice_new_did_key,
@@ -609,10 +609,12 @@ async def test_ensure_session_reuses_the_same_identity_across_membership_project
     "state", ["time_expired", "closed", "expired", "active", "migrated_history"]
 )
 async def test_session_reuse_respects_canonical_conversation_lifecycle(
-    aweb_cloud_db, state
+    pre_chat_coverage_db, state, chat_coverage_upgrade
 ):
-    db = _DbShim(aweb_cloud_db.aweb_db)
-    alice, bob = await _setup_team_and_agents(aweb_cloud_db.aweb_db)
+    if state != "migrated_history":
+        await chat_coverage_upgrade.apply()
+    db = _DbShim(pre_chat_coverage_db.aweb_db)
+    alice, bob = await _setup_team_and_agents(pre_chat_coverage_db.aweb_db)
     old_id = await ensure_session(
         db,
         team_id="backend:acme.com",
@@ -620,18 +622,18 @@ async def test_session_reuse_respects_canonical_conversation_lifecycle(
         created_by="alice",
     )
     if state == "migrated_history":
-        await aweb_cloud_db.aweb_db.execute(
+        await pre_chat_coverage_db.aweb_db.execute(
             "DELETE FROM {{tables.conversations}} WHERE conversation_id = $1",
             old_id,
         )
-        await migrate_chat_conversation_coverage(aweb_cloud_db.aweb_db)
+        await chat_coverage_upgrade.apply()
     elif state == "time_expired":
-        await aweb_cloud_db.aweb_db.execute(
+        await pre_chat_coverage_db.aweb_db.execute(
             "UPDATE {{tables.conversations}} SET expires_at = NOW() - INTERVAL '1 day' WHERE conversation_id = $1",
             old_id,
         )
     elif state in {"closed", "expired"}:
-        await aweb_cloud_db.aweb_db.execute(
+        await pre_chat_coverage_db.aweb_db.execute(
             "UPDATE {{tables.conversations}} SET status = $2 WHERE conversation_id = $1",
             old_id,
             state,
@@ -648,7 +650,7 @@ async def test_session_reuse_respects_canonical_conversation_lifecycle(
     else:
         assert new_id != old_id
     assert (
-        await aweb_cloud_db.aweb_db.fetch_value(
+        await pre_chat_coverage_db.aweb_db.fetch_value(
             "SELECT status FROM {{tables.conversations}} WHERE conversation_id = $1",
             new_id,
         )

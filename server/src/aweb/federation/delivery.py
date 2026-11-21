@@ -489,7 +489,7 @@ async def _authorize_policy(
     envelope: FederationEnvelope,
     recipient: Mapping,
     stored_route_continuation: bool,
-    registry_client=None,
+    registry_client,
 ) -> None:
     try:
         await authorize_delivery(
@@ -902,7 +902,7 @@ async def _deliver_federated_phase_b(
     recipient: Mapping,
     id_chain: dict | None = None,
     authority_token: AuthoritySecurityToken | None,
-    registry_client=None,
+    registry_client,
     stored_route_continuation: bool = False,
     stored_route_snapshot: dict | None = None,
     before_commit: BeforeCommit | None = None,
@@ -1098,7 +1098,7 @@ async def deliver_federated_phase_b(
     recipient: Mapping,
     id_chain: dict | None = None,
     authority_token: AuthoritySecurityToken | None,
-    registry_client=None,
+    registry_client,
     stored_route_continuation: bool = False,
     stored_route_snapshot: dict | None = None,
     before_commit: BeforeCommit | None = None,

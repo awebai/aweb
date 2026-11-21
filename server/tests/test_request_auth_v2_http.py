@@ -10,6 +10,8 @@ from awid.signing import canonical_json_bytes, sign_message
 from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
 from test_messages_http import _signed_identity_headers, _signed_team_headers
 
+__all__ = ["privacy_app"]
+
 
 def v2_headers(env, family, *, method="GET", path="/v1/messages/inbox", body=b"", identity_did_aw="", **overrides):
     actor = env.actors["alice"]

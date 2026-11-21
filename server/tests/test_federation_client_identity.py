@@ -8,6 +8,8 @@ from awid.federation_errors import FederationAuthorityError
 from test_federation_envelope import _envelope, _sign
 from test_dashboard_privacy import privacy_app as privacy_app
 
+__all__ = ["privacy_app"]
+
 
 class _FirstContactBudget:
     """Observe the route's budget key, then stop before external resolution."""
