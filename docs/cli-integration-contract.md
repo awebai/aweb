@@ -68,6 +68,15 @@ the registry's or service's own open refusal vocabulary.
 
 The existing JSON error envelope carries `error.code`, `error.message`, and,
 for service refusals, `http_status`, `detail`, and `reason` where available.
+Local ID-certificate refusals such as `request_binding_mismatch`,
+`human_mismatch`, `human_required`, `unregistered_parent`, `wrong_kind`, and
+verifier refusals use `error.code="error"` with the reason in `error.message`.
+A direct refusal has the bare reason as its message. A command may wrap it
+with context. HTTP refusals normally use `error.code="http_error"` with
+`error.http_status` and `error.reason` when the service supplies a reason.
+Consumers branch on the process exit status and structured fields and display
+`error.message` to the operator. See [the CLI error envelope](../cli/go/cmd/aw/errors.go#L136-L158).
+
 Service registration preserves the service's own refusal code as `error.code`
 and `reason`; unrecognized codes are retained. Service codes remain owned by
 the service, rather than becoming a universal CLI vocabulary.
