@@ -122,8 +122,11 @@ NOT_SHOWN = Refusal(404, "Asset not found")
 LINK_GONE = Refusal(404, "Presentation not found")
 # A capability of an uninstalled Folio (installation_access hides the cause's status).
 CAPABILITY_UNINSTALLED = Refusal(404, {"code": "installation_inactive"})
-# A member route of an uninstalled Folio.
-MEMBER_UNINSTALLED = Refusal(403, {"code": "installation_inactive"})
+# A member route of an uninstalled Folio: naapp-lib's admission finds no active
+# grant (team_grants.grant_for) and refuses before Folio's installation fence.
+MEMBER_UNINSTALLED = Refusal(
+    403, {"code": "scope_denied", "message": "The team has not granted this app any scopes"}
+)
 
 
 def _refused(response: httpx.Response, payload: bytes, refusal: Refusal) -> bool:
