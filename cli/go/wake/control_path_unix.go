@@ -19,23 +19,10 @@ func prepareControlSocket(path string) error {
 }
 
 func checkControlSocket(path string) error {
-	dir := filepath.Dir(path)
-	readDir := os.Stat
-	forbiddenMode := os.FileMode(0o022)
-	if custodypath.IsRuntime(path) {
-		// The fixed per-user directory for shortened paths must be private
-		// and must itself be a directory, even under a shared temp root.
-		readDir = os.Lstat
-		forbiddenMode = 0o077
-	}
-	info, err := readDir(dir)
-	if err != nil {
+	if err := checkWakeControlDirectory(filepath.Dir(path), custodypath.IsRuntime(path)); err != nil {
 		return err
 	}
-	if !info.IsDir() || !ownedByWakeUser(info) || info.Mode().Perm()&forbiddenMode != 0 {
-		return fmt.Errorf("unsafe wake control directory %s; use an owner-controlled wake state directory", dir)
-	}
-	info, err = os.Lstat(path)
+	info, err := os.Lstat(path)
 	if os.IsNotExist(err) {
 		return nil
 	}
@@ -44,6 +31,23 @@ func checkControlSocket(path string) error {
 	}
 	if info.Mode()&os.ModeSocket == 0 || !ownedByWakeUser(info) || info.Mode().Perm()&0o077 != 0 {
 		return fmt.Errorf("unsafe wake control socket %s; inspect it before restarting the wake broker", path)
+	}
+	return nil
+}
+
+func checkWakeControlDirectory(dir string, privateRuntime bool) error {
+	readDir := os.Stat
+	if privateRuntime {
+		// The fixed per-user directory for shortened paths must be private
+		// and must itself be a directory, even under a shared temp root.
+		readDir = os.Lstat
+	}
+	info, err := readDir(dir)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() || !ownedByWakeUser(info) || (privateRuntime && info.Mode().Perm()&0o077 != 0) {
+		return fmt.Errorf("unsafe wake control directory %s; use an owner-controlled wake state directory", dir)
 	}
 	return nil
 }
