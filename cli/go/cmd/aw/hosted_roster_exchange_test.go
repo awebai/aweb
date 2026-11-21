@@ -26,12 +26,13 @@ import (
 // The hosted boundary is HTTP; the child's proof, parent approval, import and
 // chain verification run the production exchange, with no substituted signer.
 func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
-	for _, scenario := range []string{"three children", "cert-only worktree", "cert-only revoked parent", "revoked parent", "different preview parent", "join-from workspace", "join-from identity home", "join-from revoked parent", "further-team external home", "further-team cross-machine recipe", "further-team retry", "further-team api-base alias", "further-team cleanup warning", "further-team own chain", "further-team parent source", "further-team other human fresh", "further-team independent init", "further-team own chain retry", "further-team explicit condition echo", "further-team explicit condition missing echo"} {
+	for _, scenario := range []string{"three children", "cert-only worktree", "cert-only revoked parent", "revoked parent", "different preview parent", "join-from workspace", "join-from identity home", "join-from revoked parent", "further-team external home", "further-team cross-machine recipe", "further-team retry", "further-team api-base alias", "further-team consumption failure", "further-team own chain", "further-team parent source", "further-team other human fresh", "further-team independent init", "further-team own chain retry", "further-team explicit condition echo", "further-team explicit condition missing echo"} {
 		t.Run(scenario, func(t *testing.T) {
 			resetTeamHumanCreateGlobals(t)
 			v := loadWhoVectors(t)
 			t.Setenv("HOME", t.TempDir())
 			t.Setenv("AW_CONFIG_PATH", "")
+
 			root := t.TempDir()
 			joinFrom := strings.HasPrefix(scenario, "join-from")
 			furtherTeam := strings.HasPrefix(scenario, "further-team")
@@ -145,7 +146,7 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 							http.Error(w, "missing own chain", 422)
 							return
 						}
-						chain = req.IDChain
+						chain = *req.IDChain
 					} else {
 						chain = req.IDTree.IDChain
 						requestID = req.IDTree.RequestID
@@ -166,8 +167,8 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 					if err != nil || pending == nil || pending.DIDKey != req.DID || (!independent && pending.Tree.RequestID != requestID) {
 						t.Error("original child request/key not retained through exchange")
 					}
-					if scenario == "further-team cleanup warning" {
-						// The exchange has finished; make actual deletion fail even
+					if scenario == "further-team consumption failure" {
+						// The exchange has finished; make consumption recording fail even
 						// when tests run as root, without substituting filesystem calls.
 						dir, err := awconfig.DefaultTeamInvitesDir()
 						if err != nil {
@@ -256,30 +257,21 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 					t.Setenv("AWEB_URL", origin)
 				}
 				teamAcceptAlias, teamAcceptLocal, teamAcceptGlobal = "child", true, false
-				// The cleanup-warning scenario reads what accepting prints to stderr.
-				var cleanupWarning string
 				accept := func() error {
 					var result error
-					run := func() {
-						withTestWorkingDir(t, childDir, func() {
-							cmd := authTestCmd(&bytes.Buffer{})
-							cmd.Flags().Bool("token-stdin", true, "")
-							if scenario == "further-team parent source" {
-								cmd.Flags().String("parent", root, "")
-							}
-							cmd.SetIn(strings.NewReader(token + "\n"))
-							if scenario == "further-team independent init" {
-								result = runInit(cmd, nil)
-							} else {
-								result = runTeamAcceptInvite(cmd, nil)
-							}
-						})
-					}
-					if scenario == "further-team cleanup warning" {
-						cleanupWarning += captureStderr(t, run)
-					} else {
-						run()
-					}
+					withTestWorkingDir(t, childDir, func() {
+						cmd := authTestCmd(&bytes.Buffer{})
+						cmd.Flags().Bool("token-stdin", true, "")
+						if scenario == "further-team parent source" {
+							cmd.Flags().String("parent", root, "")
+						}
+						cmd.SetIn(strings.NewReader(token + "\n"))
+						if scenario == "further-team independent init" {
+							result = runInit(cmd, nil)
+						} else {
+							result = runTeamAcceptInvite(cmd, nil)
+						}
+					})
 					return result
 				}
 				firstErr := accept()
@@ -381,6 +373,15 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 					}
 					firstErr = accept()
 				}
+				if scenario == "further-team consumption failure" {
+					if firstErr == nil || !strings.Contains(firstErr.Error(), "membership was issued, but recording consumed invite") {
+						t.Fatalf("consumption failure was hidden: %v", firstErr)
+					}
+					if _, err := awconfig.LoadTeamCertificateForTeamFromIdentityHome(recipientHome, team); err != nil {
+						t.Fatalf("issued certificate was lost: %v", err)
+					}
+					return
+				}
 				if firstErr != nil {
 					t.Fatalf("further-team accept: %v", firstErr)
 				}
@@ -403,15 +404,8 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 				if err != nil || verdict.Outcome != "nearest_human" {
 					t.Fatalf("selected home ancestry=%+v err=%v", verdict, err)
 				}
-				if scenario == "further-team cleanup warning" {
-					if !strings.Contains(cleanupWarning, "warning: failed to delete consumed invite "+recordID+":") {
-						t.Fatalf("missing cleanup warning: %q", cleanupWarning)
-					}
-					if _, err := os.Stat(filepath.Join(recipientHome, hostedInviteRecoveryFile)); !os.IsNotExist(err) {
-						t.Fatalf("successful accept retained recovery: %v", err)
-					}
-				} else if _, err := awconfig.LoadTeamInvite(recordID); !os.IsNotExist(err) {
-					t.Fatalf("success retained link: %v", err)
+				if scenario != "further-team cross-machine recipe" {
+					requireConsumedInviteRecord(t, recordID)
 				}
 				return
 			}

@@ -3,8 +3,9 @@ package awid
 import (
 	"crypto/ed25519"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
+
+	"github.com/awebai/aw/signaturewire"
 )
 
 // AppTaskAuthorizationPrefix domain-separates a member's task authorization
@@ -42,5 +43,5 @@ func SignAppTaskAuthorization(key ed25519.PrivateKey, payload map[string]any) (s
 	if err != nil {
 		return "", err
 	}
-	return base64.RawURLEncoding.EncodeToString(ed25519.Sign(key, signing)), nil
+	return signaturewire.SignURL(key, signing), nil
 }
