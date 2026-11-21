@@ -1041,9 +1041,11 @@ async def test_answer_requires_fresh_member_authority_even_for_replay(
     clock[0] += 61
     refused = await _v2_request(env, "bob", "POST", ref + "/answer", answer)
     assert refused.status_code == (401 if authority == "revoked" else 503), refused.text
-    assert refused.json()["detail"] == (
-        "revoked" if authority == "revoked" else "authority_unavailable"
-    )
+    detail = refused.json()["detail"]
+    if authority == "revoked":
+        assert detail["code"] == "certificate_revoked"
+    else:
+        assert detail == "authority_unavailable"
     assert await env.db.fetch_value("SELECT count(*) FROM {{tables.task_answers}}") == int(replay)
     assert await env.db.fetch_value(
         "SELECT count(*) FROM {{tables.task_answer_stage_nonces}}"
