@@ -276,7 +276,12 @@ func readPrivateRegular(path string) ([]byte, error) {
 	if !info.Mode().IsRegular() {
 		return nil, fmt.Errorf("%s is not a regular file", path)
 	}
-	data, err := os.ReadFile(path)
+	var data []byte
+	if filepath.Ext(path) == ".key" {
+		data, err = awid.ReadPrivateKeyFile(path)
+	} else {
+		data, err = os.ReadFile(path)
+	}
 	if data == nil && err == nil {
 		data = []byte{}
 	}

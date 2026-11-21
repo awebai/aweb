@@ -5,7 +5,7 @@
     "Each creation path is converted only when its actual constructor and real journey prove a chain or the required refusal. Legacy paths retain their existing behavior for now; reasons are explicit.",
     "Key rotation, team/session/encryption keys and reused projections are not new identity ancestry.",
     "Cloud coverage belongs to the application repository. Public external runtime paths remain listed with their repository owner.",
-    "The one primitive-use check permits shared verifiers and explicitly named released legacy files. It does not pin call counts or claim complete release qualification."
+    "The one primitive-use check permits shared owners and explicit exceptions for individual calls. Each exemption must resolve to one observed call."
   ],
   "creation_paths": [
     {
@@ -207,302 +207,120 @@
     }
   ],
   "primitive_guard": {
-    "legacy_files": [
+    "exempt_calls": [
       {
-        "file": "awid/src/awid/attestation_records.py",
-        "reason": "Released member-attestation signatures retain their existing verification contract."
-      },
-      {
-        "file": "awid/src/awid/e2ee_keys.py",
-        "reason": "Released e2ee keys signing/key custody; ID-certificate verification uses the shared verifier."
-      },
-      {
-        "file": "awid/src/awid/registry.py",
-        "reason": "Registry request signing derives the current public key; ID-tree signer answers are checked by the shared strict verifier."
-      },
-      {
-        "file": "awid/src/awid/signing.py",
-        "reason": "Released message signatures retain their existing verification contract; ID certificates use the shared verifier."
-      },
-      {
-        "file": "awid/src/awid_service/testing.py",
-        "reason": "Existing reusable real-service test support signs synthetic fixture identities."
-      },
-      {
-        "file": "channel-core/src/api/client.ts",
-        "reason": "Released client signing/key custody; ID-certificate verification uses the shared verifier."
-      },
-      {
-        "file": "channel-core/src/config.ts",
-        "reason": "Released local key configuration and SHA-512 wiring for existing message signatures."
-      },
-      {
-        "file": "channel-core/src/identity/registry.ts",
-        "reason": "Released registry signing/key custody; ID-certificate verification uses the shared verifier."
-      },
-      {
-        "file": "channel-core/src/identity/signing.ts",
-        "reason": "Released message signatures retain their existing verification contract; ID certificates use the shared verifier."
-      },
-      {
-        "file": "channel-core/src/identity/trust.ts",
-        "reason": "Released trust signing/key custody; ID-certificate verification uses the shared verifier."
-      },
-      {
-        "file": "cli/go/awconfig/controllers.go",
-        "reason": "Released controllers signing/key custody; ID-certificate verification uses the shared verifier."
-      },
-      {
-        "file": "cli/go/awconfig/team_keys.go",
-        "reason": "Released team keys signing/key custody; ID-certificate verification uses the shared verifier."
-      },
-      {
-        "file": "cli/go/awid/a2a_publication.go",
-        "reason": "Released a2a publication signing/key custody; ID-certificate verification uses the shared verifier."
-      },
-      {
-        "file": "cli/go/awid/app_task_authorization.go",
-        "reason": "Released app task authorization signing/key custody; ID-certificate verification uses the shared verifier."
-      },
-      {
-        "file": "cli/go/awid/atomic_address_claim.go",
-        "reason": "Released atomic address claim signing/key custody; ID-certificate verification uses the shared verifier."
-      },
-      {
-        "file": "cli/go/awid/attestation_records.go",
-        "reason": "Released member-attestation signatures retain their existing verification contract."
-      },
-      {
-        "file": "cli/go/awid/certificate.go",
-        "reason": "Released team-membership certificate signatures are separate from ID-parent certificates."
-      },
-      {
-        "file": "cli/go/awid/client.go",
-        "reason": "Released client signing/key custody; ID-certificate verification uses the shared verifier."
-      },
-      {
-        "file": "cli/go/awid/custody.go",
-        "reason": "Released custody signing/key custody; ID-certificate verification uses the shared verifier."
-      },
-      {
-        "file": "cli/go/awid/e2ee_keys.go",
-        "reason": "Released e2ee keys signing/key custody; ID-certificate verification uses the shared verifier."
-      },
-      {
-        "file": "cli/go/awid/e2ee_messages.go",
-        "reason": "Released e2ee messages signing/key custody; ID-certificate verification uses the shared verifier."
-      },
-      {
-        "file": "cli/go/awid/human_channels_presence.go",
-        "reason": "Released human channels presence signing/key custody; ID-certificate verification uses the shared verifier."
-      },
-      {
-        "file": "cli/go/awid/human_signer.go",
-        "reason": "Human key custody: the human key, decrypted for one signature after its passphrase prompt, signs exactly the bytes it is given; ID-certificate verification uses the shared verifier."
+        "file": "cli/go/awid/keys.go",
+        "symbol": "GenerateKeypair",
+        "callee": "crypto/ed25519.GenerateKey",
+        "reason": "Generates fresh Ed25519 key material for the existing local custody API."
       },
       {
         "file": "cli/go/awid/keys.go",
-        "reason": "Shared key generation and seed loading for existing custody; key creation alone does not issue an ID certificate."
-      },
-      {
-        "file": "cli/go/awid/onboarding_bootstrap_redeem.go",
-        "reason": "Released onboarding bootstrap redeem signing/key custody; ID-certificate verification uses the shared verifier."
-      },
-      {
-        "file": "cli/go/awid/onboarding_claim_human.go",
-        "reason": "Released onboarding claim human signing/key custody; ID-certificate verification uses the shared verifier."
-      },
-      {
-        "file": "cli/go/awid/onboarding_cli_signup.go",
-        "reason": "Released onboarding cli signup signing/key custody; ID-certificate verification uses the shared verifier."
-      },
-      {
-        "file": "cli/go/awid/onboarding_didkey_signing.go",
-        "reason": "Released message signatures retain their existing verification contract; ID certificates use the shared verifier."
-      },
-      {
-        "file": "cli/go/awid/owneract.go",
-        "reason": "Released controller-signed owner-act family; controller authority stays distinct from identity ancestry."
-      },
-      {
-        "file": "cli/go/awid/registry_client.go",
-        "reason": "Released registry client signing/key custody; ID-certificate verification uses the shared verifier."
-      },
-      {
-        "file": "cli/go/awid/registry_namespace.go",
-        "reason": "Released registry namespace signing/key custody; ID-certificate verification uses the shared verifier."
-      },
-      {
-        "file": "cli/go/awid/rotate.go",
-        "reason": "Released rotate signing/key custody; ID-certificate verification uses the shared verifier."
-      },
-      {
-        "file": "cli/go/awid/signing.go",
-        "reason": "Released message signatures retain their existing verification contract; ID certificates use the shared verifier."
-      },
-      {
-        "file": "cli/go/awid/stable_identity.go",
-        "reason": "Released stable identity signing/key custody; ID-certificate verification uses the shared verifier."
-      },
-      {
-        "file": "cli/go/awid/team_server.go",
-        "reason": "Released team server signing/key custody; ID-certificate verification uses the shared verifier."
-      },
-      {
-        "file": "cli/go/cmd/aw/activity_hook.go",
-        "reason": "Released CLI activity hook signing/key custody; retains its existing signed family."
+        "symbol": "ParseSigningKey",
+        "callee": "crypto/ed25519.NewKeyFromSeed",
+        "reason": "Reconstructs the private key after parsing the stored signing seed."
       },
       {
         "file": "cli/go/cmd/aw/agent_status.go",
-        "reason": "Released CLI agent status signing/key custody; retains its existing signed family."
+        "symbol": "runStatusPublish",
+        "callee": "crypto/ed25519.NewKeyFromSeed",
+        "reason": "Reconstructs the explicit deterministic seed for the offline status test path."
       },
       {
         "file": "cli/go/cmd/aw/id_create_hosted.go",
-        "reason": "Released CLI id create hosted signing/key custody; retains its existing signed family."
-      },
-      {
-        "file": "cli/go/cmd/aw/id_team.go",
-        "reason": "Released CLI id team signing/key custody; retains its existing signed family."
-      },
-      {
-        "file": "cli/go/cmd/aw/team_ensure.go",
-        "reason": "Released CLI team ensure signing/key custody; retains its existing signed family."
-      },
-      {
-        "file": "cli/go/cmd/aw/team_replace_key.go",
-        "reason": "Released CLI team replace key signing/key custody; retains its existing signed family."
-      },
-      {
-        "file": "cli/go/hookevent/delivery.go",
-        "reason": "Released delivery signing/key custody; ID-certificate verification uses the shared verifier."
-      },
-      {
-        "file": "cli/go/hookevent/envelope.go",
-        "reason": "Released envelope signing/key custody; ID-certificate verification uses the shared verifier."
+        "symbol": "prepareHostedIdentity",
+        "callee": "crypto/ed25519.NewKeyFromSeed",
+        "reason": "Restores the same private key from the retained hosted-creation seed."
       },
       {
         "file": "cli/tests/request_auth_v2_driver.go",
-        "reason": "Existing request auth v2 driver test support or fixture signatures; not an identity-tree verifier."
+        "symbol": "run",
+        "callee": "crypto/ed25519.NewKeyFromSeed",
+        "reason": "Builds the deterministic fixture key for the request-auth conformance driver."
       },
       {
         "file": "naapp-lib/renderer/link-client.mjs",
-        "reason": "Released naapp link client signing/key custody; separate from ID-certificate verification."
+        "symbol": "createLinkClient.connect",
+        "callee": "crypto.subtle.generateKey",
+        "reason": "Generates the nonexportable browser key for the released link client."
       },
       {
-        "file": "naapp-lib/src/aweb_naapp/hooks/delivery.py",
-        "reason": "Released naapp delivery signing/key custody; separate from ID-certificate verification."
+        "file": "naapp-lib/renderer/link-client.mjs",
+        "symbol": "sessionDidKey",
+        "callee": "crypto.subtle.exportKey",
+        "reason": "Exports the browser session public key for its did:key projection."
       },
       {
-        "file": "naapp-lib/src/aweb_naapp/hooks/envelope.py",
-        "reason": "Released naapp envelope signing/key custody; separate from ID-certificate verification."
-      },
-      {
-        "file": "naapp-lib/src/aweb_naapp/hooks/owner_act.py",
-        "reason": "Released controller-signed owner-act family; controller authority stays distinct from identity ancestry."
-      },
-      {
-        "file": "naapp-lib/src/aweb_naapp/hooks/producer.py",
-        "reason": "Released naapp producer signing/key custody; separate from ID-certificate verification."
+        "file": "naapp-lib/renderer/link-client.mjs",
+        "symbol": "signLinkRequest",
+        "callee": "crypto.subtle.sign",
+        "reason": "Signs the released link request through browser custody of the private key."
       },
       {
         "file": "naapp-lib/src/aweb_naapp/pages/assets/page-link-client.js",
-        "reason": "Released naapp page link client signing/key custody; separate from ID-certificate verification."
+        "symbol": "createLinkClient.connect",
+        "callee": "crypto.subtle.generateKey",
+        "reason": "Generates the nonexportable browser key for the released link client."
       },
       {
-        "file": "naapp-lib/src/aweb_naapp/runtime/app_credentials.py",
-        "reason": "Released naapp app credentials signing/key custody; separate from ID-certificate verification."
+        "file": "naapp-lib/src/aweb_naapp/pages/assets/page-link-client.js",
+        "symbol": "sessionDidKey",
+        "callee": "crypto.subtle.exportKey",
+        "reason": "Exports the browser session public key for its did:key projection."
       },
       {
-        "file": "naapp-lib/src/aweb_naapp/runtime/app_keys.py",
-        "reason": "Released naapp app keys signing/key custody; separate from ID-certificate verification."
-      },
-      {
-        "file": "naapp-lib/src/aweb_naapp/runtime/link_requests.py",
-        "reason": "Released naapp link requests signing/key custody; separate from ID-certificate verification."
-      },
-      {
-        "file": "naapp-lib/src/aweb_naapp/runtime/task_requests.py",
-        "reason": "Released naapp task requests signing/key custody; separate from ID-certificate verification."
-      },
-      {
-        "file": "naapp-lib/src/aweb_naapp/runtime/usage.py",
-        "reason": "Released naapp usage signing/key custody; separate from ID-certificate verification."
+        "file": "naapp-lib/src/aweb_naapp/pages/assets/page-link-client.js",
+        "symbol": "signLinkRequest",
+        "callee": "crypto.subtle.sign",
+        "reason": "Signs the released link request through browser custody of the private key."
       },
       {
         "file": "naapp-lib/src/aweb_naapp/signing_key.py",
-        "reason": "Released naapp signing key signing/key custody; separate from ID-certificate verification."
+        "symbol": "parse_signing_key_hex",
+        "callee": "nacl.signing.SigningKey",
+        "reason": "Released signing-key reader returns a typed seed holder without importing the AWID runtime."
       },
       {
         "file": "naapp-lib/testing/src/aweb_naapp_testing/__init__.py",
-        "reason": "Existing reusable real-service test support signs synthetic fixture identities."
+        "symbol": "_fixture_signing_key",
+        "callee": "nacl.signing.SigningKey.generate",
+        "reason": "Reusable real-service fixture mints disposable typed signing keys."
       },
       {
         "file": "naapp-lib/testing/src/aweb_naapp_testing/owner_acts.py",
-        "reason": "Existing reusable real-service test support signs synthetic fixture identities."
-      },
-      {
-        "file": "naapp/library/src/library/app_emit.py",
-        "reason": "Released naapp app emit signing/key custody; separate from ID-certificate verification."
-      },
-      {
-        "file": "naapp/logs/src/aweb_logs/chain.py",
-        "reason": "Released naapp chain signing/key custody; separate from ID-certificate verification."
-      },
-      {
-        "file": "naapp/logs/src/aweb_logs/ledger.py",
-        "reason": "Released naapp ledger signing/key custody; separate from ID-certificate verification."
+        "symbol": "team_owner",
+        "callee": "nacl.signing.SigningKey.generate",
+        "reason": "Reusable owner-act fixture mints a disposable typed signing key."
       },
       {
         "file": "naapp/secrets/runner/src/aweb_secrets_runner/protocol.py",
-        "reason": "Released naapp protocol signing/key custody; separate from ID-certificate verification."
+        "symbol": "public_key",
+        "callee": "cryptography.hazmat.primitives.asymmetric.ed25519.Ed25519PublicKey.from_public_bytes",
+        "reason": "Standalone Secrets runner DID codec creates a key object for the runner's bounded verifier."
       },
       {
         "file": "naapp/secrets/runner/src/aweb_secrets_runner/registration.py",
-        "reason": "Released naapp registration signing/key custody; separate from ID-certificate verification."
+        "symbol": "register",
+        "callee": "cryptography.hazmat.primitives.asymmetric.ed25519.Ed25519PrivateKey.generate",
+        "reason": "Standalone Secrets runner creates its own local key using its existing cryptography dependency."
+      },
+      {
+        "file": "naapp/secrets/runner/src/aweb_secrets_runner/signature_wire.py",
+        "symbol": "sign_bytes",
+        "callee": "cryptography.hazmat.primitives.asymmetric.ed25519.Ed25519PrivateKey.sign",
+        "reason": "Standalone Secrets runner signature owner uses its existing cryptography dependency."
+      },
+      {
+        "file": "naapp/secrets/runner/src/aweb_secrets_runner/signature_wire.py",
+        "symbol": "verify_bytes",
+        "callee": "cryptography.hazmat.primitives.asymmetric.ed25519.Ed25519PublicKey.verify",
+        "reason": "Standalone Secrets runner signature owner checks the shared point and scalar policy before native verification."
       },
       {
         "file": "naapp/secrets/runner/src/aweb_secrets_runner/state.py",
-        "reason": "Released naapp state signing/key custody; separate from ID-certificate verification."
-      },
-      {
-        "file": "naapp/secrets/scripts/gen_change_vectors.py",
-        "reason": "Existing gen change vectors test support or fixture signatures; not an identity-tree verifier."
-      },
-      {
-        "file": "naapp/secrets/src/aweb_secrets/run_service.py",
-        "reason": "Released naapp run service signing/key custody; separate from ID-certificate verification."
-      },
-      {
-        "file": "naapp/secrets/src/aweb_secrets/runner_protocol.py",
-        "reason": "Released naapp runner protocol signing/key custody; separate from ID-certificate verification."
-      },
-      {
-        "file": "naapp/secrets/src/aweb_secrets/runner_routes.py",
-        "reason": "Released naapp runner routes signing/key custody; separate from ID-certificate verification."
-      },
-      {
-        "file": "scripts/e2e/folio_uninstall_grant.py",
-        "reason": "Existing folio uninstall grant test support or fixture signatures; not an identity-tree verifier."
-      },
-      {
-        "file": "scripts/e2e/pin-store-multiprocess-gate/orchestrate.mjs",
-        "reason": "Existing orchestrate test support or fixture signatures; not an identity-tree verifier."
-      },
-      {
-        "file": "scripts/freeze_human_channels_presence.py",
-        "reason": "Existing freeze human channels presence test support or fixture signatures; not an identity-tree verifier."
-      },
-      {
-        "file": "scripts/freeze_human_channels_profile.py",
-        "reason": "Existing freeze human channels profile test support or fixture signatures; not an identity-tree verifier."
-      },
-      {
-        "file": "server/src/aweb/e2ee_messages.py",
-        "reason": "Released e2ee messages signing/key custody; ID-certificate verification uses the shared verifier."
-      },
-      {
-        "file": "server/src/aweb/human_channels/presence.py",
-        "reason": "Released presence signing/key custody; ID-certificate verification uses the shared verifier."
+        "symbol": "IdentityStore.load",
+        "callee": "cryptography.hazmat.primitives.asymmetric.ed25519.Ed25519PrivateKey.from_private_bytes",
+        "reason": "Standalone Secrets runner reloads its existing local key without the AWID service dependency."
       }
     ]
   }

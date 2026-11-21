@@ -7,6 +7,7 @@ import os
 import subprocess
 import tempfile
 import unittest
+from http.client import RemoteDisconnected
 from pathlib import Path
 from unittest.mock import patch
 
@@ -18,10 +19,12 @@ spec.loader.exec_module(boundaries)
 
 
 class PublishedPortPropertyTests(unittest.TestCase):
-    def exercise(self, outcome, *, stolen=False, lost=False, stopped=False):
+    def exercise(self, outcome, *, stolen=False, lost=False, stopped=False,
+                 startup_error=None, persistent=False, later_error=None):
         containers = {}
         removed = []
         responses = []
+        requests = 0
 
         def docker(*args, check=True, **kwargs):
             code, out, err = 0, "", ""
@@ -40,16 +43,19 @@ class PublishedPortPropertyTests(unittest.TestCase):
                 out = "127.0.0.1:32768\n"
             elif args[1] == "inspect":
                 name = args[-1]
-                original, _ = containers[name]
-                bindings = [{"HostIp": "127.0.0.1", "HostPort": "32768"}]
-                if not original and outcome != "mapped":
-                    bindings = []
-                if original and lost and len(containers) > 1:
-                    bindings = []
-                out = json.dumps([{
-                    "State": {"Running": not (original and stopped and len(containers) > 1)},
-                    "NetworkSettings": {"Ports": {"80/tcp": bindings}},
-                }])
+                if name not in containers:
+                    code, err = 1, "no such container"
+                else:
+                    original, _ = containers[name]
+                    bindings = [{"HostIp": "127.0.0.1", "HostPort": "32768"}]
+                    if not original and outcome != "mapped":
+                        bindings = []
+                    if original and lost and len(containers) > 1:
+                        bindings = []
+                    out = json.dumps([{
+                        "State": {"Running": not (original and stopped and len(containers) > 1)},
+                        "NetworkSettings": {"Ports": {"80/tcp": bindings}},
+                    }])
             elif args[1] == "rm":
                 removed.append(args[-1])
             elif args[1:3] == ("container", "inspect"):
@@ -60,7 +66,13 @@ class PublishedPortPropertyTests(unittest.TestCase):
             return result
 
         def http(port):
+            nonlocal requests
+            requests += 1
             self.assertEqual(str(port), "32768")
+            if startup_error is not None and (requests == 1 or persistent):
+                raise startup_error
+            if later_error is not None and len(containers) > 1 and requests == 2:
+                raise later_error
             return "competitor\n" if stolen and len(containers) > 1 else responses[0] + "\n"
 
         boundary = boundaries.HostPublishedPortTests(
@@ -72,7 +84,10 @@ class PublishedPortPropertyTests(unittest.TestCase):
                     patch.dict(boundaries.os.environ, {}, clear=True):
                 boundary.test_docker_assigned_published_port_is_reserved_by_its_service()
         finally:
-            self.assertEqual(set(removed), set(containers))
+            expected = set(containers)
+            expected.update(name.replace("aweb-publish-original-", "aweb-publish-competitor-", 1)
+                            for name in containers)
+            self.assertEqual(set(removed), expected)
 
     def test_refused_competitor_and_success_without_mapping_are_valid(self):
         for outcome in ("refused", "unmapped"):
@@ -90,6 +105,26 @@ class PublishedPortPropertyTests(unittest.TestCase):
                 self.exercise("unmapped", **kwargs)
         with self.assertRaises(AssertionError):
             self.exercise("unrelated-error")
+
+    def test_startup_reset_or_refusal_is_retried(self):
+        for error in (ConnectionResetError, ConnectionRefusedError):
+            with self.subTest(error=error):
+                self.exercise("refused", startup_error=error("startup"))
+
+    def test_persistent_startup_disconnect_still_fails_at_the_original_deadline(self):
+        for error in (RemoteDisconnected, ConnectionResetError, ConnectionRefusedError):
+            with self.subTest(error=error), \
+                    patch.object(boundaries, "wait_for_published_port", return_value="32768"), \
+                    patch.object(boundaries.time, "monotonic", side_effect=[0, 9, 10]), \
+                    patch.object(boundaries.time, "sleep") as sleep:
+                with self.assertRaisesRegex(AssertionError, "original host publication never became reachable: startup"):
+                    self.exercise("refused", startup_error=error("startup"), persistent=True)
+                sleep.assert_called_once_with(0.1)
+
+    def test_disconnect_after_readiness_is_not_retried(self):
+        for error in (RemoteDisconnected, ConnectionResetError, ConnectionRefusedError):
+            with self.subTest(error=error), self.assertRaises(error):
+                self.exercise("refused", later_error=error("after readiness"))
 
 
 class HostPublishedPortWiringTests(unittest.TestCase):

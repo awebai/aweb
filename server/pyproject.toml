@@ -29,6 +29,9 @@ dependencies = [
     "httpx>=0.28.1",
     "mcp>=1.26.0,<2",
     "pgdbm>=0.5.0",
+    # asyncpg 0.31.0 never frees a pooled connection that a protocol abort
+    # closed, so closing the pool waits forever; 0.32.0 returns it (aweb-adji).
+    "asyncpg>=0.32.0",
     "pydantic>=2.11.7",
     "pydantic-settings>=2.10.1",
     "publicsuffix2>=2.20191221",
