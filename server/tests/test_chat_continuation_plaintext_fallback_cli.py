@@ -1,10 +1,12 @@
-"""A default chat continuation whose encryption aw cannot read is refused.
+"""A default chat continuation whose encryption aw cannot read is plaintext.
 
 A continuation inherits its conversation's end-to-end encryption, which aw
 reads from the conversation's stored rows. When the server will not show
 those rows to the sender (a grant scoped to chat.send only), or the widest
 page it returns is full of plaintext rows so an older encrypted one may
-exist, the default send is refused and names --e2ee and --plaintext.
+exist, the default send is sent server-readable, as released aw sends it,
+and aw says so on stderr. A headless sender is never refused for a choice
+it did not make.
 
 Real aweb, AWID and PostgreSQL: the grant is minted through
 POST /v1/identity-grants, every row is posted through the chat routes, the
@@ -50,7 +52,9 @@ async def _stored_bodies(env, session_id):
 
 
 async def _aw(env, home, registry_url, *args):
-    child_env = {k: v for k, v in os.environ.items() if not k.startswith(("AWEB_", "AWID_"))}
+    child_env = {
+        k: v for k, v in os.environ.items() if not k.startswith(("AWEB_", "AWID_"))
+    }
     child_env.update(
         AWEB_IDENTITY_HOME=str(home),
         AWEB_URL=str(env.client.base_url).rstrip("/"),
@@ -71,23 +75,29 @@ async def _aw(env, home, registry_url, *args):
     return process.returncode, output.decode()
 
 
-def _assert_refused(code, output):
-    assert code != 0, output
-    assert "cannot tell whether this conversation is end-to-end encrypted" in output, output
-    assert "--e2ee" in output and "--plaintext" in output, output
+def _assert_plaintext_with_notice(code, output):
+    assert code == 0, output
+    assert "cannot tell whether this conversation is end-to-end encrypted" in output, (
+        output
+    )
+    assert "sending server-readable plaintext" in output, output
 
 
 @pytest.mark.usefixtures("source_cli_binary")
 @pytest.mark.asyncio
-async def test_a_send_only_grant_cannot_continue_by_default_a_session_it_cannot_read(
+async def test_a_send_only_grant_continues_by_default_in_plaintext_a_session_it_cannot_read(
     privacy_app, tmp_path
 ):
     env = privacy_app
     session_id = await _open_plaintext_session(env)
     (tmp_path / "send-only").mkdir()
     (tmp_path / "readable").mkdir()
-    send_only, _ = await _grant_home(env, tmp_path / "send-only", "alice", ["chat.send"])
-    readable, _ = await _grant_home(env, tmp_path / "readable", "alice", ["chat.send", "chat.read"])
+    send_only, _ = await _grant_home(
+        env, tmp_path / "send-only", "alice", ["chat.send"]
+    )
+    readable, _ = await _grant_home(
+        env, tmp_path / "readable", "alice", ["chat.send", "chat.read"]
+    )
 
     async with _registry_http(env.registry_app) as (registry_url, _):
         code, output = await _aw(
@@ -102,9 +112,9 @@ async def test_a_send_only_grant_cannot_continue_by_default_a_session_it_cannot_
             "inherited",
             "--json",
         )
-        _assert_refused(code, output)
+        _assert_plaintext_with_notice(code, output)
         assert "HTTP 403" in output, output
-        assert "inherited" not in await _stored_bodies(env, session_id)
+        assert "inherited" in await _stored_bodies(env, session_id)
 
         # Controls: an explicit choice needs no reading, and a grant that may
         # read the session learns it is plaintext.
@@ -142,7 +152,7 @@ async def test_a_send_only_grant_cannot_continue_by_default_a_session_it_cannot_
 
 @pytest.mark.usefixtures("source_cli_binary")
 @pytest.mark.asyncio
-async def test_a_default_continuation_is_refused_once_the_readable_page_is_full_of_plaintext(
+async def test_a_default_continuation_is_plaintext_with_a_notice_once_the_readable_page_is_full(
     privacy_app, tmp_path
 ):
     env = privacy_app
@@ -175,6 +185,7 @@ async def test_a_default_continuation_is_refused_once_the_readable_page_is_full_
             "--json",
         )
         assert code == 0, output
+        assert "sending server-readable plaintext" not in output, output
 
         # 2000 rows fill the page: an older row could be encrypted.
         code, output = await _aw(
@@ -189,8 +200,8 @@ async def test_a_default_continuation_is_refused_once_the_readable_page_is_full_
             "beyond the page",
             "--json",
         )
-        _assert_refused(code, output)
+        _assert_plaintext_with_notice(code, output)
         assert "the 2000 messages the server returns are plaintext" in output, output
 
     stored = await _stored_bodies(env, session_id)
-    assert "last readable" in stored and "beyond the page" not in stored
+    assert "last readable" in stored and "beyond the page" in stored

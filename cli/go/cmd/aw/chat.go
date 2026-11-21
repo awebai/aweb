@@ -53,10 +53,11 @@ func e2eeFlagChoice(cmd *cobra.Command, e2ee, plaintext bool) chat.E2EEChoice {
 	}
 }
 
-// configureChatE2EE loads the keys a chat send may need: --e2ee requires
-// them, and an inherited continuation uses them when this workspace has them
-// (an encrypted conversation then fails closed at encryption without them).
-func configureChatE2EE(ctx context.Context, c *aweb.Client, sel *awconfig.Selection, choice chat.E2EEChoice) error {
+// configureSendE2EE loads the keys a chat or mail send may need: --e2ee
+// requires them, and an inherited continuation uses them when this workspace
+// has them (an encrypted conversation is continued in plaintext, with a
+// notice, without them).
+func configureSendE2EE(ctx context.Context, c *aweb.Client, sel *awconfig.Selection, choice chat.E2EEChoice) error {
 	switch choice {
 	case chat.E2EERequired:
 		return configureClientE2EE(ctx, c, sel, true)
@@ -77,7 +78,7 @@ func chatSend(ctx context.Context, toAlias, message string, opts chat.SendOption
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := configureChatE2EE(ctx, c, sel, opts.Encryption()); err != nil {
+	if err := configureSendE2EE(ctx, c, sel, opts.Encryption()); err != nil {
 		return nil, nil, err
 	}
 	target := strings.TrimSpace(toAlias)
@@ -538,7 +539,7 @@ var chatSendCmd = &cobra.Command{
 			return err
 		}
 		choice := e2eeFlagChoice(cmd, chatSendE2EE, chatSendPlaintext)
-		if err := configureChatE2EE(ctx, c, sel, choice); err != nil {
+		if err := configureSendE2EE(ctx, c, sel, choice); err != nil {
 			return err
 		}
 		encrypt, err := chat.ContinuationEncrypted(ctx, c.Client, sessionID, choice, chatStderrCallback)
@@ -631,7 +632,7 @@ var chatExtendWaitCmd = &cobra.Command{
 			return err
 		}
 		choice := e2eeFlagChoice(cmd, chatExtendWaitE2EE, chatExtendWaitPlaintext)
-		if err := configureChatE2EE(ctx, c, sel, choice); err != nil {
+		if err := configureSendE2EE(ctx, c, sel, choice); err != nil {
 			return err
 		}
 		confirmedDID, err := chatSessionDID(ctx, c, sel, args[0])
@@ -739,20 +740,20 @@ var chatShowPendingCmd = &cobra.Command{
 func init() {
 	chatSendAndWaitCmd.Flags().IntVar(&chatSendAndWaitWait, "wait", chat.DefaultWait, "Seconds to wait for reply")
 	chatSendAndWaitCmd.Flags().BoolVar(&chatSendAndWaitStartConversation, "start-conversation", false, "Start conversation (5min default wait)")
-	chatSendAndWaitCmd.Flags().BoolVar(&chatSendAndWaitPlaintext, "plaintext", false, "Send explicit server-readable plaintext chat (the default for a new conversation; a continuation inherits its conversation's encryption, and needs --e2ee or --plaintext when that cannot be read)")
+	chatSendAndWaitCmd.Flags().BoolVar(&chatSendAndWaitPlaintext, "plaintext", false, "Send explicit server-readable plaintext chat (the default for a new conversation; a continuation inherits its conversation's encryption, and is plaintext, with a notice, when that cannot be read or this identity cannot encrypt)")
 	chatSendAndWaitCmd.Flags().BoolVar(&chatSendAndWaitE2EE, "e2ee", false, "Send E2E encrypted chat; fails closed if encryption keys are missing")
 	chatSendAndWaitCmd.Flags().StringVar(&chatSendAndWaitBodyFile, "body-file", "", safeFileInputHelp("message body"))
 	chatSendAndLeaveCmd.Flags().BoolVar(&chatSendAndLeaveStartConversation, "start-conversation", false, "Start a new conversation instead of continuing an existing one")
-	chatSendAndLeaveCmd.Flags().BoolVar(&chatSendAndLeavePlaintext, "plaintext", false, "Send explicit server-readable plaintext chat (the default for a new conversation; a continuation inherits its conversation's encryption, and needs --e2ee or --plaintext when that cannot be read)")
+	chatSendAndLeaveCmd.Flags().BoolVar(&chatSendAndLeavePlaintext, "plaintext", false, "Send explicit server-readable plaintext chat (the default for a new conversation; a continuation inherits its conversation's encryption, and is plaintext, with a notice, when that cannot be read or this identity cannot encrypt)")
 	chatSendAndLeaveCmd.Flags().BoolVar(&chatSendAndLeaveE2EE, "e2ee", false, "Send E2E encrypted chat; fails closed if encryption keys are missing")
 	chatSendAndLeaveCmd.Flags().StringVar(&chatSendAndLeaveBodyFile, "body-file", "", safeFileInputHelp("message body"))
 	chatSendCmd.Flags().StringVar(&chatSendSessionID, "session-id", "", "Existing chat session id")
 	chatSendCmd.Flags().StringVar(&chatSendBody, "body", "", shellExpandedInlineHelp("Body", "--body-file"))
 	chatSendCmd.Flags().StringVar(&chatSendBodyFile, "body-file", "", safeFileInputHelp("message body"))
 	chatSendCmd.Flags().BoolVar(&chatSendLeave, "leave", false, "Leave the conversation after sending")
-	chatSendCmd.Flags().BoolVar(&chatSendPlaintext, "plaintext", false, "Send explicit server-readable plaintext chat (the default for a new conversation; a continuation inherits its conversation's encryption, and needs --e2ee or --plaintext when that cannot be read)")
+	chatSendCmd.Flags().BoolVar(&chatSendPlaintext, "plaintext", false, "Send explicit server-readable plaintext chat (the default for a new conversation; a continuation inherits its conversation's encryption, and is plaintext, with a notice, when that cannot be read or this identity cannot encrypt)")
 	chatSendCmd.Flags().BoolVar(&chatSendE2EE, "e2ee", false, "Send E2E encrypted chat; fails closed if encryption keys are missing")
-	chatExtendWaitCmd.Flags().BoolVar(&chatExtendWaitPlaintext, "plaintext", false, "Send explicit server-readable plaintext wait extension (by default it inherits its conversation's encryption, and needs --e2ee or --plaintext when that cannot be read)")
+	chatExtendWaitCmd.Flags().BoolVar(&chatExtendWaitPlaintext, "plaintext", false, "Send explicit server-readable plaintext wait extension (by default it inherits its conversation's encryption, and is plaintext, with a notice, when that cannot be read or this identity cannot encrypt)")
 	chatExtendWaitCmd.Flags().BoolVar(&chatExtendWaitE2EE, "e2ee", false, "Send E2E encrypted wait extension; fails closed if encryption keys are missing")
 	chatExtendWaitCmd.Flags().StringVar(&chatExtendWaitBodyFile, "body-file", "", safeFileInputHelp("message body"))
 

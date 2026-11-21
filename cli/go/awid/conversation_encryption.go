@@ -85,24 +85,26 @@ func (c *Client) MailConversationEncryption(ctx context.Context, conversationID 
 func (c *Client) readConversationEncryption(ctx context.Context, path string, page int, routeMissingIsPlaintext bool) (ConversationEncryptionReading, error) {
 	var out storedEncryptionPage
 	if err := c.Get(ctx, path, &out); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ConversationEncryptionReading{}, ctxErr
+		}
 		var apiErr *APIError
-		if !errors.As(err, &apiErr) {
-			return ConversationEncryptionReading{}, err
+		if errors.As(err, &apiErr) {
+			switch {
+			// FastAPI's {"detail":"Not Found"} (capital F) comes only from a
+			// missing route: the conversation route answers a hidden or absent
+			// conversation with RESOURCE_NOT_FOUND_DETAIL "Not found", and no
+			// server from server-v1.19.0 to now raises a bare 404 there
+			// (checked by Antares, ddb76502).
+			case routeMissingIsPlaintext && apiErr.StatusCode == http.StatusNotFound && strings.TrimSpace(apiErr.Body) == `{"detail":"Not Found"}`:
+				return ConversationEncryptionReading{State: ConversationPlaintext}, nil
+			case apiErr.StatusCode == http.StatusForbidden:
+				return ConversationEncryptionReading{State: ConversationEncryptionUnknown, Reason: "the server does not let this identity read the conversation (HTTP 403)"}, nil
+			case apiErr.StatusCode == http.StatusNotFound:
+				return ConversationEncryptionReading{State: ConversationEncryptionUnknown, Reason: "the server does not show this identity the conversation (HTTP 404)"}, nil
+			}
 		}
-		switch {
-		// FastAPI's {"detail":"Not Found"} (capital F) comes only from a
-		// missing route: the conversation route answers a hidden or absent
-		// conversation with RESOURCE_NOT_FOUND_DETAIL "Not found", and no
-		// server from server-v1.19.0 to now raises a bare 404 there
-		// (checked by Antares, ddb76502).
-		case routeMissingIsPlaintext && apiErr.StatusCode == http.StatusNotFound && strings.TrimSpace(apiErr.Body) == `{"detail":"Not Found"}`:
-			return ConversationEncryptionReading{State: ConversationPlaintext}, nil
-		case apiErr.StatusCode == http.StatusForbidden:
-			return ConversationEncryptionReading{State: ConversationEncryptionUnknown, Reason: "the server does not let this identity read the conversation (HTTP 403)"}, nil
-		case apiErr.StatusCode == http.StatusNotFound:
-			return ConversationEncryptionReading{State: ConversationEncryptionUnknown, Reason: "the server does not show this identity the conversation (HTTP 404)"}, nil
-		}
-		return ConversationEncryptionReading{}, err
+		return ConversationEncryptionReading{State: ConversationEncryptionUnknown, Reason: "reading the conversation failed (" + err.Error() + ")"}, nil
 	}
 	if out.Messages == nil {
 		return ConversationEncryptionReading{State: ConversationEncryptionUnknown, Reason: "the server's answer carries no message list"}, nil
@@ -123,8 +125,8 @@ func (c *Client) readConversationEncryption(ctx context.Context, path string, pa
 type E2EEChoice int
 
 const (
-	// E2EEInherit continues an encrypted conversation encrypted and starts
-	// a new one in plaintext.
+	// E2EEInherit continues an encrypted conversation encrypted when the
+	// sender can encrypt, and otherwise sends plaintext with a notice.
 	E2EEInherit E2EEChoice = iota
 	// E2EERequired encrypts, failing closed when keys are missing (--e2ee).
 	E2EERequired
@@ -141,35 +143,34 @@ type ContinuationDecision struct {
 	Notice    string
 }
 
-// ContinuationEncryption is the one continuation rule for chat and mail:
+// ContinuationEncryption is the one continuation rule for chat and mail.
 // --e2ee encrypts and --plaintext sends plaintext, announcing a plaintext
-// send into an encrypted conversation; otherwise the conversation's
-// encryption carries over, and a conversation whose encryption is unknown
-// refuses the send (*UnknownConversationEncryptionError).
-func ContinuationEncryption(conversation ConversationEncryptionReading, choice E2EEChoice) (ContinuationDecision, error) {
+// send into an encrypted conversation. Otherwise an encrypted conversation
+// is continued encrypted, and plaintext is sent, as released aw sends it,
+// with a notice, when the conversation's encryption is unknown or the sender
+// cannot encrypt. cannotEncrypt is why the sender cannot encrypt, empty when
+// it can (Client.E2EESendUnavailable). Encryption is never forced on a
+// sender that did not ask for it.
+func ContinuationEncryption(conversation ConversationEncryptionReading, choice E2EEChoice, cannotEncrypt string) ContinuationDecision {
 	switch choice {
 	case E2EERequired:
-		return ContinuationDecision{Encrypt: true}, nil
+		return ContinuationDecision{Encrypt: true}
 	case E2EEPlaintext:
 		if conversation.State == ConversationEncrypted {
-			return ContinuationDecision{Notice: PlaintextIntoEncryptedNotice}, nil
+			return ContinuationDecision{Notice: PlaintextIntoEncryptedNotice}
 		}
-		return ContinuationDecision{}, nil
+		return ContinuationDecision{}
 	}
 	switch conversation.State {
 	case ConversationEncrypted:
-		return ContinuationDecision{Encrypt: true, Inherited: true}, nil
+		if cannotEncrypt != "" {
+			return ContinuationDecision{Notice: "this conversation is end-to-end encrypted, but " + cannotEncrypt + "; " + plaintextFallbackNotice + " (pass --e2ee to require encryption)"}
+		}
+		return ContinuationDecision{Encrypt: true, Inherited: true}
 	case ConversationPlaintext:
-		return ContinuationDecision{}, nil
+		return ContinuationDecision{}
 	}
-	return ContinuationDecision{}, &UnknownConversationEncryptionError{Reason: conversation.Reason}
+	return ContinuationDecision{Notice: "cannot tell whether this conversation is end-to-end encrypted: " + conversation.Reason + "; " + plaintextFallbackNotice + " (pass --e2ee to encrypt)"}
 }
 
-// UnknownConversationEncryptionError refuses a default continuation whose
-// conversation's encryption cannot be established: inheriting it might send
-// server-readable text into an encrypted conversation.
-type UnknownConversationEncryptionError struct{ Reason string }
-
-func (e *UnknownConversationEncryptionError) Error() string {
-	return "cannot tell whether this conversation is end-to-end encrypted: " + e.Reason + "; pass --e2ee to encrypt or --plaintext to send server-readable text"
-}
+const plaintextFallbackNotice = "sending server-readable plaintext"

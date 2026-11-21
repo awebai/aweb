@@ -65,16 +65,21 @@
 
 - `aw chat send --session-id`, `aw chat send-and-wait`, `aw chat extend-wait`
   and `aw mail send --conversation-id` continue a conversation with its own
-  end-to-end encryption. When aw cannot read whether the conversation is
-  encrypted (the server will not show it this identity, for example a grant
-  scoped to sending only, or every message it returns is plaintext and older
-  ones cannot be read), the send is refused and names `--e2ee` and
-  `--plaintext`, instead of sending server-readable text.
+  end-to-end encryption when this identity can encrypt. When aw cannot read
+  whether the conversation is encrypted (the server will not show it this
+  identity, for example a grant scoped to sending only, the read fails, or
+  every message it returns is plaintext and older ones cannot be read), or the
+  conversation is encrypted and this identity has no encryption key or custody
+  socket, the message is sent server-readable, as released aw sends it, and a
+  notice on stderr says so and names `--e2ee`. `--e2ee` still refuses to send
+  without encryption.
 
 - Go library (`chat`, `awid`): a continuation with no encryption choice
   (`E2EE` left at `E2EEInherit` and `EncryptE2EE` false, the zero value)
-  now inherits the conversation's end-to-end encryption, where it used to
-  send plaintext, and it can return `*awid.UnknownConversationEncryptionError`.
+  now inherits the conversation's end-to-end encryption when the client can
+  encrypt, where it used to send plaintext; otherwise it sends plaintext and
+  reports a notice. `(*awid.Client).E2EESendUnavailable` says why a client
+  cannot encrypt.
   Plaintext on purpose is `E2EE: E2EEPlaintext`. The entry points released in
   aw-v1.36.58 keep their signatures: `chat.ExtendWait`,
   `SendOptions.EncryptE2EE` and `ExtendWaitOptions.EncryptE2EE`, string
@@ -118,11 +123,6 @@
   (422) a signed recipient that names another member. `bd mail` and `gc mail`
   to a bare name now refuse when the agent list lookup fails, as `aw mail send`
   does. Who sees it: released aw, and the bd and gc delegates.
-
-- A send whose recipient key cannot be looked up is refused for every sender
-  ("Nothing was sent: ... send it again when the registry answers"), where a
-  failed lookup used to send without a recipient key unless binding was
-  required. Who sees it: released aw.
 
 - `bd mail inbox` and `bd mail read` show the sender with the verification tag
   aw mail uses, and every delegate's received-mail log records it. Who sees it:

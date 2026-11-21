@@ -651,3 +651,73 @@ func TestDirectoryGetByAddress(t *testing.T) {
 		t.Fatalf("org_slug=%v", got["org_slug"])
 	}
 }
+
+// A local seat sends to a domain/name address while the registry does not
+// answer, as an OATS agent does with no flags: the send is posted unbound and
+// the server decides, as released aw does. Only a send that requires the
+// recipient binding (a global or stable-ID sender) refuses.
+func TestLocalSeatSendsToAnAddressWhenTheRegistryIsUnreachable(t *testing.T) {
+	t.Parallel()
+
+	var mailBody, chatBody map[string]any
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/messages":
+			if err := json.NewDecoder(r.Body).Decode(&mailBody); err != nil {
+				t.Errorf("decode mail: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"message_id": "mail-1", "conversation_id": mailBody["conversation_id"], "status": "delivered"})
+		case "/api/v1/chat/pending":
+			_ = json.NewEncoder(w).Encode(awid.ChatPendingResponse{Pending: []awid.ChatPendingItem{}})
+		case "/api/v1/chat/sessions":
+			if r.Method == http.MethodGet {
+				_ = json.NewEncoder(w).Encode(awid.ChatListSessionsResponse{Sessions: []awid.ChatSessionItem{}})
+				return
+			}
+			if err := json.NewDecoder(r.Body).Decode(&chatBody); err != nil {
+				t.Errorf("decode chat: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"session_id":        "net-sess-1",
+				"message_id":        "net-msg-1",
+				"participants":      []map[string]string{{"agent_id": "a1", "alias": "eve"}, {"agent_id": "a2", "alias": "acme/bot"}},
+				"targets_connected": []string{},
+				"targets_left":      []string{},
+			})
+		case "/api/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+	writeNetworkWorkspace(t, tmp, server.URL+"/api", "eve", "acme")
+	env := append(testCommandEnv(tmp), "AWID_REGISTRY_URL=http://127.0.0.1:1")
+
+	for _, args := range [][]string{
+		{"mail", "send", "--to", "acme/bot", "--subject", "hello", "--body", "hello network"},
+		{"chat", "send-and-leave", "acme/bot", "hello network"},
+	} {
+		run := exec.CommandContext(ctx, bin, args...)
+		run.Env = env
+		run.Dir = tmp
+		if out, err := run.CombinedOutput(); err != nil {
+			t.Fatalf("%v: %v\n%s", args, err, out)
+		}
+	}
+	if mailBody == nil || mailBody["to_address"] != "acme/bot" {
+		t.Fatalf("mail was not posted to acme/bot: %v", mailBody)
+	}
+	if chatBody == nil {
+		t.Fatal("chat was not posted")
+	}
+	if addrs, ok := chatBody["to_addresses"].([]any); !ok || len(addrs) != 1 || addrs[0] != "acme/bot" {
+		t.Fatalf("chat to_addresses=%v", chatBody["to_addresses"])
+	}
+}
