@@ -2,10 +2,11 @@ package awid
 
 import (
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"strings"
+
+	"github.com/awebai/aw/signaturewire"
 )
 
 // HumanCredential is the public credential a human-role act binds: the
@@ -27,7 +28,7 @@ func (c HumanCredential) SHA256() (string, error) {
 		if field == "" {
 			return "", errors.New("credential_id and public_key are required")
 		}
-		if _, err := base64.RawURLEncoding.Strict().DecodeString(field); err != nil {
+		if _, err := signaturewire.DecodeURLStrict(field); err != nil {
 			return "", errors.New("credential_id and public_key must be unpadded base64url")
 		}
 	}

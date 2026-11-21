@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+import ipaddress
 import json
 from pathlib import Path
 
 import httpcore
 import pytest
-
 from awid.external_authority import (
     DNSLookup,
     OriginContext,
@@ -22,7 +22,6 @@ from awid.external_registry import StrictExternalRegistry
 from awid.federation_errors import FederationAuthorityError
 from awid.identity_log_verify import IdentityCheckpoint
 from test_external_registry import _identity as lookup_identity
-
 
 _ROOT = Path(__file__).resolve().parents[2]
 _VECTORS = _ROOT / "docs" / "vectors"
@@ -429,3 +428,80 @@ def test_ipv4_embedding_transition_prefixes_are_refused(address: str) -> None:
     with pytest.raises(FederationAuthorityError) as raised:
         validate_resolved_addresses([address])
     assert raised.value.reason == "sender_registry_origin_forbidden"
+
+
+@pytest.mark.parametrize("stdlib_global", [True, False], ids=["permissive", "restrictive"])
+@pytest.mark.parametrize(
+    "case",
+    _load("federation-origin-ip-v1.json")["ip_cases"],
+    ids=lambda case: case["name"],
+)
+def test_frozen_ip_policy_is_independent_of_stdlib_classification(
+    monkeypatch, stdlib_global, case
+):
+    # Only dependency metadata varies. Real address parsing and the public
+    # admission owner must still apply the unchanged frozen policy.
+    for address_type in (ipaddress.IPv4Address, ipaddress.IPv6Address):
+        monkeypatch.setattr(
+            address_type, "is_global", property(lambda _: stdlib_global)
+        )
+        monkeypatch.setattr(
+            address_type, "is_reserved", property(lambda _: not stdlib_global)
+        )
+    if case["expected"]["allowed"]:
+        assert validate_resolved_addresses([case["input"]]) == (case["input"],)
+    else:
+        with pytest.raises(FederationAuthorityError) as refused:
+            validate_resolved_addresses([case["input"]])
+        assert refused.value.reason == "sender_registry_origin_forbidden"
+
+
+@pytest.mark.parametrize(
+    "address,allowed",
+    [
+        ("3ffe:ffff:ffff:ffff:ffff:ffff:ffff:ffff", True),
+        ("3fff::", False),
+        ("3fff::1", False),
+        ("3fff:fff:ffff:ffff:ffff:ffff:ffff:ffff", False),
+        ("3fff:1000::", True),
+    ],
+)
+def test_documentation_3fff_prefix_keeps_its_exact_contract_boundaries(
+    address, allowed
+):
+    if allowed:
+        assert validate_resolved_addresses([address]) == (address,)
+    else:
+        with pytest.raises(FederationAuthorityError) as refused:
+            validate_resolved_addresses([address])
+        assert refused.value.reason == "sender_registry_origin_forbidden"
+
+
+@pytest.mark.parametrize(
+    "address,allowed",
+    [
+        ("3fff::1", False),
+        ("2001:db8::1", False),
+        ("192.0.2.1", False),
+        ("100.64.0.1", False),
+        ("127.0.0.1", True),
+        ("10.0.0.1", True),
+        ("172.20.0.2", True),
+        ("192.168.0.1", True),
+        ("169.254.1.1", True),
+        ("::1", True),
+        ("fd00::1", True),
+        ("fe80::1", True),
+        ("::ffff:127.0.0.1", True),
+    ],
+)
+def test_isolated_network_exception_is_not_a_documentation_address_opt_in(
+    address, allowed
+):
+    if allowed:
+        (result,) = validate_resolved_addresses([address], allow_nonpublic_test=True)
+        assert result == str(ipaddress.ip_address(address))
+    else:
+        with pytest.raises(FederationAuthorityError) as refused:
+            validate_resolved_addresses([address], allow_nonpublic_test=True)
+        assert refused.value.reason == "sender_registry_origin_forbidden"

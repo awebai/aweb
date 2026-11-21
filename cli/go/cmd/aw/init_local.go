@@ -190,20 +190,19 @@ func runImplicitLocalInit(req implicitLocalInitRequest) (connectOutput, error) {
 		return connectOutput{}, err
 	}
 
-	team, err := bootstrapLocalTeamMemberWithScope(
-		ctx,
-		registry,
-		prepared.Plan.RegistryURL,
-		prepared.Plan.Domain,
-		implicitLocalTeamNameValue(req.TeamName),
-		"",
-		prepared.ControllerKey,
-		prepared.IdentityKey,
-		"",
-		"",
-		alias,
-		awid.IdentityModeLocal,
-	)
+	team, err := bootstrapLocalTeamMember(ctx, localTeamMemberBootstrap{
+		Registry:      registry,
+		RegistryURL:   prepared.Plan.RegistryURL,
+		Domain:        prepared.Plan.Domain,
+		TeamName:      implicitLocalTeamNameValue(req.TeamName),
+		DisplayName:   "",
+		ControllerKey: prepared.ControllerKey,
+		MemberKey:     prepared.IdentityKey,
+		MemberDIDAW:   "",
+		MemberAddress: "",
+		Alias:         alias,
+		Scope:         awid.IdentityScopeLocal,
+	})
 	if err != nil {
 		return connectOutput{}, err
 	}

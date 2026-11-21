@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -184,6 +185,25 @@ class ShellInputModes(unittest.TestCase):
             root = Path(temporary).resolve()
             repo = root / "repo"
             repo.mkdir()
+            home = root / "empty-home"
+            home.mkdir()
+            # A gate has no author identity; forbid Git's host-specific inference too.
+            git_environment = {
+                key: value
+                for key, value in os.environ.items()
+                if not key.startswith(("GIT_AUTHOR_", "GIT_COMMITTER_", "GIT_CONFIG"))
+                and key not in ("EMAIL", "GIT_TEMPLATE_DIR")
+            }
+            git_environment.update(
+                HOME=str(home),
+                XDG_CONFIG_HOME=str(home),
+                GIT_CONFIG_NOSYSTEM="1",
+                GIT_CONFIG_GLOBAL=os.devnull,
+                GIT_CONFIG_COUNT="1",
+                GIT_CONFIG_KEY_0="user.useConfigOnly",
+                GIT_CONFIG_VALUE_0="true",
+            )
+            self.enterContext(patch.dict(os.environ, git_environment, clear=True))
             init_fixture_repo(repo)
             (repo / "public.sql").write_text("SELECT 1;\n")
             (repo / "public.sql").chmod(0o400)
@@ -191,7 +211,18 @@ class ShellInputModes(unittest.TestCase):
                 ["git", "-C", str(repo), "add", "."], check=True, capture_output=True
             )
             subprocess.run(
-                ["git", "-C", str(repo), "commit", "-qm", "public fixture"],
+                [
+                    "git",
+                    "-C",
+                    str(repo),
+                    "-c",
+                    "user.name=Fixture",
+                    "-c",
+                    "user.email=fixture@example.test",
+                    "commit",
+                    "-qm",
+                    "public fixture",
+                ],
                 check=True,
                 capture_output=True,
             )
