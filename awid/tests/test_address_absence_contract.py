@@ -9,6 +9,7 @@ import pytest
 import pytest_asyncio
 from redis.asyncio import Redis
 
+from awid.did import did_key_from_signing_key
 from awid.external_http import PinnedRegistryHTTP
 from awid.federation_errors import FederationAuthorityError
 from awid.registry import CachedRegistryClient, RegistryClient, RegistryError
@@ -204,6 +205,7 @@ async def test_revocation_scan_requires_a_complete_success_not_404(
 ):
     state = response_server
     domain = f"revocations-{uuid4().hex}.example"
+    team_did_key = did_key_from_signing_key(bytes(32))
     state["status"] = 404
     state["body"] = {"detail": "Team not found"}
     if stage == "first":
@@ -214,7 +216,7 @@ async def test_revocation_scan_requires_a_complete_success_not_404(
                 "team_id": f"ops:{domain}",
                 "domain": domain,
                 "name": "ops",
-                "team_did_key": "did:key:known-team",
+                "team_did_key": team_did_key,
                 "created_at": "2026-11-17T00:00:00Z",
             },
         }
@@ -252,7 +254,7 @@ async def test_revocation_scan_requires_a_complete_success_not_404(
             # An old client could stamp an uncoded 404 as a fresh empty set.
             await client._write_cache_entry(legacy, value=set(), ttl_seconds=60, encode=sorted)
         if stage == "first":
-            assert await client.get_team_public_key(domain, "ops") == "did:key:known-team"
+            assert await client.get_team_public_key(domain, "ops") == team_did_key
         if stage in ("first", "later"):
             with pytest.raises(RegistryError) as refused:
                 await client.get_team_revocations(domain, "ops")

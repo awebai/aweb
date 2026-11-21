@@ -70,6 +70,10 @@ async def test_revocation_survives_team_recreation_with_the_same_key(client, con
     _, team_did, cert_id = await _team_with_revoked_certificate(client, ns_key, ns_did, domain, "ops")
 
     await _delete_team(client, ns_key, ns_did, domain, "ops")
+    for path in ("ops", "ops/revocations"):
+        response = await client.get(f"/v1/namespaces/{domain}/teams/{path}")
+        assert response.status_code == 404
+        assert response.json() == {"detail": "Team not found"}
     await _create_team_with_key(client, ns_key, ns_did, domain, "ops", team_did)
 
     assert cert_id in await _revoked_ids(client, domain, "ops")
