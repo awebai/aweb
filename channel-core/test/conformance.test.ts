@@ -150,6 +150,23 @@ function loadRegistryVectors(): RegistryVectorFile {
   ) as RegistryVectorFile;
 }
 
+interface LocalSenderVector {
+  name: string;
+  raw_address: string;
+  trust_address: string;
+  from_did: string;
+  roster_did: string;
+  pin_store_before: PinStoreVector;
+  expected_status: VerificationStatus;
+  expected_pin_store_after: PinStoreVector | null;
+}
+
+function loadLocalSenderVectors(): { schema: string; vectors: LocalSenderVector[] } {
+  return JSON.parse(
+    readFileSync(join(testDir, "..", "..", "test-vectors", "trust", "local-sender-v1.json"), "utf-8"),
+  ) as { schema: string; vectors: LocalSenderVector[] };
+}
+
 function loadTOFUVectors(): TOFUVectorFile {
   return JSON.parse(
     readFileSync(join(testDir, "..", "..", "test-vectors", "trust", "tofu-v2.json"), "utf-8"),
@@ -233,6 +250,46 @@ describe("trust conformance vectors", () => {
 
       expect(result.status, vector.name).toBe(vector.expected_status);
       expect(result.confirmedCurrentKey, vector.name).toBe(vector.expected_confirmed_current_key);
+    }
+  });
+
+  test("a roster-named local sender matches the shared contract", () => {
+    const vectorFile = loadLocalSenderVectors();
+    expect(vectorFile.schema).toBe("aweb.trust.local-sender.v1");
+
+    for (const vector of vectorFile.vectors) {
+      const store = pinStoreFromVector(vector.pin_store_before);
+      const trust = new SenderTrustManager(
+        { get: async () => ({}) } as never,
+        { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
+        "",
+        "",
+      ) as SenderTrustManager & {
+        // Access the private local-sender step directly, as the Go harness does.
+        verifyResolvedLocalSender(
+          store: PinStore,
+          rawAddress: string,
+          trustAddress: string,
+          fromDID: string,
+          fresh: { did?: string; identityScope: "global" | "local"; custody: string; resolved: boolean },
+          acceptedStatus: VerificationStatus,
+        ): { status: VerificationStatus | undefined; stored: boolean };
+      };
+      const result = trust.verifyResolvedLocalSender(
+        store,
+        vector.raw_address,
+        vector.trust_address,
+        vector.from_did,
+        { did: vector.roster_did || undefined, identityScope: "local", custody: "self", resolved: true },
+        "verified",
+      );
+      expect(result.status, vector.name).toBe(vector.expected_status);
+      assertPinStoreMatchesVector(
+        store,
+        vector.expected_pin_store_after ?? vector.pin_store_before,
+        vector.pin_store_before,
+        vector.name,
+      );
     }
   });
 
@@ -383,19 +440,29 @@ async function buildReplacementAnnouncement(
   };
 }
 
+// A retired pin's address is the released address and when it was released.
+// A vector writes it as $RETIRED:<address>.
+const RETIRED_ADDRESS = /^retired:(.+)@(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)$/;
+
+function vectorAddress(address: string): string {
+  const match = RETIRED_ADDRESS.exec(address);
+  return match ? `$RETIRED:${match[1]}` : address;
+}
+
 function assertPinStoreMatchesVector(
   got: PinStore,
   expected: PinStoreVector,
   before: PinStoreVector,
   vectorName: string,
 ): void {
-  expect(Object.fromEntries(got.addresses), `${vectorName} addresses`).toEqual(expected.addresses);
+  const addresses = Object.fromEntries([...got.addresses].map(([address, pinKey]) => [vectorAddress(address), pinKey]));
+  expect(addresses, `${vectorName} addresses`).toEqual(expected.addresses);
   expect(got.pins.size, `${vectorName} pin count`).toBe(Object.keys(expected.pins).length);
   for (const [key, expectedPin] of Object.entries(expected.pins)) {
     const gotPin = got.pins.get(key);
     expect(gotPin, `${vectorName} pin ${key}`).toBeDefined();
     const beforePin = before.pins[key];
-    assertPinField(vectorName, key, "address", gotPin!.address, expectedPin.address, beforePin?.address || "");
+    assertPinField(vectorName, key, "address", vectorAddress(gotPin!.address), expectedPin.address, beforePin?.address || "");
     assertPinField(vectorName, key, "stable_id", gotPin!.stable_id || "", expectedPin.stable_id || "", beforePin?.stable_id || "");
     assertPinField(vectorName, key, "did_key", gotPin!.did_key || "", expectedPin.did_key || "", beforePin?.did_key || "");
     assertPinField(vectorName, key, "confirmed_by", gotPin!.confirmed_by || "", expectedPin.confirmed_by || "", beforePin?.confirmed_by || "");

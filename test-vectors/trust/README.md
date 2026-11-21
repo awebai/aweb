@@ -211,3 +211,31 @@ Vector fields:
 The file is built by `buildRegistryRefetchVector` in
 `cli/go/awid/registry_refetch_vector_test.go` from fixed seeds and times;
 re-freezing it (`AWEB_FREEZE_REGISTRY_REFETCH_VECTOR=1`) is a reviewed decision.
+
+## `local-sender-v1.json`
+
+Local-sender vectors cover the step where the current team roster names the
+sender as a local identity. The roster's key must be the signing key. The
+previous holder of a team-scoped member name (bare, or `team:domain/name`)
+keeps its pin under a retired key that keeps its record and anti-rollback
+anchor; the name itself is then free. A real `domain/name` address is never
+released by this step.
+
+Top-level fields:
+
+- `schema`: must be `aweb.trust.local-sender.v1`.
+- `description`: human-readable summary.
+- `vectors`: ordered list of local-sender cases.
+
+Vector fields:
+
+- `name`: stable test case identifier.
+- `raw_address`: sender wire-form reference.
+- `trust_address`: canonical sender reference.
+- `from_did`: signing `did:key`.
+- `roster_did`: the key the current roster names for the sender, or empty.
+- `pin_store_before`: pin store before the step, as in `tofu-v2.json`.
+- `expected_status`: canonical status after the step.
+- `expected_pin_store_after`: `null` when the store is unchanged. An address
+  written `$RETIRED:<address>` matches `retired:<address>@<RFC3339 UTC>`, in
+  the reverse index and in a pin's `address`.

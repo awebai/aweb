@@ -168,7 +168,7 @@ describe("SenderTrustManager", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  test("removes pins for local-scope senders", async () => {
+  test("retires pins for local-scope senders", async () => {
     const { did } = await didFromSeed(3);
     const store = new PinStore();
     store.storePin(did, "backend:acme.com/alice", "", "");
@@ -182,8 +182,10 @@ describe("SenderTrustManager", () => {
 
     const result = await trust.normalizeTrust(store, "verified", "alice", did, undefined, undefined);
     expect(result.status).toBe("verified");
+    // The name is free, and its pin is kept under a retired key.
     expect(store.addresses.has("backend:acme.com/alice")).toBe(false);
-    expect(store.pins.size).toBe(0);
+    expect(store.pins.size).toBe(1);
+    expect(store.pins.get(did)?.address).toMatch(/^retired:backend:acme\.com\/alice@/);
   });
 
   test("verifies a reissued alias whose pin still names the previous holder", async () => {
@@ -207,8 +209,9 @@ describe("SenderTrustManager", () => {
     const result = await trust.normalizeTrust(store, "verified", "alice", currentHolder.did, undefined, undefined);
 
     expect(result.status).toBe("verified");
+    // The name is free; the previous holder's pin is kept under a retired key.
     expect(store.addresses.has("backend:acme.com/alice")).toBe(false);
-    expect(store.pins.has(previousHolder.did)).toBe(false);
+    expect(store.pins.get(previousHolder.did)?.address).toMatch(/^retired:backend:acme\.com\/alice@/);
   });
 
   // Every accepted message from an already-pinned global sender used to refresh
@@ -951,8 +954,10 @@ describe("SenderTrustManager", () => {
 
     const result = await trust.normalizeTrust(store, "verified", "alice", did, undefined, undefined);
     expect(result.status).toBe("verified");
+    // The name is free, and its pin is kept under a retired key.
     expect(store.addresses.has("backend:acme.com/alice")).toBe(false);
-    expect(store.pins.size).toBe(0);
+    expect(store.pins.size).toBe(1);
+    expect(store.pins.get(did)?.address).toMatch(/^retired:backend:acme\.com\/alice@/);
   });
 
   test("does not verify legacy persistent lifetime metadata as local", async () => {

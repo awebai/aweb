@@ -1019,11 +1019,10 @@ export class SenderTrustManager {
     if (fresh.did !== fromDID) {
       return { status: "identity_mismatch", stored: false };
     }
-    const removed = store.removeAddresses([
-      trustAddress,
-      rawAddress !== trustAddress ? rawAddress : "",
-    ]);
-    return { status: acceptedStatus, stored: removed };
+    // The previous holder of a team-scoped member name keeps its pin under a
+    // retired key (the delivering server never deletes a pin); a real
+    // domain/name address is not released here.
+    return { status: acceptedStatus, stored: releaseTeamNamePin(store, rawAddress, trustAddress, this.now()) };
   }
 
   private async resolveAgentMeta(address: string, forceRefresh = false): Promise<AgentMeta> {
