@@ -1,4 +1,4 @@
-"""Shared host admission for local whole suites (docs/local-suite-slots.md)."""
+"""Shared host admission for local service-backed tests (docs/local-suite-slots.md)."""
 
 from __future__ import annotations
 
@@ -21,6 +21,7 @@ class SuiteLabel(StrEnum):
     SERVER = "server"
     REGISTRY = "registry"
     USER_PATHS = "user-paths"
+    PORTABLE = "portable"
 
 
 class Scope(StrEnum):
@@ -29,7 +30,7 @@ class Scope(StrEnum):
 
 
 def pytest_scope(arguments: list[str]) -> Scope:
-    """Only explicit selectors bypass admission; unknown options stay conservative."""
+    """Classify explicit pytest selections for slot metadata."""
     index = 0
     while index < len(arguments):
         argument = arguments[index]
@@ -134,7 +135,9 @@ def acquire_slot(slots: list[TextIO]) -> tuple[int, TextIO]:
         time.sleep(2)
 
 
-def write_holder(stream: TextIO, *, root: Path, label: SuiteLabel) -> None:
+def write_holder(
+    stream: TextIO, *, root: Path, label: SuiteLabel, scope: Scope
+) -> None:
     source = subprocess.run(
         ["git", "-C", str(root), "rev-parse", "--verify", "HEAD"],
         capture_output=True,
@@ -153,6 +156,7 @@ def write_holder(stream: TextIO, *, root: Path, label: SuiteLabel) -> None:
             "repo": "aweb",
             "source_sha": source.stdout.strip(),
             "label": label.value,
+            "scope": scope.value,
             "started_utc": datetime.now(timezone.utc).isoformat(),
             "owner": os.environ.get("OATS_INSTANCE", root.name),
         },
@@ -166,9 +170,6 @@ def write_holder(stream: TextIO, *, root: Path, label: SuiteLabel) -> None:
 @contextmanager
 def suite_slot(*, scope: Scope, label: SuiteLabel, root: Path) -> Iterator[None]:
     """Hold admission through caller cleanup; kernel locks alone own occupancy."""
-    if scope is Scope.FOCUSED:
-        yield
-        return
     try:
         count = int(os.environ.get("AWEB_LOCAL_SUITE_SLOTS", "3"))
     except ValueError as error:
@@ -193,7 +194,7 @@ def suite_slot(*, scope: Scope, label: SuiteLabel, root: Path) -> Iterator[None]
             for i in range(count)
         ]
         number, stream = acquire_slot(slots)
-        write_holder(stream, root=root, label=label)
+        write_holder(stream, root=root, label=label, scope=scope)
         print(
             f"Local suite slot {number} acquired: {label.value} pid={os.getpid()}",
             flush=True,
