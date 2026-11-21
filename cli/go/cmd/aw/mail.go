@@ -79,6 +79,25 @@ func resolveMailMessagingClientSelection() (*aweb.Client, *awconfig.Selection, e
 	return resolveIdentityMessagingClientSelection()
 }
 
+// requireMailSenderContext prevents an identity-only fallback from selecting
+// an address across several memberships (trust-model.md:186-191).
+func requireMailSenderContext(client *aweb.Client, selection *awconfig.Selection) error {
+	if activeHuman != nil || client.HasTeamCertificateAuth() || client.GrantID() != "" {
+		return nil
+	}
+	teams, err := awconfig.LoadTeamStateFromIdentityHome(selection.IdentityHome)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("sender context is unknown: %w; repair this identity home's team state and pass --team", err)
+	}
+	if len(teams.Memberships) > 1 {
+		return usageError("this identity has multiple team memberships; pass --team to select the certificate and intended sender address")
+	}
+	return nil
+}
+
 // startNewThread makes req start a new thread: a fresh client-signed
 // conversation ID that the server must not merge into another conversation.
 func startNewThread(req *awid.SendMessageRequest) error {
@@ -163,7 +182,7 @@ var mailSendCmd = &cobra.Command{
 		inheritedE2EE := false
 		switch targetKind {
 		case "conversation":
-			c, sel, err = resolveMailMessagingClientSelection()
+			c, sel, err = resolveMailContinuationClientSelection()
 			if err != nil {
 				return err
 			}
@@ -213,13 +232,13 @@ var mailSendCmd = &cobra.Command{
 				targetValue = value
 			}
 		case "did":
-			c, sel, err = resolveMailMessagingClientSelection()
+			c, sel, err = resolveMailSenderClientSelection()
 			if err != nil {
 				return err
 			}
 			req.ToDID = targetValue
 		case "address":
-			c, sel, err = resolveMailMessagingClientSelection()
+			c, sel, err = resolveMailSenderClientSelection()
 			if err != nil {
 				return err
 			}
@@ -242,6 +261,9 @@ var mailSendCmd = &cobra.Command{
 		if targetKind == "alias" {
 			resp, err = c.SendMessage(ctx, req)
 		} else {
+			if err := requireMailSenderContext(c, sel); err != nil {
+				return err
+			}
 			resp, err = c.SendMessageByIdentity(ctx, req)
 		}
 
@@ -338,7 +360,7 @@ var mailReplyCmd = &cobra.Command{
 		var c *aweb.Client
 		var sel *awconfig.Selection
 		awid.RecordHTTPDiagnosticPhase("client_selection_started")
-		c, sel, err = resolveMailMessagingClientSelection()
+		c, sel, err = resolveMailContinuationClientSelection()
 		if err != nil {
 			return err
 		}
@@ -408,6 +430,9 @@ var mailReplyCmd = &cobra.Command{
 			req.E2EERecipient = &recipient
 			req.ToDID = recipient.DID
 			req.ToStableID = recipient.StableID
+		}
+		if err := requireMailSenderContext(c, sel); err != nil {
+			return err
 		}
 		resp, err := c.SendMessageByIdentity(ctx, req)
 		if err != nil {

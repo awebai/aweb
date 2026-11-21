@@ -40,6 +40,7 @@ async def _leave_undelivered_federation_row(aweb_db) -> str:
     await deliver_federated_phase_b(
         _DB(aweb_db), envelope=envelope, signature="signed-message",
         recipient=recipient, authority_token=token,
+        registry_client=None,
     )
     return envelope.message_id
 
@@ -77,15 +78,11 @@ def _recording_hook():
     return delivered, on_mutation
 
 
-def _mounted_host(db_infra, redis, on_mutation, monkeypatch, **create_app_options):
+def _mounted_host(db_infra, redis, on_mutation, **create_app_options):
     """A host app that mounts aweb as the library-mode example does: it sets
     aweb's state itself and never runs aweb's own lifespan."""
     from fastapi import FastAPI
 
-    async def _noop_mount(_app, _db_infra, _redis, _registry_client):
-        return None
-
-    monkeypatch.setattr("aweb.api._mount_mcp_app", _noop_mount)
     aweb_app = create_app(db_infra=db_infra, redis=redis, **create_app_options)
     aweb_app.state.db = db_infra
     aweb_app.state.redis = redis
@@ -101,7 +98,7 @@ async def test_a_mounted_app_without_lifespan_recovers_after_its_first_request(d
     message_id = await _leave_undelivered_federation_row(aweb_db)
     await _leave_undelivered_lifecycle_rows(aweb_db, 1)
     delivered, on_mutation = _recording_hook()
-    host, aweb_app = _mounted_host(db_infra, redis, on_mutation, monkeypatch)
+    host, aweb_app = _mounted_host(db_infra, redis, on_mutation)
 
     try:
         async with AsyncClient(transport=ASGITransport(app=host), base_url="http://test") as client:
@@ -125,7 +122,7 @@ async def test_reads_on_a_mounted_app_scan_the_outbox_once_per_cycle_not_per_req
 
     monkeypatch.setattr("aweb.outbox_recovery.OUTBOX_RECOVERY_INTERVAL_SECONDS", 60)
     _, on_mutation = _recording_hook()
-    host, aweb_app = _mounted_host(db_infra, redis, on_mutation, monkeypatch)
+    host, aweb_app = _mounted_host(db_infra, redis, on_mutation)
     scans = []
     execute = asyncpg.connection.Connection._execute
 
@@ -152,7 +149,7 @@ async def test_a_host_that_runs_recovery_itself_gets_none_from_requests(db_infra
     await _leave_undelivered_federation_row(aweb_db)
     await _leave_undelivered_lifecycle_rows(aweb_db, 1)
     delivered, on_mutation = _recording_hook()
-    host, _ = _mounted_host(db_infra, redis, on_mutation, monkeypatch, host_runs_outbox_recovery=True)
+    host, _ = _mounted_host(db_infra, redis, on_mutation, host_runs_outbox_recovery=True)
 
     async with AsyncClient(transport=ASGITransport(app=host), base_url="http://test") as client:
         for _ in range(3):

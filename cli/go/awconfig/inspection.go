@@ -29,6 +29,11 @@ func InspectTeamStateFrom(path string) (*TeamState, error) {
 		return nil, err
 	}
 	state := raw.normalizedTeamState()
+	for _, membership := range state.Memberships {
+		if err := membership.validateTeamKey(); err != nil {
+			return nil, err
+		}
+	}
 	return &state, nil
 }
 

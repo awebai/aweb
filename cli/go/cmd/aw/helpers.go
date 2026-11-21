@@ -741,6 +741,9 @@ func resolveCertificateClient(sel *awconfig.Selection, baseURL string) (*aweb.Cl
 	if err != nil {
 		return nil, err
 	}
+	if err := recheckUnconfirmedTeamKey(sel, cert); err != nil {
+		return nil, err
+	}
 	signingKeyPath := sel.SigningKey
 	if strings.TrimSpace(sel.IdentityHome) != "" {
 		signingKeyPath, err = awconfig.IdentityHomePath(awconfig.IdentityHome{Root: sel.IdentityHome}, "signing.key")

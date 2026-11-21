@@ -95,6 +95,12 @@ func TestInitAPIKeyAliasCreatesLocalSelfCustodialCLIWorkspace(t *testing.T) {
 
 			var server *httptest.Server
 			server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
+				if strings.HasPrefix(r.URL.Path, "/v1/namespaces/acme.com/teams/backend/certificates/") && strings.HasSuffix(r.URL.Path, "/status") {
+					if err := json.NewEncoder(w).Encode(awid.TeamCertificateStatus{TeamID: "backend:acme.com", TeamDIDKey: teamDIDKey, Status: "active"}); err != nil {
+						t.Error(err)
+					}
+					return
+				}
 				if keyKind != creationKeyKindUnspecified && r.URL.Path == "/api/v1/teams/current" {
 					json.NewEncoder(w).Encode(map[string]any{"team_id": "11111111-1111-4111-8111-111111111111", "canonical_team_id": "backend:acme.com", "api_key_kind": keyKind})
 					return
@@ -211,7 +217,7 @@ func TestInitAPIKeyAliasCreatesLocalSelfCustodialCLIWorkspace(t *testing.T) {
 				buildAwBinary(t, context.Background(), bin)
 				command := exec.Command(bin, "init", "--name", "requested-alias", "--role", "backend", "--json", "--do-not-touch-agents-md")
 				command.Dir = tmp
-				command.Env = append(testCommandEnv(t.TempDir()), "AWEB_URL="+externalLikeTestURL(t, server.URL), "AWEB_API_KEY="+apiKey)
+				command.Env = append(testCommandEnv(t.TempDir()), "AWEB_URL="+externalLikeTestURL(t, server.URL), "AWEB_API_KEY="+apiKey, "AWID_REGISTRY_URL="+server.URL)
 				var stderr bytes.Buffer
 				command.Stderr = &stderr
 				output, err := command.Output()
@@ -223,11 +229,12 @@ func TestInitAPIKeyAliasCreatesLocalSelfCustodialCLIWorkspace(t *testing.T) {
 				}
 			} else {
 				result, err = runAPIKeyBootstrapInit(apiKeyInitRequest{
-					WorkingDir: tmp,
-					AwebURL:    externalLikeTestURL(t, server.URL),
-					APIKey:     apiKey,
-					Alias:      "requested-alias",
-					Role:       "backend",
+					WorkingDir:  tmp,
+					RegistryURL: server.URL,
+					AwebURL:     externalLikeTestURL(t, server.URL),
+					APIKey:      apiKey,
+					Alias:       "requested-alias",
+					Role:        "backend",
 				})
 				if err != nil {
 					t.Fatalf("runAPIKeyBootstrapInit: %v", err)
@@ -420,6 +427,10 @@ func TestInitAPIKeyGlobalNameCreatesSelfCustodialGlobalCLIIdentity(t *testing.T)
 				"custody":        awid.CustodySelf,
 				"api_key":        "workspace-sk-global",
 			})
+		case strings.HasPrefix(r.URL.Path, "/v1/namespaces/alice.aweb.ai/teams/default/certificates/") && strings.HasSuffix(r.URL.Path, "/status"):
+			if err := json.NewEncoder(w).Encode(awid.TeamCertificateStatus{TeamID: "default:alice.aweb.ai", TeamDIDKey: teamDIDKey, Status: "active"}); err != nil {
+				t.Error(err)
+			}
 		case r.URL.Path == "/v1/connect":
 			requireCertificateAuthForTest(t, r)
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -1610,13 +1621,37 @@ func TestRunAPIKeyBootstrapInitGlobalRefusesAlreadyRegisteredName(t *testing.T) 
 	}
 }
 
+// Constructor fixtures retain the released pending-private response: metadata
+// refuses anonymous reads and an unregistered certificate has no status yet.
+func servePendingPrivateTeamRead(w http.ResponseWriter, r *http.Request, canonical string) bool {
+	domain, team, err := awid.ParseTeamID(canonical)
+	if err != nil || r.Method != http.MethodGet {
+		return false
+	}
+	base := "/v1/namespaces/" + domain + "/teams/" + team
+	if r.URL.Path == base {
+		http.Error(w, "private team", http.StatusForbidden)
+		return true
+	}
+	if strings.HasPrefix(r.URL.Path, base+"/certificates/") && strings.HasSuffix(r.URL.Path, "/status") {
+		http.Error(w, "not registered", http.StatusNotFound)
+		return true
+	}
+	return false
+}
+
 // Existing constructor fixtures represent older servers that omit ID-tree
 // response fields. The independently selected team read is still required.
 func serveAPIKeyCreationTeamRead(w http.ResponseWriter, r *http.Request, canonical string) bool {
-	if r.Method != "GET" || r.URL.Path != "/api/v1/teams/current" {
+	if servePendingPrivateTeamRead(w, r, canonical) {
+		return true
+	}
+	if r.Method != http.MethodGet || r.URL.Path != "/api/v1/teams/current" {
 		return false
 	}
-	json.NewEncoder(w).Encode(map[string]any{"team_id": "11111111-1111-4111-8111-111111111111", "canonical_team_id": canonical})
+	if err := json.NewEncoder(w).Encode(map[string]any{"team_id": "11111111-1111-4111-8111-111111111111", "canonical_team_id": canonical}); err != nil {
+		panic(err)
+	}
 	return true
 }
 

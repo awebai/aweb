@@ -8,6 +8,7 @@ import httpx
 import pytest
 import pytest_asyncio
 import test_installation_http as http_fixture
+from aweb.internal_auth import ProxyVerificationConfig
 from aweb.routes.apps import router
 from fastapi import FastAPI
 
@@ -37,6 +38,7 @@ async def host(db, origin, monkeypatch):
         return verified_origin == origin.url
 
     app = FastAPI()
+    ProxyVerificationConfig.capture().install(app)
     app.state.db = Managers()
     app.state.manifest_fetcher = origin.fetcher
     app.state.install_admission_policy = admission

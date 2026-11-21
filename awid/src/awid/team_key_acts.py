@@ -16,8 +16,8 @@ import json
 import logging
 import time
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass
-from datetime import datetime
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Protocol
 
 from awid.external_authority import TXTOutcomeResolver, discover_registry_authority
@@ -31,6 +31,10 @@ logger = logging.getLogger(__name__)
 
 ROTATE_TEAM_KEY_OPERATION = "rotate_team_key"
 MAX_SIGNED_PAYLOAD_BYTES = 16384
+TEAM_KEY_UNVERIFIED_DETAIL = (
+    "team_key_unverified: The team key change could not be verified. "
+    "Ask the team administrator to verify the namespace controller's current key-change record, then retry."
+)
 
 
 class TeamKeyActError(Exception):
@@ -149,11 +153,10 @@ async def verify_team_key_change(
     resolver: TXTOutcomeResolver,
 ) -> TeamKeyAct:
     """The act that moves a pinned team key to ``team_did_key``: a valid
-    ``rotate_team_key`` act, newer than ``pinned_at`` (the act behind the
-    current pin, if any), signed by the controller DNS names for ``domain``."""
-    act = verify_team_key_act(
-        record, domain=domain, name=name, team_did_key=team_did_key
-    )
+    ``rotate_team_key`` act, newer than ``pinned_at`` (the prior act's
+    signing time, or first admission time), signed by the controller DNS
+    names for ``domain``."""
+    act = verify_team_key_act(record, domain=domain, name=name, team_did_key=team_did_key)
     if pinned_at is not None and act.signed_at <= pinned_at:
         raise TeamKeyActError("not_newer")
     controller = await dns_namespace_controller(domain, resolver)
@@ -164,11 +167,19 @@ async def verify_team_key_change(
 
 @dataclass(frozen=True)
 class TeamKeyPin:
-    """The team key a relying server holds, and the signing time of the act
-    that set it (None for a key pinned on first sight)."""
+    """An admitted key, its signed act time, and independent admission floor.
+
+    docs/trust-model.md:524-528 requires admission time when no act set the
+    pin. It never masquerades as an act timestamp or changes its CAS value.
+    """
 
     team_did_key: str
     act_at: datetime | None
+    admitted_at: datetime | None = field(default=None, kw_only=True)
+
+    @property
+    def change_time_floor(self) -> datetime | None:
+        return self.act_at if self.act_at is not None else self.admitted_at
 
 
 class TeamKeyPinStore(Protocol):
@@ -197,7 +208,9 @@ class MemoryTeamKeyPins:
         return self._pins.get(team_id)
 
     async def first_sight(self, team_id: str, team_did_key: str) -> TeamKeyPin:
-        return self._pins.setdefault(team_id, TeamKeyPin(team_did_key, None))
+        return self._pins.setdefault(
+            team_id, TeamKeyPin(team_did_key, None, admitted_at=datetime.now(timezone.utc))
+        )
 
     async def move(
         self, team_id: str, *, expected: TeamKeyPin, new: TeamKeyPin
@@ -282,7 +295,7 @@ async def pinned_team_key(
             domain=domain,
             name=name,
             team_did_key=served_key,
-            pinned_at=pin.act_at,
+            pinned_at=pin.change_time_floor,
             resolver=resolver,
         )
     except TeamKeyActError as exc:
@@ -301,7 +314,9 @@ async def pinned_team_key(
         _mismatch(team_id, pin.team_did_key, served_key, exc.reason, enforce=enforce)
         return await _move_without_act(team_id, pins, pin, served_key, exc.reason)
     if not await pins.move(
-        team_id, expected=pin, new=TeamKeyPin(served_key, act.signed_at)
+        team_id,
+        expected=pin,
+        new=TeamKeyPin(served_key, act.signed_at, admitted_at=pin.admitted_at),
     ):
         current = await pins.pin(team_id)
         if current is not None and current.team_did_key == served_key:
@@ -344,7 +359,9 @@ async def _move_without_act(
     """Before enforcement, the tolerated ``served`` key becomes the pin, so the
     key a member was verified under is the team's current key on this server.
     The time of the last accepted act is kept: no act moved it."""
-    if await pins.move(team_id, expected=pin, new=TeamKeyPin(served, pin.act_at)):
+    if await pins.move(
+        team_id, expected=pin, new=TeamKeyPin(served, pin.act_at, admitted_at=pin.admitted_at)
+    ):
         logger.warning(
             "team_key_pin_moved_without_act team=%s from=%s to=%s reason=%s",
             team_id,

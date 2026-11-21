@@ -184,9 +184,13 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (out connectOutput, resultErr
 		alias = "" // cloud rejects alias for global identity bootstrap
 	}
 
-	registry, err := newRegistryClientWithPreferredBaseURL(strings.TrimSpace(req.RegistryURL))
+	selectedRegistryURL := firstNonEmptyString(strings.TrimSpace(req.RegistryURL), strings.TrimSpace(os.Getenv("AWID_REGISTRY_URL")))
+	registry, err := newRegistryClientWithPreferredBaseURL(selectedRegistryURL)
 	if err != nil {
 		return connectOutput{}, err
+	}
+	if selectedRegistryURL != "" {
+		selectedRegistryURL = registry.DefaultRegistryURL
 	}
 	if previous, loadErr := loadAPIKeyPartialInit(apiKeyPartialInitPath(awconfig.IdentityHome{Root: req.IdentityHome})); loadErr != nil {
 		return connectOutput{}, loadErr
@@ -298,6 +302,12 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (out connectOutput, resultErr
 	if cert.Team != req.CanonicalTeamID {
 		return connectOutput{}, errors.New("workspace creation returned a different team than the API key selected")
 	}
+	admissionContext, admissionCancel := commandAPIContext(nil)
+	defer admissionCancel()
+	keyObservation, err := registry.CheckTeamCertificateCurrentKey(admissionContext, awid.CurrentTeamCertificateCheck{RegistryURL: selectedRegistryURL, Certificate: cert})
+	if err != nil {
+		return connectOutput{}, fmt.Errorf("workspace certificate is not current: %w; ask the team controller for a current certificate", err)
+	}
 	if err := state.IDTree.retainResponse(resp.IDTreeCreationResponse); err != nil {
 		return connectOutput{}, err
 	}
@@ -320,12 +330,13 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (out connectOutput, resultErr
 	if err != nil {
 		return connectOutput{}, err
 	}
-	if err := persistAPIKeyBootstrapState(req.WorkingDir, req.IdentityHome, req.RegistryURL, signingKey, didKey, stableID, cert, global); err != nil {
+	if err := persistAPIKeyBootstrapState(req.WorkingDir, req.IdentityHome, selectedRegistryURL, signingKey, didKey, stableID, cert, global); err != nil {
 		return connectOutput{}, errors.Join(err, rollbackAwTree(awconfig.IdentityHome{Root: req.IdentityHome}, snapshot))
 	}
 
 	out, err = connectAPIKeyInitializedMember(apiKeyMemberConnection{
 		Request: req, ServerURL: serverURL, WorkspaceAPIKey: resp.APIKey, Snapshot: snapshot,
+		TeamKeyObservation: keyObservation, TeamRegistryURL: selectedRegistryURL,
 	})
 	if err != nil {
 		var connected *connectedMemberSetupError

@@ -103,7 +103,7 @@ async def agent(registry, sdk, parent, chain, *, alias):
         expected_head=None,
         invitation_id=None,
     )
-    await registry.add_certificate(member.certificate())
+    await registry.add_certificate(member.certificate(), team_key=member.team_key)
     return member, bundle["certificates"]
 
 

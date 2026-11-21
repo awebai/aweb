@@ -10,7 +10,6 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID, uuid4
 
-import aweb
 import httpx
 import pytest
 import pytest_asyncio
@@ -45,7 +44,7 @@ from nacl.signing import SigningKey
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
-from pgdbm import AsyncMigrationManager
+from aweb.migrations import apply_native_migrations
 
 _ROOT = Path(__file__).resolve().parents[2]
 _MANIFEST = _ROOT / "test-vectors" / "federation" / "preactivation-harness-v1.json"
@@ -293,13 +292,7 @@ def test_topology_and_canonical_input_artifacts_are_exact() -> None:
 
 async def _receiver_database(test_db_factory, suffix: str):
     db = await test_db_factory.create_db(suffix=suffix, schema="aweb")
-    migrations = AsyncMigrationManager(
-        db,
-        migrations_path=str(Path(aweb.__file__).parent / "migrations" / "aweb"),
-        module_name="aweb-aweb",
-        migrations_table="schema_migrations",
-    )
-    await migrations.apply_pending_migrations()
+    await apply_native_migrations(db)
     return db
 
 
@@ -785,7 +778,12 @@ class _TLSRegistry:
         self.requests.append(request)
         path = request.split(b" ", 2)[1].decode()
         from urllib.parse import unquote
-        value = next(value for key, value in self.responses.items() if unquote(key) == unquote(path))
+
+        value = next(
+            value
+            for key, value in self.responses.items()
+            if unquote(key) == unquote(path)
+        )
         body = json.dumps(value, separators=(",", ":")).encode()
         writer.write(
             b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
@@ -836,9 +834,20 @@ def _identity_registry_responses(domain: str, name: str, delivery_origin: str):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("with_chain, authority_case", [(False, "direct"), (True, "direct"), (True, "alias"), (True, "mismatch"), (False, "timeout")])
+@pytest.mark.parametrize(
+    "with_chain, authority_case",
+    [
+        (False, "direct"),
+        (True, "direct"),
+        (True, "alias"),
+        (True, "mismatch"),
+        (False, "timeout"),
+    ],
+)
 async def test_http_ingress_uses_production_dns_authority_not_receiver_home_registry(
-    two_receiver_databases, with_chain, authority_case,
+    two_receiver_databases,
+    with_chain,
+    authority_case,
 ) -> None:
     _, receiver_db = two_receiver_databases
     sender_domain = "alpha.test"
@@ -849,29 +858,70 @@ async def test_http_ingress_uses_production_dns_authority_not_receiver_home_regi
     )
     chain = None
     if with_chain:
-        id_vectors = json.loads((_ROOT / "docs/vectors/id-certificates-v1.json").read_text())
-        case = next(c for c in id_vectors["verification_cases"] if c["name"] == "registered-agent")
+        id_vectors = json.loads(
+            (_ROOT / "docs/vectors/id-certificates-v1.json").read_text()
+        )
+        case = next(
+            c
+            for c in id_vectors["verification_cases"]
+            if c["name"] == "registered-agent"
+        )
         snapshot = id_vectors["status_fixtures"][case["status"]]
-        chain = {"v": 1, "type": "aweb.id-chain", "certificates": [id_vectors["certificates"][name]["signed"] for name in case["chain"]]}
+        chain = {
+            "v": 1,
+            "type": "aweb.id-chain",
+            "certificates": [
+                id_vectors["certificates"][name]["signed"] for name in case["chain"]
+            ],
+        }
         sender_domain = "example.com"
-        row = next(r for r in snapshot["identities"] if r["id"] == case["subject"]["id"])
+        row = next(
+            r for r in snapshot["identities"] if r["id"] == case["subject"]["id"]
+        )
         entries = [r["entry"] for r in row["key_history"]]
-        mapping = {"did_aw": case["subject"]["id"], "rotated_did_key": case["subject"]["did_key"], "initial_did_key": snapshot["namespace"]["epochs"][-1]["did_key"]}
+        mapping = {
+            "did_aw": case["subject"]["id"],
+            "rotated_did_key": case["subject"]["did_key"],
+            "initial_did_key": snapshot["namespace"]["epochs"][-1]["did_key"],
+        }
         escaped = mapping["did_aw"].replace(":", "%3A")
         sender_responses = {
-            f"/v1/namespaces/{sender_domain}": {"domain": sender_domain, "controller_did": mapping["initial_did_key"]},
-            f"/v1/namespaces/{sender_domain}/addresses/{sender_name}": {"address_id": "foreign-sender", "domain": sender_domain, "name": sender_name, "did_aw": mapping["did_aw"], "current_did_key": mapping["rotated_did_key"], "delivery": {"origin": sender_delivery}, "created_at": "2026-10-26T00:00:00Z"},
-            f"/v1/did/{escaped}/key": {"did_aw": mapping["did_aw"], "current_did_key": mapping["rotated_did_key"], "log_head": entries[-1], "id_tree": {"enrolled": True, "domain": sender_domain}},
+            f"/v1/namespaces/{sender_domain}": {
+                "domain": sender_domain,
+                "controller_did": mapping["initial_did_key"],
+            },
+            f"/v1/namespaces/{sender_domain}/addresses/{sender_name}": {
+                "address_id": "foreign-sender",
+                "domain": sender_domain,
+                "name": sender_name,
+                "did_aw": mapping["did_aw"],
+                "current_did_key": mapping["rotated_did_key"],
+                "delivery": {"origin": sender_delivery},
+                "created_at": "2026-10-26T00:00:00Z",
+            },
+            f"/v1/did/{escaped}/key": {
+                "did_aw": mapping["did_aw"],
+                "current_did_key": mapping["rotated_did_key"],
+                "log_head": entries[-1],
+                "id_tree": {"enrolled": True, "domain": sender_domain},
+            },
             f"/v1/did/{escaped}/log": entries,
             "/v1/id-certificates/status": snapshot,
         }
     else:
-        next(v for k, v in sender_responses.items() if k.endswith("/key"))["id_tree"] = {"enrolled": False}
+        next(v for k, v in sender_responses.items() if k.endswith("/key"))[
+            "id_tree"
+        ] = {"enrolled": False}
     if authority_case in {"alias", "mismatch"}:
         old_domain, sender_domain = sender_domain, "alias.test"
-        sender_responses = {key.replace(old_domain, sender_domain): value for key, value in sender_responses.items()}
+        sender_responses = {
+            key.replace(old_domain, sender_domain): value
+            for key, value in sender_responses.items()
+        }
         sender_responses[f"/v1/namespaces/{sender_domain}"]["domain"] = sender_domain
-        sender_responses[f"/v1/namespaces/{sender_domain}/addresses/{sender_name}"]["domain"] = sender_domain
+        sender_responses[f"/v1/namespaces/{sender_domain}/addresses/{sender_name}"][
+            "domain"
+        ] = sender_domain
     target_key = SigningKey.generate()
     target_did_key = did_from_public_key(bytes(target_key.verify_key))
     target_did_aw = "did:aw:receiver"
@@ -916,14 +966,27 @@ async def test_http_ingress_uses_production_dns_authority_not_receiver_home_regi
             sender_domain, mapping["initial_did_key"], sender_registry.origin
         )
         if authority_case in {"alias", "mismatch"}:
+
             class AliasDNS(_RecordedDNS):
                 async def lookup_txt(self, name):
                     if name == "_awid.example.com":
                         self.queries.append(name)
-                        origin = self.registry_origin if authority_case == "alias" else "https://different-registry.test"
-                        return DNSLookup("record", (f"awid=v1; controller={self.controller_did}; registry={origin};",))
+                        origin = (
+                            self.registry_origin
+                            if authority_case == "alias"
+                            else "https://different-registry.test"
+                        )
+                        return DNSLookup(
+                            "record",
+                            (
+                                f"awid=v1; controller={self.controller_did}; registry={origin};",
+                            ),
+                        )
                     return await super().lookup_txt(name)
-            sender_dns = AliasDNS(sender_domain, mapping["initial_did_key"], sender_registry.origin)
+
+            sender_dns = AliasDNS(
+                sender_domain, mapping["initial_did_key"], sender_registry.origin
+            )
 
         class ReceiveHosts(_LoopbackHosts):
             async def resolve_all(self, hostname):
@@ -969,19 +1032,38 @@ async def test_http_ingress_uses_production_dns_authority_not_receiver_home_regi
             return Database()
 
         app.dependency_overrides[get_db] = database_dependency
-        sender_key = SigningKey(bytes.fromhex(json.loads(
-            (_ROOT / "docs" / "vectors" / "identity-log-v1.json").read_text()
-        )["key_seeds"]["rotated_seed_hex"]))
+        sender_key = SigningKey(
+            bytes.fromhex(
+                json.loads(
+                    (_ROOT / "docs" / "vectors" / "identity-log-v1.json").read_text()
+                )["key_seeds"]["rotated_seed_hex"]
+            )
+        )
         if with_chain:
-            sender_key = SigningKey(bytes.fromhex(next(k["seed_hex"] for k in id_vectors["keys"].values() if k["did_key"] == mapping["rotated_did_key"])))
+            sender_key = SigningKey(
+                bytes.fromhex(
+                    next(
+                        k["seed_hex"]
+                        for k in id_vectors["keys"].values()
+                        if k["did_key"] == mapping["rotated_did_key"]
+                    )
+                )
+            )
         from redis.asyncio import Redis
         from redis.asyncio.retry import Retry
         from redis.backoff import NoBackoff
-        app.state.redis = Redis(host="127.0.0.1", port=1, socket_connect_timeout=0.1, socket_timeout=0.1, retry=Retry(NoBackoff(), 0))
+
+        app.state.redis = Redis(
+            host="127.0.0.1",
+            port=1,
+            socket_connect_timeout=0.1,
+            socket_timeout=0.1,
+            retry=Retry(NoBackoff(), 0),
+        )
         message_id = str(uuid4())
         conversation_id = str(uuid4())
-        timestamp = datetime.now(UTC).replace(microsecond=0).isoformat().replace(
-            "+00:00", "Z"
+        timestamp = (
+            datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
         )
         signed_payload = canonical_json_bytes(
             {
@@ -1024,19 +1106,33 @@ async def test_http_ingress_uses_production_dns_authority_not_receiver_home_regi
         }
         # The recipient's stream is woken through the identity the delivery
         # resolved, published from a reachable Redis after the commit.
-        wake_redis = Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True)
-        wake_hub, app.state.agent_wake_publisher = AgentWakeHub(wake_redis), AgentWakePublisher(wake_redis)
+        wake_redis = Redis.from_url(
+            os.environ.get("REDIS_URL", "redis://localhost:6379/0"),
+            decode_responses=True,
+        )
+        wake_hub, app.state.agent_wake_publisher = (
+            AgentWakeHub(wake_redis),
+            AgentWakePublisher(wake_redis),
+        )
         await wake_hub.start()
         woken = None
         try:
-            async with wake_hub.subscribe(
-                [did_wake_key(target_did_aw), did_wake_key(target_did_key)]
-            ) as wakes, AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://receiver.test"
-            ) as client:
+            async with (
+                wake_hub.subscribe(
+                    [did_wake_key(target_did_aw), did_wake_key(target_did_key)]
+                ) as wakes,
+                AsyncClient(
+                    transport=ASGITransport(app=app), base_url="http://receiver.test"
+                ) as client,
+            ):
                 from awid.id_certificates import encode_id_chain_header
-                headers = {"X-AWID-ID-Chain": encode_id_chain_header(chain)} if chain else {}
-                response = await client.post("/v1/federation/messages", json=payload, headers=headers)
+
+                headers = (
+                    {"X-AWID-ID-Chain": encode_id_chain_header(chain)} if chain else {}
+                )
+                response = await client.post(
+                    "/v1/federation/messages", json=payload, headers=headers
+                )
                 if response.status_code == 200:
                     await asyncio.wait_for(wakes.wait(), 1.0)
                     woken = wakes.take().kinds
@@ -1050,25 +1146,47 @@ async def test_http_ingress_uses_production_dns_authority_not_receiver_home_regi
 
     if authority_case in {"mismatch", "timeout"}:
         assert response.status_code == 503, response.text
-        assert response.json()["detail"] == ("sender_registry_unavailable" if authority_case == "timeout" else "evidence_unavailable")
-        assert await receiver_db.fetch_value("SELECT COUNT(*) FROM {{tables.messages}} WHERE message_id=$1", UUID(message_id)) == 0
+        assert response.json()["detail"] == (
+            "sender_registry_unavailable"
+            if authority_case == "timeout"
+            else "evidence_unavailable"
+        )
+        assert (
+            await receiver_db.fetch_value(
+                "SELECT COUNT(*) FROM {{tables.messages}} WHERE message_id=$1",
+                UUID(message_id),
+            )
+            == 0
+        )
         return
     assert response.status_code == 200, response.text
     assert response.json()["message_id"] == message_id
     assert woken == {"mail"}
-    assert sender_dns.queries == [f"_awid.{sender_domain}"] + (["_awid.example.com"] if authority_case == "alias" else [])
-    assert not any(b"authorization:" in request.lower() or b"x-awid-service-token:" in request.lower() for request in sender_registry.requests)
-    assert [request.split(b" ", 2)[1].decode() for request in home_registry.requests] == [
-        target_path
-    ]
-    assert await receiver_db.fetch_value(
-        "SELECT COUNT(*) FROM {{tables.messages}} WHERE message_id = $1",
-        UUID(message_id),
-    ) == 1
-    assert await receiver_db.fetch_value(
-        "SELECT COUNT(*) FROM {{tables.federation_did_checkpoints}} WHERE did_aw = $1",
-        mapping["did_aw"],
-    ) == 1
+    assert sender_dns.queries == [f"_awid.{sender_domain}"] + (
+        ["_awid.example.com"] if authority_case == "alias" else []
+    )
+    assert not any(
+        b"authorization:" in request.lower()
+        or b"x-awid-service-token:" in request.lower()
+        for request in sender_registry.requests
+    )
+    assert [
+        request.split(b" ", 2)[1].decode() for request in home_registry.requests
+    ] == [target_path]
+    assert (
+        await receiver_db.fetch_value(
+            "SELECT COUNT(*) FROM {{tables.messages}} WHERE message_id = $1",
+            UUID(message_id),
+        )
+        == 1
+    )
+    assert (
+        await receiver_db.fetch_value(
+            "SELECT COUNT(*) FROM {{tables.federation_did_checkpoints}} WHERE did_aw = $1",
+            mapping["did_aw"],
+        )
+        == 1
+    )
 
 
 @pytest.mark.asyncio
@@ -1131,10 +1249,13 @@ async def test_mcp_cross_registry_uses_production_strict_authority_not_home_regi
             resolver=resolver,
             txt_resolver=dns,
         )
-        home_cache = Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+        home_cache = Redis.from_url(
+            os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+        )
         if home_client_kind == "cached":
             home_client = CachedRegistryClient(
-                home_registry.origin, home_cache,
+                home_registry.origin,
+                home_cache,
                 service_token="receiver-service-must-stay-at-home-registry-only",
                 transport=httpx.AsyncHTTPTransport(verify=home_registry.client_context),
             )
@@ -1197,7 +1318,11 @@ async def test_mcp_cross_registry_uses_production_strict_authority_not_home_regi
         try:
             reassigned = json.loads(
                 await mcp_contacts_tools.send_message_to_contact(
-                    type("DB", (), {"get_manager": lambda _self, _name="aweb": receiver_db})(),
+                    type(
+                        "DB",
+                        (),
+                        {"get_manager": lambda _self, _name="aweb": receiver_db},
+                    )(),
                     registry_client=home_client,
                     federation_authority=activation,
                     hosted_signer=signer,
@@ -1206,11 +1331,18 @@ async def test_mcp_cross_registry_uses_production_strict_authority_not_home_regi
                     channel=channel,
                 )
             )
-            assert reassigned == {"error": "contact_identity_binding_required"}
+            assert reassigned == {
+                "error": "This address now belongs to a different identity. Check the contact and explicitly bind it again before sending.",
+                "reason": "contact_identity_binding_required",
+            }
             if channel == "mail":
                 result = json.loads(
                     await mcp_mail_tools.send_mail(
-                        type("DB", (), {"get_manager": lambda _self, _name="aweb": receiver_db})(),
+                        type(
+                            "DB",
+                            (),
+                            {"get_manager": lambda _self, _name="aweb": receiver_db},
+                        )(),
                         registry_client=home_client,
                         federation_authority=activation,
                         hosted_signer=signer,
@@ -1225,7 +1357,11 @@ async def test_mcp_cross_registry_uses_production_strict_authority_not_home_regi
             else:
                 result = json.loads(
                     await mcp_chat_tools.chat_send(
-                        type("DB", (), {"get_manager": lambda _self, _name="aweb": receiver_db})(),
+                        type(
+                            "DB",
+                            (),
+                            {"get_manager": lambda _self, _name="aweb": receiver_db},
+                        )(),
                         None,
                         registry_client=home_client,
                         federation_authority=activation,
@@ -1416,13 +1552,15 @@ async def test_two_registries_record_exact_dns_http_tls_and_share_side_cohorts(
                 delivery_origin=delivery,
             )
             try:
-                token = await workers[0].resolve_and_commit(
+                token = await workers[0].resolve_evidence_and_commit(
                     claim,
                     resolver,
                     authority_generation=generation,
                     publishing_fence=generation,
                 )
-                assert await workers[1].authorize_from_shared_cohort(claim) == token
+                assert (
+                    await workers[1].authorize_from_shared_cohort(claim) == token.token
+                )
             finally:
                 await resolver.aclose()
 

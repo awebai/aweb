@@ -385,7 +385,13 @@ func (r *doctorRunner) runCertificateChecks(state *doctorLocalState) {
 			map[string]any{"error": err.Error()},
 		))
 	} else {
-		r.add(localCheck(doctorCheckCertificateSignature, doctorStatusOK, &doctorTarget{Type: "did", ID: teamDID}, "Team certificate verifies with its team_did_key.", "", nil))
+		message := "Team certificate signature verifies under the key it names. This does not show that the agent is a current member of the team; run aw doctor --online to check current membership."
+		if state.teamState != nil {
+			if membership := state.teamState.Membership(cert.Team); membership != nil && membership.TeamKey != nil && (membership.TeamKey.State == awid.TeamKeyUnconfirmed || membership.TeamKey.DIDKey != cert.TeamDIDKey) {
+				message += " " + teamKeyConfirmationText(&awid.TeamKeyEvidence{DIDKey: cert.TeamDIDKey, State: awid.TeamKeyUnconfirmed})
+			}
+		}
+		r.add(localCheck(doctorCheckCertificateSignature, doctorStatusOK, &doctorTarget{Type: "did", ID: teamDID}, message, "", nil))
 	}
 }
 

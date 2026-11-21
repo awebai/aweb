@@ -417,6 +417,14 @@ func runWorkspaceDelete(cmd *cobra.Command, args []string) error {
 		if retireErr != nil {
 			return fmt.Errorf("workspace not retired: %w", retireErr)
 		}
+		if retired.Status == "accepted" {
+			return writeWorkspaceDeleteOutput(workspaceDeleteOutput{
+				WorkspaceID:         workspaceID,
+				Alias:               plan.alias,
+				AliasReleasedReason: "completion pending",
+				RetirementCode:      selfRemovalAccepted,
+			})
+		}
 		if !retired.AliasReleased {
 			return fmt.Errorf(
 				"workspace not retired: alias %s was not released (%s)",
@@ -525,8 +533,10 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 
 	apiKey := resolveInitAPIKey()
 	authority := agentCreationRequest{WorkingDir: workingDir, APIKey: apiKey, AwebURL: sourceServerURL, RequestedTeam: teamID}
+	storedKey := strings.TrimSpace(state.APIKey)
 	useWorkspaceFallback := false
-	if apiKey != "" {
+	switch {
+	case apiKey != "":
 		ctx, cancel := commandAPIContext(cmd)
 		selected, readErr := readAPIKeyCreationTeam(ctx, sourceServerURL, apiKey)
 		cancel()
@@ -534,8 +544,13 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 		if readErr != nil {
 			debugLog("API-key team unavailable for add-worktree: %v", readErr)
 			useWorkspaceFallback = true
-			apiKey = strings.TrimSpace(state.APIKey)
+			apiKey = storedKey
 		}
+	case !home.External() && storedKey != "":
+		// A co-located workspace can use its stored key for bootstrap.
+		// An explicitly selected identity uses its own signing authority.
+		useWorkspaceFallback = true
+		apiKey = storedKey
 	}
 	var creation creationAuthority
 	if !useWorkspaceFallback {
@@ -621,8 +636,8 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 	}
 
 	if useWorkspaceFallback {
-		// The team read is optional. Use the original workspace authority order
-		// when the service cannot identify the ambient key's team.
+		// Keep the released workspace authority order for the stored-key
+		// path and for services without API-key team introspection.
 		switch {
 		case hasTeamKey:
 			creation.Mode = creationAuthorityController
@@ -639,6 +654,11 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 	if creation.Mode == creationAuthorityController && hasTeamKey {
 		_, err = addWorktreeViaLocalTeamKey(child)
 	} else if creation.Mode == creationAuthorityAPI {
+		if selected := child.SelectedTeam; selected == nil || selected.CanonicalTeamID == "" || strings.EqualFold(selected.CanonicalTeamID, teamID) {
+			if membership := teamState.Membership(teamID); membership != nil {
+				child.TeamRegistryURL = membership.RegistryURL
+			}
+		}
 		_, err = addWorktreeViaCloudBootstrap(child)
 	} else {
 		_, err = addWorktreeViaPrimaryInvite(child)
@@ -862,6 +882,9 @@ func formatWorkspaceAddWorktree(v any) string {
 
 func formatWorkspaceDelete(v any) string {
 	out := v.(workspaceDeleteOutput)
+	if out.RetirementCode == selfRemovalAccepted {
+		return fmt.Sprintf("Workspace removal accepted for %s (%s). Completion pending.\n", out.Alias, out.WorkspaceID)
+	}
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("Deleted workspace %s (%s)\n", out.Alias, out.WorkspaceID))
 	if out.IdentityDeleted {

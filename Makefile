@@ -212,6 +212,7 @@ test-python-locks: test-uv-cache
 test-sot-source-inventories:
 	python3 scripts/check_sot_source_inventories.py
 	python3 -m unittest discover -s scripts -p "test_check_sot_source_inventories.py" -v
+	python3 -m unittest discover -s scripts -p "test_registry_state_owner.py" -v
 
 .PHONY: test-identity-primitives
 test-identity-primitives:

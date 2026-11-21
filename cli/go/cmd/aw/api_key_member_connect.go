@@ -6,13 +6,16 @@ import (
 	"strings"
 
 	"github.com/awebai/aw/awconfig"
+	"github.com/awebai/aw/awid"
 )
 
 type apiKeyMemberConnection struct {
-	Request         apiKeyInitRequest
-	ServerURL       string
-	WorkspaceAPIKey string
-	Snapshot        map[string]bool
+	Request            apiKeyInitRequest
+	ServerURL          string
+	WorkspaceAPIKey    string
+	Snapshot           map[string]bool
+	TeamKeyObservation *awid.TeamCertificateKeyObservation
+	TeamRegistryURL    string
 }
 
 // connectAPIKeyInitializedMember completes the installed membership while
@@ -21,11 +24,15 @@ type apiKeyMemberConnection struct {
 func connectAPIKeyInitializedMember(input apiKeyMemberConnection) (connectOutput, error) {
 	req := input.Request
 	out, err := initCertificateConnectWithOptions(req.WorkingDir, input.ServerURL, certificateConnectOptions{
-		ContextFile: req.ContextFile, EncryptionPublication: req.EncryptionPublication, Role: strings.TrimSpace(req.Role),
-		HumanName:    strings.TrimSpace(req.HumanName),
-		AgentType:    strings.TrimSpace(req.AgentType),
-		APIKey:       strings.TrimSpace(input.WorkspaceAPIKey),
-		IdentityHome: strings.TrimSpace(req.IdentityHome),
+		TeamKeyObservation:    input.TeamKeyObservation,
+		TeamRegistryURL:       input.TeamRegistryURL,
+		ContextFile:           req.ContextFile,
+		EncryptionPublication: req.EncryptionPublication,
+		Role:                  strings.TrimSpace(req.Role),
+		HumanName:             strings.TrimSpace(req.HumanName),
+		AgentType:             strings.TrimSpace(req.AgentType),
+		APIKey:                strings.TrimSpace(input.WorkspaceAPIKey),
+		IdentityHome:          strings.TrimSpace(req.IdentityHome),
 	})
 	if err != nil {
 		var connected *connectedMemberSetupError

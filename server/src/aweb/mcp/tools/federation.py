@@ -6,15 +6,29 @@ from collections import OrderedDict
 from typing import Any
 
 from aweb.agent_wake import agent_wake_publisher
+from aweb.application_state import RegistryClientUnavailable, application_registry_client
 from aweb.identity_auth_deps import MessagingAuth
 from aweb.identity_binding import identity_binding_cache
+from aweb.identity_scope import normalize_identity_scope
 from aweb.mcp.auth import AuthContext
 from aweb.federation.origins import application_public_origins
 from aweb.mcp.mutations import current_mutation_callback
 from aweb.messaging.runtime import MessagingRuntime, application_public_origin
 
 
+def mcp_sender_budget_key(auth: AuthContext) -> str:
+    """Keep MCP federation budgets per authenticated sender behind shared proxies.
+
+    HTTP budgets use the configured client address; an MCP request can have no
+    HTTP peer and must retain its established authenticated-identity namespace.
+    """
+    return f"mcp:{auth.did_key}"
+
+
 def mcp_messaging_auth(auth: AuthContext) -> MessagingAuth:
+    """Retain native credential evidence; adapt existing host metadata callers."""
+    if auth.messaging_auth is not None:
+        return auth.messaging_auth
     return MessagingAuth(
         did_key=(auth.did_key or "").strip(),
         did_aw=(auth.did_aw or "").strip() or None,
@@ -22,7 +36,13 @@ def mcp_messaging_auth(auth: AuthContext) -> MessagingAuth:
         team_id=auth.team_id,
         alias=auth.alias,
         agent_id=auth.agent_id,
-        identity_scope=auth.identity_scope,
+        identity_scope=(
+            normalize_identity_scope(auth.identity_scope)
+            if auth.identity_scope is not None
+            else None
+        ),
+        certificate_id=auth.certificate_id,
+        verified_team_id=auth.team_id if auth.certificate_id else None,
         address_resolution=auth.address_resolution,
     )
 
@@ -48,25 +68,31 @@ def mcp_messaging_runtime(
     """
     state = getattr(getattr(auth.request, "app", None), "state", None)
     origin = (public_origin or "").strip()
+    if registry_client is None and state is not None:
+        try:
+            registry_client = application_registry_client(state)
+        except RegistryClientUnavailable:
+            # As with native sends, routing/binding owns required-client refusals.
+            registry_client = None
     return MessagingRuntime(
-        registry_client=(
-            registry_client if registry_client is not None else getattr(state, "awid_registry_client", None)
-        ),
+        registry_client=registry_client,
         federation_authority=federation_authority,
         mail_transport=mail_transport,
         chat_transport=chat_transport,
         public_origin=origin or application_public_origin(state),
-        public_origins=frozenset(application_public_origins(state, public_origin=origin or None)),
+        public_origins=frozenset(
+            application_public_origins(state, public_origin=origin or None)
+        ),
         on_mutation=current_mutation_callback(),
         agent_wake_publisher=agent_wake_publisher(state),
-        identity_binding_cache=identity_binding_cache(state) if state is not None else OrderedDict(),
+        identity_binding_cache=identity_binding_cache(state)
+        if state is not None
+        else OrderedDict(),
     )
 
 
 def registry_delivery_origin(resolution) -> str:
     delivery = getattr(resolution, "delivery", None)
     return str(
-        getattr(resolution, "delivery_origin", None)
-        or getattr(delivery, "origin", "")
-        or ""
+        getattr(resolution, "delivery_origin", None) or getattr(delivery, "origin", "") or ""
     ).strip()

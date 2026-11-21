@@ -101,6 +101,35 @@ certificate wire field for this value is still `alias`; product docs and new CLI
 work call it **name**. Compatibility output may dual-emit `alias` and `name`;
 that does not create two concepts.
 
+### Pending private-team key confirmation
+
+Hosted creation can return a usable certificate while its registry registration
+is pending. The client checks the artifact signature and its binding to the
+home's signing key, but an unregistered member cannot read a private team's
+metadata. An absent certificate-status response or a private-read refusal is
+not evidence that the registry agrees with the supplied team key.
+
+The CLI records this key in the membership's `teams.yaml` entry as
+`team_key: {did_key: ..., state: unconfirmed}`. The same field becomes
+`state: confirmed` only when an existing registry read independently supplies
+the matching key. A public team's metadata may supply that evidence before
+certificate registration; a private team's certificate-status read can supply
+it after registration. Normal certificate clients recheck an unconfirmed key
+before using the credential. A definite mismatch refuses with a sentence
+saying the key this agent was given does not match the registry's and to ask
+the team's owner. An unreachable registry leaves the key unconfirmed, without
+adding a registration requirement to a supported pending flow. Certificate,
+request-signature, revocation and server admission rules still apply.
+
+A confirmation is agreement with the selected registry's current-key answer;
+it does not authenticate that answer against a new trust root or resolve the
+separate question of trusting registry-supplied first team keys. No new
+registry endpoint is introduced here. Offline `aw doctor` performs no network
+read and explicitly reports an unconfirmed stored key and what will confirm
+it. Online doctor probes the same owner and reports unavailable evidence as
+unknown, naming the registry; doctor remains read-only. These rules implement
+Antares245fb075, relayed in coordinator37ecee52.
+
 ## Name and address rules
 
 - A **member name** is the team-local routing key for one team membership, for
@@ -333,6 +362,9 @@ and normal output emits only `identity_scope`. The deprecated `--alias` flag
 remains a hidden, warning compatibility alias for `--name`. New requests,
 registry storage, and product language use `name` as the concept and
 `identity_scope=local|global` for scope.
+
+For a fully unowned team, see [how the controller signs a claim and an existing
+member submits it](unowned-team-claim.md).
 
 ### Acceptance-minted key recovery
 
@@ -716,6 +748,31 @@ rewritten. It reports only counts (`verified`, `self_derived`, `unbound`,
 unavailable. Operators investigate those counts before proceeding. This command
 requires the server's database and AWID configuration; it performs no migration.
 
+### Native member projections for embedding hosts
+
+`aweb.member_team_key.member_projection_columns_sql(alias)` supplies the native
+member columns for a SELECT or joined host snapshot. Construct its immutable
+`MemberProjection.from_row(mapping)` from the complete row; omitted columns are
+an error, including authority columns whose value is NULL. PostgreSQL JSON rows
+are supported: the constructor normalizes UUID and timestamp strings to their
+native types. A host keeps its account and custody overlays separate.
+
+`projection.verified_identity()` applies the existing verified-key rule. Raw
+stable-DID and address claims remain available only for policy classification;
+a complete projection by itself proves neither identity binding nor membership.
+`read_member_projection(db, *, team_id=None, did_key=None, agent_id=None)` reads
+the same shape. Select by explicit team plus key, or by agent ID with an optional
+team constraint. It retains inactive/deleted rows so an actor resolver can
+distinguish a known refused actor from an absent team-level principal.
+
+Hosts pass that typed projection as `cert_info["agent_row"]` only for the exact
+certificate team/key it describes. Complete legacy dictionaries are validated;
+an incomplete legacy dictionary is replaced by a native read, rather than
+manufacturing NULL authority facts. Native scope-aware authentication is exposed
+as `aweb.team_auth_deps.resolve_team_identity_with_grant_scope(request, db, *,
+grant_scope)`. Hosts apply account-specific fences to its result; they do not
+copy its grant or certificate policy.
+
 ## Session grants
 
 A session grant lets a worker process act as an identity until revoked (or for an explicit finite window)
@@ -743,8 +800,9 @@ grant clients use the locator recorded at mint time. Existing short paths and
 explicit `--custody-socket` locators remain unchanged. Explicit paths must still
 fit the platform's Unix socket limit.
 
-The fallback directory is created with mode 0700; its ownership, permissions,
-and absence of symlinks are checked before use. Existing sockets must be
+Every custody socket, whether default, configured or shortened, uses a private
+directory created with mode 0700. Its ownership, permissions and absence of
+symlinks are checked before listening or sending a request. Existing sockets must be
 owner-only, owned by the current user, and not symlinks. Unsafe paths are refused
 rather than repaired or followed. Restart custody and mint a new grant if an
 older grant contains an unusably long explicit locator; resident keys stay in
@@ -867,6 +925,12 @@ This is bounded rechecking, not instantaneous idle-stream disconnection. Existin
 finite notification streams keep their current behavior. Custody's authoritative
 status cache remains bounded to 30 seconds. Registry revocation freshness remains
 subject to the registry client's existing cache policy.
+
+A grant stays tied to the certificate that issued it. When another certificate
+becomes current for the same member, the old grant ends even if the member and
+team keys are unchanged. Ask the issuer for a new grant. For an OATS seat, enable
+renewal on launch and restart the seat so it receives a new delegation from the
+resident's current certificate.
 
 ## User-data signatures
 

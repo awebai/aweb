@@ -17,8 +17,15 @@ import awid.registry as registry_module
 from awid.registry import CachedRegistryClient
 from awid.signing import canonical_json_bytes, sign_message
 from test_dashboard_privacy import TEAM, TEAM_NAME, privacy_app  # noqa: F401
-from test_messages_http import _make_keypair
+from test_messages_http import (
+    _encode_certificate,
+    _make_certificate,
+    _make_keypair,
+    _signed_team_headers,
+)
 from awid_service.testing import TXTAnswers
+
+__all__ = ["privacy_app"]
 
 
 def _headers(sk, did, payload):
@@ -32,16 +39,21 @@ def _headers(sk, did, payload):
 
 async def _controller_action(env, operation, sk, did):
     if operation == "status_host":
-        previous = await env.db.fetch_value(
-            "SELECT host_did FROM {{tables.agent_status_hosts}} WHERE agent_id=$1",
-            env.actors["alice"].id,
-        ) or ""
+        previous = (
+            await env.db.fetch_value(
+                "SELECT host_did FROM {{tables.agent_status_hosts}} WHERE agent_id=$1",
+                env.actors["alice"].id,
+            )
+            or ""
+        )
         # Alternate hosts so every accepted request performs a real change.
         host = env.actors["carol" if previous == env.actors["bob"].did else "bob"].did
         body = {"team_id": TEAM, "host_did": host, "previous_host_did": previous}
         signed = {**body, "operation": "set_agent_status_host", "agent_alias": "alice"}
         response = await env.client.put(
-            "/v1/agents/alice/status-host", json=body, headers=_headers(sk, did, signed),
+            "/v1/agents/alice/status-host",
+            json=body,
+            headers=_headers(sk, did, signed),
         )
         stored = await env.db.fetch_value(
             "SELECT host_did FROM {{tables.agent_status_hosts}} WHERE agent_id=$1",
@@ -50,19 +62,26 @@ async def _controller_action(env, operation, sk, did):
         return response, stored, host
 
     previous = await env.db.fetch_value(
-        "SELECT did_key FROM {{tables.agents}} WHERE agent_id=$1", env.actors["alice"].id,
+        "SELECT did_key FROM {{tables.agents}} WHERE agent_id=$1",
+        env.actors["alice"].id,
     )
     _, _, next_key = _make_keypair()
     body = {
-        "team_id": TEAM, "old_did_key": previous, "new_did_key": next_key,
-        "old_certificate_id": "rotation-old", "new_certificate_id": "rotation-new",
+        "team_id": TEAM,
+        "old_did_key": previous,
+        "new_did_key": next_key,
+        "old_certificate_id": "rotation-old",
+        "new_certificate_id": "rotation-new",
     }
     signed = {**body, "operation": "replace_local_identity_key", "agent_alias": "alice"}
     response = await env.client.post(
-        "/v1/agents/alice/replace-key", json=body, headers=_headers(sk, did, signed),
+        "/v1/agents/alice/replace-key",
+        json=body,
+        headers=_headers(sk, did, signed),
     )
     stored = await env.db.fetch_value(
-        "SELECT did_key FROM {{tables.agents}} WHERE agent_id=$1", env.actors["alice"].id,
+        "SELECT did_key FROM {{tables.agents}} WHERE agent_id=$1",
+        env.actors["alice"].id,
     )
     return response, stored, next_key
 
@@ -71,7 +90,8 @@ async def _controller_action(env, operation, sk, did):
 async def rotation_app(privacy_app):
     env = privacy_app
     registry = CachedRegistryClient(
-        registry_url=f"http://registry-{uuid4().hex}.test", redis_client=env.redis,
+        registry_url=f"http://registry-{uuid4().hex}.test",
+        redis_client=env.redis,
         transport=httpx.ASGITransport(app=env.registry_app),
     )
     original = env.app.state.awid_registry_client
@@ -86,18 +106,16 @@ async def rotation_app(privacy_app):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("operation", ["replace_key", "status_host"])
 @pytest.mark.parametrize("age", [59, 61])
-async def test_awid_rotation_replaces_oss_controller_authority(rotation_app, monkeypatch, operation, age):
+async def test_awid_rotation_replaces_oss_controller_authority(
+    rotation_app, monkeypatch, operation, age
+):
     env = rotation_app
     clock = [1_000_000]
     monkeypatch.setattr(registry_module, "_cache_now", lambda: clock[0])
-    namespace_sk, _, namespace_did = _make_keypair()
+    namespace_sk, namespace_did = env.namespace_sk, env.namespace_did
     next_sk, _, next_did = _make_keypair()
     # DNS names the namespace controller whose rotation act moves the pin.
     env.app.state.awid_txt_resolver = TXTAnswers({"_awid.example.test": namespace_did})
-    await env.registry_db.execute(
-        "INSERT INTO {{tables.dns_namespaces}} (domain, controller_did, verification_status) "
-        "VALUES ('example.test', $1, 'verified')", namespace_did,
-    )
 
     # The controller has working authority before rotation; a member does not.
     member = env.actors["bob"]
@@ -108,35 +126,79 @@ async def test_awid_rotation_replaces_oss_controller_authority(rotation_app, mon
     assert stored == expected
     # Warm the real SDK cache even on the unfixed server, whose controller
     # routes currently bypass it. The fix must honor its freshness bound.
-    assert await env.app.state.awid_registry_client.get_team_public_key("example.test", TEAM_NAME) == env.team_did
+    assert (
+        await env.app.state.awid_registry_client.get_team_public_key("example.test", TEAM_NAME)
+        == env.team_did
+    )
 
     # Rotate through the actual namespace-controller-authorized AWID endpoint.
     # The OSS database keeps its admitted key until a request meets the new one.
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=env.registry_app), base_url="http://registry.test",
+        transport=httpx.ASGITransport(app=env.registry_app),
+        base_url="http://registry.test",
     ) as registry_http:
         rotated = await registry_http.post(
             f"/v1/namespaces/example.test/teams/{TEAM_NAME}/rotate",
             json={"new_team_did_key": next_did},
-            headers=_headers(namespace_sk, namespace_did, {
-                "domain": "example.test", "operation": "rotate_team_key",
-                "name": TEAM_NAME, "new_team_did_key": next_did,
-            }),
+            headers=_headers(
+                namespace_sk,
+                namespace_did,
+                {
+                    "domain": "example.test",
+                    "operation": "rotate_team_key",
+                    "name": TEAM_NAME,
+                    "new_team_did_key": next_did,
+                },
+            ),
         )
         assert rotated.status_code == 200, rotated.text
         assert rotated.json()["key_changed"] is True
         current = await registry_http.get(f"/v1/namespaces/example.test/teams/{TEAM_NAME}")
         assert current.status_code == 200, current.text
         assert current.json()["team_did_key"] == next_did
-    assert await env.db.fetch_value(
-        "SELECT team_did_key FROM {{tables.teams}} WHERE team_id=$1", TEAM,
-    ) == env.team_did
+    assert (
+        await env.db.fetch_value(
+            "SELECT team_did_key FROM {{tables.teams}} WHERE team_id=$1",
+            TEAM,
+        )
+        == env.team_did
+    )
     clock[0] += age
 
     # Both requests have valid signatures and live mutation preconditions.
     # Read the current precondition for each, so acceptance of the old key
     # cannot cause a neighboring conflict to mask the new controller's result.
-    old, old_stored, old_expected = await _controller_action(env, operation, env.team_sk, env.team_did)
+    old, old_stored, old_expected = await _controller_action(
+        env, operation, env.team_sk, env.team_did
+    )
+    if age >= 60 and operation == "status_host":
+        # Target and designated host independently require current membership.
+        # Keep controller authorization separate by re-admitting both through
+        # real SDK certificate registration and signed native connect.
+        from nacl.signing import SigningKey
+
+        for alias in ("alice", "carol"):
+            actor = env.actors[alias]
+            fields = _make_certificate(
+                next_sk,
+                next_did,
+                actor.did,
+                team_id=TEAM,
+                alias=alias,
+                identity_scope="local",
+                certificate_id="rotation-current-" + alias,
+            )
+            await env.registry.add_certificate(fields, team_key=SigningKey(next_sk))
+            certificate = _encode_certificate(fields)
+            connected = await env.client.post(
+                "/v1/connect",
+                content=b"{}",
+                headers={
+                    **_signed_team_headers(actor.sk, actor.did, TEAM, certificate, b"{}"),
+                    "Content-Type": "application/json",
+                },
+            )
+            assert connected.status_code == 200, connected.text
     new, stored, expected = await _controller_action(env, operation, next_sk, next_did)
     expected_statuses = (200, 403) if age < 60 else (403, 200)
     assert (old.status_code, new.status_code) == expected_statuses, {

@@ -24,7 +24,7 @@ from redis.asyncio import Redis
 import awid.registry as registry_module
 from awid.dns_verify import DnsVerificationError, DomainAuthority
 from awid.id_certificates import IDChainEvidence, verify_id_chain
-from awid.registry import CachedRegistryClient, RegistryError
+from awid.registry import CachedRegistryClient, MalformedIDStatusError, RegistryError
 from awid_service.deps import get_domain_verifier
 
 from id_tree_support import VECTORS, Tree, at, did_aw, did_key
@@ -40,7 +40,8 @@ def _case(name: str) -> dict:
 
 def _bundle(chain: list[str]) -> dict:
     return {
-        "v": 1, "type": "aweb.id-chain",
+        "v": 1,
+        "type": "aweb.id-chain",
         "certificates": [copy.deepcopy(VECTORS["certificates"][name]["signed"]) for name in chain],
     }
 
@@ -50,7 +51,9 @@ def _fixture(name: str) -> dict:
 
 
 def _open_epoch_key(status: dict) -> str:
-    return next(e for e in reversed(status["namespace"]["epochs"]) if e["retired_at"] is None)["did_key"]
+    return next(e for e in reversed(status["namespace"]["epochs"]) if e["retired_at"] is None)[
+        "did_key"
+    ]
 
 
 VERIFIED = _case("cached-status-age-60")
@@ -96,7 +99,9 @@ class Registry:
             if self.error_body is not None:
                 # Streamed, as a real transport delivers it, so the body is read raw.
                 return httpx.Response(
-                    self.http_status, headers=self.error_headers, stream=httpx.ByteStream(self.error_body),
+                    self.http_status,
+                    headers=self.error_headers,
+                    stream=httpx.ByteStream(self.error_body),
                 )
             return httpx.Response(self.http_status, json={"detail": "registry unavailable"})
         if self.raw_body is not None:
@@ -109,7 +114,9 @@ class Registry:
         if self.dns_failure:
             raise DnsVerificationError(f"No TXT records found for _awid.{domain}")
         return DomainAuthority(
-            controller_did=self.controller[domain], registry_url=REGISTRY, dns_name=f"_awid.{domain}",
+            controller_did=self.controller[domain],
+            registry_url=REGISTRY,
+            dns_name=f"_awid.{domain}",
         )
 
     async def route(self, domain: str) -> str:
@@ -166,7 +173,9 @@ async def env(monkeypatch):
     process_ns = [0]
     monkeypatch.setattr(registry_module, "_cache_now", lambda: clock[0] + offset[0])
     monkeypatch.setattr(
-        registry_module, "_monotonic_ns", lambda: (clock[0] + offset[0]) * 1_000_000_000 + process_ns[0],
+        registry_module,
+        "_monotonic_ns",
+        lambda: (clock[0] + offset[0]) * 1_000_000_000 + process_ns[0],
     )
     registry = Registry(clock)
     registry.offset = offset
@@ -177,9 +186,12 @@ async def env(monkeypatch):
 
     def client(*, timeout_seconds: float = 5.0) -> CachedRegistryClient:
         made = CachedRegistryClient(
-            REGISTRY, redis, timeout_seconds=timeout_seconds,
+            REGISTRY,
+            redis,
+            timeout_seconds=timeout_seconds,
             transport=httpx.MockTransport(registry.handler),
-            domain_registry_resolver=registry.route, domain_verifier=registry.verify_domain,
+            domain_registry_resolver=registry.route,
+            domain_verifier=registry.verify_domain,
         )
         clients.append(made)
         return made
@@ -194,7 +206,9 @@ async def env(monkeypatch):
             await made.aclose()
 
 
-async def _evidence(env, *, client=None, bundle=BUNDLE, subject=SUBJECT, domain=DOMAIN) -> IDChainEvidence:
+async def _evidence(
+    env, *, client=None, bundle=BUNDLE, subject=SUBJECT, domain=DOMAIN
+) -> IDChainEvidence:
     return await (client or env.client).id_chain_evidence(bundle, subject, domain=domain)
 
 
@@ -211,14 +225,20 @@ def _verdict(evidence: IDChainEvidence, *, bundle=BUNDLE, subject=SUBJECT) -> di
 
 
 def _authority(domain: str, controller_key: str) -> dict:
-    return {"domain": domain, "dns_name": f"_awid.{domain}", "inherited": False, "controller_key": controller_key}
+    return {
+        "domain": domain,
+        "dns_name": f"_awid.{domain}",
+        "inherited": False,
+        "controller_key": controller_key,
+    }
 
 
 @pytest.mark.asyncio
 async def test_a_first_read_observes_status_and_authority_together(env):
     evidence = await _evidence(env)
     assert evidence == IDChainEvidence(
-        status=_fixture("normal"), namespace_authority=_authority(DOMAIN, env.controller[DOMAIN]),
+        status=_fixture("normal"),
+        namespace_authority=_authority(DOMAIN, env.controller[DOMAIN]),
         age_seconds=0,
     )
     assert env.requests == [{"v": 1, "domain": DOMAIN, "ids": [did_aw("alice")]}]
@@ -250,7 +270,9 @@ async def test_evidence_past_60_seconds_is_never_presented(env):
     case = _case("cached-status-age-61")
     bundle, subject = _bundle(case["chain"]), case["subject"]
     stale = IDChainEvidence(
-        _fixture(case["status"]), _authority(DOMAIN, env.controller[DOMAIN]), case["cache"]["age_seconds"],
+        _fixture(case["status"]),
+        _authority(DOMAIN, env.controller[DOMAIN]),
+        case["cache"]["age_seconds"],
     )
     assert _verdict(stale, bundle=bundle, subject=subject) == case["expected"]
 
@@ -311,7 +333,9 @@ async def test_concurrent_stale_readers_share_one_refresh(env):
     env.gate[DOMAIN].set()
     results = await asyncio.gather(*readers)
     assert len(env.requests) == len(env.dns_lookups) == 2
-    assert all(result.status == _fixture("alice-rotated") and result.age_seconds == 0 for result in results)
+    assert all(
+        result.status == _fixture("alice-rotated") and result.age_seconds == 0 for result in results
+    )
 
 
 @pytest.mark.asyncio
@@ -349,7 +373,9 @@ async def test_one_timeout_bounds_dns_and_http_together(env):
     env.dns_delay = env.http_delay = 0.2
     evidence = await _evidence(env)
     assert evidence.age_seconds is None
-    env.dns_delay = env.http_delay = 0.01  # far inside the bound, so scheduler jitter cannot reach it
+    env.dns_delay = env.http_delay = (
+        0.01  # far inside the bound, so scheduler jitter cannot reach it
+    )
     evidence = await _evidence(env)
     assert evidence.age_seconds == 0
 
@@ -362,7 +388,8 @@ async def test_a_stalled_domain_does_not_delay_another_domain(env):
     stalled = asyncio.create_task(_evidence(env))
     await _until(lambda: len(env.requests) == 1)
     other = await asyncio.wait_for(
-        _evidence(env, bundle=None, subject=GLOBAL_SUBJECT, domain=OTHER_DOMAIN), timeout=1,
+        _evidence(env, bundle=None, subject=GLOBAL_SUBJECT, domain=OTHER_DOMAIN),
+        timeout=1,
     )
     assert (other.status["domain"], other.age_seconds) == (OTHER_DOMAIN, 0)
     assert not stalled.done()
@@ -393,7 +420,9 @@ async def test_the_observation_time_is_when_the_refresh_began(env):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("writer_skew", [600, -600])
-async def test_a_shared_entry_is_aged_on_the_redis_clock_whatever_the_process_clocks(env, writer_skew):
+async def test_a_shared_entry_is_aged_on_the_redis_clock_whatever_the_process_clocks(
+    env, writer_skew
+):
     writer, reader = env.make_client(), env.make_client()
     env.offset[0] = writer_skew
     await _evidence(env, client=writer)
@@ -467,20 +496,29 @@ async def test_real_redis_ages_an_entry_past_its_whole_second_stamp(env):
     env.controller[domain] = env.controller[DOMAIN]
     redis = Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
     client = CachedRegistryClient(
-        REGISTRY, redis, transport=httpx.MockTransport(env.handler),
-        domain_registry_resolver=env.route, domain_verifier=env.verify_domain,
+        REGISTRY,
+        redis,
+        transport=httpx.MockTransport(env.handler),
+        domain_registry_resolver=env.route,
+        domain_verifier=env.verify_domain,
     )
-    key = await client._generation_cache_key(client._id_status_cache_key({"v": 1, "domain": domain, "ids": [did_aw("global_agent")]}), client._id_status_generation_key(domain))
+    key = await client._generation_cache_key(
+        client._id_status_cache_key({"v": 1, "domain": domain, "ids": [did_aw("global_agent")]}),
+        client._id_status_generation_key(domain),
+    )
     try:
         seconds, microseconds = await redis.time()
         while microseconds == 0:  # the stored stamp must lie a fraction of a second behind
             seconds, microseconds = await redis.time()
         entry = {
-            "fetched_at": int(seconds) - 60, "status": env.status[domain],
+            "fetched_at": int(seconds) - 60,
+            "status": env.status[domain],
             "namespace_authority": _authority(domain, env.controller[domain]),
         }
         await redis.set(key, json.dumps(entry, separators=(",", ":"), sort_keys=True), ex=3600)
-        evidence = await _evidence(env, client=client, bundle=None, subject=GLOBAL_SUBJECT, domain=domain)
+        evidence = await _evidence(
+            env, client=client, bundle=None, subject=GLOBAL_SUBJECT, domain=domain
+        )
     finally:
         await redis.delete(key)
         await client.aclose()
@@ -507,8 +545,11 @@ class UnavailableRedis(FakeRedis):
 @pytest.mark.asyncio
 async def test_without_redis_each_read_is_fetched_and_none_is_reused(env):
     client = CachedRegistryClient(
-        REGISTRY, UnavailableRedis(), transport=httpx.MockTransport(env.handler),
-        domain_registry_resolver=env.route, domain_verifier=env.verify_domain,
+        REGISTRY,
+        UnavailableRedis(),
+        transport=httpx.MockTransport(env.handler),
+        domain_registry_resolver=env.route,
+        domain_verifier=env.verify_domain,
     )
     try:
         first = await _evidence(env, client=client)
@@ -532,7 +573,7 @@ async def test_a_clock_stepping_back_during_a_refresh_leaves_its_evidence_unavai
 @pytest.mark.parametrize("fetched_at", [1_000_000.5, "1000000", True, None])
 async def test_a_corrupt_stored_entry_is_dropped_and_refreshed(env, fetched_at):
     await _evidence(env)
-    [key] = [key for key in env.redis.values if not key.startswith("awid:cache_generation:")]
+    [key] = [key for key in env.redis.values if key.startswith("awid:registry_cache:")]
     entry = json.loads(env.redis.values[key])
     env.redis.values[key] = json.dumps(entry | {"fetched_at": fetched_at})
     env.clock[0] += 1
@@ -542,10 +583,14 @@ async def test_a_corrupt_stored_entry_is_dropped_and_refreshed(env, fetched_at):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("body, headers", [
-    (b"<html>" + b"x" * (64 * 1024) + b"</html>", {"Content-Type": "text/html"}),
-    (b"\x1f\x8b compressed error page", {"Content-Encoding": "gzip"}),
-], ids=["oversized-error-page", "encoded-error-page"])
+@pytest.mark.parametrize(
+    "body, headers",
+    [
+        (b"<html>" + b"x" * (64 * 1024) + b"</html>", {"Content-Type": "text/html"}),
+        (b"\x1f\x8b compressed error page", {"Content-Encoding": "gzip"}),
+    ],
+    ids=["oversized-error-page", "encoded-error-page"],
+)
 async def test_an_unreadable_refusal_is_a_failed_refresh(env, body, headers):
     await _evidence(env)
     env.clock[0] += 61
@@ -586,13 +631,12 @@ async def test_contradictory_authority_is_kept_as_current_and_never_verifies(env
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("body", [b"not json", b"[]", b'"status"'])
-async def test_a_malformed_successful_answer_is_unavailable_and_drops_the_old_tree(env, body):
+async def test_a_malformed_successful_answer_raises_and_drops_the_old_tree(env, body):
     await _evidence(env)
     env.clock[0] += 61
     env.raw_body = body
-    evidence = await _evidence(env)
-    assert evidence.age_seconds is None
-    assert _verdict(evidence)["reason"] == "evidence_unavailable"
+    with pytest.raises(MalformedIDStatusError):
+        await _evidence(env)
     env.raw_body = None
     env.clock[0] += 1
     assert (await _evidence(env)).age_seconds == 0
@@ -605,7 +649,10 @@ async def test_a_chainless_local_subject_creates_no_registry_dependency(env):
     evidence = await _evidence(env, bundle=None, subject=local)
     assert evidence.age_seconds is None
     assert env.requests == env.dns_lookups == env.routings == []
-    assert verify_id_chain(None, subject=local, evidence=evidence, domain=DOMAIN)["reason"] == "legacy_no_chain"
+    assert (
+        verify_id_chain(None, subject=local, evidence=evidence, domain=DOMAIN)["reason"]
+        == "legacy_no_chain"
+    )
 
 
 @pytest.mark.asyncio
@@ -613,7 +660,10 @@ async def test_a_bundle_for_another_domain_creates_no_registry_dependency(env):
     evidence = await _evidence(env, domain=OTHER_DOMAIN)
     assert evidence.age_seconds is None
     assert env.requests == env.dns_lookups == []
-    assert verify_id_chain(BUNDLE, subject=SUBJECT, evidence=evidence, domain=OTHER_DOMAIN)["reason"] == "domain_mismatch"
+    assert (
+        verify_id_chain(BUNDLE, subject=SUBJECT, evidence=evidence, domain=OTHER_DOMAIN)["reason"]
+        == "domain_mismatch"
+    )
 
 
 @pytest.mark.asyncio
@@ -640,12 +690,19 @@ async def test_the_cached_client_reads_the_real_status_endpoint(clocked_client, 
 
     redis = Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
     client = CachedRegistryClient(
-        "http://testserver", redis, transport=httpx.ASGITransport(app=clocked_client.app),
+        "http://testserver",
+        redis,
+        transport=httpx.ASGITransport(app=clocked_client.app),
         domain_verifier=service_dns,
     )
     subject = {"id": did_aw("global_agent"), "did_key": did_key("global_agent")}
     bundle = _bundle(["alice", "global-agent"])
-    key = await client._generation_cache_key(client._id_status_cache_key({"v": 1, "domain": DOMAIN, "ids": [did_aw("alice"), did_aw("global_agent")]}), client._id_status_generation_key(DOMAIN))
+    key = await client._generation_cache_key(
+        client._id_status_cache_key(
+            {"v": 1, "domain": DOMAIN, "ids": [did_aw("alice"), did_aw("global_agent")]}
+        ),
+        client._id_status_generation_key(DOMAIN),
+    )
     try:
         await redis.delete(key)
         evidence = await client.id_chain_evidence(bundle, subject, domain=DOMAIN)
@@ -657,8 +714,11 @@ async def test_the_cached_client_reads_the_real_status_endpoint(clocked_client, 
     assert 1 <= evidence.age_seconds <= 2
     verdict = verify_id_chain(bundle, subject=subject, evidence=evidence, domain=DOMAIN)
     assert verdict == {
-        "outcome": "nearest_human", "human_id": did_aw("alice"), "identity_valid": True,
-        "kind": "agent", "reason": "verified",
+        "outcome": "nearest_human",
+        "human_id": did_aw("alice"),
+        "identity_valid": True,
+        "kind": "agent",
+        "reason": "verified",
     }
 
 
@@ -672,17 +732,29 @@ async def test_real_redis_ages_shared_evidence_on_its_own_clock(env, monkeypatch
     redis = Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
     clients = [
         CachedRegistryClient(
-            REGISTRY, redis, transport=httpx.MockTransport(env.handler),
-            domain_registry_resolver=env.route, domain_verifier=env.verify_domain,
+            REGISTRY,
+            redis,
+            transport=httpx.MockTransport(env.handler),
+            domain_registry_resolver=env.route,
+            domain_verifier=env.verify_domain,
         )
         for _ in range(2)
     ]
-    key = await clients[0]._generation_cache_key(clients[0]._id_status_cache_key({"v": 1, "domain": domain, "ids": [did_aw("global_agent")]}), clients[0]._id_status_generation_key(domain))
+    key = await clients[0]._generation_cache_key(
+        clients[0]._id_status_cache_key(
+            {"v": 1, "domain": domain, "ids": [did_aw("global_agent")]}
+        ),
+        clients[0]._id_status_generation_key(domain),
+    )
     try:
         monkeypatch.setattr(registry_module, "_cache_now", lambda: int(time.time()) + skew)
-        written = await _evidence(env, client=clients[0], bundle=None, subject=GLOBAL_SUBJECT, domain=domain)
+        written = await _evidence(
+            env, client=clients[0], bundle=None, subject=GLOBAL_SUBJECT, domain=domain
+        )
         monkeypatch.setattr(registry_module, "_cache_now", lambda: int(time.time()) - skew)
-        read = await _evidence(env, client=clients[1], bundle=None, subject=GLOBAL_SUBJECT, domain=domain)
+        read = await _evidence(
+            env, client=clients[1], bundle=None, subject=GLOBAL_SUBJECT, domain=domain
+        )
     finally:
         await redis.delete(key)
         for client in clients:

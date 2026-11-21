@@ -37,7 +37,7 @@ def member_for(case: dict) -> Member:
 async def present(registry, case, *, public_origin=None, path=None, body=None, payload=None, signature=None):
     member = member_for(case)
     await registry.add_team(member.team_id, member.team_did_key)
-    await registry.add_certificate(member.certificate())
+    await registry.add_certificate(member.certificate(), team_key=member.team_key)
     pinned = datetime.fromisoformat(case["payload"]["timestamp"].replace("Z", "+00:00"))
     headers = envelope_headers(
         did_key=case["did_key"],

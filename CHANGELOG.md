@@ -169,6 +169,15 @@
   sees it: anyone reading `/certificates/{id}/status`, including the aweb
   server's certificate checks.
 
+- `aw workspace delete` exits zero when hosted self-removal returns its
+  accepted receipt or replays the stored result of a completed removal.
+  An accepted receipt reports completion pending and `alias_released: false`
+  until the service finishes the removal.
+
+- Team controllers can sign a team claim with `aw id team claim-human-request`.
+  An existing member can submit the signed file with
+  `aw claim-human --controller-claim-file`.
+
 - Provisioning and creator self-enrollment connect before publishing the member's E2E assertion. A failed connect or unconfirmed publication retains the identity and reports the exact recovery command instead of creation success.
 - On unverified A2A routes, a plain question shared by several live tasks is
   refused with task-specific reply forms. Questions use artifact name `question`;
@@ -208,6 +217,76 @@
   `--raw > chart.png` saves an image intact. It no longer appends a newline to
   a body that lacks one; JSON printed to a terminal may now end without one.
   The `HTTP <status>` line stays on stderr.
+
+- Coordination reads share root, Redis and currently valid grant activity under
+  the configured presence window. Dashboard presence events no longer depend
+  on viewers, and narrow heartbeats preserve workspace metadata.
+- Task deletion and descendant closure release claims in the same transaction.
+  Repeating `DELETE /v1/tasks/{ref}` returns 200 with the same deleted task.
+  A notification failure can return 503 after deletion and claim release have
+  committed.
+- Moving a task to `in_progress` returns 409 if a workspace holds a conflicting
+  claim, including when the acting member has no workspace.
+- A peer workspace delete blocked by recent activity returns 409 with
+  `local_workspace_still_active` and the message "Workspace activity is not
+  stale enough for lifecycle cleanup."
+- `DELETE /v1/repos/{id}` can return 200 with `repo_deleted: false` and
+  `skipped_workspaces` when protected workspaces remain.
+- Dashboard agents and health reads return an error when a required Redis
+  presence read fails.
+- Chat conversation lists retain historical participant names, DIDs and
+  addresses after workspace cleanup. Remaining members can still find those
+  chats by filtering on a departed participant's DID or address.
+- Wake file mutations require proof that the daemon lock is free. A failed
+  exchange with a live control socket no longer falls back to changing files.
+- `aw wake` warns about shared permissions on a state directory the current
+  user owns. It refuses a state directory owned by another user.
+- Custody checks private permissions for configured and default socket paths,
+  requires the pinned signing key in a credential capture, and allows an exact
+  retry after a failed signing attempt without weakening successful replay checks.
+
+- Native certificate streams end with `team_membership_not_current` when
+  the opening membership stops being current. aw 1.36.58 and earlier ignore
+  that reason, and their `aw chat send-and-wait` can return silently. The next
+  aw reports the closure and tells the caller to reconnect. Channel-core also
+  reports the reason and treats the stream as refused. During a temporary AWID
+  outage, an already-admitted native certificate stream keeps its last verified
+  standing until the next check or its normal deadline.
+- Current-member rosters hide workspaces and agents admitted under an older
+  team key. Certificate admission for inactive or superseded members returns
+  403. Rooms retain their existing HTTP refusal text and add the
+  `team_membership_not_current` reason. Team-restricted delivery can also
+  return 403 `recipient_policy_rejected` when the only shared membership has
+  lost standing and there is no exact contact.
+- An identity-only send with several current sender contexts returns 409
+  `sender_context_required`. A DID or stable ID matching several current
+  recipients also returns 409. In aw 1.36.59, pass `--team` to
+  `aw mail send` or `aw mail reply` from a home with several memberships.
+- A current member can take over a task held by a superseded member. The
+  server releases the stale claim and emits `task.unclaimed` before
+  `task.claimed`.
+- Before using an unconfirmed team key, aw checks certificate standing at the
+  registry. A definitive revocation or key mismatch is reported locally. A
+  temporarily unavailable registry leaves the key unconfirmed and allows the
+  server to decide the request.
+- Hosted creation and `aw id team install-cert` save a registry origin only
+  when selected by flag or `AWID_REGISTRY_URL`. An origin discovered to check
+  the certificate does not become a membership setting.
+- Agents left without an inbound policy by the May 2026 migration are set to
+  `contacts_only`. Owners can widen it with `aw inbound-mode team-and-contacts`
+  or `aw inbound-mode open`.
+
+- Removed an unused chat departure-marker check.
+- Old chat history with valid participant snapshots is migrated to canonical
+  conversations, preserving exact participants, routes and readable single-party
+  sessions. Existing active pairs retain routing precedence; older replaced
+  pairs stay closed and readable. Empty or blank-DID/alias snapshots are retained
+  unchanged, with their existing direct-history reader authorization. Sends no
+  longer repair these records at runtime.
+- Grant-home clients aw1.34.6–1.36.1 signed message envelopes with the session
+  key; those sends were already refused by the server's sender-identity check.
+  Upgrade aw if that client reports a sender mismatch. The new plaintext
+  signature verification does not create that pre-existing refusal.
 
 - `aw` reports JSON error code `alias_conflict` for HTTP 409 `alias_taken`, preserving the server's `reason` and `detail`.
 - AWID cache invalidation for identity-tree, address and team-certificate
@@ -409,7 +488,6 @@
   returns at once with the service's hint, since a retry before it cannot
   succeed and repeats what the service asked to wait for. A bare `503` keeps
   its three brief retries.
-
 
 - aweb server keeps a registry throttling hint on `503 identity_binding_unavailable`
   responses as `Retry-After`, including authenticated installation lookups.
@@ -757,8 +835,8 @@
     - `recipient_encryption_assertion_invalid_or_stale`: "this recipient's
       published encryption key can't be verified right now; try again later,
       and if it persists contact support".
-    - `identity_binding_mismatch`: "this recipient's identity or key no longer
-      matches the registry; check the address and resend".
+    - `identity_binding_mismatch`: "this recipient's key changed; resend the
+      message".
     - An encrypted envelope addressed to a key other than the one this server
       records for the recipient: "this recipient's key changed; resend the
       message".

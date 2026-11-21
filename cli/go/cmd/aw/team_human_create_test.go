@@ -1119,7 +1119,7 @@ func TestHeadlessTeamAdminCreateAcceptsWorkspaceKey(t *testing.T) {
 			var server *httptest.Server
 			server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
 				if r.Method == http.MethodGet && r.URL.Path == "/api/v1/teams/current" {
-					_ = json.NewEncoder(w).Encode(map[string]any{"team_id": "11111111-1111-4111-8111-111111111111", "canonical_team_id": "backend:acme.com", "api_key_kind": "workspace"})
+					_ = json.NewEncoder(w).Encode(map[string]any{"team_id": "11111111-1111-4111-8111-111111111111", "canonical_team_id": "backend:acme.test", "api_key_kind": "workspace"})
 					return
 				}
 				switch r.URL.Path {
@@ -1134,7 +1134,7 @@ func TestHeadlessTeamAdminCreateAcceptsWorkspaceKey(t *testing.T) {
 					}
 					didKey, _ := body["did"].(string)
 					cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-						Team:          "backend:acme.com",
+						Team:          "backend:acme.test",
 						MemberDIDKey:  didKey,
 						Alias:         "eng",
 						IdentityScope: awid.IdentityModeLocal,
@@ -1150,7 +1150,7 @@ func TestHeadlessTeamAdminCreateAcceptsWorkspaceKey(t *testing.T) {
 						"server_url":     serverURL,
 						"team_cert":      encoded,
 						"alias":          "eng",
-						"team_id":        "backend:acme.com",
+						"team_id":        "backend:acme.test",
 						"workspace_id":   "ws-1",
 						"did":            didKey,
 						"stable_id":      "",
@@ -1161,7 +1161,7 @@ func TestHeadlessTeamAdminCreateAcceptsWorkspaceKey(t *testing.T) {
 				case "/api/v1/connect", "/v1/connect":
 					requireCertificateAuthForTest(t, r)
 					_ = json.NewEncoder(w).Encode(map[string]any{
-						"team_id":      "backend:acme.com",
+						"team_id":      "backend:acme.test",
 						"alias":        "eng",
 						"agent_id":     "agent-1",
 						"workspace_id": "ws-1",
@@ -1171,7 +1171,7 @@ func TestHeadlessTeamAdminCreateAcceptsWorkspaceKey(t *testing.T) {
 				case "/v1/agents/heartbeat", "/api/v1/agents/heartbeat":
 					w.WriteHeader(http.StatusOK)
 				case "/v1/agents/me/encryption-key", "/api/v1/agents/me/encryption-key":
-					writePublishEncryptionKeyResponseForTest(t, w, "agent-1", "backend:acme.com", "eng")
+					writePublishEncryptionKeyResponseForTest(t, w, "agent-1", "backend:acme.test", "eng")
 				default:
 					t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 				}
@@ -1186,8 +1186,8 @@ func TestHeadlessTeamAdminCreateAcceptsWorkspaceKey(t *testing.T) {
 			if out, err := cmd.CombinedOutput(); err != nil {
 				t.Fatalf("headless team create: %v\n%s", err, out)
 			}
-			cert, err := awid.LoadTeamCertificate(awconfig.TeamCertificatePath(dir, "backend:acme.com"))
-			if err != nil || cert.Alias != "eng" || cert.Team != "backend:acme.com" {
+			cert, err := awid.LoadTeamCertificate(awconfig.TeamCertificatePath(dir, "backend:acme.test"))
+			if err != nil || cert.Alias != "eng" || cert.Team != "backend:acme.test" {
 				t.Fatalf("create did not persist the expected membership: %+v, %v", cert, err)
 			}
 			if count := initPosts.Load(); count != 1 {
@@ -1657,6 +1657,8 @@ func TestTeamHumanCreateFirstAgentGlobalHostedBootstrapAllowed(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)
 	t.Setenv(initAPIKeyEnvVar, "")
+	// The hosted bootstrap is allowed when no registry is named.
+	t.Setenv("AWID_REGISTRY_URL", "")
 	teamHumanCreateFirstGlobal = true
 	teamHumanCreateServiceURL = "https://app.example"
 	teamHumanCreateUsername = "eng-user"

@@ -48,7 +48,7 @@ def read_completed_events(path: Path) -> list[dict[str, object]]:
 
 
 class CLICommandError(AssertionError):
-    def __init__(self, lane, actor, args, result):
+    def __init__(self, lane, actor, args, result, *, phase=None):
         try:
             response = json.loads(result.stdout)
         except ValueError:
@@ -58,7 +58,9 @@ class CLICommandError(AssertionError):
             args=list(args),
             exit=result.returncode,
             response=response,
+            stdout=result.stdout,
             stderr=result.stderr,
+            phase=phase,
         )
         super().__init__(
             f"{lane}/{actor} aw {args}: {result.returncode}\n{result.stdout}\n{result.stderr}"
@@ -201,6 +203,7 @@ class Lane:
                     (name + "-encryption-key", name, ["id", "encryption-key", "show"]),
                 ]
             )
+        observations = {}
         for label, actor, args in commands:
             result = self.command(actor, *args, check=False)
             (directory / (label + ".json")).write_text(
@@ -213,6 +216,8 @@ class Lane:
                     indent=2,
                 )
             )
+            if label in ("roster", "sessions") and result.returncode == 0:
+                observations[label] = json.loads(result.stdout)
         # A separately pinned published client is an author diagnostic only;
         # it never substitutes for npm latest in the standing released lane.
         comparison = os.environ.get("USER_PATHS_COMPARISON_BIN")
@@ -243,6 +248,29 @@ class Lane:
                 )
             finally:
                 self.binary = original
+        # The actw exception needs the actual existing local session and
+        # published keys, not only the same missing-key diagnostic.
+        if (
+            kind == "chat"
+            and encrypted
+            and case.removesuffix("/v2") + "/plain" in self.results
+            and not self.actors[sender]["address"]
+            and not self.actors[receiver]["address"]
+        ):
+            local_keys = {
+                row.get("did_key")
+                for row in observations.get("roster", {}).get("agents", [])
+                if row.get("identity_scope") == "local" and row.get("encryption_key")
+            }
+            if {self.actors[sender]["did"], self.actors[receiver]["did"]} <= local_keys:
+                sessions = [
+                    row["session_id"]
+                    for row in observations.get("sessions", {}).get("sessions", [])
+                    if row.get("participant_dids") == [self.actors[receiver]["did"]]
+                ]
+                if len(sessions) == 1:
+                    return sessions[0]
+        return None
 
     def run_case(self, case, operation, diagnostic=None):
         started = time.monotonic()
@@ -253,6 +281,8 @@ class Lane:
             record = dict(case=case, status="FAILED", error=str(error))
             if isinstance(error, CLICommandError):
                 record["failure"] = error.failure
+            elif isinstance(error, AssertionError):
+                record["assertion"] = str(error)
             if self.case_commands:
                 directory = self.root / (
                     "failure-" + case.replace("/", "_").replace("->", "-")
@@ -263,7 +293,9 @@ class Lane:
                 )
             if diagnostic:
                 try:
-                    self.capture_failure(case, *diagnostic)
+                    existing_session = self.capture_failure(case, *diagnostic)
+                    if existing_session and "failure" in record:
+                        record["failure"]["existing_local_session"] = existing_session
                 except Exception as capture_error:
                     record["diagnostic_error"] = str(capture_error)
             # Let real presentation callbacks finish even after an assertion
@@ -288,12 +320,13 @@ class Lane:
                 flush=True,
             )
         elif record["status"] == "KNOWN_ISSUE":
+            diagnostic = (record.get("failure") or {}).get("stderr", record["error"])
             print(
                 "KNOWN ISSUE",
                 case,
                 record["known_issue"]["task"],
                 "observed failure:",
-                record["failure"]["response"],
+                diagnostic.rstrip("\n"),
                 flush=True,
             )
         elif record["status"] == "PASSED":
@@ -358,7 +391,7 @@ class Lane:
                 )
         self.record_command(actor, args, result, phase)
         if check and result.returncode:
-            raise CLICommandError(self.name, actor, args, result)
+            raise CLICommandError(self.name, actor, args, result, phase=phase)
         if not check:
             return result
         return json.loads(result.stdout)
@@ -569,10 +602,33 @@ class Lane:
         result = self.command(sender, *args, check=False)
         text = result.stdout + result.stderr
         assert result.returncode != 0, ("expected refusal", args, result.stdout)
-        error = json.loads(result.stdout)["error"]
+        if self.legacy_released_diagnostics:
+            assert result.returncode == 1, ("unexpected refusal exit", result)
+        if result.stdout.strip():
+            error = json.loads(result.stdout)["error"]
+        else:
+            # Older CLIs print errors to stderr even with --json. Match their
+            # real HTTP carrier, or the exact preflight diagnostic with no
+            # invented HTTP status; other output remains a failed control.
+            assert self.legacy_released_diagnostics, result
+            prefix = "sending message: " if kind == "chat" else ""
+            match = re.fullmatch(
+                re.escape(prefix) + r"aweb: http (\d{3}): (\{[^\n]+\})\n",
+                result.stderr,
+            )
+            if match:
+                error = dict(json.loads(match[2]), http_status=int(match[1]))
+            else:
+                assert status is None and result.stderr == message_text + "\n", result
+                error = dict(message=message_text)
         (self.root / f"refusal-{receiver}-{kind}.json").write_text(
             json.dumps(
-                dict(exit=result.returncode, response=error, stderr=result.stderr),
+                dict(
+                    exit=result.returncode,
+                    response=error,
+                    stdout=result.stdout,
+                    stderr=result.stderr,
+                ),
                 indent=2,
             )
         )
@@ -608,12 +664,17 @@ class Lane:
     def contacts_only(self, kind):
         self.command("g2", "inbound-mode", "contacts-only")
         try:
+            stored = self.command("g2", "inbound-mode")
+            assert stored["inbound_mode"] == "contacts_only", (
+                f"Expected contacts_only; server stored {stored['inbound_mode']}"
+            )
             self.refused(
                 "t1",
                 "g2",
                 kind,
                 403,
                 "Recipient only accepts messages from exact active contacts",
+                "recipient_policy_rejected",
             )
         finally:
             self.command("g2", "inbound-mode", "open")
@@ -634,8 +695,12 @@ class Lane:
                         "nonresident",
                         kind,
                         None,
-                        self.actors["nonresident"]["address"]
-                        + " is not a member of your team or a registered address. Check the name with `aw workspace status`.",
+                        (
+                            "agent not found: " + self.actors["nonresident"]["address"]
+                            if self.version == "1.36.40"
+                            else self.actors["nonresident"]["address"]
+                            + " is not a member of your team or a registered address. Check the name with `aw workspace status`."
+                        ),
                     ),
                 )
             else:

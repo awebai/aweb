@@ -582,6 +582,7 @@ func acceptInitInviteAndConnect(cmd *cobra.Command, request initInviteConnection
 				Name:             alias,
 				Scope:            initInviteIdentityScope(),
 				AwebURL:          strings.TrimSpace(request.PreferredAwebURL),
+				RegistryURL:      strings.TrimSpace(initAWIDRegistry),
 			},
 		},
 		Store: teamInviteStoreOptions{IdentityHome: resolvedEncryptionKeyIdentityHome(home), Activation: membershipMakeActive},
@@ -886,7 +887,7 @@ func runInitFromAPIKey(cmd *cobra.Command, selected initAPIKeySelection) error {
 	if err != nil {
 		return err
 	}
-	registryURL, err := resolveInitAWIDRegistryURL()
+	registryURL, err := resolveConfiguredInitAWIDRegistryURL()
 	if err != nil {
 		return err
 	}
@@ -1084,12 +1085,20 @@ func awebURLOrDefault(raw string) string {
 }
 
 func resolveInitAWIDRegistryURL() (string, error) {
-	value, err := resolveRegistryURLSetting(registryURLSettingInput{ExplicitURL: initAWIDRegistry, DefaultURL: awid.DefaultAWIDRegistryURL})
+	value, err := resolveConfiguredInitAWIDRegistryURL()
+	if err != nil || value != "" {
+		return value, err
+	}
+	return awid.DefaultAWIDRegistryURL, nil
+}
+
+func resolveConfiguredInitAWIDRegistryURL() (string, error) {
+	value, err := resolveRegistryURLSetting(registryURLSettingInput{ExplicitURL: initAWIDRegistry})
 	if errors.Is(err, errLocalRegistryURL) {
 		return "", usageError("AWID_REGISTRY_URL=local is not supported by `aw init`; use an explicit localhost URL such as http://localhost:8010")
 	}
-	if err != nil {
-		return "", err
+	if err != nil || value == "" {
+		return value, err
 	}
 	return awid.CanonicalRegistryServerOrigin(value)
 }

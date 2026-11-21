@@ -29,8 +29,10 @@ type TeamCertificate struct {
 	IssuedAt      string `json:"issued_at"`
 	Signature     string `json:"signature"`
 
-	scopeWireKey   string
-	legacyLifetime string
+	scopeWireKey       string
+	legacyLifetime     string
+	emptyMemberDIDAW   bool
+	emptyMemberAddress bool
 }
 
 // TeamCertificateFields are the inputs for signing a certificate.
@@ -154,32 +156,34 @@ func DecodeTeamCertificateHeader(encoded string) (*TeamCertificate, error) {
 
 func (c TeamCertificate) MarshalJSON() ([]byte, error) {
 	type canonicalWire struct {
-		Version       int    `json:"version"`
-		CertificateID string `json:"certificate_id"`
-		Team          string `json:"team_id"`
-		TeamDIDKey    string `json:"team_did_key"`
-		MemberDIDKey  string `json:"member_did_key"`
-		MemberDIDAW   string `json:"member_did_aw,omitempty"`
-		MemberAddress string `json:"member_address,omitempty"`
-		Alias         string `json:"alias"`
-		IdentityScope string `json:"identity_scope"`
-		IssuedAt      string `json:"issued_at"`
-		Signature     string `json:"signature"`
+		Version       int     `json:"version"`
+		CertificateID string  `json:"certificate_id"`
+		Team          string  `json:"team_id"`
+		TeamDIDKey    string  `json:"team_did_key"`
+		MemberDIDKey  string  `json:"member_did_key"`
+		MemberDIDAW   *string `json:"member_did_aw,omitempty"`
+		MemberAddress *string `json:"member_address,omitempty"`
+		Alias         string  `json:"alias"`
+		IdentityScope string  `json:"identity_scope"`
+		IssuedAt      string  `json:"issued_at"`
+		Signature     string  `json:"signature"`
 	}
 	identityScope := NormalizeIdentityScope(c.IdentityScope)
+	memberDIDAW := optionalCertificateString(c.MemberDIDAW, c.emptyMemberDIDAW)
+	memberAddress := optionalCertificateString(c.MemberAddress, c.emptyMemberAddress)
 	if c.scopeWireKey == "lifetime" {
 		type legacyWire struct {
-			Version       int    `json:"version"`
-			CertificateID string `json:"certificate_id"`
-			Team          string `json:"team_id"`
-			TeamDIDKey    string `json:"team_did_key"`
-			MemberDIDKey  string `json:"member_did_key"`
-			MemberDIDAW   string `json:"member_did_aw,omitempty"`
-			MemberAddress string `json:"member_address,omitempty"`
-			Alias         string `json:"alias"`
-			Lifetime      string `json:"lifetime"`
-			IssuedAt      string `json:"issued_at"`
-			Signature     string `json:"signature"`
+			Version       int     `json:"version"`
+			CertificateID string  `json:"certificate_id"`
+			Team          string  `json:"team_id"`
+			TeamDIDKey    string  `json:"team_did_key"`
+			MemberDIDKey  string  `json:"member_did_key"`
+			MemberDIDAW   *string `json:"member_did_aw,omitempty"`
+			MemberAddress *string `json:"member_address,omitempty"`
+			Alias         string  `json:"alias"`
+			Lifetime      string  `json:"lifetime"`
+			IssuedAt      string  `json:"issued_at"`
+			Signature     string  `json:"signature"`
 		}
 		return json.Marshal(legacyWire{
 			Version:       c.Version,
@@ -187,8 +191,8 @@ func (c TeamCertificate) MarshalJSON() ([]byte, error) {
 			Team:          c.Team,
 			TeamDIDKey:    c.TeamDIDKey,
 			MemberDIDKey:  c.MemberDIDKey,
-			MemberDIDAW:   c.MemberDIDAW,
-			MemberAddress: c.MemberAddress,
+			MemberDIDAW:   memberDIDAW,
+			MemberAddress: memberAddress,
 			Alias:         c.Alias,
 			Lifetime:      c.legacyLifetime,
 			IssuedAt:      c.IssuedAt,
@@ -201,8 +205,8 @@ func (c TeamCertificate) MarshalJSON() ([]byte, error) {
 		Team:          c.Team,
 		TeamDIDKey:    c.TeamDIDKey,
 		MemberDIDKey:  c.MemberDIDKey,
-		MemberDIDAW:   c.MemberDIDAW,
-		MemberAddress: c.MemberAddress,
+		MemberDIDAW:   memberDIDAW,
+		MemberAddress: memberAddress,
 		Alias:         c.Alias,
 		IdentityScope: identityScope,
 		IssuedAt:      c.IssuedAt,
@@ -210,20 +214,29 @@ func (c TeamCertificate) MarshalJSON() ([]byte, error) {
 	})
 }
 
+// A loaded certificate may sign an explicit empty string. Preserve it when
+// forwarding that artifact. New certificates omit unused optional claims.
+func optionalCertificateString(value string, signedEmpty bool) *string {
+	if value == "" && !signedEmpty {
+		return nil
+	}
+	return &value
+}
+
 func (c *TeamCertificate) UnmarshalJSON(data []byte) error {
 	type wire struct {
-		Version       int    `json:"version"`
-		CertificateID string `json:"certificate_id"`
-		Team          string `json:"team_id"`
-		TeamDIDKey    string `json:"team_did_key"`
-		MemberDIDKey  string `json:"member_did_key"`
-		MemberDIDAW   string `json:"member_did_aw,omitempty"`
-		MemberAddress string `json:"member_address,omitempty"`
-		Alias         string `json:"alias"`
-		IdentityScope string `json:"identity_scope"`
-		Lifetime      string `json:"lifetime"`
-		IssuedAt      string `json:"issued_at"`
-		Signature     string `json:"signature"`
+		Version       int     `json:"version"`
+		CertificateID string  `json:"certificate_id"`
+		Team          string  `json:"team_id"`
+		TeamDIDKey    string  `json:"team_did_key"`
+		MemberDIDKey  string  `json:"member_did_key"`
+		MemberDIDAW   *string `json:"member_did_aw,omitempty"`
+		MemberAddress *string `json:"member_address,omitempty"`
+		Alias         string  `json:"alias"`
+		IdentityScope string  `json:"identity_scope"`
+		Lifetime      string  `json:"lifetime"`
+		IssuedAt      string  `json:"issued_at"`
+		Signature     string  `json:"signature"`
 	}
 	var w wire
 	if err := json.Unmarshal(data, &w); err != nil {
@@ -241,14 +254,20 @@ func (c *TeamCertificate) UnmarshalJSON(data []byte) error {
 		Team:           w.Team,
 		TeamDIDKey:     w.TeamDIDKey,
 		MemberDIDKey:   w.MemberDIDKey,
-		MemberDIDAW:    w.MemberDIDAW,
-		MemberAddress:  w.MemberAddress,
 		Alias:          w.Alias,
 		IdentityScope:  identityScope,
 		IssuedAt:       w.IssuedAt,
 		Signature:      w.Signature,
 		scopeWireKey:   scopeWireKey,
 		legacyLifetime: strings.TrimSpace(w.Lifetime),
+	}
+	if w.MemberDIDAW != nil {
+		c.MemberDIDAW = *w.MemberDIDAW
+		c.emptyMemberDIDAW = c.MemberDIDAW == ""
+	}
+	if w.MemberAddress != nil {
+		c.MemberAddress = *w.MemberAddress
+		c.emptyMemberAddress = c.MemberAddress == ""
 	}
 	return nil
 }

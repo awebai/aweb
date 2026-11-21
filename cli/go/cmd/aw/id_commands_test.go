@@ -2043,7 +2043,8 @@ func TestAwIDVerifyUsesIdentityRegistryURLWithoutWorkspace(t *testing.T) {
 	writeStandaloneSelfCustodyIdentity(t, tmp, "acme.com/alice", did, stableID, registryServer.URL, priv)
 
 	run := exec.CommandContext(ctx, bin, "id", "verify", stableID, "--json")
-	run.Env = append(testCommandEnv(tmp), "AWEB_URL=https://should-not-be-used.example")
+	// No registry is named outside the identity, so its registry_url decides.
+	run.Env = append(testCommandEnv(tmp), "AWEB_URL=https://should-not-be-used.example", "AWID_REGISTRY_URL=")
 	// The identity registry is an isolated host reached in isolated development.
 	run.Env = append(run.Env, "APP_ENV=development", "AWEB_FEDERATION_TEST=1")
 	run.Dir = tmp
@@ -2163,7 +2164,8 @@ func TestAwIDResolveWorksWithoutSigningKeyWhenIdentityRegistryURLPresent(t *test
 	}
 
 	run := exec.CommandContext(ctx, bin, "id", "resolve", stableID, "--json")
-	run.Env = testCommandEnv(tmp)
+	// No registry is named outside the identity, so its registry_url decides.
+	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL=")
 	// The identity registry is an isolated host reached in isolated development.
 	run.Env = append(run.Env, "APP_ENV=development", "AWEB_FEDERATION_TEST=1")
 	run.Dir = tmp
@@ -2185,7 +2187,8 @@ func TestAwIDResolveWorksWithoutSigningKeyWhenIdentityRegistryURLPresent(t *test
 }
 
 func TestResolveRegistryClientForLookupDefaultsWithoutIdentityOrEnv(t *testing.T) {
-	t.Parallel()
+	// Cannot use t.Parallel() — clears AWID_REGISTRY_URL.
+	t.Setenv("AWID_REGISTRY_URL", "")
 
 	tmp := t.TempDir()
 	registry, identity, err := resolveRegistryClientForLookup(tmp)
