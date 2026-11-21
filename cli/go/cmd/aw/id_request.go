@@ -85,7 +85,7 @@ func init() {
 	idRequestCmd.Flags().StringVar(&idRequestBodyFile, "body-file", "", safeFileInputHelp("request body"))
 	idRequestCmd.Flags().StringArrayVar(&idRequestHeaders, "header", nil, "Additional header in 'Name: Value' form")
 	idRequestCmd.Flags().BoolVar(&idRequestTeamAuth, "team-auth", false, "Attach the active team certificate and sign a team-bound request payload")
-	idRequestCmd.Flags().BoolVar(&idRequestRaw, "raw", false, "Print only the upstream response body")
+	idRequestCmd.Flags().BoolVar(&idRequestRaw, "raw", false, "Print only the upstream response body, byte for byte; the HTTP status line goes to stderr")
 	identityCmd.AddCommand(idRequestCmd)
 }
 
@@ -176,8 +176,24 @@ func runIDRequest(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	return printIDRequestExecutionResult(result, idRequestRaw)
+	output := idRequestOutputEnvelope
+	if idRequestRaw {
+		output = idRequestOutputBody
+	}
+	return printIDRequestExecutionResult(result, output)
 }
+
+// idRequestOutputMode selects what `aw id request` prints for a response.
+type idRequestOutputMode int
+
+const (
+	// idRequestOutputEnvelope prints the status, headers and decoded body in
+	// the selected output format.
+	idRequestOutputEnvelope idRequestOutputMode = iota
+	// idRequestOutputBody (--raw) writes the upstream body to stdout byte for
+	// byte, so it can be redirected to a file, and the status line to stderr.
+	idRequestOutputBody
+)
 
 type idRequestExecutionResult struct {
 	Status int
@@ -279,24 +295,24 @@ func signIDRequestHeaders(headers http.Header, method string, parsedURL *url.URL
 	return nil
 }
 
-func printIDRequestExecutionResult(result *idRequestExecutionResult, raw bool) error {
+func printIDRequestExecutionResult(result *idRequestExecutionResult, output idRequestOutputMode) error {
 	if result == nil {
 		return fmt.Errorf("missing response")
 	}
-	if raw {
+	switch output {
+	case idRequestOutputBody:
 		if _, err := commandStdout.Write(result.Body); err != nil {
 			return err
 		}
-		if len(result.Body) > 0 && result.Body[len(result.Body)-1] != '\n' {
-			fmt.Fprintln(commandStdout)
-		}
 		fmt.Fprintf(os.Stderr, "HTTP %d\n", result.Status)
-	} else {
+	case idRequestOutputEnvelope:
 		printOutput(idRequestOutput{
 			Status:  result.Status,
 			Headers: flattenResponseHeaders(result.Header),
 			Body:    decodeResponseBody(result.Body),
 		}, formatIDRequest)
+	default:
+		return fmt.Errorf("unknown id request output mode %d", output)
 	}
 	if result.Status >= 400 {
 		return fmt.Errorf("request failed with status %d", result.Status)

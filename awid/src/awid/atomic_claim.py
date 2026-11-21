@@ -7,6 +7,7 @@ import hashlib
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
+from awid.signature_wire import decode_legacy_signature
 from awid.signing import canonical_json_bytes
 
 ATOMIC_ADDRESS_CLAIM_OPERATION = "claim_identity_address"
@@ -61,7 +62,9 @@ def normalize_claim_custody(value: str) -> str:
     raise ValueError("unsupported custody value")
 
 
-def normalize_atomic_address_claim_fields(fields: AtomicAddressClaimFields) -> AtomicAddressClaimFields:
+def normalize_atomic_address_claim_fields(
+    fields: AtomicAddressClaimFields,
+) -> AtomicAddressClaimFields:
     operation = (fields.operation or "").strip() or ATOMIC_ADDRESS_CLAIM_OPERATION
     if operation != ATOMIC_ADDRESS_CLAIM_OPERATION:
         raise ValueError(f"operation must be {ATOMIC_ADDRESS_CLAIM_OPERATION!r}")
@@ -86,7 +89,9 @@ def normalize_atomic_address_claim_fields(fields: AtomicAddressClaimFields) -> A
     identity_custody = normalize_claim_custody(fields.identity_custody)
     namespace_custody = normalize_claim_custody(fields.namespace_custody)
     if identity_custody == CUSTODY_HOSTED and namespace_custody == CUSTODY_SELF:
-        raise ValueError("hosted-custodial DID with self-custodial namespace is unsupported")
+        raise ValueError(
+            "hosted-custodial DID with self-custodial namespace is unsupported"
+        )
     timestamp = (fields.timestamp or "").strip()
     if not timestamp:
         raise ValueError("timestamp is required")
@@ -126,8 +131,7 @@ def atomic_address_claim_identity_proof_hash(
 ) -> str:
     if not identity_canonical:
         raise ValueError("identity canonical payload is required")
-    padded = identity_signature.strip() + "=" * (-len(identity_signature.strip()) % 4)
-    signature_bytes = base64.b64decode(padded)
+    signature_bytes = decode_legacy_signature(identity_signature)
     digest = hashlib.sha256(identity_canonical + signature_bytes).digest()
     return "sha256:" + base64.b64encode(digest).rstrip(b"=").decode("ascii")
 

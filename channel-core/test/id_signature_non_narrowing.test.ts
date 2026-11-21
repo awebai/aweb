@@ -12,7 +12,8 @@ const rawStdBase64 = (hex: string) => Buffer.from(hex, "hex").toString("base64")
 // The released message family's outcome for each frozen ID-profile Ed25519 case.
 // A did:key whose public key is small-order, non-canonical or mixed-order is
 // refused at decode (aweb-acmz), so no signature under it verifies. Signature
-// checks on R and S keep the released family's own acceptance.
+// checks on R and S use the common noncofactored message profile (R13 ruling
+// 2c74f907-fee7-496f-bba7-1dadbaefee37).
 const RELEASED_MESSAGE_OUTCOME: Record<string, "verified" | "failed"> = {
   "control-root-signs-alice": "verified",
   "small-order-A-0": "failed",
@@ -30,7 +31,7 @@ const RELEASED_MESSAGE_OUTCOME: Record<string, "verified" | "failed"> = {
   "small-order-R-identity": "failed",
   "noncanonical-R-identity": "failed",
   "noncanonical-R-x0-sign-bit": "failed",
-  "mixed-order-R-honest-A": "verified",
+  "mixed-order-R-honest-A": "failed",
   "S-equals-L": "failed",
   "S-plus-L": "failed",
 };

@@ -6,10 +6,10 @@ process. DNS is a loopback authoritative server, not an overridden verifier.
 
 import asyncio
 import os
-from pathlib import Path
 import socket
 import tempfile
 from datetime import datetime, timezone
+from pathlib import Path
 
 import dns.asyncresolver
 import dns.flags
@@ -18,8 +18,6 @@ import dns.rcode
 import dns.rrset
 import httpx
 import pytest
-from nacl.signing import SigningKey
-
 from awid.controller_signing import (
     ControllerDescriptor,
     parse_controller_object,
@@ -29,6 +27,7 @@ from awid.controller_signing import (
 from awid.did import did_key_from_signing_key, stable_id_from_did_key
 from awid.id_certificates import verify_id_chain
 from awid.registry import RegistryClient, RegistryError
+from nacl.signing import SigningKey
 
 pytestmark = pytest.mark.asyncio
 ROOT = Path(__file__).resolve().parents[2]
@@ -43,7 +42,7 @@ resolver = dns.asyncresolver.Resolver(configure=False)
 resolver.nameservers = ['127.0.0.1']
 resolver.port = int(sys.argv[1])
 dns.asyncresolver.default_resolver = resolver
-uvicorn.run(create_app(), host='127.0.0.1', port=int(sys.argv[2]), log_level='warning')
+uvicorn.run(create_app(), fd=int(sys.argv[2]), log_level='warning')
 """
 
 
@@ -88,9 +87,10 @@ async def test_controller_continuity_and_explicit_reset_preserve_distinct_semant
     resolver.nameservers = ["127.0.0.1"]
     resolver.port = dns_port
     dns.asyncresolver.default_resolver = resolver
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        port = sock.getsockname()[1]
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen()
+    port = listener.getsockname()[1]
     origin = f"http://127.0.0.1:{port}"
     project = ROOT / (
         "awid"
@@ -103,6 +103,10 @@ async def test_controller_continuity_and_explicit_reset_preserve_distinct_semant
         "AWID_DB_SCHEMA": "sdk_version_" + registry_version.replace(".", "_"),
         "AWID_REDIS_URL": os.environ["REDIS_URL"],
         "AWID_PUBLIC_ORIGINS": origin,
+        # This standalone peer owns its default per-client budget; other tests
+        # sharing Redis must not spend it before this journey registers its DID.
+        "AWID_RATE_LIMIT_BACKEND": "memory",
+        "AWID_RATE_LIMIT_DISABLED": "0",
         "UV_PROJECT_ENVIRONMENT": str(project / ".venv"),
     }
     env.pop("PYTHONPATH", None)
@@ -121,7 +125,7 @@ async def test_controller_continuity_and_explicit_reset_preserve_distinct_semant
             process = await asyncio.create_subprocess_exec(
                 "uv",
                 "run",
-                "--locked",
+                "--frozen",
                 "--project",
                 str(project),
                 "python",
@@ -129,12 +133,14 @@ async def test_controller_continuity_and_explicit_reset_preserve_distinct_semant
                 "-c",
                 SERVE,
                 str(dns_port),
-                str(port),
+                str(listener.fileno()),
                 registry_version,
                 env=env,
+                pass_fds=(listener.fileno(),),
                 stdout=output,
                 stderr=output,
             )
+            listener.close()
             async with httpx.AsyncClient(timeout=1) as http:
                 async with asyncio.timeout(45):
                     while True:
@@ -294,6 +300,7 @@ async def test_controller_continuity_and_explicit_reset_preserve_distinct_semant
             await run("namespace_reset", reset, new_controller_did=dids[2])
             assert await valid() is False
         finally:
+            listener.close()
             await sdk.aclose()
             if process and process.returncode is None:
                 process.terminate()

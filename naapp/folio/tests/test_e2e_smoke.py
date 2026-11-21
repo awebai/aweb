@@ -12,7 +12,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable, Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -193,12 +193,6 @@ def _require_e2e_enabled() -> None:
         pytest.skip("set FOLIO_E2E=1 or run `make e2e` to execute docker-backed e2e tests")
 
 
-def _free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
-
-
 def _wait_http_ok(
     url: str, *, timeout_seconds: float = 30.0, ca_file: Path | None = None,
 ) -> None:
@@ -327,99 +321,102 @@ def _running_folio(
     _require_e2e_enabled()
     _wait_http_ok(f"{AWID_URL}/health")
 
-    backend_port = _free_port()
-    proxy_port = _free_port()
-    backend_origin = f"http://127.0.0.1:{backend_port}"
-    address = "127.0.0.1"
-    certificates = None
-    if tls_dir is not None:
-        from aweb_naapp_testing.network import local_address, make_certificates
+    with ExitStack() as setup:
+        listener = setup.enter_context(socket.socket())
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        backend_port = listener.getsockname()[1]
+        backend_origin = f"http://127.0.0.1:{backend_port}"
+        address = "127.0.0.1"
+        certificates = None
+        if tls_dir is not None:
+            from aweb_naapp_testing.network import local_address, make_certificates
 
-        address = local_address()  # The real egress guard never permits loopback.
-        tls_dir.mkdir()
-        certificates = make_certificates(tls_dir, ["folio-install.test"], [address])
-    proxy_origin = f"{'https' if certificates else 'http'}://{address}:{proxy_port}"
-    env = os.environ.copy()
-    env.update(
-        {
-            "FOLIO_DATABASE_URL": POSTGRES_URL,
-            "FOLIO_AWID_REGISTRY_URL": AWID_URL,
-            "FOLIO_AUTH_CACHE_TTL_SECONDS": "2",
-            "FOLIO_PUBLIC_ORIGIN": proxy_origin,
-            "FOLIO_APP_ID": app_id,
-        }
-    )
-    env.pop("FOLIO_AWID_SERVICE_TOKEN", None)
-    if awid_service_token is not None:
-        env["FOLIO_AWID_SERVICE_TOKEN"] = awid_service_token
-    proc = subprocess.Popen(
-        [
-            sys.executable,
-            "-m",
-            "uvicorn",
-            "folio.api:create_app",
-            "--factory",
-            "--host",
-            "127.0.0.1",
-            "--port",
-            str(backend_port),
-        ],
-        env=env,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    proxy = RecordingProxy((address, proxy_port), backend_origin)
-    if certificates:
-        tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        tls.load_cert_chain(certificates.cert_file, certificates.key_file)
-        proxy.socket = tls.wrap_socket(proxy.socket, server_side=True)
-    thread = threading.Thread(target=proxy.serve_forever, name="folio-e2e-proxy", daemon=True)
-    thread.start()
-    setup_error: Exception | None = None
-    try:
-        ca_file = certificates.ca_file if certificates else None
-        with pytest.MonkeyPatch.context() as patch:
-            # Only this host's own test listener bypasses the public egress proxy.
-            for name in ("NO_PROXY", "no_proxy"):
-                patch.setenv(name, ",".join(filter(None, (os.environ.get(name), address))))
-            if ca_file is not None:
-                # All resident clients trust the disposable deployment's CA.
-                # Keep earlier session deployments trusted when another starts.
-                previous = os.environ.get("SSL_CERT_FILE")
-                bundle = ca_file.with_name("client-ca-bundle.pem")
-                bundle.write_bytes((Path(previous).read_bytes() if previous else b"") + ca_file.read_bytes())
-                patch.setenv("SSL_CERT_FILE", str(bundle))
-                patch.setenv("GODEBUG", "x509sslcertoverrideplatform=1")
-            try:
-                _wait_http_ok(f"{proxy_origin}/health", ca_file=ca_file)
-            except Exception as exc:
-                setup_error = exc
-                raise
-            yield RunningFolio(origin=proxy_origin, backend_origin=backend_origin, proxy=proxy, ca_file=ca_file, app_id=app_id)
-    finally:
-        proxy.shutdown()
-        proxy.server_close()
-        thread.join(timeout=5)
-        proc.terminate()
+            address = local_address()  # The real egress guard never permits loopback.
+            tls_dir.mkdir()
+            certificates = make_certificates(tls_dir, ["folio-install.test"], [address])
+        proxy = setup.enter_context(RecordingProxy((address, 0), backend_origin))
+        if certificates:
+            tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            tls.load_cert_chain(certificates.cert_file, certificates.key_file)
+            proxy.socket = tls.wrap_socket(proxy.socket, server_side=True)
+        proxy_origin = f"{'https' if certificates else 'http'}://{address}:{proxy.server_address[1]}"
+        env = os.environ.copy()
+        env.update(
+            {
+                "FOLIO_DATABASE_URL": POSTGRES_URL,
+                "FOLIO_AWID_REGISTRY_URL": AWID_URL,
+                "FOLIO_AUTH_CACHE_TTL_SECONDS": "2",
+                "FOLIO_PUBLIC_ORIGIN": proxy_origin,
+                "FOLIO_APP_ID": app_id,
+            }
+        )
+        env.pop("FOLIO_AWID_SERVICE_TOKEN", None)
+        if awid_service_token is not None:
+            env["FOLIO_AWID_SERVICE_TOKEN"] = awid_service_token
+        proc = subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "uvicorn",
+                "folio.api:create_app",
+                "--factory",
+                "--fd",
+                str(listener.fileno()),
+            ],
+            env=env,
+            pass_fds=(listener.fileno(),),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        listener.close()
+        thread = threading.Thread(target=proxy.serve_forever, name="folio-e2e-proxy", daemon=True)
+        thread.start()
+        setup_error: Exception | None = None
         try:
-            proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait(timeout=10)
-        failed = proc.returncode not in (0, -15, -9, None)
-        show_logs = failed or setup_error is not None
-        stdout = proc.stdout.read() if show_logs and proc.stdout else ""
-        stderr = proc.stderr.read() if show_logs and proc.stderr else ""
-        if proc.stdout:
-            proc.stdout.close()
-        if proc.stderr:
-            proc.stderr.close()
-        if show_logs:
-            raise RuntimeError(
-                f"uvicorn exited with {proc.returncode}; setup error: {setup_error}\n"
-                f"stdout:\n{stdout}\nstderr:\n{stderr}"
-            ) from setup_error
+            ca_file = certificates.ca_file if certificates else None
+            with pytest.MonkeyPatch.context() as patch:
+                # Only this host's own test listener bypasses the public egress proxy.
+                for name in ("NO_PROXY", "no_proxy"):
+                    patch.setenv(name, ",".join(filter(None, (os.environ.get(name), address))))
+                if ca_file is not None:
+                    # All resident clients trust the disposable deployment's CA.
+                    # Keep earlier session deployments trusted when another starts.
+                    previous = os.environ.get("SSL_CERT_FILE")
+                    bundle = ca_file.with_name("client-ca-bundle.pem")
+                    bundle.write_bytes((Path(previous).read_bytes() if previous else b"") + ca_file.read_bytes())
+                    patch.setenv("SSL_CERT_FILE", str(bundle))
+                    patch.setenv("GODEBUG", "x509sslcertoverrideplatform=1")
+                try:
+                    _wait_http_ok(f"{proxy_origin}/health", ca_file=ca_file)
+                except Exception as exc:
+                    setup_error = exc
+                    raise
+                yield RunningFolio(origin=proxy_origin, backend_origin=backend_origin, proxy=proxy, ca_file=ca_file, app_id=app_id)
+        finally:
+            proxy.shutdown()
+            proxy.server_close()
+            thread.join(timeout=5)
+            proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=10)
+            failed = proc.returncode not in (0, -15, -9, None)
+            show_logs = failed or setup_error is not None
+            stdout = proc.stdout.read() if show_logs and proc.stdout else ""
+            stderr = proc.stderr.read() if show_logs and proc.stderr else ""
+            if proc.stdout:
+                proc.stdout.close()
+            if proc.stderr:
+                proc.stderr.close()
+            if show_logs:
+                raise RuntimeError(
+                    f"uvicorn exited with {proc.returncode}; setup error: {setup_error}\n"
+                    f"stdout:\n{stdout}\nstderr:\n{stderr}"
+                ) from setup_error
 
 
 @pytest.fixture(scope="module")
@@ -778,60 +775,65 @@ def _running_coordination_server(
     tmp_path: Path, *, app_origin: str, ca_file: Path,
 ) -> Iterator[tuple[str, dict[str, str]]]:
     """Real aweb, with the real HTTPS fetcher pinned to this test origin."""
-    port = _free_port()
-    origin = f"http://127.0.0.1:{port}"
-    redis_url = STACK.redis_url
-    if redis_url is None:
-        redis_port = _compose("port", "redis", "6379").stdout.strip().rsplit(":", 1)[1]
-        redis_url = f"redis://{STACK.host}:{redis_port}/0"
-    env = {k: v for k, v in os.environ.items() if not k.startswith(("AWEB_", "AW_", "AWID_"))}
-    env.update(
-        AWEB_DATABASE_URL=POSTGRES_URL,
-        AWEB_REDIS_URL=redis_url,
-        AWEB_PUBLIC_ORIGIN=origin,
-        AWID_REGISTRY_URL=AWID_URL,
-        AWID_SERVICE_TOKEN=AWID_SERVICE_TOKEN,
-    )
-    # Use the locked server source environment, not an installed aweb artifact.
-    project = Path(__file__).resolve().parents[3] / "server"
-    runner = tmp_path / "installation-server.py"
-    runner.write_text(
-        "import sys\n"
-        "from urllib.parse import urlsplit\n"
-        "import uvicorn\n"
-        "from aweb.api import create_app\n"
-        "from aweb.app_manifests import ManifestFetcher\n"
-        "from aweb_naapp.egress import AddressPolicy, DnsResolver, Egress, InternalDestinations, parse_destination\n"
-        "origin = urlsplit(sys.argv[1])\n"
-        "destination = parse_destination({'host': origin.hostname, 'port': origin.port, 'path': '/**', "
-        "'methods': ['GET'], 'network': 'internal', 'cidr': origin.hostname + '/32'}, "
-        "internal_destinations=InternalDestinations.ALLOWED)\n"
-        "app = create_app()\n"
-        "app.state.manifest_fetcher = ManifestFetcher(destination=destination, egress=Egress("
-        "addresses=AddressPolicy(internal_destinations=InternalDestinations.ALLOWED), "
-        "resolver=DnsResolver(), user_agent='folio-install-test/1', ca_file=sys.argv[2]))\n"
-        "uvicorn.run(app, host='127.0.0.1', port=int(sys.argv[3]))\n"
-    )
-    with (tmp_path / "coordination.log").open("w+") as log:
-        proc = subprocess.Popen(
-            ["uv", "run", "--offline", "--frozen", "--project", str(project),
-             "python", str(runner), app_origin, str(ca_file), str(port)],
-            env=env, stdout=log, stderr=log,
+    with ExitStack() as setup:
+        listener = setup.enter_context(socket.socket())
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        port = listener.getsockname()[1]
+        origin = f"http://127.0.0.1:{port}"
+        redis_url = STACK.redis_url
+        if redis_url is None:
+            redis_port = _compose("port", "redis", "6379").stdout.strip().rsplit(":", 1)[1]
+            redis_url = f"redis://{STACK.host}:{redis_port}/0"
+        env = {k: v for k, v in os.environ.items() if not k.startswith(("AWEB_", "AW_", "AWID_"))}
+        env.update(
+            AWEB_DATABASE_URL=POSTGRES_URL,
+            AWEB_REDIS_URL=redis_url,
+            AWEB_PUBLIC_ORIGIN=origin,
+            AWID_REGISTRY_URL=AWID_URL,
+            AWID_SERVICE_TOKEN=AWID_SERVICE_TOKEN,
         )
-        try:
-            _wait_http_ok(f"{origin}/health")
-            yield origin, env
-        finally:
-            proc.terminate()
+        # Use the locked server source environment, not an installed aweb artifact.
+        project = Path(__file__).resolve().parents[3] / "server"
+        runner = tmp_path / "installation-server.py"
+        runner.write_text(
+            "import sys\n"
+            "from urllib.parse import urlsplit\n"
+            "import uvicorn\n"
+            "from aweb.api import create_app\n"
+            "from aweb.app_manifests import ManifestFetcher\n"
+            "from aweb_naapp.egress import AddressPolicy, DnsResolver, Egress, InternalDestinations, parse_destination\n"
+            "origin = urlsplit(sys.argv[1])\n"
+            "destination = parse_destination({'host': origin.hostname, 'port': origin.port, 'path': '/**', "
+            "'methods': ['GET'], 'network': 'internal', 'cidr': origin.hostname + '/32'}, "
+            "internal_destinations=InternalDestinations.ALLOWED)\n"
+            "app = create_app()\n"
+            "app.state.manifest_fetcher = ManifestFetcher(destination=destination, egress=Egress("
+            "addresses=AddressPolicy(internal_destinations=InternalDestinations.ALLOWED), "
+            "resolver=DnsResolver(), user_agent='folio-install-test/1', ca_file=sys.argv[2]))\n"
+            "uvicorn.run(app, fd=int(sys.argv[3]))\n"
+        )
+        with (tmp_path / "coordination.log").open("w+") as log:
+            proc = subprocess.Popen(
+                ["uv", "run", "--offline", "--frozen", "--project", str(project),
+                 "python", str(runner), app_origin, str(ca_file), str(listener.fileno())],
+                env=env, stdout=log, stderr=log, pass_fds=(listener.fileno(),),
+            )
+            listener.close()
             try:
-                proc.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait(timeout=10)
-            # uv may report forwarded SIGTERM as 128 + SIGTERM.
-            if proc.returncode not in (0, -15, 143, None):
-                log.seek(0)
-                raise AssertionError(f"coordination server exit {proc.returncode}: {log.read()}")
+                _wait_http_ok(f"{origin}/health")
+                yield origin, env
+            finally:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait(timeout=10)
+                # uv may report forwarded SIGTERM as 128 + SIGTERM.
+                if proc.returncode not in (0, -15, 143, None):
+                    log.seek(0)
+                    raise AssertionError(f"coordination server exit {proc.returncode}: {log.read()}")
 
 
 def test_install_after_mint_uses_replacement_grant(

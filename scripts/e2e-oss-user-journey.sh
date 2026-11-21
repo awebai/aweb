@@ -861,6 +861,11 @@ AWID_RATE_LIMIT_DISABLED=1
 AWID_SKIP_DNS_VERIFY=1
 EOF
 
+# Keep the shipped quickstart origins (including Phase 22's loopback bridge)
+# and add only the published/candidate URL used by this journey's other clients.
+awid_public_origins="$(cd "$SERVER_DIR" && compose config --format json | python3 -c 'import json,sys; print(json.load(sys.stdin)["services"]["awid"]["environment"]["AWID_PUBLIC_ORIGINS"])')"
+printf 'AWID_PUBLIC_ORIGINS=%s,%s\n' "$awid_public_origins" "$AWID_URL" >> "$SERVER_DIR/.env.e2e"
+
 cd "$SERVER_DIR"
 compose down -v --rmi local --remove-orphans 2>/dev/null || true
 compose build --no-cache

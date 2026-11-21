@@ -1,4 +1,4 @@
-"""DNS-selected registries cannot turn a registry read into a private-network dial."""
+"""Public registry selections cannot turn a read into a private-network dial."""
 
 from __future__ import annotations
 
@@ -16,7 +16,6 @@ from awid.registry import RegistryClient, RegistryError
 async def test_dns_override_refuses_nonpublic_answers_before_dial(
     monkeypatch, addresses
 ):
-    import awid.dns_verify
 
     async def discover(domain):
         return "https://registry.example.com"
@@ -31,10 +30,9 @@ async def test_dns_override_refuses_nonpublic_answers_before_dial(
         dials.append(str(request.url))
         return httpx.Response(404)
 
-    monkeypatch.setattr(awid.dns_verify, "discover_registry_override", discover)
     monkeypatch.setattr(SystemHostResolver, "resolve_all", resolve)
     monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", dial)
-    registry = RegistryClient("https://api.awid.ai")
+    registry = RegistryClient("https://api.awid.ai", domain_registry_resolver=discover)
     try:
         with pytest.raises(RegistryError, match="unavailable"):
             await registry.get_namespace("example.com")
@@ -47,7 +45,6 @@ async def test_dns_override_refuses_nonpublic_answers_before_dial(
 async def test_dns_override_dials_only_checked_ip_preserving_host_and_tls_name(
     monkeypatch,
 ):
-    import awid.dns_verify
 
     async def discover(domain):
         return "https://registry.example.com:8443"
@@ -71,12 +68,12 @@ async def test_dns_override_dials_only_checked_ip_preserving_host_and_tls_name(
         )
         return httpx.Response(404)
 
-    monkeypatch.setattr(awid.dns_verify, "discover_registry_override", discover)
     monkeypatch.setattr(SystemHostResolver, "resolve_all", resolve)
     monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", dial)
     registry = RegistryClient(
         "https://api.awid.ai",
         service_token="private-home-token-with-more-than-32-bytes",
+        domain_registry_resolver=discover,
     )
     try:
         assert await registry.get_namespace("example.com") is None
@@ -98,20 +95,68 @@ async def test_dns_override_dials_only_checked_ip_preserving_host_and_tls_name(
 @pytest.mark.parametrize(
     "app_env, enabled, listener, origin, addresses, allowed",
     [
-        ("development", True, "http://awid-b:8010", "http://awid-a:8010", ("172.20.0.2",), True),
-        ("production", True, "http://awid-b:8010", "http://awid-a:8010", ("172.20.0.2",), False),
-        ("development", False, "http://awid-b:8010", "http://awid-a:8010", ("172.20.0.2",), False),
+        (
+            "development",
+            True,
+            "http://awid-b:8010",
+            "http://awid-a:8010",
+            ("172.20.0.2",),
+            True,
+        ),
+        (
+            "production",
+            True,
+            "http://awid-b:8010",
+            "http://awid-a:8010",
+            ("172.20.0.2",),
+            False,
+        ),
+        (
+            "development",
+            False,
+            "http://awid-b:8010",
+            "http://awid-a:8010",
+            ("172.20.0.2",),
+            False,
+        ),
         ("development", True, "", "http://awid-a:8010", ("172.20.0.2",), False),
         ("development", True, "http://", "http://awid-a:8010", ("172.20.0.2",), False),
-        ("development", True, "https://server.example.com", "http://awid-a:8010", ("172.20.0.2",), False),
-        ("development", True, "http://awid-b:8010", "http://registry.example.com", ("1.1.1.1",), False),
-        ("development", True, "http://awid-b:8010", "https://registry.example.com", ("1.1.1.1", "127.0.0.1"), False),
+        (
+            "development",
+            True,
+            "https://server.example.com",
+            "http://awid-a:8010",
+            ("172.20.0.2",),
+            False,
+        ),
+        (
+            "development",
+            True,
+            "http://awid-b:8010",
+            "http://registry.example.com",
+            ("1.1.1.1",),
+            False,
+        ),
+        (
+            "development",
+            True,
+            "http://awid-b:8010",
+            "https://registry.example.com",
+            ("1.1.1.1", "127.0.0.1"),
+            False,
+        ),
     ],
 )
 async def test_explicit_development_context_is_scoped_to_isolated_origins(
-    monkeypatch, cached, app_env, enabled, listener, origin, addresses, allowed,
+    monkeypatch,
+    cached,
+    app_env,
+    enabled,
+    listener,
+    origin,
+    addresses,
+    allowed,
 ):
-    import awid.dns_verify
     from awid.external_authority import OriginContext
     from awid.registry import CachedRegistryClient
     from test_registry_client import FakeRedis
@@ -128,14 +173,19 @@ async def test_explicit_development_context_is_scoped_to_isolated_origins(
         dials.append(str(request.url))
         return httpx.Response(404)
 
-    monkeypatch.setattr(awid.dns_verify, "discover_registry_override", discover)
     monkeypatch.setattr(SystemHostResolver, "resolve_all", resolve)
     monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", dial)
-    options = {"registry_origin_context": OriginContext(app_env, enabled, listener)}
+    options = {
+        "registry_origin_context": OriginContext(app_env, enabled, listener),
+        "domain_registry_resolver": discover,
+    }
     # Both constructors must preserve the same explicitly selected route
     # policy, including on a cache miss.
-    registry = (CachedRegistryClient("https://api.awid.ai", FakeRedis(), **options) if cached
-                else RegistryClient("https://api.awid.ai", **options))
+    registry = (
+        CachedRegistryClient("https://api.awid.ai", FakeRedis(), **options)
+        if cached
+        else RegistryClient("https://api.awid.ai", **options)
+    )
     try:
         if allowed:
             assert await registry.get_namespace("alpha.example.com") is None

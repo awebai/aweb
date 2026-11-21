@@ -57,6 +57,7 @@ def fixture_app():
 def main():
     owned = []
     process = None
+    listener = None
     env = dict(os.environ)
     schema = 'test_cli_' + uuid.uuid4().hex
     try:
@@ -77,9 +78,10 @@ def main():
                 if subprocess.run(['docker', 'exec', owned[0], 'pg_isready', '-U', 'postgres'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
                     break
                 time.sleep(.25)
-        with socket.socket() as sock:
-            sock.bind(('127.0.0.1', 0))
-            port = sock.getsockname()[1]
+        listener = socket.socket()
+        listener.bind(('127.0.0.1', 0))
+        listener.listen()
+        port = listener.getsockname()[1]
         from urllib.parse import quote
         database = (f"postgresql://{quote(env.get('PGUSER', 'postgres'), safe='')}:"
                     f"{quote(env.get('PGPASSWORD', 'postgres'), safe='')}@{env['PGHOST']}:"
@@ -108,15 +110,16 @@ def main():
             env.pop('AWID_RATE_LIMIT_DISABLED', None)
             env['AWID_RATE_LIMIT_BACKEND'] = 'memory'
             command = ['uv', 'run', '--offline', '--frozen', '--project', str(Path(__file__).resolve().parent / 'production-awid'),
-                       'awid', '--host', '127.0.0.1', '--port', str(port)]
+                       'python', '-m', 'uvicorn', 'awid_service.main:create_app', '--factory', '--fd', str(listener.fileno())]
             cwd = tempfile.gettempdir()
         else:
             command = ['uv', 'run', '--offline', '--frozen', '--project', str(ROOT / 'awid'),
                        'python', '-c',
-                       "import runpy, sys, uvicorn; uvicorn.run(runpy.run_path(sys.argv[1])['fixture_app'](), host='127.0.0.1', port=int(sys.argv[2]))",
-                       str(Path(__file__).resolve()), str(port)]
+                       "import runpy, sys, uvicorn; uvicorn.run(runpy.run_path(sys.argv[1])['fixture_app'](), fd=int(sys.argv[2]))",
+                       str(Path(__file__).resolve()), str(listener.fileno())]
             cwd = None
-        process = subprocess.Popen(command, cwd=cwd, env=env, stdout=sys.stderr, stderr=sys.stderr)
+        process = subprocess.Popen(command, cwd=cwd, env=env, stdout=sys.stderr, stderr=sys.stderr, pass_fds=(listener.fileno(),))
+        listener.close()
         url = f'http://127.0.0.1:{port}'
         for _ in range(120):
             if process.poll() is not None:
@@ -133,6 +136,8 @@ def main():
         print(json.dumps({'database_url': database, 'schema': schema}), flush=True)
         sys.stdin.read()
     finally:
+        if listener is not None:
+            listener.close()
         if process is not None:
             process.terminate()
             try:
