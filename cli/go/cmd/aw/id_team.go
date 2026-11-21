@@ -3909,6 +3909,10 @@ func ensureLocalTeamRegistered(
 		return nil, fmt.Errorf("ensure namespace at registry: %w", err)
 	}
 
+	if err := settleUnconfirmedTeamKey(ctx, registry, registryURL, domain, name); err != nil {
+		return nil, err
+	}
+
 	// The key is in local custody before the registry pins the team to it,
 	// so an interrupted run is completed by a retry that reuses it.
 	teamPriv, created, err := teamKeyForCreate(domain, name)
@@ -3925,11 +3929,23 @@ func ensureLocalTeamRegistered(
 		}
 		existingTeam, getErr := registry.GetTeam(ctx, registryURL, domain, name, teamPriv)
 		if getErr != nil {
-			debugLog("read existing team after name conflict: %v", getErr)
-			return nil, withErrorCode(codeTeamNameTaken, fmt.Errorf("create team at registry: %w\nRestore this team's controller key to reuse it, or choose another --name.", err))
+			// The registry has the name but could not say which key holds
+			// it; a failed read is not a taken name. A key this run created
+			// may be the registered one (another run here registered it
+			// first), so it is set aside, never destroyed, and never read as
+			// the team key until a read settles it.
+			aside := ""
+			if created {
+				path, asideErr := awconfig.SetAsideUnconfirmedTeamKey(domain, name, teamPub)
+				if asideErr != nil {
+					return nil, fmt.Errorf("%w. The team key this run saved could not be set aside: %v", unconfirmedTeamNameError(domain, name, "", getErr), asideErr)
+				}
+				aside = path
+			}
+			return nil, unconfirmedTeamNameError(domain, name, aside, getErr)
 		}
 		if strings.TrimSpace(existingTeam.TeamDIDKey) != teamDIDKey {
-			pinned := withErrorCode(codeTeamNameTaken, fmt.Errorf("team %s/%s is already pinned to %s\nRestore its current controller key to reuse this team, or choose another --name.", domain, name, existingTeam.TeamDIDKey))
+			pinned := teamPinnedElsewhereError(domain, name, existingTeam.TeamDIDKey)
 			// A key this run created was never registered; keep no key file
 			// for a team pinned to another key.
 			if created {
@@ -3951,6 +3967,49 @@ func ensureLocalTeamRegistered(
 		TeamKey:     teamPriv,
 		TeamKeyPath: teamKeyPath,
 	}, nil
+}
+
+// settleUnconfirmedTeamKey settles a team key an earlier run set aside as
+// unconfirmed, before this run reads or creates a team key. A registry read
+// that succeeds restores it when the registry pins exactly that key, and
+// removes it, refusing the name as taken, when the registry pins another. A
+// read that fails leaves it set aside and refuses: no new key is created
+// while one that may be registered is unsettled.
+func settleUnconfirmedTeamKey(ctx context.Context, registry *awid.RegistryClient, registryURL, domain, name string) error {
+	key, aside, err := awconfig.LoadUnconfirmedTeamKey(domain, name)
+	if err != nil || key == nil {
+		return err
+	}
+	pub := key.Public().(ed25519.PublicKey)
+	team, err := registry.GetTeam(ctx, registryURL, domain, name, key)
+	if err != nil {
+		return unconfirmedTeamNameError(domain, name, aside, err)
+	}
+	if strings.TrimSpace(team.TeamDIDKey) == awid.ComputeDIDKey(pub) {
+		return awconfig.RestoreUnconfirmedTeamKey(domain, name)
+	}
+	pinned := teamPinnedElsewhereError(domain, name, team.TeamDIDKey)
+	if err := awconfig.RemoveUnconfirmedTeamKey(domain, name, pub); err != nil {
+		return fmt.Errorf("%w. The unconfirmed team key at %s was kept: %v", pinned, aside, err)
+	}
+	return pinned
+}
+
+// unconfirmedTeamNameError is the refusal when the registry has a team's name
+// and a read could not say which key holds it. aside is where this machine's
+// unconfirmed key waits, or "" when no key was set aside.
+func unconfirmedTeamNameError(domain, name, aside string, readErr error) error {
+	held := ""
+	if aside != "" {
+		held = fmt.Sprintf("\nThe team key this machine created is set aside at %s and is not used as the team key.", aside)
+	}
+	return withErrorCode(codeTeamNameUnconfirmed, fmt.Errorf("team %s/%s already exists at the registry, and reading it to confirm which key holds it failed: %w%s\nRun the same command again once the registry answers: aw restores a set-aside key the registry pins and removes one it does not. If the read keeps being refused, another key may hold this name privately: choose another --name.", domain, name, readErr, held))
+}
+
+// teamPinnedElsewhereError is the refusal when the registry pins a team's
+// name to another key.
+func teamPinnedElsewhereError(domain, name, pinnedDIDKey string) error {
+	return withErrorCode(codeTeamNameTaken, fmt.Errorf("team %s/%s is already pinned to %s\nRestore its current controller key to reuse this team, or choose another --name.", domain, name, pinnedDIDKey))
 }
 
 // teamKeyForCreate returns the team key to register: the key already saved
