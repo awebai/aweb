@@ -1,4 +1,4 @@
-"""The actual unit stage must refuse before expensive setup on a cheap failure."""
+"""The actual unit stage runs the source controls before product tests."""
 
 import os
 import subprocess
@@ -63,13 +63,16 @@ class UnitRequiredChecksTests(unittest.TestCase):
         for target in REQUIRED:
             self.assertIn("=== candidate: " + target + " ===", log)
 
-    def test_each_cheap_failure_is_unit_failure_before_node_or_product_work(self):
-        for index, target in enumerate(REQUIRED):
+    def test_each_source_failure_is_reported_and_product_work_still_runs(self):
+        for target in REQUIRED:
             with self.subTest(target=target):
                 result, calls, summary, log = self.exercise(failure=target)
                 self.assertEqual(result.returncode, 23, result.stdout + result.stderr)
-                self.assertEqual(calls, REQUIRED[: index + 1])
+                self.assertEqual(
+                    calls, REQUIRED + ["_candidate-node-deps", "_candidate-unit-suites"]
+                )
                 self.assertIn("unit\tFAILED\tunit.log", summary)
+                self.assertIn(f"unit/{target}\tFAILED\tunit.log", summary)
                 self.assertIn("=== candidate: " + target + " ===", log)
 
     def test_later_artifact_stage_reuses_the_successful_unit_node_setup(self):
