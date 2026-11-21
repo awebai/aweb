@@ -300,22 +300,17 @@ accepting it with a valid member credential. Its operation owner completes the
 intent under service authorization, even if revocation succeeds before the
 workspace cleanup is recorded and the member never retries.
 
-A retry with the revoked certificate is refused with HTTP 401. When the
-verifier refuses it for revocation and the certificate fingerprint, team,
-method, raw request target, and body match the retained signed intent, the
-service returns the following detail.
+The verifier refuses a revoked credential. The service may return the
+retained result for an exact retry matching the original certificate
+fingerprint, team, method, raw request target, and body. A pending removal
+returns HTTP 202 with `status: "accepted"`. A completed retry returns HTTP
+200 with the stored removal result. The retry receives a receipt and the
+service owner handles completion.
 
-| `detail.code` | `detail.removal_status` | `detail.message` |
-| --- | --- | --- |
-| `self_removal_accepted` | `pending` | Self-removal was accepted and is being completed. No further action is required. |
-| `self_removal_accepted` | `complete` | Self-removal is complete. No further action is required. |
-
-The match only selects the response. Ordinary requests with a revoked
-certificate and retries with a different certificate, team, method, target,
-or body receive the ordinary refusal.
-Released `aw` exits nonzero, displays the service's sentence, and reports
-`error.reason: "self_removal_accepted"` and `error.http_status: 401` with
-`--json`. Keep the identity home on this refusal.
+`aw workspace delete` exits zero on either receipt. While completion is
+pending, `--json` reports `retirement_code: "self_removal_accepted"`,
+`identity_deleted: false`, and `alias_released: false` with reason
+`completion pending`. Wait for a completed receipt before reusing the alias.
 
 ### Team-authorized retirement
 

@@ -599,10 +599,18 @@ func addWorkspaceAPIKeyForTest(t *testing.T, dir, apiKey string) {
 	}
 }
 
-// runSelfRetireDeleteJSONForTest runs `aw workspace delete --json` for the
-// fixture member and returns stdout alone: the --json error envelope is the
-// one document there, and the human sentence goes to stderr.
 func runSelfRetireDeleteJSONForTest(t *testing.T, serverURL, alias, apiKey string) (cliErrorEnvelope, string, error) {
+	t.Helper()
+	stdout, stderr, err := runSelfRetireDeleteCommandForTest(t, serverURL, alias, apiKey)
+	var envelope cliErrorEnvelope
+	if decodeErr := json.Unmarshal([]byte(stdout), &envelope); decodeErr != nil {
+		t.Fatalf("stdout is not one JSON document: %v\nstdout:\n%s\nstderr:\n%s", decodeErr, stdout, stderr)
+	}
+	return envelope, stdout + stderr, err
+}
+
+// runSelfRetireDeleteCommandForTest runs a built aw from the member home as OATS does.
+func runSelfRetireDeleteCommandForTest(t *testing.T, serverURL, alias, apiKey string) (string, string, error) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
@@ -622,11 +630,7 @@ func runSelfRetireDeleteJSONForTest(t *testing.T, serverURL, alias, apiKey strin
 	run.Stdout = &stdout
 	run.Stderr = &stderr
 	err := run.Run()
-	var envelope cliErrorEnvelope
-	if decodeErr := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &envelope); decodeErr != nil {
-		t.Fatalf("stdout is not one JSON document: %v\nstdout:\n%s\nstderr:\n%s", decodeErr, stdout.String(), stderr.String())
-	}
-	return envelope, stdout.String() + stderr.String(), err
+	return stdout.String(), stderr.String(), err
 }
 
 func revokedCallerRefusal(code string) func(w http.ResponseWriter) {
@@ -657,39 +661,47 @@ func TestAwWorkspaceDeleteJSONCarriesCertificateRevokedForARevokedCaller(t *test
 	}
 }
 
-func TestAwWorkspaceDeleteReportsAnAcceptedHostedRemovalAsACodedRefusal(t *testing.T) {
+func TestAwWorkspaceDeleteReportsAcceptedHostedRemovalToOATS(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct {
-		status  string
-		message string
+		name       string
+		httpStatus int
+		complete   bool
 	}{
-		{"pending", "Self-removal was accepted and is being completed. No further action is required."},
-		{"complete", "Self-removal is complete. No further action is required."},
+		{"accepted", http.StatusAccepted, false},
+		{"completed-replay", http.StatusOK, true},
 	} {
-		t.Run(tc.status, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			var sawSelfRemove atomic.Bool
 			server := newLocalHTTPServer(t, selfRetireCertServerHandler(t, "worker", &sawSelfRemove, func(w http.ResponseWriter) {
 				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusUnauthorized)
-				_ = json.NewEncoder(w).Encode(map[string]any{
-					"detail": map[string]any{
-						"code": "self_removal_accepted", "removal_status": tc.status, "message": tc.message,
-					},
-				})
+				w.WriteHeader(tc.httpStatus)
+				detail := map[string]any{
+					"status": "removed", "alias": "worker", "workspace_id": selfRetireFixtureWorkspaceID,
+					"alias_released": tc.complete, "alias_released_reason": "revoked",
+				}
+				if tc.httpStatus == http.StatusAccepted {
+					detail["status"], detail["code"], detail["removal_status"] = "accepted", "self_removal_accepted", "pending"
+					detail["alias_released_reason"] = "Self-removal was accepted and is being completed. No further action is required."
+				}
+				_ = json.NewEncoder(w).Encode(detail)
 			}))
 
-			envelope, out, err := runSelfRetireDeleteJSONForTest(t, server.URL, "worker", "")
-			if err == nil || !sawSelfRemove.Load() {
-				t.Fatalf("expected a refusal from the self-remove route, got %v:\n%s", err, out)
+			stdout, stderr, err := runSelfRetireDeleteCommandForTest(t, server.URL, "worker", "")
+			if err != nil || !sawSelfRemove.Load() {
+				t.Fatalf("OATS self-delete should succeed, got %v:\n%s%s", err, stdout, stderr)
 			}
-			refusal := envelope.Error
-			if refusal.Code != "self_removal_accepted" || refusal.Reason != "self_removal_accepted" ||
-				refusal.HTTPStatus != http.StatusUnauthorized || refusal.Message != tc.message || refusal.Detail != tc.message {
-				t.Fatalf("unexpected refusal: %+v\n%s", refusal, out)
+			var receipt workspaceDeleteOutput
+			if err := json.Unmarshal([]byte(stdout), &receipt); err != nil {
+				t.Fatalf("stdout is not one workspace deletion receipt: %v\n%s%s", err, stdout, stderr)
 			}
-			if !strings.Contains(out, "\n"+tc.message+"\n") || strings.Contains(out, "alias_released") {
-				t.Fatalf("expected the service's sentence and no deletion result:\n%s", out)
+			if receipt.WorkspaceID != selfRetireFixtureWorkspaceID || receipt.Alias != "worker" ||
+				receipt.AliasReleased != tc.complete || receipt.IdentityDeleted != tc.complete {
+				t.Fatalf("unexpected workspace removal receipt: %+v\n%s%s", receipt, stdout, stderr)
+			}
+			if !tc.complete && (receipt.RetirementCode != "self_removal_accepted" || receipt.AliasReleasedReason != "completion pending") {
+				t.Fatalf("expected a pending removal receipt:\n%s%s", stdout, stderr)
 			}
 		})
 	}
