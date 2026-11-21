@@ -159,6 +159,7 @@ def run_session(
                     )
                     for field in [
                         "stages",
+                        "targets",
                         "gate_summaries",
                         "memory",
                         "archive_sha256",
