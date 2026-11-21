@@ -1,15 +1,14 @@
+import { escapeJSONString as escapeJSON } from "./canonical.js";
+import { verifyBytes } from "./signature_wire.js";
 import { keyResponseIdTree, type IdTreeEnrollment } from "./id_certificates.js";
 import { IdStatusClient } from "./id_status.js";
 import * as dns from "node:dns/promises";
 import { isIP } from "node:net";
-import { sha256, sha512 } from "@noble/hashes/sha2.js";
-import * as ed from "@noble/ed25519";
+import { sha256 } from "@noble/hashes/sha2.js";
 import { getDomain } from "tldts";
 import { computeStableID, extractPublicKey } from "./did.js";
 import { decodeRawStdBase64 } from "./base64.js";
 import { readBoundedJSON, readSafeErrorExcerpt } from "../api/response.js";
-
-ed.etc.sha512Sync = (...m) => sha512(ed.etc.concatBytes(...m));
 
 export const DEFAULT_AWID_REGISTRY_URL = "https://api.awid.ai";
 
@@ -635,11 +634,7 @@ export function verifyDidKeyResolution(
 
   let validSignature = false;
   try {
-    validSignature = ed.verify(
-      b64Decode(head.signature),
-      new TextEncoder().encode(payload),
-      extractPublicKey(head.authorized_by),
-    );
+    validSignature = verifyBytes({signature: b64Decode(head.signature), message: new TextEncoder().encode(payload), publicKey: extractPublicKey(head.authorized_by)});
   } catch (error) {
     return { outcome: "HARD_ERROR", error: String(error) };
   }
@@ -861,43 +856,6 @@ function b64Decode(value: string): Uint8Array {
 
 function bytesToHex(bytes: Uint8Array): string {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
-function escapeJSON(s: string): string {
-  let result = "";
-  for (const ch of s) {
-    const code = ch.codePointAt(0)!;
-    switch (ch) {
-      case '"':
-        result += '\\"';
-        break;
-      case "\\":
-        result += "\\\\";
-        break;
-      case "\n":
-        result += "\\n";
-        break;
-      case "\r":
-        result += "\\r";
-        break;
-      case "\t":
-        result += "\\t";
-        break;
-      case "\b":
-        result += "\\b";
-        break;
-      case "\f":
-        result += "\\f";
-        break;
-      default:
-        if (code < 0x20) {
-          result += `\\u${code.toString(16).padStart(4, "0")}`;
-        } else {
-          result += ch;
-        }
-    }
-  }
-  return result;
 }
 
 /**

@@ -1076,6 +1076,9 @@ func newBYOTRegistryTestServer(t *testing.T, domain, team string, controllerKey 
 		if serveUnadvertisedHealth(w, r) {
 			return
 		}
+		if serveProvisionedConnectForTest(t, w, r) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/"+domain:
 			if !namespaceCreated {

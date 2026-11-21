@@ -151,6 +151,9 @@ func formatNotifyOutput(result *chat.PendingResult, selfAlias string, selfDIDs .
 		if from == "" {
 			continue
 		}
+		// A pending row contains no verified sender result. Its only eligible
+		// model-facing sender field is an identifier, never arbitrary text.
+		from = claimedSenderIdentifier(from)
 		if pending.SenderWaiting {
 			urgent = append(urgent, from)
 		} else {
@@ -168,10 +171,18 @@ func formatNotifyOutput(result *chat.PendingResult, selfAlias string, selfDIDs .
 	sb.WriteString("║         📬 AGENT: YOU HAVE PENDING CHAT MESSAGES             ║\n")
 	sb.WriteString("╠══════════════════════════════════════════════════════════════╣\n")
 	for _, from := range urgent {
-		sb.WriteString(padNotifyLine(fmt.Sprintf("║ ⚠️  URGENT: %s is WAITING for your reply", from)))
+		line := "║ ⚠️  URGENT: a pending chat is WAITING for your reply"
+		if from != "" {
+			line = fmt.Sprintf("║ ⚠️  URGENT: %s is WAITING for your reply", from)
+		}
+		sb.WriteString(padNotifyLine(line))
 	}
 	for _, from := range regular {
-		sb.WriteString(padNotifyLine(fmt.Sprintf("║ 💬 Unread message from %s", from)))
+		line := "║ 💬 Unread message from an unknown sender"
+		if from != "" {
+			line = fmt.Sprintf("║ 💬 Unread message from %s", from)
+		}
+		sb.WriteString(padNotifyLine(line))
 	}
 	sb.WriteString("╠══════════════════════════════════════════════════════════════╣\n")
 	sb.WriteString("║ YOU MUST RUN: aw chat pending                                ║\n")
