@@ -223,9 +223,11 @@ cryptographically verified identity.`,
 		} else {
 			applyMailRecipientTarget(req, target.Kind, target.Value)
 			if target.Kind == "alias" {
-				if _, err := confirmMailAliasRecipient(ctx, c, req, target.Value); err != nil {
+				confirmed, err := confirmTeamAlias(ctx, c, sel, target.Value, false)
+				if err != nil {
 					return err
 				}
+				req.ConfirmedRecipient = confirmed.recipient
 			}
 		}
 

@@ -191,33 +191,29 @@ var mailSendCmd = &cobra.Command{
 			}
 			// /v1/agents lists the team's agents; a name it lacks may be a
 			// human on the live roster, which binds the member's current key.
-			if found, findErr := confirmMailAliasRecipient(ctx, c, req, targetValue); findErr != nil {
-				return findErr
-			} else if found {
+			// Key discovery for an encrypted send to a human is scoped to the
+			// selected team, using its original identity-signed assertion,
+			// so that send keeps the alias.
+			confirmed, confirmErr := confirmTeamAlias(ctx, c, sel, targetValue, !sendEncryptE2EE)
+			if confirmErr != nil {
+				return confirmErr
+			}
+			req.ToAlias = targetValue
+			switch confirmed.source {
+			case teamAliasFromAgentList:
 				// The agent list confirms the member: the signature binds it,
 				// and the server routes by the alias.
-				req.ToAlias = targetValue
-			} else if sendEncryptE2EE {
-				// Key discovery for a human is scoped to the selected team,
-				// using its original identity-signed assertion.
-				req.ToAlias = targetValue
-			} else if liveTarget, liveFound, liveErr := resolveLiveTeamMemberAliasTarget(ctx, sel, targetValue); liveErr != nil {
-				return recipientLookupError(targetValue, "live roster", liveErr)
-			} else if liveFound {
-				kind, value := liveTarget.identityTarget()
+				req.ConfirmedRecipient = confirmed.recipient
+			case teamAliasFromLiveRoster:
+				kind, value := confirmed.live.identityTarget()
+				req.ToAlias = ""
 				applyMailRecipientTarget(req, kind, value)
 				// The live team roster already binds the member's current key.
 				// Keep it with the stable ID instead of treating the member as
 				// an external bare-DID first contact. /v1/agents omits humans.
-				req.ToDID = strings.TrimSpace(liveTarget.DIDKey)
-				if mailRecipientTargetApplied(req) {
-					targetKind = kind
-					targetValue = value
-				} else {
-					req.ToAlias = targetValue
-				}
-			} else {
-				req.ToAlias = targetValue
+				req.ToDID = strings.TrimSpace(confirmed.live.DIDKey)
+				targetKind = kind
+				targetValue = value
 			}
 		case "did":
 			c, sel, err = resolveMailMessagingClientSelection()

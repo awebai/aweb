@@ -83,99 +83,84 @@ func chatSend(ctx context.Context, toAlias, message string, opts chat.SendOption
 	target := strings.TrimSpace(toAlias)
 	// Encrypted human aliases use selected-team key discovery; preserve the
 	// released plaintext live-roster route.
-	confirmed, err := confirmChatAlias(ctx, c, sel, target, opts.Encryption() != chat.E2EERequired)
+	confirmed, err := confirmTeamAlias(ctx, c, sel, target, opts.Encryption() != chat.E2EERequired)
 	if err != nil {
 		return nil, sel, err
 	}
 	switch confirmed.source {
-	case chatAliasFromAgentList:
+	case teamAliasFromAgentList:
 		// An existing session is selected by the confirmed DID; a new one is
 		// created by the alias, which the server resolves in the team, and
 		// signs the member the agent list names.
 		opts.RecipientDID = confirmed.sessionDID
 		opts.ConfirmedRecipient = confirmed.recipient
-	case chatAliasFromLiveRoster:
+	case teamAliasFromLiveRoster:
 		target = confirmed.sessionDID
 	}
 	r, err := chat.Send(ctx, c.Client, sel.Alias, []string{target}, message, opts, chatStderrCallback)
 	return r, sel, err
 }
 
-type chatAliasSource int
+type teamAliasSource int
 
 const (
-	chatAliasUnconfirmed chatAliasSource = iota
-	chatAliasFromAgentList
-	chatAliasFromLiveRoster
+	teamAliasUnconfirmed teamAliasSource = iota
+	teamAliasFromAgentList
+	teamAliasFromLiveRoster
 )
 
-// confirmedChatAlias is a bare alias confirmed in the selected team.
-type confirmedChatAlias struct {
-	source chatAliasSource
+// confirmedTeamAlias is a bare alias confirmed in the selected team, for a
+// chat or a mail send.
+type confirmedTeamAlias struct {
+	source teamAliasSource
 	// sessionDID selects the chat session: the member's did:aw, else its
 	// did:key.
 	sessionDID string
 	// recipient is the identity a new message signs as its recipient
 	// binding; only the agent list sets it.
 	recipient *awid.ConfirmedRecipient
+	// live is the live roster's member, when it confirmed the alias: its
+	// identity target and current key.
+	live liveTeamMemberAliasTarget
 }
 
-// confirmChatAlias confirms a bare alias in the selected team: the identity
-// its agent list names for it, or else, with useLiveRoster, the DID the
-// team's live roster names. A confirmed DID is a strong identity, so it
-// selects the chat session rather than the name, which an outside
-// participant may also hold (chat/IDENTITY_RULES.md). A failed lookup
-// refuses. Any other target, or an alias neither confirms, is unconfirmed.
-func confirmChatAlias(ctx context.Context, c *aweb.Client, sel *awconfig.Selection, target string, useLiveRoster bool) (confirmedChatAlias, error) {
+// confirmTeamAlias confirms a bare alias in the selected team, for chat and
+// mail alike: the identity its agent list names for it, or else, with
+// useLiveRoster, the member the team's live roster names. A confirmed DID is
+// a strong identity, so it selects the chat session rather than the name,
+// which an outside participant may also hold (chat/IDENTITY_RULES.md). A
+// failed lookup refuses. Any other target, or an alias neither confirms, is
+// unconfirmed.
+func confirmTeamAlias(ctx context.Context, c *aweb.Client, sel *awconfig.Selection, target string, useLiveRoster bool) (confirmedTeamAlias, error) {
 	target = strings.TrimSpace(target)
 	if !shouldTryLiveRosterAliasFallback(target) {
-		return confirmedChatAlias{}, nil
+		return confirmedTeamAlias{}, nil
 	}
 	agent, found, err := clientAgentForAlias(ctx, c, target)
 	if err != nil {
-		return confirmedChatAlias{}, recipientLookupError(target, "agent list", err)
+		return confirmedTeamAlias{}, recipientLookupError(target, "agent list", err)
 	}
 	if found {
 		recipient, err := agentListRecipient(target, agent)
 		if err != nil {
-			return confirmedChatAlias{}, err
+			return confirmedTeamAlias{}, err
 		}
 		sessionDID := firstNonEmpty(recipient.StableID, recipient.DID)
-		return confirmedChatAlias{source: chatAliasFromAgentList, sessionDID: sessionDID, recipient: recipient}, nil
+		return confirmedTeamAlias{source: teamAliasFromAgentList, sessionDID: sessionDID, recipient: recipient}, nil
 	}
 	if !useLiveRoster {
-		return confirmedChatAlias{}, nil
+		return confirmedTeamAlias{}, nil
 	}
 	live, liveFound, err := resolveLiveTeamMemberAliasTarget(ctx, sel, target)
 	if err != nil {
-		return confirmedChatAlias{}, recipientLookupError(target, "live roster", err)
+		return confirmedTeamAlias{}, recipientLookupError(target, "live roster", err)
 	}
 	if liveFound {
 		if _, value := live.identityTarget(); strings.TrimSpace(value) != "" {
-			return confirmedChatAlias{source: chatAliasFromLiveRoster, sessionDID: strings.TrimSpace(value)}, nil
+			return confirmedTeamAlias{source: teamAliasFromLiveRoster, sessionDID: strings.TrimSpace(value), live: live}, nil
 		}
 	}
-	return confirmedChatAlias{}, nil
-}
-
-// confirmMailAliasRecipient confirms a bare alias in the selected team's
-// agent list for a mail send: when the list names it, the message signs that
-// member as its recipient. A failed lookup refuses; it reports whether the
-// list named the alias, leaving an alias it lacks to the caller.
-func confirmMailAliasRecipient(ctx context.Context, c *aweb.Client, req *awid.SendMessageRequest, alias string) (bool, error) {
-	agent, found, err := clientAgentForAlias(ctx, c, alias)
-	if err != nil {
-		return false, recipientLookupError(alias, "agent list", err)
-	}
-	if !found {
-		return false, nil
-	}
-	recipient, err := agentListRecipient(alias, agent)
-	if err != nil {
-		return false, err
-	}
-	req.ConfirmedRecipient = recipient
-	return true, nil
+	return confirmedTeamAlias{}, nil
 }
 
 // agentListRecipient is the identity the selected team's agent list names
@@ -194,8 +179,8 @@ func agentListRecipient(alias string, agent awid.AgentView) (*awid.ConfirmedReci
 // teammate's alias, or "" when the list does not name it. A failed lookup
 // refuses.
 func chatSessionDID(ctx context.Context, c *aweb.Client, sel *awconfig.Selection, target string) (string, error) {
-	confirmed, err := confirmChatAlias(ctx, c, sel, target, false)
-	if err != nil || confirmed.source != chatAliasFromAgentList {
+	confirmed, err := confirmTeamAlias(ctx, c, sel, target, false)
+	if err != nil || confirmed.source != teamAliasFromAgentList {
 		return "", err
 	}
 	return confirmed.sessionDID, nil
