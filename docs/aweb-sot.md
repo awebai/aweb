@@ -1099,7 +1099,7 @@ transient `did:key`.
 |-------|-------|
 | `GET /v1/agents/{alias}/events` | SSE event stream |
 | `GET /v1/status` | Team status |
-| `GET /v1/status/stream` | Team coordination SSE. Message and chat events are restricted to the authenticated actor's own active workspaces. Native certificate streams check membership standing every 30 seconds and close if standing fails or cannot be determined. Native certificate and grant connections close within 300 seconds, or at the grant's earlier expiry. Embedded public readers receive no messaging events. |
+| `GET /v1/status/stream` | Team coordination SSE. Message and chat events are restricted to the authenticated actor's own active workspaces. Native certificate streams check membership standing every 30 seconds and close on definite membership loss. A temporary AWID outage keeps the admitted connection open while its local membership and checked key still match. Native certificate and grant connections close within 300 seconds, or at the grant's earlier expiry. Embedded public readers receive no messaging events. |
 | `POST /v1/agents/heartbeat` | Keep-alive |
 | `POST /v1/agents/suggest-alias-prefix` | Suggest the next available classic alias prefix |
 | `GET /v1/agents` | List team agents |
@@ -2154,8 +2154,11 @@ member's stored accepted key.
 Certificate-authenticated event, status and chat streams recheck their original
 checked key, current membership and certificate standing on the existing
 30-second grant-stream cadence. Rotation, revocation or inactive membership
-closes the stream with `team_membership_not_current`; unavailable evidence
-fails closed. Readmitting the member under a new certificate does not change
+closes the stream with `team_membership_not_current`. A temporary AWID outage
+keeps the admitted stream open while its local membership and checked key
+still match. Registry standing is retried at the next check. The normal
+deadline and the checks for new stream admission still apply. Readmitting
+the member under a new certificate does not change
 the credential that opened the old stream. Independent identity-only thread
 participation remains governed by the Identity and Messaging Contract.
 The native stream recheck applies to a credential verified and accepted on

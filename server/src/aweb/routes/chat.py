@@ -678,7 +678,9 @@ async def _sse_events(
         if time.monotonic() < next_grant_check:
             return None
         try:
-            reason = await grant_terminal_reason(request, db, auth)
+            reason = await grant_terminal_reason(
+                request, db, auth, continue_on_registry_outage=True,
+            )
         except Exception:
             logger.exception("Chat stream grant verification failed for session %s", session_id_str)
             return "verification_unavailable"
