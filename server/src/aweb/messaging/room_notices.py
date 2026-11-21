@@ -10,7 +10,7 @@ from uuid import UUID
 
 from fastapi import HTTPException, Request
 from aweb.config import require_registered_certificates
-from aweb.grant_streams import grant_has_scope, grant_terminal_reason
+from aweb.grant_streams import grant_has_scope, grant_terminal_reason, is_native_certificate_stream
 from aweb.identity_binding import verify_identity_binding
 from aweb.id_chain_auth import authenticate_id_chain
 from aweb.messaging.room import _active_member, _post_dict, _uuid
@@ -82,7 +82,7 @@ async def _refresh_room_authority(request, db, identity):
             or "chat.read" not in (row["scopes"] or ())
         ):
             raise HTTPException(status_code=403, detail="Room grant out of scope")
-    else:
+    elif is_native_certificate_stream(identity):
         team_key = await _resolve_team_key(authority_request, identity.team_id)
         if not team_key:
             raise HTTPException(status_code=401, detail="unknown_team")
@@ -110,6 +110,8 @@ async def _refresh_room_authority(request, db, identity):
             or cert["certificate_id"] != identity.certificate_id
         ):
             raise HTTPException(status_code=403, detail="Room membership changed")
+    else:
+        raise HTTPException(status_code=403, detail="Room stream requires native membership authority")
     binding = await verify_identity_binding(
         authority_request,
         did_key=identity.did_key,

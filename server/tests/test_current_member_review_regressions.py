@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
@@ -455,6 +456,16 @@ async def test_an_open_certificate_status_stream_stops_after_rotation(pinning, m
         assert terminal["type"] == "team_membership_not_current", terminal
         async with asyncio.timeout(5):
             assert [line async for line in lines if line.startswith("data: ")] == []
+
+
+@pytest.mark.asyncio
+async def test_proxy_stream_credential_does_not_require_native_certificate_evidence():
+    from aweb.grant_streams import grant_terminal_reason, requires_stream_recheck
+
+    # The host's opaque credential label supplies no native certificate proof.
+    identity = SimpleNamespace(grant=None, certificate_id="host-credential")
+    assert not requires_stream_recheck(identity)
+    assert await grant_terminal_reason(None, None, identity) is None
 
 
 @pytest.mark.asyncio

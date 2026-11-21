@@ -29,6 +29,7 @@ from ..grant_streams import (
     NeverGrantStreamGuard,
     grant_terminal_sse,
     require_valid_stream_grant,
+    requires_stream_recheck,
     status_event_allowed,
 )
 from ..presence import (
@@ -732,7 +733,7 @@ async def status_stream(
             return str(event.get("workspace_id", "")) in messaging_workspace_ids
         return True
 
-    if identity.grant is None:
+    if not requires_stream_recheck(identity):
         return StreamingResponse(
             stream_events_multi(
                 redis,
@@ -758,7 +759,7 @@ async def status_stream(
         datetime.now(timezone.utc) + timedelta(seconds=300), identity
     )
 
-    async def _grant_guarded_status_stream():
+    async def _authority_guarded_status_stream():
         guard = NeverGrantStreamGuard(request, db_infra, identity)
         terminal = None
 
@@ -800,7 +801,7 @@ async def status_stream(
             yield grant_terminal_sse(reason)
 
     return StreamingResponse(
-        _grant_guarded_status_stream(),
+        _authority_guarded_status_stream(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

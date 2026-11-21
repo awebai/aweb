@@ -10,7 +10,13 @@ from fastapi import Depends, HTTPException, Request
 from aweb.application_state import application_registry_client
 from aweb.awid_error_handling import AWID_DEPENDENCY_ERRORS
 from aweb.auth_context import GrantContext as GrantContext
-from aweb.auth_context import IdentityAuth, MessagingAuth, TeamIdentity
+from aweb.auth_context import (
+    IdentityAuth,
+    MessagingAuth,
+    NativeCertificateIdentity,
+    NativeCertificateMessagingAuth,
+    TeamIdentity,
+)
 from aweb.auth_metrics import count_legacy_request_auth
 from aweb.deps import get_db
 from aweb.id_chain_auth import authenticate_id_chain
@@ -256,7 +262,9 @@ async def get_messaging_auth(request: Request, db=Depends(get_db)) -> MessagingA
 
     if request.headers.get("X-AWID-Team-Certificate"):
         team_identity: TeamIdentity = await get_team_identity(request, db)
-        return MessagingAuth(
+        native_certificate = isinstance(team_identity, NativeCertificateIdentity)
+        messaging_auth = NativeCertificateMessagingAuth if native_certificate else MessagingAuth
+        return messaging_auth(
             did_key=team_identity.did_key,
             did_aw=team_identity.did_aw or None,
             address=team_identity.address or None,
@@ -265,7 +273,9 @@ async def get_messaging_auth(request: Request, db=Depends(get_db)) -> MessagingA
             agent_id=team_identity.agent_id,
             identity_scope=team_identity.identity_scope,
             certificate_id=team_identity.certificate_id,
-            verified_team_did_key=team_identity.verified_team_did_key,
+            verified_team_did_key=(
+                team_identity.verified_team_did_key if native_certificate else None
+            ),
             verified_team_id=team_identity.team_id,
             id_chain=getattr(request.state, "id_chain", None),
             address_resolution=team_identity.address_resolution,

@@ -2158,6 +2158,10 @@ closes the stream with `team_membership_not_current`; unavailable evidence
 fails closed. Readmitting the member under a new certificate does not change
 the credential that opened the old stream. Independent identity-only thread
 participation remains governed by the Identity and Messaging Contract.
+The native stream recheck applies to a credential verified and accepted on
+the native certificate path. A proxy identity keeps its own admission when
+its transport supplies an opaque certificate identifier.
+
 Revocation without a key rotation removes authentication and delivery standing.
 Roster, assignee, room fan-out and alias projections use the admitted member
 row and current team key until its recorded admission changes.
