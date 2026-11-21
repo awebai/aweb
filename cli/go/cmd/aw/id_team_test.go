@@ -1292,7 +1292,7 @@ func TestBootstrapFirstLocalTeamMemberCreatesTeamAndRegistersCertificate(t *test
 		Scope:         awid.IdentityScopeGlobal,
 	})
 	if err != nil {
-		t.Fatalf("bootstrapLocalTeamMemberWithScope: %v", err)
+		t.Fatalf("bootstrapLocalTeamMember: %v", err)
 	}
 	if result.TeamID != "default:acme.com" {
 		t.Fatalf("team_id=%q", result.TeamID)
