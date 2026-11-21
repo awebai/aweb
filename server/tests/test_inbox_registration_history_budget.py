@@ -4,10 +4,11 @@ import json
 
 import httpx
 import pytest
+from nacl.signing import SigningKey
 
 from awid.registry import RegistryClient
-from test_dashboard_privacy import TEAM, TEAM_NAME, privacy_app as privacy_app
-from test_messages_http import _signed_team_headers
+from test_dashboard_privacy import TEAM, privacy_app as privacy_app
+from test_messages_http import _make_certificate, _signed_team_headers
 from test_team_room import admit_room_member
 
 
@@ -33,17 +34,20 @@ async def test_warm_inbox_registration_pages_do_not_grow_with_revoked_history(
         },
     )
     assert sent.status_code == 200, sent.text
-    # Historical revoked rows are cost input, never accepted authority.
-    await env.registry_db.execute(
-        """INSERT INTO {{tables.team_certificates}}
-               (team_uuid,certificate_id,member_did_key,alias,revoked_at)
-           SELECT t.team_uuid,'old-inbox-'||n,$2,'old-'||n,now()
-           FROM {{tables.teams}} t CROSS JOIN generate_series(1,$3::int) n
-           WHERE t.name=$1""",
-        TEAM_NAME,
-        alice.did,
-        history,
-    )
+    team_key = SigningKey(env.team_sk)
+    for number in range(history):
+        certificate_id = f"old-inbox-{number}"
+        certificate = _make_certificate(
+            env.team_sk,
+            env.team_did,
+            alice.did,
+            team_id=TEAM,
+            alias=certificate_id,
+            identity_scope="local",
+            certificate_id=certificate_id,
+        )
+        await env.registry.add_certificate(certificate, team_key=team_key)
+        await env.registry.revoke(certificate_id, team_id=TEAM)
     pages = []
 
     class CountedTransport(httpx.ASGITransport):

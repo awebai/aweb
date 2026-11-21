@@ -122,11 +122,17 @@ async def test_federation_first_contact_and_new_continuation_keep_identity_resid
     second_response, second = await same_origin.send(kind, "global", continuation=first)
     assert second_response.status_code == 200, second_response.text
     assert second.message_id != first.message_id
-    table = "messages" if kind == "mail" else "chat_messages"
-    rows = await foreign_receiver.db.fetch_all(
-        "SELECT message_id,from_did FROM {{tables." + table + "}} WHERE message_id=ANY($1::uuid[])",
-        [first.message_id, second.message_id],
-    )
+    message_ids = [first.message_id, second.message_id]
+    if kind == "mail":
+        rows = await foreign_receiver.db.fetch_all(
+            "SELECT message_id, from_did FROM {{tables.messages}} WHERE message_id=ANY($1::uuid[])",
+            message_ids,
+        )
+    else:
+        rows = await foreign_receiver.db.fetch_all(
+            "SELECT message_id, from_did FROM {{tables.chat_messages}} WHERE message_id=ANY($1::uuid[])",
+            message_ids,
+        )
     assert {row["message_id"] for row in rows} == {first.message_id, second.message_id}
     assert {row["from_did"] for row in rows} == {first.signed["from_stable_id"]}
     assert foreign_receiver.statuses == [200, 200]
@@ -289,11 +295,17 @@ async def test_encrypted_federation_uses_identity_assertion_after_member_superse
         assertion=assertion,
     )
     assert response.status_code == 200, response.text
-    table = "messages" if kind == "mail" else "chat_messages"
-    stored = await foreign_receiver.db.fetch_one(
-        "SELECT content_mode,from_did FROM {{tables." + table + "}} WHERE message_id=$1::uuid",
-        response.json()["message_id"],
-    )
+    message_id = response.json()["message_id"]
+    if kind == "mail":
+        stored = await foreign_receiver.db.fetch_one(
+            "SELECT content_mode, from_did FROM {{tables.messages}} WHERE message_id=$1::uuid",
+            message_id,
+        )
+    else:
+        stored = await foreign_receiver.db.fetch_one(
+            "SELECT content_mode, from_did FROM {{tables.chat_messages}} WHERE message_id=$1::uuid",
+            message_id,
+        )
     assert stored["content_mode"] == "encrypted_v2"
     assert stored["from_did"] == first.signed["from_stable_id"]
     assert envelope["recipients"][0]["encryption_key_id"] == assertion["encryption_key_id"]
@@ -338,15 +350,17 @@ async def test_encrypted_federation_uses_identity_assertion_after_member_superse
     )
     assert refused.status_code == 424, refused.text
     assert "recipient_encryption_assertion_missing" in refused.text
-    assert (
-        await foreign_receiver.db.fetch_value(
-            "SELECT count(*) FROM {{tables." + table + "}} WHERE conversation_id=$1"
-            if kind == "mail"
-            else "SELECT count(*) FROM {{tables.chat_messages}} WHERE session_id=$1",
+    if kind == "mail":
+        count = await foreign_receiver.db.fetch_value(
+            "SELECT count(*) FROM {{tables.messages}} WHERE conversation_id=$1",
             first.conversation_id,
         )
-        == 2
-    )
+    else:
+        count = await foreign_receiver.db.fetch_value(
+            "SELECT count(*) FROM {{tables.chat_messages}} WHERE session_id=$1",
+            first.conversation_id,
+        )
+    assert count == 2
 
 
 async def _require_identity_wakes(fixture, *, kind):
