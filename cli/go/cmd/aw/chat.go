@@ -549,14 +549,15 @@ var chatSendCmd = &cobra.Command{
 		if err := configureSendE2EE(ctx, c, sel, choice); err != nil {
 			return err
 		}
-		encrypt, err := chat.ContinuationEncrypted(ctx, c.Client, sessionID, choice, chatStderrCallback)
+		decision, err := chat.ContinuationEncryption(ctx, c.Client, sessionID, choice, chatStderrCallback)
 		if err != nil {
 			return err
 		}
 		resp, err := c.Client.ChatSendMessage(ctx, sessionID, &awid.ChatSendMessageRequest{
-			Body:        body,
-			Leaving:     chatSendLeave,
-			EncryptE2EE: encrypt,
+			Body:          body,
+			Leaving:       chatSendLeave,
+			EncryptE2EE:   decision.Encrypt,
+			E2EEInherited: decision.Inherited,
 		})
 		if err != nil {
 			return humanMailOnlyRefusal(err)
