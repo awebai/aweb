@@ -14,6 +14,7 @@ DOCKER_BIND_ROOT="${AWEB_DOCKER_BIND_ROOT:-${TMPDIR:-/tmp}}"
 RUNTIME="$(mktemp -d "$DOCKER_BIND_ROOT/aweb-fed-auth.XXXXXX")"
 COMPOSE_FILE="$RUNTIME/docker-compose.yml"
 cp "$ROOT/scripts/federation-authority-worker.py" "$RUNTIME/federation-authority-worker.py"
+chmod 0644 "$RUNTIME/federation-authority-worker.py"
 TLS_DIR="$RUNTIME/tls"
 ARTIFACT_DIR="${AWEB_FED_AUTH_ARTIFACT_DIR:-$ROOT/.cache/federation-authority}"
 AWID_A_PORT="${AWEB_FED_AUTH_AWID_A_PORT:-18410}"
@@ -118,6 +119,10 @@ generate_tls() {
 }
 
 generate_tls
+# Services read the public CA; only the root nginx master reads private keys.
+chmod 0755 "$TLS_DIR"
+chmod 0644 "$TLS_DIR"/*.crt
+chmod 0600 "$TLS_DIR"/*.key
 cat > "$RUNTIME/registry-a.conf" <<'EOF'
 events {}
 http {
@@ -146,6 +151,8 @@ http {
   }
 }
 EOF
+
+chmod 0644 "$RUNTIME/registry-a.conf" "$RUNTIME/registry-b.conf"
 
 cat > "$COMPOSE_FILE" <<EOF
 services:

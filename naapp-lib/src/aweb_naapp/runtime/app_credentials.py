@@ -20,9 +20,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from urllib.parse import urlsplit
 
-from awid.did import did_from_public_key
+from awid.did import did_key_from_signing_key
 from awid.signing import canonical_json_bytes, sign_message
-from nacl.signing import SigningKey
 
 from aweb_naapp.runtime.app_keys import AppKey
 
@@ -111,7 +110,7 @@ def sign_app_credential(
 
     audience, path = _request_target(target)
     body_sha256 = hashlib.sha256(body).hexdigest()
-    did_key = did_from_public_key(bytes(SigningKey(private_key).verify_key))
+    did_key = did_key_from_signing_key(private_key)
 
     payload = {
         "v": APP_CREDENTIAL_VERSION,
@@ -166,7 +165,7 @@ class AppCredentialSigner:
     def __init__(self, *, app_id: str, key: AppKey, purpose: str) -> None:
         if purpose not in PURPOSES:
             raise ValueError(f"unknown app credential purpose {purpose!r}")
-        if did_from_public_key(bytes(key.signing_key.verify_key)) != key.did_key:
+        if did_key_from_signing_key(bytes(key.signing_key)) != key.did_key:
             raise ValueError(f"app key {key.kid} is not the key its did:key names")
         self.app_id = app_id
         self.purpose = purpose

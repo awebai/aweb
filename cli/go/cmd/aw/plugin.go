@@ -1402,7 +1402,11 @@ func executeInstalledManifestTool(name string, args []string) (*installedManifes
 		return result, true, nil
 	}
 	var installedResult *installedManifestToolResult
-	if _, isGrant := activeGrantHome(); isGrant && activeHuman == nil {
+	grant, err := loadSelectedGrantHome()
+	if err != nil {
+		return nil, true, err
+	}
+	if grant != nil && activeHuman == nil {
 		// Grant path: custody re-interprets the call against the resident's
 		// mint-time tool snapshot and returns the exact signed request. Nothing
 		// from the local manifest is merged into it.

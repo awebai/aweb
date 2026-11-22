@@ -20,9 +20,10 @@ from datetime import UTC, datetime
 from typing import Any
 
 from awid.did import did_from_public_key, public_key_from_did
+from awid.signature_wire import Base64Profile, decode_base64, sign_bytes, verify_bytes
 from awid.signing import canonical_json_bytes
 from nacl.exceptions import BadSignatureError
-from nacl.signing import SigningKey, VerifyKey
+from nacl.signing import SigningKey
 
 LINK_REQUEST_PREFIX = b"aweb.link-request/1\n"
 LINK_REQUEST_TYPE = "aweb.link-request"
@@ -163,17 +164,18 @@ def _issued_at(payload: object) -> datetime:
 def sign_link_request(payload: Mapping[str, Any], signing_key: SigningKey) -> str:
     """The session key's signature, base64url without padding."""
     _issued_at(payload)
-    signature = signing_key.sign(link_request_signing_bytes(payload)).signature
+    signature = sign_bytes(key=signing_key, payload=link_request_signing_bytes(payload))
     return base64.urlsafe_b64encode(signature).rstrip(b"=").decode("ascii")
 
 
 def _signature_bytes(signature: object) -> bytes:
-    if not isinstance(signature, str) or not re.fullmatch(r"[A-Za-z0-9_-]{86}", signature):
-        raise LinkRequestRefused("signature_invalid", "signature encoding")
-    raw = base64.urlsafe_b64decode(signature + "==")
-    if base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii") != signature:
-        raise LinkRequestRefused("signature_invalid", "signature encoding")
-    return raw
+    try:
+        raw = decode_base64(signature, profile=Base64Profile.CANONICAL_URL)
+        if len(raw) != 64:
+            raise ValueError("signature size")
+        return raw
+    except (ValueError, TypeError) as exc:
+        raise LinkRequestRefused("signature_invalid", "signature encoding") from exc
 
 
 def verify_link_request(
@@ -198,8 +200,10 @@ def verify_link_request(
     try:
         if did_from_public_key(public_key_from_did(session_did_key)) != session_did_key:
             raise ValueError("session key is not a canonical did:key")
-        VerifyKey(public_key_from_did(session_did_key)).verify(
-            link_request_signing_bytes(payload), raw
+        verify_bytes(
+            key=public_key_from_did(session_did_key),
+            payload=link_request_signing_bytes(payload),
+            signature=raw,
         )
     except BadSignatureError as exc:
         raise LinkRequestRefused("signature_invalid", "signature does not verify") from exc

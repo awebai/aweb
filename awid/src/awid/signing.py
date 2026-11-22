@@ -6,11 +6,28 @@ import base64
 import binascii
 import enum
 import json
+import logging
+from itertools import count
 
 from nacl.exceptions import BadSignatureError
-from nacl.signing import SigningKey, VerifyKey
 
-from awid.did import public_key_from_did, strict_ed25519_point
+from awid.did import public_key_from_did
+from awid.signature_wire import decode_legacy_signature, sign_bytes, verify_bytes
+
+logger = logging.getLogger(__name__)
+_noncanonical_signature_counts = count(1)
+
+
+def _record_signature_spelling(signature: str, raw: bytes) -> None:
+    if signature == base64.b64encode(raw).rstrip(b"=").decode("ascii"):
+        return
+    value = next(_noncanonical_signature_counts)
+    logger.info(
+        "event=awid_noncanonical_signature_accepted value=%d",
+        value,
+        extra={"event": "awid_noncanonical_signature_accepted", "value": value},
+    )
+
 
 SIGNED_FIELDS = frozenset(
     {
@@ -43,9 +60,9 @@ class VerifyResult(enum.Enum):
 
 
 def canonical_json_bytes(fields: dict) -> bytes:
-    return json.dumps(fields, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode(
-        "utf-8"
-    )
+    return json.dumps(
+        fields, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
 
 
 def canonical_payload(fields: dict) -> bytes:
@@ -61,8 +78,11 @@ def load_signing_key_pem(pem: bytes) -> bytes:
     material never appears in an error message.
     """
     lines = pem.strip().splitlines()
-    if (len(lines) < 3 or lines[0] != b"-----BEGIN ED25519 PRIVATE KEY-----"
-            or lines[-1] != b"-----END ED25519 PRIVATE KEY-----"):
+    if (
+        len(lines) < 3
+        or lines[0] != b"-----BEGIN ED25519 PRIVATE KEY-----"
+        or lines[-1] != b"-----END ED25519 PRIVATE KEY-----"
+    ):
         raise ValueError("expected an ED25519 PRIVATE KEY PEM block")
     try:
         seed = base64.b64decode(b"".join(lines[1:-1]), validate=True)
@@ -74,14 +94,15 @@ def load_signing_key_pem(pem: bytes) -> bytes:
 
 
 def sign_message(private_key: bytes, payload: bytes) -> str:
-    signing_key = SigningKey(private_key)
-    signed = signing_key.sign(payload)
-    return base64.b64encode(signed.signature).rstrip(b"=").decode("ascii")
+    return (
+        base64.b64encode(sign_bytes(key=private_key, payload=payload))
+        .rstrip(b"=")
+        .decode("ascii")
+    )
 
 
 def _decode_signature(signature_b64: str) -> bytes:
-    padded = signature_b64 + "=" * (-len(signature_b64) % 4)
-    return base64.urlsafe_b64decode(padded)
+    return decode_legacy_signature(signature_b64)
 
 
 def verify_signature_with_public_key(
@@ -89,17 +110,14 @@ def verify_signature_with_public_key(
 ) -> VerifyResult:
     if not signature_b64:
         return VerifyResult.UNVERIFIED
-    if not strict_ed25519_point(public_key):
-        return VerifyResult.FAILED
-
     try:
         sig_bytes = _decode_signature(signature_b64)
     except Exception:
         return VerifyResult.FAILED
 
     try:
-        verify_key = VerifyKey(public_key)
-        verify_key.verify(payload, sig_bytes)
+        verify_bytes(key=public_key, payload=payload, signature=sig_bytes)
+        _record_signature_spelling(signature_b64, sig_bytes)
         return VerifyResult.VERIFIED
     except BadSignatureError:
         return VerifyResult.FAILED
@@ -107,7 +125,9 @@ def verify_signature_with_public_key(
         return VerifyResult.FAILED
 
 
-def verify_signature(did: str | None, payload: bytes, signature_b64: str | None) -> VerifyResult:
+def verify_signature(
+    did: str | None, payload: bytes, signature_b64: str | None
+) -> VerifyResult:
     if not did or not signature_b64:
         return VerifyResult.UNVERIFIED
 
@@ -122,7 +142,9 @@ def verify_signature(did: str | None, payload: bytes, signature_b64: str | None)
     return verify_signature_with_public_key(public_key, payload, signature_b64)
 
 
-def verify_did_key_signature(*, did_key: str, payload: bytes, signature_b64: str) -> None:
+def verify_did_key_signature(
+    *, did_key: str, payload: bytes, signature_b64: str
+) -> None:
     result = verify_signature(did_key, payload, signature_b64)
     if result != VerifyResult.VERIFIED:
         raise ValueError("invalid signature")

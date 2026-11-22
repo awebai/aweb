@@ -47,3 +47,6 @@ const identityKeyPreparationAnnotation = "aw.identity-key-preparation-flag"
 // Only marked commands may take the explicit key-only -> certificate transition.
 // This never relaxes identity selection for an inherited home or other commands.
 const identityKeyOnlyTargetAnnotation = "aw.identity-key-only-target"
+
+// Lifecycle cleanup must not renew the credential it is about to retire.
+const identityNoRenewalAnnotation = "aw.identity-no-renewal"

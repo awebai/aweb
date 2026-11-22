@@ -1,5 +1,6 @@
 import { formatAwakeningForAgent, isTrustedVerificationStatus, type ChannelAwakening } from "./channel.js";
 import type { VerificationStatus } from "./identity/signing.js";
+import { validatedNoticeID, withheldMessageNotice } from "./message_presentation.js";
 
 export type TerminalReadinessState = "idle" | "working" | "blocked" | "shell" | "unknown" | "stopped" | "not-launched";
 
@@ -94,13 +95,6 @@ export function terminalInputSafeText(text: string): string {
   return text
     .replace(/\r\n?/g, "\n")
     .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F\u0080-\u009F]/g, "");
-}
-
-function validatedNoticeID(value: string | undefined): string | undefined {
-  const raw = value || "";
-  return /^[0-9a-f]{32}$/i.test(raw) || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(raw)
-    ? raw
-    : undefined;
 }
 
 function quotedIdentityHome(home: string): string | undefined {
@@ -273,7 +267,8 @@ export function createTerminalAwakeningHandler(options: TerminalAwakeningHandler
     const quotedHome = receivingIdentityHome === undefined ? undefined : quotedIdentityHome(receivingIdentityHome);
     const command = quotedHome ? `aw --identity-home ${quotedHome}` : "aw";
     const text = heldReason
-      ? `[aweb] 1 message held (${heldReason}). Run: ${command} ${awakening.kind === "mail" ? "mail inbox" : "chat pending"}`
+      ? (awakening.meta.decrypted !== "false" ? withheldMessageNotice(awakening, command) : undefined)
+        ?? `[aweb] 1 message held (${heldReason}). Run: ${command} ${awakening.kind === "mail" ? "mail inbox" : "chat pending"}`
       : [...ambientBatch, { awakening, receivingIdentityHome }]
       .map((item) => textForTerminalAwakening(item.awakening, item.receivingIdentityHome))
       .join("\n\n---\n\n");

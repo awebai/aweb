@@ -640,17 +640,5 @@ func assertMaterializedHomeHasAwebCoordination(t *testing.T, home, expectedBody 
 
 func testLibraryProfilePayloadDigestForProfile(t *testing.T, profileRef string, files []blueprint.LibraryProfilePayloadFile) string {
 	t.Helper()
-	result, err := blueprint.MaterializeLibraryProfilePayload(blueprint.MaterializeLibraryProfilePayloadOptions{
-		TargetDir:        t.TempDir(),
-		BlueprintRef:     "aweb.engineering",
-		BlueprintVersion: "0.1.0",
-		ProfileRef:       profileRef,
-		ProfileVersion:   "0.1.0",
-		RuntimeKind:      "local-shell",
-		Files:            files,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return result.ProfileDigest
+	return testLibraryProfilePayloadDigest(t, files)
 }

@@ -1,0 +1,1887 @@
+{
+  "schema_version": 1,
+  "versions": {
+    "ruff": "0.15.0",
+    "mypy": "1.19.1"
+  },
+  "groups": [
+    {
+      "tool": "mypy",
+      "file": "awid/src/awid/attestation_records.py",
+      "code": "arg-type",
+      "count": 2
+    },
+    {
+      "tool": "mypy",
+      "file": "awid/src/awid/controller_signing.py",
+      "code": "arg-type",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
+      "file": "awid/src/awid/db_config.py",
+      "code": "arg-type",
+      "count": 8
+    },
+    {
+      "tool": "mypy",
+      "file": "awid/src/awid/id_certificates.py",
+      "code": "index",
+      "count": 4
+    },
+    {
+      "tool": "mypy",
+      "file": "awid/src/awid/id_certificates.py",
+      "code": "operator",
+      "count": 2
+    },
+    {
+      "tool": "mypy",
+      "file": "awid/src/awid/id_certificates.py",
+      "code": "var-annotated",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
+      "file": "awid/src/awid/registry.py",
+      "code": "arg-type",
+      "count": 8
+    },
+    {
+      "tool": "mypy",
+      "file": "awid/src/awid/registry.py",
+      "code": "misc",
+      "count": 2
+    },
+    {
+      "tool": "mypy",
+      "file": "awid/src/awid_service/db.py",
+      "code": "arg-type",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
+      "file": "awid/src/awid_service/id_revocation.py",
+      "code": "arg-type",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
+      "file": "awid/src/awid_service/id_revocation.py",
+      "code": "index",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
+      "file": "awid/src/awid_service/id_status.py",
+      "code": "attr-defined",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
+      "file": "awid/src/awid_service/id_status.py",
+      "code": "index",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
+      "file": "awid/src/awid_service/id_tree_gate.py",
+      "code": "type-var",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
+      "file": "awid/src/awid_service/main.py",
+      "code": "misc",
+      "count": 2
+    },
+    {
+      "tool": "mypy",
+      "file": "awid/src/awid_service/routes/a2a_publications.py",
+      "code": "assignment",
+      "count": 6
+    },
+    {
+      "tool": "mypy",
+      "file": "awid/src/awid_service/routes/attestation_records.py",
+      "code": "assignment",
+      "count": 2
+    },
+    {
+      "tool": "mypy",
+      "file": "awid/src/awid_service/routes/did.py",
+      "code": "return-value",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
+      "file": "awid/src/awid_service/routes/dns_addresses.py",
+      "code": "assignment",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
+      "file": "awid/src/awid_service/routes/dns_addresses.py",
+      "code": "misc",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
+      "file": "awid/src/awid_service/routes/dns_addresses.py",
+      "code": "union-attr",
+      "count": 2
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/agent_wake.py",
+      "code": "assignment",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/api.py",
+      "code": "misc",
+      "count": 2
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/app_credentials.py",
+      "code": "index",
+      "count": 2
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/attachments.py",
+      "code": "union-attr",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/coordination/app_tasks.py",
+      "code": "return-value",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/coordination/defaults.py",
+      "code": "import-untyped",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/coordination/routes/app_tasks.py",
+      "code": "var-annotated",
+      "count": 2
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/coordination/routes/repos.py",
+      "code": "index",
+      "count": 5
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/coordination/routes/tasks.py",
+      "code": "arg-type",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/coordination/routes/tasks.py",
+      "code": "var-annotated",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/coordination/routes/team_instructions.py",
+      "code": "arg-type",
+      "count": 4
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/coordination/routes/team_instructions.py",
+      "code": "return-value",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/coordination/routes/team_roles.py",
+      "code": "arg-type",
+      "count": 6
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/coordination/routes/team_roles.py",
+      "code": "return-value",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/coordination/routes/workspaces.py",
+      "code": "assignment",
+      "count": 2
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/coordination/workspace_registry.py",
+      "code": "index",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/db.py",
+      "code": "source-type-ignore",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/federation/activation.py",
+      "code": "arg-type",
+      "count": 4
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/federation/activation.py",
+      "code": "assignment",
+      "count": 2
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/federation/delivery.py",
+      "code": "arg-type",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/federation/delivery.py",
+      "code": "union-attr",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/federation/envelope.py",
+      "code": "arg-type",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/federation/envelope.py",
+      "code": "assignment",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/human_channels/native.py",
+      "code": "arg-type",
+      "count": 2
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/human_channels/native.py",
+      "code": "assignment",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/human_channels/native.py",
+      "code": "var-annotated",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/identity_auth_deps.py",
+      "code": "union-attr",
+      "count": 2
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/identity_binding.py",
+      "code": "assignment",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/installations.py",
+      "code": "assignment",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/installations.py",
+      "code": "index",
+      "count": 2
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/installations.py",
+      "code": "return-value",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/lifecycle.py",
+      "code": "arg-type",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/mcp/auth.py",
+      "code": "arg-type",
+      "count": 2
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/mcp/auth.py",
+      "code": "assignment",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/mcp/auth.py",
+      "code": "attr-defined",
+      "count": 5
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/mcp/signing.py",
+      "code": "call-arg",
+      "count": 17
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/mcp/signing.py",
+      "code": "misc",
+      "count": 3
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/mcp/tools/chat.py",
+      "code": "arg-type",
+      "count": 2
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/mcp/tools/chat.py",
+      "code": "assignment",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/mcp/tools/chat.py",
+      "code": "union-attr",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/mcp/tools/contacts.py",
+      "code": "arg-type",
+      "count": 3
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/mcp/tools/contacts.py",
+      "code": "list-item",
+      "count": 5
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/mcp/tools/mail.py",
+      "code": "arg-type",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/mcp/tools/mail.py",
+      "code": "assignment",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/mcp/tools/mail.py",
+      "code": "source-type-ignore",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/mcp/tools/room.py",
+      "code": "union-attr",
+      "count": 4
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/mcp/tools/tasks.py",
+      "code": "arg-type",
+      "count": 9
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/mcp/tools/tasks.py",
+      "code": "assignment",
+      "count": 2
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/mcp/tools/team_instructions.py",
+      "code": "arg-type",
+      "count": 2
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/mcp/tools/team_roles.py",
+      "code": "arg-type",
+      "count": 2
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/mcp/tools/work.py",
+      "code": "arg-type",
+      "count": 5
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/mcp/tools/workspace.py",
+      "code": "var-annotated",
+      "count": 2
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/messaging/address_auth.py",
+      "code": "arg-type",
+      "count": 2
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/messaging/address_auth.py",
+      "code": "index",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/messaging/chat_send.py",
+      "code": "arg-type",
+      "count": 7
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/messaging/chat_send.py",
+      "code": "assignment",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/messaging/conversations.py",
+      "code": "source-type-ignore",
+      "count": 2
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/messaging/mail_send.py",
+      "code": "arg-type",
+      "count": 17
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/messaging/mail_send.py",
+      "code": "union-attr",
+      "count": 2
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/messaging/messages.py",
+      "code": "arg-type",
+      "count": 2
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/messaging/messages.py",
+      "code": "list-item",
+      "count": 2
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/messaging/sender_membership.py",
+      "code": "assignment",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/presence.py",
+      "code": "misc",
+      "count": 6
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/routes/agent_activity.py",
+      "code": "arg-type",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/routes/apps.py",
+      "code": "arg-type",
+      "count": 2
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/routes/chat.py",
+      "code": "arg-type",
+      "count": 5
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/routes/chat.py",
+      "code": "assignment",
+      "count": 2
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/routes/chat.py",
+      "code": "misc",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/routes/chat.py",
+      "code": "union-attr",
+      "count": 5
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/routes/connect.py",
+      "code": "arg-type",
+      "count": 3
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/routes/connect.py",
+      "code": "index",
+      "count": 2
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/routes/connect.py",
+      "code": "return-value",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/routes/contacts.py",
+      "code": "list-item",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/routes/conversations.py",
+      "code": "operator",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/routes/events.py",
+      "code": "assignment",
+      "count": 3
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/routes/events.py",
+      "code": "attr-defined",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/routes/events.py",
+      "code": "operator",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/routes/federation.py",
+      "code": "dict-item",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/routes/federation.py",
+      "code": "union-attr",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/routes/identity_grants.py",
+      "code": "arg-type",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/routes/messages.py",
+      "code": "assignment",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/routes/status.py",
+      "code": "type-var",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/team_auth_deps.py",
+      "code": "source-type-ignore",
+      "count": 1
+    },
+    {
+      "tool": "mypy",
+      "file": "server/src/aweb/workspace_config.py",
+      "code": "import-untyped",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "awid/src/awid/did.py",
+      "code": "B904",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "awid/src/awid/did.py",
+      "code": "BLE001",
+      "count": 3
+    },
+    {
+      "tool": "ruff",
+      "file": "awid/src/awid/dns_auth.py",
+      "code": "B904",
+      "count": 2
+    },
+    {
+      "tool": "ruff",
+      "file": "awid/src/awid/dns_auth.py",
+      "code": "BLE001",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "awid/src/awid/dns_verify.py",
+      "code": "E402",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "awid/src/awid/external_authority.py",
+      "code": "BLE001",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "awid/src/awid/identity_observation.py",
+      "code": "BLE001",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "awid/src/awid/pagination.py",
+      "code": "B904",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "awid/src/awid/registry.py",
+      "code": "B904",
+      "count": 2
+    },
+    {
+      "tool": "ruff",
+      "file": "awid/src/awid/registry.py",
+      "code": "BLE001",
+      "count": 7
+    },
+    {
+      "tool": "ruff",
+      "file": "awid/src/awid/registry.py",
+      "code": "E731",
+      "count": 2
+    },
+    {
+      "tool": "ruff",
+      "file": "awid/src/awid/request_body_limit.py",
+      "code": "BLE001",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "awid/src/awid/signing.py",
+      "code": "BLE001",
+      "count": 3
+    },
+    {
+      "tool": "ruff",
+      "file": "awid/src/awid/team_certificate.py",
+      "code": "BLE001",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "awid/src/awid_service/id_revocation.py",
+      "code": "E402",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "awid/src/awid_service/main.py",
+      "code": "BLE001",
+      "count": 3
+    },
+    {
+      "tool": "ruff",
+      "file": "awid/src/awid_service/routes/dns_addresses.py",
+      "code": "B904",
+      "count": 3
+    },
+    {
+      "tool": "ruff",
+      "file": "awid/src/awid_service/routes/dns_namespaces.py",
+      "code": "B904",
+      "count": 2
+    },
+    {
+      "tool": "ruff",
+      "file": "awid/src/awid_service/routes/teams.py",
+      "code": "B904",
+      "count": 3
+    },
+    {
+      "tool": "ruff",
+      "file": "awid/tests/test_attestation_records.py",
+      "code": "E731",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "awid/tests/test_certificate_lifecycle.py",
+      "code": "F401",
+      "count": 2
+    },
+    {
+      "tool": "ruff",
+      "file": "awid/tests/test_did_registration_client.py",
+      "code": "F841",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "awid/tests/test_id_certificate_registration.py",
+      "code": "F401",
+      "count": 3
+    },
+    {
+      "tool": "ruff",
+      "file": "awid/tests/test_id_chain_vectors.py",
+      "code": "E701",
+      "count": 12
+    },
+    {
+      "tool": "ruff",
+      "file": "awid/tests/test_id_namespace_epochs.py",
+      "code": "B905",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "awid/tests/test_id_registry_client.py",
+      "code": "B905",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "awid/tests/test_registry_auth.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "awid/tests/test_registry_client.py",
+      "code": "B017",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "awid/tests/test_registry_client.py",
+      "code": "F401",
+      "count": 3
+    },
+    {
+      "tool": "ruff",
+      "file": "awid/tests/test_registry_team_mutations.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/agent_health.py",
+      "code": "B905",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/agent_health.py",
+      "code": "BLE001",
+      "count": 3
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/agent_wake.py",
+      "code": "BLE001",
+      "count": 3
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/attachment_service.py",
+      "code": "BLE001",
+      "count": 2
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/auth.py",
+      "code": "B904",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/cli.py",
+      "code": "B904",
+      "count": 6
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/config.py",
+      "code": "B904",
+      "count": 2
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/coordination/routes/repos.py",
+      "code": "B008",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/coordination/routes/repos.py",
+      "code": "B904",
+      "count": 3
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/coordination/routes/tasks.py",
+      "code": "B008",
+      "count": 12
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/coordination/routes/team_instructions.py",
+      "code": "B008",
+      "count": 3
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/coordination/routes/team_roles.py",
+      "code": "B008",
+      "count": 3
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/coordination/routes/workspaces.py",
+      "code": "B008",
+      "count": 5
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/coordination/routes/workspaces.py",
+      "code": "B904",
+      "count": 6
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/coordination/routes/workspaces.py",
+      "code": "BLE001",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/coordination/tasks_service.py",
+      "code": "BLE001",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/federation/activation.py",
+      "code": "BLE001",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/federation/delivery.py",
+      "code": "BLE001",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/grant_liveness.py",
+      "code": "BLE001",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/grant_streams.py",
+      "code": "BLE001",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/hooks.py",
+      "code": "BLE001",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/human_channels/authority.py",
+      "code": "B905",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/identity_auth_deps.py",
+      "code": "BLE001",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/lifecycle.py",
+      "code": "BLE001",
+      "count": 5
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/mcp/tools/chat.py",
+      "code": "BLE001",
+      "count": 6
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/mcp/tools/contacts.py",
+      "code": "B904",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/mcp/tools/contacts.py",
+      "code": "BLE001",
+      "count": 3
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/mcp/tools/mail.py",
+      "code": "BLE001",
+      "count": 2
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/mcp/tools/room.py",
+      "code": "BLE001",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/messaging/address_auth.py",
+      "code": "BLE001",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/messaging/alias_targets.py",
+      "code": "BLE001",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/messaging/chat.py",
+      "code": "BLE001",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/messaging/chat_send.py",
+      "code": "B904",
+      "count": 5
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/messaging/chat_send.py",
+      "code": "BLE001",
+      "count": 5
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/messaging/contacts.py",
+      "code": "B904",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/messaging/contacts.py",
+      "code": "BLE001",
+      "count": 2
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/messaging/conversations.py",
+      "code": "B904",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/messaging/mail_send.py",
+      "code": "B904",
+      "count": 2
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/messaging/mail_send.py",
+      "code": "BLE001",
+      "count": 2
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/messaging/messages.py",
+      "code": "B904",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/messaging/messages.py",
+      "code": "BLE001",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/messaging/verification.py",
+      "code": "BLE001",
+      "count": 3
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/messaging/waiting.py",
+      "code": "B905",
+      "count": 2
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/messaging/waiting.py",
+      "code": "BLE001",
+      "count": 4
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/mutation_hooks.py",
+      "code": "BLE001",
+      "count": 2
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/outbox_recovery.py",
+      "code": "BLE001",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/presence.py",
+      "code": "B905",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/redis_subscriptions.py",
+      "code": "BLE001",
+      "count": 2
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/routes/agent_activity.py",
+      "code": "B008",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/routes/agents.py",
+      "code": "B008",
+      "count": 2
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/routes/agents.py",
+      "code": "B904",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/routes/chat.py",
+      "code": "B904",
+      "count": 3
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/routes/chat.py",
+      "code": "BLE001",
+      "count": 3
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/routes/claims.py",
+      "code": "B008",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/routes/claims.py",
+      "code": "B904",
+      "count": 3
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/routes/conversations.py",
+      "code": "B008",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/routes/conversations.py",
+      "code": "B905",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/routes/dashboard.py",
+      "code": "B904",
+      "count": 6
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/routes/dashboard.py",
+      "code": "BLE001",
+      "count": 2
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/routes/events.py",
+      "code": "B008",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/routes/events.py",
+      "code": "B904",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/routes/events.py",
+      "code": "BLE001",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/routes/identity_grants.py",
+      "code": "B904",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/routes/messages.py",
+      "code": "B904",
+      "count": 7
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/routes/messages.py",
+      "code": "BLE001",
+      "count": 7
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/routes/reservations.py",
+      "code": "B008",
+      "count": 4
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/routes/service_registration.py",
+      "code": "BLE001",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/routes/status.py",
+      "code": "B008",
+      "count": 2
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/routes/status.py",
+      "code": "B904",
+      "count": 2
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/team_auth.py",
+      "code": "B904",
+      "count": 2
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/team_auth_deps.py",
+      "code": "B904",
+      "count": 2
+    },
+    {
+      "tool": "ruff",
+      "file": "server/src/aweb/workspace_config.py",
+      "code": "B904",
+      "count": 3
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/conftest.py",
+      "code": "E402",
+      "count": 5
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_actl_fresh_chat.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_addressed_sender_cli.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_addressless_sender_cli.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_agent_activity_emitter_e2e.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_agent_activity_http.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_agent_health_fallback_http.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_agent_health_http.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_agent_status_host_http.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_agent_status_publish_http.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_agent_wake_latency.py",
+      "code": "F401",
+      "count": 4
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_agent_wake_recovery.py",
+      "code": "F401",
+      "count": 2
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_attachments_http.py",
+      "code": "F401",
+      "count": 2
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_awid_controller_type_refusal_http.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_awid_registry_client.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_awid_registry_client.py",
+      "code": "F841",
+      "count": 2
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_c2_vectors.py",
+      "code": "F401",
+      "count": 2
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_chat_alias_reaches_teammate.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_chat_history_custody_cli.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_chat_read_race.py",
+      "code": "BLE001",
+      "count": 2
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_chat_session_authority_http.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_chat_signed_recipient_display.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_chat_stream_commit_order.py",
+      "code": "F401",
+      "count": 3
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_chat_stream_live_cursor.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_cli_agent_status.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_cli_events_stream.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_cli_human_reply.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_cli_invite_registry_discovery.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_cli_never_grants.py",
+      "code": "B023",
+      "count": 2
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_cli_never_grants.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_cli_team_key_refresh.py",
+      "code": "F401",
+      "count": 2
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_connect_http.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_connect_http.py",
+      "code": "F841",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_connect_private_team_refusal.py",
+      "code": "F401",
+      "count": 2
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_connection_notice_restart.py",
+      "code": "F401",
+      "count": 3
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_contacts_only.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_conversation_dashboard.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_conversations_service.py",
+      "code": "F841",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_custodial_recipient_e2ee.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_custody_symlink_cwd.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_delegated_namespace_contacts.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_e2ee_local_sender_read_trust.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_federation_mail.py",
+      "code": "B017",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_heartbeat_presence_http.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_historical_mail_attribution.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_hook_bindings_http.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_human_alias_cli.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_human_channels_contract.py",
+      "code": "B017",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_human_channels_participants.py",
+      "code": "F401",
+      "count": 2
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_human_channels_presence.py",
+      "code": "B904",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_human_channels_presence.py",
+      "code": "E402",
+      "count": 8
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_human_channels_presence.py",
+      "code": "E702",
+      "count": 2
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_human_channels_presence.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_id_chain_message_metadata.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_id_chain_request_auth.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_id_tree_contact_replacement.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_identity_binding_http.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_identity_grants.py",
+      "code": "B008",
+      "count": 2
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_inbox_page_reads.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_local_recipient_address.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_mail_conversation_pagination.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_mail_explicit_conversations.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_mail_unread_count.py",
+      "code": "F401",
+      "count": 3
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_mcp_contact_send_http.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_mcp_mutation_hook_parity.py",
+      "code": "B905",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_mcp_notifications.py",
+      "code": "B905",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_mcp_room_notifications.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_mcp_team_certificate_evidence_http.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_member_team_key.py",
+      "code": "F401",
+      "count": 2
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_messages_http.py",
+      "code": "F841",
+      "count": 3
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_multi_membership_address.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_operator_audit_http.py",
+      "code": "B007",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_operator_audit_http.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_participant_identity_authority.py",
+      "code": "F401",
+      "count": 4
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_participant_identity_migration.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_participant_succession.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_pubsub_lease_ownership.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_registered_certificate_admission_http.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_registry_member_signing.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_request_auth_app_config.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_request_auth_v2_http.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_request_compression.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_resource_visibility.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_retired_mail_participant.py",
+      "code": "F401",
+      "count": 3
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_revocation_index_http.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_room_notice_count.py",
+      "code": "B008",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_room_notice_count.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_rotated_address_locality.py",
+      "code": "F401",
+      "count": 2
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_same_origin_delivery.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_sender_address_scope.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_sender_membership.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_service_registration_team_key.py",
+      "code": "F401",
+      "count": 2
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_status_locks_http.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_task_answers.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_tasks_http.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_team_auth_deps.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_team_controller_registry_outage_http.py",
+      "code": "F401",
+      "count": 2
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_team_controller_rotation_http.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_team_documents_http.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_team_key_pinning.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_team_room.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_team_room_notices.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_team_room_tree_stream.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_user_signature_separation.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_verified_human_kind.py",
+      "code": "B023",
+      "count": 3
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_verified_human_kind.py",
+      "code": "F401",
+      "count": 1
+    }
+  ]
+}

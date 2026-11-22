@@ -10,9 +10,8 @@ from typing import Any
 from cryptography.hazmat.primitives.asymmetric import x25519
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
-from nacl.signing import SigningKey
 
-from awid.did import did_from_public_key
+from awid.did import did_key_from_signing_key
 from awid.e2ee_keys import encryption_key_id, validate_encryption_key_assertion
 from awid.signing import VerifyResult, canonical_json_bytes, sign_message, verify_signature
 from aweb.messaging.signatures import (
@@ -497,7 +496,7 @@ def encrypt_e2ee_message(
         raise E2EEEnvelopeError("sender encryption key is required")
     created = (created_at or datetime.now(timezone.utc)).astimezone(timezone.utc).replace(microsecond=0)
     expires = created + E2EE_INGESTION_WINDOW
-    verify_key = bytes(SigningKey(signing_key).verify_key)
+    signing_did = did_key_from_signing_key(signing_key)
     from_ref = {
         "address": _non_empty(sender.get("address")),
         "did": _non_empty(sender.get("did")),
@@ -505,7 +504,7 @@ def encrypt_e2ee_message(
         "team_id": _non_empty(sender.get("team_id")),
         "encryption_key_id": _non_empty(sender_assertion.get("encryption_key_id")),
     }
-    if did_from_public_key(verify_key) != from_ref["did"]:
+    if signing_did != from_ref["did"]:
         raise E2EEEnvelopeError("sender signing key does not match sender did")
     validate_encryption_key_assertion(
         sender_assertion,

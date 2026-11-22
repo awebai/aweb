@@ -8,12 +8,12 @@ package hookevent
 import (
 	"bytes"
 	"crypto/ed25519"
-	"encoding/base64"
 	"regexp"
 	"sort"
 	"time"
 
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/signaturewire"
 	"github.com/awebai/aw/strictjson"
 )
 
@@ -122,7 +122,7 @@ func Sign(key ed25519.PrivateKey, envelope map[string]any) ([]byte, string, erro
 	if didKey, _ := producer["did_key"].(string); didKey != awid.ComputeDIDKey(key.Public().(ed25519.PublicKey)) {
 		return nil, "", strictjson.Refuse("signer_mismatch", "the key is not the producer's did_key")
 	}
-	return signing, base64.RawStdEncoding.EncodeToString(ed25519.Sign(key, signing)), nil
+	return signing, signaturewire.SignStd(key, signing), nil
 }
 
 // VerifyOptions are the facts a verifier already holds about the event.
@@ -183,7 +183,7 @@ func VerifySignature(didKey string, message []byte, signature string) error {
 	if err != nil {
 		return err
 	}
-	if !ed25519.Verify(public, message, sig) {
+	if !signaturewire.Verify(signaturewire.Proof{PublicKey: public, Payload: message, Signature: sig}) {
 		return strictjson.Refuse("bad_signature", "signature does not verify")
 	}
 	return nil

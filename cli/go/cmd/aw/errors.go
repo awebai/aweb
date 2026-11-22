@@ -133,7 +133,8 @@ func nameTakenText(alias, teamID, flag string) string {
 // cliErrorEnvelope is what --json prints for a failed command: the error's
 // awid.ErrorDetail, with the code of a tagged refusal, and its message.
 type cliErrorEnvelope struct {
-	Error cliErrorBody `json:"error"`
+	Error  cliErrorBody      `json:"error"`
+	Invite *inviteInspection `json:"invite,omitempty"`
 }
 
 type cliErrorBody struct {
@@ -145,6 +146,15 @@ type cliErrorBody struct {
 }
 
 func errorEnvelope(err error, message string) cliErrorEnvelope {
+	var inspect *inviteInspectError
+	if errors.As(err, &inspect) {
+		envelope := cliErrorEnvelope{Error: cliErrorBody{Code: inspect.Code, Message: inspect.Message}}
+		var failure *inviteInspectionFailure
+		if errors.As(err, &failure) {
+			envelope.Invite = failure.invite
+		}
+		return envelope
+	}
 	detail := awid.DescribeError(err)
 	var plain *plainRefusal
 	if errors.As(err, &plain) && plain.jsonMessage != "" {
@@ -157,7 +167,24 @@ func errorEnvelope(err error, message string) cliErrorEnvelope {
 	return cliErrorEnvelope{Error: cliErrorBody{Code: detail.Code, Message: message, HTTPStatus: detail.HTTPStatus, Detail: detail.Detail, Reason: detail.Reason}}
 }
 
-func writeCLIErrorEnvelope(w io.Writer, err error, message string) {
-	encoded, _ := json.Marshal(errorEnvelope(err, message))
-	fmt.Fprintln(w, string(encoded))
+type cliErrorResult struct {
+	Refusal error
+	Message string
+	JSON    bool
+}
+
+// writeCLIErrorResult owns the JSON error envelope and any retained text
+// result from a failed command. The caller still owns stderr and exit status.
+func writeCLIErrorResult(w io.Writer, result cliErrorResult) error {
+	envelope := errorEnvelope(result.Refusal, result.Message)
+	var err error
+	if result.JSON {
+		err = json.NewEncoder(w).Encode(envelope)
+	} else if envelope.Invite != nil {
+		err = formatInviteInspection(w, envelope.Invite)
+	}
+	if err != nil {
+		return fmt.Errorf("write command output: %w; check the output destination and retry", err)
+	}
+	return nil
 }

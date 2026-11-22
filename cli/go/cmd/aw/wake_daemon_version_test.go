@@ -21,6 +21,9 @@ func serveOneWakeStatus(t *testing.T, socketPath string, status wake.Status) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = listener.Close() })
+	if err := os.Chmod(socketPath, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	go func() {
 		conn, err := listener.Accept()
 		if err != nil {

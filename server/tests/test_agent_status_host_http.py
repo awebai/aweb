@@ -17,10 +17,13 @@ from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
 from test_messages_http import _make_keypair, _signed_team_headers
 
 
-async def _team_request(env, actor, method, path, body=None):
+async def _team_request(env, actor, method, path, body=None, *, team_id=TEAM, certificate=None):
     identity = env.actors[actor]
     content = json.dumps(body).encode() if body is not None else b""
-    headers = _signed_team_headers(identity.sk, identity.did, TEAM, identity.certificate, content)
+    headers = _signed_team_headers(
+        identity.sk, identity.did, team_id,
+        identity.certificate if certificate is None else certificate, content,
+    )
     headers["Content-Type"] = "application/json"
     return await env.client.request(method, path, content=content, headers=headers)
 

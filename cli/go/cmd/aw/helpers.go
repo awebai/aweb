@@ -1497,24 +1497,27 @@ func ensureWorktreeContextAtIdentityHome(identityHome string) error {
 	return awconfig.SaveWorktreeContextTo(ctxPath, &awconfig.WorktreeContext{})
 }
 
-func formatJSONOutput(v any) string {
-	data, _ := json.Marshal(v)
-	var compat any
-	// json.Number carries each number's digits as written; float64 would
-	// round integers above 2^53.
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
-	if err := decoder.Decode(&compat); err == nil {
-		compat = addJSONNameCompat(compat)
-		data, _ = json.MarshalIndent(compat, "", "  ")
-	} else {
-		data, _ = json.MarshalIndent(v, "", "  ")
+func formatJSONOutput(v any) (string, error) {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return "", fmt.Errorf("encode command JSON: %w", err)
 	}
-	return string(data)
+	var compat any
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	// Number preserves every digit in the released JSON/name adapter.
+	decoder.UseNumber()
+	if err := decoder.Decode(&compat); err != nil {
+		return "", fmt.Errorf("decode command JSON: %w", err)
+	}
+	data, err = json.MarshalIndent(addJSONNameCompat(compat), "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("encode command JSON: %w", err)
+	}
+	return string(data), nil
 }
 
-func printJSON(v any) {
-	fmt.Fprintln(commandStdout, formatJSONOutput(v))
+func printJSON(v any) error {
+	return writeCommandOutput(commandOutputRequest{Writer: commandStdout, Value: v, Format: commandOutputJSON})
 }
 
 func addJSONNameCompat(v any) any {
@@ -1539,17 +1542,57 @@ func addJSONNameCompat(v any) any {
 	}
 }
 
-func writeOutput(w io.Writer, v any, formatter func(v any) string) error {
-	if jsonFlag {
-		_, err := fmt.Fprintln(w, formatJSONOutput(v))
-		return err
-	}
-	_, err := fmt.Fprint(w, termtext.Body(formatter(v)))
-	return err
+type commandOutputFormat uint8
+
+const (
+	commandOutputText commandOutputFormat = iota
+	commandOutputJSON
+)
+
+type commandOutputRequest struct {
+	Writer io.Writer
+	Value  any
+	Format commandOutputFormat
+	Text   func(any) string
 }
 
-func printOutput(v any, formatter func(v any) string) {
-	_ = writeOutput(commandStdout, v, formatter)
+// writeCommandOutput keeps encoding and presentation errors in the command's
+// error result; producing no usable output is never reported as success.
+func writeCommandOutput(input commandOutputRequest) error {
+	if input.Writer == nil {
+		return fmt.Errorf("command output requires a writer")
+	}
+	switch input.Format {
+	case commandOutputJSON:
+		encoded, err := formatJSONOutput(input.Value)
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintln(input.Writer, encoded)
+		return err
+	case commandOutputText:
+		if input.Text == nil {
+			return fmt.Errorf("text command output requires a formatter")
+		}
+		_, err := fmt.Fprint(input.Writer, termtext.Body(input.Text(input.Value)))
+		return err
+	default:
+		return fmt.Errorf("command output format is unknown")
+	}
+}
+
+// writeOutput adapts parsed command flags for mail/room/activity and hook
+// cleanup callers. The presentation owner receives an explicit format.
+func writeOutput(w io.Writer, v any, formatter func(any) string) error {
+	format := commandOutputText
+	if jsonFlag {
+		format = commandOutputJSON
+	}
+	return writeCommandOutput(commandOutputRequest{Writer: w, Value: v, Text: formatter, Format: format})
+}
+
+func printOutput(v any, formatter func(any) string) error {
+	return writeOutput(commandStdout, v, formatter)
 }
 
 func parseTimeBestEffort(value string) (time.Time, bool) {

@@ -348,7 +348,9 @@ func TestStatusClientConcurrentStaleReadersShareOneRefresh(t *testing.T) {
 	env.clock.Add(61)
 	gate := make(chan struct{})
 	env.set(func() { env.gate["example.com"] = gate })
-	results := concurrently(10, func() *IDChainEvidence { return env.evidence(nil) }, func() bool { r, _ := env.counts(); return r == 2 }, gate)
+	results := readStatusConcurrently(t, 10, func(ctx context.Context) *IDChainEvidence {
+		return env.client.IDChainEvidence(ctx, env.bundle("alice", "coordinator"), statusSubject, "example.com")
+	}, gate)
 	for _, e := range results {
 		if ageOf(e) != 0.0 {
 			t.Fatalf("age=%v", ageOf(e))
@@ -363,7 +365,9 @@ func TestStatusClientConcurrentReadersShareOneFailedAttempt(t *testing.T) {
 	env := newStatusEnv(t)
 	gate := make(chan struct{})
 	env.set(func() { env.gate["example.com"] = gate; env.httpStatus = 503 })
-	results := concurrently(10, func() *IDChainEvidence { return env.evidence(nil) }, func() bool { r, _ := env.counts(); return r == 1 }, gate)
+	results := readStatusConcurrently(t, 10, func(ctx context.Context) *IDChainEvidence {
+		return env.client.IDChainEvidence(ctx, env.bundle("alice", "coordinator"), statusSubject, "example.com")
+	}, gate)
 	for _, e := range results {
 		if e.AgeSeconds != nil {
 			t.Fatalf("age=%v", ageOf(e))
@@ -374,19 +378,54 @@ func TestStatusClientConcurrentReadersShareOneFailedAttempt(t *testing.T) {
 	}
 }
 
-func concurrently(n int, read func() *IDChainEvidence, started func() bool, gate chan struct{}) []*IDChainEvidence {
+// IDChainEvidence consults Done after joining its in-flight attempt. Observe
+// that boundary so every reader joins before the test releases the response.
+type statusAttemptWaitContext struct {
+	context.Context
+	waiting chan<- struct{}
+	once    sync.Once
+}
+
+func (ctx *statusAttemptWaitContext) Done() <-chan struct{} {
+	ctx.once.Do(func() { ctx.waiting <- struct{}{} })
+	return ctx.Context.Done()
+}
+
+func readStatusConcurrently(t *testing.T, n int, read func(context.Context) *IDChainEvidence, gate chan struct{}) []*IDChainEvidence {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var release sync.Once
+	unblock := func() { release.Do(func() { close(gate) }) }
+	defer unblock()
+	waiting := make(chan struct{}, n)
 	results := make([]*IDChainEvidence, n)
 	var wg sync.WaitGroup
 	for i := range results {
 		wg.Add(1)
-		go func(i int) { defer wg.Done(); results[i] = read() }(i)
+		readerContext := &statusAttemptWaitContext{Context: ctx, waiting: waiting}
+		go func(i int, readerContext context.Context) {
+			defer wg.Done()
+			results[i] = read(readerContext)
+		}(i, readerContext)
 	}
-	for deadline := time.Now().Add(2 * time.Second); !started() && time.Now().Before(deadline); {
-		time.Sleep(time.Millisecond)
+	finished := make(chan struct{})
+	go func() { wg.Wait(); close(finished) }()
+	deadline := time.NewTimer(5 * time.Second)
+	defer deadline.Stop()
+	for joined := 0; joined < n; joined++ {
+		select {
+		case <-waiting:
+		case <-deadline.C:
+			t.Fatalf("only %d of %d readers joined the shared attempt", joined, n)
+		}
 	}
-	time.Sleep(20 * time.Millisecond)
-	close(gate)
-	wg.Wait()
+	unblock()
+	select {
+	case <-finished:
+	case <-deadline.C:
+		t.Fatal("status readers did not finish after the shared attempt was released")
+	}
 	return results
 }
 

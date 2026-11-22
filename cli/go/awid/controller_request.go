@@ -196,12 +196,11 @@ var controllerWriteStates = map[string]controllerWriteState{
 }
 
 func idBundleLeafDomain(bundle map[string]any) (string, error) {
-	if err := idCertificateBundleShape(bundle); err != nil {
+	chain, err := IDChainFromBundle(bundle)
+	if err != nil {
 		return "", err
 	}
-	certificates := bundle["certificates"].([]any)
-	leaf := certificates[len(certificates)-1].(map[string]any)["certificate"].(map[string]any)
-	return leaf["domain"].(string), nil
+	return chain.Leaf().Domain(), nil
 }
 
 func optionalText(value *string) any {

@@ -117,6 +117,8 @@ def main():
                         help='bounded runner resources; CCX33 unit resource profile')
     parser.add_argument('--server-workers', type=int, choices=(0, 7), default=0,
                         help='seven-worker server services; requires ccx33 profile')
+    parser.add_argument('--collect-summary', action='store_true',
+                        help='collect the isolated candidate suite target summary')
     parser.add_argument('--command', nargs=argparse.REMAINDER, help='guard qualification command instead of make targets')
     parser.add_argument('targets', nargs='*', default=['test-server', 'test-awid', 'test-cli', 'test-channel', 'test-channel-name-live-contract', 'test-channel-core', 'test-pi-extension'])
     args = parser.parse_args()
@@ -164,7 +166,7 @@ def main():
         dns = docker('run', '-d', '--network', token, '--name', token + '-dns',
                      '--cpus', '.5', '--memory', '128m', '--pids-limit', '128',
                      '-v', f'{evidence}:/evidence', image, 'python3',
-                     'scripts/test-egress/dns.py', '--log', '/evidence/dns-denied.log')
+                     'scripts/test-egress/egress_dns.py', '--log', '/evidence/dns-denied.log')
         containers.append(dns)
         info = json.loads(docker('inspect', dns))[0]
         dns_ip = info['NetworkSettings']['Networks'][token]['IPAddress']
@@ -211,11 +213,14 @@ def main():
         # Retain inspect evidence proving that the runner has only the internal network.
         (evidence / 'network.json').write_text(docker('network', 'inspect', token))
         (evidence / 'runner.json').write_text(docker('inspect', runner))
+        command_env = ['-e', 'CANDIDATE_LOG_DIR=/tmp'] if args.collect_summary else []
         with (evidence / 'suite.log').open('w') as log:
-            result = subprocess.run(['docker', 'exec', runner, *(args.command or ['make', 'TEST_EGRESS_RUNNER=', *args.targets])], stdout=log, stderr=subprocess.STDOUT)
+            result = subprocess.run(['docker', 'exec', *command_env, runner, *(args.command or ['make', 'TEST_EGRESS_RUNNER=', *args.targets])], stdout=log, stderr=subprocess.STDOUT)
         print(f'Test child exit status: {result.returncode}; evidence: {evidence}', flush=True)
         if result.returncode:
             print('\n'.join((evidence / 'suite.log').read_text().splitlines()[-100:]), flush=True)
+        if args.collect_summary:
+            docker('cp', f'{runner}:/tmp/summary.tsv', str(evidence / 'summary.tsv'))
         if docker('inspect', '--format', '{{.State.Running}}', dns) != 'true':
             raise RuntimeError('DNS sink exited during tests')
         report = evidence / 'dns-denied.log.reported'

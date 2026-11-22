@@ -180,9 +180,13 @@ def decode_signature(signature: str) -> bytes:
     of the standard base64 alphabet, no padding, and zero trailing bits."""
     if len(signature) != SIGNATURE_LENGTH or not _SIGNATURE.fullmatch(signature):
         raise Refused("signature_encoding", f"a signature is {SIGNATURE_LENGTH} characters")
-    raw = base64.b64decode(signature + "==")
-    if base64.b64encode(raw).decode("ascii").rstrip("=") != signature:
-        raise Refused("signature_encoding", "nonzero trailing bits")
+    # JSON-only commitment consumers do not need the signing runtime.
+    from awid.signature_wire import decode_base64
+
+    try:
+        raw = decode_base64(signature)
+    except ValueError as exc:
+        raise Refused("signature_encoding", "nonzero trailing bits") from exc
     return raw
 
 
@@ -190,8 +194,10 @@ def decode_base64url(text: str, what: str) -> bytes:
     """Accept exactly one spelling: the URL alphabet, no padding, zero trailing bits."""
     if not _BASE64URL.fullmatch(text) or len(text) % 4 == 1:
         raise Refused("invalid_value", f"{what} is not strict unpadded base64url")
+    from awid.signature_wire import Base64Profile, decode_base64
+
     try:
-        raw = base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
+        raw = decode_base64(text, profile=Base64Profile.CANONICAL_URL)
     except (binascii.Error, ValueError):
         raise Refused("invalid_value", f"{what} is not strict unpadded base64url") from None
     if base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=") != text:

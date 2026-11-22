@@ -240,11 +240,11 @@ func (h localActiveTeamFixHandler) Plan(_ context.Context, ctx doctorFixContext,
 	detail := snapshot.detail()
 	detail["selected_team_id"] = teamID
 	plan.PlannedMutations = []doctorFixMutation{{
-		Operation:     "rewrite_teams_metadata",
+		Operation:     doctorFixRewriteTeamsMetadata,
 		Description:   "Set teams.yaml active_team from the sole local workspace membership.",
 		Target:        localPathTarget(doctorFixIdentityPath(ctx, "teams.yaml")),
 		Path:          awconfig.DefaultTeamStateRelativePath(),
-		Resource:      "active_team",
+		Resource:      doctorFixActiveTeamField,
 		SourceOfTruth: "local workspace memberships",
 	}}
 	plan.Preconditions = []doctorFixPrecondition{
@@ -373,11 +373,11 @@ func (localWorkspaceURLFixHandler) Plan(_ context.Context, ctx doctorFixContext,
 	detail["removed_query"] = normalization.RemovedQuery
 	detail["removed_fragment"] = normalization.RemovedFragment
 	plan.PlannedMutations = []doctorFixMutation{{
-		Operation:     "rewrite_workspace_metadata",
+		Operation:     doctorFixRewriteWorkspaceMetadata,
 		Description:   "Normalize aweb_url by removing credential/query/fragment material already present in the local field.",
 		Target:        localPathTarget(workspacePath),
 		Path:          awconfig.DefaultWorktreeWorkspaceRelativePath(),
-		Resource:      "aweb_url",
+		Resource:      doctorFixAwebURLField,
 		SourceOfTruth: "existing local aweb_url",
 	}}
 	plan.Preconditions = []doctorFixPrecondition{
@@ -453,11 +453,11 @@ func (localIdentityRegistryURLFixHandler) Plan(_ context.Context, ctx doctorFixC
 	detail["removed_query"] = normalization.RemovedQuery
 	detail["removed_fragment"] = normalization.RemovedFragment
 	plan.PlannedMutations = []doctorFixMutation{{
-		Operation:     "rewrite_identity_metadata",
+		Operation:     doctorFixRewriteIdentityMetadata,
 		Description:   "Normalize registry_url by removing credential/query/fragment material already present in the local field.",
 		Target:        localPathTarget(identityPath),
 		Path:          awconfig.DefaultWorktreeIdentityRelativePath(),
-		Resource:      "registry_url",
+		Resource:      doctorFixRegistryURLField,
 		SourceOfTruth: "existing local registry_url",
 	}}
 	plan.Preconditions = []doctorFixPrecondition{

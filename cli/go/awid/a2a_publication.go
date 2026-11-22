@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/awebai/aw/signaturewire"
 )
 
 const (
@@ -239,7 +241,7 @@ func A2ASignedAssertionDigest(canonical, signature string) (string, error) {
 	if canonical == "" {
 		return "", fmt.Errorf("canonical payload is required")
 	}
-	sig, err := base64.RawStdEncoding.DecodeString(strings.TrimSpace(signature))
+	sig, err := signaturewire.DecodeStd(strings.TrimSpace(signature))
 	if err != nil {
 		return "", fmt.Errorf("decode signature: %w", err)
 	}
@@ -492,7 +494,7 @@ func signedA2APublicationBody(fields A2APublicationFields, signingKey ed25519.Pr
 	if err != nil {
 		return nil, "", err
 	}
-	signature := base64.RawStdEncoding.EncodeToString(ed25519.Sign(signingKey, []byte(canonical)))
+	signature := signaturewire.SignStd(signingKey, []byte(canonical))
 	body["signature"] = signature
 	return body, signature, nil
 }
@@ -516,7 +518,7 @@ func signedA2ADelegationBody(fields A2ADelegationFields, signingKey ed25519.Priv
 	if err != nil {
 		return nil, "", err
 	}
-	signature := base64.RawStdEncoding.EncodeToString(ed25519.Sign(signingKey, []byte(canonical)))
+	signature := signaturewire.SignStd(signingKey, []byte(canonical))
 	body["signature"] = signature
 	return body, signature, nil
 }

@@ -27,6 +27,7 @@ COPY --from=channel /src/node_modules /workspace/channel-core/node_modules
 COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=docker-cli /usr/local/libexec/docker/cli-plugins/docker-compose /usr/local/libexec/docker/cli-plugins/docker-compose
 COPY scripts/e2e/ /workspace/scripts/e2e/
+RUN chmod -R a+rX /workspace/scripts/e2e /workspace/channel-core
 RUN AW_NO_UPDATE_CHECK=1 aw version && node --version && docker compose version && python3 --version
 ENV PYTHONUNBUFFERED=1
 WORKDIR /workspace

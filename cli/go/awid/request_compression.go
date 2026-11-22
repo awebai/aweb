@@ -58,7 +58,7 @@ func doServerRequest(client *http.Client, req *http.Request, serverBase string, 
 // status only. Queries, headers and bodies can carry credentials and invite
 // tokens, so they are never written here.
 func traceServerCall(req *http.Request, resp *http.Response) {
-	if !traceEnabled() || req == nil || req.URL == nil {
+	if !TraceEnabled() || req == nil || req.URL == nil {
 		return
 	}
 	path := req.URL.Path

@@ -12,20 +12,21 @@ import (
 )
 
 // formatVerificationTag returns a warning string for non-verified messages.
-// Returns empty string for verified or unset status.
+// Returns empty string for a trusted verification result.
 // ALL CAPS for active security failures; lowercase for informational (no signature present).
 func formatVerificationTag(status awid.VerificationStatus) string {
+	if status.Trusted() {
+		return ""
+	}
 	switch status {
 	case awid.Failed:
 		return " [VERIFICATION FAILED]"
 	case awid.IdentityMismatch:
 		return " [IDENTITY MISMATCH]"
-	case awid.Unverified:
-		return " [unverified]"
 	case awid.VerificationStale:
 		return " [verification stale]"
 	default:
-		return ""
+		return " [unverified]"
 	}
 }
 
@@ -663,14 +664,19 @@ func formatChatPending(v any) string {
 
 func formatChatOpen(v any) string {
 	result := v.(*chat.OpenResult)
+	var sb strings.Builder
+	if result.ReceiptError != "" {
+		fmt.Fprintf(&sb, "Warning: could not save local chat receipts (%s). Check the workspace cache; messages may repeat.\n\n", termtext.Line(result.ReceiptError))
+	}
 	if len(result.Messages) == 0 {
 		if result.UnreadWasEmpty {
-			return fmt.Sprintf("No unread chat messages for %s\n", result.TargetAgent)
+			fmt.Fprintf(&sb, "No unread chat messages for %s\n", result.TargetAgent)
+		} else {
+			sb.WriteString("No unread chat messages\n")
 		}
-		return "No unread chat messages\n"
+		return sb.String()
 	}
 
-	var sb strings.Builder
 	if result.MarkedRead > 0 {
 		sb.WriteString(fmt.Sprintf("Unread chat messages (%d marked as read):\n\n", result.MarkedRead))
 	} else {

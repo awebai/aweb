@@ -339,7 +339,7 @@ func (c *Client) prepareE2EEChatCreate(ctx context.Context, payload *ChatCreateS
 	}
 	now := time.Now().UTC().Truncate(time.Second)
 	if custody != nil {
-		envelope, err := c.createCustodyE2EEEnvelope(ctx, custody, "chat", "", payload.Message, messageID, sessionID, payload.ReplyTo, recipients, "", "")
+		envelope, err := c.createCustodyE2EEEnvelope(ctx, custody, custodyEnvelopeMessage{Kind: custodyChatMessage, Body: payload.Message, MessageID: messageID, ConversationID: sessionID, ReplyTo: payload.ReplyTo, Recipients: recipients})
 		if err != nil {
 			return err
 		}
@@ -417,7 +417,7 @@ func (c *Client) prepareE2EEChatSend(ctx context.Context, sessionID string, payl
 	}
 	now := time.Now().UTC().Truncate(time.Second)
 	if custody != nil {
-		envelope, err := c.createCustodyE2EEEnvelope(ctx, custody, "chat", "", payload.Body, messageID, strings.TrimSpace(sessionID), payload.ReplyTo, recipients, "", "")
+		envelope, err := c.createCustodyE2EEEnvelope(ctx, custody, custodyEnvelopeMessage{Kind: custodyChatMessage, Body: payload.Body, MessageID: messageID, ConversationID: strings.TrimSpace(sessionID), ReplyTo: payload.ReplyTo, Recipients: recipients})
 		if err != nil {
 			return err
 		}

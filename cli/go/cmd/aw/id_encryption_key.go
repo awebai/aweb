@@ -118,8 +118,7 @@ func runIDEncryptionKeySetup(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	printOutput(out, formatIDEncryptionKey)
-	return nil
+	return printOutput(out, formatIDEncryptionKey)
 }
 
 func runIDEncryptionKeyRotate(cmd *cobra.Command, args []string) error {
@@ -130,8 +129,7 @@ func runIDEncryptionKeyRotate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	printOutput(out, formatIDEncryptionKey)
-	return nil
+	return printOutput(out, formatIDEncryptionKey)
 }
 
 func runIDEncryptionKeyShow(cmd *cobra.Command, args []string) error {
@@ -154,7 +152,7 @@ func runIDEncryptionKeyShow(cmd *cobra.Command, args []string) error {
 	if record == nil {
 		return usageError("local E2E encryption key state has no active key; run `aw id encryption-key setup`")
 	}
-	printOutput(idEncryptionKeyOutput{
+	return printOutput(idEncryptionKeyOutput{
 		Status:        "present",
 		KeyID:         record.KeyID,
 		PublicKey:     record.PublicKey,
@@ -163,7 +161,6 @@ func runIDEncryptionKeyShow(cmd *cobra.Command, args []string) error {
 		AssertionPath: identityRecordPathBestEffort(identity, record.AssertionPath),
 		Warning:       encryptionKeyBackupWarning(),
 	}, formatIDEncryptionKey)
-	return nil
 }
 
 func setupOrRotateIdentityEncryptionKey(ctx context.Context, rotate bool) (idEncryptionKeyOutput, error) {
@@ -812,10 +809,6 @@ func saveEncryptionAssertion(path string, assertion *awid.EncryptionKeyAssertion
 	}
 	data = append(data, '\n')
 	return awid.AtomicWriteFile(path, data)
-}
-
-func loadEncryptionAssertion(root, relPath string) (*awid.EncryptionKeyAssertion, error) {
-	return loadEncryptionAssertionAt(root, "", relPath)
 }
 
 func loadEncryptionAssertionAt(workingDir, identityHome, relPath string) (*awid.EncryptionKeyAssertion, error) {

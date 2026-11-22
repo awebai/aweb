@@ -90,7 +90,15 @@ func TestHostedTeamInviteAcceptRefusesAWellSignedCertificateWithoutID(t *testing
 		t.Fatal(err)
 	}
 	resp := &awid.SpawnAcceptInviteResponse{ServerURL: "https://app.example.com/api", TeamCert: encoded}
-	_, _, err = validateHostedTeamInviteAcceptResponse(resp, didKey, "alice", "", "", awid.IdentityModeLocal, true)
+	_, _, err = validateHostedTeamInviteAcceptResponse(hostedInviteResponseExpectation{
+		Response:  resp,
+		DIDKey:    didKey,
+		Alias:     "alice",
+		StableID:  "",
+		Address:   "",
+		Scope:     awid.IdentityModeLocal,
+		NoAddress: true,
+	})
 	if err == nil || !strings.Contains(err.Error(), "certificate_id") {
 		t.Fatalf("want a certificate_id refusal, got %v", err)
 	}

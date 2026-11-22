@@ -19,6 +19,7 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 
 from .errors import Refused
 from .journal import Journal
+from .signature_wire import sign_bytes, verify_bytes
 
 MAX_BODY = 1024 * 1024
 SAFE_INT = 2**53 - 1
@@ -182,7 +183,7 @@ def sign_request(
         }
     )
     header = (
-        encode64(payload) + "." + encode64(key.sign(b"aweb.secrets.runner-request/1\n" + payload))
+        encode64(payload) + "." + encode64(sign_bytes(key, b"aweb.secrets.runner-request/1\n" + payload))
     )
     if len(header) > 4096:
         raise Refused("runner_request_invalid")
@@ -258,11 +259,12 @@ def verify_assignment(
                 raise ValueError("credential")
             decode64(credential["sealed"])
         signature = decode64(doc["signature"])
-        public_key(assignment["service_kid"])
         if assignment["service_kid"] != service_kid:
             raise ValueError("unpinned key")
-        public_key(service_kid).verify(
-            signature, b"aweb.secrets.runner-assignment/1\n" + canonical(assignment)
+        verify_bytes(
+            public_key(service_kid),
+            signature,
+            b"aweb.secrets.runner-assignment/1\n" + canonical(assignment),
         )
     except (ValueError, TypeError, KeyError, RecursionError, InvalidSignature):
         raise Refused("assignment_invalid") from None

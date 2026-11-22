@@ -27,8 +27,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from awid.did import public_key_from_did
+from awid.signature_wire import verify_bytes
 from nacl.exceptions import BadSignatureError
-from nacl.signing import VerifyKey
 
 from aweb_naapp.hooks.strictjson import (
     MAX_SAFE_INTEGER,
@@ -457,7 +457,7 @@ def _check_owner_act(
         raise Refused("bad_signature", "the current team key does not decode") from None
     raw = decode_signature(signature)
     try:
-        VerifyKey(team_key).verify(signing, raw)
+        verify_bytes(key=team_key, payload=signing, signature=raw)
     except BadSignatureError:
         raise Refused("bad_signature", "signature does not verify under the team key") from None
     return act

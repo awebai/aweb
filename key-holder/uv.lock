@@ -153,9 +153,10 @@ dev = [
 
 [[package]]
 name = "awid-service"
-version = "0.5.40rc2"
+version = "0.5.40rc3"
 source = { editable = "../awid" }
 dependencies = [
+    { name = "asyncpg" },
     { name = "base58" },
     { name = "dnspython" },
     { name = "fastapi" },
@@ -173,6 +174,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "asyncpg", specifier = ">=0.32.0" },
     { name = "base58", specifier = ">=2.1.1" },
     { name = "dnspython", specifier = ">=2.8.0" },
     { name = "fastapi", specifier = ">=0.116.1" },
@@ -190,8 +192,10 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "mypy", specifier = "==1.19.1" },
     { name = "pytest", specifier = ">=9.0.0" },
     { name = "pytest-asyncio", specifier = ">=1.2.0" },
+    { name = "ruff", specifier = "==0.15.0" },
     { name = "trustme", specifier = ">=1.2.1" },
 ]
 

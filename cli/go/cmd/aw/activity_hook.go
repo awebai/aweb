@@ -21,6 +21,7 @@ import (
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/internal/atomicfile"
+	"github.com/awebai/aw/signaturewire"
 	"github.com/spf13/cobra"
 )
 
@@ -455,7 +456,7 @@ func signActivityEvent(event map[string]any, key ed25519.PrivateKey) (map[string
 	payload := []byte(canonical)
 	return map[string]string{
 		"signed_payload": base64.RawURLEncoding.EncodeToString(payload),
-		"signature":      base64.RawStdEncoding.EncodeToString(ed25519.Sign(key, payload)),
+		"signature":      signaturewire.SignStd(key, payload),
 	}, nil
 }
 

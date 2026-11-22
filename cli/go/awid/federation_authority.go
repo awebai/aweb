@@ -346,12 +346,8 @@ func isIsolatedFederationHost(host string) bool {
 		strings.HasSuffix(host, ".test") || strings.HasSuffix(host, ".test.local")
 }
 
-// A federation or registry address must be public. Both readers apply the
-// same explicit, conservative tables, taken from the Python reader's ipaddress
-// rule (is_global, and neither multicast, reserved nor unspecified, with
-// site-local refused); they are not a restatement of the IANA
-// globally-reachable classification. The shared federation origin vector pins
-// both readers to them.
+// Both readers apply the public-address tables defined under outbound delivery
+// transport in docs/aweb-sot.md and covered by the federation-origin-ip-v1 vector.
 var (
 	nonPublicIPv4 = mustParsePrefixes(
 		"0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16",

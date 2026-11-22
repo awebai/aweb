@@ -59,17 +59,22 @@ type connectRequest struct {
 }
 
 type certificateConnectOptions struct {
-	Role                 string
-	HumanName            string
-	AgentType            string
-	APIKey               string
-	IdentityHome         string
-	BindingWorkspacePath string
+	EncryptionPublication encryptionPublicationPolicy
+	Role                  string
+	HumanName             string
+	AgentType             string
+	APIKey                string
+	IdentityHome          string
+	BindingWorkspacePath  string
 }
 
 // initCertificateConnectWithOptions implements the certificate-based init flow.
 // Reads team cert + signing key, calls POST /v1/connect, writes workspace.yaml.
 func initCertificateConnectWithOptions(workingDir, awebURL string, opts certificateConnectOptions) (connectOutput, error) {
+	if err := opts.EncryptionPublication.validate(); err != nil {
+		return connectOutput{}, err
+	}
+
 	identityHome := strings.TrimSpace(opts.IdentityHome)
 	if identityHome == "" {
 		identityHome = filepath.Join(filepath.Clean(workingDir), ".aw")
@@ -150,11 +155,18 @@ func initCertificateConnectWithOptions(workingDir, awebURL string, opts certific
 		// over any registry/aweb URLs an earlier join stored. The worktree binding
 		// (role, workspace id) is written separately below because it is unique to
 		// the connect step.
-		if err := upsertAcceptedTeamMembershipState(workingDir, &teamAcceptInviteOutput{
-			TeamID:   resp.TeamID,
-			Alias:    resp.Alias,
-			CertPath: filepath.ToSlash(certPath),
-		}, cert, "", "", true, identityHome); err != nil {
+		if err := upsertAcceptedTeamMembershipState(teamMembershipStateUpdate{
+			Location: teamMembershipLocation{WorkingDir: workingDir, IdentityHome: identityHome},
+			Output: &teamAcceptInviteOutput{
+				TeamID:   resp.TeamID,
+				Alias:    resp.Alias,
+				CertPath: filepath.ToSlash(certPath),
+			},
+			Certificate: cert,
+			RegistryURL: "",
+			AwebURL:     "",
+			Activation:  membershipMakeActive,
+		}); err != nil {
 			return err
 		}
 		workspaceState.AwebURL = awebURL
@@ -198,15 +210,8 @@ func initCertificateConnectWithOptions(workingDir, awebURL string, opts certific
 	if err := ensureWorktreeContextAtIdentityHome(identityHome); err != nil {
 		return connectOutput{}, err
 	}
-	if err := ensureLocalIdentityEncryptionKeyForDir(workingDir, explicitEncryptionKeyIdentityHome(identityHome)); err != nil {
-		return connectOutput{}, fmt.Errorf("set up E2E encryption key: %w", err)
-	}
-	if _, err := setupOrRotateIdentityEncryptionKeyForDir(ctx, workingDir, false, explicitEncryptionKeyIdentityHome(identityHome)); err != nil {
-		fmt.Fprintf(os.Stderr,
-			"Warning: could not publish E2E encryption key automatically: %v\n"+
-				"Counterparties cannot discover this identity's encryption key until the assertion is published.\n"+
-				"Run `aw id encryption-key setup` to publish it; `aw check` reports the unpublished state as identity.e2ee.assertion_published.\n",
-			err)
+	if err := completeConnectedEncryption(ctx, connectedEncryptionSetup{WorkingDir: workingDir, Home: awconfig.IdentityHome{Root: identityHome}, Warnings: os.Stderr, Policy: opts.EncryptionPublication}); err != nil {
+		return connectOutput{}, err
 	}
 
 	identityScope := awid.NormalizeIdentityScope(cert.IdentityScope)

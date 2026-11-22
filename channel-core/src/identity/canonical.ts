@@ -27,3 +27,49 @@ export function canonicalJSONValue(value: unknown, unsupported: string): string 
       || (typeof value === "number" && Number.isSafeInteger(value))) return JSON.stringify(value);
   throw new Error(unsupported);
 }
+
+/** Legacy wire strings retain replacement/escaping behavior separately from strict JSON. */
+export function escapeJSONString(s: string): string {
+  let result = "";
+  for (const ch of s) {
+    const code = ch.codePointAt(0)!;
+    switch (ch) {
+      case '"':
+        result += '\\"';
+        break;
+      case "\\":
+        result += "\\\\";
+        break;
+      case "\n":
+        result += "\\n";
+        break;
+      case "\r":
+        result += "\\r";
+        break;
+      case "\t":
+        result += "\\t";
+        break;
+      case "\b":
+        result += "\\b";
+        break;
+      case "\f":
+        result += "\\f";
+        break;
+      default:
+        if (code < 0x20) {
+          result += "\\u" + code.toString(16).padStart(4, "0");
+        } else {
+          result += ch;
+        }
+    }
+  }
+  return result;
+}
+
+export function canonicalStringObject(fields: Array<[string, string]>): string {
+  const sorted = [...fields].sort(([left], [right]) => compareByCodePoint(left, right));
+  const members = sorted.map(([key, value]) =>
+    `"${escapeJSONString(key)}":"${escapeJSONString(value)}"`,
+  );
+  return `{${members.join(",")}}`;
+}

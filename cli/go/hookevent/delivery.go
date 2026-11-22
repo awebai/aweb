@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/signaturewire"
 	"github.com/awebai/aw/strictjson"
 )
 
@@ -114,7 +115,7 @@ func SignDelivery(key ed25519.PrivateKey, method string, target *url.URL, bindin
 	if err != nil {
 		return nil, err
 	}
-	authSignature := base64.RawStdEncoding.EncodeToString(ed25519.Sign(key, payload))
+	authSignature := signaturewire.SignStd(key, payload)
 	headers := map[string]string{
 		"Authorization":     AuthScheme + didKey + " " + authSignature,
 		SignedPayloadHeader: base64.RawURLEncoding.EncodeToString(payload),
@@ -240,7 +241,7 @@ func VerifyDelivery(method, path string, headers map[string]string, body []byte,
 		return nil, strictjson.Refuse("invalid_body", "%v", err)
 	}
 	eventText, _ := bodyObject["hook_event"].(string)
-	signing, err := base64.RawURLEncoding.Strict().DecodeString(eventText)
+	signing, err := signaturewire.DecodeURLStrict(eventText)
 	if err != nil {
 		return nil, strictjson.Refuse("invalid_body", "hook_event is not strict unpadded base64url")
 	}
