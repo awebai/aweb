@@ -7,9 +7,10 @@ import json
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from contextvars import ContextVar
+from datetime import UTC, datetime
 from enum import StrEnum
 from http import HTTPStatus
+from time import monotonic_ns
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
@@ -18,6 +19,7 @@ from aweb_naapp import roles
 from aweb_naapp.console import COOKIE_NAME
 from aweb_naapp.runtime.app_credentials import APP_GRANT_READ, AppCredentialSigner
 from aweb_naapp.runtime.app_keys import load_app_key
+from aweb_naapp.runtime.clock import seconds_to_ns
 from aweb_naapp.runtime.passkeys import contact_sha256
 from aweb_naapp.runtime.team_grants import AppIdentity, TeamGrantSource
 from aweb_naapp_testing.owner_acts import TeamOwner
@@ -32,6 +34,7 @@ from aweb_secrets.custody import (
     SealContext,
     decode_value,
 )
+from aweb_secrets.erasure import ErasureFailure
 from aweb_secrets.owners import OWNER_ROLE, approver_scope
 from aweb_secrets.secret import SecretBackend, SecretKind
 from tests.human_owner import b64, holder_credential
@@ -43,6 +46,8 @@ from tests.test_production_routed_owner import RoutedOwner
 from tests.test_production_routed_owner import production_routed_owner as production_routed_owner
 
 GRANT_SECONDS = 8
+EXPIRING_GRANT_SECONDS = 3
+GOVERNANCE_HOOK = "post-governance-hook"
 
 
 @pytest.fixture(autouse=True)
@@ -71,15 +76,19 @@ async def login(client: httpx.AsyncClient, scope: str, device: SoftAuthenticator
     return csrf
 
 
-_FIXED_REFUSALS = frozenset(ValueStagingCode) | {
-    "authority_unavailable",
-    "generation_superseded",
-    "installation_inactive",
-    "owner_act_refused",
-    "principal_not_member",
-    "principal_status_unavailable",
-    "release_context_unavailable",
-}
+_FIXED_REFUSALS = (
+    frozenset(ValueStagingCode)
+    | frozenset(ErasureFailure)
+    | {
+        "authority_unavailable",
+        "generation_superseded",
+        "installation_inactive",
+        "owner_act_refused",
+        "principal_not_member",
+        "principal_status_unavailable",
+        "release_context_unavailable",
+    }
+)
 
 
 def response_status(response: httpx.Response) -> str:
@@ -149,7 +158,7 @@ async def test_owner_token_ingress_is_sealed_scoped_inert_and_never_echoed(produ
 
 
 async def test_ingress_requires_login_and_this_tabs_csrf_before_any_allocation(
-    production_routed_owner
+    production_routed_owner,
 ):
     world = production_routed_owner
     production_client = world.client
@@ -165,7 +174,9 @@ async def test_ingress_requires_login_and_this_tabs_csrf_before_any_allocation(
     assert response.json() == {"detail": "csrf_token_required"}
     no_value(response, value)
     assert (
-        await world.service.runtime.db().fetch_value("SELECT count(*) FROM {{tables.custody_secrets}}")
+        await world.service.runtime.db().fetch_value(
+            "SELECT count(*) FROM {{tables.custody_secrets}}"
+        )
         == 0
     )
 
@@ -186,13 +197,15 @@ async def test_invalid_ingress_body_is_constant_and_allocates_nothing(
     assert response.status_code == HTTPStatus.BAD_REQUEST
     assert response.json() == {"detail": "request_invalid"}
     assert (
-        await world.service.runtime.db().fetch_value("SELECT count(*) FROM {{tables.custody_secrets}}")
+        await world.service.runtime.db().fetch_value(
+            "SELECT count(*) FROM {{tables.custody_secrets}}"
+        )
         == 0
     )
 
 
 async def test_ingress_json_and_scope_fail_without_reflecting_submitted_bytes(
-    production_routed_owner
+    production_routed_owner,
 ):
     world = production_routed_owner
     production_client = world.client
@@ -219,7 +232,9 @@ async def test_ingress_json_and_scope_fail_without_reflecting_submitted_bytes(
     assert response.status_code == HTTPStatus.FORBIDDEN
     no_value(response, value)
     assert (
-        await world.service.runtime.db().fetch_value("SELECT count(*) FROM {{tables.custody_secrets}}")
+        await world.service.runtime.db().fetch_value(
+            "SELECT count(*) FROM {{tables.custody_secrets}}"
+        )
         == 0
     )
 
@@ -302,15 +317,17 @@ async def blocked_pid(db, blocker: int, request: asyncio.Task, *, relation: str)
         ):
             if request.done():
                 response = await request
-                pytest.fail(f"request returned {response_status(response)} before waiting on {relation}")
+                pytest.fail(
+                    f"request returned {response_status(response)} before waiting on {relation}"
+                )
             await asyncio.sleep(0.01)
     return pid
 
 
-async def wait_for_grant_expiry(world: RoutedOwner) -> None:
+async def wait_for_grant_expiry(world: RoutedOwner, *, deadline: int = 0) -> None:
     db = world.service.runtime.db()
     async with asyncio.timeout(GRANT_SECONDS + 5):
-        while await db.fetch_value(
+        while monotonic_ns() < deadline or await db.fetch_value(
             "SELECT fresh_until > clock_timestamp() FROM {{tables.installation_fences}} "
             "WHERE installation_id=$1",
             world.installation["installation_id"],
@@ -331,10 +348,13 @@ async def action_during_lookup(world: RoutedOwner, act: OwnerAct) -> httpx.Respo
     try:
         async with db.transaction() as gate:
             gate_pid = await gate.fetch_value("SELECT pg_backend_pid()")
-            assert await gate.fetch_value(
-                "SELECT b3_scope FROM {{tables.role_holdings}} WHERE b3_scope=$1 FOR UPDATE",
-                world.holder.scope,
-            ) == world.holder.scope
+            assert (
+                await gate.fetch_value(
+                    "SELECT b3_scope FROM {{tables.role_holdings}} WHERE b3_scope=$1 FOR UPDATE",
+                    world.holder.scope,
+                )
+                == world.holder.scope
+            )
             action = asyncio.create_task(deliver_owner_action(world, body))
             actor_pid = await blocked_pid(db, gate_pid, action, relation="role_holdings")
             posting = asyncio.create_task(post_token(world))
@@ -356,9 +376,12 @@ async def test_owner_role_revoked_during_lookup_cannot_enter_a_token(production_
     response = await action_during_lookup(world, OwnerAct.REVOKE)
     assert response.status_code == HTTPStatus.FORBIDDEN
     assert response.json() == {"detail": "owner_required"}
-    assert await world.service.runtime.db().fetch_value(
-        "SELECT count(*) FROM {{tables.custody_secrets}}"
-    ) == 0
+    assert (
+        await world.service.runtime.db().fetch_value(
+            "SELECT count(*) FROM {{tables.custody_secrets}}"
+        )
+        == 0
+    )
 
 
 async def advance_generation(world: RoutedOwner) -> None:
@@ -405,17 +428,34 @@ async def advance_generation(world: RoutedOwner) -> None:
 
 
 async def post_during_expiry(
-    world: RoutedOwner, *, relation: str, lock_query: str, arguments: tuple, value: str | None = None
+    world: RoutedOwner,
+    monkeypatch,
+    *,
+    relation: str,
+    lock_query: str,
+    arguments: tuple,
+    value: str | None = None,
 ) -> httpx.Response:
     db = world.service.runtime.db()
+    fence = world.service.runtime.installation_fence()
+    previous = await fence.permit(world.member.team_id)
+    # Use the server's advertised policy and PostgreSQL's unchanged timeout.
+    # The waiter can then see the full freshness window pass under the lock.
+    assert await db.fetch_value("SHOW lock_timeout") == "5s"
+    monkeypatch.setenv("AWEB_APP_GRANT_MAX_AGE_SECONDS", str(EXPIRING_GRANT_SECONDS))
+    await wait_for_grant_expiry(world, deadline=previous.status.fresh_until)
+    permit = await fence.permit(world.member.team_id)
+    deadline = permit.status.fresh_until
+    assert 0 < deadline - monotonic_ns() <= seconds_to_ns(EXPIRING_GRANT_SECONDS)
     posting = None
     try:
         async with db.transaction() as gate:
             gate_pid = await gate.fetch_value("SELECT pg_backend_pid()")
-            await gate.fetch_value(lock_query, *arguments)
+            assert await gate.fetch_value(lock_query, *arguments) is not None
             posting = asyncio.create_task(post_token(world, value=value))
             await blocked_pid(db, gate_pid, posting, relation=relation)
-            await wait_for_grant_expiry(world)
+            assert monotonic_ns() < deadline, "the request did not block with a fresh grant"
+            await wait_for_grant_expiry(world, deadline=deadline)
         return await asyncio.wait_for(posting, 10)
     finally:
         if posting is not None:
@@ -432,18 +472,14 @@ async def post_during_expiry(
     ],
 )
 async def test_ingress_preserves_f6_status_and_allocates_nothing(
-    production_routed_owner, failure, status, code
+    production_routed_owner, monkeypatch, failure, status, code
 ):
     world = production_routed_owner
     value = os.urandom(24).hex()
-    # The fixture's initial installation permit used the real grant cache.
-    # Observe a fresh grant immediately before holding a row or advancing it.
-    await wait_for_grant_expiry(world)
-    actual = await world.service.runtime.installation_fence().permit(world.member.team_id)
-    assert actual.admitted.generation == world.installation["generation"]
     if failure is FenceFailure.STALE:
         response = await post_during_expiry(
             world,
+            monkeypatch,
             relation="installation_fences",
             lock_query="SELECT generation FROM {{tables.installation_fences}} "
             "WHERE installation_id=$1 FOR UPDATE",
@@ -451,14 +487,24 @@ async def test_ingress_preserves_f6_status_and_allocates_nothing(
             value=value,
         )
     else:
+        # Retain a fresh old-generation receipt in the ingress replica before
+        # the independent replica publishes the newly installed generation.
+        fence = world.service.runtime.installation_fence()
+        previous = await fence.permit(world.member.team_id)
+        await wait_for_grant_expiry(world, deadline=previous.status.fresh_until)
+        actual = await fence.permit(world.member.team_id)
+        assert actual.admitted.generation == world.installation["generation"]
         await advance_generation(world)
         response = await post_token(world, value=value)
     assert response.status_code == status, response_status(response)
     assert response.json() == {"detail": code}
     no_value(response, value)
-    assert await world.service.runtime.db().fetch_value(
-        "SELECT count(*) FROM {{tables.custody_secrets}}"
-    ) == 0
+    assert (
+        await world.service.runtime.db().fetch_value(
+            "SELECT count(*) FROM {{tables.custody_secrets}}"
+        )
+        == 0
+    )
 
 
 async def test_login_evidence_retired_during_lookup_cannot_stage_a_token(production_routed_owner):
@@ -481,7 +527,9 @@ def mail_token(world: RoutedOwner, start: int, *, contact: str, path: str) -> st
     return token
 
 
-async def enrol_contact_approver(world: RoutedOwner, *, ref: str, contact: str) -> SoftAuthenticator:
+async def enrol_contact_approver(
+    world: RoutedOwner, *, ref: str, contact: str
+) -> SoftAuthenticator:
     change_root = f"/installations/{world.installation['installation_id']}/change-sets"
     headers = {"X-CSRF-Token": world.holder.csrf_token}
     mail_before = len(world.smtp.received)
@@ -490,18 +538,20 @@ async def enrol_contact_approver(world: RoutedOwner, *, ref: str, contact: str) 
         json={
             "reason": "Designate a contact approver",
             "sealed": [],
-            "changes": [{
-                "kind": "approver",
-                "op": "create",
-                "ref": ref,
-                "after": {
-                    "v": 1,
-                    "approver_ref": ref,
-                    "contact": contact,
-                    "covers": [SECRET_ID],
-                    "principal": None,
-                },
-            }],
+            "changes": [
+                {
+                    "kind": "approver",
+                    "op": "create",
+                    "ref": ref,
+                    "after": {
+                        "v": 1,
+                        "approver_ref": ref,
+                        "contact": contact,
+                        "covers": [SECRET_ID],
+                        "principal": None,
+                    },
+                }
+            ],
         },
         headers=headers,
     )
@@ -552,25 +602,29 @@ async def test_current_approver_session_has_no_backend_credential_ingress_author
     )
     assert response.status_code == HTTPStatus.FORBIDDEN
     assert response.json() == {"detail": "owner_required"}
-    assert await world.service.runtime.db().fetch_value(
-        "SELECT count(*) FROM {{tables.custody_secrets}}"
-    ) == 0
+    assert (
+        await world.service.runtime.db().fetch_value(
+            "SELECT count(*) FROM {{tables.custody_secrets}}"
+        )
+        == 0
+    )
 
 
 @asynccontextmanager
 async def pause_revocation_view(
     world: RoutedOwner, monkeypatch
-) -> AsyncIterator[tuple[asyncio.Event, asyncio.Event, ContextVar[bool]]]:
+) -> AsyncIterator[tuple[asyncio.Event, asyncio.Event]]:
     """Hold a genuine governance reply after the revoke's F6 admission."""
     transport = world.coordination.server.transport
     forward = transport.handle_async_request
-    revoking = ContextVar("revoking", default=False)
     observed = asyncio.Event()
     resume = asyncio.Event()
 
     async def request(incoming: httpx.Request) -> httpx.Response:
         response = await forward(incoming)
-        if revoking.get() and incoming.url.path.endswith("/post-governance-hook/registrations"):
+        if not observed.is_set() and incoming.url.path.endswith(
+            f"/{GOVERNANCE_HOOK}/registrations"
+        ):
             assert response.status_code == HTTPStatus.OK
             observed.set()
             await resume.wait()
@@ -579,7 +633,7 @@ async def pause_revocation_view(
     with monkeypatch.context() as patch:
         patch.setattr(transport, "handle_async_request", request)
         try:
-            yield observed, resume, revoking
+            yield observed, resume
         finally:
             resume.set()
 
@@ -590,6 +644,24 @@ PARENT_LOCK = (
 )
 
 
+async def wait_for_idle_governance(world: RoutedOwner) -> None:
+    """Let the prior designation drain before observing a new governance read."""
+    runtime = world.service.runtime
+    team_id = world.member.team_id
+    async with asyncio.timeout(GRANT_SECONDS + 10):
+        while await runtime.db().fetch_value(
+            "SELECT EXISTS(SELECT 1 FROM {{tables.outbox_events}} "
+            "WHERE team_id=$1 AND kind=$2 AND drained_at IS NULL)",
+            team_id,
+            GOVERNANCE_HOOK,
+        ):
+            await asyncio.sleep(0.02)
+        view = await runtime.hook_registrations().view(team_id, GOVERNANCE_HOOK)
+        assert view is not None
+        while view.is_fresh(datetime.now(UTC)):
+            await asyncio.sleep(0.02)
+
+
 async def test_owner_role_revocation_waits_for_the_real_ingress_transaction(
     production_routed_owner, monkeypatch
 ):
@@ -597,18 +669,12 @@ async def test_owner_role_revocation_waits_for_the_real_ingress_transaction(
     db = world.service.runtime.db()
     staged = await post_token(world)
     assert staged.status_code == HTTPStatus.CREATED, response_status(staged)
-    # Governance registration is cached for the real advertised grant age.
-    # Let the fixture's designation view age out before the action under test.
-    await asyncio.sleep(GRANT_SECONDS)
+    await wait_for_idle_governance(world)
     body = await signed_owner_action(world, OwnerAct.REVOKE)
     posting = revoking = None
-    async with pause_revocation_view(world, monkeypatch) as (observed, resume, marker):
+    async with pause_revocation_view(world, monkeypatch) as (observed, resume):
         try:
-            token = marker.set(True)
-            try:
-                revoking = asyncio.create_task(deliver_owner_action(world, body))
-            finally:
-                marker.reset(token)
+            revoking = asyncio.create_task(deliver_owner_action(world, body))
             await asyncio.wait_for(observed.wait(), 10)
             async with db.transaction() as gate:
                 gate_pid = await gate.fetch_value("SELECT pg_backend_pid()")
@@ -616,13 +682,19 @@ async def test_owner_role_revocation_waits_for_the_real_ingress_transaction(
                     PARENT_LOCK, world.installation["installation_id"], world.member.team_id
                 )
                 posting = asyncio.create_task(post_token(world))
-                ingress_pid = await blocked_pid(db, gate_pid, posting, relation="onepassword_credentials")
+                ingress_pid = await blocked_pid(
+                    db, gate_pid, posting, relation="onepassword_credentials"
+                )
                 resume.set()
-                revoker_pid = await blocked_pid(db, ingress_pid, revoking, relation="role_assignments")
+                revoker_pid = await blocked_pid(
+                    db, ingress_pid, revoking, relation="role_assignments"
+                )
                 assert ingress_pid != revoker_pid and gate_pid != ingress_pid
             response, revoked = await asyncio.wait_for(asyncio.gather(posting, revoking), 15)
-            assert response.status_code == HTTPStatus.CREATED and response.json()["version"] == 2
-            assert revoked.status_code == HTTPStatus.OK
+            assert response.status_code == HTTPStatus.CREATED and response.json()["version"] == 2, (
+                response_status(response)
+            )
+            assert revoked.status_code == HTTPStatus.OK, response_status(revoked)
             assert (await post_token(world)).status_code == HTTPStatus.UNAUTHORIZED
         finally:
             resume.set()
@@ -638,7 +710,9 @@ async def test_owner_role_revocation_waits_for_the_real_ingress_transaction(
     assert await db.fetch_value("SELECT last_version FROM {{tables.custody_secrets}}") == 2
 
 
-async def test_expired_f6_after_wait_rolls_back_the_new_token_version(production_routed_owner):
+async def test_expired_f6_after_wait_rolls_back_the_new_token_version(
+    production_routed_owner, monkeypatch
+):
     world = production_routed_owner
     db = world.service.runtime.db()
     await wait_for_grant_expiry(world)
@@ -646,11 +720,12 @@ async def test_expired_f6_after_wait_rolls_back_the_new_token_version(production
     assert staged.status_code == HTTPStatus.CREATED, response_status(staged)
     response = await post_during_expiry(
         world,
+        monkeypatch,
         relation="onepassword_credentials",
         lock_query=PARENT_LOCK,
         arguments=(world.installation["installation_id"], world.member.team_id),
     )
-    assert response.status_code == HTTPStatus.SERVICE_UNAVAILABLE
+    assert response.status_code == HTTPStatus.SERVICE_UNAVAILABLE, response_status(response)
     assert response.json() == {"detail": "authority_unavailable"}
     assert await db.fetch_value("SELECT last_version FROM {{tables.custody_secrets}}") == 1
     assert await db.fetch_value("SELECT count(*) FROM {{tables.sealed_versions}}") == 1
