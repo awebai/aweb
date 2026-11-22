@@ -121,7 +121,29 @@ func TestHostedSignupRecoveryRetainsSignerAndCredential(t *testing.T) {
 				t.Setenv("AWEB_URL", server.URL)
 				request.BaseURL = ""
 			}
-			if _, err := executeGuidedOnboardingWizard(request); err == nil {
+			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+			defer cancel()
+			binary := filepath.Join(t.TempDir(), "aw")
+			buildAwBinary(t, ctx, binary)
+			oatsArgs := []string{"init", "--new-account", "--username", "recover", "--name", "terminal", "--json", "--do-not-touch-agents-md", "--write-context=false"}
+			runOATSInit := func() ([]byte, error) {
+				command := exec.CommandContext(ctx, binary, oatsArgs...)
+				command.Dir = directory
+				command.Env = append(idCreateCommandEnv(os.Getenv("HOME")), "AWEB_URL="+server.URL)
+				return command.CombinedOutput()
+			}
+			if failure == "connect after response" {
+				if raw, err := runOATSInit(); err == nil || !strings.Contains(string(raw), "connect interrupted") {
+					t.Fatalf("expected connect to fail after signup: %v %s", err, raw)
+				}
+				cert, err := awconfig.LoadTeamCertificateForTeam(directory, "default:recover.example")
+				if err != nil || cert.MemberDIDKey != didKey {
+					t.Fatalf("failed connect did not leave the original certificate: %v", err)
+				}
+				if _, err := awid.LoadSigningKey(awconfig.WorktreeSigningKeyPath(directory)); err != nil {
+					t.Fatalf("failed connect did not leave the signer: %v", err)
+				}
+			} else if _, err := executeGuidedOnboardingWizard(request); err == nil {
 				t.Fatal("expected interrupted signup/install")
 			}
 			path := filepath.Join(directory, ".aw", "signup-recovery.json")
@@ -142,10 +164,6 @@ func TestHostedSignupRecoveryRetainsSignerAndCredential(t *testing.T) {
 				}
 			}
 			readsBefore := usernameReads
-			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
-			defer cancel()
-			binary := filepath.Join(t.TempDir(), "aw")
-			buildAwBinary(t, ctx, binary)
 			for _, changed := range [][]string{{"--username", "another"}, {"--global"}, {"--url", "http://127.0.0.1:1"}, {"--invite", "aw_inv_another_fixture"}} {
 				args := append([]string{"init", "--json", "--do-not-touch-agents-md"}, changed...)
 				refused := exec.CommandContext(ctx, binary, args...)
@@ -178,10 +196,16 @@ func TestHostedSignupRecoveryRetainsSignerAndCredential(t *testing.T) {
 			if !foundRecovery || bytes.Contains(diagnosed, []byte(credential)) {
 				t.Fatalf("doctor lost or exposed recovery: %s", diagnosed)
 			}
-			command := exec.CommandContext(ctx, binary, "init", "--json", "--do-not-touch-agents-md", "--url", server.URL, "--write-context=false")
-			command.Dir, command.Env = directory, idCreateCommandEnv(directory)
-			if raw, err := command.CombinedOutput(); err != nil {
-				t.Fatalf("command resume: %v %s", err, raw)
+			if failure == "connect after response" {
+				if raw, err := runOATSInit(); err != nil {
+					t.Fatalf("repeat the OATS signup command: %v %s", err, raw)
+				}
+			} else {
+				command := exec.CommandContext(ctx, binary, "init", "--json", "--do-not-touch-agents-md", "--url", server.URL, "--write-context=false")
+				command.Dir, command.Env = directory, idCreateCommandEnv(directory)
+				if raw, err := command.CombinedOutput(); err != nil {
+					t.Fatalf("command resume: %v %s", err, raw)
+				}
 			}
 			if _, err := os.Stat(filepath.Join(directory, ".aw", "context")); !os.IsNotExist(err) {
 				t.Fatalf("init ignored --write-context=false: %v", err)
@@ -209,6 +233,14 @@ func TestHostedSignupRecoveryRetainsSignerAndCredential(t *testing.T) {
 			}
 			if workspace.APIKey != credential {
 				t.Fatal("connected workspace lost its credential")
+			}
+			originalCert, err := awid.DecodeTeamCertificateHeader(retainedResponse.Certificate)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cert, err := awconfig.LoadTeamCertificateForTeam(directory, originalCert.Team)
+			if err != nil || cert.CertificateID != originalCert.CertificateID || workspace.Membership(originalCert.Team) == nil {
+				t.Fatalf("resume did not install the original membership: %v", err)
 			}
 			if _, err := os.Stat(path); !os.IsNotExist(err) {
 				t.Fatalf("completed signup retained recovery: %v", err)

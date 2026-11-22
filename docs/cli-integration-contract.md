@@ -39,6 +39,29 @@ check fails. `aw doctor` remains a report command. `aw init --join-from SOURCE
 one process without returning its token. FRESH must be explicitly selected and
 free of existing identity credentials or workspace bindings; an inherited identity home is never an implicit creation destination.
 
+## Hosted signup recovery
+
+A valid `.aw/signup-recovery.json` is the resumption signal for an interrupted
+hosted signup. Retry the original command in the same working directory:
+
+```sh
+AWEB_URL=<original-service-url> aw init --new-account --username U --name N
+```
+
+Keep the original identity scope, registry and other signup inputs if explicitly
+selected. A supplied API key or a different creation or join outcome cannot
+resume this signup. This applies even if `.aw/signing.key` and a team certificate
+already exist after a failed connect. When the signup response was saved, the
+retry reuses that response and the original signer to finish installation and
+connect. It makes no second signup request and keeps the existing API key.
+
+After signup succeeds, aw removes the journal only once the signer, membership
+and workspace credential are installed and connect has succeeded. A definitive
+409 on the first local signup submission clears the rejected attempt separately
+so the caller can choose another username. The per-checkout lock lives in aw's
+user state under `signup-locks`. Use the journal's presence as the recovery
+signal. Keep its contents private.
+
 ## Validation
 
 These identity-independent commands use the existing CLI or SDK owner and make
