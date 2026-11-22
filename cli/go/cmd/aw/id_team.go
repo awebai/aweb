@@ -1454,13 +1454,10 @@ func runTeamList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	workspacePath, err := awconfig.IdentityHomePath(home, "workspace.yaml")
-	if err != nil {
-		return err
-	}
-	workspace, err := awconfig.LoadWorktreeWorkspaceForTeamList(workspacePath)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("read workspace binding: %w; repair the selected home's workspace.yaml before listing its bindings", err)
+	// The binding only supplies optional coordinates. Team state owns the list.
+	var workspace *awconfig.WorktreeWorkspace
+	if workspacePath, err := awconfig.IdentityHomePath(home, "workspace.yaml"); err == nil {
+		workspace, _ = awconfig.LoadWorktreeWorkspaceFrom(workspacePath)
 	}
 
 	items := make([]teamListItem, 0, len(teamState.Memberships))

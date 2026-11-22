@@ -129,95 +129,10 @@ func TestOATSOfflineMembershipInspection(t *testing.T) {
 			}
 		}
 	})
-	t.Run("list tolerates a released top-level alias", func(t *testing.T) {
+	t.Run("list ignores unusable supplemental bindings", func(t *testing.T) {
 		workspacePath := awconfig.WorktreeWorkspacePath(dir)
 		original, err := os.ReadFile(workspacePath)
 		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() {
-			if err := os.WriteFile(workspacePath, original, 0o600); err != nil {
-				t.Error(err)
-			}
-		})
-		legacy := []byte("alias: stale-workspace-alias\n" + string(original))
-		if err := os.WriteFile(workspacePath, legacy, 0o600); err != nil {
-			t.Fatal(err)
-		}
-		out, err := run("team", "list", "--json")
-		if err != nil {
-			t.Fatalf("list with legacy alias: %v\n%s", err, out)
-		}
-		var result teamListOutput
-		if err := json.Unmarshal(out, &result); err != nil {
-			t.Fatalf("decode list: %v\n%s", err, out)
-		}
-		if len(result.Memberships) != 2 {
-			t.Fatalf("memberships: %s", out)
-		}
-		for _, membership := range result.Memberships {
-			if membership.Alias != "worker" || membership.WorkspaceID != "workspace-"+strings.Split(membership.TeamID, ":")[0] {
-				t.Fatalf("legacy alias changed the membership or dropped coordinates: %s", out)
-			}
-		}
-		if _, err := awconfig.LoadWorktreeWorkspaceFrom(workspacePath); err == nil || !strings.Contains(err.Error(), "unsupported fields: alias") {
-			t.Fatalf("strict workspace loader accepted the legacy field: %v", err)
-		}
-		if err := os.WriteFile(workspacePath, append(legacy, []byte("unknown_field: invalid\n")...), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		out, err = run("team", "list", "--json")
-		if err == nil || !strings.Contains(string(out), "unsupported fields: unknown_field") {
-			t.Fatalf("list with unrelated unknown field: %v\n%s", err, out)
-		}
-	})
-	t.Run("list accepts an alias-only supplemental binding", func(t *testing.T) {
-		workspacePath := awconfig.WorktreeWorkspacePath(dir)
-		original, err := os.ReadFile(workspacePath)
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() {
-			if err := os.WriteFile(workspacePath, original, 0o600); err != nil {
-				t.Error(err)
-			}
-		})
-		if err := os.WriteFile(workspacePath, []byte("alias: stale-workspace-alias\naweb_url: https://service.invalid/api\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		out, err := run("--identity-home", filepath.Dir(workspacePath), "id", "team", "list", "--json")
-		if err != nil {
-			t.Fatalf("list with alias-only binding: %v\n%s", err, out)
-		}
-		var result teamListOutput
-		if err := json.Unmarshal(out, &result); err != nil {
-			t.Fatalf("decode list: %v\n%s", err, out)
-		}
-		if len(result.Memberships) != 2 || result.ActiveTeam != state.ActiveTeam {
-			t.Fatalf("unexpected team state: %s", out)
-		}
-		for _, membership := range result.Memberships {
-			if membership.Alias != "worker" || membership.WorkspaceID != "" {
-				t.Fatalf("alias-only workspace changed the membership: %s", out)
-			}
-		}
-	})
-	t.Run("list preserves recorded membership without a service route", func(t *testing.T) {
-		workspacePath := awconfig.WorktreeWorkspacePath(dir)
-		original, err := os.ReadFile(workspacePath)
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() {
-			if err := os.WriteFile(workspacePath, original, 0o600); err != nil {
-				t.Error(err)
-			}
-		})
-		unrouted := strings.Replace(string(original), "aweb_url: "+workspace.AwebURL+"\n", "", 1)
-		if unrouted == string(original) {
-			t.Fatalf("workspace fixture has no service route to remove: %s", original)
-		}
-		if err := os.WriteFile(workspacePath, []byte(unrouted), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		unroutedState := &awconfig.TeamState{ActiveTeam: state.ActiveTeam, Memberships: append([]awconfig.TeamMembership(nil), state.Memberships...)}
@@ -228,28 +143,48 @@ func TestOATSOfflineMembershipInspection(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() {
+			if err := os.WriteFile(workspacePath, original, 0o600); err != nil {
+				t.Error(err)
+			}
 			if err := awconfig.SaveTeamState(dir, state); err != nil {
 				t.Error(err)
 			}
 		})
-		out, err := run("team", "list", "--json")
-		if err != nil {
-			t.Fatalf("list without service route: %v\n%s", err, out)
+		cases := []struct {
+			name string
+			yaml string
+		}{
+			{"historical top-level alias", "alias: stale-workspace-alias\naweb_url: https://service.invalid/api\n"},
+			{"missing service route", strings.Replace(string(original), "aweb_url: "+workspace.AwebURL+"\n", "", 1)},
+			{"unknown field", string(original) + "unknown_field: invalid\n"},
+			{"malformed YAML", "memberships: [\n"},
 		}
-		var result teamListOutput
-		if err := json.Unmarshal(out, &result); err != nil {
-			t.Fatalf("decode list: %v\n%s", err, out)
-		}
-		if len(result.Memberships) != 2 || result.ActiveTeam != state.ActiveTeam {
-			t.Fatalf("unexpected team state: %s", out)
-		}
-		for _, membership := range result.Memberships {
-			if membership.Alias != "worker" || membership.AwebURL != "" || membership.WorkspaceID != "workspace-"+strings.Split(membership.TeamID, ":")[0] {
-				t.Fatalf("list changed membership or invented a service route: %s", out)
-			}
-		}
-		if _, err := awconfig.LoadWorktreeWorkspaceFrom(workspacePath); err == nil || !strings.Contains(err.Error(), "workspace.yaml is missing aweb_url") {
-			t.Fatalf("strict workspace loader accepted the unrouted binding: %v", err)
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				if err := os.WriteFile(workspacePath, []byte(tc.yaml), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := awconfig.LoadWorktreeWorkspaceFrom(workspacePath); err == nil {
+					t.Fatal("strict workspace loader accepted the fixture")
+				}
+				out, err := run("--identity-home", filepath.Dir(workspacePath), "id", "team", "list", "--json")
+				if err != nil {
+					t.Fatalf("list with unusable binding: %v\n%s", err, out)
+				}
+				var result teamListOutput
+				if err := json.Unmarshal(out, &result); err != nil {
+					t.Fatalf("decode list: %v\n%s", err, out)
+				}
+				if len(result.Memberships) != 2 || result.ActiveTeam != state.ActiveTeam {
+					t.Fatalf("unexpected team state: %s", out)
+				}
+				for _, membership := range result.Memberships {
+					cert := certs[membership.TeamID]
+					if cert == nil || membership.CertificateID != cert.CertificateID || membership.Alias != "worker" || membership.AwebURL != "" || membership.WorkspaceID != "" {
+						t.Fatalf("list used an unusable binding or changed the membership: %s", out)
+					}
+				}
+			})
 		}
 	})
 	t.Run("cert show selects inactive team", func(t *testing.T) {
