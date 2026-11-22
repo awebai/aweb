@@ -606,18 +606,17 @@ func (r *doctorRunner) addAWIDEncryptionKeyCheck(state *doctorIdentityState, res
 		r.add(awidCheck(doctorCheckAWIDEncryptionKey, doctorStatusFail, "awid has no published E2E encryption key assertion for this identity.", "Run `aw id encryption-key setup` before expecting to receive E2E messages.", map[string]any{"did_aw": state.stableID}))
 		return
 	}
-	if err := awid.VerifyEncryptionKeyAssertion(resolution.EncryptionKey, strings.TrimSpace(state.did), strings.TrimSpace(state.stableID), time.Now().UTC()); err != nil {
-		r.add(awidCheck(doctorCheckAWIDEncryptionKey, doctorStatusFail, "awid published E2E encryption-key assertion is invalid for the local identity.", "Rotate or republish the E2E encryption key; do not accept substituted keys.", map[string]any{"error": err.Error()}))
+	localKeyID := ""
+	if record := state.encryptionState.ActiveRecord(); record != nil {
+		localKeyID = strings.TrimSpace(record.KeyID)
+	}
+	err := validatePublishedEncryptionKey(resolution.EncryptionKey, state.did, state.stableID, state.custody, localKeyID)
+	if errors.Is(err, errPublishedEncryptionKeyMismatch) {
+		r.add(awidCheck(doctorCheckAWIDEncryptionKey, doctorStatusFail, "awid published E2E encryption key does not match the local active private key.", "Run `aw id encryption-key setup` from the identity home device or restore the matching private key.", map[string]any{"local_encryption_key_id": localKeyID, "published_encryption_key_id": strings.TrimSpace(resolution.EncryptionKey.EncryptionKeyID)}))
 		return
 	}
-	localKeyID := ""
-	if state.encryptionState != nil {
-		if record := state.encryptionState.ActiveRecord(); record != nil {
-			localKeyID = strings.TrimSpace(record.KeyID)
-		}
-	}
-	if localKeyID != "" && strings.TrimSpace(resolution.EncryptionKey.EncryptionKeyID) != localKeyID {
-		r.add(awidCheck(doctorCheckAWIDEncryptionKey, doctorStatusFail, "awid published E2E encryption key does not match the local active private key.", "Run `aw id encryption-key setup` from the identity home device or restore the matching private key.", map[string]any{"local_encryption_key_id": localKeyID, "published_encryption_key_id": strings.TrimSpace(resolution.EncryptionKey.EncryptionKeyID)}))
+	if err != nil {
+		r.add(awidCheck(doctorCheckAWIDEncryptionKey, doctorStatusFail, "awid published E2E encryption-key assertion is invalid for the local identity.", "Rotate or republish the E2E encryption key; do not accept substituted keys.", map[string]any{"error": err.Error()}))
 		return
 	}
 	r.add(awidCheck(doctorCheckAWIDEncryptionKey, doctorStatusOK, "awid published E2E encryption key matches the local identity.", "", map[string]any{"encryption_key_id": strings.TrimSpace(resolution.EncryptionKey.EncryptionKeyID)}))

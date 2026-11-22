@@ -138,28 +138,35 @@ class TestTeamIdentity:
             identity.team_id = "other"
 
 
-async def _admitted_cert_info(env, *, alias):
-    """Register/connect through real routes before exercising a native reader."""
+async def _register_fixture_certificate(env, certificate):
     from aweb.application_state import application_registry_client
-    from aweb.team_auth import parse_and_verify_certificate
-    from test_dashboard_privacy import TEAM, TEAM_NAME
-    from test_messages_http import _signed_team_headers
+    from test_dashboard_privacy import TEAM_NAME
 
-    member = env.actors[alias]
-    claims = json.loads(base64.b64decode(member.certificate))
+    claims = json.loads(base64.b64decode(certificate))
     registry = application_registry_client(env.app.state)
     await registry.register_team_certificate(
         "example.test",
         TEAM_NAME,
         team_controller_signing_key=env.team_sk,
         certificate_id=claims["certificate_id"],
-        member_did_key=member.did,
+        member_did_key=claims["member_did_key"],
         member_did_aw=claims.get("member_did_aw") or None,
         member_address=claims.get("member_address") or None,
-        alias=alias,
+        alias=claims["alias"],
         identity_scope=claims["identity_scope"],
-        certificate=member.certificate,
+        certificate=certificate,
     )
+    return registry
+
+
+async def _admitted_cert_info(env, *, alias):
+    """Register/connect through real routes before exercising a native reader."""
+    from aweb.team_auth import parse_and_verify_certificate
+    from test_dashboard_privacy import TEAM, TEAM_NAME
+    from test_messages_http import _signed_team_headers
+
+    member = env.actors[alias]
+    registry = await _register_fixture_certificate(env, member.certificate)
     connected = await env.client.post(
         "/v1/connect",
         content=b"{}",
@@ -287,6 +294,211 @@ class TestResolveTeamIdentity:
         ]
         assert len(member_reads) == 1, member_reads
         assert "FOR SHARE OF t, a" in member_reads[0]
+
+    @pytest.mark.asyncio
+    async def test_warm_acceptance_takes_one_statement_on_the_request_connection(self, privacy_app):
+        from aweb.connection_scope import connection_scope
+        from aweb.member_team_key import read_member_projection
+        from aweb.team_auth_deps import resolve_team_identity
+
+        env = privacy_app
+        member, cert_info = await _admitted_cert_info(env, alias="bob")
+        db = env.infra.get_manager("aweb")
+        cert_info["agent_row"] = await read_member_projection(db, agent_id=member.id)
+        queries = []
+        async with connection_scope():
+            async with db.acquire() as connection:
+                assert not connection.is_in_transaction()
+            with connection.query_logger(lambda event: queries.append(event.query)):
+                identity = await resolve_team_identity(db, cert_info)
+                assert await db.fetch_value("SELECT 1") == 1
+
+        assert identity.agent_id == str(member.id)
+        admission = [query for query in queries if query != "SELECT 1"]
+        assert len(admission) == 1, admission
+        assert "FOR SHARE OF t, a" in admission[0]
+
+    @pytest.mark.asyncio
+    async def test_mounted_snapshot_carries_the_locked_row_and_overlay_once(self, privacy_app):
+        from dataclasses import replace
+
+        from aweb.connection_scope import connection_scope
+        from aweb.team_auth_deps import (
+            admitted_member_projection,
+            read_team_member_snapshot,
+            resolve_team_membership,
+        )
+
+        env = privacy_app
+        member, cert_info = await _admitted_cert_info(env, alias="bob")
+        request = _request_with_headers({})
+        overlay = """
+            SELECT t.team_id AS host_team_id, native_member.agent_id AS host_agent_id,
+                   $3 AS host_certificate_id
+            FROM {{tables.teams}} t LEFT JOIN native_member ON TRUE
+            WHERE t.team_id=$1
+        """
+        queries = []
+        async with connection_scope():
+            async with env.db.acquire() as connection:
+                assert not connection.is_in_transaction()
+            with connection.query_logger(lambda event: queries.append(event.query)):
+                snapshot = await read_team_member_snapshot(
+                    env.db, cert_info, request=request, overlay_sql=overlay,
+                )
+                wrapped_request = Request(dict(request.scope))
+                admitted = await resolve_team_membership(
+                    env.db, cert_info, request=wrapped_request, snapshot=snapshot,
+                )
+                assert await env.db.fetch_value("SELECT 1") == 1
+            assert admitted_member_projection(wrapped_request, admitted.identity) is snapshot.member
+            for changed in (
+                {"team_id": "other:example.test"},
+                {"agent_id": str(uuid.uuid4())},
+                {"did_key": "other-did"},
+                {"certificate_id": "other-certificate"},
+                {"verified_team_did_key": "other-controller"},
+                {"certificate_verified": False},
+            ):
+                assert admitted_member_projection(wrapped_request, replace(admitted.identity, **changed)) is None
+            assert admitted_member_projection(_request_with_headers({}), admitted.identity) is None
+            with pytest.raises(ValueError, match="different request or certificate"):
+                await resolve_team_membership(
+                    env.db, cert_info, request=_request_with_headers({}), snapshot=snapshot,
+                )
+            with pytest.raises(ValueError, match="different request or certificate"):
+                await resolve_team_membership(
+                    env.db, {**cert_info, "certificate_id": "another-certificate"},
+                    request=wrapped_request, snapshot=snapshot,
+                )
+
+        assert admitted.identity.agent_id == str(member.id)
+        assert admitted.snapshot is snapshot
+        assert snapshot.member is not None and snapshot.member["agent_id"] == member.id
+        assert snapshot.host_row == {
+            "host_team_id": cert_info["team_id"],
+            "host_agent_id": member.id,
+            "host_certificate_id": cert_info["certificate_id"],
+        }
+        admission = [query for query in queries if query != "SELECT 1"]
+        assert len(admission) == 1, admission
+        assert "FOR SHARE OF t, a" in admission[0]
+        assert admitted_member_projection(request, admitted.identity) is None
+        with pytest.raises(ValueError, match="different request or certificate"):
+            await resolve_team_membership(env.db, cert_info, request=request, snapshot=snapshot)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("remove_before_retry", [False, True])
+    async def test_mounted_reacceptance_checks_host_policy_on_the_update_reread(
+        self, privacy_app, remove_before_retry,
+    ):
+        from aweb.application_state import application_registry_client
+        from aweb.connection_scope import connection_scope
+        from aweb.lifecycle_agent import AgentDisposition, apply_agent_disposition_on
+        from aweb.member_team_key import CurrentMembershipRequired, read_member_projection
+        from aweb.team_auth_deps import (
+            admitted_member_projection,
+            read_team_member_snapshot,
+            resolve_team_membership,
+            verify_request_certificate,
+        )
+        from test_dashboard_privacy import TEAM, TEAM_NAME
+        from test_messages_http import _signed_team_headers
+
+        env = privacy_app
+        member, first = await _admitted_cert_info(env, alias="bob")
+        registry = application_registry_client(env.app.state)
+        await registry.revoke_team_certificate(
+            "example.test", TEAM_NAME,
+            team_controller_signing_key=env.team_sk, certificate_id=first["certificate_id"],
+        )
+        replacement_id = str(uuid.uuid4())
+        replacement = _encode_certificate(_make_certificate(
+            env.team_sk, env.team_did, member.did,
+            certificate_id=replacement_id, team_id=TEAM, alias=first["alias"],
+        ))
+        await _register_fixture_certificate(env, replacement)
+        request = _request_with_headers(
+            _signed_team_headers(member.sk, member.did, TEAM, replacement, b"")
+        )
+        request.scope["app"] = env.app
+        checked = await verify_request_certificate(request, env.infra, fresh=True)
+        snapshot = await read_team_member_snapshot(
+            env.db, checked, request=request,
+            overlay_sql="SELECT certificate_id AS previous_certificate_id FROM native_member",
+        )
+        assert snapshot.member is not None and snapshot.member["certificate_id"] == first["certificate_id"]
+        assert snapshot.host_row == {"previous_certificate_id": first["certificate_id"]}
+
+        rereads = []
+
+        def refuse(reread):
+            rereads.append(reread)
+            raise HTTPException(403, "Host policy refused")
+
+        with pytest.raises(HTTPException, match="Host policy refused"):
+            await resolve_team_membership(
+                env.db, checked, request=request, snapshot=snapshot, before_write=refuse,
+            )
+        assert len(rereads) == 1 and rereads[0] is not snapshot
+        assert rereads[0].member == snapshot.member and rereads[0].host_row == snapshot.host_row
+        assert await read_member_projection(env.db, agent_id=member.id) == snapshot.member
+
+        if remove_before_retry:
+            async with env.db.transaction() as tx:
+                await apply_agent_disposition_on(
+                    tx, team_id=TEAM, agent_ids=[member.id],
+                    disposition=AgentDisposition.PREPARED_REMOVAL, deleted_at=datetime.now(timezone.utc),
+                )
+            with pytest.raises(CurrentMembershipRequired):
+                await resolve_team_membership(
+                    env.db, checked, request=request, snapshot=snapshot, before_write=rereads.append,
+                )
+            assert len(rereads) == 1
+            removed = await read_member_projection(env.db, agent_id=member.id)
+            assert removed is not None and removed["deleted_at"] is not None
+            assert removed["certificate_id"] == first["certificate_id"]
+            return
+
+        async with connection_scope():
+            admitted = await resolve_team_membership(
+                env.db, checked, request=request, snapshot=snapshot, before_write=rereads.append,
+            )
+            assert admitted_member_projection(request, admitted.identity) is admitted.snapshot.member
+        assert len(rereads) == 2
+        assert admitted.identity.certificate_id == replacement_id
+        assert admitted.snapshot.member == await read_member_projection(env.db, agent_id=member.id)
+        assert admitted.snapshot.member["certificate_id"] == replacement_id
+
+    @pytest.mark.asyncio
+    async def test_mounted_proof_can_read_host_facts_before_connect(self, privacy_app):
+        from aweb.member_team_key import CurrentMembershipRequired
+        from aweb.team_auth_deps import (
+            read_team_member_snapshot,
+            resolve_team_membership,
+            verify_request_certificate,
+        )
+        from test_dashboard_privacy import TEAM
+        from test_messages_http import _signed_team_headers
+
+        env = privacy_app
+        private_key, _, did_key = _make_keypair()
+        certificate = _encode_certificate(_make_certificate(
+            env.team_sk, env.team_did, did_key, certificate_id=str(uuid.uuid4()),
+            team_id=TEAM, alias="awaiting-connect", identity_scope="local",
+        ))
+        await _register_fixture_certificate(env, certificate)
+        request = _request_with_headers(_signed_team_headers(private_key, did_key, TEAM, certificate, b""))
+        request.scope["app"] = env.app
+        checked = await verify_request_certificate(request, env.infra)
+        snapshot = await read_team_member_snapshot(
+            env.db, checked, request=request,
+            overlay_sql="SELECT team_id AS host_team_id FROM {{tables.teams}} WHERE team_id=$1",
+        )
+        assert snapshot.member is None
+        assert snapshot.host_row == {"host_team_id": TEAM}
+        with pytest.raises(CurrentMembershipRequired, match="Agent not connected"):
+            await resolve_team_membership(env.db, checked, request=request, snapshot=snapshot)
 
     @pytest.mark.asyncio
     async def test_another_members_snapshot_requires_the_exact_native_lookup(self, privacy_app):

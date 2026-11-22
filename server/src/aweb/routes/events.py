@@ -945,7 +945,7 @@ async def event_stream(
         deadline_dt = max_deadline
     deadline_dt = clamp_deadline_to_grant(deadline_dt, identity)
 
-    await require_valid_stream_grant(request, db, identity)
+    await require_valid_stream_grant(request, db, identity, use_admitted_member=True)
 
     return StreamingResponse(
         _sse_agent_events(

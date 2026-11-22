@@ -117,8 +117,8 @@ func TestTeamCreateSetsAsideAKeyItCannotConfirmAndRestoresIt(t *testing.T) {
 	}
 
 	_, err := registerTeamAt(t, registryURL, faults, domain, name, controllerKey)
-	if code := errorCodeOf(err); code != codeTeamNameUnconfirmed {
-		t.Fatalf("first run: code=%q err=%v, want %q", code, err, codeTeamNameUnconfirmed)
+	if code := errorEnvelope(err, "").Error.Classification; code != codeTeamNameUnconfirmed {
+		t.Fatalf("first run: classification=%q err=%v, want %q", code, err, codeTeamNameUnconfirmed)
 	}
 	aside := setAsideKey(t, domain, name)
 	if aside == nil || didOf(aside) != registered {
@@ -137,8 +137,8 @@ func TestTeamCreateSetsAsideAKeyItCannotConfirmAndRestoresIt(t *testing.T) {
 
 	// While reads fail, the set-aside key is left alone and no new key is made.
 	_, err = registerTeamAt(t, registryURL, faults, domain, name, controllerKey)
-	if code := errorCodeOf(err); code != codeTeamNameUnconfirmed {
-		t.Fatalf("run while reads fail: code=%q err=%v", code, err)
+	if code := errorEnvelope(err, "").Error.Classification; code != codeTeamNameUnconfirmed {
+		t.Fatalf("run while reads fail: classification=%q err=%v", code, err)
 	}
 	if again := setAsideKey(t, domain, name); again == nil || !again.Equal(aside) {
 		t.Fatal("the set-aside key changed while reads failed")
@@ -200,8 +200,8 @@ func TestTeamCreateRemovesAnUnconfirmedKeyTheRegistryShowsIsNotTheTeams(t *testi
 
 			faults.failTeamRead.Store(true)
 			_, err := registerTeamAt(t, registryURL, faults, domain, name, controllerKey)
-			if code := errorCodeOf(err); code != codeTeamNameUnconfirmed {
-				t.Fatalf("run while reads fail: code=%q err=%v", code, err)
+			if code := errorEnvelope(err, "").Error.Classification; code != codeTeamNameUnconfirmed {
+				t.Fatalf("run while reads fail: classification=%q err=%v", code, err)
 			}
 			if setAsideKey(t, domain, name) == nil {
 				t.Fatal("the key this run created was not set aside")
@@ -209,8 +209,8 @@ func TestTeamCreateRemovesAnUnconfirmedKeyTheRegistryShowsIsNotTheTeams(t *testi
 
 			faults.failTeamRead.Store(false)
 			_, err = registerTeamAt(t, registryURL, faults, domain, name, controllerKey)
-			if code := errorCodeOf(err); code != codeTeamNameTaken {
-				t.Fatalf("run once the registry answers: code=%q err=%v, want %q", code, err, codeTeamNameTaken)
+			if code := errorEnvelope(err, "").Error.Classification; code != codeTeamNameTaken {
+				t.Fatalf("run once the registry answers: classification=%q err=%v, want %q", code, err, codeTeamNameTaken)
 			}
 			if setAsideKey(t, domain, name) != nil {
 				t.Fatal("the unconfirmed key was kept for a team pinned to another key")
@@ -252,8 +252,8 @@ func TestTeamCreateAgainstATeamPinnedToAnotherKey(t *testing.T) {
 	}
 
 	_, err := registerTeamAt(t, registryURL, http.DefaultTransport, domain, "public-team", controllerKey)
-	if code := errorCodeOf(err); code != codeTeamNameTaken {
-		t.Fatalf("public team: code=%q err=%v, want %q", code, err, codeTeamNameTaken)
+	if code := errorEnvelope(err, "").Error.Classification; code != codeTeamNameTaken {
+		t.Fatalf("public team: classification=%q err=%v, want %q", code, err, codeTeamNameTaken)
 	}
 	assertNoTeamKeyFile(t, domain, "public-team")
 	if setAsideKey(t, domain, "public-team") != nil {
@@ -261,8 +261,8 @@ func TestTeamCreateAgainstATeamPinnedToAnotherKey(t *testing.T) {
 	}
 
 	_, err = registerTeamAt(t, registryURL, http.DefaultTransport, domain, "private-team", controllerKey)
-	if code := errorCodeOf(err); code != codeTeamNameTaken {
-		t.Fatalf("private team: code=%q err=%v, want %q", code, err, codeTeamNameTaken)
+	if code := errorEnvelope(err, "").Error.Classification; code != codeTeamNameTaken {
+		t.Fatalf("private team: classification=%q err=%v, want %q", code, err, codeTeamNameTaken)
 	}
 	assertNoTeamKeyFile(t, domain, "private-team")
 	if setAsideKey(t, domain, "private-team") != nil {

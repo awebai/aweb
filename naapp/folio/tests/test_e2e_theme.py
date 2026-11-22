@@ -8,6 +8,7 @@ from typing import Any
 
 import httpx
 import pytest
+from test_e2e_asset_capabilities import _member_read, _served
 from test_e2e_present import _mint_present
 from test_e2e_smoke import (
     AWWorkspace,
@@ -63,14 +64,20 @@ def test_theme_wraps_present_page_and_body_team_cannot_cross_scope(
     team_a = _provision_team(aw_workspace_factory("theme-a"), folio=folio, alias="alice")
     team_b = _provision_team(aw_workspace_factory("theme-b"), folio=folio, alias="bob")
 
-    _create_document(folio, team_a, slug="memo", title="Memo", body="# Plain\n\nA table:\n\n| A | B |\n| - | - |\n| 1 | 2 |")
+    _create_document(
+        folio,
+        team_a,
+        slug="memo",
+        title="Memo",
+        body="# Plain\n\nA table:\n\n| A | B |\n| - | - |\n| 1 | 2 |",
+    )
     no_theme = _mint_present(folio, team_a, slug="memo")
     no_theme_page = httpx.get(no_theme["url"], timeout=10.0)
     assert no_theme_page.status_code == 200, no_theme_page.text
     assert "Presented with folio" in no_theme_page.text
     assert "theme-header" in no_theme_page.text
     assert "Brand header" not in no_theme_page.text
-    assert "<img class=\"brand-logo\"" not in no_theme_page.text
+    assert '<img class="brand-logo"' not in no_theme_page.text
     assert "<table>" in no_theme_page.text
 
     invalid_logo = _aw_request(
@@ -134,11 +141,10 @@ def test_theme_wraps_present_page_and_body_team_cannot_cross_scope(
     assert theme["logo_asset_id"] is not None
     assert theme["logo_url"] == f"{folio.origin}/assets/{theme['logo_asset_id']}"
 
-    logo = httpx.get(theme["logo_url"], timeout=10.0)
-    assert logo.status_code == 200, logo.text
-    assert logo.headers["content-type"].startswith("image/png")
-    assert logo.headers["x-content-type-options"] == "nosniff"
-    assert logo.content == base64.b64decode(_ONE_BY_ONE_PNG)
+    # logo_url is the asset's reference; members read the bytes with team auth.
+    logo = _member_read(team_a, f"{folio.origin}/v1/assets/{theme['logo_asset_id']}/content")
+    assert logo.returncode == 0, logo.stderr.decode(errors="replace")
+    assert logo.stdout == base64.b64decode(_ONE_BY_ONE_PNG)
 
     themed = _mint_present(folio, team_a, slug="memo")
     themed_page = httpx.get(themed["url"], timeout=10.0)
@@ -153,7 +159,9 @@ def test_theme_wraps_present_page_and_body_team_cannot_cross_scope(
     assert "</style><script" not in themed_page.text.lower()
     assert "&lt;/style&gt;&lt;script&gt;alert(3)&lt;/script&gt;" in themed_page.text
     assert "&lt;img src=x onerror=alert(4)&gt;" in themed_page.text
-    assert f'src="{folio.origin}/assets/{theme["logo_asset_id"]}"' in themed_page.text
+    logo_on_page = f"{themed['url']}/assets/{theme['logo_asset_id']}"
+    assert f'src="{logo_on_page}"' in themed_page.text
+    assert _served(httpx.get(logo_on_page, timeout=10.0), base64.b64decode(_ONE_BY_ONE_PNG))
     assert "<table>" in themed_page.text
 
     b_theme = _put_theme(
@@ -187,9 +195,9 @@ def test_builtin_aweb_preset_themes_present_page_per_scheme(
     assert _get_theme(folio, team)["preset"] == "aweb"
 
     # Document/light default uses the aweb identity light palette.
-    light_style = httpx.get(_mint_present(folio, team, slug="brand")["url"], timeout=10.0).text.split(
-        "</style>", 1
-    )[0]
+    light_style = httpx.get(
+        _mint_present(folio, team, slug="brand")["url"], timeout=10.0
+    ).text.split("</style>", 1)[0]
     light_colors = dict(re.findall(r"(--[\w-]+):\s*([^;]+);", light_style))
     for name, value in _AWEB_LIGHT_PALETTE.items():
         assert light_colors[name] == value
@@ -200,9 +208,9 @@ def test_builtin_aweb_preset_themes_present_page_per_scheme(
         team,
         {"preset": "aweb", "tokens": {"layout": {"color_scheme": "dark", "mode": "presentation"}}},
     )
-    dark_style = httpx.get(_mint_present(folio, team, slug="brand")["url"], timeout=10.0).text.split(
-        "</style>", 1
-    )[0]
+    dark_style = httpx.get(
+        _mint_present(folio, team, slug="brand")["url"], timeout=10.0
+    ).text.split("</style>", 1)[0]
     dark_colors = dict(re.findall(r"(--[\w-]+):\s*([^;]+);", dark_style))
     for name, value in _AWEB_DARK_PALETTE.items():
         assert dark_colors[name] == value
@@ -219,9 +227,9 @@ def test_builtin_aweb_preset_themes_present_page_per_scheme(
             },
         },
     )
-    custom_style = httpx.get(_mint_present(folio, team, slug="brand")["url"], timeout=10.0).text.split(
-        "</style>", 1
-    )[0]
+    custom_style = httpx.get(
+        _mint_present(folio, team, slug="brand")["url"], timeout=10.0
+    ).text.split("</style>", 1)[0]
     custom_colors = dict(re.findall(r"(--[\w-]+):\s*([^;]+);", custom_style))
     assert custom_colors["--bg"] == "#001122"
     assert custom_colors["--accent"] == "rgb(1, 2, 3)"

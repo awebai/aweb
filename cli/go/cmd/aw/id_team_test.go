@@ -957,7 +957,25 @@ func TestExecuteTeamCleanupCloudSignsProjectionDeletePayload(t *testing.T) {
 	})
 	pub := teamKey.Public().(ed25519.PublicKey)
 	var gotBody map[string]any
+	var advertiseGzip atomic.Bool
+	advertiseGzip.Store(true)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if advertiseGzip.Load() {
+			switch {
+			case r.Method == http.MethodGet && r.URL.Path == "/health":
+				w.Header().Set("Accept-Encoding", "gzip")
+			case r.Method == http.MethodPost && r.URL.Path == "/api/v1/teams/byoidt/projection-delete":
+				if r.Header.Get("Content-Encoding") != "gzip" {
+					t.Error("the previous fixture did not establish gzip support")
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				w.WriteHeader(http.StatusNoContent)
+			default:
+				http.NotFound(w, r)
+			}
+			return
+		}
 		if serveUnadvertisedHealth(w, r) {
 			return
 		}
@@ -981,6 +999,17 @@ func TestExecuteTeamCleanupCloudSignsProjectionDeletePayload(t *testing.T) {
 		})
 	}))
 	defer server.Close()
+	defer awid.ForgetRequestCompression(server.URL)
+	awid.ForgetRequestCompression(server.URL)
+
+	// Simulate a prior fixture at this origin advertising gzip. Switch to
+	// the plain handler on the same listener to reproduce reuse without a
+	// race to reacquire its port.
+	if err := postTeamCleanupCloud(context.Background(), server.URL, map[string]any{"fixture": "previous"}, nil); err != nil {
+		t.Fatalf("cache the previous fixture's compression capability: %v", err)
+	}
+	advertiseGzip.Store(false)
+	awid.ForgetRequestCompression(server.URL)
 
 	out, err := executeTeamCleanupCloud(
 		context.Background(),
@@ -1056,6 +1085,9 @@ func TestExecuteTeamCleanupCloudCanSignWithNamespaceControllerScope(t *testing.T
 		})
 	}))
 	defer server.Close()
+	defer awid.ForgetRequestCompression(server.URL)
+	// A closed loopback fixture may have advertised gzip on this port.
+	awid.ForgetRequestCompression(server.URL)
 
 	out, err := executeTeamCleanupCloud(
 		context.Background(),

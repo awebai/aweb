@@ -58,26 +58,12 @@ async def store_chat(
     an empty set leaves publication to that transaction owner.
     """
     aweb_db = db.get_manager("aweb")
-    participant = await aweb_db.fetch_one(
-        """
-        SELECT alias, did, agent_id
-        FROM {{tables.chat_participants}}
-        WHERE session_id = $1 AND did = $2
-        """,
-        session_id,
-        sender_did,
-    )
-    if not participant:
-        return None
-
     # The sender-attested time remains in signed_payload or encrypted_envelope.
     # created_at is when this server received the message for ordering, so the
     # two values intentionally use different clocks and may disagree.
     effective_created_at = datetime.now(timezone.utc)
     effective_message_id = message_id if message_id is not None else uuid_mod.uuid4()
-    sender_agent_uuid = parse_optional_uuid(sender_agent_id) or participant.get(
-        "agent_id"
-    )
+    sender_agent_uuid = parse_optional_uuid(sender_agent_id)
     encrypted_metadata = encrypted_metadata or {}
 
     # One statement inserts the message and the sender's read receipt for it,
@@ -92,14 +78,16 @@ async def store_chat(
                  encrypted_key_wraps, encrypted_ciphertext_hash, encrypted_ciphertext_size,
                  encrypted_key_wraps_hash, encrypted_inner_header_hash, encrypted_suite,
                  encrypted_signing_key_id, signed_envelope_hash, created_at, id_chain)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-                    $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
-                    $21, $22, $23, $24, $25, $26::jsonb)
-            RETURNING message_id, created_at, seq
+            SELECT $1, p.session_id, COALESCE($3::uuid, p.agent_id), p.did, p.alias,
+                   $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17,
+                   $18, $19, $20, $21, $22, $23, $24, $25::jsonb
+            FROM {{tables.chat_participants}} p
+            WHERE p.session_id = $2 AND p.did = $4
+            RETURNING message_id, created_at, seq, from_did, from_agent_id
         ), receipt AS (
             INSERT INTO {{tables.chat_read_receipts}}
                 (session_id, did, agent_id, last_read_message_id, last_read_at)
-            SELECT $2, $4, $3, message_id, created_at FROM message
+            SELECT $2, from_did, from_agent_id, message_id, created_at FROM message
             ON CONFLICT (session_id, did) DO UPDATE
             SET last_read_message_id = EXCLUDED.last_read_message_id,
                 agent_id = EXCLUDED.agent_id,
@@ -117,8 +105,7 @@ async def store_chat(
         effective_message_id,
         session_id,
         sender_agent_uuid,
-        participant["did"],
-        participant["alias"],
+        sender_did,
         (sender_address or "").strip() or None,
         body,
         bool(leaving),
@@ -149,6 +136,8 @@ async def store_chat(
         effective_created_at,
         json.dumps(id_chain) if id_chain is not None else None,
     )
+    if inserted is None:
+        return None
     msg_row = {
         "message_id": inserted["message_id"],
         "created_at": inserted["created_at"],

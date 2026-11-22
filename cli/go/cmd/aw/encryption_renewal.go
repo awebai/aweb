@@ -103,11 +103,11 @@ func renewIdentityEncryptionAssertionWithBackoff(ctx context.Context, workingDir
 	if err := awconfig.SaveEncryptionKeyStateTo(statePath, state); err != nil {
 		return err
 	}
-	published, _, err := publishIdentityEncryptionKey(ctx, identity, key, &renewed)
+	publication, err := publishIdentityEncryptionKey(ctx, identity, &renewed, publishEncryptionKey)
 	if err != nil {
 		return err
 	}
-	if len(published) == 0 {
+	if len(publication.published) == 0 {
 		return fmt.Errorf("no public discovery target available")
 	}
 	path, err := resolveIdentityStoredPath(identity.WorkingDir, identity.IdentityHome, record.AssertionPath)

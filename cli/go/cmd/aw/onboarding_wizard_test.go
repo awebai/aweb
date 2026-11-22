@@ -1168,10 +1168,7 @@ func TestExecuteHostedPathDoesNotPromptForUsernameRetryWhenNonInteractive(t *tes
 		Alias:          "laptop",
 		NonInteractive: true,
 	})
-	if err == nil {
-		t.Fatal("expected non-interactive signup conflict to fail")
-	}
-	if !strings.Contains(err.Error(), "signup attempt retained") {
+	if exitCode(err) != 2 || err.Error() != `username "jack" is not available (taken)` {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if signupCalls != 1 {

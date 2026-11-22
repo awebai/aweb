@@ -440,44 +440,46 @@ async def test_certificate_stream_rechecks_its_original_authority_on_grant_caden
 
 @pytest.mark.asyncio
 async def test_an_open_certificate_event_stream_stops_after_rotation(pinning, monkeypatch):
-    import asyncio
     from datetime import datetime, timedelta, timezone
 
     from aweb import grant_streams
+    from aweb.connection_scope import request_memo
     from aweb.routes import events
-    from aweb.team_auth_deps import get_team_identity
 
     env = pinning
     actor = await _admit(env, "eventstreamoriginal")
-    request = _request(env, actor)
-    identity = await get_team_identity(request, env.infra)
-    assert identity.verified_team_did_key == env.team_did
+    headers = _signed_team_headers(actor.sk, actor.did, TEAM, actor.certificate)
+    member_reads, standing_checks = [], []
+    read_member = grant_streams.read_member_projection
+    current_membership = grant_streams.current_membership
+
+    async def observe_member_read(*args, **kwargs):
+        member_reads.append(request_memo() is not None)
+        return await read_member(*args, **kwargs)
+
+    async def observe_standing(*args, **kwargs):
+        standing_checks.append(request_memo() is not None)
+        return await current_membership(*args, **kwargs)
+
+    monkeypatch.setattr(grant_streams, "read_member_projection", observe_member_read)
+    monkeypatch.setattr(grant_streams, "current_membership", observe_standing)
     assert grant_streams.STREAM_AUTHORITY_RECHECK_SECONDS == events.STREAM_AUTHORITY_RECHECK_SECONDS == 30
-    # Shorten only the timer for this real stream; all authority/SQL/Redis
-    # observations and the original admitted credential remain untouched.
     monkeypatch.setattr(grant_streams, "STREAM_AUTHORITY_RECHECK_SECONDS", 0.05)
     monkeypatch.setattr(events, "STREAM_AUTHORITY_RECHECK_SECONDS", 0.05)
-    stream = events._sse_agent_events(
-        request=request,
-        db=env.infra,
-        redis=env.redis,
-        team_id=TEAM,
-        agent_id=str(actor.id),
-        identity=identity,
-        deadline=datetime.now(timezone.utc) + timedelta(seconds=3),
-    )
-    try:
-        assert await anext(stream) == ": keepalive\n\n"
-        assert "event: connected\n" in await anext(stream)
+    deadline = datetime.now(timezone.utc) + timedelta(seconds=5)
+    async with env.client.stream(
+        "GET", "/v1/events/stream", headers=headers, params={"deadline": deadline.isoformat()}
+    ) as response:
+        assert response.status_code == 200
+        lines = response.aiter_lines()
+        assert await _next_event(lines) == {"agent_id": str(actor.id), "team_id": TEAM}
         await _change_key(env)
-        frames = []
-        async with asyncio.timeout(4):
-            async for frame in stream:
-                frames.append(frame)
-        assert any("event: team_membership_not_current\n" in frame for frame in frames), frames
-        assert not any("event: actionable_" in frame for frame in frames), frames
-    finally:
-        await stream.aclose()
+        terminal = await _next_event(lines)
+        assert terminal["type"] == "team_membership_not_current", terminal
+        async with asyncio.timeout(5):
+            assert [line async for line in lines if line.startswith("data: ")] == []
+    assert True in standing_checks
+    assert member_reads and not any(member_reads)
 
 
 @pytest.mark.asyncio
@@ -551,6 +553,27 @@ async def test_proxy_stream_credential_does_not_require_native_certificate_evide
     identity = SimpleNamespace(grant=None, certificate_id="host-credential")
     assert not requires_stream_recheck(identity)
     assert await grant_terminal_reason(None, None, identity) is None
+
+
+@pytest.mark.asyncio
+async def test_certificate_stream_refuses_missing_checked_key(pinning):
+    from dataclasses import replace
+
+    from aweb.grant_streams import grant_terminal_reason
+    from aweb.identity_auth_deps import get_messaging_auth
+    from aweb.team_auth_deps import get_team_identity
+
+    env = pinning
+    actor = await _admit(env, "streammissingkey")
+    request = _request(env, actor)
+    team_identity = await get_team_identity(request, env.infra)
+    messaging_identity = await get_messaging_auth(request, env.infra)
+    for identity in (team_identity, messaging_identity):
+        assert identity.verified_team_did_key == env.team_did
+        assert identity.certificate_verified is True
+        assert await grant_terminal_reason(
+            request, env.infra, replace(identity, verified_team_did_key=None)
+        ) == "team_membership_not_current"
 
 
 @pytest.mark.asyncio

@@ -171,9 +171,19 @@ func (c *RegistryClient) ResolveKey(ctx context.Context, didAW string) (*DidKeyR
 }
 
 func (c *RegistryClient) ResolveKeyAt(ctx context.Context, registryURL, didAW string) (*DidKeyResolution, error) {
+	return c.resolveKeyAt(ctx, registryURL, didAW, true)
+}
+
+// ResolveKeyAtOnce reads the same key projection for callers that can continue
+// through their own recovery path after an unsuccessful lookup.
+func (c *RegistryClient) ResolveKeyAtOnce(ctx context.Context, registryURL, didAW string) (*DidKeyResolution, error) {
+	return c.resolveKeyAt(ctx, registryURL, didAW, false)
+}
+
+func (c *RegistryClient) resolveKeyAt(ctx context.Context, registryURL, didAW string, retry bool) (*DidKeyResolution, error) {
 	didAW = strings.TrimSpace(didAW)
 	var wire didKeyResolutionWire
-	if err := c.requestJSON(ctx, http.MethodGet, registryURL, "/v1/did/"+urlPathEscape(didAW)+"/key", nil, nil, &wire); err != nil {
+	if err := c.requestBytesWithRetry(ctx, http.MethodGet, registryURL, "/v1/did/"+urlPathEscape(didAW)+"/key", nil, nil, &wire, retry); err != nil {
 		return nil, err
 	}
 	res := &DidKeyResolution{
@@ -511,6 +521,10 @@ func (c *RegistryClient) requestJSON(ctx context.Context, method, registryURL, p
 // request is replay-safe, resends the same bytes and the same headers: a
 // signature made once covers every attempt.
 func (c *RegistryClient) requestBytes(ctx context.Context, method, registryURL, path string, headers map[string]string, raw []byte, out any) error {
+	return c.requestBytesWithRetry(ctx, method, registryURL, path, headers, raw, out, true)
+}
+
+func (c *RegistryClient) requestBytesWithRetry(ctx context.Context, method, registryURL, path string, headers map[string]string, raw []byte, out any, retry bool) error {
 	for attempt := 0; ; attempt++ {
 		req, err := c.newRequest(ctx, method, registryURL, path, headers, raw)
 		if err != nil {
@@ -518,7 +532,7 @@ func (c *RegistryClient) requestBytes(ctx context.Context, method, registryURL, 
 		}
 		resp, err := DoNoRedirectWithTimeout(c.httpClientFor(registryURL), req, APITimeout())
 		if err != nil {
-			if shouldRetryRegistryTransportError(ctx, method, path, attempt, err) {
+			if retry && shouldRetryRegistryTransportError(ctx, method, path, attempt, err) {
 				if waitErr := waitForRegistryRetry(ctx, attempt); waitErr != nil {
 					return waitErr
 				}
@@ -526,7 +540,7 @@ func (c *RegistryClient) requestBytes(ctx context.Context, method, registryURL, 
 			}
 			return err
 		}
-		if shouldRetryRegistryResponse(ctx, method, path, attempt, resp) {
+		if retry && shouldRetryRegistryResponse(ctx, method, path, attempt, resp) {
 			_, _ = ReadAllBounded(resp.Body, MaxErrorResponseSize)
 			_ = resp.Body.Close()
 			if waitErr := waitForRegistryRetry(ctx, attempt); waitErr != nil {
@@ -536,7 +550,7 @@ func (c *RegistryClient) requestBytes(ctx context.Context, method, registryURL, 
 		}
 
 		err = decodeRegistryResponse(resp, out)
-		if err != nil && shouldRetryRegistryTransportError(ctx, method, path, attempt, err) {
+		if retry && err != nil && shouldRetryRegistryTransportError(ctx, method, path, attempt, err) {
 			if waitErr := waitForRegistryRetry(ctx, attempt); waitErr != nil {
 				return waitErr
 			}
