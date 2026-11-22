@@ -96,15 +96,19 @@ async def _team_request(
     params: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     raw = json.dumps(body).encode() if body is not None else b""
-    headers = member.headers(aud=coordination.server.url, method=method, path=path, body=raw)
     async with coordination.server.client() as client:
-        response = await client.request(
-            method,
-            path,
-            content=raw,
-            params=params,
-            headers={**headers, "Content-Type": "application/json"},
+        request = client.build_request(
+            method, path, content=raw, params=params, headers={"Content-Type": "application/json"}
         )
+        request.headers.update(
+            member.headers(
+                aud=coordination.server.url,
+                method=request.method,
+                path=request.url.raw_path.decode("ascii"),
+                body=raw,
+            )
+        )
+        response = await client.send(request)
     assert response.status_code == 200, f"{method} {path} returned {response.status_code}"
     return response.json()
 
