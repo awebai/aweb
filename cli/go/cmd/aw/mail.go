@@ -665,11 +665,11 @@ func ensureE2EEKeyReadyForSend(ctx context.Context, sel *awconfig.Selection) err
 		// External certificate-only homes must never fall back to the cwd.
 		identityHome = explicitEncryptionKeyIdentityHome(sel.IdentityHome)
 	}
-	out, err := setupOrRotateIdentityEncryptionKeyForDir(ctx, sel.WorkingDir, false, identityHome)
+	out, err := prepareIdentityEncryptionKeyForDir(ctx, sel.WorkingDir, false, identityHome, publishEncryptionKeyIfNeeded)
 	if err != nil {
 		return err
 	}
-	if len(out.Published) == 0 {
+	if len(out.Published) == 0 && !out.registryCurrent {
 		return usageError("E2E messaging requires a published encryption key; run `aw id encryption-key setup` after joining a service, or pass --plaintext only for explicit server-readable messaging")
 	}
 	return nil

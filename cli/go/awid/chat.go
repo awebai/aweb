@@ -397,7 +397,12 @@ func (c *Client) prepareE2EEChatSend(ctx context.Context, sessionID string, payl
 	if err != nil {
 		return err
 	}
-	if err := refuseCustodialRecipients(recipients, time.Now().UTC()); err != nil {
+	now := time.Now().UTC()
+	if payload.E2EEInherited && len(recipients) == 1 && recipientKeyIsHosted(recipients[0], now) {
+		payload.EncryptE2EE = false
+		return nil
+	}
+	if err := refuseCustodialRecipients(recipients, now); err != nil {
 		return err
 	}
 	messageID, err := GenerateUUID4()
@@ -407,7 +412,7 @@ func (c *Client) prepareE2EEChatSend(ctx context.Context, sessionID string, payl
 	if strings.TrimSpace(payload.MessageID) != "" {
 		messageID = strings.TrimSpace(payload.MessageID)
 	}
-	now := time.Now().UTC().Truncate(time.Second)
+	now = now.Truncate(time.Second)
 	if custody != nil {
 		envelope, err := c.createCustodyE2EEEnvelope(ctx, custody, custodyEnvelopeMessage{Kind: custodyChatMessage, Body: payload.Body, MessageID: messageID, ConversationID: strings.TrimSpace(sessionID), ReplyTo: payload.ReplyTo, Recipients: recipients})
 		if err != nil {
@@ -1091,6 +1096,9 @@ type ChatSendMessageRequest struct {
 	MessageID      string               `json:"message_id,omitempty"`
 	SignedPayload  string               `json:"signed_payload,omitempty"`
 	EncryptE2EE    bool                 `json:"-"`
+	// E2EEInherited permits a server-readable continuation to a verified
+	// hosted peer when encryption came from the existing conversation.
+	E2EEInherited bool `json:"-"`
 }
 
 type ChatSendMessageResponse struct {
@@ -1108,6 +1116,8 @@ func (c *Client) ChatSendMessage(ctx context.Context, sessionID string, req *Cha
 		if err := c.prepareE2EEChatSend(ctx, sessionID, &payload); err != nil {
 			return nil, err
 		}
+	}
+	if payload.EncryptE2EE {
 		var out ChatSendMessageResponse
 		if err := c.Post(ctx, "/v1/chat/sessions/"+urlPathEscape(sessionID)+"/messages", &payload, &out); err != nil {
 			return nil, serverCustodialRefusal(err, payload.Encrypted)

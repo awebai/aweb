@@ -55,6 +55,9 @@ func TestAwMailSendE2EEToAddressStartsANewThreadAndResolvesRecipient(t *testing.
 	var mu sync.Mutex
 	var sent map[string]any
 	var resolverPaths []string
+	var senderAssertion *awid.EncryptionKeyAssertion
+	var failSenderLookup bool
+	var publications, sends int
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -91,14 +94,40 @@ func TestAwMailSendE2EEToAddressStartsANewThreadAndResolvesRecipient(t *testing.
 			}
 			mu.Lock()
 			sent = body
+			sends++
 			mu.Unlock()
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"message_id": "msg-e2ee", "conversation_id": body["conversation_id"],
 				"status": "delivered", "delivered_at": "2026-09-24T00:00:01Z",
 			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/did/"+senderStableID+"/key":
+			mu.Lock()
+			defer mu.Unlock()
+			if failSenderLookup {
+				failSenderLookup = false
+				http.Error(w, "unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(awid.DidKeyResolution{
+				DIDAW: senderStableID, CurrentDIDKey: senderDID, EncryptionKey: senderAssertion,
+			})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/did/"+senderStableID+"/encryption-key":
-			// The sender publishes its own encryption key assertion before sending.
-			writeRegistryEncryptionKeyAssertionForTest(t, w, r)
+			var assertion awid.EncryptionKeyAssertion
+			if err := json.NewDecoder(r.Body).Decode(&assertion); err != nil {
+				t.Errorf("decode sender assertion: %v", err)
+				http.Error(w, "bad assertion", http.StatusBadRequest)
+				return
+			}
+			if err := awid.VerifyEncryptionKeyAssertion(&assertion, senderDID, senderStableID, time.Now().UTC()); err != nil {
+				t.Errorf("verify sender assertion: %v", err)
+				http.Error(w, "bad assertion", http.StatusBadRequest)
+				return
+			}
+			mu.Lock()
+			publications++
+			senderAssertion = &assertion
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(assertion)
 		case r.URL.Path == "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
 		default:
@@ -128,22 +157,52 @@ func TestAwMailSendE2EEToAddressStartsANewThreadAndResolvesRecipient(t *testing.
 	}
 	installMailReadEncryptionKeyForTest(t, tmp, filepath.Join(tmp, ".aw"), senderDID, senderKey)
 
-	run := exec.CommandContext(ctx, bin, "mail", "send", "--e2ee",
-		"--to", "acme.com/bob", "--subject", "[test]", "--body", "secret body")
-	run.Env = append(testCommandEnv(tmp), "AWEB_URL="+server.URL, "AWID_REGISTRY_URL="+server.URL, "AWID_SKIP_DNS_VERIFY=1")
-	run.Dir = tmp
-	out, err := run.CombinedOutput()
+	staleKey, err := ecdh.X25519().GenerateKey(rand.Reader)
 	if err != nil {
-		t.Fatalf("e2ee send to an address with an existing conversation failed: %v\n%s", err, out)
+		t.Fatal(err)
 	}
-	if strings.Contains(string(out), "invalid identifier") {
-		t.Fatalf("recipient resolved from the conversation id:\n%s", out)
+	stale, err := awid.BuildEncryptionKeyAssertion(senderKey, senderDID, senderStableID, staleKey.PublicKey().Bytes(), "", time.Now().UTC().Add(-time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name         string
+		publications int
+	}{
+		{"missing", 1},
+		{"current", 0},
+		{"stale", 1},
+		{"unavailable lookup", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mu.Lock()
+			if tc.name == "stale" {
+				senderAssertion = stale
+			}
+			failSenderLookup = tc.name == "unavailable lookup"
+			publications, sends = 0, 0
+			mu.Unlock()
+			for range 3 {
+				run := exec.CommandContext(ctx, bin, "mail", "send", "--e2ee",
+					"--to", "acme.com/bob", "--subject", "[test]", "--body", "secret body")
+				run.Env = append(testCommandEnv(tmp), "AWEB_URL="+server.URL, "AWID_REGISTRY_URL="+server.URL, "AWID_SKIP_DNS_VERIFY=1")
+				run.Dir = tmp
+				if out, err := run.CombinedOutput(); err != nil {
+					t.Fatalf("explicit E2EE send failed: %v\n%s", err, out)
+				}
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if sends != 3 || publications != tc.publications {
+				t.Errorf("sent %d messages and published %d assertions, want 3 sends and %d publications", sends, publications, tc.publications)
+			}
+		})
 	}
 
 	mu.Lock()
 	defer mu.Unlock()
 	if sent == nil {
-		t.Fatalf("nothing was sent; resolver saw %v\n%s", resolverPaths, out)
+		t.Fatalf("nothing was sent; resolver saw %v", resolverPaths)
 	}
 	if sent["conversation_id"] == conversationID || sent["new_conversation"] != true {
 		t.Fatalf("conversation_id=%v new_conversation=%v, want a new thread", sent["conversation_id"], sent["new_conversation"])

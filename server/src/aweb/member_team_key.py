@@ -11,6 +11,7 @@ member until each is accepted under the new key.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from collections.abc import Collection, Iterator, Mapping
@@ -195,6 +196,17 @@ async def read_member_projection(
     """
     if (did_key is None) == (agent_id is None) or (did_key is not None and not team_id):
         raise ValueError("Select a native member by team and did_key, or by agent_id")
+    selector = "a.agent_id=$1::uuid" if agent_id is not None else "a.did_key=$1"
+    selected = UUID(str(agent_id)) if agent_id is not None else did_key
+    row = await db.fetch_one(
+        _member_projection_select(selector + " AND ($2::text IS NULL OR a.team_id=$2)", read_lock),
+        selected,
+        team_id,
+    )
+    return MemberProjection.from_row(row) if row is not None else None
+
+
+def _member_projection_select(selector: str, read_lock: MemberReadLock) -> str:
     if not isinstance(read_lock, MemberReadLock):
         raise TypeError("Member reads require a named MemberReadLock")
     locked = read_lock is not MemberReadLock.NONE
@@ -206,23 +218,51 @@ async def read_member_projection(
             if read_lock is MemberReadLock.UPDATE
             else " FOR SHARE OF t, a"
         )
-    selector = "a.agent_id=$1::uuid" if agent_id is not None else "a.did_key=$1"
-    selected = UUID(str(agent_id)) if agent_id is not None else did_key
-    row = await db.fetch_one(
+    return (
         "SELECT "
         + member_projection_columns_sql("a", team="t" if locked else None)
-        + """
-        FROM {{tables.agents}} a
-        """
+        + " FROM {{tables.agents}} a"
         + join_sql
         + " WHERE "
         + selector
-        + " AND ($2::text IS NULL OR a.team_id=$2)"
-        + lock_sql,
-        selected,
-        team_id,
+        + lock_sql
     )
-    return MemberProjection.from_row(row) if row is not None else None
+
+
+async def read_member_with_overlay(
+    db,
+    *,
+    team_id: str,
+    did_key: str,
+    certificate_id: str,
+    read_lock: MemberReadLock,
+    overlay_sql: str,
+) -> tuple[MemberProjection | None, Mapping[str, Any]]:
+    """Read native member facts and a host overlay in one statement.
+
+    The host supplies a trusted SELECT that may reference ``native_member``
+    and the three bound credential arguments. The native projection is
+    returned independently of the overlay, and may be absent.
+    """
+    member_select = _member_projection_select("a.team_id=$1 AND a.did_key=$2", read_lock)
+    row = await db.fetch_one(
+        f"""
+        WITH native_member AS MATERIALIZED ({member_select}),
+             member_overlay AS ({overlay_sql})
+        SELECT to_jsonb(native_member) AS native_member_projection, member_overlay.*
+        FROM (SELECT $3::text) AS credential
+        LEFT JOIN native_member ON TRUE
+        LEFT JOIN member_overlay ON TRUE
+        """,
+        team_id,
+        did_key,
+        certificate_id,
+    )
+    assert row is not None
+    member = row.pop("native_member_projection")
+    if isinstance(member, str):
+        member = json.loads(member)
+    return MemberProjection.from_row(member) if member is not None else None, MappingProxyType(row)
 
 
 async def lock_member_projections(tx, *, agent_ids: list[UUID]) -> list[MemberProjection]:
@@ -548,20 +588,41 @@ async def current_membership(
 async def current_member_team_ids_for_identity(
     db, dids: list[str], *, registry_client, read_lock: MemberReadLock = MemberReadLock.NONE
 ) -> set[str]:
+    (teams,) = await current_member_team_ids_for_identities(
+        db, dids, registry_client=registry_client, read_lock=read_lock
+    )
+    return teams
+
+
+async def current_member_team_ids_for_identities(
+    db,
+    *identities: Collection[str],
+    registry_client,
+    read_lock: MemberReadLock = MemberReadLock.NONE,
+) -> tuple[set[str], ...]:
     """Current memberships with the admitting certificate's live standing.
 
     Apply SDK revocation and staged registration policy after selecting each
-    admitted membership under the current key.
+    admitted membership under the current key. The caller's lock covers the
+    combined selection, while each identity keeps its own membership set.
     """
-    selected = [did.strip() for did in dids if did and did.strip()]
+    scopes = [{did.strip() for did in dids if did and did.strip()} for dids in identities]
+    selected = set().union(*scopes)
     if not selected:
-        return set()
-    teams = set()
-    for row in await current_member_projections(db, dids=selected, read_lock=read_lock):
-        standing = await current_membership(registry_client, dict(row))
-        if standing is not None and standing.get("team_id"):
-            teams.add(standing["team_id"])
-    return teams
+        return tuple(set() for _ in scopes)
+    rows = await current_member_projections(db, dids=sorted(selected), read_lock=read_lock)
+    projected = [row.verified_identity() for row in rows]
+    results = []
+    for scope in scopes:
+        teams = set()
+        for row in projected:
+            if row["did_key"] not in scope and row["did_aw"] not in scope:
+                continue
+            standing = await current_membership(registry_client, row)
+            if standing is not None and standing.get("team_id"):
+                teams.add(standing["team_id"])
+        results.append(teams)
+    return tuple(results)
 
 
 def grant_issuer_current(row) -> bool:

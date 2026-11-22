@@ -225,11 +225,20 @@ func (c *Client) sendMessage(ctx context.Context, req *SendMessageRequest, ident
 	return &out, nil
 }
 
-// VerifyInboxResponse uses the mail reader's verification and display-binding
-// owner for a conversation fetched through an authenticated provider transport
-// (docs/a2a.md:976-977).
+// VerifyInboxResponse verifies rows with the same rules as the ordinary mail
+// reader, including local or configured custody decryption.
 func (c *Client) VerifyInboxResponse(ctx context.Context, out *InboxResponse) (*InboxResponse, error) {
 	return c.normalizeInboxResponse(ctx, out)
+}
+
+// VerifyManagedMailConversation verifies mail returned by the authenticated
+// managed bridge for conversationID. Only this reader accepts a provider-opened
+// encrypted mail projection. The client must know its gateway stable identity.
+func (c *Client) VerifyManagedMailConversation(ctx context.Context, out *InboxResponse, conversationID string) (*InboxResponse, error) {
+	if strings.TrimSpace(conversationID) == "" {
+		return nil, errors.New("aweb: managed mail verification requires the requested conversation ID")
+	}
+	return c.normalizeMailRows(ctx, out, conversationID)
 }
 
 func (c *Client) prepareE2EEMail(ctx context.Context, payload *SendMessageRequest, identityTarget bool, initialConversationID string, hasRecipient bool) error {
@@ -649,6 +658,7 @@ type InboxMessage struct {
 	ContentMode             string                   `json:"content_mode,omitempty"`
 	MessageVersion          int                      `json:"message_version,omitempty"`
 	Encrypted               *E2EEMessageEnvelope     `json:"encrypted_envelope,omitempty"`
+	Decryptable             bool                     `json:"decryptable,omitempty"`
 	Priority                MessagePriority          `json:"priority"`
 	ThreadID                *string                  `json:"thread_id"`
 	ReadAt                  *string                  `json:"read_at"`
@@ -840,14 +850,25 @@ func (c *Client) markAuthenticatedSenderMessages(out *InboxResponse) {
 }
 
 func (c *Client) normalizeInboxResponse(ctx context.Context, out *InboxResponse) (*InboxResponse, error) {
+	return c.normalizeMailRows(ctx, out, "")
+}
+
+func (c *Client) normalizeMailRows(ctx context.Context, out *InboxResponse, managedConversationID string) (*InboxResponse, error) {
 	if out == nil {
 		return out, nil
 	}
 	for i := range out.Messages {
 		m := &out.Messages[i]
 		r := receivedMailMessage(m)
+		if managedConversationID != "" {
+			r.requestedConversationID = managedConversationID
+			r.providerDecryptable = &m.Decryptable
+		}
 		if err := c.verifyReceived(ctx, &r); err != nil {
 			return nil, err
+		}
+		if managedConversationID != "" && r.isEncrypted() && !r.status.Trusted() {
+			r.subject, r.body = "", ""
 		}
 		r.applyToMail(m)
 	}

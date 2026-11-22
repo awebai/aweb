@@ -59,6 +59,20 @@ func withErrorCode(code string, err error) error {
 	return &codedError{code: code, err: err}
 }
 
+// classifiedError gives existing CLI refusals an additive classification.
+type classifiedError struct {
+	classification string
+	err            error
+}
+
+func (e *classifiedError) Error() string { return e.err.Error() }
+
+func (e *classifiedError) Unwrap() error { return e.err }
+
+func withErrorClassification(classification string, err error) error {
+	return &classifiedError{classification: classification, err: err}
+}
+
 // errorCodeOf is err's refusal code, or "" when it has none.
 func errorCodeOf(err error) string {
 	var pending *hostedInviteSignaturePendingError
@@ -151,11 +165,12 @@ type cliErrorEnvelope struct {
 }
 
 type cliErrorBody struct {
-	Code       string `json:"code"`
-	Message    string `json:"message"`
-	HTTPStatus int    `json:"http_status,omitempty"`
-	Detail     string `json:"detail,omitempty"`
-	Reason     string `json:"reason,omitempty"`
+	Code           string `json:"code"`
+	Message        string `json:"message"`
+	HTTPStatus     int    `json:"http_status,omitempty"`
+	Detail         string `json:"detail,omitempty"`
+	Reason         string `json:"reason,omitempty"`
+	Classification string `json:"classification,omitempty"`
 }
 
 func errorEnvelope(err error, message string) cliErrorEnvelope {
@@ -176,7 +191,12 @@ func errorEnvelope(err error, message string) cliErrorEnvelope {
 	if code := errorCodeOf(err); code != "" {
 		detail.Code = code
 	}
-	return cliErrorEnvelope{Error: cliErrorBody{Code: detail.Code, Message: message, HTTPStatus: detail.HTTPStatus, Detail: detail.Detail, Reason: detail.Reason}}
+	body := cliErrorBody{Code: detail.Code, Message: message, HTTPStatus: detail.HTTPStatus, Detail: detail.Detail, Reason: detail.Reason}
+	var classified *classifiedError
+	if errors.As(err, &classified) {
+		body.Classification = classified.classification
+	}
+	return cliErrorEnvelope{Error: body}
 }
 
 type cliErrorResult struct {

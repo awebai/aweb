@@ -1283,14 +1283,15 @@ func Send(ctx context.Context, client *awid.Client, myAlias string, targets []st
 	}
 	if len(targets) == 1 && !opts.StartConversation && shouldProbeExistingSession(targets[0]) {
 		if sessionID, _, findErr := lookupSession(ctx, client, targets[0], opts.RecipientDID, latestSession); findErr == nil && sessionID != "" {
-			encrypt, err := ContinuationEncrypted(ctx, client, sessionID, opts.Encryption(), callback)
+			decision, err := ContinuationEncryption(ctx, client, sessionID, opts.Encryption(), callback)
 			if err != nil {
 				return nil, err
 			}
 			msgResp, err := client.ChatSendMessage(ctx, sessionID, &awid.ChatSendMessageRequest{
-				Body:        message,
-				Leaving:     opts.Leaving,
-				EncryptE2EE: encrypt,
+				Body:          message,
+				Leaving:       opts.Leaving,
+				EncryptE2EE:   decision.Encrypt,
+				E2EEInherited: decision.Inherited,
 			})
 			if err != nil {
 				return nil, fmt.Errorf("sending message: %w", err)
@@ -1674,24 +1675,22 @@ func ExtendWait(ctx context.Context, client *awid.Client, targetAlias string, me
 	return ExtendWaitWithOptions(ctx, client, targetAlias, message, ExtendWaitOptions{EncryptE2EE: len(encryptE2EE) > 0 && encryptE2EE[0]})
 }
 
-// ContinuationEncrypted reports whether a message to an existing session is
-// end-to-end encrypted, by awid.ContinuationEncryption from the session's
-// stored rows (read unless --e2ee decides alone) and whether this client can
-// encrypt. A plaintext send into an encrypted session, or into one whose
-// encryption cannot be read, is announced through status.
-func ContinuationEncrypted(ctx context.Context, client *awid.Client, sessionID string, choice E2EEChoice, status StatusCallback) (bool, error) {
+// ContinuationEncryption reads the session's stored mode unless --e2ee decides
+// alone. It preserves whether the decision came from the conversation so the
+// send can account for a verified hosted recipient.
+func ContinuationEncryption(ctx context.Context, client *awid.Client, sessionID string, choice E2EEChoice, status StatusCallback) (awid.ContinuationDecision, error) {
 	var reading awid.ConversationEncryptionReading
 	if choice != E2EERequired {
 		var err error
 		if reading, err = client.ChatSessionEncryption(ctx, sessionID); err != nil {
-			return false, fmt.Errorf("reading whether the conversation is end-to-end encrypted: %w", err)
+			return awid.ContinuationDecision{}, fmt.Errorf("reading whether the conversation is end-to-end encrypted: %w", err)
 		}
 	}
 	decision := awid.ContinuationEncryption(reading, choice, client.E2EESendUnavailable())
 	if decision.Notice != "" && status != nil {
 		status("plaintext", decision.Notice)
 	}
-	return decision.Encrypt, nil
+	return decision, nil
 }
 
 func ExtendWaitWithOptions(ctx context.Context, client *awid.Client, targetAlias string, message string, opts ExtendWaitOptions) (*ExtendWaitResult, error) {
@@ -1706,14 +1705,15 @@ func ExtendWaitWithStatus(ctx context.Context, client *awid.Client, targetAlias 
 		return nil, err
 	}
 
-	encrypt, err := ContinuationEncrypted(ctx, client, sessionID, opts.Encryption(), status)
+	decision, err := ContinuationEncryption(ctx, client, sessionID, opts.Encryption(), status)
 	if err != nil {
 		return nil, err
 	}
 	msgResp, err := client.ChatSendMessage(ctx, sessionID, &awid.ChatSendMessageRequest{
-		Body:        message,
-		ExtendWait:  true,
-		EncryptE2EE: encrypt,
+		Body:          message,
+		ExtendWait:    true,
+		EncryptE2EE:   decision.Encrypt,
+		E2EEInherited: decision.Inherited,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("sending extend-wait message: %w", err)

@@ -10,6 +10,11 @@
   send-and-wait` verified while another agent on the host was writing its own
   pins was reported `verification_stale`; it is now verified.
 
+- `aw id team show-server` and `aw id team create` preserve the released
+  error codes and messages for missing server records and team name conflicts.
+  JSON output adds `error.classification` to distinguish a missing record,
+  a confirmed foreign pin, and an unconfirmed name conflict.
+
 - Hosted invite acceptance awaiting an agent signature exits with JSON error
   code `native_agent_signature_pending`. Resume the exchange using the retained
   child key and invite.
@@ -22,8 +27,10 @@
 
 - `aw init` and `aw team admin create` accept a supplied workspace API key
   for the service bootstrap, including keys returned by CLI signup.
-  `aw workspace add-worktree` uses the existing workspace authority when
-  the service cannot read the team for the exported key.
+- `aw workspace add-worktree` uses the local team key, the selected parent's
+  stored workspace API key, or a signed invite, in that order. API-key
+  bootstrap gives each child its own API key. A parent that uses a signed
+  invite can still create a certificate-only child.
 - `aw team admin add` and `extend` use workspace-signed creation when a
   supplied workspace key identifies a matching creator. `extend` uses the
   sole discovered creator workspace and asks you to select one when several

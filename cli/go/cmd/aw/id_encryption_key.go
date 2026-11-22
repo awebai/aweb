@@ -78,6 +78,21 @@ type idEncryptionKeyOutput struct {
 	Published      []string `json:"published,omitempty"`
 	PublishSkipped []string `json:"publish_skipped,omitempty"`
 	Warning        string   `json:"warning,omitempty"`
+
+	registryCurrent bool
+}
+
+type encryptionKeyPublicationMode uint8
+
+const (
+	publishEncryptionKey encryptionKeyPublicationMode = iota
+	publishEncryptionKeyIfNeeded
+)
+
+type encryptionKeyPublication struct {
+	published       []string
+	skipped         []string
+	registryCurrent bool
 }
 
 var idEncryptionKeyCmd = &cobra.Command{
@@ -169,6 +184,10 @@ func setupOrRotateIdentityEncryptionKey(ctx context.Context, rotate bool) (idEnc
 }
 
 func setupOrRotateIdentityEncryptionKeyForDir(ctx context.Context, workingDir string, rotate bool, identityHome encryptionKeyIdentityHomeIntent) (idEncryptionKeyOutput, error) {
+	return prepareIdentityEncryptionKeyForDir(ctx, workingDir, rotate, identityHome, publishEncryptionKey)
+}
+
+func prepareIdentityEncryptionKeyForDir(ctx context.Context, workingDir string, rotate bool, identityHome encryptionKeyIdentityHomeIntent, mode encryptionKeyPublicationMode) (idEncryptionKeyOutput, error) {
 	identity, err := resolveIdentityForEncryptionKeyForDir(workingDir, identityHome)
 	if err != nil {
 		return idEncryptionKeyOutput{}, err
@@ -260,26 +279,27 @@ func setupOrRotateIdentityEncryptionKeyForDir(ctx context.Context, workingDir st
 		}
 	}
 
-	published, skipped, publishErr := publishIdentityEncryptionKey(ctx, identity, signingKey, assertion)
+	publication, publishErr := publishIdentityEncryptionKey(ctx, identity, assertion, mode)
 	if publishErr != nil {
 		return idEncryptionKeyOutput{}, publishErr
 	}
-	if len(published) > 0 {
+	if len(publication.published) > 0 {
 		record.PublishedAt = time.Now().UTC().Format(time.RFC3339)
 		state.UpsertRecord(*record)
 		_ = awconfig.SaveEncryptionKeyStateTo(statePath, state)
 	}
 
 	return idEncryptionKeyOutput{
-		Status:         status,
-		KeyID:          record.KeyID,
-		PublicKey:      record.PublicKey,
-		PrivateKey:     identityRecordPathBestEffort(identity, record.PrivateKeyPath),
-		StatePath:      statePath,
-		AssertionPath:  identityRecordPathBestEffort(identity, record.AssertionPath),
-		Published:      published,
-		PublishSkipped: skipped,
-		Warning:        encryptionKeyBackupWarning(),
+		Status:          status,
+		KeyID:           record.KeyID,
+		PublicKey:       record.PublicKey,
+		PrivateKey:      identityRecordPathBestEffort(identity, record.PrivateKeyPath),
+		StatePath:       statePath,
+		AssertionPath:   identityRecordPathBestEffort(identity, record.AssertionPath),
+		Published:       publication.published,
+		PublishSkipped:  publication.skipped,
+		Warning:         encryptionKeyBackupWarning(),
+		registryCurrent: publication.registryCurrent,
 	}, nil
 }
 
@@ -324,8 +344,7 @@ func publishEnsuredIdentityEncryptionKeyForDir(ctx context.Context, workingDir s
 	if strings.TrimSpace(identity.Custody) != awid.CustodySelf {
 		return nil, nil, nil
 	}
-	signingKey, err := resolveIdentitySigningKey(identity)
-	if err != nil {
+	if _, err := resolveIdentitySigningKey(identity); err != nil {
 		return nil, nil, err
 	}
 	statePath, err := encryptionStatePathForIdentity(identity)
@@ -349,16 +368,16 @@ func publishEnsuredIdentityEncryptionKeyForDir(ctx context.Context, workingDir s
 	if err != nil {
 		return nil, nil, err
 	}
-	published, skipped, err := publishIdentityEncryptionKey(ctx, identity, signingKey, assertion)
+	publication, err := publishIdentityEncryptionKey(ctx, identity, assertion, publishEncryptionKey)
 	if err != nil {
 		return nil, nil, err
 	}
-	if len(published) > 0 {
+	if len(publication.published) > 0 {
 		record.PublishedAt = time.Now().UTC().Format(time.RFC3339)
 		state.UpsertRecord(*record)
 		_ = awconfig.SaveEncryptionKeyStateTo(statePath, state)
 	}
-	return published, skipped, nil
+	return publication.published, publication.skipped, nil
 }
 
 func ensureLocalIdentityEncryptionKeyForDir(workingDir string, identityHome encryptionKeyIdentityHomeIntent) error {
@@ -734,29 +753,30 @@ func validateEncryptionRecordAssertionAt(identity *awconfig.ResolvedIdentity, re
 	return nil
 }
 
-func publishIdentityEncryptionKey(ctx context.Context, identity *awconfig.ResolvedIdentity, signingKey ed25519.PrivateKey, assertion *awid.EncryptionKeyAssertion) ([]string, []string, error) {
-	published := []string{}
-	skipped := []string{}
+func publishIdentityEncryptionKey(ctx context.Context, identity *awconfig.ResolvedIdentity, assertion *awid.EncryptionKeyAssertion, mode encryptionKeyPublicationMode) (encryptionKeyPublication, error) {
+	var publication encryptionKeyPublication
 
 	if strings.TrimSpace(identity.StableID) != "" {
 		registry, err := resolveIdentityRegistryClient(identity)
 		if err != nil {
-			return nil, nil, err
+			return publication, err
 		}
 		registryURL, err := currentIdentityRegistryURL(ctx, identity, registry)
 		if err != nil {
 			if errors.Is(err, errMissingIdentityRegistryContext) {
-				skipped = append(skipped, "awid: global identity is missing registry_url or address domain; cannot safely choose a registry")
+				publication.skipped = append(publication.skipped, "awid: global identity is missing registry_url or address domain; cannot safely choose a registry")
 			} else {
-				return nil, nil, err
+				return publication, err
 			}
+		} else if mode == publishEncryptionKeyIfNeeded && registryHasCurrentEncryptionKey(ctx, registry, registryURL, identity, assertion) {
+			publication.registryCurrent = true
 		} else if err := registry.PublishEncryptionKey(ctx, registryURL, identity.StableID, assertion); err != nil {
-			return nil, nil, fmt.Errorf("publish encryption key to awid: %w", err)
+			return publication, fmt.Errorf("publish encryption key to awid: %w", err)
 		} else {
-			published = append(published, "awid:"+registryURL)
+			publication.published = append(publication.published, "awid:"+registryURL)
 		}
 	} else {
-		skipped = append(skipped, "awid: local identity has no did:aw")
+		publication.skipped = append(publication.skipped, "awid: local identity has no did:aw")
 	}
 
 	if hasWorkspaceBinding(identity) {
@@ -772,20 +792,48 @@ func publishIdentityEncryptionKey(ctx context.Context, identity *awconfig.Resolv
 			client, _, err = resolveClientSelectionForDir(identity.WorkingDir)
 		}
 		if err != nil {
-			return nil, nil, err
+			return publication, err
 		}
 		if _, err := client.PublishMyEncryptionKey(ctx, assertion); err != nil {
-			return nil, nil, fmt.Errorf("publish encryption key to aweb service: %w", err)
+			return publication, fmt.Errorf("publish encryption key to aweb service: %w", err)
 		}
-		published = append(published, "aweb-service")
+		publication.published = append(publication.published, "aweb-service")
 	} else {
-		skipped = append(skipped, "aweb-service: no workspace binding")
+		publication.skipped = append(publication.skipped, "aweb-service: no workspace binding")
 	}
 
-	if len(published) == 0 {
-		skipped = append(skipped, "no public discovery target was available; run this again after joining or registering with a service")
+	if len(publication.published) == 0 && !publication.registryCurrent {
+		publication.skipped = append(publication.skipped, "no public discovery target was available; run this again after joining or registering with a service")
 	}
-	return published, skipped, nil
+	return publication, nil
+}
+
+func registryHasCurrentEncryptionKey(ctx context.Context, registry *awid.RegistryClient, registryURL string, identity *awconfig.ResolvedIdentity, local *awid.EncryptionKeyAssertion) bool {
+	stableID := strings.TrimSpace(identity.StableID)
+	did := strings.TrimSpace(identity.DID)
+	resolved, err := registry.ResolveKeyAtOnce(ctx, registryURL, stableID)
+	// If the lookup cannot prove readiness, use the existing publication path.
+	if err != nil || resolved.DIDAW != stableID || resolved.CurrentDIDKey != did {
+		return false
+	}
+	return validatePublishedEncryptionKey(resolved.EncryptionKey, did, stableID, identity.Custody, local.EncryptionKeyID) == nil
+}
+
+var errPublishedEncryptionKeyMismatch = errors.New("published encryption key does not match the local active key")
+
+func validatePublishedEncryptionKey(assertion *awid.EncryptionKeyAssertion, did, stableID, custody, activeKeyID string) error {
+	// Signature verification also recomputes the key ID from the public key.
+	if err := awid.VerifyEncryptionKeyAssertion(assertion, strings.TrimSpace(did), strings.TrimSpace(stableID), time.Now().UTC()); err != nil {
+		return err
+	}
+	// A legacy self-custodial assertion may omit custody.
+	if strings.TrimSpace(custody) == awid.CustodySelf && strings.TrimSpace(assertion.Custody) == awid.EncryptionKeyCustodyHosted {
+		return errors.New("published encryption key has hosted custody for a self-custodial identity")
+	}
+	if activeKeyID = strings.TrimSpace(activeKeyID); activeKeyID != "" && assertion.EncryptionKeyID != activeKeyID {
+		return errPublishedEncryptionKeyMismatch
+	}
+	return nil
 }
 
 func hasWorkspaceBinding(identity *awconfig.ResolvedIdentity) bool {

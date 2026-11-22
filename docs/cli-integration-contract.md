@@ -28,7 +28,9 @@ fails with a repair instruction.
 `aw id team list --json` always includes `registry_url`, `aweb_url`,
 `certificate_id`, and `workspace_id` strings on every membership. Absent values
 are empty strings. These are recorded coordinates, without discovery or network
-validation. `aw id cert show --team T --json` selects T even when another team is
+validation. If the workspace binding cannot be read or parsed, the list still
+reports the recorded team memberships and omits coordinates from that binding.
+`aw id cert show --team T --json` selects T even when another team is
 active, including the legacy certificate layout when no teams state exists.
 `aw workspace status --json` always includes `team`, including `[]` for a
 singleton workspace.
@@ -87,8 +89,7 @@ the service, rather than becoming a universal CLI vocabulary.
 | `alias_conflict` | A membership already holds this alias; recover that membership or choose another alias. |
 | `outcome_unknown` | A write may have applied; inspect the recorded operation before retrying. |
 | `controller_key_missing` | The required controller key is unavailable here; use the installation or key-holder command in the message. |
-| `team_name_taken` | The registry pins this team to another controller; restore that key or choose another team name. |
-| `team_name_unconfirmed` | The registry has this team name and a read could not say which key holds it; a team key this machine created for it is set aside, never read as the team key. A registration command (`aw id team create`, `aw team create`, `aw init`, the onboarding wizard) settles it when run again once the registry answers: it restores the set-aside key when the registry pins it and removes it when the registry pins another. Every other command that reads the team key (invites, `aw workspace add-worktree`, reissue-cert, replace-key, signed team reads, owner acts) refuses with this code rather than taking the team as keyless, and names `aw id team create --namespace <domain> --name <team>` as the step that settles it. |
+| `team_name_unconfirmed` | A command needs a team key that is set aside pending confirmation. Retry `aw id team create --namespace <domain> --name <team>` after the registry answers. |
 | `grant_not_found` | The selected team has no such grant; run grant list in that team and identity home. |
 | `certificate_persistence_incomplete` | Registry issuance succeeded but its recipient copy could not be saved; retain the key and fetch the exact certificate named in the recovery command. |
 | `certificate_rollback_pending` | The exact issued certificate could not be revoked during rollback; keep the recipient home and ask the team controller to revoke it. |
@@ -96,8 +97,21 @@ the service, rather than becoming a universal CLI vocabulary.
 | `workspace_cleanup_incomplete` | The service did not confirm cleanup of the exact workspace and local identity; reconcile it before revoking the certificate. |
 | `invite_issuance_pending` | Issuance is attempted or unknown; keep the exact recipient and record, check online, and resume the retained certificate. Offline cancellation leaves its child untouched. |
 | `native_agent_signature_pending` | Hosted invite acceptance stopped before submitting membership because the child needs an agent signature. The CLI exits with status 1 and retains the child key and pending invite, including any prepared request. Preserve the identity home and finish the exchange, then retry with the same token, name, scope, and home. |
-| `team_server_record_missing` | No signed service record is published for this team; its controller must register the service. |
 | `invalid_alias`, `invalid_team_id`, `invalid_team_server_url` | Correct the input using the validation command's remedy. |
+
+Team discovery and creation preserve the released refusal code, HTTP status,
+and message. Read `error.classification` for the additional CLI classification.
+The server's own `error.reason` remains available where supplied.
+
+| Classification | Released refusal | Action |
+| --- | --- | --- |
+| `team_server_record_missing` | `error`, with `no team server record is published for <team>` | The controller can publish it with `aw id team set-server`. |
+| `team_name_taken` | `error`, with `team <domain>/<name> is already pinned to <did:key>` when the registry returns the foreign pin. A private team's proof of foreign control after a create conflict preserves the original `http_error` 409. | Restore the registered controller key or choose another name. |
+| `team_name_unconfirmed` | `http_error` 409 with the original `create team at registry: ...` message when the follow-up read cannot confirm ownership. | Retry the same creation command when the registry answers. It restores the set-aside key if the registry pins it and otherwise removes it after confirming another key holds the name. |
+
+A repeat attempt while a team key is set aside reports the result of the
+reconciliation read. The creation command supplies the same classifications
+when that read confirms foreign control or fails to establish ownership.
 
 The aweb service registration owner is
 [`service_registration.py`](../server/src/aweb/routes/service_registration.py).
@@ -159,8 +173,9 @@ same default or requested lifetime without creating anything. Saved invitations
 without an explicit expiry use their creation time plus 24 hours. Native
 acceptance reads routing and lifetime from the saved issuer record, never from
 unsigned token hints. Unknown or expired invitations refuse with
-`invite_unknown_or_expired` and the issuer-reissue action. An attempted issuance
-always takes precedence over age and retains its exact recovery record.
+`invite_unknown_or_expired` and the issuer-reissue action. Malformed positional
+tokens keep the released `error` code and token-decoder message. Attempted
+issuance takes precedence over age and retains its exact recovery record.
 
 `aw id team revoke-invite --invite-id ID --json` locally cancels an unused
 controller enrollment. It makes no network request. `status` and `code` are

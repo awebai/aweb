@@ -2137,12 +2137,10 @@ func TestAwWorkspaceAddWorktreeExternalIdentityHomeUsesHostedInviteWithoutTeamKe
 	t.Parallel()
 	for _, test := range []struct {
 		name       string
-		storedKey  string
 		ambientKey string
 	}{
 		{name: "cert-only"},
-		{name: "stored workspace key", storedKey: "aw_sk_stored_workspace_key"},
-		{name: "ambient key unreadable", ambientKey: "aw_sk_other_workspace"},
+		{name: "ambient key does not change the creator", ambientKey: "aw_sk_other_workspace"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 
@@ -2162,11 +2160,6 @@ func TestAwWorkspaceAddWorktreeExternalIdentityHomeUsesHostedInviteWithoutTeamKe
 
 			server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
-				case "/api/v1/teams/current":
-					if test.ambientKey == "" || r.Method != http.MethodGet || r.Header.Get("Authorization") != "Bearer "+test.ambientKey {
-						t.Error("unexpected API-key team read")
-					}
-					http.NotFound(w, r)
 				case "/v1/roles/active":
 					_ = json.NewEncoder(w).Encode(map[string]any{
 						"team_roles_id": "roles-1",
@@ -2287,7 +2280,6 @@ func TestAwWorkspaceAddWorktreeExternalIdentityHomeUsesHostedInviteWithoutTeamKe
 			// No local team key and no API key: this matches hosted worktree agents
 			// created by `aw team bootstrap` through the primary-workspace invite path.
 			binding := workspaceBinding(server.URL, teamID, "dev", "ws-dev")
-			binding.APIKey = test.storedKey
 			writeWorkspaceBindingForTest(t, principalDir, binding)
 			if err := awconfig.SaveWorktreeContextTo(filepath.Join(identityHome, "context"), &awconfig.WorktreeContext{}); err != nil {
 				t.Fatalf("seed principal context: %v", err)
@@ -2354,7 +2346,7 @@ func TestAwWorkspaceAddWorktreeExternalIdentityHomeUsesHostedInviteWithoutTeamKe
 	}
 }
 
-func TestAwWorkspaceAddWorktreeExplicitSetupKeyOverridesSigningWorkspace(t *testing.T) {
+func TestAwWorkspaceAddWorktreeUsesStoredKeyInSelectedHome(t *testing.T) {
 	t.Parallel()
 
 	const origin = "https://github.com/acme/repo.git"
@@ -2371,11 +2363,14 @@ func TestAwWorkspaceAddWorktreeExplicitSetupKeyOverridesSigningWorkspace(t *test
 	defer cancel()
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/v1/teams/current" {
-			json.NewEncoder(w).Encode(map[string]any{"team_id": "11111111-1111-4111-8111-111111111111", "canonical_team_id": teamID, "api_key_kind": "person"})
-			return
-		}
 		switch r.URL.Path {
+		case "/api/v1/teams/current":
+			if r.Header.Get("Authorization") != "Bearer aw_sk_parent_key" {
+				t.Error("team read did not use the selected parent's key")
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			serveAPIKeyCreationTeamRead(w, r, teamID)
 		case "/v1/roles/active":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"team_roles_id": "pol-1",
@@ -2389,11 +2384,8 @@ func TestAwWorkspaceAddWorktreeExplicitSetupKeyOverridesSigningWorkspace(t *test
 				"name_prefix": "grace",
 			})
 		case "/api/v1/workspaces/init":
-			if got := r.Header.Get("Authorization"); got != "Bearer aw_sk_person_setup" {
-				t.Errorf("bootstrap key=%q", got)
-			}
 			authHeader := r.Header.Get("Authorization")
-			if authHeader != "Bearer aw_sk_person_setup" {
+			if authHeader != "Bearer aw_sk_parent_key" {
 				t.Fatalf("expected parent API key, got %q", authHeader)
 			}
 			if err := json.NewDecoder(r.Body).Decode(&initBody); err != nil {
