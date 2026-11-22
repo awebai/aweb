@@ -24,6 +24,7 @@ from aweb_naapp_testing.owner_acts import TeamOwner
 from aweb_naapp_testing.webauthn import SoftAuthenticator
 
 from aweb_secrets.app import installation_fence
+from aweb_secrets.console_values import ValueStagingCode
 from aweb_secrets.custody import (
     Custody,
     CustodyUnavailable,
@@ -70,6 +71,29 @@ async def login(client: httpx.AsyncClient, scope: str, device: SoftAuthenticator
     return csrf
 
 
+_FIXED_REFUSALS = frozenset(ValueStagingCode) | {
+    "authority_unavailable",
+    "generation_superseded",
+    "installation_inactive",
+    "owner_act_refused",
+    "principal_not_member",
+    "principal_status_unavailable",
+    "release_context_unavailable",
+}
+
+
+def response_status(response: httpx.Response) -> str:
+    """Report only allowlisted codes, never bodies or values sent to ingress."""
+    try:
+        body = response.json()
+    except ValueError:
+        return f"HTTP {response.status_code}"
+    detail = body.get("detail") if isinstance(body, dict) else None
+    if isinstance(detail, str) and detail in _FIXED_REFUSALS:
+        return f"HTTP {response.status_code} ({detail})"
+    return f"HTTP {response.status_code}"
+
+
 def no_value(response, value):
     if value in response.text:
         raise AssertionError("submitted value appeared in response")
@@ -85,7 +109,7 @@ async def test_owner_token_ingress_is_sealed_scoped_inert_and_never_echoed(produ
     response = await production_client.post(
         path, json={"value": value}, headers={"X-CSRF-Token": csrf}
     )
-    assert response.status_code == HTTPStatus.CREATED
+    assert response.status_code == HTTPStatus.CREATED, response_status(response)
     assert response.json() == {
         "v": 1,
         "backend": SecretBackend.ONEPASSWORD,
@@ -94,10 +118,9 @@ async def test_owner_token_ingress_is_sealed_scoped_inert_and_never_echoed(produ
     }
     assert response.headers["cache-control"] == "no-store"
     no_value(response, value)
-    # The same real application chooses its agent surface by Host. This is
-    # application routing evidence, not acceptance of the deployment's TLS front.
+    # Both listeners use the fixture CA. Send to the actual agent origin.
     agent_response = await production_client.post(
-        path, json={"value": value}, headers={"Host": urlsplit(world.settings.public_origin).netloc}
+        world.settings.public_origin + path, json={"value": value}
     )
     assert agent_response.status_code == HTTPStatus.NOT_FOUND
     no_value(agent_response, value)
@@ -249,6 +272,14 @@ async def signed_owner_action(world: RoutedOwner, act: OwnerAct) -> dict:
     return {**body, "signing": base64.b64encode(signing).decode(), "signature": signature}
 
 
+async def deliver_owner_action(world: RoutedOwner, body: dict) -> httpx.Response:
+    request = world.client.build_request("POST", OWNER_ACT_PATH, json=body, timeout=15)
+    # The signed delivery route admits controller acts alone. It explicitly
+    # refuses a request that also carries the owner's console cookie.
+    request.headers.pop("cookie", None)
+    return await world.client.send(request)
+
+
 async def post_token(world: RoutedOwner, *, value: str | None = None) -> httpx.Response:
     return await world.client.post(
         token_path(world),
@@ -271,7 +302,7 @@ async def blocked_pid(db, blocker: int, request: asyncio.Task, *, relation: str)
         ):
             if request.done():
                 response = await request
-                pytest.fail(f"request returned {response.status_code} before waiting on {relation}")
+                pytest.fail(f"request returned {response_status(response)} before waiting on {relation}")
             await asyncio.sleep(0.01)
     return pid
 
@@ -304,12 +335,12 @@ async def action_during_lookup(world: RoutedOwner, act: OwnerAct) -> httpx.Respo
                 "SELECT b3_scope FROM {{tables.role_holdings}} WHERE b3_scope=$1 FOR UPDATE",
                 world.holder.scope,
             ) == world.holder.scope
-            action = asyncio.create_task(world.client.post(OWNER_ACT_PATH, json=body, timeout=15))
+            action = asyncio.create_task(deliver_owner_action(world, body))
             actor_pid = await blocked_pid(db, gate_pid, action, relation="role_holdings")
             posting = asyncio.create_task(post_token(world))
             await blocked_pid(db, actor_pid, posting, relation="installation_fences")
         applied, response = await asyncio.wait_for(asyncio.gather(action, posting), 15)
-        assert applied.status_code == HTTPStatus.OK
+        assert applied.status_code == HTTPStatus.OK, response_status(applied)
         assert applied.json()["act"] == act
         return response
     finally:
@@ -422,7 +453,7 @@ async def test_ingress_preserves_f6_status_and_allocates_nothing(
     else:
         await advance_generation(world)
         response = await post_token(world, value=value)
-    assert response.status_code == status
+    assert response.status_code == status, response_status(response)
     assert response.json() == {"detail": code}
     no_value(response, value)
     assert await world.service.runtime.db().fetch_value(
@@ -564,7 +595,8 @@ async def test_owner_role_revocation_waits_for_the_real_ingress_transaction(
 ):
     world = production_routed_owner
     db = world.service.runtime.db()
-    assert (await post_token(world)).status_code == HTTPStatus.CREATED
+    staged = await post_token(world)
+    assert staged.status_code == HTTPStatus.CREATED, response_status(staged)
     # Governance registration is cached for the real advertised grant age.
     # Let the fixture's designation view age out before the action under test.
     await asyncio.sleep(GRANT_SECONDS)
@@ -574,7 +606,7 @@ async def test_owner_role_revocation_waits_for_the_real_ingress_transaction(
         try:
             token = marker.set(True)
             try:
-                revoking = asyncio.create_task(world.client.post(OWNER_ACT_PATH, json=body, timeout=15))
+                revoking = asyncio.create_task(deliver_owner_action(world, body))
             finally:
                 marker.reset(token)
             await asyncio.wait_for(observed.wait(), 10)
@@ -610,7 +642,8 @@ async def test_expired_f6_after_wait_rolls_back_the_new_token_version(production
     world = production_routed_owner
     db = world.service.runtime.db()
     await wait_for_grant_expiry(world)
-    assert (await post_token(world)).status_code == HTTPStatus.CREATED
+    staged = await post_token(world)
+    assert staged.status_code == HTTPStatus.CREATED, response_status(staged)
     response = await post_during_expiry(
         world,
         relation="onepassword_credentials",
