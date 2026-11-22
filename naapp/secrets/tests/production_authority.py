@@ -48,7 +48,7 @@ async def authority(test_db_factory, registry, member, *, visibility="public"):
         )
         name, domain = member.team_id.split(":", 1)
         await registry.add_team(member.team_id, member.team_did_key, visibility=visibility)
-        await registry.add_certificate(member.certificate())
+        await registry.add_certificate(member.certificate(), team_key=member.team_key)
         await db.execute(
             "INSERT INTO {{tables.teams}} (team_id,namespace,team_name,team_did_key) VALUES ($1,$2,$3,$4)",
             member.team_id,

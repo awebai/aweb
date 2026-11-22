@@ -21,6 +21,7 @@ for source_root in (SERVER_SRC, AWID_SRC):
 from mcp.server.fastmcp import FastMCP  # noqa: E402
 
 from aweb.mcp.server import register_tools  # noqa: E402
+from aweb.mcp.compatibility import COMPATIBILITY_TOOL_REPLACEMENTS  # noqa: E402
 
 OUTPUT = ROOT / "docs" / "mcp-tools-reference.md"
 
@@ -61,19 +62,7 @@ CANONICAL_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ),
 )
 
-LEGACY_TOOLS: tuple[str, ...] = (
-    "check_inbox",
-    "chat_send",
-    "chat_pending",
-    "chat_history",
-    "chat_read",
-    "contacts_list",
-    "contacts_add",
-    "contacts_remove",
-    "add_contact_by_email",
-    "send_message_to_contact",
-    "read_messages_from_contact",
-)
+COMPATIBILITY_TOOLS = tuple(COMPATIBILITY_TOOL_REPLACEMENTS)
 
 
 class CoverageError(RuntimeError):
@@ -82,7 +71,7 @@ class CoverageError(RuntimeError):
 
 def classified_names() -> tuple[str, ...]:
     canonical = tuple(name for _, names in CANONICAL_GROUPS for name in names)
-    return canonical + LEGACY_TOOLS
+    return canonical + COMPATIBILITY_TOOLS
 
 
 async def load_registered_tools() -> dict[str, Any]:
@@ -205,14 +194,22 @@ MCP section of [`aweb-sot.md`](https://aweb.ai/docs/aweb-sot.md).
         sections.append(f"## {heading}\n\n{render_table(names, tools)}")
 
     sections.append(
-        """## Legacy Compatibility Aliases
+        """## Compatibility Names
 
-The OSS server still registers these older names so clients with cached tool
-lists do not fail with "Unknown tool." New clients should use the canonical
-names above. Their parameters and descriptions below also come from the live
-registration."""
+These names were advertised by released servers and remain callable by MCP
+clients retaining those tool lists. Use the canonical names above for fresh
+configurations. The serving call_tool entry counts attempts, including refused
+calls, in aweb_mcp_compatibility_tool_calls_total(tool). Hosts exposing MCP
+through their own wrapper call the same native observer before their checks.
+No tool arguments or identities are recorded.
+
+Removal is a separate release decision after the observation covers native and
+hosted entries and the deployed observation shows zero calls for 30 consecutive days. Source searches
+alone do not establish zero external cached-client use. See the per-name
+replacement and evidence table in [MCP compatibility](mcp-compatibility.md).
+Parameters and descriptions below come from live registration."""
         + "\n\n"
-        + render_table(LEGACY_TOOLS, tools)
+        + render_table(COMPATIBILITY_TOOLS, tools)
     )
 
     sections.append(

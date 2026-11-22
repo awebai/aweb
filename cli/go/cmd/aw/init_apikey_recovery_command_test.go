@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/awebai/aw/awconfig"
 	"net/http"
 	"os"
 	"os/exec"
@@ -36,12 +37,16 @@ func TestAPIKeyGlobalRecoveryCommand(t *testing.T) {
 			const team = "staff:example.test"
 			var mu sync.Mutex
 			var did, pub string
-			calls, issued, registered := 0, 0, 0
+			calls, issued, registered, teamReads := 0, 0, 0, 0
 			server := newLocalHTTPServerHandlerWithURL(t, func(base string, w http.ResponseWriter, r *http.Request) {
+				if servePendingPrivateTeamRead(w, r, team) {
+					return
+				}
 				mu.Lock()
 				defer mu.Unlock()
 				switch {
 				case r.Method == "GET" && r.URL.Path == "/api/v1/teams/current":
+					teamReads++
 					if r.Header.Get("Authorization") != "Bearer "+provisioningKey {
 						t.Error("team selection did not use original authority")
 					}
@@ -250,7 +255,7 @@ func TestAPIKeyGlobalRecoveryCommand(t *testing.T) {
 			if strings.Contains(stdout, provisioningKey) || strings.Contains(stdout, "sensitive arbitrary") {
 				t.Fatal("hosted body or key exposed in the error envelope")
 			}
-			partial, err := os.ReadFile(apiKeyPartialInitPath(target))
+			partial, err := os.ReadFile(apiKeyPartialInitPath(awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(target)}))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -288,7 +293,7 @@ func TestAPIKeyGlobalRecoveryCommand(t *testing.T) {
 				}
 			} else {
 				mu.Lock()
-				beforeCalls, beforeIssued := calls, issued
+				beforeCalls, beforeIssued, beforeTeamReads := calls, issued, teamReads
 				mu.Unlock()
 				if beforeCalls != 1 || beforeIssued != 1 {
 					t.Fatalf("lost response auto-retried: %d/%d", beforeCalls, beforeIssued)
@@ -298,12 +303,12 @@ func TestAPIKeyGlobalRecoveryCommand(t *testing.T) {
 				}
 				// Wrong original authority must refuse locally without altering the partial.
 				_, _, changedCode := run("aw_sk_different_fixture_key")
-				after, err := os.ReadFile(apiKeyPartialInitPath(target))
+				after, err := os.ReadFile(apiKeyPartialInitPath(awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(target)}))
 				if err != nil {
 					t.Fatal(err)
 				}
 				mu.Lock()
-				unchanged := calls == beforeCalls
+				unchanged := calls == beforeCalls && teamReads == beforeTeamReads
 				mu.Unlock()
 				if changedCode == 0 || !unchanged || string(after) != string(partial) {
 					t.Fatal("changed context did not refuse intact before hosted call")
@@ -327,14 +332,17 @@ func TestAPIKeyGlobalRecoveryCommand(t *testing.T) {
 				if awid.ComputeDIDKey(key.Public().(ed25519.PublicKey)) != did {
 					t.Fatal("persisted replacement identity")
 				}
-				if _, err := os.Stat(apiKeyPartialInitPath(target)); !os.IsNotExist(err) {
+				if _, err := os.Stat(apiKeyPartialInitPath(awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(target)})); !os.IsNotExist(err) {
 					t.Fatal("success left partial")
 				}
 				mu.Lock()
-				finalCalls, finalIssued := calls, issued
+				finalCalls, finalIssued, finalTeamReads := calls, issued, teamReads
 				mu.Unlock()
 				if finalCalls != 2 || finalIssued != 2 {
 					t.Fatalf("repeat effects not accounted: %d/%d", finalCalls, finalIssued)
+				}
+				if finalTeamReads != 1 {
+					t.Fatalf("creation retry re-probed the original selection %d times", finalTeamReads)
 				}
 			}
 		})

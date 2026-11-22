@@ -150,10 +150,14 @@ Registration and instance-state writes retain their existing persistence path.
 Long control socket paths use a stable hash of the canonical socket path in
 an owner-only per-user runtime directory, shared with custody:
 `/private/tmp/aw-custody-<uid>` on macOS and `/tmp/aw-custody-<uid>` on other
-Unix systems. The directory is 0700 and the socket is 0600. For these shortened paths, unsafe ownership,
-permissions, symlinks or file types are refused before listen and dial. Existing
-short paths stay unchanged. `--state-dir` and `AW_WAKE_STATE_DIR` still select
-all durable state and the input to the socket locator; no state moves to tmp.
+Unix systems. The shortened directory must be owner-only and cannot itself be
+a symlink. Wake state paths allow symlinked ancestors, including HOME or
+`~/.config`. The current user must own the state directory. Existing shared
+permissions warn with repair advice and remain usable. For either locator, the
+socket must be an actual owner-only Unix socket. A refused path reports a wake
+control error before listen or dial. The broker creates the socket with mode
+0600. `--state-dir` and `AW_WAKE_STATE_DIR` select durable state and the input to
+the socket locator.
 
 `aw wake run` binds its control socket before reporting “listening”. A bind or
 permission failure exits immediately with an error and releases the daemon
@@ -307,9 +311,15 @@ home exits 0 with a note because the hook may run twice.
 Ordinary deregistration keeps its offline/idempotent behavior. Its successful
 exit, registry-file removal, and status absence are **not** a managed-stop
 completion receipt. File fallback is permitted only while holding the daemon
-lock, excluding a live daemon or a concurrent start. A control timeout or broken
-exchange refuses the command; retry or inspect the daemon instead of changing
-its state files.
+lock, excluding a live daemon or a concurrent start. A broker restart holds the
+lock with no answering socket, from taking the lock until it listens and from
+closing its socket until its channel-core children stop (up to 7 s). So
+`register`, `deregister`, `pause` and `resume` wait up to 15 s when the socket
+is down with the lock held, or an exchange breaks or times out. They retry
+until the daemon answers or the lock frees, and never change state files under
+a held lock. A daemon that holds the lock and does not answer for the whole 15 s
+is wedged: the command refuses, naming its pid, so it can be stopped and
+restarted with `aw wake run`.
 
 For an explicitly authorized withdrawal requiring that proof, the additive
 strict mode is:

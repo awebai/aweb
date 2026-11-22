@@ -208,7 +208,10 @@ async def test_key_and_enrollment_come_from_one_snapshot(tree, monkeypatch):
         resp = await tree.register([certificate("alice"), certificate("bob")], when=at("2026-10-26T00:03:00Z"))
         assert resp.status_code == 200, resp.text
 
-    monkeypatch.setattr(did_routes, "_db", lambda request: _ManagerEnrollingDuringKeyRead(real_db(request), enroll_bob))
+    async def db_enrolling_during_key_read(request):
+        return _ManagerEnrollingDuringKeyRead(await real_db(request), enroll_bob)
+
+    monkeypatch.setattr(did_routes, "_db", db_enrolling_during_key_read)
     assert await _id_tree(tree, "bob") == {"enrolled": False}
     monkeypatch.setattr(did_routes, "_db", real_db)
     assert await _id_tree(tree, "bob") == {"enrolled": True, "domain": DOMAIN}

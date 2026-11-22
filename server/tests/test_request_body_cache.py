@@ -3,17 +3,79 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
+from datetime import datetime, timezone
 
 import pytest
 from fastapi import FastAPI, HTTPException, Request
 from httpx import ASGITransport, AsyncClient
 from pydantic import BaseModel
+from starlette.exceptions import HTTPException as ASGIHTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from aweb.api import RequestBodyCacheMiddleware, create_app
+from aweb.application_state import application_registry_client
+from aweb.deps import get_db
+from aweb.identity_auth_deps import resolve_identity_auth
+from awid.signing import canonical_json_bytes, sign_message
+from nacl.signing import SigningKey
+from test_dashboard_privacy import privacy_app as privacy_app
+from test_team_room import admit_room_member
+
+__all__ = ["privacy_app"]
 
 EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cached_only", [False, True])
+@pytest.mark.parametrize("version", [1, 2])
+@pytest.mark.parametrize("body", [b"", b'{"text":"signed bytes"}'])
+async def test_identity_request_auth_binds_cached_bytes(privacy_app, cached_only, version, body):
+    """An embedding host's byte cache and the full middleware bind the same body."""
+    env = privacy_app
+    await admit_room_member(env, alias="alice")
+    actor = env.actors["alice"]
+    app = FastAPI()
+    app.state.public_origin = "https://body.example"
+    # Borrow the serving fixture's real client; its lifecycle remains there.
+    app.state.awid_registry_client = application_registry_client(env.app.state)
+    if not cached_only:
+        app.add_middleware(RequestBodyCacheMiddleware)
+
+    @app.post("/authenticate")
+    async def authenticate(request: Request):
+        if cached_only:
+            request.state.cached_body = await request.body()
+        identity = await resolve_identity_auth(request)
+        return {"did_key": identity.did_key}
+
+    key = SigningKey(actor.sk)
+    did = actor.did
+    timestamp = datetime.now(timezone.utc).isoformat()
+    payload = {
+        "did_aw": "",
+        "timestamp": timestamp,
+        "body_sha256": hashlib.sha256(body).hexdigest(),
+    }
+    if version == 2:
+        payload.update(v=2, aud=app.state.public_origin, method="POST", path="/authenticate")
+    canonical = canonical_json_bytes(payload)
+    headers = {
+        "Authorization": f"DIDKey {did} {sign_message(bytes(key), canonical)}",
+        "X-AWEB-Timestamp": timestamp,
+    }
+    if version == 2:
+        headers["X-AWEB-Signed-Payload"] = base64.urlsafe_b64encode(canonical).rstrip(b"=").decode()
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url=app.state.public_origin
+    ) as client:
+        accepted = await client.post("/authenticate", content=body, headers=headers)
+        assert accepted.status_code == 200, accepted.text
+        assert accepted.json() == {"did_key": did}
+        changed = await client.post("/authenticate", content=body + b" ", headers=headers)
+        assert changed.status_code == 401, changed.text
 
 
 class Note(BaseModel):
@@ -37,7 +99,10 @@ def _app():
 
     @app.get("/notes")
     async def get_notes(request: Request):
-        return {"cached": request.state.cached_body.decode(), "sha256": request.state.body_sha256}
+        return {
+            "cached": request.state.cached_body.decode(),
+            "sha256": request.state.body_sha256,
+        }
 
     @app.post("/refuse")
     async def refuse(note: Note):
@@ -50,7 +115,9 @@ def _app():
 async def test_a_post_body_is_cached_hashed_and_still_parsed():
     body = b'{"text":"hello"}'
     async with AsyncClient(transport=ASGITransport(app=_app()), base_url="http://test") as client:
-        response = await client.post("/notes", content=body, headers={"content-type": "application/json"})
+        response = await client.post(
+            "/notes", content=body, headers={"content-type": "application/json"}
+        )
     assert response.status_code == 200, response.text
     assert response.json() == {
         "text": "hello",
@@ -72,7 +139,8 @@ async def test_a_get_sees_an_empty_cached_body():
 async def test_a_post_that_errors_still_gets_its_response():
     async with AsyncClient(transport=ASGITransport(app=_app()), base_url="http://test") as client:
         response = await asyncio.wait_for(
-            client.post("/refuse", json={"text": "x"}), timeout=5,
+            client.post("/refuse", json={"text": "x"}),
+            timeout=5,
         )
     assert response.status_code == 409
     assert response.json() == {"detail": "refused x"}
@@ -102,8 +170,13 @@ async def test_a_multi_part_body_is_read_whole_before_the_app_runs():
     async def send(message):
         sent.append(message)
 
-    await RequestBodyCacheMiddleware(app)({"type": "http", "method": "POST", "headers": []}, receive, send)
-    assert seen == [b'{"text":"split"}', {"type": "http.request", "body": b'{"text":"split"}', "more_body": False}]
+    await RequestBodyCacheMiddleware(app)(
+        {"type": "http", "method": "POST", "headers": []}, receive, send
+    )
+    assert seen == [
+        b'{"text":"split"}',
+        {"type": "http.request", "body": b'{"text":"split"}', "more_body": False},
+    ]
     assert sent[0]["status"] == 204
 
 
@@ -171,8 +244,12 @@ async def test_a_body_at_the_cap_is_cached_and_one_byte_more_is_refused():
     _, sent, _ = await _run(middleware, {}, at_cap)
     assert seen == [cap] and _status(sent) == 204
 
-    over = iter([{"type": "http.request", "body": b"x" * cap, "more_body": True},
-                 {"type": "http.request", "body": b"y", "more_body": False}])
+    over = iter(
+        [
+            {"type": "http.request", "body": b"x" * cap, "more_body": True},
+            {"type": "http.request", "body": b"y", "more_body": False},
+        ]
+    )
     _, sent, _ = await _run(middleware, {}, over)
     assert seen == [cap], "the app must not run for an oversized body"
     assert _status(sent) == 413
@@ -187,7 +264,11 @@ async def test_an_endless_body_is_refused_without_reading_past_the_cap():
             yield {"type": "http.request", "body": b"z" * chunk, "more_body": True}
 
     seen = []
-    _, sent, read = await _run(RequestBodyCacheMiddleware(_recording_app(seen), max_body_bytes=cap), {}, endless())
+    _, sent, read = await _run(
+        RequestBodyCacheMiddleware(_recording_app(seen), max_body_bytes=cap),
+        {},
+        endless(),
+    )
     assert _status(sent) == 413 and seen == []
     assert sum(read) <= cap + chunk, sum(read)
 
@@ -196,8 +277,60 @@ async def test_an_endless_body_is_refused_without_reading_past_the_cap():
 async def test_a_declared_oversized_body_is_refused_before_any_read():
     seen = []
     scope = {"headers": [(b"content-length", b"4097")]}
-    _, sent, read = await _run(RequestBodyCacheMiddleware(_recording_app(seen), max_body_bytes=4096), scope, iter([]))
+    _, sent, read = await _run(
+        RequestBodyCacheMiddleware(_recording_app(seen), max_body_bytes=4096),
+        scope,
+        iter([]),
+    )
     assert read == [] and seen == [] and _status(sent) == 413
+
+
+@pytest.mark.asyncio
+async def test_host_stream_limit_stops_mounted_federation_before_ingress():
+    native = create_app()
+    ingress_calls = []
+
+    def observe_ingress():
+        ingress_calls.append(True)
+
+    native.dependency_overrides[get_db] = observe_ingress
+    host = FastAPI()
+    host.mount("/", native)
+    host_cap = 256 * 1024
+
+    async def host_with_stream_limit(scope, receive, send):
+        received = 0
+
+        async def limited_receive():
+            nonlocal received
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > host_cap:
+                    raise ASGIHTTPException(413, "Request body too large")
+            return message
+
+        await host(scope, limited_receive, send)
+
+    async def oversized_body():
+        yield b"x" * host_cap
+        yield b"x"
+        pytest.fail("the host limit must stop the upload")
+
+    async with AsyncClient(
+        transport=ASGITransport(app=host_with_stream_limit), base_url="http://test"
+    ) as client:
+        path = "/v1/federation/messages"
+        oversized = await client.post(
+            path, content=oversized_body(), headers={"content-type": "application/json"}
+        )
+        assert oversized.status_code == 413, oversized.text
+        assert oversized.json() == {"detail": "Request body too large"}
+        assert ingress_calls == []
+
+        malformed = await client.post(path, json={})
+        assert malformed.status_code == 422, malformed.text
+        assert ingress_calls == [True]
 
 
 def test_the_default_cap_admits_the_largest_released_client_body():
@@ -213,7 +346,11 @@ async def test_create_app_takes_its_cap_from_the_environment(monkeypatch):
     monkeypatch.setenv("AWEB_MAX_REQUEST_BODY_BYTES", "1024")
     app = create_app()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.post("/v1/messages", content=b"x" * 2048, headers={"content-type": "application/json"})
+        response = await client.post(
+            "/v1/messages",
+            content=b"x" * 2048,
+            headers={"content-type": "application/json"},
+        )
     assert response.status_code == 413
     assert response.json() == {"detail": "Request body too large"}
 

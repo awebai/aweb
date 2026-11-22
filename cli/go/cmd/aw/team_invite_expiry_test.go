@@ -86,7 +86,10 @@ func TestOATSControllerInviteExpiresFlagUsesTheSavedLifetime(t *testing.T) {
 	if err := os.Remove(keyPath); err != nil {
 		t.Fatal(err)
 	}
-	if err := awconfig.SaveTeamState(dir, &awconfig.TeamState{ActiveTeam: "one:example.com", Memberships: []awconfig.TeamMembership{{TeamID: "one:example.com", Alias: "root", CertPath: "team-certs/one.pem", AwebURL: "https://service.invalid"}}}); err != nil {
+	if err := awconfig.SaveTeamState(dir, &awconfig.TeamState{ActiveTeam: "one:example.com", Memberships: []awconfig.TeamMembership{{
+		TeamID: "one:example.com", Alias: "root", CertPath: "team-certs/one.pem",
+		AwebURL: "https://service.invalid", RegistryURL: "https://registry.example.test",
+	}}}); err != nil {
 		t.Fatal(err)
 	}
 	cmd := exec.Command(bin, "team", "invite", "--team-id", "one:example.com", "--expires", "48h", "--preflight", "--json")
@@ -95,5 +98,27 @@ func TestOATSControllerInviteExpiresFlagUsesTheSavedLifetime(t *testing.T) {
 	out, err := cmd.CombinedOutput()
 	if err == nil || !strings.Contains(string(out), "--expires selects a local controller invite lifetime; the hosted service sets its own expiry") {
 		t.Fatalf("hosted explicit lifetime was admitted: %v\n%s", err, out)
+	}
+}
+
+func TestOATSReleasedMalformedPositionalInviteRefusal(t *testing.T) {
+	bin, dir := buildDoctorBinary(t)
+	for _, verb := range [][]string{{"team", "join"}, {"id", "team", "accept-invite"}} {
+		t.Run(strings.Join(verb, " "), func(t *testing.T) {
+			cmd := exec.Command(bin, append(verb, "not-a-token", "--json")...)
+			cmd.Dir = dir
+			cmd.Env = append(testCommandEnv(dir), "AWEB_IDENTITY_HOME=", "AW_NO_UPDATE_CHECK=1")
+			out, err := cmd.Output()
+			exit, ok := err.(*exec.ExitError)
+			_, decodeErr := awconfig.DecodeInviteToken("not-a-token")
+			var envelope cliErrorEnvelope
+			if !ok || exit.ExitCode() != 1 || json.Unmarshal(out, &envelope) != nil ||
+				envelope.Error.Code != "error" || envelope.Error.Message != decodeErr.Error() {
+				t.Fatalf("expected released malformed token refusal, got %v: %s", err, out)
+			}
+			if _, err := os.Lstat(filepath.Join(dir, ".aw")); !os.IsNotExist(err) {
+				t.Fatalf("malformed token created an identity home: %v", err)
+			}
+		})
 	}
 }

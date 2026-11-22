@@ -216,10 +216,12 @@ MANAGED_GATEWAY_PRIVATE_TOKENS = (
 )
 
 HOOK_SOURCES = (
+    "server/src/aweb/event_types.py",
     "server/src/aweb/routes/messages.py",
     "server/src/aweb/messaging/mail_ack.py",
     "server/src/aweb/messaging/mail_send.py",
     "server/src/aweb/messaging/chat_send.py",
+    "server/src/aweb/messaging/room.py",
     "server/src/aweb/routes/federation.py",
     "server/src/aweb/routes/reservations.py",
     "server/src/aweb/routes/agent_status.py",
@@ -239,20 +241,123 @@ FORBIDDEN_PUBLIC_REFERENCES = (
 )
 
 
-def _string_literals(node: ast.AST) -> set[str]:
+def _expression_path(node: ast.AST) -> tuple[str, ...]:
+    if isinstance(node, ast.Name):
+        return (node.id,)
+    if isinstance(node, ast.Attribute):
+        parent = _expression_path(node.value)
+        return (*parent, node.attr) if parent else ()
+    return ()
+
+
+def _mutation_enum_members(root: Path) -> dict[str, str]:
+    """Read the canonical enum's literal assignments without executing source."""
+    source = root / "server/src/aweb/event_types.py"
+    if not source.is_file():
+        return {}
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef) and node.name == "MutationEventType":
+            return {
+                target.id: statement.value.value
+                for statement in node.body
+                if isinstance(statement, ast.Assign)
+                and isinstance(statement.value, ast.Constant)
+                and isinstance(statement.value.value, str)
+                for target in statement.targets
+                if isinstance(target, ast.Name)
+            }
+    return {}
+
+
+def _mutation_enum_imports(tree: ast.Module) -> set[tuple[str, ...]]:
+    """Resolve explicit canonical imports, conservatively refusing rebinding."""
+    references: set[tuple[str, ...]] = set()
+    canonical_imports: set[tuple[int, str]] = set()
+    node: ast.AST
+    for node in tree.body:
+        if isinstance(node, ast.ImportFrom) and node.module == "aweb.event_types":
+            for name in node.names:
+                if name.name == "MutationEventType":
+                    references.add((name.asname or name.name,))
+                    canonical_imports.add((id(node), name.asname or name.name))
+        elif isinstance(node, ast.Import):
+            for name in node.names:
+                if name.name == "aweb.event_types":
+                    references.add(
+                        (name.asname, "MutationEventType")
+                        if name.asname
+                        else ("aweb", "event_types", "MutationEventType")
+                    )
+                    canonical_imports.add(
+                        (id(node), name.asname or name.name.split(".")[0])
+                    )
+    shadowed: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            shadowed.add(node.id)
+        elif isinstance(node, ast.Attribute) and isinstance(
+            node.ctx, (ast.Store, ast.Del)
+        ):
+            path = _expression_path(node)
+            if path:
+                shadowed.add(path[0])
+        elif isinstance(node, ast.arg):
+            shadowed.add(node.arg)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            shadowed.add(node.name)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for name in node.names:
+                bound = name.asname or name.name.split(".")[0]
+                canonical = (
+                    isinstance(node, ast.ImportFrom)
+                    and node.module == "aweb.event_types"
+                    and name.name == "MutationEventType"
+                ) or (isinstance(node, ast.Import) and name.name == "aweb.event_types")
+                if not canonical or (id(node), bound) not in canonical_imports:
+                    shadowed.add(bound)
+    return {reference for reference in references if reference[0] not in shadowed}
+
+
+def _string_literals(
+    node: ast.AST,
+    *,
+    enum_imports: set[tuple[str, ...]],
+    enum_members: dict[str, str],
+) -> set[str]:
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return {node.value}
     if isinstance(node, ast.IfExp):
-        return _string_literals(node.body) | _string_literals(node.orelse)
+        left = _string_literals(
+            node.body, enum_imports=enum_imports, enum_members=enum_members
+        )
+        right = _string_literals(
+            node.orelse, enum_imports=enum_imports, enum_members=enum_members
+        )
+        return left | right if left and right else set()
+    path = _expression_path(node)
+    if path and path[-1] == "value":
+        path = path[:-1]
+    if len(path) >= 2 and path[:-1] in enum_imports and path[-1] in enum_members:
+        return {enum_members[path[-1]]}
     return set()
 
 
 class _HookCallVisitor(ast.NodeVisitor):
-    def __init__(self, relative: str, failures: list[str]) -> None:
+    def __init__(
+        self,
+        relative: str,
+        failures: list[str],
+        *,
+        tree: ast.Module,
+        enum_members: dict[str, str],
+    ) -> None:
         self.relative = relative
         self.failures = failures
         self.function_stack: list[str] = []
         self.call_sites: list[dict[str, str]] = []
+        self.enum_imports = _mutation_enum_imports(tree)
+        self.enum_members = enum_members
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         self._visit_function(node)
@@ -279,11 +384,27 @@ class _HookCallVisitor(ast.NodeVisitor):
             or (self.relative, self.function_stack[-1]) in HOOK_FORWARDING_FUNCTIONS
         )
         if event_position is not None and not forwards:
-            event_expression = node.args[event_position] if len(node.args) > event_position else next(
-                (keyword.value for keyword in node.keywords if keyword.arg == "event_type"),
-                None,
+            event_expression = (
+                node.args[event_position]
+                if len(node.args) > event_position
+                else next(
+                    (
+                        keyword.value
+                        for keyword in node.keywords
+                        if keyword.arg == "event_type"
+                    ),
+                    None,
+                )
             )
-            literals = _string_literals(event_expression) if event_expression is not None else set()
+            literals = (
+                _string_literals(
+                    event_expression,
+                    enum_imports=self.enum_imports,
+                    enum_members=self.enum_members,
+                )
+                if event_expression is not None
+                else set()
+            )
             if not literals:
                 self.failures.append(
                     f"unsupported non-literal {name} event expression: {self.relative}:{node.lineno}"
@@ -292,7 +413,11 @@ class _HookCallVisitor(ast.NodeVisitor):
                 enclosing_function = ".".join(self.function_stack) or "<module>"
                 for event in sorted(literals):
                     self.call_sites.append(
-                        {"source": self.relative, "function": enclosing_function, "event": event}
+                        {
+                            "source": self.relative,
+                            "function": enclosing_function,
+                            "event": event,
+                        }
                     )
         self.generic_visit(node)
 
@@ -303,10 +428,13 @@ def _source_hook_call_sites(root: Path, failures: list[str]) -> list[dict[str, s
     if not source_root.is_dir():
         failures.append("missing hook source root: server/src/aweb")
         return call_sites
+    enum_members = _mutation_enum_members(root)
     for path in sorted(source_root.rglob("*.py")):
         relative = str(path.relative_to(root))
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=relative)
-        visitor = _HookCallVisitor(relative, failures)
+        visitor = _HookCallVisitor(
+            relative, failures, tree=tree, enum_members=enum_members
+        )
         visitor.visit(tree)
         call_sites.extend(visitor.call_sites)
     call_sites.sort(key=lambda item: (item["source"], item["function"], item["event"]))
@@ -389,7 +517,8 @@ def _is_managed_gateway_surface(relative: str) -> bool:
         or relative.startswith("docs/examples/a2a-")
         or relative.startswith("docs/vectors/a2a-")
         or relative.startswith("cli/go/internal/conformance/vectors/a2a-")
-        or relative in {
+        or relative
+        in {
             "docs/README.md",
             "docs/vectors/README.md",
             "cli/go/.goreleaser.yaml",
@@ -430,7 +559,9 @@ def _check_federation_docs(root: Path, failures: list[str]) -> None:
         != "controller_proof_and_authenticated_recipient_acceptance"
         or policies.get("contact_transfer") != "never_automatic"
     ):
-        failures.append("canonical federation selected-policy vector changed without docs reconciliation")
+        failures.append(
+            "canonical federation selected-policy vector changed without docs reconciliation"
+        )
 
     if not reference_path.is_file():
         failures.append("missing generated federation error reference")
@@ -439,7 +570,9 @@ def _check_federation_docs(root: Path, failures: list[str]) -> None:
         for error in vector.get("stable_errors", []):
             reason = error.get("reason") if isinstance(error, dict) else None
             if not isinstance(reason, str) or reference.count(f"| `{reason}` |") != 1:
-                failures.append(f"generated federation error reference does not contain {reason!r} exactly once")
+                failures.append(
+                    f"generated federation error reference does not contain {reason!r} exactly once"
+                )
 
     for relative, required_text in FEDERATION_DOC_REQUIREMENTS.items():
         path = docs / relative
@@ -449,7 +582,9 @@ def _check_federation_docs(root: Path, failures: list[str]) -> None:
         text = path.read_text(encoding="utf-8").casefold()
         for requirement in required_text:
             if requirement.casefold() not in text:
-                failures.append(f"docs/{relative} omits federation contract text {requirement!r}")
+                failures.append(
+                    f"docs/{relative} omits federation contract text {requirement!r}"
+                )
 
 
 def check(
@@ -465,15 +600,23 @@ def check(
         normalized_relative = relative.casefold()
         for token in MANAGED_GATEWAY_PRIVATE_TOKENS:
             if token.casefold() in normalized_relative:
-                failures.append(f"tracked path {relative} retains private managed-gateway name {token!r}")
+                failures.append(
+                    f"tracked path {relative} retains private managed-gateway name {token!r}"
+                )
         for name in PRIVATE_TRANSITION_PATH_NAMES:
             if name.casefold() in normalized_relative:
-                failures.append(f"tracked path {relative} retains private transition document name")
+                failures.append(
+                    f"tracked path {relative} retains private transition document name"
+                )
 
-    for relative, normalized_text in sorted(_tracked_text_corpus(root, tracked_files).items()):
+    for relative, normalized_text in sorted(
+        _tracked_text_corpus(root, tracked_files).items()
+    ):
         for name in PRIVATE_TRANSITION_PATH_NAMES:
             if name.casefold() in normalized_text:
-                failures.append(f"tracked file {relative} references private transition document name")
+                failures.append(
+                    f"tracked file {relative} references private transition document name"
+                )
         for label, terms in PRIVATE_TRANSITION_CONTENT_RULES:
             if all(term.casefold() in normalized_text for term in terms):
                 failures.append(f"{relative} retains {label}")
@@ -500,14 +643,18 @@ def check(
         normalized_text = raw.decode("utf-8", errors="replace").casefold()
         for token in MANAGED_GATEWAY_PRIVATE_TOKENS:
             if token.casefold() in normalized_text:
-                failures.append(f"{relative} retains private managed-gateway token {token!r}")
+                failures.append(
+                    f"{relative} retains private managed-gateway token {token!r}"
+                )
     removed_private_paths = (
         root / "docs" / ("a2a-ac-" + "managed-gateway-contract.md"),
         root / "docs/examples" / ("a2a-gateway-ac-" + "managed.yaml"),
     )
     for path in removed_private_paths:
         if path.exists():
-            failures.append(f"removed private managed-gateway path returned: {path.relative_to(root)}")
+            failures.append(
+                f"removed private managed-gateway path returned: {path.relative_to(root)}"
+            )
     docs = root / "docs"
 
     for relative in REMOVED_DOCS:
@@ -524,7 +671,9 @@ def check(
     for relative, text in public_text.items():
         for forbidden in FORBIDDEN_PUBLIC_REFERENCES:
             if forbidden in text:
-                failures.append(f"docs/{relative} retains private/superseded reference {forbidden!r}")
+                failures.append(
+                    f"docs/{relative} retains private/superseded reference {forbidden!r}"
+                )
 
     hook_text = public_text.get("aw-hooks-sot.md", "")
     source_call_sites = _source_hook_call_sites(root, failures)
@@ -536,10 +685,14 @@ def check(
 
     inventory_path = docs / HOOK_INVENTORY
     if not inventory_path.is_file():
-        failures.append(f"missing mutation hook call-site inventory: docs/{HOOK_INVENTORY}")
+        failures.append(
+            f"missing mutation hook call-site inventory: docs/{HOOK_INVENTORY}"
+        )
     else:
         inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
-        inventory_call_sites = inventory.get("call_sites") if isinstance(inventory, dict) else None
+        inventory_call_sites = (
+            inventory.get("call_sites") if isinstance(inventory, dict) else None
+        )
         if (
             not isinstance(inventory, dict)
             or inventory.get("schema") != "aweb.mutation-hook-call-sites.v1"
@@ -551,30 +704,48 @@ def check(
                 for item in inventory_call_sites
             )
         ):
-            failures.append(f"invalid mutation hook call-site inventory: docs/{HOOK_INVENTORY}")
+            failures.append(
+                f"invalid mutation hook call-site inventory: docs/{HOOK_INVENTORY}"
+            )
         else:
             source_counts = Counter(
-                (item["source"], item["function"], item["event"]) for item in source_call_sites
+                (item["source"], item["function"], item["event"])
+                for item in source_call_sites
             )
             inventory_counts = Counter(
-                (item["source"], item["function"], item["event"]) for item in inventory_call_sites
+                (item["source"], item["function"], item["event"])
+                for item in inventory_call_sites
             )
             for call_site, count in sorted((source_counts - inventory_counts).items()):
-                failures.append(f"mutation hook inventory omits source call site {call_site!r} x{count}")
+                failures.append(
+                    f"mutation hook inventory omits source call site {call_site!r} x{count}"
+                )
             for call_site, count in sorted((inventory_counts - source_counts).items()):
-                failures.append(f"mutation hook inventory retains absent call site {call_site!r} x{count}")
+                failures.append(
+                    f"mutation hook inventory retains absent call site {call_site!r} x{count}"
+                )
 
     runbook = public_text.get("a2a-release-runbook.md", "")
-    makefile = (root / "Makefile").read_text(encoding="utf-8") if (root / "Makefile").is_file() else ""
+    makefile = (
+        (root / "Makefile").read_text(encoding="utf-8")
+        if (root / "Makefile").is_file()
+        else ""
+    )
     e2e_script_path = root / "scripts" / "e2e-a2a-gateway-docker.sh"
-    e2e_script = e2e_script_path.read_text(encoding="utf-8") if e2e_script_path.is_file() else ""
+    e2e_script = (
+        e2e_script_path.read_text(encoding="utf-8") if e2e_script_path.is_file() else ""
+    )
     generator = "go run ./tools/a2a-gateway-check-workspace -output"
     if generator not in runbook:
-        failures.append("A2A release image check does not generate a synthetic gateway workspace")
-    if '$(CURDIR):/workspace:ro' in makefile or '"$ROOT:/workspace' in e2e_script:
+        failures.append(
+            "A2A release image check does not generate a synthetic gateway workspace"
+        )
+    if "$(CURDIR):/workspace:ro" in makefile or '"$ROOT:/workspace' in e2e_script:
         failures.append("A2A release image check mounts the real repository workspace")
     if '-v "$GATEWAY_DIR:/workspace:ro"' not in e2e_script:
-        failures.append("A2A release image check does not mount its throwaway workspace")
+        failures.append(
+            "A2A release image check does not mount its throwaway workspace"
+        )
 
     vectors = sorted(path.name for path in (docs / "vectors").glob("*.json"))
     vector_index = public_text.get("vectors/README.md", "")
@@ -582,31 +753,53 @@ def check(
         if f"`{name}`" not in vector_index:
             failures.append(f"vectors/README.md omits {name}")
     if "digest-only fixture" not in vector_index or "placeholder" not in vector_index:
-        failures.append("vectors/README.md does not identify the non-verifying digest-only fixture")
+        failures.append(
+            "vectors/README.md does not identify the non-verifying digest-only fixture"
+        )
 
     support_text = public_text.get("support-contract-v1.md", "")
-    if "current for OSS registry-read envelopes" not in support_text or "doctor.v1" not in support_text:
-        failures.append("support-contract-v1.md does not state its current registry/doctor compatibility boundary")
+    if (
+        "current for OSS registry-read envelopes" not in support_text
+        or "doctor.v1" not in support_text
+    ):
+        failures.append(
+            "support-contract-v1.md does not state its current registry/doctor compatibility boundary"
+        )
     for relative in ("app-events.md", "app-manifest.md", "app-registry.md"):
         # Checking only the header keeps a distant use of the word from masking a bad status.
         header = "\n".join(public_text.get(relative, "").splitlines()[:12])
         if "experimental" not in header:
-            failures.append(f"docs/{relative} does not state its experimental lifecycle in the header")
+            failures.append(
+                f"docs/{relative} does not state its experimental lifecycle in the header"
+            )
 
     _check_federation_docs(root, failures)
 
     identity_contract = docs / "identity-messaging-contract.md"
     if not identity_contract.is_file():
-        failures.append("missing current federation authority: docs/identity-messaging-contract.md")
+        failures.append(
+            "missing current federation authority: docs/identity-messaging-contract.md"
+        )
     else:
         text = identity_contract.read_text(encoding="utf-8")
-        if "Accept-Encoding: identity" not in text or "Federation Compatibility" not in text:
-            failures.append("current identity messaging authority lacks retained federation compatibility rules")
+        if (
+            "Accept-Encoding: identity" not in text
+            or "Federation Compatibility" not in text
+        ):
+            failures.append(
+                "current identity messaging authority lacks retained federation compatibility rules"
+            )
 
-    all_markdown = tracked_markdown if tracked_markdown is not None else _tracked_docs_markdown(root, failures)
+    all_markdown = (
+        tracked_markdown
+        if tracked_markdown is not None
+        else _tracked_docs_markdown(root, failures)
+    )
     for relative in sorted(all_markdown):
         if not (docs / relative).is_file():
-            failures.append(f"tracked Markdown is missing from the working tree: docs/{relative}")
+            failures.append(
+                f"tracked Markdown is missing from the working tree: docs/{relative}"
+            )
     readme = (docs / "README.md").read_text(encoding="utf-8")
     links = {
         target
@@ -615,12 +808,36 @@ def check(
     }
     extra = sorted(links - (all_markdown - {"README.md"}))
     if extra:
-        failures.append(f"docs/README.md links non-public/absent Markdown paths: {', '.join(extra)}")
+        failures.append(
+            f"docs/README.md links non-public/absent Markdown paths: {', '.join(extra)}"
+        )
     section_links = _readme_h2_links(readme)
     if section_links.get("Non-normative strategy and research"):
         failures.append("public docs index still publishes a strategy/research section")
 
     return failures
+
+
+def _room_dynamic_event_is_rejected(root: Path) -> bool:
+    """Exercise the actual named room producer, restoring its source afterward."""
+    relative = "server/src/aweb/messaging/room.py"
+    source = root / relative
+    original = source.read_text(encoding="utf-8")
+    mutated = original.replace(
+        "MutationEventType.ROOM_MESSAGE_SENT.value,", "dynamic_event_name,", 1
+    ).replace("MutationEventType.ROOM_MESSAGE_SENT,", "dynamic_event_name,", 1)
+    if mutated == original:
+        return False
+    try:
+        source.write_text(mutated, encoding="utf-8")
+        failures: list[str] = []
+        _source_hook_call_sites(root, failures)
+        return any(
+            relative in failure and "unsupported non-literal" in failure
+            for failure in failures
+        )
+    finally:
+        source.write_text(original, encoding="utf-8")
 
 
 def self_test(root: Path) -> int:
@@ -645,7 +862,9 @@ def self_test(root: Path) -> int:
         tmp = Path(raw_tmp)
         shutil.copytree(root / "docs", tmp / "docs")
         for relative in sorted(tracked_files):
-            if not _is_managed_gateway_surface(relative) or relative.startswith("docs/"):
+            if not _is_managed_gateway_surface(relative) or relative.startswith(
+                "docs/"
+            ):
                 continue
             destination = tmp / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
@@ -655,13 +874,21 @@ def self_test(root: Path) -> int:
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(root / relative, destination)
 
+        if not _room_dynamic_event_is_rejected(tmp):
+            print("self-test failed: dynamic room event was not detected")
+            return 1
+
         untracked_note = tmp / "docs/untracked-self-test-note.md"
         untracked_note.write_text("not part of the tracked corpus\n", encoding="utf-8")
         if failures := check(tmp, tracked_markdown, tracked_files):
-            print(f"self-test failed: untracked Markdown changed the tracked corpus: {failures[0]}")
+            print(
+                f"self-test failed: untracked Markdown changed the tracked corpus: {failures[0]}"
+            )
             return 1
         untracked_note.unlink()
-        failures = check(tmp, tracked_markdown | {"missing-tracked-self-test-note.md"}, tracked_files)
+        failures = check(
+            tmp, tracked_markdown | {"missing-tracked-self-test-note.md"}, tracked_files
+        )
         if not any("tracked Markdown is missing" in failure for failure in failures):
             print("self-test failed: missing tracked Markdown was not detected")
             return 1
@@ -669,7 +896,10 @@ def self_test(root: Path) -> int:
         private_transition_mutations = (
             (
                 "private database inventory",
-                "Cross-boundary " + "foreign keys\naweb_" + "cloud rows\naweb_" + "overlay changes\n",
+                "Cross-boundary "
+                + "foreign keys\naweb_"
+                + "cloud rows\naweb_"
+                + "overlay changes\n",
             ),
             (
                 "private production runbook",
@@ -689,7 +919,8 @@ def self_test(root: Path) -> int:
             ),
             (
                 "private personnel approval flow",
-                "Credentialed " + "human operator\nReviewer reviews this plan before execution\n",
+                "Credentialed "
+                + "human operator\nReviewer reviews this plan before execution\n",
             ),
         )
         rule_labels = {label for label, _ in PRIVATE_TRANSITION_CONTENT_RULES}
@@ -697,7 +928,9 @@ def self_test(root: Path) -> int:
             print("self-test failed: every content rule needs a document fixture")
             return 1
         if set(PRIVATE_TRANSITION_NON_DOC_SURFACES) != rule_labels:
-            print("self-test failed: every content rule needs a non-document surface fixture")
+            print(
+                "self-test failed: every content rule needs a non-document surface fixture"
+            )
             return 1
 
         for index, (label, content) in enumerate(private_transition_mutations):
@@ -723,7 +956,9 @@ def self_test(root: Path) -> int:
             mutation_failures = check(tmp, tracked_markdown, tracked_files | {relative})
             expected = f"{relative} retains {label}"
             if expected not in mutation_failures:
-                print(f"self-test failed: {label} was not detected on non-document surface {relative}")
+                print(
+                    f"self-test failed: {label} was not detected on non-document surface {relative}"
+                )
                 return 1
             path.unlink()
 
@@ -733,13 +968,23 @@ def self_test(root: Path) -> int:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(b"\0\x1f\x8b" + content.encode("utf-8") + b"\0")
             mutation_failures = check(tmp, tracked_markdown, tracked_files | {relative})
-            if any(failure.startswith(f"{relative} retains") for failure in mutation_failures):
-                print(f"self-test failed: binary content was scanned as text for {label}")
+            if any(
+                failure.startswith(f"{relative} retains")
+                for failure in mutation_failures
+            ):
+                print(
+                    f"self-test failed: binary content was scanned as text for {label}"
+                )
                 return 1
             path.write_bytes("Príväte".encode("latin-1") + content.encode("utf-8"))
             mutation_failures = check(tmp, tracked_markdown, tracked_files | {relative})
-            if any(failure.startswith(f"{relative} retains") for failure in mutation_failures):
-                print(f"self-test failed: undecodable content was scanned as text for {label}")
+            if any(
+                failure.startswith(f"{relative} retains")
+                for failure in mutation_failures
+            ):
+                print(
+                    f"self-test failed: undecodable content was scanned as text for {label}"
+                )
                 return 1
             path.unlink()
 
@@ -750,7 +995,9 @@ def self_test(root: Path) -> int:
             transition_failures = check(tmp, tracked_markdown, tracked_files)
             expected = f"removed private transition path returned: {transition_path}"
             if expected not in transition_failures:
-                print(f"self-test failed: private transition path returned: {transition_path}")
+                print(
+                    f"self-test failed: private transition path returned: {transition_path}"
+                )
                 return 1
             transition_file.unlink()
 
@@ -759,16 +1006,24 @@ def self_test(root: Path) -> int:
             transition_file = tmp / relative
             transition_file.parent.mkdir(parents=True, exist_ok=True)
             transition_file.write_text("generic: true\n", encoding="utf-8")
-            transition_failures = check(tmp, tracked_markdown, tracked_files | {relative})
-            expected = f"tracked path {relative} retains private transition document name"
+            transition_failures = check(
+                tmp, tracked_markdown, tracked_files | {relative}
+            )
+            expected = (
+                f"tracked path {relative} retains private transition document name"
+            )
             if expected not in transition_failures:
-                print(f"self-test failed: private transition name returned: {transition_name}")
+                print(
+                    f"self-test failed: private transition name returned: {transition_name}"
+                )
                 return 1
             transition_file.unlink()
 
             consumer_relative = f"reviewer/private-transition-consumer-{index}.txt"
             consumer_file = tmp / consumer_relative
-            consumer_file.write_text(f"docs/archive/{transition_name}.md\n", encoding="utf-8")
+            consumer_file.write_text(
+                f"docs/archive/{transition_name}.md\n", encoding="utf-8"
+            )
             transition_failures = check(
                 tmp,
                 tracked_markdown,
@@ -776,7 +1031,9 @@ def self_test(root: Path) -> int:
             )
             expected = f"tracked file {consumer_relative} references private transition document name"
             if expected not in transition_failures:
-                print(f"self-test failed: private transition consumer returned: {transition_name}")
+                print(
+                    f"self-test failed: private transition consumer returned: {transition_name}"
+                )
                 return 1
             consumer_file.unlink()
 
@@ -787,7 +1044,11 @@ def self_test(root: Path) -> int:
             ("awid/src/awid/a2a_publication.py", "a" + "c_config", False),
             ("cli/go/awid/a2a_publication.go", "a" + "c_config", False),
             ("cli/go/cmd/aw/a2a.go", "a" + "c_config", False),
-            ("cli/go/tools/a2a-gateway-check-workspace/main.go", "a" + "c_config", False),
+            (
+                "cli/go/tools/a2a-gateway-check-workspace/main.go",
+                "a" + "c_config",
+                False,
+            ),
             ("docs/a2a-release-runbook.md", "a" + "c_config", False),
             ("cli/go/cmd/aweb-a2a-gw/new_surface.go", "a" + "c_config", True),
             ("cli/go/a2a/new_surface.go", "a" + "c_config", True),
@@ -799,11 +1060,15 @@ def self_test(root: Path) -> int:
             original = path.read_text(encoding="utf-8") if path.exists() else None
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text((original or "") + f"\n{token}\n", encoding="utf-8")
-            mutation_files = tracked_files | ({relative} if newly_tracked_surface else set())
+            mutation_files = tracked_files | (
+                {relative} if newly_tracked_surface else set()
+            )
             mutation_failures = check(tmp, tracked_markdown, mutation_files)
             expected = f"{relative} retains private managed-gateway token"
             if not any(expected in failure for failure in mutation_failures):
-                print(f"self-test failed: managed-gateway neutrality mutation was not detected in {relative}")
+                print(
+                    f"self-test failed: managed-gateway neutrality mutation was not detected in {relative}"
+                )
                 return 1
             if original is None:
                 path.unlink()
@@ -823,7 +1088,9 @@ def self_test(root: Path) -> int:
             mutation_failures = check(tmp, tracked_markdown, tracked_files | {relative})
             expected = f"tracked path {relative} retains private managed-gateway name"
             if not any(expected in failure for failure in mutation_failures):
-                print(f"self-test failed: private managed-gateway path was not detected: {relative}")
+                print(
+                    f"self-test failed: private managed-gateway path was not detected: {relative}"
+                )
                 return 1
             path.unlink()
 
@@ -834,7 +1101,9 @@ def self_test(root: Path) -> int:
             mutation_failures = check(tmp, tracked_markdown, tracked_files | {relative})
             expected = f"removed company-strategy path returned: {relative}"
             if not any(expected in failure for failure in mutation_failures):
-                print(f"self-test failed: removed strategy path was not detected: {relative}")
+                print(
+                    f"self-test failed: removed strategy path was not detected: {relative}"
+                )
                 return 1
             path.unlink()
 
@@ -845,7 +1114,9 @@ def self_test(root: Path) -> int:
             mutation_failures = check(tmp, tracked_markdown, tracked_files | {relative})
             expected = f"removed superseded repository path returned: {relative}"
             if not any(expected in failure for failure in mutation_failures):
-                print(f"self-test failed: removed superseded path was not detected: {relative}")
+                print(
+                    f"self-test failed: removed superseded path was not detected: {relative}"
+                )
                 return 1
             path.unlink()
 
@@ -853,7 +1124,12 @@ def self_test(root: Path) -> int:
             path = tmp / "docs" / relative
             original = path.read_text(encoding="utf-8")
             requirement = required_text[0]
-            mutated = re.sub(re.escape(requirement), "removed-federation-contract-text", original, flags=re.I)
+            mutated = re.sub(
+                re.escape(requirement),
+                "removed-federation-contract-text",
+                original,
+                flags=re.I,
+            )
             if mutated == original:
                 print(f"self-test setup failed: docs/{relative} lacks {requirement!r}")
                 return 1
@@ -861,37 +1137,58 @@ def self_test(root: Path) -> int:
             mutation_failures = check(tmp, tracked_markdown, tracked_files)
             expected = f"docs/{relative} omits federation contract text"
             if not any(expected in failure for failure in mutation_failures):
-                print(f"self-test failed: federation contract mutation was not detected in docs/{relative}")
+                print(
+                    f"self-test failed: federation contract mutation was not detected in docs/{relative}"
+                )
                 return 1
             path.write_text(original, encoding="utf-8")
 
         reference = tmp / "docs/federation-error-reference.md"
         reference_original = reference.read_text(encoding="utf-8")
         first_reason = json.loads(
-            (tmp / "docs/vectors/federation-authority-state-v1.json").read_text(encoding="utf-8")
+            (tmp / "docs/vectors/federation-authority-state-v1.json").read_text(
+                encoding="utf-8"
+            )
         )["stable_errors"][0]["reason"]
         reference.write_text(
-            reference_original.replace(f"| `{first_reason}` |", "| `removed_error` |", 1),
+            reference_original.replace(
+                f"| `{first_reason}` |", "| `removed_error` |", 1
+            ),
             encoding="utf-8",
         )
         mutation_failures = check(tmp, tracked_markdown, tracked_files)
-        if not any("generated federation error reference" in failure for failure in mutation_failures):
+        if not any(
+            "generated federation error reference" in failure
+            for failure in mutation_failures
+        ):
             print("self-test failed: removed federation error row was not detected")
             return 1
         reference.write_text(reference_original, encoding="utf-8")
 
         hook = tmp / "docs/aw-hooks-sot.md"
-        hook.write_text(hook.read_text(encoding="utf-8").replace("`task.created`", "`task-created`"), encoding="utf-8")
+        hook.write_text(
+            hook.read_text(encoding="utf-8").replace(
+                "`task.created`", "`task-created`"
+            ),
+            encoding="utf-8",
+        )
 
         message_source = tmp / "server/src/aweb/routes/messages.py"
         message_text = message_source.read_text(encoding="utf-8")
-        message_text = message_text.replace("await fire_mutation_hook(", "await omitted_mutation_hook(", 1)
+        message_text = message_text.replace(
+            "await fire_mutation_hook(", "await omitted_mutation_hook(", 1
+        )
         message_text += '\n\nasync def negative_new_hook_call_site():\n    await fire_mutation_hook(None, "message.sent", {})\n'
         message_source.write_text(message_text, encoding="utf-8")
 
         chat_source = tmp / "server/src/aweb/messaging/chat_send.py"
         chat_source.write_text(
-            chat_source.read_text(encoding="utf-8").replace('"chat.message_sent",', "dynamic_event_name,", 1),
+            chat_source.read_text(encoding="utf-8")
+            .replace('"chat.message_sent",', "dynamic_event_name,", 1)
+            .replace(
+                "MutationEventType.CHAT_MESSAGE_SENT.value,", "dynamic_event_name,", 1
+            )
+            .replace("MutationEventType.CHAT_MESSAGE_SENT,", "dynamic_event_name,", 1),
             encoding="utf-8",
         )
 
@@ -935,7 +1232,9 @@ def self_test(root: Path) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--root", default=Path(__file__).resolve().parents[1], type=Path)
+    parser.add_argument(
+        "--root", default=Path(__file__).resolve().parents[1], type=Path
+    )
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
     root = args.root.resolve()

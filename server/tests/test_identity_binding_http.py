@@ -14,7 +14,8 @@ from awid.did import stable_id_from_did_key
 from awid.registry import CachedRegistryClient
 from awid.signing import canonical_json_bytes, sign_message
 from test_cli_never_grants import registry_listener
-from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
+from test_dashboard_privacy import TEAM
+from test_dashboard_privacy import privacy_app as privacy_app
 from test_messages_http import (
     _encode_certificate,
     _make_certificate,
@@ -23,10 +24,10 @@ from test_messages_http import (
     _signed_team_headers,
 )
 
+__all__ = ["privacy_app"]
 
-async def request(
-    env, actor, method, path, payload=None, *, certificate=None, did_aw=None
-):
+
+async def request(env, actor, method, path, payload=None, *, certificate=None, did_aw=None):
     body = json.dumps(payload).encode() if payload is not None else b""
     if did_aw is not None:
         headers = _signed_identity_headers(actor.sk, actor.did, did_aw, body)
@@ -78,18 +79,14 @@ async def register(env, registry, actor, name="bob"):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("claim", ["other_identity", "other_address"])
-async def test_connect_refuses_inconsistent_identity_claims_without_writes(
-    privacy_app, claim
-):
+async def test_connect_refuses_inconsistent_identity_claims_without_writes(privacy_app, claim):
     env = privacy_app
     bob, alice = env.actors["bob"], env.actors["alice"]
     async with registry_listener(env) as (registry, _):
         stable, address = await register(env, registry, alice)
         if claim == "other_address":
             stable = (await registry.register_did(bob.did, bob.sk)).did_aw
-        before = await env.db.fetch_all(
-            "SELECT * FROM {{tables.agents}} ORDER BY agent_id"
-        )
+        before = await env.db.fetch_all("SELECT * FROM {{tables.agents}} ORDER BY agent_id")
         result = await request(
             env,
             bob,
@@ -100,9 +97,7 @@ async def test_connect_refuses_inconsistent_identity_claims_without_writes(
         )
         assert result.status_code == 403, result.text
         assert result.json()["detail"] == "identity_binding_mismatch"
-        assert before == await env.db.fetch_all(
-            "SELECT * FROM {{tables.agents}} ORDER BY agent_id"
-        )
+        assert before == await env.db.fetch_all("SELECT * FROM {{tables.agents}} ORDER BY agent_id")
 
 
 @pytest.mark.asyncio
@@ -114,9 +109,7 @@ async def test_verified_identity_connects_and_receives_mail(privacy_app):
         bob.certificate = certificate(env, bob, stable, address)
         connected = await request(env, bob, "POST", "/v1/connect", {})
         assert connected.status_code == 200, connected.text
-        row = await env.db.fetch_one(
-            "SELECT * FROM {{tables.agents}} WHERE agent_id=$1", bob.id
-        )
+        row = await env.db.fetch_one("SELECT * FROM {{tables.agents}} WHERE agent_id=$1", bob.id)
         assert (row["did_aw"], row["address"], row["did_aw_verified_key"]) == (
             stable,
             address,
@@ -130,9 +123,7 @@ async def test_verified_identity_connects_and_receives_mail(privacy_app):
             {"to_did": stable, "subject": "hello", "body": "hello"},
         )
         assert sent.status_code == 200, sent.text
-        received = await request(
-            env, bob, "GET", f"/v1/messages/{sent.json()['message_id']}"
-        )
+        received = await request(env, bob, "GET", f"/v1/messages/{sent.json()['message_id']}")
         assert received.status_code == 200, received.text
 
 
@@ -159,9 +150,7 @@ async def test_self_derived_identity_requires_definitive_registry_absence(privac
                 identity_scope="global",
             )
         )
-        refused = await request(
-            env, other, "POST", "/v1/connect", {}, certificate=forged
-        )
+        refused = await request(env, other, "POST", "/v1/connect", {}, certificate=forged)
         assert refused.status_code == 403, refused.text
 
 
@@ -236,9 +225,7 @@ async def test_rotation_requires_current_key_and_preserves_multi_team_identity(
             "SELECT did_aw_verified_key FROM {{tables.agents}} WHERE did_aw=$1 AND deleted_at IS NULL",
             stable,
         )
-        assert len(rows) == 2 and all(
-            row["did_aw_verified_key"] == bob.did for row in rows
-        )
+        assert len(rows) == 2 and all(row["did_aw_verified_key"] == bob.did for row in rows)
         identity_inbox = await request(env, bob, "GET", "/v1/messages/inbox", did_aw=stable)
         assert identity_inbox.status_code == 200, identity_inbox.text
 
@@ -278,19 +265,21 @@ async def test_old_projections_require_verification_before_stable_resolution(
         )
         async with env.db.transaction() as tx:
             with pytest.raises(FederationAuthorityError):
-                await _lock_current_recipient(
-                    tx, envelope=envelope, recipient={"agent_id": bob.id}
-                )
+                await _lock_current_recipient(tx, envelope=envelope, recipient={"agent_id": bob.id})
         other_team = f"other-{uuid4().hex[:8]}:identity.test"
         _, _, other_key = _make_keypair()
         await env.db.execute(
             "INSERT INTO {{tables.teams}} (team_id,namespace,team_name,team_did_key) VALUES ($1,'identity.test','other',$2)",
-            other_team, env.team_did,
+            other_team,
+            env.team_did,
         )
         await env.db.execute(
             "INSERT INTO {{tables.agents}} (team_id,did_key,did_aw,address,alias,identity_scope,inbound_mode) "
             "VALUES ($1,$2,$3,$4,'other','global','open')",
-            other_team,other_key,stable,address,
+            other_team,
+            other_key,
+            stable,
+            address,
         )
         assert await resolve_agent_by_did(env.infra, stable) is None
         assert await resolve_chat(env.infra, stable) is None
@@ -299,18 +288,25 @@ async def test_old_projections_require_verification_before_stable_resolution(
         authenticated = await request(env, bob, "GET", "/v1/team")
         assert authenticated.status_code == 200, authenticated.text
         assert (await resolve_agent_by_did(env.infra, stable))["agent_id"] == bob.id
-        from aweb.messaging.messages import _active_team_ids_for_identity
+        from aweb.member_team_key import current_member_team_ids_for_identity
         from aweb.identity_metadata import lookup_identity_metadata_by_did
-        assert other_team not in await _active_team_ids_for_identity(env.infra,[stable,bob.did])
-        metadata=await lookup_identity_metadata_by_did(env.infra,[other_key])
+
+        assert other_team not in await current_member_team_ids_for_identity(
+            env.infra, [stable, bob.did], registry_client=registry
+        )
+        metadata = await lookup_identity_metadata_by_did(env.infra, [other_key])
         assert not metadata[other_key].get("stable_id")
         assert not metadata[other_key].get("address")
 
         async with env.db.transaction() as tx:
+            # The verified projection supplies the target facts after this
+            # request authenticated them; a row ID alone grants no identity.
             current = await _lock_current_recipient(
-                tx, envelope=envelope, recipient={"agent_id": bob.id}
+                tx,
+                envelope=envelope,
+                recipient=await resolve_agent_by_did(env.infra, stable),
             )
-            assert current["did_aw"] == stable
+            assert current.recipient["did_aw"] == stable
 
 
 @pytest.mark.asyncio
@@ -327,9 +323,7 @@ async def test_registry_outage_does_not_provision_or_use_self_derivation(privacy
     env.app.state.awid_registry_client = cached
     try:
         stable = stable_id_from_did_key(bob.did)
-        before = await env.db.fetch_all(
-            "SELECT * FROM {{tables.agents}} ORDER BY agent_id"
-        )
+        before = await env.db.fetch_all("SELECT * FROM {{tables.agents}} ORDER BY agent_id")
         result = await request(
             env,
             bob,
@@ -339,9 +333,7 @@ async def test_registry_outage_does_not_provision_or_use_self_derivation(privacy
             certificate=certificate(env, bob, stable),
         )
         assert result.status_code == 503, result.text
-        assert before == await env.db.fetch_all(
-            "SELECT * FROM {{tables.agents}} ORDER BY agent_id"
-        )
+        assert before == await env.db.fetch_all("SELECT * FROM {{tables.agents}} ORDER BY agent_id")
     finally:
         env.app.state.awid_registry_client = existing
         await cached.aclose()
@@ -404,9 +396,7 @@ async def test_identity_and_grant_auth_recheck_the_subject_binding(privacy_app):
                     "Authorization": f"AWEB-Grant DIDKey {grant_did} {sign_message(grant_sk, payload)}",
                     "X-AWEB-Grant-ID": grant_id,
                     "X-AWEB-Timestamp": timestamp,
-                    "X-AWEB-Signed-Payload": base64.urlsafe_b64encode(payload)
-                    .decode()
-                    .rstrip("="),
+                    "X-AWEB-Signed-Payload": base64.urlsafe_b64encode(payload).decode().rstrip("="),
                 },
             )
 
@@ -444,9 +434,7 @@ async def test_observing_rotated_identity_excludes_prior_key_projections(privacy
         await registry.rotate_key(stable, new_key, bob.sk, new_sk)
         old_sk = bob.sk
         bob.did, bob.sk = new_key, new_sk
-        authenticated = await request(
-            env, bob, "GET", "/v1/messages/inbox", did_aw=stable
-        )
+        authenticated = await request(env, bob, "GET", "/v1/messages/inbox", did_aw=stable)
         assert authenticated.status_code == 200, authenticated.text
         old_row = await env.db.fetch_one(
             "SELECT did_key,did_aw_verified_key FROM {{tables.agents}} WHERE agent_id=$1",
@@ -466,7 +454,10 @@ async def test_cached_prior_key_cannot_change_routing_markers(privacy_app):
     from collections import OrderedDict
     from types import SimpleNamespace
     from starlette.requests import Request
-    from aweb.identity_binding import refresh_projection_binding, verify_identity_binding
+    from aweb.identity_binding import (
+        refresh_projection_binding,
+        verify_identity_binding,
+    )
     from aweb.messaging.messages import resolve_agent_by_did
 
     env = privacy_app
@@ -479,19 +470,29 @@ async def test_cached_prior_key_cannot_change_routing_markers(privacy_app):
         new_sk, _, new_key = _make_keypair()
         await registry.rotate_key(stable, new_key, bob.sk, new_sk)
         new_row = await env.db.fetch_one(
-            "INSERT INTO {{tables.agents}} (team_id,did_key,did_aw,alias,identity_scope) "
-            "VALUES ($1,$2,$3,'new-bob','global') RETURNING agent_id", TEAM,new_key,stable,
+            "INSERT INTO {{tables.agents}} (team_id,did_key,did_aw,alias,identity_scope, inbound_mode) "
+            "VALUES ($1,$2,$3,'new-bob','global', 'open') RETURNING agent_id",
+            TEAM,
+            new_key,
+            stable,
         )
-        other_worker = Request({"type":"http", "app":SimpleNamespace(state=SimpleNamespace(awid_registry_client=registry))})
+        other_worker = Request(
+            {
+                "type": "http",
+                "app": SimpleNamespace(state=SimpleNamespace(awid_registry_client=registry)),
+            }
+        )
         current = await verify_identity_binding(other_worker, did_key=new_key, did_aw=stable)
-        await refresh_projection_binding(env.db, agent_id=new_row["agent_id"], did_key=new_key, binding=current)
+        await refresh_projection_binding(
+            env.db, agent_id=new_row["agent_id"], did_key=new_key, binding=current
+        )
         before = await env.db.fetch_all("SELECT * FROM {{tables.agents}} ORDER BY agent_id")
         # Model the allowed 60-second authentication cache of a different worker.
         env.app.state.identity_binding_cache = old_cache
         cached_auth = await request(env, bob, "GET", "/v1/team")
         assert cached_auth.status_code == 200, cached_auth.text
         assert before == await env.db.fetch_all("SELECT * FROM {{tables.agents}} ORDER BY agent_id")
-        assert (await resolve_agent_by_did(env.infra,stable))["agent_id"] == new_row["agent_id"]
+        assert (await resolve_agent_by_did(env.infra, stable))["agent_id"] == new_row["agent_id"]
 
 
 @pytest.mark.asyncio
@@ -503,19 +504,27 @@ async def test_operator_verification_restores_only_bound_projections(privacy_app
     from aweb.messaging.messages import resolve_agent_by_did
 
     env = privacy_app
-    bob, alice, carol = (env.actors[name] for name in ("bob","alice","carol"))
+    bob, alice, carol = (env.actors[name] for name in ("bob", "alice", "carol"))
     async with registry_listener(env) as (registry, origin):
-        stable,address = await register(env,registry,bob)
+        stable, address = await register(env, registry, bob)
         self_derived = stable_id_from_did_key(carol.did)
-        for actor,claim,claimed_address in ((bob,stable,address),(alice,stable,None),(carol,self_derived,None)):
+        for actor, claim, claimed_address in (
+            (bob, stable, address),
+            (alice, stable, None),
+            (carol, self_derived, None),
+        ):
             await env.db.execute(
                 "UPDATE {{tables.agents}} SET identity_scope='global',did_aw=$2,address=$3,did_aw_verified_key=NULL WHERE agent_id=$1",
-                actor.id,claim,claimed_address,
+                actor.id,
+                claim,
+                claimed_address,
             )
-        _,_,claimless_key = _make_keypair()
+        _, _, claimless_key = _make_keypair()
         await env.db.execute(
-            "INSERT INTO {{tables.agents}} (team_id,did_key,alias,identity_scope) "
-            "VALUES ($1,$2,'claimless','global')",TEAM,claimless_key,
+            "INSERT INTO {{tables.agents}} (team_id,did_key,alias,identity_scope, inbound_mode) "
+            "VALUES ($1,$2,'claimless','global', 'open')",
+            TEAM,
+            claimless_key,
         )
         db_name = await env.db.fetch_value("SELECT current_database()")
         child_env = dict(os.environ)
@@ -523,30 +532,42 @@ async def test_operator_verification_restores_only_bound_projections(privacy_app
         password = quote(os.environ.get("TEST_DB_PASSWORD", "postgres"), safe="")
         host = os.environ.get("TEST_DB_HOST", "localhost")
         port = os.environ.get("TEST_DB_PORT", "5432")
-        child_env.update(AWEB_DATABASE_URL=f"postgresql://{user}:{password}@{host}:{port}/{db_name}", AWID_REGISTRY_URL=origin)
+        child_env.update(
+            AWEB_DATABASE_URL=f"postgresql://{user}:{password}@{host}:{port}/{db_name}",
+            AWID_REGISTRY_URL=origin,
+        )
 
         async def operator(*options):
             command = await asyncio.create_subprocess_exec(
-                sys.executable, "-c", "from aweb.cli import app; app()",
-                "verify-identity-bindings", *options, env=child_env,
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                sys.executable,
+                "-c",
+                "from aweb.cli import app; app()",
+                "verify-identity-bindings",
+                *options,
+                env=child_env,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
-            output,error = await asyncio.wait_for(command.communicate(), 30)
+            output, error = await asyncio.wait_for(command.communicate(), 30)
             assert command.returncode == 1, error.decode()
             return json.loads(output)
 
         before = await env.db.fetch_all("SELECT * FROM {{tables.agents}} ORDER BY agent_id")
-        assert await resolve_agent_by_did(env.infra,stable) is None
-        expected = dict(verified=1,self_derived=1,unbound=1,awid_error=0)
+        assert await resolve_agent_by_did(env.infra, stable) is None
+        expected = dict(verified=1, self_derived=1, unbound=1, awid_error=0)
         assert await operator("--dry-run") == expected
         assert before == await env.db.fetch_all("SELECT * FROM {{tables.agents}} ORDER BY agent_id")
         assert await operator() == expected
         after = await env.db.fetch_all("SELECT * FROM {{tables.agents}} ORDER BY agent_id")
-        assert [{**dict(row),"did_aw_verified_key":None} for row in after] == [dict(row) for row in before]
-        assert (await resolve_agent_by_did(env.infra,stable))["agent_id"] == bob.id
-        assert (await resolve_agent_by_did(env.infra,self_derived))["agent_id"] == carol.id
-        assert next(row for row in after if row["agent_id"]==alice.id)["did_aw_verified_key"] is None
-        assert await operator() == dict(verified=0,self_derived=0,unbound=1,awid_error=0)
+        assert [{**dict(row), "did_aw_verified_key": None} for row in after] == [
+            dict(row) for row in before
+        ]
+        assert (await resolve_agent_by_did(env.infra, stable))["agent_id"] == bob.id
+        assert (await resolve_agent_by_did(env.infra, self_derived))["agent_id"] == carol.id
+        assert (
+            next(row for row in after if row["agent_id"] == alice.id)["did_aw_verified_key"] is None
+        )
+        assert await operator() == dict(verified=0, self_derived=0, unbound=1, awid_error=0)
         assert after == await env.db.fetch_all("SELECT * FROM {{tables.agents}} ORDER BY agent_id")
 
 
@@ -556,14 +577,22 @@ async def test_operator_verification_preserves_rows_on_registry_error(privacy_ap
 
     env = privacy_app
     bob = env.actors["bob"]
-    await env.db.execute("UPDATE {{tables.agents}} SET identity_scope='local',did_aw=NULL,address=NULL,did_aw_verified_key=NULL")
+    await env.db.execute(
+        "UPDATE {{tables.agents}} SET identity_scope='local',did_aw=NULL,address=NULL,did_aw_verified_key=NULL"
+    )
     async with registry_listener(env) as (registry, origin):
-        stable = (await registry.register_did(bob.did,bob.sk)).did_aw
-        await env.db.execute("UPDATE {{tables.agents}} SET identity_scope='global',did_aw=$2 WHERE agent_id=$1",bob.id,stable)
-    client = CachedRegistryClient(origin,env.redis)
+        stable = (await registry.register_did(bob.did, bob.sk)).did_aw
+        await env.db.execute(
+            "UPDATE {{tables.agents}} SET identity_scope='global',did_aw=$2 WHERE agent_id=$1",
+            bob.id,
+            stable,
+        )
+    client = CachedRegistryClient(origin, env.redis)
     try:
         before = await env.db.fetch_all("SELECT * FROM {{tables.agents}} ORDER BY agent_id")
-        assert await verify_pending_identity_bindings(env.db,client) == dict(verified=0,self_derived=0,unbound=0,awid_error=1)
+        assert await verify_pending_identity_bindings(env.db, client) == dict(
+            verified=0, self_derived=0, unbound=0, awid_error=1
+        )
         assert before == await env.db.fetch_all("SELECT * FROM {{tables.agents}} ORDER BY agent_id")
     finally:
         await client.aclose()
@@ -572,30 +601,60 @@ async def test_operator_verification_preserves_rows_on_registry_error(privacy_ap
 @pytest.mark.asyncio
 async def test_verified_proxy_context_rechecks_subject_binding(privacy_app, monkeypatch):
     from starlette.requests import Request
-    from fastapi import HTTPException
+    from aweb.service_errors import IdentityBindingError
     from aweb.internal_auth import build_internal_auth_header_value
     from aweb.mcp.auth import MCPAuthMiddleware
 
     env = privacy_app
-    bob,alice = env.actors["bob"],env.actors["alice"]
-    monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS","1")
-    monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET","binding-test-disposable-secret")
-    async with registry_listener(env) as (registry,_):
-        stable,address = await register(env,registry,bob)
-        await env.db.execute("UPDATE {{tables.agents}} SET did_aw=$2,address=$3,identity_scope='global' WHERE agent_id=$1",bob.id,stable,address)
+    bob, alice = env.actors["bob"], env.actors["alice"]
+    monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
+    monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", "binding-test-disposable-secret")
+    async with registry_listener(env) as (registry, _):
+        stable, address = await register(env, registry, bob)
+        admitted = await request(
+            env,
+            bob,
+            "POST",
+            "/v1/connect",
+            {},
+            certificate=certificate(env, bob, stable, address),
+        )
+        assert admitted.status_code == 200, admitted.text
         user_id = str(uuid4())
         headers = {
-            "X-Team-ID":TEAM,"X-User-ID":user_id,"X-AWEB-Actor-ID":str(bob.id),
-            "X-AWEB-Auth":build_internal_auth_header_value(secret="binding-test-disposable-secret", team_id=TEAM,principal_type="u",principal_id=user_id,actor_id=str(bob.id)),
+            "X-Team-ID": TEAM,
+            "X-User-ID": user_id,
+            "X-AWEB-Actor-ID": str(bob.id),
+            "X-AWEB-Auth": build_internal_auth_header_value(
+                secret="binding-test-disposable-secret",
+                team_id=TEAM,
+                principal_type="u",
+                principal_id=user_id,
+                actor_id=str(bob.id),
+            ),
         }
-        middleware = MCPAuthMiddleware(app=env.app,db_infra=env.infra)
+        middleware = MCPAuthMiddleware(app=env.app, db_infra=env.infra)
+
         def proxy_request():
-            return Request({"type":"http","method":"POST","path":"/mcp","headers":[(k.lower().encode(),v.encode()) for k,v in headers.items()],"app":env.app})
+            return Request(
+                {
+                    "type": "http",
+                    "method": "POST",
+                    "path": "/mcp",
+                    "headers": [(k.lower().encode(), v.encode()) for k, v in headers.items()],
+                    "app": env.app,
+                }
+            )
+
         auth = await middleware._resolve_auth(proxy_request())
         assert auth.did_aw == stable and auth.did_key == bob.did
-        other = (await registry.register_did(alice.did,alice.sk)).did_aw
-        await env.db.execute("UPDATE {{tables.agents}} SET did_aw=$2,address=NULL,did_aw_verified_key=NULL WHERE agent_id=$1",bob.id,other)
-        with pytest.raises(HTTPException) as refused:
+        other = (await registry.register_did(alice.did, alice.sk)).did_aw
+        await env.db.execute(
+            "UPDATE {{tables.agents}} SET did_aw=$2,address=NULL,did_aw_verified_key=NULL WHERE agent_id=$1",
+            bob.id,
+            other,
+        )
+        with pytest.raises(IdentityBindingError) as refused:
             await middleware._resolve_auth(proxy_request())
         assert refused.value.status_code == 403
 
@@ -604,105 +663,260 @@ async def test_verified_proxy_context_rechecks_subject_binding(privacy_app, monk
 @pytest.mark.parametrize("target_kind", ["did_key", "did_aw"])
 @pytest.mark.parametrize("keep_marker", [False, True], ids=["historical", "verified"])
 @pytest.mark.parametrize("keep_agent_ref", [False, True], ids=["did-reference", "agent-reference"])
-async def test_stored_mail_and_chat_routes_keep_recipient_policy(privacy_app, target_kind, keep_marker, keep_agent_ref):
+async def test_stored_mail_and_chat_routes_keep_recipient_policy(
+    privacy_app, target_kind, keep_marker, keep_agent_ref
+):
     from fastapi import FastAPI
     from starlette.responses import JSONResponse
     from aweb.mcp.auth import MCPAuthMiddleware
     from aweb.mcp.tools.chat import chat_send
 
     env = privacy_app
-    sender,recipient = env.actors["alice"],env.actors["bob"]
+    sender, recipient = env.actors["alice"], env.actors["bob"]
     outside = "outside:example.test"
-    await env.db.execute("INSERT INTO {{tables.teams}} (team_id,namespace,team_name,team_did_key) VALUES ($1,'example.test','outside',$2)",outside,env.team_did)
-    await env.registry_db.execute("INSERT INTO {{tables.teams}} (domain,name,team_did_key,visibility) VALUES ('example.test','outside',$1,'public')",env.team_did)
-    await env.db.execute("UPDATE {{tables.agents}} SET team_id=$2 WHERE agent_id=$1",sender.id,outside)
-    await env.db.execute("UPDATE {{tables.workspaces}} SET team_id=$2 WHERE workspace_id=$1",sender.workspace,outside)
-    async with registry_listener(env) as (registry,_):
+    await env.db.execute(
+        "INSERT INTO {{tables.teams}} (team_id,namespace,team_name,team_did_key) VALUES ($1,'example.test','outside',$2)",
+        outside,
+        env.team_did,
+    )
+    await env.registry_db.execute(
+        "INSERT INTO {{tables.teams}} (domain,name,team_did_key,visibility) VALUES ('example.test','outside',$1,'public')",
+        env.team_did,
+    )
+    await env.db.execute(
+        "UPDATE {{tables.agents}} SET team_id=$2 WHERE agent_id=$1", sender.id, outside
+    )
+    await env.db.execute(
+        "UPDATE {{tables.workspaces}} SET team_id=$2 WHERE workspace_id=$1",
+        sender.workspace,
+        outside,
+    )
+    async with registry_listener(env) as (registry, _):
         stable_ids = {}
-        for name,actor,team in (("alice",sender,outside),("bob",recipient,TEAM)):
-            stable = (await registry.register_did(actor.did,actor.sk)).did_aw
+        for name, actor, team in (("alice", sender, outside), ("bob", recipient, TEAM)):
+            stable = (await registry.register_did(actor.did, actor.sk)).did_aw
             stable_ids[name] = stable
-            await env.db.execute("UPDATE {{tables.agents}} SET identity_scope='global',did_aw=$2,address=NULL WHERE agent_id=$1",actor.id,stable)
-            actor.certificate = _encode_certificate(_make_certificate(
-                env.team_sk,env.team_did,actor.did,team_id=team,alias=name,
-                identity_scope="global",member_did_aw=stable,certificate_id=f"policy-{name}",
-            ))
+            await env.db.execute(
+                "UPDATE {{tables.agents}} SET identity_scope='global',did_aw=$2,address=NULL WHERE agent_id=$1",
+                actor.id,
+                stable,
+            )
+            actor.certificate = _encode_certificate(
+                _make_certificate(
+                    env.team_sk,
+                    env.team_did,
+                    actor.did,
+                    team_id=team,
+                    alias=name,
+                    identity_scope="global",
+                    member_did_aw=stable,
+                    certificate_id=f"policy-{name}",
+                )
+            )
 
         async def signed(actor, method, path, payload=None):
             body = json.dumps(payload).encode() if payload is not None else b""
             team = outside if actor is sender else TEAM
-            headers = _signed_team_headers(actor.sk,actor.did,team,actor.certificate,body)
-            return await env.client.request(method,path,content=body,headers={**headers,"Content-Type":"application/json"})
+            headers = _signed_team_headers(actor.sk, actor.did, team, actor.certificate, body)
+            return await env.client.request(
+                method,
+                path,
+                content=body,
+                headers={**headers, "Content-Type": "application/json"},
+            )
 
         # Auth establishes the current bindings before any stable-DID routing.
-        for actor in (sender,recipient):
-            admitted = await signed(actor,"GET","/v1/team")
+        for actor in (sender, recipient):
+            admitted = await signed(actor, "GET", "/v1/team")
             assert admitted.status_code == 200, admitted.text
         target = recipient.did if target_kind == "did_key" else stable_ids["bob"]
-        mail = await signed(sender,"POST","/v1/messages",{"to_did":target,"subject":"policy","body":"while open"})
-        chat = await signed(sender,"POST","/v1/chat/sessions",{"to_dids":[target],"message":"while open"})
-        assert (mail.status_code,chat.status_code) == (200,200), (mail.text,chat.text)
+        mail = await signed(
+            sender,
+            "POST",
+            "/v1/messages",
+            {"to_did": target, "subject": "policy", "body": "while open"},
+        )
+        chat = await signed(
+            sender,
+            "POST",
+            "/v1/chat/sessions",
+            {"to_dids": [target], "message": "while open"},
+        )
+        assert (mail.status_code, chat.status_code) == (200, 200), (
+            mail.text,
+            chat.text,
+        )
         if not keep_agent_ref:
-            await env.db.execute("UPDATE {{tables.chat_participants}} SET agent_id=NULL WHERE session_id=$1::uuid AND agent_id=$2",chat.json()["session_id"],recipient.id)
-            await env.db.execute("UPDATE {{tables.conversation_participants}} SET agent_id=NULL WHERE conversation_id=ANY($1::uuid[]) AND agent_id=$2",[mail.json()["conversation_id"],chat.json()["session_id"]],recipient.id)
-        mode = await signed(recipient,"PATCH","/v1/agents/me/inbound-mode",{"inbound_mode":"team_and_contacts"})
+            await env.db.execute(
+                "UPDATE {{tables.chat_participants}} SET agent_id=NULL WHERE session_id=$1::uuid AND agent_id=$2",
+                chat.json()["session_id"],
+                recipient.id,
+            )
+            await env.db.execute(
+                "UPDATE {{tables.conversation_participants}} SET agent_id=NULL WHERE conversation_id=ANY($1::uuid[]) AND agent_id=$2",
+                [mail.json()["conversation_id"], chat.json()["session_id"]],
+                recipient.id,
+            )
+        mode = await signed(
+            recipient,
+            "PATCH",
+            "/v1/agents/me/inbound-mode",
+            {"inbound_mode": "team_and_contacts"},
+        )
         assert mode.status_code == 200, mode.text
         if not keep_marker:
-            await env.db.execute("UPDATE {{tables.agents}} SET did_aw_verified_key=NULL WHERE agent_id=$1",recipient.id)
+            await env.db.execute(
+                "UPDATE {{tables.agents}} SET did_aw_verified_key=NULL WHERE agent_id=$1",
+                recipient.id,
+            )
 
-        chat_count = await env.db.fetch_value("SELECT count(*) FROM {{tables.chat_messages}} WHERE session_id=$1::uuid",chat.json()["session_id"])
-        chat_more = await signed(sender,"POST",f"/v1/chat/sessions/{chat.json()['session_id']}/messages",{"body":"after policy change"})
-        mail_more = await signed(sender,"POST","/v1/messages",{"conversation_id":mail.json()["conversation_id"],"subject":"policy","body":"after policy change"})
-        assert (mail_more.status_code,chat_more.status_code) == (403,403), (mail_more.text,chat_more.text)
+        chat_count = await env.db.fetch_value(
+            "SELECT count(*) FROM {{tables.chat_messages}} WHERE session_id=$1::uuid",
+            chat.json()["session_id"],
+        )
+        chat_more = await signed(
+            sender,
+            "POST",
+            f"/v1/chat/sessions/{chat.json()['session_id']}/messages",
+            {"body": "after policy change"},
+        )
+        mail_more = await signed(
+            sender,
+            "POST",
+            "/v1/messages",
+            {
+                "conversation_id": mail.json()["conversation_id"],
+                "subject": "policy",
+                "body": "after policy change",
+            },
+        )
+        assert (mail_more.status_code, chat_more.status_code) == (403, 403), (
+            mail_more.text,
+            chat_more.text,
+        )
 
         # Exercise the actual MCP middleware with the same signed sender and
         # real registry, rather than replacing its auth context in the tool.
         mcp_app = FastAPI()
+
         @mcp_app.post("/")
         async def continue_chat():
-            result = await chat_send(env.infra,env.redis,registry_client=registry,
-                session_id=chat.json()["session_id"],message="MCP policy change",plaintext=True)
+            result = await chat_send(
+                env.infra,
+                env.redis,
+                registry_client=registry,
+                session_id=chat.json()["session_id"],
+                message="MCP policy change",
+                plaintext=True,
+            )
             return JSONResponse(json.loads(result))
-        env.app.mount("/binding-policy-mcp",MCPAuthMiddleware(mcp_app,env.infra))
-        mcp_more = await signed(sender,"POST","/binding-policy-mcp/")
+
+        env.app.mount("/binding-policy-mcp", MCPAuthMiddleware(mcp_app, env.infra))
+        mcp_more = await signed(sender, "POST", "/binding-policy-mcp/")
         assert mcp_more.status_code == 200, mcp_more.text
         assert "error" in mcp_more.json(), mcp_more.text
         assert "only accepts" in mcp_more.json()["error"], mcp_more.text
-        assert await env.db.fetch_value("SELECT count(*) FROM {{tables.chat_messages}} WHERE session_id=$1::uuid",chat.json()["session_id"]) == chat_count
+        assert (
+            await env.db.fetch_value(
+                "SELECT count(*) FROM {{tables.chat_messages}} WHERE session_id=$1::uuid",
+                chat.json()["session_id"],
+            )
+            == chat_count
+        )
         # A policy-only raw lookup must not make the historical row routable.
         if not keep_marker:
             from aweb.messaging.chat import resolve_agent_by_did
-            assert await resolve_agent_by_did(env.infra,stable_ids["bob"]) is None
+
+            assert await resolve_agent_by_did(env.infra, stable_ids["bob"]) is None
 
 
 @pytest.mark.asyncio
 async def test_retired_group_member_does_not_relax_live_member_policy(privacy_app):
     env = privacy_app
-    sender,bob,retired = (env.actors[name] for name in ("alice","bob","carol"))
+    sender, bob, retired = (env.actors[name] for name in ("alice", "bob", "carol"))
     outside = "outside:example.test"
-    await env.db.execute("INSERT INTO {{tables.teams}} (team_id,namespace,team_name,team_did_key) VALUES ($1,'example.test','outside',$2)",outside,env.team_did)
-    await env.registry_db.execute("INSERT INTO {{tables.teams}} (domain,name,team_did_key,visibility) VALUES ('example.test','outside',$1,'public')",env.team_did)
-    await env.db.execute("UPDATE {{tables.agents}} SET team_id=$2 WHERE agent_id=$1",sender.id,outside)
-    await env.db.execute("UPDATE {{tables.workspaces}} SET team_id=$2 WHERE workspace_id=$1",sender.workspace,outside)
-    async with registry_listener(env) as (registry,_):
-        for name,actor,team in (("alice",sender,outside),("bob",bob,TEAM),("carol",retired,TEAM)):
-            stable = (await registry.register_did(actor.did,actor.sk)).did_aw
-            await env.db.execute("UPDATE {{tables.agents}} SET identity_scope='global',did_aw=$2 WHERE agent_id=$1",actor.id,stable)
-            actor.certificate = _encode_certificate(_make_certificate(env.team_sk,env.team_did,actor.did,team_id=team,alias=name,identity_scope="global",member_did_aw=stable,certificate_id=f"group-{name}"))
+    await env.db.execute(
+        "INSERT INTO {{tables.teams}} (team_id,namespace,team_name,team_did_key) VALUES ($1,'example.test','outside',$2)",
+        outside,
+        env.team_did,
+    )
+    await env.registry_db.execute(
+        "INSERT INTO {{tables.teams}} (domain,name,team_did_key,visibility) VALUES ('example.test','outside',$1,'public')",
+        env.team_did,
+    )
+    await env.db.execute(
+        "UPDATE {{tables.agents}} SET team_id=$2 WHERE agent_id=$1", sender.id, outside
+    )
+    await env.db.execute(
+        "UPDATE {{tables.workspaces}} SET team_id=$2 WHERE workspace_id=$1",
+        sender.workspace,
+        outside,
+    )
+    async with registry_listener(env) as (registry, _):
+        for name, actor, team in (
+            ("alice", sender, outside),
+            ("bob", bob, TEAM),
+            ("carol", retired, TEAM),
+        ):
+            stable = (await registry.register_did(actor.did, actor.sk)).did_aw
+            await env.db.execute(
+                "UPDATE {{tables.agents}} SET identity_scope='global',did_aw=$2 WHERE agent_id=$1",
+                actor.id,
+                stable,
+            )
+            actor.certificate = _encode_certificate(
+                _make_certificate(
+                    env.team_sk,
+                    env.team_did,
+                    actor.did,
+                    team_id=team,
+                    alias=name,
+                    identity_scope="global",
+                    member_did_aw=stable,
+                    certificate_id=f"group-{name}",
+                )
+            )
 
-        async def signed(actor,method,path,payload=None):
+        async def signed(actor, method, path, payload=None):
             body = json.dumps(payload).encode() if payload is not None else b""
-            headers = _signed_team_headers(actor.sk,actor.did,outside if actor is sender else TEAM,actor.certificate,body)
-            return await env.client.request(method,path,content=body,headers={**headers,"Content-Type":"application/json"})
+            headers = _signed_team_headers(
+                actor.sk,
+                actor.did,
+                outside if actor is sender else TEAM,
+                actor.certificate,
+                body,
+            )
+            return await env.client.request(
+                method,
+                path,
+                content=body,
+                headers={**headers, "Content-Type": "application/json"},
+            )
 
-        for actor in (sender,bob,retired):
-            assert (await signed(actor,"GET","/v1/team")).status_code == 200
-        created = await signed(sender,"POST","/v1/chat/sessions",{"to_dids":[bob.did,retired.did],"message":"group"})
+        for actor in (sender, bob, retired):
+            assert (await signed(actor, "GET", "/v1/team")).status_code == 200
+        created = await signed(
+            sender,
+            "POST",
+            "/v1/chat/sessions",
+            {"to_dids": [bob.did, retired.did], "message": "group"},
+        )
         assert created.status_code == 200, created.text
         session = created.json()["session_id"]
-        await env.db.execute("UPDATE {{tables.agents}} SET deleted_at=clock_timestamp() WHERE agent_id=$1",retired.id)
-        await env.db.execute("UPDATE {{tables.agents}} SET did_aw_verified_key=NULL WHERE agent_id=$1",bob.id)
-        allowed = await signed(sender,"POST",f"/v1/chat/sessions/{session}/messages",{"body":"remaining member open"})
+        await env.db.execute(
+            "UPDATE {{tables.agents}} SET deleted_at=clock_timestamp() WHERE agent_id=$1",
+            retired.id,
+        )
+        await env.db.execute(
+            "UPDATE {{tables.agents}} SET did_aw_verified_key=NULL WHERE agent_id=$1",
+            bob.id,
+        )
+        allowed = await signed(
+            sender,
+            "POST",
+            f"/v1/chat/sessions/{session}/messages",
+            {"body": "remaining member open"},
+        )
         assert allowed.status_code == 200, allowed.text
         from fastapi import FastAPI
         from fastapi.responses import JSONResponse
@@ -710,32 +924,67 @@ async def test_retired_group_member_does_not_relax_live_member_policy(privacy_ap
         from aweb.mcp.tools.chat import chat_send
 
         mcp_app = FastAPI()
+
         @mcp_app.post("/")
         async def continue_group_chat():
-            result = await chat_send(env.infra, env.redis, registry_client=registry,
-                session_id=session, message="remaining member via MCP", plaintext=True)
+            result = await chat_send(
+                env.infra,
+                env.redis,
+                registry_client=registry,
+                session_id=session,
+                message="remaining member via MCP",
+                plaintext=True,
+            )
             return JSONResponse(json.loads(result))
+
         env.app.mount("/retired-group-mcp", MCPAuthMiddleware(mcp_app, env.infra))
         mcp_allowed = await signed(sender, "POST", "/retired-group-mcp/")
         assert mcp_allowed.status_code == 200, mcp_allowed.text
         assert mcp_allowed.json().get("message_id"), mcp_allowed.text
-        tightened = await signed(bob,"PATCH","/v1/agents/me/inbound-mode",{"inbound_mode":"team_and_contacts"})
+        tightened = await signed(
+            bob,
+            "PATCH",
+            "/v1/agents/me/inbound-mode",
+            {"inbound_mode": "team_and_contacts"},
+        )
         assert tightened.status_code == 200, tightened.text
-        before = await env.db.fetch_value("SELECT count(*) FROM {{tables.chat_messages}} WHERE session_id=$1::uuid",session)
-        refused = await signed(sender,"POST",f"/v1/chat/sessions/{session}/messages",{"body":"remaining member restricted"})
+        before = await env.db.fetch_value(
+            "SELECT count(*) FROM {{tables.chat_messages}} WHERE session_id=$1::uuid",
+            session,
+        )
+        refused = await signed(
+            sender,
+            "POST",
+            f"/v1/chat/sessions/{session}/messages",
+            {"body": "remaining member restricted"},
+        )
         assert refused.status_code == 403, refused.text
         mcp_refused = await signed(sender, "POST", "/retired-group-mcp/")
         assert mcp_refused.status_code == 200, mcp_refused.text
         assert "only accepts" in mcp_refused.json()["error"], mcp_refused.text
-        assert await env.db.fetch_value("SELECT count(*) FROM {{tables.chat_messages}} WHERE session_id=$1::uuid",session) == before
+        assert (
+            await env.db.fetch_value(
+                "SELECT count(*) FROM {{tables.chat_messages}} WHERE session_id=$1::uuid",
+                session,
+            )
+            == before
+        )
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("target", ["did_key", "address", "stable_only"])
-@pytest.mark.parametrize("evidence", ["current", "old_key", "other_stable", "other_address", "unavailable", "invalid_signature"])
-async def test_signed_continuation_after_rotation_keeps_stored_route(
-    privacy_app, target, evidence
-):
+@pytest.mark.parametrize(
+    "evidence",
+    [
+        "current",
+        "old_key",
+        "other_stable",
+        "other_address",
+        "unavailable",
+        "invalid_signature",
+    ],
+)
+async def test_signed_continuation_after_rotation_keeps_stored_route(privacy_app, target, evidence):
     from contextlib import AsyncExitStack
     from aweb.messaging.messages import resolve_agent_by_did
 
@@ -747,14 +996,23 @@ async def test_signed_continuation_after_rotation_keeps_stored_route(
         stable, address = await register(env, registry, bob)
         bob.certificate = certificate(env, bob, stable, address)
         assert (await request(env, bob, "POST", "/v1/connect", {})).status_code == 200
-        opened = await request(env, alice, "POST", "/v1/messages", {
-            "to_did": stable, "subject": "before rotation", "body": "before rotation",
-        })
+        opened = await request(
+            env,
+            alice,
+            "POST",
+            "/v1/messages",
+            {
+                "to_did": stable,
+                "subject": "before rotation",
+                "body": "before rotation",
+            },
+        )
         assert opened.status_code == 200, opened.text
         conversation_id = opened.json()["conversation_id"]
         participant = await env.db.fetch_one(
             "SELECT * FROM {{tables.conversation_participants}} WHERE conversation_id=$1::uuid AND did=$2",
-            conversation_id, stable,
+            conversation_id,
+            stable,
         )
         # A DID selector records the identity, not a membership projection.
         assert participant["agent_id"] is None
@@ -775,20 +1033,37 @@ async def test_signed_continuation_after_rotation_keeps_stored_route(
         timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
         message_id = str(uuid4())
         fields = dict(
-            type="mail", **{"from": "alice"}, from_did=alice.did,
-            to=(signed_address if target == "address" or evidence == "other_address"
-                else signed_key if target == "did_key" else signed_stable),
-            to_stable_id=signed_stable, priority="normal", subject="after rotation", body="after rotation",
-            message_id=message_id, timestamp=timestamp, conversation_id=conversation_id,
+            type="mail",
+            **{"from": "alice"},
+            from_did=alice.did,
+            to=(
+                signed_address
+                if target == "address" or evidence == "other_address"
+                else signed_key
+                if target == "did_key"
+                else signed_stable
+            ),
+            to_stable_id=signed_stable,
+            priority="normal",
+            subject="after rotation",
+            body="after rotation",
+            message_id=message_id,
+            timestamp=timestamp,
+            conversation_id=conversation_id,
         )
         if target != "stable_only" or evidence == "old_key":
             fields["to_did"] = signed_key
         signed_payload = canonical_json_bytes(fields).decode()
         signing_key = new_sk if evidence == "invalid_signature" else alice.sk
         payload = dict(
-            conversation_id=conversation_id, subject="after rotation", body="after rotation",
-            message_id=message_id, timestamp=timestamp, from_did=alice.did,
-            signature=sign_message(signing_key, signed_payload.encode()), signed_payload=signed_payload,
+            conversation_id=conversation_id,
+            subject="after rotation",
+            body="after rotation",
+            message_id=message_id,
+            timestamp=timestamp,
+            from_did=alice.did,
+            signature=sign_message(signing_key, signed_payload.encode()),
+            signed_payload=signed_payload,
         )
         # Close the real dependency, rather than substituting its resolver.
         if evidence == "unavailable":
@@ -804,7 +1079,8 @@ async def test_signed_continuation_after_rotation_keeps_stored_route(
         if evidence == "current":
             assert result.status_code == 200, result.text
             stored = await env.db.fetch_one(
-                "SELECT to_agent_id,to_did FROM {{tables.messages}} WHERE message_id=$1::uuid", message_id,
+                "SELECT to_agent_id,to_did FROM {{tables.messages}} WHERE message_id=$1::uuid",
+                message_id,
             )
             assert stored["to_agent_id"] is None
             assert stored["to_did"] == stable
@@ -812,23 +1088,46 @@ async def test_signed_continuation_after_rotation_keeps_stored_route(
             assert result.status_code == (503 if evidence == "unavailable" else 403), result.text
             if evidence == "unavailable":
                 assert result.json()["detail"] == "identity_binding_unavailable"
-            assert await env.db.fetch_value("SELECT COUNT(*) FROM {{tables.messages}}") == before_count
+            assert (
+                await env.db.fetch_value("SELECT COUNT(*) FROM {{tables.messages}}") == before_count
+            )
         assert before == await env.db.fetch_all("SELECT * FROM {{tables.agents}} ORDER BY agent_id")
         assert await resolve_agent_by_did(env.infra, stable) is None
         # A stored continuation must not restore stable-DID routing for new mail.
         if evidence == "unavailable":
             # Restore real AWID for the independent first-contact neighbor.
             env.app.state.awid_registry_client = available_registry
-        new_mail = await request(env, alice, "POST", "/v1/messages", {
-            "to_did": stable, "subject": "new route", "body": "new route",
-            "new_conversation": True, "conversation_id": str(uuid4()),
-        })
+        new_mail = await request(
+            env,
+            alice,
+            "POST",
+            "/v1/messages",
+            {
+                "to_did": stable,
+                "subject": "new route",
+                "body": "new route",
+                "new_conversation": True,
+                "conversation_id": str(uuid4()),
+            },
+        )
         assert new_mail.status_code == 422, new_mail.text
         assert "Bare did:aw first-contact is unsupported" in new_mail.text
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("change", ["publish", "origin", "key", "wrong_stable", "wrong_key", "wrong_origin", "missing", "unavailable"])
+@pytest.mark.parametrize(
+    "change",
+    [
+        "publish",
+        "origin",
+        "key",
+        "wrong_stable",
+        "wrong_key",
+        "wrong_origin",
+        "missing",
+        "unavailable",
+    ],
+)
 async def test_federation_target_refreshes_stale_binding_before_refusal(privacy_app, change):
     from contextlib import AsyncExitStack
     from aweb.federation.envelope import FederationEnvelope
@@ -843,17 +1142,24 @@ async def test_federation_target_refreshes_stale_binding_before_refusal(privacy_
         registry, registry_origin = await listener.enter_async_context(registry_listener(env))
         stable, address = await register(env, registry, bob)
         if change == "origin":
-            await registry.update_namespace_delivery_origin("identity.test", env.team_sk, "https://previous.identity.test")
+            await registry.update_namespace_delivery_origin(
+                "identity.test", env.team_sk, "https://previous.identity.test"
+            )
         cached = CachedRegistryClient(registry_origin, env.redis)
         stack.push_async_callback(cached.aclose)
         env.app.state.awid_registry_client = cached
         bob.certificate = certificate(env, bob, stable, address)
         connected = await request(env, bob, "POST", "/v1/connect", {})
         assert connected.status_code == 200, connected.text
-        row = await env.db.fetch_one("SELECT did_key,did_aw_verified_key FROM {{tables.agents}} WHERE agent_id=$1", bob.id)
+        row = await env.db.fetch_one(
+            "SELECT did_key,did_aw_verified_key FROM {{tables.agents}} WHERE agent_id=$1",
+            bob.id,
+        )
         assert row["did_aw_verified_key"] == row["did_key"]
         old = await cached.resolve_address("identity.test", "bob")
-        assert old.delivery.origin == ("https://previous.identity.test" if change == "origin" else None)
+        assert old.delivery.origin == (
+            "https://previous.identity.test" if change == "origin" else None
+        )
         if change not in {"missing", "unavailable"}:
             await registry.update_namespace_delivery_origin("identity.test", env.team_sk, origin)
         current_key = bob.did
@@ -861,21 +1167,35 @@ async def test_federation_target_refreshes_stale_binding_before_refusal(privacy_
             new_sk, _, current_key = _make_keypair()
             await registry.rotate_key(stable, current_key, bob.sk, new_sk)
         envelope = FederationEnvelope(
-            type="mail", sender_did_aw=env.actors["alice"].did,
+            type="mail",
+            sender_did_aw=env.actors["alice"].did,
             sender_current_did_key=env.actors["alice"].did,
-            target_did_aw=stable_id_from_did_key(env.actors["alice"].did) if change == "wrong_stable" else stable,
-            target_current_did_key=env.actors["alice"].did if change == "wrong_key" else current_key,
+            target_did_aw=stable_id_from_did_key(env.actors["alice"].did)
+            if change == "wrong_stable"
+            else stable,
+            target_current_did_key=env.actors["alice"].did
+            if change == "wrong_key"
+            else current_key,
             target_address=address,
-            target_delivery_origin="https://different.identity.test" if change == "wrong_origin" else origin,
-            message_id=str(uuid4()), conversation_id=str(uuid4()),
+            target_delivery_origin="https://different.identity.test"
+            if change == "wrong_origin"
+            else origin,
+            message_id=str(uuid4()),
+            conversation_id=str(uuid4()),
             timestamp=datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
-            subject="route refresh", body="route refresh", signed_payload="{}",
+            subject="route refresh",
+            body="route refresh",
+            signed_payload="{}",
         )
         if change == "unavailable":
             await listener.aclose()
-        reasons = dict(wrong_stable="recipient_address_did_mismatch", wrong_key="recipient_current_key_mismatch",
-                       wrong_origin="recipient_route_mismatch", missing="recipient_route_missing",
-                       unavailable="federation_authority_coordination_unavailable")
+        reasons = dict(
+            wrong_stable="recipient_address_did_mismatch",
+            wrong_key="recipient_current_key_mismatch",
+            wrong_origin="recipient_route_mismatch",
+            missing="recipient_route_missing",
+            unavailable="federation_authority_coordination_unavailable",
+        )
         if change in reasons:
             with pytest.raises(FederationAuthorityError) as refused:
                 await _resolve_target_identity(cached, envelope, stored_route_continuation=False)
@@ -888,11 +1208,26 @@ async def test_federation_target_refreshes_stale_binding_before_refusal(privacy_
             # path remains usable with the actual AWID listener stopped.
             await listener.aclose()
             await _resolve_target_identity(cached, envelope, stored_route_continuation=False)
-        assert row == await env.db.fetch_one("SELECT did_key,did_aw_verified_key FROM {{tables.agents}} WHERE agent_id=$1", bob.id)
+        assert row == await env.db.fetch_one(
+            "SELECT did_key,did_aw_verified_key FROM {{tables.agents}} WHERE agent_id=$1",
+            bob.id,
+        )
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("observation", ["fresh", "missing", "cached", "mapping", "wrong_key", "wrong_stable", "wrong_address", "unclaimed"])
+@pytest.mark.parametrize(
+    "observation",
+    [
+        "fresh",
+        "missing",
+        "cached",
+        "mapping",
+        "wrong_key",
+        "wrong_stable",
+        "wrong_address",
+        "unclaimed",
+    ],
+)
 async def test_public_connect_requires_matching_fresh_observation(privacy_app, observation):
     from contextlib import AsyncExitStack
     from dataclasses import asdict, replace
@@ -907,13 +1242,22 @@ async def test_public_connect_requires_matching_fresh_observation(privacy_app, o
         listener = await stack.enter_async_context(AsyncExitStack())
         registry, _ = await listener.enter_async_context(registry_listener(env))
         stable, address = await register(env, registry, actor, name="hosted")
-        binding = await observe_identity_binding(registry, did_key=did_key, did_aw=stable, address=address)
+        binding = await observe_identity_binding(
+            registry, did_key=did_key, did_aw=stable, address=address
+        )
         cert_info = dict(
-            team_id=TEAM, alias="hosted", did_key=did_key, identity_scope="global",
-            member_did_aw=stable, member_address=address, certificate_id="public-connect-hosted",
+            team_id=TEAM,
+            alias="hosted",
+            did_key=did_key,
+            identity_scope="global",
+            member_did_aw=stable,
+            member_address=address,
+            certificate_id="public-connect-hosted",
             # These derived fields are deliberately insufficient as connect input.
-            verified_member_did_aw=stable, verified_member_address=address,
-            did_aw_verified_key=did_key, identity_binding_fresh=True,
+            verified_member_did_aw=stable,
+            verified_member_address=address,
+            did_aw_verified_key=did_key,
+            identity_binding_fresh=True,
         )
         supplied = binding
         if observation == "missing":
@@ -936,22 +1280,41 @@ async def test_public_connect_requires_matching_fresh_observation(privacy_app, o
         await listener.aclose()
         async with env.db.transaction() as tx:
             kwargs = dict(
-                db=tx, cert_info=cert_info, team_did_key=env.team_did, hostname="hosted",
-                workspace_path="/hosted", repo_origin="", role="agent", human_name="", agent_type="agent",
+                db=tx,
+                cert_info=cert_info,
+                team_did_key=env.team_did,
+                hostname="hosted",
+                workspace_path="/hosted",
+                repo_origin="",
+                role="agent",
+                human_name="",
+                agent_type="agent",
             )
             if observation != "missing":
                 kwargs["identity_binding"] = supplied
             if observation == "fresh":
                 result = await connect_agent(**kwargs)
                 assert binding.did_key == did_key
-                row = await tx.fetch_one("SELECT did_key,did_aw,address,did_aw_verified_key FROM {{tables.agents}} WHERE agent_id=$1::uuid", result["agent_id"])
-                assert row == dict(did_key=did_key, did_aw=stable, address=address, did_aw_verified_key=did_key)
+                row = await tx.fetch_one(
+                    "SELECT did_key,did_aw,address,did_aw_verified_key FROM {{tables.agents}} WHERE agent_id=$1::uuid",
+                    result["agent_id"],
+                )
+                assert row == dict(
+                    did_key=did_key,
+                    did_aw=stable,
+                    address=address,
+                    did_aw_verified_key=did_key,
+                )
             else:
                 with pytest.raises(ValueError, match="^identity_binding_mismatch$"):
                     await connect_agent(**kwargs)
-                assert before == await tx.fetch_all("SELECT * FROM {{tables.agents}} ORDER BY agent_id")
+                assert before == await tx.fetch_all(
+                    "SELECT * FROM {{tables.agents}} ORDER BY agent_id"
+                )
         if observation == "fresh":
-            assert len(before) + 1 == await env.db.fetch_value("SELECT COUNT(*) FROM {{tables.agents}}")
+            assert len(before) + 1 == await env.db.fetch_value(
+                "SELECT COUNT(*) FROM {{tables.agents}}"
+            )
 
 
 @pytest.mark.asyncio
@@ -969,7 +1332,11 @@ async def test_http_connect_cannot_supply_binding_observation(privacy_app, carri
         if carrier == "header":
             headers["X-AWEB-Identity-Binding"] = json.dumps(evidence)
         before = await env.db.fetch_all("SELECT * FROM {{tables.agents}} ORDER BY agent_id")
-        result = await env.client.post("/v1/connect", content=body, headers={**headers, "Content-Type": "application/json"})
+        result = await env.client.post(
+            "/v1/connect",
+            content=body,
+            headers={**headers, "Content-Type": "application/json"},
+        )
         assert result.status_code == 403, result.text
         assert result.json()["detail"] == "identity_binding_mismatch"
         assert before == await env.db.fetch_all("SELECT * FROM {{tables.agents}} ORDER BY agent_id")

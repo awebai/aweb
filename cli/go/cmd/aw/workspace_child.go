@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,20 +12,20 @@ import (
 )
 
 // worktreeAgentCreation keeps the creator, new home and cleanup context
-// explicit across the controller, signed-invitation and setup-key paths.
+// explicit across the controller, signed-invitation and API-key paths.
 type worktreeAgentCreation struct {
-	WorkingDir    string
-	CreatorHome   awconfig.IdentityHome
-	WorktreePath  string
-	RepoRoot      string
-	BranchName    string
-	BranchCreated bool
-	ServerURL     string
-	TeamID        string
-	Alias         string
-	Role          string
-	Workspace     *awconfig.WorktreeWorkspace
-	APIKey        string
+	WorkingDir      string
+	CreatorHome     awconfig.IdentityHome
+	WorktreePath    string
+	RepoRoot        string
+	BranchName      string
+	BranchCreated   bool
+	ServerURL       string
+	TeamID          string
+	Alias           string
+	Role            string
+	Workspace       *awconfig.WorktreeWorkspace
+	TeamRegistryURL string
 }
 
 func addWorktreeViaLocalTeamKey(input worktreeAgentCreation) (connectOutput, error) {
@@ -37,7 +38,9 @@ func addWorktreeViaLocalTeamKey(input worktreeAgentCreation) (connectOutput, err
 	if err != nil {
 		return connectOutput{}, err
 	}
-	registryURL, err := resolveWorkspaceTeamRegistryURLAt(workingDir, sourceIdentityHome, sourceServerURL, teamDomain)
+	registryURL, err := resolveWorkspaceTeamRegistryURL(context.Background(), registryAuthorityRequest{
+		WorkingDir: workingDir, IdentityHome: sourceIdentityHome, AwebURL: sourceServerURL, Domain: teamDomain, TeamID: teamID,
+	})
 	if err != nil {
 		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
 		return connectOutput{}, err
@@ -75,11 +78,7 @@ func addWorktreeViaLocalTeamKey(input worktreeAgentCreation) (connectOutput, err
 	}
 
 	fmt.Fprintln(os.Stderr, "Connecting new workspace...")
-	connectResult, err := initCertificateConnectWithOptions(worktreePath, sourceServerURL, certificateConnectOptions{
-		Role:      role,
-		HumanName: strings.TrimSpace(state.HumanName),
-		AgentType: strings.TrimSpace(state.AgentType),
-	})
+	connectResult, err := connectProvisionedTeamMembership(provisionedTeamMembership{WorkingDir: worktreePath, Home: awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(worktreePath)}, AwebURL: sourceServerURL, Role: role, HumanName: strings.TrimSpace(state.HumanName), AgentType: strings.TrimSpace(state.AgentType)})
 	if err != nil {
 		return retain("connect new worktree", err)
 	}
@@ -96,8 +95,7 @@ func addWorktreeViaCloudBootstrap(input worktreeAgentCreation) (connectOutput, e
 	worktreePath, root, branchName := input.WorktreePath, input.RepoRoot, input.BranchName
 	branchCreated := input.BranchCreated
 	sourceServerURL, alias, role, state := input.ServerURL, input.Alias, input.Role, input.Workspace
-	apiKey := input.APIKey
-	apiKey = strings.TrimSpace(apiKey)
+	apiKey := strings.TrimSpace(state.APIKey)
 	if apiKey == "" {
 		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
 		return connectOutput{}, usageError(
@@ -114,22 +112,25 @@ func addWorktreeViaCloudBootstrap(input worktreeAgentCreation) (connectOutput, e
 	}
 
 	fmt.Fprintln(os.Stderr, "Requesting certificate from cloud...")
-	result, err := runAPIKeyBootstrapInit(apiKeyInitRequest{
-		WorkingDir:   worktreePath,
-		IdentityHome: filepath.Join(filepath.Clean(worktreePath), ".aw"),
-		AwebURL:      awebURL,
-		APIKey:       apiKey,
-		Alias:        alias,
-		Role:         role,
-		HumanName:    strings.TrimSpace(state.HumanName),
-		AgentType:    strings.TrimSpace(state.AgentType),
-		Global:       false,
-	})
+	request := apiKeyInitRequest{
+		WorkingDir:            worktreePath,
+		IdentityHome:          filepath.Join(filepath.Clean(worktreePath), ".aw"),
+		AwebURL:               awebURL,
+		RegistryURL:           input.TeamRegistryURL,
+		APIKey:                apiKey,
+		Alias:                 alias,
+		Role:                  role,
+		HumanName:             strings.TrimSpace(state.HumanName),
+		AgentType:             strings.TrimSpace(state.AgentType),
+		Global:                false,
+		EncryptionPublication: encryptionPublicationRequiredService,
+	}
+	result, err := runAPIKeyBootstrapInit(request)
 	if err != nil {
 		if !retainUnfinishedProvisioningIdentity(err) {
 			cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
 		}
-		return connectOutput{}, fmt.Errorf("cloud bootstrap for new worktree: %w", err)
+		return connectOutput{}, fmt.Errorf("cloud bootstrap for new worktree: %w", apiKeyCreationRecoveryAdvice(request, err))
 	}
 	if strings.TrimSpace(result.Alias) != "" && !strings.EqualFold(strings.TrimSpace(result.Alias), alias) {
 		return connectOutput{}, retainWorktreeSetupFailure(worktreeSetupFailure{Creation: input, AwebURL: sourceServerURL, Cause: fmt.Errorf("new workspace connected as name %q, expected %q", strings.TrimSpace(result.Alias), alias)})
@@ -151,7 +152,7 @@ func addWorktreeViaPrimaryInvite(input worktreeAgentCreation) (connectOutput, er
 		invite.AwebURL = sourceServerURL
 	}
 
-	accepted, err := acceptTeamInviteWithPreferredAwebURL(primaryDir, primaryIdentityHome, worktreePath, invite.Token, strings.TrimSpace(invite.AwebURL), alias)
+	accepted, err := acceptWorkspaceTeamInvite(workspaceInviteAcceptance{SourceDir: primaryDir, SourceHome: primaryIdentityHome, ChildDir: worktreePath, Invite: invite, Alias: alias})
 	if err != nil {
 		if !retainUnfinishedProvisioningIdentity(err) {
 			cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
@@ -182,11 +183,7 @@ func addWorktreeViaPrimaryInvite(input worktreeAgentCreation) (connectOutput, er
 	}
 
 	fmt.Fprintln(os.Stderr, "Connecting new workspace...")
-	connectResult, err := initCertificateConnectWithOptions(worktreePath, awebURL, certificateConnectOptions{
-		Role:      role,
-		HumanName: strings.TrimSpace(state.HumanName),
-		AgentType: strings.TrimSpace(state.AgentType),
-	})
+	connectResult, err := connectProvisionedTeamMembership(provisionedTeamMembership{WorkingDir: worktreePath, Home: awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(worktreePath)}, AwebURL: awebURL, Role: role, HumanName: strings.TrimSpace(state.HumanName), AgentType: strings.TrimSpace(state.AgentType)})
 	if err != nil {
 		return connectOutput{}, retainWorktreeSetupFailure(worktreeSetupFailure{Creation: input, AwebURL: awebURL, Cause: fmt.Errorf("connect new worktree: %w", err)})
 	}

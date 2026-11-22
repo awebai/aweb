@@ -83,6 +83,12 @@ type StableIdentityVerification struct {
 	// the caller can persist it as an anti-rollback checkpoint alongside the pin
 	// (default-aajc.8). Set only when Outcome is StableIdentityVerified.
 	VerifiedHead *VerifiedLogHead
+	// RegistryURL is the registry that answered; a checkpoint belongs to it.
+	RegistryURL string
+	// NewCheckpoint says the registry had no checkpoint for this identity
+	// before this verification: across it, only the pin's key binding
+	// protects (docs/trust-model.md).
+	NewCheckpoint bool
 }
 
 type VerifiedLogHead struct {

@@ -83,14 +83,8 @@ class PasskeyEmailDelivery:
                 f"{self._product} contact change scheduled",
                 f"A change to your {self._product} contact has been scheduled.",
             ),
-            NoticeKind.CONTACT_CHANGE_CANCELLED: (
-                f"{self._product} contact change cancelled",
-                f"The pending change to your {self._product} contact has been cancelled.",
-            ),
         }[notice.kind]
-        text = f"{explanation}\n"
-        if notice.kind is not NoticeKind.CONTACT_CHANGE_CANCELLED:
-            text += f"Effective time: {notice.effective_at.isoformat()}\n"
+        text = f"{explanation}\nEffective time: {notice.effective_at.isoformat()}\n"
         return await self._send(
             Message(to=contact, subject=subject, text=text, html=f"<p>{escape(text)}</p>")
         )

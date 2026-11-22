@@ -248,12 +248,12 @@ async def test_handle_contact_default_agent_resolution_uses_recent_activity(aweb
     older = await aweb_cloud_db.aweb_db.fetch_one(
         """
         INSERT INTO {{tables.agents}} (
-            team_id, did_key, did_aw, address, alias, identity_scope, role, created_at
+            team_id, did_key, did_aw, address, alias, identity_scope, role, created_at, inbound_mode
         )
         VALUES (
             'default:acme.com', 'did:key:older', 'did:aw:older',
             'acme.com/older', 'older', 'global', 'developer',
-            '2026-01-01T00:00:00Z'
+            '2026-01-01T00:00:00Z', 'open'
         )
         RETURNING agent_id
         """
@@ -261,12 +261,12 @@ async def test_handle_contact_default_agent_resolution_uses_recent_activity(aweb
     recent = await aweb_cloud_db.aweb_db.fetch_one(
         """
         INSERT INTO {{tables.agents}} (
-            team_id, did_key, did_aw, address, alias, identity_scope, role, created_at
+            team_id, did_key, did_aw, address, alias, identity_scope, role, created_at, inbound_mode
         )
         VALUES (
             'default:acme.com', 'did:key:recent', 'did:aw:recent',
             'acme.com/recent', 'recent', 'global', 'developer',
-            '2026-01-02T00:00:00Z'
+            '2026-01-02T00:00:00Z', 'open'
         )
         RETURNING agent_id
         """

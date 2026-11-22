@@ -10,6 +10,7 @@ from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 
 from awid.did import did_from_public_key
 import aweb.messaging.chat as chat_service
+import aweb.messaging.chat_storage as chat_storage
 from aweb.messaging.chat import (
     ensure_session,
     get_message_history,
@@ -41,8 +42,8 @@ async def _setup_team_and_agents(aweb_db):
         did_key = did_from_public_key(bytes(signing_key.verify_key))
         row = await aweb_db.fetch_one(
             """
-            INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, identity_scope)
-            VALUES ('backend:read-race.example', $1, $2, $3, 'global')
+            INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, identity_scope, inbound_mode)
+            VALUES ('backend:read-race.example', $1, $2, $3, 'global', 'open')
             RETURNING agent_id
             """,
             did_key,
@@ -84,6 +85,7 @@ async def test_message_inserted_during_presented_snapshot_remains_unread(
         created_by="alice",
     )
     monkeypatch.setattr(chat_service, "datetime", _FrozenDateTime)
+    monkeypatch.setattr(chat_storage, "datetime", _FrozenDateTime)
 
     presented = await send_in_session(
         db,
@@ -103,7 +105,11 @@ async def test_message_inserted_during_presented_snapshot_remains_unread(
             body="committed after recipient acknowledgement",
         )
         assert concurrent is not None
-        assert presented["created_at"] == concurrent["created_at"] == _FrozenDateTime.instant
+        assert (
+            presented["created_at"]
+            == concurrent["created_at"]
+            == _FrozenDateTime.instant
+        )
 
         snapshot = await get_message_history(
             db,
@@ -125,13 +131,15 @@ async def test_message_inserted_during_presented_snapshot_remains_unread(
 
         # The read receipt takes its number from the session the open writer
         # holds, so the acknowledgement completes once that writer commits.
-        acknowledgement = asyncio.create_task(mark_messages_read(
-            db,
-            session_id=session_id,
-            participant_did=bob["did_aw"],
-            participant_agent_id=str(bob["agent_id"]),
-            message_ids=presented_ids,
-        ))
+        acknowledgement = asyncio.create_task(
+            mark_messages_read(
+                db,
+                session_id=session_id,
+                participant_did=bob["did_aw"],
+                participant_agent_id=str(bob["agent_id"]),
+                message_ids=presented_ids,
+            )
+        )
         done, _ = await asyncio.wait({acknowledgement}, timeout=0.5)
         assert not done
 
@@ -311,7 +319,9 @@ async def test_watermark_and_exact_ids_produce_equivalent_read_state(aweb_cloud_
     )
 
     assert legacy_result["messages_marked"] == exact_result["messages_marked"] == 3
-    assert [row["message_id"] for row in legacy_rows] == [row["message_id"] for row in exact_rows]
+    assert [row["message_id"] for row in legacy_rows] == [
+        row["message_id"] for row in exact_rows
+    ]
     assert legacy_unread == exact_unread == []
 
 
@@ -472,9 +482,7 @@ async def test_exact_read_migration_skips_orphaned_receipts_on_both_upgrade_path
         WHERE conrelid = 'aweb.chat_message_reads'::regclass
         """
     )
-    intermediate_definitions = {
-        row["definition"] for row in intermediate_constraints
-    }
+    intermediate_definitions = {row["definition"] for row in intermediate_constraints}
     assert any(
         "FOREIGN KEY (session_id, did) REFERENCES aweb.chat_participants(session_id, did)"
         in definition
@@ -519,7 +527,9 @@ async def test_exact_read_migration_skips_orphaned_receipts_on_both_upgrade_path
         if migration_error is not None
         else ""
     )
-    assert migration_error is None, f"orphan-safe backfill must complete: {error_detail}"
+    assert migration_error is None, (
+        f"orphan-safe backfill must complete: {error_detail}"
+    )
     assert migration_result is not None
 
     backfilled = await upgrade_db.fetch_all(
@@ -531,9 +541,9 @@ async def test_exact_read_migration_skips_orphaned_receipts_on_both_upgrade_path
         """,
         session_id,
     )
-    assert {
-        row["message_id"] for row in backfilled if row["did"] == bob_did
-    } == set(message_ids[:2])
+    assert {row["message_id"] for row in backfilled if row["did"] == bob_did} == set(
+        message_ids[:2]
+    )
     assert [row for row in backfilled if row["did"] == orphan_did] == []
 
     receipt_count = await upgrade_db.fetch_val(

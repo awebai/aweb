@@ -13,6 +13,9 @@ type provisionedTeamMembership struct {
 	WorkingDir string
 	Home       awconfig.IdentityHome
 	AwebURL    string
+	Role       string
+	HumanName  string
+	AgentType  string
 }
 
 // provisionedMembershipIncompleteError carries the already admitted home's
@@ -27,8 +30,16 @@ func (err *provisionedMembershipIncompleteError) Unwrap() error { return err.cau
 // Its explicit home is the produced member, independently of the operator's
 // selected identity. Failure retains the already accepted certificate and key.
 func completeProvisionedTeamMembership(request provisionedTeamMembership) error {
+	_, err := connectProvisionedTeamMembership(request)
+	return err
+}
+
+// connectProvisionedTeamMembership returns the admitted member result for
+// callers that also complete git-worktree setup; the publication rule and
+// precise recovery errors are shared with roster provisioning.
+func connectProvisionedTeamMembership(request provisionedTeamMembership) (connectOutput, error) {
 	if strings.TrimSpace(request.WorkingDir) == "" || strings.TrimSpace(request.Home.Root) == "" {
-		return errors.New("provisioning completion requires the member's working directory and identity home")
+		return connectOutput{}, errors.New("provisioning completion requires the member's working directory and identity home")
 	}
 	serviceURL := strings.TrimSpace(request.AwebURL)
 	connectURL := serviceURL
@@ -37,18 +48,18 @@ func completeProvisionedTeamMembership(request provisionedTeamMembership) error 
 	}
 	connectCommand := workspaceConnectCommandForIdentityHome(connectURL, request.Home.Root)
 	if serviceURL == "" {
-		return &provisionedMembershipIncompleteError{cause: &plainRefusal{text: "Membership is saved; the E2E key is NOT published by this provisioning attempt. Run `" + connectCommand + "` to connect and publish it."}}
+		return connectOutput{}, &provisionedMembershipIncompleteError{cause: &plainRefusal{text: "Membership is saved; the E2E key is NOT published by this provisioning attempt. Run `" + connectCommand + "` to connect and publish it."}}
 	}
-	_, err := initCertificateConnectWithOptions(request.WorkingDir, serviceURL, certificateConnectOptions{IdentityHome: request.Home.Root, EncryptionPublication: encryptionPublicationRequiredService})
+	output, err := initCertificateConnectWithOptions(request.WorkingDir, serviceURL, certificateConnectOptions{IdentityHome: request.Home.Root, Role: request.Role, HumanName: request.HumanName, AgentType: request.AgentType, EncryptionPublication: encryptionPublicationRequiredService})
 	if err == nil {
-		return nil
+		return output, nil
 	}
 	var publication *requiredEncryptionPublicationError
 	if errors.As(err, &publication) {
 		setupCommand := formatShellCommand([]string{"aw", "--identity-home", request.Home.Root, "id", "encryption-key", "setup"})
-		return &provisionedMembershipIncompleteError{cause: &plainRefusal{text: "Membership is connected; E2E key publication is not confirmed. Run `" + setupCommand + "` to publish it.", err: err}}
+		return connectOutput{}, &provisionedMembershipIncompleteError{cause: &plainRefusal{text: "Membership is connected; E2E key publication is not confirmed. Run `" + setupCommand + "` to publish it.", err: err}}
 	}
-	return &provisionedMembershipIncompleteError{cause: &plainRefusal{text: "Membership is saved; the E2E key is NOT published by this provisioning attempt. Run `" + connectCommand + "` to connect and publish it.", err: err}}
+	return connectOutput{}, &provisionedMembershipIncompleteError{cause: &plainRefusal{text: "Membership is saved; the E2E key is NOT published by this provisioning attempt. Run `" + connectCommand + "` to connect and publish it.", err: err}}
 }
 
 type provisionedRecordFailure struct {

@@ -2,7 +2,7 @@
 
 > **Status: shipped compatibility command contract.** The everyday workflow is
 > [Orchestrate more local agents](grow-team.md); this document preserves the durable
-> authority discovery, ambiguity, rollback, and batch semantics used by the
+> authority discovery, ambiguity, recovery, and batch semantics used by the
 > implemented command and its tests. It does not make profiles, homes,
 > worktrees, or runtime launch mandatory.
 
@@ -59,7 +59,7 @@ classic name; omitted scope comes from `profile.yaml`.
 
 Flags (all reused from `add` where they exist there):
 
-- `--api-key <key>` — explicit team API key; wins over discovery and bypasses
+- `--api-key <key>` — explicit person setup key; wins over discovery and bypasses
   any assertion inferred from the current workspace. The `AWEB_API_KEY` env var
   selects the same API-key authority tier, but when cwd has an active team that
   team is asserted against the server response (flag wins over env).
@@ -81,9 +81,14 @@ concerns; a caller who needs them has a workspace and should use `add`).
 Precedence is deterministic and overridable. The first tier that can
 select an anchor wins; lower tiers are not consulted after that:
 
-1. **Team API key** — explicit `--api-key`, else `AWEB_API_KEY`. Used
+1. **Person setup key** — explicit `--api-key`, else `AWEB_API_KEY`. Used
    directly via the API-key bootstrap path (`runAPIKeyBootstrapInit` per
-   member, as `add` does in API-key mode). The key itself determines the
+   member, as `add` does in API-key mode). `GET /api/v1/teams/current`
+   identifies `api_key_kind=person` or `workspace`. A workspace key instead
+   selects the native signing creator for the requested team and prints a
+   notice; without one it refuses with creator/setup-key guidance. A missing
+   or unknown kind preserves the API path, without a warning. Stored
+   workspace keys never create another identity. The key itself determines the
    team. An explicit `--api-key` does not consult workspace team state; it is
    the opt-out when the caller deliberately wants to extend a different team.
 
@@ -97,27 +102,20 @@ select an anchor wins; lower tiers are not consulted after that:
    remain `api-key`.
 
    An explicit `--team-id` alongside either kind of key is also an assertion
-   and wins over any workspace-derived assertion. Assertions are
-   side-effect-safe: the key's team is only learned from the server response
-   of the bootstrap call, so the FIRST member is bootstrapped, its response
-   team id is compared to the asserted team, and on mismatch that just-created
-   member is rolled back — server-side membership revoked and the local home
-   removed, via the same rollback machinery the roster path already uses
-   (`rollbackJustCreatedTeamMemberWithExplicitHostedAuth` + home rollback) — and `extend` errors
-   naming both team ids before any further member is attempted. An implicit
-   mismatch says `workspace active team X does not match API key team Y`; it
-   never names an unpassed `--team-id` flag. A mismatch never leaves a partial
-   roster in the key's team. (If a key-introspection preflight endpoint becomes
-   available, it replaces the bootstrap-then-rollback check; the observable
-   contract stays the same.)
+   and wins over any workspace-derived assertion. `extend` compares the
+   asserted team with the key's canonical team from `GET /api/v1/teams/current`
+   before any admission request or agent home creation. On mismatch it names
+   both teams and refuses the roster. An implicit mismatch says `workspace
+   active team X does not match API key team Y`, identifying the source of
+   the assertion.
 2. **The current workspace, if invite-capable** — cwd has a `.aw` workspace
    with an active team and can mint invites (below). This covers running
    `extend` from an agent home and from a team root whose first member was
    created in place by `aw team admin create`.
 3. **A discovered invite-capable agent** — scan the candidate homes under
    the agents root (next section), gather the qualifying ones, apply the
-   ambiguity rule below, and borrow the lexicographically first qualifying
-   home as the invite anchor. The new members join that agent's active
+   ambiguity rule below, and use the single qualifying
+   home as the invite anchor, printing its path as the creator. The new members join that agent's active
    team.
 4. **Error** — nothing found. The error names both missing inputs and the
    alternative verb:
@@ -129,12 +127,11 @@ select an anchor wins; lower tiers are not consulted after that:
    --api-key, or create a new team with aw team admin create <name>
    ```
 
-Why explicit-key-first: tiers 2–3 are discovery — they depend on what
-happens to be on disk. An explicit key is the caller saying exactly which
-team and which authority; it must not be overridden by whatever the scan
-finds. (`aw team admin add` keeps its existing opposite ordering — workspace
-first, API key as fallback — because for `add` the cwd workspace IS the
-explicit context. The asymmetry is deliberate.)
+A person's setup key is explicit creation authority and wins over disk. A
+workspace key is not creation authority: the selected native workspace signs
+its child using the existing invitation exchange. This rule is shared with
+`add`, `init` and `add-worktree`. The service keeps the legacy API path when
+key-kind metadata is absent or unknown.
 
 **Invite-capable**, concretely: for a candidate home,
 `resolveTeamInviteTarget(home)` resolves an active team (workspace/team
@@ -148,8 +145,8 @@ add` exercises today via `createAndAcceptTeamInviteForEmptyAgent`; `extend`
 changes where the anchor comes from, not what it can do.
 
 Capability is proven at mint time, not pre-checked per candidate: discovery
-selects the first candidate whose team state resolves (and matches
-`--team-id` when given); if its mint then fails, that failure surfaces
+gathers candidates whose team state resolves (and matches
+`--team-id` when given); one candidate may be used. If its mint then fails, that failure surfaces
 as-is with the anchor's path named — it does not silently fall through to
 the next candidate, which would make failures order-dependent and opaque.
 
@@ -159,8 +156,8 @@ Ambiguity is judged WITHIN a tier, and only after every higher tier has
 failed to select an anchor. A lower tier never re-opens or overrides a
 higher one:
 
-- Tier 1: the key names the team. Explicit `--api-key` consults nothing on
-  disk. Ambient `AWEB_API_KEY` consults only cwd's active team for the
+- Tier 1: a person setup key names the team. Explicit person `--api-key` consults nothing on
+  disk. A workspace key must select its native signing creator. Ambient `AWEB_API_KEY` consults only cwd's active team for the
   side-effect-safe assertion described above; it does not scan candidate homes
   or select authority from disk.
 - Tier 2: if the current workspace is invite-capable (and its active team
@@ -170,8 +167,9 @@ higher one:
 - Tier 3: `--team-id`, when given, filters the qualifying candidates to
   those whose active team matches. Without `--team-id`, if the qualifying
   candidates span more than one active team, `extend` errors and lists the
-  teams found, asking for `--team-id`. Within a single team, the
-  lexicographically first qualifying home wins.
+  teams found, asking for `--team-id`. Within a single team, exactly one qualifying home is used and printed as
+  the creator. Several homes are listed in a refusal before any write; run
+  from the intended creating workspace or select its `--identity-home`.
 
 `extend` never guesses among teams.
 
@@ -185,12 +183,12 @@ The **agents root** is the directory that holds the team layout
    enclosing `agents/instances`.
 3. `<git-repo-root(cwd)>/agents/instances` exists → that (matches where
    `aw team admin add` and `aw team admin up` operate from a repo subdirectory).
-4. Otherwise there is no layout yet: `<cwd>/agents/instances` is created on
-   success (the clean-dir case).
+4. Otherwise there is no layout yet: use `<cwd>/agents/instances` (the
+   clean-dir case).
 
 New member homes are placed at `<agents-root>/<name>`, with the same
-preflights, materialization, connect, configure, worktree setup, and
-rollback behavior as `aw team admin add`.
+preflights, materialization, connect, configure, worktree setup, and recovery
+behavior as `aw team admin add`.
 
 | Call site | Example cwd | Authority available | Agents root |
 |---|---|---|---|
@@ -234,10 +232,14 @@ modes:
 - `not_attempted` — the untouched tail was skipped after the failure.
 
 The `agents` array preserves command-line order and failure JSON uses
-`"status": "failed"`. The command does not roll back healthy members that
-completed before the failure; changing that to all-or-nothing requires a
-separate design decision because compensating membership removal can itself
-fail. The failing member keeps the existing per-member rollback behavior.
+`"status": "failed"`. Earlier members remain in the team. If the failed member
+has prepared recovery material or an admitted certificate, its home retains
+the material required to resume the same identity. For global members
+provisioned by invitation, rerun the original command from the same creator
+with the same team, agent name and home. The retry uses the retained key and
+invitation, including when the registry accepted the membership and its
+response was lost. When there is no identity to retain, the failed member's
+new local files can be rolled back.
 A fully successful batch keeps the existing human and JSON output unchanged;
 per-agent outcome fields are omitted on that path.
 

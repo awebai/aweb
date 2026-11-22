@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
@@ -17,7 +18,20 @@ import (
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"github.com/spf13/cobra"
 )
+
+func TestReplaceKeyDisclosesConversationBoundaryInHelpAndResult(t *testing.T) {
+	const notice = "The new key will not have the old key's mail or chat conversations."
+	for name, text := range map[string]string{
+		"before acting": teamHumanReplaceKeyCmd.Long,
+		"result":        formatTeamHumanReplaceKey(teamHumanReplaceKeyOutput{Alias: "alice", TeamID: "backend:acme.com"}),
+	} {
+		if !strings.Contains(text, notice) {
+			t.Errorf("%s omits conversation boundary: %s", name, text)
+		}
+	}
+}
 
 // A compromised or MITM'd aweb server must not be able to exhaust client memory
 // by returning an unbounded body to a signed key-rotation request. Because the
@@ -43,7 +57,7 @@ func TestPostLocalIdentityKeyReplacementRejectsOversizeResponseAsOutcomeUnknown(
 	}
 	payload := localIdentityKeyReplacementRequest{TeamID: "backend:acme.com"}
 
-	_, err = postLocalIdentityKeyReplacementOnce(context.Background(), server.URL, "alice", payload, teamKey)
+	_, err = postLocalIdentityKeyReplacementOnce(context.Background(), awid.LocalIdentityKeyReplacementInput{ServiceURL: server.URL, Alias: "alice", Request: payload, TeamKey: teamKey})
 	if err == nil {
 		t.Fatal("expected oversize replace-key response to be rejected")
 	}
@@ -195,7 +209,7 @@ func TestReplacementHomeRejectsGlobalMembershipCertificate(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = preflightReplacementAgentHome(agentHome, "backend:acme.com", "alice", oldDID, newDID, "")
+	_, err = preflightReplacementAgentHome(replacementAgentHome{HomeDir: agentHome, TeamID: "backend:acme.com", Alias: "alice", OldDIDKey: oldDID, NewDIDKey: newDID, OldCertificateID: ""})
 	if err == nil || !strings.Contains(err.Error(), "local member") {
 		t.Fatalf("error=%v", err)
 	}
@@ -210,7 +224,7 @@ func TestGenerateReplacementKeyUsesRealLocalHomeWithoutIdentityYAML(t *testing.T
 		t.Fatal(err)
 	}
 
-	oldCertID, newDID, generatedPath, err := prepareGeneratedReplacementAgentHome(agentHome, "backend:acme.com", "alice", oldDID, "")
+	oldCertID, newDID, generatedPath, err := prepareGeneratedReplacementAgentHome(replacementAgentHome{HomeDir: agentHome, TeamID: "backend:acme.com", Alias: "alice", OldDIDKey: oldDID, OldCertificateID: ""})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,7 +248,7 @@ func TestGenerateReplacementKeyRefusesToOverwriteExistingSigningKey(t *testing.T
 	t.Cleanup(server.Close)
 	_, agentHome, oldDID, _, _, _ := seedReplaceKeyWorkspace(t, server.URL)
 
-	_, _, _, err := prepareGeneratedReplacementAgentHome(agentHome, "backend:acme.com", "alice", oldDID, "")
+	_, _, _, err := prepareGeneratedReplacementAgentHome(replacementAgentHome{HomeDir: agentHome, TeamID: "backend:acme.com", Alias: "alice", OldDIDKey: oldDID, OldCertificateID: ""})
 	if err == nil {
 		t.Fatal("expected existing-key refusal")
 	}
@@ -252,7 +266,7 @@ func TestReplacementHomeWithoutOldCertificateAcceptsExplicitCertificateID(t *tes
 	if err := os.Remove(awconfig.TeamCertificatePath(agentHome, "backend:acme.com")); err != nil {
 		t.Fatal(err)
 	}
-	got, err := preflightReplacementAgentHome(agentHome, "backend:acme.com", "alice", oldDID, newDID, "cert-from-operator-records")
+	got, err := preflightReplacementAgentHome(replacementAgentHome{HomeDir: agentHome, TeamID: "backend:acme.com", Alias: "alice", OldDIDKey: oldDID, NewDIDKey: newDID, OldCertificateID: "cert-from-operator-records"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -426,9 +440,12 @@ func TestTeamReplaceKeyWithoutHomePrintsCertificatePlacementMaterial(t *testing.
 	teamHumanReplaceKeyOldCertID = oldCert.CertificateID
 	teamHumanReplaceKeyHome = ""
 	jsonFlag = true
+	var notice bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetErr(&notice)
 	var runErr error
-	printed := captureIDCommandStdout(t, func() {
-		runErr = runTeamHumanReplaceKey(nil, []string{"alice"})
+	printed := captureStdout(t, func() {
+		runErr = runTeamHumanReplaceKey(cmd, []string{"alice"})
 	})
 	if runErr != nil {
 		t.Fatal(runErr)
@@ -439,6 +456,10 @@ func TestTeamReplaceKeyWithoutHomePrintsCertificatePlacementMaterial(t *testing.
 	}
 	if output["team_certificate"] == "" || !strings.Contains(output["placement"].(string), ".aw/team-certs") {
 		t.Fatalf("output=%v", output)
+	}
+	const expected = "The new key will not have the old key's mail or chat conversations."
+	if notice.String() != expected+"\n" || output["conversation_access"] != expected {
+		t.Fatalf("conversation notice: stderr=%q result=%v", notice.String(), output)
 	}
 }
 

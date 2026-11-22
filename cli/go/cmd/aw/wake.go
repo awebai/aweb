@@ -384,21 +384,59 @@ func wakeSetPaused(cmd *cobra.Command, home string, paused bool) error {
 	return nil
 }
 
+// wakeRestartWait outlasts a broker restart: the daemon holds its lock with the
+// socket closed while its channel-core children stop (up to their 5 s grace
+// plus 2 s of output), and from taking the lock until it listens.
+const (
+	wakeRestartWait = 15 * time.Second
+	wakeRestartPoll = 50 * time.Millisecond
+)
+
 // wakeCallOrFallback writes state files only while holding the daemon lock.
 // A missing socket can mean startup or failure of a live daemon, so only the
 // lock permits mutation fallback (docs/terminal-wake-broker.md, Local state).
+// A restart is waited out: while the lock is held and nothing answers, the
+// request is retried until the daemon answers or the lock frees. Every request
+// sent here is idempotent, so retrying an exchange that broke is safe.
 func wakeCallOrFallback(store *wake.Store, req wake.ControlRequest, fallback func() error) (wake.ControlResponse, error) {
-	resp, err := wake.Call(store.SocketPath(), req)
-	if err == nil {
-		return resp, nil
+	deadline := time.Now().Add(wakeRestartWait)
+	for {
+		resp, err := wake.Call(store.SocketPath(), req)
+		if err == nil {
+			return resp, nil
+		}
+		if errors.Is(err, wake.ErrDaemonDown) {
+			err = wake.WithDaemonStopped(store, fallback)
+			if err == nil {
+				return wake.ControlResponse{OK: true}, nil
+			}
+			if !errors.Is(err, wake.ErrDaemonOwnsState) {
+				return wake.ControlResponse{}, err
+			}
+		} else if !errors.Is(err, wake.ErrControlTransport) {
+			return resp, err
+		}
+		if !time.Now().Before(deadline) {
+			return wake.ControlResponse{}, wakeDaemonUnresponsive(store, err)
+		}
+		time.Sleep(wakeRestartPoll)
 	}
-	if !errors.Is(err, wake.ErrDaemonDown) {
-		return resp, err
+}
+
+// wakeDaemonUnresponsive names the daemon that held its lock through the whole
+// restart wait without answering: it is wedged, not restarting.
+func wakeDaemonUnresponsive(store *wake.Store, last error) error {
+	var owner string
+	switch pid, alive, err := wake.LockOwner(store.LockPath()); {
+	case err != nil:
+		owner = fmt.Sprintf("a wake broker (pid unreadable: %v)", err)
+	case alive && pid > 0:
+		owner = fmt.Sprintf("the wake broker (pid %d)", pid)
+	default:
+		owner = "a wake broker (pid not recorded)"
 	}
-	if err := wake.WithDaemonStopped(store, fallback); err != nil {
-		return wake.ControlResponse{}, err
-	}
-	return wake.ControlResponse{OK: true}, nil
+	return fmt.Errorf("wake: %s holds its state but has not answered for %s; stop it and restart the broker with aw wake run, then retry: %w",
+		owner, wakeRestartWait, last)
 }
 
 // wakeStore resolves the state directory: the flag, then AW_WAKE_STATE_DIR,

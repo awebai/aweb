@@ -195,7 +195,7 @@ dev = [
 
 [[package]]
 name = "awid-service"
-version = "0.5.40rc3"
+version = "0.5.40rc4"
 source = { editable = "../../awid" }
 dependencies = [
     { name = "asyncpg" },

@@ -11,94 +11,120 @@ is revoked — same fail-closed posture as the certificate-presenting path.
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 from unittest.mock import AsyncMock
-from team_facts_fixtures import legacy_team
 
-import httpx
 import pytest
 from fastapi import HTTPException
 
-from aweb.identity_auth_deps import (
-    _enforce_current_membership,
-    lookup_identity_agent_context,
-)
+from aweb.member_team_key import current_membership, read_member_projection
 from aweb.routes.connect import connect_agent
 from aweb.team_auth_deps import resolve_team_identity
+from awid.registry import RegistryError
+from messaging_actor_support import admit_messaging_actor
+from test_dashboard_privacy import TEAM, TEAM_NAME
+from test_dashboard_privacy import privacy_app as privacy_app
+
+__all__ = ["privacy_app"]
 
 TEAM_ID = "backend:acme.com"
 MEMBER_DID_KEY = "did:key:z6MkRevocable"
 # A member accepted under its team's current key, as lookup_identity_agent_context reads it.
-CURRENT_KEY = {"accepted_team_did_key": "did:key:zTeam", "current_team_did_key": "did:key:zTeam"}
+CURRENT_KEY = {
+    "status": "active",
+    "deleted_at": None,
+    "accepted_team_did_key": "did:key:zTeam",
+    "current_team_did_key": "did:key:zTeam",
+}
 
 
-def _request_with_revocations(result):
-    registry = AsyncMock()
-    # Explicitly model the old SDK surface; AsyncMock invents new methods.
-    registry.get_team_revocations_for_certificates = None
-    registry.get_team_fresh = AsyncMock(side_effect=legacy_team)
-    if isinstance(result, Exception):
-        registry.get_team_revocations = AsyncMock(side_effect=result)
-    else:
-        registry.get_team_revocations = AsyncMock(return_value=result)
-    return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(awid_registry_client=registry))), registry
+async def _registered_member(env, *, alias="revocable"):
+    actor = await admit_messaging_actor(
+        env, alias=alias, team_id=TEAM, address="example.test/" + alias
+    )
+    row = await read_member_projection(env.db, team_id=TEAM, did_key=actor.did_key)
+    assert row["certificate_id"]
+    assert row["did_aw"] == actor.stable_id
+    return actor, row
 
 
 @pytest.mark.asyncio
-async def test_revoked_certificate_strips_team_context():
-    request, _ = _request_with_revocations({"cert-9"})
-    row = {
-        "agent_id": "agent-1",
-        "team_id": TEAM_ID,
-        "alias": "alice",
-        "did_aw": "did:aw:alice",
-        "address": "acme.com/alice",
-        "identity_scope": "global",
-        "certificate_id": "cert-9",
-        **CURRENT_KEY,
-    }
-    out = await _enforce_current_membership(request, row)
+async def test_revoked_certificate_strips_team_context(privacy_app):
+    env = privacy_app
+    actor, row = await _registered_member(env)
+    registry = env.app.state.awid_registry_client
+    live = await current_membership(registry, row)
+    assert live["agent_id"] == row["agent_id"]
+    await registry.revoke_team_certificate(
+        "example.test",
+        TEAM_NAME,
+        team_controller_signing_key=env.team_sk,
+        certificate_id=row["certificate_id"],
+    )
+    out = await current_membership(registry, row)
     assert out["team_id"] is None
     assert out["alias"] is None
     assert out["agent_id"] is None
-    # Revocation ends membership, not the identity.
-    assert out["did_aw"] == "did:aw:alice"
-    assert out["address"] == "acme.com/alice"
+    assert out["did_aw"] == actor.stable_id
+    assert out["address"] == actor.address
 
 
 @pytest.mark.asyncio
-async def test_live_certificate_keeps_team_context():
-    request, _ = _request_with_revocations({"cert-other"})
-    row = {"team_id": TEAM_ID, "alias": "alice", "agent_id": "a", "certificate_id": "cert-9", **CURRENT_KEY}
-    out = await _enforce_current_membership(request, row)
-    assert out["team_id"] == TEAM_ID and out["alias"] == "alice"
+async def test_live_certificate_keeps_team_context(privacy_app):
+    env = privacy_app
+    _, row = await _registered_member(env)
+    _, other = await _registered_member(env, alias="other-certificate")
+    registry = env.app.state.awid_registry_client
+    await registry.revoke_team_certificate(
+        "example.test",
+        TEAM_NAME,
+        team_controller_signing_key=env.team_sk,
+        certificate_id=other["certificate_id"],
+    )
+    out = await current_membership(registry, row)
+    assert out["team_id"] == TEAM
+    assert out["alias"] == "revocable"
+    assert out["agent_id"] == row["agent_id"]
 
 
 @pytest.mark.asyncio
 async def test_row_without_recorded_certificate_passes_without_registry_call():
-    request, registry = _request_with_revocations(set())
-    row = {"team_id": TEAM_ID, "alias": "alice", "agent_id": "a", "certificate_id": None, **CURRENT_KEY}
-    out = await _enforce_current_membership(request, row)
+    registry = AsyncMock()
+    row = {
+        "team_id": TEAM_ID,
+        "alias": "alice",
+        "agent_id": "a",
+        "certificate_id": None,
+        **CURRENT_KEY,
+    }
+    out = await current_membership(registry, row)
     assert out is row
+    registry.get_team_revocations_for_certificates.assert_not_awaited()
     registry.get_team_revocations.assert_not_awaited()
+    assert registry.mock_calls == []
 
 
 @pytest.mark.asyncio
 async def test_row_without_team_context_passes_without_registry_call():
-    request, registry = _request_with_revocations(set())
+    registry = AsyncMock()
     row = {"team_id": None, "alias": None, "agent_id": None, "certificate_id": "cert-9"}
-    out = await _enforce_current_membership(request, row)
+    out = await current_membership(registry, row)
     assert out is row
+    registry.get_team_revocations_for_certificates.assert_not_awaited()
     registry.get_team_revocations.assert_not_awaited()
+    assert registry.mock_calls == []
 
 
 @pytest.mark.asyncio
-async def test_registry_unavailable_fails_closed():
-    request, _ = _request_with_revocations(httpx.ConnectError("registry down"))
-    row = {"team_id": TEAM_ID, "alias": "alice", "agent_id": "a", "certificate_id": "cert-9", **CURRENT_KEY}
+async def test_registry_unavailable_fails_closed(privacy_app):
+    env = privacy_app
+    _, row = await _registered_member(env)
+    registry = env.app.state.awid_registry_client
+    assert (await current_membership(registry, row))["team_id"] == TEAM
+    env.registry.transport.down = True
     with pytest.raises(HTTPException) as excinfo:
-        await _enforce_current_membership(request, row)
+        await current_membership(registry, row)
     assert excinfo.value.status_code == 503
+    assert isinstance(excinfo.value.__cause__, RegistryError)
 
 
 @pytest.mark.asyncio
@@ -122,7 +148,7 @@ async def test_connect_records_certificate_and_lookup_returns_it(aweb_cloud_db):
         human_name="",
         agent_type="agent",
     )
-    row = await lookup_identity_agent_context(db, did_key=MEMBER_DID_KEY)
+    row = await read_member_projection(db, team_id=TEAM_ID, did_key=MEMBER_DID_KEY)
     assert row is not None
     assert row["certificate_id"] == "cert-first"
     assert row["team_id"] == TEAM_ID
@@ -139,12 +165,14 @@ async def test_connect_records_certificate_and_lookup_returns_it(aweb_cloud_db):
         human_name="",
         agent_type="agent",
     )
-    row = await lookup_identity_agent_context(db, did_key=MEMBER_DID_KEY)
+    row = await read_member_projection(db, team_id=TEAM_ID, did_key=MEMBER_DID_KEY)
     assert row["certificate_id"] == "cert-second"
 
 
 @pytest.mark.asyncio
-async def test_certificate_authenticated_request_refreshes_recorded_certificate(aweb_cloud_db):
+async def test_certificate_authenticated_request_refreshes_recorded_certificate(
+    aweb_cloud_db,
+):
     db = aweb_cloud_db.aweb_db
     cert_info = {
         "team_id": TEAM_ID,
@@ -152,6 +180,8 @@ async def test_certificate_authenticated_request_refreshes_recorded_certificate(
         "did_key": "did:key:z6MkRefresher",
         "identity_scope": "local",
         "certificate_id": "cert-old",
+        # Unit owner input: the key the certificate verifier checked.
+        "verified_team_did_key": "did:key:zTeam",
     }
     await connect_agent(
         db=db,
@@ -168,5 +198,5 @@ async def test_certificate_authenticated_request_refreshes_recorded_certificate(
     # updates the projection, so identity-only enforcement checks the current
     # certificate rather than the one from the original connect.
     await resolve_team_identity(db, {**cert_info, "certificate_id": "cert-new"})
-    row = await lookup_identity_agent_context(db, did_key="did:key:z6MkRefresher")
+    row = await read_member_projection(db, team_id=TEAM_ID, did_key="did:key:z6MkRefresher")
     assert row["certificate_id"] == "cert-new"

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -64,6 +65,10 @@ func (s IDIssuanceFileStore) directory(create bool) (bool, error) {
 }
 
 func (s IDIssuanceFileStore) Entry(certificateID string) (*awid.IDIssuanceEntry, error) {
+	return s.readEntry(os.DirFS(s.Dir), certificateID)
+}
+
+func (s IDIssuanceFileStore) readEntry(files fs.FS, certificateID string) (*awid.IDIssuanceEntry, error) {
 	path, err := s.path(certificateID)
 	if err != nil {
 		return nil, err
@@ -71,7 +76,7 @@ func (s IDIssuanceFileStore) Entry(certificateID string) (*awid.IDIssuanceEntry,
 	if exists, err := s.directory(false); err != nil || !exists {
 		return nil, err
 	}
-	data, err := os.ReadFile(path)
+	data, err := fs.ReadFile(files, filepath.Base(path))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
@@ -86,12 +91,6 @@ func (s IDIssuanceFileStore) Entry(certificateID string) (*awid.IDIssuanceEntry,
 		return nil, fmt.Errorf("issuance entry %s records %s", path, entry.CertificateID)
 	}
 	return entry, nil
-}
-
-func (s IDIssuanceFileStore) EntryForRequest(requestID string) (*awid.IDIssuanceEntry, error) {
-	return s.find(func(entry *awid.IDIssuanceEntry) bool {
-		return entry.Resign != nil && entry.Resign.RequestID == requestID
-	})
 }
 
 // EntryForSubject is the entry of a certificate issued to subject, or nil.
@@ -149,6 +148,10 @@ func (s IDIssuanceFileStore) filter(match func(*awid.IDIssuanceEntry) bool, firs
 // Put durably replaces the entry: the file and the directory that names it
 // are both synced before Put returns.
 func (s IDIssuanceFileStore) Put(entry *awid.IDIssuanceEntry) error {
+	return (issuanceRequestIndex{store: s, files: os.DirFS(s.Dir)}).put(entry)
+}
+
+func (s IDIssuanceFileStore) writeEntry(entry *awid.IDIssuanceEntry) error {
 	path, err := s.path(entry.CertificateID)
 	if err != nil {
 		return err

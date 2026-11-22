@@ -16,6 +16,7 @@ from nacl.signing import SigningKey
 
 import aweb.app_credentials as app_credentials
 import aweb.routes.events as events_routes
+from aweb.internal_auth import ProxyVerificationConfig
 from aweb.app_events import current_app_events_for_agent
 from aweb.app_registry import (
     AppEmitKey,
@@ -63,6 +64,7 @@ def _cached_body_receive(body: bytes):
 
 def _build_events_app(aweb_db, *, public_origin: str = "http://test") -> FastAPI:
     app = FastAPI()
+    ProxyVerificationConfig.capture().install(app)
     app.include_router(events_router)
     app.state.db = _DbShim(aweb_db)
     app.state.redis = object()
@@ -111,9 +113,9 @@ async def _seed_team_and_agent(aweb_db, *, team_id: str = TEAM_ID) -> None:
     await aweb_db.execute(
         """
         INSERT INTO {{tables.agents}} (
-            agent_id, team_id, did_key, alias, human_name, status, identity_scope
+            agent_id, team_id, did_key, alias, human_name, status, identity_scope, inbound_mode
         )
-        VALUES ($1, $2, 'did:key:z6Mkalice', 'alice', 'Alice', 'active', 'global')
+        VALUES ($1, $2, 'did:key:z6Mkalice', 'alice', 'Alice', 'active', 'global', 'open')
         ON CONFLICT DO NOTHING
         """,
         AGENT_ID,
@@ -438,13 +440,13 @@ async def test_a_revoked_emit_key_stays_revoked_when_a_new_digest_lists_it_again
 async def test_subscription_get_accepts_internal_gateway_auth(aweb_cloud_db, monkeypatch):
     monkeypatch.setattr(events_routes, "get_team_identity", _fake_team_identity)
     signing_key, did_key = _make_app_keypair()
-    app = _build_events_app(aweb_cloud_db.aweb_db)
     await _seed_team_and_agent(aweb_cloud_db.aweb_db)
     await _install_folio(aweb_cloud_db.aweb_db, did_key=did_key)
     secret = "test-internal-secret"
     user_id = "00000000-0000-0000-0000-000000000999"
     monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "true")
     monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", secret)
+    app = _build_events_app(aweb_cloud_db.aweb_db)
     auth = build_internal_auth_header_value(
         secret=secret,
         team_id=TEAM_ID,
@@ -481,12 +483,12 @@ async def test_subscription_get_refuses_a_forwarded_actor_that_is_not_an_active_
     """The gateway forwards a read for an agent that is not an active member of the team: one whose
     row has another status with deleted_at NULL, one that is soft-deleted, or one with no row."""
     monkeypatch.setattr(events_routes, "get_team_identity", _fake_team_identity)
-    app = _build_events_app(aweb_cloud_db.aweb_db)
     await _seed_team_and_agent(aweb_cloud_db.aweb_db)
     secret = "test-internal-secret"
     user_id = "00000000-0000-0000-0000-000000000999"
     monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "true")
     monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", secret)
+    app = _build_events_app(aweb_cloud_db.aweb_db)
     actor_id = str(AGENT_ID)
     if state == "absent":
         actor_id = "00000000-0000-0000-0000-000000000777"

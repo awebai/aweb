@@ -4,11 +4,12 @@ that authenticates every request through the shared verifier."""
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Callable
-from contextlib import asynccontextmanager
+from contextlib import aclosing, asynccontextmanager
 from datetime import datetime
 from typing import Any
 
 import httpx
+from awid.registry import RegistryClient
 from awid_service.testing import REGISTRY_URL, Registry
 from fastapi import FastAPI, Request
 
@@ -60,3 +61,29 @@ async def relying_app(
 
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app, root_path=root_path), base_url=public_origin) as client:
         yield client, cache
+
+
+async def register_member_address(registry, member, *, address):
+    """Publish the member's address through its actual namespace controller."""
+    domain, name = address.split("/", 1)
+    controller = await registry.ensure_namespace(domain=domain)
+    stable_id = member.extra_cert_fields.get("member_did_aw")
+    if stable_id is None:
+        stable_id = await registry.register_did(member.member_key)
+    async with aclosing(
+        RegistryClient(
+            registry.registry_url,
+            transport=registry.transport,
+            domain_verifier=registry.namespace_authority,
+        )
+    ) as client:
+        registered = await client.register_address(
+            domain,
+            name,
+            stable_id,
+            bytes(controller),
+            current_did_key=member.did_key,
+        )
+    assert registered.did_aw == stable_id
+    assert registered.current_did_key == member.did_key
+    member.extra_cert_fields.update(member_did_aw=stable_id, member_address=address)

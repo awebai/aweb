@@ -336,7 +336,7 @@ func TestCustodyServesTheReplacedCertificateAndKeepsTheGrantRefused(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := commitTeamCertificate(t.TempDir(), home.Root, "fetch-cert", replacement, "", "", func() (string, error) { return "installed", nil }); err != nil {
+	if _, err := commitTeamCertificate(certificateCommit{WorkingDir: t.TempDir(), IdentityHome: home.Root, Command: "fetch-cert", Certificate: replacement, RegistryURL: "", WorkspacePath: "", Decide: func() (certificateInstallStatus, error) { return certificateInstalled, nil }}); err != nil {
 		t.Fatal(err)
 	}
 	if status := grant(); status.Active || lastSent() != replacement.CertificateID {

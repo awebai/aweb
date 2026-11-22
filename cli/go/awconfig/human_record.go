@@ -50,7 +50,8 @@ type HumanRecord struct {
 	// recorded in the controller's issuance log before it was released.
 	CertificateID string `yaml:"certificate_id,omitempty"`
 	// RegisteredAt is AWID's registration receipt time.
-	RegisteredAt string `yaml:"registered_at,omitempty"`
+	RegisteredAt           string `yaml:"registered_at,omitempty"`
+	RegistryOperatorOrigin string `yaml:"registry_operator_origin,omitempty"`
 }
 
 var humanStableID = regexp.MustCompile(`^did:aw:([1-9A-HJ-NP-Za-km-z]+)$`)

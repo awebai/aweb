@@ -205,37 +205,30 @@ export class PinStore {
     return true;
   }
 
-  removeAddress(address: string): boolean {
-    let removed = false;
-
-    const pinnedDID = this.addresses.get(address);
-    if (pinnedDID !== undefined) {
+  /**
+   * Moves the pin bound to address to retiredKey, an address no lookup
+   * reaches, keeping its record and anti-rollback anchor; address is then
+   * free. Returns true when a pin was moved.
+   */
+  retireAddress(address: string, retiredKey: string): boolean {
+    let moved = false;
+    const pinKey = this.addresses.get(address);
+    if (pinKey !== undefined) {
       this.addresses.delete(address);
-      const pin = this.mutablePins.get(pinnedDID);
+      const pin = this.mutablePins.get(pinKey);
       if (pin?.address === address) {
-        this.deletePin(pinnedDID);
+        pin.address = retiredKey;
+        this.addresses.set(retiredKey, pinKey);
       }
-      removed = true;
+      moved = true;
     }
-
-    for (const [pinKey, pin] of this.mutablePins) {
+    for (const [key, pin] of this.mutablePins) {
       if (pin.address !== address) continue;
-      this.deletePin(pinKey);
-      if (this.addresses.get(address) === pinKey) {
-        this.addresses.delete(address);
-      }
-      removed = true;
+      pin.address = retiredKey;
+      this.addresses.set(retiredKey, key);
+      moved = true;
     }
-
-    return removed;
-  }
-
-  removeAddresses(addresses: string[]): boolean {
-    let removed = false;
-    for (const address of addresses) {
-      if (address) removed = this.removeAddress(address) || removed;
-    }
-    return removed;
+    return moved;
   }
 
   bindStableIdentity(currentKey: string, stableID: string): RekeyPinResult {
@@ -291,12 +284,26 @@ export class PinStore {
     return removed || recorded;
   }
 
-  advanceLogCheckpoint(stableID: string, seq: number, entryHash: string): boolean {
+  /**
+   * Clears the anchor an earlier client kept on the pin, once a checkpoint in
+   * the per-registry map carries it. Returns whether the pin changed.
+   */
+  clearPinLogAnchor(stableID: string): boolean {
     const pin = this.mutablePins.get(stableID);
-    if (!pin || seq <= (pin.log_seq ?? 0)) return false;
-    pin.log_seq = seq;
-    pin.log_entry_hash = entryHash;
+    if (!pin || (pin.log_seq === undefined && pin.log_entry_hash === undefined)) return false;
+    delete pin.log_seq;
+    delete pin.log_entry_hash;
     return true;
+  }
+
+  /** The registries holding a checkpoint for stableID. */
+  identityCheckpointRegistries(stableID: string): string[] {
+    const heads = this.unknownRootFields.get("received_identity_heads");
+    if (!heads || typeof heads !== "object" || Array.isArray(heads)) return [];
+    return Object.entries(heads as Record<string, unknown>)
+      .filter(([, identities]) => !!identities && typeof identities === "object"
+        && (identities as Record<string, unknown>)[stableID] !== undefined)
+      .map(([registryURL]) => registryURL);
   }
 
   // Keep a trust decision and its commit in one per-process critical section.

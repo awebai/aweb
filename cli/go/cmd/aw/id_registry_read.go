@@ -184,7 +184,7 @@ func runIDNamespaceAddresses(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	registryURL, err := registry.DiscoverRegistry(ctx, domain)
+	registryURL, err := resolveRegistryAuthority(ctx, registryAuthorityRequest{Kind: registryDomainRoute, Registry: registry, Domain: domain})
 	if err != nil {
 		return err
 	}
@@ -228,7 +228,7 @@ func runIDNamespaceResolve(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	registryURL, err := registry.DiscoverRegistry(ctx, domain)
+	registryURL, err := resolveRegistryAuthority(ctx, registryAuthorityRequest{Kind: registryDomainRoute, Registry: registry, Domain: domain})
 	if err != nil {
 		return err
 	}

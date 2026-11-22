@@ -160,10 +160,6 @@ func readInteractionLog(path string, limit int) ([]InteractionEntry, error) {
 	return entries, nil
 }
 
-func formatInteractionRecap(entries []InteractionEntry, limit int) string {
-	return formatInteractionRecapStyled(entries, limit, false, 0)
-}
-
 func formatInteractionRecapStyled(entries []InteractionEntry, limit int, ansi bool, width int) string {
 	if len(entries) == 0 {
 		return ""
