@@ -333,6 +333,11 @@
   names the person's domain. Both may be given only when they name the same
   domain. `aw id create --human-parent ID --domain DOMAIN` (aw 1.36.58) again
   works without `--human`: the parent person signs, in the child's domain.
+- `aw id create` clears its saved plan and new key after a definitive
+  first-write refusal with no earlier accepted or unresolved write. Users can
+  rerun with a new selection. If AWID accepted a step or the outcome is
+  uncertain, the same key and plan are kept, and retry errors name any changed
+  choices and show the original command.
 - `aw chat send-and-wait`, `send-and-leave`, `extend-wait`, `open`,
   `history`, `listen` and `show-pending` to a teammate's alias now use the
   conversation found by the DID the team's agent list confirms for that

@@ -558,15 +558,16 @@ model.
 ## Key material and local files
 
 Addressed `aw id create` saves its private signing key and a private
-`id-create.json` plan in the target `.aw` before any registry write. If the
-claim outcome is uncertain, keep both files and repeat the same command: it
-reuses the key and refuses a changed address, registry, parent or target.
-A missing original key is an error, never a reason to mint another one.
-If an address is definitively unavailable and a different selection is needed,
-first confirm that no identity/address claim applied, then remove only this
-attempt's `id-create.json` and `signing.key` before starting again. Never remove
-that key when the earlier claim may have succeeded. Successful creation removes
-the plan and keeps the private key.
+`id-create.json` plan in the target `.aw` before any registry write. A definitive
+first-write refusal (401, 403, 409 or 422) clears the plan and its new signing
+key when this attempt has no accepted or unresolved write. You can rerun with a
+new selection immediately.
+
+If the outcome is uncertain or AWID already accepted an earlier step, keep the
+plan and key and repeat the original command. The error names accepted steps,
+identifies changed choices on a retry, and prints the original selection to
+rerun. A missing original key requires recovery of that same key. Successful
+creation removes the plan and keeps the private key.
 
 The active signing key is Ed25519. The public key is encoded as a `did:key`.
 For global identities, AWID records a stable `did:aw` identifier and its current
