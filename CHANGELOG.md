@@ -22,8 +22,10 @@
 
 - `aw init` and `aw team admin create` accept a supplied workspace API key
   for the service bootstrap, including keys returned by CLI signup.
-  `aw workspace add-worktree` uses the existing workspace authority when
-  the service cannot read the team for the exported key.
+- `aw workspace add-worktree` uses the local team key, the selected parent's
+  stored workspace API key, or a signed invite, in that order. API-key
+  bootstrap gives each child its own API key. A parent that uses a signed
+  invite can still create a certificate-only child.
 - `aw team admin add` and `extend` use workspace-signed creation when a
   supplied workspace key identifies a matching creator. `extend` uses the
   sole discovered creator workspace and asks you to select one when several

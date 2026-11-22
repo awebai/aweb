@@ -216,6 +216,10 @@ func resolveCertificateIdentityAtHome(workingDir, identityHome string) (*awconfi
 	return resolved, nil
 }
 
+func missingGlobalIdentityFile() error {
+	return usageError("current global identity is missing .aw/identity.yaml; restore it or run `aw init` again")
+}
+
 func resolveLocalIdentityWithoutState(workingDir string) (*awconfig.ResolvedIdentity, error) {
 	workspace, teamState, _, err := awconfig.LoadWorkspaceAndTeamState(workingDir)
 	if err != nil {
@@ -244,7 +248,7 @@ func resolveLocalIdentityWithoutState(workingDir string) (*awconfig.ResolvedIden
 		return nil, fmt.Errorf("load active team certificate for %s: %w", activeTeamID, err)
 	}
 	if awid.NormalizeIdentityScope(cert.IdentityScope) != awid.IdentityModeLocal {
-		return nil, usageError("current global identity is missing .aw/identity.yaml; restore it or run `aw init` again")
+		return nil, missingGlobalIdentityFile()
 	}
 
 	signingKeyPath := awconfig.WorktreeSigningKeyPath(workingDir)
