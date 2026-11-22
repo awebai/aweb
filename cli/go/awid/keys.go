@@ -69,6 +69,9 @@ type SigningKeyFile struct {
 	Path       string
 	Key        ed25519.PrivateKey
 	PathPolicy PrivateKeyPathPolicy
+	// Exclusive never replaces an existing file: the write then fails with an
+	// error matching os.ErrExist and leaves that key untouched.
+	Exclusive bool
 }
 
 // StoreSigningKeyFile retains each released path policy while sharing private
@@ -85,6 +88,12 @@ func StoreSigningKeyFile(keyFile SigningKeyFile) error {
 		// The operator supplies this authority-store path; retain its mount policy.
 	default:
 		return errors.New("unknown private-key path policy; select an identity or operator-managed authority destination")
+	}
+	if keyFile.Exclusive {
+		if err := writePrivatePEM(privateKeyFile{Path: keyFile.Path, Kind: ed25519PrivateKey, Bytes: keyFile.Key.Seed(), Mode: createKeyExclusively}); err != nil {
+			return exclusiveKeyWriteError(keyFile.Path, err)
+		}
+		return nil
 	}
 	return writePrivateKey(keyFile.Path, keyFile.Key)
 }

@@ -508,7 +508,7 @@ func TestAwDoctorIdentityNoPublicDiscoveryProof(t *testing.T) {
 	fixture := writeDoctorIdentityFixture(t, "")
 	updateDoctorIdentityRegistryURL(t, fixture.Dir, "")
 
-	out, err := runDoctorCLI(t, fixture.Bin, fixture.Dir, "doctor", "registry", "--online", "--json")
+	out, err := runDoctorCLIWithRegistry(t, fixture.Bin, fixture.Dir, "", "doctor", "registry", "--online", "--json")
 	if err != nil {
 		t.Fatalf("doctor registry online failed: %v\n%s", err, string(out))
 	}
@@ -533,7 +533,7 @@ func TestAwDoctorIdentityOutputRedactsRegistrySecrets(t *testing.T) {
 	parsed.Fragment = "secret-fragment"
 	updateDoctorIdentityRegistryURL(t, fixture.Dir, parsed.String())
 
-	out, err := runDoctorCLI(t, fixture.Bin, fixture.Dir, "doctor", "registry", "--online", "--json")
+	out, err := runDoctorCLIWithRegistry(t, fixture.Bin, fixture.Dir, "", "doctor", "registry", "--online", "--json")
 	if err != nil {
 		t.Fatalf("doctor registry online failed: %v\n%s", err, string(out))
 	}

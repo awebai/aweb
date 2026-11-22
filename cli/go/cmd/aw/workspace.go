@@ -34,7 +34,8 @@ var workspaceAddWorktreeCmd = &cobra.Command{
 	Use:   "add-worktree [role]",
 	Short: "Legacy convenience: create a sibling git worktree and coordination workspace",
 	Long: "Legacy convenience for existing users: create a sibling git worktree and initialize a new coordination workspace in it.\n\n" +
-		"New setup flows should prefer explicit git worktree/filesystem steps followed by aw init, invite/join, or service init primitives unless this command is reduced to a transparent wrapper with no identity/team orchestration.",
+		"New setup flows should prefer explicit git worktree/filesystem steps followed by aw init, invite/join, or service init primitives unless this command is reduced to a transparent wrapper with no identity/team orchestration.\n\n" +
+		"If the service cannot report the team for AWEB_API_KEY, creation uses the current workspace's existing authority.",
 	Args: cobra.RangeArgs(0, 1),
 	RunE: runWorkspaceAddWorktree,
 }
@@ -312,6 +313,17 @@ func loadCurrentWorkspaceAndTeamState(workingDir, identityHome string) (*awconfi
 	return awconfig.LoadWorkspaceAndTeamState(workingDir)
 }
 
+func workspaceAwebURLForTeam(workspace *awconfig.WorktreeWorkspace, state *awconfig.TeamState, teamID string) string {
+	membership := workspace.Membership(teamID)
+	if teamID == "" {
+		membership = awconfig.ActiveMembershipFor(workspace, state)
+	}
+	if membership == nil {
+		return ""
+	}
+	return strings.TrimSpace(workspace.AwebURL)
+}
+
 // workspaceDeleteRefusal refuses a delete through an external identity home.
 // Its alias-release reason is also its --json error code.
 func workspaceDeleteRefusal(selection *awconfig.Selection, reason string) error {
@@ -405,6 +417,14 @@ func runWorkspaceDelete(cmd *cobra.Command, args []string) error {
 		if retireErr != nil {
 			return fmt.Errorf("workspace not retired: %w", retireErr)
 		}
+		if retired.Status == "accepted" {
+			return writeWorkspaceDeleteOutput(workspaceDeleteOutput{
+				WorkspaceID:         workspaceID,
+				Alias:               plan.alias,
+				AliasReleasedReason: "completion pending",
+				RetirementCode:      selfRemovalAccepted,
+			})
+		}
 		if !retired.AliasReleased {
 			return fmt.Errorf(
 				"workspace not retired: alias %s was not released (%s)",
@@ -471,7 +491,7 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	client, _, err := resolveClientSelectionAtIdentityHome(workingDir, home)
+	client, selection, err := resolveClientSelectionAtIdentityHome(workingDir, home)
 	if err != nil {
 		return err
 	}
@@ -509,6 +529,40 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 	sourceServerURL := strings.TrimSpace(state.AwebURL)
 	if sourceServerURL == "" {
 		return usageError("current worktree is missing aweb_url; run `aw init` first")
+	}
+
+	apiKey := resolveInitAPIKey()
+	authority := agentCreationRequest{WorkingDir: workingDir, APIKey: apiKey, AwebURL: sourceServerURL, RequestedTeam: teamID}
+	storedKey := strings.TrimSpace(state.APIKey)
+	if selection.IdentityScope == awid.IdentityModeGlobal {
+		// A global creator issues signed invitations using its selected identity.
+		storedKey = ""
+	}
+	useWorkspaceFallback := false
+	switch {
+	case apiKey != "":
+		ctx, cancel := commandAPIContext(cmd)
+		selected, readErr := readAPIKeyCreationTeam(ctx, sourceServerURL, apiKey)
+		cancel()
+		authority.SelectedTeam = selected
+		if readErr != nil {
+			debugLog("API-key team unavailable for add-worktree: %v", readErr)
+			useWorkspaceFallback = true
+			apiKey = storedKey
+		}
+	case !home.External() && storedKey != "":
+		// A local or legacy co-located workspace can use its stored key for bootstrap.
+		// An explicitly selected identity uses its own signing authority.
+		useWorkspaceFallback = true
+		apiKey = storedKey
+	}
+	var creation creationAuthority
+	if !useWorkspaceFallback {
+		creation, err = resolveAgentCreation(authority)
+		if err != nil {
+			return err
+		}
+		printCreationAuthority(creation)
 	}
 
 	alias := strings.TrimSpace(workspaceAddAlias)
@@ -577,24 +631,38 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid team_id in workspace.yaml: %w", err)
 	}
 
-	// When the team controller key is available locally (BYOD), mint the
-	// certificate directly.  When it is not (hosted/API-key bootstrapped
-	// workspaces), delegate certificate issuance to the cloud via the
-	// parent workspace's API key.
+	// Keep local controller issuance; otherwise use the selected creator
+	// invitation or an explicitly supplied setup/legacy API credential.
 	hasTeamKey, err := awconfig.TeamKeyExists(teamDomain, teamName)
 	if err != nil {
 		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
 		return fmt.Errorf("check team key: %w", err)
 	}
 
+	if useWorkspaceFallback {
+		// Keep the released workspace authority order for the stored-key
+		// path and for services without API-key team introspection.
+		switch {
+		case hasTeamKey:
+			creation.Mode = creationAuthorityController
+		case apiKey != "":
+			creation.Mode = creationAuthorityAPI
+		}
+	}
+
 	child := worktreeAgentCreation{
 		WorkingDir: workingDir, CreatorHome: home, WorktreePath: worktreePath, RepoRoot: root,
 		BranchName: branchName, BranchCreated: branchCreated, ServerURL: sourceServerURL, TeamID: teamID,
-		Alias: alias, Role: role, Workspace: state, APIKey: strings.TrimSpace(state.APIKey),
+		Alias: alias, Role: role, Workspace: state, APIKey: apiKey, SelectedTeam: creation.SelectedTeam,
 	}
-	if hasTeamKey {
+	if creation.Mode == creationAuthorityController && hasTeamKey {
 		_, err = addWorktreeViaLocalTeamKey(child)
-	} else if strings.TrimSpace(state.APIKey) != "" {
+	} else if creation.Mode == creationAuthorityAPI {
+		if selected := child.SelectedTeam; selected == nil || selected.CanonicalTeamID == "" || strings.EqualFold(selected.CanonicalTeamID, teamID) {
+			if membership := teamState.Membership(teamID); membership != nil {
+				child.TeamRegistryURL = membership.RegistryURL
+			}
+		}
 		_, err = addWorktreeViaCloudBootstrap(child)
 	} else {
 		_, err = addWorktreeViaPrimaryInvite(child)
@@ -666,10 +734,6 @@ func writeWorkspaceMigrationResult(output workspaceMigrateMultiTeamOutput) error
 		return fmt.Errorf("write workspace migration result: %w. Check the output destination and run aw workspace status to inspect the workspace.", err)
 	}
 	return nil
-}
-
-func migrateLegacyWorkspaceToMultiTeam(workingDir, workspacePath string) (workspaceMigrateMultiTeamOutput, error) {
-	return migrateLegacyWorkspaceToMultiTeamAt(workingDir, workspacePath, awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(workingDir), Source: awconfig.IdentityHomeDefault})
 }
 
 func migrateLegacyWorkspaceToMultiTeamAt(workingDir, workspacePath string, home awconfig.IdentityHome) (workspaceMigrateMultiTeamOutput, error) {
@@ -822,6 +886,9 @@ func formatWorkspaceAddWorktree(v any) string {
 
 func formatWorkspaceDelete(v any) string {
 	out := v.(workspaceDeleteOutput)
+	if out.RetirementCode == selfRemovalAccepted {
+		return fmt.Sprintf("Workspace removal accepted for %s (%s). Completion pending.\n", out.Alias, out.WorkspaceID)
+	}
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("Deleted workspace %s (%s)\n", out.Alias, out.WorkspaceID))
 	if out.IdentityDeleted {
@@ -1002,67 +1069,16 @@ func fetchWorkspaceTeamAliases(client *aweb.Client, workspaceID string) (map[str
 	return aliases, nil
 }
 
-func resolveWorkspaceTeamRegistryURL(workingDir, awebURL, teamDomain string) (string, error) {
-	return resolveWorkspaceTeamRegistryURLAt(workingDir, "", awebURL, teamDomain)
-}
-
-func resolveWorkspaceTeamRegistryURLAt(workingDir, identityHome, awebURL, teamDomain string) (string, error) {
-	meta, err := awconfig.LoadControllerMeta(teamDomain)
-	if err == nil && meta != nil {
-		if registryURL := strings.TrimSpace(meta.RegistryURL); registryURL != "" {
-			return registryURL, nil
-		}
+func resolveWorkspaceTeamRegistryURL(ctx context.Context, req registryAuthorityRequest) (string, error) {
+	req.Kind = registryWorkspaceTeamRoute
+	url, err := resolveRegistryAuthority(ctx, req)
+	if err != nil || url != "" {
+		return url, err
 	}
-	if err != nil && !os.IsNotExist(err) {
-		return "", fmt.Errorf("load controller metadata for %s: %w", teamDomain, err)
-	}
-	var teamState *awconfig.TeamState
-	if strings.TrimSpace(identityHome) != "" {
-		teamState, err = awconfig.LoadTeamStateFromIdentityHome(identityHome)
-	} else {
-		teamState, err = awconfig.LoadTeamState(workingDir)
-	}
-	if err == nil && teamState != nil {
-		for _, membership := range teamState.Memberships {
-			membershipDomain, _, parseErr := awid.ParseTeamID(strings.TrimSpace(membership.TeamID))
-			if parseErr != nil {
-				continue
-			}
-			if strings.EqualFold(membershipDomain, awconfig.NormalizeDomain(teamDomain)) {
-				if registryURL := strings.TrimSpace(membership.RegistryURL); registryURL != "" {
-					return registryURL, nil
-				}
-			}
-		}
-	} else if err != nil && !os.IsNotExist(err) {
-		return "", fmt.Errorf("load team state: %w", err)
-	}
-	var identity *awconfig.WorktreeIdentity
-	if strings.TrimSpace(identityHome) != "" {
-		identityPath, pathErr := awconfig.IdentityHomePath(awconfig.IdentityHome{Root: identityHome}, "identity.yaml")
-		if pathErr != nil {
-			return "", pathErr
-		}
-		identity, err = awconfig.LoadWorktreeIdentityFrom(identityPath)
-	} else {
-		identity, _, err = awconfig.LoadWorktreeIdentityFromDir(workingDir)
-	}
-	if err == nil && identity != nil {
-		if registryURL := strings.TrimSpace(identity.RegistryURL); registryURL != "" {
-			return registryURL, nil
-		}
-	} else if err != nil && !os.IsNotExist(err) {
-		return "", fmt.Errorf("load worktree identity: %w", err)
-	}
-	if strings.TrimSpace(awebURL) != "" {
-		if discovered, err := discoverOnboardingServiceURLs(awebURL); err == nil {
-			if registryURL := strings.TrimSpace(discovered.RegistryURL); registryURL != "" {
-				return registryURL, nil
-			}
-		}
+	if strings.TrimSpace(req.AwebURL) != "" {
 		return "", usageError("current worktree is missing identity registry_url; run `aw init` again or restore .aw/identity.yaml")
 	}
-	return "", usageError("current worktree is missing registry configuration for %s", teamDomain)
+	return "", usageError("current worktree is missing registry configuration for %s", req.Domain)
 }
 
 func deriveWorkspaceAddWorktreePath(mainRepo, branchName string) (string, error) {

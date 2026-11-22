@@ -94,5 +94,6 @@ Run that native control only when Docker execution on the host is authorized.
 For the isolated head/released and forward/reverse messaging selections, use
 [`make test-user-paths-local`](local-user-paths.md).
 
-Whole-suite invocations share the host-wide [local suite slots](local-suite-slots.md)
-with Cloud (default three), held from preparation through cleanup.
+Focused and whole-suite invocations share the host-wide
+[local suite slots](local-suite-slots.md) with Cloud (default three), held
+from preparation through cleanup.

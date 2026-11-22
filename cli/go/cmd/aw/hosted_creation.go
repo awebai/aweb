@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"time"
@@ -70,7 +70,7 @@ func (tree *hostedIDTreeRecovery) retainResponse(response awid.IDTreeCreationRes
 }
 
 func loadHostedIdentityRecovery(path string) (*hostedIdentityRecovery, error) {
-	raw, err := os.ReadFile(path)
+	raw, err := (awconfig.RecoveryFile{Home: awconfig.IdentityHome{Root: filepath.Dir(path)}, Name: filepath.Base(path)}).Read()
 	if err != nil {
 		return nil, err
 	}
@@ -89,7 +89,7 @@ func saveHostedIdentityRecovery(path string, state *hostedIdentityRecovery) erro
 	if err != nil {
 		return err
 	}
-	return awid.AtomicWriteFile(path, raw)
+	return (awconfig.RecoveryFile{Home: awconfig.IdentityHome{Root: filepath.Dir(path)}, Name: filepath.Base(path)}).Write(raw)
 }
 
 // Marshal structs through the ordinary JSON encoder before canonicalizing; the
@@ -275,6 +275,7 @@ func finishHostedIDTree(ctx context.Context, tree *hostedIDTreeRecovery, respons
 }
 
 type apiKeyCreationTeam struct {
+	APIKeyKind         creationKeyKind            `json:"api_key_kind,omitempty"`
 	CreationInvitation *awid.IDCreationInvitation `json:"creation_invitation,omitempty"`
 	TeamID             string                     `json:"team_id"`
 	CanonicalTeamID    string                     `json:"canonical_team_id"`
@@ -324,13 +325,16 @@ func readAPIKeyCreationTeam(ctx context.Context, baseURL, apiKey string) (*apiKe
 // answer the API key's team read: a 404 is a service older than this aw; a
 // 401 or 403 is a key that is not current or an older service.
 func apiKeyTeamReadRefusal(base string, status int) error {
+	var message string
 	switch status {
 	case http.StatusNotFound:
-		return fmt.Errorf("The aweb service at %s does not support creating agents with an API key; it is older than this aw. Use an aweb service that does, or an older aw.", base)
+		message = fmt.Sprintf("The aweb service at %s does not support creating agents with an API key; it is older than this aw. Use an aweb service that does, or an older aw.", base)
 	case http.StatusUnauthorized, http.StatusForbidden:
-		return fmt.Errorf("The aweb service at %s refused this API key's team read (HTTP %d). Check that AWEB_API_KEY is current; if it is, the service may be older than this aw and not support creating agents with an API key.", base, status)
+		message = fmt.Sprintf("The aweb service at %s refused this API key's team read (HTTP %d). Check that AWEB_API_KEY is current; if it is, the service may be older than this aw and not support creating agents with an API key.", base, status)
+	default:
+		message = fmt.Sprintf("selected API-key team unavailable (HTTP %d)", status)
 	}
-	return fmt.Errorf("selected API-key team unavailable (HTTP %d)", status)
+	return errors.New(message)
 }
 
 // readHostedCreationResponse keeps the constructor transport at the creation

@@ -729,6 +729,14 @@ func (b *Broker) refuseDuplicateBinding(reg Registration) error {
 		existing = append(existing, other)
 	}
 	b.mu.Unlock()
+	return refuseBindingOwnedByAnother(existing, reg)
+}
+
+// refuseBindingOwnedByAnother refuses reg when another registration in
+// existing already owns one of its receive bindings: at most one registration
+// serves an identity home's binding for a team
+// (docs/terminal-wake-broker.md:85-88).
+func refuseBindingOwnedByAnother(existing []Registration, reg Registration) error {
 	want := map[string]ReceiveIdentity{}
 	for _, binding := range reg.ReceiveBindings() {
 		key, err := bindingKey(binding.IdentityHome, binding.TeamID)
@@ -766,8 +774,17 @@ func (b *Broker) instanceRunner(home string) (*instanceRunner, bool) {
 }
 
 // RegisterInStore applies the daemon-down registration fallback semantics:
-// write the registration and reset lifecycle status while preserving pause.
+// refuse a receive binding another stored registration owns, write the
+// registration and reset lifecycle status while preserving pause.
 func RegisterInStore(store *Store, reg Registration) error {
+	// A file that cannot be read owns no binding.
+	stored, _, err := store.ListRegistrationsWithFaults()
+	if err != nil {
+		return err
+	}
+	if err := refuseBindingOwnedByAnother(stored, reg); err != nil {
+		return err
+	}
 	if existing, ok, loadErr := store.LoadRegistration(reg.Home); loadErr == nil && ok {
 		reg.RegisteredAt = existing.RegisteredAt
 	}

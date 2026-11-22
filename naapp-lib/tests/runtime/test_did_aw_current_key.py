@@ -47,7 +47,7 @@ async def certified(registry, *, member_key: SigningKey, did_aw: str | None, tea
     extra = {"member_did_aw": did_aw} if did_aw else {}
     member = Member(team_id=TEAM_ID, team_key=team_key, member_key=member_key, certificate_id=certificate_id,
                     alias=alias, extra_cert_fields=extra)
-    await registry.add_certificate(member.certificate())
+    await registry.add_certificate(member.certificate(), team_key=member.team_key)
     return member
 
 

@@ -64,10 +64,6 @@ func applyMailRecipientTarget(req *awid.SendMessageRequest, kind, value string) 
 	}
 }
 
-func mailRecipientTargetApplied(req *awid.SendMessageRequest) bool {
-	return req.ToAlias != "" || req.ToDID != "" || req.ToStableID != "" || req.ToAddress != ""
-}
-
 func resolveMailMessagingClientSelection() (*aweb.Client, *awconfig.Selection, error) {
 	if activeHuman != nil {
 		return activeHuman.client(teamFlag, "")
@@ -81,6 +77,25 @@ func resolveMailMessagingClientSelection() (*aweb.Client, *awconfig.Selection, e
 	}
 	debugLog("resolve certificate messaging client for mail: %v", err)
 	return resolveIdentityMessagingClientSelection()
+}
+
+// requireMailSenderContext prevents an identity-only fallback from selecting
+// an address across several memberships (trust-model.md:186-191).
+func requireMailSenderContext(client *aweb.Client, selection *awconfig.Selection) error {
+	if activeHuman != nil || client.HasTeamCertificateAuth() || client.GrantID() != "" {
+		return nil
+	}
+	teams, err := awconfig.LoadTeamStateFromIdentityHome(selection.IdentityHome)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("sender context is unknown: %w; repair this identity home's team state and pass --team", err)
+	}
+	if len(teams.Memberships) > 1 {
+		return usageError("this identity has multiple team memberships; pass --team to select the certificate and intended sender address")
+	}
+	return nil
 }
 
 // startNewThread makes req start a new thread: a fresh client-signed
@@ -164,12 +179,23 @@ var mailSendCmd = &cobra.Command{
 				return err
 			}
 		}
+		inheritedE2EE := false
 		switch targetKind {
 		case "conversation":
-			c, sel, err = resolveMailMessagingClientSelection()
+			c, sel, err = resolveMailContinuationClientSelection()
 			if err != nil {
 				return err
 			}
+			choice := e2eeFlagChoice(cmd, mailSendE2EE, mailSendPlaintext || mailSendLegacyPlaintext)
+			if err := configureSendE2EE(ctx, c, sel, choice); err != nil {
+				return err
+			}
+			conversation, err := c.MailConversationEncryption(ctx, req.ConversationID)
+			if err != nil {
+				return fmt.Errorf("reading whether the conversation is end-to-end encrypted: %w", err)
+			}
+			decision := mailContinuation(cmd, c, conversation, choice)
+			sendEncryptE2EE, inheritedE2EE = decision.Encrypt, decision.Inherited
 		case "alias":
 			if activeHuman != nil {
 				c, sel, err = activeHuman.client(teamFlag, "")
@@ -181,38 +207,38 @@ var mailSendCmd = &cobra.Command{
 			}
 			// /v1/agents lists the team's agents; a name it lacks may be a
 			// human on the live roster, which binds the member's current key.
-			if _, found, findErr := clientAgentForAlias(ctx, c, targetValue); findErr != nil {
-				return recipientLookupError(targetValue, "agent list", findErr)
-			} else if found || sendEncryptE2EE {
-				// Key discovery for a human is scoped to the selected team,
-				// using its original identity-signed assertion.
-				req.ToAlias = targetValue
-			} else if liveTarget, liveFound, liveErr := resolveLiveTeamMemberAliasTarget(ctx, sel, targetValue); liveErr != nil {
-				return recipientLookupError(targetValue, "live roster", liveErr)
-			} else if liveFound {
-				kind, value := liveTarget.identityTarget()
+			// Key discovery for an encrypted send to a human is scoped to the
+			// selected team, using its original identity-signed assertion,
+			// so that send keeps the alias.
+			confirmed, confirmErr := confirmTeamAlias(ctx, c, sel, targetValue, !sendEncryptE2EE)
+			if confirmErr != nil {
+				return confirmErr
+			}
+			req.ToAlias = targetValue
+			switch confirmed.source {
+			case teamAliasFromAgentList:
+				// The agent list confirms the member: the signature binds it,
+				// and the server routes by the alias.
+				req.ConfirmedRecipient = confirmed.recipient
+			case teamAliasFromLiveRoster:
+				kind, value := confirmed.live.identityTarget()
+				req.ToAlias = ""
 				applyMailRecipientTarget(req, kind, value)
 				// The live team roster already binds the member's current key.
 				// Keep it with the stable ID instead of treating the member as
 				// an external bare-DID first contact. /v1/agents omits humans.
-				req.ToDID = strings.TrimSpace(liveTarget.DIDKey)
-				if mailRecipientTargetApplied(req) {
-					targetKind = kind
-					targetValue = value
-				} else {
-					req.ToAlias = targetValue
-				}
-			} else {
-				req.ToAlias = targetValue
+				req.ToDID = strings.TrimSpace(confirmed.live.DIDKey)
+				targetKind = kind
+				targetValue = value
 			}
 		case "did":
-			c, sel, err = resolveMailMessagingClientSelection()
+			c, sel, err = resolveMailSenderClientSelection()
 			if err != nil {
 				return err
 			}
 			req.ToDID = targetValue
 		case "address":
-			c, sel, err = resolveMailMessagingClientSelection()
+			c, sel, err = resolveMailSenderClientSelection()
 			if err != nil {
 				return err
 			}
@@ -226,6 +252,7 @@ var mailSendCmd = &cobra.Command{
 			return usageError("--e2ee and --plaintext are mutually exclusive")
 		}
 		req.EncryptE2EE = sendEncryptE2EE
+		req.E2EEInherited = inheritedE2EE
 		if req.EncryptE2EE {
 			if err := configureClientE2EE(ctx, c, sel, true); err != nil {
 				return err
@@ -234,6 +261,9 @@ var mailSendCmd = &cobra.Command{
 		if targetKind == "alias" {
 			resp, err = c.SendMessage(ctx, req)
 		} else {
+			if err := requireMailSenderContext(c, sel); err != nil {
+				return err
+			}
 			resp, err = c.SendMessageByIdentity(ctx, req)
 		}
 
@@ -330,7 +360,7 @@ var mailReplyCmd = &cobra.Command{
 		var c *aweb.Client
 		var sel *awconfig.Selection
 		awid.RecordHTTPDiagnosticPhase("client_selection_started")
-		c, sel, err = resolveMailMessagingClientSelection()
+		c, sel, err = resolveMailContinuationClientSelection()
 		if err != nil {
 			return err
 		}
@@ -362,11 +392,13 @@ var mailReplyCmd = &cobra.Command{
 		if len(inbox.Messages) == 0 {
 			return mailReplySourceMissingError(ctx, c, messageID)
 		}
-		encryptReply := mailReplyE2EE
-		if !cmd.Flags().Changed("e2ee") && !mailReplyPlaintext && !mailReplyLegacyPlaintext {
-			source := inbox.Messages[0]
-			encryptReply = source.ContentMode == awid.ContentModeEncryptedV2 || source.MessageVersion == awid.E2EEMessageVersion || source.Encrypted != nil
+		source := inbox.Messages[0]
+		sourceEncryption := awid.ConversationEncryptionReading{State: awid.ConversationPlaintext}
+		if awid.StoredRowEncrypted(source.ContentMode, source.MessageVersion, source.Encrypted) {
+			sourceEncryption.State = awid.ConversationEncrypted
 		}
+		replyDecision := mailContinuation(cmd, c, sourceEncryption, e2eeFlagChoice(cmd, mailReplyE2EE, mailReplyPlaintext || mailReplyLegacyPlaintext))
+		encryptReply := replyDecision.Encrypt
 		if encryptReply {
 			if err := configureClientE2EE(ctx, c, sel, true); err != nil {
 				return err
@@ -383,7 +415,7 @@ var mailReplyCmd = &cobra.Command{
 			Body:           body,
 			Priority:       awid.MessagePriority(mailReplyPriority),
 			EncryptE2EE:    encryptReply,
-			E2EEInherited:  encryptReply && !cmd.Flags().Changed("e2ee"),
+			E2EEInherited:  replyDecision.Inherited,
 		}
 		if encryptReply && inbox.Messages[0].Encrypted != nil {
 			source := inbox.Messages[0]
@@ -398,6 +430,9 @@ var mailReplyCmd = &cobra.Command{
 			req.E2EERecipient = &recipient
 			req.ToDID = recipient.DID
 			req.ToStableID = recipient.StableID
+		}
+		if err := requireMailSenderContext(c, sel); err != nil {
+			return err
 		}
 		resp, err := c.SendMessageByIdentity(ctx, req)
 		if err != nil {
@@ -518,6 +553,17 @@ type e2eeDecryptionUnavailableError struct {
 
 func (e *e2eeDecryptionUnavailableError) Error() string {
 	return fmt.Sprintf("E2E decryption unavailable: %s at %s", e.reason, e.statePath)
+}
+
+// mailContinuation applies the one continuation rule
+// (awid.ContinuationEncryption) to a mail sent by c and shows its notice on
+// stderr.
+func mailContinuation(cmd *cobra.Command, c *aweb.Client, conversation awid.ConversationEncryptionReading, choice awid.E2EEChoice) awid.ContinuationDecision {
+	decision := awid.ContinuationEncryption(conversation, choice, c.Client.E2EESendUnavailable())
+	if decision.Notice != "" {
+		fmt.Fprintf(cmd.ErrOrStderr(), "Note: %s\n", decision.Notice)
+	}
+	return decision
 }
 
 func configureClientE2EEForRead(cmd *cobra.Command, ctx context.Context, c *aweb.Client, sel *awconfig.Selection) error {
@@ -987,7 +1033,7 @@ func init() {
 	mailSendCmd.Flags().StringVar(&mailSendBodyFile, "body-file", "", safeFileInputHelp("message body"))
 	mailSendCmd.Flags().StringVar(&mailSendPriority, "priority", "normal", "Priority: low|normal|high|urgent")
 	mailSendCmd.Flags().StringVar(&mailSendConversationID, "conversation-id", "", "Existing mail conversation to continue (no recipient or --subject)")
-	mailSendCmd.Flags().BoolVar(&mailSendPlaintext, "plaintext", false, "Send explicit server-readable plaintext mail (currently the default)")
+	mailSendCmd.Flags().BoolVar(&mailSendPlaintext, "plaintext", false, "Send explicit server-readable plaintext mail (the default for a new conversation; --conversation-id inherits its conversation's encryption, and is plaintext, with a notice, when that cannot be read or this identity cannot encrypt)")
 	mailSendCmd.Flags().BoolVar(&mailSendE2EE, "e2ee", false, "Send E2E encrypted mail; fails closed if encryption keys are missing")
 	mailSendCmd.Flags().BoolVar(&mailSendLegacyPlaintext, "legacy-plaintext", false, "Deprecated alias for --plaintext")
 	_ = mailSendCmd.Flags().MarkHidden("legacy-plaintext")

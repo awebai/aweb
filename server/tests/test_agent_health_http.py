@@ -19,6 +19,8 @@ from test_agent_status_host_http import _team_request
 from test_dashboard import _make_jwt
 from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
 
+__all__ = ["privacy_app"]
+
 NOT_REPORTED = {
     "source": "host",
     "reachable": "unknown",

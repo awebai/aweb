@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -173,9 +172,13 @@ func (s *Session) request(ctx context.Context, method, path string, body []byte)
 	if err != nil {
 		return nil, err
 	}
+	nonce, err := newNonce()
+	if err != nil {
+		return nil, err
+	}
 	headers, err := consoleHeaders(s.key, consoleRequest{
-		Auth: "handoff-session", Audience: s.origin, Method: method, Path: target.RequestURI(),
-		SubjectField: "session_id", Subject: s.ID, Body: body, Timestamp: time.Now(), Nonce: newNonce(),
+		Auth: consoleSessionAuth, Audience: s.origin, Method: method, Path: target.RequestURI(),
+		SubjectField: consoleSessionID, Subject: s.ID, Body: body, Timestamp: time.Now(), Nonce: nonce,
 	})
 	if err != nil {
 		return nil, err
@@ -191,7 +194,10 @@ func run(ctx context.Context, opts Options, purpose string) (ed25519.PrivateKey,
 	if err != nil {
 		return nil, nil, err
 	}
-	verifier := randomToken()
+	verifier, err := randomToken()
+	if err != nil {
+		return nil, nil, err
+	}
 	loopback, err := ListenLoopback()
 	if err != nil {
 		return nil, nil, err
@@ -265,9 +271,13 @@ func collect(ctx context.Context, opts Options, key ed25519.PrivateKey, handoffI
 	if err != nil {
 		return nil, err
 	}
+	nonce, err := newNonce()
+	if err != nil {
+		return nil, err
+	}
 	headers, err := consoleHeaders(key, consoleRequest{
-		Auth: "handoff-result", Audience: opts.Origins.Human, Method: http.MethodPost, Path: target.RequestURI(),
-		SubjectField: "handoff_id", Subject: handoffID, Body: []byte(body), Timestamp: time.Now(), Nonce: newNonce(),
+		Auth: consoleResultAuth, Audience: opts.Origins.Human, Method: http.MethodPost, Path: target.RequestURI(),
+		SubjectField: consoleHandoffID, Subject: handoffID, Body: []byte(body), Timestamp: time.Now(), Nonce: nonce,
 	})
 	if err != nil {
 		return nil, err
@@ -364,10 +374,10 @@ func RefusalCode(body []byte) string {
 func invalidResult(err error) error { return coded("handoff_result_invalid", err) }
 
 // randomToken is 32 random bytes in unpadded base64url.
-func randomToken() string {
-	b := make([]byte, 32)
-	if _, err := rand.Read(b); err != nil {
-		panic(err)
+func randomToken() (string, error) {
+	raw, err := readEntropy(32)
+	if err != nil {
+		return "", err
 	}
-	return base64.RawURLEncoding.EncodeToString(b)
+	return base64.RawURLEncoding.EncodeToString(raw), nil
 }

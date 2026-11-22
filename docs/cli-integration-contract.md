@@ -68,6 +68,15 @@ the registry's or service's own open refusal vocabulary.
 
 The existing JSON error envelope carries `error.code`, `error.message`, and,
 for service refusals, `http_status`, `detail`, and `reason` where available.
+Local ID-certificate refusals such as `request_binding_mismatch`,
+`human_mismatch`, `human_required`, `unregistered_parent`, `wrong_kind`, and
+verifier refusals use `error.code="error"` with the reason in `error.message`.
+A direct refusal has the bare reason as its message. A command may wrap it
+with context. HTTP refusals normally use `error.code="http_error"` with
+`error.http_status` and `error.reason` when the service supplies a reason.
+Consumers branch on the process exit status and structured fields and display
+`error.message` to the operator. See [the CLI error envelope](../cli/go/cmd/aw/errors.go#L136-L158).
+
 Service registration preserves the service's own refusal code as `error.code`
 and `reason`; unrecognized codes are retained. Service codes remain owned by
 the service, rather than becoming a universal CLI vocabulary.
@@ -79,12 +88,14 @@ the service, rather than becoming a universal CLI vocabulary.
 | `outcome_unknown` | A write may have applied; inspect the recorded operation before retrying. |
 | `controller_key_missing` | The required controller key is unavailable here; use the installation or key-holder command in the message. |
 | `team_name_taken` | The registry pins this team to another controller; restore that key or choose another team name. |
+| `team_name_unconfirmed` | The registry has this team name and a read could not say which key holds it; a team key this machine created for it is set aside, never read as the team key. A registration command (`aw id team create`, `aw team create`, `aw init`, the onboarding wizard) settles it when run again once the registry answers: it restores the set-aside key when the registry pins it and removes it when the registry pins another. Every other command that reads the team key (invites, `aw workspace add-worktree`, reissue-cert, replace-key, signed team reads, owner acts) refuses with this code rather than taking the team as keyless, and names `aw id team create --namespace <domain> --name <team>` as the step that settles it. |
 | `grant_not_found` | The selected team has no such grant; run grant list in that team and identity home. |
 | `certificate_persistence_incomplete` | Registry issuance succeeded but its recipient copy could not be saved; retain the key and fetch the exact certificate named in the recovery command. |
 | `certificate_rollback_pending` | The exact issued certificate could not be revoked during rollback; keep the recipient home and ask the team controller to revoke it. |
 | `retirement_receipt_unavailable` | The CLI could not lock or write the retirement receipt; retain the identity home and repair the receipt destination before retrying. |
 | `workspace_cleanup_incomplete` | The service did not confirm cleanup of the exact workspace and local identity; reconcile it before revoking the certificate. |
 | `invite_issuance_pending` | Issuance is attempted or unknown; keep the exact recipient and record, check online, and resume the retained certificate. Offline cancellation leaves its child untouched. |
+| `native_agent_signature_pending` | Hosted invite acceptance stopped before submitting membership because the child needs an agent signature. The CLI exits with status 1 and retains the child key and pending invite, including any prepared request. Preserve the identity home and finish the exchange, then retry with the same token, name, scope, and home. |
 | `team_server_record_missing` | No signed service record is published for this team; its controller must register the service. |
 | `invalid_alias`, `invalid_team_id`, `invalid_team_server_url` | Correct the input using the validation command's remedy. |
 

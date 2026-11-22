@@ -532,14 +532,30 @@ block later UUID reuse after message deletion; existing local API idempotency
 may still return its row before attempting an insert.
 
 For local mail, an exact retry is a stored `message_id` resent by the same
-sender with the identical nonempty `signed_payload` (plaintext) or the identical
-encrypted envelope. It returns the original message ID, conversation ID and
+sender with the identical nonempty signature and `signed_payload` (plaintext)
+or the identical complete encrypted envelope. The same stored-artifact rule is
+used by native send retries, mail storage, outbound projections and attachment
+retries. Stored chat controls and supplied participants must also match;
+attachment reference ownership and order remain additional admission checks.
+It returns the original message ID, conversation ID and
 receipt time with no second effect: no new conversation, no second
 `message.sent`, no second count against the sender's allowance. A different
 sender or payload under that ID (including unsigned ID reuse) returns HTTP 409.
 Delivery admission and signature validation still apply before replay, so a
 retry whose request fields disagree with its signed payload is refused as any
 send would be.
+
+Exact signed plaintext retries of stored outbound mail/chat projections and
+established federation receipts retain their original answer after the ordinary
+attestation window. Signature/binding and current authority checks still run;
+changed or missing proofs require a fresh attestation. No encrypted age window
+is extended. An age refusal tells the sender to sign with current UTC time and
+retry; changing a signature is never needed merely to acknowledge an exact
+accepted plaintext message.
+
+Native recipient lookups return 422 with `detail.code=registry_response_unusable`
+when the registry returns an unexpected status. The message directs the sender
+to the server operator. A temporary registry failure returns 503 with retry guidance.
 
 Cross-registry failures return `reason`, `retryable`, and `correlation_id` in
 addition to matching `detail`. Retry unchanged input only when `retryable` is

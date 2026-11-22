@@ -13,6 +13,11 @@ import (
 	"github.com/awebai/aw/awconfig"
 )
 
+// unreachableTestRegistryURL is the registry every test that names none
+// selects: a loopback port nothing listens on, so a read is refused at once
+// and the public registry is never discovered or reached.
+const unreachableTestRegistryURL = "http://127.0.0.1:1"
+
 const (
 	hermeticClaudeDirEnv             = "AW_TEST_HERMETIC_CLAUDE_DIR"
 	windowsNoCurrentDirectoryPathEnv = "NoDefaultCurrentDirectoryInExePath"
@@ -151,6 +156,12 @@ func isolateHostEnvironment() (func() error, error) {
 	}
 	save("TMPDIR")
 	if err := os.Setenv("TMPDIR", tmp); err != nil {
+		_ = restore()
+		return nil, err
+	}
+	// The host's registry, if it names one, is not the tests' to use either.
+	save("AWID_REGISTRY_URL")
+	if err := os.Setenv("AWID_REGISTRY_URL", unreachableTestRegistryURL); err != nil {
 		_ = restore()
 		return nil, err
 	}

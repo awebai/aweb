@@ -182,6 +182,8 @@ including `credential`, keeps the same-signer rule.
   a revoked or stale edge.
 - `403 principal_not_member` / `403 principal_not_human`: the retained
   certificate's checks, as today, including no usable retained certificate.
+- `422 registry_response_unusable`: AWID answered with malformed identity
+  status for the requester's chain.
 - `503 principal_status_unavailable`: chain or certificate status evidence
   cannot be read. This fails closed and is retryable.
 - `403 role_not_held`, `401 console_session_required` and the rest of

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/internal/termtext"
 )
@@ -60,9 +61,21 @@ func withErrorCode(code string, err error) error {
 
 // errorCodeOf is err's refusal code, or "" when it has none.
 func errorCodeOf(err error) string {
+	var pending *hostedInviteSignaturePendingError
+	if errors.As(err, &pending) {
+		return codeNativeAgentSignaturePending
+	}
 	var coded *codedError
 	if errors.As(err, &coded) {
 		return coded.code
+	}
+	// Any command that reads a team key refuses one set aside as unconfirmed.
+	if errors.Is(err, awconfig.ErrTeamKeyUnconfirmed) {
+		return codeTeamNameUnconfirmed
+	}
+	var certificate *awid.CurrentTeamCertificateError
+	if errors.As(err, &certificate) {
+		return string(certificate.Code)
 	}
 	return ""
 }
@@ -160,9 +173,8 @@ func errorEnvelope(err error, message string) cliErrorEnvelope {
 	if errors.As(err, &plain) && plain.jsonMessage != "" {
 		message = plain.jsonMessage
 	}
-	var coded *codedError
-	if errors.As(err, &coded) {
-		detail.Code = coded.code
+	if code := errorCodeOf(err); code != "" {
+		detail.Code = code
 	}
 	return cliErrorEnvelope{Error: cliErrorBody{Code: detail.Code, Message: message, HTTPStatus: detail.HTTPStatus, Detail: detail.Detail, Reason: detail.Reason}}
 }

@@ -12,6 +12,7 @@ from mcp.types import CallToolResult, TextContent
 
 from aweb.mcp.auth import get_auth, primary_auth_did
 from aweb.mcp.tools.room import room_notice_count
+from aweb.member_team_key import current_member_sql
 from aweb.messaging.mail_attribution import incoming_mail_sql
 
 logger = logging.getLogger(__name__)
@@ -47,10 +48,10 @@ async def append_pending_nudge(result: Any, db_infra: Any) -> Any:
         counts = await db_infra.get_manager("aweb").fetch_one(
             f"""
             WITH actor AS MATERIALIZED (
-                SELECT agent_id
-                FROM {{{{tables.agents}}}}
-                WHERE team_id = $1 AND agent_id = $2
-                  AND deleted_at IS NULL AND status = 'active'
+                SELECT a.agent_id
+                FROM {{{{tables.agents}}}} a
+                WHERE a.team_id = $1 AND a.agent_id = $2
+                  AND {current_member_sql("a")}
             ),
             mine AS MATERIALIZED (
                 SELECT p.session_id, p.did, p.current_did_key

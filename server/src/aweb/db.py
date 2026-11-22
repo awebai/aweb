@@ -1,18 +1,26 @@
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Protocol
 
 from fastapi import Request
 from pgdbm import AsyncDatabaseManager
-from pgdbm.migrations import AsyncMigrationManager
-
-from aweb_naapp.hooks.owner_act_nonces import apply_owner_act_migrations
 
 from .config import get_settings
 from .connection_scope import DatabaseManager
+from .migrations import apply_native_migrations
 from awid.db_config import build_database_config
+
+class DatabaseInfrastructure(Protocol):
+    """Initialized native managers borrowed from a serving application."""
+
+    @property
+    def is_initialized(self) -> bool:
+        ...
+
+    def get_manager(self, name: str = "aweb") -> Any:
+        ...
+
 
 class DatabaseInfra:
     """
@@ -35,6 +43,7 @@ class DatabaseInfra:
         shared_pool: Optional[Any] = None,
         run_migrations: bool = True,
     ) -> None:
+        """Initialize native managers and apply the complete native migration inventory."""
         if self._initialized:
             return
 
@@ -73,22 +82,12 @@ class DatabaseInfra:
             )
 
             if run_migrations:
-                base_dir = Path(__file__).resolve().parent
-                migrations_path = base_dir / "migrations" / "aweb"
-                if migrations_path.is_dir():
-                    mgr = AsyncMigrationManager(
-                        self._manager,
-                        migrations_path=str(migrations_path),
-                        module_name="aweb-aweb",
-                    )
-                    await mgr.apply_pending_migrations()
-                # The hooks kit's own module (the owner-act nonces), after
-                # core's chain: one implementation shared with the naapps.
-                await apply_owner_act_migrations(self._manager)
+                await apply_native_migrations(self._manager)
 
             self._initialized = True
 
     async def close(self) -> None:
+        """Stop this native resource and release only the resources it owns."""
         if self._shared_pool is not None and self._owns_pool:
             await self._shared_pool.close()
 
@@ -103,6 +102,7 @@ class DatabaseInfra:
         return self._initialized
 
     def get_manager(self, name: str = "aweb") -> AsyncDatabaseManager:
+        """Return the initialized native manager for the requested module."""
         if not self._initialized:
             raise RuntimeError(
                 "DatabaseInfra is not initialized. Call 'await db_infra.initialize()' first."
@@ -123,6 +123,7 @@ class TransactionInfra:
         self.original, self.transaction = original, transaction
 
     def get_manager(self, name: str = "aweb") -> Any:
+        """Return the initialized native manager for the requested module."""
         return self.transaction if name == "aweb" else self.original.get_manager(name)
 
     def __getattr__(self, name: str) -> Any:

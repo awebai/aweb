@@ -5,6 +5,7 @@ A second stdout line is JSON naming the fixture's storage (database URL and
 schema), for test helpers that seed state the CLI cannot publish itself.
 Rate limits are off unless AWID_FIXTURE_RATE_LIMITS=production, which runs the
 production bucket values on the in-memory limiter, private to this fixture.
+The limiter clock stays in one window for the life of that fixture.
 AWID_PUBLIC_ORIGINS is the fixture's own loopback origin, unless
 AWID_FIXTURE_PUBLIC_ORIGINS=none leaves it unset or names other origins.
 
@@ -24,6 +25,7 @@ import subprocess
 import tempfile
 import sys
 import time
+from types import SimpleNamespace
 import urllib.request
 import uuid
 
@@ -37,6 +39,15 @@ def run(*args):
 def fixture_app():
     """Real service with an optional exact DNS dependency for CLI journeys."""
     from awid_service.main import app
+
+    if os.environ.get('AWID_FIXTURE_RATE_LIMITS') == 'production':
+        from awid import ratelimit
+
+        # Change only the limiter's clock in the fixture subprocess. Request
+        # timestamps and signatures still use wall time.
+        started_at = time.time()
+        ratelimit.time = SimpleNamespace(time=lambda: started_at)
+
     domain = os.environ.get('AWID_FIXTURE_DNS_DOMAIN')
     if domain:
         from awid.dns_verify import DomainAuthority, DnsVerificationError

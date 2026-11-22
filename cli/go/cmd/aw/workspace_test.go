@@ -8,10 +8,12 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -20,6 +22,7 @@ import (
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"golang.org/x/net/dns/dnsmessage"
 	"gopkg.in/yaml.v3"
 )
 
@@ -1125,7 +1128,16 @@ func TestAwWorkspaceAddWorktreeRejectsTrackedAwebRuntimeState(t *testing.T) {
 
 func TestAwWorkspaceAddWorktreeCreatesLocalSelfCustodialCLIWorkspaceWithTeamKey(t *testing.T) {
 	t.Parallel()
+	for _, status := range []int{0, http.StatusUnauthorized, http.StatusNotFound} {
+		t.Run(firstNonEmpty(http.StatusText(status), "no ambient key"), func(t *testing.T) {
+			testHeadlessControllerWorktree(t, status)
+		})
+	}
+}
 
+func testHeadlessControllerWorktree(t *testing.T, teamReadStatus int) {
+	t.Helper()
+	const ambientKey = "aw_sk_unreadable"
 	const origin = "https://github.com/acme/repo.git"
 	const teamID = "backend:source"
 
@@ -1148,6 +1160,13 @@ func TestAwWorkspaceAddWorktreeCreatesLocalSelfCustodialCLIWorkspaceWithTeamKey(
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/api/v1/teams/current":
+			if teamReadStatus == 0 || r.Method != http.MethodGet || r.Header.Get("Authorization") != "Bearer "+ambientKey {
+				t.Error("unexpected API-key team read")
+				http.Error(w, "unexpected team read", http.StatusInternalServerError)
+				return
+			}
+			http.Error(w, http.StatusText(teamReadStatus), teamReadStatus)
 		case "/v1/did/" + parentStableID + "/key":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"did_aw":          parentStableID,
@@ -1228,6 +1247,9 @@ func TestAwWorkspaceAddWorktreeCreatesLocalSelfCustodialCLIWorkspaceWithTeamKey(
 
 	run := exec.CommandContext(ctx, bin, "workspace", "add-worktree", "developer")
 	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL)
+	if teamReadStatus != 0 {
+		run.Env = append(run.Env, "AWEB_API_KEY="+ambientKey)
+	}
 	run.Stdin = strings.NewReader("")
 	run.Dir = repo
 	out, err := run.CombinedOutput()
@@ -1633,7 +1655,7 @@ func TestAwWorkspaceAddWorktreeWithoutIdentityUsesDiscoveryAndMailRoundTrip(t *t
 	}
 }
 
-func TestAPIKeyBootstrapAddWorktreeMailRoundTrip(t *testing.T) {
+func TestExplicitSetupKeyAddWorktreeMailRoundTrip(t *testing.T) {
 	t.Parallel()
 
 	const apiKey = "aw_sk_bootstrap_journey"
@@ -1840,21 +1862,23 @@ func TestAPIKeyBootstrapAddWorktreeMailRoundTrip(t *testing.T) {
 	defer cancel()
 
 	tmp := t.TempDir()
-	bin := filepath.Join(tmp, "aw")
 	repo := filepath.Join(tmp, "repo")
 	if err := os.MkdirAll(repo, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	initGitRepoWithOriginAndCommit(t, repo, origin)
-	buildAwBinary(t, ctx, bin)
 
+	hostedURL := externalLikeTestURL(t, awebServer.URL)
+	hosted, err := url.Parse(hostedURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dns, discoveryReads := serveWorktreeDiscoveryRefusal(t, hosted.Hostname(), "acme.com")
 	runAW := func(dir string, env []string, args ...string) string {
 		t.Helper()
-		run := exec.CommandContext(ctx, bin, args...)
-		run.Env = env
-		if len(args) > 0 && args[0] == "mail" {
-			run.Env = append(run.Env, "AWID_REGISTRY_URL=http://127.0.0.1:1")
-		}
+		testArgs := append([]string{"-test.run=^TestAPIKeyWorktreeCommandHelper$", "--"}, args...)
+		run := exec.CommandContext(ctx, os.Args[0], testArgs...)
+		run.Env = append(append([]string{}, env...), "AW_TEST_WORKTREE_DNS="+dns)
 		run.Dir = dir
 		out, err := run.CombinedOutput()
 		if err != nil {
@@ -1862,9 +1886,14 @@ func TestAPIKeyBootstrapAddWorktreeMailRoundTrip(t *testing.T) {
 		}
 		return string(out)
 	}
-	baseEnv := withoutEnvForTest(testCommandEnv(tmp), "AWEB_URL", "AWID_REGISTRY_URL", "AWEB_API_KEY")
-	initEnv := append(append([]string{}, baseEnv...), "AWEB_API_KEY="+apiKey)
-	runAW(repo, initEnv, "init", "--aweb-url", externalLikeTestURL(t, awebServer.URL), "--name", "alice", "--role", "developer")
+	baseEnv := withoutEnvForTest(testCommandEnv(tmp), "AWEB_URL", "AWEB_API_KEY", "AWID_REGISTRY_URL")
+	discoveryEnv := append(append([]string{}, baseEnv...), "AW_TEST_WORKTREE_DISCOVERY=1")
+	initEnv := append(append([]string{}, discoveryEnv...), "AWEB_API_KEY="+apiKey)
+	runAW(repo, initEnv, "init", "--aweb-url", hostedURL, "--name", "alice", "--role", "developer")
+	initReads := discoveryReads.Load()
+	if initReads == 0 {
+		t.Fatal("default API-key init did not attempt team registry discovery")
+	}
 
 	if _, err := os.Stat(filepath.Join(repo, ".aw", "identity.yaml")); !os.IsNotExist(err) {
 		t.Fatalf("parent identity.yaml should not exist after local API-key bootstrap: %v", err)
@@ -1878,7 +1907,10 @@ func TestAPIKeyBootstrapAddWorktreeMailRoundTrip(t *testing.T) {
 		t.Fatalf("parent local cert member_did_aw=%q", parentCert.MemberDIDAW)
 	}
 
-	runAW(repo, baseEnv, "workspace", "add-worktree", "developer", "--name", "charlie")
+	runAW(repo, discoveryEnv, "workspace", "add-worktree", "developer", "--name", "charlie")
+	if discoveryReads.Load() <= initReads {
+		t.Fatal("default worktree creation did not attempt team registry discovery")
+	}
 	child := filepath.Join(tmp, "repo-charlie")
 	if _, err := os.Stat(filepath.Join(child, ".aw", "identity.yaml")); !os.IsNotExist(err) {
 		t.Fatalf("child identity.yaml should not exist after local add-worktree: %v", err)
@@ -1892,16 +1924,110 @@ func TestAPIKeyBootstrapAddWorktreeMailRoundTrip(t *testing.T) {
 		t.Fatalf("child local cert member_did_aw=%q", childCert.MemberDIDAW)
 	}
 
-	runAW(repo, baseEnv, "mail", "send", "--subject", "Test thread", "--plaintext", "--to", "charlie", "--body", "hello child", "--json")
-	childInbox := runAW(child, baseEnv, "mail", "inbox", "--show-all", "--json")
+	for _, dir := range []string{repo, child} {
+		state, err := awconfig.LoadTeamState(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		membership := state.Membership(teamID)
+		if membership == nil || membership.RegistryURL != "" || membership.TeamKey == nil || membership.TeamKey.State != awid.TeamKeyUnconfirmed {
+			t.Fatalf("default discovery refusal persisted the wrong membership in %s: %+v", dir, membership)
+		}
+	}
+
+	mailEnv := append(append([]string{}, baseEnv...), "AWID_REGISTRY_URL="+unreachableTestRegistryURL)
+	runAW(repo, mailEnv, "mail", "send", "--subject", "Test thread", "--plaintext", "--to", "charlie", "--body", "hello child", "--json")
+	childInbox := runAW(child, mailEnv, "mail", "inbox", "--show-all", "--json")
 	if !strings.Contains(childInbox, "hello child") {
 		t.Fatalf("child inbox missing parent mail:\n%s", childInbox)
 	}
-	runAW(child, baseEnv, "mail", "send", "--subject", "Test thread", "--plaintext", "--to", "alice", "--body", "hello parent", "--json")
-	parentInbox := runAW(repo, baseEnv, "mail", "inbox", "--show-all", "--json")
+	runAW(child, mailEnv, "mail", "send", "--subject", "Test thread", "--plaintext", "--to", "alice", "--body", "hello parent", "--json")
+	parentInbox := runAW(repo, mailEnv, "mail", "inbox", "--show-all", "--json")
 	if !strings.Contains(parentInbox, "hello parent") {
 		t.Fatalf("parent inbox missing child mail:\n%s", parentInbox)
 	}
+}
+
+// Execute the ordinary command tree in a fresh process with the test's DNS
+// authority, so the registry client still parses and refuses the TXT response.
+func TestAPIKeyWorktreeCommandHelper(t *testing.T) {
+	address := os.Getenv("AW_TEST_WORKTREE_DNS")
+	if address == "" {
+		t.Skip("subprocess helper requires the parent test's worktree DNS fixture")
+	}
+	if os.Getenv("AW_TEST_WORKTREE_DISCOVERY") == "1" {
+		if err := os.Unsetenv("AWID_REGISTRY_URL"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	net.DefaultResolver = &net.Resolver{
+		PreferGo: true,
+		Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, network, address)
+		},
+	}
+	separator := slices.Index(os.Args, "--")
+	if separator < 0 || separator == len(os.Args)-1 {
+		t.Fatal("expected CLI arguments after --")
+	}
+	os.Args = append([]string{"aw"}, os.Args[separator+1:]...)
+	main()
+	os.Exit(0)
+}
+
+func serveWorktreeDiscoveryRefusal(t *testing.T, appHost, teamDomain string) (string, *atomic.Int32) {
+	t.Helper()
+	listener, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var discoveryReads atomic.Int32
+	done := make(chan struct{})
+	t.Cleanup(func() {
+		_ = listener.Close()
+		<-done
+	})
+	go func() {
+		defer close(done)
+		buffer := make([]byte, 4096)
+		for {
+			n, client, err := listener.ReadFromUDP(buffer)
+			if err != nil {
+				return
+			}
+			var query dnsmessage.Message
+			if err := query.Unpack(buffer[:n]); err != nil || len(query.Questions) != 1 {
+				continue
+			}
+			question := query.Questions[0]
+			reply := dnsmessage.Message{
+				Header: dnsmessage.Header{
+					ID: query.ID, Response: true, RecursionAvailable: true,
+				},
+				Questions: query.Questions,
+			}
+			header := dnsmessage.ResourceHeader{Name: question.Name, Class: dnsmessage.ClassINET}
+			switch {
+			case question.Type == dnsmessage.TypeTXT && question.Name.String() == awid.AWIDTXTName(teamDomain)+".":
+				discoveryReads.Add(1)
+				// The malformed controller record stops discovery before HTTP.
+				reply.Answers = []dnsmessage.Resource{{
+					Header: header, Body: &dnsmessage.TXTResource{TXT: []string{"awid=v1"}},
+				}}
+			case question.Type == dnsmessage.TypeA && question.Name.String() == appHost+".":
+				reply.Answers = []dnsmessage.Resource{{
+					Header: header, Body: &dnsmessage.AResource{A: [4]byte{127, 0, 0, 1}},
+				}}
+			}
+			packet, err := reply.Pack()
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			_, _ = listener.WriteToUDP(packet, client)
+		}
+	}()
+	return listener.LocalAddr().String(), &discoveryReads
 }
 
 func withoutEnvForTest(env []string, names ...string) []string {
@@ -2009,206 +2135,226 @@ func TestAwWorkspaceAddWorktreeRejectsAliasAlreadyInUse(t *testing.T) {
 
 func TestAwWorkspaceAddWorktreeExternalIdentityHomeUsesHostedInviteWithoutTeamKeyOrAPIKey(t *testing.T) {
 	t.Parallel()
+	for _, test := range []struct {
+		name       string
+		storedKey  string
+		ambientKey string
+	}{
+		{name: "cert-only"},
+		{name: "stored workspace key", storedKey: "aw_sk_stored_workspace_key"},
+		{name: "ambient key unreadable", ambientKey: "aw_sk_other_workspace"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
 
-	const origin = "https://github.com/acme/repo.git"
-	const teamID = "default:acme.aweb.ai"
+			const origin = "https://github.com/acme/repo.git"
+			const teamID = "default:acme.aweb.ai"
 
-	_, teamKey, err := awid.GenerateKeypair()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	var createInviteHit atomic.Bool
-	var workspaceInitHit atomic.Bool
-	var connectRole string
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/v1/roles/active":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"team_roles_id": "roles-1",
-				"roles": map[string]any{
-					"frontend": map[string]any{"title": "Frontend"},
-				},
-			})
-		case "/v1/agents/suggest-alias-prefix":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"team_id":     teamID,
-				"name_prefix": "alice",
-			})
-		case "/api/v1/spawn/create-invite":
-			cert := requireCertificateAuthForTest(t, r)
-			if cert.Team != teamID || cert.Alias != "dev" {
-				t.Fatalf("create-invite cert team/alias=%q/%q", cert.Team, cert.Alias)
-			}
-			var body awid.SpawnCreateInviteRequest
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				t.Fatalf("decode create-invite body: %v", err)
-			}
-			if body.AccessMode != "open" || body.MaxUses != 1 {
-				t.Fatalf("create-invite body=%+v", body)
-			}
-			createInviteHit.Store(true)
-			_ = json.NewEncoder(w).Encode(awid.SpawnCreateInviteResponse{
-				InviteID:      "invite-1",
-				Token:         "aw_inv_hosted_child",
-				TokenPrefix:   "aw_inv",
-				AccessMode:    "open",
-				MaxUses:       1,
-				NamespaceSlug: "acme",
-				Namespace:     "acme.aweb.ai",
-				ServerURL:     "http://" + r.Host,
-			})
-		case "/api/v1/spawn/invite-preview":
-			writeLegacyHostedPreviewForTest(t, w, r, teamID, "http://"+r.Host)
-		case "/api/v1/spawn/accept-invite":
-			if didFromDIDKeyAuthorizationForTest(r.Header.Get("Authorization")) == "" {
-				t.Fatalf("accept-invite missing DIDKey auth")
-			}
-			var body awid.SpawnAcceptInviteRequest
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				t.Fatalf("decode accept-invite body: %v", err)
-			}
-			if body.Token != "aw_inv_hosted_child" || body.Alias != "alice" {
-				t.Fatalf("accept-invite token/alias=%q/%q", body.Token, body.Alias)
-			}
-			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-				Team:          teamID,
-				MemberDIDKey:  body.DID,
-				Alias:         body.Alias,
-				IdentityScope: awid.IdentityModeLocal,
-			})
+			_, teamKey, err := awid.GenerateKeypair()
 			if err != nil {
-				t.Fatalf("sign child cert: %v", err)
+				t.Fatal(err)
 			}
-			encoded, err := awid.EncodeTeamCertificateHeader(cert)
+
+			var createInviteHit atomic.Bool
+			var workspaceInitHit atomic.Bool
+			var connectRole string
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+
+			server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/v1/teams/current":
+					if test.ambientKey == "" || r.Method != http.MethodGet || r.Header.Get("Authorization") != "Bearer "+test.ambientKey {
+						t.Error("unexpected API-key team read")
+					}
+					http.NotFound(w, r)
+				case "/v1/roles/active":
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"team_roles_id": "roles-1",
+						"roles": map[string]any{
+							"frontend": map[string]any{"title": "Frontend"},
+						},
+					})
+				case "/v1/agents/suggest-alias-prefix":
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"team_id":     teamID,
+						"name_prefix": "alice",
+					})
+				case "/api/v1/spawn/create-invite":
+					cert := requireCertificateAuthForTest(t, r)
+					if cert.Team != teamID || cert.Alias != "dev" {
+						t.Fatalf("create-invite cert team/alias=%q/%q", cert.Team, cert.Alias)
+					}
+					var body awid.SpawnCreateInviteRequest
+					if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+						t.Fatalf("decode create-invite body: %v", err)
+					}
+					if body.AccessMode != "open" || body.MaxUses != 1 {
+						t.Fatalf("create-invite body=%+v", body)
+					}
+					createInviteHit.Store(true)
+					_ = json.NewEncoder(w).Encode(awid.SpawnCreateInviteResponse{
+						InviteID:      "invite-1",
+						Token:         "aw_inv_hosted_child",
+						TokenPrefix:   "aw_inv",
+						AccessMode:    "open",
+						MaxUses:       1,
+						NamespaceSlug: "acme",
+						Namespace:     "acme.aweb.ai",
+						ServerURL:     "http://" + r.Host,
+					})
+				case "/api/v1/spawn/invite-preview":
+					writeLegacyHostedPreviewForTest(t, w, r, teamID, "http://"+r.Host)
+				case "/api/v1/spawn/accept-invite":
+					if didFromDIDKeyAuthorizationForTest(r.Header.Get("Authorization")) == "" {
+						t.Fatalf("accept-invite missing DIDKey auth")
+					}
+					var body awid.SpawnAcceptInviteRequest
+					if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+						t.Fatalf("decode accept-invite body: %v", err)
+					}
+					if body.Token != "aw_inv_hosted_child" || body.Alias != "alice" {
+						t.Fatalf("accept-invite token/alias=%q/%q", body.Token, body.Alias)
+					}
+					cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+						Team:          teamID,
+						MemberDIDKey:  body.DID,
+						Alias:         body.Alias,
+						IdentityScope: awid.IdentityModeLocal,
+					})
+					if err != nil {
+						t.Fatalf("sign child cert: %v", err)
+					}
+					encoded, err := awid.EncodeTeamCertificateHeader(cert)
+					if err != nil {
+						t.Fatalf("encode child cert: %v", err)
+					}
+					_ = json.NewEncoder(w).Encode(awid.SpawnAcceptInviteResponse{
+						TeamID:        teamID,
+						TeamSlug:      "default",
+						Namespace:     "acme.aweb.ai",
+						Alias:         body.Alias,
+						ServerURL:     "http://" + r.Host,
+						DID:           body.DID,
+						IdentityScope: awid.IdentityModeLocal,
+						AccessMode:    "open",
+						Created:       true,
+						TeamCert:      encoded,
+					})
+				case "/v1/connect":
+					cert := requireCertificateAuthForTest(t, r)
+					if cert.Alias != "alice" {
+						t.Fatalf("connect alias=%q", cert.Alias)
+					}
+					var body connectRequest
+					if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+						t.Fatalf("decode connect body: %v", err)
+					}
+					connectRole = body.Role
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"team_id":      teamID,
+						"alias":        "alice",
+						"agent_id":     "agent-alice",
+						"workspace_id": "ws-alice",
+						"repo_id":      "repo-alice",
+						"team_did_key": awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey)),
+						"role":         body.Role,
+					})
+				case "/v1/agents/me/encryption-key":
+					writePublishEncryptionKeyResponseForTest(t, w, "agent-alice", teamID, "alice")
+				case "/api/v1/workspaces/init":
+					workspaceInitHit.Store(true)
+					t.Fatalf("cert-only hosted add-worktree must not call workspace init")
+				default:
+					t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+				}
+			}))
+
+			tmp := t.TempDir()
+			canonicalTmp, err := filepath.EvalSymlinks(tmp)
 			if err != nil {
-				t.Fatalf("encode child cert: %v", err)
+				t.Fatal(err)
 			}
-			_ = json.NewEncoder(w).Encode(awid.SpawnAcceptInviteResponse{
-				TeamID:        teamID,
-				TeamSlug:      "default",
-				Namespace:     "acme.aweb.ai",
-				Alias:         body.Alias,
-				ServerURL:     "http://" + r.Host,
-				DID:           body.DID,
-				IdentityScope: awid.IdentityModeLocal,
-				AccessMode:    "open",
-				Created:       true,
-				TeamCert:      encoded,
-			})
-		case "/v1/connect":
-			cert := requireCertificateAuthForTest(t, r)
-			if cert.Alias != "alice" {
-				t.Fatalf("connect alias=%q", cert.Alias)
+			bin := filepath.Join(canonicalTmp, "aw")
+			repo := filepath.Join(canonicalTmp, "repo")
+			principalDir := filepath.Join(canonicalTmp, "principal")
+			identityHome := filepath.Join(principalDir, ".aw")
+			if err := os.MkdirAll(repo, 0o755); err != nil {
+				t.Fatal(err)
 			}
-			var body connectRequest
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				t.Fatalf("decode connect body: %v", err)
+			initGitRepoWithOriginAndCommit(t, repo, origin)
+			buildAwBinary(t, ctx, bin)
+
+			// No local team key and no API key: this matches hosted worktree agents
+			// created by `aw team bootstrap` through the primary-workspace invite path.
+			binding := workspaceBinding(server.URL, teamID, "dev", "ws-dev")
+			binding.APIKey = test.storedKey
+			writeWorkspaceBindingForTest(t, principalDir, binding)
+			if err := awconfig.SaveWorktreeContextTo(filepath.Join(identityHome, "context"), &awconfig.WorktreeContext{}); err != nil {
+				t.Fatalf("seed principal context: %v", err)
 			}
-			connectRole = body.Role
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"team_id":      teamID,
-				"alias":        "alice",
-				"agent_id":     "agent-alice",
-				"workspace_id": "ws-alice",
-				"repo_id":      "repo-alice",
-				"team_did_key": awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey)),
-				"role":         body.Role,
-			})
-		case "/v1/agents/me/encryption-key":
-			writePublishEncryptionKeyResponseForTest(t, w, "agent-alice", teamID, "alice")
-		case "/api/v1/workspaces/init":
-			workspaceInitHit.Store(true)
-			t.Fatalf("cert-only hosted add-worktree must not call workspace init")
-		default:
-			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
-		}
-	}))
+			shadow := workspaceBinding(server.URL, teamID, "mallory", "shadow-workspace")
+			if err := awconfig.SaveWorktreeWorkspaceTo(filepath.Join(repo, ".aw", "workspace.yaml"), &shadow); err != nil {
+				t.Fatal(err)
+			}
+			if err := awconfig.SaveTeamState(repo, &awconfig.TeamState{
+				ActiveTeam: teamID,
+				Memberships: []awconfig.TeamMembership{{
+					TeamID:   teamID,
+					Alias:    "mallory",
+					CertPath: awconfig.TeamCertificateRelativePath(teamID),
+				}},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			shadowBefore := fileDigestsForTest(t, filepath.Join(repo, ".aw"))
 
-	tmp := t.TempDir()
-	canonicalTmp, err := filepath.EvalSymlinks(tmp)
-	if err != nil {
-		t.Fatal(err)
-	}
-	bin := filepath.Join(canonicalTmp, "aw")
-	repo := filepath.Join(canonicalTmp, "repo")
-	principalDir := filepath.Join(canonicalTmp, "principal")
-	identityHome := filepath.Join(principalDir, ".aw")
-	if err := os.MkdirAll(repo, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	initGitRepoWithOriginAndCommit(t, repo, origin)
-	buildAwBinary(t, ctx, bin)
+			run := exec.CommandContext(ctx, bin, "--identity-home", identityHome, "workspace", "add-worktree", "frontend")
+			run.Env = append(testCommandEnv(tmp), "AWEB_API_KEY="+test.ambientKey)
+			run.Stdin = strings.NewReader("")
+			run.Dir = repo
+			out, err := run.CombinedOutput()
+			if err != nil {
+				t.Fatalf("expected success, got error: %v\n%s", err, string(out))
+			}
+			if !createInviteHit.Load() {
+				t.Fatal("expected hosted invite creation")
+			}
+			if workspaceInitHit.Load() {
+				t.Fatal("unexpected workspace init call")
+			}
+			if connectRole != "frontend" {
+				t.Fatalf("connect role=%q, want frontend", connectRole)
+			}
+			if !strings.Contains(string(out), "New agent worktree created at") || !strings.Contains(string(out), "alice") {
+				t.Fatalf("unexpected output:\n%s", string(out))
+			}
 
-	// No local team key and no API key: this matches hosted worktree agents
-	// created by `aw team bootstrap` through the primary-workspace invite path.
-	writeWorkspaceBindingForTest(t, principalDir, workspaceBinding(server.URL, teamID, "dev", "ws-dev"))
-	if err := awconfig.SaveWorktreeContextTo(filepath.Join(identityHome, "context"), &awconfig.WorktreeContext{}); err != nil {
-		t.Fatalf("seed principal context: %v", err)
-	}
-	shadow := workspaceBinding(server.URL, teamID, "mallory", "shadow-workspace")
-	if err := awconfig.SaveWorktreeWorkspaceTo(filepath.Join(repo, ".aw", "workspace.yaml"), &shadow); err != nil {
-		t.Fatal(err)
-	}
-	if err := awconfig.SaveTeamState(repo, &awconfig.TeamState{
-		ActiveTeam: teamID,
-		Memberships: []awconfig.TeamMembership{{
-			TeamID:   teamID,
-			Alias:    "mallory",
-			CertPath: awconfig.TeamCertificateRelativePath(teamID),
-		}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	shadowBefore := fileDigestsForTest(t, filepath.Join(repo, ".aw"))
+			if shadowAfter := fileDigestsForTest(t, filepath.Join(repo, ".aw")); !reflect.DeepEqual(shadowAfter, shadowBefore) {
+				t.Fatal("hosted primary invite read or mutated the source instance shadow")
+			}
+			if err := os.RemoveAll(filepath.Join(repo, ".aw")); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Lstat(filepath.Join(repo, ".aw")); !os.IsNotExist(err) {
+				t.Fatalf("hosted primary invite left source instance state: %v", err)
+			}
+			child := filepath.Join(canonicalTmp, "repo-alice")
+			childWorkspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(child, ".aw", "workspace.yaml"))
+			if err != nil {
+				t.Fatalf("load child workspace: %v", err)
+			}
+			if childWorkspace.APIKey != "" {
+				t.Fatalf("hosted invite child should be cert-only, api_key=%q", childWorkspace.APIKey)
+			}
+			if _, err := os.Stat(filepath.Join(child, ".aw", "identity.yaml")); !os.IsNotExist(err) {
+				t.Fatalf("identity.yaml should not exist for local hosted-invite child: %v", err)
+			}
 
-	run := exec.CommandContext(ctx, bin, "--identity-home", identityHome, "workspace", "add-worktree", "frontend")
-	run.Env = testCommandEnv(tmp)
-	run.Stdin = strings.NewReader("")
-	run.Dir = repo
-	out, err := run.CombinedOutput()
-	if err != nil {
-		t.Fatalf("expected success, got error: %v\n%s", err, string(out))
-	}
-	if !createInviteHit.Load() {
-		t.Fatal("expected hosted invite creation")
-	}
-	if workspaceInitHit.Load() {
-		t.Fatal("unexpected workspace init call")
-	}
-	if connectRole != "frontend" {
-		t.Fatalf("connect role=%q, want frontend", connectRole)
-	}
-	if !strings.Contains(string(out), "New agent worktree created at") || !strings.Contains(string(out), "alice") {
-		t.Fatalf("unexpected output:\n%s", string(out))
-	}
-
-	if shadowAfter := fileDigestsForTest(t, filepath.Join(repo, ".aw")); !reflect.DeepEqual(shadowAfter, shadowBefore) {
-		t.Fatal("hosted primary invite read or mutated the source instance shadow")
-	}
-	if err := os.RemoveAll(filepath.Join(repo, ".aw")); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Lstat(filepath.Join(repo, ".aw")); !os.IsNotExist(err) {
-		t.Fatalf("hosted primary invite left source instance state: %v", err)
-	}
-	child := filepath.Join(canonicalTmp, "repo-alice")
-	childWorkspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(child, ".aw", "workspace.yaml"))
-	if err != nil {
-		t.Fatalf("load child workspace: %v", err)
-	}
-	if childWorkspace.APIKey != "" {
-		t.Fatalf("hosted invite child should be cert-only, api_key=%q", childWorkspace.APIKey)
-	}
-	if _, err := os.Stat(filepath.Join(child, ".aw", "identity.yaml")); !os.IsNotExist(err) {
-		t.Fatalf("identity.yaml should not exist for local hosted-invite child: %v", err)
+		})
 	}
 }
 
-func TestAwWorkspaceAddWorktreeExternalIdentityHomeUsesParentAPIKey(t *testing.T) {
+func TestAwWorkspaceAddWorktreeExplicitSetupKeyOverridesSigningWorkspace(t *testing.T) {
 	t.Parallel()
 
 	const origin = "https://github.com/acme/repo.git"
@@ -2225,7 +2371,8 @@ func TestAwWorkspaceAddWorktreeExternalIdentityHomeUsesParentAPIKey(t *testing.T
 	defer cancel()
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if serveAPIKeyCreationTeamRead(w, r, teamID) {
+		if r.URL.Path == "/api/v1/teams/current" {
+			json.NewEncoder(w).Encode(map[string]any{"team_id": "11111111-1111-4111-8111-111111111111", "canonical_team_id": teamID, "api_key_kind": "person"})
 			return
 		}
 		switch r.URL.Path {
@@ -2242,8 +2389,11 @@ func TestAwWorkspaceAddWorktreeExternalIdentityHomeUsesParentAPIKey(t *testing.T
 				"name_prefix": "grace",
 			})
 		case "/api/v1/workspaces/init":
+			if got := r.Header.Get("Authorization"); got != "Bearer aw_sk_person_setup" {
+				t.Errorf("bootstrap key=%q", got)
+			}
 			authHeader := r.Header.Get("Authorization")
-			if authHeader != "Bearer aw_sk_parent_key" {
+			if authHeader != "Bearer aw_sk_person_setup" {
 				t.Fatalf("expected parent API key, got %q", authHeader)
 			}
 			if err := json.NewDecoder(r.Body).Decode(&initBody); err != nil {
@@ -2322,7 +2472,7 @@ func TestAwWorkspaceAddWorktreeExternalIdentityHomeUsesParentAPIKey(t *testing.T
 	}
 
 	run := exec.CommandContext(ctx, bin, "--identity-home", identityHome, "workspace", "add-worktree", "developer")
-	run.Env = testCommandEnv(tmp)
+	run.Env = append(testCommandEnv(tmp), "AWEB_API_KEY=aw_sk_person_setup")
 	run.Stdin = strings.NewReader("")
 	run.Dir = repo
 	out, err := run.CombinedOutput()
@@ -2566,7 +2716,7 @@ updated_at: "2026-04-09T00:00:00Z"
 		saveWorktreeWorkspaceTo = origSave
 	}()
 
-	_, err = migrateLegacyWorkspaceToMultiTeam(tmp, workspacePath)
+	_, err = migrateLegacyWorkspaceToMultiTeamAt(tmp, workspacePath, awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(tmp), Source: awconfig.IdentityHomeDefault})
 	if err == nil || !strings.Contains(err.Error(), "boom") {
 		t.Fatalf("expected workspace save failure, got %v", err)
 	}
@@ -2585,7 +2735,7 @@ updated_at: "2026-04-09T00:00:00Z"
 	}
 }
 
-func TestResolveWorkspaceTeamRegistryURLRejectsEmptyControllerRegistry(t *testing.T) {
+func TestResolveWorkspaceTeamRegistryURLRejectsFailedDiscovery(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -2597,22 +2747,20 @@ func TestResolveWorkspaceTeamRegistryURLRejectsEmptyControllerRegistry(t *testin
 		t.Fatalf("save controller meta: %v", err)
 	}
 
-	// Use a URL that will fail discovery quickly (no server listening).
-	registryURL, err := resolveWorkspaceTeamRegistryURL(t.TempDir(), "http://127.0.0.1:1", "source")
-	if err == nil {
-		t.Fatalf("expected error, got registry_url=%q", registryURL)
-	}
-	if registryURL != "" {
-		t.Fatalf("registry_url=%q", registryURL)
-	}
-	if !strings.Contains(err.Error(), "missing identity registry_url") {
-		t.Fatalf("unexpected error: %v", err)
+	t.Setenv("AWID_REGISTRY_URL", "https://process-default.example")
+	service := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "discovery unavailable", http.StatusServiceUnavailable)
+	}))
+	registryURL, err := resolveWorkspaceTeamRegistryURL(context.Background(), registryAuthorityRequest{WorkingDir: t.TempDir(), AwebURL: service.URL, Domain: "source"})
+	if registryURL != "" || err == nil || !strings.Contains(err.Error(), "discover registry for source") {
+		t.Fatalf("failed discovery must refuse the process default: registry_url=%q err=%v", registryURL, err)
 	}
 }
 
 func TestResolveWorkspaceTeamRegistryURLFallsBackToServiceDiscovery(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("AWID_REGISTRY_URL", "https://process-default.example")
 
 	discoveryServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery" {
@@ -2625,13 +2773,52 @@ func TestResolveWorkspaceTeamRegistryURLFallsBackToServiceDiscovery(t *testing.T
 		http.NotFound(w, r)
 	}))
 
-	// No controller meta, no identity.yaml — discovery is the only source.
-	registryURL, err := resolveWorkspaceTeamRegistryURL(t.TempDir(), discoveryServer.URL, "source")
+	// A team service discovered from the selected workspace precedes the process default.
+	registryURL, err := resolveWorkspaceTeamRegistryURL(context.Background(), registryAuthorityRequest{WorkingDir: t.TempDir(), AwebURL: discoveryServer.URL, Domain: "source"})
 	if err != nil {
 		t.Fatalf("resolveWorkspaceTeamRegistryURL: %v", err)
 	}
 	if registryURL != "https://discovered-registry.example" {
 		t.Fatalf("registry_url=%q, want https://discovered-registry.example", registryURL)
+	}
+}
+
+func TestResolveWorkspaceTeamRegistryURLUsesActorRegistryForRecordedTeam(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AWID_REGISTRY_URL", "https://process-registry.example")
+	const teamID = "backend:team.example"
+	const actorRegistry = "https://actor-registry.example"
+	actor := t.TempDir()
+	writeIdentityForTest(t, actor, awconfig.WorktreeIdentity{
+		DID:           "did:key:z6MkMember",
+		Address:       "identity.example/alice",
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		RegistryURL:   actorRegistry,
+	})
+	for _, tc := range []struct {
+		name       string
+		storedTeam string
+		want       string
+	}{
+		{name: "selected team", storedTeam: teamID, want: actorRegistry},
+		{name: "other team in same namespace", storedTeam: "other:team.example", want: "https://process-registry.example"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			writeTeamStateForTest(t, actor, awconfig.TeamState{
+				ActiveTeam: tc.storedTeam,
+				Memberships: []awconfig.TeamMembership{{
+					TeamID:   tc.storedTeam,
+					CertPath: awconfig.TeamCertificateRelativePath(tc.storedTeam),
+				}},
+			})
+			registryURL, err := resolveWorkspaceTeamRegistryURL(context.Background(), registryAuthorityRequest{
+				WorkingDir: t.TempDir(), IdentityHome: awconfig.WorktreeIdentityHome(actor), Domain: "team.example", TeamID: teamID,
+			})
+			if err != nil || registryURL != tc.want {
+				t.Fatalf("registry_url=%q, want %q: %v", registryURL, tc.want, err)
+			}
+		})
 	}
 }
 
@@ -2657,7 +2844,7 @@ func TestResolveWorkspaceTeamRegistryURLPrefersControllerRegistryOverIdentity(t 
 		t.Fatalf("save controller meta: %v", err)
 	}
 
-	registryURL, err := resolveWorkspaceTeamRegistryURL(workingDir, "https://app.aweb.ai", "source")
+	registryURL, err := resolveWorkspaceTeamRegistryURL(context.Background(), registryAuthorityRequest{WorkingDir: workingDir, AwebURL: "https://app.aweb.ai", Domain: "source"})
 	if err != nil {
 		t.Fatalf("resolveWorkspaceTeamRegistryURL: %v", err)
 	}

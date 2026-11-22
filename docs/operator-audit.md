@@ -77,6 +77,7 @@ row; an audit insert failure cannot count as a successful audited operation.
 | POST /v1/instructions/{id}/activate | instructions.activate | instructions:&lt;version_uuid&gt; |
 | POST /v1/instructions/reset | instructions.reset | instructions:&lt;team_id&gt; |
 | DELETE /v1/repos/{id} | repos.delete | repo:&lt;repo_uuid&gt; |
+| POST /v1/reservations/revoke | reservations.revoke | reservations:&lt;team_id&gt; |
 | POST /v1/apps/install | apps.install | app:&lt;app_id&gt; |
 
 Invalid UUID route values use the fixed `roles:invalid`, `instructions:invalid`

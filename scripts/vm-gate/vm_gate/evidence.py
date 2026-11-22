@@ -2,9 +2,11 @@
 
 import json
 import re
-from pathlib import Path, PurePosixPath
 import tarfile
+from pathlib import Path, PurePosixPath
+
 from .errors import Infrastructure
+from .memory import load_samples, summarize_samples
 
 
 def collect_archive(archive, sha, destination):
@@ -72,7 +74,7 @@ def collect_archive(archive, sha, destination):
         for stage, log in re.findall(
             r"^gate: tree [0-9a-f]{40} already passed ([a-z-]+); original log (.+)$",
             output.read_text(errors="replace"),
-            re.M,
+            re.MULTILINE,
         ):
             stages.append(
                 {
@@ -85,29 +87,14 @@ def collect_archive(archive, sha, destination):
     memory_path = destination / "var/log/vm-gate/memory.jsonl"
     memory = None
     if memory_path.exists():
-        samples = [
-            json.loads(line) for line in memory_path.read_text().splitlines() if line
-        ]
-        valid = [s for s in samples if "meminfo_kib" in s and not s.get("sample_error")]
-        if valid:
-            memory = {
-                "samples": len(samples),
-                "valid": len(valid),
-                "host_sample_errors": sum("sample_error" in s for s in samples),
-                "container_read_errors": sum(
-                    len(s.get("container_errors", [])) for s in samples
-                ),
-                "host_sampled_used_peak_bytes": max(
-                    (s["meminfo_kib"]["MemTotal"] - s["meminfo_kib"]["MemAvailable"])
-                    * 1024
-                    for s in valid
-                ),
-                "concurrent_cgroup_current_peak_sum_bytes": max(
-                    sum(int(c["memory.current"]) for c in s.get("containers", []))
-                    for s in valid
-                ),
-            }
+        samples = load_samples(memory_path)
+        memory = summarize_samples(samples)
+    supervision_path = destination / "var/log/vm-gate/supervisor-receipt.json"
+    supervision = (
+        json.loads(supervision_path.read_text()) if supervision_path.exists() else None
+    )
     return {
+        "supervision": supervision,
         "stages": stages,
         "targets": targets,
         "gate_summaries": summaries,

@@ -11,6 +11,20 @@ import (
 	"testing"
 )
 
+func TestCustodyProofCanonicalRetainsReleasedBytes(t *testing.T) {
+	proof, err := custodyProofCanonical(&PlainMessageSignRequest{
+		Version: 1, Operation: "sign_plain_message", GrantID: "g", SessionDIDKey: "s", TeamID: "t",
+		SubjectDIDKey: "k", Audience: "a", Nonce: "a\u2028b", Timestamp: "2026-11-19T00:00:00Z", RequestDigest: "sha256:d",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const expected = `{"aud":"a","grant_id":"g","nonce":"a\u2028b","op":"sign_plain_message","request_digest":"sha256:d","session_did_key":"s","subject_did_aw":"","subject_did_key":"k","team_id":"t","timestamp":"2026-11-19T00:00:00Z","v":1}`
+	if proof != expected {
+		t.Fatalf("custody proof bytes = %q, want %q", proof, expected)
+	}
+}
+
 // The custody request digest and proof are computed by the worker and
 // recomputed by the resident custody service, two aw processes that can be
 // different builds. These digests were computed at commit 8e8d008c8.

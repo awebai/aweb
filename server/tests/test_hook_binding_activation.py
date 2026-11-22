@@ -33,7 +33,7 @@ from aweb.hook_bindings import (
 from aweb.service_errors import ConflictError, ForbiddenError, NotFoundError
 from aweb_naapp.hooks.owner_act import PREFIX
 from aweb_naapp.hooks.strictjson import canonical
-from aweb.team_key_pins import TeamKeyUnverified, pinned_team_key
+from aweb.team_key_pins import TeamKeyUnverified
 from awid.did import did_from_public_key
 from awid.ratelimit import MemoryFixedWindowRateLimiter
 from awid.registry import RegistryClient
@@ -148,11 +148,6 @@ async def env(aweb_cloud_db, shared_test_pool, monkeypatch):
                 service_token=service_token,
             )
 
-            async def pin_team_key(team_id: str, served_key: str) -> str:
-                return await pinned_team_key(
-                    db=db, registry_client=registry, txt_resolver=dns, team_id=team_id, served_key=served_key,
-                )
-
             try:
                 yield type("Env", (), {
                     "db": db,
@@ -162,7 +157,7 @@ async def env(aweb_cloud_db, shared_test_pool, monkeypatch):
                     "namespace_key": namespace_key,
                     "owner": Owner(team_key),
                     "verifier": core_owner_act_verifier(
-                        audience=AUDIENCE, registry_client=registry, pin_team_key=pin_team_key,
+                        audience=AUDIENCE, db=db, registry_client=registry, txt_resolver=dns,
                     ),
                 })
             finally:

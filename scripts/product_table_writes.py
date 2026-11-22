@@ -13,7 +13,7 @@ import re
 import subprocess
 import sys
 import tokenize
-from typing import Iterator, Literal, TypedDict
+from typing import Iterator, Literal, NotRequired, TypedDict
 
 CEILINGS = "tools/product-table-write-ceilings.json"
 METHODS = frozenset(
@@ -39,6 +39,7 @@ TOKEN = re.compile(
 )
 IDENTIFIER = re.compile(r"[A-Za-z_]\w*\Z")
 MARKER = "unreachable-state:"
+NONLITERAL_MARKER = "nonliteral-call:"
 
 
 class ScanError(Exception):
@@ -64,6 +65,14 @@ class TableCounts(Counts):
     candidate_namespaces: list[str]
 
 
+class UnresolvedCall(TypedDict):
+    file: str
+    line: int
+    method: str
+    operation: NotRequired[str]
+    reason: NotRequired[str]
+
+
 @dataclass
 class Report:
     source_sha: str
@@ -75,8 +84,10 @@ class Report:
     by_table: dict[str, TableCounts]
     writes: list[Write]
     excluded: list[dict[str, object]]
-    unresolved_calls: list[dict[str, object]]
+    unresolved_calls: list[UnresolvedCall]
     nonliteral_by_file: dict[str, int]
+    marked_nonliteral_by_file: dict[str, int]
+    markers_by_file: dict[str, int]
     schema_version: int = 1
     scope: str = "Python test/helper ASTs; execute/fetch literal SQL INSERT/UPDATE/DELETE statement sites"
 
@@ -283,7 +294,7 @@ def literal(
 
 def scan_file(
     root: Path, path: Path, tables: dict[str, set[str]]
-) -> tuple[list[Write], list[dict[str, object]], list[dict[str, object]]]:
+) -> tuple[list[Write], list[dict[str, object]], list[UnresolvedCall], int]:
     source = (root / path).read_text()
     tree = ast.parse(source, filename=path.as_posix())
     parents = {
@@ -292,12 +303,23 @@ def scan_file(
         for child in ast.iter_child_nodes(parent)
     }
     lines = source.splitlines()
-    comments = {
-        t.start[0]: t.string[1:].strip()
-        for t in tokenize.generate_tokens(io.StringIO(source).readline)
-        if t.type == tokenize.COMMENT
-        and not lines[t.start[0] - 1][: t.start[1]].strip()
-    }
+    comments: dict[int, str] = {}
+    nonliteral_markers: dict[int, str] = {}
+    for token in tokenize.generate_tokens(io.StringIO(source).readline):
+        if token.type != tokenize.COMMENT:
+            continue
+        line, column = token.start
+        comment = token.string[1:].strip()
+        inline = bool(lines[line - 1][:column].strip())
+        if not inline:
+            comments[line] = comment
+        if comment.startswith(NONLITERAL_MARKER):
+            explanation = comment[len(NONLITERAL_MARKER) :].strip()
+            if not explanation:
+                raise ScanError(f"{path}:{line}: empty nonliteral-call marker")
+            if not inline:
+                raise ScanError(f"{path}:{line}: nonliteral-call marker must be inline")
+            nonliteral_markers[line] = explanation
     scopes = {
         node: bindings(node)
         for node in ast.walk(tree)
@@ -305,8 +327,9 @@ def scan_file(
     }
     writes: list[Write] = []
     excluded: list[dict[str, object]] = []
-    unresolved: list[dict[str, object]] = []
+    unresolved: list[UnresolvedCall] = []
     marked_statements: set[int] = set()
+    marked_nonliteral_lines: set[int] = set()
     for call in ast.walk(tree):
         if (
             not isinstance(call, ast.Call)
@@ -363,9 +386,17 @@ def scan_file(
                     names = scopes[tree] | names
         sql = literal(expression, names)
         if sql is None:
-            unresolved.append(
-                {"file": path.as_posix(), "line": call.lineno, "method": call.func.attr}
+            row = UnresolvedCall(
+                file=path.as_posix(), line=call.lineno, method=call.func.attr
             )
+            if call.lineno in nonliteral_markers:
+                if call.lineno in marked_nonliteral_lines:
+                    raise ScanError(
+                        f"{path}:{call.lineno}: a nonliteral-call marker must identify one unresolved call"
+                    )
+                marked_nonliteral_lines.add(call.lineno)
+                row["reason"] = nonliteral_markers[call.lineno]
+            unresolved.append(row)
             continue
         targets = list(write_targets(sql))
         if not targets:
@@ -381,6 +412,10 @@ def scan_file(
             if line in marked_statements:
                 raise ScanError(
                     f"{path}:{line}: one marker covers multiple write calls; put each call and its specific marker on a separate statement"
+                )
+            if sum(name in tables for _, _, name in targets) > 1:
+                raise ScanError(
+                    f"{path}:{line}: one marker covers multiple product writes; use a separate marked call for each write"
                 )
             marked_statements.add(line)
         for operation, qualified, name in targets:
@@ -414,7 +449,17 @@ def scan_file(
                     reason,
                 )
             )
-    return writes, excluded, unresolved
+    unused_markers = nonliteral_markers.keys() - marked_nonliteral_lines
+    if unused_markers:
+        raise ScanError(
+            f"{path}:{min(unused_markers)}: a nonliteral-call marker must identify one unresolved call"
+        )
+    return (
+        writes,
+        excluded,
+        unresolved,
+        sum(c.startswith(MARKER) for c in comments.values()),
+    )
 
 
 def scan(root: Path) -> Report:
@@ -430,10 +475,13 @@ def scan(root: Path) -> Report:
     tables = inventory(root, paths)
     writes: list[Write] = []
     excluded: list[dict[str, object]] = []
-    unresolved: list[dict[str, object]] = []
+    unresolved: list[UnresolvedCall] = []
     files = [path for path in paths if test_file(path)]
+    markers_by_file: dict[str, int] = {}
     for path in files:
-        found, other, dynamic = scan_file(root, path, tables)
+        found, other, dynamic, marker_count = scan_file(root, path, tables)
+        if marker_count:
+            markers_by_file[path.as_posix()] = marker_count
         writes.extend(found)
         excluded.extend(other)
         unresolved.extend(dynamic)
@@ -465,8 +513,18 @@ def scan(root: Path) -> Report:
         excluded=excluded,
         unresolved_calls=unresolved,
         nonliteral_by_file=dict(
-            sorted(Counter(str(row["file"]) for row in unresolved).items())
+            sorted(
+                Counter(
+                    row["file"] for row in unresolved if "reason" not in row
+                ).items()
+            )
         ),
+        marked_nonliteral_by_file=dict(
+            sorted(
+                Counter(row["file"] for row in unresolved if "reason" in row).items()
+            )
+        ),
+        markers_by_file=markers_by_file,
     )
 
 
@@ -474,26 +532,30 @@ class Budget(TypedDict):
     files: dict[str, int]
     marked_files: dict[str, int]
     nonliteral_files: dict[str, int]
+    marked_nonliteral_files: dict[str, int]
 
 
 def ceilings(raw: str) -> Budget:
     value = json.loads(raw)
+    required = {"schema_version", "files", "nonliteral_files"}
+    optional = {"marked_files", "marked_nonliteral_files"}
     if (
         not isinstance(value, dict)
-        or set(value)
-        not in (
-            {"schema_version", "files", "nonliteral_files"},
-            {"schema_version", "files", "marked_files", "nonliteral_files"},
-        )
+        or not required <= value.keys() <= required | optional
         or type(value["schema_version"]) is not int
         or value["schema_version"] != 1
     ):
         raise ScanError(
             "invalid product-write ceiling shape; restore the reviewed manifest"
         )
-    # Existing manifests predate the marked budget; absence grants zero.
-    value.setdefault("marked_files", {})
-    for group in ("files", "marked_files", "nonliteral_files"):
+    # Existing manifests predate the marked budgets; absence grants zero.
+    for group in (
+        "files",
+        "marked_files",
+        "nonliteral_files",
+        "marked_nonliteral_files",
+    ):
+        value.setdefault(group, {})
         if not isinstance(value[group], dict):
             raise ScanError(f"{group} ceilings must map files to positive counts")
         for file, count in value[group].items():
@@ -512,6 +574,7 @@ def ceilings(raw: str) -> Budget:
         files=value["files"],
         marked_files=value["marked_files"],
         nonliteral_files=value["nonliteral_files"],
+        marked_nonliteral_files=value["marked_nonliteral_files"],
     )
 
 
@@ -527,22 +590,45 @@ def violations(root: Path, report: Report) -> list[str]:
         else None
     )
     errors: list[str] = []
+    reviewed_marked = reviewed["marked_files"] if reviewed is not None else {}
+    for file, count in sorted(candidate["marked_files"].items()):
+        previous = reviewed_marked.get(file, 0)
+        if count <= previous:
+            continue
+        if "migration" not in Path(file).name:
+            errors.append(
+                f"{file}: a marked writes ceiling increase above reviewed {previous} requires a filename containing 'migration'"
+            )
+        markers = report.markers_by_file.get(file, 0)
+        if count != markers:
+            errors.append(
+                f"{file}: marked writes ceiling {count} must match {markers} unreachable-state markers for a raise above reviewed {previous}"
+            )
     actual_writes = Counter(w.file for w in report.writes if w.reason is None)
     actual_marked = Counter(w.file for w in report.writes if w.reason is not None)
     groups: tuple[
         tuple[
-            Literal["files", "marked_files", "nonliteral_files"], str, dict[str, int]
+            Literal[
+                "files", "marked_files", "nonliteral_files", "marked_nonliteral_files"
+            ],
+            str,
+            dict[str, int],
         ],
         ...,
     ] = (
         ("files", "unmarked writes", dict(actual_writes)),
         ("marked_files", "marked writes", dict(actual_marked)),
         ("nonliteral_files", "nonliteral calls", report.nonliteral_by_file),
+        (
+            "marked_nonliteral_files",
+            "marked nonliteral calls",
+            report.marked_nonliteral_by_file,
+        ),
     )
     for key, label, actual in groups:
         limits = candidate[key]
-        if reviewed is not None or key == "marked_files":
-            reviewed_limits = reviewed[key] if reviewed is not None else {}
+        if reviewed is not None and key in ("files", "nonliteral_files"):
+            reviewed_limits = reviewed[key]
             errors.extend(
                 f"{file}: {label} ceiling {count} > reviewed {reviewed_limits.get(file, 0)}"
                 for file, count in limits.items()
@@ -606,14 +692,17 @@ def main() -> int:
                     f"non-product target {excluded['file']}:{excluded['line']}: {excluded['table']}"
                 )
             for unresolved in report.unresolved_calls:
+                reason = unresolved.get("reason")
+                label = "marked nonliteral call" if reason else "nonliteral call"
+                detail = f": {reason}" if reason else ""
                 print(
-                    f"nonliteral call {unresolved['file']}:{unresolved['line']}: {unresolved['method']}"
+                    f"{label} {unresolved['file']}:{unresolved['line']}: {unresolved['method']}{detail}"
                 )
             for error in errors:
                 print(error)
             if errors:
                 print(
-                    "Build test state through the product/shared builders; document specific unreachable states without raising reviewed allowances, and lower cleared ceilings."
+                    "Build test state through the product/shared builders. For unreachable states, declare the exact marked count and put one specific marker above each write. Lower cleared ceilings."
                 )
         return int(bool(errors))
     except (

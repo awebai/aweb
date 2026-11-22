@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from awid.id_certificates import IDCertificateError, decode_id_chain_header, verify_id_chain
+from awid.registry import MalformedIDStatusError
 from fastapi import HTTPException, Request
 
 from aweb_naapp.runtime.team_auth import Principal
@@ -67,8 +68,9 @@ def requester_parent(registry: Any) -> RequesterParent:
     ``registry`` is the runtime's registry client; its ``id_chain_evidence``
     serves status evidence no older than 60 seconds or refreshes it. Returns
     None when the chain is absent, invalid, or the signer is not an agent
-    whose own certificate's issuer is a human. Evidence that cannot be read
-    refuses ``503 principal_status_unavailable``; nothing falls back.
+    whose own certificate's issuer is a human. An unreadable status refuses
+    ``503 principal_status_unavailable``. A malformed status refuses
+    ``422 registry_response_unusable``.
     """
 
     async def parent(request: Request, signer: Principal) -> RequesterEvidence | None:
@@ -87,7 +89,10 @@ def requester_parent(registry: Any) -> RequesterParent:
         if not isinstance(domain, str):
             return None
         started = time.monotonic_ns()
-        evidence = await registry.id_chain_evidence(bundle, subject, domain=domain)
+        try:
+            evidence = await registry.id_chain_evidence(bundle, subject, domain=domain)
+        except MalformedIDStatusError as exc:
+            raise HTTPException(422, "registry_response_unusable") from exc
         result = verify_id_chain(bundle, subject=subject, evidence=evidence, domain=domain)
         if result.get("outcome") == "unavailable":
             raise HTTPException(503, "principal_status_unavailable")
