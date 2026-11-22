@@ -11,6 +11,8 @@ from awid.did import stable_id_from_did_key
 from awid.signing import canonical_json_bytes, sign_message
 from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
 
+__all__ = ["privacy_app"]
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('family', ['certificate', 'identity-local', 'identity-global'])

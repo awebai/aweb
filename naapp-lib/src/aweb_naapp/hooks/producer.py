@@ -32,8 +32,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Literal, Protocol
 from uuid import UUID
 
-from awid.did import did_from_public_key
-from nacl.signing import SigningKey
+from awid.did import did_key_from_signing_key
 from pgdbm.core import TransactionManager
 
 from aweb_naapp.hooks.catalog import Catalog, packaged_catalog
@@ -151,7 +150,7 @@ class ServerProducer:
 
     @property
     def did_key(self) -> str:
-        return did_from_public_key(bytes(SigningKey(self.seed).verify_key))
+        return did_key_from_signing_key(self.seed)
 
     @property
     def name(self) -> str:

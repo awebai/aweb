@@ -19,7 +19,6 @@ from pydantic_settings import (
     SettingsConfigDict,
 )
 
-from aweb_naapp.egress import EgressRefused, operator_origin
 from aweb_naapp.outbox import MAX_CALL_TIMEOUT_SECONDS
 from aweb_naapp.runtime.team_auth import (
     MAX_TEAM_FACTS_TTL_SECONDS,
@@ -105,9 +104,7 @@ class NaappSettings(BaseSettings):
     did_aw_profile: DidAwProfile = DidAwProfile.REQUIRE
     # Staged team-key pin enforcement, one name for every naapp and the aweb
     # server: OFF logs team_key_pin_mismatch and serves the registry's key.
-    enforce_team_key_pins: bool = Field(
-        default=False, validation_alias="AWEB_ENFORCE_TEAM_KEY_PINS"
-    )
+    enforce_team_key_pins: bool = Field(default=False, validation_alias="AWEB_ENFORCE_TEAM_KEY_PINS")
     db_pool_min_connections: int = Field(default=1, ge=1)
     db_pool_max_connections: int = Field(default=5, ge=1)
     db_statement_cache_size: int = Field(default=0, ge=0)
@@ -120,11 +117,6 @@ class NaappSettings(BaseSettings):
         default=None, repr=False, validation_alias="AWEB_PAGE_DELETION_DATABASE_URL"
     )
     app_events_origin: str | None = None
-    # The operator's own coordination servers, as exact origins (https, or
-    # http on a loopback host). A team whose signed server record names one of
-    # them is reached directly; every other team server only through the
-    # egress guard. Empty in production.
-    team_server_internal_origins: frozenset[str] = frozenset()
     # Key files by kid; which purposes a kid signs is the manifest's to declare.
     app_key_files: dict[str, Path] = Field(default_factory=dict)
     app_emit_kid: str | None = None
@@ -151,25 +143,6 @@ class NaappSettings(BaseSettings):
             prefix = cls.model_config.get("env_prefix", "")
             raise ValueError(f"{prefix}AWID_SERVICE_TOKEN must contain at least 32 bytes")
         return token
-
-    @field_validator("team_server_internal_origins", mode="before")
-    @classmethod
-    def canonical_team_server_origins(cls, value: object) -> frozenset[str]:
-        prefix = cls.model_config.get("env_prefix", "")
-        if not isinstance(value, (list, tuple, set, frozenset)) or not all(
-            isinstance(entry, str) for entry in value
-        ):
-            raise ValueError(f"{prefix}TEAM_SERVER_INTERNAL_ORIGINS must list origins")
-        origins = set()
-        for entry in value:
-            try:
-                origins.add(operator_origin(entry))
-            except EgressRefused as refused:
-                raise ValueError(
-                    f"{prefix}TEAM_SERVER_INTERNAL_ORIGINS entry {entry!r} is not an https "
-                    f"origin, or an http origin on 127.0.0.1, [::1] or localhost: {refused}"
-                ) from None
-        return frozenset(origins)
 
     @model_validator(mode="after")
     def validate_db_pool(self) -> Self:

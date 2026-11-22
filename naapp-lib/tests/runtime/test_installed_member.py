@@ -65,7 +65,6 @@ def _runtime(tmp_path: Path, coordination: Coordination, database_url: str) -> N
             app_key_files={"grant-read": key},
             awid_registry_url=REGISTRY_URL,
             awid_service_token=SERVICE_TOKEN,
-            team_server_internal_origins=[coordination.server.url],
         ),
         module_name="example",
         migrations_path=migrations,

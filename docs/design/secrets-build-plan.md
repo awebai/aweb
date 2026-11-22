@@ -573,7 +573,7 @@ Paths below abbreviate `naapp-lib/src/aweb_naapp/` as `aweb_naapp/` and
 | aweb-acgh.18.43 | B3: governance lifecycle mapping | Built |
 | aweb-acgh.18.44 | B3: caller-transaction current-approver prepare | Built |
 | aweb-acgh.18.45 | B3: caller-transaction fence `prepare`/`check` | Built |
-| aweb-acgh.18.46 | B3: `PasskeyEffectFence` on `change_contact` and `cancel_pending_contact` | In flight: the `fence` parameter is on both in `aweb_naapp/runtime/passkeys/service.py`; no root caller passes it |
+| aweb-acgh.18.46 | B3: `PasskeyEffectFence` on `change_contact` and `cancel_pending_contact` | Closed: both methods had no product caller and were removed from `aweb_naapp/runtime/passkeys/service.py` |
 | aweb-acgh.18.47 | S3: once-linked continuation for the §11.4 repeat | Built: `aweb_naapp/dispatch/migrations/002_continuations.sql`; its secrets caller is S13 |
 | aweb-acgh.18.48 | Containment: remove one member from a role | Built |
 | aweb-acgh.18.49 | Shared chrome without Berkeley Mono; toolkit tokens | Built |

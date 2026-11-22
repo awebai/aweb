@@ -133,7 +133,7 @@ func TestAPIKeyLocalCreationRetainsKeyRequestAndSelectedTeam(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	state, err := loadAPIKeyPartialInit(apiKeyPartialInitPath(root, req.IdentityHome))
+	state, err := loadAPIKeyPartialInit(apiKeyPartialInitPath(awconfig.IdentityHome{Root: req.IdentityHome}))
 	if err != nil || state == nil || state.IDTree == nil {
 		t.Fatalf("local creation lacks durable recovery: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestAPIKeyLocalCreationRetainsKeyRequestAndSelectedTeam(t *testing.T) {
 	if _, err := prepareAPIKeyBootstrapIdentity(changed, "", nil); err == nil {
 		t.Fatal("changed team/parent reused the original operation")
 	}
-	after, err := loadAPIKeyPartialInit(apiKeyPartialInitPath(root, req.IdentityHome))
+	after, err := loadAPIKeyPartialInit(apiKeyPartialInitPath(awconfig.IdentityHome{Root: req.IdentityHome}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +165,7 @@ func TestAPIKeyCreationCannotReplaceAnActiveOperationsRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	home := filepath.Join(root, ".aw")
-	lock, err := awconfig.TryLockExclusive(apiKeyPartialInitPath(root, home) + ".lock")
+	lock, err := awconfig.TryLockExclusive(apiKeyPartialInitPath(awconfig.IdentityHome{Root: home}) + ".lock")
 	if err != nil {
 		t.Fatal(err)
 	}

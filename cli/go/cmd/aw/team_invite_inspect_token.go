@@ -30,9 +30,9 @@ func unsupportedInspectToken() *inviteInspectError {
 	return &inviteInspectError{"unsupported_version", "Invite token version is not supported by this CLI.", 1}
 }
 
-// Unlike acceptance's stdin reader, inspection must distinguish an unsupported
-// envelope version from malformed input. Keep acceptance behavior unchanged.
-func readInspectToken(reader io.Reader) (string, error) {
+// Inspection distinguishes unsupported envelope versions from malformed input
+// without retaining decoder errors that may contain the presented capability.
+func readInspectToken(reader io.Reader) (string, *inviteInspectError) {
 	data, err := io.ReadAll(io.LimitReader(reader, inviteTokenStdinLimit+1))
 	if err != nil {
 		return "", &inviteInspectError{"malformed_token", "Cannot read invite token from stdin.", 2}
@@ -55,7 +55,7 @@ func readInspectToken(reader io.Reader) (string, error) {
 var inspectVersionPrefix = regexp.MustCompile(`^aw_inv_v[0-9]+_`)
 var inspectInnerToken = regexp.MustCompile(`^aw_inv_[A-Za-z0-9_-]+$`)
 
-func decodeInspectHostedEnvelope(token string) (hostedJoinTokenEnvelope, error) {
+func decodeInspectHostedEnvelope(token string) (hostedJoinTokenEnvelope, *inviteInspectError) {
 	var envelope hostedJoinTokenEnvelope
 	// A legacy random token can start with v1_. It contains no server URL,
 	// and inspect must not discover a destination from principal state.
@@ -78,10 +78,11 @@ func decodeInspectHostedEnvelope(token string) (hostedJoinTokenEnvelope, error) 
 	if len(envelope.InnerToken) > 256 || !inspectInnerToken.MatchString(envelope.InnerToken) {
 		return hostedJoinTokenEnvelope{}, malformedInspectToken()
 	}
-	envelope.AwebURL, err = inspectServiceURL(envelope.AwebURL)
-	if err != nil {
-		return hostedJoinTokenEnvelope{}, err
+	serviceURL, refusal := inspectServiceURL(envelope.AwebURL)
+	if refusal != nil {
+		return hostedJoinTokenEnvelope{}, refusal
 	}
+	envelope.AwebURL = serviceURL
 	if strings.Contains(envelope.AwebURL, envelope.InnerToken) || strings.Contains(envelope.AwebURL, strings.TrimPrefix(envelope.InnerToken, "aw_inv_")) {
 		return hostedJoinTokenEnvelope{}, malformedInspectToken()
 	}
@@ -90,7 +91,7 @@ func decodeInspectHostedEnvelope(token string) (hostedJoinTokenEnvelope, error) 
 
 // Reject URL credentials instead of silently sending them. No caller may expose
 // the original URL or an underlying parser error in output or trace.
-func inspectServiceURL(raw string) (string, error) {
+func inspectServiceURL(raw string) (string, *inviteInspectError) {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Opaque != "" {
 		return "", malformedInspectToken()
@@ -102,16 +103,17 @@ func inspectServiceURL(raw string) (string, error) {
 	return normalized, nil
 }
 
-func decodeInspectControllerToken(token string) (*awconfig.TeamInviteToken, error) {
+func decodeInspectControllerToken(token string) (*awconfig.TeamInviteToken, *inviteInspectError) {
 	decoded, err := awconfig.DecodeInviteToken(token)
 	if err != nil {
 		return nil, malformedInspectToken()
 	}
 	if decoded.AwebURL != "" {
-		decoded.AwebURL, err = inspectServiceURL(decoded.AwebURL)
-		if err != nil {
-			return nil, err
+		serviceURL, refusal := inspectServiceURL(decoded.AwebURL)
+		if refusal != nil {
+			return nil, refusal
 		}
+		decoded.AwebURL = serviceURL
 	}
 	return decoded, nil
 }

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
@@ -39,7 +40,7 @@ func TestHostedInviteOwnChainSeparatesMembershipFromParentage(t *testing.T) {
 			if scope == "global" {
 				material.StableID = v.Keys[name].DIDAW
 			}
-			state, err := prepareHostedInviteCreation(context.Background(), nil, "aw_inv_independent", server.URL, "child", "", false, material)
+			state, err := prepareHostedInviteCreation(context.Background(), nil, "aw_inv_independent", server.URL, "child", "", false, material, false, true, "", "")
 			if err != nil {
 				t.Fatalf("own chain rejected by invite issuer: %v", err)
 			}
@@ -71,7 +72,7 @@ func TestHostedAcceptReusesAnUnjoinedKeyAndChain(t *testing.T) {
 	if !got.Equal(key) {
 		t.Fatal("replaced prepared identity key")
 	}
-	if _, err := os.Stat(hostedAcceptPendingMarkerPath(wd, home)); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(home, acceptanceKeyMarkerName)); !os.IsNotExist(err) {
 		t.Fatalf("membership-only join manufactured pending creation: %v", err)
 	}
 }
@@ -84,7 +85,7 @@ func TestOtherHumanInviteWithoutAChainNamesOwnParentExchange(t *testing.T) {
 	}))
 	defer server.Close()
 	material := workspaceTeamIdentityMaterial{SigningKey: key, DIDKey: awid.ComputeDIDKey(key.Public().(ed25519.PublicKey)), IdentityScope: "local"}
-	state, err := prepareHostedInviteCreation(context.Background(), nil, "aw_inv_other", server.URL, "child", "", false, material)
+	state, err := prepareHostedInviteCreation(context.Background(), nil, "aw_inv_other", server.URL, "child", "", false, material, false, false, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +148,7 @@ func TestLocalInviteConditionPrecedesMembershipEffect(t *testing.T) {
 				human = v.Keys["bob"].DIDAW
 			}
 			id, _ := awid.GenerateUUID4()
-			invite := &awconfig.TeamInvite{InviteID: id, Domain: "example.com", TeamName: "backend", Secret: "fixture", RegistryURL: origin, ForHuman: &human}
+			invite := &awconfig.TeamInvite{InviteID: id, Domain: "example.com", TeamName: "backend", Secret: "fixture", RegistryURL: origin, ForHuman: &human, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}
 			if err := awconfig.SaveTeamInvite(invite); err != nil {
 				t.Fatal(err)
 			}
@@ -155,7 +156,11 @@ func TestLocalInviteConditionPrecedesMembershipEffect(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			accepted, err := acceptTeamInviteWithDetails(wd, token, teamAcceptInviteOptions{IdentityHome: home, Name: "child", Scope: "local"})
+			accepted, err := acceptTeamInviteWithDetails(teamInviteAcceptanceRequest{
+				WorkingDir: wd,
+				Token:      token,
+				Options:    teamAcceptInviteOptions{IdentityHome: home, Name: "child", Scope: "local"},
+			})
 			certPath, _ := awconfig.TeamCertificatePathFromIdentityHome(home, "backend:example.com")
 			if scenario == "current human" {
 				if err != nil || accepted == nil || registrations != 1 {
@@ -225,20 +230,24 @@ func TestLocalInviteStoresTheVerifiedDefaultOrExplicitCondition(t *testing.T) {
 			origin := strings.Replace(registry.URL, "127.0.0.1", "registry.example", 1)
 			t.Setenv("AWID_REGISTRY_URL", origin)
 			serveRosterTXT(t, idCreateDNSRecordValue(v.Keys["root"].DIDKey, origin))
-			_, key, _ := awid.GenerateKeypair()
+			_, key, err := awid.GenerateKeypair()
+			if err != nil {
+				t.Fatal(err)
+			}
 			if err := awconfig.SaveTeamKey("example.com", "backend", key); err != nil {
 				t.Fatal(err)
 			}
-			var requested []string
+			var requested *string
 			want := v.Keys["alice"].DIDAW
 			if scenario == "explicit other" {
 				want = v.Keys["bob"].DIDAW
-				requested = []string{want}
+				requested = &want
 			}
 			if scenario == "explicit same" {
-				requested = []string{want}
+				requested = &want
 			}
-			id, token, err := createTeamInviteTokenAt("example.com", "backend", origin, "https://service.example", true, "", wd, filepath.Join(wd, ".aw"), requested...)
+			created, err := mintPlannedTeamInvite(teamInviteMintRequest{Plan: teamInvitePlan{Kind: inviteAuthorityController, Source: teamInviteSource{WorkingDir: wd, Home: awconfig.IdentityHome{Root: filepath.Join(wd, ".aw"), Source: awconfig.IdentityHomeFlag}, Domain: "example.com", Team: "backend", RegistryURL: origin, AwebURL: "https://service.example"}}, Scope: inviteMemberLocal, ForHuman: requested})
+			id, token := created.InviteID, created.Token
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -298,15 +307,15 @@ func TestInitIndependentInviteFlagsKeepOutcomesSeparate(t *testing.T) {
 	})
 	initInvite, initParent, initJoinFrom, initAdmissionTeamID, initWorkspaceTeam, initNewAccount, initNewTeam = "aw_inv_selected", "/creator", "", "", false, false, false
 	activeIdentityHome = awconfig.IdentityHome{}
-	if err := validateInitOutcomeFlags(); err != nil {
+	if err := validateInitOutcomeFlags(initInviteInput{}); err != nil {
 		t.Fatal(err)
 	}
 	initJoinFrom = "/other"
-	if err := validateInitOutcomeFlags(); err == nil {
+	if err := validateInitOutcomeFlags(initInviteInput{}); err == nil {
 		t.Fatal("two membership sources accepted")
 	}
 	initJoinFrom, initInvite = "", ""
-	if err := validateInitOutcomeFlags(); err == nil {
+	if err := validateInitOutcomeFlags(initInviteInput{}); err == nil {
 		t.Fatal("parent accepted without invite")
 	}
 }

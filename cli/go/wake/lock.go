@@ -87,17 +87,41 @@ func (l *Lock) Release() error {
 
 // LockOwner reports whether a process holds the lock, and the pid it
 // recorded.
-func LockOwner(path string) (int, bool) {
+func LockOwner(path string) (int, bool, error) {
 	probe, err := awconfig.TryLockExistingExclusive(path)
 	if err == nil {
-		_ = probe.Close()
-		return 0, false
+		return 0, false, probe.Close()
+	}
+	if os.IsNotExist(err) {
+		return 0, false, nil
 	}
 	if !errors.Is(err, awconfig.ErrLockUnavailable) {
-		return 0, false
+		return 0, false, fmt.Errorf("wake: inspect daemon lock: %w", err)
 	}
-	pid, _ := readPID(lockPIDPath(path))
-	return pid, true
+	pid, recorded := readPID(lockPIDPath(path))
+	if !recorded {
+		// The OS lock proves liveness; missing display metadata cannot undo it.
+		return 0, true, nil
+	}
+	return pid, true, nil
+}
+
+// ErrDaemonOwnsState reports that a daemon holds the lock, so its state files
+// are not the caller's to write.
+var ErrDaemonOwnsState = errors.New("wake: daemon still owns its state")
+
+// WithDaemonStopped holds the daemon's exclusive lock across a fallback write.
+// A control failure alone is not absence evidence (docs/terminal-wake-broker.md).
+// Holding this lock also excludes a daemon starting between the probe and write.
+func WithDaemonStopped(store *Store, update func() error) error {
+	lock, err := awconfig.TryLockExclusive(store.LockPath())
+	if errors.Is(err, awconfig.ErrLockUnavailable) {
+		return fmt.Errorf("%w; retry the control request: %w", ErrDaemonOwnsState, err)
+	}
+	if err != nil {
+		return fmt.Errorf("wake: cannot establish daemon absence: %w", err)
+	}
+	return errors.Join(update(), lock.Close())
 }
 
 func readPID(path string) (int, bool) {

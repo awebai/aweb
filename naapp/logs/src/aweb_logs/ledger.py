@@ -17,7 +17,7 @@ from datetime import datetime
 from typing import Any
 
 from aweb_naapp.hooks.envelope import Envelope
-from awid.did import did_from_public_key
+from awid.did import did_key_from_signing_key
 from nacl.signing import SigningKey
 from pgdbm import AsyncDatabaseManager
 from pgdbm.core import TransactionManager
@@ -50,7 +50,7 @@ class LogsSigner:
 
     @property
     def did_key(self) -> str:
-        return did_from_public_key(bytes(self.signing_key.verify_key))
+        return did_key_from_signing_key(bytes(self.signing_key))
 
 
 @dataclass(frozen=True)

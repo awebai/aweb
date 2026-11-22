@@ -2,38 +2,51 @@
 
 from __future__ import annotations
 
+from aweb.application_state import (
+    RegistryClientUnavailable,
+    application_registry_client,
+)
+from aweb.grant_liveness_policy import GrantLivenessFailurePolicy
+from aweb.workspace_activity import WorkspaceActivity, workspace_activity_by_id
+
+from aweb.task_refs import TaskTitleFields, task_title_join
+
 import logging
 import uuid as uuid_module
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 from uuid import UUID
 
-from awid.team_ids import team_slug
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from pydantic import BaseModel, Field, field_validator, model_validator
 from redis.asyncio import Redis
 
-from aweb.team_auth_deps import TeamIdentity, get_team_identity, team_identity_with_grant_scope
+from aweb.team_auth_deps import (
+    TeamIdentity,
+    get_team_identity,
+    team_identity_with_grant_scope,
+)
 
-from ...config import get_settings
+from ...config import get_presence_ttl_seconds
 from ...db import DatabaseInfra, get_db_infra
-from ...input_validation import is_valid_alias, is_valid_canonical_origin, is_valid_human_name
+from ...input_validation import (
+    is_valid_alias,
+    is_valid_canonical_origin,
+    is_valid_human_name,
+)
 from awid.pagination import encode_cursor, validate_pagination_params
+from ...member_team_key import current_member_sql
 from ...grant_liveness import grant_liveness_expiry, cleanup_expired_grant_liveness
 from ...presence import (
-    DEFAULT_PRESENCE_TTL_SECONDS,
     clear_workspace_presence,
-    get_workspace_ids_by_team_id,
-    list_agent_presences,
-    list_agent_presences_by_workspace_ids,
     update_agent_presence,
 )
 from ...redis_client import get_redis
 from ...role_name_compat import normalize_optional_role_name, resolve_role_name_aliases
 from ...lifecycle import (
     LifecycleActor,
-    LifecycleCascadeRequest,
-    apply_lifecycle_cascade,
+    LocalWorkspaceTarget,
+    apply_local_workspace_cleanup,
 )
 from ..roles import (
     ROLE_MAX_LENGTH,
@@ -112,16 +125,24 @@ class WorkspaceHeartbeatResponse(BaseModel):
     workspace_id: str
 
 
-def _require_workspace_owner(existing, identity: TeamIdentity, workspace_id: str, *, operation: str) -> None:
+def _require_workspace_owner(
+    existing, identity: TeamIdentity, workspace_id: str, *, operation: str
+) -> None:
     """Refuse a team-certificate caller acting on a workspace another agent owns."""
     if str(existing["agent_id"]) == identity.agent_id:
         return
     logger.warning(
         "Workspace %s refused: workspace belongs to another agent",
         operation,
-        extra={"workspace_id": workspace_id, "team_id": identity.team_id, "caller_agent_id": identity.agent_id},
+        extra={
+            "workspace_id": workspace_id,
+            "team_id": identity.team_id,
+            "caller_agent_id": identity.agent_id,
+        },
     )
-    raise HTTPException(status_code=403, detail=f"Workspace {workspace_id} belongs to another agent.")
+    raise HTTPException(
+        status_code=403, detail=f"Workspace {workspace_id} belongs to another agent."
+    )
 
 
 @router.post("/heartbeat", response_model=WorkspaceHeartbeatResponse)
@@ -176,13 +197,26 @@ async def heartbeat(
         raise HTTPException(status_code=404, detail=_WORKSPACE_NOT_FOUND_DETAIL)
 
     if identity.grant is None:
-        _require_workspace_owner(existing, identity, payload.workspace_id, operation="heartbeat")
+        _require_workspace_owner(
+            existing, identity, payload.workspace_id, operation="heartbeat"
+        )
 
     if identity.grant is not None:
-        if existing.get("agent_id") is not None and str(existing["agent_id"]) != identity.agent_id:
+        if (
+            existing.get("agent_id") is not None
+            and str(existing["agent_id"]) != identity.agent_id
+        ):
             raise HTTPException(status_code=403, detail="grant workspace mismatch")
-        if payload.role is not None or payload.hostname is not None or payload.workspace_path is not None or payload.human_name:
-            raise HTTPException(status_code=403, detail="grant workspace metadata is not shared presence")
+        if (
+            payload.role is not None
+            or payload.hostname is not None
+            or payload.workspace_path is not None
+            or payload.human_name
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="grant workspace metadata is not shared presence",
+            )
         await cleanup_expired_grant_liveness(aweb_db)
         await aweb_db.fetch_one(
             """
@@ -215,7 +249,6 @@ async def heartbeat(
     # and Redis presence semantics. Grant workspace heartbeat intentionally does
     # not write these shared coordinates; it records grant-keyed ephemeral
     # liveness above, matching /v1/agents/heartbeat.
-    settings = get_settings()
     await aweb_db.execute(
         """
         UPDATE {{tables.workspaces}}
@@ -250,14 +283,14 @@ async def heartbeat(
             redis,
             workspace_id=payload.workspace_id,
             alias=payload.alias,
-            human_name=payload.human_name or "",
+            human_name=payload.human_name,
             team_id=team_id,
             repo_id=str(existing["repo_id"]) if existing.get("repo_id") else None,
             program="aw",
             model=None,
             canonical_origin=repo_row["canonical_origin"] if repo_row else None,
             role=payload.role,
-            ttl_seconds=settings.presence_ttl_seconds,
+            ttl_seconds=get_presence_ttl_seconds(),
         )
     except Exception as e:
         logger.warning(
@@ -325,11 +358,19 @@ class UpdateWorkspaceResponse(BaseModel):
 async def update_workspace(
     request: Request,
     workspace_id: str = Path(..., description="Workspace ID to update"),
-    payload: UpdateWorkspaceRequest = None,
+    payload: UpdateWorkspaceRequest | None = None,
     db: DatabaseInfra = Depends(get_db_infra),
     identity: TeamIdentity = Depends(team_identity_with_grant_scope("presence.write")),
 ) -> UpdateWorkspaceResponse:
-    """Update mutable workspace fields."""
+    """Update mutable workspace fields after requiring an explicit JSON body."""
+    if payload is None:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "workspace_update_body_required",
+                "message": "Send a JSON object containing the workspace fields to update, then retry this PATCH.",
+            },
+        )
     try:
         validated_id = str(UUID(workspace_id))
     except ValueError:
@@ -350,10 +391,14 @@ async def update_workspace(
     )
 
     if not existing:
-        raise HTTPException(status_code=404, detail=f"Workspace {workspace_id} not found")
+        raise HTTPException(
+            status_code=404, detail=f"Workspace {workspace_id} not found"
+        )
 
     if existing["deleted_at"] is not None:
-        raise HTTPException(status_code=410, detail=f"Workspace {workspace_id} is deleted")
+        raise HTTPException(
+            status_code=410, detail=f"Workspace {workspace_id} is deleted"
+        )
 
     if identity.grant is None:
         _require_workspace_owner(existing, identity, validated_id, operation="update")
@@ -363,10 +408,21 @@ async def update_workspace(
     idx = 2
 
     if identity.grant is not None:
-        if existing.get("agent_id") is not None and str(existing["agent_id"]) != identity.agent_id:
+        if (
+            existing.get("agent_id") is not None
+            and str(existing["agent_id"]) != identity.agent_id
+        ):
             raise HTTPException(status_code=403, detail="grant workspace mismatch")
-        if payload.role is not None or payload.hostname is not None or payload.workspace_path is not None or payload.human_name is not None:
-            raise HTTPException(status_code=403, detail="grant workspace metadata is not shared presence")
+        if (
+            payload.role is not None
+            or payload.hostname is not None
+            or payload.workspace_path is not None
+            or payload.human_name is not None
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="grant workspace metadata is not shared presence",
+            )
     else:
         if payload.role is not None:
             set_clauses.append(f"role = ${idx}")
@@ -400,7 +456,7 @@ async def update_workspace(
         await aweb_db.execute(
             f"""
             UPDATE {{{{tables.workspaces}}}}
-            SET {', '.join(set_clauses)}
+            SET {", ".join(set_clauses)}
             WHERE workspace_id = $1
             """,
             *params,
@@ -518,7 +574,9 @@ async def delete_workspace(
                     code="workspace_already_deleted",
                     workspace_id=validated_id,
                     identity_id=existing.get("agent_id"),
-                    identity_scope=str(existing.get("agent_identity_scope") or "").strip(),
+                    identity_scope=str(
+                        existing.get("agent_identity_scope") or ""
+                    ).strip(),
                     recommended_next_step="The workspace is deleted; its identity is not. Clean the identity before reporting the retirement complete.",
                 ),
             )
@@ -531,7 +589,9 @@ async def delete_workspace(
                 presence_ids.append(str(existing["agent_id"]))
             await clear_workspace_presence(redis, presence_ids)
         except Exception as exc:
-            logger.warning("Retry failed to clear deleted workspace presence", exc_info=exc)
+            logger.warning(
+                "Retry failed to clear deleted workspace presence", exc_info=exc
+            )
             raise HTTPException(
                 status_code=503,
                 detail=_workspace_delete_refusal_detail(
@@ -584,64 +644,27 @@ async def delete_workspace(
             ),
         )
 
-    # A workspace acting on ITSELF may delete itself at any time; anyone else may
-    # only delete a stale one, so a live teammate cannot be removed out from under
-    # its session. The presence TTL exists for that second case and has no work to
-    # do in the first: an agent retiring itself knows its own session is over, and
-    # nothing is learned by making it wait 30 minutes for its own heartbeat to go
-    # stale. Without this, a retiring instance-lifetime member is refused
-    # `local_workspace_still_active` for the whole TTL, which is not prompt
-    # retirement (aweb-aaqg).
-    #
-    # The cloud overlay in aweb-saas (`aweb_cloud/embedded/workspaces.py`,
-    # coordination_delete_workspace) already draws exactly this distinction. This
-    # brings self-hosted to the same rule rather than leaving two deployments
-    # disagreeing about whether an agent may retire itself promptly.
-    requesting_agent_id = str(getattr(identity, "agent_id", "") or "").strip()
-    is_self_delete = (
-        requesting_agent_id != ""
-        and existing.get("agent_id") is not None
-        and str(existing["agent_id"]) == requesting_agent_id
-    )
-    last_seen_at = existing.get("last_seen_at")
-    stale_cutoff = datetime.now(timezone.utc) - timedelta(seconds=DEFAULT_PRESENCE_TTL_SECONDS)
-    if not is_self_delete and last_seen_at is not None and last_seen_at > stale_cutoff:
-        raise HTTPException(
-            status_code=409,
-            detail=_workspace_delete_refusal_detail(
-                code="local_workspace_still_active",
-                workspace_id=validated_id,
-                identity_id=existing.get("agent_id"),
-                identity_scope=agent_identity_scope,
-                recommended_next_step="Wait until presence is stale before deleting a local workspace.",
-            ),
-        )
-
+    try:
+        registry_client = application_registry_client(request.app.state)
+    except RegistryClientUnavailable as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
     deleted_at = datetime.now(timezone.utc)
-    cascade_result = await apply_lifecycle_cascade(
+    cascade_result = await apply_local_workspace_cleanup(
         aweb_db,
         redis,
-        LifecycleCascadeRequest(
-            operation="delete_local_workspace",
-            actor=LifecycleActor(
-                actor_id=getattr(identity, "agent_id", None),
-                actor_type="agent",
-                authority="team_identity",
-            ),
-            team_id=team_id,
-            target_agent_id=(
-                str(existing["agent_id"]) if existing.get("agent_id") is not None else None
-            ),
-            target_workspace_ids=(validated_id,),
-            workspace_scope="explicit",
-            require_identity_scope="local",
-            # Must track the gate above. The cascade enforces the same staleness
-            # precondition independently, so leaving it set here would re-refuse a
-            # self-delete that the gate just allowed - the 409 would simply move.
-            stale_before=None if is_self_delete else stale_cutoff,
-            deleted_at=deleted_at,
-            mark_local_agent_deleted=True,
+        team_id=team_id,
+        target=LocalWorkspaceTarget(
+            workspace_id=UUID(validated_id),
+            agent_id=UUID(str(existing["agent_id"]))
+            if existing.get("agent_id") is not None
+            else None,
         ),
+        actor=LifecycleActor(
+            actor_id=identity.agent_id, actor_type="agent", authority="team_identity"
+        ),
+        deleted_at=deleted_at,
+        registry_client=registry_client,
+        request_context=request,
     )
     if cascade_result.errors:
         error = cascade_result.errors[0]
@@ -758,44 +781,15 @@ class ListWorkspacesResponse(BaseModel):
     next_cursor: Optional[str] = None
 
 
-def _get_team_slug(team_id: str) -> str:
-    return team_slug(team_id)
-
-
-def _title_join(
-    alias: str,
-    team_id_col: str,
-    task_ref_col: str,
-    *,
-    include_type: bool = False,
-    guard_col: str | None = None,
-) -> str:
-    """Lateral join resolving title (+ optional type) from tasks."""
-    select_expr = "t.title, t.task_type AS issue_type" if include_type else "t.title AS title"
-
-    guard = f"\n                  AND {guard_col} IS NOT NULL" if guard_col else ""
-
-    # task_ref = slug || '-' || task_ref_suffix, where slug is the team-name
-    # prefix from the colon-form team_id.
-    return f"""
-        LEFT JOIN LATERAL (
-            SELECT {select_expr}
-            FROM aweb.tasks t
-            WHERE t.team_id = {team_id_col}
-              AND split_part({team_id_col}, '/', -1) || '-' || t.task_ref_suffix = {task_ref_col}
-              AND t.deleted_at IS NULL{guard}
-            LIMIT 1
-        ) {alias} ON true"""
-
-
 def _build_workspace_claims_query(placeholders: str) -> str:
-    claim_join = _title_join("claim_info", "c.team_id", "c.task_ref")
-    apex_join = _title_join(
-        "apex_info",
-        "c.team_id",
-        "c.apex_task_ref",
-        include_type=True,
-        guard_col="c.apex_task_ref",
+    claim_join = task_title_join(
+        alias="claim_info", team_id_col="c.team_id", task_ref_col="c.task_ref"
+    )
+    apex_join = task_title_join(
+        alias="apex_info",
+        team_id_col="c.team_id",
+        task_ref_col="c.apex_task_ref",
+        fields=TaskTitleFields.TITLE_AND_TYPE,
     )
     return f"""
         SELECT
@@ -831,12 +825,11 @@ def _timestamp(value: Optional[datetime] | Optional[str]) -> float:
         return 0.0
 
 
-_TEAM_FOCUS_JOIN = _title_join(
-    "focus_issue",
-    "w.team_id",
-    "w.focus_task_ref",
-    include_type=True,
-    guard_col="w.focus_task_ref",
+_TEAM_FOCUS_JOIN = task_title_join(
+    alias="focus_issue",
+    team_id_col="w.team_id",
+    task_ref_col="w.focus_task_ref",
+    fields=TaskTitleFields.TITLE_AND_TYPE,
 )
 
 _TEAM_PARTICIPANT_WORKSPACE_SELECT = f"""
@@ -864,10 +857,10 @@ _TEAM_PARTICIPANT_WORKSPACE_SELECT = f"""
             cs.last_claimed_at,
             w.updated_at
         FROM {{{{tables.workspaces}}}} w
-        LEFT JOIN {{{{tables.agents}}}} a
+        JOIN {{{{tables.agents}}}} a
           ON a.agent_id = w.agent_id
          AND a.team_id = w.team_id
-         AND a.deleted_at IS NULL
+         AND {current_member_sql("a")}
         LEFT JOIN {{{{tables.repos}}}} r ON w.repo_id = r.id AND r.deleted_at IS NULL
         LEFT JOIN claim_stats cs ON cs.workspace_id = w.workspace_id
         {_TEAM_FOCUS_JOIN}
@@ -915,10 +908,8 @@ async def _fetch_extra_team_workspace(
 
 def _row_to_workspace_info(
     row,
-    presence: dict | None,
+    activity: WorkspaceActivity | None,
     workspace_claims: list[Claim],
-    *,
-    include_presence: bool,
 ) -> WorkspaceInfo:
     workspace_id = str(row["workspace_id"])
 
@@ -933,12 +924,14 @@ def _row_to_workspace_info(
     program = None
     model = None
 
-    if include_presence and presence:
+    presence = activity.presence if activity else None
+    if activity:
+        status = activity.display_status(now=datetime.now(timezone.utc))
+        last_seen = _to_iso(activity.last_seen_at)
+    if presence:
         program = presence.get("program")
         model = presence.get("model")
         role = presence.get("role") or role
-        status = presence.get("status") or "active"
-        last_seen = presence.get("last_seen") or last_seen
 
     return WorkspaceInfo(
         workspace_id=workspace_id,
@@ -967,11 +960,6 @@ def _row_to_workspace_info(
         deleted_at=_to_iso(row.get("deleted_at")),
         claims=workspace_claims,
     )
-
-
-async def _fetch_presence_map(redis: Redis, workspace_id_strings: list[str]) -> Dict[str, dict]:
-    presences = await list_agent_presences_by_workspace_ids(redis, workspace_id_strings)
-    return {str(p["workspace_id"]): p for p in presences if p.get("workspace_id")}
 
 
 async def _fetch_claims_map(aweb_db, workspace_ids: list) -> Dict[str, List[Claim]]:
@@ -1007,17 +995,27 @@ async def _fetch_claims_map(aweb_db, workspace_ids: list) -> Dict[str, List[Clai
 @router.get("", response_model=ListWorkspacesResponse)
 async def list_workspaces(
     request: Request,
-    human_name: Optional[str] = Query(None, description="Filter by workspace owner", max_length=64),
+    human_name: Optional[str] = Query(
+        None, description="Filter by workspace owner", max_length=64
+    ),
     repo: Optional[str] = Query(
         None, description="Filter by repo canonical origin", max_length=255
     ),
-    alias: Optional[str] = Query(None, description="Filter by workspace alias", max_length=64),
-    hostname: Optional[str] = Query(None, description="Filter by machine hostname", max_length=255),
+    alias: Optional[str] = Query(
+        None, description="Filter by workspace alias", max_length=64
+    ),
+    hostname: Optional[str] = Query(
+        None, description="Filter by machine hostname", max_length=255
+    ),
     include_deleted: bool = Query(False, description="Include soft-deleted workspaces"),
     include_claims: bool = Query(False, description="Include active task claims"),
     include_presence: bool = Query(True, description="Include Redis presence data"),
-    limit: Optional[int] = Query(None, description="Maximum items per page", ge=1, le=200),
-    cursor: Optional[str] = Query(None, description="Pagination cursor from previous response"),
+    limit: Optional[int] = Query(
+        None, description="Maximum items per page", ge=1, le=200
+    ),
+    cursor: Optional[str] = Query(
+        None, description="Pagination cursor from previous response"
+    ),
     db_infra: DatabaseInfra = Depends(get_db_infra),
     redis: Redis = Depends(get_redis),
     identity: TeamIdentity = Depends(team_identity_with_grant_scope("coord.read")),
@@ -1049,7 +1047,7 @@ async def list_workspaces(
     aweb_db = db_infra.get_manager("aweb")
 
     query = (
-        """
+        f"""
         SELECT
             w.workspace_id,
             w.agent_id,
@@ -1068,22 +1066,21 @@ async def list_workspaces(
             focus_issue.title AS focus_task_title,
             focus_issue.issue_type AS focus_task_type,
             r.canonical_origin as repo
-        FROM {{tables.workspaces}} w
-        LEFT JOIN {{tables.agents}} a
+        FROM {{{{tables.workspaces}}}} w
+        LEFT JOIN {{{{tables.agents}}}} a
           ON a.agent_id = w.agent_id
          AND a.team_id = w.team_id
-         AND a.deleted_at IS NULL
-        LEFT JOIN {{tables.repos}} r ON w.repo_id = r.id AND r.deleted_at IS NULL
+         AND {current_member_sql("a")}
+        LEFT JOIN {{{{tables.repos}}}} r ON w.repo_id = r.id AND r.deleted_at IS NULL
         """
-        + _title_join(
-            "focus_issue",
-            "w.team_id",
-            "w.focus_task_ref",
-            include_type=True,
-            guard_col="w.focus_task_ref",
+        + task_title_join(
+            alias="focus_issue",
+            team_id_col="w.team_id",
+            task_ref_col="w.focus_task_ref",
+            fields=TaskTitleFields.TITLE_AND_TYPE,
         )
         + """
-        WHERE 1=1
+        WHERE (a.agent_id IS NOT NULL OR w.deleted_at IS NOT NULL)
     """
     )
     params: list = []
@@ -1135,7 +1132,9 @@ async def list_workspaces(
         try:
             cursor_timestamp = datetime.fromisoformat(cursor_data["updated_at"])
         except (ValueError, TypeError) as e:
-            raise HTTPException(status_code=422, detail=f"Invalid cursor timestamp: {e}")
+            raise HTTPException(
+                status_code=422, detail=f"Invalid cursor timestamp: {e}"
+            )
         query += f" AND w.updated_at < ${param_idx}"
         params.append(cursor_timestamp)
         param_idx += 1
@@ -1154,9 +1153,16 @@ async def list_workspaces(
     workspace_ids = [row["workspace_id"] for row in rows]
     workspace_id_strings = [str(ws_id) for ws_id in workspace_ids]
 
-    presence_map: Dict[str, dict] = {}
+    activity_map: dict[str, WorkspaceActivity] = {}
     if include_presence and workspace_id_strings:
-        presence_map = await _fetch_presence_map(redis, workspace_id_strings)
+        activity_map = await workspace_activity_by_id(
+            aweb_db,
+            redis,
+            workspace_ids=workspace_id_strings,
+            registry_client=application_registry_client(request.app.state),
+            request=request,
+            failure_policy=GrantLivenessFailurePolicy.OMIT_UNPROVEN,
+        )
 
     claims_map: Dict[str, List[Claim]] = {}
     if include_claims and workspace_ids:
@@ -1164,13 +1170,14 @@ async def list_workspaces(
 
     workspaces: List[WorkspaceInfo] = []
     for row in rows:
-        workspace_claims = claims_map.get(str(row["workspace_id"]), []) if include_claims else []
+        workspace_claims = (
+            claims_map.get(str(row["workspace_id"]), []) if include_claims else []
+        )
         workspaces.append(
             _row_to_workspace_info(
                 row,
-                presence_map.get(str(row["workspace_id"])),
+                activity_map.get(str(row["workspace_id"])),
                 workspace_claims,
-                include_presence=include_presence,
             )
         )
 
@@ -1179,7 +1186,9 @@ async def list_workspaces(
         last_row = rows[-1]
         next_cursor = encode_cursor({"updated_at": last_row["updated_at"].isoformat()})
 
-    return ListWorkspacesResponse(workspaces=workspaces, has_more=has_more, next_cursor=next_cursor)
+    return ListWorkspacesResponse(
+        workspaces=workspaces, has_more=has_more, next_cursor=next_cursor
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1190,13 +1199,17 @@ async def list_workspaces(
 @router.get("/team", response_model=ListWorkspacesResponse)
 async def list_team_workspaces(
     request: Request,
-    human_name: Optional[str] = Query(None, description="Filter by workspace owner", max_length=64),
+    human_name: Optional[str] = Query(
+        None, description="Filter by workspace owner", max_length=64
+    ),
     repo: Optional[str] = Query(
         None, description="Filter by repo canonical origin", max_length=255
     ),
     include_claims: bool = Query(True, description="Include active task claims"),
     include_presence: bool = Query(True, description="Include Redis presence data"),
-    only_with_claims: bool = Query(True, description="Only return workspaces with active claims"),
+    only_with_claims: bool = Query(
+        True, description="Only return workspaces with active claims"
+    ),
     always_include_workspace_id: Optional[str] = Query(
         None,
         description="Ensure a workspace is included even if filtered out",
@@ -1222,12 +1235,24 @@ async def list_team_workspaces(
     aweb_db = db_infra.get_manager("aweb")
 
     live_workspace_ids: list[UUID] = []
+    activity_map: dict[str, WorkspaceActivity] = {}
     if include_presence:
-        for workspace_id in await get_workspace_ids_by_team_id(redis, team_id):
-            try:
-                live_workspace_ids.append(UUID(workspace_id))
-            except ValueError:
-                logger.warning("Ignoring invalid workspace ID in team presence index: %s", workspace_id)
+        candidates = await aweb_db.fetch_all(
+            "SELECT workspace_id FROM {{tables.workspaces}} WHERE team_id=$1 AND deleted_at IS NULL",
+            team_id,
+        )
+        activity_map = await workspace_activity_by_id(
+            aweb_db,
+            redis,
+            workspace_ids=[str(row["workspace_id"]) for row in candidates],
+            registry_client=application_registry_client(request.app.state),
+            request=request,
+            failure_policy=GrantLivenessFailurePolicy.OMIT_UNPROVEN,
+        )
+        now = datetime.now(timezone.utc)
+        live_workspace_ids = [
+            UUID(key) for key, value in activity_map.items() if value.is_online(now=now)
+        ]
 
     params: list = [team_id]
     param_idx = 2
@@ -1312,12 +1337,6 @@ async def list_team_workspaces(
                 rows.append(extra_row)
 
     workspace_ids = [row["workspace_id"] for row in rows]
-    workspace_id_strings = [str(ws_id) for ws_id in workspace_ids]
-
-    presence_map: Dict[str, dict] = {}
-    if include_presence and workspace_id_strings:
-        presence_map = await _fetch_presence_map(redis, workspace_id_strings)
-
     claims_map: Dict[str, List[Claim]] = {}
     if include_claims and workspace_ids:
         claims_map = await _fetch_claims_map(aweb_db, workspace_ids)
@@ -1325,14 +1344,13 @@ async def list_team_workspaces(
     entries: List[tuple[WorkspaceInfo, int, float, float, int, int]] = []
     for row in rows:
         workspace_id = str(row["workspace_id"])
-        presence = presence_map.get(workspace_id) if include_presence else None
+        activity = activity_map.get(workspace_id)
         workspace_claims = claims_map.get(workspace_id, []) if include_claims else []
 
         workspace_info = _row_to_workspace_info(
             row,
-            presence,
+            activity,
             workspace_claims,
-            include_presence=include_presence,
         )
 
         claim_count = int(row["claim_count"] or 0)
@@ -1342,7 +1360,10 @@ async def list_team_workspaces(
                 1 if claim_count > 0 else 0,
                 _timestamp(workspace_info.last_seen),
                 _timestamp(row["last_claimed_at"]),
-                1 if presence is not None else 0,
+                1
+                if activity is not None
+                and activity.is_online(now=datetime.now(timezone.utc))
+                else 0,
                 claim_count,
             )
         )
@@ -1371,52 +1392,40 @@ async def list_team_workspaces(
 @router.get("/online", response_model=ListWorkspacesResponse)
 async def list_online_workspaces(
     request: Request,
-    human_name: Optional[str] = Query(None, description="Filter by workspace owner", max_length=64),
+    human_name: Optional[str] = Query(
+        None, description="Filter by workspace owner", max_length=64
+    ),
     redis: Redis = Depends(get_redis),
     db_infra: DatabaseInfra = Depends(get_db_infra),
     identity: TeamIdentity = Depends(team_identity_with_grant_scope("coord.read")),
 ) -> ListWorkspacesResponse:
-    """
-    List only currently online workspaces (active presence in Redis).
-
-    This is a filtered view showing workspaces with recent activity.
-    Presence expires after ~5 minutes of inactivity.
-
-    For all registered workspaces (including offline), use GET /v1/workspaces.
-    """
+    """List workspaces active within the configured root/Redis/valid-grant window."""
     team_id = identity.team_id
-
-    presences = await list_agent_presences(redis)
-
-    workspaces: List[WorkspaceInfo] = []
-    for presence in presences:
-        workspace_id = presence.get("workspace_id")
-        alias = presence.get("alias")
-        if not workspace_id or not alias:
-            continue
-
-        if presence.get("team_id") != team_id:
-            continue
-
-        if human_name and presence.get("human_name") != human_name:
-            continue
-
-        workspaces.append(
-            WorkspaceInfo(
-                workspace_id=workspace_id,
-                alias=alias,
-                human_name=presence.get("human_name"),
-                team_id=team_id,
-                program=presence.get("program"),
-                model=presence.get("model"),
-                repo=None,
-                role=presence.get("role") or None,
-                role_name=presence.get("role") or None,
-                status=presence.get("status") or "unknown",
-                last_seen=presence.get("last_seen") or "",
-            )
-        )
-
-    workspaces.sort(key=lambda w: w.last_seen or "", reverse=True)
-
+    aweb_db = db_infra.get_manager("aweb")
+    rows = await aweb_db.fetch_all(
+        """SELECT w.*, r.canonical_origin AS repo,
+                  NULL::text AS focus_task_title, NULL::text AS focus_task_type
+           FROM {{tables.workspaces}} w
+           LEFT JOIN {{tables.repos}} r ON r.id=w.repo_id AND r.deleted_at IS NULL
+           WHERE w.team_id=$1 AND w.deleted_at IS NULL
+             AND ($2::text IS NULL OR w.human_name=$2)""",
+        team_id,
+        human_name,
+    )
+    activity = await workspace_activity_by_id(
+        aweb_db,
+        redis,
+        workspace_ids=[str(row["workspace_id"]) for row in rows],
+        registry_client=application_registry_client(request.app.state),
+        request=request,
+        failure_policy=GrantLivenessFailurePolicy.OMIT_UNPROVEN,
+    )
+    now = datetime.now(timezone.utc)
+    workspaces = [
+        _row_to_workspace_info(row, observed, [])
+        for row in rows
+        if (observed := activity.get(str(row["workspace_id"]))) is not None
+        and observed.is_online(now=now)
+    ]
+    workspaces.sort(key=lambda workspace: workspace.last_seen or "", reverse=True)
     return ListWorkspacesResponse(workspaces=workspaces, has_more=False)

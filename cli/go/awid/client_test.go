@@ -12,12 +12,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
 	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/awebai/aw/internal/testcapture"
 )
 
 type stubIdentityResolver struct {
@@ -2350,22 +2351,11 @@ func TestTraceLogsRedactedHTTPAndAPIErrorRequestID(t *testing.T) {
 	}
 }
 
+// captureStderrForTest delegates complete stderr capture to the shared owner.
+// Callers must run serially because os.Stderr belongs to the whole process.
 func captureStderrForTest(t *testing.T, fn func()) string {
 	t.Helper()
-	old := os.Stderr
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	os.Stderr = w
-	fn()
-	_ = w.Close()
-	os.Stderr = old
-	data, err := io.ReadAll(r)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(data)
+	return testcapture.Stderr(t, fn)
 }
 
 func TestNewWithIdentitySetsFields(t *testing.T) {
@@ -2900,12 +2890,15 @@ func TestSendMessageByIdentityUsesToDID(t *testing.T) {
 		return &ResolvedIdentity{DID: recipientCurrentDID, StableID: recipientDID}, nil
 	}})
 
-	_, err = c.SendMessageByIdentity(context.Background(), &SendMessageRequest{
+	response, err := c.SendMessageByIdentity(context.Background(), &SendMessageRequest{
 		ToDID: recipientDID,
 		Body:  "hello direct",
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if response.RecipientDID != recipientCurrentDID || response.RecipientStableID != recipientDID {
+		t.Fatalf("response must carry exactly the signed recipient: %#v", response)
 	}
 
 	gotBody := captured()
@@ -2922,7 +2915,10 @@ func TestSendMessageByIdentityUsesToDID(t *testing.T) {
 	if !ok || sp == "" {
 		t.Fatal("signed_payload missing")
 	}
-	sig := gotBody["signature"].(string)
+	sig, ok := gotBody["signature"].(string)
+	if !ok {
+		t.Fatal("signature missing")
+	}
 	status, err := VerifySignedPayload(sp, sig, did, did)
 	if err != nil {
 		t.Fatalf("VerifySignedPayload: %v", err)
@@ -4403,14 +4399,15 @@ func TestChatHistoryVerifiesSignedMessages(t *testing.T) {
 	did := ComputeDIDKey(pub)
 
 	env := &MessageEnvelope{
-		From:      "myco/agent",
-		FromDID:   did,
-		To:        "",
-		Type:      "chat",
-		Subject:   "",
-		Body:      "hello chat",
-		Timestamp: "2026-02-22T00:00:00Z",
-		MessageID: "msg-1",
+		From:           "myco/agent",
+		FromDID:        did,
+		To:             "",
+		Type:           "chat",
+		Subject:        "",
+		Body:           "hello chat",
+		Timestamp:      "2026-02-22T00:00:00Z",
+		MessageID:      "msg-1",
+		ConversationID: "sess-1",
 	}
 	sig, err := SignMessage(priv, env)
 	if err != nil {
@@ -4420,13 +4417,14 @@ func TestChatHistoryVerifiesSignedMessages(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"messages": []map[string]any{{
-				"message_id":     "msg-1",
-				"from_agent":     "myco/agent",
-				"body":           "hello chat",
-				"timestamp":      "2026-02-22T00:00:00Z",
-				"from_did":       did,
-				"signature":      sig,
-				"signing_key_id": did,
+				"message_id":      "msg-1",
+				"conversation_id": "sess-1",
+				"from_agent":      "myco/agent",
+				"body":            "hello chat",
+				"timestamp":       "2026-02-22T00:00:00Z",
+				"from_did":        did,
+				"signature":       sig,
+				"signing_key_id":  did,
 			}},
 		})
 	}))
@@ -6452,12 +6450,13 @@ func TestChatHistoryUsesFromAddressForVerification(t *testing.T) {
 	did := ComputeDIDKey(pub)
 
 	env := &MessageEnvelope{
-		From:      "myco/agent",
-		FromDID:   did,
-		Type:      "chat",
-		Body:      "hi there",
-		Timestamp: "2026-02-22T00:00:00Z",
-		MessageID: "msg-chat-1",
+		From:           "myco/agent",
+		FromDID:        did,
+		Type:           "chat",
+		Body:           "hi there",
+		Timestamp:      "2026-02-22T00:00:00Z",
+		MessageID:      "msg-chat-1",
+		ConversationID: "sess-1",
 	}
 	sig, err := SignMessage(priv, env)
 	if err != nil {
@@ -6467,14 +6466,15 @@ func TestChatHistoryUsesFromAddressForVerification(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"messages": []map[string]any{{
-				"message_id":     "msg-chat-1",
-				"from_agent":     "agent",
-				"from_address":   "myco/agent",
-				"body":           "hi there",
-				"timestamp":      "2026-02-22T00:00:00Z",
-				"from_did":       did,
-				"signature":      sig,
-				"signing_key_id": did,
+				"message_id":      "msg-chat-1",
+				"conversation_id": "sess-1",
+				"from_agent":      "agent",
+				"from_address":    "myco/agent",
+				"body":            "hi there",
+				"timestamp":       "2026-02-22T00:00:00Z",
+				"from_did":        did,
+				"signature":       sig,
+				"signing_key_id":  did,
 			}},
 		})
 	}))
@@ -6579,11 +6579,14 @@ func TestCheckTOFUPinEphemeralSkipsPinning(t *testing.T) {
 	if _, ok := ps.Pins[senderDID]; ok {
 		t.Fatal("ephemeral agent should not be pinned")
 	}
-	if _, ok := ps.Addresses["myco/ephemeral-bot"]; ok {
-		t.Fatal("ephemeral agent should not remain in address index")
+	// A pin at a real address is never deleted on a local answer for that
+	// address (Antares 2e8881d7; tofu-v2 ephemeral-sender-leaves-the-pin-at-a-real-address):
+	// the earlier pin stays as it was, and the ephemeral sender is not added.
+	if ps.Addresses["myco/ephemeral-bot"] != "did:key:stale" {
+		t.Fatalf("the earlier pin at the address changed: %v", ps.Addresses)
 	}
-	if _, ok := ps.Pins["did:key:stale"]; ok {
-		t.Fatal("stale ephemeral pin should be pruned")
+	if _, ok := ps.Pins["did:key:stale"]; !ok {
+		t.Fatal("the earlier pin at a real address was deleted")
 	}
 }
 
@@ -6956,13 +6959,14 @@ func TestChatHistoryCanonicalizesLocalAliasBeforeTOFUPin(t *testing.T) {
 	senderDID := ComputeDIDKey(senderPub)
 
 	env := &MessageEnvelope{
-		From:      "architect",
-		FromDID:   senderDID,
-		To:        "implementer",
-		Type:      "chat",
-		Body:      "hello",
-		Timestamp: "2026-03-24T13:12:05Z",
-		MessageID: "msg-chat-local-1",
+		From:           "architect",
+		FromDID:        senderDID,
+		To:             "implementer",
+		Type:           "chat",
+		Body:           "hello",
+		Timestamp:      "2026-03-24T13:12:05Z",
+		MessageID:      "msg-chat-local-1",
+		ConversationID: "sess-1",
 	}
 	sig, err := SignMessage(senderPriv, env)
 	if err != nil {
@@ -6973,16 +6977,17 @@ func TestChatHistoryCanonicalizesLocalAliasBeforeTOFUPin(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"messages": []map[string]any{{
-				"message_id":     "msg-chat-local-1",
-				"from_agent":     "architect",
-				"from_address":   "architect",
-				"to_address":     "implementer",
-				"body":           "hello",
-				"timestamp":      "2026-03-24T13:12:05Z",
-				"from_did":       senderDID,
-				"signature":      sig,
-				"signing_key_id": senderDID,
-				"is_contact":     false,
+				"message_id":      "msg-chat-local-1",
+				"conversation_id": "sess-1",
+				"from_agent":      "architect",
+				"from_address":    "architect",
+				"to_address":      "implementer",
+				"body":            "hello",
+				"timestamp":       "2026-03-24T13:12:05Z",
+				"from_did":        senderDID,
+				"signature":       sig,
+				"signing_key_id":  senderDID,
+				"is_contact":      false,
 			}},
 		})
 	}))

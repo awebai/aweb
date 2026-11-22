@@ -441,7 +441,6 @@ def main():
         "naapp/secrets/tests/test_owner_directory.py",
         "naapp/secrets/tests/test_owner_holding_backfill.py",
         "naapp/secrets/tests/test_passkey_context.py",
-        "naapp/secrets/tests/test_passkey_email_cancellation.py",
         "naapp/secrets/tests/test_production_bootstrap.py",
         "naapp/secrets/tests/test_production_hook_network.py",
         "naapp/secrets/tests/test_uninstall_cleanup.py",

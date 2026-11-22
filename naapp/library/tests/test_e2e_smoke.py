@@ -60,7 +60,6 @@ _DEPLOYMENT_SETTINGS = (
     "LIBRARY_AWID_SERVICE_TOKEN",
     "LIBRARY_APP_KEY_FILES",
     "LIBRARY_APP_ID",
-    "LIBRARY_TEAM_SERVER_INTERNAL_ORIGINS",
 )
 
 
@@ -74,11 +73,9 @@ def running_library(
     directory: Path,
     *,
     awid_service_token: str | None,
-    team_server_origin: str,
     registry_url: str = AWID_URL,
 ) -> Iterator[RunningApp]:
-    """Library behind TLS on this host, reading AWID at ``registry_url``, with
-    ``team_server_origin`` as the one team server it reaches outside the egress guard."""
+    """Library behind TLS on this host, reading AWID at ``registry_url``."""
     require_e2e_enabled()
     wait_http_ok(f"{registry_url}/health")
     directory.mkdir(parents=True)
@@ -95,7 +92,6 @@ def running_library(
             "LIBRARY_PUBLIC_ORIGIN": origin,
             "LIBRARY_APP_ID": E2E_APP_ID,
             "LIBRARY_APP_KEY_FILES": json.dumps({"library:grant-read-1": str(grant_key)}),
-            "LIBRARY_TEAM_SERVER_INTERNAL_ORIGINS": json.dumps([team_server_origin]),
         }
         if awid_service_token is not None:
             values["LIBRARY_AWID_SERVICE_TOKEN"] = awid_service_token
@@ -117,7 +113,7 @@ def library_deployment(directory: Path, *, awid_service_token: str | None) -> It
     with (
         coordination_listener() as (listener, server_origin),
         running_library(
-            directory, awid_service_token=awid_service_token, team_server_origin=server_origin
+            directory, awid_service_token=awid_service_token
         ) as app,
     ):
         assert app.ca_file is not None

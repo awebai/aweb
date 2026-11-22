@@ -15,7 +15,6 @@ from aweb_naapp.runtime.app_credentials import APP_GRANT_READ, HOOK_RESOLVE, App
 from aweb_naapp.runtime.app_keys import AppKeyError, load_app_key
 from aweb_naapp.runtime.db import ApplyMigrations
 from aweb_naapp.runtime.team_grants import AppIdentity, TeamGrantSource
-from aweb_naapp.runtime.team_server import TeamServerReach
 from tests.runtime.conftest import relying_app
 from tests.runtime.test_naapp_runtime import allow_all
 from tests.runtime.test_served_manifest import ExampleSettings, _key_file, _v2_template
@@ -74,7 +73,6 @@ async def test_one_directory_can_be_wired_before_startup_and_resolves_real_awid(
             purpose=APP_GRANT_READ,
         ),
         discovery=directory,
-        reach=TeamServerReach(),
     )
     # Registering guards must precede the existing lifespan route validation.
     guard = runtime.authorized(grants=source, policy=allow_all)
@@ -116,7 +114,7 @@ def test_hook_key_is_loaded_at_construction_and_resolver_is_cached(tmp_path):
     runtime.settings.app_key_files["hooks"].unlink()
     resolver = runtime.hook_resolver()
     assert resolver is runtime.hook_resolver()
-    assert resolver._reach._transport is transport
+    assert resolver._transport is transport
     assert resolver._directory._transport is None
     assert resolver._signer.purpose == HOOK_RESOLVE
     credential = resolver._signer.sign(method="GET", target=SERVER_URL, team_id=TEAM_ID)
@@ -143,7 +141,7 @@ async def test_shared_publication_check_and_request_authentication_agree(
     member = Member(team_id=TEAM_ID)
     await registry.add_team(TEAM_ID, member.team_did_key)
     if state != "unpublished":
-        await registry.add_certificate(member.certificate())
+        await registry.add_certificate(member.certificate(), team_key=member.team_key)
     if state == "revoked":
         await registry.revoke(member.certificate_id)
     cache = team_auth.AWIDTeamCache(
@@ -191,7 +189,7 @@ def test_a_declared_hook_key_cannot_be_replaced_by_another_configured_kid(tmp_pa
 async def test_shared_publication_check_preserves_authority_outages(registry, service_token):
     member = Member(team_id=TEAM_ID)
     await registry.add_team(TEAM_ID, member.team_did_key)
-    await registry.add_certificate(member.certificate())
+    await registry.add_certificate(member.certificate(), team_key=member.team_key)
 
     def outage(request, response):
         response.status_code = 503

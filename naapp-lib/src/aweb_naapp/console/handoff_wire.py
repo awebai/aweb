@@ -11,6 +11,7 @@ import re
 from datetime import UTC, datetime
 from typing import Any
 
+from awid.signature_wire import decode_base64
 from awid.signing import canonical_json_bytes, verify_did_key_signature
 from fastapi import Request
 
@@ -91,9 +92,7 @@ async def verify_console_request(
             raise ValueError()
         if _UTC_SECOND.fullmatch(timestamp) is None or _SIGNATURE64.fullmatch(signature) is None:
             raise ValueError()
-        signature_bytes = base64.b64decode(signature + "==", validate=True)
-        if base64.b64encode(signature_bytes).rstrip(b"=").decode() != signature:
-            raise ValueError()
+        decode_base64(signature)
         issued = datetime.fromisoformat(timestamp[:-1] + "+00:00")
         if now.tzinfo is None or abs((now.astimezone(UTC) - issued).total_seconds()) > 300:
             raise ValueError()

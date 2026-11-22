@@ -46,18 +46,26 @@ def test_builder_and_signer_match_go_vector(case):
         expected["team_id"], expected["team_did_key"], expected["server_url"], issued_at
     )
     assert record == expected
-    assert team_server_record.record_signing_bytes(record) == base64.b64decode(case["signing_bytes_b64"])
-    assert team_server_record.sign_team_server_record(
-        bytes.fromhex(VECTOR["team_key_seed_hex"]), record
-    ) == case["signature"]
+    assert team_server_record.record_signing_bytes(record) == base64.b64decode(
+        case["signing_bytes_b64"]
+    )
+    assert (
+        team_server_record.sign_team_server_record(
+            bytes.fromhex(VECTOR["team_key_seed_hex"]), record
+        )
+        == case["signature"]
+    )
 
 
 def test_builder_formats_utc_seconds_like_go():
     case = VECTOR["valid"][0]
     local = datetime(2026, 1, 20, 12, 0, 0, 123456, tzinfo=timezone(timedelta(hours=2)))
-    assert team_server_record.build_team_server_record(
-        VECTOR["team_id"], VECTOR["team_did_key"], case["record"]["server_url"], local
-    ) == case["record"]
+    assert (
+        team_server_record.build_team_server_record(
+            VECTOR["team_id"], VECTOR["team_did_key"], case["record"]["server_url"], local
+        )
+        == case["record"]
+    )
 
 
 @pytest.mark.asyncio
@@ -67,6 +75,7 @@ async def test_publish_read_and_idempotent_retry(database_url, visibility):
     did = did_from_public_key(bytes(key.verify_key))
     async with running_registry(database_url) as registry:
         await registry.add_team(TEAM_ID, did, visibility=visibility)
+        action_start = len(registry.transport.calls)
         client = RegistryClient(registry_url=REGISTRY_URL, transport=registry.transport)
         try:
             assert await client.get_team_server_record(DOMAIN, NAME) is None
@@ -75,14 +84,21 @@ async def test_publish_read_and_idempotent_retry(database_url, visibility):
             )
             signature = team_server_record.sign_team_server_record(bytes(key), record)
             expected = {"record": record, "signature": signature}
-            assert await client.publish_team_server_record(DOMAIN, NAME, record, signature) == expected
+            assert (
+                await client.publish_team_server_record(DOMAIN, NAME, record, signature) == expected
+            )
             assert await client.get_team_server_record(DOMAIN, NAME) == expected
-            assert await client.publish_team_server_record(DOMAIN, NAME, record, signature) == expected
+            assert (
+                await client.publish_team_server_record(DOMAIN, NAME, record, signature) == expected
+            )
             verified = team_server_record.verify_team_server_record(
                 record, signature, team_id=TEAM_ID, current_team_did_key=did, now=datetime.now(UTC)
             )
             assert verified.server_url == SERVER_URL
-            assert all("Authorization" not in request.headers for request in registry.transport.calls)
+            assert all(
+                "Authorization" not in request.headers
+                for request in registry.transport.calls[action_start:]
+            )
         finally:
             await client.aclose()
 
@@ -98,7 +114,8 @@ async def test_get_missing_record_is_none(database_url, state):
             await registry.publish_team_server(TEAM_ID, key, server_url=SERVER_URL)
             await registry.db.execute(
                 "UPDATE {{tables.teams}} SET deleted_at = now() WHERE domain = $1 AND name = $2",
-                DOMAIN, NAME,
+                DOMAIN,
+                NAME,
             )
         client = RegistryClient(registry_url=REGISTRY_URL, transport=registry.transport)
         try:
@@ -126,7 +143,10 @@ async def test_publish_preserves_typed_refusals(database_url, failure, status, d
     async with running_registry(database_url) as registry:
         await registry.add_team(TEAM_ID, did)
         await registry.publish_team_server(TEAM_ID, key, server_url=SERVER_URL, issued_at=issued_at)
-        record = {**original["record"], "issued_at": (issued_at + timedelta(seconds=1)).strftime("%Y-%m-%dT%H:%M:%SZ")}
+        record = {
+            **original["record"],
+            "issued_at": (issued_at + timedelta(seconds=1)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }
         signer, target_name = key, NAME
         if failure == "unknown-team":
             target_name = "missing"
@@ -138,7 +158,9 @@ async def test_publish_preserves_typed_refusals(database_url, failure, status, d
         elif failure == "invalid-url":
             record["server_url"] = "http://coord.publisher.example"
         elif failure == "future-record":
-            record["issued_at"] = (datetime.now(UTC) + timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            record["issued_at"] = (datetime.now(UTC) + timedelta(minutes=10)).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            )
         signature = sign_message(bytes(signer), team_server_record.record_signing_bytes(record))
         client = RegistryClient(registry_url=REGISTRY_URL, transport=registry.transport)
         try:
@@ -152,7 +174,9 @@ async def test_publish_preserves_typed_refusals(database_url, failure, status, d
 
 
 @pytest.mark.asyncio
-async def test_methods_follow_domain_resolver_without_leaking_home_service_token(database_url):
+async def test_publish_pins_home_and_read_follows_domain_without_leaking_service_token(
+    database_url,
+):
     key = SigningKey.generate()
     resolved_domains = []
 
@@ -165,20 +189,32 @@ async def test_methods_follow_domain_resolver_without_leaking_home_service_token
     )
     async with running_registry(database_url) as registry:
         await registry.add_team(TEAM_ID, did_from_public_key(bytes(key.verify_key)))
+        action_start = len(registry.transport.calls)
         client = RegistryClient(
-            registry_url=REGISTRY_URL, transport=registry.transport,
-            domain_registry_resolver=resolve, service_token=SERVICE_TOKEN,
+            registry_url=REGISTRY_URL,
+            transport=registry.transport,
+            domain_registry_resolver=resolve,
+            service_token=SERVICE_TOKEN,
         )
         try:
             assert await client.publish_team_server_record(DOMAIN, NAME, **body) == body
             assert await client.get_team_server_record(DOMAIN, NAME) == body
-            assert resolved_domains == [DOMAIN, DOMAIN]
-            assert [(request.method, request.url.host, request.url.path) for request in registry.transport.calls] == [
-                (method, "foreign.registry.example", f"/v1/namespaces/{DOMAIN}/teams/{NAME}/server")
-                for method in ("PUT", "GET")
+            assert resolved_domains == [DOMAIN]
+            assert [
+                (request.method, request.url.host, request.url.path)
+                for request in registry.transport.calls[action_start:]
+            ] == [
+                (
+                    "PUT",
+                    httpx.URL(REGISTRY_URL).host,
+                    f"/v1/namespaces/{DOMAIN}/teams/{NAME}/server",
+                ),
+                ("GET", "foreign.registry.example", f"/v1/namespaces/{DOMAIN}/teams/{NAME}/server"),
             ]
-            assert json.loads(registry.transport.calls[0].content) == body
-            assert all("X-AWID-Service-Token" not in request.headers for request in registry.transport.calls)
+            assert json.loads(registry.transport.calls[action_start].content) == body
+            publish, read = registry.transport.calls[action_start:]
+            assert publish.headers[AWID_SERVICE_TOKEN_HEADER] == SERVICE_TOKEN
+            assert AWID_SERVICE_TOKEN_HEADER not in read.headers
         finally:
             await client.aclose()
 
@@ -186,11 +222,15 @@ async def test_methods_follow_domain_resolver_without_leaking_home_service_token
 @pytest.mark.asyncio
 async def test_publish_sends_service_token_to_configured_registry(database_url):
     key = SigningKey.generate()
-    body = signed_team_server_record(TEAM_ID, key, server_url=SERVER_URL, issued_at=datetime.now(UTC))
+    body = signed_team_server_record(
+        TEAM_ID, key, server_url=SERVER_URL, issued_at=datetime.now(UTC)
+    )
     async with running_registry(database_url) as registry:
         await registry.add_team(TEAM_ID, did_from_public_key(bytes(key.verify_key)))
         client = RegistryClient(
-            registry_url=REGISTRY_URL, transport=registry.transport, service_token=SERVICE_TOKEN,
+            registry_url=REGISTRY_URL,
+            transport=registry.transport,
+            service_token=SERVICE_TOKEN,
         )
         try:
             assert await client.publish_team_server_record(DOMAIN, NAME, **body) == body
@@ -203,7 +243,9 @@ async def test_publish_sends_service_token_to_configured_registry(database_url):
 @pytest.mark.parametrize("credential", ["ordinary", "invalid-token", "trusted-service"])
 async def test_publish_limit_preserves_only_trusted_service_exemption(database_url, credential):
     key = SigningKey.generate()
-    body = signed_team_server_record(TEAM_ID, key, server_url=SERVER_URL, issued_at=datetime.now(UTC))
+    body = signed_team_server_record(
+        TEAM_ID, key, server_url=SERVER_URL, issued_at=datetime.now(UTC)
+    )
     headers = {}
     if credential != "ordinary":
         headers[AWID_SERVICE_TOKEN_HEADER] = (
@@ -221,12 +263,23 @@ async def test_publish_limit_preserves_only_trusted_service_exemption(database_u
             assert response.status_code == (200 if credential == "trusted-service" else 429)
             if credential != "trusted-service":
                 # The trusted caller can still publish when the ordinary bucket is exhausted.
-                assert (await client.put(
-                    path, json=body, headers={AWID_SERVICE_TOKEN_HEADER: SERVICE_TOKEN},
-                )).status_code == 200
+                assert (
+                    await client.put(
+                        path,
+                        json=body,
+                        headers={AWID_SERVICE_TOKEN_HEADER: SERVICE_TOKEN},
+                    )
+                ).status_code == 200
             wrong_key_body = signed_team_server_record(
-                TEAM_ID, SigningKey.generate(), server_url=SERVER_URL, issued_at=datetime.now(UTC),
+                TEAM_ID,
+                SigningKey.generate(),
+                server_url=SERVER_URL,
+                issued_at=datetime.now(UTC),
             )
-            assert (await client.put(
-                path, json=wrong_key_body, headers={AWID_SERVICE_TOKEN_HEADER: SERVICE_TOKEN},
-            )).status_code == 404
+            assert (
+                await client.put(
+                    path,
+                    json=wrong_key_body,
+                    headers={AWID_SERVICE_TOKEN_HEADER: SERVICE_TOKEN},
+                )
+            ).status_code == 404

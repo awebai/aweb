@@ -3,12 +3,13 @@ package awid
 import (
 	"crypto/ed25519"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/awebai/aw/signaturewire"
 )
 
 // onboardingDIDKeySignPayload builds the canonical JSON bytes for the shared
@@ -51,7 +52,7 @@ func DIDKeyRequestHeadersForAudience(method, path, audience string, body []byte,
 	payload := onboardingDIDKeySignPayloadWithAudience(audience, method, path, timestamp, body)
 	did := ComputeDIDKey(signingKey.Public().(ed25519.PublicKey))
 	return map[string]string{
-		"Authorization":    "DIDKey " + did + " " + base64.RawStdEncoding.EncodeToString(ed25519.Sign(signingKey, payload)),
+		"Authorization":    "DIDKey " + did + " " + signaturewire.SignStd(signingKey, payload),
 		"X-AWEB-Timestamp": timestamp,
 	}, nil
 }

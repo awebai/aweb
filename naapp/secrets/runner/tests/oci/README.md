@@ -3,35 +3,48 @@
 These local installed-runtime capability checks are separate from the S19
 operator launcher and release journey. They use only local synthetic credentials
 and grant no server release authority. The focused worker cases compose TLS,
-signed assignments and native OCI with those same fixtures. Normal host tests skip these checks; the explicit
-Linux proof must run before any OCI integration is called complete.
+signed assignments and native OCI with those same fixtures. Normal host tests
+skip these checks. Complete the explicit Linux proof before qualifying an OCI
+integration.
 
-From the runner package directory:
+Use a disposable Ubuntu 24.04 VM guest with the local Docker daemon and
+AppArmor ABI 4.0. The guest operator stages the reviewed profile at
+`/usr/local/share/aweb-oci-proof/aweb-secrets-oci-proof.apparmor`. The directory
+is root:root mode 0755 and the file is root:root mode 0444.
+[Proof profile](aweb-secrets-oci-proof.apparmor)
+
+The proof user needs Docker access and non-interactive sudo to manage the staged
+profile and read back its kernel state.
+
+```sudoers
+gateuser ALL=(root) NOPASSWD: /usr/sbin/apparmor_parser --add --skip-cache /usr/local/share/aweb-oci-proof/aweb-secrets-oci-proof.apparmor, /usr/sbin/apparmor_parser --remove --skip-cache /usr/local/share/aweb-oci-proof/aweb-secrets-oci-proof.apparmor
+gateuser ALL=(root) NOPASSWD: /usr/bin/cat /sys/kernel/security/apparmor/profiles
+```
+
+Run the proof from the runner package directory in the guest.
 
 ```sh
-docker build --build-context runner=. --build-context values=../values \
-  --build-context naapp=../../../naapp-lib \
-  -t aweb-secrets-runner-oci-proof tests/oci
-docker run --rm --init --network none --cap-drop ALL \
-  --security-opt no-new-privileges --security-opt seccomp=unconfined \
-  --security-opt systempaths=unconfined --user 10000:10000 \
-  --tmpfs /memory:rw,exec,nosuid,nodev,mode=0700,uid=10000,gid=10000 \
-  --mount "type=bind,source=$(pwd),target=/runner,readonly" \
-  --env PYTHONPATH=/runner/src --env AWEB_SECRETS_OCI_PROOF=1 \
-  aweb-secrets-runner-oci-proof \
-  python3 -m unittest discover -s /runner/tests/oci
+./tests/oci/run-proof.sh
 ```
+
+Docker's default profile denies runc's mount propagation change before it
+can prepare the nested job root. The script verifies the staged profile's
+digest, loads it in the guest, checks its enforcing mode and verifies the
+container's effective label. It removes the profile when the run ends.
+The proof runs the unittest-style and pytest worker cases together. It checks
+the collected node IDs against `expected-cases.txt` before running any cases.
+When a case changes, update the list in the same change.
 
 The image installs Python 3.12 and the runner’s locked dependencies from the
 three explicit package contexts. Only those package sources enter the build;
 instance state and repository metadata are not copied.
 
-The disposable outer container has no capabilities or network, and the runner
-source is mounted read-only. Its syscall/proc restrictions are relaxed solely to
-permit nested rootless user/PID/mount namespaces. Its writable disk-backed
-`/disk` directory supplies a negative storage control. No host users, release
-launcher, privilege policy or deployment settings are provisioned by this test.
-The explicit proof flag is a test switch, not another S19 runner input.
+The disposable outer container has no capabilities or external network, and
+the runner source is mounted read-only. Its syscall and /proc settings permit
+nested rootless user, PID and mount namespaces. Its writable disk-backed
+`/disk` directory supplies a negative storage control. The proof script uses the
+host's existing accounts and policy. The explicit proof flag only enables this
+test suite.
 
 `require_memory_directory` checks actual Linux filesystem type through an opened
 directory descriptor, in addition to runner ownership, mode 0700 and protected

@@ -156,6 +156,13 @@ same bytes for the same call.
 
 These fixtures govern shipped non-A2A protocol behavior.
 
+### `cli-integration-codes-v1.json`
+
+CLI error codes and classifications, invite cancellation and inspection states, and wake
+readiness codes consumed by OATS. The native invite issuance test reads this
+root file to check the pending-issuance refusal and operator recovery contract.
+See [the CLI integration contract](../cli-integration-contract.md).
+
 ### `team-certificate-status-v1.json`
 
 Anonymous status response for one published certificate, public or private team:
@@ -959,6 +966,7 @@ reference duplication are mutation-tested failures.
 | `a2a-bridge-envelope-v0.json` | Go gateway `envelope_vector_test.go` |
 | `a2a-v1.json` | Go A2A `card_test.go`; Go gateway `gateway_rpc_test.go`; Go shared `conformance_test.go` |
 | `canonical-json-v1.json` | Python AWID `test_canonical_json_vectors.py`; Go AWID `canonical_json_vector_test.go`; Go A2A `card_test.go`; TypeScript channel-core `canonical_json_vector.test.ts` |
+| `cli-integration-codes-v1.json` | Go CLI `team_invite_issuance_test.go` |
 | `atomic-address-claim-conflict-codes-v1.json` | Python AWID `test_atomic_claim_route.py`; Go AWID `atomic_address_claim_test.go` |
 | `atomic-address-claim-v1.json` | Python AWID `test_atomic_claim.py`; Go AWID `atomic_address_claim_test.go` |
 | `dns-txt-v1.json` | Python AWID `test_conformance_vectors.py`; Python aweb `test_identity_conformance_vectors.py`; TypeScript channel-core `registry.test.ts` |
@@ -971,7 +979,7 @@ reference duplication are mutation-tested failures.
 | `identity-log-v1.json` | Python AWID `test_conformance_vectors.py`, `test_did.py`, `test_external_registry.py`, and `test_identity_log_verify.py`; Python aweb `test_identity_conformance_vectors.py` and pre-activation federation harness; Go AWID `registry_register_test.go`, `federation_authority_test.go`, and `federation_external_registry_test.go`; Go shared `conformance_test.go`; TypeScript channel-core `registry.test.ts`, `log_rollback.test.ts`, and `received_sender_trust.test.ts` |
 | `message-display-binding-v1.json` | Go AWID `request_envelope_as_message_test.go`; TypeScript channel-core `request_envelope_as_message.test.ts` |
 | `message-signing-v1.json` | Python AWID and aweb conformance tests, including the pre-activation federation harness; Go shared `conformance_test.go` |
-| `mutation-hook-call-sites-v1.json` | Build guard `scripts/check-extension-docs.py` |
+| `mutation-hook-call-sites-v1.json` | Build guard `scripts/check-extension-docs.py`; server `test_message_event_contracts.py` verifies the canonical event vocabulary covers the recorded call sites |
 | `pin-store-raw-wire-v1.json` | Go shared `pin_store_raw_wire_test.go`; TypeScript channel-core `pin_store_raw_wire.test.ts` |
 | `rotation-announcements-v1.json` | Python AWID and aweb conformance tests; Go shared `conformance_test.go` |
 | `stable-id-v1.json` | Python AWID and aweb conformance tests; Go shared `conformance_test.go` |
@@ -1064,3 +1072,38 @@ derivation; they are never message/provenance fields. Author projections test
 exact session/subject/signer binding and external/untrusted guest assurance.
 They assume independently verified signer facts and do not authorize membership
 or activate managed chat. See [P3 readiness](../human-channels-participants.md).
+
+## Signature primitive profiles
+
+`signature-primitives-v1.json` is the common exact-byte verification and strict
+URL-codec vector for Go, Python and TypeScript; the standalone Secrets runner
+consumes its codec cases and the existing Unicode canonical-JSON vector. It pins
+released Python spelling differences without narrowing them. R13 rulings
+`2c74f907-fee7-496f-bba7-1dadbaefee37` and
+`beb23450-5400-473e-9651-0e25bfb649f9` authorize mixed-order-R refusal in TypeScript
+and small-order-R refusal in Go, respectively. The file names the deliberate
+profile changes. See [the primitive contract](../signature-primitives.md).
+
+### `signature-point-encoding-v2.json`
+
+Current shared component evidence for the canonical compressed Ed25519
+representation of A and R. Canonical, noncanonical and negative-zero cases call
+`signaturewire.CanonicalPointEncoding`, `awid.signature_wire.canonical_point_encoding`
+TypeScript `canonicalPointEncoding`, and the standalone Secrets runner’s
+`signature_wire.canonical_point_encoding` directly. Those same predicates run
+inside the production verifiers. Canonical identity and torsion encodings are
+positive representation controls; they do not establish admissible signature
+points. Curve, subgroup and signature-equation rules remain separate checks.
+
+These cases do not claim a full signature invalid solely because of a
+noncanonical point encoding. Antares accepted this scope in `0a7453e1`, relayed
+in `7be295e4-3463-473a-8dd5-f9eb522aa145`. The frozen v1 full-signature corpus,
+including mixed-order and small-order single-fault controls, is unchanged.
+
+## Team-control request signatures
+
+`team-control-requests-v1.json` covers the released ordinary-import preimage
+and the separate [unowned controller claim](../unowned-team-claim.md).
+Go and Python check the same frozen bytes and signatures. The real CLI
+producer and Python admission test reuse the claim signer and account from
+the vector with a freshly registered test team and timestamp.

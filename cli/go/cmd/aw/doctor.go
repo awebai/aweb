@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -72,7 +73,6 @@ var checkCmd = &cobra.Command{
 		"This is the everyday setup diagnostic entrypoint. It runs the same checks as\n" +
 		"`aw doctor` and is safe to run before asking a teammate or support for help.",
 	Args: cobra.RangeArgs(0, 1),
-	RunE: runDoctorAllCommand,
 }
 
 var doctorSupportBundleCmd = &cobra.Command{
@@ -188,6 +188,7 @@ type doctorRedaction struct {
 
 func init() {
 	bindDoctorCommandFlags(doctorCmd)
+	checkCmd.RunE = runDoctorAllCommand
 	bindDoctorCommandFlags(checkCmd)
 
 	for _, category := range []string{"local", "identity", "workspace", "team", "registry", "messaging"} {
@@ -262,15 +263,21 @@ func runDoctorCommand(cmd *cobra.Command, opts doctorRunOptions) error {
 	if err := validateDoctorModeFlags(); err != nil {
 		return err
 	}
-	workingDir, _ := os.Getwd()
+	workingDir, err := os.Getwd()
+	if err != nil {
+		return err
+	}
 	home, err := identityHomeForDir(workingDir)
 	if err != nil {
 		return err
 	}
 	opts.IdentityHome = externalIdentityHomeRoot(home)
 	out := buildDoctorOutput(opts)
-	printOutput(out, formatDoctorOutput)
-	return nil
+	outputErr := printOutput(out, formatDoctorOutput)
+	if cmd == checkCmd && opts.Mode == doctorModeOnline && out.Status == doctorStatusFail {
+		return errors.Join(withErrorCode("check_failed", fmt.Errorf("Checks failed; follow the next_step for each failed check and rerun aw check --online.")), outputErr)
+	}
+	return outputErr
 }
 
 func runDoctorSupportBundle(cmd *cobra.Command, opts doctorRunOptions) error {
@@ -387,6 +394,7 @@ func (r *doctorRunner) addContractCheck() {
 func (r *doctorRunner) runCategory(category string) {
 	switch category {
 	case "local":
+		r.runSignupRecoveryCheck()
 		r.runLocalChecks()
 	case "identity":
 		r.runIdentityDoctorChecks()

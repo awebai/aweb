@@ -59,7 +59,6 @@ services:
       LIBRARY_PUBLIC_ORIGIN: https://library-grant.test:8765
       LIBRARY_APP_KEY_FILES: '{"library:grant-read-1": "/fixture/library/grant-read.hex"}'
       # aweb, in Library's network namespace, is the team server it reads grants from.
-      LIBRARY_TEAM_SERVER_INTERNAL_ORIGINS: '["http://127.0.0.1:8000"]'
     volumes:
       - fixture:/fixture:ro
       # Library's template published from this stack's origin (library_stack_prepare.py).

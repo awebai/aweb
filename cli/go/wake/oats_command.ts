@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 
 export interface OATSEnvelope {
   ok?: boolean;
-  result?: { home?: string; backend?: string; present?: boolean; state?: string; submitted?: boolean };
+  result?: { home?: string; backend?: string; present?: boolean; running?: boolean; state?: string; submitted?: boolean };
   error?: { code?: string; message?: string };
 }
 

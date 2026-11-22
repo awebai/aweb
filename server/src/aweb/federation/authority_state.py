@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Sequence
 
 from awid.federation_errors import FederationAuthorityError
@@ -78,6 +79,10 @@ class AuthorityRepository:
         self.db = db
         self.before_commit = before_commit
 
+    def _cohort_check_time(self) -> datetime | None:
+        """Use PostgreSQL time for cohort reuse unless a test supplies a time."""
+        return None
+
     async def _lock(self, tx, key: str) -> None:
         await tx.fetch_value(
             "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
@@ -152,12 +157,13 @@ class AuthorityRepository:
                 )
                 existing_cohort = await tx.fetch_one(
                     """
-                    SELECT *, expires_at > clock_timestamp() AS live
+                    SELECT *, expires_at > COALESCE($2::timestamptz, clock_timestamp()) AS live
                     FROM {{tables.federation_address_authority_cohorts}}
                     WHERE canonical_address = $1
                     FOR UPDATE
                     """,
                     cohort.canonical_address,
+                    self._cohort_check_time(),
                 )
 
                 advanced = False
@@ -405,12 +411,13 @@ class AuthorityRepository:
                       AND c.bound_did_aw = $2
                       AND c.bound_current_did_key = $3
                       AND c.authoritative_delivery_origin = $4
-                      AND c.expires_at > clock_timestamp()
+                      AND c.expires_at > COALESCE($5::timestamptz, clock_timestamp())
                     """,
                     canonical_address,
                     did_aw,
                     current_did_key,
                     delivery_origin,
+                    self._cohort_check_time(),
                 )
         except Exception as exc:
             raise FederationAuthorityError(

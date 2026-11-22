@@ -17,6 +17,7 @@ const implicitLocalDomain = "local"
 const implicitLocalTeamName = "default"
 
 type implicitLocalInitRequest struct {
+	ContextFile workspaceContextPolicy
 	WorkingDir  string
 	AwebURL     string
 	RegistryURL string
@@ -73,22 +74,26 @@ func localNamespaceHeldElsewhere(ctx context.Context, registry *awid.RegistryCli
 // --new-team path, the only one that reads --team. The paths runInit takes
 // before it (workspace team, --join-from, admission, AWEB_API_KEY, an
 // existing certificate or workspace) would ignore the flag.
-func initTeamFlagApplies() bool {
+func initTeamFlagApplies() (bool, error) {
 	if !initNewTeam || initBYOD || initGlobal || strings.TrimSpace(initUsername) != "" || strings.TrimSpace(initDomain) != "" {
-		return false
+		return false, nil
 	}
 	if initWorkspaceTeam || strings.TrimSpace(initJoinFrom) != "" || strings.TrimSpace(initAdmissionTeamID) != "" || resolveInitAPIKey() != "" {
-		return false
+		return false, nil
 	}
 	wd, err := os.Getwd()
 	if err != nil {
-		return false
+		return false, err
 	}
-	if hasCertificateForInit(wd) {
-		return false
+	hasCertificate, err := hasCertificateForInit(wd)
+	if err != nil {
+		return false, err
+	}
+	if hasCertificate {
+		return false, nil
 	}
 	missing, err := initWorkspaceMissing(wd)
-	return err == nil && missing
+	return missing, err
 }
 
 // initTeamFlagUsageText says where --team applies.
@@ -129,6 +134,9 @@ func recordLocalControllerRegistry(registryURL string) error {
 }
 
 func runImplicitLocalInit(req implicitLocalInitRequest) (connectOutput, error) {
+	if err := req.ContextFile.validate(); err != nil {
+		return connectOutput{}, err
+	}
 	if strings.TrimSpace(req.WorkingDir) == "" {
 		return connectOutput{}, fmt.Errorf("working directory is required")
 	}
@@ -190,20 +198,19 @@ func runImplicitLocalInit(req implicitLocalInitRequest) (connectOutput, error) {
 		return connectOutput{}, err
 	}
 
-	team, err := bootstrapLocalTeamMemberWithScope(
-		ctx,
-		registry,
-		prepared.Plan.RegistryURL,
-		prepared.Plan.Domain,
-		implicitLocalTeamNameValue(req.TeamName),
-		"",
-		prepared.ControllerKey,
-		prepared.IdentityKey,
-		"",
-		"",
-		alias,
-		awid.IdentityModeLocal,
-	)
+	team, err := bootstrapLocalTeamMember(ctx, localTeamMemberBootstrap{
+		Registry:      registry,
+		RegistryURL:   prepared.Plan.RegistryURL,
+		Domain:        prepared.Plan.Domain,
+		TeamName:      implicitLocalTeamNameValue(req.TeamName),
+		DisplayName:   "",
+		ControllerKey: prepared.ControllerKey,
+		MemberKey:     prepared.IdentityKey,
+		MemberDIDAW:   "",
+		MemberAddress: "",
+		Alias:         alias,
+		Scope:         awid.IdentityScopeLocal,
+	})
 	if err != nil {
 		return connectOutput{}, err
 	}
@@ -213,7 +220,7 @@ func runImplicitLocalInit(req implicitLocalInitRequest) (connectOutput, error) {
 	}
 
 	return initCertificateConnectWithOptions(req.WorkingDir, req.AwebURL, certificateConnectOptions{
-		Role:      strings.TrimSpace(req.Role),
+		ContextFile: req.ContextFile, Role: strings.TrimSpace(req.Role),
 		HumanName: strings.TrimSpace(req.HumanName),
 		AgentType: strings.TrimSpace(req.AgentType),
 	})

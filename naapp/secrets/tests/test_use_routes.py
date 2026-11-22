@@ -47,7 +47,7 @@ async def test_actual_guard_binds_submission_and_status_never_sends(
 ):
     member = Member(team_id=TEAM)
     await registry.add_team(TEAM, member.team_did_key)
-    await registry.add_certificate(member.certificate())
+    await registry.add_certificate(member.certificate(), team_key=member.team_key)
     database = await test_db_factory.create_db(suffix="broker_http")
     grants, shared = Installed(), {}
 

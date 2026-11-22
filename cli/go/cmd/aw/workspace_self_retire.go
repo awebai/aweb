@@ -55,6 +55,9 @@ const (
 // team's owner has to.
 const callerCertificateRevoked = "certificate_revoked"
 
+// selfRemovalAccepted records a hosted removal that the service will finish.
+const selfRemovalAccepted retirementOutcome = "self_removal_accepted"
+
 type selfRetireResponse struct {
 	Status              string `json:"status"`
 	TeamID              string `json:"team_id"`
@@ -94,11 +97,10 @@ type selfRetirePlan struct {
 // planSelfRetire decides whether `aw workspace delete <target>` is a hosted
 // local member retiring itself.
 //
-// All three conditions must hold, and each maps to a distinct reason so a false
-// is actionable: the target must be the caller's OWN workspace (self-remove
-// only ever retires the caller), the team must be in the hosted zone (only the
-// cloud holds a team controller that can revoke), and the identity must be
-// local (a global identity's alias is released by team-authorized removal only).
+// The hosted path requires the caller's own workspace, a hosted controller and
+// local membership (docs/aweb-sot.md:233-248). Each refusal has a distinct reason.
+// Non-hosted local retirement uses the separate durable controller-revocation
+// owner; global identity removal remains team-authorized.
 func planSelfRetire(workingDir string, sel *awconfig.Selection, targetWorkspaceID string) selfRetirePlan {
 	if sel == nil {
 		return selfRetirePlan{reason: aliasReleaseNotSelf}

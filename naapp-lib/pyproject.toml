@@ -1,6 +1,6 @@
 [project]
 name = "aweb-naapp"
-version = "0.5.2rc3"
+version = "0.5.2rc4"
 description = "Reusable Native Agentic App (naapp) docs surface: shared chrome, the aweb design system, and manifest-driven llms.txt and reference generators."
 readme = "README.md"
 license = { text = "MIT" }
@@ -31,12 +31,17 @@ runtime = [
   "httpx>=0.28.1",
   "jsonschema>=4.23.0",
   "pgdbm>=0.5.0",
+  # The runtime owns its pool and closes it on shutdown. asyncpg 0.31.0 never
+  # frees a pooled connection that a protocol abort closed (a backend
+  # terminated while its connection was idle), so Pool.close() waits for it
+  # forever; 0.32.0 terminates it and returns it to the pool (asyncpg pool.py,
+  # PoolConnectionHolder.release). tests/runtime/test_runtime_health.py holds
+  # the lifespan to finishing in that case.
+  "asyncpg>=0.32.0",
   "pydantic-settings>=2.10.1",
   "pynacl>=1.6.2",
   "webauthn>=3.0.1",
   "cbor2>=6.1.2",
-  # Team-server reads go through the egress guard.
-  "aweb-naapp[egress]",
 ]
 # The shared durable outbox, aweb_naapp.outbox: pgdbm only, so the core server
 # can use it without the naapp runtime.

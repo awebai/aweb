@@ -79,8 +79,8 @@ async def test_signed_member_operations_and_revoked_install_cannot_bypass_acl(
         team_id=owner.team_id, team_key=owner.team_key, certificate_id="cert-2", alias="bob"
     )
     await registry.add_team(owner.team_id, owner.team_did_key)
-    await registry.add_certificate(owner.certificate())
-    await registry.add_certificate(stranger.certificate())
+    await registry.add_certificate(owner.certificate(), team_key=owner.team_key)
+    await registry.add_certificate(stranger.certificate(), team_key=stranger.team_key)
     content = await test_db_factory.create_db(suffix="signed_pages")
     ledger = await test_db_factory.create_db(suffix="signed_ledger")
     migrations = tmp_path / "migrations"
@@ -195,7 +195,7 @@ async def test_signed_member_operations_and_revoked_install_cannot_bypass_acl(
                 ] == 3
                 outsider = Member(team_id="other:example.com")
                 await registry.add_team(outsider.team_id, outsider.team_did_key)
-                await registry.add_certificate(outsider.certificate())
+                await registry.add_certificate(outsider.certificate(), team_key=outsider.team_key)
                 assert (await call(outsider, "GET", "/fixture")).status_code == 403
             # A valid signed request still needs the current installation grant.
             grants.active = False

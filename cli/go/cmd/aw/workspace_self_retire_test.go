@@ -301,39 +301,26 @@ func selfRetireCertServerHandler(
 	})
 }
 
-func runSelfRetireDeleteForTest(t *testing.T, serverURL, alias string) (string, error) {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
-
-	tmp := t.TempDir()
-	bin := filepath.Join(tmp, "aw")
-	buildAwBinary(t, ctx, bin)
-	writeSelfRetireCertificateFixture(t, tmp, serverURL+"/api", alias)
-
-	run := exec.CommandContext(ctx, bin, "workspace", "delete", selfRetireFixtureWorkspaceID)
-	run.Env = testCommandEnv(tmp)
-	run.Dir = tmp
-	out, err := run.CombinedOutput()
-	return string(out), err
+// selfRemovedResponse is the self-remove route's answer for a member it
+// retired and whose alias it released.
+func selfRemovedResponse(w http.ResponseWriter) {
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"status":                "removed",
+		"team_id":               selfRetireFixtureTeamID,
+		"canonical_team_id":     selfRetireFixtureTeamID,
+		"alias":                 "worker",
+		"identity_scope":        "local",
+		"alias_released":        true,
+		"alias_released_reason": "certificate_revoked",
+		"workspace_id":          selfRetireFixtureWorkspaceID,
+	})
 }
 
 func TestAwWorkspaceDeleteExternalIdentityHomeSelfRetiresWithSelectedRoot(t *testing.T) {
 	t.Parallel()
 
 	var sawSelfRemove atomic.Bool
-	server := newLocalHTTPServer(t, selfRetireCertServerHandler(t, "worker", &sawSelfRemove, func(w http.ResponseWriter) {
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"status":                "removed",
-			"team_id":               selfRetireFixtureTeamID,
-			"canonical_team_id":     selfRetireFixtureTeamID,
-			"alias":                 "worker",
-			"identity_scope":        "local",
-			"alias_released":        true,
-			"alias_released_reason": "certificate_revoked",
-			"workspace_id":          selfRetireFixtureWorkspaceID,
-		})
-	}))
+	server := newLocalHTTPServer(t, selfRetireCertServerHandler(t, "worker", &sawSelfRemove, selfRemovedResponse))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
@@ -350,19 +337,20 @@ func TestAwWorkspaceDeleteExternalIdentityHomeSelfRetiresWithSelectedRoot(t *tes
 	}
 	writeSelfRetireCertificateFixture(t, principalRoot, server.URL+"/api", "worker")
 
-	run := exec.CommandContext(ctx, bin, "--identity-home", filepath.Join(principalRoot, ".aw"), "workspace", "delete", "worker")
+	run := exec.CommandContext(ctx, bin, "--identity-home", filepath.Join(principalRoot, ".aw"), "workspace", "delete", "worker", "--json")
 	run.Env = testCommandEnv(filepath.Join(root, "home"))
 	run.Dir = instanceHome
-	out, err := run.CombinedOutput()
+	var stdout, stderr bytes.Buffer
+	run.Stdout, run.Stderr = &stdout, &stderr
+	err = run.Run()
+	out := stdout.String() + stderr.String()
 	if err != nil {
 		t.Fatalf("run failed: %v\n%s", err, out)
 	}
 	if !sawSelfRemove.Load() {
 		t.Fatalf("self-remove was never called:\n%s", out)
 	}
-	if !strings.Contains(string(out), "Released alias for reuse: true") {
-		t.Fatalf("unexpected output:\n%s", out)
-	}
+	assertSelfRetiredForTest(t, decodeSelfRetireJSONForTest[workspaceDeleteOutput](t, stdout.Bytes(), out), out)
 	if _, err := os.Stat(filepath.Join(instanceHome, ".aw")); !os.IsNotExist(err) {
 		t.Fatalf("external self-retire mutated caller cwd identity home: %v", err)
 	}
@@ -409,7 +397,7 @@ func TestAwWorkspaceDeleteExternalIdentityHomeHasNoGenericFallback(t *testing.T)
 		t.Fatalf("expected external global self-delete refusal, got success:\n%s", out)
 	}
 	text := string(out)
-	if !strings.Contains(text, "only own hosted local self-release is supported") || !strings.Contains(text, aliasReleaseGlobalIdentity) {
+	if !strings.Contains(text, "only own local retirement is supported") || !strings.Contains(text, aliasReleaseGlobalIdentity) || !strings.HasSuffix(text, "Select that local member's own retained identity home, or ask its team controller for team-authorized removal.\n") {
 		t.Fatalf("unexpected refusal:\n%s", text)
 	}
 	if _, err := os.Stat(filepath.Join(instanceHome, ".aw")); !os.IsNotExist(err) {
@@ -443,28 +431,24 @@ func TestAwWorkspaceDeleteSelfRetiresWithTeamCertificate(t *testing.T) {
 	t.Parallel()
 
 	var sawSelfRemove atomic.Bool
-	server := newLocalHTTPServer(t, selfRetireCertServerHandler(t, "worker", &sawSelfRemove, func(w http.ResponseWriter) {
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"status":                "removed",
-			"team_id":               selfRetireFixtureTeamID,
-			"canonical_team_id":     selfRetireFixtureTeamID,
-			"alias":                 "worker",
-			"identity_scope":        "local",
-			"alias_released":        true,
-			"alias_released_reason": "certificate_revoked",
-			"workspace_id":          selfRetireFixtureWorkspaceID,
-		})
-	}))
+	server := newLocalHTTPServer(t, selfRetireCertServerHandler(t, "worker", &sawSelfRemove, selfRemovedResponse))
 
-	out, err := runSelfRetireDeleteForTest(t, server.URL, "worker")
+	stdout, out, err := runSelfRetireDeleteJSONForTest(t, server.URL, "worker", "")
 	if err != nil {
 		t.Fatalf("run failed: %v\n%s", err, out)
 	}
 	if !sawSelfRemove.Load() {
 		t.Fatalf("self-remove was never called:\n%s", out)
 	}
-	if !strings.Contains(out, "Released alias for reuse: true") {
-		t.Fatalf("unexpected output:\n%s", out)
+	assertSelfRetiredForTest(t, decodeSelfRetireJSONForTest[workspaceDeleteOutput](t, stdout, out), out)
+}
+
+// assertSelfRetiredForTest checks the result of a retirement the route
+// accepted: the fixture workspace, its alias released for reuse.
+func assertSelfRetiredForTest(t *testing.T, result workspaceDeleteOutput, out string) {
+	t.Helper()
+	if result.WorkspaceID != selfRetireFixtureWorkspaceID || result.Alias != "worker" || !result.IdentityDeleted || !result.AliasReleased || result.AliasReleasedReason != "certificate_revoked" {
+		t.Fatalf("result = %+v, want workspace %s retired with its alias released\n%s", result, selfRetireFixtureWorkspaceID, out)
 	}
 }
 
@@ -485,18 +469,18 @@ func TestAwWorkspaceDeleteSelfRetireReportsServerRefusalAsFailure(t *testing.T) 
 		})
 	}))
 
-	out, err := runSelfRetireDeleteForTest(t, server.URL, "worker")
+	stdout, out, err := runSelfRetireDeleteJSONForTest(t, server.URL, "worker", "")
 	if err == nil {
 		t.Fatalf("refused retirement must fail the command:\n%s", out)
 	}
 	if !sawSelfRemove.Load() {
 		t.Fatalf("self-remove was never called:\n%s", out)
 	}
-	if !strings.Contains(out, "workspace not retired") {
-		t.Fatalf("unexpected output:\n%s", out)
-	}
-	if strings.Contains(out, "Deleted workspace") {
-		t.Fatalf("a refused retirement must not report a delete:\n%s", out)
+	// The one document on stdout is the error envelope, never a delete result,
+	// and it carries the route's own refusal code.
+	envelope := decodeSelfRetireJSONForTest[cliErrorEnvelope](t, stdout, out)
+	if envelope.Error.HTTPStatus != http.StatusForbidden || envelope.Error.Reason != "self_removal_requires_member_credential" {
+		t.Fatalf("error = %+v, want the route's 403 refusal\n%s", envelope.Error, out)
 	}
 }
 
@@ -518,15 +502,18 @@ func TestAwWorkspaceDeleteSelfRetireReportsUnreleasedAliasAsFailure(t *testing.T
 		})
 	}))
 
-	out, err := runSelfRetireDeleteForTest(t, server.URL, "worker")
+	stdout, out, err := runSelfRetireDeleteJSONForTest(t, server.URL, "worker", "")
 	if err == nil {
 		t.Fatalf("unreleased alias must fail the command:\n%s", out)
 	}
 	if !sawSelfRemove.Load() {
 		t.Fatalf("self-remove was never called:\n%s", out)
 	}
-	if !strings.Contains(out, "registry_unavailable") {
-		t.Fatalf("unexpected output:\n%s", out)
+	// The failure names the route's reason code, so the caller can tell a
+	// registry outage from any other unreleased alias.
+	envelope := decodeSelfRetireJSONForTest[cliErrorEnvelope](t, stdout, out)
+	if !strings.Contains(envelope.Error.Message, "registry_unavailable") {
+		t.Fatalf("error = %+v, want the route's alias_released_reason\n%s", envelope.Error, out)
 	}
 }
 
@@ -545,16 +532,7 @@ func TestAwWorkspaceDeleteSelfRetireStillUsesWorkspaceBoundKey(t *testing.T) {
 				t.Fatalf("authorization = %q, want the workspace-bound key", got)
 			}
 			sawBearer.Store(true)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"status":                "removed",
-				"team_id":               selfRetireFixtureTeamID,
-				"canonical_team_id":     selfRetireFixtureTeamID,
-				"alias":                 "worker",
-				"identity_scope":        "local",
-				"alias_released":        true,
-				"alias_released_reason": "certificate_revoked",
-				"workspace_id":          selfRetireFixtureWorkspaceID,
-			})
+			selfRemovedResponse(w)
 		case r.URL.Path == "/api/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
 		default:
@@ -562,28 +540,14 @@ func TestAwWorkspaceDeleteSelfRetireStillUsesWorkspaceBoundKey(t *testing.T) {
 		}
 	}))
 
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
-
-	tmp := t.TempDir()
-	bin := filepath.Join(tmp, "aw")
-	buildAwBinary(t, ctx, bin)
-	writeSelfRetireCertificateFixture(t, tmp, server.URL+"/api", "worker")
-	addWorkspaceAPIKeyForTest(t, tmp, "aw_sk_selfretire")
-
-	run := exec.CommandContext(ctx, bin, "workspace", "delete", selfRetireFixtureWorkspaceID)
-	run.Env = testCommandEnv(tmp)
-	run.Dir = tmp
-	out, err := run.CombinedOutput()
+	stdout, out, err := runSelfRetireDeleteJSONForTest(t, server.URL, "worker", "aw_sk_selfretire")
 	if err != nil {
-		t.Fatalf("run failed: %v\n%s", err, string(out))
+		t.Fatalf("run failed: %v\n%s", err, out)
 	}
 	if !sawBearer.Load() {
-		t.Fatalf("self-remove was not called with the workspace-bound key:\n%s", string(out))
+		t.Fatalf("self-remove was not called with the workspace-bound key:\n%s", out)
 	}
-	if !strings.Contains(string(out), "Released alias for reuse: true") {
-		t.Fatalf("unexpected output:\n%s", string(out))
-	}
+	assertSelfRetiredForTest(t, decodeSelfRetireJSONForTest[workspaceDeleteOutput](t, stdout, out), out)
 }
 
 func addWorkspaceAPIKeyForTest(t *testing.T, dir, apiKey string) {
@@ -600,9 +564,16 @@ func addWorkspaceAPIKeyForTest(t *testing.T, dir, apiKey string) {
 }
 
 // runSelfRetireDeleteJSONForTest runs `aw workspace delete --json` for the
-// fixture member and returns stdout alone: the --json error envelope is the
-// one document there, and the human sentence goes to stderr.
-func runSelfRetireDeleteJSONForTest(t *testing.T, serverURL, alias, apiKey string) (cliErrorEnvelope, string, error) {
+// fixture member and returns stdout alone, the one JSON document the command
+// prints (its result, or its error envelope), and stdout+stderr for failures.
+func runSelfRetireDeleteJSONForTest(t *testing.T, serverURL, alias, apiKey string) ([]byte, string, error) {
+	t.Helper()
+	stdout, stderr, err := runSelfRetireDeleteCommandForTest(t, serverURL, alias, apiKey)
+	return []byte(stdout), stdout + stderr, err
+}
+
+// runSelfRetireDeleteCommandForTest runs a built aw from the member home as OATS does.
+func runSelfRetireDeleteCommandForTest(t *testing.T, serverURL, alias, apiKey string) (string, string, error) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
@@ -622,11 +593,21 @@ func runSelfRetireDeleteJSONForTest(t *testing.T, serverURL, alias, apiKey strin
 	run.Stdout = &stdout
 	run.Stderr = &stderr
 	err := run.Run()
-	var envelope cliErrorEnvelope
-	if decodeErr := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &envelope); decodeErr != nil {
-		t.Fatalf("stdout is not one JSON document: %v\nstdout:\n%s\nstderr:\n%s", decodeErr, stdout.String(), stderr.String())
+	return stdout.String(), stderr.String(), err
+}
+
+// decodeSelfRetireJSONForTest decodes the one JSON document on stdout.
+func decodeSelfRetireJSONForTest[T any](t *testing.T, stdout []byte, out string) T {
+	t.Helper()
+	var doc T
+	decoder := json.NewDecoder(bytes.NewReader(stdout))
+	if err := decoder.Decode(&doc); err != nil {
+		t.Fatalf("stdout is not one %T document: %v\n%s", doc, err, out)
 	}
-	return envelope, stdout.String() + stderr.String(), err
+	if decoder.More() {
+		t.Fatalf("stdout carries more than one JSON document:\n%s", out)
+	}
+	return doc
 }
 
 func revokedCallerRefusal(code string) func(w http.ResponseWriter) {
@@ -645,7 +626,8 @@ func TestAwWorkspaceDeleteJSONCarriesCertificateRevokedForARevokedCaller(t *test
 	var sawSelfRemove atomic.Bool
 	server := newLocalHTTPServer(t, selfRetireCertServerHandler(t, "worker", &sawSelfRemove, revokedCallerRefusal("certificate_revoked")))
 
-	envelope, out, err := runSelfRetireDeleteJSONForTest(t, server.URL, "worker", "")
+	stdout, out, err := runSelfRetireDeleteJSONForTest(t, server.URL, "worker", "")
+	envelope := decodeSelfRetireJSONForTest[cliErrorEnvelope](t, stdout, out)
 	if err == nil {
 		t.Fatalf("a refused retirement must fail the command:\n%s", out)
 	}
@@ -654,6 +636,52 @@ func TestAwWorkspaceDeleteJSONCarriesCertificateRevokedForARevokedCaller(t *test
 	}
 	if envelope.Error.Code != "certificate_revoked" || envelope.Error.HTTPStatus != http.StatusUnauthorized {
 		t.Fatalf("error = %+v, want code certificate_revoked with status 401\n%s", envelope.Error, out)
+	}
+}
+
+func TestAwWorkspaceDeleteReportsAcceptedHostedRemovalToOATS(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name       string
+		httpStatus int
+		complete   bool
+	}{
+		{"accepted", http.StatusAccepted, false},
+		{"completed-replay", http.StatusOK, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var sawSelfRemove atomic.Bool
+			server := newLocalHTTPServer(t, selfRetireCertServerHandler(t, "worker", &sawSelfRemove, func(w http.ResponseWriter) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tc.httpStatus)
+				detail := map[string]any{
+					"status": "removed", "alias": "worker", "workspace_id": selfRetireFixtureWorkspaceID,
+					"alias_released": tc.complete, "alias_released_reason": "revoked",
+				}
+				if tc.httpStatus == http.StatusAccepted {
+					detail["status"], detail["code"], detail["removal_status"] = "accepted", "self_removal_accepted", "pending"
+					detail["alias_released_reason"] = "Self-removal was accepted and is being completed. No further action is required."
+				}
+				_ = json.NewEncoder(w).Encode(detail)
+			}))
+
+			stdout, stderr, err := runSelfRetireDeleteCommandForTest(t, server.URL, "worker", "")
+			if err != nil || !sawSelfRemove.Load() {
+				t.Fatalf("OATS self-delete should succeed, got %v:\n%s%s", err, stdout, stderr)
+			}
+			var receipt workspaceDeleteOutput
+			if err := json.Unmarshal([]byte(stdout), &receipt); err != nil {
+				t.Fatalf("stdout is not one workspace deletion receipt: %v\n%s%s", err, stdout, stderr)
+			}
+			if receipt.WorkspaceID != selfRetireFixtureWorkspaceID || receipt.Alias != "worker" ||
+				receipt.AliasReleased != tc.complete || receipt.IdentityDeleted != tc.complete {
+				t.Fatalf("unexpected workspace removal receipt: %+v\n%s%s", receipt, stdout, stderr)
+			}
+			if !tc.complete && (receipt.RetirementCode != "self_removal_accepted" || receipt.AliasReleasedReason != "completion pending") {
+				t.Fatalf("expected a pending removal receipt:\n%s%s", stdout, stderr)
+			}
+		})
 	}
 }
 
@@ -677,7 +705,8 @@ func TestAwWorkspaceDeleteJSONCarriesCertificateRevokedOnTheWorkspaceKeyPath(t *
 		}
 	}))
 
-	envelope, out, err := runSelfRetireDeleteJSONForTest(t, server.URL, "worker", "aw_sk_selfretire")
+	stdout, out, err := runSelfRetireDeleteJSONForTest(t, server.URL, "worker", "aw_sk_selfretire")
+	envelope := decodeSelfRetireJSONForTest[cliErrorEnvelope](t, stdout, out)
 	if err == nil {
 		t.Fatalf("a refused retirement must fail the command:\n%s", out)
 	}
@@ -695,7 +724,8 @@ func TestAwWorkspaceDeleteJSONKeepsOtherRefusalCodesOffCertificateRevoked(t *tes
 	var sawSelfRemove atomic.Bool
 	server := newLocalHTTPServer(t, selfRetireCertServerHandler(t, "worker", &sawSelfRemove, revokedCallerRefusal("certificate_invalid")))
 
-	envelope, out, err := runSelfRetireDeleteJSONForTest(t, server.URL, "worker", "")
+	stdout, out, err := runSelfRetireDeleteJSONForTest(t, server.URL, "worker", "")
+	envelope := decodeSelfRetireJSONForTest[cliErrorEnvelope](t, stdout, out)
 	if err == nil {
 		t.Fatalf("a refused retirement must fail the command:\n%s", out)
 	}

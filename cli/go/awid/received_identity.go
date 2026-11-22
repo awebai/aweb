@@ -2,7 +2,6 @@ package awid
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -47,11 +46,64 @@ func (r *RegistryResolver) receivedRegistry(ctx context.Context, teamID string) 
 	return registryURL, scoped, nil
 }
 
-// NormalizeReceivedSenderTrust keeps display labels out of cross-team local
-// and no-address global verification. It cannot promote a failed signature or recipient mismatch.
+// ReceivedSender is what a received message says about its sender, as trust
+// normalisation reads it.
+type ReceivedSender struct {
+	// Address is the sender's address; Alias names it when there is none.
+	Address     string
+	Alias       string
+	DID         string
+	StableID    string
+	Membership  *SenderMembership
+	Rotation    *RotationAnnouncement
+	Replacement *ReplacementAnnouncement
+	IsContact   *bool
+	// Binding is the delivery server's projection of the sender for a
+	// received read; nil when the read carries none.
+	Binding *ReceivedSenderBinding
+}
+
+// NormalizeReceivedSenderTrust is the released form of
+// NormalizeReceivedSender (aw-v1.36.58), kept for Go callers of this public
+// package: binding, when given, is the receiver-side sender binding.
 func (c *Client) NormalizeReceivedSenderTrust(ctx context.Context, status VerificationStatus, address, alias, did, stableID string, membership *SenderMembership, ra *RotationAnnouncement, repl *ReplacementAnnouncement, contact *bool, binding ...ReceivedSenderBinding) (VerificationStatus, *bool) {
-	if len(binding) > 0 && strings.TrimSpace(stableID) == "" {
-		if localStatus, handled := c.receivedLocalSenderTrust(status, address, did, membership, binding[0]); handled {
+	sender := ReceivedSender{Address: address, Alias: alias, DID: did, StableID: stableID, Membership: membership,
+		Rotation: ra, Replacement: repl, IsContact: contact}
+	if len(binding) > 0 {
+		sender.Binding = &binding[0]
+	}
+	return c.NormalizeReceivedSender(ctx, status, sender)
+}
+
+// NormalizeReceivedSender keeps display labels out of cross-team local
+// and no-address global verification. It cannot promote a failed signature or recipient mismatch.
+func (c *Client) NormalizeReceivedSender(ctx context.Context, status VerificationStatus, sender ReceivedSender) (VerificationStatus, *bool) {
+	return checkedAsVerified(status, func(status VerificationStatus) (VerificationStatus, *bool) {
+		return c.normalizeReceivedSender(ctx, status, sender)
+	})
+}
+
+// checkedAsVerified runs a sender's trust checks for a legacy-format
+// signature exactly as for a current one. VerifiedLegacy names the signed
+// envelope's format (it has no conversation claim), not a trust result, so
+// the message keeps it only when the checks pass; a failed check gives the
+// same outcome as for a current-format message.
+func checkedAsVerified(status VerificationStatus, check func(VerificationStatus) (VerificationStatus, *bool)) (VerificationStatus, *bool) {
+	if status != VerifiedLegacy {
+		return check(status)
+	}
+	checked, contact := check(Verified)
+	if checked == Verified {
+		checked = VerifiedLegacy
+	}
+	return checked, contact
+}
+
+func (c *Client) normalizeReceivedSender(ctx context.Context, status VerificationStatus, sender ReceivedSender) (VerificationStatus, *bool) {
+	address, alias, did, stableID := sender.Address, sender.Alias, sender.DID, sender.StableID
+	membership := sender.Membership
+	if sender.Binding != nil && strings.TrimSpace(stableID) == "" {
+		if localStatus, handled := c.receivedLocalSenderTrust(status, address, did, membership, *sender.Binding); handled {
 			return localStatus, nil
 		}
 	}
@@ -60,9 +112,9 @@ func (c *Client) NormalizeReceivedSenderTrust(ctx context.Context, status Verifi
 		if reference == "" {
 			reference = alias
 		}
-		return c.NormalizeSenderTrust(ctx, status, reference, did, stableID, ra, repl, contact)
+		return c.normalizeSenderTrust(ctx, status, reference, did, stableID, sender.Rotation, sender.Replacement, sender.IsContact)
 	}
-	if status != Verified && status != VerifiedLegacy && status != VerifiedCustodial {
+	if !status.Trusted() {
 		return status, nil
 	}
 	if membership == nil || membership.State == "unknown" {
@@ -85,11 +137,11 @@ func (c *Client) NormalizeReceivedSenderTrust(ctx context.Context, status Verifi
 	if err != nil {
 		return VerificationStale, nil
 	}
-	checkpoint, err := c.receivedCheckpoint(registryURL, stableID)
+	checkpoint, err := c.identityCheckpoint(registryURL, stableID)
 	if err != nil {
 		return VerificationStale, nil
 	}
-	registry.SeedVerifiedHead(stableID, checkpoint)
+	registry.SeedVerifiedHeadAt(registryURL, stableID, checkpoint)
 	result := registry.verifyStableIdentityAtRegistry(ctx, registryURL, stableID, did, true)
 	if result == nil {
 		return VerificationStale, nil
@@ -104,114 +156,13 @@ func (c *Client) NormalizeReceivedSenderTrust(ctx context.Context, status Verifi
 		if result.VerifiedHead == nil {
 			return VerificationStale, nil
 		}
-		if err := c.saveReceivedCheckpoint(registryURL, stableID, result.VerifiedHead); err != nil {
+		if err := c.saveIdentityCheckpoint(identityCheckpointWrite{RegistryURL: registryURL, StableID: stableID, Head: result.VerifiedHead}); err != nil {
 			return VerificationStale, nil
 		}
 		return Verified, nil
 	default:
 		return VerificationStale, nil
 	}
-}
-
-// Stored in the pin store's forward-compatible root metadata, never as an
-// address pin. Older clients preserve these checkpoints without inventing an
-// address for this identity. Both levels are authority-scoped.
-const receivedHeadsField = "received_identity_heads"
-
-func (c *Client) receivedCheckpoint(registryURL, stableID string) (*VerifiedLogHead, error) {
-	if c.pinStore == nil {
-		return nil, nil
-	}
-	c.pinStore.mu.Lock()
-	defer c.pinStore.mu.Unlock()
-	if c.pinStore.undurable.Load() {
-		return nil, fmt.Errorf("trust store is not durable")
-	}
-	raw, ok := c.pinStore.unknown[receivedHeadsField]
-	if !ok {
-		return nil, nil
-	}
-	data, err := json.Marshal(raw)
-	if err != nil {
-		return nil, err
-	}
-	var heads map[string]map[string]*VerifiedLogHead
-	if err := json.Unmarshal(data, &heads); err != nil {
-		return nil, err
-	}
-	if heads == nil {
-		return nil, fmt.Errorf("invalid received identity checkpoints")
-	}
-	head, ok := heads[registryURL][stableID]
-	if !ok {
-		return nil, nil
-	}
-	if head == nil || head.Seq < 1 || len(head.EntryHash) != 64 || !isLowerHex(head.EntryHash) || head.CurrentDIDKey == "" {
-		return nil, fmt.Errorf("invalid received identity checkpoint")
-	}
-	if _, err := ExtractPublicKey(head.CurrentDIDKey); err != nil {
-		return nil, err
-	}
-	return head, nil
-}
-
-func (c *Client) saveReceivedCheckpoint(registryURL, stableID string, head *VerifiedLogHead) error {
-	if c.pinStore == nil {
-		return nil
-	}
-	c.pinStore.mu.Lock()
-	if c.pinStore.unknown == nil {
-		c.pinStore.unknown = make(map[string]any)
-	}
-	heads := map[string]map[string]*VerifiedLogHead{}
-	if raw, ok := c.pinStore.unknown[receivedHeadsField]; ok {
-		data, err := json.Marshal(raw)
-		if err != nil {
-			c.pinStore.mu.Unlock()
-			return err
-		}
-		if err := json.Unmarshal(data, &heads); err != nil {
-			c.pinStore.mu.Unlock()
-			return err
-		}
-	}
-	if heads == nil {
-		c.pinStore.mu.Unlock()
-		return fmt.Errorf("invalid received identity checkpoints")
-	}
-	if heads[registryURL] == nil {
-		heads[registryURL] = map[string]*VerifiedLogHead{}
-	}
-	old := heads[registryURL][stableID]
-	if old != nil && old.Seq > head.Seq {
-		c.pinStore.mu.Unlock()
-		return fmt.Errorf("received identity checkpoint rollback")
-	}
-	if old != nil && old.Seq == head.Seq && old.EntryHash != head.EntryHash {
-		c.pinStore.mu.Unlock()
-		return fmt.Errorf("received identity checkpoint fork")
-	}
-	heads[registryURL][stableID] = head
-	// Plain values are required by the pin store's unknown-field serializer.
-	data, err := json.Marshal(heads)
-	if err != nil {
-		c.pinStore.mu.Unlock()
-		return err
-	}
-	var plain map[string]any
-	err = json.Unmarshal(data, &plain)
-	if err == nil {
-		c.pinStore.unknown[receivedHeadsField] = plain
-	}
-	c.pinStore.mu.Unlock()
-	if err != nil {
-		return err
-	}
-	err = c.savePinStore()
-	if err != nil {
-		c.pinStore.undurable.Store(true)
-	}
-	return err
 }
 
 // ReceivedSenderBinding keeps the participant-authorized projection separate
@@ -245,7 +196,7 @@ func (c *Client) receivedLocalSenderTrust(status VerificationStatus, address, di
 	if !crossTeam {
 		return status, false
 	}
-	if status != Verified && status != VerifiedLegacy && status != VerifiedCustodial {
+	if !status.Trusted() {
 		return status, true
 	}
 	if member == nil {
@@ -263,16 +214,10 @@ func (c *Client) receivedLocalSenderTrust(status VerificationStatus, address, di
 	if _, err := ExtractPublicKey(did); err != nil {
 		return IdentityMismatch, true
 	}
-	if c.pinStore != nil && strings.Contains(address, "/") {
-		c.pinStore.mu.Lock()
-		removed := c.pinStore.RemoveAddress(address)
-		c.pinStore.mu.Unlock()
-		if removed {
-			if err := c.savePinStore(); err != nil {
-				return VerificationStale, true
-			}
-		}
-	}
+	// The server's membership attestation never deletes a pin (Antares
+	// 2e8881d7): a team-scoped name's previous holder is retired with its
+	// anchor, and a pin at a real address is left untouched.
+	c.releaseTeamNamePin(address, address)
 	return Verified, true
 }
 

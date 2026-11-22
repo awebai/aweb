@@ -1,10 +1,13 @@
 package awid
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -129,6 +132,10 @@ func TestFirstContactPinThatPersistsIsVerified(t *testing.T) {
 // not a continuity one: the pin is unchanged and already durable. Downgrading
 // here would make every message unverifiable whenever the disk is full.
 func TestAlreadyPinnedSenderStaysVerifiedWhenRefreshCannotPersist(t *testing.T) {
+	var warnings bytes.Buffer
+	previousOutput := log.Writer()
+	log.SetOutput(&warnings)
+	t.Cleanup(func() { log.SetOutput(previousOutput) })
 	c, ps := newPinClient(t, unwritablePinPath(t))
 
 	const addr = "alice@example.com"
@@ -139,6 +146,9 @@ func TestAlreadyPinnedSenderStaysVerifiedWhenRefreshCannotPersist(t *testing.T) 
 	status := c.CheckTOFUPin(context.Background(), Verified, addr, did, "", nil, nil)
 	if status != Verified {
 		t.Fatalf("status=%q: an unchanged, already-durable pin must stay verified", status)
+	}
+	if !strings.Contains(warnings.String(), "not a directory") || !strings.Contains(warnings.String(), "Check the pin-store path and permissions, then retry the command.") {
+		t.Fatalf("missing persistence failure and recovery: %s", warnings.String())
 	}
 }
 
@@ -193,8 +203,8 @@ func TestAdvancedCheckpointThatPersistsIsVerified(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := reloaded.Pins[f.stableID]; got == nil || got.LogSeq != 2 {
-		t.Errorf("checkpoint was reported verified but is not on disk: %+v", got)
+	if got := checkpointHead(t, reloaded, f.stableID); got.Seq != 2 || got.EntryHash == "" {
+		t.Errorf("checkpoint was reported verified but is not on disk: seq=%d hash=%q", got.Seq, got.EntryHash)
 	}
 }
 

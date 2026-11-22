@@ -25,6 +25,8 @@ from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
 from test_identity_grants import _grant_headers, _session_keypair
 from test_messages_http import _signed_team_headers
 
+__all__ = ["privacy_app"]
+
 
 def _when(value):
     return datetime.fromisoformat(value.replace("Z", "+00:00"))

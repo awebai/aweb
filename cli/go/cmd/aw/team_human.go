@@ -117,7 +117,8 @@ var teamHumanCreateCmd = &cobra.Command{
 		"--home with a single spec uses that spec for the root workspace profile.\n" +
 		"Deprecated --profile is accepted as --agent for transition; @VERSION is dropped.\n\n" +
 		"With --org, create a hosted team using human CLI authorization and return an invite.\n" +
-		"This explicit mode creates no local identity or profile; accept the invite separately.",
+		"This explicit mode creates no local identity or profile; accept the invite separately.\n\n" +
+		"In a fresh directory, a supplied AWEB_API_KEY uses the service's workspace bootstrap.",
 	Args: cobra.ExactArgs(1),
 	RunE: runTeamHumanCreate,
 }
@@ -125,7 +126,7 @@ var teamHumanCreateCmd = &cobra.Command{
 var teamHumanAddCmd = &cobra.Command{
 	Use:   "add <agent-spec>...",
 	Short: "Add agents to this team's agents/instances layout",
-	Long:  "Add one or more agents to agents/instances/<name>/. Specs use [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME] or NAME[:local|global] for empty-profile homes. Omitted names use the server-authoritative next classic name; omitted scope comes from profile.yaml. @VERSION is no longer supported.",
+	Long:  "Add one or more agents to agents/instances/<name>/. Specs use [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME] or NAME[:local|global] for empty-profile homes. Omitted names use the server-authoritative next classic name; omitted scope comes from profile.yaml. @VERSION is no longer supported.\n\n" + creationAuthorityHelp,
 	Args:  cobra.MinimumNArgs(1),
 	RunE:  runTeamHumanAdd,
 }
@@ -620,12 +621,12 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 				return err
 			}
 			if !identityExists {
-				if err := bootstrapTeamCreateGlobalIdentity(wd, alias, domain, strings.TrimSpace(teamHumanCreateRegistryURL), true); err != nil {
+				if err := bootstrapTeamCreateGlobalIdentity(globalIdentityBootstrap{WorkingDir: wd, Name: alias, Domain: domain, RegistryURL: strings.TrimSpace(teamHumanCreateRegistryURL), Purpose: globalIdentityForTeamFounding}); err != nil {
 					return err
 				}
 			}
 		}
-		teamOut, err := foundTeamWithNamespaceControllerAuthority(wd, name, alias, domain, strings.TrimSpace(teamHumanCreateRegistryURL), strings.TrimSpace(teamHumanCreateDisplayName), firstAgentScope)
+		teamOut, err := foundTeamWithNamespaceControllerAuthority(namespaceTeamFounding{WorkingDir: wd, Name: name, CreatorAlias: alias, Domain: domain, RegistryURL: strings.TrimSpace(teamHumanCreateRegistryURL), DisplayName: strings.TrimSpace(teamHumanCreateDisplayName), CreatorScope: awid.IdentityScope(firstAgentScope)})
 		if err != nil {
 			return err
 		}
@@ -651,7 +652,7 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if identityExists {
-		teamOut, err := runTeamHumanCreateForExistingIdentity(wd, teamName, alias, firstAgentScope, selector)
+		teamOut, err := runTeamHumanCreateForExistingIdentity(existingIdentityTeamCreation{Founding: namespaceTeamFounding{WorkingDir: wd, Name: teamName, CreatorAlias: alias, DisplayName: strings.TrimSpace(teamHumanCreateDisplayName), CreatorScope: awid.IdentityScope(firstAgentScope)}, Profile: selector})
 		if err != nil {
 			return err
 		}
@@ -683,11 +684,15 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
+		selectedRegistryURL, err := resolveConfiguredInitAWIDRegistryURL()
+		if err != nil {
+			return err
+		}
 		result, err := runAPIKeyBootstrapInit(apiKeyInitRequest{
 			WorkingDir:   wd,
 			IdentityHome: identityHome.Root,
 			AwebURL:      apiKeyAwebURL,
-			RegistryURL:  registryURL,
+			RegistryURL:  selectedRegistryURL,
 			APIKey:       apiKey,
 			Name:         apiName,
 			Alias:        apiAlias,
@@ -702,7 +707,7 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 		return finishTeamHumanCreateFounding(teamHumanCreateFoundingResult{HomeDir: wd, Selector: selector, HumanOutput: &out}, rosterSpecs)
 	}
 	if !initShouldUseImplicitLocalFlow(registryURL) {
-		guidedResult, err := runTeamHumanCreateHostedInitBundle(wd, awebURL, registryURL, strings.TrimSpace(teamHumanCreateUsername), alias, firstAgentScope)
+		guidedResult, err := runTeamHumanCreateHostedInitBundle(hostedTeamCreation{WorkingDir: wd, AwebURL: awebURL, RegistryURL: registryURL, Username: strings.TrimSpace(teamHumanCreateUsername), Alias: alias, Scope: awid.IdentityScope(firstAgentScope)})
 		if err != nil {
 			return err
 		}
@@ -771,10 +776,14 @@ func finishTeamHumanCreateFounding(result teamHumanCreateFoundingResult, rosterS
 		}
 	}
 	if result.HumanOutput != nil {
-		printOutput(*result.HumanOutput, formatTeamHumanCreate)
+		if err := printOutput(*result.HumanOutput, formatTeamHumanCreate); err != nil {
+			return err
+		}
 	}
 	if result.TeamOutput != nil {
-		printOutput(*result.TeamOutput, formatTeamCreate)
+		if err := printOutput(*result.TeamOutput, formatTeamCreate); err != nil {
+			return err
+		}
 	}
 	if result.GuidedResult != nil && !jsonFlag {
 		initPrintGuidedOnboardingReady(result.GuidedResult)
@@ -920,8 +929,30 @@ func runTeamHumanCreateRosterAdd(specs []teamAgentSpec) error {
 	return runTeamHumanAddWithOptions(nil, args, teamHumanAddRunOptions{Specs: append([]teamAgentSpec(nil), specs...)})
 }
 
-func bootstrapTeamCreateGlobalIdentity(wd, alias, domain, registryURL string, allowCreateFlagGuidance bool) error {
-	domain = awconfig.NormalizeDomain(domain)
+type globalIdentityBootstrapPurpose uint8
+
+const (
+	globalIdentityForTeamMember globalIdentityBootstrapPurpose = iota
+	globalIdentityForTeamFounding
+)
+
+type globalIdentityBootstrap struct {
+	WorkingDir  string
+	Name        string
+	Domain      string
+	RegistryURL string
+	Purpose     globalIdentityBootstrapPurpose
+}
+
+// bootstrapTeamCreateGlobalIdentity prepares the member's own durable identity;
+// namespace authority authorizes its address, not its later creator attribution
+// (docs/identity.md#1-claim-address).
+func bootstrapTeamCreateGlobalIdentity(input globalIdentityBootstrap) error {
+	if input.Purpose != globalIdentityForTeamMember && input.Purpose != globalIdentityForTeamFounding {
+		return errors.New("global identity bootstrap purpose is unknown")
+	}
+	domain := awconfig.NormalizeDomain(input.Domain)
+	alias := input.Name
 	if domain == "" {
 		return usageError("--first-agent-global requires --namespace with --byot when no global identity exists")
 	}
@@ -930,15 +961,15 @@ func bootstrapTeamCreateGlobalIdentity(wd, alias, domain, registryURL string, al
 		return err
 	}
 	if !exists {
-		if allowCreateFlagGuidance {
+		if input.Purpose == globalIdentityForTeamFounding {
 			return usageError("--first-agent-global with --byot requires namespace controller authority for %s; run `aw id create --domain %s --name %s` first, or use hosted onboarding", domain, domain, alias)
 		}
 		return usageError("global identity creation requires namespace controller authority for %s; run `aw id create --domain %s --name %s` first, or run aw team admin extend from a fresh directory with --api-key <key>", domain, domain, alias)
 	}
-	_, err = executeIDCreate(wd, idCreateOptions{
+	_, err = executeIDCreate(input.WorkingDir, idCreateOptions{
 		Name:        alias,
 		Domain:      domain,
-		RegistryURL: registryURL,
+		RegistryURL: input.RegistryURL,
 		Now:         time.Now,
 	})
 	return err
@@ -958,25 +989,34 @@ func teamCreateHasIdentityMaterial(workingDir string) (bool, error) {
 	return false, nil
 }
 
-func runTeamHumanCreateHostedInitBundle(wd, awebURL, registryURL, username, alias, firstAgentScope string) (*guidedOnboardingResult, error) {
+type hostedTeamCreation struct {
+	WorkingDir  string
+	AwebURL     string
+	RegistryURL string
+	Username    string
+	Alias       string
+	Scope       awid.IdentityScope
+}
+
+func runTeamHumanCreateHostedInitBundle(input hostedTeamCreation) (*guidedOnboardingResult, error) {
 	canPrompt := initIsTTY() && !jsonFlag
 	askPostCreateSetup := canPrompt && !initHasExplicitOnboardingArgs()
-	firstAgentGlobal := firstAgentScope == awid.IdentityModeGlobal
-	requestAlias := alias
+	firstAgentGlobal := input.Scope == awid.IdentityScopeGlobal
+	requestAlias := input.Alias
 	requestName := ""
 	if firstAgentGlobal {
 		requestAlias = ""
-		requestName = alias
+		requestName = input.Alias
 	}
 	req := guidedOnboardingRequest{
-		WorkingDir:         wd,
+		WorkingDir:         input.WorkingDir,
 		PromptIn:           os.Stdin,
 		PromptOut:          os.Stderr,
-		BaseURL:            awebURL,
-		RegistryURL:        registryURL,
+		BaseURL:            input.AwebURL,
+		RegistryURL:        input.RegistryURL,
 		ServerName:         serverFlag,
 		BYOD:               false,
-		Username:           strings.TrimSpace(firstNonEmptyLibraryValue(username, initUsername)),
+		Username:           strings.TrimSpace(firstNonEmptyLibraryValue(input.Username, initUsername)),
 		Domain:             strings.TrimSpace(initDomain),
 		Alias:              requestAlias,
 		Name:               requestName,
@@ -1010,16 +1050,34 @@ func resolveTeamHumanCreateFirstAgentScope() (string, error) {
 	return awid.IdentityModeLocal, nil
 }
 
-func runTeamHumanCreateForExistingIdentity(wd, teamName, alias, firstAgentScope string, selector *libraryProfileSelector) (*teamCreateOutput, error) {
-	if selector != nil {
-		return nil, usageError("aw team admin create --profile for an existing identity is not supported yet; use aw team admin add NAME@BLUEPRINT/PROFILE after creating the team")
-	}
-	return foundTeamWithNamespaceControllerAuthority(wd, teamName, alias, "", "", strings.TrimSpace(teamHumanCreateDisplayName), firstAgentScope)
+type existingIdentityTeamCreation struct {
+	Founding namespaceTeamFounding
+	Profile  *libraryProfileSelector
 }
 
-func foundTeamWithNamespaceControllerAuthority(wd, teamName, alias, explicitDomain, explicitRegistryURL, displayName, firstAgentScope string) (*teamCreateOutput, error) {
-	domain := awconfig.NormalizeDomain(explicitDomain)
-	identity, _, identityErr := awconfig.LoadWorktreeIdentityFromDir(wd)
+func runTeamHumanCreateForExistingIdentity(input existingIdentityTeamCreation) (*teamCreateOutput, error) {
+	if input.Profile != nil {
+		return nil, usageError("aw team admin create --profile for an existing identity is not supported yet; use aw team admin add NAME@BLUEPRINT/PROFILE after creating the team")
+	}
+	return foundTeamWithNamespaceControllerAuthority(input.Founding)
+}
+
+type namespaceTeamFounding struct {
+	WorkingDir   string
+	Name         string
+	CreatorAlias string
+	Domain       string
+	RegistryURL  string
+	DisplayName  string
+	CreatorScope awid.IdentityScope
+}
+
+// foundTeamWithNamespaceControllerAuthority uses namespace authority to found
+// the team and controller authority to admit its creator as a member
+// (docs/identity.md#2-create-team). Identity ancestry is independent.
+func foundTeamWithNamespaceControllerAuthority(input namespaceTeamFounding) (*teamCreateOutput, error) {
+	domain := awconfig.NormalizeDomain(input.Domain)
+	identity, _, identityErr := awconfig.LoadWorktreeIdentityFromDir(input.WorkingDir)
 	if domain == "" {
 		if identityErr != nil {
 			if errors.Is(identityErr, os.ErrNotExist) {
@@ -1044,38 +1102,27 @@ func foundTeamWithNamespaceControllerAuthority(wd, teamName, alias, explicitDoma
 	if err != nil {
 		return nil, fmt.Errorf("load controller key for %s: %w", domain, err)
 	}
-	registryURL := strings.TrimSpace(explicitRegistryURL)
-	if registryURL == "" && identityErr == nil && identity != nil {
-		registryURL = strings.TrimSpace(identity.RegistryURL)
-	}
-	if registryURL == "" {
-		registryURL, err = resolveInitAWIDRegistryURL()
-		if err != nil {
-			return nil, err
-		}
-	}
 	registry, err := newConfiguredRegistryClient(nil)
 	if err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(registryURL) != "" {
-		if err := registry.SetFallbackRegistryURL(registryURL); err != nil {
-			return nil, err
-		}
-	}
 	ctx, cancel := commandAPIContext(nil)
 	defer cancel()
+	registryURL, err := resolveTeamCommandRegistry(ctx, registry, input.WorkingDir, domain, awid.BuildTeamID(domain, input.Name), input.RegistryURL)
+	if err != nil {
+		return nil, err
+	}
 	firstAgentAddress := ""
-	if firstAgentScope == awid.IdentityModeGlobal && identityErr == nil && identity != nil {
+	if input.CreatorScope == awid.IdentityScopeGlobal && identityErr == nil && identity != nil {
 		firstAgentAddress = strings.TrimSpace(identity.Address)
 	}
 	plan, err := resolveTeamMemberEnrollment(ctx, teamMemberEnrollmentResolveOptions{
-		WorkingDir:        wd,
+		WorkingDir:        input.WorkingDir,
 		TeamDomain:        domain,
-		Name:              alias,
+		Name:              input.CreatorAlias,
 		Address:           firstAgentAddress,
-		Scope:             firstAgentScope,
-		RegistryURL:       strings.TrimSpace(registry.DefaultRegistryURL),
+		Scope:             string(input.CreatorScope),
+		RegistryURL:       registryURL,
 		Registry:          registry,
 		AllowLocalMint:    true,
 		AllowDefaultClaim: false,
@@ -1083,43 +1130,33 @@ func foundTeamWithNamespaceControllerAuthority(wd, teamName, alias, explicitDoma
 	if err != nil {
 		return nil, err
 	}
-	registration, err := ensureLocalTeamRegistered(ctx, registry, strings.TrimSpace(registry.DefaultRegistryURL), domain, strings.ToLower(strings.TrimSpace(teamName)), strings.TrimSpace(displayName), controllerKey)
-	if err != nil {
-		return nil, err
-	}
-	cert, err := awid.SignTeamCertificate(registration.TeamKey, awid.TeamCertificateFields{
-		Team:          registration.TeamID,
-		MemberDIDKey:  plan.MemberDIDKey,
-		MemberDIDAW:   strings.TrimSpace(plan.MemberDIDAW),
-		MemberAddress: strings.TrimSpace(plan.MemberAddress),
-		Alias:         strings.TrimSpace(plan.Name),
-		IdentityScope: strings.TrimSpace(plan.Scope),
+	bootstrap, err := bootstrapTeamMembership(ctx, teamMembershipBootstrap{
+		Registry: registry, RegistryURL: registryURL, Domain: domain,
+		TeamName: input.Name, DisplayName: input.DisplayName, ControllerKey: controllerKey,
+		Member: awid.TeamCertificateFields{
+			MemberDIDKey: plan.MemberDIDKey, MemberDIDAW: plan.MemberDIDAW, MemberAddress: plan.MemberAddress,
+			Alias: plan.Name, IdentityScope: plan.Scope,
+		},
+		NameFlag: "--first-agent-name",
 	})
 	if err != nil {
 		return nil, err
 	}
-	if err := registry.RegisterCertificate(ctx, strings.TrimSpace(registry.DefaultRegistryURL), domain, strings.ToLower(strings.TrimSpace(teamName)), cert, registration.TeamKey); err != nil {
-		if isAliasConflict(err) {
-			return nil, &plainRefusal{text: nameTakenText(strings.TrimSpace(plan.Name), registration.TeamID, "--first-agent-name"), err: err}
-		}
-		return nil, fmt.Errorf("register certificate at registry: %w", err)
-	}
-	bootstrap := &localTeamBootstrapResult{TeamID: registration.TeamID, TeamDIDKey: registration.TeamDIDKey, TeamKeyPath: registration.TeamKeyPath, Certificate: cert}
-	certPath, err := awconfig.SaveTeamCertificateForTeam(wd, bootstrap.TeamID, bootstrap.Certificate)
+	certPath, err := awconfig.SaveTeamCertificateForTeam(input.WorkingDir, bootstrap.TeamID, bootstrap.Certificate)
 	if err != nil {
 		return nil, err
 	}
-	accepted := &teamAcceptInviteOutput{Status: "accepted", TeamID: bootstrap.TeamID, Alias: alias, CertPath: certPath}
+	accepted := &teamAcceptInviteOutput{Status: "accepted", TeamID: bootstrap.TeamID, Alias: input.CreatorAlias, CertPath: certPath}
 	awebURL, err := resolveInitAwebURL()
 	if err != nil {
 		return nil, err
 	}
 	// The creator self-enrolls as the team's first member and produces a
 	// ready-to-run identity, so the worktree binding is written now.
-	if err := recordAcceptedTeamMembership(wd, accepted, bootstrap.Certificate, strings.TrimSpace(registry.DefaultRegistryURL), awebURL, recordMembershipOptions{IdentityHome: currentEncryptionKeyIdentityHome(), SetActive: true, WriteWorkspaceBinding: true}); err != nil {
+	if err := recordAcceptedTeamMembership(acceptedTeamMembershipRequest{WorkingDir: input.WorkingDir, Output: accepted, Certificate: bootstrap.Certificate, RegistryURL: registryURL, AwebURL: awebURL, IdentityHome: currentEncryptionKeyIdentityHome(), Activation: membershipMakeActive, Binding: membershipWriteWorkspaceBinding}); err != nil {
 		return nil, err
 	}
-	return &teamCreateOutput{Status: "created", TeamID: bootstrap.TeamID, TeamDIDKey: bootstrap.TeamDIDKey, TeamKeyPath: bootstrap.TeamKeyPath, RegistryURL: strings.TrimSpace(registry.DefaultRegistryURL)}, nil
+	return &teamCreateOutput{Status: "created", TeamID: bootstrap.TeamID, TeamDIDKey: bootstrap.TeamDIDKey, TeamKeyPath: bootstrap.TeamKeyPath, RegistryURL: registryURL}, nil
 }
 
 func teamHumanCreateOutputFromConnect(teamName string, result connectOutput, homeDir string) teamHumanCreateOutput {
@@ -1200,6 +1237,7 @@ const (
 )
 
 type teamHumanAddedAgent struct {
+	ResumeMembership  *acceptedTeamInvite     `json:"-"`
 	Name              string                  `json:"name"`
 	HomeDir           string                  `json:"home_dir"`
 	ProfileMode       string                  `json:"profile_mode"`
@@ -1210,14 +1248,14 @@ type teamHumanAddedAgent struct {
 	Source *teamProfileSource `json:"-"`
 	// ProfileSource states where this agent's profile came from, built from
 	// Source.Describe so the reported line and the resolution cannot drift apart.
-	ProfileSource string `json:"profile_source,omitempty"`
-	Scope         string `json:"scope,omitempty"`
-	Alias         string `json:"alias,omitempty"`
-	TeamID        string `json:"team_id,omitempty"`
-	CertPath      string `json:"cert_path,omitempty"`
-	Outcome       string `json:"outcome,omitempty"`
-	Reason        string `json:"reason,omitempty"`
-	Connected     bool   `json:"-"`
+	ProfileSource        string `json:"profile_source,omitempty"`
+	Scope                string `json:"scope,omitempty"`
+	Alias                string `json:"alias,omitempty"`
+	TeamID               string `json:"team_id,omitempty"`
+	CertPath             string `json:"cert_path,omitempty"`
+	Outcome              string `json:"outcome,omitempty"`
+	Reason               string `json:"reason,omitempty"`
+	ProfileRoleConnected bool   `json:"-"`
 }
 
 func resolveTeamHumanAddAgentSpecs(wd string, args []string, specs []teamAgentSpec) ([]teamAgentSpec, error) {
@@ -1334,7 +1372,10 @@ func suggestTeamHumanAgentName(client *aweb.Client, scope string, used map[strin
 	return "", fmt.Errorf("server returned no available names for %s agent", scope)
 }
 
-func preflightTeamHumanAddRosterAliases(wd, agentsRoot string, specs []teamAgentSpec) error {
+func preflightTeamHumanAddRosterAliases(wd string, freshSpecs []teamAgentSpec) error {
+	if len(freshSpecs) == 0 {
+		return nil
+	}
 	client, selection, err := resolveClientSelectionForDir(wd)
 	if err != nil || client == nil || client.Client == nil || selection == nil {
 		if err != nil {
@@ -1348,15 +1389,6 @@ func preflightTeamHumanAddRosterAliases(wd, agentsRoot string, specs []teamAgent
 	if err != nil {
 		debugLog("list team roster for agent-name preflight: %v", err)
 		return nil
-	}
-	freshSpecs := make([]teamAgentSpec, 0, len(specs))
-	for _, spec := range specs {
-		targetDir := filepath.Join(agentsRoot, strings.TrimSpace(spec.Name))
-		homeSelection, homeErr := resolveSelectionAtIdentityHome(targetDir, "", awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(targetDir), Source: awconfig.IdentityHomeDefault})
-		if homeErr == nil && strings.EqualFold(strings.TrimSpace(homeSelection.TeamID), strings.TrimSpace(selection.TeamID)) && strings.EqualFold(strings.TrimSpace(homeSelection.Alias), strings.TrimSpace(spec.Name)) {
-			continue
-		}
-		freshSpecs = append(freshSpecs, spec)
 	}
 	return teamHumanAddRosterCollisionError(roster.Agents, freshSpecs)
 }
@@ -1377,19 +1409,6 @@ func teamHumanAddRosterCollisionError(agents []awid.AgentView, specs []teamAgent
 	return nil
 }
 
-func shouldUseAPIKeyBootstrapForTeamAdd(wd string) (bool, error) {
-	if strings.TrimSpace(resolveInitAPIKey()) == "" {
-		return false, nil
-	}
-	if _, _, _, _, err := resolveTeamInviteTarget(wd); err == nil {
-		return false, nil
-	} else if errors.Is(err, errTeamInviteTargetHasNoActiveTeam) {
-		return true, nil
-	} else {
-		return false, err
-	}
-}
-
 func bootstrapTeamHumanAddAgentWithAPIKey(homeDir string, plan teamHumanAddedAgent, apiKey string) (*acceptedTeamInvite, error) {
 	apiKey = strings.TrimSpace(apiKey)
 	if apiKey == "" {
@@ -1402,19 +1421,20 @@ func bootstrapTeamHumanAddAgentWithAPIKey(homeDir string, plan teamHumanAddedAge
 	if err != nil {
 		return nil, err
 	}
-	registryURL, err := resolveInitAWIDRegistryURL()
+	registryURL, err := resolveConfiguredInitAWIDRegistryURL()
 	if err != nil {
 		return nil, err
 	}
 	global := strings.TrimSpace(plan.Scope) == awid.IdentityModeGlobal
 	request := apiKeyInitRequest{
-		WorkingDir:   homeDir,
-		IdentityHome: filepath.Join(filepath.Clean(homeDir), ".aw"),
-		AwebURL:      awebURL,
-		RegistryURL:  registryURL,
-		APIKey:       apiKey,
-		Role:         teamHumanAddRoleForPlan(plan),
-		Global:       global,
+		EncryptionPublication: encryptionPublicationRequiredService,
+		WorkingDir:            homeDir,
+		IdentityHome:          filepath.Join(filepath.Clean(homeDir), ".aw"),
+		AwebURL:               awebURL,
+		RegistryURL:           registryURL,
+		APIKey:                apiKey,
+		Role:                  teamHumanAddRoleForPlan(plan),
+		Global:                global,
 	}
 	if global {
 		request.Name = strings.TrimSpace(plan.Name)
@@ -1423,7 +1443,7 @@ func bootstrapTeamHumanAddAgentWithAPIKey(homeDir string, plan teamHumanAddedAge
 	}
 	out, err := runAPIKeyBootstrapInit(request)
 	if err != nil {
-		return nil, err
+		return nil, apiKeyCreationRecoveryAdvice(request, err)
 	}
 	certPath := awconfig.TeamCertificatePath(homeDir, strings.TrimSpace(out.TeamID))
 	cert, err := awid.LoadTeamCertificate(certPath)
@@ -1457,12 +1477,12 @@ func teamHumanAddRoleForPlan(plan teamHumanAddedAgent) string {
 	return strings.TrimSpace(plan.Profile.ProfileRef)
 }
 
-func resolveOrCreateTeamMemberIdentity(inviteAnchorDir string, plan teamHumanAddedAgent, apiKeyBootstrapMode bool, apiKey string) (*acceptedTeamInvite, error) {
-	if apiKeyBootstrapMode {
-		return bootstrapTeamHumanAddAgentWithAPIKey(plan.HomeDir, plan, apiKey)
+func resolveOrCreateTeamMemberIdentity(input teamAgentMembershipPreparation) (*acceptedTeamInvite, error) {
+	plan := *input.Plan
+	if input.Authority.Mode == creationAuthorityAPI {
+		return bootstrapTeamHumanAddAgentWithAPIKey(plan.HomeDir, plan, input.APIKey)
 	}
-	globalAgent := strings.TrimSpace(plan.Scope) == awid.IdentityModeGlobal
-	return createAndAcceptTeamInviteForEmptyAgent(inviteAnchorDir, plan.HomeDir, plan.Name, globalAgent)
+	return createProvisionedTeamMember(teamMemberCreation{SourceDir: input.SourceDir, HomeDir: plan.HomeDir, Name: plan.Name, Scope: awid.IdentityScope(plan.Scope)})
 }
 
 type teamIDAssertionSource string
@@ -1474,12 +1494,12 @@ const (
 )
 
 type teamHumanAddRunOptions struct {
+	Creation              *creationAuthority
 	CWD                   string
 	InviteAnchorDir       string
 	AgentsRoot            string
 	WorktreeAnchorDir     string
 	APIKey                string
-	ForceAPIKey           bool
 	ExpectedTeamID        string
 	TeamIDAssertionSource teamIDAssertionSource
 	OutputStatus          string
@@ -1538,16 +1558,30 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 	if err != nil {
 		return err
 	}
-	if err := preflightTeamHumanAddRosterAliases(wd, agentsRoot, resolvedSpecs); err != nil {
-		return err
+	apiKey := strings.TrimSpace(opts.APIKey)
+	if apiKey == "" {
+		apiKey = resolveInitAPIKey()
 	}
-	apiKeyBootstrapMode := opts.ForceAPIKey
-	if !apiKeyBootstrapMode {
-		apiKeyBootstrapMode, err = shouldUseAPIKeyBootstrapForTeamAdd(inviteAnchorDir)
+	var creation creationAuthority
+	if opts.Creation != nil {
+		creation = *opts.Creation
+	} else {
+		base, err := resolveAPIKeyInitAwebURL()
+		if err != nil {
+			return err
+		}
+		creation, err = resolveAgentCreation(agentCreationRequest{WorkingDir: inviteAnchorDir, APIKey: apiKey, AwebURL: base, RequestedTeam: opts.ExpectedTeamID})
 		if err != nil {
 			return err
 		}
 	}
+	creatorHome, err := identityHomeForDir(inviteAnchorDir)
+	if err != nil {
+		return err
+	}
+	printCreationAuthority(creation)
+	apiKeyBootstrapMode := creation.Mode == creationAuthorityAPI
+	opts.APIKey = apiKey
 	plans := make([]teamHumanAddedAgent, 0, len(resolvedSpecs))
 	for _, spec := range resolvedSpecs {
 		if spec.Profile != nil && teamHumanAddLayoutOnly {
@@ -1566,7 +1600,38 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 	if teamHumanAddStart && len(plans) != 1 {
 		return usageError("aw team admin add --start requires exactly one agent")
 	}
-	for _, plan := range plans {
+	expectedTeam := creation.SourceTeam
+	if creation.SelectedTeam != nil {
+		expectedTeam = creation.SelectedTeam.CanonicalTeamID
+	}
+	if expectedTeam == "" {
+		expectedTeam = opts.AuthorityTeamID
+	}
+	freshSpecs := make([]teamAgentSpec, 0, len(resolvedSpecs))
+	for index := range plans {
+		plan := &plans[index]
+		existing, err := existingProvisionedMember(provisionedMemberSelection{Home: awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(plan.HomeDir)}, TeamID: expectedTeam, Name: plan.Name, Scope: awid.IdentityScope(plan.Scope)})
+		if err != nil {
+			return err
+		}
+		plan.ResumeMembership = existing
+		if existing != nil {
+			continue
+		}
+		if !apiKeyBootstrapMode && !teamHumanAddLayoutOnly && plan.Scope == awid.IdentityModeGlobal {
+			if err := preflightProfileAgentHome(plan.HomeDir); err != nil {
+				return err
+			}
+			path := filepath.Join(awconfig.WorktreeIdentityHome(plan.HomeDir), initInviteRecoveryFile)
+			recovery, err := loadRosterInviteRecovery(path, rosterInviteSelection(inviteAnchorDir, creatorHome.Root, expectedTeam, plan.Name))
+			if err != nil {
+				return err
+			}
+			if recovery != nil {
+				continue
+			}
+		}
+		freshSpecs = append(freshSpecs, resolvedSpecs[index])
 		if plan.Profile != nil {
 			if err := preflightProfileAgentHome(plan.HomeDir); err != nil {
 				return err
@@ -1576,6 +1641,9 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 		if err := preflightEmptyAgentHome(plan.HomeDir); err != nil {
 			return err
 		}
+	}
+	if err := preflightTeamHumanAddRosterAliases(wd, freshSpecs); err != nil {
+		return err
 	}
 	if err := preflightTeamHumanAddRosterAuthority(inviteAnchorDir, plans, apiKeyBootstrapMode, opts); err != nil {
 		return err
@@ -1591,7 +1659,7 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 	createdTeamID := ""
 	reportRosterFailure := func(failedIndex int, failure error) error {
 		failedPlans := teamHumanAddFailurePlans(plans, failedIndex, failure)
-		printOutput(teamHumanAddOutput{
+		if err := printOutput(teamHumanAddOutput{
 			Status:        "failed",
 			AgentsRoot:    agentsRoot,
 			TeamID:        teamHumanAddResolvedTeamID(createdTeamID, failedPlans),
@@ -1601,112 +1669,22 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 			NoLibrary:     noLibrary,
 			NoProfile:     noProfile,
 			Agents:        failedPlans,
-		}, formatTeamHumanAdd)
+		}, formatTeamHumanAdd); err != nil {
+			return errors.Join(failure, err)
+		}
 		return failure
 	}
 	for i := range plans {
-		rollback, err := captureAgentHomeRollback(plans[i].HomeDir)
+		teamID, err := createAndSetUpTeamAgent(teamAgentSetup{
+			Membership:  teamAgentMembershipPreparation{SourceDir: inviteAnchorDir, Plan: &plans[i], Authority: creation, APIKey: opts.APIKey},
+			CreatorHome: creatorHome, WorktreeAnchorDir: worktreeAnchorDir, WorkDir: teamHumanAddWorkDir,
+			ExpectedTeamID: opts.ExpectedTeamID, AssertionSource: opts.TeamIDAssertionSource, LayoutOnly: teamHumanAddLayoutOnly,
+		})
+		if createdTeamID == "" {
+			createdTeamID = teamID
+		}
 		if err != nil {
 			return reportRosterFailure(i, err)
-		}
-		if err := os.MkdirAll(plans[i].HomeDir, 0o755); err != nil {
-			homeRollbackErr := rollback.Rollback()
-			return reportRosterFailure(i, addPostJoinRollbackError(err, nil, nil, homeRollbackErr))
-		}
-		if teamHumanAddLayoutOnly {
-			continue
-		}
-		createdIdentity := false
-		var acceptedIdentity *acceptedTeamInvite
-		if plans[i].Profile != nil {
-			targetIdentityHome := awconfig.IdentityHome{Root: filepath.Join(filepath.Clean(plans[i].HomeDir), ".aw"), Source: awconfig.IdentityHomeDefault}
-			if sel, err := resolveSelectionAtIdentityHome(plans[i].HomeDir, "", targetIdentityHome); err == nil && strings.TrimSpace(sel.TeamID) != "" {
-				plans[i].Alias = strings.TrimSpace(sel.Alias)
-				plans[i].TeamID = strings.TrimSpace(sel.TeamID)
-			} else {
-				accepted, err := resolveOrCreateTeamMemberIdentity(inviteAnchorDir, plans[i], apiKeyBootstrapMode, opts.APIKey)
-				if err != nil {
-					var pending *hostedInviteSignaturePendingError
-					if errors.As(err, &pending) {
-						return reportRosterFailure(i, err)
-					}
-					homeRollbackErr := rollback.Rollback()
-					return reportRosterFailure(i, addPostJoinRollbackError(err, nil, nil, homeRollbackErr))
-				}
-				createdIdentity = true
-				acceptedIdentity = accepted
-				plans[i].Alias = accepted.Output.Alias
-				plans[i].TeamID = accepted.Output.TeamID
-				plans[i].CertPath = accepted.Output.CertPath
-				plans[i].Connected = apiKeyBootstrapMode
-			}
-		} else {
-			accepted, err := resolveOrCreateTeamMemberIdentity(inviteAnchorDir, plans[i], apiKeyBootstrapMode, opts.APIKey)
-			if err != nil {
-				var pending *hostedInviteSignaturePendingError
-				if errors.As(err, &pending) {
-					return reportRosterFailure(i, err)
-				}
-				homeRollbackErr := rollback.Rollback()
-				return reportRosterFailure(i, addPostJoinRollbackError(err, nil, nil, homeRollbackErr))
-			}
-			createdIdentity = true
-			acceptedIdentity = accepted
-			plans[i].Alias = accepted.Output.Alias
-			plans[i].TeamID = accepted.Output.TeamID
-			plans[i].CertPath = accepted.Output.CertPath
-			plans[i].Connected = apiKeyBootstrapMode
-		}
-		rollbackOnErr := func(err error) error {
-			var memberRollbackErr error
-			if createdIdentity {
-				memberRollbackErr = rollbackJustCreatedTeamMemberWithExplicitHostedAuth(inviteAnchorDir, acceptedIdentity, opts.APIKey)
-			}
-			homeRollbackErr := rollback.Rollback()
-			return addPostJoinRollbackError(err, acceptedIdentity, memberRollbackErr, homeRollbackErr)
-		}
-		if plans[i].Profile != nil {
-			// Materialize the profile home, connect the member to the aweb service,
-			// then run the coordination configure step. Connect sits between the two:
-			// the configure step injects the team's active instructions, which the
-			// aweb server serves only to a connected agent, and self-hosted create/add
-			// install the awid certificate but not the aweb connection. Connecting only
-			// after materialize succeeds avoids an orphaned aweb connection on a
-			// materialize failure. (default-aabq.21)
-			if strings.TrimSpace(plans[i].LocalBlueprintDir) != "" {
-				if _, _, err := applyLocalBlueprintProfileToHome(plans[i].HomeDir, *plans[i].Profile, plans[i].LocalBlueprintDir, true); err != nil {
-					return reportRosterFailure(i, rollbackOnErr(err))
-				}
-			} else if _, _, err := applyTeamLibraryProfileToHome(plans[i].HomeDir, *plans[i].Profile, plans[i].Source, true); err != nil {
-				return reportRosterFailure(i, rollbackOnErr(err))
-			}
-			if !plans[i].Connected {
-				targetIdentityHome := awconfig.IdentityHome{Root: filepath.Join(filepath.Clean(plans[i].HomeDir), ".aw"), Source: awconfig.IdentityHomeDefault}
-				if sel, selErr := resolveSelectionAtIdentityHome(plans[i].HomeDir, "", targetIdentityHome); selErr == nil && strings.TrimSpace(sel.AwebURL) != "" {
-					if _, err := initCertificateConnectWithOptions(plans[i].HomeDir, strings.TrimSpace(sel.AwebURL), certificateConnectOptions{
-						Role:         strings.TrimSpace(plans[i].Profile.ProfileRef),
-						IdentityHome: targetIdentityHome.Root,
-					}); err != nil {
-						return reportRosterFailure(i, rollbackOnErr(fmt.Errorf("connect agent to aweb service: %w", err)))
-					}
-				}
-			}
-			targetIdentityHome := awconfig.IdentityHome{Root: filepath.Join(filepath.Clean(plans[i].HomeDir), ".aw"), Source: awconfig.IdentityHomeDefault}
-			if err := configureMaterializedAgentHome(plans[i].HomeDir, targetIdentityHome); err != nil {
-				return reportRosterFailure(i, rollbackOnErr(err))
-			}
-		}
-		if createdTeamID == "" {
-			createdTeamID = strings.TrimSpace(plans[i].TeamID)
-		}
-		if expected := strings.TrimSpace(opts.ExpectedTeamID); expected != "" && !strings.EqualFold(strings.TrimSpace(plans[i].TeamID), expected) {
-			mismatchErr := teamIDAssertionMismatchError(expected, strings.TrimSpace(plans[i].TeamID), opts.TeamIDAssertionSource)
-			memberRollbackErr := rollbackJustCreatedTeamMemberWithExplicitHostedAuth(plans[i].HomeDir, acceptedIdentity, opts.APIKey)
-			homeRollbackErr := rollback.Rollback()
-			return reportRosterFailure(i, addPostJoinRollbackError(mismatchErr, acceptedIdentity, memberRollbackErr, homeRollbackErr))
-		}
-		if err := setupTeamAddedAgentWorktree(worktreeAnchorDir, plans[i], teamHumanAddWorkDir); err != nil {
-			return reportRosterFailure(i, rollbackOnErr(err))
 		}
 	}
 	if teamHumanAddStart && len(plans) == 1 {
@@ -1724,7 +1702,9 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 		status = "added"
 	}
 	outputTeamID := teamHumanAddResolvedTeamID(createdTeamID, plans)
-	printOutput(teamHumanAddOutput{Status: status, AgentsRoot: agentsRoot, TeamID: outputTeamID, AuthorityTier: strings.TrimSpace(opts.OutputAuthorityTier), HomeOverride: explicitHome != "", LayoutOnly: teamHumanAddLayoutOnly, NoLibrary: noLibrary, NoProfile: noProfile, Agents: plans}, formatTeamHumanAdd)
+	if err := printOutput(teamHumanAddOutput{Status: status, AgentsRoot: agentsRoot, TeamID: outputTeamID, AuthorityTier: strings.TrimSpace(opts.OutputAuthorityTier), HomeOverride: explicitHome != "", LayoutOnly: teamHumanAddLayoutOnly, NoLibrary: noLibrary, NoProfile: noProfile, Agents: plans}, formatTeamHumanAdd); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -2104,131 +2084,16 @@ func ensureTeamAddWorkMainLink(homeDir, repoRoot string) error {
 	return os.Symlink(repoRoot, link)
 }
 
-type justCreatedTeamMemberRollbackTarget struct {
-	TeamID        string
-	Domain        string
-	TeamName      string
-	RegistryURL   string
-	AwebURL       string
-	CertificateID string
-	MemberAddress string
+type localProvisioningRollback struct {
+	Cause    error
+	Rollback error
 }
 
-func rollbackJustCreatedTeamMemberWithExplicitHostedAuth(anchorDir string, accepted *acceptedTeamInvite, explicitAPIKey string) error {
-	target, err := justCreatedTeamMemberRollbackTargetFromAccepted(accepted)
-	if err != nil {
-		return err
+func withLocalProvisioningRollback(input localProvisioningRollback) error {
+	if input.Rollback == nil {
+		return input.Cause
 	}
-	ctx, cancel := commandAPIContext(nil)
-	defer cancel()
-	if isAwebHostedNamespace(target.Domain) || strings.TrimSpace(explicitAPIKey) != "" {
-		awebURL, apiKey, authErr := resolveHostedTeamRemoveAuthWithAwebURL(anchorDir, target.TeamID, target.AwebURL, explicitAPIKey)
-		if authErr != nil {
-			return authErr
-		}
-		_, err = postHostedTeamRemoveMember(ctx, awebURL, apiKey, target.TeamID, hostedTeamRemoveMemberRequest{CertificateID: target.CertificateID})
-		if err != nil {
-			return err
-		}
-		return nil
-	}
-
-	registry, err := newConfiguredRegistryClient(nil)
-	if err != nil {
-		return err
-	}
-	registryURL := strings.TrimSpace(target.RegistryURL)
-	if registryURL != "" {
-		if err := registry.SetFallbackRegistryURL(registryURL); err != nil {
-			return fmt.Errorf("invalid registry url %q: %w", registryURL, err)
-		}
-	} else {
-		registryURL = strings.TrimSpace(registry.DefaultRegistryURL)
-	}
-	teamKey, err := awconfig.LoadTeamKey(target.Domain, target.TeamName)
-	if err != nil {
-		return fmt.Errorf("load team key for %s/%s: %w", target.Domain, target.TeamName, err)
-	}
-	if err := registry.RevokeCertificate(ctx, registryURL, target.Domain, target.TeamName, target.CertificateID, teamKey); err != nil {
-		return fmt.Errorf("revoke certificate %s: %w", target.CertificateID, err)
-	}
-	return nil
-}
-
-func justCreatedTeamMemberRollbackTargetFromAccepted(accepted *acceptedTeamInvite) (justCreatedTeamMemberRollbackTarget, error) {
-	if accepted == nil || accepted.Certificate == nil {
-		return justCreatedTeamMemberRollbackTarget{}, fmt.Errorf("cannot roll back server-side team member: accepted certificate is missing")
-	}
-	target := justCreatedTeamMemberRollbackTarget{
-		CertificateID: strings.TrimSpace(accepted.Certificate.CertificateID),
-		MemberAddress: strings.TrimSpace(accepted.Certificate.MemberAddress),
-		RegistryURL:   strings.TrimSpace(accepted.RegistryURL),
-		AwebURL:       strings.TrimSpace(accepted.AwebURL),
-	}
-	if accepted.Output != nil {
-		target.TeamID = strings.TrimSpace(accepted.Output.TeamID)
-	}
-	if target.TeamID == "" {
-		target.TeamID = strings.TrimSpace(accepted.Certificate.Team)
-	}
-	target.Domain = awconfig.NormalizeDomain(accepted.Domain)
-	target.TeamName = strings.TrimSpace(accepted.TeamName)
-	if target.Domain == "" || target.TeamName == "" {
-		if domain, teamName, err := awid.ParseTeamID(target.TeamID); err == nil {
-			if target.Domain == "" {
-				target.Domain = domain
-			}
-			if target.TeamName == "" {
-				target.TeamName = teamName
-			}
-		}
-	}
-	if target.TeamID == "" && target.Domain != "" && target.TeamName != "" {
-		target.TeamID = awid.BuildTeamID(target.Domain, target.TeamName)
-	}
-	if target.TeamID == "" {
-		return justCreatedTeamMemberRollbackTarget{}, fmt.Errorf("cannot roll back server-side team member: team id is missing")
-	}
-	if target.Domain == "" || target.TeamName == "" {
-		return justCreatedTeamMemberRollbackTarget{}, fmt.Errorf("cannot roll back server-side team member for %s: team domain/name is missing", target.TeamID)
-	}
-	if target.CertificateID == "" {
-		return justCreatedTeamMemberRollbackTarget{}, fmt.Errorf("cannot roll back server-side team member for %s: certificate_id is missing", target.TeamID)
-	}
-	return target, nil
-}
-
-func addPostJoinRollbackError(cause error, accepted *acceptedTeamInvite, memberRollbackErr, homeRollbackErr error) error {
-	if memberRollbackErr == nil && homeRollbackErr == nil {
-		return cause
-	}
-	target, targetErr := justCreatedTeamMemberRollbackTargetFromAccepted(accepted)
-	var b strings.Builder
-	if memberRollbackErr != nil {
-		b.WriteString("server-side member rollback failed")
-		if targetErr == nil {
-			fmt.Fprintf(&b, " for team_id %s certificate_id %s", target.TeamID, target.CertificateID)
-			if target.MemberAddress != "" {
-				fmt.Fprintf(&b, " member_address %s", target.MemberAddress)
-			}
-		}
-		fmt.Fprintf(&b, ": %v", memberRollbackErr)
-		if targetErr == nil {
-			fmt.Fprintf(&b, "; dirty server-side member may remain; clean it from an owner/admin workspace with `aw id team remove-member --team %s --namespace %s --cert-id %s`", target.TeamName, target.Domain, target.CertificateID)
-			if target.MemberAddress != "" {
-				fmt.Fprintf(&b, " or `aw team admin remove-agent %s --team-id %s`", target.MemberAddress, target.TeamID)
-			}
-		} else {
-			fmt.Fprintf(&b, "; rollback target details unavailable: %v", targetErr)
-		}
-	}
-	if homeRollbackErr != nil {
-		if b.Len() > 0 {
-			b.WriteString("; ")
-		}
-		fmt.Fprintf(&b, "local home rollback failed: %v", homeRollbackErr)
-	}
-	return fmt.Errorf("%w; %s", cause, b.String())
+	return errors.Join(input.Cause, fmt.Errorf("local home rollback failed: %w", input.Rollback))
 }
 
 type agentHomeRollback struct {
@@ -2316,92 +2181,6 @@ func preflightEmptyAgentHome(homeDir string) error {
 
 func preflightProfileAgentHome(homeDir string) error {
 	return pathpreflight.PreflightDir(homeDir, "agent home", pathpreflight.AllowTempAmbientSymlinkPrefix())
-}
-
-func createAndAcceptTeamInviteForEmptyAgent(anchorDir, homeDir, alias string, global bool) (*acceptedTeamInvite, error) {
-	team, domain, registryURL, awebURL, err := resolveTeamInviteTarget(anchorDir)
-	if err != nil {
-		// resolveTeamInviteTarget is shared with `aw id team invite`, whose error
-		// mentions --team/--namespace. Those are not flags on `aw team admin add`: this
-		// command mints against this workspace's active team.
-		if errors.Is(err, errTeamInviteTargetHasNoActiveTeam) {
-			return nil, usageError("aw team admin add mints against this workspace's active team, but none was found here; run `aw team admin create <name>` (or `aw init` with your team's AWEB_URL and AWEB_API_KEY) in this directory first, then re-run `aw team admin add`")
-		}
-		return nil, err
-	}
-	memberAddress := ""
-	if global {
-		identityExists, err := teamCreateHasIdentityMaterial(homeDir)
-		if err != nil {
-			return nil, err
-		}
-		if !identityExists {
-			if err := bootstrapTeamCreateGlobalIdentity(homeDir, alias, domain, registryURL, false); err != nil {
-				return nil, err
-			}
-		}
-		if identity, _, err := awconfig.LoadWorktreeIdentityFromDir(homeDir); err == nil && identity != nil {
-			memberAddress = strings.TrimSpace(identity.Address)
-		}
-	}
-	localInvite := !global
-	actorHome, err := identityHomeForDir(anchorDir)
-	if err != nil {
-		return nil, err
-	}
-	hasTeamKey := false
-	if !awconfig.IsGrantHome(actorHome.Root) {
-		hasTeamKey, err = awconfig.TeamKeyExists(domain, team)
-		if err != nil {
-			return nil, err
-		}
-	}
-	var token string
-	if hasTeamKey {
-		_, token, err = createTeamInviteTokenAt(domain, team, registryURL, awebURL, localInvite, "", anchorDir, actorHome.Root)
-	} else if strings.TrimSpace(awebURL) != "" {
-		_, token, err = createHostedTeamInviteToken(anchorDir, awid.BuildTeamID(domain, team), localInvite)
-	} else {
-		_, token, err = createTeamInviteTokenAt(domain, team, registryURL, awebURL, localInvite, "", anchorDir, actorHome.Root)
-	}
-	if err != nil {
-		return nil, err
-	}
-	acceptOpts := teamAcceptInviteOptions{IdentityHome: awconfig.WorktreeIdentityHome(homeDir), Name: alias, Scope: teamAcceptScopeFromGlobal(global), Address: memberAddress}
-	accepted, err := acceptProvisionedTeamInvite(anchorDir, actorHome.Root, homeDir, token, acceptOpts)
-	if err != nil {
-		return nil, err
-	}
-	// Agent provisioning writes the worktree binding immediately: the produced
-	// agent is ready to run with no separate `aw init`.
-	if err := recordAcceptedTeamMembership(homeDir, accepted.Output, accepted.Certificate, accepted.RegistryURL, accepted.AwebURL, recordMembershipOptions{IdentityHome: explicitEncryptionKeyIdentityHome(awconfig.WorktreeIdentityHome(homeDir)), SetActive: true, WriteWorkspaceBinding: true}); err != nil {
-		return nil, err
-	}
-	return accepted, nil
-}
-
-func ensureAcceptedTeamWorkspaceBinding(homeDir string, output *teamAcceptInviteOutput, cert *awid.TeamCertificate, awebURL string) error {
-	if output == nil || cert == nil {
-		return fmt.Errorf("accepted team membership is required")
-	}
-	workspacePath := filepath.Join(homeDir, awconfig.DefaultWorktreeWorkspaceRelativePath())
-	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(workspacePath)
-	if err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	if workspace == nil {
-		workspace = &awconfig.WorktreeWorkspace{}
-	}
-	workspace.AwebURL = strings.TrimSpace(awebURL)
-	workspace.WorkspacePath = homeDir
-	workspace.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-	upsertWorkspaceMembershipCache(workspace, awconfig.WorktreeMembership{
-		TeamID:   strings.TrimSpace(output.TeamID),
-		Alias:    strings.TrimSpace(output.Alias),
-		CertPath: filepath.ToSlash(strings.TrimSpace(output.CertPath)),
-		JoinedAt: strings.TrimSpace(cert.IssuedAt),
-	})
-	return awconfig.SaveWorktreeWorkspaceTo(workspacePath, workspace)
 }
 
 func formatTeamHumanAdd(v any) string {
@@ -2553,7 +2332,9 @@ func runTeamHumanRemoveAgent(cmd *cobra.Command, args []string) error {
 			if listErr != nil {
 				return listErr
 			}
-			printOutput(operations, formatHostedRemovalList)
+			if err := printOutput(operations, formatHostedRemovalList); err != nil {
+				return err
+			}
 			return nil
 		case strings.TrimSpace(teamHumanRemoveAbortOperation) != "":
 			operationID := strings.TrimSpace(teamHumanRemoveAbortOperation)
@@ -2580,14 +2361,18 @@ func runTeamHumanRemoveAgent(cmd *cobra.Command, args []string) error {
 			if err := clearHostedRemovalRecovery(workingDir, operationID); err != nil {
 				return fmt.Errorf("hosted removal %s reached %s but local recovery cleanup failed: %w", operationID, aborted.Status, err)
 			}
-			printOutput(aborted, formatHostedRemovalOperation)
+			if err := printOutput(aborted, formatHostedRemovalOperation); err != nil {
+				return err
+			}
 			return nil
 		default:
 			operation, resumeErr := resumeHostedRemoval(ctx, client, workingDir, teamID, strings.TrimSpace(teamHumanRemoveResumeOperation))
 			if resumeErr != nil {
 				return resumeErr
 			}
-			printOutput(operation, formatHostedRemovalOperation)
+			if err := printOutput(operation, formatHostedRemovalOperation); err != nil {
+				return err
+			}
 			return nil
 		}
 	}
@@ -2619,7 +2404,9 @@ func runTeamHumanRemoveAgent(cmd *cobra.Command, args []string) error {
 			}
 			out, hostedErr := runHostedLocalRemoval(ctx, client, workingDir, teamID, teamRemoveMember, *workspace)
 			if out.TeamID != "" {
-				printOutput(out, formatTeamRemoveAgent)
+				if err := printOutput(out, formatTeamRemoveAgent); err != nil {
+					return err
+				}
 			}
 			if hostedErr != nil || !retirementSucceeded(out.Status) {
 				if hostedErr != nil {
@@ -2635,48 +2422,49 @@ func runTeamHumanRemoveAgent(cmd *cobra.Command, args []string) error {
 	}
 
 	var verified *verifiedMember
+	revoke := func(ctx context.Context) (certificateStoreResult, error) {
+		return revokeHostedTeamCertificate(ctx, teamID, teamRemoveMember, "")
+	}
 	if !isAwebHostedNamespace(domain) {
-		registry, regErr := newConfiguredRegistryClient(nil)
-		if regErr != nil {
-			return regErr
+		registry, err := newConfiguredRegistryClient(nil)
+		if err != nil {
+			return err
+		}
+		registryURL, err := resolveTeamCommandRegistry(ctx, registry, workingDir, domain, teamID, teamHumanRemoveRegistryURL)
+		if err != nil {
+			return err
+		}
+		signers, signersErr := teamReadSigners(workingDir, domain, name)
+		if signersErr != nil {
+			return signersErr
 		}
 		verified, err = verifyRetirementTarget(
-			ctx, client, registry, resolveTeamRemoveRegistryURL(registry),
-			domain, name, teamRemoveMember, alias,
-			teamReadSigners(workingDir, domain, name),
+			ctx, client, registry, registryURL, domain, name, teamRemoveMember, alias,
+			signers,
 		)
 		if err != nil {
 			return err
 		}
+		revoke = func(ctx context.Context) (certificateStoreResult, error) {
+			return revokeVerifiedTeamCertificate(ctx, registry, registryURL, domain, name, teamID, verified)
+		}
 	}
 
-	out := retireTeamAgent(ctx, client, teamID, teamRemoveMember, alias, verified != nil, func(ctx context.Context) (certificateStoreResult, error) {
-		return revokeTeamCertificate(ctx, domain, name, teamID, teamRemoveMember, verified)
-	})
-	printOutput(out, formatTeamRemoveAgent)
+	out := retireTeamAgent(ctx, client, teamID, teamRemoveMember, alias, verified != nil, revoke)
+	if err := printOutput(out, formatTeamRemoveAgent); err != nil {
+		return err
+	}
 	if !retirementSucceeded(out.Status) {
 		return &cliError{code: 1, msg: fmt.Sprintf("%s is not fully retired; see the per-store results above", teamRemoveMember)}
 	}
 	return nil
 }
 
-// revokeTeamCertificate revokes the member's certificate through whichever
-// authority owns the namespace.
-func revokeTeamCertificate(ctx context.Context, domain, team, teamID, memberAddress string, verified *verifiedMember) (certificateStoreResult, error) {
-	if isAwebHostedNamespace(domain) {
-		return revokeHostedTeamCertificate(ctx, teamID, memberAddress, "")
-	}
-
+func revokeVerifiedTeamCertificate(ctx context.Context, registry *awid.RegistryClient, registryURL, domain, team, teamID string, verified *verifiedMember) (certificateStoreResult, error) {
 	teamKey, err := awconfig.LoadTeamKey(domain, team)
 	if err != nil {
 		return certificateStoreResult{}, fmt.Errorf("load team key for %s: %w", teamID, err)
 	}
-	registry, err := newConfiguredRegistryClient(nil)
-	if err != nil {
-		return certificateStoreResult{}, err
-	}
-	registryURL := resolveTeamRemoveRegistryURL(registry)
-
 	// No lookup here. The member was resolved and verified once, before anything
 	// was written, and its certificate id was carried forward - see verifiedMember.
 	if verified == nil {

@@ -145,8 +145,9 @@ or maximum lifetime**, including while its tab is hidden.
 - **Session**: the exchange returns one 256-bit secret, stored only as SHA-256
   in the database. The page keeps it in memory and
   `sessionStorage['folio.editSession:<id>']` for tab reloads. It travels only in
-  `X-Folio-Edit-Session` on `/state`, `/preview` and `/edit`, never in the URL,
-  cookies, localStorage or logs. Reload resumes the session without reusing the
+  `X-Folio-Edit-Session` on `/state`, `/preview`, `/edit` and the session's
+  image reads at `/assets/<uuid>`, never in the URL, cookies, localStorage or
+  logs. Reload resumes the session without reusing the
   opener. A duplicated tab may share that session; version CAS still applies.
 - **Authority**: every session request joins its link and document, checks
   revocation/deletion and the matching document id, and checks the minter's
@@ -168,8 +169,9 @@ or maximum lifetime**, including while its tab is hidden.
   copy/reopen recovery on refusal; a clean buffer shows unavailable guidance
   without claiming unsaved text. Closing the tab discards its sessionStorage.
 
-The manifest bytes are unchanged. Moving read-only link tokens to fragments is
-separate work, and no legacy editable-token authority path remains.
+Editable links add no manifest tool; a member's image read is the `asset-content`
+tool (§1, Images). Moving read-only link tokens to fragments is separate work,
+and no legacy editable-token authority path remains.
 
 ### 7. Read-only present links
 

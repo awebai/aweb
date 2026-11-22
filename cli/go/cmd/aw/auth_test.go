@@ -123,7 +123,7 @@ func TestAuthLoginUsesDeviceFlowAndStoresHostCredentialsOnly(t *testing.T) {
 	if cfg.AccessToken != "access-secret" || cfg.RefreshToken != "refresh-secret" || cfg.Resource != server.URL+"/cli" {
 		t.Fatalf("unexpected config: %+v", cfg)
 	}
-	path, err := cliAuthConfigPath()
+	path, err := cliAuthConfigPathForScope(cliAuthScope)
 	if err != nil {
 		t.Fatal(err)
 	}

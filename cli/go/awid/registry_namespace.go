@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/awebai/aw/signaturewire"
 )
 
 type namespaceRegisterRequest struct {
@@ -26,6 +28,7 @@ type addressRegisterRequest struct {
 	CurrentDIDKey string `json:"current_did_key"`
 }
 
+// AtomicAddressClaimParams binds an address claim to both identity and namespace signatures.
 type AtomicAddressClaimParams struct {
 	Domain                        string
 	AddressName                   string
@@ -66,6 +69,7 @@ type atomicClaimDIDLogProof struct {
 	Signature      string  `json:"signature"`
 }
 
+// AtomicAddressClaimResult reports the registry decision and the resulting address, if committed.
 type AtomicAddressClaimResult struct {
 	Status           string           `json:"status"`
 	DryRun           bool             `json:"dry_run"`
@@ -91,6 +95,7 @@ type conditionalAddressDeleteRequest struct {
 	ExpectedCurrentDIDKey string `json:"expected_current_did_key"`
 }
 
+// NamespaceReverifyResult reports a namespace DNS recheck and any controller change.
 type NamespaceReverifyResult struct {
 	NamespaceID        string `json:"namespace_id"`
 	Domain             string `json:"domain"`
@@ -102,6 +107,7 @@ type NamespaceReverifyResult struct {
 	NewControllerDID   string `json:"new_controller_did,omitempty"`
 }
 
+// GetNamespaceAddress discovers the namespace registry and returns its address record and URL.
 func (c *RegistryClient) GetNamespaceAddress(ctx context.Context, domain, name string) (*RegistryAddress, string, error) {
 	registryURL, err := c.DiscoverRegistry(ctx, domain)
 	if err != nil {
@@ -110,6 +116,7 @@ func (c *RegistryClient) GetNamespaceAddress(ctx context.Context, domain, name s
 	return c.GetNamespaceAddressAt(ctx, registryURL, domain, name)
 }
 
+// GetNamespaceAddressSigned preserves the public signed-read API; address records are public reads.
 func (c *RegistryClient) GetNamespaceAddressSigned(
 	ctx context.Context,
 	domain, name string,
@@ -122,6 +129,7 @@ func (c *RegistryClient) GetNamespaceAddressSigned(
 	return c.GetNamespaceAddressAtSigned(ctx, registryURL, domain, name, signingKey)
 }
 
+// GetNamespaceAddressAt reads an address record from the explicitly selected registry.
 func (c *RegistryClient) GetNamespaceAddressAt(ctx context.Context, registryURL, domain, name string) (*RegistryAddress, string, error) {
 	var out RegistryAddress
 	path := "/v1/namespaces/" + urlPathEscape(canonicalizeDomain(domain)) + "/addresses/" + urlPathEscape(strings.TrimSpace(name))
@@ -131,6 +139,7 @@ func (c *RegistryClient) GetNamespaceAddressAt(ctx context.Context, registryURL,
 	return &out, registryURL, nil
 }
 
+// GetNamespaceAddressAtSigned preserves the signed-read API without adding authority to a public read.
 func (c *RegistryClient) GetNamespaceAddressAtSigned(
 	ctx context.Context,
 	registryURL, domain, name string,
@@ -139,6 +148,7 @@ func (c *RegistryClient) GetNamespaceAddressAtSigned(
 	return c.GetNamespaceAddressAt(ctx, registryURL, domain, name)
 }
 
+// RegisterNamespace discovers the registry and submits a controller-signed namespace registration.
 func (c *RegistryClient) RegisterNamespace(
 	ctx context.Context,
 	domain string,
@@ -153,6 +163,7 @@ func (c *RegistryClient) RegisterNamespace(
 	return namespace, registryURL, err
 }
 
+// RegisterNamespaceWithDeliveryOrigin registers a namespace with a signed default delivery origin.
 func (c *RegistryClient) RegisterNamespaceWithDeliveryOrigin(
 	ctx context.Context,
 	domain string,
@@ -168,6 +179,7 @@ func (c *RegistryClient) RegisterNamespaceWithDeliveryOrigin(
 	return namespace, registryURL, err
 }
 
+// RegisterNamespaceAt registers a namespace at the selected registry without a delivery origin.
 func (c *RegistryClient) RegisterNamespaceAt(
 	ctx context.Context,
 	registryURL string,
@@ -178,6 +190,7 @@ func (c *RegistryClient) RegisterNamespaceAt(
 	return c.RegisterNamespaceWithDeliveryOriginAt(ctx, registryURL, domain, controllerDID, signingKey, "")
 }
 
+// RegisterNamespaceWithDeliveryOriginAt verifies the signing key matches the controller before registration.
 func (c *RegistryClient) RegisterNamespaceWithDeliveryOriginAt(
 	ctx context.Context,
 	registryURL string,
@@ -228,6 +241,7 @@ func (c *RegistryClient) RegisterNamespaceWithDeliveryOriginAt(
 	return &out, nil
 }
 
+// UpdateNamespaceDeliveryOrigin discovers the registry and signs a default delivery origin update.
 func (c *RegistryClient) UpdateNamespaceDeliveryOrigin(
 	ctx context.Context,
 	domain string,
@@ -242,6 +256,7 @@ func (c *RegistryClient) UpdateNamespaceDeliveryOrigin(
 	return namespace, registryURL, err
 }
 
+// UpdateNamespaceDeliveryOriginAt signs a canonical delivery origin update at the selected registry.
 func (c *RegistryClient) UpdateNamespaceDeliveryOriginAt(
 	ctx context.Context,
 	registryURL string,
@@ -277,6 +292,7 @@ func (c *RegistryClient) UpdateNamespaceDeliveryOriginAt(
 	return &out, nil
 }
 
+// DeleteNamespace discovers the registry and submits a controller-signed namespace deletion.
 func (c *RegistryClient) DeleteNamespace(
 	ctx context.Context,
 	domain string,
@@ -290,6 +306,7 @@ func (c *RegistryClient) DeleteNamespace(
 	return registryURL, c.DeleteNamespaceAt(ctx, registryURL, domain, controllerSigningKey, reason)
 }
 
+// DeleteNamespaceAt signs a namespace deletion at the selected registry, with an optional reason.
 func (c *RegistryClient) DeleteNamespaceAt(
 	ctx context.Context,
 	registryURL string,
@@ -322,6 +339,7 @@ func (c *RegistryClient) DeleteNamespaceAt(
 	)
 }
 
+// ReverifyNamespaceAt asks the selected registry to recheck namespace DNS authority.
 func (c *RegistryClient) ReverifyNamespaceAt(
 	ctx context.Context,
 	registryURL string,
@@ -347,6 +365,7 @@ func (c *RegistryClient) ReverifyNamespaceAt(
 	return &out, nil
 }
 
+// RegisterAddress discovers the registry and signs an address binding to a stable identity and current key.
 func (c *RegistryClient) RegisterAddress(
 	ctx context.Context,
 	domain string,
@@ -363,6 +382,7 @@ func (c *RegistryClient) RegisterAddress(
 	return address, registryURL, err
 }
 
+// RegisterAddressAt signs an address binding at the selected registry using namespace controller authority.
 func (c *RegistryClient) RegisterAddressAt(
 	ctx context.Context,
 	registryURL string,
@@ -413,12 +433,13 @@ func (c *RegistryClient) RegisterAddressAt(
 	return &out, nil
 }
 
+// ClaimIdentityAddressAt submits both authorities for one atomic identity and address claim.
 func (c *RegistryClient) ClaimIdentityAddressAt(
 	ctx context.Context,
 	registryURL string,
 	params AtomicAddressClaimParams,
 ) (*AtomicAddressClaimResult, error) {
-	registryURL, err := canonicalRegistryServerOrigin(registryURL)
+	registryURL, err := CanonicalRegistryServerOrigin(registryURL)
 	if err != nil {
 		return nil, fmt.Errorf("registry_url: %w", err)
 	}
@@ -478,7 +499,7 @@ func (c *RegistryClient) ClaimIdentityAddressAt(
 		return nil, err
 	}
 	identitySignature := base64.RawStdEncoding.EncodeToString(
-		ed25519.Sign(params.IdentitySigningKey, []byte(identityCanonical)),
+		signaturewire.SignBytes(params.IdentitySigningKey, []byte(identityCanonical)),
 	)
 	identityProofHash, err := AtomicAddressClaimIdentityProofHash(identityCanonical, identitySignature)
 	if err != nil {
@@ -489,7 +510,7 @@ func (c *RegistryClient) ClaimIdentityAddressAt(
 		return nil, err
 	}
 	namespaceSignature := base64.RawStdEncoding.EncodeToString(
-		ed25519.Sign(params.NamespaceControllerSigningKey, []byte(namespaceCanonical)),
+		signaturewire.SignBytes(params.NamespaceControllerSigningKey, []byte(namespaceCanonical)),
 	)
 
 	body := atomicAddressClaimRequest{
@@ -549,7 +570,7 @@ func (c *RegistryClient) atomicAddressClaimDIDLogProof(ctx context.Context, regi
 			AuthorizedBy:   currentDIDKey,
 			Timestamp:      timestamp,
 			Signature: base64.RawStdEncoding.EncodeToString(
-				ed25519.Sign(signingKey, []byte(didLogPayload)),
+				signaturewire.SignBytes(signingKey, []byte(didLogPayload)),
 			),
 		}, nil
 	}
@@ -566,6 +587,7 @@ func (c *RegistryClient) atomicAddressClaimDIDLogProof(ctx context.Context, regi
 	return resolution.LogHead, nil
 }
 
+// DeleteAddress discovers the registry and submits a namespace-controller-signed address deletion.
 func (c *RegistryClient) DeleteAddress(
 	ctx context.Context,
 	domain string,
@@ -580,6 +602,7 @@ func (c *RegistryClient) DeleteAddress(
 	return registryURL, c.DeleteAddressAt(ctx, registryURL, domain, name, controllerSigningKey, reason)
 }
 
+// DeleteAddressAt signs deletion of the named address at the explicitly selected registry.
 func (c *RegistryClient) DeleteAddressAt(
 	ctx context.Context,
 	registryURL string,
@@ -617,6 +640,9 @@ func (c *RegistryClient) DeleteAddressAt(
 	)
 }
 
+// DeleteAddressIfMatchesAt deletes only the exact address ID, stable identity
+// and current key supplied by the caller. The service compares all three
+// preconditions atomically; it never deletes a replacement address by name.
 func (c *RegistryClient) DeleteAddressIfMatchesAt(
 	ctx context.Context,
 	registryURL string,
@@ -628,6 +654,33 @@ func (c *RegistryClient) DeleteAddressIfMatchesAt(
 	controllerSigningKey ed25519.PrivateKey,
 	reason string,
 ) error {
+	return c.deleteMatchingAddress(ctx, addressMatchDeletion{
+		RegistryURL: registryURL, Domain: domain, Name: name,
+		AddressID: expectedAddressID, DIDAW: expectedDIDAW, CurrentDIDKey: expectedCurrentDIDKey,
+		ControllerKey: controllerSigningKey, Reason: reason,
+	})
+}
+
+type addressMatchDeletion struct {
+	RegistryURL   string
+	Domain        string
+	Name          string
+	AddressID     string
+	DIDAW         string
+	CurrentDIDKey string
+	ControllerKey ed25519.PrivateKey
+	Reason        string
+}
+
+func (c *RegistryClient) deleteMatchingAddress(ctx context.Context, input addressMatchDeletion) error {
+	registryURL := input.RegistryURL
+	domain := input.Domain
+	name := input.Name
+	expectedAddressID := input.AddressID
+	expectedDIDAW := input.DIDAW
+	expectedCurrentDIDKey := input.CurrentDIDKey
+	controllerSigningKey := input.ControllerKey
+	reason := input.Reason
 	domain = canonicalizeDomain(domain)
 	name = strings.TrimSpace(name)
 	expectedAddressID = strings.TrimSpace(expectedAddressID)

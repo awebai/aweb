@@ -155,6 +155,98 @@ func TestE2EEMailEncryptDecryptRecipientAndSenderCopy(t *testing.T) {
 	}
 }
 
+func TestManagedMailProjectionRequiresAnOpenedSignedEnvelope(t *testing.T) {
+	sender := newE2EETestIdentity(t, "example.com/sender")
+	gateway := newE2EETestIdentity(t, "example.com/gateway")
+	now := time.Now().UTC()
+	const messageID = "11111111-1111-4111-8111-111111111111"
+	const conversationID = "22222222-2222-4222-8222-222222222222"
+	envelope, err := EncryptE2EEMail(E2EEEncryptMailParams{
+		Sender: E2EESenderKey{DID: sender.did, StableID: sender.stableID, Address: sender.address,
+			SigningKey: sender.priv, EncryptionKey: sender.assertion},
+		Recipients: []E2EERecipientKey{{DID: gateway.did, StableID: gateway.stableID, EncryptionKey: gateway.assertion}},
+		Subject:    "Answer", Body: "The hosted reply", MessageID: messageID, ConversationID: conversationID, CreatedAt: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	opened, err := DecryptE2EEMessage(envelope, E2EEDecryptIdentity{
+		DID: gateway.did, StableID: gateway.stableID, EncryptionKeyID: gateway.assertion.EncryptionKeyID, PrivateKey: gateway.xPriv,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	invalidSignature := *envelope
+	invalidSignature.Signature = ""
+	projection := InboxMessage{MessageID: messageID, ConversationID: conversationID,
+		ContentMode: ContentModeEncryptedV2, MessageVersion: E2EEMessageVersion, Encrypted: envelope,
+		Decryptable: true, VerificationStatus: VerifiedCustodial, Body: opened.Body, Subject: opened.Subject}
+
+	for _, tc := range []struct {
+		name, reader, requested string
+		change                  func(*InboxMessage)
+	}{
+		{name: "provider did not open", reader: gateway.stableID, requested: conversationID, change: func(row *InboxMessage) {
+			row.Decryptable = false
+		}},
+		{name: "original signature missing", reader: gateway.stableID, requested: conversationID, change: func(row *InboxMessage) {
+			row.Encrypted = &invalidSignature
+		}},
+		{name: "different signed message", reader: gateway.stableID, requested: conversationID, change: func(row *InboxMessage) {
+			row.MessageID = conversationID
+		}},
+		{name: "different requested conversation", reader: gateway.stableID, requested: messageID, change: func(row *InboxMessage) {
+			row.ConversationID = messageID
+		}},
+		{name: "different recipient", reader: sender.stableID, requested: conversationID},
+		{name: "missing gateway identity", requested: conversationID},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client, err := New("https://example.invalid")
+			if err != nil {
+				t.Fatal(err)
+			}
+			client.SetStableID(tc.reader)
+			row := projection
+			if tc.change != nil {
+				tc.change(&row)
+			}
+			out, err := client.VerifyManagedMailConversation(t.Context(), &InboxResponse{Messages: []InboxMessage{row}}, tc.requested)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := out.Messages[0]; got.VerificationStatus != Failed || got.Body != "" || got.Subject != "" {
+				t.Fatalf("unverified managed projection was readable: tier=%s", got.VerificationStatus)
+			}
+		})
+	}
+
+	// The ordinary reader ignores the provider projection and still needs its
+	// own authorized decryption, even when the row contains readable text.
+	peer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var response any = InboxResponse{Messages: []InboxMessage{projection}}
+		if r.URL.Path == "/v1/messages/"+messageID {
+			response = projection
+		}
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			t.Error(err)
+		}
+	}))
+	defer peer.Close()
+	client, err := New(peer.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, inboxErr := client.Inbox(t.Context(), InboxParams{})
+	_, showErr := client.Message(t.Context(), messageID)
+	for _, err := range []error{inboxErr, showErr} {
+		var decryptErr *DecryptionError
+		if !errors.As(err, &decryptErr) || decryptErr.Code != "encryption_key_missing" {
+			t.Fatalf("ordinary mail read should require authorized decryption: %v", err)
+		}
+	}
+}
+
 func TestE2EERecipientFromEnvelopeSenderRequiresMatchingAssertion(t *testing.T) {
 	alice := newE2EETestLocalIdentity(t)
 	bob := newE2EETestLocalIdentity(t)

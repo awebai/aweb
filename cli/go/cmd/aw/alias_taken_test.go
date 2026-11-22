@@ -18,6 +18,7 @@ import (
 // A name another active member holds is refused in one plain sentence; --json
 // keeps the alias_conflict envelope; the invite stays usable for a retry.
 func TestAcceptInviteAliasTakenIsAPlainSentence(t *testing.T) {
+	const domain = "acme.test"
 	for _, tc := range []struct {
 		name string
 		args []string
@@ -32,6 +33,14 @@ func TestAcceptInviteAliasTakenIsAPlainSentence(t *testing.T) {
 			var memberDIDKey, memberStableID string
 			server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/v1/did/"+memberStableID+"/key":
+					if err := json.NewEncoder(w).Encode(map[string]any{
+						"did_aw":          memberStableID,
+						"current_did_key": memberDIDKey,
+						"id_tree":         map[string]any{"enrolled": false},
+					}); err != nil {
+						t.Error(err)
+					}
 				case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/certificates"):
 					if aliasTaken.Load() {
 						w.Header().Set("Content-Type", "application/json")
@@ -42,9 +51,9 @@ func TestAcceptInviteAliasTakenIsAPlainSentence(t *testing.T) {
 					w.WriteHeader(http.StatusCreated)
 				case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/encryption-key"):
 					w.WriteHeader(http.StatusCreated)
-				case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.com/addresses/alice":
+				case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/"+domain+"/addresses/alice":
 					_ = json.NewEncoder(w).Encode(map[string]any{
-						"address_id": "addr-alice", "domain": "acme.com", "name": "alice",
+						"address_id": "addr-alice", "domain": domain, "name": "alice",
 						"did_aw": memberStableID, "current_did_key": memberDIDKey,
 						"reachability": "public", "created_at": "2026-04-06T00:00:00Z",
 					})
@@ -64,7 +73,7 @@ func TestAcceptInviteAliasTakenIsAPlainSentence(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			writeTeamKeyForTest(t, tmp, "acme.com", "backend", teamKey)
+			writeTeamKeyForTest(t, tmp, domain, "backend", teamKey)
 			memberPub, memberKey, err := awid.GenerateKeypair()
 			if err != nil {
 				t.Fatal(err)
@@ -72,7 +81,7 @@ func TestAcceptInviteAliasTakenIsAPlainSentence(t *testing.T) {
 			memberDIDKey = awid.ComputeDIDKey(memberPub)
 			memberStableID = awid.ComputeStableID(memberPub)
 			if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(tmp, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{
-				DID: memberDIDKey, StableID: memberStableID, Address: "acme.com/alice",
+				DID: memberDIDKey, StableID: memberStableID, Address: domain + "/alice", RegistryURL: server.URL,
 				Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeGlobal, CreatedAt: "2026-04-06T00:00:00Z",
 			}); err != nil {
 				t.Fatal(err)
@@ -89,7 +98,7 @@ func TestAcceptInviteAliasTakenIsAPlainSentence(t *testing.T) {
 				return string(out), err
 			}
 
-			inviteOut, err := run("id", "team", "invite", "--team", "backend", "--namespace", "acme.com", "--member-global", "--json")
+			inviteOut, err := run("id", "team", "invite", "--team", "backend", "--namespace", domain, "--member-global", "--json")
 			if err != nil {
 				t.Fatalf("team invite failed: %v\n%s", err, inviteOut)
 			}
@@ -103,7 +112,7 @@ func TestAcceptInviteAliasTakenIsAPlainSentence(t *testing.T) {
 			}
 			accept := append(append([]string{}, tc.args...), token, "--global", "--no-address")
 
-			const want = "The name alice is already taken in backend:acme.com. Pick another with --name. Your invite is still valid."
+			const want = "The name alice is already taken in backend:" + domain + ". Pick another with --name. Your invite is still valid."
 			out, err := run(accept...)
 			if err == nil {
 				t.Fatalf("accept succeeded despite the taken name:\n%s", out)
@@ -243,7 +252,19 @@ func TestLocalTeamBootstrapNameTakenIsAPlainSentence(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	_, err = bootstrapLocalTeamMemberWithScope(ctx, registry, "", "acme.com", "default", "", controllerKey, memberKey, "", "", "alice", awid.IdentityModeLocal)
+	_, err = bootstrapLocalTeamMember(ctx, localTeamMemberBootstrap{
+		Registry:      registry,
+		RegistryURL:   "",
+		Domain:        "acme.com",
+		TeamName:      "default",
+		DisplayName:   "",
+		ControllerKey: controllerKey,
+		MemberKey:     memberKey,
+		MemberDIDAW:   "",
+		MemberAddress: "",
+		Alias:         "alice",
+		Scope:         awid.IdentityScopeLocal,
+	})
 	if err == nil {
 		t.Fatal("bootstrap succeeded despite the taken name")
 	}

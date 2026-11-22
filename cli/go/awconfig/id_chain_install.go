@@ -61,11 +61,26 @@ func SaveInstalledIDChain(identityHome string, bundle map[string]any) error {
 // subject's current did:key. For a grant this is the grant subject's key,
 // never the session's.
 func (c *InstalledIDChain) Subject(currentDIDKey string) (awid.IDChainSubject, error) {
-	certificates := c.Bundle["certificates"].([]any)
-	leaf := certificates[len(certificates)-1].(map[string]any)["certificate"].(map[string]any)
-	id := leaf["id"].(string)
+	leaf, err := c.Leaf()
+	if err != nil {
+		return awid.IDChainSubject{}, err
+	}
+	id := leaf.ID()
 	if strings.HasPrefix(id, "did:key:") && id != currentDIDKey {
 		return awid.IDChainSubject{}, &awid.IDCertificateError{Code: "subject_mismatch"}
 	}
 	return awid.IDChainSubject{ID: id, DIDKey: currentDIDKey}, nil
+}
+
+// Leaf returns a checked view of the subject certificate. It validates Bundle
+// even for an InstalledIDChain built directly rather than loaded from disk.
+func (c *InstalledIDChain) Leaf() (awid.IDCertificateView, error) {
+	if c == nil {
+		return awid.IDCertificateView{}, &awid.IDCertificateError{Code: "invalid_shape"}
+	}
+	chain, err := awid.IDChainFromBundle(c.Bundle)
+	if err != nil {
+		return awid.IDCertificateView{}, err
+	}
+	return chain.Leaf(), nil
 }

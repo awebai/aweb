@@ -18,6 +18,8 @@ from test_dashboard_privacy import TEAM, _request, privacy_app  # noqa: F401
 from test_federation_activation_delivery import _DB, _envelope, _seed_recipient_and_authority
 from test_messages_http import _insert_agent_encryption_assertion, _make_keypair, _signed_team_headers
 
+__all__ = ["privacy_app"]
+
 
 def _identity(actor, custody="self", *, address="", stable_id=""):
     _, public_key = generate_x25519_keypair()
@@ -326,5 +328,6 @@ async def test_federation_preserves_managed_hosted_delivery(aweb_cloud_db, kind)
     result = await deliver_federated_phase_b(
         _DB(manager), envelope=envelope, signature=encrypted["signature"],
         recipient=recipient, authority_token=token,
+        registry_client=None,
     )
     assert result["message_id"] == envelope.message_id

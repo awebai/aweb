@@ -7,7 +7,15 @@ Managed membership/export/federation remain separately negotiated capabilities.
 
 from __future__ import annotations
 
-from aweb.human_kind import is_verified_human
+from aweb.messaging.mail_storage import (
+    MailStorageInput,
+    MailSender,
+    MailRecipient,
+    MailAttestation,
+    mail_content_for_storage,
+    store_mail,
+)
+from aweb.message_vocabulary import MessageInputSource, observe_message_vocabulary
 
 import hashlib
 import json
@@ -21,17 +29,30 @@ from uuid import UUID, uuid4
 
 from awid.signing import canonical_json_bytes
 from fastapi import HTTPException
+from aweb.application_state import RegistryClientUnavailable
+from aweb.service_errors import ServiceError
 
 from aweb.attachment_service import prepare_attachment_send
 from aweb.db import TransactionInfra
-from aweb.identity_auth_deps import auth_dids, participant_dids
-from aweb.identity_binding import verified_projection
+from aweb.human_kind import is_verified_human
 from aweb.identity_address import require_address_evidence
+from aweb.identity_auth_deps import auth_dids, participant_dids
 from aweb.inbound_modes import effective_inbound_mode
+from aweb.member_team_key import (
+    CURRENT_MEMBERSHIP_REQUIRED_DETAIL,
+    current_member,
+    current_member_projections,
+    lock_member_projections,
+    messaging_identity_projection,
+)
 from aweb.messaging.chat import ensure_session, send_in_session
-from aweb.messaging.chat_policy import HumanChatRefused, recipient_label, require_agent_chat
+from aweb.messaging.chat_policy import (
+    HumanChatRefused,
+    recipient_label,
+    require_agent_chat,
+)
 from aweb.messaging.conversations import create_conversation, get_conversation
-from aweb.messaging.messages import authorize_message_delivery, deliver_message
+from aweb.messaging.messages import authorize_message_delivery
 
 from .authority import NativeMessagingAuthority, NativeMessagingSubject
 from .contract import ContractError, ContractRecord, canonical_record, decode_record
@@ -107,6 +128,7 @@ class NativeMessagingService:
         db,
         *,
         authority: NativeMessagingAuthority,
+        registry_client,
         service: ContractRecord,
         publisher=None,
         attachment_backend=None,
@@ -114,6 +136,7 @@ class NativeMessagingService:
     ):
         self.db = db
         self.authority = authority
+        self.registry_client = registry_client
         self.service = _snapshot(service, "ServiceBinding")
         self.publisher = publisher
         self.attachment_backend = attachment_backend
@@ -133,29 +156,25 @@ class NativeMessagingService:
         )
 
     async def _row(self, *, principal=None, actor_id=None, team_id=None):
-        rows = await self.db.get_manager("aweb").fetch_all(
-            """SELECT agent_id, team_id, alias, did_key, did_aw, address,
-                      did_aw_verified_key, identity_scope,
-                      (NULLIF(did_aw,'') IS NOT NULL) AS has_global_claim,
-                      did_aw AS policy_did_aw,
-                      status, deleted_at, certificate_id, agent_type, human_verified_key, inbound_mode
-               FROM {{tables.agents}}
-               WHERE deleted_at IS NULL
-                 AND ($1::uuid IS NULL OR agent_id=$1)
-                 AND ($2::text IS NULL OR (did_aw=$2 AND did_aw_verified_key=did_key) OR did_key=$2)
-                 AND ($3::text IS NULL OR team_id=$3)""",
-            UUID(actor_id) if actor_id else None,
-            principal,
-            team_id,
+        try:
+            selected_actor = UUID(actor_id) if actor_id else None
+        except (ValueError, TypeError, AttributeError) as error:
+            raise ContractError(
+                "invalid", "Actor ID is invalid. Select a current team member."
+            ) from error
+        rows = await current_member_projections(
+            self.db,
+            agent_id=selected_actor,
+            dids=[principal] if principal else None,
+            team_id=team_id,
         )
         if len(rows) != 1:
             raise ContractError(
-                "not_found" if not rows else "forbidden", "exact local actor"
+                "not_found" if not rows else "forbidden",
+                "The actor is not an unambiguous current team member. "
+                "Select the intended team and reconnect with a current team certificate.",
             )
-        row = verified_projection(rows[0])
-        if row["status"] != "active":
-            raise ContractError("forbidden", "inactive actor")
-        return row
+        return messaging_identity_projection(rows[0])
 
     async def _authority_call(self, method, *args):
         try:
@@ -167,9 +186,7 @@ class NativeMessagingService:
                 "Native messaging authority unavailable: %s",
                 getattr(method, "__name__", "provider"),
             )
-            raise ContractError(
-                "authority_unavailable", "current messaging authority"
-            ) from error
+            raise ContractError("authority_unavailable", "current messaging authority") from error
 
     async def _authority_check(self, method, *args):
         if await self._authority_call(method, *args) is not None:
@@ -196,14 +213,8 @@ class NativeMessagingService:
             or value.get("team_id") != subject.team_id
             or value["route"] != self.service.value
         ):
-            raise ContractError(
-                "authority_unavailable", "exact current actor authority"
-            )
-        if (
-            not value["active"]
-            or value["access"] != "allowed"
-            or value["inbound"] != "allowed"
-        ):
+            raise ContractError("authority_unavailable", "exact current actor authority")
+        if not value["active"] or value["access"] != "allowed" or value["inbound"] != "allowed":
             raise ContractError("forbidden", "current access/inbound policy")
         return facts
 
@@ -211,9 +222,7 @@ class NativeMessagingService:
         request = _snapshot(request, "ResolveRequest")
         value = request.value
         if "session_id" in value:
-            raise ContractError(
-                "unsupported", "typed session resolution requires P4/P5"
-            )
+            raise ContractError("unsupported", "typed session resolution requires P4/P5")
         if not auth.team_id or value["team_id"] != auth.team_id:
             raise ContractError("forbidden", "selected team")
         rows = await self.db.get_manager("aweb").fetch_all(
@@ -222,9 +231,7 @@ class NativeMessagingService:
             value["selector"],
         )
         if len(rows) != 1:
-            raise ContractError(
-                "not_found" if not rows else "forbidden", "selected-team actor"
-            )
+            raise ContractError("not_found" if not rows else "forbidden", "selected-team actor")
         row = await self._row(actor_id=str(rows[0]["agent_id"]), team_id=auth.team_id)
         return await self._facts(auth, row)
 
@@ -247,13 +254,8 @@ class NativeMessagingService:
         target_ref = requested_target.value["principal"]
         if target_ref["kind"] != "native":
             raise ContractError("unsupported", "native recipient")
-        recipient = await self._row(
-            principal=target_ref["did"], team_id=auth.team_id
-        )
-        if (
-            is_verified_human(recipient)
-            and recipient["team_id"] != auth.team_id
-        ):
+        recipient = await self._row(principal=target_ref["did"], team_id=auth.team_id)
+        if is_verified_human(recipient) and recipient["team_id"] != auth.team_id:
             raise ContractError("forbidden", "human selected team")
         if value["kind"] == "chat":
             await require_agent_chat(self.db, [recipient])
@@ -262,6 +264,11 @@ class NativeMessagingService:
             raise ContractError("stale", "recipient authority")
         await self._policy(self.db, auth, recipient)
         payload = self._validate_envelope(auth, value, recipient)
+        observe_message_vocabulary(
+            source=MessageInputSource.NATIVE_PREPARATION,
+            content_mode=payload.content_mode,
+            priority=payload.priority,
+        )
         now = datetime.now(UTC)
         for pid, retained in list(self._preparations.items()):
             if json.loads(retained.prepared_bytes)["expires_at"] <= now.strftime(
@@ -276,9 +283,7 @@ class NativeMessagingService:
 
             assertion = facts.value.get("key_assertion")
             if not assertion:
-                raise ContractError(
-                    "authority_unavailable", "recipient encryption assertion"
-                )
+                raise ContractError("authority_unavailable", "recipient encryption assertion")
             try:
                 validate_encryption_key_assertion(
                     assertion,
@@ -287,21 +292,16 @@ class NativeMessagingService:
                     now=now,
                 )
             except ValueError as error:
-                raise ContractError(
-                    "invalid", "recipient encryption assertion"
-                ) from error
+                raise ContractError("invalid", "recipient encryption assertion") from error
             wraps = payload.encrypted_envelope.get("key_wraps", [])
             if not any(
                 w.get("recipient_did") == recipient["did_key"]
                 and w.get("wrap_purpose") == "delivery"
-                and w.get("recipient_encryption_key_id")
-                == assertion["encryption_key_id"]
+                and w.get("recipient_encryption_key_id") == assertion["encryption_key_id"]
                 for w in wraps
             ):
                 raise ContractError("stale", "recipient encryption key binding")
-            sender_assertion = (
-                payload.encrypted_envelope.get("sender_encryption_key") or {}
-            )
+            sender_assertion = payload.encrypted_envelope.get("sender_encryption_key") or {}
             # Signing custody and decryption custody are independent. Never
             # promote an explicit hosted/bridge-readable authority fact to E2EE.
             confidentiality = (
@@ -312,21 +312,14 @@ class NativeMessagingService:
                         and f.value["confidentiality"] == "end_to_end"
                         for f in (author_facts, facts)
                     )
-                    and all(
-                        a.get("custody") == "self"
-                        for a in (assertion, sender_assertion)
-                    )
+                    and all(a.get("custody") == "self" for a in (assertion, sender_assertion))
                 )
                 else "hosted_readable"
             )
-            if any(
-                f.value["confidentiality"] == "bridge_readable"
-                for f in (author_facts, facts)
-            ):
+            if any(f.value["confidentiality"] == "bridge_readable" for f in (author_facts, facts)):
                 confidentiality = "bridge_readable"
             elif any(
-                f.value["confidentiality"] == "server_readable"
-                for f in (author_facts, facts)
+                f.value["confidentiality"] == "server_readable" for f in (author_facts, facts)
             ):
                 confidentiality = "server_readable"
         projection = {
@@ -376,18 +369,23 @@ class NativeMessagingService:
 
     async def _policy(self, db, auth, recipient):
         require_address_evidence(auth)
-        from aweb.service_errors import ServiceError
 
         try:
             await authorize_message_delivery(
                 db,
+                registry_client=self.registry_client,
                 recipient_agent=recipient,
                 sender_did=_principal(auth),
                 sender_address=auth.address,
-                sender_team_id=auth.team_id,
-                sender_verified_team_id=auth.verified_team_id,
                 sender_verified_dids=auth_dids(auth),
             )
+        except HTTPException as error:
+            raise ContractError(
+                "authority_unavailable" if error.status_code >= 500 else "forbidden",
+                str(error.detail),
+            ) from error
+        except RegistryClientUnavailable:
+            raise
         except ServiceError as error:
             raise ContractError("forbidden", error.detail) from error
 
@@ -402,17 +400,13 @@ class NativeMessagingService:
             _validate_encrypted_payload,
             _validate_signed_mail_payload,
         )
-        from aweb.routes.chat import CreateSessionRequest
-        from aweb.routes.messages import SendMessageRequest
+        from aweb.messaging.chat_models import CreateSessionRequest
+        from aweb.messaging.mail_models import SendMessageRequest
 
         try:
             if value["format"] == "native_plaintext":
-                artifact = decode_record(
-                    "SignedArtifact", value["envelope"].encode()
-                ).value
-                signed = decode_record(
-                    "NativePlaintext", artifact["signed_payload"].encode()
-                ).value
+                artifact = decode_record("SignedArtifact", value["envelope"].encode()).value
+                signed = decode_record("NativePlaintext", artifact["signed_payload"].encode()).value
                 if (
                     signed.get("message_id") != value["message_id"]
                     or signed["type"] != value["kind"]
@@ -499,14 +493,14 @@ class NativeMessagingService:
                         recipient_did=recipient["did_aw"] or recipient["did_key"],
                     )
                 else:
-                    model = CreateSessionRequest(
+                    chat_model = CreateSessionRequest(
                         **fields,
                         to_aliases=[recipient["alias"]],
                         session_id=cid,
                         message="",
                     )
                     metadata = validate_encrypted_chat_payload(
-                        model,
+                        chat_model,
                         auth=auth,
                         actor_did=_principal(auth),
                         session_id=cid,
@@ -541,8 +535,7 @@ class NativeMessagingService:
                 "from_did": auth.did_key,
             }
             if payload.attachment_refs and (
-                payload.content_mode != "encrypted_v2"
-                or self.attachment_backend is None
+                payload.content_mode != "encrypted_v2" or self.attachment_backend is None
             ):
                 raise ContractError("unsupported", "attachment provider")
             if payload.attachment_refs:
@@ -553,7 +546,7 @@ class NativeMessagingService:
                 except AttachmentError as error:
                     raise ContractError("invalid", "attachment references") from error
             return payload
-        except HTTPException as error:
+        except (ServiceError, HTTPException) as error:
             raise ContractError("invalid", str(error.detail)) from error
         except (ValueError, TypeError, KeyError) as error:
             if isinstance(error, ContractError):
@@ -590,9 +583,7 @@ class NativeMessagingService:
             except Exception:
                 # Acceptance already committed. Keep its successful durable
                 # result and pending intent; never report a no-effects refusal.
-                logger.exception(
-                    "Native messaging publication pending after committed acceptance"
-                )
+                logger.exception("Native messaging publication pending after committed acceptance")
 
     async def ingress_result(self, auth, key):
         async with self.unit_of_work(auth) as uow:
@@ -615,9 +606,7 @@ class NativeMessagingService:
             # The sink acknowledges stable intent IDs. At-least-once event
             # delivery is deliberate; exactly-once model/tool work is not promised.
             context = (
-                json.loads(row["context"])
-                if isinstance(row["context"], str)
-                else row["context"]
+                json.loads(row["context"]) if isinstance(row["context"], str) else row["context"]
             )
             await self.publisher(str(row["mutation_id"]), row["event_type"], context)
             await self.db.get_manager("aweb").execute(
@@ -671,9 +660,7 @@ class NativeMessagingUnitOfWork:
                 raise ContractError("replay_conflict", "ingress input")
             result = _dto(
                 "IngressResult",
-                json.loads(row["result"])
-                if isinstance(row["result"], str)
-                else row["result"],
+                json.loads(row["result"]) if isinstance(row["result"], str) else row["result"],
             )
             _grant(self.auth, result.value["accepted"]["kind"])
             self.finished = True
@@ -707,25 +694,19 @@ class NativeMessagingUnitOfWork:
             _snapshot(self.claim, "IngressKey"),
             self.transaction,
         )
-        rows = await self.manager.fetch_all(
-            "SELECT * FROM {{tables.agents}} WHERE agent_id=ANY($1::uuid[]) ORDER BY agent_id FOR UPDATE",
-            sorted(
-                {retained.author["agent_id"], retained.recipient["agent_id"]}, key=str
-            ),
+        rows = await lock_member_projections(
+            self.manager,
+            agent_ids=[retained.author["agent_id"], retained.recipient["agent_id"]],
         )
-        by_id = {str(row["agent_id"]): verified_projection(row) for row in rows}
+        by_id = {str(row["agent_id"]): messaging_identity_projection(row) for row in rows}
         if value["kind"] == "chat":
             current_recipient = by_id.get(str(retained.recipient["agent_id"]))
             if current_recipient and is_verified_human(current_recipient):
                 raise HumanChatRefused(recipient_label(current_recipient))
         for old in (retained.author, retained.recipient):
             row = by_id.get(str(old["agent_id"]))
-            if (
-                row is None
-                or row["status"] != "active"
-                or row.get("deleted_at") is not None
-            ):
-                raise ContractError("forbidden", "inactive actor")
+            if row is None or not current_member(row):
+                raise ContractError("forbidden", CURRENT_MEMBERSHIP_REQUIRED_DETAIL)
             if any(
                 row.get(k) != old.get(k)
                 for k in (
@@ -753,16 +734,10 @@ class NativeMessagingUnitOfWork:
         # Missing contacts cannot permit a send; a later insert only widens.
         await self.manager.fetch_all(
             "SELECT contact_id FROM {{tables.contacts}} WHERE owner_did=ANY($1::text[]) ORDER BY contact_id FOR SHARE",
-            [
-                d
-                for d in (retained.recipient["did_aw"], retained.recipient["did_key"])
-                if d
-            ],
+            [d for d in (retained.recipient["did_aw"], retained.recipient["did_key"]) if d],
         )
         db = TransactionInfra(self.service.db, self.manager)
-        await self.service._policy(
-            db, self.auth, by_id[str(retained.recipient["agent_id"])]
-        )
+        await self.service._policy(db, self.auth, by_id[str(retained.recipient["agent_id"])])
         await self.manager.execute(
             "SELECT pg_advisory_xact_lock(hashtextextended($1,0))",
             "native-message:" + value["message_id"],
@@ -775,15 +750,10 @@ class NativeMessagingUnitOfWork:
         original["target"] = original["target"]["principal"]
         request_hash = _hash(canonical_json_bytes(original))
         if old:
-            if (
-                old["issuer"] != _principal(self.auth)
-                or old["request_hash"] != request_hash
-            ):
+            if old["issuer"] != _principal(self.auth) or old["request_hash"] != request_hash:
                 raise ContractError("replay_conflict", "message ID/envelope binding")
             accepted = (
-                json.loads(old["accepted"])
-                if isinstance(old["accepted"], str)
-                else old["accepted"]
+                json.loads(old["accepted"]) if isinstance(old["accepted"], str) else old["accepted"]
             )
             accepted["replayed"] = True
             self.accepted = _dto("AcceptedSend", accepted)
@@ -892,38 +862,56 @@ class NativeMessagingUnitOfWork:
                         equivalent_dids=participant_dids(self.auth),
                     )
                     if route.recipient_participant["did"] != recipient["did"]:
-                        raise ContractError(
-                            "forbidden", "exact conversation participant"
-                        )
-                await deliver_message(
+                        raise ContractError("forbidden", "exact conversation participant")
+                await store_mail(
                     db,
-                    **common,
-                    from_did=_principal(self.auth),
-                    to_did=recipient["did"],
-                    from_alias=self.auth.alias,
-                    to_alias=recipient["alias"],
-                    subject=payload.subject,
-                    body=payload.body,
-                    priority=payload.priority,
-                    sender_address=self.auth.address,
-                    team_id=self.auth.team_id,
-                    from_agent_id=self.auth.agent_id,
-                    to_agent_id=str(recipient["agent_id"]),
-                    conversation_id=cid,
-                    skip_policy_check=True,
+                    message=MailStorageInput(
+                        local_team_id=self.auth.team_id,
+                        sender=MailSender(
+                            did=_principal(self.auth),
+                            alias=self.auth.alias,
+                            address=self.auth.address,
+                            agent_id=self.auth.agent_id,
+                        ),
+                        recipient=MailRecipient(
+                            did=recipient["did"],
+                            alias=recipient["alias"],
+                            address=recipient.get("address"),
+                            agent_id=str(recipient["agent_id"]),
+                            signed_did=None,
+                            wake_dids=(
+                                recipient.get("did_aw"),
+                                recipient.get("did_key"),
+                            ),
+                        ),
+                        content=mail_content_for_storage(
+                            payload, encrypted_metadata=payload.encrypted_metadata
+                        ),
+                        attestation=MailAttestation(
+                            signature=common["signature"],
+                            signed_payload=common["signed_payload"],
+                            id_chain=common["id_chain"],
+                        ),
+                        priority=payload.priority,
+                        message_id=common["message_id"],
+                        conversation_id=cid,
+                    ),
                 )
             else:
                 cid = await ensure_session(
                     db,
                     team_id=self.auth.team_id,
-                    participant_rows=[dict(actor, agent_id=None), dict(recipient, agent_id=None)],
+                    participant_rows=[
+                        dict(actor, agent_id=None),
+                        dict(recipient, agent_id=None),
+                    ],
                     created_by=_principal(self.auth),
                     session_id=UUID(value["conversation_id"]),
                 )
                 # A native pair preparation may not silently expand to an old
                 # group's recipients. Managed/group preparation belongs to P4/P5.
                 participants = await self.manager.fetch_all(
-                    "SELECT did FROM {{tables.chat_participants}} WHERE session_id=$1 AND left_at IS NULL",
+                    "SELECT did FROM {{tables.chat_participants}} WHERE session_id=$1",
                     cid,
                 )
                 if {r["did"] for r in participants} != {actor["did"], recipient["did"]}:

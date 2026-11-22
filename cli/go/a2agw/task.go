@@ -3,13 +3,17 @@ package a2agw
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/awebai/aw/awid"
 )
 
 const (
@@ -26,6 +30,21 @@ const (
 	RoleAgent = "ROLE_AGENT"
 )
 
+// taskState is the internal policy value. Public TaskStatus.State and
+// BridgeReply.State remain string inputs for released Go consumers.
+type taskState string
+
+const (
+	taskSubmitted     taskState = TaskStateSubmitted
+	taskWorking       taskState = TaskStateWorking
+	taskInputRequired taskState = TaskStateInputRequired
+	taskAuthRequired  taskState = TaskStateAuthRequired
+	taskCompleted     taskState = TaskStateCompleted
+	taskFailed        taskState = TaskStateFailed
+	taskCanceled      taskState = TaskStateCanceled
+	taskRejected      taskState = TaskStateRejected
+)
+
 const (
 	defaultMaxMessageBytes = 1 << 20
 	defaultTaskTTL         = time.Hour
@@ -34,11 +53,14 @@ const (
 
 var errBridgeNotConfigured = errors.New("a2a bridge is not configured")
 
+// Bridge delivers durable task messages and task-specific cancellation notices.
 type Bridge interface {
 	SendTask(context.Context, BridgeTask) error
 	CancelTask(context.Context, BridgeCancel) error
 }
 
+// BridgeTask carries one admitted task to its configured target.
+// CallerScope is audit context and never forwarded as a credential.
 type BridgeTask struct {
 	RequestID   string
 	RouteID     string
@@ -48,10 +70,11 @@ type BridgeTask struct {
 	MessageID   string
 	CallerScope string
 	Text        string
-	// TaskTTL bounds how long the bridge keeps polling for the agent reply.
+	// TaskTTL bounds retained task correlation; PollTimeout may stop polling sooner.
 	TaskTTL time.Duration
 }
 
+// BridgeCancel identifies the original task and conversation for a notice.
 type BridgeCancel struct {
 	RequestID string
 	RouteID   string
@@ -60,14 +83,18 @@ type BridgeCancel struct {
 	ContextID string
 }
 
+// BridgeReply is a parsed target reply. ApplyBridgeReply validates state
+// and task context; transports must establish sender trust before applying it.
 type BridgeReply struct {
-	TaskID    string
-	ContextID string
-	State     string
-	Text      string
-	Artifacts []Artifact
+	TaskID       string
+	ContextID    string
+	State        string
+	Text         string
+	Artifacts    []Artifact
+	Verification awid.VerificationStatus
 }
 
+// Task is a retained A2A task projection; its ID is not an access credential.
 type Task struct {
 	ID        string         `json:"id"`
 	ContextID string         `json:"contextId,omitempty"`
@@ -77,12 +104,15 @@ type Task struct {
 	Metadata  map[string]any `json:"metadata,omitempty"`
 }
 
+// TaskStatus is the public wire projection of a validated internal task state.
+// State stays a string for released Go consumers.
 type TaskStatus struct {
 	State     string      `json:"state"`
 	Timestamp string      `json:"timestamp"`
 	Message   *A2AMessage `json:"message,omitempty"`
 }
 
+// A2AMessage carries a caller or agent message within a task.
 type A2AMessage struct {
 	MessageID string    `json:"messageId"`
 	ContextID string    `json:"contextId,omitempty"`
@@ -91,29 +121,42 @@ type A2AMessage struct {
 	Parts     []A2APart `json:"parts"`
 }
 
+// A2APart is one media-labelled text segment of a message or artifact.
 type A2APart struct {
 	Text      string `json:"text"`
 	MediaType string `json:"mediaType"`
 }
 
+// Artifact carries the output of an accepted target reply.
 type Artifact struct {
 	ArtifactID string    `json:"artifactId,omitempty"`
 	Name       string    `json:"name,omitempty"`
 	Parts      []A2APart `json:"parts"`
 }
 
+type replyArtifactRole string
+
+const (
+	answerArtifact   replyArtifactRole = "answer"
+	questionArtifact replyArtifactRole = "question"
+)
+
+// replyArtifactName distinguishes an input question from an answer while
+// retaining the completed reply's artifact name (docs/a2a.md:1035-1037).
+func replyArtifactName(state taskState) string {
+	if state == taskInputRequired {
+		return string(questionArtifact)
+	}
+	return string(answerArtifact)
+}
+
 type taskRecord struct {
 	Task
-	RouteID      string
-	CallerScope  string
-	TaskToken    string
-	RequestID    string
-	MessageID    string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
-	ExpiresAt    time.Time
-	Terminal     bool
-	Cancellation bool
+	RouteID     string
+	CallerScope string
+	TaskToken   string
+	ExpiresAt   time.Time
+	Terminal    bool
 }
 
 type taskStore struct {
@@ -130,7 +173,21 @@ func newTaskStore(now func() time.Time) *taskStore {
 	return &taskStore{tasks: map[string]*taskRecord{}, now: now}
 }
 
-func (s *taskStore) create(routeID, callerScope, requestID string, message A2AMessage, ttl time.Duration) (*taskRecord, error) {
+var errTaskLimit = errors.New("too many active tasks")
+
+type taskCreation struct {
+	RouteID     string
+	CallerScope string
+	RequestID   string
+	Message     A2AMessage
+	TTL         time.Duration
+	MaxActive   int
+}
+
+// create owns expiry and atomic per-route task admission (docs/a2a.md:801-809).
+func (s *taskStore) create(input taskCreation) (*taskRecord, error) {
+	routeID, callerScope, requestID := input.RouteID, input.CallerScope, input.RequestID
+	message, ttl, maxActive := input.Message, input.TTL, input.MaxActive
 	taskID, err := newUUIDv4()
 	if err != nil {
 		return nil, err
@@ -147,17 +204,13 @@ func (s *taskStore) create(routeID, callerScope, requestID string, message A2AMe
 		Task: Task{
 			ID:        taskID,
 			ContextID: message.ContextID,
-			Status:    TaskStatus{State: TaskStateSubmitted, Timestamp: formatTime(now)},
+			Status:    TaskStatus{State: string(taskSubmitted), Timestamp: formatTime(now)},
 			History:   []A2AMessage{message},
 			Metadata:  map[string]any{"request_id": requestID},
 		},
 		RouteID:     routeID,
 		CallerScope: callerScope,
 		TaskToken:   token,
-		RequestID:   requestID,
-		MessageID:   message.MessageID,
-		CreatedAt:   now,
-		UpdatedAt:   now,
 		ExpiresAt:   now.Add(ttl),
 	}
 	if callerScope == "" || callerScope == "anonymous:unscoped" {
@@ -165,14 +218,36 @@ func (s *taskStore) create(routeID, callerScope, requestID string, message A2AMe
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.pruneExpiredLocked()
+	if maxActive > 0 {
+		active := 0
+		for _, existing := range s.tasks {
+			if existing.RouteID == routeID && !existing.Terminal {
+				active++
+			}
+		}
+		if active >= maxActive {
+			return nil, errTaskLimit
+		}
+	}
 	s.tasks[taskID] = record
 	s.order = append(s.order, taskID)
+	// Reclaim idle stores too: expiry is storage lifetime, not just a read filter.
+	time.AfterFunc(ttl, func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		s.pruneExpiredLocked()
+	})
 	return cloneRecord(record), nil
 }
 
-func (s *taskStore) getVisible(routeID, callerScope, token, taskID string) (*taskRecord, bool) {
+type taskAccess struct{ RouteID, CallerScope, Token, TaskID string }
+
+func (s *taskStore) getVisible(access taskAccess) (*taskRecord, bool) {
+	routeID, callerScope, token, taskID := access.RouteID, access.CallerScope, access.Token, access.TaskID
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.pruneExpiredLocked()
 	record, ok := s.tasks[taskID]
 	if !ok || record.RouteID != routeID || s.expiredLocked(record) {
 		return nil, false
@@ -183,22 +258,18 @@ func (s *taskStore) getVisible(routeID, callerScope, token, taskID string) (*tas
 	return cloneRecord(record), true
 }
 
-func (s *taskStore) getPublicAnonymous(routeID, taskID string) (*taskRecord, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	record, ok := s.tasks[taskID]
-	if !ok || record.RouteID != routeID || s.expiredLocked(record) {
-		return nil, false
-	}
-	if record.CallerScope != "anonymous:unscoped" {
-		return nil, false
-	}
-	return cloneRecord(record), true
+type taskListQuery struct {
+	RouteID, CallerScope, Status, ContextID string
+	Limit                                   int
+	IncludeArtifacts                        bool
 }
 
-func (s *taskStore) listVisible(routeID, callerScope, status, contextID string, limit int, includeArtifacts bool) []Task {
+func (s *taskStore) listVisible(query taskListQuery) []Task {
+	routeID, callerScope, status, contextID := query.RouteID, query.CallerScope, query.Status, query.ContextID
+	limit, includeArtifacts := query.Limit, query.IncludeArtifacts
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.pruneExpiredLocked()
 	if limit <= 0 || limit > 100 {
 		limit = 50
 	}
@@ -226,41 +297,29 @@ func (s *taskStore) listVisible(routeID, callerScope, status, contextID string, 
 	return out
 }
 
-func (s *taskStore) activeCount(routeID, callerScope string) int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	count := 0
-	for _, record := range s.tasks {
-		if record == nil || record.RouteID != routeID || record.Terminal || s.expiredLocked(record) {
-			continue
-		}
-		if callerScope == "" || record.CallerScope == callerScope {
-			count++
-		}
-	}
-	return count
-}
-
 func (s *taskStore) updateWorking(taskID string) (*taskRecord, bool) {
-	return s.updateState(taskID, TaskStateWorking, nil, nil)
+	return s.updateState(taskID, taskWorking, nil, nil)
 }
 
-func (s *taskStore) failTask(taskID, text string) (*taskRecord, bool) {
+type taskFailure struct{ TaskID, Text string }
+
+func (s *taskStore) failTask(input taskFailure) (*taskRecord, bool, error) {
+	taskID, text := input.TaskID, input.Text
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	record, ok := s.tasks[taskID]
 	if !ok || s.expiredLocked(record) || record.Terminal {
-		return nil, false
+		return nil, false, nil
 	}
 	now := s.now().UTC()
-	msg := statusMessage(taskID, record.ContextID, TaskStateFailed, text)
-	record.Status = TaskStatus{State: TaskStateFailed, Timestamp: formatTime(now), Message: &msg}
-	record.UpdatedAt = now
+	msg, err := statusMessage(statusMessageInput{TaskID: taskID, ContextID: record.ContextID, State: taskFailed, Text: text})
+	record.Status = TaskStatus{State: TaskStateFailed, Timestamp: formatTime(now), Message: msg}
 	record.Terminal = true
-	return cloneRecord(record), true
+	return cloneRecord(record), true, err
 }
 
-func (s *taskStore) cancelTask(routeID, callerScope, token, taskID string) (*taskRecord, bool) {
+func (s *taskStore) cancelTask(access taskAccess) (*taskRecord, bool) {
+	routeID, callerScope, token, taskID := access.RouteID, access.CallerScope, access.Token, access.TaskID
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	record, ok := s.tasks[taskID]
@@ -268,10 +327,8 @@ func (s *taskStore) cancelTask(routeID, callerScope, token, taskID string) (*tas
 		return nil, false
 	}
 	now := s.now().UTC()
-	record.Status = TaskStatus{State: TaskStateCanceled, Timestamp: formatTime(now)}
-	record.UpdatedAt = now
+	record.Status = TaskStatus{State: string(taskCanceled), Timestamp: formatTime(now)}
 	record.Terminal = true
-	record.Cancellation = true
 	return cloneRecord(record), true
 }
 
@@ -283,7 +340,7 @@ func (s *taskStore) applyReply(reply BridgeReply) (*taskRecord, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	record, ok := s.tasks[reply.TaskID]
-	if !ok || s.expiredLocked(record) || record.Terminal {
+	if !ok || s.expiredLocked(record) || record.Terminal || isInterruptedState(taskState(record.Status.State)) {
 		return nil, false, nil
 	}
 	if record.ContextID != "" && reply.ContextID != record.ContextID {
@@ -294,15 +351,29 @@ func (s *taskStore) applyReply(reply BridgeReply) (*taskRecord, bool, error) {
 	if messageText == "" && len(reply.Artifacts) > 0 && len(reply.Artifacts[0].Parts) > 0 {
 		messageText = reply.Artifacts[0].Parts[0].Text
 	}
-	msg := statusMessage(record.ID, record.ContextID, state, messageText)
-	record.Status = TaskStatus{State: state, Timestamp: formatTime(now), Message: &msg}
-	record.UpdatedAt = now
-	record.Terminal = isTerminalState(state)
-	if len(reply.Artifacts) > 0 {
-		record.Artifacts = cloneArtifacts(reply.Artifacts)
-	} else if messageText != "" {
-		record.Artifacts = []Artifact{{ArtifactID: mustNewUUIDv4(), Name: "answer", Parts: []A2APart{{Text: messageText, MediaType: "text/plain"}}}}
+	msg, err := statusMessage(statusMessageInput{TaskID: record.ID, ContextID: record.ContextID, State: state, Text: messageText})
+	if err != nil {
+		return nil, false, err
 	}
+	artifacts := cloneArtifacts(reply.Artifacts)
+	for i := range artifacts {
+		if artifacts[i].Name == "" || artifacts[i].Name == string(answerArtifact) {
+			artifacts[i].Name = replyArtifactName(state)
+		}
+	}
+	if len(artifacts) == 0 && messageText != "" {
+		id, err := newUUIDv4()
+		if err != nil {
+			return nil, false, err
+		}
+		artifacts = []Artifact{{ArtifactID: id, Name: replyArtifactName(state), Parts: []A2APart{{Text: messageText, MediaType: "text/plain"}}}}
+	}
+	record.Status = TaskStatus{State: string(state), Timestamp: formatTime(now), Message: msg}
+	record.Terminal = isTerminalState(state)
+	if reply.Verification != "" {
+		record.Metadata["reply_verification"] = string(reply.Verification)
+	}
+	record.Artifacts = artifacts
 	return cloneRecord(record), true, nil
 }
 
@@ -315,7 +386,7 @@ func (s *taskStore) wait(taskID string, timeout time.Duration) (*taskRecord, boo
 			s.mu.Unlock()
 			return nil, false
 		}
-		if record.Terminal || isInterruptedState(record.Status.State) {
+		if record.Terminal || isInterruptedState(taskState(record.Status.State)) {
 			out := cloneRecord(record)
 			s.mu.Unlock()
 			return out, true
@@ -334,7 +405,7 @@ func (s *taskStore) wait(taskID string, timeout time.Duration) (*taskRecord, boo
 	}
 }
 
-func (s *taskStore) updateState(taskID, state string, message *A2AMessage, artifacts []Artifact) (*taskRecord, bool) {
+func (s *taskStore) updateState(taskID string, state taskState, message *A2AMessage, artifacts []Artifact) (*taskRecord, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	record, ok := s.tasks[taskID]
@@ -342,8 +413,7 @@ func (s *taskStore) updateState(taskID, state string, message *A2AMessage, artif
 		return nil, false
 	}
 	now := s.now().UTC()
-	record.Status = TaskStatus{State: state, Timestamp: formatTime(now), Message: message}
-	record.UpdatedAt = now
+	record.Status = TaskStatus{State: string(state), Timestamp: formatTime(now), Message: message}
 	record.Terminal = isTerminalState(state)
 	if artifacts != nil {
 		record.Artifacts = cloneArtifacts(artifacts)
@@ -355,8 +425,22 @@ func (s *taskStore) expiredLocked(record *taskRecord) bool {
 	return !record.ExpiresAt.IsZero() && !s.now().Before(record.ExpiresAt)
 }
 
+func (s *taskStore) pruneExpiredLocked() {
+	order := s.order[:0]
+	for _, id := range s.order {
+		record := s.tasks[id]
+		if record == nil || s.expiredLocked(record) {
+			delete(s.tasks, id)
+		} else {
+			order = append(order, id)
+		}
+	}
+	clear(s.order[len(order):])
+	s.order = order
+}
+
 func (r *taskRecord) visibleTo(callerScope, token string) bool {
-	if token != "" && token == r.TaskToken {
+	if token != "" && subtle.ConstantTimeCompare([]byte(token), []byte(r.TaskToken)) == 1 {
 		return true
 	}
 	return callerScope != "" && callerScope == r.CallerScope && callerScope != "anonymous:unscoped"
@@ -372,45 +456,49 @@ func (notReadyBridge) CancelTask(context.Context, BridgeCancel) error {
 	return nil
 }
 
-func normalizeReplyState(state string) (string, error) {
+func normalizeReplyState(state string) (taskState, error) {
 	switch strings.TrimSpace(state) {
 	case "completed", TaskStateCompleted:
-		return TaskStateCompleted, nil
+		return taskCompleted, nil
 	case "input_required", TaskStateInputRequired:
-		return TaskStateInputRequired, nil
+		return taskInputRequired, nil
 	case "failed", TaskStateFailed:
-		return TaskStateFailed, nil
+		return taskFailed, nil
 	case "rejected", TaskStateRejected:
-		return TaskStateRejected, nil
+		return taskRejected, nil
 	default:
-		return "", fmt.Errorf("unsupported a2a reply state %q", state)
+		return "", fmt.Errorf("unsupported a2a reply state %q. Set state to completed, input_required, failed, or rejected and retry.", state)
 	}
 }
 
-func isTerminalState(state string) bool {
+func isTerminalState(state taskState) bool {
 	switch state {
-	case TaskStateCompleted, TaskStateFailed, TaskStateCanceled, TaskStateRejected:
+	case taskCompleted, taskFailed, taskCanceled, taskRejected:
 		return true
 	default:
 		return false
 	}
 }
 
-func isInterruptedState(state string) bool {
-	return state == TaskStateInputRequired || state == TaskStateAuthRequired
+func isInterruptedState(state taskState) bool {
+	return state == taskInputRequired || state == taskAuthRequired
 }
 
-func statusMessage(taskID, contextID, state, text string) A2AMessage {
+type statusMessageInput struct {
+	TaskID, ContextID, Text string
+	State                   taskState
+}
+
+func statusMessage(input statusMessageInput) (*A2AMessage, error) {
+	id, err := newUUIDv4()
+	if err != nil {
+		return nil, fmt.Errorf("create status message id: %w", err)
+	}
+	text := input.Text
 	if text == "" {
-		text = state
+		text = string(input.State)
 	}
-	return A2AMessage{
-		MessageID: mustNewUUIDv4(),
-		ContextID: contextID,
-		TaskID:    taskID,
-		Role:      RoleAgent,
-		Parts:     []A2APart{{Text: text, MediaType: "text/plain"}},
-	}
+	return &A2AMessage{MessageID: id, ContextID: input.ContextID, TaskID: input.TaskID, Role: RoleAgent, Parts: []A2APart{{Text: text, MediaType: "text/plain"}}}, nil
 }
 
 func cloneRecord(record *taskRecord) *taskRecord {
@@ -480,9 +568,11 @@ func formatTime(t time.Time) string {
 	return t.UTC().Format(time.RFC3339)
 }
 
-func newUUIDv4() (string, error) {
+func newUUIDv4() (string, error) { return readUUIDv4(rand.Reader) }
+
+func readUUIDv4(source io.Reader) (string, error) {
 	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
+	if _, err := io.ReadFull(source, b[:]); err != nil {
 		return "", err
 	}
 	b[6] = (b[6] & 0x0f) | 0x40
@@ -490,17 +580,9 @@ func newUUIDv4() (string, error) {
 	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16]), nil
 }
 
-func mustNewUUIDv4() string {
-	value, err := newUUIDv4()
-	if err != nil {
-		panic(err)
-	}
-	return value
-}
-
 func randomHex(bytes int) (string, error) {
 	buf := make([]byte, bytes)
-	if _, err := rand.Read(buf); err != nil {
+	if _, err := io.ReadFull(rand.Reader, buf); err != nil {
 		return "", err
 	}
 	return hex.EncodeToString(buf), nil

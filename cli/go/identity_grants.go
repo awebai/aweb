@@ -107,11 +107,5 @@ func (c *Client) RevokeIdentityGrant(ctx context.Context, grantID string) error 
 }
 
 func identityGrantCompatibilityError(err error) error {
-	if err == nil {
-		return nil
-	}
-	if status, ok := awid.HTTPStatusCode(err); ok && status == http.StatusNotFound {
-		return fmt.Errorf("identity grants require aweb server 1.27.2 or later: %w", err)
-	}
-	return err
+	return missingEndpointDiagnostic(err, identityGrantEndpoint)
 }

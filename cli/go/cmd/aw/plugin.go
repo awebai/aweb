@@ -1402,7 +1402,11 @@ func executeInstalledManifestTool(name string, args []string) (*installedManifes
 		return result, true, nil
 	}
 	var installedResult *installedManifestToolResult
-	if _, isGrant := activeGrantHome(); isGrant && activeHuman == nil {
+	grant, err := loadSelectedGrantHome()
+	if err != nil {
+		return nil, true, err
+	}
+	if grant != nil && activeHuman == nil {
 		// Grant path: custody re-interprets the call against the resident's
 		// mint-time tool snapshot and returns the exact signed request. Nothing
 		// from the local manifest is merged into it.
@@ -1438,7 +1442,7 @@ func executeGrantManifestTool(name, verb string, args map[string]any, rawBody []
 	defer cancel()
 	signed, err := client.SignAppRequestViaCustody(ctx, name, verb, args, rawBody)
 	if err != nil {
-		if err.Error() == "app_tool_denied" {
+		if errors.Is(err, awid.ErrAppToolDenied) {
 			return nil, fmt.Errorf("%w: %s %s is not delegated to this grant; installing an app does not update an existing grant's tool snapshot. Ask the resident owner to approve the app and mint a replacement grant with the intended tools, then restart this session using the new grant (see aw id grant mint --help)", err, name, verb)
 		}
 		return nil, err

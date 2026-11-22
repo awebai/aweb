@@ -19,17 +19,18 @@ import (
 
 // connectOutput is the JSON output for `aw init` when using certificate auth.
 type connectOutput struct {
-	IDRegistration string              `json:"id_registration,omitempty"`
-	Responsibility *awid.IDChainResult `json:"responsibility,omitempty"`
-	Status         string              `json:"status"`
-	TeamID         string              `json:"team_id"`
-	Alias          string              `json:"alias"`
-	AwebURL        string              `json:"aweb_url"`
-	AgentID        string              `json:"-"`
-	WorkspaceID    string              `json:"workspace_id,omitempty"`
-	StableID       string              `json:"stable_id,omitempty"`
-	Address        string              `json:"address,omitempty"`
-	IdentityScope  string              `json:"identity_scope,omitempty"`
+	TeamKey        *awid.TeamKeyEvidence `json:"team_key,omitempty"`
+	IDRegistration identityRegistration  `json:"id_registration,omitempty"`
+	Responsibility *awid.IDChainResult   `json:"responsibility,omitempty"`
+	Status         string                `json:"status"`
+	TeamID         string                `json:"team_id"`
+	Alias          string                `json:"alias"`
+	AwebURL        string                `json:"aweb_url"`
+	AgentID        string                `json:"-"`
+	WorkspaceID    string                `json:"workspace_id,omitempty"`
+	StableID       string                `json:"stable_id,omitempty"`
+	Address        string                `json:"address,omitempty"`
+	IdentityScope  string                `json:"identity_scope,omitempty"`
 	// NextSteps are aw init's next steps for the path it took; Guide is the
 	// page that walks through them.
 	NextSteps []initNextStep `json:"next_steps,omitempty"`
@@ -59,17 +60,28 @@ type connectRequest struct {
 }
 
 type certificateConnectOptions struct {
-	Role                 string
-	HumanName            string
-	AgentType            string
-	APIKey               string
-	IdentityHome         string
-	BindingWorkspacePath string
+	TeamKeyObservation    *awid.TeamCertificateKeyObservation
+	TeamRegistryURL       string
+	ContextFile           workspaceContextPolicy
+	EncryptionPublication encryptionPublicationPolicy
+	Role                  string
+	HumanName             string
+	AgentType             string
+	APIKey                string
+	IdentityHome          string
+	BindingWorkspacePath  string
 }
 
 // initCertificateConnectWithOptions implements the certificate-based init flow.
 // Reads team cert + signing key, calls POST /v1/connect, writes workspace.yaml.
 func initCertificateConnectWithOptions(workingDir, awebURL string, opts certificateConnectOptions) (connectOutput, error) {
+	if err := opts.ContextFile.validate(); err != nil {
+		return connectOutput{}, err
+	}
+	if err := opts.EncryptionPublication.validate(); err != nil {
+		return connectOutput{}, err
+	}
+
 	identityHome := strings.TrimSpace(opts.IdentityHome)
 	if identityHome == "" {
 		identityHome = filepath.Join(filepath.Clean(workingDir), ".aw")
@@ -150,11 +162,19 @@ func initCertificateConnectWithOptions(workingDir, awebURL string, opts certific
 		// over any registry/aweb URLs an earlier join stored. The worktree binding
 		// (role, workspace id) is written separately below because it is unique to
 		// the connect step.
-		if err := upsertAcceptedTeamMembershipState(workingDir, &teamAcceptInviteOutput{
-			TeamID:   resp.TeamID,
-			Alias:    resp.Alias,
-			CertPath: filepath.ToSlash(certPath),
-		}, cert, "", "", true, identityHome); err != nil {
+		if err := upsertAcceptedTeamMembershipState(teamMembershipStateUpdate{
+			Location: teamMembershipLocation{WorkingDir: workingDir, IdentityHome: identityHome},
+			Output: &teamAcceptInviteOutput{
+				TeamID:   resp.TeamID,
+				TeamKey:  teamKeyEvidence(opts.TeamKeyObservation),
+				Alias:    resp.Alias,
+				CertPath: filepath.ToSlash(certPath),
+			},
+			Certificate: cert,
+			RegistryURL: opts.TeamRegistryURL,
+			AwebURL:     "",
+			Activation:  membershipMakeActive,
+		}); err != nil {
 			return err
 		}
 		workspaceState.AwebURL = awebURL
@@ -195,22 +215,16 @@ func initCertificateConnectWithOptions(workingDir, awebURL string, opts certific
 	})
 
 	// Ensure .aw/context exists
-	if err := ensureWorktreeContextAtIdentityHome(identityHome); err != nil {
-		return connectOutput{}, err
+	if err := opts.ContextFile.apply(identityHome); err != nil {
+		return connectOutput{}, &connectedMemberSetupError{cause: err}
 	}
-	if err := ensureLocalIdentityEncryptionKeyForDir(workingDir, explicitEncryptionKeyIdentityHome(identityHome)); err != nil {
-		return connectOutput{}, fmt.Errorf("set up E2E encryption key: %w", err)
-	}
-	if _, err := setupOrRotateIdentityEncryptionKeyForDir(ctx, workingDir, false, explicitEncryptionKeyIdentityHome(identityHome)); err != nil {
-		fmt.Fprintf(os.Stderr,
-			"Warning: could not publish E2E encryption key automatically: %v\n"+
-				"Counterparties cannot discover this identity's encryption key until the assertion is published.\n"+
-				"Run `aw id encryption-key setup` to publish it; `aw check` reports the unpublished state as identity.e2ee.assertion_published.\n",
-			err)
+	if err := completeConnectedEncryption(ctx, connectedEncryptionSetup{WorkingDir: workingDir, Home: awconfig.IdentityHome{Root: identityHome}, Warnings: os.Stderr, Policy: opts.EncryptionPublication}); err != nil {
+		return connectOutput{}, &connectedMemberSetupError{cause: err}
 	}
 
 	identityScope := awid.NormalizeIdentityScope(cert.IdentityScope)
 	return connectOutput{
+		TeamKey:       teamKeyEvidence(opts.TeamKeyObservation),
 		Status:        "connected",
 		TeamID:        resp.TeamID,
 		Alias:         resp.Alias,
@@ -317,10 +331,15 @@ func connectNameRefusalText(code string, cert *awid.TeamCertificate) string {
 	return ""
 }
 
-// hasCertificateForInit checks if at least one team certificate exists in the working directory.
-func hasCertificateForInit(workingDir string) bool {
+// hasCertificateForInit distinguishes absent certificates from unreadable
+// identity state (docs/identity.md#key-material-and-local-files). An unreadable
+// installed certificate cannot select fresh identity creation.
+func hasCertificateForInit(workingDir string) (bool, error) {
 	stored, err := awconfig.ListTeamCertificates(workingDir)
-	return err == nil && len(stored) > 0
+	if err != nil {
+		return false, fmt.Errorf("read stored team certificates: %w; repair the stored certificate state before running aw init", err)
+	}
+	return len(stored) > 0, nil
 }
 
 // discoverRepoOrigin attempts to find the git remote origin URL.
@@ -379,6 +398,9 @@ func formatConnect(v any) string {
 	sb.WriteString(fmt.Sprintf("Team:        %s\n", out.TeamID))
 	sb.WriteString(fmt.Sprintf("Name:        %s\n", out.Alias))
 	sb.WriteString(fmt.Sprintf("Aweb URL:    %s\n", out.AwebURL))
+	if text := teamKeyConfirmationText(out.TeamKey); text != "" {
+		sb.WriteString(text + "\n")
+	}
 	if out.IDRegistration != "" {
 		sb.WriteString(fmt.Sprintf("ID registration: %s\n", out.IDRegistration))
 	}

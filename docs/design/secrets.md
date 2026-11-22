@@ -1697,7 +1697,7 @@ same outcome vocabulary.
   contact through team-auth alone, the narrowing path in §12, is refused if it
   would leave no owner with an enrolled passkey and a verified contact
   (`last_owner_protected`). The last owner's passkey or contact can be changed
-  only on the console with that owner's own passkey, or by re-designation.
+  only by re-designation.
   Re-designation after a lockout has a mandatory 72 h cooling-off period.
   During it, `approve_only` uses and widening changes are frozen, and every
   owner and approver contact recorded before the lockout is notified. A contact
@@ -2276,10 +2276,8 @@ mapping for their actual effect, not this credential table.
 | `APPROVER_ENROLMENT_REISSUED` | No governance hook; retain local operational audit | Replaces an unused enrolment link for the same current designation/contact; grants no new designation or credential. |
 | `APPROVER_RETIRED` | `role.revoked`, narrowing | Ends the affected designation, under the actual authorized containment actor/evidence. |
 | `APPROVER_PASSKEY_REVOKED` | `credential.revoked`, narrowing | Ends the affected key, under the actual authorized containment actor/evidence. If losing the last key also emits `APPROVER_RETIRED`, that distinct receipt records the ended designation. |
-| `APPROVER_CONTACT_CHANGE_SCHEDULED` | `credential.enrolled`, widening | Creates the pending contact candidate, using the actual retained `contact_change` assertion. |
 | `APPROVER_CONTACT_CHANGE_BY_OWNER_SCHEDULED` | `credential.enrolled`, widening | Creates the pending contact candidate, using the actually admitted owner's APPROVE evidence. |
 | `APPROVER_CONTACT_PROVEN` | `credential.enrolled`, widening | Makes that candidate eligible to take effect at its retained effective time, under its immutable original scheduling authorization. The proof token establishes reachability, not fresh owner/passkey authority. |
-| `APPROVER_CONTACT_CHANGE_CANCELLED` | `credential.revoked`, narrowing | Cancels only that pending candidate, using the actual retained `contact_cancel` assertion; never describes revocation of the current contact, an existing key or the role. |
 | `APPROVER_LOGGED_IN` | No governance hook; retain local operational audit | Authentication to the existing scope, not a new designation or credential. Later governance can reference its retained assertion only under the existing session authorization rules. |
 
 Recovery re-designation and the later key enrolment are different effects:
@@ -2289,8 +2287,8 @@ Do not emit a second recovery receipt for that enrolment.
 
 Every pending-contact receipt has `resource_type: pending_contact` and the
 same persisted random opaque `resource_ref` for that candidate. Scheduling
-uses `reason_code: contact_change_scheduled`; proof uses `contact_proven`;
-cancellation uses `contact_change_cancelled`. Each transition has a distinct
+uses `reason_code: contact_change_scheduled`; proof uses `contact_proven`.
+Each transition has a distinct
 opaque `after_ref` for its resulting state, with `before_ref` naming the prior
 state when present. Neither reference derives from a contact, token, key or
 credential identifier. Retain the candidate, its contact binding, state and
@@ -2854,10 +2852,9 @@ each where one exists.
   and are re-checked at decide; challenges are bound per candidate (decision
   53b).
 - **Decision 62.** An approver's contact changes through an owner-confirmed
-  change set (B3 `change_contact_by_owner`) or is cancelled under the
-  approver's own passkey (`cancel_pending_contact`); the cancel wins. Only the
-  last owner's own contact is protected (`last_owner_protected`). It changes the
-  contact only, never enrolment, keeps the 24 h floor and both notices, and
+  change set (B3 `change_contact_by_owner`). Only the last owner's own contact
+  is protected (`last_owner_protected`). It changes the contact only, never
+  enrolment, keeps the 24 h floor and both notices, and
   does not stack.
 - **Decision 82.** Value replacement is a §6 console change set confirmed with
   a passkey. Containment owns its consequences (void approvals, disable tokens

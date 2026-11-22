@@ -76,7 +76,9 @@ canonical_git_input() {
 }
 LIBRARY_E2E_BLUEPRINT_SRC="$(canonical_git_input blueprints "$LIBRARY_E2E_BLUEPRINT_SRC")"
 run_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
-LOG_DIR="/tmp/aweb-candidate-gate-$SOURCE_SHA-$run_id"
+log_root="${AWEB_GATE_RUN_LOG_ROOT:-/tmp}"
+[[ "$log_root" == /* && -d "$log_root" ]] || refuse "AWEB_GATE_RUN_LOG_ROOT must be an existing absolute directory"
+LOG_DIR="${log_root%/}/aweb-candidate-gate-$SOURCE_SHA-$run_id"
 [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || refuse "CANDIDATE_SOURCE_SHA must be a full lowercase SHA"
 [[ -z "$(git -C "$ROOT" status --porcelain --untracked-files=all)" ]] \
   || refuse "source checkout is dirty or has untracked files"
@@ -91,6 +93,10 @@ if [[ -z "$STAGES" ]]; then
   git -C "$ROOT" merge-base --is-ancestor "$SOURCE_SHA" origin/main \
     || refuse "source SHA is not on the synchronized origin/main history"
 fi
+# docs/python-static-analysis.md: allowances use synchronized main, never the
+# candidate's own budget. Focused callers supply this ref during preparation.
+SYNCHRONIZED_MAIN_SHA="$(git -C "$ROOT" rev-parse --verify 'refs/remotes/origin/main^{commit}')" \
+  || refuse "synchronized origin/main is missing. Synchronize main and start a new gate invocation."
 [[ -d "$LIBRARY_E2E_BLUEPRINT_SRC" ]] || refuse "blueprint input is missing"
 CLI_VERSION="${CLI_VERSION:-$(python3 "$ROOT/scripts/next_tag_version.py" aw-v)}"
 A2A_GATEWAY_VERSION="${A2A_GATEWAY_VERSION:-$(python3 "$ROOT/scripts/next_tag_version.py" a2a-gw-v)}"
@@ -109,6 +115,7 @@ USER_PATHS_LATEST_METADATA="$(python3 "$ROOT/scripts/fetch_released_aw.py" --fre
 USER_PATHS_RESOLVE_SECONDS=$((SECONDS - resolve_started))
 released_identity="$(python3 -c 'import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$USER_PATHS_LATEST_METADATA")"
 USER_PATHS_LATEST_SHA256="$released_identity"
+external_inputs+="SYNCHRONIZED_MAIN_SHA=$SYNCHRONIZED_MAIN_SHA"$'\n'
 external_inputs+="RELEASED_AW=$released_identity"$'\n'
 input_identity() {
   local name="$1" path="$2" default="$3" repo sha relative
@@ -167,9 +174,13 @@ python3 -c 'import fcntl; fcntl.flock(9, fcntl.LOCK_EX | fcntl.LOCK_NB)' 2>/dev/
 recorded() {
   awk -F'\t' -v key="$KEY" -v stage="$1" '$1 == key && $2 == stage' "$LEDGER" | tail -1
 }
-failed="$(awk -F'\t' -v key="$KEY" '$1 == key && $3 == "failed"' "$LEDGER" | tail -1)"
+failed="$(awk -F'\t' -v key="$KEY" -v tree="$TREE" '
+  $1 == key && $3 == "failed" && index($2, "/") == 0 {
+    printf "gate: tree %s already FAILED %s (log %s).\n", tree, $2, $6
+  }
+' "$LEDGER")"
 if [[ -n "$failed" ]]; then
-  printf 'gate: tree %s already FAILED %s (log %s).\n' "$TREE" "$(cut -f2 <<<"$failed")" "$(cut -f6 <<<"$failed")" >&2
+  printf '%s\n' "$failed" >&2
   printf '%s\n' "Fix the code and gate the changed tree. For infrastructure failures only, the coordinator removes the failed ledger line and uses GATE_RERUN_REASON='<reason>'." >&2
   exit 1
 fi
@@ -191,10 +202,9 @@ if [[ -z "$pending" ]]; then
   exit 0
 fi
 
-run_candidate() (
+run_candidate() {
 set -euo pipefail
 command -v docker >/dev/null || refuse "docker is unavailable"
-wait_for_disk
 
 if ! work="$(mktemp -d "/tmp/aweb-candidate-work.XXXXXX")"; then
   refuse "could not allocate the candidate work directory"
@@ -236,11 +246,9 @@ suite_projects=(
   "$gate_run_id-library"
 )
 # Install cleanup before the first Docker allocation. Logs outlive the run.
-[[ "$LOG_DIR" == "/tmp/aweb-candidate-gate-$SOURCE_SHA-$run_id" ]] || refuse "unsafe log directory"
-rm -rf -- "$LOG_DIR"
-mkdir -p "$LOG_DIR"
 : > "$LOG_DIR/owned-resources.tsv"
 printf '%s\n' "$run_id" > "$LOG_DIR/run-id"
+printf '%s\n' "$SYNCHRONIZED_MAIN_SHA" > "$LOG_DIR/synchronized-main-sha"
 source "$ROOT/scripts/candidate-cleanup.sh"
 trap 'cleanup "$?"' EXIT
 trap 'cleanup 130' INT
@@ -254,6 +262,8 @@ if [[ -n "${USER_PATHS_LATEST_METADATA:-}" ]]; then
     || refuse "released aw metadata changed after the ledger lookup"
 fi
 checkout="$work/aweb"
+[[ "$(git -C "$ROOT" rev-parse --verify 'refs/remotes/origin/main^{commit}')" == "$SYNCHRONIZED_MAIN_SHA" ]] \
+  || refuse "synchronized origin/main changed or disappeared. Synchronize main and start a new gate invocation."
 # Tracked source is also mounted into services running as other UIDs (notably
 # Library's PostgreSQL initdb). Materialize its Git modes independently of the
 # operator's private umask; keep the work parent and later runtime files private.
@@ -262,6 +272,12 @@ checkout="$work/aweb"
   git clone --local --no-hardlinks "$ROOT" "$checkout" >/dev/null
   git -C "$checkout" checkout --detach "$SOURCE_SHA" >/dev/null
 )
+# Local clone does not copy the source's remote-tracking refs. Bind the checked
+# baseline explicitly; all its objects were copied locally, with no fetch here.
+git -C "$checkout" update-ref refs/remotes/origin/main "$SYNCHRONIZED_MAIN_SHA" \
+  || refuse "could not install synchronized main. Synchronize main and start a new gate invocation."
+[[ "$(git -C "$checkout" rev-parse --verify 'refs/remotes/origin/main^{commit}')" == "$SYNCHRONIZED_MAIN_SHA" ]] \
+  || refuse "cloned main does not match the admitted baseline. Synchronize main and start a new gate invocation."
 git -C "$checkout" remote set-url origin "$checkout"
 [[ "$(git -C "$checkout" rev-parse HEAD)" == "$SOURCE_SHA" ]] || refuse "clone selected the wrong SHA"
 git -C "$checkout" diff --quiet && git -C "$checkout" diff --cached --quiet \
@@ -284,7 +300,12 @@ record_input() {
   tree="$sha"
   [[ "$path" == "$repo" ]] || tree="$sha:${path#"$repo"/}"
   mkdir -p "$work/inputs/$name"
-  git -C "$repo" archive "$tree" | tar -xf - -C "$work/inputs/$name"
+  chmod 0755 "$work/inputs" "$work/inputs/$name"
+  (
+    umask 0022
+    # Drain Git padding on BSD/GNU tar; pipefail still reports archive errors.
+    git -C "$repo" archive "$tree" | tar --ignore-zeros -xf - -C "$work/inputs/$name"
+  )
 }
 record_input blueprints "$LIBRARY_E2E_BLUEPRINT_SRC"
 LIBRARY_E2E_BLUEPRINT_SRC="$work/inputs/blueprints"
@@ -294,14 +315,12 @@ printf 'NOT RELEVANT: OSS packages do not bundle Library; it is built only for i
 
 python3 "$ROOT/scripts/candidate-host-pressure.py" capture "$LOG_DIR/host-before.json"
 # The published socket belongs to the Docker host, not the bridge runner.
+host_port_status=0
 if [[ " $pending " == *" checks "* ]]; then
-  if ! AWEB_CANDIDATE_RESOURCE_LABEL="$resource_label" python3 \
+  AWEB_CANDIDATE_RESOURCE_LABEL="$resource_label" python3 \
     "$checkout/scripts/e2e/test_candidate_gate_docker_boundaries.py" \
-    --image unused HostPublishedPortTests -v > "$LOG_DIR/host-published-port.log" 2>&1; then
-    cp "$LOG_DIR/host-published-port.log" "$LOG_DIR/checks.log"
-    cat "$LOG_DIR/checks.log" >&2
-    exit 1
-  fi
+    --image unused HostPublishedPortTests -v > "$LOG_DIR/host-published-port.log" 2>&1 \
+    || host_port_status=$?
 fi
 mkdir -p "$buildx_config"
 printf 'builder\t%s\n' "$builder_name" >> "$LOG_DIR/owned-resources.tsv"
@@ -316,6 +335,8 @@ docker update --cpus "$builder_cpus" --memory "$builder_memory" --memory-swap "$
 
 BUILDX_CONFIG="$buildx_config" docker buildx build --builder "$builder_name" --load --pull \
   --build-arg USER_PATHS_SOURCE_TREE="$TREE" \
+  --build-arg USER_PATHS_SOURCE_SHA="$SOURCE_SHA" \
+  --build-arg USER_PATHS_CLI_VERSION="$CLI_VERSION" \
   --label "aweb.candidate-gate=$resource_label" \
   -f "$checkout/candidate-gate/Dockerfile" -t "$IMAGE" "$checkout" \
   2>&1 | tee "$LOG_DIR/docker-build.log"
@@ -327,6 +348,7 @@ base_ref="$(awk '/^FROM /{print $2; exit}' "$checkout/candidate-gate/Dockerfile"
 base_digest="$(docker image inspect "$base_ref" --format '{{join .RepoDigests ","}}' 2>/dev/null || echo unresolved)"
 locks_digest="$(git -C "$checkout" ls-files -s -- '*uv.lock' | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.read().encode()).hexdigest())')"
 printf 'base\t%s\t%s\nlocks\t%s\n' "$base_ref" "$base_digest" "$locks_digest" > "$LOG_DIR/inputs.tsv"
+printf 'synchronized-main\t%s\n' "$SYNCHRONIZED_MAIN_SHA" >> "$LOG_DIR/inputs.tsv"
 printf 'runner\tcpus=%s\tmemory=%s\tpids=%s\nbuilder\tcpus=%s\tmemory=%s\tmemory_swap=%s\tpids=%s\nservice\tcpus=%s\tmemory=%s\tpids=%s\nredis\tcpus=%s\tmemory=%s\tpids=%s\nsibling\tcpus=%s\tmemory=%s\tpids=%s\n' \
   "$runner_cpus" "$runner_memory" "$runner_pids" \
   "$builder_cpus" "$builder_memory" "$builder_memory_swap" "$builder_pids" \
@@ -446,6 +468,7 @@ docker run --rm --init \
   -e A2A_GATEWAY_VERSION="${A2A_GATEWAY_VERSION:-}" \
   -e LIBRARY_E2E_BLUEPRINT_SRC="$LIBRARY_E2E_BLUEPRINT_SRC" \
   -e CANDIDATE_LOG_DIR="$LOG_DIR" \
+  -e CANDIDATE_HOST_PORT_STATUS="$host_port_status" \
   -e USER_PATHS_LATEST_METADATA="${USER_PATHS_LATEST_METADATA:-}" \
   -e USER_PATHS_LATEST_SHA256="${USER_PATHS_LATEST_SHA256:-}" \
   -e USER_PATHS_RESOLVE_SECONDS="${USER_PATHS_RESOLVE_SECONDS:-0}" \
@@ -483,8 +506,10 @@ docker run --rm --init \
   -w "$checkout" \
   "$IMAGE" \
   bash scripts/candidate-suite.sh "$pending" \
-  2>&1 | tee "$LOG_DIR/gate.log"
-status="${PIPESTATUS[0]}"
+  2>&1 | (trap '' INT TERM; exec tee "$LOG_DIR/gate.log") &
+runner_job=$!
+wait "$runner_job"
+status=$?
 set -e
 
 if [[ "$status" -ne 0 ]]; then
@@ -494,46 +519,33 @@ fi
 printf 'candidate gate PASSED at %s; logs: %s\n' \
   "$SOURCE_SHA" "$LOG_DIR" | tee -a "$LOG_DIR/wrapper-verdict.log"
 
-)
+}
 
-# The child owns Docker cleanup. A stage is recorded only after it exits, and
-# only from this invocation's logs; stale logs cannot supply a missing result.
+# The child owns Docker cleanup. Its output reader survives group signals;
+# the lock holder waits for cleanup before recording reusable proof.
+source "$ROOT/scripts/candidate-record.sh"
 started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 run_log="$LEDGER_LOGS/${KEY:0:12}-run-$run_id.log"
+wait_for_disk
+mkdir -- "$LOG_DIR" || refuse "could not allocate run logs: $LOG_DIR"
+output_pipe="$LOG_DIR/output.pipe"
+mkfifo "$output_pipe"
+if [[ -n "${AWEB_GATE_RUN_REGISTRY:-}" ]]; then
+  printf '%s\t%s\n' "$run_id" "$LOG_DIR" >> "$AWEB_GATE_RUN_REGISTRY"
+fi
+trap 'candidate_interrupted 130 INT' INT
+trap 'candidate_interrupted 143 TERM' TERM
+(trap '' INT TERM; exec tee "$run_log") < "$output_pipe" &
+candidate_writer=$!
+run_candidate > "$output_pipe" 2>&1 &
+candidate_job=$!
 set +e
-run_candidate 2>&1 | tee "$run_log"
-status="${PIPESTATUS[0]}"
-set -e
-finished="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-[[ "$status" != 130 && "$status" != 143 ]] || exit "$status"
-if [[ ! -f "$LOG_DIR/run-id" || "$(cat "$LOG_DIR/run-id")" != "$run_id" ]]; then
-  printf 'gate: stopped before allocation; nothing recorded\n' >&2
-  exit "$status"
-fi
-record() {
-  local stage="$1" result="$2" source="$3" log note=""
-  log="$LEDGER_LOGS/${KEY:0:12}-$stage-$run_id.log"
-  cp "$source" "$log"
-  [[ -z "${GATE_RERUN_REASON:-}" ]] || note="rerun after $GATE_RERUN_REASON"
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-    "$KEY" "$stage" "$result" "$SOURCE_SHA" "" "$log" "$OWNER" "$started" "$finished" "$note" >>"$LEDGER"
-}
-for stage in $pending; do
-  if [[ -f "$LOG_DIR/summary.tsv" ]] && grep -q "^$stage"$'\tPASSED\t' "$LOG_DIR/summary.tsv"; then
-    record "$stage" passed "$LOG_DIR/$stage.log"
-  elif [[ -f "$LOG_DIR/$stage.log" ]]; then
-    record "$stage" failed "$LOG_DIR/$stage.log"
-    status=1
-    break
-  else
-    record setup failed "$run_log"
-    status=1
-    break
-  fi
-done
-if [[ ! -f "$LOG_DIR/wrapper-verdict.log" ]] \
-   || ! grep -q '^candidate gate cleanup PASSED$' "$LOG_DIR/wrapper-verdict.log"; then
-  record cleanup failed "$run_log"
-  status=1
-fi
+wait "$candidate_job"
+status=$?
+candidate_child_status=$status
+trap '' INT TERM
+finish_candidate_output
+if [[ "$status" == 0 && "$candidate_writer_status" != 0 ]]; then status=1; fi
+finalize_candidate "$status"
+status=$?
 exit "$status"

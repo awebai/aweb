@@ -129,7 +129,7 @@ async def test_disable_worker_a_stops_worker_b_while_its_actual_token_remains_ca
         )
         assert await registry.register_did(member.member_key) == REQUESTER.did_aw
         await registry.add_team(TEAM, member.team_did_key)
-        await registry.add_certificate(member.certificate())
+        await registry.add_certificate(member.certificate(), team_key=member.team_key)
         owner = await register_holder_member(uses.world, registry, ALICE, team_key=member.team_key)
         assert owner.did_key != member.did_key
 

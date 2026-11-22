@@ -6,14 +6,16 @@ Review generated vectors at an exact SHA; never re-freeze to repair a test.
 import copy
 import json
 from pathlib import Path
-from datetime import datetime, timezone
-from nacl.signing import SigningKey
-from awid.did import did_from_public_key
+from awid.did import did_key_from_signing_key
 from awid.signing import canonical_json_bytes, sign_message
 
 ROOT=Path(__file__).resolve().parents[1]
 keys={name:bytes([i])*32 for i,name in enumerate(('subject','owner','issuer','other'),49)}
-identities={name:dict(principal=did_from_public_key(bytes(SigningKey(seed).verify_key)),signing_key_id=did_from_public_key(bytes(SigningKey(seed).verify_key)),active=True) for name,seed in keys.items()}
+dids = {name: did_key_from_signing_key(seed) for name, seed in keys.items()}
+identities = {
+    name: dict(principal=did, signing_key_id=did, active=True)
+    for name, did in dids.items()
+}
 ID='11111111-1111-4111-8111-111111111111'
 SUBJECT={'kind':'native','did':identities['subject']['principal']}
 SCOPE={'kind':'platform'}

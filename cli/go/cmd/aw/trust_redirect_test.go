@@ -51,7 +51,7 @@ func TestDirectTrustRequestsDoNotFollowRedirects(t *testing.T) {
 			name:             "local identity key replacement",
 			expectsAuthority: true,
 			invoke: func(sourceURL string) error {
-				_, err := postLocalIdentityKeyReplacementOnce(context.Background(), sourceURL, "alice", localIdentityKeyReplacementRequest{TeamID: cert.Team}, teamKey)
+				_, err := postLocalIdentityKeyReplacementOnce(context.Background(), awid.LocalIdentityKeyReplacementInput{ServiceURL: sourceURL, Alias: "alice", Request: localIdentityKeyReplacementRequest{TeamID: cert.Team}, TeamKey: teamKey})
 				return err
 			},
 		},

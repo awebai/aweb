@@ -40,7 +40,7 @@ async def test_mounted_revoke_commits_before_final_fence_and_prevents_any_send(
         )
         assert await registry.register_did(member.member_key) == REQUESTER.did_aw
         await registry.add_team(TEAM, member.team_did_key)
-        await registry.add_certificate(member.certificate())
+        await registry.add_certificate(member.certificate(), team_key=member.team_key)
         owner = await register_holder_member(uses.world, registry, ALICE, team_key=member.team_key)
         assert owner.did_key != member.did_key
 

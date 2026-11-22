@@ -9,7 +9,7 @@ from collections.abc import Callable
 from typing import Any
 
 from aweb_naapp.runtime.approvals.request import parse_request_json
-from awid.did import did_from_public_key
+from awid.did import did_key_from_signing_key
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.routing import APIRoute
 from nacl.signing import SigningKey
@@ -39,7 +39,7 @@ def runner_registration_router(
     service_key: SigningKey,
 ) -> APIRouter:
     router = APIRouter()
-    service_kid = did_from_public_key(bytes(service_key.verify_key))
+    service_kid = did_key_from_signing_key(bytes(service_key))
 
     @router.post("/runner/v1/register")
     async def register(request: Request, response: Response) -> dict[str, Any]:

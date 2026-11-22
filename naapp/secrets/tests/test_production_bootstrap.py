@@ -47,7 +47,6 @@ from aweb_secrets.policy import Policy
 from aweb_secrets.secret import SecretBackend, SecretRecord
 from tests.human_owner import apply_holder, fixture_principal, member_key
 from tests.production_authority import (
-    SERVER,
     authority,
     install,
     install_audit_receiver,
@@ -103,7 +102,6 @@ async def root(
                 update={
                     "public_origin": AUDIENCE,
                     "awid_service_token": SERVICE_TOKEN,
-                    "team_server_internal_origins": frozenset({SERVER}),
                     **production_settings,
                 }
             )
@@ -117,7 +115,7 @@ async def root(
                     certificate_id="secrets-service",
                     alias="secrets-service",
                 )
-                await registry.add_certificate(service_member.certificate())
+                await registry.add_certificate(service_member.certificate(), team_key=service_member.team_key)
                 key_file = tmp_path / "service-member.key"
                 key_file.write_text(
                     "-----BEGIN ED25519 PRIVATE KEY-----\n"

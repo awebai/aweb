@@ -43,7 +43,7 @@ docker buildx inspect "$BUILDER" >"$EVIDENCE/builder.txt" 2>&1
 "${COMPOSE[@]}" create --no-build aweb library
 docker create --name "$SEED" --user 0 --entrypoint /app/.venv/bin/python \
   -v "$PROJECT-fixture:/fixture" -e PYTHONPATH=/fixture/test-support \
-  "$PROJECT-aweb" /fixture/e2e/stack_tls_prepare.py library-grant.test >/dev/null
+  "$PROJECT-aweb" /fixture/e2e/grant_app_prepare.py >/dev/null
 docker cp "$REPO_ROOT/scripts/e2e/." "$SEED:/fixture/e2e"
 docker cp "$REPO_ROOT/naapp-lib/testing/src/." "$SEED:/fixture/test-support"
 docker start -a "$SEED"

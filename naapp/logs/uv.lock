@@ -202,6 +202,7 @@ name = "aweb"
 version = "1.27.51rc3"
 source = { editable = "../../server" }
 dependencies = [
+    { name = "asyncpg" },
     { name = "aweb-naapp", extra = ["egress", "hooks"] },
     { name = "awid-service" },
     { name = "base58" },
@@ -224,6 +225,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "asyncpg", specifier = ">=0.32.0" },
     { name = "aweb-naapp", extras = ["egress", "hooks"], editable = "../../naapp-lib" },
     { name = "awid-service", editable = "../../awid" },
     { name = "base58", specifier = ">=2.1.1" },
@@ -248,10 +250,12 @@ requires-dist = [
 dev = [
     { name = "aweb-naapp", editable = "../../naapp-lib" },
     { name = "aweb-naapp-testing", editable = "../../naapp-lib/testing" },
+    { name = "mypy", specifier = "==1.19.1" },
     { name = "playwright", specifier = "==1.63.0" },
     { name = "pytest", specifier = ">=9.0.0" },
     { name = "pytest-asyncio", specifier = ">=1.2.0" },
     { name = "pytest-xdist", specifier = ">=3.8.0" },
+    { name = "ruff", specifier = "==0.15.0" },
 ]
 
 [[package]]
@@ -295,7 +299,7 @@ dev = [
 
 [[package]]
 name = "aweb-naapp"
-version = "0.5.2rc3"
+version = "0.5.2rc4"
 source = { editable = "../../naapp-lib" }
 
 [package.optional-dependencies]
@@ -311,16 +315,13 @@ hooks = [
     { name = "pynacl" },
 ]
 runtime = [
+    { name = "asyncpg" },
     { name = "awid-service" },
     { name = "cbor2" },
-    { name = "dnspython" },
     { name = "fastapi" },
-    { name = "httpcore", extra = ["asyncio"] },
     { name = "httpx" },
-    { name = "idna" },
     { name = "jsonschema" },
     { name = "pgdbm" },
-    { name = "publicsuffixlist" },
     { name = "pydantic-settings" },
     { name = "pynacl" },
     { name = "webauthn" },
@@ -328,7 +329,7 @@ runtime = [
 
 [package.metadata]
 requires-dist = [
-    { name = "aweb-naapp", extras = ["egress"], marker = "extra == 'runtime'" },
+    { name = "asyncpg", marker = "extra == 'runtime'", specifier = ">=0.32.0" },
     { name = "awid-service", marker = "extra == 'hooks'", editable = "../../awid" },
     { name = "awid-service", marker = "extra == 'runtime'", editable = "../../awid" },
     { name = "cbor2", marker = "extra == 'runtime'", specifier = ">=6.1.2" },
@@ -377,7 +378,7 @@ dev = [
 
 [[package]]
 name = "aweb-naapp-testing"
-version = "0.5.2rc3"
+version = "0.5.2rc4"
 source = { editable = "../../naapp-lib/testing" }
 dependencies = [
     { name = "aiosmtpd" },
@@ -414,6 +415,7 @@ name = "awid-service"
 version = "0.5.40rc3"
 source = { editable = "../../awid" }
 dependencies = [
+    { name = "asyncpg" },
     { name = "base58" },
     { name = "dnspython" },
     { name = "fastapi" },
@@ -431,6 +433,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "asyncpg", specifier = ">=0.32.0" },
     { name = "base58", specifier = ">=2.1.1" },
     { name = "dnspython", specifier = ">=2.8.0" },
     { name = "fastapi", specifier = ">=0.116.1" },
@@ -448,8 +451,10 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "mypy", specifier = "==1.19.1" },
     { name = "pytest", specifier = ">=9.0.0" },
     { name = "pytest-asyncio", specifier = ">=1.2.0" },
+    { name = "ruff", specifier = "==0.15.0" },
     { name = "trustme", specifier = ">=1.2.1" },
 ]
 

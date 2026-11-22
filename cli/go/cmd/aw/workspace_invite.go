@@ -1,10 +1,8 @@
 package main
 
 import (
-	"errors"
+	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/awebai/aw/awconfig"
@@ -12,67 +10,16 @@ import (
 )
 
 type workspaceTeamInvite struct {
-	Token   string
-	AwebURL string
-}
-
-func addWorktreeViaPrimaryInvite(
-	primaryDir, primaryIdentityHome, worktreePath, root, branchName string, branchCreated bool,
-	sourceServerURL, alias, role string, state *awconfig.WorktreeWorkspace,
-) (connectOutput, error) {
-	invite, err := createWorkspaceTeamInviteAt(primaryDir, primaryIdentityHome)
-	if err != nil {
-		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
-		return connectOutput{}, fmt.Errorf("create team invite from primary workspace: %w", err)
-	}
-	if strings.TrimSpace(invite.AwebURL) == "" {
-		invite.AwebURL = sourceServerURL
-	}
-
-	accepted, err := acceptTeamInviteWithPreferredAwebURL(primaryDir, primaryIdentityHome, worktreePath, invite.Token, strings.TrimSpace(invite.AwebURL), alias)
-	if err != nil {
-		var pending *hostedInviteSignaturePendingError
-		if !errors.As(err, &pending) {
-			cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
-		}
-		return connectOutput{}, fmt.Errorf("accept team invite in new worktree: %w", err)
-	}
-
-	awebURL := strings.TrimSpace(accepted.AwebURL)
-	if awebURL == "" {
-		awebURL = strings.TrimSpace(invite.AwebURL)
-	}
-	if awebURL == "" {
-		awebURL = strings.TrimSpace(sourceServerURL)
-	}
-	awebURL = awebURLOrDefault(awebURL)
-	if err := upsertAcceptedTeamMembershipState(worktreePath, accepted.Output, accepted.Certificate, accepted.RegistryURL, awebURL, true); err != nil {
-		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
-		return connectOutput{}, err
-	}
-
-	fmt.Fprintln(os.Stderr, "Connecting new workspace...")
-	connectResult, err := initCertificateConnectWithOptions(worktreePath, awebURL, certificateConnectOptions{
-		Role:      role,
-		HumanName: strings.TrimSpace(state.HumanName),
-		AgentType: strings.TrimSpace(state.AgentType),
-	})
-	if err != nil {
-		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
-		return connectOutput{}, fmt.Errorf("connect new worktree: %w", err)
-	}
-	if strings.TrimSpace(connectResult.Alias) != "" && !strings.EqualFold(strings.TrimSpace(connectResult.Alias), alias) {
-		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
-		return connectOutput{}, fmt.Errorf("new workspace connected as name %q, expected %q", strings.TrimSpace(connectResult.Alias), alias)
-	}
-	return connectResult, nil
+	ExpiresAt string
+	Token     string
+	AwebURL   string
 }
 
 func createWorkspaceTeamInviteAt(workingDir, identityHome string) (workspaceTeamInvite, error) {
-	return createWorkspaceTeamInviteForTeamAt(workingDir, identityHome, "")
+	return createWorkspaceTeamInviteForTeamAt(workingDir, identityHome, "", awid.IdentityModeLocal)
 }
 
-func createWorkspaceTeamInviteForTeamAt(workingDir, identityHome, explicitTeamID string) (workspaceTeamInvite, error) {
+func createWorkspaceTeamInviteForTeamAt(workingDir, identityHome, explicitTeamID, scope string) (workspaceTeamInvite, error) {
 	workspace, teamState, rootDir, err := loadCurrentWorkspaceAndTeamState(workingDir, identityHome)
 	if err != nil {
 		return workspaceTeamInvite{}, err
@@ -96,46 +43,45 @@ func createWorkspaceTeamInviteForTeamAt(workingDir, identityHome, explicitTeamID
 		awebURL = strings.TrimSpace(workspace.AwebURL)
 	}
 
-	hasTeamKey, err := awconfig.TeamKeyExists(domain, team)
+	home := awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(workingDir)}
+	if identityHome != "" {
+		home = awconfig.IdentityHome{Root: identityHome, Source: awconfig.IdentityHomeFlag}
+	}
+	plan, err := planTeamInvite(teamInviteSource{WorkingDir: workingDir, Home: home, Domain: domain, Team: team, AwebURL: awebURL})
 	if err != nil {
 		return workspaceTeamInvite{}, err
 	}
-	var token string
-	if hasTeamKey {
-		registryURL := registryURLForTeamInviteAt(rootDir, identityHome, domain, awebURL)
-		_, token, err = createTeamInviteTokenAt(domain, team, registryURL, awebURL, true, "", workingDir, identityHome)
-	} else if strings.TrimSpace(awebURL) != "" {
-		_, token, err = createHostedTeamInviteTokenAt(workingDir, identityHome, teamID, true)
-	} else {
-		_, token, err = createTeamInviteTokenAt(domain, team, "", awebURL, true, "", workingDir, identityHome)
+	// Hosted minting uses the selected service's authority and needs no
+	// controller registry discovery (docs/byot-onboarding-contract.md:36-46).
+	if plan.Kind == inviteAuthorityController {
+		plan.Source.RegistryURL, err = resolveRegistryAuthority(context.Background(), registryAuthorityRequest{
+			Kind: registryTeamRoute, WorkingDir: rootDir, IdentityHome: identityHome, AwebURL: awebURL, TeamID: teamID, Domain: domain,
+		})
+		if err != nil {
+			return workspaceTeamInvite{}, err
+		}
 	}
+	created, err := mintPlannedTeamInvite(teamInviteMintRequest{Plan: plan, Scope: teamInviteMemberScope(scope)})
 	if err != nil {
 		return workspaceTeamInvite{}, err
 	}
-	return workspaceTeamInvite{Token: token, AwebURL: awebURL}, nil
+	return workspaceTeamInvite{Token: created.Token, AwebURL: awebURL, ExpiresAt: created.ExpiresAt}, nil
 }
 
-func acceptTeamInviteWithPreferredAwebURL(primaryDir, primaryIdentityHome, homeDir, token, preferredAwebURL, alias string) (*acceptedTeamInvite, error) {
-	preferredAwebURL = strings.TrimSpace(preferredAwebURL)
-	opts := teamAcceptInviteOptions{
-		IdentityHome: filepath.Join(filepath.Clean(homeDir), ".aw"),
-		Name:         alias,
-		Scope:        awid.IdentityModeLocal,
-	}
-	if preferredAwebURL == "" {
-		return acceptProvisionedTeamInvite(primaryDir, primaryIdentityHome, homeDir, token, opts)
-	}
+type workspaceInviteAcceptance struct {
+	SourceDir  string
+	SourceHome string
+	ChildDir   string
+	Invite     workspaceTeamInvite
+	Alias      string
+}
 
-	previous, hadPrevious := os.LookupEnv("AWEB_URL")
-	if err := os.Setenv("AWEB_URL", preferredAwebURL); err != nil {
-		return nil, err
-	}
-	defer func() {
-		if hadPrevious {
-			_ = os.Setenv("AWEB_URL", previous)
-		} else {
-			_ = os.Unsetenv("AWEB_URL")
-		}
-	}()
-	return acceptProvisionedTeamInvite(primaryDir, primaryIdentityHome, homeDir, token, opts)
+// acceptWorkspaceTeamInvite names the selected service in the acceptance
+// request rather than changing selection for other operations in this process
+// (docs/cli-identity-selection.md:13-33).
+func acceptWorkspaceTeamInvite(input workspaceInviteAcceptance) (*acceptedTeamInvite, error) {
+	return acceptProvisionedTeamInvite(input.SourceDir, input.SourceHome, input.ChildDir, input.Invite.Token, teamAcceptInviteOptions{
+		IdentityHome: awconfig.WorktreeIdentityHome(input.ChildDir), Name: input.Alias,
+		Scope: awid.IdentityModeLocal, AwebURL: strings.TrimSpace(input.Invite.AwebURL),
+	})
 }

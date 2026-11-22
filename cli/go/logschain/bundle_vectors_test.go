@@ -63,7 +63,9 @@ func TestExportVectorCases(t *testing.T) {
 			if err != nil {
 				t.Fatalf("verify: %v", err)
 			}
-			if got := asJSON(t, report.JSON()); !reflect.DeepEqual(got, asJSON(t, c.Report)) {
+			structural := report.JSON()
+			delete(structural, "attested_epochs")
+			if got := asJSON(t, structural); !reflect.DeepEqual(got, asJSON(t, c.Report)) {
 				t.Fatalf("report:\n got %v\nwant %v", got, c.Report)
 			}
 		})

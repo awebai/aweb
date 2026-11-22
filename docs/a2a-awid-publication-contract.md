@@ -183,8 +183,12 @@ Generic `authority invalid` errors are rejected at review.
 ## Verification rules
 
 The AWID write routes verify assertion signatures, registered address binding,
-current identity key history, delegation digest/status/expiry, and request
-freshness before storage. Anonymous reads return only active, unexpired rows.
+current identity key history, and request freshness before storage, and a
+publication write that references a delegation verifies that it is active,
+unexpired, and matches its current digest, except that a signed withdrawal of a
+stored publication may reference an existing revoked or expired delegation by
+the ID and digest retained in that publication.
+Anonymous reads return only active, unexpired rows.
 
 A **full independent** aweb-aware verifier for an A2A card must:
 

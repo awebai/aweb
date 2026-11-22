@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -20,6 +22,33 @@ import (
 	"github.com/awebai/aw/internal/blueprint"
 	"github.com/spf13/cobra"
 )
+
+// serveProvisionedConnectForTest extends creator-focused HTTP fixtures with
+// admission before publication (docs/identity.md:514-519). Server authority is
+// exercised by the real-command world; this response preserves these fixtures'
+// certificate subject while their placement and recovery assertions run.
+func serveProvisionedConnectForTest(t *testing.T, w http.ResponseWriter, r *http.Request) bool {
+	t.Helper()
+	if r.Method != http.MethodPost || (r.URL.Path != "/v1/connect" && r.URL.Path != "/api/v1/connect") {
+		return false
+	}
+	certificate := requireCertificateAuthForTest(t, r)
+	var request connectRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		t.Fatal(err)
+	}
+	if request.WorkspacePath == "" {
+		t.Fatal("provisioned connect must identify its workspace")
+	}
+	if err := json.NewEncoder(w).Encode(connectResponse{
+		TeamID: certificate.Team, Alias: certificate.Alias,
+		AgentID: "agent-" + certificate.Alias, WorkspaceID: "workspace-" + certificate.Alias,
+		TeamDIDKey: certificate.TeamDIDKey,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return true
+}
 
 func resetTeamHumanCreateGlobals(t *testing.T) {
 	t.Helper()
@@ -940,8 +969,11 @@ func TestTeamHumanAddRejectsExistingAwSymlinkState(t *testing.T) {
 	teamHumanAddLayoutOnly = true
 
 	err := runTeamHumanAdd(nil, []string{"developer"})
-	if err == nil || !strings.Contains(err.Error(), "already has identity state") {
+	if err == nil || !strings.Contains(err.Error(), "must not be a symlink") {
 		t.Fatalf("error=%v", err)
+	}
+	if _, err := os.Lstat(root + "/missing-aw-target"); !os.IsNotExist(err) {
+		t.Fatalf("refusal wrote through the identity-home symlink: %v", err)
 	}
 }
 
@@ -1068,7 +1100,7 @@ func TestTeamHumanCreateHostedRegistryUsesGuidedOnboardingWhenNoIdentity(t *test
 	}
 }
 
-func TestTeamHumanCreateAPIKeyToleratesAPISuffixedAwebURL(t *testing.T) {
+func TestHeadlessTeamAdminCreateAcceptsWorkspaceKey(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		suffix string
@@ -1077,8 +1109,6 @@ func TestTeamHumanCreateAPIKeyToleratesAPISuffixedAwebURL(t *testing.T) {
 		{name: "apisuffixed", suffix: "/api"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			resetTeamHumanCreateGlobals(t)
-
 			const apiKey = "aw_sk_create_apikey"
 			teamPub, teamKey, err := awid.GenerateKeypair()
 			if err != nil {
@@ -1086,22 +1116,26 @@ func TestTeamHumanCreateAPIKeyToleratesAPISuffixedAwebURL(t *testing.T) {
 			}
 			teamDIDKey := awid.ComputeDIDKey(teamPub)
 
-			var initPaths []string
+			var initPosts atomic.Int32
 			var server *httptest.Server
 			server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
-				if serveAPIKeyCreationTeamRead(w, r, "backend:acme.com") {
+				if r.Method == http.MethodGet && r.URL.Path == "/api/v1/teams/current" {
+					_ = json.NewEncoder(w).Encode(map[string]any{"team_id": "11111111-1111-4111-8111-111111111111", "canonical_team_id": "backend:acme.test", "api_key_kind": "workspace"})
 					return
 				}
 				switch r.URL.Path {
 				case "/api/v1/workspaces/init":
-					initPaths = append(initPaths, r.URL.Path)
+					initPosts.Add(1)
+					if r.Method != http.MethodPost || r.Header.Get("Authorization") != "Bearer "+apiKey {
+						t.Error("workspace init did not use the supplied workspace key")
+					}
 					var body map[string]any
 					if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 						t.Fatal(err)
 					}
 					didKey, _ := body["did"].(string)
 					cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-						Team:          "backend:acme.com",
+						Team:          "backend:acme.test",
 						MemberDIDKey:  didKey,
 						Alias:         "eng",
 						IdentityScope: awid.IdentityModeLocal,
@@ -1117,7 +1151,7 @@ func TestTeamHumanCreateAPIKeyToleratesAPISuffixedAwebURL(t *testing.T) {
 						"server_url":     serverURL,
 						"team_cert":      encoded,
 						"alias":          "eng",
-						"team_id":        "backend:acme.com",
+						"team_id":        "backend:acme.test",
 						"workspace_id":   "ws-1",
 						"did":            didKey,
 						"stable_id":      "",
@@ -1128,7 +1162,7 @@ func TestTeamHumanCreateAPIKeyToleratesAPISuffixedAwebURL(t *testing.T) {
 				case "/api/v1/connect", "/v1/connect":
 					requireCertificateAuthForTest(t, r)
 					_ = json.NewEncoder(w).Encode(map[string]any{
-						"team_id":      "backend:acme.com",
+						"team_id":      "backend:acme.test",
 						"alias":        "eng",
 						"agent_id":     "agent-1",
 						"workspace_id": "ws-1",
@@ -1138,23 +1172,27 @@ func TestTeamHumanCreateAPIKeyToleratesAPISuffixedAwebURL(t *testing.T) {
 				case "/v1/agents/heartbeat", "/api/v1/agents/heartbeat":
 					w.WriteHeader(http.StatusOK)
 				case "/v1/agents/me/encryption-key", "/api/v1/agents/me/encryption-key":
-					writePublishEncryptionKeyResponseForTest(t, w, "agent-1", "backend:acme.com", "eng")
+					writePublishEncryptionKeyResponseForTest(t, w, "agent-1", "backend:acme.test", "eng")
 				default:
 					t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 				}
 			})
 
-			t.Setenv("AWEB_API_KEY", apiKey)
-			t.Setenv("AWEB_URL", server.URL+tc.suffix)
-			t.Setenv("AWID_REGISTRY_URL", "")
-			t.Chdir(t.TempDir())
-			jsonFlag = true
-
-			if err := runTeamHumanCreate(nil, []string{"eng"}); err != nil {
-				t.Fatalf("runTeamHumanCreate with AWEB_URL=%q: %v", server.URL+tc.suffix, err)
+			dir := t.TempDir()
+			bin := filepath.Join(t.TempDir(), "aw")
+			buildAwBinary(t, t.Context(), bin)
+			cmd := exec.CommandContext(t.Context(), bin, "team", "admin", "create", "eng", "--json")
+			cmd.Dir = dir
+			cmd.Env = append(testCommandEnv(t.TempDir()), "AWEB_API_KEY="+apiKey, "AWEB_URL="+server.URL+tc.suffix)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("headless team create: %v\n%s", err, out)
 			}
-			if len(initPaths) != 1 || initPaths[0] != "/api/v1/workspaces/init" {
-				t.Fatalf("workspace init paths=%v want [/api/v1/workspaces/init]", initPaths)
+			cert, err := awid.LoadTeamCertificate(awconfig.TeamCertificatePath(dir, "backend:acme.test"))
+			if err != nil || cert.Alias != "eng" || cert.Team != "backend:acme.test" {
+				t.Fatalf("create did not persist the expected membership: %+v, %v", cert, err)
+			}
+			if count := initPosts.Load(); count != 1 {
+				t.Fatalf("workspace init requests=%d, want 1", count)
 			}
 		})
 	}
@@ -1620,6 +1658,8 @@ func TestTeamHumanCreateFirstAgentGlobalHostedBootstrapAllowed(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)
 	t.Setenv(initAPIKeyEnvVar, "")
+	// The hosted bootstrap is allowed when no registry is named.
+	t.Setenv("AWID_REGISTRY_URL", "")
 	teamHumanCreateFirstGlobal = true
 	teamHumanCreateServiceURL = "https://app.example"
 	teamHumanCreateUsername = "eng-user"
@@ -1749,7 +1789,15 @@ func TestTeamHumanCreateExistingSelfCustodialIdentityCreatesTeam(t *testing.T) {
 		if serveUnadvertisedHealth(w, r) {
 			return
 		}
+		if serveProvisionedConnectForTest(t, w, r) {
+			return
+		}
 		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+			certificate := requireCertificateAuthForTest(t, r)
+			if err := json.NewEncoder(w).Encode(connectResponse{TeamID: certificate.Team, Alias: certificate.Alias, AgentID: certificate.CertificateID, WorkspaceID: "fixture-" + certificate.CertificateID, TeamDIDKey: certificate.TeamDIDKey}); err != nil {
+				t.Error(err)
+			}
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.com":
 			http.NotFound(w, r)
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces":
@@ -1782,8 +1830,7 @@ func TestTeamHumanCreateExistingSelfCustodialIdentityCreatesTeam(t *testing.T) {
 	defer server.Close()
 	t.Setenv("AWID_REGISTRY_URL", server.URL)
 	teamHumanCreateFirstGlobal = true
-	// Keep the provisioning-time encryption-key publish off the production
-	// default aweb URL (aweb-abfd wiring publishes once a binding exists).
+	// Keep admission and encryption publication on this fixture service.
 	initAwebURL = server.URL
 
 	if err := runTeamHumanCreate(nil, []string{"Eng"}); err != nil {
@@ -1859,7 +1906,15 @@ func TestTeamHumanCreateBYOTWithAgentsCreatesTeamAndRoster(t *testing.T) {
 			return
 		}
 
+		if serveProvisionedConnectForTest(t, w, r) {
+			return
+		}
 		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+			certificate := requireCertificateAuthForTest(t, r)
+			if err := json.NewEncoder(w).Encode(connectResponse{TeamID: certificate.Team, Alias: certificate.Alias, AgentID: certificate.CertificateID, WorkspaceID: "fixture-" + certificate.CertificateID, TeamDIDKey: certificate.TeamDIDKey}); err != nil {
+				t.Error(err)
+			}
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
 			_ = json.NewEncoder(w).Encode(map[string]any{"aweb_url": serverURL, "registry_url": serverURL})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.com":
@@ -1975,7 +2030,7 @@ func TestTeamHumanCreateBYOTFirstAgentGlobalWithoutAuthorityFailsBeforeRegister(
 func TestTeamHumanAddGlobalIdentityFallbackDoesNotNameCreateFlags(t *testing.T) {
 	resetTeamHumanCreateGlobals(t)
 	t.Setenv("HOME", t.TempDir())
-	err := bootstrapTeamCreateGlobalIdentity(t.TempDir(), "aw-coord", "missing-controller.invalid", "https://api.awid.ai", false)
+	err := bootstrapTeamCreateGlobalIdentity(globalIdentityBootstrap{WorkingDir: t.TempDir(), Name: "aw-coord", Domain: "missing-controller.invalid", RegistryURL: "https://api.awid.ai", Purpose: globalIdentityForTeamMember})
 	if err == nil || !strings.Contains(err.Error(), "global identity creation requires namespace controller authority") || !strings.Contains(err.Error(), "--api-key") {
 		t.Fatalf("add fallback error=%v", err)
 	}
@@ -1989,6 +2044,8 @@ func TestTeamHumanCreateBYOTFirstAgentGlobalMintsWithNamespaceAuthority(t *testi
 	root := t.TempDir()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	// Exercise the founding command's recorded registry in publication.
+	t.Setenv("AWID_REGISTRY_URL", "")
 	t.Chdir(root)
 	_, controllerKey, err := awid.GenerateKeypair()
 	if err != nil {
@@ -2005,7 +2062,15 @@ func TestTeamHumanCreateBYOTFirstAgentGlobalMintsWithNamespaceAuthority(t *testi
 		if serveUnadvertisedHealth(w, r) {
 			return
 		}
+		if serveProvisionedConnectForTest(t, w, r) {
+			return
+		}
 		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+			certificate := requireCertificateAuthForTest(t, r)
+			if err := json.NewEncoder(w).Encode(connectResponse{TeamID: certificate.Team, Alias: certificate.Alias, AgentID: certificate.CertificateID, WorkspaceID: "fixture-" + certificate.CertificateID, TeamDIDKey: certificate.TeamDIDKey}); err != nil {
+				t.Error(err)
+			}
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.com":
 			if !namespaceCreated {
 				http.NotFound(w, r)
@@ -2035,10 +2100,9 @@ func TestTeamHumanCreateBYOTFirstAgentGlobalMintsWithNamespaceAuthority(t *testi
 			createdDIDKey, _ = body["current_did_key"].(string)
 			_ = json.NewEncoder(w).Encode(map[string]any{"status": "claimed", "domain": "acme.com", "name": "ops", "did_aw": createdDIDAW, "current_did_key": createdDIDKey, "did_status": "created", "address_status": "created"})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/did/"+createdDIDAW+"/encryption-key":
-			_ = json.NewEncoder(w).Encode(map[string]any{"status": "published"})
+			writeRegistryEncryptionKeyAssertionForTest(t, w, r)
 		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
-			// aweb-abfd: provisioning publishes to the aweb service once a binding exists.
-			_, _ = w.Write([]byte("{}"))
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-ops", "ops:acme.com", "ops")
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.com/addresses/ops":
 			_ = json.NewEncoder(w).Encode(map[string]any{"domain": "acme.com", "name": "ops", "did_aw": createdDIDAW, "current_did_key": createdDIDKey})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/acme.com/teams":
@@ -2062,11 +2126,14 @@ func TestTeamHumanCreateBYOTFirstAgentGlobalMintsWithNamespaceAuthority(t *testi
 	teamHumanCreateNamespace = "acme.com"
 	teamHumanCreateRegistryURL = server.URL
 	teamHumanCreateFirstGlobal = true
-	// Keep the provisioning-time encryption-key publish off the production
-	// default aweb URL (aweb-abfd wiring publishes once a binding exists).
+	// Keep admission and encryption publication on this fixture service.
 	initAwebURL = server.URL
 
 	if err := runTeamHumanCreate(nil, []string{"Ops"}); err != nil {
+		var publication *requiredEncryptionPublicationError
+		if errors.As(err, &publication) {
+			t.Fatalf("runTeamHumanCreate: %v: %v", err, publication)
+		}
 		t.Fatalf("runTeamHumanCreate: %v", err)
 	}
 	if claimCalls != 1 || certCalls != 1 {
@@ -2076,7 +2143,7 @@ func TestTeamHumanCreateBYOTFirstAgentGlobalMintsWithNamespaceAuthority(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if identity.IdentityScope != awid.IdentityModeGlobal || identity.Address != "acme.com/ops" || identity.StableID != createdDIDAW {
+	if identity.IdentityScope != awid.IdentityModeGlobal || identity.Address != "acme.com/ops" || identity.StableID != createdDIDAW || identity.RegistryURL != server.URL {
 		t.Fatalf("identity=%+v created=%s", identity, createdDIDAW)
 	}
 	cert, err := awconfig.LoadTeamCertificateForTeam(root, "ops:acme.com")
@@ -2123,7 +2190,15 @@ func TestTeamHumanCreateBYOTEnrollsCreatorAndPreservesExistingMembership(t *test
 		if serveUnadvertisedHealth(w, r) {
 			return
 		}
+		if serveProvisionedConnectForTest(t, w, r) {
+			return
+		}
 		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+			certificate := requireCertificateAuthForTest(t, r)
+			if err := json.NewEncoder(w).Encode(connectResponse{TeamID: certificate.Team, Alias: certificate.Alias, AgentID: certificate.CertificateID, WorkspaceID: "fixture-" + certificate.CertificateID, TeamDIDKey: certificate.TeamDIDKey}); err != nil {
+				t.Error(err)
+			}
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.com":
 			http.NotFound(w, r)
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces":
@@ -2156,13 +2231,13 @@ func TestTeamHumanCreateBYOTEnrollsCreatorAndPreservesExistingMembership(t *test
 		}
 	}))
 	defer server.Close()
+	t.Setenv("AWID_REGISTRY_URL", server.URL)
 	teamHumanCreateBYOT = true
 	teamHumanCreateNamespace = "acme.com"
 	teamHumanCreateRegistryURL = server.URL
 	teamHumanCreateAlias = "captain"
 	teamHumanCreateFirstGlobal = true
-	// Keep the provisioning-time encryption-key publish off the production
-	// default aweb URL (aweb-abfd wiring publishes once a binding exists).
+	// Keep admission and encryption publication on this fixture service.
 	initAwebURL = server.URL
 
 	if err := runTeamHumanCreate(nil, []string{"Ops"}); err != nil {
@@ -2213,7 +2288,7 @@ func TestTeamHumanCreateRejectsVersionedLibraryProfileBeforeIdentity(t *testing.
 	}
 }
 
-func TestTeamHumanAddProfileMaterializeFailureRollsBackCreatedHome(t *testing.T) {
+func TestTeamHumanAddProfileFailureRetainsAdmittedHome(t *testing.T) {
 	resetTeamHumanCreateGlobals(t)
 	root := t.TempDir()
 	home := t.TempDir()
@@ -2230,7 +2305,7 @@ func TestTeamHumanAddProfileMaterializeFailureRollsBackCreatedHome(t *testing.T)
 		t.Fatal(err)
 	}
 	teamDID := awid.ComputeDIDKey(teamPub)
-	var certCalls int
+	var certCalls, connectCalls int
 	var registeredCertID string
 	var revokedCertID string
 	var server *httptest.Server
@@ -2258,7 +2333,12 @@ func TestTeamHumanAddProfileMaterializeFailureRollsBackCreatedHome(t *testing.T)
 				t.Fatal(err)
 			}
 			revokedCertID, _ = body["certificate_id"].(string)
-			_ = json.NewEncoder(w).Encode(map[string]any{"certificate_id": revokedCertID})
+			http.Error(w, "revocation outcome unavailable", 503)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+			connectCalls++
+			if err := json.NewEncoder(w).Encode(map[string]any{"team_id": "eng:local", "alias": "developer", "workspace_id": "ws-developer", "agent_id": "developer", "team_did_key": teamDID}); err != nil {
+				t.Fatal(err)
+			}
 		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
 			writePublishEncryptionKeyResponseForTest(t, w, "developer", "eng:local", "developer")
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/agents":
@@ -2289,16 +2369,41 @@ func TestTeamHumanAddProfileMaterializeFailureRollsBackCreatedHome(t *testing.T)
 	if registeredCertID == "" {
 		t.Fatal("registered certificate id was not captured")
 	}
-	if revokedCertID != registeredCertID {
-		t.Fatalf("revoked certificate_id=%q want just-created %q", revokedCertID, registeredCertID)
+	if connectCalls != 1 {
+		t.Fatalf("profile failure must follow admission, connects=%d", connectCalls)
+	}
+	if revokedCertID != "" {
+		t.Fatalf("setup failure attempted registry-only retirement: %s", revokedCertID)
 	}
 	agentHome := filepath.Join(root, "agents", "instances", "developer")
-	if _, statErr := os.Lstat(agentHome); !os.IsNotExist(statErr) {
-		t.Fatalf("failed profile add left agent home state at %s: %v", agentHome, statErr)
+	if _, err := awid.LoadSigningKey(awconfig.WorktreeSigningKeyPath(agentHome)); err != nil {
+		t.Fatalf("setup failure discarded admitted key: %v", err)
 	}
+	cert, err := awconfig.LoadTeamCertificateForTeam(agentHome, "eng:local")
+	if err != nil || cert.CertificateID != registeredCertID {
+		t.Fatalf("setup failure discarded issued certificate: %v", err)
+	}
+	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(agentHome, ".aw", "workspace.yaml"))
+	if err != nil || workspace.Membership("eng:local") == nil || workspace.Membership("eng:local").WorkspaceID != "ws-developer" {
+		t.Fatalf("setup failure lost coordination recovery: %v", err)
+	}
+	beforeKey, err := os.ReadFile(awconfig.WorktreeSigningKeyPath(agentHome))
+	if err != nil {
+		t.Fatal(err)
+	}
+	teamHumanAddHome = agentHome
+	retryErr := runTeamHumanAdd(nil, []string{"developer@aweb.engineering/developer:local"})
+	if retryErr == nil || !strings.Contains(retryErr.Error(), "retained at") || certCalls != 1 || connectCalls != 2 || revokedCertID != "" {
+		t.Fatalf("setup retry changed membership: certs=%d connects=%d revoke=%q error=%v", certCalls, connectCalls, revokedCertID, retryErr)
+	}
+	afterKey, err := os.ReadFile(awconfig.WorktreeSigningKeyPath(agentHome))
+	if err != nil || string(afterKey) != string(beforeKey) {
+		t.Fatalf("setup retry changed retained key: %v", err)
+	}
+
 }
 
-func TestTeamHumanAddHostedProfileMaterializeFailureRequiresTeamKeyForHostedRollback(t *testing.T) {
+func TestTeamHumanAddHostedProfileFailureRetainsConnectedIdentity(t *testing.T) {
 	resetTeamHumanCreateGlobals(t)
 	root := t.TempDir()
 	home := t.TempDir()
@@ -2318,6 +2423,9 @@ func TestTeamHumanAddHostedProfileMaterializeFailureRequiresTeamKeyForHostedRoll
 	removeCalls := 0
 	var server *httptest.Server
 	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
+		if serveProvisionedConnectForTest(t, w, r) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
 			_ = json.NewEncoder(w).Encode(map[string]any{"aweb_url": serverURL, "registry_url": serverURL})
@@ -2350,6 +2458,10 @@ func TestTeamHumanAddHostedProfileMaterializeFailureRequiresTeamKeyForHostedRoll
 				"did": didKey, "custody": "self", "identity_scope": "local", "access_mode": "open", "created": true,
 				"team_cert": encoded,
 			})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+			if err := json.NewEncoder(w).Encode(map[string]any{"team_id": teamID, "alias": "developer", "workspace_id": "ws-developer", "agent_id": "agent-developer"}); err != nil {
+				t.Fatal(err)
+			}
 		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
 			writePublishEncryptionKeyResponseForTest(t, w, "agent-developer", teamID, "developer")
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/agents":
@@ -2395,18 +2507,16 @@ func TestTeamHumanAddHostedProfileMaterializeFailureRequiresTeamKeyForHostedRoll
 	if removeCertID != "" || removeAuth != "" {
 		t.Fatalf("unexpected hosted remove attempt cert=%q auth=%q", removeCertID, removeAuth)
 	}
-	for _, want := range []string{"server-side member rollback failed", "requires --api-key or AWEB_API_KEY", "workspace-bound API keys cannot remove hosted team members", justCreatedCertID} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("error missing %q:\n%s", want, err)
-		}
+	if !strings.Contains(err.Error(), "retained at") || !strings.Contains(err.Error(), "team admin add --home") {
+		t.Fatalf("missing setup recovery: %v", err)
 	}
 	agentHome := filepath.Join(root, "agents", "instances", "developer")
-	if _, statErr := os.Lstat(agentHome); !os.IsNotExist(statErr) {
-		t.Fatalf("failed hosted profile add left agent home state at %s: %v", agentHome, statErr)
+	if _, err := awid.LoadSigningKey(awconfig.WorktreeSigningKeyPath(agentHome)); err != nil {
+		t.Fatalf("hosted setup failure lost member credential: %v", err)
 	}
 }
 
-func TestTeamHumanAddHostedProfileRollbackFailureIsLoud(t *testing.T) {
+func TestTeamHumanAddHostedProfileFailureRetainsAdmittedMember(t *testing.T) {
 	resetTeamHumanCreateGlobals(t)
 	root := t.TempDir()
 	home := t.TempDir()
@@ -2420,8 +2530,12 @@ func TestTeamHumanAddHostedProfileRollbackFailureIsLoud(t *testing.T) {
 		t.Fatal(err)
 	}
 	justCreatedCertID := ""
+	removeCalls := 0
 	var server *httptest.Server
 	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
+		if serveProvisionedConnectForTest(t, w, r) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
 			_ = json.NewEncoder(w).Encode(map[string]any{"aweb_url": serverURL, "registry_url": serverURL})
@@ -2457,6 +2571,7 @@ func TestTeamHumanAddHostedProfileRollbackFailureIsLoud(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/blueprints/aweb.engineering/profiles/developer":
 			http.Error(w, `{"detail":"catalog unavailable"}`, http.StatusServiceUnavailable)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/teams/default:rollback-fail.aweb.ai/agents/remove-member":
+			removeCalls++
 			http.Error(w, `{"detail":"remove failed"}`, http.StatusServiceUnavailable)
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
@@ -2474,13 +2589,22 @@ func TestTeamHumanAddHostedProfileRollbackFailureIsLoud(t *testing.T) {
 
 	err = runTeamHumanAdd(nil, []string{"developer@aweb.engineering/developer:local"})
 	if err == nil {
-		t.Fatal("expected materialize + rollback failure")
+		t.Fatal("expected profile materialization failure")
 	}
 	text := err.Error()
-	for _, want := range []string{"GET " + server.URL + "/v1/blueprints/aweb.engineering/profiles/developer returned 503", "server-side member rollback failed", "requires --api-key or AWEB_API_KEY", "workspace-bound API keys cannot remove hosted team members", justCreatedCertID, "aw id team remove-member --team default --namespace rollback-fail.aweb.ai --cert-id"} {
+	memberHome := filepath.Join(root, "agents", "instances", "developer")
+	for _, want := range []string{"GET " + server.URL + "/v1/blueprints/aweb.engineering/profiles/developer returned 503",
+		"retained at " + memberHome, "setup did not finish", "remove-agent developer --team-id " + teamID} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("error missing %q:\n%s", want, text)
 		}
+	}
+	if removeCalls != 0 {
+		t.Fatalf("profile failure attempted hosted retirement: %d", removeCalls)
+	}
+	cert, certErr := awconfig.LoadTeamCertificateForTeam(memberHome, teamID)
+	if certErr != nil || justCreatedCertID == "" || cert.CertificateID != justCreatedCertID {
+		t.Fatalf("profile failure did not retain the admitted certificate: %v", certErr)
 	}
 }
 

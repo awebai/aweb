@@ -974,6 +974,7 @@ func (p *recordingRunProvider) snapshot() ([]string, []awrun.BuildOptions) {
 }
 
 func TestRunUsesWakeEventToTriggerSecondCycle(t *testing.T) {
+	deliveredIDsTestPath(t)
 	initRunCommandVars()
 
 	oldLoad := runLoadUserConfig
@@ -1012,6 +1013,10 @@ func TestRunUsesWakeEventToTriggerSecondCycle(t *testing.T) {
 			_, _ = io.WriteString(w, "event: actionable_chat\ndata: {\"message_id\":\"m-1\",\"from_alias\":\"mia\",\"session_id\":\"s-1\",\"wake_mode\":\"interrupt\",\"unread_count\":1,\"sender_waiting\":true}\n\n")
 			flusher.Flush()
 			<-r.Context().Done()
+		case r.URL.Path == "/v1/chat/sessions/s-1/messages":
+			writeRunTestJSON(t, w, awid.ChatHistoryResponse{Messages: []awid.ChatMessage{{MessageID: "durable-message", FromAgent: "mia", Body: "can you review the retry path?"}}})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/read"):
+			writeRunTestJSON(t, w, awid.ChatMarkReadResponse{Success: true})
 		case r.URL.Path == "/v1/chat/pending":
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(w, `{"pending":[{"session_id":"s-1","participants":["mia","rose"],"last_message":"can you review the retry path?","last_from":"mia","unread_count":1,"last_activity":"2026-03-20T00:00:00Z","sender_waiting":true}],"messages_waiting":1}`)
@@ -1397,6 +1402,7 @@ func TestNativeRunChatProviderFailureLeavesBatchForRestart(t *testing.T) {
 }
 
 func TestRunUsesActionableWakeEventToTriggerSecondCycle(t *testing.T) {
+	deliveredIDsTestPath(t)
 	initRunCommandVars()
 
 	oldLoad := runLoadUserConfig
@@ -1432,6 +1438,10 @@ func TestRunUsesActionableWakeEventToTriggerSecondCycle(t *testing.T) {
 			_, _ = io.WriteString(w, "event: actionable_chat\ndata: {\"message_id\":\"m-2\",\"from_alias\":\"henry\",\"session_id\":\"s-9\",\"wake_mode\":\"interrupt\",\"unread_count\":1,\"sender_waiting\":true}\n\n")
 			flusher.Flush()
 			<-r.Context().Done()
+		case r.URL.Path == "/v1/chat/sessions/s-9/messages":
+			writeRunTestJSON(t, w, awid.ChatHistoryResponse{Messages: []awid.ChatMessage{{MessageID: "durable-message", FromAgent: "henry", Body: "ping"}}})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/read"):
+			writeRunTestJSON(t, w, awid.ChatMarkReadResponse{Success: true})
 		case r.URL.Path == "/v1/chat/pending":
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(w, `{"pending":[{"session_id":"s-9","participants":["henry","rose"],"last_message":"ping","last_from":"henry","unread_count":1,"last_activity":"2026-03-20T00:00:00Z","sender_waiting":true}],"messages_waiting":1}`)

@@ -64,7 +64,6 @@ def test_private_certificate_refused_by_real_pre_status_registry(
     with running_library(
         tmp_path / "old-registry",
         awid_service_token=None,
-        team_server_origin=library_without_awid_service_token.server.origin,
         registry_url=old_registry,
     ) as app:
         configure_app_client(team.workspace, app)

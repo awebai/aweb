@@ -15,6 +15,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/awebai/aw/canonicaljson"
 )
 
 const HumanChannelsProfile = "aweb-human-channels-v1"
@@ -475,19 +477,7 @@ func hcRelations(schema string, v map[string]any) error {
 			return hcError("invalid", "mail subject")
 		}
 	case "PrepareRequest":
-		managed := v["format"] == "managed_chat_plaintext"
-		author := v["author"].(map[string]any)
-		if (!managed) != hcHas(v, "target") || managed != hcHas(v, "group_context") || (managed && v["kind"] != "chat") || (v["kind"] == "mail" && author["kind"] != "native") {
-			return hcError("invalid", "message profile")
-		}
-		if managed {
-			c := v["group_context"].(map[string]any)
-			a, _ := StrictCanonicalJSON(c["author_ref"])
-			b, _ := StrictCanonicalJSON(author)
-			if string(a) != string(b) || c["message_id"] != v["message_id"] || c["session_id"] != v["conversation_id"] {
-				return hcError("invalid", "message context")
-			}
-		}
+		return checkHumanChannelsPrepareRequest(v)
 	case "NativeOperationRequest":
 		if v["operation"] == "resolve" {
 			for _, k := range []string{"decision", "owner_authorization", "evidence_hash"} {
@@ -532,6 +522,24 @@ func hcRelations(schema string, v map[string]any) error {
 		}
 		if !guest && (v["author_assurance"] != "native" || v["trust_status"] == "external_untrusted") {
 			return hcError("invalid", "native assurance")
+		}
+	}
+	return nil
+}
+
+// checkHumanChannelsPrepareRequest keeps the message profile and its managed
+// author/context binding together (docs/human-channels-contract-v1.md:27-31).
+func checkHumanChannelsPrepareRequest(v map[string]any) error {
+	managed := v["format"] == "managed_chat_plaintext"
+	author := v["author"].(map[string]any)
+	if (!managed) != hcHas(v, "target") || managed != hcHas(v, "group_context") || (managed && v["kind"] != "chat") || (v["kind"] == "mail" && author["kind"] != "native") {
+		return hcError("invalid", "message profile")
+	}
+	if managed {
+		c := v["group_context"].(map[string]any)
+		matches, err := canonicaljson.EqualValues(canonicaljson.Comparison{Expected: author, Actual: c["author_ref"]})
+		if err != nil || !matches || c["message_id"] != v["message_id"] || c["session_id"] != v["conversation_id"] {
+			return hcError("invalid", "message context")
 		}
 	}
 	return nil

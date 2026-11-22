@@ -16,17 +16,13 @@ import time
 from dataclasses import dataclass, replace
 from datetime import datetime
 
+import httpx
+
 from aweb_naapp.runtime.app_credentials import APP_GRANT_READ, AppCredentialSigner
-from aweb_naapp.runtime.authorization import Grant, GrantUnavailable, TeamServerNotAllowed
+from aweb_naapp.runtime.authorization import Grant, GrantUnavailable
 from aweb_naapp.runtime.clock import MonotonicClock
 from aweb_naapp.runtime.freshness import FreshnessCache, RefreshTimedOut
-from aweb_naapp.runtime.team_server import (
-    TeamServerDirectory,
-    TeamServerReach,
-    TeamServerRefused,
-    TeamServerUnavailable,
-    TeamServerUnreachable,
-)
+from aweb_naapp.runtime.team_server import TeamServerDirectory, TeamServerUnavailable
 
 MAX_ANSWER_BYTES = 1 << 20
 MISSING_KEY_MAX_AGE_SECONDS = 5
@@ -77,8 +73,8 @@ class TeamGrantSource:
         identity: AppIdentity,
         signer: AppCredentialSigner,
         discovery: TeamServerDirectory,
-        reach: TeamServerReach,
         timeout: float = 5.0,
+        transport: httpx.AsyncBaseTransport | None = None,
         monotonic: MonotonicClock = time.monotonic_ns,
     ) -> None:
         if signer.purpose != APP_GRANT_READ:
@@ -89,7 +85,7 @@ class TeamGrantSource:
         self._signer = signer
         self._directory = discovery
         self._timeout = timeout
-        self._reach = reach
+        self._transport = transport
         self._monotonic = monotonic
         self._cache: FreshnessCache[tuple[str, ...], GrantStatus | None] = FreshnessCache(
             refresh_timeout=timeout,
@@ -108,9 +104,7 @@ class TeamGrantSource:
             generation=status.generation,
         )
 
-    async def status_for(
-        self, team_id: str, certificate_id: str | None = None
-    ) -> GrantStatus | None:
+    async def status_for(self, team_id: str, certificate_id: str | None = None) -> GrantStatus | None:
         """Fresh status or no registered key; unavailable authority raises GrantUnavailable.
 
         The total caller deadline includes discovery. Cancellation never
@@ -123,33 +117,32 @@ class TeamGrantSource:
             raise GrantUnavailable(exc.code) from exc
         except (TimeoutError, RefreshTimedOut) as exc:
             raise GrantUnavailable("grant_refresh_timeout") from exc
-        except TeamServerRefused as exc:
-            raise TeamServerNotAllowed(exc.server_url) from exc
-        except TeamServerUnreachable as exc:
+        except (httpx.HTTPError, httpx.InvalidURL) as exc:
             raise GrantUnavailable("grant_server_unreachable") from exc
         except (KeyError, TypeError, ValueError, RecursionError) as exc:
             raise GrantUnavailable("grant_answer_malformed") from exc
 
-    async def _status_for(
-        self, team_id: str, certificate_id: str | None = None
-    ) -> GrantStatus | None:
+    async def _status_for(self, team_id: str, certificate_id: str | None = None) -> GrantStatus | None:
         server = await self._directory.resolve(team_id, certificate_id)
         # A move or controller-key change cannot reuse the old server's answer.
         key = (team_id, server.server_url, server.audience, server.team_did_key)
 
         async def fetch() -> tuple[GrantStatus | None, int]:
-            answer = await self._reach.get(
-                server,
-                "/v1/apps/self/grant",
-                signer=self._signer,
-                max_bytes=MAX_ANSWER_BYTES,
+            url = f"{server.server_url}/v1/apps/self/grant"
+            headers = self._signer.sign(method="GET", target=url, team_id=team_id).headers
+            async with httpx.AsyncClient(
+                transport=self._transport,
                 timeout=self._timeout,
-            )
-            if answer.truncated:
-                raise GrantUnavailable("grant_answer_too_large")
-            content = answer.body
-            if answer.status != 200:
-                if answer.status == 403:
+                follow_redirects=False,
+            ) as client:
+                async with client.stream("GET", url, headers=headers) as response:
+                    content = bytearray()
+                    async for chunk in response.aiter_bytes():
+                        content.extend(chunk)
+                        if len(content) > MAX_ANSWER_BYTES:
+                            raise GrantUnavailable("grant_answer_too_large")
+            if response.status_code != 200:
+                if response.status_code == 403:
                     try:
                         denial = json.loads(content)
                     except ValueError:
@@ -161,7 +154,7 @@ class TeamGrantSource:
                             # A denial grants no use and carries no installation identity.
                             # Let a new install become usable promptly on retry.
                             return None, MISSING_KEY_MAX_AGE_SECONDS
-                raise GrantUnavailable(f"grant_server_status_{answer.status}")
+                raise GrantUnavailable(f"grant_server_status_{response.status_code}")
             body = json.loads(content)
             status = self._parse(body, team_id)
             return status, status.max_age_seconds
@@ -185,8 +178,7 @@ class TeamGrantSource:
             body["team_id"] != team_id
             or body["app_id"] != identity.app_id
             or body["origin"] != identity.origin
-            or expected_digest is None
-            or body["digest"] != expected_digest
+            or expected_digest is None or body["digest"] != expected_digest
         ):
             raise ValueError("grant answer names another team or app identity")
         for field in ("state", "app_version", "as_of"):
@@ -202,9 +194,7 @@ class TeamGrantSource:
         if not isinstance(scopes, list) or not all(isinstance(s, str) and s for s in scopes):
             raise ValueError("invalid granted_scopes")
         installation_id = body["installation_id"]
-        if installation_id is not None and (
-            not isinstance(installation_id, str) or not installation_id
-        ):
+        if installation_id is not None and (not isinstance(installation_id, str) or not installation_id):
             raise ValueError("invalid installation_id")
         generation = body["generation"]
         if generation is not None and (

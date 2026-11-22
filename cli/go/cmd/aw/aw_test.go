@@ -1201,7 +1201,7 @@ func TestAwMailSendAliasUsesTeamScopedTarget(t *testing.T) {
 		case "/v1/agents":
 			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{
 				TeamID: "backend:demo",
-				Agents: []awid.AgentView{{AgentID: "alice-agent", Alias: "alice"}},
+				Agents: []awid.AgentView{{AgentID: "alice-agent", Alias: "alice", DIDKey: "did:key:z6Mkalice"}},
 			})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
@@ -1962,7 +1962,7 @@ func TestAwMailInboxLogsStableIDWhenAddressMissing(t *testing.T) {
 		t.Fatalf("interaction from=%q want did:aw:monitor", got)
 	}
 
-	recap := formatInteractionRecap(entries, 10)
+	recap := formatInteractionRecapStyled(entries, 10, false, 0)
 	if !strings.Contains(recap, "from did:aw:monitor (mail)") {
 		t.Fatalf("interaction recap lost sender identity:\n%s", recap)
 	}
@@ -2020,7 +2020,7 @@ func TestAwMailSendWritesCommLog(t *testing.T) {
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/agents":
-			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{Agents: []awid.AgentView{{AgentID: "eve-agent", Alias: "eve"}}})
+			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{Agents: []awid.AgentView{{AgentID: "eve-agent", Alias: "eve", DIDKey: "did:key:z6Mkeve"}}})
 		case "/v1/messages":
 			var posted awid.SendMessageRequest
 			_ = json.NewDecoder(r.Body).Decode(&posted)

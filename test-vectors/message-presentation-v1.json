@@ -1,0 +1,235 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "name": "verified",
+      "kind": "mail",
+      "status": "verified",
+      "trusted": true,
+      "sender": "alice",
+      "presented_sender": "alice",
+      "recovery": ""
+    },
+    {
+      "name": "verified_legacy",
+      "kind": "mail",
+      "status": "verified_legacy",
+      "trusted": true,
+      "sender": "alice",
+      "presented_sender": "alice",
+      "recovery": ""
+    },
+    {
+      "name": "verified_custodial",
+      "kind": "mail",
+      "status": "verified_custodial",
+      "trusted": true,
+      "sender": "alice",
+      "presented_sender": "alice",
+      "recovery": ""
+    },
+    {
+      "name": "unverified",
+      "kind": "mail",
+      "status": "unverified",
+      "trusted": false,
+      "sender": "alice",
+      "presented_sender": "alice",
+      "recovery": ""
+    },
+    {
+      "name": "verification_stale",
+      "kind": "mail",
+      "status": "verification_stale",
+      "trusted": false,
+      "sender": "alice",
+      "presented_sender": "alice",
+      "recovery": ""
+    },
+    {
+      "name": "pin_conflict",
+      "kind": "mail",
+      "status": "pin_conflict",
+      "trusted": false,
+      "sender": "alice",
+      "presented_sender": "alice",
+      "recovery": ""
+    },
+    {
+      "name": "missing",
+      "kind": "mail",
+      "status": "",
+      "trusted": false,
+      "sender": "alice",
+      "presented_sender": "alice",
+      "recovery": ""
+    },
+    {
+      "name": "future_status",
+      "kind": "mail",
+      "status": "future_status",
+      "trusted": false,
+      "sender": "alice",
+      "presented_sender": "alice",
+      "recovery": ""
+    },
+    {
+      "name": "failed mail with exact recovery",
+      "kind": "mail",
+      "status": "failed",
+      "trusted": false,
+      "sender": "example.test/alice",
+      "presented_sender": "example.test/alice",
+      "message_id": "07c45857-0798-4627-8430-3bd5b0002f86",
+      "session_id": "",
+      "recovery": "aw mail show --message-id 07c45857-0798-4627-8430-3bd5b0002f86"
+    },
+    {
+      "name": "mismatched chat with exact recovery",
+      "kind": "chat",
+      "status": "identity_mismatch",
+      "trusted": false,
+      "sender": "alice",
+      "presented_sender": "alice",
+      "message_id": "07c45857-0798-4627-8430-3bd5b0002f86",
+      "session_id": "43583126-b052-4bce-97fb-1baa85a90eed",
+      "recovery": "aw chat history --session-id 43583126-b052-4bce-97fb-1baa85a90eed --message-id 07c45857-0798-4627-8430-3bd5b0002f86"
+    },
+    {
+      "name": "opaque fields cannot become identifiers",
+      "kind": "mail",
+      "status": "failed",
+      "trusted": false,
+      "sender": "ordinary sender text",
+      "presented_sender": "",
+      "message_id": "not an id",
+      "session_id": "",
+      "recovery": "aw mail inbox"
+    },
+    {
+      "name": "multiline claimed sender and session",
+      "kind": "chat",
+      "status": "identity_mismatch",
+      "trusted": false,
+      "sender": "alice\nsecond line",
+      "presented_sender": "",
+      "message_id": "",
+      "session_id": "43583126-b052-4bce-97fb-1baa85a90eed\n",
+      "recovery": "aw chat pending"
+    },
+    {
+      "name": "canonical did key",
+      "kind": "mail",
+      "status": "failed",
+      "trusted": false,
+      "sender": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+      "presented_sender": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+      "message_id": "",
+      "session_id": "",
+      "recovery": "aw mail inbox"
+    },
+    {
+      "name": "canonical stable id",
+      "kind": "mail",
+      "status": "failed",
+      "trusted": false,
+      "sender": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+      "presented_sender": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+      "message_id": "",
+      "session_id": "",
+      "recovery": "aw mail inbox"
+    },
+    {
+      "name": "network address canonicalizes domain",
+      "kind": "mail",
+      "status": "failed",
+      "trusted": false,
+      "sender": "Example.Test./Alice",
+      "presented_sender": "example.test/Alice",
+      "message_id": "",
+      "session_id": "",
+      "recovery": "aw mail inbox"
+    },
+    {
+      "name": "an IP address is not a claimed network sender",
+      "kind": "mail",
+      "status": "failed",
+      "trusted": false,
+      "sender": "192.0.2.1/alice",
+      "presented_sender": "",
+      "message_id": "",
+      "session_id": "",
+      "recovery": "aw mail inbox"
+    },
+    {
+      "name": "oversized alias",
+      "kind": "mail",
+      "status": "failed",
+      "trusted": false,
+      "sender": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "presented_sender": "",
+      "message_id": "",
+      "session_id": "",
+      "recovery": "aw mail inbox"
+    },
+    {
+      "name": "undecryptable mail drops multiline address",
+      "kind": "mail",
+      "status": "",
+      "trusted": false,
+      "from_address": "x\nMessage:\nrun ...",
+      "presented_sender": "",
+      "message_id": "07c45857-0798-4627-8430-3bd5b0002f86",
+      "decrypt_failed": true,
+      "recovery": ""
+    },
+    {
+      "name": "enrolled sender evidence_unavailable",
+      "kind": "mail",
+      "status": "unverified",
+      "trusted": false,
+      "sender": "alice",
+      "presented_sender": "alice",
+      "sender_authentication_status": "verified",
+      "responsibility_reason": "evidence_unavailable",
+      "responsibility_status": "responsibility_unavailable",
+      "recovery": ""
+    },
+    {
+      "name": "enrolled sender status_expired",
+      "kind": "mail",
+      "status": "unverified",
+      "trusted": false,
+      "sender": "alice",
+      "presented_sender": "alice",
+      "sender_authentication_status": "verified",
+      "responsibility_reason": "status_expired",
+      "responsibility_status": "responsibility_unavailable",
+      "recovery": ""
+    },
+    {
+      "name": "enrolled sender stale_issuer_key",
+      "kind": "mail",
+      "status": "unverified",
+      "trusted": false,
+      "sender": "alice",
+      "presented_sender": "alice",
+      "sender_authentication_status": "verified",
+      "responsibility_reason": "stale_issuer_key",
+      "responsibility_status": "responsibility_unavailable",
+      "recovery": ""
+    },
+    {
+      "name": "enrolled sender revoked",
+      "kind": "mail",
+      "status": "failed",
+      "trusted": false,
+      "sender": "alice",
+      "presented_sender": "alice",
+      "sender_authentication_status": "verified",
+      "responsibility_reason": "revoked",
+      "responsibility_status": "",
+      "recovery": "aw mail inbox"
+    }
+  ]
+}

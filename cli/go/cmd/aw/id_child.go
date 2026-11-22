@@ -245,9 +245,12 @@ func currentAgentIssuer(opts idChildOptions) (*selectedChildIssuer, error) {
 	if chain == nil {
 		return nil, usageError("%s has no installed chain, so it issues no children; select --as-root or --human", identity.StableID)
 	}
-	certificates := chain.Bundle["certificates"].([]any)
-	leaf := certificates[len(certificates)-1].(map[string]any)["certificate"].(map[string]any)
-	domain := leaf["domain"].(string)
+	checkedChain, err := awid.IDChainFromBundle(chain.Bundle)
+	if err != nil {
+		return nil, err
+	}
+	certificates := checkedChain.SignedCertificates()
+	domain := checkedChain.Leaf().Domain()
 	registry, err := resolveIdentityRegistryClient(identity)
 	if err != nil {
 		return nil, err
@@ -297,7 +300,9 @@ func runIDChildInvite(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	printOutput(out, formatIDChildInvite)
+	if err := printOutput(out, formatIDChildInvite); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -357,7 +362,9 @@ func runIDChildReceive(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	printOutput(out, formatIDChildRequest)
+	if err := printOutput(out, formatIDChildRequest); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -372,18 +379,18 @@ func executeIDChildReceive(ctx context.Context, opts idChildOptions, raw []byte)
 		return idChildRequestOutput{}, err
 	}
 	defer lock.Close()
-	signed, err := awid.ParseIDCertificateRequest(raw)
+	signed, err := awid.DecodeIDCertificateRequest(raw)
 	if err != nil {
 		return idChildRequestOutput{}, err
 	}
-	req := signed["request"].(map[string]any)
+	req := signed
 	// A request ID names one request across both stores: each library
 	// receive checks its own store, and this checks the other.
-	existing, _, err := lookupReceivedRequest(issuer, req["request_id"].(string))
+	existing, _, err := lookupReceivedRequest(issuer, req.RequestID())
 	if err != nil {
 		return idChildRequestOutput{}, err
 	}
-	if req["operation"] == "resign" {
+	if req.Operation() == awid.IDCertificateRequestResign {
 		if err := issuerResigns(issuer); err != nil {
 			return idChildRequestOutput{}, err
 		}
@@ -454,18 +461,18 @@ func (r receivedRequest) record() *awid.IDRequestRecord {
 
 func (r receivedRequest) output() (idChildRequestOutput, error) {
 	record := r.record()
-	signed, err := awid.ParseIDCertificateRequest([]byte(record.Request))
+	signed, err := awid.DecodeIDCertificateRequest([]byte(record.Request))
 	if err != nil {
 		return idChildRequestOutput{}, err
 	}
-	req := signed["request"].(map[string]any)
-	fingerprint, err := awid.IDKeyFingerprint(req["subject_key"].(string))
+	req := signed
+	fingerprint, err := awid.IDKeyFingerprint(req.SubjectKey())
 	if err != nil {
 		return idChildRequestOutput{}, err
 	}
 	out := idChildRequestOutput{
-		RequestID: record.RequestID, Operation: req["operation"].(string), State: record.State,
-		ID: req["id"].(string), Domain: req["domain"].(string), Parent: req["parent"].(map[string]any), Kind: req["kind"].(string),
+		RequestID: record.RequestID, Operation: string(req.Operation()), State: record.State,
+		ID: req.ID(), Domain: req.Domain(), Parent: req.Parent().Fields(), Kind: string(req.Kind()),
 		Fingerprint: fingerprint, CertificateID: record.NewCertificateID,
 	}
 	if r.resign != nil {
@@ -492,14 +499,12 @@ func findReceivedRequest(issuer *selectedChildIssuer, requestID string) (receive
 }
 
 func lookupReceivedRequest(issuer *selectedChildIssuer, requestID string) (receivedRequest, bool, error) {
-	all, err := issuer.invitations.Invitations()
+	inv, err := awid.FindIDInvitationForRequest(issuer.invitations, requestID)
 	if err != nil {
 		return receivedRequest{}, false, err
 	}
-	for _, inv := range all {
-		if inv.Request != nil && inv.Request.RequestID == requestID {
-			return receivedRequest{invitation: inv}, true, nil
-		}
+	if inv != nil {
+		return receivedRequest{invitation: inv}, true, nil
 	}
 	entry, err := issuer.issuance.EntryForRequest(requestID)
 	if err != nil || entry == nil {
@@ -573,7 +578,9 @@ func runIDChildPending(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	printOutput(listed, formatIDChildPending)
+	if err := printOutput(listed, formatIDChildPending); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -582,7 +589,9 @@ func runIDChildShow(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	printOutput(out, formatIDChildRequest)
+	if err := printOutput(out, formatIDChildRequest); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -627,6 +636,14 @@ func executeIDChildApprove(ctx context.Context, opts idChildOptions, requestID s
 		return nil, err
 	}
 	pending := found.record().State == awid.IDRequestPending
+	// docs/id-certificates.md §6: an unregistered home cannot establish
+	// exclusive attribution outside that home. Tell the signing person before
+	// asking their key to issue another independently valid certificate.
+	if pending && issuer.kind == "human" && out.Kind == "agent" && strings.HasPrefix(out.ID, "did:key:") && opts.Show != nil {
+		if _, err := fmt.Fprintln(opts.Show, "This agent is unregistered; your signature attributes it to you, and nothing prevents it from also holding another person's signature."); err != nil {
+			return nil, err
+		}
+	}
 	approval := awid.IDHumanApproval{}
 	if out.Kind == "human" && pending {
 		if err := opts.HumanAtTerminal(); err != nil {
@@ -646,15 +663,15 @@ func executeIDChildApprove(ctx context.Context, opts idChildOptions, requestID s
 	}
 	var evidence *awid.IDChainEvidence
 	if pending {
-		signed, err := awid.ParseIDCertificateRequest([]byte(found.record().Request))
+		signed, err := awid.DecodeIDCertificateRequest([]byte(found.record().Request))
 		if err != nil {
 			return nil, err
 		}
-		r := signed["request"].(map[string]any)
-		if out.Operation == "resign" && r["domain"] != issuer.domain {
-			return nil, fmt.Errorf("this child belongs to %s but its parent is now in %s; its ancestry cannot refresh across domains; respawn under the adopted parent", r["domain"], issuer.domain)
+		r := signed
+		if out.Operation == "resign" && r.Domain() != issuer.domain {
+			return nil, fmt.Errorf("this child belongs to %s but its parent is now in %s; its ancestry cannot refresh across domains; respawn under the adopted parent", r.Domain(), issuer.domain)
 		}
-		if evidence, err = issuer.evidence(ctx, r["id"].(string), r["subject_key"].(string)); err != nil {
+		if evidence, err = issuer.evidence(ctx, r.ID(), r.SubjectKey()); err != nil {
 			return nil, err
 		}
 	}
@@ -666,7 +683,11 @@ func executeIDChildApprove(ctx context.Context, opts idChildOptions, requestID s
 	}
 	defer lock.Close()
 	if found.resign != nil {
-		return awid.ApproveIDResignRequest(issuer.issuance, requestID, issuer.parent["id"].(string), issuer.parentChain, evidence, issuer.domain, issuer.signer("issue the certificate of "+out.ID), opts.Now())
+		parentID, ok := issuer.parent["id"].(string)
+		if !ok || parentID == "" {
+			return nil, errors.New("selected issuer has no valid parent ID")
+		}
+		return awid.ApproveIDResignRequest(issuer.issuance, requestID, parentID, issuer.parentChain, evidence, issuer.domain, issuer.signer("issue the certificate of "+out.ID), opts.Now())
 	}
 	return awid.ApproveIDChildRequest(issuer.invitations, issuer.issuance, requestID, approval, issuer.parentChain, evidence, issuer.signer("issue the certificate of "+out.ID), opts.Now())
 }

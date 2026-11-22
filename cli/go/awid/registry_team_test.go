@@ -456,6 +456,12 @@ func TestFetchTeamCertificate(t *testing.T) {
 	var gotAuth string
 	var gotTimestamp string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/namespaces/acme.com/teams/backend/certificates/"+cert.CertificateID+"/status" {
+			if err := json.NewEncoder(w).Encode(TeamCertificateStatus{TeamID: cert.Team, TeamDIDKey: ComputeDIDKey(teamPub), Status: "active"}); err != nil {
+				t.Error(err)
+			}
+			return
+		}
 		if r.Method != http.MethodGet || r.URL.Path != "/v1/namespaces/acme.com/teams/backend/certificates/"+cert.CertificateID {
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}

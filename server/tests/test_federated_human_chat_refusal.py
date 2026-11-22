@@ -1,136 +1,241 @@
-"""Real source/receiver routes: unknown source kind, authoritative receiver."""
-from team_facts_fixtures import legacy_registry
+"""Actual source/receiver: optional source kind, verified receiver human refusal."""
 
 import json
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import httpx
 import pytest
 
-from aweb.api import create_app
-from aweb.mcp.auth import AuthContext
+from aweb.application_state import application_registry_client
+from aweb.internal_auth import build_internal_auth_header_value
+from aweb.mcp.server import create_mcp_app
 from aweb.mcp.signing import HostedMessageSigningResult, canonical_signed_payload
-from aweb.mcp.tools import chat as mcp_chat
-from awid.registry import Address, AddressDelivery, KeyResolution, IDTreeEnrollment
+from awid.registry import RegistryClient
 from awid.signing import canonical_json_bytes, sign_message
-from federation_activation_support import TestFederationAuthority
-from identity_binding_support import seed_verified_bindings
-from test_chat_http import _make_keypair, _signed_identity_headers
-from test_federation_preactivation_harness import two_receiver_databases  # noqa: F401
+from messaging_actor_support import admit_messaging_actor, register_messaging_team
+from test_dashboard_privacy import TEAM, privacy_app as privacy_app
+from test_messages_http import _signed_team_headers
+from test_same_origin_delivery import (
+    SAME_ORIGIN_PROXY_SECRET,
+    foreign_receiver as foreign_receiver,
+    same_origin as same_origin,
+    same_origin_registry_socket as same_origin_registry_socket,
+)
 
-__all__ = ["two_receiver_databases"]
+__all__ = ["foreign_receiver", "same_origin"]
+
+
+@pytest.fixture(autouse=True)
+def configured_host_signing(monkeypatch):
+    # Configure the public host boundary before native/MCP creation, including
+    # hosts which capture their configuration at resource startup.
+    monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
+    monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", SAME_ORIGIN_PROXY_SECRET)
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('adapter', ['http', 'mcp'])
-@pytest.mark.parametrize('existing', [False, True])
-async def test_remote_human_refusal_keeps_typed_body_through_source(two_receiver_databases, monkeypatch, adapter, existing):
-    source_db, receiver_db = two_receiver_databases
-    alice_key, _, alice_key_did = _make_keypair()
-    _, _, bob_key_did = _make_keypair()
-    facts = {
-        'did:aw:alice': (alice_key_did, 'alpha.test/alice', 'https://alpha.test'),
-        'did:aw:bob': (bob_key_did, 'beta.test/bob', 'https://beta.test'),
-    }
-    apps = []
+@pytest.mark.parametrize("adapter", ["http", "mcp"])
+@pytest.mark.parametrize("existing", [False, True])
+async def test_remote_human_refusal_keeps_typed_body_through_source(
+    same_origin, foreign_receiver, monkeypatch, adapter, existing
+):
+    env = same_origin.env
+    alice = await admit_messaging_actor(
+        env,
+        alias="alice",
+        team_id=TEAM,
+        address="example.test/alice",
+        signing_key=bytes(env.actors["alice"].sk),
+    )
+    source_registry = application_registry_client(env.app.state)
+    target = same_origin.target
+    receiver_team = await foreign_receiver.db.fetch_value(
+        "SELECT team_id FROM {{tables.agents}} WHERE agent_id=$1", target.id
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=foreign_receiver.app),
+        base_url=foreign_receiver.origin,
+    ) as receiver_client:
+        receiver_env = SimpleNamespace(
+            app=foreign_receiver.app,
+            client=receiver_client,
+            registry=env.registry,
+            team_sk=env.team_sk,
+            team_did=env.team_did,
+        )
+        await register_messaging_team(receiver_env, team_id=receiver_team)
+        bob = await admit_messaging_actor(
+            receiver_env,
+            alias="recipient",
+            team_id=receiver_team,
+            address=same_origin.target_address,
+            signing_key=bytes(target.sk),
+        )
+
     kind_lookups = []
-    for db, name in [(source_db, 'alice'), (receiver_db, 'bob')]:
-        key, address, origin = facts['did:aw:' + name]
-        domain = address.split('/')[0]
-        team = 't:' + domain
-        await db.execute("INSERT INTO {{tables.teams}} (team_id,namespace,team_name,team_did_key) VALUES ($1,$2,'t',$3)", team, domain, key)
-        actor = await db.fetch_val("""INSERT INTO {{tables.agents}}
-            (team_id,alias,did_key,did_aw,did_aw_verified_key,address,identity_scope,inbound_mode)
-            VALUES ($1,$2,$3,$4,$3,$5,'global','open') RETURNING agent_id""", team, name, key, 'did:aw:' + name, address)
-        registry = AsyncMock()
-        async def resolve_key(did):
-            key, _, _ = facts[did]
-            return KeyResolution(did, key, id_tree=IDTreeEnrollment(False, None))
-        async def resolve_kind(did):
+    original_fresh = source_registry.resolve_key_fresh
+
+    async def observe_source_kind(did, *args, **kwargs):
+        if did == bob.stable_id:
             kind_lookups.append(did)
-            # No tree enrollment or human classification at the source.
-            key, _, _ = facts[did]
-            return KeyResolution(did, key, id_tree=None if did == 'did:aw:bob' else IDTreeEnrollment(False, None))
-        async def resolve_address(domain, name, **kwargs):
-            did = 'did:aw:' + name
-            key, address, origin = facts[did]
-            assert address == f'{domain}/{name}'
-            return Address(address_id=name, domain=domain, name=name, did_aw=did,
-                           current_did_key=key, reachability='public',
-                           created_at='2026-10-31T00:00:00Z', delivery=AddressDelivery(origin=origin))
-        registry.resolve_key.side_effect = resolve_key
-        registry.resolve_key_fresh.side_effect = resolve_kind
-        registry.resolve_address.side_effect = resolve_address
-        registry.resolve_address_fresh.side_effect = resolve_address
-        async def list_addresses(did, **kwargs):
-            _, address, _ = facts[did]
-            return [await resolve_address(*address.split('/'))]
-        registry.list_did_addresses.side_effect = list_addresses
-        registry.registry_url = 'https://registry.test'
-        registry.registry_audience.return_value = 'https://registry.test'
-        infra = SimpleNamespace(get_manager=lambda _, manager=db: manager)
-        app = create_app()
-        app.state.db = infra
-        app.state.redis = None
-        app.state.rate_limiter = None
-        app.state.awid_registry_client = legacy_registry(registry)
-        app.state.public_origin = origin
-        app.state.federation_authority = TestFederationAuthority(db, registry)
-        app.state.on_mutation = None
-        seed_verified_bindings(app, ('did:aw:' + name, key, address))
-        apps.append((app, infra, registry, actor))
-    source, receiver = apps
-    transport = httpx.ASGITransport(app=receiver[0])
-    source[0].state.federation_chat_transport = transport
-    auth = AuthContext(team_id='t:alpha.test', agent_id=str(source[3]), workspace_id=str(uuid4()), alias='alice',
-                       did_key=alice_key_did, did_aw='did:aw:alice', address='alpha.test/alice', trusted_proxy=True)
-    monkeypatch.setattr(mcp_chat, 'get_auth', lambda: auth)
+        return await original_fresh(did, *args, **kwargs)
+
+    # A delegating observation of the actual SDK, never replacement authority.
+    monkeypatch.setattr(source_registry, "resolve_key_fresh", observe_source_kind)
+    initial = await source_registry.resolve_key_fresh(bob.stable_id)
+    assert initial.current_did_key == bob.did_key
+    assert initial.id_tree is None or not initial.id_tree.enrolled
+    assert kind_lookups == [bob.stable_id]
+    kind_lookups.clear()
+
     async def signer(**kwargs):
-        payload = canonical_signed_payload(kwargs['payload'])
-        return HostedMessageSigningResult(from_did=alice_key_did, signing_key_id=alice_key_did,
-                                           signed_payload=payload, signature=sign_message(alice_key, payload.encode()))
+        payload = canonical_signed_payload(kwargs["payload"])
+        return HostedMessageSigningResult(
+            from_did=alice.did_key,
+            signing_key_id=alice.did_key,
+            signed_payload=payload,
+            signature=sign_message(alice.signing_key, payload.encode()),
+        )
+
+    mcp = create_mcp_app(
+        db_infra=env.infra,
+        redis=env.redis,
+        registry_client=source_registry,
+        federation_authority=env.app.state.federation_authority,
+        hosted_signer=signer,
+        public_origin=env.app.state.public_origin,
+    )
+    env.app.mount("/human-refusal-mcp", mcp)
+    await mcp.startup()
+    principal = str(uuid4())
+
     async def send(cid, *, continuation=False):
-        if adapter == 'mcp':
-            result = json.loads(await mcp_chat.chat_send(
-                source[1], None, registry_client=source[2], federation_authority=source[0].state.federation_authority,
-                hosted_signer=signer, message='hello', plaintext=True, leaving=True,
-                federation_transport=transport, public_origin='https://alpha.test',
-                **({'session_id': cid} if continuation else {'to_address': 'beta.test/bob'})))
-            return result
-        mid = str(uuid4())
-        timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
-        signed = canonical_json_bytes(dict(type='chat', from_did=alice_key_did, from_stable_id='did:aw:alice',
-            body='hello', conversation_id=cid, message_id=mid, timestamp=timestamp, sender_leaving=True,
-            to='beta.test/bob', to_did=bob_key_did, to_stable_id='did:aw:bob', **{'from': 'alpha.test/alice'})).decode()
-        payload = dict(from_did=alice_key_did, message_id=mid, timestamp=timestamp,
-                       signature=sign_message(alice_key, signed.encode()), signed_payload=signed)
-        if continuation:
-            path = f'/v1/chat/sessions/{cid}/messages'
-            payload.update(body='hello', leaving=True)
+        if adapter == "mcp":
+            arguments = dict(message="hello", plaintext=True, leaving=True)
+            arguments.update({"session_id": cid} if continuation else {"to_address": bob.address})
+            path = "/human-refusal-mcp/"
+            raw = json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "tools/call",
+                    "params": {"name": "chat_send", "arguments": arguments},
+                }
+            ).encode()
         else:
-            path = '/v1/chat/sessions'
-            payload.update(session_id=cid, to_addresses=['beta.test/bob'], message='hello', leaving=True)
-        body = json.dumps(payload).encode()
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=source[0]), base_url='https://alpha.test') as client:
-            response = await client.post(path, content=body, headers={'Content-Type': 'application/json',
-                **_signed_identity_headers(alice_key, alice_key_did, 'did:aw:alice', body)})
-        return {'http_status': response.status_code, **response.json()}
-    # A legacy human label alone cannot trigger human federation treatment.
-    await receiver_db.execute("UPDATE {{tables.agents}} SET agent_type='human', human_verified_key=NULL WHERE did_aw='did:aw:bob'")
-    control = await send(str(uuid4()))
-    assert 'error' not in control and control.get('http_status', 200) == 200, control
-    cid = control['session_id']
-    assert await receiver_db.fetch_val('SELECT count(*) FROM {{tables.chat_messages}}') == 1
-    await receiver_db.execute("UPDATE {{tables.agents}} SET agent_type='human', human_verified_key=did_key WHERE did_aw='did:aw:bob'")
-    refused = await send(cid if existing else str(uuid4()), continuation=existing)
-    assert refused.get('http_status', 422) == 422, refused
-    assert refused.get('reason') == 'recipient_human_mail_only', refused
-    assert refused['retryable'] is False
-    assert refused['recipients'] == ['beta.test/bob']
-    assert kind_lookups == []  # The source preflight makes no registry lookups.
-    assert await source_db.fetch_val('SELECT count(*) FROM {{tables.chat_messages}}') == 1
-    assert await receiver_db.fetch_val('SELECT count(*) FROM {{tables.chat_messages}}') == 1
-    assert await receiver_db.fetch_val('SELECT count(*) FROM {{tables.message_ingress_receipts}}') == 1
+            mid = str(uuid4())
+            timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+            signed = canonical_json_bytes(
+                dict(
+                    type="chat",
+                    from_did=alice.did_key,
+                    from_stable_id=alice.stable_id,
+                    body="hello",
+                    conversation_id=cid,
+                    message_id=mid,
+                    timestamp=timestamp,
+                    sender_leaving=True,
+                    to=bob.address,
+                    to_did=bob.did_key,
+                    to_stable_id=bob.stable_id,
+                    **{"from": alice.address},
+                )
+            ).decode()
+            payload = dict(
+                from_did=alice.did_key,
+                message_id=mid,
+                timestamp=timestamp,
+                signature=sign_message(alice.signing_key, signed.encode()),
+                signed_payload=signed,
+            )
+            if continuation:
+                path = f"/v1/chat/sessions/{cid}/messages"
+                payload.update(body="hello", leaving=True)
+            else:
+                path = "/v1/chat/sessions"
+                payload.update(
+                    session_id=cid, to_addresses=[bob.address], message="hello", leaving=True
+                )
+            raw = json.dumps(payload).encode()
+        response = await env.client.post(
+            path,
+            content=raw,
+            headers={
+                **_signed_team_headers(
+                    alice.signing_key, alice.did_key, TEAM, alice.certificate, raw
+                ),
+                "Content-Type": "application/json",
+                "Accept": "application/json, text/event-stream",
+                **(
+                    {
+                        "X-Team-ID": TEAM,
+                        "X-User-ID": principal,
+                        "X-AWEB-Actor-ID": alice.agent_id,
+                        "X-AWEB-Auth": build_internal_auth_header_value(
+                            secret=SAME_ORIGIN_PROXY_SECRET,
+                            team_id=TEAM,
+                            principal_type="u",
+                            principal_id=principal,
+                            actor_id=alice.agent_id,
+                        ),
+                    }
+                    if adapter == "mcp"
+                    else {}
+                ),
+            },
+        )
+        if adapter == "mcp":
+            assert response.status_code == 200, response.text
+            result = response.json()["result"]
+            assert not result.get("isError"), result
+            return json.loads(result["content"][0]["text"])
+        return {"http_status": response.status_code, **response.json()}
+
+    try:
+        # Legacy runtime provenance alone is not a positive human-kind fact.
+        await foreign_receiver.db.execute(
+            "UPDATE {{tables.agents}} SET agent_type='human',human_verified_key=NULL WHERE agent_id=$1",
+            target.id,
+        )
+        control = await send(str(uuid4()))
+        assert "error" not in control and control.get("http_status", 200) == 200, control
+        cid = control["session_id"]
+        assert (
+            await foreign_receiver.db.fetch_value("SELECT count(*) FROM {{tables.chat_messages}}")
+            == 1
+        )
+        # Publish the actual controller-signed kind and project from fresh SDK
+        # evidence; keep the source's earlier optional-kind cache independent.
+        fresh_reader = RegistryClient(
+            registry_url=source_registry.registry_url,
+            service_token=source_registry.service_token,
+            domain_verifier=same_origin.domain_authority,
+        )
+        try:
+            await same_origin.verify_human(
+                target, bob.stable_id, foreign_receiver.db, registry_client=fresh_reader
+            )
+        finally:
+            await fresh_reader.aclose()
+        refused = await send(cid if existing else str(uuid4()), continuation=existing)
+        assert refused.get("http_status", 422) == 422, refused
+        assert refused.get("reason") == "recipient_human_mail_only", refused
+        assert refused["retryable"] is False
+        assert refused["recipients"] == [bob.address]
+        assert kind_lookups == []
+        assert foreign_receiver.statuses == [200, 422]
+        assert await env.db.fetch_value("SELECT count(*) FROM {{tables.chat_messages}}") == 1
+        assert (
+            await foreign_receiver.db.fetch_value("SELECT count(*) FROM {{tables.chat_messages}}")
+            == 1
+        )
+        assert (
+            await foreign_receiver.db.fetch_value(
+                "SELECT count(*) FROM {{tables.message_ingress_receipts}}"
+            )
+            == 1
+        )
+    finally:
+        await mcp.shutdown()

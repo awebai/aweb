@@ -19,6 +19,7 @@ import (
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/signaturewire"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
@@ -192,14 +193,9 @@ func init() {
 }
 
 func runTeamEnsure(ctx context.Context, cmd *cobra.Command) error {
-	var org *string
-	if cmd.Flags().Changed("org") {
-		selector, _ := cmd.Flags().GetString("org")
-		selector = strings.TrimSpace(selector)
-		if selector == "" {
-			return usageError("--org must not be blank")
-		}
-		org = &selector
+	org, err := workspaceTeamOrgFromCommand(cmd)
+	if err != nil {
+		return err
 	}
 	workingDir, err := os.Getwd()
 	if err != nil {
@@ -212,27 +208,68 @@ func runTeamEnsure(ctx context.Context, cmd *cobra.Command) error {
 	if !home.External() {
 		return usageError("aw team ensure requires explicit --identity-home selecting the credential root to install")
 	}
-	workspaceDigest, err := workspaceTeamDigest(teamEnsureWorkspaceKey)
+	out, err := ensureWorkspaceTeam(ctx, workspaceTeamEnsureInput{WorkingDir: workingDir, Home: home, Org: org, WorkspaceKey: teamEnsureWorkspaceKey, Label: teamEnsureLabel, ExpectedAccountID: teamEnsureExpectedAccountID})
 	if err != nil {
 		return err
+	}
+	return writeWorkspaceTeamEnsureOutput(cmd, out)
+}
+
+func workspaceTeamOrgFromCommand(cmd *cobra.Command) (*string, error) {
+	if !cmd.Flags().Changed("org") {
+		return nil, nil
+	}
+	selector, err := cmd.Flags().GetString("org")
+	if err != nil {
+		return nil, err
+	}
+	selector = strings.TrimSpace(selector)
+	if selector == "" {
+		return nil, usageError("--org must not be blank")
+	}
+	return &selector, nil
+}
+
+type workspaceTeamEnsureInput struct {
+	WorkingDir        string
+	Home              awconfig.IdentityHome
+	Org               *string
+	WorkspaceKey      string
+	Label             string
+	ExpectedAccountID string
+}
+
+// ensureWorkspaceTeam installs only into its explicit credential root, after
+// the live host admission and spawn-authority proof (docs/cli-identity-selection.md:13-33).
+func ensureWorkspaceTeam(ctx context.Context, input workspaceTeamEnsureInput) (teamEnsureOutput, error) {
+	if strings.TrimSpace(input.WorkingDir) == "" {
+		return teamEnsureOutput{}, fmt.Errorf("workspace-team ensure requires an explicit working directory")
+	}
+	if strings.TrimSpace(input.Home.Root) == "" || !input.Home.External() {
+		return teamEnsureOutput{}, usageError("aw team ensure requires explicit --identity-home selecting the credential root to install")
+	}
+	workingDir, home, org := input.WorkingDir, input.Home, input.Org
+	workspaceDigest, err := workspaceTeamDigest(input.WorkspaceKey)
+	if err != nil {
+		return teamEnsureOutput{}, err
 	}
 	cfg, account, err := requireCLIAuthForTeamEnsure(ctx)
 	if err != nil {
-		return err
+		return teamEnsureOutput{}, err
 	}
 	binding, err := loadWorkspaceTeamBindingMarker(home.Root)
 	if err != nil {
-		return err
+		return teamEnsureOutput{}, err
 	}
-	expectedAccountID, err := selectExpectedWorkspaceTeamAccountID(teamEnsureExpectedAccountID, binding, account)
+	expectedAccountID, err := selectExpectedWorkspaceTeamAccountID(input.ExpectedAccountID, binding, account)
 	if err != nil {
-		return err
+		return teamEnsureOutput{}, err
 	}
 	request := workspaceTeamEnsureRequest{
 		Org:                org,
 		WorkspaceKeyFormat: workspaceTeamKeyFormat,
 		WorkspaceKeySHA256: workspaceDigest,
-		Label:              strings.TrimSpace(teamEnsureLabel),
+		Label:              strings.TrimSpace(input.Label),
 		ExpectedAccountID:  expectedAccountID,
 	}
 	if org != nil && binding != nil {
@@ -240,56 +277,56 @@ func runTeamEnsure(ctx context.Context, cmd *cobra.Command) error {
 	}
 	ensure, err := postWorkspaceTeamEnsure(ctx, cfg, request)
 	if err != nil {
-		return err
+		return teamEnsureOutput{}, err
 	}
 	if strings.TrimSpace(ensure.TeamID) == "" {
-		return fmt.Errorf("team ensure response missing team_id")
+		return teamEnsureOutput{}, fmt.Errorf("team ensure response missing team_id")
 	}
 	if strings.TrimSpace(ensure.CanonicalTeamID) == "" {
-		return fmt.Errorf("team ensure response missing canonical_team_id")
+		return teamEnsureOutput{}, fmt.Errorf("team ensure response missing canonical_team_id")
 	}
-	material, err := prepareWorkspaceTeamIdentityMaterial(workingDir, home.Root, cfg.Issuer, workspaceDigest, strings.TrimSpace(teamEnsureLabel), ensure)
+	material, err := prepareWorkspaceTeamIdentityMaterial(workingDir, home.Root, cfg.Issuer, workspaceDigest, strings.TrimSpace(input.Label), ensure)
 	if err != nil {
-		return err
+		return teamEnsureOutput{}, err
 	}
 	enroll, err := postWorkspaceTeamEnroll(ctx, cfg, ensure, workspaceDigest, material, expectedAccountID, org)
 	if err != nil {
-		return err
+		return teamEnsureOutput{}, err
 	}
 	cert, err := decodeWorkspaceTeamTeamCert(enroll.TeamCert)
 	if err != nil {
-		return err
+		return teamEnsureOutput{}, err
 	}
 	if strings.TrimSpace(enroll.TeamID) != strings.TrimSpace(ensure.TeamID) {
-		return fmt.Errorf("team ensure enroll response team_id %q does not match ensured team_id %q", enroll.TeamID, ensure.TeamID)
+		return teamEnsureOutput{}, fmt.Errorf("team ensure enroll response team_id %q does not match ensured team_id %q", enroll.TeamID, ensure.TeamID)
 	}
 	if strings.TrimSpace(enroll.CanonicalTeamID) == "" {
-		return fmt.Errorf("team ensure enroll response missing canonical_team_id")
+		return teamEnsureOutput{}, fmt.Errorf("team ensure enroll response missing canonical_team_id")
 	}
 	if strings.TrimSpace(enroll.CanonicalTeamID) != strings.TrimSpace(ensure.CanonicalTeamID) {
-		return fmt.Errorf("team ensure enroll response canonical_team_id %q does not match ensured canonical_team_id %q", enroll.CanonicalTeamID, ensure.CanonicalTeamID)
+		return teamEnsureOutput{}, fmt.Errorf("team ensure enroll response canonical_team_id %q does not match ensured canonical_team_id %q", enroll.CanonicalTeamID, ensure.CanonicalTeamID)
 	}
 	if strings.TrimSpace(cert.Team) != strings.TrimSpace(enroll.CanonicalTeamID) {
-		return fmt.Errorf("team ensure enroll response certificate team_id %q does not match response canonical_team_id %q", cert.Team, enroll.CanonicalTeamID)
+		return teamEnsureOutput{}, fmt.Errorf("team ensure enroll response certificate team_id %q does not match response canonical_team_id %q", cert.Team, enroll.CanonicalTeamID)
 	}
 	if got := strings.TrimSpace(enroll.DID); got != "" && got != material.DIDKey {
-		return fmt.Errorf("team ensure enroll response did %q does not match local did %q", got, material.DIDKey)
+		return teamEnsureOutput{}, fmt.Errorf("team ensure enroll response did %q does not match local did %q", got, material.DIDKey)
 	}
 	if strings.TrimSpace(enroll.APIKey) != "" || enroll.APIKeyCreated {
-		return fmt.Errorf("team ensure enroll response returned an API key; this client path requires cert-authenticated retryable enrollment")
+		return teamEnsureOutput{}, fmt.Errorf("team ensure enroll response returned an API key; this client path requires cert-authenticated retryable enrollment")
 	}
 	if err := installWorkspaceTeamEnrollment(workingDir, home.Root, cfg.Issuer, material, enroll, cert, ""); err != nil {
-		return err
+		return teamEnsureOutput{}, err
 	}
 	spawn, err := verifyWorkspaceTeamSpawnAuthority(ctx, workingDir, home.Root, enroll.TeamID)
 	if err != nil {
-		return err
+		return teamEnsureOutput{}, err
 	}
 	if err := saveWorkspaceTeamBindingMarker(home.Root, workspaceTeamBindingState{Version: workspaceTeamPartialVersion, Issuer: cfg.Issuer, WorkspaceKeySHA256: workspaceDigest, TeamID: enroll.TeamID, CanonicalTeamID: enroll.CanonicalTeamID, ExpectedAccountID: expectedAccountID, AccountHandle: strings.TrimSpace(account.Handle), BoundAt: time.Now().UTC().Format(time.RFC3339)}); err != nil {
-		return err
+		return teamEnsureOutput{}, err
 	}
 	if err := removeWorkspaceTeamPartial(home.Root); err != nil {
-		return fmt.Errorf("remove partial team ensure state: %w", err)
+		return teamEnsureOutput{}, fmt.Errorf("remove partial team ensure state: %w", err)
 	}
 	out := teamEnsureOutput{
 		Owner: ensure.Owner, Binding: ensure.Binding,
@@ -309,11 +346,15 @@ func runTeamEnsure(ctx context.Context, cmd *cobra.Command) error {
 		AccountID:       expectedAccountID,
 		AccountHandle:   strings.TrimSpace(account.Handle),
 	}
+	return out, nil
+}
+
+func writeWorkspaceTeamEnsureOutput(cmd *cobra.Command, out teamEnsureOutput) error {
 	if jsonFlag {
 		return json.NewEncoder(cmd.OutOrStdout()).Encode(out)
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "status: %s\nteam_id: %s\nidentity_home: %s\ndid: %s\ncan_spawn: %t\n", out.Status, out.TeamID, out.IdentityHome, out.DID, out.CanSpawn)
-	return nil
+	_, err := fmt.Fprintf(cmd.OutOrStdout(), "status: %s\nteam_id: %s\nidentity_home: %s\ndid: %s\ncan_spawn: %t\n", out.Status, out.TeamID, out.IdentityHome, out.DID, out.CanSpawn)
+	return err
 }
 
 func workspaceTeamDigest(raw string) (string, error) {
@@ -467,7 +508,7 @@ func postWorkspaceTeamEnroll(ctx context.Context, cfg cliAuthConfig, ensure *wor
 	if err != nil {
 		return nil, err
 	}
-	signature := base64.RawStdEncoding.EncodeToString(ed25519.Sign(material.SigningKey, []byte(canonical)))
+	signature := signaturewire.SignStd(material.SigningKey, []byte(canonical))
 	req := workspaceTeamEnrollRequest{
 		Org:                org,
 		WorkspaceKeyFormat: workspaceTeamKeyFormat,
@@ -815,7 +856,16 @@ func installWorkspaceTeamEnrollment(workingDir, identityHome, issuer string, mat
 	}
 	canonicalTeamID := strings.TrimSpace(enroll.CanonicalTeamID)
 	output := &teamAcceptInviteOutput{Status: "accepted", TeamID: canonicalTeamID, Alias: firstNonEmptyString(enroll.Alias, material.Alias), CertPath: awconfig.TeamCertificateRelativePath(canonicalTeamID), AwebURL: strings.TrimRight(issuer, "/")}
-	if err := recordAcceptedTeamMembership(workingDir, output, cert, registryURL, strings.TrimRight(issuer, "/"), recordMembershipOptions{IdentityHome: explicitEncryptionKeyIdentityHome(identityHome), SetActive: true, WriteWorkspaceBinding: false}); err != nil {
+	if err := recordAcceptedTeamMembership(acceptedTeamMembershipRequest{
+		WorkingDir:   workingDir,
+		Output:       output,
+		Certificate:  cert,
+		RegistryURL:  registryURL,
+		AwebURL:      strings.TrimRight(issuer, "/"),
+		IdentityHome: explicitEncryptionKeyIdentityHome(identityHome),
+		Activation:   membershipMakeActive,
+		Binding:      membershipLeaveWorkspaceBinding,
+	}); err != nil {
 		return err
 	}
 	return saveWorkspaceTeamBinding(identityHome, output, cert, strings.TrimRight(issuer, "/"))

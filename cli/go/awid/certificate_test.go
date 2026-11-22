@@ -10,6 +10,55 @@ import (
 	"testing"
 )
 
+func TestTeamCertificateFilePreservesSignedEmptyClaims(t *testing.T) {
+	teamKey, teamSigner, err := GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberKey, _, err := GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	facts := TeamCertificateFacts{
+		SubjectDIDKey: ComputeDIDKey(memberKey),
+		TeamDIDKey:    ComputeDIDKey(teamKey),
+		Registered:    RegistrationNotRequired(),
+	}
+	claims := map[string]any{
+		"version": 1, "certificate_id": "signed-empty-claims", "team_id": "backend:acme.com",
+		"team_did_key": facts.TeamDIDKey, "member_did_key": facts.SubjectDIDKey,
+		"alias": "alice", "identity_scope": "local", "issued_at": "2026-11-21T00:00:00Z",
+		"member_did_aw": "", "member_address": "",
+	}
+	payload, err := CanonicalJSONValue(claims)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claims["signature"] = base64.RawStdEncoding.EncodeToString(ed25519.Sign(teamSigner, []byte(payload)))
+	data, err := json.Marshal(claims)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CheckTeamCertificate(base64.StdEncoding.EncodeToString(data), facts); err != nil {
+		t.Fatalf("original signed artifact: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "team.pem")
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadTeamCertificate(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	header, err := EncodeTeamCertificateHeader(loaded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CheckTeamCertificate(header, facts); err != nil {
+		t.Fatalf("forwarded signed artifact: %v", err)
+	}
+}
+
 func TestSignAndCheckTeamCertificate(t *testing.T) {
 	teamPub, teamPriv, err := GenerateKeypair()
 	if err != nil {
@@ -298,18 +347,7 @@ func TestLegacyLifetimeTeamCertificatePreservesSignedWireShape(t *testing.T) {
 	teamDIDKey := ComputeDIDKey(teamPub)
 	issuedAt := "2026-05-22T00:00:00Z"
 
-	payload := canonicalCertificatePayload(
-		certID,
-		teamID,
-		teamDIDKey,
-		memberDIDKey,
-		"",
-		"",
-		"alice",
-		"persistent",
-		issuedAt,
-		true,
-	)
+	payload := canonicalCertificatePayload(certificatePayloadFields{CertificateID: certID, TeamID: teamID, TeamDIDKey: teamDIDKey, MemberDIDKey: memberDIDKey, MemberDIDAW: "", MemberAddress: "", Alias: "alice", Scope: "persistent", IssuedAt: issuedAt, ScopeField: certificateLifetimeField})
 	signature := base64.RawStdEncoding.EncodeToString(ed25519.Sign(teamPriv, []byte(payload)))
 	type legacyWire struct {
 		Version       int    `json:"version"`
@@ -381,18 +419,7 @@ func TestLegacyLifetimeTeamCertificatePreservesSignedWireShape(t *testing.T) {
 }
 
 func TestCanonicalCertificatePayloadSortsKeys(t *testing.T) {
-	payload := canonicalCertificatePayload(
-		"cert-1",
-		"backend:acme.com",
-		"did:key:zteam",
-		"did:key:zmember",
-		"did:aw:test",
-		"acme.com/alice",
-		"alice",
-		IdentityModeGlobal,
-		"2026-04-09T00:00:00Z",
-		false,
-	)
+	payload := canonicalCertificatePayload(certificatePayloadFields{CertificateID: "cert-1", TeamID: "backend:acme.com", TeamDIDKey: "did:key:zteam", MemberDIDKey: "did:key:zmember", MemberDIDAW: "did:aw:test", MemberAddress: "acme.com/alice", Alias: "alice", Scope: IdentityModeGlobal, IssuedAt: "2026-04-09T00:00:00Z", ScopeField: certificateIdentityScopeField})
 
 	if strings.Index(payload, `"team_did_key"`) > strings.Index(payload, `"team_id"`) {
 		t.Fatalf("payload keys not sorted as expected: %s", payload)

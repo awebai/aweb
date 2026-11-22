@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -58,6 +59,23 @@ func completeLocalHostedInvite(ctx context.Context, invite *awconfig.TeamInvite,
 
 // Only the recipe's explicit, retained local-agent home can make this transition.
 func pendingHostedExchangeTarget(cmd *cobra.Command, home awconfig.IdentityHome) (bool, error) {
+	if home.Source == awconfig.IdentityHomeFlag && cmd == teamFetchCertCmd && humanFlag == "" {
+		state, err := loadHostedInviteCreation(filepath.Join(home.Root, hostedInviteRecoveryFile))
+		if err != nil || state == nil {
+			return false, err
+		}
+		if awid.BuildTeamID(teamFetchCertNamespace, teamFetchCertTeam) != state.TeamID || teamFetchCertID == "" {
+			return false, nil
+		}
+		for _, name := range []string{"grant.yaml", "teams.yaml", "workspace.yaml"} {
+			if _, err := os.Stat(filepath.Join(home.Root, name)); !errors.Is(err, os.ErrNotExist) {
+				return false, nil
+			}
+		}
+		key, err := awid.LoadSigningKey(filepath.Join(home.Root, "signing.key"))
+		return err == nil && awid.ComputeDIDKey(key.Public().(ed25519.PublicKey)) == state.DIDKey, err
+	}
+
 	if home.Source != awconfig.IdentityHomeFlag || (cmd != idParentRequestCmd && cmd != idParentImportCmd) || humanFlag != "" {
 		return false, nil
 	}
@@ -83,6 +101,11 @@ func (e *hostedInviteSignaturePendingError) Error() string { return e.err.Error(
 func (e *hostedInviteSignaturePendingError) Unwrap() error { return e.err }
 
 type hostedInviteCreation struct {
+	MintedKey             *bool                 `json:"minted_key,omitempty"`
+	ParentFromSource      *bool                 `json:"parent_from_source,omitempty"`
+	MembershipOnly        bool                  `json:"membership_only"`
+	ParentHome            string                `json:"parent_home,omitempty"`
+	ParentSelected        bool                  `json:"parent_selected,omitempty"`
 	AcceptAttempted       *bool                 `json:"accept_attempted,omitempty"`
 	ForHuman              *string               `json:"for_human,omitempty"`
 	MembershipChain       map[string]any        `json:"membership_chain,omitempty"`
@@ -103,7 +126,7 @@ type hostedInviteCreation struct {
 }
 
 func loadHostedInviteCreation(path string) (*hostedInviteCreation, error) {
-	raw, err := os.ReadFile(path)
+	raw, err := (awconfig.RecoveryFile{Home: awconfig.IdentityHome{Root: filepath.Dir(path)}, Name: filepath.Base(path)}).Read()
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
@@ -116,28 +139,88 @@ func loadHostedInviteCreation(path string) (*hostedInviteCreation, error) {
 	if err := decoder.Decode(&state); err != nil {
 		return nil, err
 	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return nil, errors.New("invalid hosted invite recovery JSON; retain the file for reconciliation")
+	}
 	if state.Tree == nil || !hostedIdentityTeamUUID.MatchString(state.Tree.RequestID) || state.TokenHash == "" || state.DIDKey == "" {
 		return nil, errors.New("invalid hosted invite recovery")
+	}
+	// Stable 1.36.58 retained an issuer-creation selection before these facts
+	// existed. An upgrade must replay it, including a native chain on disk.
+	if state.MintedKey == nil && state.Tree.Domain != "" {
+		state.IssuerCreationStarted = true
 	}
 	return &state, nil
 }
 
 func (state *hostedInviteCreation) save(path string) error {
-	raw, err := json.Marshal(state)
+	saved := *state
+	response, err := hostedInviteInstallationResponse(state.ResponseJSON)
 	if err != nil {
 		return err
 	}
-	return awid.AtomicWriteFile(path, raw)
+	saved.ResponseJSON = response
+	raw, err := json.Marshal(&saved)
+	if err != nil {
+		return err
+	}
+	return (awconfig.RecoveryFile{Home: awconfig.IdentityHome{Root: filepath.Dir(path)}, Name: filepath.Base(path)}).Write(raw)
 }
 
-func prepareHostedInviteCreation(ctx context.Context, prior *hostedInviteCreation, token, origin, alias, address string, noAddress bool, material workspaceTeamIdentityMaterial) (*hostedInviteCreation, error) {
+// hostedInviteInstallationResponse retains the installation evidence but no
+// workspace API key: hosted invite acceptance acts with its own identity key.
+// Raw fields keep forward-compatible response evidence intact.
+func hostedInviteInstallationResponse(raw string) (string, error) {
+	if raw == "" {
+		return "", nil
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &fields); err != nil {
+		return "", fmt.Errorf("read hosted invite installation response: %w", err)
+	}
+	if _, present := fields["api_key"]; !present {
+		return raw, nil
+	}
+	delete(fields, "api_key")
+	sanitized, err := json.Marshal(fields)
+	if err != nil {
+		return "", err
+	}
+	return string(sanitized), nil
+}
+
+func prepareHostedInviteCreation(ctx context.Context, prior *hostedInviteCreation, token, origin, alias, address string, noAddress bool, material workspaceTeamIdentityMaterial, mintedKey, parentFromSource bool, parentHome, recoveryPath string) (*hostedInviteCreation, error) {
 	digest := sha256.Sum256([]byte(token))
-	state := &hostedInviteCreation{AcceptAttempted: new(bool), TokenHash: hex.EncodeToString(digest[:]), AwebURL: origin, Alias: alias, Address: address, NoAddress: noAddress, Scope: material.IdentityScope, DIDKey: material.DIDKey, StableID: material.StableID}
+	state := &hostedInviteCreation{MintedKey: &mintedKey, ParentFromSource: &parentFromSource, AcceptAttempted: new(bool), TokenHash: hex.EncodeToString(digest[:]), AwebURL: origin, Alias: alias, Address: address, NoAddress: noAddress, Scope: material.IdentityScope, DIDKey: material.DIDKey, StableID: material.StableID}
 	if prior != nil {
+		if parentFromSource && prior.MintedKey != nil && (prior.ParentFromSource == nil || !*prior.ParentFromSource) {
+			return nil, errors.New("hosted invite retry changed the explicit parent source")
+		}
 		if state.TokenHash != prior.TokenHash || state.AwebURL != prior.AwebURL || state.Alias != prior.Alias || state.Address != prior.Address || state.Scope != prior.Scope || state.NoAddress != prior.NoAddress || state.DIDKey != prior.DIDKey || state.StableID != prior.StableID {
 			return nil, errors.New("hosted invite retry changed the original token, child key, scope or creation selection")
 		}
-		return prior, nil
+		state = prior
+	}
+	if _, err := state.selectParent(parentHome); err != nil {
+		return nil, err
+	}
+	if state.InviteID != "" {
+		return state, nil
+	}
+	if state.Tree == nil {
+		var err error
+		state.Tree, err = newHostedIDTreeRecovery(hostedIdentityContext{})
+		if err != nil {
+			return nil, err
+		}
+	}
+	// The key exists before preview. Retain its provenance first, including
+	// when preview fails and no invitation metadata can be saved yet.
+	if recoveryPath != "" {
+		if err := state.save(recoveryPath); err != nil {
+			return nil, err
+		}
 	}
 	// Preview is required. It is a possession-only read, independent of the
 	// child's later signed acceptance and of any response-selected ancestry.
@@ -149,11 +232,7 @@ func prepareHostedInviteCreation(ctx context.Context, prior *hostedInviteCreatio
 		return nil, errors.New("hosted invite preview omitted its invitation ID or explicit ID-tree metadata")
 	}
 	state.InviteID, state.TeamID, state.ForHuman = wire.InviteID, wire.CanonicalTeamID, wire.ForHuman
-	tree, err := newHostedIDTreeRecovery(hostedIdentityContext{})
-	state.Tree = tree
-	if err != nil {
-		return nil, err
-	}
+	tree := state.Tree
 	if inv := wire.CreationInvitation; inv != nil {
 		name := alias
 		if err := inv.Validate(); err != nil {
@@ -193,19 +272,18 @@ func (state *hostedInviteCreation) prepareRequest(root string, material workspac
 		}
 		if installed != nil {
 			state.MembershipChain = installed.Bundle
+			state.MembershipOnly = true
 			return nil, nil
 		}
 	}
-	if state.Tree.Domain == "" && state.ForHuman != nil {
-		return nil, &hostedInviteSignaturePendingError{err: fmt.Errorf("this invite admits agents of %s; obtain a chain from your own creator first using aw id child invite, aw id parent request, and aw id parent import, then retry this join in the same home; on this machine use --parent HOME", *state.ForHuman)}
+	if !state.parentageSelected() || state.Tree.Domain == "" {
+		state.MembershipOnly = true
+		return nil, missingInviteHumanChain(state.ForHuman)
 	}
 	if material.IdentityScope == awid.IdentityModeGlobal && strings.HasPrefix(fmt.Sprint(state.Tree.Parent["id"]), "did:key:") {
-		return nil, &awid.IDCertificateError{Code: "unregistered_parent"}
+		return nil, unregisteredInviteParentError()
 	}
 	state.IssuerCreationStarted = true
-	if state.Tree.Domain == "" {
-		return nil, nil
-	}
 	if !state.RequestReady {
 		installed, err := awconfig.LoadInstalledIDChain(root)
 		if err != nil {
@@ -230,13 +308,15 @@ Finally retry your original invite command with the SAME token, name, scope and 
 			if _, err := awid.EncodeIDChainHeader(bundle); err != nil {
 				return nil, err
 			}
-			certificates := bundle["certificates"].([]any)
-			leaf := certificates[len(certificates)-1].(map[string]any)["certificate"].(map[string]any)
+			leaf, err := installed.Leaf()
+			if err != nil {
+				return nil, err
+			}
 			subject := material.DIDKey
 			if material.IdentityScope == awid.IdentityModeGlobal {
 				subject = material.StableID
 			}
-			if leaf["id"] != subject || leaf["kind"] != "agent" || leaf["domain"] != state.Tree.Domain || !reflect.DeepEqual(leaf["parent"], state.Tree.Parent) {
+			if leaf.ID() != subject || leaf.Kind() != awid.IDCertificateKindAgent || leaf.Domain() != state.Tree.Domain || !reflect.DeepEqual(leaf.Parent().Fields(), state.Tree.Parent) {
 				return nil, errors.New("installed child chain contradicts the pinned invite issuer; membership cannot reparent an identity")
 			}
 			state.Tree.NativeChainHeader, err = awid.EncodeIDChainHeader(bundle)
@@ -255,6 +335,14 @@ Finally retry your original invite command with the SAME token, name, scope and 
 		}
 	}
 	return state.Tree.request(bundle), nil
+}
+
+func (state *hostedInviteCreation) parentageSelected() bool {
+	return state.MintedKey == nil || *state.MintedKey || state.ParentHome != "" || (state.ParentFromSource != nil && *state.ParentFromSource)
+}
+
+func unregisteredInviteParentError() error {
+	return fmt.Errorf("%w: a registered child needs a registered parent; be adopted by the person directly with aw id parent request --human, or join from a registered source", &awid.IDCertificateError{Code: "unregistered_parent"})
 }
 
 // A pending local invite already has its final child key, but no membership or
@@ -306,7 +394,7 @@ func pendingHostedInviteRequester(opts idParentOptions) (*requester, error) {
 
 // A condition refusal grants no membership. It releases the operation selection,
 // never the identity, signed ancestry, or a retained successful Cloud answer.
-func releaseRefusedHostedInvite(recoveryPath, markerPath string, refusal error) error {
+func releaseRefusedHostedInvite(recoveryPath string, refusal error) error {
 	definitive := awid.IDCertificateErrorCode(refusal) == "human_mismatch"
 	status, hasStatus := awid.HTTPStatusCode(refusal)
 	if hasStatus && status == http.StatusConflict && awid.RefusalCode(refusal) == "human_condition_mismatch" {
@@ -315,18 +403,35 @@ func releaseRefusedHostedInvite(recoveryPath, markerPath string, refusal error) 
 	if !definitive {
 		return refusal
 	}
-	if err := discardHostedInviteAttempt(recoveryPath, markerPath); err != nil {
+	if err := discardHostedInviteAttempt(recoveryPath); err != nil {
 		return errors.Join(refusal, err)
 	}
 	return refusal
 }
 
-func discardHostedInviteAttempt(recoveryPath, markerPath string) error {
-	if err := removeHostedAcceptPendingMarker(markerPath); err != nil {
-		return fmt.Errorf("release refused invite marker: %w", err)
-	}
+func discardHostedInviteAttempt(recoveryPath string) error {
+	// The pending marker is the key's provenance: acceptance minted it and
+	// it has never joined. A replacement invite may reuse that same key;
+	// only successful acceptance removes this marker.
 	if err := os.Remove(recoveryPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("release refused invite recovery: %w", err)
 	}
 	return nil
+}
+
+func canResumeHostedInvite(token, home string) bool {
+	if !awid.IsHostedSpawnInviteToken(token) {
+		return false
+	}
+	for _, name := range []string{"grant.yaml", "teams.yaml", "workspace.yaml"} {
+		if _, err := os.Stat(filepath.Join(home, name)); !errors.Is(err, os.ErrNotExist) {
+			return false
+		}
+	}
+	state, err := loadHostedInviteCreation(filepath.Join(home, hostedInviteRecoveryFile))
+	if err != nil || state == nil || state.Scope != "local" || state.TokenHash != strings.TrimPrefix(hostedTeamInviteRecordID(token), "hosted-") {
+		return false
+	}
+	key, err := awid.LoadSigningKey(filepath.Join(home, "signing.key"))
+	return err == nil && awid.ComputeDIDKey(key.Public().(ed25519.PublicKey)) == state.DIDKey
 }

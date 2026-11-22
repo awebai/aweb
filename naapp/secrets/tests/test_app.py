@@ -90,7 +90,7 @@ class Running:
 async def member(registry) -> Member:
     member = Member(team_id="backend:example.com")
     await registry.add_team(member.team_id, member.team_did_key)
-    await registry.add_certificate(member.certificate())
+    await registry.add_certificate(member.certificate(), team_key=member.team_key)
     return member
 
 

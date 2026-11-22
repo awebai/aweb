@@ -318,6 +318,10 @@ func TestExtendWait(t *testing.T) {
 				},
 			})
 		},
+		"GET /v1/chat/sessions/s1/messages": func(w http.ResponseWriter, _ *http.Request) {
+			// An existing session's history: no encrypted message to inherit.
+			jsonResponse(w, awid.ChatHistoryResponse{Messages: []awid.ChatMessage{}})
+		},
 		"POST /v1/chat/sessions/s1/messages": func(w http.ResponseWriter, r *http.Request) {
 			var req awid.ChatSendMessageRequest
 			_ = json.NewDecoder(r.Body).Decode(&req)
@@ -333,7 +337,7 @@ func TestExtendWait(t *testing.T) {
 	})
 	t.Cleanup(server.Close)
 
-	result, err := ExtendWait(context.Background(), mustClient(t, server.URL), "bob", "thinking...")
+	result, err := ExtendWaitWithOptions(context.Background(), mustClient(t, server.URL), "bob", "thinking...", ExtendWaitOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -346,7 +350,6 @@ func TestExtendWait(t *testing.T) {
 }
 
 func TestOpen(t *testing.T) {
-	t.Parallel()
 	deliveredIDsTestPath(t)
 
 	server := newMockServer(map[string]http.HandlerFunc{
@@ -395,6 +398,31 @@ func TestOpen(t *testing.T) {
 	if !result.SenderWaiting {
 		t.Fatal("sender_waiting=false")
 	}
+
+	t.Run("reports_receipt_write_failure", func(t *testing.T) {
+		workspace := deliveredIDsTestPath(t)
+		lock := filepath.Join(workspace, ".aw", DeliveredIDsFileName+".lock")
+		if err := os.MkdirAll(lock, 0700); err != nil {
+			t.Fatal(err)
+		}
+		got, err := Open(context.Background(), mustClient(t, server.URL), "bob")
+		if err != nil || len(got.Messages) != 2 || got.MarkedRead != 2 {
+			t.Fatalf("receipt failure blocked chat open: %+v, %v", got, err)
+		}
+		data, err := json.Marshal(got)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var output struct {
+			ReceiptError string `json:"receipt_error"`
+		}
+		if err := json.Unmarshal(data, &output); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(output.ReceiptError, "Repair the cache directory before retrying") {
+			t.Fatalf("missing actionable receipt warning: %s", data)
+		}
+	})
 }
 
 func TestOpenPresentsAndAcknowledgesACompleteMaximumUnreadSnapshot(t *testing.T) {
@@ -1460,6 +1488,10 @@ func TestSendWithLeavingReusesExistingSession(t *testing.T) {
 				},
 			})
 		},
+		"GET /v1/chat/sessions/s1/messages": func(w http.ResponseWriter, _ *http.Request) {
+			// An existing session's history: no encrypted message to inherit.
+			jsonResponse(w, awid.ChatHistoryResponse{Messages: []awid.ChatMessage{}})
+		},
 		"POST /v1/chat/sessions/s1/messages": func(w http.ResponseWriter, r *http.Request) {
 			if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
 				t.Fatal(err)
@@ -1536,6 +1568,10 @@ func TestSendProbesExistingSessionEvenWhenWaiting(t *testing.T) {
 					},
 				},
 			})
+		},
+		"GET /v1/chat/sessions/s1/messages": func(w http.ResponseWriter, _ *http.Request) {
+			// An existing session's history: no encrypted message to inherit.
+			jsonResponse(w, awid.ChatHistoryResponse{Messages: []awid.ChatMessage{}})
 		},
 		"POST /v1/chat/sessions/s1/messages": func(w http.ResponseWriter, r *http.Request) {
 			if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
@@ -2590,7 +2626,7 @@ func TestFindSessionFallback(t *testing.T) {
 	})
 	t.Cleanup(server.Close)
 
-	sessionID, senderWaiting, err := findSession(context.Background(), mustClient(t, server.URL), "bob")
+	sessionID, senderWaiting, err := findSessionWithOptions(context.Background(), mustClient(t, server.URL), "bob", waitingSessionFirst)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2623,7 +2659,7 @@ func TestFindSessionFallbackUsesParticipantAddress(t *testing.T) {
 	})
 	t.Cleanup(server.Close)
 
-	sessionID, senderWaiting, err := findSession(context.Background(), mustClient(t, server.URL), "otherco/monitor")
+	sessionID, senderWaiting, err := findSessionWithOptions(context.Background(), mustClient(t, server.URL), "otherco/monitor", waitingSessionFirst)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2668,7 +2704,7 @@ func TestFindSessionStableDIDHandleOnlyErrorsOnAmbiguousAliasMatches(t *testing.
 		},
 	})
 
-	_, _, err := findSession(context.Background(), client, "did:aw:monitor")
+	_, _, err := findSessionWithOptions(context.Background(), client, "did:aw:monitor", waitingSessionFirst)
 	if err == nil {
 		t.Fatal("expected ambiguity error")
 	}
@@ -2719,7 +2755,7 @@ func TestFindSessionStableDIDHandleOnlyAllowsSparseAndRichRowsForSameIdentity(t 
 		},
 	})
 
-	sessionID, senderWaiting, err := findSession(context.Background(), client, "did:aw:monitor")
+	sessionID, senderWaiting, err := findSessionWithOptions(context.Background(), client, "did:aw:monitor", waitingSessionFirst)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2770,7 +2806,7 @@ func TestFindSessionStableDIDHandleOnlyPendingAllowsSparseAndRichRowsForSameIden
 		},
 	})
 
-	sessionID, senderWaiting, err := findSession(context.Background(), client, "did:aw:monitor")
+	sessionID, senderWaiting, err := findSessionWithOptions(context.Background(), client, "did:aw:monitor", waitingSessionFirst)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2811,7 +2847,7 @@ func TestFindSessionAliasAllowsAddressAndStableDIDRowsForSameIdentity(t *testing
 	})
 	t.Cleanup(server.Close)
 
-	sessionID, senderWaiting, err := findSession(context.Background(), mustClient(t, server.URL), "monitor")
+	sessionID, senderWaiting, err := findSessionWithOptions(context.Background(), mustClient(t, server.URL), "monitor", waitingSessionFirst)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2867,7 +2903,7 @@ func TestFindSessionStableDIDHandleOnlyAllowsAddressAndStableDIDRowsForSameIdent
 		},
 	})
 
-	sessionID, senderWaiting, err := findSession(context.Background(), client, "did:aw:monitor")
+	sessionID, senderWaiting, err := findSessionWithOptions(context.Background(), client, "did:aw:monitor", waitingSessionFirst)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2908,7 +2944,7 @@ func TestFindSessionAliasAllowsAddressAndCurrentDIDRowsForSameIdentity(t *testin
 	})
 	t.Cleanup(server.Close)
 
-	sessionID, senderWaiting, err := findSession(context.Background(), mustClient(t, server.URL), "monitor")
+	sessionID, senderWaiting, err := findSessionWithOptions(context.Background(), mustClient(t, server.URL), "monitor", waitingSessionFirst)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2964,7 +3000,7 @@ func TestFindSessionStableDIDHandleOnlyAllowsAddressAndCurrentDIDRowsForSameIden
 		},
 	})
 
-	sessionID, senderWaiting, err := findSession(context.Background(), client, "did:aw:monitor")
+	sessionID, senderWaiting, err := findSessionWithOptions(context.Background(), client, "did:aw:monitor", waitingSessionFirst)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3029,7 +3065,7 @@ func TestFindSessionStableDIDHandleOnlyAllowsStableAndCurrentDIDRowsForSameIdent
 		},
 	})
 
-	sessionID, senderWaiting, err := findSession(context.Background(), client, "did:aw:monitor")
+	sessionID, senderWaiting, err := findSessionWithOptions(context.Background(), client, "did:aw:monitor", waitingSessionFirst)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3094,7 +3130,7 @@ func TestFindSessionAliasAllowsStableAndCurrentDIDRowsForSameIdentity(t *testing
 		},
 	})
 
-	sessionID, senderWaiting, err := findSession(context.Background(), client, "monitor")
+	sessionID, senderWaiting, err := findSessionWithOptions(context.Background(), client, "monitor", waitingSessionFirst)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3153,7 +3189,7 @@ func TestFindSessionAliasAllowsAddressOnlyAndStableDIDRowsForSameIdentity(t *tes
 		},
 	})
 
-	sessionID, senderWaiting, err := findSession(context.Background(), client, "monitor")
+	sessionID, senderWaiting, err := findSessionWithOptions(context.Background(), client, "monitor", waitingSessionFirst)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3212,7 +3248,7 @@ func TestFindSessionStableDIDHandleOnlyAllowsAddressOnlyAndStableDIDRowsForSameI
 		},
 	})
 
-	sessionID, senderWaiting, err := findSession(context.Background(), client, "did:aw:monitor")
+	sessionID, senderWaiting, err := findSessionWithOptions(context.Background(), client, "did:aw:monitor", waitingSessionFirst)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3253,7 +3289,7 @@ func TestFindSessionAddressTargetPrefersAddressBackedRowOverDIDOnlyDuplicate(t *
 	})
 	t.Cleanup(server.Close)
 
-	sessionID, senderWaiting, err := findSession(context.Background(), mustClient(t, server.URL), "acme.com/monitor")
+	sessionID, senderWaiting, err := findSessionWithOptions(context.Background(), mustClient(t, server.URL), "acme.com/monitor", waitingSessionFirst)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3312,7 +3348,7 @@ func TestFindSessionAliasAllowsAddressOnlyAndCurrentDIDRowsForSameIdentity(t *te
 		},
 	})
 
-	sessionID, senderWaiting, err := findSession(context.Background(), client, "monitor")
+	sessionID, senderWaiting, err := findSessionWithOptions(context.Background(), client, "monitor", waitingSessionFirst)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3350,7 +3386,7 @@ func TestFindSessionAliasErrorsOnAmbiguousAliasMatches(t *testing.T) {
 	})
 	t.Cleanup(server.Close)
 
-	_, _, err := findSession(context.Background(), mustClient(t, server.URL), "monitor")
+	_, _, err := findSessionWithOptions(context.Background(), mustClient(t, server.URL), "monitor", waitingSessionFirst)
 	if err == nil {
 		t.Fatal("expected ambiguity error")
 	}
@@ -3383,8 +3419,8 @@ func TestFindSessionAliasAmbiguityReadsTheFullListBeforeChoosingAPendingMatch(t 
 	})
 	t.Cleanup(server.Close)
 
-	for _, find := range []func(context.Context, *awid.Client, string) (string, bool, error){findSession, findLatestSession} {
-		sessionID, _, err := find(context.Background(), mustClient(t, server.URL), "monitor")
+	for _, choice := range []sessionChoice{waitingSessionFirst, latestSession} {
+		sessionID, _, err := findSessionWithOptions(context.Background(), mustClient(t, server.URL), "monitor", choice)
 		if err == nil || !strings.Contains(err.Error(), "multiple conversations match monitor") {
 			t.Fatalf("session_id=%q err=%v, want the ambiguity refusal", sessionID, err)
 		}
@@ -3418,7 +3454,7 @@ func TestFindSessionAliasAllowsSparseAndRichRowsForSameIdentity(t *testing.T) {
 	})
 	t.Cleanup(server.Close)
 
-	sessionID, senderWaiting, err := findSession(context.Background(), mustClient(t, server.URL), "monitor")
+	sessionID, senderWaiting, err := findSessionWithOptions(context.Background(), mustClient(t, server.URL), "monitor", waitingSessionFirst)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3455,7 +3491,7 @@ func TestFindSessionPendingDoesNotPreferSparseGroupOverDirect(t *testing.T) {
 	})
 	t.Cleanup(server.Close)
 
-	sessionID, senderWaiting, err := findSession(context.Background(), mustClient(t, server.URL), "otherco/monitor")
+	sessionID, senderWaiting, err := findSessionWithOptions(context.Background(), mustClient(t, server.URL), "otherco/monitor", waitingSessionFirst)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3495,7 +3531,7 @@ func TestFindSessionFallbackDoesNotPreferSparseGroupOverDirect(t *testing.T) {
 	})
 	t.Cleanup(server.Close)
 
-	sessionID, senderWaiting, err := findSession(context.Background(), mustClient(t, server.URL), "otherco/monitor")
+	sessionID, senderWaiting, err := findSessionWithOptions(context.Background(), mustClient(t, server.URL), "otherco/monitor", waitingSessionFirst)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3520,7 +3556,7 @@ func TestFindSessionNotFound(t *testing.T) {
 	})
 	t.Cleanup(server.Close)
 
-	_, _, err := findSession(context.Background(), mustClient(t, server.URL), "nobody")
+	_, _, err := findSessionWithOptions(context.Background(), mustClient(t, server.URL), "nobody", waitingSessionFirst)
 	if err == nil {
 		t.Fatal("expected error for missing session")
 	}
@@ -4111,13 +4147,14 @@ func TestSendUsesSignedPayloadStableIDForSSEIdentityMismatch(t *testing.T) {
 	replyTimestamp := "2026-04-10T00:00:00Z"
 
 	replyEnv := &awid.MessageEnvelope{
-		From:         "myteam/architect",
-		FromDID:      senderDID,
-		Type:         "chat",
-		Body:         "hi back!",
-		Timestamp:    replyTimestamp,
-		FromStableID: stableID,
-		MessageID:    replyMsgID,
+		From:           "myteam/architect",
+		FromDID:        senderDID,
+		Type:           "chat",
+		Body:           "hi back!",
+		Timestamp:      replyTimestamp,
+		FromStableID:   stableID,
+		MessageID:      replyMsgID,
+		ConversationID: "s1",
 	}
 	replySig, err := awid.SignMessage(senderPriv, replyEnv)
 	if err != nil {
@@ -4155,16 +4192,18 @@ func TestSendUsesSignedPayloadStableIDForSSEIdentityMismatch(t *testing.T) {
 			}
 
 			replyData, _ := json.Marshal(map[string]any{
-				"type":           "message",
-				"message_id":     replyMsgID,
-				"from_agent":     "architect",
-				"from_address":   "myteam/architect",
-				"body":           "hi back!",
-				"from_did":       senderDID,
-				"signature":      replySig,
-				"signing_key_id": senderDID,
-				"signed_payload": replySignedPayload,
-				"timestamp":      replyTimestamp,
+				"type":            "message",
+				"message_id":      replyMsgID,
+				"session_id":      "s1",
+				"conversation_id": "s1",
+				"from_agent":      "architect",
+				"from_address":    "myteam/architect",
+				"body":            "hi back!",
+				"from_did":        senderDID,
+				"signature":       replySig,
+				"signing_key_id":  senderDID,
+				"signed_payload":  replySignedPayload,
+				"timestamp":       replyTimestamp,
 			})
 			fmt.Fprintf(w, "event: message\ndata: %s\n\n", replyData)
 			if flusher != nil {
@@ -4304,6 +4343,7 @@ func TestSendUsesSignedPayloadRecipientBindingForSSEIdentityMismatch(t *testing.
 				"from_address":   "myteam/architect",
 				"body":           "hi back!",
 				"from_did":       senderDID,
+				"to_did":         wrongRecipientDID,
 				"signature":      replySig,
 				"signing_key_id": senderDID,
 				"signed_payload": replySignedPayload,
@@ -4366,15 +4406,16 @@ func TestSendUsesStableRecipientBindingForSSEAfterLocalKeyRotation(t *testing.T)
 	replyTimestamp := "2026-04-10T00:00:00Z"
 
 	replyEnv := &awid.MessageEnvelope{
-		From:       "myteam/architect",
-		FromDID:    senderDID,
-		To:         receiverStableID,
-		ToDID:      receiverOldDID,
-		ToStableID: receiverStableID,
-		Type:       "chat",
-		Body:       "hi after rotation!",
-		Timestamp:  replyTimestamp,
-		MessageID:  replyMsgID,
+		From:           "myteam/architect",
+		FromDID:        senderDID,
+		To:             receiverStableID,
+		ToDID:          receiverOldDID,
+		ToStableID:     receiverStableID,
+		Type:           "chat",
+		Body:           "hi after rotation!",
+		Timestamp:      replyTimestamp,
+		MessageID:      replyMsgID,
+		ConversationID: "s1",
 	}
 	replySig, err := awid.SignMessage(senderPriv, replyEnv)
 	if err != nil {
@@ -4412,16 +4453,20 @@ func TestSendUsesStableRecipientBindingForSSEAfterLocalKeyRotation(t *testing.T)
 			}
 
 			replyData, _ := json.Marshal(map[string]any{
-				"type":           "message",
-				"message_id":     replyMsgID,
-				"from_agent":     "architect",
-				"from_address":   "myteam/architect",
-				"body":           "hi after rotation!",
-				"from_did":       senderDID,
-				"signature":      replySig,
-				"signing_key_id": senderDID,
-				"signed_payload": replySignedPayload,
-				"timestamp":      replyTimestamp,
+				"type":            "message",
+				"message_id":      replyMsgID,
+				"session_id":      "s1",
+				"conversation_id": "s1",
+				"from_agent":      "architect",
+				"from_address":    "myteam/architect",
+				"body":            "hi after rotation!",
+				"from_did":        senderDID,
+				"to_did":          receiverOldDID,
+				"to_stable_id":    receiverStableID,
+				"signature":       replySig,
+				"signing_key_id":  senderDID,
+				"signed_payload":  replySignedPayload,
+				"timestamp":       replyTimestamp,
 			})
 			fmt.Fprintf(w, "event: message\ndata: %s\n\n", replyData)
 			if flusher != nil {
@@ -4472,7 +4517,7 @@ func TestWaitForMessageTreatsInitialEOFAsTimeout(t *testing.T) {
 		1,
 		nil,
 		nil,
-		func(Event) (bool, bool) { return false, false },
+		func(Event) eventDisposition { return collectEvent },
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -4504,7 +4549,7 @@ func TestWaitForMessageTreatsWrappedEOFAsTimeout(t *testing.T) {
 		1,
 		nil,
 		nil,
-		func(Event) (bool, bool) { return false, false },
+		func(Event) eventDisposition { return collectEvent },
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -4535,7 +4580,7 @@ func TestWaitForMessagePropagatesContextCancellationOnOpen(t *testing.T) {
 		1,
 		nil,
 		nil,
-		func(Event) (bool, bool) { return false, false },
+		func(Event) eventDisposition { return collectEvent },
 	)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("err=%v, want context.Canceled", err)
@@ -4560,7 +4605,7 @@ func TestWaitForMessageDoesNotTreatUnexpectedEOFAsTimeout(t *testing.T) {
 		1,
 		nil,
 		nil,
-		func(Event) (bool, bool) { return false, false },
+		func(Event) eventDisposition { return collectEvent },
 	)
 	if err == nil {
 		t.Fatal("expected error")
@@ -4798,7 +4843,7 @@ func TestFindSessionPrefersSmallestPending(t *testing.T) {
 	})
 	t.Cleanup(server.Close)
 
-	sessionID, _, err := findSession(context.Background(), mustClient(t, server.URL), "bob")
+	sessionID, _, err := findSessionWithOptions(context.Background(), mustClient(t, server.URL), "bob", waitingSessionFirst)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -4825,7 +4870,7 @@ func TestFindSessionPrefersSmallestFallback(t *testing.T) {
 	})
 	t.Cleanup(server.Close)
 
-	sessionID, _, err := findSession(context.Background(), mustClient(t, server.URL), "bob")
+	sessionID, _, err := findSessionWithOptions(context.Background(), mustClient(t, server.URL), "bob", waitingSessionFirst)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -4851,7 +4896,7 @@ func TestFindSessionPendingPrefersWaiting(t *testing.T) {
 	})
 	t.Cleanup(server.Close)
 
-	sessionID, senderWaiting, err := findSession(context.Background(), mustClient(t, server.URL), "bob")
+	sessionID, senderWaiting, err := findSessionWithOptions(context.Background(), mustClient(t, server.URL), "bob", waitingSessionFirst)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -4878,7 +4923,7 @@ func TestFindLatestSessionPendingPrefersActivity(t *testing.T) {
 	})
 	t.Cleanup(server.Close)
 
-	sessionID, senderWaiting, err := findLatestSession(context.Background(), mustClient(t, server.URL), "bob")
+	sessionID, senderWaiting, err := findSessionWithOptions(context.Background(), mustClient(t, server.URL), "bob", latestSession)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -4906,7 +4951,7 @@ func TestFindSessionPendingTiebreaksOnActivity(t *testing.T) {
 	})
 	t.Cleanup(server.Close)
 
-	sessionID, _, err := findSession(context.Background(), mustClient(t, server.URL), "bob")
+	sessionID, _, err := findSessionWithOptions(context.Background(), mustClient(t, server.URL), "bob", waitingSessionFirst)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -4934,7 +4979,7 @@ func TestFindSessionFallbackTiebreaksOnCreatedAt(t *testing.T) {
 	})
 	t.Cleanup(server.Close)
 
-	sessionID, _, err := findSession(context.Background(), mustClient(t, server.URL), "bob")
+	sessionID, _, err := findSessionWithOptions(context.Background(), mustClient(t, server.URL), "bob", waitingSessionFirst)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -4971,7 +5016,7 @@ func TestFindSessionFallbackTiebreaksOnLastActivity(t *testing.T) {
 	})
 	t.Cleanup(server.Close)
 
-	sessionID, _, err := findSession(context.Background(), mustClient(t, server.URL), "bob")
+	sessionID, _, err := findSessionWithOptions(context.Background(), mustClient(t, server.URL), "bob", waitingSessionFirst)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -5010,7 +5055,7 @@ func TestFindLatestSessionBareAliasScopesToClientTeam(t *testing.T) {
 	})
 	t.Cleanup(server.Close)
 
-	sessionID, _, err := findLatestSession(context.Background(), mustTeamClient(t, server.URL, "main:partner.local"), "bob")
+	sessionID, _, err := findSessionWithOptions(context.Background(), mustTeamClient(t, server.URL, "main:partner.local"), "bob", latestSession)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -5043,7 +5088,7 @@ func TestFindLatestSessionAddressDoesNotFallbackToHandle(t *testing.T) {
 	})
 	t.Cleanup(server.Close)
 
-	sessionID, _, err := findLatestSession(context.Background(), mustTeamClient(t, server.URL, "main:partner.local"), "partner.local/bob")
+	sessionID, _, err := findSessionWithOptions(context.Background(), mustTeamClient(t, server.URL, "main:partner.local"), "partner.local/bob", latestSession)
 	if err == nil {
 		t.Fatalf("session_id=%s, want no conversation found", sessionID)
 	}
@@ -6023,12 +6068,11 @@ func TestParseSSEEventIdentityFields(t *testing.T) {
 	if ev.SigningKeyID != did {
 		t.Fatalf("signing_key_id=%s", ev.SigningKeyID)
 	}
-	if ev.VerificationStatus != awid.Verified {
-		t.Fatalf("verification_status=%s", ev.VerificationStatus)
-	}
+	// Verification is not the parser's: received_chat_parity_test.go checks
+	// the stream and history verify this row alike.
 }
 
-func TestParseSSEEventNoIdentityUnverified(t *testing.T) {
+func TestParseSSEEventWithoutIdentityHasNoSenderDID(t *testing.T) {
 	t.Parallel()
 
 	ev := parseSSEEvent(&awid.SSEEvent{
@@ -6039,12 +6083,11 @@ func TestParseSSEEventNoIdentityUnverified(t *testing.T) {
 	if ev.FromDID != "" {
 		t.Fatalf("from_did=%s", ev.FromDID)
 	}
-	if ev.VerificationStatus != awid.Unverified {
-		t.Fatalf("verification_status=%s, want %s", ev.VerificationStatus, awid.Unverified)
-	}
+	// Verification is not the parser's: received_chat_parity_test.go checks
+	// the stream and history verify this row alike.
 }
 
-func TestParseSSEEventSignedPayloadOverridesStableDIDForVerification(t *testing.T) {
+func TestParseSSEEventKeepsTheRowsStableDIDUntilVerification(t *testing.T) {
 	t.Parallel()
 
 	pub, priv, err := ed25519.GenerateKey(nil)
@@ -6074,27 +6117,27 @@ func TestParseSSEEventSignedPayloadOverridesStableDIDForVerification(t *testing.
 	signedPayload := awid.CanonicalJSON(env)
 
 	// Live stream rows can carry the participant stable DID in from_did while
-	// the signed payload carries the signing did:key. The parser must verify
-	// against the signed-payload did:key, matching ChatHistory normalization.
-	data := fmt.Sprintf(`{"from_agent":"alice","from_address":"myco/alice","to_address":"myco/bob","body":"signed hello","from_did":%q,"from_stable_id":%q,"signature":%q,"signed_payload":%q,"timestamp":"2026-01-01T00:00:00Z"}`, stableID, stableID, sig, signedPayload)
+	// the signed payload carries the signing did:key. The parser decodes the
+	// row as sent; verification replaces from_did with the signed did:key
+	// (the "row from_did is the stable id" case of the parity test).
+	data := fmt.Sprintf(`{"session_id":%q,"conversation_id":%q,"message_id":%q,"from_agent":"alice","from_address":"myco/alice","to_address":"myco/bob","body":"signed hello","from_did":%q,"from_stable_id":%q,"to_did":%q,"signature":%q,"signed_payload":%q,"timestamp":"2026-01-01T00:00:00Z"}`, env.ConversationID, env.ConversationID, env.MessageID, stableID, stableID, toDID, sig, signedPayload)
 
 	ev := parseSSEEvent(&awid.SSEEvent{
 		Event: "message",
 		Data:  data,
 	})
 
-	if ev.FromDID != did {
-		t.Fatalf("from_did=%q, want signed payload did:key %q", ev.FromDID, did)
+	if ev.FromDID != stableID {
+		t.Fatalf("from_did=%q, want the row's %q before verification", ev.FromDID, stableID)
 	}
 	if ev.FromStableID != stableID {
 		t.Fatalf("from_stable_id=%q, want %q", ev.FromStableID, stableID)
 	}
-	if ev.VerificationStatus != awid.Verified {
-		t.Fatalf("verification_status=%s, want verified", ev.VerificationStatus)
-	}
+	// Verification is not the parser's: received_chat_parity_test.go checks
+	// the stream and history verify this row alike.
 }
 
-func TestParseSSEEventUsesFromAddressForVerification(t *testing.T) {
+func TestParseSSEEventDecodesFromAddress(t *testing.T) {
 	t.Parallel()
 
 	pub, priv, err := ed25519.GenerateKey(nil)
@@ -6127,10 +6170,8 @@ func TestParseSSEEventUsesFromAddressForVerification(t *testing.T) {
 	if ev.FromAddress != "myco/alice" {
 		t.Fatalf("from_address=%q, want myco/alice", ev.FromAddress)
 	}
-	// Verification should succeed because From in envelope uses from_address.
-	if ev.VerificationStatus != awid.Verified {
-		t.Fatalf("verification_status=%s, want verified (from_address should be used)", ev.VerificationStatus)
-	}
+	// Verification is not the parser's: received_chat_parity_test.go checks
+	// the stream and history verify this row alike.
 }
 
 func TestParseSSEEventWiresIsContact(t *testing.T) {
@@ -6598,25 +6639,32 @@ func TestParseSSEEventGrantTerminalDetail(t *testing.T) {
 	if ev.Type != "grant_expired" || ev.Reason != "identity grant expired" {
 		t.Fatalf("terminal event=%+v", ev)
 	}
-	if !isGrantTerminalEvent(ev.Type) {
+	if !awid.IsAuthorityTerminalEvent(ev.Type) {
 		t.Fatalf("%q should be a grant terminal event", ev.Type)
 	}
 }
 
-func TestSendReturnsVerificationUnavailableStreamError(t *testing.T) {
+func TestSendReturnsAuthorityTerminalStreamError(t *testing.T) {
 	t.Parallel()
-	server := newMockServer(map[string]http.HandlerFunc{
-		"POST /v1/chat/sessions": func(w http.ResponseWriter, _ *http.Request) {
-			jsonResponse(w, awid.ChatCreateSessionResponse{SessionID: "s1", MessageID: "sent", SSEURL: "/v1/chat/sessions/s1/stream"})
-		},
-		"GET /v1/chat/sessions/s1/stream": func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set("Content-Type", "text/event-stream")
-			fmt.Fprint(w, "event: verification_unavailable\ndata: {\"type\":\"verification_unavailable\",\"detail\":\"identity grant verification unavailable\"}\n\n")
-		},
-	})
-	t.Cleanup(server.Close)
-	result, err := Send(context.Background(), mustClient(t, server.URL), "alice", []string{"bob"}, "hello", SendOptions{Wait: 5}, nil)
-	if err == nil || err.Error() != "chat stream closed: identity grant verification unavailable; retry" {
-		t.Fatalf("result=%+v err=%v, want explicit retryable verification failure", result, err)
+	for _, tc := range []struct{ event, detail, want string }{
+		{"verification_unavailable", "identity grant verification unavailable", "identity grant verification unavailable; retry"},
+		{"team_membership_not_current", "reconnect with the current team key", "reconnect with the current team key"},
+	} {
+		t.Run(tc.event, func(t *testing.T) {
+			server := newMockServer(map[string]http.HandlerFunc{
+				"POST /v1/chat/sessions": func(w http.ResponseWriter, _ *http.Request) {
+					jsonResponse(w, awid.ChatCreateSessionResponse{SessionID: "s1", MessageID: "sent", SSEURL: "/v1/chat/sessions/s1/stream"})
+				},
+				"GET /v1/chat/sessions/s1/stream": func(w http.ResponseWriter, _ *http.Request) {
+					w.Header().Set("Content-Type", "text/event-stream")
+					fmt.Fprintf(w, "event: %s\ndata: {\"type\":%q,\"detail\":%q}\n\n", tc.event, tc.event, tc.detail)
+				},
+			})
+			t.Cleanup(server.Close)
+			result, err := Send(context.Background(), mustClient(t, server.URL), "alice", []string{"bob"}, "hello", SendOptions{Wait: 5}, nil)
+			if err == nil || err.Error() != "chat stream closed: "+tc.want {
+				t.Fatalf("result=%+v err=%v, want explicit closure %q", result, err, tc.want)
+			}
+		})
 	}
 }

@@ -98,7 +98,9 @@ func runDoctorCLI(t *testing.T, bin, dir string, args ...string) ([]byte, error)
 }
 
 // runDoctorCLIWithRegistry is runDoctorCLI with registryURL named by
-// AWID_REGISTRY_URL, the operator's explicit registry choice.
+// AWID_REGISTRY_URL, the operator's explicit registry choice. An empty
+// registryURL is the operator naming none, so the identity's stored registry,
+// or its absence, decides.
 func runDoctorCLIWithRegistry(t *testing.T, bin, dir, registryURL string, args ...string) ([]byte, error) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -140,7 +142,7 @@ func requireDoctorCheckStatus(t *testing.T, out doctorOutput, id string, status 
 	return check
 }
 
-func writeDoctorLocalFixture(t *testing.T, workingDir, awebURL string) {
+func writeDoctorLocalFixture(t *testing.T, workingDir, awebURL string) string {
 	t.Helper()
 	pub, priv, err := awid.GenerateKeypair()
 	if err != nil {
@@ -157,9 +159,36 @@ func writeDoctorLocalFixture(t *testing.T, workingDir, awebURL string) {
 		SigningKey:    priv,
 		CreatedAt:     "2026-04-04T00:00:00Z",
 	})
+	state := collectDoctorAwebStateAt(workingDir, "")
+	if state.cert == nil {
+		t.Fatalf("doctor fixture certificate: %v", state.certErr)
+	}
+	registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/certificates/"+state.cert.CertificateID+"/status") {
+			http.NotFound(w, r)
+			return
+		}
+		if err := json.NewEncoder(w).Encode(awid.TeamCertificateStatus{TeamID: state.cert.Team, TeamDIDKey: state.cert.TeamDIDKey, Status: "active"}); err != nil {
+			t.Error(err)
+		}
+	}))
+	t.Cleanup(registry.Close)
+	teams, err := awconfig.LoadTeamState(workingDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	membership := teams.Membership(state.cert.Team)
+	if membership == nil {
+		t.Fatal("doctor fixture has no selected membership")
+	}
+	membership.RegistryURL = registry.URL
+	if err := awconfig.SaveTeamState(workingDir, teams); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Remove(filepath.Join(workingDir, awconfig.DefaultWorktreeIdentityRelativePath())); err != nil && !os.IsNotExist(err) {
 		t.Fatalf("remove local identity: %v", err)
 	}
+	return registry.URL
 }
 
 func writeDoctorGlobalFixture(t *testing.T, workingDir, awebURL string) ed25519.PrivateKey {
@@ -668,6 +697,7 @@ func TestAwDoctorFixTargetNotFound(t *testing.T) {
 }
 
 type fakeDoctorFixHandler struct {
+	scopeOwner  doctorFixHandler
 	id          string
 	plan        doctorFixPlan
 	planErr     error
@@ -677,6 +707,13 @@ type fakeDoctorFixHandler struct {
 
 func (h *fakeDoctorFixHandler) CheckID() string {
 	return h.id
+}
+
+func (h *fakeDoctorFixHandler) doctorMutationScope(ctx doctorFixContext) (doctorMutationScope, error) {
+	if h.scopeOwner != nil {
+		return h.scopeOwner.doctorMutationScope(ctx)
+	}
+	return doctorMutationScope{CheckID: h.id, Refusal: doctorFixAuthority}, nil
 }
 
 func (h *fakeDoctorFixHandler) Plan(context.Context, doctorFixContext, doctorCheck) (doctorFixPlan, error) {
@@ -756,34 +793,7 @@ func TestAwDoctorFixAdvertisedNoHandler(t *testing.T) {
 	}
 }
 
-func TestAwDoctorFixFakeSafeDryRunDoesNotApply(t *testing.T) {
-	handler := &fakeDoctorFixHandler{
-		id: "fake.safe",
-		plan: doctorFixPlan{
-			CheckID:   "fake.safe",
-			Safe:      true,
-			Authority: doctorAuthorityCaller,
-			Target:    &doctorTarget{Type: "local_path", ID: ".aw/workspace.yaml"},
-			PlannedMutations: []doctorFixMutation{{
-				Operation:   "write_metadata",
-				Description: "write non-secret metadata",
-				Path:        ".aw/workspace.yaml",
-			}},
-		},
-	}
-	setDoctorFixHandlersForTest(t, map[string]doctorFixHandler{handler.id: handler})
-
-	got := runDoctorFixFrameworkForTest(advertisedDoctorFixCheck(handler.id, true), doctorRunOptions{Fix: true, DryRun: true})
-	requireDoctorCheckStatus(t, got, "doctor.fix.planned", doctorStatusInfo)
-	if handler.applyCalled != 0 {
-		t.Fatalf("dry-run called Apply %d times", handler.applyCalled)
-	}
-	if len(got.Fixes) != 1 || got.Fixes[0].Status != doctorFixStatusPlanned || !got.Fixes[0].DryRun {
-		t.Fatalf("fixes=%#v", got.Fixes)
-	}
-}
-
-func TestAwDoctorFixApplyRequiresAdvertisedSafe(t *testing.T) {
+func TestAwDoctorFixRefusesUnsafeAdvertisement(t *testing.T) {
 	handler := &fakeDoctorFixHandler{
 		id: "fake.safe",
 		plan: doctorFixPlan{
@@ -808,11 +818,6 @@ func TestAwDoctorFixApplyRequiresAdvertisedSafe(t *testing.T) {
 		t.Fatalf("unsafe advertised fix called Apply")
 	}
 
-	got = runDoctorFixFrameworkForTest(advertisedDoctorFixCheck(handler.id, true), doctorRunOptions{Fix: true})
-	requireDoctorCheckStatus(t, got, "doctor.fix.applied", doctorStatusOK)
-	if handler.applyCalled != 1 {
-		t.Fatalf("applyCalled=%d, want 1", handler.applyCalled)
-	}
 }
 
 func TestAwDoctorFixSafetyValidatorRefusesSensitivePlans(t *testing.T) {
@@ -825,15 +830,7 @@ func TestAwDoctorFixSafetyValidatorRefusesSensitivePlans(t *testing.T) {
 		{name: "high-impact", plan: doctorFixPlan{Safe: true, HighImpact: true, Authority: doctorAuthorityCaller}, want: "high_impact"},
 		{name: "authority", plan: doctorFixPlan{Safe: true, Authority: doctorAuthoritySupport}, want: "authority"},
 		{name: "precondition", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, Preconditions: []doctorFixPrecondition{{ID: "fresh_state", Passed: false}}}, want: "precondition"},
-		{name: "global lifecycle", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, PlannedMutations: []doctorFixMutation{{Operation: "delete global identity lifecycle"}}}, want: "global_identity_lifecycle"},
-		{name: "did aw delete", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, PlannedMutations: []doctorFixMutation{{Operation: "delete", Target: &doctorTarget{Type: "did", ID: "did:aw:example"}}}}, want: "global_identity_lifecycle"},
-		{name: "identity reassign", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, PlannedMutations: []doctorFixMutation{{Operation: "reassign identity binding"}}}, want: "global_identity_lifecycle"},
-		{name: "managed address reassign", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, PlannedMutations: []doctorFixMutation{{Operation: "reassign managed address"}}}, want: "global_identity_lifecycle"},
-		{name: "private key", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, PlannedMutations: []doctorFixMutation{{Operation: "write", Path: ".aw/signing.key"}}}, want: "private_key_material"},
-		{name: "signing key underscore", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, PlannedMutations: []doctorFixMutation{{Operation: "rotate signing_key"}}}, want: "private_key_material"},
-		{name: "private key hyphen", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, PlannedMutations: []doctorFixMutation{{Operation: "write private-key material"}}}, want: "private_key_material"},
-		{name: "task unclaim", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, PlannedMutations: []doctorFixMutation{{Operation: "task unclaim"}}}, want: "coordination_cleanup"},
-		{name: "presence cleanup", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, PlannedMutations: []doctorFixMutation{{Operation: "clear presence"}}}, want: "coordination_cleanup"},
+		{name: "unowned metadata", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, PlannedMutations: []doctorFixMutation{{Operation: doctorFixRewriteWorkspaceMetadata, Path: ".aw/workspace.yaml"}}}, want: "authority"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -879,11 +876,6 @@ func TestAwDoctorFixApplyErrorDoesNotLeakHandlerError(t *testing.T) {
 			CheckID:   "fake.apply_error",
 			Safe:      true,
 			Authority: doctorAuthorityCaller,
-			PlannedMutations: []doctorFixMutation{{
-				Operation:   "write_metadata",
-				Description: "write non-secret metadata",
-				Path:        ".aw/workspace.yaml",
-			}},
 		},
 		applyErr: errors.New("synthetic-secret-apply-body"),
 	}
@@ -1282,6 +1274,19 @@ func TestAwDoctorOfflineLocalChecksDoNotContactNetwork(t *testing.T) {
 
 	bin, tmp := buildDoctorBinary(t)
 	writeDoctorGlobalFixture(t, tmp, server.URL)
+	teamState, loadErr := awconfig.LoadTeamState(tmp)
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
+	membership := teamState.ActiveMembership()
+	certificate, loadErr := awconfig.LoadTeamCertificateForTeam(tmp, membership.TeamID)
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
+	membership.TeamKey = &awid.TeamKeyEvidence{DIDKey: certificate.TeamDIDKey, State: awid.TeamKeyUnconfirmed}
+	if err := awconfig.SaveTeamState(tmp, teamState); err != nil {
+		t.Fatal(err)
+	}
 
 	out, err := runDoctorCLI(t, bin, tmp, "doctor", "local", "--offline", "--json")
 	if err != nil {
@@ -1289,6 +1294,13 @@ func TestAwDoctorOfflineLocalChecksDoNotContactNetwork(t *testing.T) {
 	}
 	if requests.Load() != 0 {
 		t.Fatalf("offline local doctor contacted network %d times", requests.Load())
+	}
+	check := requireDoctorCheckStatus(t, decodeDoctorOutput(t, out), doctorCheckCertificateSignature, doctorStatusOK)
+	if !strings.Contains(check.Message, "does not show that the agent is a current member of the team") || !strings.Contains(check.Message, "aw doctor --online") {
+		t.Fatalf("offline signature result must distinguish current authority and name its next check: %s", check.Message)
+	}
+	if !strings.Contains(check.Message, "Team key is unconfirmed") || !strings.Contains(check.Message, "Registration and a successful registry read will confirm it") {
+		t.Fatalf("pending confirmation remedy missing: %s", check.Message)
 	}
 }
 

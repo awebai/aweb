@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/awebai/aw/internal/custodypath"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -14,6 +13,8 @@ import (
 	aweb "github.com/awebai/aw"
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/custodypath"
+	"github.com/awebai/aw/internal/termtext"
 	"github.com/spf13/cobra"
 )
 
@@ -112,30 +113,43 @@ type grantMintOutput struct {
 	CustodySocketPath string                  `json:"custody_socket_path,omitempty"`
 }
 
-// activeGrantHome loads the grant home the current identity-home resolution
-// points at, or reports false when the identity home is not a grant home.
-func activeGrantHome() (*awconfig.GrantHome, bool) {
-	wd, _ := os.Getwd()
+// loadSelectedGrantHome distinguishes a root identity from an unreadable selected
+// grant; a broken selected home cannot fall back to root authority (docs/cli-identity-selection.md:13-17).
+func loadSelectedGrantHome() (*awconfig.GrantHome, error) {
+	wd, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("resolve current grant directory: %w", err)
+	}
 	home, err := identityHomeForDir(wd)
-	if err != nil || !awconfig.IsGrantHome(home.Root) {
-		return nil, false
+	if err != nil {
+		return nil, err
+	}
+	return loadGrantHomeAt(home)
+}
+
+// loadGrantHomeAt preserves selection errors for explicit-home consumers such
+// as mint planning; absence alone permits root authority (docs/cli-identity-selection.md:13-17).
+func loadGrantHomeAt(home awconfig.IdentityHome) (*awconfig.GrantHome, error) {
+	if _, err := os.Lstat(awconfig.GrantHomeStatePath(home.Root)); errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	} else if err != nil {
+		return nil, fmt.Errorf("inspect selected grant home: %w", err)
 	}
 	grant, err := awconfig.LoadGrantHome(home.Root)
 	if err != nil {
-		return nil, false
+		return nil, fmt.Errorf("load selected grant home: %w", err)
 	}
-	return grant, true
+	return grant, nil
 }
 
 // requireGrantAuthorityHome refuses grant subcommands from a grant home: they
 // all need the identity's root team-certificate authority.
 func requireGrantAuthorityHome() error {
-	wd, _ := os.Getwd()
-	home, err := identityHomeForDir(wd)
+	grant, err := loadSelectedGrantHome()
 	if err != nil {
 		return err
 	}
-	if awconfig.IsGrantHome(home.Root) {
+	if grant != nil {
 		return errGrantHomeRootAuthority
 	}
 	return nil
@@ -465,7 +479,7 @@ func runGrantMint(cmd *cobra.Command, _ []string) error {
 		Out:               outDir,
 		CustodySocketPath: state.Custody.SocketPath,
 	}
-	printOutput(out, func(any) string {
+	return printOutput(out, func(any) string {
 		text := fmt.Sprintf("Minted grant %s for %s (team %s), expires %s.\nGrant home: %s\n",
 			out.GrantID, firstNonEmpty(out.Address, out.Alias), out.TeamID, out.ExpiresAt, out.Out)
 		if out.CustodySocketPath != "" {
@@ -476,7 +490,6 @@ func runGrantMint(cmd *cobra.Command, _ []string) error {
 		}
 		return text
 	})
-	return nil
 }
 
 func runGrantList(cmd *cobra.Command, _ []string) error {
@@ -493,8 +506,7 @@ func runGrantList(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	printOutput(resp, formatIdentityGrants)
-	return nil
+	return printOutput(resp, formatIdentityGrants)
 }
 
 func runGrantRevoke(cmd *cobra.Command, args []string) error {
@@ -505,19 +517,21 @@ func runGrantRevoke(cmd *cobra.Command, args []string) error {
 	if grantID == "" {
 		return usageError("grant id is required")
 	}
-	client, err := resolveClient()
+	client, selection, err := resolveClientSelection()
 	if err != nil {
 		return err
 	}
 	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
 	if err := client.RevokeIdentityGrant(ctx, grantID); err != nil {
+		if status, isHTTP := awid.HTTPStatusCode(err); isHTTP && status == http.StatusNotFound && awid.DescribeError(err).Detail == "grant not found" {
+			return grantNotFoundInTeam(grantLookup{grantID: grantID, teamID: selection.TeamID}, err)
+		}
 		return err
 	}
-	printOutput(map[string]string{"status": "revoked", "grant_id": grantID}, func(any) string {
+	return printOutput(map[string]string{"status": "revoked", "grant_id": grantID}, func(any) string {
 		return fmt.Sprintf("Revoked identity grant %s.\n", grantID)
 	})
-	return nil
 }
 
 func runGrantShow(cmd *cobra.Command, args []string) error {
@@ -528,7 +542,7 @@ func runGrantShow(cmd *cobra.Command, args []string) error {
 	if grantID == "" {
 		return usageError("grant id is required")
 	}
-	client, err := resolveClient()
+	client, selection, err := resolveClientSelection()
 	if err != nil {
 		return err
 	}
@@ -540,11 +554,26 @@ func runGrantShow(cmd *cobra.Command, args []string) error {
 	}
 	for i := range resp.Grants {
 		if strings.TrimSpace(resp.Grants[i].GrantID) == grantID {
-			printOutput(&resp.Grants[i], formatIdentityGrant)
-			return nil
+			return printOutput(&resp.Grants[i], formatIdentityGrant)
 		}
 	}
-	return fmt.Errorf("identity grant not found: %s", grantID)
+	return grantNotFoundInTeam(grantLookup{grantID: grantID, teamID: selection.TeamID}, nil)
+}
+
+type grantLookup struct {
+	grantID string
+	teamID  string
+}
+
+type grantRefusalCode string
+
+const grantNotFound grantRefusalCode = "grant_not_found"
+
+// grantNotFoundInTeam preserves the selected-team boundary documented in
+// docs/aweb-sot.md:346 and supplies a recovery action in that same team.
+func grantNotFoundInTeam(lookup grantLookup, cause error) error {
+	text := fmt.Sprintf("Grant %s was not found in team %s. Run `aw --team %s id grant list` with the same identity home to choose a grant ID.", termtext.Line(lookup.grantID), termtext.Line(lookup.teamID), termtext.Line(lookup.teamID))
+	return withErrorCode(string(grantNotFound), &plainRefusal{text: text, err: cause, jsonMessage: text})
 }
 
 func formatIdentityGrant(v any) string {

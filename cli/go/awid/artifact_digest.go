@@ -2,11 +2,12 @@ package awid
 
 import (
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"strings"
+
+	"github.com/awebai/aw/signaturewire"
 )
 
 // SignedArtifactDigest binds the exact bytes of a historical signed result.
@@ -16,7 +17,7 @@ func SignedArtifactDigest(signing []byte, signature string) (string, error) {
 	if strings.ContainsAny(signature, "\r\n=") {
 		return "", fmt.Errorf("invalid protected artifact signature")
 	}
-	raw, err := base64.RawStdEncoding.Strict().DecodeString(signature)
+	raw, err := signaturewire.DecodeStdStrict(signature)
 	if err != nil || len(raw) != 64 {
 		return "", fmt.Errorf("invalid protected artifact signature")
 	}

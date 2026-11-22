@@ -1,21 +1,23 @@
+import { escapeJSONString as escapeJSON } from "./canonical.js";
+import { verifyBytes } from "./signature_wire.js";
 import { keyResponseIdTree, type IdTreeEnrollment } from "./id_certificates.js";
 import { IdStatusClient } from "./id_status.js";
 import * as dns from "node:dns/promises";
 import { isIP } from "node:net";
-import { sha256, sha512 } from "@noble/hashes/sha2.js";
-import * as ed from "@noble/ed25519";
+import { sha256 } from "@noble/hashes/sha2.js";
 import { getDomain } from "tldts";
 import { computeStableID, extractPublicKey } from "./did.js";
 import { decodeRawStdBase64 } from "./base64.js";
 import { readBoundedJSON, readSafeErrorExcerpt } from "../api/response.js";
-
-ed.etc.sha512Sync = (...m) => sha512(ed.etc.concatBytes(...m));
 
 export const DEFAULT_AWID_REGISTRY_URL = "https://api.awid.ai";
 
 const REGISTRY_DISCOVERY_TTL_MS = 15 * 60 * 1000;
 const REGISTRY_ADDRESS_TTL_MS = 5 * 60 * 1000;
 const REGISTRY_KEY_TTL_MS = 15 * 60 * 1000;
+/** One read per sender per interval that a disagreeing cached answer may
+ * force (docs/trust-model.md, bounded refetch). */
+const REGISTRY_FORCED_READ_INTERVAL_MS = 30 * 1000;
 
 export interface DomainAuthority {
   controllerDid: string;
@@ -60,6 +62,21 @@ export interface StableIdentityVerification {
    * (default-aajc.8). Set only when outcome is OK_VERIFIED.
    */
   verifiedHead?: VerifiedLogHead;
+  /** The registry that answered; a checkpoint belongs to it. */
+  registryURL?: string;
+  /**
+   * The caller held no checkpoint for this identity at that registry: across
+   * it only the pin's key binding protects (docs/trust-model.md).
+   */
+  newCheckpoint?: boolean;
+}
+
+/** The caller's persisted checkpoint for an identity at one registry. */
+export type CheckpointLookup = (registryURL: string) => VerifiedLogHead | undefined;
+
+/** A verified log head is one registry's view of an identity. */
+function headCacheKey(registryURL: string, stableID: string): string {
+  return `${registryURL.trim().replace(/\/+$/, "")}|${stableID.trim()}`;
 }
 
 export interface ResolvedRegistryIdentity {
@@ -115,6 +132,8 @@ export class RegistryResolver {
   private keyCache = new Map<string, CacheEntry<DidKeyResolution>>();
   private headCache = new Map<string, VerifiedLogHead>();
   private receivedRegistries = new Map<string, RegistryResolver>();
+  /** The last read a disagreeing cached answer forced, per sender address or key. */
+  private forcedReads = new Map<string, { at: number; failed: boolean }>();
   private readonly fallbackRegistryURL: string;
   private readonly identityDomain: string;
 
@@ -140,6 +159,7 @@ export class RegistryResolver {
     address: string,
     stableID: string,
     expectedCurrentDidKey: string = "",
+    checkpointFor?: CheckpointLookup,
   ): Promise<StableIdentityVerification> {
     const split = splitRegistryAddress(address);
     if (!split || !stableID.trim()) {
@@ -154,10 +174,52 @@ export class RegistryResolver {
     }
 
     if (resolvedAddress.response.did_aw !== stableID) {
-      return { outcome: "HARD_ERROR", error: "registry address did:aw mismatch" };
+      const readKey = `address:${split.domain}/${split.name}`;
+      const claim = this.claimForcedRead(readKey);
+      if (!claim.allowed && claim.lastFailed) {
+        return { outcome: "STALE_CACHE", error: "registry address could not be read again in this interval" };
+      }
+      if (claim.allowed) {
+        try {
+          resolvedAddress = await this.resolveAddress(split.domain, split.name, true);
+          this.recordForcedRead(readKey, false);
+        } catch (error) {
+          this.recordForcedRead(readKey, true);
+          return { outcome: "STALE_CACHE", error: String(error) };
+        }
+      }
+      if (resolvedAddress.response.did_aw !== stableID) {
+        return { outcome: "HARD_ERROR", error: "registry address did:aw mismatch" };
+      }
     }
 
-    return this.verifyStableIdentityAtRegistry(resolvedAddress.registryURL, stableID, expectedCurrentDidKey);
+    // The caller's persisted checkpoint for the answering registry seeds the
+    // anchor (seeding only advances); without one, this is a new checkpoint.
+    const checkpoint = checkpointFor?.(resolvedAddress.registryURL);
+    if (checkpoint) this.seedVerifiedHead(resolvedAddress.registryURL, stableID, checkpoint);
+    const result = await this.verifyStableIdentityAtRegistry(resolvedAddress.registryURL, stableID, expectedCurrentDidKey);
+    return { ...result, registryURL: resolvedAddress.registryURL, newCheckpoint: !checkpoint };
+  }
+
+  /**
+   * Whether a cached answer that disagrees with a signed message may be read
+   * again from the registry now: once per REGISTRY_FORCED_READ_INTERVAL_MS for
+   * that sender. When it may not, lastFailed says whether the read that used
+   * the interval failed; the cache then still holds the older answer.
+   */
+  private claimForcedRead(key: string): { allowed: boolean; lastFailed: boolean } {
+    const now = this.now();
+    const last = this.forcedReads.get(key);
+    if (last && now - last.at < REGISTRY_FORCED_READ_INTERVAL_MS) {
+      return { allowed: false, lastFailed: last.failed };
+    }
+    this.forcedReads.set(key, { at: now, failed: false });
+    return { allowed: true, lastFailed: false };
+  }
+
+  private recordForcedRead(key: string, failed: boolean): void {
+    const read = this.forcedReads.get(key);
+    if (read) this.forcedReads.set(key, { ...read, failed });
   }
 
   /** Addressless receive authority comes only from the selected delivery team.
@@ -175,7 +237,7 @@ export class RegistryResolver {
         this.receivedRegistries.set(registryURL, scoped);
       }
       const checkpoint = checkpointFor?.(registryURL);
-      if (checkpoint) scoped.seedVerifiedHead(stableID, checkpoint);
+      if (checkpoint) scoped.seedVerifiedHead(registryURL, stableID, checkpoint);
       return { registryURL, result: await scoped.verifyStableIdentityAtRegistry(registryURL, stableID, did, true) };
     } catch (error) {
       return { registryURL: "", result: { outcome: "OK_DEGRADED", error: String(error) } };
@@ -207,21 +269,42 @@ export class RegistryResolver {
       return { outcome: "OK_DEGRADED", error: String(error) };
     }
     const expectedKey = expectedCurrentDidKey.trim();
+    if (expectedKey && resolution.current_did_key !== expectedKey && !fresh) {
+      const readKey = `key:${registryURL}|${stableID}`;
+      const claim = this.claimForcedRead(readKey);
+      if (!claim.allowed && claim.lastFailed) {
+        return {
+          outcome: "STALE_CACHE",
+          currentDidKey: resolution.current_did_key,
+          error: "registry key could not be read again in this interval",
+        };
+      }
+      if (claim.allowed) {
+        const staleKey = resolution.current_did_key;
+        try {
+          resolution = await this.resolveDidKey(registryURL, stableID, true);
+          this.recordForcedRead(readKey, false);
+        } catch (error) {
+          this.recordForcedRead(readKey, true);
+          return { outcome: "STALE_CACHE", currentDidKey: staleKey, error: String(error) };
+        }
+      }
+    }
     if (expectedKey && resolution.current_did_key !== expectedKey) {
       return {
-        outcome: fresh ? "HARD_ERROR" : "STALE_CACHE",
+        outcome: "HARD_ERROR",
         currentDidKey: resolution.current_did_key,
-        error: "registry key cache does not match the signed current key",
+        error: "registry key does not match the signed current key",
       };
     }
     if (resolution.did_aw !== stableID) {
       return { outcome: "HARD_ERROR", error: "registry key did:aw mismatch" };
     }
 
-    const cached = this.headCache.get(stableID);
+    const cached = this.headCache.get(headCacheKey(registryURL, stableID));
     const verification = verifyDidKeyResolution(resolution, cached, this.now());
     if (verification.outcome === "OK_VERIFIED" && verification.nextHead) {
-      this.headCache.set(stableID, verification.nextHead);
+      this.headCache.set(headCacheKey(registryURL, stableID), verification.nextHead);
     }
     // An unanchored seq>1 head (first contact or a seq gap) degrades; recover by
     // anchoring the full log to genesis, matching the Go resolver.
@@ -242,17 +325,19 @@ export class RegistryResolver {
 
   /**
    * Install a previously verified log head as the anti-rollback anchor for
-   * stableID. Callers restore it from the checkpoint persisted with the pin so a
-   * restart does not forget which sequence was already verified — without it a
-   * registry can serve a valid truncated prefix and roll a rotated identity back
-   * to a retired key (default-aajc.8). Seeding never moves the anchor backwards.
+   * stableID at registryURL. Callers restore it from the persisted checkpoint
+   * so a restart does not forget which sequence was already verified — without
+   * it a registry can serve a valid truncated prefix and roll a rotated identity
+   * back to a retired key (default-aajc.8). Seeding never moves the anchor
+   * backwards.
    */
-  seedVerifiedHead(stableID: string, head: VerifiedLogHead): void {
+  seedVerifiedHead(registryURL: string, stableID: string, head: VerifiedLogHead): void {
     const id = stableID.trim();
     if (!id || !head || !isValidDidLogSequence(head.seq) || !isLowerHex(head.entryHash.trim())) return;
-    const existing = this.headCache.get(id);
+    const key = headCacheKey(registryURL, id);
+    const existing = this.headCache.get(key);
     if (existing && existing.seq >= head.seq) return;
-    this.headCache.set(id, head);
+    this.headCache.set(key, head);
   }
 
   private async verifyStableIdentityViaFullLog(
@@ -281,7 +366,7 @@ export class RegistryResolver {
     // it. Otherwise a registry can serve a valid truncated prefix (rollback to a
     // retired key) or a valid fork that never included our entry
     // (default-aajc.8).
-    const checkpoint = this.headCache.get(stableID);
+    const checkpoint = this.headCache.get(headCacheKey(registryURL, stableID));
     if (checkpoint) {
       if (head.seq < checkpoint.seq) {
         return { outcome: "HARD_ERROR", currentDidKey, error: "audit log behind verified checkpoint" };
@@ -294,7 +379,7 @@ export class RegistryResolver {
         };
       }
     }
-    this.headCache.set(stableID, head);
+    this.headCache.set(headCacheKey(registryURL, stableID), head);
     return { outcome: "OK_VERIFIED", currentDidKey, verifiedHead: head };
   }
 
@@ -330,14 +415,14 @@ export class RegistryResolver {
     }
     const verification = verifyDidKeyResolution(
       resolution,
-      this.headCache.get(resolvedAddress.response.did_aw),
+      this.headCache.get(headCacheKey(resolvedAddress.registryURL, resolvedAddress.response.did_aw)),
       this.now(),
     );
     if (verification.outcome === "HARD_ERROR") {
       throw new Error(verification.error || "invalid log head");
     }
     if (verification.outcome === "OK_VERIFIED" && verification.nextHead) {
-      this.headCache.set(resolvedAddress.response.did_aw, verification.nextHead);
+      this.headCache.set(headCacheKey(resolvedAddress.registryURL, resolvedAddress.response.did_aw), verification.nextHead);
     }
     return {
       did: resolution.current_did_key,
@@ -389,16 +474,17 @@ export class RegistryResolver {
     return resolvedAuthority;
   }
 
-  private async resolveAddress(domain: string, name: string): Promise<{ registryURL: string; response: AddressResponse }> {
+  private async resolveAddress(domain: string, name: string, fresh = false): Promise<{ registryURL: string; response: AddressResponse }> {
     const key = `${domain}/${name}`;
     const cached = this.addressCache.get(key);
-    if (cached && this.now() <= cached.expiresAt) {
+    if (!fresh && cached && this.now() <= cached.expiresAt) {
       return cached.value;
     }
     const registryURL = await this.discoverRegistry(domain);
     const response = await this.getJSON<AddressResponse>(
       registryURL,
       `/v1/namespaces/${pathSafeSegment(domain)}/addresses/${pathSafeSegment(name)}`,
+      fresh,
     );
     const value = { registryURL, response };
     this.addressCache.set(key, { value, expiresAt: this.now() + REGISTRY_ADDRESS_TTL_MS });
@@ -518,11 +604,11 @@ export function parseAwidTXTRecord(record: string, dnsName: string): DomainAutho
   };
 }
 
-export function awidTXTName(domain: string): string {
+function awidTXTName(domain: string): string {
   return `_awid.${canonicalizeDomain(domain)}`;
 }
 
-export function candidateDomainsForLookup(domain: string): string[] {
+function candidateDomainsForLookup(domain: string): string[] {
   const canonical = canonicalizeDomain(domain);
   if (!canonical) return [];
   const labels = canonical.split(".");
@@ -536,7 +622,7 @@ export function candidateDomainsForLookup(domain: string): string[] {
   return out;
 }
 
-export function registeredDomainBoundary(domain: string): string {
+function registeredDomainBoundary(domain: string): string {
   return canonicalizeDomain(getDomain(domain) || domain);
 }
 
@@ -635,11 +721,7 @@ export function verifyDidKeyResolution(
 
   let validSignature = false;
   try {
-    validSignature = ed.verify(
-      b64Decode(head.signature),
-      new TextEncoder().encode(payload),
-      extractPublicKey(head.authorized_by),
-    );
+    validSignature = verifyBytes({signature: b64Decode(head.signature), message: new TextEncoder().encode(payload), publicKey: extractPublicKey(head.authorized_by)});
   } catch (error) {
     return { outcome: "HARD_ERROR", error: String(error) };
   }
@@ -861,43 +943,6 @@ function b64Decode(value: string): Uint8Array {
 
 function bytesToHex(bytes: Uint8Array): string {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
-function escapeJSON(s: string): string {
-  let result = "";
-  for (const ch of s) {
-    const code = ch.codePointAt(0)!;
-    switch (ch) {
-      case '"':
-        result += '\\"';
-        break;
-      case "\\":
-        result += "\\\\";
-        break;
-      case "\n":
-        result += "\\n";
-        break;
-      case "\r":
-        result += "\\r";
-        break;
-      case "\t":
-        result += "\\t";
-        break;
-      case "\b":
-        result += "\\b";
-        break;
-      case "\f":
-        result += "\\f";
-        break;
-      default:
-        if (code < 0x20) {
-          result += `\\u${code.toString(16).padStart(4, "0")}`;
-        } else {
-          result += ch;
-        }
-    }
-  }
-  return result;
 }
 
 /**

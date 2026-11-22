@@ -34,11 +34,19 @@ from urllib.parse import quote, urlsplit
 
 import httpx
 from awid.did import did_key_from_signing_key, public_key_from_did, validate_stable_id
+from awid.dns_auth import DIDKeyHeaderProfile, parse_didkey_auth
 from awid.external_authority import SystemTXTOutcomeResolver, TXTOutcomeResolver
 from awid.log import canonical_server_origin
 from awid.registry_auth import RegistryRequestAuth
+from awid.request_auth import (
+    RequestAuthProfile,
+    decode_signed_payload_header,
+    team_auth_signature_payload,
+)
+from awid.request_auth import (
+    raw_request_target as _raw_request_target,
+)
 from awid.signing import (
-    canonical_json_bytes,
     verify_did_key_signature,
 )
 from awid.team_certificate import (
@@ -49,12 +57,14 @@ from awid.team_certificate import (
 )
 from awid.team_ids import parse_team_id
 from awid.team_key_acts import (
+    TEAM_KEY_UNVERIFIED_DETAIL,
     MemoryTeamKeyPins,
     TeamKeyMemo,
     TeamKeyPinStore,
     TeamKeyUnverified,
     pinned_team_key,
 )
+from awid.utc_timestamps import parse_zoned_timestamp
 from fastapi import HTTPException, Request
 from pgdbm import AsyncDatabaseManager
 
@@ -259,7 +269,9 @@ class AWIDTeamCache:
         self._transport = transport
         self._team_key_pins = team_key_pins if team_key_pins is not None else MemoryTeamKeyPins()
         self._team_key_memo = TeamKeyMemo()
-        self._txt_resolver = txt_resolver if txt_resolver is not None else SystemTXTOutcomeResolver()
+        self._txt_resolver = (
+            txt_resolver if txt_resolver is not None else SystemTXTOutcomeResolver()
+        )
         self._enforce_team_key_pins = enforce_team_key_pins
 
     async def _pinned_team_key(self, team_id: str, served_key: str) -> str:
@@ -282,7 +294,9 @@ class AWIDTeamCache:
             if response.status_code == 404:
                 return None
             if response.status_code >= 400:
-                logger.warning("AWID team key act read for %s answered %s", team_id, response.status_code)
+                logger.warning(
+                    "AWID team key act read for %s answered %s", team_id, response.status_code
+                )
                 raise HTTPException(status_code=503, detail="AWID registry unavailable")
             try:
                 return response.json()
@@ -291,11 +305,15 @@ class AWIDTeamCache:
 
         try:
             key = await pinned_team_key(
-                team_id, served_key, pins=self._team_key_pins, fetch_act=fetch_act, resolver=self._txt_resolver,
+                team_id,
+                served_key,
+                pins=self._team_key_pins,
+                fetch_act=fetch_act,
+                resolver=self._txt_resolver,
                 enforce=self._enforce_team_key_pins,
             )
         except TeamKeyUnverified:
-            raise HTTPException(status_code=401, detail="team_key_unverified") from None
+            raise HTTPException(status_code=401, detail=TEAM_KEY_UNVERIFIED_DETAIL) from None
         self._team_key_memo.put(team_id, served_key, key)
         return key
 
@@ -337,8 +355,10 @@ class AWIDTeamCache:
         window; facts already past their expiry cannot issue a fresh proof.
         """
         if (
-            not isinstance(certificate_id, str) or not certificate_id.strip()
-            or not isinstance(team_did_key, str) or not team_did_key.strip()
+            not isinstance(certificate_id, str)
+            or not certificate_id.strip()
+            or not isinstance(team_did_key, str)
+            or not team_did_key.strip()
         ):
             raise _current_member_refusal(403)
         try:
@@ -373,8 +393,10 @@ class AWIDTeamCache:
             return await self._get_certificate_status(team_id, certificate_id)
         now = time.monotonic_ns()
         cached = self._cache.get(team_id)
-        if cached and cached.expires_at > now and (
-            certificate_id is None or certificate_id in cached.published_certificate_ids
+        if (
+            cached
+            and cached.expires_at > now
+            and (certificate_id is None or certificate_id in cached.published_certificate_ids)
         ):
             return cached
 
@@ -383,10 +405,16 @@ class AWIDTeamCache:
             now = time.monotonic_ns()
             cached = self._cache.get(team_id)
             fresh = cached is not None and cached.expires_at > now
-            if cached is not None and fresh and (certificate_id is None or certificate_id in cached.published_certificate_ids):
+            if (
+                cached is not None
+                and fresh
+                and (certificate_id is None or certificate_id in cached.published_certificate_ids)
+            ):
                 return cached
             last_refresh = self._unknown_refresh_at.get(team_id)
-            if last_refresh is not None and now - last_refresh < seconds_to_ns(UNKNOWN_CERTIFICATE_REFRESH_SECONDS):
+            if last_refresh is not None and now - last_refresh < seconds_to_ns(
+                UNKNOWN_CERTIFICATE_REFRESH_SECONDS
+            ):
                 if cached is not None and fresh:
                     return cached
                 failure = self._team_refresh_errors.get(team_id)
@@ -413,7 +441,9 @@ class AWIDTeamCache:
                     self._unknown_refresh_at[team_id] = time.monotonic_ns()
                 raise
             self._team_refresh_errors.pop(team_id, None)
-            if not fresh and (certificate_id is None or certificate_id in facts.published_certificate_ids):
+            if not fresh and (
+                certificate_id is None or certificate_id in facts.published_certificate_ids
+            ):
                 # An ordinary successful load does not consume the early-refresh
                 # allowance for a certificate published immediately afterwards.
                 self._unknown_refresh_at.pop(team_id, None)
@@ -454,7 +484,9 @@ class AWIDTeamCache:
                 # A check, not a load: requests read their own facts.
                 facts = await self._refresh_team_facts(team_id, time.monotonic_ns(), store=False)
                 check_team_certificate(
-                    base64.b64encode(json.dumps(dict(credential.certificate)).encode()).decode("ascii"),
+                    base64.b64encode(json.dumps(dict(credential.certificate)).encode()).decode(
+                        "ascii"
+                    ),
                     subject_did_key=did_key_from_signing_key(credential.signing_key),
                     team_did_key=facts.team_did_key,
                     revoked_certificate_ids=facts.revoked_certificate_ids,
@@ -484,7 +516,9 @@ class AWIDTeamCache:
 
                 team_did_key = str(team_payload.get("team_did_key") or "").strip()
                 if not team_did_key:
-                    raise HTTPException(status_code=503, detail="AWID team response missing team_did_key")
+                    raise HTTPException(
+                        status_code=503, detail="AWID team response missing team_did_key"
+                    )
 
                 published: set[str] = set()
                 revoked: set[str] = set()
@@ -492,17 +526,24 @@ class AWIDTeamCache:
                 seen_cursors: set[str] = set()
                 for _ in range(MAX_CERTIFICATE_PAGES):
                     params: dict[str, str | int] = {
-                        "active_only": "false", "limit": CERTIFICATE_PAGE_SIZE,
+                        "active_only": "false",
+                        "limit": CERTIFICATE_PAGE_SIZE,
                     }
                     if cursor is not None:
                         params["cursor"] = cursor
-                    certificates_url = f"{self.registry_url}/v1/namespaces/{domain}/teams/{team_name}/certificates"
+                    certificates_url = (
+                        f"{self.registry_url}/v1/namespaces/{domain}/teams/{team_name}/certificates"
+                    )
                     cert_resp = await client.get(
-                        certificates_url, params=params, headers=self._read_headers(certificates_url),
+                        certificates_url,
+                        params=params,
+                        headers=self._read_headers(certificates_url),
                     )
                     _raise_if_private_team_unreadable(cert_resp, team_id)
                     if cert_resp.status_code >= 400:
-                        raise HTTPException(status_code=503, detail="AWID certificate revocation lookup unavailable")
+                        raise HTTPException(
+                            status_code=503, detail="AWID certificate revocation lookup unavailable"
+                        )
                     cert_payload = cert_resp.json()
                     page = cert_payload.get("certificates")
                     has_more = cert_payload.get("has_more")
@@ -518,18 +559,31 @@ class AWIDTeamCache:
                             for item in page
                         )
                     ):
-                        raise HTTPException(status_code=503, detail="AWID certificate revocation response is incomplete")
+                        raise HTTPException(
+                            status_code=503,
+                            detail="AWID certificate revocation response is incomplete",
+                        )
                     published.update(item["certificate_id"] for item in page)
-                    revoked.update(item["certificate_id"] for item in page if item["revoked_at"] is not None)
+                    revoked.update(
+                        item["certificate_id"] for item in page if item["revoked_at"] is not None
+                    )
                     if not has_more:
                         break
                     next_cursor = cert_payload.get("next_cursor")
-                    if not isinstance(next_cursor, str) or not next_cursor.strip() or next_cursor in seen_cursors:
-                        raise HTTPException(status_code=503, detail="AWID certificate pagination did not advance")
+                    if (
+                        not isinstance(next_cursor, str)
+                        or not next_cursor.strip()
+                        or next_cursor in seen_cursors
+                    ):
+                        raise HTTPException(
+                            status_code=503, detail="AWID certificate pagination did not advance"
+                        )
                     seen_cursors.add(next_cursor)
                     cursor = next_cursor
                 else:
-                    raise HTTPException(status_code=503, detail="AWID certificate pagination limit exceeded")
+                    raise HTTPException(
+                        status_code=503, detail="AWID certificate pagination limit exceeded"
+                    )
         except HTTPException as exc:
             logger.warning("AWID team facts refresh failed: %s", exc.detail)
             raise
@@ -551,9 +605,7 @@ class AWIDTeamCache:
             self._cache[team_id] = facts
         return facts
 
-    async def _get_certificate_status(
-        self, team_id: str, certificate_id: str
-    ) -> CachedTeamFacts:
+    async def _get_certificate_status(self, team_id: str, certificate_id: str) -> CachedTeamFacts:
         now = time.monotonic_ns()
         cache_key = (team_id, certificate_id)
         cached = self._certificate_cache.get(cache_key)
@@ -644,7 +696,9 @@ class AWIDTeamCache:
                 public_key_from_did(current_did_key)
         except Exception as exc:
             logger.warning("AWID did:aw resolution failed for %s", did_aw, exc_info=True)
-            raise HTTPException(status_code=503, detail="AWID did:aw resolution unavailable") from exc
+            raise HTTPException(
+                status_code=503, detail="AWID did:aw resolution unavailable"
+            ) from exc
         self._did_keys[cache_key] = CachedDidKey(
             current_did_key=current_did_key, expires_at=now + seconds_to_ns(self.ttl_seconds)
         )
@@ -668,39 +722,44 @@ async def _did_aw_registry_verified(
         else:
             outcome = "key_mismatch"
         if outcome != "match" and profile is DidAwProfile.REQUIRE:
-            raise HTTPException(status_code=401, detail="did:aw current key does not match the signer")
+            raise HTTPException(
+                status_code=401, detail="did:aw current key does not match the signer"
+            )
     if profile is DidAwProfile.OBSERVE:
         # The measurement before an app requires the check: a stable outcome
         # and the DID, nothing from the request.
         logger.log(
             logging.INFO if outcome == "match" else logging.WARNING,
-            "did:aw current-key check %s for %s", outcome, did_aw,
+            "did:aw current-key check %s for %s",
+            outcome,
+            did_aw,
             extra={"did_aw_outcome": outcome, "did_aw": did_aw},
         )
     return outcome == "match"
 
 
 def _parse_didkey_auth(header: str) -> tuple[str, str]:
-    parts = header.strip().split()
-    if len(parts) != 3 or parts[0] != "DIDKey":
-        raise HTTPException(status_code=401, detail="Invalid Authorization header")
-    did_key, signature = parts[1].strip(), parts[2].strip()
+    try:
+        did_key, signature = parse_didkey_auth(
+            header, profile=DIDKeyHeaderProfile.WHITESPACE_SEPARATED
+        )
+    except HTTPException as exc:
+        raise HTTPException(status_code=401, detail="Invalid Authorization header") from exc
     if not did_key.startswith("did:key:") or not signature:
         raise HTTPException(status_code=401, detail="Invalid DIDKey Authorization header")
     return did_key, signature
 
 
 def _parse_rfc3339_utc(value: str) -> datetime:
-    text = value.strip()
-    if text.endswith("Z"):
-        text = text[:-1] + "+00:00"
     try:
-        parsed = datetime.fromisoformat(text)
+        return parse_zoned_timestamp(value)
     except ValueError as exc:
-        raise HTTPException(status_code=401, detail="Invalid X-AWEB-Timestamp") from exc
-    if parsed.tzinfo is None:
-        raise HTTPException(status_code=401, detail="X-AWEB-Timestamp must include timezone")
-    return parsed.astimezone(UTC)
+        detail = (
+            "X-AWEB-Timestamp must include timezone"
+            if "timezone" in str(exc)
+            else "Invalid X-AWEB-Timestamp"
+        )
+        raise HTTPException(status_code=401, detail=detail) from exc
 
 
 def _certificate_refusal(error: TeamCertificateError) -> HTTPException:
@@ -727,11 +786,9 @@ def _decode_signed_payload_header(value: str) -> bytes:
     text = value.strip()
     if not text:
         raise HTTPException(status_code=401, detail="Missing X-AWEB-Signed-Payload")
-    if "=" in text or _B64URL_NO_PADDING.fullmatch(text) is None:
-        raise HTTPException(status_code=401, detail="Invalid X-AWEB-Signed-Payload")
     try:
-        return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
-    except Exception as exc:
+        return decode_signed_payload_header(text, profile=RequestAuthProfile.NAAPP_V2)
+    except ValueError as exc:
         raise HTTPException(status_code=401, detail="Invalid X-AWEB-Signed-Payload") from exc
 
 
@@ -743,36 +800,10 @@ def signed_payload_bytes(request: Request) -> bytes:
 
 
 def raw_request_target(request: Request) -> str:
-    raw_path_value = request.scope.get("raw_path")
-    if isinstance(raw_path_value, bytes):
-        try:
-            path = raw_path_value.decode("ascii")
-        except UnicodeDecodeError as exc:
-            raise HTTPException(status_code=400, detail="Request target is not ASCII") from exc
-    elif raw_path_value:
-        path = str(raw_path_value)
-    else:
-        path = quote(str(request.scope.get("path") or request.url.path or "/"), safe="/%")
-
-    root_path = str(request.scope.get("root_path") or "")
-    if root_path and not path.startswith(root_path):
-        encoded_root = quote(root_path.rstrip("/"), safe="/%")
-        path = encoded_root + (path if path.startswith("/") else f"/{path}")
-
-    if not path.startswith("/"):
-        path = f"/{path}"
-
-    query_string = request.scope.get("query_string") or b""
-    if isinstance(query_string, bytes):
-        try:
-            query = query_string.decode("ascii")
-        except UnicodeDecodeError as exc:
-            raise HTTPException(status_code=400, detail="Request target is not ASCII") from exc
-    else:
-        query = str(query_string)
-    if query:
-        return f"{path}?{query}"
-    return path
+    try:
+        return _raw_request_target(request)
+    except UnicodeDecodeError as exc:
+        raise HTTPException(status_code=400, detail="Request target is not ASCII") from exc
 
 
 def _verified_signed_payload(
@@ -785,38 +816,29 @@ def _verified_signed_payload(
     team_id: str,
     body: bytes,
 ) -> dict[str, Any]:
-    canonical = signed_payload_bytes(request)
+    # The decoder retains this consumer's strict v2-only wire policy. Request
+    # binding and purpose separation are owned by awid, as on the server.
     try:
-        payload = json.loads(canonical)
-        # A value that does not encode, such as a lone surrogate, can never be
-        # the canonical bytes the member signed.
-        recanonical = canonical_json_bytes(payload) if isinstance(payload, dict) else None
+        envelope = team_auth_signature_payload(
+            request,
+            team_id=team_id,
+            timestamp=header_timestamp.strip(),
+            body_sha256=hashlib.sha256(body).hexdigest(),
+            allowed_audiences=[public_origin],
+            profile=RequestAuthProfile.NAAPP_V2,
+        )
+    except UnicodeDecodeError as exc:
+        raise HTTPException(status_code=400, detail="Request target is not ASCII") from exc
     except (ValueError, TypeError, RecursionError) as exc:
-        raise HTTPException(status_code=401, detail="Invalid X-AWEB-Signed-Payload") from exc
-    if recanonical != canonical:
-        raise HTTPException(status_code=401, detail="Invalid X-AWEB-Signed-Payload")
-
-    if payload.get("v") != TEAM_AUTH_ENVELOPE_V2:
-        raise HTTPException(status_code=401, detail="Unsupported team-auth envelope version")
-
-    expected = {
-        "body_sha256": hashlib.sha256(body).hexdigest(),
-        "method": request.method.upper(),
-        "path": raw_request_target(request),
-        "team_id": team_id,
-        "timestamp": header_timestamp.strip(),
-    }
-    for field, expected_value in expected.items():
-        if str(payload.get(field) or "").strip() != expected_value:
-            raise HTTPException(status_code=401, detail="Signed request payload does not match request")
-
-    try:
-        configured_audience = canonical_server_origin(public_origin)
-        signed_audience = canonical_server_origin(str(payload.get("aud") or "").strip())
-    except Exception as exc:
-        raise HTTPException(status_code=401, detail="Signed request payload audience is invalid") from exc
-    if signed_audience != configured_audience:
-        raise HTTPException(status_code=401, detail="Signed request payload audience is not allowed")
+        detail = str(exc)
+        if detail == "missing X-AWEB-Signed-Payload header":
+            detail = "Missing X-AWEB-Signed-Payload"
+        elif detail == "invalid X-AWEB-Signed-Payload header":
+            detail = "Invalid X-AWEB-Signed-Payload"
+        else:
+            detail = detail[:1].upper() + detail[1:]
+        raise HTTPException(status_code=401, detail=detail) from exc
+    canonical, payload = envelope.canonical_payload, envelope.payload
 
     try:
         verify_did_key_signature(did_key=did_key, payload=canonical, signature_b64=signature)
@@ -827,7 +849,10 @@ def _verified_signed_payload(
 
 
 async def require_active_certificate(
-    team_cache: AWIDTeamCache, *, team_id: str, certificate_id: str,
+    team_cache: AWIDTeamCache,
+    *,
+    team_id: str,
+    certificate_id: str,
 ) -> CachedTeamFacts:
     """Require controller-published, unrevoked membership through the shared cache.
 
@@ -856,7 +881,9 @@ async def authenticate_request(
     auth_header = request.headers.get("Authorization") or request.headers.get("authorization") or ""
     did_key, signature = _parse_didkey_auth(auth_header)
 
-    timestamp = request.headers.get("X-AWEB-Timestamp") or request.headers.get("x-aweb-timestamp") or ""
+    timestamp = (
+        request.headers.get("X-AWEB-Timestamp") or request.headers.get("x-aweb-timestamp") or ""
+    )
     if not timestamp:
         raise HTTPException(status_code=401, detail="Missing X-AWEB-Timestamp")
     parsed_timestamp = _parse_rfc3339_utc(timestamp)
@@ -864,7 +891,11 @@ async def authenticate_request(
     if skew > min(timestamp_skew_seconds, MAX_TIMESTAMP_SKEW_SECONDS):
         raise HTTPException(status_code=401, detail="X-AWEB-Timestamp outside allowed clock skew")
 
-    cert_header = request.headers.get("X-AWID-Team-Certificate") or request.headers.get("x-awid-team-certificate") or ""
+    cert_header = (
+        request.headers.get("X-AWID-Team-Certificate")
+        or request.headers.get("x-awid-team-certificate")
+        or ""
+    )
     if not cert_header:
         raise HTTPException(status_code=401, detail="Missing X-AWID-Team-Certificate")
     team_id, certificate_id = _certificate_locator(cert_header)

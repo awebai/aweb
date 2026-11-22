@@ -28,7 +28,7 @@ import time
 import tomllib
 from urllib.parse import quote
 
-APPROVAL = "7dac79afab8d6c341b14f7afa1625d2e42a050bb"
+APPROVAL = "426fc6ba11f916cd2c2b4d0246e802486e1ab946"
 ORG = "org.adcl6.test"
 REGISTRY = "https://awid.adcl6.test"
 SITE = "https://approval.adcl6.test"

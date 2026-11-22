@@ -18,6 +18,7 @@ import (
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/signaturewire"
 	"github.com/spf13/cobra"
 )
 
@@ -48,15 +49,6 @@ func init() {
 	statusHostCmd.AddCommand(set, clear, show)
 	statusCmd.AddCommand(publish)
 	rootCmd.AddCommand(statusHostCmd, statusCmd)
-}
-
-func isAgentStatusCommand(cmd *cobra.Command) bool {
-	for current := cmd; current != nil; current = current.Parent() {
-		if current == statusCmd || current == statusHostCmd {
-			return true
-		}
-	}
-	return false
 }
 
 // Execute also calls this for pre-run/flag/identity-selection errors, so --json
@@ -238,7 +230,7 @@ func signAgentStatus(raw []byte, identity *localSigningIdentity) (map[string]str
 	if len(payload) > 2048 {
 		return nil, fmt.Errorf("canonical status document exceeds 2048 bytes")
 	}
-	return map[string]string{"signed_payload": base64.RawURLEncoding.EncodeToString(payload), "signature": base64.RawStdEncoding.EncodeToString(ed25519.Sign(identity.SigningKey, payload))}, nil
+	return map[string]string{"signed_payload": base64.RawURLEncoding.EncodeToString(payload), "signature": signaturewire.SignStd(identity.SigningKey, payload)}, nil
 }
 
 func runStatusRequest(cmd *cobra.Command, method, path string, body any) error {

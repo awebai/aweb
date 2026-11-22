@@ -22,7 +22,7 @@ AWID_A_URL="$(journey_url "$PROJECT" awid-a 8010 "http://$PUBLISHED_HOST:$AWID_A
 AWID_B_URL="$(journey_url "$PROJECT" awid-b 8010 "http://$PUBLISHED_HOST:$AWID_B_PORT")"
 AWEB_A_URL="$(journey_url "$PROJECT" aweb-a 8000 "http://$PUBLISHED_HOST:$AWEB_A_PORT")"
 AWEB_B_URL="$(journey_url "$PROJECT" aweb-b 8000 "http://$PUBLISHED_HOST:$AWEB_B_PORT")"
-mkdir -p "$DNS_DIR" "$WORK_DIR/home" "$WORK_DIR/alice" "$WORK_DIR/bob"
+mkdir -p "$DNS_DIR" "$WORK_DIR/home" "$WORK_DIR/alice" "$WORK_DIR/bob" "$WORK_DIR/wrong-controller"
 # CoreDNS runs as nonroot; only its public DNS mounts cross the UID boundary.
 chmod 0755 "$DNS_DIR"
 
@@ -422,8 +422,9 @@ for _ in $(seq 1 30); do
 done
 [[ "$dns_published" == 1 ]] || { printf '%s\n' "$seen" >&2; exit 1; }
 awid_refused=0
+# Keep the probe's creation attempt in a different home from Alice's journey.
 for _ in $(seq 1 30); do
-  if refused="$(run_cli alice id create --name alice --domain alpha.example.com --registry http://awid-a:8010 --json 2>&1)"; then
+  if refused="$(run_cli wrong-controller id create --name alice --domain alpha.example.com --registry http://awid-a:8010 --json 2>&1)"; then
     echo "AWID accepted a namespace whose DNS controller is another key" >&2
     exit 1
   fi
@@ -529,6 +530,8 @@ ALICE_DID_AW="$(printf '%s' "$alice_create" | json_field did_aw)"
 BOB_DID_AW="$(printf '%s' "$bob_create" | json_field did_aw)"
 compose run --rm -T --no-deps --entrypoint id-tree-verifier cli
 compose cp "$ROOT/scripts/cross-registry-python-verifier.py" awid-b:/tmp/cross-registry-python-verifier.py
+# docker cp preserves host modes but the verifier runs as the registry UID.
+compose exec -T --user root awid-b chmod 0644 /tmp/cross-registry-python-verifier.py
 compose exec -T awid-b python /tmp/cross-registry-python-verifier.py < "$WORK_DIR/journey-public.json"
 # Membership and connection are not ancestry: joining a team, connecting to
 # aweb and later leaving the team keep each identity and its exact chain.

@@ -49,8 +49,8 @@ async def _seed(db) -> dict[str, set]:
         )
         await db.execute(
             """
-            INSERT INTO {{tables.agents}} (agent_id, team_id, did_key, alias, created_at)
-            VALUES ($1, $2, $3, 'alice', $4)
+            INSERT INTO {{tables.agents}} (agent_id, team_id, did_key, alias, created_at, inbound_mode)
+            VALUES ($1, $2, $3, 'alice', $4, 'open')
             """,
             agent_id,
             team_id,

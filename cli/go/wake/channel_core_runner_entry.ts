@@ -1,5 +1,6 @@
 import { runOATS } from "./oats_command.js";
 import { createInterface } from "node:readline";
+import { setTimeout as delay } from "node:timers/promises";
 import {
   consumeAgentEvents,
   createChannelClient,
@@ -111,26 +112,81 @@ function traceStatus(bindingID: string, entry: { stage?: string; message_id?: st
 }
 
 
+interface StartupPresenceObserver {
+  inspect(): Promise<TerminalInspection>;
+  hasObservedReceiver(): boolean;
+  signal: AbortSignal;
+  reportError(error: unknown): void;
+}
+
+async function inspectStartupPresence(observer: StartupPresenceObserver): Promise<void> {
+  try {
+    await observer.inspect();
+  } catch (error) {
+    if (!observer.signal.aborted) observer.reportError(error);
+  }
+}
+
+// A registration may precede launch. Observe only until this runner generation
+// sees process presence; ordinary delivery then owns inspection (terminal-wake-broker.md:186-193).
+async function observeStartupPresence(observer: StartupPresenceObserver): Promise<void> {
+  while (!observer.signal.aborted && !observer.hasObservedReceiver()) {
+    try {
+      await delay(250, undefined, { signal: observer.signal });
+    } catch (error) {
+      if (observer.signal.aborted) return;
+      throw error;
+    }
+    if (observer.signal.aborted || observer.hasObservedReceiver()) return;
+    await inspectStartupPresence(observer);
+  }
+}
+
 async function start(init: InitLine): Promise<void> {
   paused = Boolean(init.paused);
   const oatsBin = init.oatsBin || process.env.AW_WAKE_OATS_BIN || "oats";
   const awCommand = init.awCommand || "aw";
   let confirmedLive = false;
+  let receiverObserved = false;
+  let pendingInspection: Promise<TerminalInspection> | undefined;
+  const inspectSession = async (home: string): Promise<TerminalInspection> => {
+    if (abort.signal.aborted) throw new Error("runner generation stopped");
+    status({ readiness_waiting: "inspect_start" });
+    try {
+      const envelope = await runOATS(oatsBin, ["session", "inspect", "--home", home, "--json"], "", { signal: abort.signal });
+      if (abort.signal.aborted) throw new Error("runner generation stopped");
+      const observation = envelope.result;
+      if (typeof observation?.present !== "boolean"
+        || (observation.state !== undefined && typeof observation.state !== "string")
+        || (observation.running !== undefined && typeof observation.running !== "boolean")) {
+        throw new Error("oats session inspect did not report valid process presence");
+      }
+      const state = normalizeTerminalReadiness(observation.state, observation.present);
+      if (observation.present) confirmedLive = true;
+      if (observation.present && observation.running !== false
+        && state !== "shell" && state !== "stopped" && state !== "not-launched") {
+        receiverObserved = true;
+      }
+      status({ readiness_waiting: "inspect_done", readiness_state: state, readiness_error: "" });
+      if (confirmedLive && (state === "stopped" || state === "not-launched")) onInactive(state);
+      return { present: observation.present, state };
+    } catch (error) {
+      if (!abort.signal.aborted) {
+        status({ readiness_waiting: "inspect_error", readiness_error: error instanceof Error ? error.message : String(error) });
+      }
+      throw error;
+    }
+  };
   const session = {
     async inspect(home: string): Promise<TerminalInspection> {
-      status({ readiness_waiting: "inspect_start" });
+      // Startup and delivery share an in-flight observation, so a slower
+      // prelaunch inspect cannot overwrite a later live observation.
+      if (pendingInspection) return pendingInspection;
+      pendingInspection = inspectSession(home);
       try {
-        const envelope = await runOATS(oatsBin, ["session", "inspect", "--home", home, "--json"], "", { signal: abort.signal });
-        if (envelope.result?.present === true) confirmedLive = true;
-        const state = normalizeTerminalReadiness(envelope.result?.state, envelope.result?.present ?? true);
-        status({ readiness_waiting: "inspect_done", readiness_state: state, readiness_error: "" });
-        // Prelaunch registration must keep receiving unread snapshots until
-        // the harness appears; only a previously present session can go inactive.
-        if (confirmedLive && (state === "stopped" || state === "not-launched")) onInactive(state);
-        return { present: envelope.result?.present, state };
-      } catch (error) {
-        status({ readiness_waiting: "inspect_error", readiness_error: error instanceof Error ? error.message : String(error) });
-        throw error;
+        return await pendingInspection;
+      } finally {
+        pendingInspection = undefined;
       }
     },
     async input(home: string, text: string): Promise<void> {
@@ -179,17 +235,18 @@ async function start(init: InitLine): Promise<void> {
       status({ binding_id: binding.binding_id, error: message });
     }));
   }
-  // Quiet homes need one live observation too, so older brokers can retain
-  // their first_present_at after a downgrade. Delivery remains event-driven.
-  try {
-    await session.inspect(init.home);
-  } catch (error) {
-    if (!abort.signal.aborted) {
-      lastError = error instanceof Error ? error.message : String(error);
-      status({ readiness_error: lastError });
-    }
-  }
+  const startup: StartupPresenceObserver = {
+    inspect: () => session.inspect(init.home),
+    hasObservedReceiver: () => receiverObserved,
+    signal: abort.signal,
+    reportError: (error) => status({ readiness_error: error instanceof Error ? error.message : String(error) }),
+  };
+  await inspectStartupPresence(startup);
+  if (abort.signal.aborted) return;
   status({ ready: true });
+  // Registration must complete before the launcher can create the process.
+  // Continue observing in the background without delaying that handshake.
+  consumers.push(observeStartupPresence(startup));
 }
 
 async function main(): Promise<void> {

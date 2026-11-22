@@ -343,6 +343,10 @@ is not the header's; `epoch_absent` when the bundle holds no epoch with its
 The report is:
 
 - `intact`: every epoch is intact and linked, and no witness is contradicted;
+- `attested_epochs`: the epoch numbers for which an accepted receipt or
+  checkpoint agrees with the represented chain, from the bundle or supplied
+  witnesses; an empty array when none does. This is separate from structural
+  `intact` and does not establish the producer's declared authority;
 - `accepted_keys`: `{"receipt": [...], "checkpoint": [...]}`, the keys given;
 - `epochs`: for each epoch in bundle order, its `chain_epoch`, the per-epoch
   report of `verify` (`intact`, `first_break`, `missing`, `purged`,
@@ -397,7 +401,10 @@ this artefact object, so `{"receipt": <the ack's receipt>}` is a witness line.
 files it is given and reaches no workspace, identity or server. It requires at
 least one key of each kind, each an Ed25519 `did:key`, and never takes a key
 from the bundle. `--bundle -` reads stdin; a witness file cannot. `--json`
-prints the report above. It exits 0 when the bundle is intact, 1 when it is
+prints the report above. Text output includes an `attested:` line naming those
+epochs, or `attested: none` with a command-independent instruction to supply an
+accepted receipt or checkpoint. Structural `intact: true` alone is not
+accepted-key attestation. It exits 0 when the bundle is intact, 1 when it is
 verified and not intact, and 2 when it could not be verified, with the error
 codes `usage`, `keys_invalid`, `input_unreadable`, `bundle_malformed`,
 `witness_malformed` and, for anything else, `verify_failed`.

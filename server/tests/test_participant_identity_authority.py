@@ -1,5 +1,4 @@
 """A global participant is its did:aw, not its signing-key identity."""
-import json
 from uuid import UUID, uuid4
 
 import pytest
@@ -9,6 +8,8 @@ from test_multi_membership_address import addressed_human  # noqa: F401
 from test_dashboard_privacy import privacy_app  # noqa: F401
 from test_messages_http import _signed_identity_headers
 from test_mcp_mail_conversation_parity import mail_server  # noqa: F401
+
+__all__ = ["addressed_human", "mail_server"]
 
 
 @pytest.mark.asyncio
@@ -46,7 +47,7 @@ async def test_hosted_signature_key_does_not_replace_global_thread_participant(m
     assert 'error' not in result, result
     cid = UUID(result['conversation_id'])
     participants = await env.db.fetch_all("SELECT did FROM {{tables.conversation_participants}} WHERE conversation_id=$1", cid)
-    assert {row['did'] for row in participants} == {'did:aw:pilot', 'did:aw:human'}
+    assert {row['did'] for row in participants} == {env.pilot_stable, env.human_stable}
     payload = env.custody.payloads[-1]
     assert payload['from_did'] == env.pilot_did
-    assert payload['from_stable_id'] == 'did:aw:pilot'
+    assert payload['from_stable_id'] == env.pilot_stable

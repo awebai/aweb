@@ -47,15 +47,31 @@ type SendMessageRequest struct {
 	// verified key assertion says aweb's hosted service holds the key.
 	E2EEInherited bool              `json:"-"`
 	E2EERecipient *E2EERecipientKey `json:"-"`
+	// ConfirmedRecipient is what the sender's team roster names for ToAlias;
+	// it is signed, never sent as a selector.
+	ConfirmedRecipient *ConfirmedRecipient `json:"-"`
 
 	NewConversation bool `json:"new_conversation,omitempty"`
 }
 
+// ConfirmedRecipient is the identity the sender's team roster names for the
+// one alias a message is sent to. The message signs it as its recipient
+// binding and still routes by the alias: the server refuses a signed binding
+// that names another member (docs/aweb-sot.md:1036-1047).
+type ConfirmedRecipient struct {
+	// DID is the member's current did:key.
+	DID string
+	// StableID is the member's did:aw, when it has one.
+	StableID string
+}
+
 type SendMessageResponse struct {
-	MessageID      string `json:"message_id"`
-	ConversationID string `json:"conversation_id,omitempty"`
-	Status         string `json:"status"`
-	DeliveredAt    string `json:"delivered_at"`
+	RecipientDID      string `json:"recipient_did,omitempty"`
+	RecipientStableID string `json:"recipient_stable_id,omitempty"`
+	MessageID         string `json:"message_id"`
+	ConversationID    string `json:"conversation_id,omitempty"`
+	Status            string `json:"status"`
+	DeliveredAt       string `json:"delivered_at"`
 }
 
 func (c *Client) SendMessage(ctx context.Context, req *SendMessageRequest) (*SendMessageResponse, error) {
@@ -150,6 +166,13 @@ func (c *Client) sendMessage(ctx context.Context, req *SendMessageRequest, ident
 	if strings.TrimSpace(payload.ToAddress) != "" {
 		to = strings.TrimSpace(payload.ToAddress)
 	}
+	signedToDID, signedToStableID := toDID, toStableID
+	confirmedAlias := payload.ConfirmedRecipient != nil && strings.TrimSpace(payload.ToAlias) != "" &&
+		toDID == "" && toStableID == "" && strings.TrimSpace(payload.ToAddress) == ""
+	if confirmedAlias {
+		signedToDID = strings.TrimSpace(payload.ConfirmedRecipient.DID)
+		signedToStableID = strings.TrimSpace(payload.ConfirmedRecipient.StableID)
+	}
 	if payload.EncryptE2EE {
 		if err := c.prepareE2EEMail(ctx, &payload, identityTarget, initialConversationID, hasRecipient); err != nil {
 			return nil, err
@@ -167,8 +190,8 @@ func (c *Client) sendMessage(ctx context.Context, req *SendMessageRequest, ident
 	sf, err := c.signEnvelope(ctx, &MessageEnvelope{
 		From:                          from,
 		To:                            to,
-		ToDID:                         toDID,
-		ToStableID:                    toStableID,
+		ToDID:                         signedToDID,
+		ToStableID:                    signedToStableID,
 		Type:                          "mail",
 		Priority:                      signedMailPriority(payload.Priority),
 		Subject:                       payload.Subject,
@@ -182,8 +205,10 @@ func (c *Client) sendMessage(ctx context.Context, req *SendMessageRequest, ident
 	}
 	if c.canAttachPlainMessageSignature() {
 		payload.FromDID = sf.FromDID
-		payload.ToDID = sf.ToDID
-		payload.ToStableID = sf.ToStableID
+		if !confirmedAlias {
+			payload.ToDID = sf.ToDID
+			payload.ToStableID = sf.ToStableID
+		}
 		payload.Signature = sf.Signature
 		payload.MessageID = sf.MessageID
 		payload.Timestamp = sf.Timestamp
@@ -194,25 +219,36 @@ func (c *Client) sendMessage(ctx context.Context, req *SendMessageRequest, ident
 	if err := c.Post(ctx, "/v1/messages", &payload, &out); err != nil {
 		return nil, err
 	}
+	// These are the exact recipient claims signed by this send, not a later
+	// address lookup. Bridges bind subsequent replies to this identity.
+	out.RecipientDID, out.RecipientStableID = sf.ToDID, sf.ToStableID
 	return &out, nil
+}
+
+// VerifyInboxResponse verifies rows with the same rules as the ordinary mail
+// reader, including local or configured custody decryption.
+func (c *Client) VerifyInboxResponse(ctx context.Context, out *InboxResponse) (*InboxResponse, error) {
+	return c.normalizeInboxResponse(ctx, out)
+}
+
+// VerifyManagedMailConversation verifies mail returned by the authenticated
+// managed bridge for conversationID. Only this reader accepts a provider-opened
+// encrypted mail projection. The client must know its gateway stable identity.
+func (c *Client) VerifyManagedMailConversation(ctx context.Context, out *InboxResponse, conversationID string) (*InboxResponse, error) {
+	if strings.TrimSpace(conversationID) == "" {
+		return nil, errors.New("aweb: managed mail verification requires the requested conversation ID")
+	}
+	return c.normalizeMailRows(ctx, out, conversationID)
 }
 
 func (c *Client) prepareE2EEMail(ctx context.Context, payload *SendMessageRequest, identityTarget bool, initialConversationID string, hasRecipient bool) error {
 	if c == nil || payload == nil {
 		return errors.New("aweb: request is required")
 	}
-	if c.signingKey == nil || strings.TrimSpace(c.did) == "" {
-		return errors.New("E2E messaging requires a local self-custodial signing key")
+	if _, refusal := c.e2eeSenderGap(); refusal != nil {
+		return refusal
 	}
 	custody := c.e2eeCustody()
-	if custody == nil {
-		if !c.canSignMessages() {
-			return errors.New("E2E messaging requires the subject identity signing key; identity grants cannot sign encrypted message envelopes")
-		}
-		if c.e2eeEncryptionKey == nil {
-			return errors.New("E2E messaging requires a local encryption key; upgrade aw and run `aw id encryption-key setup`, or pass --plaintext only for explicit server-readable messaging")
-		}
-	}
 	recipient, err := c.e2eeMailRecipient(ctx, payload)
 	if err != nil {
 		return err
@@ -269,7 +305,8 @@ func (c *Client) prepareE2EEMail(ctx context.Context, payload *SendMessageReques
 		}
 		out, err := custody.CreateE2EEEnvelope(ctx, req)
 		if err != nil {
-			if payload.ReplyToMessageID != "" && recipient.Address == "" && strings.Contains(err.Error(), "recipient_binding_unavailable") {
+			var refusal *CustodyError
+			if payload.ReplyToMessageID != "" && recipient.Address == "" && errors.As(err, &refusal) && refusal.Code == CustodyRecipientBindingUnavailable {
 				return fmt.Errorf("%w; custody host must be aw >= 1.36.30 for replies to addressless senders", err)
 			}
 			return err
@@ -621,6 +658,7 @@ type InboxMessage struct {
 	ContentMode             string                   `json:"content_mode,omitempty"`
 	MessageVersion          int                      `json:"message_version,omitempty"`
 	Encrypted               *E2EEMessageEnvelope     `json:"encrypted_envelope,omitempty"`
+	Decryptable             bool                     `json:"decryptable,omitempty"`
 	Priority                MessagePriority          `json:"priority"`
 	ThreadID                *string                  `json:"thread_id"`
 	ReadAt                  *string                  `json:"read_at"`
@@ -800,31 +838,6 @@ func (c *Client) Inbox(ctx context.Context, p InboxParams) (*InboxResponse, erro
 	return c.normalizeInboxResponse(ctx, &out)
 }
 
-func applyE2EEPlaintextMailMetadata(m *InboxMessage, plain *E2EEInnerPayload) {
-	if m == nil || plain == nil {
-		return
-	}
-	if strings.TrimSpace(plain.From.DID) != "" {
-		m.FromDID = strings.TrimSpace(plain.From.DID)
-	}
-	m.FromStableID = strings.TrimSpace(plain.From.StableID)
-	// An authenticated empty address is meaningful; never retain a projected
-	// alias/address here. Server-attested membership remains separate.
-	m.FromAddress = strings.TrimSpace(plain.From.Address)
-	if len(plain.Recipients) == 1 {
-		recipient := plain.Recipients[0]
-		if strings.TrimSpace(recipient.DID) != "" {
-			m.ToDID = strings.TrimSpace(recipient.DID)
-		}
-		if strings.TrimSpace(recipient.StableID) != "" {
-			m.ToStableID = strings.TrimSpace(recipient.StableID)
-		}
-		if strings.TrimSpace(recipient.Address) != "" {
-			m.ToAddress = strings.TrimSpace(recipient.Address)
-		}
-	}
-}
-
 func (c *Client) markAuthenticatedSenderMessages(out *InboxResponse) {
 	if c == nil || out == nil {
 		return
@@ -837,134 +850,79 @@ func (c *Client) markAuthenticatedSenderMessages(out *InboxResponse) {
 }
 
 func (c *Client) normalizeInboxResponse(ctx context.Context, out *InboxResponse) (*InboxResponse, error) {
+	return c.normalizeMailRows(ctx, out, "")
+}
+
+func (c *Client) normalizeMailRows(ctx context.Context, out *InboxResponse, managedConversationID string) (*InboxResponse, error) {
 	if out == nil {
 		return out, nil
 	}
 	for i := range out.Messages {
 		m := &out.Messages[i]
-		m.Attachments = nil
-		m.AttachmentsAvailable = true
-		binding := ReceivedSenderBinding{ProjectedDID: m.FromDID}
-		if m.ContentMode != ContentModeEncryptedV2 && m.MessageVersion != E2EEMessageVersion && m.Encrypted == nil && m.SignedPayload != "" && !c.signedMailDisplayMatches(m.SignedPayload, map[string]string{
-			"type": "mail", "body": m.Body, "subject": m.Subject,
-			"message_id": m.MessageID, "conversation_id": m.ConversationID,
-			"from_did": m.FromDID, "to_did": m.ToDID,
-		}, m.authenticatedSenderRead) {
-			// Preserve the observed response so a mismatch cannot be hidden by
-			// metadata overlay or subsequently promoted by trust normalization.
-			m.VerificationStatus = Failed
-			continue
+		r := receivedMailMessage(m)
+		if managedConversationID != "" {
+			r.requestedConversationID = managedConversationID
+			r.providerDecryptable = &m.Decryptable
 		}
-
-		if m.ContentMode == ContentModeEncryptedV2 || m.MessageVersion == E2EEMessageVersion || m.Encrypted != nil {
-			if m.Encrypted == nil {
-				return nil, errors.New("encrypted mail response is missing encrypted envelope")
-			}
-			plain, err := c.DecryptE2EEEnvelopeWithContext(ctx, m.Encrypted)
-			if err != nil {
-				return nil, err
-			}
-			if m.MessageID != plain.MessageID || m.ConversationID != plain.ConversationID {
-				// Decryption authenticated the envelope and its inner IDs. Keep
-				// the original outer projection visible when it disagrees.
-				m.VerificationStatus = Failed
-				continue
-			}
-
-			m.Subject = plain.Subject
-			m.Body = plain.Body
-			m.Attachments, m.AttachmentsAvailable = DecodeAttachmentContent(plain.Attachments)
-			binding.TeamID = plain.From.TeamID
-			applyE2EEPlaintextMailMetadata(m, plain)
-			m.VerificationStatus = Verified
+		if err := c.verifyReceived(ctx, &r); err != nil {
+			return nil, err
 		}
-		if meta, ok := parseSignedEnvelopeMetadata(m.SignedPayload); ok && m.ContentMode != ContentModeEncryptedV2 {
-			if meta.FromDID != "" {
-				m.FromDID = meta.FromDID
-			}
-			if meta.ToDID != "" {
-				m.ToDID = meta.ToDID
-			}
-			if m.FromStableID == "" {
-				m.FromStableID = meta.FromStableID
-			}
-			if m.ToStableID == "" {
-				m.ToStableID = meta.ToStableID
-			}
-			// A signed member name is not a public address. Preserve an explicit
-			// server projection; only suppress alias-to-address fallback.
-			stableAlias := strings.HasPrefix(meta.FromStableID, "did:aw:") && !strings.Contains(meta.From, "/")
-			if m.FromAddress == "" && meta.From != "" && !stableAlias {
-				m.FromAddress = meta.From
-			}
-			if m.ToAddress == "" && meta.To != "" {
-				m.ToAddress = meta.To
-			}
-			if stableAlias {
-				m.FromStableID = meta.FromStableID
-			}
+		if managedConversationID != "" && r.isEncrypted() && !r.status.Trusted() {
+			r.subject, r.body = "", ""
 		}
-		from := m.FromAlias
-		if m.FromAddress != "" {
-			from = m.FromAddress
-		}
-		if m.ContentMode == ContentModeEncryptedV2 {
-			// The v2 envelope signature was verified before decrypting above.
-		} else if m.SignedPayload != "" {
-			m.VerificationStatus, _ = VerifySignedPayload(m.SignedPayload, m.Signature, m.FromDID, m.SigningKeyID)
-			if m.VerificationStatus == Verified {
-				m.VerificationStatus = SignedPayloadConversationStatus(m.SignedPayload, m.ConversationID)
-			}
-		} else {
-			to := m.ToAlias
-			if m.ToAddress != "" {
-				to = m.ToAddress
-			}
-			env := &MessageEnvelope{
-				From:           from,
-				FromDID:        m.FromDID,
-				To:             to,
-				ToDID:          m.ToDID,
-				Type:           "mail",
-				Priority:       signedMailPriority(m.Priority),
-				Subject:        m.Subject,
-				Body:           m.Body,
-				Timestamp:      m.CreatedAt,
-				FromStableID:   m.FromStableID,
-				ToStableID:     m.ToStableID,
-				MessageID:      m.MessageID,
-				ConversationID: m.ConversationID,
-				Signature:      m.Signature,
-				SigningKeyID:   m.SigningKeyID,
-			}
-			m.VerificationStatus, _ = VerifyMessage(env)
-			if m.VerificationStatus == Failed && m.ConversationID != "" {
-				env.ConversationID = ""
-				legacyStatus, _ := VerifyMessage(env)
-				if legacyStatus == Verified {
-					m.VerificationStatus = VerifiedLegacy
-				}
-			}
-		}
-		// Recipient binding is a receiver-side check. Sender-visible reads may establish
-		// authorship from the server-authorized stored routing DID before signed metadata
-		// restores a historical signing key after rotation or resident custody signing.
-		senderRead := m.authenticatedSenderRead &&
-			(m.VerificationStatus == Verified || m.VerificationStatus == VerifiedLegacy) &&
-			c.messageSignedByClientIdentity(m.FromDID, m.FromStableID)
-		if !senderRead && !c.messageAuthoredByClientDID(m.FromDID) {
-			m.VerificationStatus = c.checkRecipientBinding(m.VerificationStatus, m.ToDID, m.ToStableID)
-		}
-		// Own-sent reads establish authorship, not a received sender's team trust.
-		// Require the server-authorized sender view AND our stable ID AND a
-		// signature by our current resident key; a claimed stable ID is not enough.
-		ownAddressless := senderRead && strings.TrimSpace(m.FromAddress) == "" && c.stableID != "" &&
-			m.FromStableID == c.stableID && c.ParticipantDID() != "" && m.FromDID == c.ParticipantDID()
-		if !ownAddressless {
-			m.VerificationStatus, m.IsContact = c.NormalizeReceivedSenderTrust(ctx, m.VerificationStatus, m.FromAddress, m.FromAlias, m.FromDID, m.FromStableID, m.SenderMembership, m.RotationAnnouncement, m.ReplacementAnnouncement, m.IsContact, binding)
-		}
+		r.applyToMail(m)
 	}
 	return out, nil
+}
+
+func receivedMailMessage(m *InboxMessage) receivedMessage {
+	return receivedMessage{
+		kind:                    receivedMail,
+		fromAlias:               m.FromAlias,
+		trustAlias:              m.FromAlias,
+		toAlias:                 m.ToAlias,
+		priority:                m.Priority,
+		timestamp:               m.CreatedAt,
+		authenticatedSenderRead: m.authenticatedSenderRead,
+		messageID:               m.MessageID,
+		conversationID:          m.ConversationID,
+		contentMode:             m.ContentMode,
+		messageVersion:          m.MessageVersion,
+		encrypted:               m.Encrypted,
+		signature:               m.Signature,
+		signingKeyID:            m.SigningKeyID,
+		signedPayload:           m.SignedPayload,
+		senderMembership:        m.SenderMembership,
+		rotationAnnouncement:    m.RotationAnnouncement,
+		replacementAnnouncement: m.ReplacementAnnouncement,
+		subject:                 m.Subject,
+		body:                    m.Body,
+		fromDID:                 m.FromDID,
+		toDID:                   m.ToDID,
+		fromStableID:            m.FromStableID,
+		toStableID:              m.ToStableID,
+		fromAddress:             m.FromAddress,
+		toAddress:               m.ToAddress,
+		attachments:             m.Attachments,
+		attachmentsAvailable:    m.AttachmentsAvailable,
+		status:                  m.VerificationStatus,
+		isContact:               m.IsContact,
+	}
+}
+
+func (r *receivedMessage) applyToMail(m *InboxMessage) {
+	m.Subject = r.subject
+	m.Body = r.body
+	m.FromDID = r.fromDID
+	m.ToDID = r.toDID
+	m.FromStableID = r.fromStableID
+	m.ToStableID = r.toStableID
+	m.FromAddress = r.fromAddress
+	m.ToAddress = r.toAddress
+	m.Attachments = r.attachments
+	m.AttachmentsAvailable = r.attachmentsAvailable
+	m.VerificationStatus = r.status
+	m.IsContact = r.isContact
 }
 
 func (c *Client) messageAuthoredByClientDID(fromDID string) bool {

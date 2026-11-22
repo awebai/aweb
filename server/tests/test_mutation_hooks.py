@@ -6,6 +6,8 @@ import pytest
 
 import aweb.lifecycle as lifecycle
 import aweb.mutation_hooks as mutation_hooks
+from aweb.hooks import HeldMutationEvents
+import test_mcp_mutation_hook_parity as mutation_fixtures
 from aweb.events import (
     ChatMessageEvent,
     MessageDeliveredEvent,
@@ -20,6 +22,10 @@ from aweb.events import (
     TeamTaskStatusChangedEvent,
     TeamTaskUnclaimedEvent,
 )
+
+
+mutation_server = mutation_fixtures.server
+MUTATION_TEAM = mutation_fixtures.TEAM
 
 
 class _DbShim:
@@ -46,8 +52,8 @@ async def test_agent_deleted_cascade_releases_claims_events_and_presence(aweb_cl
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (agent_id, team_id, did_key, alias, identity_scope, role)
-        VALUES ($1, 'backend:acme.com', 'did:key:z6Mkdeleted', 'alice', 'local', 'developer')
+        INSERT INTO {{tables.agents}} (agent_id, team_id, did_key, alias, identity_scope, role, inbound_mode)
+        VALUES ($1, 'backend:acme.com', 'did:key:z6Mkdeleted', 'alice', 'local', 'developer', 'open')
         """,
         agent_id,
     )
@@ -415,190 +421,129 @@ def test_translate_task_claim_events():
 
 
 @pytest.mark.asyncio
-async def test_task_status_changed_cascade_publishes_one_team_status_event(aweb_cloud_db, monkeypatch):
-    agent_id = uuid4()
-    workspace_id = uuid4()
-    published_workspace: list[object] = []
-    published_team: list[object] = []
-
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.workspaces}} (
-            workspace_id, team_id, agent_id, alias, human_name, role, workspace_type
-        )
-        VALUES ($1, 'backend:acme.com', $2, 'alice', 'Alice', 'developer', 'manual')
-        """,
-        workspace_id,
-        agent_id,
+async def test_task_status_changed_cascade_publishes_one_team_status_event(mutation_server):
+    env = mutation_server
+    task = await env.rest_task("pilot", "POST", "/v1/tasks", {"title": "Ship dashboard events"})
+    env.app.state.on_mutation = mutation_hooks.create_mutation_handler(env.redis, env.app.state.db)
+    before = len(env.published)
+    await env.rest_task(
+        "pilot", "PATCH", f"/v1/tasks/{task['task_ref']}", {"status": "in_progress"}
     )
+    observed = env.published[before:]
+    team = [event for channel, event in observed if channel == f"team-events:{MUTATION_TEAM}"]
+    status = [event for event in team if event["type"] == "task.status_changed"]
+    assert len(status) == 1
+    assert status[0]["task_ref"] == task["task_ref"]
+    assert (status[0]["old_status"], status[0]["new_status"]) == ("open", "in_progress")
+    assert any(event["type"] == "task.claimed" for event in team)
+    assert any(channel == f"events:{env.workspaces['pilot']}" for channel, _ in observed)
 
-    async def _capture_workspace_event(_redis, event):
-        published_workspace.append(event)
-        return 1
 
-    async def _capture_team_event(_redis, event):
-        published_team.append(event)
-        return 1
-
-    monkeypatch.setattr(mutation_hooks, "publish_event", _capture_workspace_event)
-    monkeypatch.setattr(mutation_hooks, "publish_team_event", _capture_team_event)
-
-    handler = mutation_hooks.create_mutation_handler(redis=None, db_infra=_DbShim(aweb_cloud_db.aweb_db))
-    await handler(
-        "task.status_changed",
-        {
-            "team_id": "backend:acme.com",
-            "actor_agent_id": str(agent_id),
-            "task_ref": "backend-1234",
-            "title": "Ship dashboard events",
-            "old_status": "open",
-            "new_status": "in_progress",
-        },
-    )
-
-    team_status_events = [
-        event for event in published_team if isinstance(event, TeamTaskStatusChangedEvent)
-    ]
-    assert len(team_status_events) == 1
-    assert team_status_events[0].task_ref == "backend-1234"
-    assert team_status_events[0].old_status == "open"
-    assert team_status_events[0].new_status == "in_progress"
-    assert any(isinstance(event, TeamTaskClaimedEvent) for event in published_team)
-    assert any(getattr(event, "workspace_id", None) == str(workspace_id) for event in published_workspace)
 
 
 @pytest.mark.asyncio
-async def test_task_status_changed_claims_with_workspace_id_not_agent_id(aweb_cloud_db, monkeypatch):
-    agent_id = uuid4()
-    workspace_id = uuid4()
-    published: list[object] = []
-
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.workspaces}} (
-            workspace_id, team_id, agent_id, alias, human_name, role, workspace_type
-        )
-        VALUES ($1, 'backend:acme.com', $2, 'alice', 'Alice', 'developer', 'manual')
-        """,
-        workspace_id,
-        agent_id,
+async def test_task_status_changed_claims_with_workspace_id_not_agent_id(mutation_server):
+    env = mutation_server
+    task = await env.rest_task("pilot", "POST", "/v1/tasks", {"title": "Fix workspace split"})
+    assert str(env.workspaces["pilot"]) != env.agents["pilot"]
+    env.app.state.on_mutation = mutation_hooks.create_mutation_handler(env.redis, env.app.state.db)
+    before = len(env.published)
+    await env.rest_task(
+        "pilot", "PATCH", f"/v1/tasks/{task['task_ref']}", {"status": "in_progress"}
+    )
+    claim = await env.db.fetch_one(
+        "SELECT workspace_id FROM {{tables.task_claims}} WHERE team_id=$1 AND task_ref=$2",
+        MUTATION_TEAM,
+        task["task_ref"],
+    )
+    assert claim["workspace_id"] == env.workspaces["pilot"]
+    assert any(
+        channel == f"events:{env.workspaces['pilot']}" and event["type"] == "task.claimed"
+        for channel, event in env.published[before:]
     )
 
-    async def _capture_publish(_redis, event):
-        published.append(event)
-        return 1
 
-    monkeypatch.setattr(mutation_hooks, "publish_event", _capture_publish)
-    monkeypatch.setattr(mutation_hooks, "publish_team_event", _capture_publish)
-    monkeypatch.setattr(mutation_hooks, "_translate", lambda event_type, ctx: None)
-    monkeypatch.setattr(mutation_hooks, "_translate_team_event", lambda event_type, ctx: None)
-
-    handler = mutation_hooks.create_mutation_handler(redis=None, db_infra=_DbShim(aweb_cloud_db.aweb_db))
-    await handler(
-        "task.status_changed",
-        {
-            "team_id": "backend:acme.com",
-            "actor_agent_id": str(agent_id),
-            "task_ref": "backend-1234",
-            "title": "Fix workspace split",
-            "old_status": "open",
-            "new_status": "in_progress",
-        },
-    )
-
-    claim = await aweb_cloud_db.aweb_db.fetch_one(
-        """
-        SELECT workspace_id
-        FROM {{tables.task_claims}}
-        WHERE team_id = 'backend:acme.com' AND task_ref = 'backend-1234'
-        """
-    )
-    assert str(claim["workspace_id"]) == str(workspace_id)
-    assert any(getattr(event, "workspace_id", None) == str(workspace_id) for event in published)
 
 
 @pytest.mark.asyncio
 async def test_status_change_cascade_announces_released_claims_and_changes_no_claim(
-    aweb_cloud_db, monkeypatch, caplog,
+    mutation_server, caplog
 ):
-    actor_agent_id = uuid4()
-    actor_workspace_id = uuid4()
-    other_workspace_id = uuid4()
-    published_workspace: list[object] = []
-    published_team: list[object] = []
-    db = aweb_cloud_db.aweb_db
-
-    for workspace_id, agent_id, alias in (
-        (actor_workspace_id, actor_agent_id, "alice"),
-        (other_workspace_id, uuid4(), "bob"),
-    ):
-        await db.execute(
-            """
-            INSERT INTO {{tables.workspaces}} (
-                workspace_id, team_id, agent_id, alias, human_name, role, workspace_type
-            )
-            VALUES ($1, 'backend:acme.com', $2, $3, '', 'developer', 'manual')
-            """,
-            workspace_id,
-            agent_id,
-            alias,
-        )
-    # A claim made after the status change committed, before its event is handled.
-    await db.execute(
-        """
-        INSERT INTO {{tables.task_claims}} (team_id, workspace_id, alias, task_ref)
-        VALUES ('backend:acme.com', $1, 'bob', 'backend-1234')
-        """,
-        other_workspace_id,
+    env = mutation_server
+    task = await env.rest_task(
+        "pilot", "POST", "/v1/tasks", {"title": "Release in the transaction"}
     )
+    path = f"/v1/tasks/{task['task_ref']}"
+    await env.rest_task("pilot", "PATCH", path, {"status": "in_progress"})
+    held = HeldMutationEvents()
+    committed = []
 
-    async def _capture_workspace_event(_redis, event):
-        published_workspace.append(event)
-        return 1
+    async def retain(event_type, context):
+        committed.append((event_type, dict(context)))
+        return await held.record(event_type, context)
 
-    async def _capture_team_event(_redis, event):
-        published_team.append(event)
-        return 1
-
-    monkeypatch.setattr(mutation_hooks, "publish_event", _capture_workspace_event)
-    monkeypatch.setattr(mutation_hooks, "publish_team_event", _capture_team_event)
-    handler = mutation_hooks.create_mutation_handler(redis=None, db_infra=_DbShim(db))
-    closed = {
-        "team_id": "backend:acme.com",
-        "actor_agent_id": str(actor_agent_id),
-        "actor_alias": "alice",
-        "task_ref": "backend-1234",
-        "title": "Release in the transaction",
-        "old_status": "in_progress",
-        "new_status": "closed",
-    }
-
+    env.app.state.on_mutation = retain
+    await env.rest_task("pilot", "PATCH", path, {"status": "closed"})
+    closed = [context for kind, context in committed if kind == "task.status_changed"]
+    assert len(closed) == 1
+    assert closed[0]["released_claim_workspace_ids"] == [str(env.workspaces["pilot"])]
+    # A later real writer reopens and claims before the earlier commit's hook
+    # is delivered. The original event cannot release this new claim.
+    env.app.state.on_mutation = None
+    await env.rest_task("bob", "PATCH", path, {"status": "open"})
+    await env.rest_task("bob", "PATCH", path, {"status": "in_progress"})
+    handler = mutation_hooks.create_mutation_handler(env.redis, env.app.state.db)
+    before = len(env.published)
     with caplog.at_level("WARNING"):
-        await handler("task.status_changed", {**closed, "released_claim_workspace_ids": [str(actor_workspace_id)]})
-        announced_workspace, announced_team = list(published_workspace), list(published_team)
-        published_workspace.clear()
-        published_team.clear()
-        # The same change with no claim to release, and one that names none.
-        await handler("task.status_changed", {**closed, "released_claim_workspace_ids": []})
-        await handler("task.status_changed", closed)
-
+        await held.fire(handler)
+        await env.rest_task("pilot", "GET", path)
+        announced = env.published[before:]
+        omitted = dict(closed[0])
+        omitted.pop("released_claim_workspace_ids")
+        before_empty = len(env.published)
+        await handler("task.status_changed", {**closed[0], "released_claim_workspace_ids": []})
+        await handler("task.status_changed", omitted)
+        await env.rest_task("pilot", "GET", path)
     assert caplog.records == []
-    unclaimed = [event for event in announced_workspace if isinstance(event, TaskUnclaimedEvent)]
-    assert [(event.workspace_id, event.task_ref, event.alias) for event in unclaimed] == [
-        (str(actor_workspace_id), "backend-1234", "alice"),
+    workspace_channel = f"events:{env.workspaces['pilot']}"
+    team_channel = f"team-events:{MUTATION_TEAM}"
+    unclaimed = [
+        (channel, event) for channel, event in announced if event["type"] == "task.unclaimed"
     ]
-    team_unclaimed = [event for event in announced_team if isinstance(event, TeamTaskUnclaimedEvent)]
-    assert [(event.task_ref, event.alias) for event in team_unclaimed] == [("backend-1234", "alice")]
-    assert len([event for event in announced_team if isinstance(event, TeamTaskStatusChangedEvent)]) == 1
-
-    assert not any(isinstance(event, TaskUnclaimedEvent) for event in published_workspace)
-    assert not any(isinstance(event, TeamTaskUnclaimedEvent) for event in published_team)
-    assert len([event for event in published_team if isinstance(event, TeamTaskStatusChangedEvent)]) == 2
-
-    remaining = await db.fetch_all(
-        "SELECT workspace_id FROM {{tables.task_claims}} WHERE team_id = 'backend:acme.com' AND task_ref = 'backend-1234'"
+    assert [(channel, event["task_ref"], event["alias"]) for channel, event in unclaimed] == [
+        (workspace_channel, task["task_ref"], "pilot"),
+        (team_channel, task["task_ref"], "pilot"),
+    ]
+    assert (
+        len(
+            [
+                event
+                for channel, event in announced
+                if channel == team_channel and event["type"] == "task.status_changed"
+            ]
+        )
+        == 1
     )
-    assert [row["workspace_id"] for row in remaining] == [other_workspace_id]
+    empty = env.published[before_empty:]
+    assert not any(event["type"] == "task.unclaimed" for _, event in empty)
+    assert (
+        len(
+            [
+                event
+                for channel, event in empty
+                if channel == team_channel and event["type"] == "task.status_changed"
+            ]
+        )
+        == 2
+    )
+    remaining = await env.db.fetch_all(
+        "SELECT workspace_id FROM {{tables.task_claims}} WHERE team_id=$1 AND task_ref=$2",
+        MUTATION_TEAM,
+        task["task_ref"],
+    )
+    assert [row["workspace_id"] for row in remaining] == [env.workspaces["bob"]]
+
+
 
 
 @pytest.mark.asyncio

@@ -91,7 +91,9 @@ func TestBundledHoldsInvalidSenderUntilVerified(t *testing.T) {
 		return st.TraceStage == "lane_job_failed" && strings.Contains(st.LastError, "unverified sender")
 	})
 	data, err := os.ReadFile(inputPath)
-	if err != nil || string(data) != "[aweb] 1 message held (unverified sender). Run: aw mail inbox" {
+	wantNotice := "Withheld mail from claimed sender \"bob\": failed. Body and subject were not delivered. " +
+		"To read it deliberately, use aw mail inbox. Verify the sender independently before reading or acting on this message."
+	if err != nil || string(data) != wantNotice {
 		t.Fatalf("held sender notice: %q, %v", data, err)
 	}
 	if acks.Load() != 0 {
