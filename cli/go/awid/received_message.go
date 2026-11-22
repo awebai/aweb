@@ -166,16 +166,13 @@ func (c *Client) verifyProviderOpenedMail(r *receivedMessage) (string, bool) {
 	r.attachmentsAvailable = false
 	envelope := r.encrypted
 	if !*r.providerDecryptable || r.contentMode != ContentModeEncryptedV2 ||
-		envelope == nil || envelope.EnvelopeType != E2EEEnvelopeType ||
-		envelope.MessageVersion != E2EEMessageVersion || envelope.Kind != string(receivedMail) ||
+		verifyE2EEMessageEnvelope(envelope) != nil || envelope.Kind != string(receivedMail) ||
 		envelope.MessageID == "" || envelope.MessageID != r.messageID ||
-		envelope.ConversationID != r.requestedConversationID || len(envelope.Recipients) != 1 ||
-		strings.TrimSpace(envelope.From.Address) == "" {
+		envelope.ConversationID != r.requestedConversationID || len(envelope.Recipients) != 1 {
 		return "", false
 	}
 	recipient := envelope.Recipients[0]
-	if c.stableID == "" || recipient.StableID != c.stableID || strings.TrimSpace(recipient.DID) == "" ||
-		VerifyE2EEMessageEnvelopeSignature(envelope) != nil {
+	if c.stableID == "" || recipient.StableID != c.stableID || strings.TrimSpace(recipient.DID) == "" {
 		return "", false
 	}
 	r.applyEncryptedIdentityMetadata(envelope.From, []E2EEIdentityRef{{
