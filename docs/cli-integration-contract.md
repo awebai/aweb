@@ -28,7 +28,9 @@ fails with a repair instruction.
 `aw id team list --json` always includes `registry_url`, `aweb_url`,
 `certificate_id`, and `workspace_id` strings on every membership. Absent values
 are empty strings. These are recorded coordinates, without discovery or network
-validation. `aw id cert show --team T --json` selects T even when another team is
+validation. If the workspace binding cannot be read or parsed, the list still
+reports the recorded team memberships and omits coordinates from that binding.
+`aw id cert show --team T --json` selects T even when another team is
 active, including the legacy certificate layout when no teams state exists.
 `aw workspace status --json` always includes `team`, including `[]` for a
 singleton workspace.
