@@ -12,7 +12,7 @@ import (
 )
 
 // worktreeAgentCreation keeps the creator, new home and cleanup context
-// explicit across the controller, signed-invitation and setup-key paths.
+// explicit across the controller, signed-invitation and API-key paths.
 type worktreeAgentCreation struct {
 	WorkingDir      string
 	CreatorHome     awconfig.IdentityHome
@@ -25,8 +25,6 @@ type worktreeAgentCreation struct {
 	Alias           string
 	Role            string
 	Workspace       *awconfig.WorktreeWorkspace
-	APIKey          string
-	SelectedTeam    *apiKeyCreationTeam
 	TeamRegistryURL string
 }
 
@@ -97,8 +95,7 @@ func addWorktreeViaCloudBootstrap(input worktreeAgentCreation) (connectOutput, e
 	worktreePath, root, branchName := input.WorktreePath, input.RepoRoot, input.BranchName
 	branchCreated := input.BranchCreated
 	sourceServerURL, alias, role, state := input.ServerURL, input.Alias, input.Role, input.Workspace
-	apiKey, selectedTeam := input.APIKey, input.SelectedTeam
-	apiKey = strings.TrimSpace(apiKey)
+	apiKey := strings.TrimSpace(state.APIKey)
 	if apiKey == "" {
 		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
 		return connectOutput{}, usageError(
@@ -116,7 +113,6 @@ func addWorktreeViaCloudBootstrap(input worktreeAgentCreation) (connectOutput, e
 
 	fmt.Fprintln(os.Stderr, "Requesting certificate from cloud...")
 	request := apiKeyInitRequest{
-		SelectedTeam:          selectedTeam,
 		WorkingDir:            worktreePath,
 		IdentityHome:          filepath.Join(filepath.Clean(worktreePath), ".aw"),
 		AwebURL:               awebURL,
