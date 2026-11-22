@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- A pin-store write no longer fails because another `aw` process on the same
+  home changed the trust store first. `aw id pin-store compare-and-set`
+  applies the writer's change on top of the other writer's, keeping both.
+  It refuses only when both set the same key to different values, such as one
+  address pinned to two keys or a checkpoint fork. A reply that `aw chat
+  send-and-wait` verified while another agent on the host was writing its own
+  pins was reported `verification_stale`; it is now verified.
+
 - Hosted invite acceptance awaiting an agent signature exits with JSON error
   code `native_agent_signature_pending`. Resume the exchange using the retained
   child key and invite.
