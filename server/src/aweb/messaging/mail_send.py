@@ -1997,7 +1997,7 @@ async def _send_mail_to_resolved_target(
         )
 
     try:
-        if not recipient.get("external"):
+        if msg_uuid is not None or payload.content_mode == ContentMode.ENCRYPTED:
             await authorize_message_delivery(
                 db,
                 registry_client=runtime.registry_client,

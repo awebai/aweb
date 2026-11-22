@@ -588,20 +588,41 @@ async def current_membership(
 async def current_member_team_ids_for_identity(
     db, dids: list[str], *, registry_client, read_lock: MemberReadLock = MemberReadLock.NONE
 ) -> set[str]:
+    (teams,) = await current_member_team_ids_for_identities(
+        db, dids, registry_client=registry_client, read_lock=read_lock
+    )
+    return teams
+
+
+async def current_member_team_ids_for_identities(
+    db,
+    *identities: Collection[str],
+    registry_client,
+    read_lock: MemberReadLock = MemberReadLock.NONE,
+) -> tuple[set[str], ...]:
     """Current memberships with the admitting certificate's live standing.
 
     Apply SDK revocation and staged registration policy after selecting each
-    admitted membership under the current key.
+    admitted membership under the current key. The caller's lock covers the
+    combined selection, while each identity keeps its own membership set.
     """
-    selected = [did.strip() for did in dids if did and did.strip()]
+    scopes = [{did.strip() for did in dids if did and did.strip()} for dids in identities]
+    selected = set().union(*scopes)
     if not selected:
-        return set()
-    teams = set()
-    for row in await current_member_projections(db, dids=selected, read_lock=read_lock):
-        standing = await current_membership(registry_client, dict(row))
-        if standing is not None and standing.get("team_id"):
-            teams.add(standing["team_id"])
-    return teams
+        return tuple(set() for _ in scopes)
+    rows = await current_member_projections(db, dids=sorted(selected), read_lock=read_lock)
+    projected = [row.verified_identity() for row in rows]
+    results = []
+    for scope in scopes:
+        teams = set()
+        for row in projected:
+            if row["did_key"] not in scope and row["did_aw"] not in scope:
+                continue
+            standing = await current_membership(registry_client, row)
+            if standing is not None and standing.get("team_id"):
+                teams.add(standing["team_id"])
+        results.append(teams)
+    return tuple(results)
 
 
 def grant_issuer_current(row) -> bool:
