@@ -1,5 +1,5 @@
 // ABOUTME: Chat protocol functions composing low-level aweb-go client methods.
-// ABOUTME: Provides Send, Open, History, Pending, ExtendWait, and ShowPending.
+// ABOUTME: Provides Send, Open, History, Pending, Listen, and ShowPending.
 
 package chat
 
@@ -16,26 +16,6 @@ import (
 	awid "github.com/awebai/aw/awid"
 	"github.com/awebai/aw/internal/identityutil"
 )
-
-type signedEnvelopeMetadata struct {
-	From         string `json:"from"`
-	To           string `json:"to"`
-	FromDID      string `json:"from_did"`
-	ToDID        string `json:"to_did"`
-	FromStableID string `json:"from_stable_id"`
-	ToStableID   string `json:"to_stable_id"`
-}
-
-func parseSignedEnvelopeMetadata(payload string) (signedEnvelopeMetadata, bool) {
-	if payload == "" {
-		return signedEnvelopeMetadata{}, false
-	}
-	var meta signedEnvelopeMetadata
-	if err := json.Unmarshal([]byte(payload), &meta); err != nil {
-		return signedEnvelopeMetadata{}, false
-	}
-	return meta, true
-}
 
 const DefaultWait = 120 // Default wait timeout in seconds for replies
 const maxOpenUnreadMessages = 1000
@@ -109,21 +89,13 @@ func streamToChannel(ctx context.Context, stream *awid.SSEStream) (<-chan sseRes
 }
 
 // parseSSEEvent converts an SSE event to a chat Event.
-func isGrantTerminalEvent(eventType string) bool {
-	switch strings.TrimSpace(eventType) {
-	case "grant_expired", "grant_revoked", "grant_subject_inactive", "grant_issuer_revoked", "verification_unavailable":
-		return true
-	default:
-		return false
-	}
-}
-
 func parseSSEEvent(sseEvent *awid.SSEEvent) Event {
 	ev := Event{
 		Type: sseEvent.Event,
 	}
 	var data map[string]any
 	if err := json.Unmarshal([]byte(sseEvent.Data), &data); err != nil {
+		ev.VerificationStatus = awid.Failed
 		return ev
 	}
 
@@ -143,38 +115,20 @@ func parseSSEEvent(sseEvent *awid.SSEEvent) Event {
 			_ = json.Unmarshal(encoded, &ev.SenderMembership)
 		}
 	}
-	if v, ok := data["agent"].(string); ok {
-		ev.Agent = v
-	}
-	if v, ok := data["session_id"].(string); ok {
-		ev.SessionID = v
-	}
-	if v, ok := data["seq"].(float64); ok {
-		ev.Seq = int64(v)
-	}
-	if v, ok := data["message_id"].(string); ok {
-		ev.MessageID = v
-	}
+	ev.Agent = stringField(data, "agent")
+	ev.SessionID = stringField(data, "session_id")
+	ev.Seq = int64(numberField(data, "seq"))
+	ev.MessageID = stringField(data, "message_id")
 	if v, ok := data["from_agent"].(string); ok {
 		ev.FromAgent = v
-	} else if v, ok := data["from"].(string); ok {
-		ev.FromAgent = v
+	} else {
+		ev.FromAgent = stringField(data, "from")
 	}
-	if v, ok := data["from_address"].(string); ok {
-		ev.FromAddress = v
-	}
-	if v, ok := data["to_address"].(string); ok {
-		ev.ToAddress = v
-	}
-	if v, ok := data["body"].(string); ok {
-		ev.Body = v
-	}
-	if v, ok := data["content_mode"].(string); ok {
-		ev.ContentMode = v
-	}
-	if v, ok := data["message_version"].(float64); ok {
-		ev.MessageVersion = int(v)
-	}
+	ev.FromAddress = stringField(data, "from_address")
+	ev.ToAddress = stringField(data, "to_address")
+	ev.Body = stringField(data, "body")
+	ev.ContentMode = stringField(data, "content_mode")
+	ev.MessageVersion = int(numberField(data, "message_version"))
 	if encryptedData, ok := data["encrypted_envelope"].(map[string]any); ok {
 		raw, err := json.Marshal(encryptedData)
 		if err == nil {
@@ -184,182 +138,111 @@ func parseSSEEvent(sseEvent *awid.SSEEvent) Event {
 			}
 		}
 	}
-	if v, ok := data["by"].(string); ok {
-		ev.By = v
-	}
-	if v, ok := data["reason"].(string); ok {
-		ev.Reason = v
-	}
+	ev.By = stringField(data, "by")
+	ev.Reason = stringField(data, "reason")
 	if ev.Reason == "" {
-		if v, ok := data["detail"].(string); ok {
-			ev.Reason = v
-		}
+		ev.Reason = stringField(data, "detail")
 	}
-	if v, ok := data["timestamp"].(string); ok {
-		ev.Timestamp = v
-	}
-	if v, ok := data["sender_leaving"].(bool); ok {
-		ev.SenderLeaving = v
-	}
-	if v, ok := data["sender_waiting"].(bool); ok {
-		ev.SenderWaiting = v
-	}
-	if v, ok := data["reader_alias"].(string); ok {
-		ev.ReaderAlias = v
-	}
-	if v, ok := data["hang_on"].(bool); ok {
-		ev.ExtendWait = v
-	}
-	if v, ok := data["extends_wait_seconds"].(float64); ok {
-		ev.ExtendsWaitSeconds = int(v)
-	}
-	if v, ok := data["reply_to_message_id"].(string); ok {
-		ev.ReplyToMessageID = v
-	}
-	if v, ok := data["from_did"].(string); ok {
-		ev.FromDID = v
-	}
-	if v, ok := data["to_did"].(string); ok {
-		ev.ToDID = v
-	}
-	if v, ok := data["from_stable_id"].(string); ok {
-		ev.FromStableID = v
-	}
-	if v, ok := data["to_stable_id"].(string); ok {
-		ev.ToStableID = v
-	}
-	if v, ok := data["signature"].(string); ok {
-		ev.Signature = v
-	}
-	if v, ok := data["signing_key_id"].(string); ok {
-		ev.SigningKeyID = v
-	}
-	if v, ok := data["signed_payload"].(string); ok {
-		ev.SignedPayload = v
-	}
+	ev.Timestamp = stringField(data, "timestamp")
+	ev.SenderLeaving = boolField(data, "sender_leaving")
+	ev.SenderWaiting = boolField(data, "sender_waiting")
+	ev.ReaderAlias = stringField(data, "reader_alias")
+	ev.ExtendWait = boolField(data, "hang_on")
+	ev.ExtendsWaitSeconds = int(numberField(data, "extends_wait_seconds"))
+	ev.ReplyToMessageID = stringField(data, "reply_to_message_id")
+	ev.FromDID = stringField(data, "from_did")
+	ev.ToDID = stringField(data, "to_did")
+	ev.FromStableID = stringField(data, "from_stable_id")
+	ev.ToStableID = stringField(data, "to_stable_id")
+	ev.Signature = stringField(data, "signature")
+	ev.SigningKeyID = stringField(data, "signing_key_id")
+	ev.SignedPayload = stringField(data, "signed_payload")
 	if v, ok := data["is_contact"].(bool); ok {
 		ev.IsContact = &v
 	}
-	if raData, ok := data["rotation_announcement"].(map[string]any); ok {
-		ev.RotationAnnouncement = &awid.RotationAnnouncement{}
-		if v, ok := raData["old_did"].(string); ok {
-			ev.RotationAnnouncement.OldDID = v
-		}
-		if v, ok := raData["new_did"].(string); ok {
-			ev.RotationAnnouncement.NewDID = v
-		}
-		if v, ok := raData["timestamp"].(string); ok {
-			ev.RotationAnnouncement.Timestamp = v
-		}
-		if v, ok := raData["old_key_signature"].(string); ok {
-			ev.RotationAnnouncement.OldKeySignature = v
+	if announcement, ok := data["rotation_announcement"].(map[string]any); ok {
+		ev.RotationAnnouncement = &awid.RotationAnnouncement{
+			OldDID:          stringField(announcement, "old_did"),
+			NewDID:          stringField(announcement, "new_did"),
+			Timestamp:       stringField(announcement, "timestamp"),
+			OldKeySignature: stringField(announcement, "old_key_signature"),
 		}
 	}
-	if replData, ok := data["replacement_announcement"].(map[string]any); ok {
-		ev.ReplacementAnnouncement = &awid.ReplacementAnnouncement{}
-		if v, ok := replData["address"].(string); ok {
-			ev.ReplacementAnnouncement.Address = v
+	if announcement, ok := data["replacement_announcement"].(map[string]any); ok {
+		ev.ReplacementAnnouncement = &awid.ReplacementAnnouncement{
+			Address:             stringField(announcement, "address"),
+			OldDID:              stringField(announcement, "old_did"),
+			NewDID:              stringField(announcement, "new_did"),
+			ControllerDID:       stringField(announcement, "controller_did"),
+			Timestamp:           stringField(announcement, "timestamp"),
+			ControllerSignature: stringField(announcement, "controller_signature"),
 		}
-		if v, ok := replData["old_did"].(string); ok {
-			ev.ReplacementAnnouncement.OldDID = v
-		}
-		if v, ok := replData["new_did"].(string); ok {
-			ev.ReplacementAnnouncement.NewDID = v
-		}
-		if v, ok := replData["controller_did"].(string); ok {
-			ev.ReplacementAnnouncement.ControllerDID = v
-		}
-		if v, ok := replData["timestamp"].(string); ok {
-			ev.ReplacementAnnouncement.Timestamp = v
-		}
-		if v, ok := replData["controller_signature"].(string); ok {
-			ev.ReplacementAnnouncement.ControllerSignature = v
-		}
-	}
-
-	if meta, ok := parseSignedEnvelopeMetadata(ev.SignedPayload); ok {
-		// The chat stream row may carry a stable DID in from_did/to_did when the
-		// session participant was stored under did:aw. The signed payload is the
-		// verification authority and carries the did:key that signed the message;
-		// match ChatHistory normalization so live SSE rendering does not show a
-		// verified message as [unverified].
-		if meta.FromDID != "" {
-			ev.FromDID = meta.FromDID
-		}
-		if meta.ToDID != "" {
-			ev.ToDID = meta.ToDID
-		}
-		if ev.FromStableID == "" {
-			ev.FromStableID = meta.FromStableID
-		}
-		if ev.ToStableID == "" {
-			ev.ToStableID = meta.ToStableID
-		}
-		if ev.FromAddress == "" {
-			ev.FromAddress = meta.From
-		}
-		if ev.ToAddress == "" {
-			ev.ToAddress = meta.To
-		}
-	}
-
-	// Verify message signature when identity fields are present.
-	from := ev.FromAgent
-	if ev.FromAddress != "" {
-		from = ev.FromAddress
-	}
-	env := &awid.MessageEnvelope{
-		From:         from,
-		FromDID:      ev.FromDID,
-		To:           ev.ToAddress,
-		ToDID:        ev.ToDID,
-		Type:         "chat",
-		Body:         ev.Body,
-		Timestamp:    ev.Timestamp,
-		FromStableID: ev.FromStableID,
-		ToStableID:   ev.ToStableID,
-		MessageID:    ev.MessageID,
-		Signature:    ev.Signature,
-		SigningKeyID: ev.SigningKeyID,
-	}
-	// Error is encoded in VerificationStatus; discard it.
-	if ev.SignedPayload != "" {
-		ev.VerificationStatus, _ = awid.VerifySignedPayload(ev.SignedPayload, ev.Signature, ev.FromDID, ev.SigningKeyID)
-	} else {
-		ev.VerificationStatus, _ = awid.VerifyMessage(env)
 	}
 
 	return ev
 }
 
-func decryptChatEvent(client *awid.Client, ev *Event) error {
-	if ev != nil {
-		ev.Attachments = nil
-		ev.AttachmentsAvailable = true
-	}
-	if ev == nil || (ev.ContentMode != awid.ContentModeEncryptedV2 && ev.MessageVersion != awid.E2EEMessageVersion && ev.Encrypted == nil) {
+// stringField, numberField and boolField read one SSE event field leniently:
+// a missing field or one of another JSON type reads as the zero value, so one
+// malformed field does not discard the rest of the event.
+func stringField(data map[string]any, key string) string {
+	v, _ := data[key].(string)
+	return v
+}
+
+func numberField(data map[string]any, key string) float64 {
+	v, _ := data[key].(float64)
+	return v
+}
+
+func boolField(data map[string]any, key string) bool {
+	v, _ := data[key].(bool)
+	return v
+}
+
+// verifyStreamMessage verifies a message received on the live stream with the
+// same rule chat history uses (awid.Client.VerifyReceivedChatMessage), as
+// read from the conversation sessionID. An
+// event whose row could not be decoded keeps its Failed status.
+func verifyStreamMessage(ctx context.Context, client *awid.Client, sessionID string, ev *Event, participants []awid.ChatParticipant) error {
+	if ev.VerificationStatus == awid.Failed {
 		return nil
 	}
-	if ev.Encrypted == nil {
-		return fmt.Errorf("encrypted chat event is missing encrypted envelope")
+	m := awid.ChatMessage{
+		IDChain:                 ev.IDChain,
+		SenderMembership:        ev.SenderMembership,
+		MessageID:               ev.MessageID,
+		ConversationID:          ev.SessionID,
+		FromAgent:               ev.FromAgent,
+		FromAddress:             ev.FromAddress,
+		ToAddress:               ev.ToAddress,
+		Body:                    ev.Body,
+		ContentMode:             ev.ContentMode,
+		MessageVersion:          ev.MessageVersion,
+		Encrypted:               ev.Encrypted,
+		Timestamp:               ev.Timestamp,
+		SenderLeaving:           ev.SenderLeaving,
+		ReplyToMessageID:        ev.ReplyToMessageID,
+		FromDID:                 ev.FromDID,
+		ToDID:                   ev.ToDID,
+		FromStableID:            ev.FromStableID,
+		ToStableID:              ev.ToStableID,
+		Signature:               ev.Signature,
+		SigningKeyID:            ev.SigningKeyID,
+		SignedPayload:           ev.SignedPayload,
+		RotationAnnouncement:    ev.RotationAnnouncement,
+		ReplacementAnnouncement: ev.ReplacementAnnouncement,
+		IsContact:               ev.IsContact,
 	}
-	plain, err := client.DecryptE2EEEnvelope(ev.Encrypted)
-	if err != nil {
+	if err := client.VerifyReceivedChatMessage(ctx, &m, sessionID, chatEventTrustAddress(*ev, participants)); err != nil {
 		return err
 	}
-	if plain.MessageID != ev.MessageID || plain.ConversationID != ev.SessionID {
-		return fmt.Errorf("encrypted chat event identity mismatch")
-	}
-	ev.FromDID, ev.FromStableID, ev.FromAddress = plain.From.DID, plain.From.StableID, plain.From.Address
-	if len(plain.Recipients) == 1 {
-		ev.ToDID, ev.ToStableID = plain.Recipients[0].DID, plain.Recipients[0].StableID
-	}
-	ev.Body = plain.Body
-	ev.Attachments, ev.AttachmentsAvailable = awid.DecodeAttachmentContent(plain.Attachments)
-	// Verified means the encrypted-envelope signature is valid, not that the
-	// signer owns the claimed address. The inbound caller must immediately pass
-	// this result through Client.NormalizeSenderTrust.
-	ev.VerificationStatus = awid.Verified
+	ev.FromDID, ev.ToDID = m.FromDID, m.ToDID
+	ev.FromStableID, ev.ToStableID = m.FromStableID, m.ToStableID
+	ev.FromAddress, ev.ToAddress = m.FromAddress, m.ToAddress
+	ev.Body = m.Body
+	ev.Attachments, ev.AttachmentsAvailable = m.Attachments, m.AttachmentsAvailable
+	ev.VerificationStatus, ev.IsContact = m.VerificationStatus, m.IsContact
 	return nil
 }
 
@@ -431,7 +314,7 @@ func (row chatParticipantRow) identityValues() []string {
 
 func (row chatParticipantRow) matchesTarget(target string) bool {
 	for _, candidate := range row.identityValues() {
-		if chatIdentityMatchesTarget(candidate, target) {
+		if chatIdentityMatches(candidate, target, handlesEitherWay) {
 			return true
 		}
 	}
@@ -440,7 +323,7 @@ func (row chatParticipantRow) matchesTarget(target string) bool {
 
 func (row chatParticipantRow) matchesSessionTarget(target string) bool {
 	for _, candidate := range row.identityValues() {
-		if chatSessionIdentityMatchesTarget(candidate, target) {
+		if chatIdentityMatches(candidate, target, candidateHandleForBareTarget) {
 			return true
 		}
 	}
@@ -450,9 +333,9 @@ func (row chatParticipantRow) matchesSessionTarget(target string) bool {
 func (row chatParticipantRow) matchesStrongIdentity(kind string, target string) bool {
 	switch kind {
 	case "address":
-		return chatIdentityMatchesTarget(row.Address, target)
+		return chatIdentityMatches(row.Address, target, handlesEitherWay)
 	case "did":
-		return chatIdentityMatchesTarget(row.DID, target)
+		return chatIdentityMatches(row.DID, target, handlesEitherWay)
 	default:
 		return false
 	}
@@ -489,7 +372,23 @@ func preferredChatIdentityLabel(alias string, address string, stableID string, d
 	return row.label()
 }
 
-func chatIdentityMatchesTarget(candidate string, target string) bool {
+// handleMatching is when an address's handle (its name after the domain)
+// may stand in for an identity value.
+type handleMatching int
+
+const (
+	// handlesEitherWay: a handle on either side matches the other value.
+	handlesEitherWay handleMatching = iota
+	// candidateHandleForBareTarget: only a candidate address's handle
+	// matches, and only a bare target name; a DID or address target matches
+	// only exactly (session lookup).
+	candidateHandleForBareTarget
+)
+
+// chatIdentityMatches is the one comparison of a participant identity value
+// with a target: equal ignoring case, through a stable alias, or through an
+// address handle as handles allows (chat/IDENTITY_RULES.md).
+func chatIdentityMatches(candidate string, target string, handles handleMatching) bool {
 	candidate = strings.TrimSpace(candidate)
 	target = strings.TrimSpace(target)
 	if candidate == "" || target == "" {
@@ -503,35 +402,19 @@ func chatIdentityMatchesTarget(candidate string, target string) bool {
 	}
 	if alias := stableAlias(target); alias != "" && strings.EqualFold(alias, candidate) {
 		return true
+	}
+	if handles == candidateHandleForBareTarget {
+		if strings.HasPrefix(target, "did:") || strings.Contains(target, "/") {
+			return false
+		}
+		handle := addressHandle(candidate)
+		return handle != "" && strings.EqualFold(handle, target)
 	}
 	if handle := addressHandle(candidate); handle != "" && strings.EqualFold(handle, target) {
 		return true
 	}
 	if handle := addressHandle(target); handle != "" && strings.EqualFold(handle, candidate) {
 		return true
-	}
-	return false
-}
-
-func chatSessionIdentityMatchesTarget(candidate string, target string) bool {
-	candidate = strings.TrimSpace(candidate)
-	target = strings.TrimSpace(target)
-	if candidate == "" || target == "" {
-		return false
-	}
-	if strings.EqualFold(candidate, target) {
-		return true
-	}
-	if alias := stableAlias(candidate); alias != "" && strings.EqualFold(alias, target) {
-		return true
-	}
-	if alias := stableAlias(target); alias != "" && strings.EqualFold(alias, candidate) {
-		return true
-	}
-	if !strings.HasPrefix(target, "did:") && !strings.Contains(target, "/") {
-		if handle := addressHandle(candidate); handle != "" && strings.EqualFold(handle, target) {
-			return true
-		}
 	}
 	return false
 }
@@ -684,7 +567,7 @@ func uniqueHandleParticipantMatch(participants []string, _ []string, _ []string,
 		return false
 	}
 	for _, participant := range participants {
-		if strings.TrimSpace(participant) == handle {
+		if strings.EqualFold(strings.TrimSpace(participant), handle) {
 			return true
 		}
 	}
@@ -719,8 +602,31 @@ func sessionActivity(session awid.ChatSessionItem) string {
 	return session.CreatedAt
 }
 
-// findSession finds the session ID for a conversation with targetAlias.
-// Checks pending first (captures sender_waiting), falls back to listing sessions.
+// lookupSession is the one session lookup every chat command uses
+// (IDENTITY_RULES.md): a DID the caller confirmed for target is a strong
+// identity and selects alone; otherwise target is matched as given, a bare
+// alias only when it names exactly one participant.
+func lookupSession(ctx context.Context, client *awid.Client, target, confirmedDID string, choice sessionChoice) (sessionID string, senderWaiting bool, err error) {
+	if did := strings.TrimSpace(confirmedDID); did != "" {
+		return findSessionByConfirmedDID(ctx, client, did, choice)
+	}
+	return findSessionWithOptions(ctx, client, target, choice)
+}
+
+// sessionChoice is how a lookup chooses among sessions that match its target.
+type sessionChoice int
+
+const (
+	// latestSession picks the most recently active matching session.
+	latestSession sessionChoice = iota
+	// waitingSessionFirst prefers a session whose other party is waiting.
+	waitingSessionFirst
+)
+
+// findSessionWithOptions finds the session ID for a conversation with targetAlias.
+// Checks pending first (captures sender_waiting), falls back to listing sessions;
+// choice sets the pending priority below (waitingSessionFirst) or takes the
+// latest session (latestSession).
 //
 // Selection priority for pending sessions:
 //  1. sender_waiting sessions over non-waiting (urgent conversations first)
@@ -730,26 +636,7 @@ func sessionActivity(session awid.ChatSessionItem) string {
 // Selection priority for fallback (all sessions):
 //  1. smallest participant count
 //  2. most recent LastActivity, falling back to CreatedAt (tiebreaker)
-func findSession(ctx context.Context, client *awid.Client, targetAlias string) (sessionID string, senderWaiting bool, err error) {
-	return findSessionWithOptions(ctx, client, targetAlias, true)
-}
-
-func findLatestSession(ctx context.Context, client *awid.Client, targetAlias string) (sessionID string, senderWaiting bool, err error) {
-	return findSessionWithOptions(ctx, client, targetAlias, false)
-}
-
-// lookupSession is the one session lookup every chat command uses
-// (IDENTITY_RULES.md): a DID the caller confirmed for target is a strong
-// identity and selects alone; otherwise target is matched as given, a bare
-// alias only when it names exactly one participant.
-func lookupSession(ctx context.Context, client *awid.Client, target, confirmedDID string, preferWaiting bool) (sessionID string, senderWaiting bool, err error) {
-	if did := strings.TrimSpace(confirmedDID); did != "" {
-		return findSessionByConfirmedDID(ctx, client, did, preferWaiting)
-	}
-	return findSessionWithOptions(ctx, client, target, preferWaiting)
-}
-
-func findSessionWithOptions(ctx context.Context, client *awid.Client, targetAlias string, preferWaiting bool) (sessionID string, senderWaiting bool, err error) {
+func findSessionWithOptions(ctx context.Context, client *awid.Client, targetAlias string, choice sessionChoice) (sessionID string, senderWaiting bool, err error) {
 	rawTarget := strings.TrimSpace(targetAlias)
 	targetAlias = normalizeSessionTarget(ctx, client, rawTarget)
 	bareAliasTarget := rawTarget != "" &&
@@ -786,15 +673,7 @@ func findSessionWithOptions(ctx context.Context, client *awid.Client, targetAlia
 		}
 		identityKeys := []string{}
 		appendKeys := func(participants, participantDIDs, participantAddresses []string) {
-			for _, key := range matchedParticipantIdentityKeys(participants, participantDIDs, participantAddresses, targetAlias) {
-				duplicate := false
-				for _, existing := range identityKeys {
-					duplicate = duplicate || strings.EqualFold(existing, key)
-				}
-				if !duplicate {
-					identityKeys = append(identityKeys, key)
-				}
-			}
+			identityKeys = appendUniqueFold(identityKeys, matchedParticipantIdentityKeys(participants, participantDIDs, participantAddresses, targetAlias)...)
 		}
 		for _, p := range pendingResp.Pending {
 			if matchesSelectedTeam(p.TeamID) {
@@ -810,102 +689,54 @@ func findSessionWithOptions(ctx context.Context, client *awid.Client, targetAlia
 			identityKeys = normalizeMatchedIdentityKeys(ctx, client, identityKeys)
 		}
 		if len(identityKeys) > 1 {
-			return "", false, fmt.Errorf("multiple conversations match %s; run `aw chat pending` to choose one", targetAlias)
+			return "", false, ambiguousConversation(targetAlias)
 		}
 	}
 
-	selectPending := func(match func([]string, []string, []string, string) bool, requireUnique bool, trackConcreteIdentity bool) (string, bool, error) {
-		var bestPendingID string
-		var bestPendingWaiting bool
-		var bestPendingActivity string
-		bestPendingSize := -1
+	selectAmong := func(candidates []sessionCandidate, rule candidateRule) (sessionCandidate, error) {
+		var best sessionCandidate
 		matchCount := 0
 		identityKeys := []string{}
-		appendIdentityKey := func(value string) {
-			value = strings.TrimSpace(value)
-			if value == "" {
-				return
-			}
-			for _, existing := range identityKeys {
-				if strings.EqualFold(existing, value) {
-					return
-				}
-			}
-			identityKeys = append(identityKeys, value)
-		}
-		for _, p := range pendingResp.Pending {
-			if !matchesSelectedTeam(p.TeamID) {
-				continue
-			}
-			if !match(p.Participants, p.ParticipantDIDs, p.ParticipantAddresses, targetAlias) {
+		for _, candidate := range candidates {
+			if !matchesSelectedTeam(candidate.teamID) || !rule.match(candidate.participants, candidate.participantDIDs, candidate.participantAddresses, targetAlias) {
 				continue
 			}
 			matchCount++
-			if trackConcreteIdentity {
-				for _, key := range matchedParticipantIdentityKeys(p.Participants, p.ParticipantDIDs, p.ParticipantAddresses, targetAlias) {
-					appendIdentityKey(key)
-				}
+			if rule.trackIdentity {
+				identityKeys = appendUniqueFold(identityKeys, matchedParticipantIdentityKeys(candidate.participants, candidate.participantDIDs, candidate.participantAddresses, targetAlias)...)
 			}
-			size := participantIdentityCount(p.Participants, p.ParticipantDIDs, p.ParticipantAddresses)
-			better := bestPendingSize < 0
-			if !better && preferWaiting {
-				// Prefer sender_waiting over non-waiting.
-				if p.SenderWaiting && !bestPendingWaiting {
-					better = true
-				} else if !p.SenderWaiting && bestPendingWaiting {
-					better = false
-				} else if size < bestPendingSize {
-					better = true
-				} else if size == bestPendingSize && p.LastActivity > bestPendingActivity {
-					better = true
-				}
-			} else if !better {
-				if size < bestPendingSize {
-					better = true
-				} else if size == bestPendingSize && p.LastActivity > bestPendingActivity {
-					better = true
-				}
-			}
-			if better {
-				bestPendingID = p.SessionID
-				bestPendingWaiting = p.SenderWaiting
-				bestPendingSize = size
-				bestPendingActivity = p.LastActivity
+			if candidate.betterThan(best, choice) {
+				best = candidate
 			}
 		}
-		if requireUnique && matchCount > 1 {
-			if trackConcreteIdentity && len(identityKeys) > 1 {
+		if rule.requireUnique && matchCount > 1 {
+			if rule.trackIdentity && len(identityKeys) > 1 {
 				identityKeys = normalizeMatchedIdentityKeys(ctx, client, identityKeys)
 			}
-			if !(trackConcreteIdentity && len(identityKeys) == 1) {
-				return "", false, fmt.Errorf("multiple conversations match %s; run `aw chat pending` to choose one", targetAlias)
+			if !(rule.trackIdentity && len(identityKeys) == 1) {
+				return sessionCandidate{}, ambiguousConversation(targetAlias)
 			}
 		}
-		if requireUniqueConcreteAlias && trackConcreteIdentity && len(identityKeys) > 1 {
+		if requireUniqueConcreteAlias && rule.trackIdentity && len(identityKeys) > 1 {
 			identityKeys = normalizeMatchedIdentityKeys(ctx, client, identityKeys)
 		}
-		if requireUniqueConcreteAlias && trackConcreteIdentity && len(identityKeys) > 1 {
-			return "", false, fmt.Errorf("multiple conversations match %s; run `aw chat pending` to choose one", targetAlias)
+		if requireUniqueConcreteAlias && rule.trackIdentity && len(identityKeys) > 1 {
+			return sessionCandidate{}, ambiguousConversation(targetAlias)
 		}
-		if bestPendingID != "" {
-			return bestPendingID, bestPendingWaiting, nil
-		}
-		return "", false, nil
+		return best, nil
 	}
-	bestPendingID, bestPendingWaiting, err := selectPending(exactParticipantMatch, requireUniqueExact, true)
-	if err != nil {
-		return "", false, err
-	}
-	if bestPendingID != "" {
-		return bestPendingID, bestPendingWaiting, nil
-	}
+	rules := []candidateRule{{match: exactParticipantMatch, requireUnique: requireUniqueExact, trackIdentity: true}}
 	if bareAliasTarget {
-		bestPendingID, bestPendingWaiting, err = selectPending(uniqueHandleParticipantMatch, true, false)
+		rules = append(rules, candidateRule{match: uniqueHandleParticipantMatch, requireUnique: true})
+	}
+	pending := pendingCandidates(pendingResp.Pending)
+	for _, rule := range rules {
+		best, err := selectAmong(pending, rule)
 		if err != nil {
 			return "", false, err
 		}
-		if bestPendingID != "" {
-			return bestPendingID, bestPendingWaiting, nil
+		if best.sessionID != "" {
+			return best.sessionID, best.senderWaiting, nil
 		}
 	}
 
@@ -914,86 +745,104 @@ func findSessionWithOptions(ctx context.Context, client *awid.Client, targetAlia
 	if err != nil {
 		return "", false, fmt.Errorf("listing chat sessions: %w", err)
 	}
-	selectSession := func(match func([]string, []string, []string, string) bool, requireUnique bool, trackConcreteIdentity bool) (string, error) {
-		var bestSessionID string
-		var bestSessionActivity string
-		bestSessionSize := -1
-		matchCount := 0
-		identityKeys := []string{}
-		appendIdentityKey := func(value string) {
-			value = strings.TrimSpace(value)
-			if value == "" {
-				return
-			}
-			for _, existing := range identityKeys {
-				if strings.EqualFold(existing, value) {
-					return
-				}
-			}
-			identityKeys = append(identityKeys, value)
-		}
-		for _, s := range sessionsResp.Sessions {
-			if !matchesSelectedTeam(s.TeamID) {
-				continue
-			}
-			if !match(s.Participants, s.ParticipantDIDs, s.ParticipantAddresses, targetAlias) {
-				continue
-			}
-			matchCount++
-			if trackConcreteIdentity {
-				for _, key := range matchedParticipantIdentityKeys(s.Participants, s.ParticipantDIDs, s.ParticipantAddresses, targetAlias) {
-					appendIdentityKey(key)
-				}
-			}
-			size := participantIdentityCount(s.Participants, s.ParticipantDIDs, s.ParticipantAddresses)
-			better := bestSessionSize < 0
-			if !better {
-				if size < bestSessionSize {
-					better = true
-				} else if size == bestSessionSize && sessionActivity(s) > bestSessionActivity {
-					better = true
-				}
-			}
-			if better {
-				bestSessionID = s.SessionID
-				bestSessionSize = size
-				bestSessionActivity = sessionActivity(s)
-			}
-		}
-		if requireUnique && matchCount > 1 {
-			if trackConcreteIdentity && len(identityKeys) > 1 {
-				identityKeys = normalizeMatchedIdentityKeys(ctx, client, identityKeys)
-			}
-			if !(trackConcreteIdentity && len(identityKeys) == 1) {
-				return "", fmt.Errorf("multiple conversations match %s; run `aw chat pending` to choose one", targetAlias)
-			}
-		}
-		if requireUniqueConcreteAlias && trackConcreteIdentity && len(identityKeys) > 1 {
-			identityKeys = normalizeMatchedIdentityKeys(ctx, client, identityKeys)
-		}
-		if requireUniqueConcreteAlias && trackConcreteIdentity && len(identityKeys) > 1 {
-			return "", fmt.Errorf("multiple conversations match %s; run `aw chat pending` to choose one", targetAlias)
-		}
-		return bestSessionID, nil
-	}
-	bestSessionID, err := selectSession(exactParticipantMatch, requireUniqueExact, true)
-	if err != nil {
-		return "", false, err
-	}
-	if bestSessionID != "" {
-		return bestSessionID, false, nil
-	}
-	if bareAliasTarget {
-		bestSessionID, err = selectSession(uniqueHandleParticipantMatch, true, false)
+	listed := listedCandidates(sessionsResp.Sessions)
+	for _, rule := range rules {
+		best, err := selectAmong(listed, rule)
 		if err != nil {
 			return "", false, err
 		}
-		if bestSessionID != "" {
-			return bestSessionID, false, nil
+		if best.sessionID != "" {
+			return best.sessionID, false, nil
 		}
 	}
 
 	return "", false, fmt.Errorf("no conversation found with %s", targetAlias)
+}
+
+// ErrAmbiguousConversation says a target matches more than one conversation
+// and the caller must choose.
+var ErrAmbiguousConversation = errors.New("multiple conversations match")
+
+func ambiguousConversation(target string) error {
+	return fmt.Errorf("%w %s; run `aw chat pending` to choose one", ErrAmbiguousConversation, target)
+}
+
+// sessionCandidate is one conversation a lookup may select: a pending item
+// or a listed session.
+type sessionCandidate struct {
+	sessionID            string
+	teamID               string
+	participants         []string
+	participantDIDs      []string
+	participantAddresses []string
+	senderWaiting        bool
+	activity             string
+	size                 int
+}
+
+func pendingCandidates(items []awid.ChatPendingItem) []sessionCandidate {
+	out := make([]sessionCandidate, 0, len(items))
+	for _, p := range items {
+		out = append(out, sessionCandidate{sessionID: p.SessionID, teamID: p.TeamID, participants: p.Participants,
+			participantDIDs: p.ParticipantDIDs, participantAddresses: p.ParticipantAddresses, senderWaiting: p.SenderWaiting,
+			activity: p.LastActivity, size: participantIdentityCount(p.Participants, p.ParticipantDIDs, p.ParticipantAddresses)})
+	}
+	return out
+}
+
+func listedCandidates(items []awid.ChatSessionItem) []sessionCandidate {
+	out := make([]sessionCandidate, 0, len(items))
+	for _, s := range items {
+		out = append(out, sessionCandidate{sessionID: s.SessionID, teamID: s.TeamID, participants: s.Participants,
+			participantDIDs: s.ParticipantDIDs, participantAddresses: s.ParticipantAddresses,
+			activity: sessionActivity(s), size: participantIdentityCount(s.Participants, s.ParticipantDIDs, s.ParticipantAddresses)})
+	}
+	return out
+}
+
+// betterThan ranks candidates: a session whose other party is waiting first
+// when the choice says so, then the fewest participants (1:1 over group),
+// then the latest activity. Any candidate beats none.
+func (c sessionCandidate) betterThan(best sessionCandidate, choice sessionChoice) bool {
+	if best.sessionID == "" {
+		return true
+	}
+	if choice == waitingSessionFirst && c.senderWaiting != best.senderWaiting {
+		return c.senderWaiting
+	}
+	if c.size != best.size {
+		return c.size < best.size
+	}
+	return c.activity > best.activity
+}
+
+// candidateRule is how one lookup pass matches candidates against its target.
+type candidateRule struct {
+	match func(participants, participantDIDs, participantAddresses []string, target string) bool
+	// requireUnique refuses more than one match, unless every match names
+	// one concrete identity.
+	requireUnique bool
+	// trackIdentity collects the concrete identities the matches name.
+	trackIdentity bool
+}
+
+// appendUniqueFold appends the non-empty values not already present,
+// ignoring case.
+func appendUniqueFold(keys []string, values ...string) []string {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		duplicate := false
+		for _, existing := range keys {
+			duplicate = duplicate || strings.EqualFold(existing, value)
+		}
+		if !duplicate {
+			keys = append(keys, value)
+		}
+	}
+	return keys
 }
 
 // findSessionByConfirmedDID selects a conversation with the participant the
@@ -1001,7 +850,7 @@ func findSessionWithOptions(ctx context.Context, client *awid.Client, targetAlia
 // identity is available, so only strong identities match (IDENTITY_RULES.md):
 // did, the identity's other DID and its address, as resolved for did. A bare
 // alias, which any participant may hold, is no fallback here.
-func findSessionByConfirmedDID(ctx context.Context, client *awid.Client, did string, preferWaiting bool) (sessionID string, senderWaiting bool, err error) {
+func findSessionByConfirmedDID(ctx context.Context, client *awid.Client, did string, choice sessionChoice) (sessionID string, senderWaiting bool, err error) {
 	dids := []string{did}
 	address := ""
 	// Resolution only widens the match to the same identity's other DID and
@@ -1029,42 +878,26 @@ func findSessionByConfirmedDID(ctx context.Context, client *awid.Client, did str
 	if err := client.Get(ctx, "/v1/chat/pending", &pendingResp); err != nil {
 		return "", false, fmt.Errorf("getting pending chats: %w", err)
 	}
-	bestSize := -1
-	var bestWaiting bool
-	var bestActivity string
-	for _, p := range pendingResp.Pending {
-		if !hasParticipant(p.Participants, p.ParticipantDIDs, p.ParticipantAddresses) {
-			continue
-		}
-		size := participantIdentityCount(p.Participants, p.ParticipantDIDs, p.ParticipantAddresses)
-		better := bestSize < 0
-		if !better && preferWaiting && p.SenderWaiting != bestWaiting {
-			better = p.SenderWaiting
-		} else if !better {
-			better = size < bestSize || (size == bestSize && p.LastActivity > bestActivity)
-		}
-		if better {
-			sessionID, bestWaiting, bestSize, bestActivity = p.SessionID, p.SenderWaiting, size, p.LastActivity
+	var best sessionCandidate
+	for _, candidate := range pendingCandidates(pendingResp.Pending) {
+		if hasParticipant(candidate.participants, candidate.participantDIDs, candidate.participantAddresses) && candidate.betterThan(best, choice) {
+			best = candidate
 		}
 	}
-	if sessionID != "" {
-		return sessionID, bestWaiting, nil
+	if best.sessionID != "" {
+		return best.sessionID, best.senderWaiting, nil
 	}
 	sessionsResp, err := client.ChatListSessions(ctx)
 	if err != nil {
 		return "", false, fmt.Errorf("listing chat sessions: %w", err)
 	}
-	for _, s := range sessionsResp.Sessions {
-		if !hasParticipant(s.Participants, s.ParticipantDIDs, s.ParticipantAddresses) {
-			continue
-		}
-		size := participantIdentityCount(s.Participants, s.ParticipantDIDs, s.ParticipantAddresses)
-		if bestSize < 0 || size < bestSize || (size == bestSize && sessionActivity(s) > bestActivity) {
-			sessionID, bestSize, bestActivity = s.SessionID, size, sessionActivity(s)
+	for _, candidate := range listedCandidates(sessionsResp.Sessions) {
+		if hasParticipant(candidate.participants, candidate.participantDIDs, candidate.participantAddresses) && candidate.betterThan(best, choice) {
+			best = candidate
 		}
 	}
-	if sessionID != "" {
-		return sessionID, false, nil
+	if best.sessionID != "" {
+		return best.sessionID, false, nil
 	}
 	return "", false, fmt.Errorf("no conversation found with %s", did)
 }
@@ -1152,7 +985,7 @@ func markReadBestEffort(ctx context.Context, client *awid.Client, sessionID stri
 func markPresentedRead(ctx context.Context, client *awid.Client, sessionID string, events []Event) {
 	messageIDs := make([]string, 0, len(events))
 	for _, event := range events {
-		if event.Type == "message" && event.MessageID != "" {
+		if event.Type == EventMessage && event.MessageID != "" {
 			messageIDs = append(messageIDs, event.MessageID)
 		}
 	}
@@ -1178,12 +1011,23 @@ func clientStreamOpener(client *awid.Client) streamOpener {
 // minStreamReopenInterval paces reopening a stream that ended early.
 const minStreamReopenInterval = time.Second
 
-// messageAcceptor decides how to handle a received message event during the wait loop.
-//
-//	accept=true:  treat as the awaited reply
-//	skip=true:    silently ignore (e.g., replayed own message)
-//	both false:   unrelated message, continue waiting
-type messageAcceptor func(ev Event) (accept, skip bool)
+// eventDisposition is what a wait does with one received message event.
+type eventDisposition int
+
+const (
+	// skipEvent drops the event silently, such as the replay of the
+	// sender's own message.
+	skipEvent eventDisposition = iota
+	// collectEvent keeps the event among those the wait presents and goes on
+	// waiting.
+	collectEvent
+	// acceptEvent keeps the event as the awaited reply.
+	acceptEvent
+)
+
+// messageAcceptor decides the disposition of a received message event
+// during the wait loop.
+type messageAcceptor func(ev Event) eventDisposition
 
 // waitForMessage opens an SSE stream and waits for a message matching the acceptor.
 // Handles read receipts, extend-wait messages, and wait extensions.
@@ -1196,7 +1040,7 @@ type messageAcceptor func(ev Event) (accept, skip bool)
 func waitForMessage(ctx context.Context, client *awid.Client, openStream streamOpener, sessionID string, participants []awid.ChatParticipant, selfAlias string, waitSeconds int, after *time.Time, callback StatusCallback, accept messageAcceptor) (*SendResult, error) {
 	result := &SendResult{
 		SessionID: sessionID,
-		Status:    "timeout",
+		Status:    SendTimeout,
 		Events:    []Event{},
 	}
 
@@ -1313,13 +1157,13 @@ func waitForMessage(ctx context.Context, client *awid.Client, openStream streamO
 			if chatEvent.Seq > lastSeq {
 				lastSeq = chatEvent.Seq
 			}
-			if chatEvent.Type == "message" && chatEvent.MessageID != "" {
+			if chatEvent.Type == EventMessage && chatEvent.MessageID != "" {
 				if seenMessages[chatEvent.MessageID] {
 					continue
 				}
 				seenMessages[chatEvent.MessageID] = true
 			}
-			if isGrantTerminalEvent(chatEvent.Type) {
+			if awid.IsAuthorityTerminalEvent(chatEvent.Type) {
 				detail := strings.TrimSpace(chatEvent.Reason)
 				if detail == "" {
 					detail = strings.TrimSpace(chatEvent.Body)
@@ -1327,19 +1171,18 @@ func waitForMessage(ctx context.Context, client *awid.Client, openStream streamO
 				if detail == "" {
 					detail = chatEvent.Type
 				}
-				if chatEvent.Type == "verification_unavailable" {
+				if chatEvent.Type == EventVerificationUnavailable {
 					detail = "identity grant verification unavailable; retry"
 				}
 				return nil, fmt.Errorf("chat stream closed: %s", detail)
 			}
-			if err := decryptChatEvent(client, &chatEvent); err != nil {
-				return nil, err
+			if chatEvent.Type == EventMessage {
+				if err := verifyStreamMessage(ctx, client, sessionID, &chatEvent, participants); err != nil {
+					return nil, err
+				}
 			}
-			tofuFrom := chatEventTrustAddress(chatEvent, participants)
-			chatEvent.VerificationStatus, chatEvent.IsContact = client.NormalizeReceivedSenderTrust(ctx, chatEvent.VerificationStatus, chatEvent.FromAddress, tofuFrom, chatEvent.FromDID, chatEvent.FromStableID, chatEvent.SenderMembership, chatEvent.RotationAnnouncement, chatEvent.ReplacementAnnouncement, chatEvent.IsContact)
-			chatEvent.VerificationStatus = client.NormalizeRecipientBinding(chatEvent.VerificationStatus, chatEvent.ToDID, chatEvent.ToStableID)
 
-			if chatEvent.Type == "read_receipt" {
+			if chatEvent.Type == EventReadReceipt {
 				readerLabel := inferReadReceiptLabel(ctx, client, selfAlias, chatEvent.ReaderAlias, participants)
 				if readerLabel != "" {
 					chatEvent.ReaderAlias = readerLabel
@@ -1354,15 +1197,15 @@ func waitForMessage(ctx context.Context, client *awid.Client, openStream streamO
 				continue
 			}
 
-			if chatEvent.Type == "message" {
-				accepted, skip := accept(chatEvent)
-				if skip {
+			if chatEvent.Type == EventMessage {
+				disposition := accept(chatEvent)
+				if disposition == skipEvent {
 					continue
 				}
 
 				result.Events = append(result.Events, chatEvent)
 
-				if !accepted {
+				if disposition != acceptEvent {
 					continue
 				}
 
@@ -1380,12 +1223,12 @@ func waitForMessage(ctx context.Context, client *awid.Client, openStream streamO
 				result.SenderWaiting = chatEvent.SenderWaiting
 
 				if chatEvent.SenderLeaving {
-					result.Status = "sender_left"
+					result.Status = SendSenderLeft
 					result.Reply = chatEvent.Body
 					return result, nil
 				}
 
-				result.Status = "replied"
+				result.Status = SendReplied
 				result.Reply = chatEvent.Body
 				return result, nil
 			}
@@ -1427,22 +1270,27 @@ func Send(ctx context.Context, client *awid.Client, myAlias string, targets []st
 
 	aliases, dids, addresses := classifyChatTargets(targets)
 	req := &awid.ChatCreateSessionRequest{
-		ToAliases:   aliases,
-		ToDIDs:      dids,
-		ToAddresses: addresses,
-		Message:     message,
-		Leaving:     opts.Leaving,
-		EncryptE2EE: opts.EncryptE2EE,
+		ToAliases:          aliases,
+		ToDIDs:             dids,
+		ToAddresses:        addresses,
+		Message:            message,
+		Leaving:            opts.Leaving,
+		EncryptE2EE:        opts.Encryption() == E2EERequired,
+		ConfirmedRecipient: opts.ConfirmedRecipient,
 	}
 	if waitSeconds > 0 {
 		req.WaitSeconds = &waitSeconds
 	}
 	if len(targets) == 1 && !opts.StartConversation && shouldProbeExistingSession(targets[0]) {
-		if sessionID, _, findErr := lookupSession(ctx, client, targets[0], opts.RecipientDID, false); findErr == nil && sessionID != "" {
+		if sessionID, _, findErr := lookupSession(ctx, client, targets[0], opts.RecipientDID, latestSession); findErr == nil && sessionID != "" {
+			encrypt, err := ContinuationEncrypted(ctx, client, sessionID, opts.Encryption(), callback)
+			if err != nil {
+				return nil, err
+			}
 			msgResp, err := client.ChatSendMessage(ctx, sessionID, &awid.ChatSendMessageRequest{
 				Body:        message,
 				Leaving:     opts.Leaving,
-				EncryptE2EE: opts.EncryptE2EE,
+				EncryptE2EE: encrypt,
 			})
 			if err != nil {
 				return nil, fmt.Errorf("sending message: %w", err)
@@ -1451,8 +1299,7 @@ func Send(ctx context.Context, client *awid.Client, myAlias string, targets []st
 				SessionID: sessionID,
 				MessageID: msgResp.MessageID,
 			}, myAlias, targets, message, waitSeconds, opts, &sentAt, callback)
-		} else if findErr != nil &&
-			strings.Contains(findErr.Error(), "multiple conversations match") {
+		} else if errors.Is(findErr, ErrAmbiguousConversation) {
 			return nil, findErr
 		}
 	}
@@ -1471,16 +1318,8 @@ func Send(ctx context.Context, client *awid.Client, myAlias string, targets []st
 }
 
 func shouldProbeExistingSession(target string) bool {
-	// Probe for any non-empty target. The previous narrow gate (did:/-prefixed
-	// or address-shaped only) skipped bare aliases, which made the CLI fall
-	// through to ChatCreateSession with a fresh auto-generated session_id
-	// (cli/go/awid/chat.go:159 generates UUID4 when signingKey is set). With
-	// the post-aame server-side 'one active 1:1' dedup, that fresh UUID
-	// conflicts with the existing session and 409s. Probing for bare aliases
-	// lets findLatestSession discover the existing session_id, route via
-	// ChatSendMessage on the per-session endpoint, and bypass the conflict
-	// entirely. Ambiguous targets are surfaced by findLatestSession as
-	// 'multiple conversations match' and propagate up.
+	// Every non-empty target may name an existing session. Lookup reuses its
+	// session ID or reports ambiguity before a new conversation is created.
 	return strings.TrimSpace(target) != ""
 }
 
@@ -1491,7 +1330,7 @@ func sendCommon(ctx context.Context, client *awid.Client, openStream streamOpene
 	result := &SendResult{
 		SessionID:   resp.SessionID,
 		MessageID:   resp.MessageID,
-		Status:      "sent",
+		Status:      SendSent,
 		TargetAgent: strings.Join(targets, ", "),
 		Events:      []Event{},
 	}
@@ -1508,67 +1347,29 @@ func sendCommon(ctx context.Context, client *awid.Client, openStream streamOpene
 		return result, nil
 	}
 
-	// Check if any target has left
+	leftNames := chatNameLists(ctx, client, resp.TargetsLeft, resp.Participants)
 	targetHasLeft := false
-	for _, leftAlias := range resp.TargetsLeft {
-		leftNames := normalizedChatTargetNames(ctx, client, leftAlias, resp.Participants)
-		for _, targetNames := range targetStatusNames {
-			if chatTargetNameListsOverlap(targetNames, leftNames) {
-				targetHasLeft = true
-				break
-			}
-		}
-		if targetHasLeft {
+	for _, targetNames := range targetStatusNames {
+		if overlapsAny(targetNames, leftNames) {
+			targetHasLeft = true
 			break
 		}
 	}
-
 	if targetHasLeft && !opts.StartConversation {
-		result.Status = "targets_left"
+		result.Status = SendTargetsLeft
 		return result, nil
 	}
 
-	// Check target connection status (informational)
-	allTargetsConnected := true
+	// Target connection status is informational.
+	connectedNames := chatNameLists(ctx, client, resp.TargetsConnected, resp.Participants)
 	for _, targetNames := range targetStatusNames {
-		found := false
-		for _, alias := range resp.TargetsConnected {
-			connectedNames := normalizedChatTargetNames(ctx, client, alias, resp.Participants)
-			if chatTargetNameListsOverlap(targetNames, connectedNames) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			allTargetsConnected = false
+		if !overlapsAny(targetNames, connectedNames) {
+			result.TargetNotConnected = true
 			break
 		}
 	}
-	if !allTargetsConnected {
-		result.TargetNotConnected = true
-	}
 
-	// Build message acceptor: skip replays, accept only from targets.
-	// The gate opens when we see our sent message by ID. If the server
-	// didn't return a message ID (sentMessageID==""), the gate starts open.
-	sentMessageID := resp.MessageID
-	seenSentMessage := sentMessageID == ""
-	acceptor := func(ev Event) (accept, skip bool) {
-		if !seenSentMessage {
-			if ev.MessageID == sentMessageID {
-				seenSentMessage = true
-			}
-			return false, true
-		}
-		eventNames := normalizedChatEventNames(ev, resp.Participants)
-		for _, targetNames := range targetStatusNames {
-			if chatTargetNameListsOverlap(targetNames, eventNames) {
-				return true, false
-			}
-		}
-		return false, false
-	}
-
+	acceptor := targetReplyAcceptor(resp.MessageID, opts, resp.Participants, targetStatusNames)
 	waitResult, err := waitForMessage(ctx, client, openStream, resp.SessionID, resp.Participants, myAlias, resolvedWait, after, callback, acceptor)
 	if err != nil {
 		return nil, err
@@ -1584,6 +1385,74 @@ func sendCommon(ctx context.Context, client *awid.Client, openStream streamOpene
 	return result, nil
 }
 
+// chatNameLists resolves each alias to its normalized chat names once.
+func chatNameLists(ctx context.Context, client *awid.Client, aliases []string, participants []awid.ChatParticipant) [][]string {
+	lists := make([][]string, 0, len(aliases))
+	for _, alias := range aliases {
+		lists = append(lists, normalizedChatTargetNames(ctx, client, alias, participants))
+	}
+	return lists
+}
+
+// overlapsAny reports whether names shares a name with any of lists.
+func overlapsAny(names []string, lists [][]string) bool {
+	for _, other := range lists {
+		if chatTargetNameListsOverlap(names, other) {
+			return true
+		}
+	}
+	return false
+}
+
+// targetReplyAcceptor skips replays and accepts only a reply from a target.
+// The gate opens when the stream shows the sent message by ID; with no
+// message ID from the server it starts open.
+func targetReplyAcceptor(sentMessageID string, opts SendOptions, participants []awid.ChatParticipant, targetStatusNames [][]string) func(Event) eventDisposition {
+	seenSentMessage := sentMessageID == ""
+	return func(ev Event) eventDisposition {
+		if !seenSentMessage {
+			if ev.MessageID == sentMessageID {
+				seenSentMessage = true
+			}
+			return skipEvent
+		}
+		if !eventMayBeTargetReply(ev, opts) {
+			return collectEvent
+		}
+		eventNames := normalizedChatEventNames(ev, participants)
+		for _, targetNames := range targetStatusNames {
+			if chatTargetNameListsOverlap(targetNames, eventNames) {
+				return acceptEvent
+			}
+		}
+		return collectEvent
+	}
+}
+
+// eventMayBeTargetReply reports whether ev can be the reply the sender waits
+// for, before its names are compared with the target's. When the caller
+// confirmed its one target's identity, only a message signed by that
+// identity is its reply: the strong tier decides, and a matching name does
+// not (chat/IDENTITY_RULES.md:38-40). A reply that fails verification is
+// still accepted and shown with its failure tag, so the failure is seen.
+func eventMayBeTargetReply(ev Event, opts SendOptions) bool {
+	confirmed := []string{strings.TrimSpace(opts.RecipientDID)}
+	if opts.ConfirmedRecipient != nil {
+		confirmed = append(confirmed, strings.TrimSpace(opts.ConfirmedRecipient.DID), strings.TrimSpace(opts.ConfirmedRecipient.StableID))
+	}
+	anyConfirmed := false
+	for _, did := range confirmed {
+		if did == "" {
+			continue
+		}
+		anyConfirmed = true
+		if did == strings.TrimSpace(ev.FromStableID) || did == strings.TrimSpace(ev.FromDID) {
+			return true
+		}
+	}
+	return !anyConfirmed
+}
+
 // Listen waits for a message in an existing conversation without sending.
 // Returns on any message in the session (not filtered by sender).
 func Listen(ctx context.Context, client *awid.Client, targetAlias string, waitSeconds int, callback StatusCallback) (*SendResult, error) {
@@ -1593,12 +1462,12 @@ func Listen(ctx context.Context, client *awid.Client, targetAlias string, waitSe
 // ListenConfirmed is Listen in the session selected by confirmedDID, the DID
 // the caller confirmed for targetAlias, when one is given (lookupSession).
 func ListenConfirmed(ctx context.Context, client *awid.Client, targetAlias string, waitSeconds int, callback StatusCallback, confirmedDID string) (*SendResult, error) {
-	sessionID, _, err := lookupSession(ctx, client, targetAlias, confirmedDID, true)
+	sessionID, _, err := lookupSession(ctx, client, targetAlias, confirmedDID, waitingSessionFirst)
 	if err != nil {
 		return nil, err
 	}
 
-	acceptAll := func(ev Event) (bool, bool) { return true, false }
+	acceptAll := func(ev Event) eventDisposition { return acceptEvent }
 
 	result, err := waitForMessage(ctx, client, clientStreamOpener(client), sessionID, nil, "", waitSeconds, nil, callback, acceptAll)
 	if err != nil {
@@ -1619,7 +1488,7 @@ func Open(ctx context.Context, client *awid.Client, targetAlias string) (*OpenRe
 // OpenConfirmed is Open in the session selected by confirmedDID, the DID the
 // caller confirmed for targetAlias, when one is given (lookupSession).
 func OpenConfirmed(ctx context.Context, client *awid.Client, targetAlias string, confirmedDID string) (*OpenResult, error) {
-	sessionID, senderWaiting, err := lookupSession(ctx, client, targetAlias, confirmedDID, true)
+	sessionID, senderWaiting, err := lookupSession(ctx, client, targetAlias, confirmedDID, waitingSessionFirst)
 	if err != nil {
 		return nil, err
 	}
@@ -1698,7 +1567,7 @@ func HistoryWithOptions(ctx context.Context, client *awid.Client, targetAlias st
 // confirmedDID, the DID the caller confirmed for targetAlias, when one is
 // given (lookupSession).
 func HistoryConfirmed(ctx context.Context, client *awid.Client, targetAlias string, unreadOnly bool, limit int, confirmedDID string) (*HistoryResult, error) {
-	sessionID, _, err := lookupSession(ctx, client, targetAlias, confirmedDID, false)
+	sessionID, _, err := lookupSession(ctx, client, targetAlias, confirmedDID, latestSession)
 	if err != nil {
 		return nil, err
 	}
@@ -1781,29 +1650,70 @@ func Pending(ctx context.Context, client *awid.Client) (*PendingResult, error) {
 	return result, nil
 }
 
-// ExtendWait sends an extend-wait message requesting more time to reply.
-func ExtendWait(ctx context.Context, client *awid.Client, targetAlias string, message string, encryptE2EE ...bool) (*ExtendWaitResult, error) {
-	return ExtendWaitWithOptions(ctx, client, targetAlias, message, ExtendWaitOptions{EncryptE2EE: len(encryptE2EE) > 0 && encryptE2EE[0]})
-}
-
 // ExtendWaitOptions configures ExtendWaitWithOptions.
 type ExtendWaitOptions struct {
+	// EncryptE2EE is the released (aw-v1.36.58) way to require encryption;
+	// true is E2EE: E2EERequired, whatever E2EE says.
 	EncryptE2EE bool
 	// RecipientDID is the DID the caller confirmed for targetAlias; the
 	// session is then selected by this strong identity only.
 	RecipientDID string
+	// E2EE is how the message chooses end-to-end encryption.
+	E2EE E2EEChoice
+}
+
+// Encryption is the end-to-end encryption choice the options make.
+func (o ExtendWaitOptions) Encryption() E2EEChoice {
+	return encryptionChoice(o.EncryptE2EE, o.E2EE)
+}
+
+// ExtendWait tells the target its wait is extended, in the session found for
+// targetAlias. encryptE2EE, when given and true, requires encryption; otherwise
+// the session's encryption carries over.
+func ExtendWait(ctx context.Context, client *awid.Client, targetAlias string, message string, encryptE2EE ...bool) (*ExtendWaitResult, error) {
+	return ExtendWaitWithOptions(ctx, client, targetAlias, message, ExtendWaitOptions{EncryptE2EE: len(encryptE2EE) > 0 && encryptE2EE[0]})
+}
+
+// ContinuationEncrypted reports whether a message to an existing session is
+// end-to-end encrypted, by awid.ContinuationEncryption from the session's
+// stored rows (read unless --e2ee decides alone) and whether this client can
+// encrypt. A plaintext send into an encrypted session, or into one whose
+// encryption cannot be read, is announced through status.
+func ContinuationEncrypted(ctx context.Context, client *awid.Client, sessionID string, choice E2EEChoice, status StatusCallback) (bool, error) {
+	var reading awid.ConversationEncryptionReading
+	if choice != E2EERequired {
+		var err error
+		if reading, err = client.ChatSessionEncryption(ctx, sessionID); err != nil {
+			return false, fmt.Errorf("reading whether the conversation is end-to-end encrypted: %w", err)
+		}
+	}
+	decision := awid.ContinuationEncryption(reading, choice, client.E2EESendUnavailable())
+	if decision.Notice != "" && status != nil {
+		status("plaintext", decision.Notice)
+	}
+	return decision.Encrypt, nil
 }
 
 func ExtendWaitWithOptions(ctx context.Context, client *awid.Client, targetAlias string, message string, opts ExtendWaitOptions) (*ExtendWaitResult, error) {
-	sessionID, _, err := lookupSession(ctx, client, targetAlias, opts.RecipientDID, true)
+	return ExtendWaitWithStatus(ctx, client, targetAlias, message, opts, nil)
+}
+
+// ExtendWaitWithStatus is ExtendWaitWithOptions with status lines, such as the
+// --plaintext notice, sent to status.
+func ExtendWaitWithStatus(ctx context.Context, client *awid.Client, targetAlias string, message string, opts ExtendWaitOptions, status StatusCallback) (*ExtendWaitResult, error) {
+	sessionID, _, err := lookupSession(ctx, client, targetAlias, opts.RecipientDID, waitingSessionFirst)
 	if err != nil {
 		return nil, err
 	}
 
+	encrypt, err := ContinuationEncrypted(ctx, client, sessionID, opts.Encryption(), status)
+	if err != nil {
+		return nil, err
+	}
 	msgResp, err := client.ChatSendMessage(ctx, sessionID, &awid.ChatSendMessageRequest{
 		Body:        message,
 		ExtendWait:  true,
-		EncryptE2EE: opts.EncryptE2EE,
+		EncryptE2EE: encrypt,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("sending extend-wait message: %w", err)
@@ -1826,7 +1736,7 @@ func ShowPending(ctx context.Context, client *awid.Client, targetAlias string) (
 // confirmedDID, the DID the caller confirmed for targetAlias, when one is
 // given (lookupSession).
 func ShowPendingConfirmed(ctx context.Context, client *awid.Client, targetAlias string, confirmedDID string) (*SendResult, error) {
-	sessionID, _, err := lookupSession(ctx, client, targetAlias, confirmedDID, true)
+	sessionID, _, err := lookupSession(ctx, client, targetAlias, confirmedDID, waitingSessionFirst)
 	if err != nil {
 		return nil, err
 	}
@@ -1886,7 +1796,7 @@ func ShowPendingConfirmed(ctx context.Context, client *awid.Client, targetAlias 
 		}
 		return &SendResult{
 			SessionID:     p.SessionID,
-			Status:        "pending",
+			Status:        SendPending,
 			TargetAgent:   targetAlias,
 			Reply:         p.LastMessage,
 			SenderWaiting: p.SenderWaiting,

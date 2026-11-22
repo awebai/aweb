@@ -1,180 +1,127 @@
-from __future__ import annotations
+"""Team presence through real certificate/proxy HTTP, MCP, DB and Redis."""
 
 import json
+from uuid import uuid4
 
 import pytest
-import pytest_asyncio
 
-from aweb.coordination.routes import workspaces as workspace_routes
-from aweb.mcp import auth as mcp_auth
-from aweb.mcp.auth import AuthContext
-from aweb.mcp.tools import agents as mcp_agents
-from aweb.routes import agents as agent_routes
-from aweb.team_auth_deps import TeamIdentity
+from aweb.internal_auth import (
+    ProxyHeaderTrust,
+    ProxyVerificationConfig,
+    build_internal_auth_header_value,
+)
+from test_coordination_state_http import call_mcp, request_as
+from test_coordination_state_http import coordination_mcp
+from test_dashboard_privacy import TEAM
+from test_dashboard_privacy import privacy_app
+from test_workspace_liveness_http import _connect_registered_member, _send_member_request
 
+__all__ = ["coordination_mcp", "privacy_app"]
 
-class _FakeAwebDB:
-    def __init__(self, alias: str = "ivy", workspace_id: str = "workspace-1"):
-        self.alias = alias
-        self.workspace_id = workspace_id
-
-    async def fetch_one(self, _query: str, *_args):
-        return {"alias": self.alias, "workspace_id": self.workspace_id}
-
-    async def execute(self, _query: str, *_args):
-        return None
-
-
-class _FakeDbInfra:
-    def __init__(self, alias: str = "ivy"):
-        self._db = _FakeAwebDB(alias=alias)
-
-    def get_manager(self, _name: str = "aweb"):
-        return self._db
-
-
-@pytest_asyncio.fixture(params=["certificate", "proxy"])
-async def authenticated_mcp_context(request):
-    auth = AuthContext(
-        agent_id="agent-1",
-        team_id="default:acme.com",
-        alias="ivy",
-        did_key="did:key:z6MkIvy",
-        certificate_id="cert-001" if request.param == "certificate" else None,
-        trusted_proxy=request.param == "proxy",
-    )
-    token = mcp_auth._auth_context.set(auth)
-    try:
-        yield auth
-    finally:
-        mcp_auth._auth_context.reset(token)
+PROXY_SECRET = "r15-disposable-proxy-test-secret"
 
 
 @pytest.mark.asyncio
-async def test_mcp_heartbeat_passes_team_id(monkeypatch, authenticated_mcp_context):
-    seen: dict[str, str] = {}
-
-    async def _capture_presence(_redis, **kwargs):
-        seen.update(kwargs)
-        return "2026-04-07T00:00:00Z"
-
-    monkeypatch.setattr(mcp_agents, "update_agent_presence", _capture_presence)
-
-    payload = json.loads(await mcp_agents.heartbeat(db_infra=_FakeDbInfra(), redis=object()))
-
-    assert payload["agent_id"] == "agent-1"
-    assert seen["team_id"] == "default:acme.com"
-    assert seen["alias"] == "ivy"
-    assert seen["workspace_id"] == "workspace-1"
-    assert "agent_id" not in seen
-
-
-@pytest.mark.asyncio
-async def test_mcp_agent_list_reads_presence_by_workspace_id(monkeypatch, authenticated_mcp_context):
-    seen: list[str] = []
-
-    class _ListDB:
-        async def fetch_all(self, _query: str, *_args):
-            return [
-                {
-                    "agent_id": "agent-1",
-                    "workspace_id": "workspace-1",
-                    "alias": "ivy",
-                    "human_name": "",
-                    "agent_type": "agent",
-                    "identity_scope": "local",
-                    "status": "active",
-                }
-            ]
-
-    class _ListInfra:
-        def get_manager(self, _name: str = "aweb"):
-            return _ListDB()
-
-    async def _presence(_redis, workspace_ids):
-        seen.extend(workspace_ids)
-        return [{"workspace_id": "workspace-1", "status": "active"}]
-
-    monkeypatch.setattr(mcp_agents, "list_agent_presences_by_workspace_ids", _presence)
-
-    payload = json.loads(await mcp_agents.list_agents(db_infra=_ListInfra(), redis=object()))
-
-    assert seen == ["workspace-1"]
-    assert payload["agents"][0]["online"] is True
-
-
-@pytest.mark.asyncio
-async def test_route_heartbeat_passes_team_id(monkeypatch):
-    seen: dict[str, str] = {}
-
-    async def _capture_presence(_redis, **kwargs):
-        seen.update(kwargs)
-        return "2026-04-07T00:00:00Z"
-
-    monkeypatch.setattr(agent_routes, "update_agent_presence", _capture_presence)
-
-    identity = TeamIdentity(
-        team_id="default:acme.com",
-        agent_id="agent-1",
-        alias="ivy",
-        did_key="did:key:z6MkIvy",
-        did_aw="did:aw:ivy",
-        address="acme.com/ivy",
-        identity_scope="global",
-        certificate_id="cert-001",
-        grant=None,
-    )
-
-    response = await agent_routes.heartbeat(
-        request=None,
-        db=_FakeDbInfra(),
-        redis=object(),
-        identity=identity,
-    )
-
-    assert response.agent_id == "agent-1"
-    assert seen["team_id"] == "default:acme.com"
-    assert seen["alias"] == "ivy"
-    assert seen["workspace_id"] == "workspace-1"
-
-
-@pytest.mark.asyncio
-async def test_list_online_workspaces_filters_by_team_id(monkeypatch):
-    async def _presences(_redis):
-        return [
-            {
-                "workspace_id": "ws-1",
-                "alias": "ivy",
-                "team_id": "default:acme.com",
-                "last_seen": "2026-04-07T00:00:00Z",
-            },
-            {
-                "workspace_id": "ws-2",
-                "alias": "other",
-                "team_id": "other.com/default",
-                "last_seen": "2026-04-07T00:00:01Z",
-            },
-        ]
-
-    monkeypatch.setattr(workspace_routes, "list_agent_presences", _presences)
-
-    response = await workspace_routes.list_online_workspaces(
-        request=None,
-        human_name=None,
-        redis=object(),
-        db_infra=object(),
-        identity=TeamIdentity(
-            team_id="default:acme.com",
-            agent_id="agent-1",
-            alias="ivy",
-            did_key="did:key:z6MkIvy",
-            did_aw="did:aw:ivy",
-            address="acme.com/ivy",
-            identity_scope="global",
-            certificate_id="cert-001",
-            grant=None,
+@pytest.mark.parametrize(
+    ("privacy_app", "transport"),
+    [
+        pytest.param(
+            ProxyVerificationConfig(trust=ProxyHeaderTrust.DISABLED),
+            "certificate",
+            id="certificate",
         ),
+        pytest.param(
+            ProxyVerificationConfig(
+                trust=ProxyHeaderTrust.SHARED_SECRET, shared_secret=PROXY_SECRET
+            ),
+            "proxy",
+            id="proxy",
+        ),
+    ],
+    indirect=["privacy_app"],
+)
+async def test_mcp_heartbeat_and_agent_list_use_the_workspace_and_team(
+    coordination_mcp, transport
+):
+    env = coordination_mcp
+    alice = env.actors["alice"]
+    if transport == "certificate":
+        result = await call_mcp(env, name="heartbeat")
+    else:
+        user_id = str(uuid4())
+        response = await env.client.post(
+            "/coordination-mcp/",
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": "heartbeat", "arguments": {}},
+            },
+            headers={
+                "X-Team-ID": TEAM,
+                "X-User-ID": user_id,
+                "X-AWEB-Actor-ID": str(alice.id),
+                "X-AWEB-Auth": build_internal_auth_header_value(
+                    secret=PROXY_SECRET,
+                    team_id=TEAM,
+                    principal_type="u",
+                    principal_id=user_id,
+                    actor_id=str(alice.id),
+                ),
+                "Accept": "application/json, text/event-stream",
+            },
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()["result"]
+        assert not payload.get("isError"), payload
+        result = json.loads(payload["content"][0]["text"])
+    assert result["agent_id"] == str(alice.id)
+    presence = await env.redis.hgetall(f"presence:{alice.workspace}")
+    assert presence["team_id"] == TEAM
+    assert presence["alias"] == "alice"
+    assert presence["workspace_id"] == str(alice.workspace)
+    agents = await call_mcp(env, name="list_agents")
+    assert (
+        next(agent for agent in agents["agents"] if agent["alias"] == "alice")["online"]
+        is True
     )
 
-    assert [workspace.alias for workspace in response.workspaces] == ["ivy"]
-    assert response.workspaces[0].team_id == "default:acme.com"
+
+@pytest.mark.asyncio
+async def test_route_heartbeat_and_online_list_keep_the_team_boundary(privacy_app):
+    env = privacy_app
+    for alias in ("bob", "carol"):
+        seeded = await request_as(
+            env, alias=alias, method="POST", path="/v1/agents/heartbeat"
+        )
+        assert seeded.status_code == 200, seeded.text
+    response = await request_as(
+        env, alias="alice", method="POST", path="/v1/agents/heartbeat"
+    )
+    assert response.status_code == 200, response.text
+    presence = await env.redis.hgetall(f"presence:{env.actors['alice'].workspace}")
+    assert presence["team_id"] == TEAM
+    assert presence["alias"] == "alice"
+    # An unrelated team's real row and presence must not join this team's view.
+    foreign_team = "foreign:example.test"
+    expected_aliases = set(env.actors)
+    await env.app.state.awid_registry_client.register_team(
+        domain="example.test",
+        name="foreign",
+        display_name="Foreign",
+        team_did_key=env.team_did,
+        visibility="public",
+        namespace_controller_signing_key=env.namespace_sk,
+    )
+    await _connect_registered_member(env, alias="outsider", team_id=foreign_team)
+    foreign_heartbeat = await _send_member_request(
+        env, alias="outsider", method="POST", path="/v1/agents/heartbeat",
+        team_id=foreign_team,
+    )
+    assert foreign_heartbeat.status_code == 200, foreign_heartbeat.text
+    online = await request_as(
+        env, alias="alice", method="GET", path="/v1/workspaces/online"
+    )
+    assert online.status_code == 200, online.text
+    assert {row["alias"] for row in online.json()["workspaces"]} == expected_aliases
+    assert {row["team_id"] for row in online.json()["workspaces"]} == {TEAM}

@@ -35,14 +35,18 @@ func TestOATSWakeReadinessReportsAcceptedControlFailureAsUnavailable(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := listener.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
-		t.Fatal(err)
-	}
 	t.Cleanup(func() {
 		if err := listener.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
 			t.Error(err)
 		}
 	})
+	// Match StartControl so the client admits the socket and exercises the exchange.
+	if err := os.Chmod(store.SocketPath(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := listener.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
 	done := make(chan error, 1)
 	go func() {
 		conn, err := listener.Accept()

@@ -401,8 +401,11 @@ func (c *RegistryClient) FetchTeamCertificateWithSigner(ctx context.Context, reg
 	if _, err := ExtractPublicKey(strings.TrimSpace(cert.TeamDIDKey)); err != nil {
 		return nil, fmt.Errorf("decode fetched certificate team_did_key: %w", err)
 	}
-	if err := CheckDecodedTeamCertificate(cert, strings.TrimSpace(cert.TeamDIDKey)); err != nil {
-		return nil, fmt.Errorf("verify fetched certificate: %w", err)
+	if cert.Team != BuildTeamID(domain, name) {
+		return nil, fmt.Errorf("fetched certificate names another team; retry with the intended team")
+	}
+	if err := c.CheckCurrentTeamCertificate(ctx, CurrentTeamCertificateCheck{RegistryURL: registryURL, Certificate: cert}); err != nil {
+		return nil, fmt.Errorf("verify current fetched certificate: %w; ask the team controller for a current certificate", err)
 	}
 	return cert, nil
 }

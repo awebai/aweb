@@ -222,6 +222,13 @@ cryptographically verified identity.`,
 			req.ConversationID = conversationID
 		} else {
 			applyMailRecipientTarget(req, target.Kind, target.Value)
+			if target.Kind == "alias" {
+				confirmed, err := confirmTeamAlias(ctx, c, sel, target.Value, false)
+				if err != nil {
+					return err
+				}
+				req.ConfirmedRecipient = confirmed.recipient
+			}
 		}
 
 		certSend := beadsMailUsesCertSend(target.Kind, req.ConversationID)

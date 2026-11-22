@@ -408,12 +408,26 @@ async def test_an_owner_approval_designates_no_holder(test_db_factory, registry)
     )
 
 
-async def test_a_holder_without_a_notice_contact_cannot_gain_one(pw: PasskeyWorld):
-    member = holder()
-    await designate(pw, member)
-    options = await pw.passkeys.contact_change_options(SCOPE, NOTICE)
-    with pytest.raises(ContactChangeRefused):
-        await pw.passkeys.change_contact(SCOPE, NOTICE, member.device.get(options))
+async def test_a_holder_without_a_notice_contact_cannot_gain_one(test_db_factory, registry):
+    # An owner's change set is the one path that schedules a contact change;
+    # here no scope is an owner scope, so the last-owner rule does not decide.
+    world = await passkey_world(
+        test_db_factory, registry, holding_scopes=is_holding_scope, owner_scopes=lambda _: False
+    )
+    await apply_roles_migrations(world.passkeys.db)
+    await designate(world, holder())
+    async with world.passkeys.db.transaction() as tx:
+        approval = OwnerApproval(
+            approval_id="approval-1",
+            approver_subject="approver-1",
+            approver_scope=CONTACT_SCOPE,
+            transaction_id=await tx.fetch_value("SELECT txid_current()"),
+        )
+        with pytest.raises(ContactChangeRefused) as refused:
+            await world.passkeys.change_contact_by_owner(
+                tx, scope=SCOPE, new_contact=NOTICE, evidence=approval
+            )
+    assert refused.value.reason == "contact_not_declared"
 
 
 async def test_a_holder_assertion_from_another_origin_is_refused(pw: PasskeyWorld):

@@ -225,11 +225,11 @@ def test_kms_region_must_match_the_selected_key(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "user", [pwd.getpwuid(os.geteuid()).pw_name, "root", "lab-user-that-does-not-exist"]
+    "user", [pytest.param(None, id="current-user"), "root", "lab-user-that-does-not-exist"]
 )
 def test_runner_must_resolve_to_a_real_separate_nonroot_user(tmp_path, user):
     inputs = configured(tmp_path)
-    inputs[PREFIX + "RUNNER_USER"] = user
+    inputs[PREFIX + "RUNNER_USER"] = pwd.getpwuid(os.geteuid()).pw_name if user is None else user
     with pytest.raises(LabConfigurationError):
         load_lab_environment(inputs, private_dns="excluded")
 

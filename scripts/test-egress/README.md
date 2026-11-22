@@ -192,3 +192,33 @@ or different identity never authorizes killing a reused PID.
 long paths/narrow columns, plus exited-child, wrong-start and wrong-container
 negatives. Fixed Docker/interpreter transports make it a process-identity
 control, not a whole deployment or parallel-suite qualification.
+
+## Prepared package callers on an ephemeral VM
+
+`package_image.py` owns the source/dependency image build for both the isolated
+runner and `package_environment.py`. Package preparation uses the selected
+checkout's tool Dockerfile and test-egress recipe, then synchronizes each selected
+project with `uv sync --frozen`. Each installed Playwright version installs its
+own Chromium headless shell and system dependencies. Browser revision numbers
+and wheel versions are never copied from a prior run.
+
+The image's UID1000 admission check creates a fresh temporary environment for
+each selected project and runs a frozen offline sync. It also launches Chromium
+through each project's own Playwright. Missing wheels/build backends or a missing
+browser refuse preparation with a project-qualified setup error. The generated
+recipe, preparation-tool hash, immutable image ID, exact source and lock hashes
+remain in the binding. Tests begin only after this admission succeeds.
+
+The package entry is for callers that own Compose services: it uses the
+single-tenant VM's loopback and Docker socket, UID1000, bounded resources and a
+private image HOME, with no host identity or credential-directory mount. The
+ordinary isolated runner retains its internal network and has no Docker socket.
+The socket-bearing package command may run only on a dedicated ephemeral VM
+holding no credential, no ledger that survives the run, and no other run's
+evidence. Image preparation alone may also prepare development leases; those
+leases must not use this socket-bearing package command. Source/lock read-back
+does not attest that code with the VM's Docker socket left evidence untouched.
+Package commands retain their actual exit, JUnit when selected, and source/lock
+read-back before container removal. A batch owns its preparation binding and
+removes that binding's unique image tag at the end, including failed phases.
+This preparation is a runner precondition and does not modify the gated tree.

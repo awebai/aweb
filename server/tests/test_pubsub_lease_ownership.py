@@ -24,6 +24,8 @@ from aweb.events import stream_events_multi
 from aweb.routes.dashboard import _sse_dashboard_events
 from test_dashboard_privacy import privacy_app  # noqa: F401
 
+__all__ = ["privacy_app"]
+
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 CYCLES = 10
 
@@ -38,6 +40,20 @@ async def settled(redis: Redis, expected: int, timeout: float = 2.0) -> int:
         while held(redis) != expected:
             await asyncio.sleep(0.01)
     return held(redis)
+
+
+async def dashboard_subscribers(redis: Redis, expected: int) -> int:
+    """Observe the private subscription through Redis, not the serving pool."""
+    from aweb.events import team_events_channel_name
+
+    channel = team_events_channel_name("lease-ownership:local")
+    count = -1
+    with anyio.move_on_after(2):
+        while count != expected:
+            count = dict(await redis.pubsub_numsub(channel))[channel]
+            if count != expected:
+                await asyncio.sleep(0.01)
+    return count
 
 
 @pytest_asyncio.fixture
@@ -80,9 +96,13 @@ async def test_a_stream_closed_normally_returns_its_connection(redis, kind):
     for _ in range(CYCLES):
         stream = _streams(redis)[kind]()
         await anext(stream)
-        assert held(redis) == 1
+        assert held(redis) == (1 if kind == "status" else 0)
+        if kind == "dashboard":
+            assert await dashboard_subscribers(redis, 1) == 1
         await stream.aclose()
         assert held(redis) == 0
+        if kind == "dashboard":
+            assert await dashboard_subscribers(redis, 0) == 0
 
 
 @pytest.mark.asyncio
@@ -91,12 +111,16 @@ async def test_a_stream_closed_under_cancellation_returns_its_connection(redis, 
     for _ in range(CYCLES):
         stream = _streams(redis)[kind]()
         await anext(stream)
-        assert held(redis) == 1
+        assert held(redis) == (1 if kind == "status" else 0)
+        if kind == "dashboard":
+            assert await dashboard_subscribers(redis, 1) == 1
         # A client disconnect cancels the response's scope while it closes the stream.
         with anyio.CancelScope() as scope:
             scope.cancel()
             await stream.aclose()
     assert await settled(redis, 0) == 0
+    if kind == "dashboard":
+        assert await dashboard_subscribers(redis, 0) == 0
 
 
 @pytest.mark.asyncio

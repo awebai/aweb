@@ -423,15 +423,17 @@ async def list_conversations_for_auth(
     rows_by_session: dict[str, dict] = {}
     if requested_type in (None, "chat"):
         for actor_did in actor_dids:
+            # Live membership admits the caller. Canonical participants describe
+            # the history, with a fallback for legacy chats left uncovered by 055.
             rows = await aweb_db.fetch_all(
                 """
                 SELECT
                     s.session_id::text AS conversation_id,
                     jsonb_agg(jsonb_build_object('did', p2.did, 'alias', p2.alias, 'address', p2.address)
                               ORDER BY p2.alias, p2.did) AS participant_details,
-                    array_agg(p2.alias ORDER BY p2.alias) AS participants,
-                    array_agg(p2.did ORDER BY p2.alias) AS participant_dids,
-                    array_agg(p2.address ORDER BY p2.alias) AS participant_addresses,
+                    array_agg(p2.alias ORDER BY p2.alias, p2.did) AS participants,
+                    array_agg(p2.did ORDER BY p2.alias, p2.did) AS participant_dids,
+                    array_agg(p2.address ORDER BY p2.alias, p2.did) AS participant_addresses,
                     LEFT(COALESCE(lm.body, ''), 100) AS last_body,
                     lm.from_alias AS last_from,
                     lm.from_did AS last_from_did,
@@ -440,8 +442,20 @@ async def list_conversations_for_auth(
                 FROM {{tables.chat_sessions}} s
                 JOIN {{tables.chat_participants}} p
                   ON p.session_id = s.session_id AND p.did = $1
-                JOIN {{tables.chat_participants}} p2
-                  ON p2.session_id = s.session_id
+                JOIN LATERAL (
+                    WITH canonical_participants AS (
+                        SELECT cp.did, cp.alias, cp.address
+                        FROM {{tables.conversations}} c
+                        JOIN {{tables.conversation_participants}} cp
+                          ON cp.conversation_id = c.conversation_id
+                        WHERE c.conversation_id = s.session_id AND c.conversation_type = 'chat'
+                    )
+                    SELECT did, alias, address FROM canonical_participants
+                    UNION ALL
+                    SELECT did, alias, address FROM {{tables.chat_participants}}
+                    WHERE session_id = s.session_id
+                      AND NOT EXISTS (SELECT 1 FROM canonical_participants)
+                ) p2 ON TRUE
                 LEFT JOIN LATERAL (
                     SELECT body, from_alias, from_did, created_at
                     FROM {{tables.chat_messages}}
@@ -467,19 +481,9 @@ async def list_conversations_for_auth(
                   AND ($4::timestamptz IS NULL OR lm.created_at < $4::timestamptz
                     OR (lm.created_at = $4::timestamptz AND $5::text IS NOT NULL
                         AND 'chat:' || s.session_id::text < $5::text))
-                  AND (
-                        ($2::text IS NULL AND $3::text IS NULL)
-                     OR EXISTS (
-                            SELECT 1
-                            FROM {{tables.chat_participants}} target_cp
-                            WHERE target_cp.session_id = s.session_id
-                              AND (
-                                   ($2::text IS NOT NULL AND target_cp.did = $2::text)
-                                OR ($3::text IS NOT NULL AND target_cp.address = $3::text)
-                              )
-                        )
-                  )
                 GROUP BY s.session_id, lm.body, lm.from_alias, lm.from_did, lm.created_at, unread.cnt
+                HAVING ($2::text IS NULL AND $3::text IS NULL)
+                    OR bool_or(p2.did = $2::text OR p2.address = $3::text)
                 ORDER BY lm.created_at DESC, s.session_id DESC
                 LIMIT $6::int
                 """,

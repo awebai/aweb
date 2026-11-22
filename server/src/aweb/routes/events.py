@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from aweb.identity_binding import IdentityProjectionField, verified_identity_field_sql
+from aweb.messaging.kinds import ContentMode
+from aweb.messaging.mail_attribution import incoming_mail_snapshot_predicate
 from aweb.messaging.participant_succession import MailSuccessionScope, load_mail_succession_scope
 
 import asyncio
@@ -39,22 +42,35 @@ from aweb.agent_wake import (
     team_room_wake_key,
 )
 from aweb.deps import get_db, get_redis
-from aweb.identity_metadata import lookup_identity_metadata_by_did, routable_chat_address
+from aweb.identity_metadata import (
+    lookup_identity_metadata_by_did,
+    routable_chat_address,
+)
 from aweb.messaging.chat import get_pending_conversations
-from aweb.messaging.room_notices import RoomAuthorityUnavailable, RoomAuthorityWindow, current_room_events
+from aweb.messaging.room_notices import (
+    RoomAuthorityUnavailable,
+    RoomAuthorityWindow,
+    current_room_events,
+)
 from aweb.messaging.waiting import get_waiting_agents, get_waiting_agents_by_session
 from aweb.internal_auth import parse_internal_auth_context, resolve_internal_actor
 from aweb.grant_streams import (
-    GRANT_STREAM_RECHECK_SECONDS,
+    STREAM_AUTHORITY_RECHECK_SECONDS,
+    STREAM_MAX_DURATION_SECONDS,
     agent_event_allowed,
     clamp_deadline_to_grant,
     grant_has_scope,
-    NeverGrantStreamGuard, grant_expiry_reason,
+    NeverGrantStreamGuard,
+    grant_expiry_reason,
     grant_terminal_sse,
     require_valid_stream_grant,
 )
 from aweb.service_errors import ServiceError
-from aweb.team_auth_deps import TeamIdentity, get_team_identity, team_identity_with_grant_scope
+from aweb.team_auth_deps import (
+    TeamIdentity,
+    get_team_identity,
+    team_identity_with_grant_scope,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +81,6 @@ EVENTS_SNAPSHOT_RETRY_INITIAL = 1.0  # first retry delay after a failed snapshot
 EVENTS_SNAPSHOT_FAILURE_WINDOW = 30.0  # tolerate bursts; terminate only after >30s
 EVENTS_SNAPSHOT_MAX_BACKOFF = 5.0  # cap snapshot retry delay
 EVENTS_HEARTBEAT_INTERVAL = 30.0  # seconds between idle SSE heartbeat comments
-MAX_STREAM_DURATION = 300  # maximum stream lifetime in seconds
 CONTROL_SIGNAL_BATCH = 10  # control signals consumed per read; a full batch reads again
 ROOM_AUTHORITY_RETRY_MAX = 5.0  # cap on retrying room notices while authority is unavailable
 
@@ -151,7 +166,9 @@ def _app_event_response(record: AppEventRecord) -> AppEventEmitResponse:
     )
 
 
-def _subscription_response(subscription: AppEventSubscription) -> AppEventSubscriptionResponse:
+def _subscription_response(
+    subscription: AppEventSubscription,
+) -> AppEventSubscriptionResponse:
     return AppEventSubscriptionResponse(
         subscription_id=subscription.subscription_id,
         team_id=subscription.team_id,
@@ -179,31 +196,14 @@ async def _current_actionable_mail(
     aweb_db, *, inbox_dids: list[str], mail_scope: MailSuccessionScope
 ) -> list[dict[str, Any]]:
     """Return unread incoming mail using preloaded, exact thread evidence."""
-    args: list[Any] = [inbox_dids]
-    targets = ["m.to_did = ANY($1::text[])"]
-    senders = ["m.from_did = ANY($1::text[])"]
-    for dids, conversations in mail_scope.identity_threads:
-        did_param, conversation_param = len(args) + 1, len(args) + 2
-        args.extend((list(dids), list(conversations)))
-        for field, clauses in (("to_did", targets), ("from_did", senders)):
-            clauses.append(
-                f"(m.{field} = ANY(${did_param}::text[]) "
-                f"AND m.conversation_id = ANY(${conversation_param}::uuid[]))"
-            )
-    # Exact current targets retain legacy/no-conversation wake delivery. Extra
-    # identities require their recorded thread, on BOTH sides of attribution.
-    # A merged predecessor's outgoing mail is not incoming even if sent to H.
-    predicate = (
-        f"({' OR '.join(targets)}) "
-        f"AND NOT COALESCE(({' OR '.join(senders)}), FALSE)"
-    )
+    predicate = incoming_mail_snapshot_predicate(inbox_dids=inbox_dids, scope=mail_scope)
     rows = await aweb_db.fetch_all(
         f"""
         WITH unread AS (
             SELECT message_id, conversation_id, from_did, from_alias, from_address, subject, priority,
                    created_at, content_mode, message_version
             FROM {{{{tables.messages}}}} m
-            WHERE {predicate}
+            WHERE {predicate.sql}
               AND read_at IS NULL
         ),
         windowed AS (
@@ -228,7 +228,7 @@ async def _current_actionable_mail(
         FROM windowed
         ORDER BY created_at ASC, message_id ASC
         """,
-        *args,
+        *predicate.arguments,
     )
     sender_map = await lookup_identity_metadata_by_did(
         aweb_db,
@@ -241,18 +241,22 @@ async def _current_actionable_mail(
             "conversation_id": str(r["conversation_id"]),
             "from_alias": r["from_alias"],
             "from_did": (r.get("from_did") or "").strip(),
-            "from_stable_id": sender_map.get((r.get("from_did") or "").strip(), {}).get("stable_id", ""),
+            "from_stable_id": sender_map.get((r.get("from_did") or "").strip(), {}).get(
+                "stable_id", ""
+            ),
             "from_address": (
                 r.get("from_address")
                 or sender_map.get((r.get("from_did") or "").strip(), {}).get("address")
                 or r["from_alias"]
                 or ""
             ),
-            "subject": "" if r.get("content_mode") == "encrypted_v2" else (r["subject"] or ""),
+            "subject": ""
+            if r.get("content_mode") == ContentMode.ENCRYPTED
+            else (r["subject"] or ""),
             "priority": (r.get("priority") or "normal").strip().lower(),
-            "content_mode": r.get("content_mode") or "legacy_plaintext_v1",
+            "content_mode": r.get("content_mode") or ContentMode.PLAINTEXT,
             "message_version": int(r.get("message_version") or 1),
-            "encrypted": r.get("content_mode") == "encrypted_v2",
+            "encrypted": r.get("content_mode") == ContentMode.ENCRYPTED,
             "unread_count": int(r.get("unread_count") or 0),
             "wake_mode": _mail_wake_mode(r.get("priority")),
             "created_at": r["created_at"].astimezone(timezone.utc).isoformat(),
@@ -261,7 +265,9 @@ async def _current_actionable_mail(
     ]
 
 
-def _identity_dids(viewer: dict[str, Any] | None, identity: TeamIdentity | None = None) -> list[str]:
+def _identity_dids(
+    viewer: dict[str, Any] | None, identity: TeamIdentity | None = None
+) -> list[str]:
     dids: list[str] = []
     for value in (
         (getattr(identity, "did_aw", None) or "").strip(),
@@ -278,7 +284,9 @@ def _identity_dids(viewer: dict[str, Any] | None, identity: TeamIdentity | None 
 ChatWaitingState = dict[str, tuple[tuple[str, ...], bool, bool]]
 
 
-async def _chat_waiting_state(redis, *, viewer_dids: list[str], other_dids: dict[str, list[str]]) -> ChatWaitingState:
+async def _chat_waiting_state(
+    redis, *, viewer_dids: list[str], other_dids: dict[str, list[str]]
+) -> ChatWaitingState:
     """Per pending session: its other participants, whether the viewer waits in
     it, and whether another participant waits in it. Read from Redis only."""
     viewer_waiting = await get_waiting_agents_by_session(
@@ -344,7 +352,9 @@ async def _current_actionable_chat(
         redis,
         viewer_dids=participant_dids,
         other_dids={
-            session_id: [did for did in item.get("participant_dids", []) if did not in viewer_did_set]
+            session_id: [
+                did for did in item.get("participant_dids", []) if did not in viewer_did_set
+            ]
             for session_id, item in pending_by_session.items()
         },
     )
@@ -365,7 +375,8 @@ async def _current_actionable_chat(
                 "conversation_id": item["session_id"],
                 "participants": list(item.get("participants") or []),
                 "participant_addresses": [
-                    (address or "").strip() or routable_chat_address(
+                    (address or "").strip()
+                    or routable_chat_address(
                         participant_identity_map.get((did or "").strip(), {}),
                         viewer_team_id,
                         alias or "",
@@ -383,13 +394,15 @@ async def _current_actionable_chat(
                 "from_stable_id": participant_identity_map.get(
                     (item.get("last_from_did") or "").strip(), {}
                 ).get("stable_id", ""),
-                "from_address": item.get("last_from_address") or routable_chat_address(
+                "from_address": item.get("last_from_address")
+                or routable_chat_address(
                     participant_identity_map.get((item.get("last_from_did") or "").strip(), {}),
                     viewer_team_id,
                     item.get("last_from") or "",
                 ),
                 "last_from": item.get("last_from") or "",
-                "last_from_address": item.get("last_from_address") or routable_chat_address(
+                "last_from_address": item.get("last_from_address")
+                or routable_chat_address(
                     participant_identity_map.get((item.get("last_from_did") or "").strip(), {}),
                     viewer_team_id,
                     item.get("last_from") or "",
@@ -561,9 +574,9 @@ async def _sse_agent_events(
     aweb_db = db.get_manager("aweb")
     aid = UUID(agent_id)
     viewer = await aweb_db.fetch_one(
-        """
-        SELECT CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, did_key
-        FROM {{tables.agents}}
+        f"""
+        SELECT {verified_identity_field_sql(IdentityProjectionField.STABLE_DID)} AS did_aw, did_key
+        FROM {{{{tables.agents}}}}
         WHERE agent_id = $1 AND deleted_at IS NULL
         """,
         aid,
@@ -596,7 +609,9 @@ async def _sse_agent_events(
         if "control" in kinds:
             current["control"] = await _poll_control_signals(aweb_db, team_id=team_id, agent_id=aid)
         if "app" in kinds:
-            current["app"] = await current_app_events_for_agent(aweb_db, team_id=team_id, agent_id=agent_id)
+            current["app"] = await current_app_events_for_agent(
+                aweb_db, team_id=team_id, agent_id=agent_id
+            )
         if "room" in kinds:
             try:
                 current["room"] = await current_room_events(request, db, identity, room_authority)
@@ -629,7 +644,9 @@ async def _sse_agent_events(
             previous[kind] = _index_events(events, key_field=key_field)
         return emitted
 
-    async with _wake_subscription(wake_hub, _stream_wake_keys(identity, viewer_dids)) as subscription:
+    async with _wake_subscription(
+        wake_hub, _stream_wake_keys(identity, viewer_dids)
+    ) as subscription:
         keys = list(subscription.keys) if subscription is not None else []
         marks = await _read_stream_marks(redis, keys) if subscription is not None else None
 
@@ -658,11 +675,15 @@ async def _sse_agent_events(
         # The caller deadline bounds waiting, not the initial scoped snapshot.
         # Grant expiry still blocks delivery above, even for an expired deadline.
 
+        delivered = False
         for evt in initial:
             if evt["type"] == "actionable_room_post" and not room_authority.fresh():
                 continue
             if agent_event_allowed(identity, evt):
                 yield _sse_frame(evt)
+                delivered = True
+        if delivered:
+            last_heartbeat_at = datetime.now(timezone.utc)
 
         # Streams opened together reconcile apart.
         next_reconcile_at = monotonic() + random.uniform(0, EVENTS_RECONCILE_INTERVAL)
@@ -681,14 +702,15 @@ async def _sse_agent_events(
                 next_reconcile_at,
                 listening_recorded_at + LISTENING_REFRESH_SECONDS,
                 now + (deadline - datetime.now(timezone.utc)).total_seconds(),
-                now + max(
+                now
+                + max(
                     0.0,
                     EVENTS_HEARTBEAT_INTERVAL
                     - (datetime.now(timezone.utc) - last_heartbeat_at).total_seconds(),
                 ),
             ]
-            if identity.grant is not None and identity.grant.never_expires:
-                due.append(guard.checked_at + GRANT_STREAM_RECHECK_SECONDS)
+            if identity.grant is None or identity.grant.never_expires:
+                due.append(guard.checked_at + STREAM_AUTHORITY_RECHECK_SECONDS)
             if pending - {"room"}:
                 due.append(retry_at)
             if "room" in pending:
@@ -736,7 +758,9 @@ async def _sse_agent_events(
                     )
                     # A wake for one kind also reads every kind whose counter
                     # moved, so a lost publication is not absorbed unread.
-                    kinds |= _moved_kinds(marks, snapshot_marks) if snapshot_marks is not None else set()
+                    kinds |= (
+                        _moved_kinds(marks, snapshot_marks) if snapshot_marks is not None else set()
+                    )
                     if monotonic() < room_retry_at:
                         kinds.discard("room")
                     current = await snapshot(kinds)
@@ -791,12 +815,12 @@ async def _sse_agent_events(
                     yield _sse_frame(evt)
                     delivered = True
 
-            now = datetime.now(timezone.utc)
+            heartbeat_now = datetime.now(timezone.utc)
             if delivered:
-                last_heartbeat_at = now
-            elif (now - last_heartbeat_at).total_seconds() >= EVENTS_HEARTBEAT_INTERVAL:
+                last_heartbeat_at = heartbeat_now
+            elif (heartbeat_now - last_heartbeat_at).total_seconds() >= EVENTS_HEARTBEAT_INTERVAL:
                 yield ": keepalive\n\n"
-                last_heartbeat_at = now
+                last_heartbeat_at = heartbeat_now
 
         reason = await guard.reason()
         if reason:
@@ -916,7 +940,7 @@ async def event_stream(
         raise HTTPException(status_code=422, detail="Invalid deadline format")
 
     # Cap deadline so clients cannot hold connections open indefinitely.
-    max_deadline = datetime.now(timezone.utc) + timedelta(seconds=MAX_STREAM_DURATION)
+    max_deadline = datetime.now(timezone.utc) + timedelta(seconds=STREAM_MAX_DURATION_SECONDS)
     if deadline_dt > max_deadline:
         deadline_dt = max_deadline
     deadline_dt = clamp_deadline_to_grant(deadline_dt, identity)

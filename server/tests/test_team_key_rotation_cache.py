@@ -1,4 +1,11 @@
-"""Real signed team-auth requests across an external AWID key rotation."""
+"""Isolated cache refresh tests with simulated registry and Redis services.
+
+These explicit unadmitted-team fixtures exercise crypto verification, refresh
+coalescing and cooldown behavior. They have no admitted native pin and cannot
+prove key-change authority. Real admitted-pin/controller-act coverage lives in
+test_team_key_pinning.py and test_admitted_team_key_cache.py.
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -7,18 +14,20 @@ import json
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
+import awid.registry as registry_module
 import httpx
 import pytest
 import pytest_asyncio
-from fastapi import HTTPException
-
-import awid.registry as registry_module
-from awid.registry import CachedRegistryClient
-from team_facts_fixtures import LegacyTeamFacts
-from awid.signing import canonical_json_bytes, sign_message
 from aweb.team_auth_deps import verify_request_certificate
+from awid.registry import CachedRegistryClient
+from awid.signing import canonical_json_bytes, sign_message
+from fastapi import HTTPException
+from team_facts_fixtures import LegacyTeamFacts
 from test_team_auth_deps import (
-    _encode_certificate, _make_certificate, _make_keypair, _request_with_app_state,
+    _encode_certificate,
+    _make_certificate,
+    _make_keypair,
+    _request_with_app_state,
 )
 
 
@@ -58,27 +67,46 @@ class LegacyCacheRegistry(LegacyTeamFacts, CachedRegistryClient):
 @pytest_asyncio.fixture
 async def world(monkeypatch, aweb_cloud_db):
     monkeypatch.delenv("AWEB_REQUIRE_REGISTERED_CERTIFICATES", raising=False)
+    monkeypatch.setenv("AWEB_ENFORCE_TEAM_KEY_PINS", "false")
     clock = [1_000_000]
     monkeypatch.setattr(registry_module, "_cache_now", lambda: clock[0])
     old, _, old_did = _make_keypair()
     new, _, new_did = _make_keypair()
     member, _, member_did = _make_keypair()
     env = SimpleNamespace(
-        clock=clock, old=old, old_did=old_did, new=new, new_did=new_did,
-        member=member, member_did=member_did, keys={"backend": old_did, "other": old_did},
-        key_reads=0, revocation_reads=0, revoked=[], status=200,
-        entered=asyncio.Event(), release=None, clients=[],
+        clock=clock,
+        old=old,
+        old_did=old_did,
+        new=new,
+        new_did=new_did,
+        member=member,
+        member_did=member_did,
+        keys={"backend": old_did, "other": old_did},
+        key_reads=0,
+        revocation_reads=0,
+        revoked=[],
+        status=200,
+        entered=asyncio.Event(),
+        release=None,
+        clients=[],
         # The real aweb schema holds the team-key pins verification reads.
         db_infra=SimpleNamespace(get_manager=lambda _name: aweb_cloud_db.aweb_db),
     )
 
     async def handler(request):
+        if request.url.path.endswith("/certificates"):
+            # OFF-mode registration measurement is distinct from controller
+            # acquisition; its catalog request must not spend the key counter.
+            return httpx.Response(200, json={"certificates": [], "has_more": False})
         if request.url.path.endswith("/revocations"):
             env.revocation_reads += 1
-            return httpx.Response(200, json={
-                "revocations": [{"certificate_id": value} for value in env.revoked],
-                "has_more": False,
-            })
+            return httpx.Response(
+                200,
+                json={
+                    "revocations": [{"certificate_id": value} for value in env.revoked],
+                    "has_more": False,
+                },
+            )
         name = request.url.path.rsplit("/", 1)[-1]
         env.key_reads += 1
         if name not in env.keys:
@@ -86,16 +114,31 @@ async def world(monkeypatch, aweb_cloud_db):
         env.entered.set()
         if env.release is not None:
             await env.release.wait()
-        return httpx.Response(env.status, json={
-            "team_id": f"{name}:acme.com", "domain": "acme.com", "name": name,
-            "team_did_key": env.keys[name], "created_at": "2026-01-01T00:00:00Z",
-        })
+        return httpx.Response(
+            env.status,
+            json={
+                "team_id": f"{name}:acme.com",
+                "domain": "acme.com",
+                "name": name,
+                "team_did_key": env.keys[name],
+                "created_at": "2026-01-01T00:00:00Z",
+            },
+        )
+
+    for name in env.keys:
+        assert (
+            await aweb_cloud_db.aweb_db.fetch_value(
+                "SELECT count(*) FROM {{tables.teams}} WHERE team_id=$1", f"{name}:acme.com"
+            )
+            == 0
+        )
 
     env.redis = _Redis(clock)
 
     def client():
         value = LegacyCacheRegistry(
-            registry_url="http://registry.test", redis_client=env.redis,
+            registry_url="http://registry.test",
+            redis_client=env.redis,
             transport=httpx.MockTransport(handler),
         )
         env.clients.append(value)
@@ -115,20 +158,29 @@ async def world(monkeypatch, aweb_cloud_db):
             await value.aclose()
 
 
-async def _verify(env, *, signer="new", name="backend", registry=None, cert_patch=None, headers_patch=None):
+async def _verify(
+    env, *, signer="new", name="backend", registry=None, cert_patch=None, headers_patch=None
+):
     cert = _make_certificate(
-        getattr(env, signer), getattr(env, signer + "_did"), env.member_did,
+        getattr(env, signer),
+        getattr(env, signer + "_did"),
+        env.member_did,
         team_id=f"{name}:acme.com",
     )
     cert.update(cert_patch or {})
     timestamp = datetime.now(timezone.utc).isoformat()
     body_hash = hashlib.sha256(b"").hexdigest()
-    payload = canonical_json_bytes({
-        "team_id": cert["team_id"], "timestamp": timestamp, "body_sha256": body_hash,
-    })
+    payload = canonical_json_bytes(
+        {
+            "team_id": cert["team_id"],
+            "timestamp": timestamp,
+            "body_sha256": body_hash,
+        }
+    )
     headers = {
         "Authorization": f"DIDKey {env.member_did} {sign_message(env.member, payload)}",
-        "X-AWEB-Timestamp": timestamp, "X-AWID-Team-Certificate": _encode_certificate(cert),
+        "X-AWEB-Timestamp": timestamp,
+        "X-AWID-Team-Certificate": _encode_certificate(cert),
     }
     headers.update(headers_patch or {})
     request = _request_with_app_state(headers)
@@ -144,10 +196,10 @@ async def _refused(env, **kwargs):
 
 
 @pytest.mark.asyncio
-async def test_external_rotation_recovers_on_first_request_and_updates_cache(world):
+async def test_unadmitted_registry_key_change_refreshes_verification_inputs(world):
     env = world
-    # The controller rotates outside this client; its old-key certificate still
-    # follows the existing cache freshness policy until the failure refresh.
+    # No admitted pin exists in this cache-only fixture. A simulated registry
+    # response change exercises freshness, not controller rotation authority.
     env.keys["backend"] = env.new_did
     assert (await _verify(env, signer="old"))["verified_team_did_key"] == env.old_did
     assert env.key_reads == 0
@@ -206,7 +258,7 @@ async def test_cooldown_is_shared_by_clients_and_independent_per_team(world):
 
 
 @pytest.mark.asyncio
-async def test_second_rotation_recovers_after_cooldown(world):
+async def test_second_unadmitted_registry_key_change_refreshes_after_cooldown(world):
     env = world
     env.keys["backend"] = env.new_did
     await _verify(env)
@@ -224,7 +276,7 @@ async def test_new_key_retry_reads_revocations_again(world):
     env = world
     env.keys["backend"] = env.new_did
     env.revoked = ["cert-001"]
-    assert await _refused(env) == "revoked"
+    assert (await _refused(env))["code"] == "certificate_revoked"
     assert env.key_reads == 1
     assert env.revocation_reads == 1
 
@@ -265,20 +317,27 @@ async def test_bad_signature_under_refreshed_key_never_drives_revocation_read(wo
     world.keys["backend"] = world.new_did
     # A certificate naming the current key whose signature fails is not a
     # superseded certificate: it keeps the plain signature refusal.
-    assert await _refused(
-        world, cert_patch={"signature": sign_message(world.member, b"wrong certificate")},
-    ) == "bad_signature"
+    assert (
+        await _refused(
+            world,
+            cert_patch={"signature": sign_message(world.member, b"wrong certificate")},
+        )
+        == "bad_signature"
+    )
     assert world.key_reads == 1
     assert world.revocation_reads == 0
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("headers_patch,cert_patch", [
-    ({"X-AWID-Team-Certificate": "not-base64"}, {}),
-    ({}, {"version": 99}),
-    ({}, {"certificate_id": ""}),
-    ({"X-AWEB-Timestamp": "2000-01-01T00:00:00Z"}, {}),
-])
+@pytest.mark.parametrize(
+    "headers_patch,cert_patch",
+    [
+        ({"X-AWID-Team-Certificate": "not-base64"}, {}),
+        ({}, {"version": 99}),
+        ({}, {"certificate_id": ""}),
+        ({"X-AWEB-Timestamp": "2000-01-01T00:00:00Z"}, {}),
+    ],
+)
 async def test_non_signature_refusals_never_refresh(world, headers_patch, cert_patch):
     await _refused(world, headers_patch=headers_patch, cert_patch=cert_patch)
     assert world.key_reads == 0
@@ -296,5 +355,5 @@ async def test_cached_revocation_never_triggers_key_refresh(world):
     entry = json.loads(world.redis.values[key])
     entry["value"] = ["cert-001"]
     world.redis.values[key] = json.dumps(entry)
-    assert await _refused(world, signer="old") == "revoked"
+    assert (await _refused(world, signer="old"))["code"] == "certificate_revoked"
     assert world.key_reads == 0

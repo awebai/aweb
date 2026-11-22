@@ -43,7 +43,9 @@ def _registry(service_client, *, cached=False, transport=None, **kwargs):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("cached", [False, True], ids=["client", "cached-client"])
-async def test_registry_visibility_changes_anonymous_reads(service_client, controller_identity, cached):
+async def test_registry_visibility_changes_anonymous_reads(
+    service_client, controller_identity, cached
+):
     key, did, created = await _team(service_client, controller_identity)
     path = f"/v1/namespaces/{DOMAIN}/teams/{NAME}"
     assert (await service_client.get(path)).status_code == 403
@@ -71,7 +73,10 @@ async def test_registry_visibility_changes_anonymous_reads(service_client, contr
 @pytest.mark.asyncio
 @pytest.mark.parametrize("signer", ["namespace", "member", "stranger"])
 async def test_registry_visibility_requires_the_team_controller(
-    service_client, controller_identity, awid_db_infra, signer,
+    service_client,
+    controller_identity,
+    awid_db_infra,
+    signer,
 ):
     key, did, _ = await _team(service_client, controller_identity)
     if signer == "namespace":
@@ -87,18 +92,28 @@ async def test_registry_visibility_requires_the_team_controller(
             await registry.set_team_visibility(DOMAIN, NAME, "public", wrong_key)
         assert refused.value.status_code == 403
         row = await awid_db_infra.get_manager("aweb").fetch_one(
-            "SELECT visibility FROM {{tables.teams}} WHERE domain = $1 AND name = $2", DOMAIN, NAME,
+            "SELECT visibility FROM {{tables.teams}} WHERE domain = $1 AND name = $2",
+            DOMAIN,
+            NAME,
         )
         assert row["visibility"] == "private"
-        assert (await registry.set_team_visibility(DOMAIN, NAME, "public", key)).visibility == "public"
+        assert (
+            await registry.set_team_visibility(DOMAIN, NAME, "public", key)
+        ).visibility == "public"
     finally:
         await registry.aclose()
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("name,visibility,status", [(NAME, "invalid", 422), ("missing", "public", 404)])
+@pytest.mark.parametrize(
+    "name,visibility,status", [(NAME, "invalid", 422), ("missing", "public", 404)]
+)
 async def test_registry_visibility_preserves_route_refusals(
-    service_client, controller_identity, name, visibility, status,
+    service_client,
+    controller_identity,
+    name,
+    visibility,
+    status,
 ):
     key, _, _ = await _team(service_client, controller_identity)
     registry = _registry(service_client)
@@ -106,7 +121,9 @@ async def test_registry_visibility_preserves_route_refusals(
         with pytest.raises(RegistryError) as refused:
             await registry.set_team_visibility(DOMAIN, name, visibility, key)
         assert refused.value.status_code == status
-        assert (await registry.set_team_visibility(DOMAIN, NAME, "public", key)).visibility == "public"
+        assert (
+            await registry.set_team_visibility(DOMAIN, NAME, "public", key)
+        ).visibility == "public"
     finally:
         await registry.aclose()
 
@@ -129,29 +146,39 @@ class ForwardToService(httpx.AsyncBaseTransport):
 
 
 @pytest.mark.asyncio
-async def test_registry_visibility_follows_the_domain_registry(service_client, controller_identity):
+async def test_registry_visibility_pins_the_configured_registry(
+    service_client, controller_identity
+):
     key, _, _ = await _team(service_client, controller_identity)
     domains = []
 
     async def resolve(domain):
         domains.append(domain)
-        return "http://testserver"
+        return "http://foreign-registry.example"
 
     transport = ForwardToService(service_client)
     registry = _registry(
-        service_client, transport=transport, registry_url="http://home-registry.example",
+        service_client,
+        transport=transport,
+        registry_url="http://testserver",
         domain_registry_resolver=resolve,
     )
     try:
-        assert (await registry.set_team_visibility(DOMAIN, NAME, "public", key)).visibility == "public"
-        assert domains == [DOMAIN]
+        assert (
+            await registry.set_team_visibility(DOMAIN, NAME, "public", key)
+        ).visibility == "public"
+        assert domains == []
         assert transport.hosts == ["testserver"]
+        assert await registry.registry_audience(DOMAIN) == "http://foreign-registry.example"
+        assert domains == [DOMAIN]
     finally:
         await registry.aclose()
 
 
 @pytest.mark.asyncio
-async def test_registry_visibility_signature_binds_the_new_value(service_client, controller_identity):
+async def test_registry_visibility_signature_binds_the_new_value(
+    service_client, controller_identity
+):
     key, _, _ = await _team(service_client, controller_identity)
     registry = _registry(service_client, transport=ForwardToService(service_client, tamper=True))
     try:
@@ -163,7 +190,9 @@ async def test_registry_visibility_signature_binds_the_new_value(service_client,
     # The same controller's unaltered neighboring request succeeds.
     registry = _registry(service_client)
     try:
-        assert (await registry.set_team_visibility(DOMAIN, NAME, "public", key)).visibility == "public"
+        assert (
+            await registry.set_team_visibility(DOMAIN, NAME, "public", key)
+        ).visibility == "public"
     finally:
         await registry.aclose()
 
@@ -171,7 +200,10 @@ async def test_registry_visibility_signature_binds_the_new_value(service_client,
 @pytest.mark.asyncio
 @pytest.mark.parametrize("cached", [False, True], ids=["client", "cached-client"])
 async def test_registry_delete_requires_revocation_then_removes_team_and_cached_reads(
-    service_client, controller_identity, awid_db_infra, cached,
+    service_client,
+    controller_identity,
+    awid_db_infra,
+    cached,
 ):
     key, did, _ = await _team(service_client, controller_identity)
     _, _, cert_id = await _register_member(service_client, key, did, DOMAIN, NAME, "alice")
@@ -188,27 +220,47 @@ async def test_registry_delete_requires_revocation_then_removes_team_and_cached_
         assert (await registry.get_team(DOMAIN, NAME)).team_did_key == did
         for signing_key in (None, key):
             certificates = await registry.list_team_certificates(
-                DOMAIN, NAME, active_only=False, signing_key=signing_key,
+                DOMAIN,
+                NAME,
+                active_only=False,
+                signing_key=signing_key,
             )
             assert [certificate.certificate_id for certificate in certificates] == [cert_id]
         assert await registry.get_team_revocations(DOMAIN, NAME) == {cert_id}
         result = await registry.delete_team(DOMAIN, NAME, controller_identity[0])
-        assert result == {"deleted": True, "team_id": f"{NAME}:{DOMAIN}", "domain": DOMAIN, "name": NAME}
+        assert result == {
+            "deleted": True,
+            "team_id": f"{NAME}:{DOMAIN}",
+            "domain": DOMAIN,
+            "name": NAME,
+        }
         assert await registry.get_team(DOMAIN, NAME) is None
         for signing_key in (None, key):
             with pytest.raises(RegistryError) as missing:
                 await registry.list_team_certificates(
-                    DOMAIN, NAME, active_only=False, signing_key=signing_key,
+                    DOMAIN,
+                    NAME,
+                    active_only=False,
+                    signing_key=signing_key,
                 )
             assert missing.value.status_code == 404
         assert await registry.get_team_revocations(DOMAIN, NAME) == set()
         db = awid_db_infra.get_manager("aweb")
         row = await db.fetch_one(
-            "SELECT team_uuid, deleted_at FROM {{tables.teams}} WHERE domain = $1 AND name = $2", DOMAIN, NAME,
+            "SELECT team_uuid, deleted_at FROM {{tables.teams}} WHERE domain = $1 AND name = $2",
+            DOMAIN,
+            NAME,
         )
         assert row["deleted_at"] is not None
+        # The revoked certificate outlives the team, so the revocation still
+        # applies if the team name is created again.
         assert await db.fetch_value(
-            "SELECT count(*) FROM {{tables.team_certificates}} WHERE team_uuid = $1", row["team_uuid"],
+            "SELECT count(*) FROM {{tables.team_certificates}} WHERE team_uuid = $1 AND revoked_at IS NOT NULL",
+            row["team_uuid"],
+        ) == 1
+        assert await db.fetch_value(
+            "SELECT count(*) FROM {{tables.team_certificates}} WHERE team_uuid = $1 AND revoked_at IS NULL",
+            row["team_uuid"],
         ) == 0
         with pytest.raises(RegistryError) as missing:
             await registry.delete_team(DOMAIN, NAME, controller_identity[0])
@@ -220,13 +272,17 @@ async def test_registry_delete_requires_revocation_then_removes_team_and_cached_
 @pytest.mark.asyncio
 @pytest.mark.parametrize("signer", ["team", "member", "stranger"])
 async def test_registry_delete_requires_namespace_controller(
-    service_client, controller_identity, signer,
+    service_client,
+    controller_identity,
+    signer,
 ):
     key, did, _ = await _team(service_client, controller_identity)
     if signer == "team":
         wrong_key = key
     elif signer == "member":
-        wrong_key, _, cert_id = await _register_member(service_client, key, did, DOMAIN, NAME, "alice")
+        wrong_key, _, cert_id = await _register_member(
+            service_client, key, did, DOMAIN, NAME, "alice"
+        )
         await _revoke_member(service_client, key, did, DOMAIN, NAME, cert_id)
     else:
         wrong_key, _ = generate_keypair()
@@ -243,23 +299,27 @@ async def test_registry_delete_requires_namespace_controller(
 
 
 @pytest.mark.asyncio
-async def test_registry_delete_follows_domain_registry(service_client, controller_identity):
+async def test_registry_delete_pins_the_configured_registry(service_client, controller_identity):
     await _team(service_client, controller_identity)
     domains = []
 
     async def resolve(domain):
         domains.append(domain)
-        return "http://testserver"
+        return "http://foreign-registry.example"
 
     transport = ForwardToService(service_client)
     registry = _registry(
-        service_client, transport=transport, registry_url="http://home-registry.example",
+        service_client,
+        transport=transport,
+        registry_url="http://testserver",
         domain_registry_resolver=resolve,
     )
     try:
         assert (await registry.delete_team(DOMAIN, NAME, controller_identity[0]))["deleted"] is True
-        assert domains == [DOMAIN]
+        assert domains == []
         assert transport.hosts == ["testserver"]
+        assert await registry.registry_audience(DOMAIN) == "http://foreign-registry.example"
+        assert domains == [DOMAIN]
     finally:
         await registry.aclose()
 

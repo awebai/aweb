@@ -26,11 +26,30 @@ func TestWakeControlStartup(t *testing.T) {
 	}
 	bin := filepath.Join(root, "aw")
 	buildAwBinary(t, ctx, bin)
-	for _, name := range []string{"long-default-home", "short-state-override", "unservable", "unsafe-shortened-socket"} {
+	for _, name := range []string{"long-default-home", "short-state-override", "symlinked-home", "unservable", "unsafe-shortened-socket"} {
 		t.Run(name, func(t *testing.T) {
 			home := filepath.Join(root, name, strings.Repeat("h", 120))
 			if err := os.MkdirAll(home, 0700); err != nil {
 				t.Fatal(err)
+			}
+			if name == "symlinked-home" {
+				short, err := os.MkdirTemp("/tmp", "aw-wake-home-")
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer os.RemoveAll(short)
+				alias := filepath.Join(short, "home")
+				if err := os.Symlink(home, alias); err != nil {
+					t.Fatal(err)
+				}
+				home = alias
+				state := filepath.Join(home, ".config", "aw", "wake")
+				if err := os.MkdirAll(state, 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Chmod(state, 0755); err != nil {
+					t.Fatal(err)
+				}
 			}
 			env := []string{}
 			for _, value := range os.Environ() {
@@ -137,6 +156,9 @@ func TestWakeControlStartup(t *testing.T) {
 			}
 			if name == "short-state-override" && store.SocketPath() != filepath.Join(stateDir, "control.sock") {
 				t.Fatal("short explicit state path changed")
+			}
+			if name == "symlinked-home" && store.SocketPath() != filepath.Join(stateDir, "control.sock") {
+				t.Fatal("symlinked HOME did not exercise the ordinary socket path")
 			}
 			status := exec.CommandContext(ctx, bin, append([]string{"wake", "status", "--json"}, flags...)...)
 			status.Env = env

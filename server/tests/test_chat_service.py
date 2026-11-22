@@ -48,19 +48,21 @@ async def _setup_team_and_agents(aweb_db, team_id="backend:acme.com"):
 
     alice = await aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, identity_scope, did_aw_verified_key)
-        VALUES ($1, $2, 'did:aw:alice', 'alice', 'global', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN $2 END)
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, identity_scope, did_aw_verified_key, inbound_mode)
+        VALUES ($1, $2, 'did:aw:alice', 'alice', 'global', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN $2 END, 'open')
         RETURNING agent_id
         """,
-        team_id, alice_did,
+        team_id,
+        alice_did,
     )
     bob = await aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, identity_scope, did_aw_verified_key)
-        VALUES ($1, $2, 'did:aw:bob', 'bob', 'global', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN $2 END)
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, identity_scope, did_aw_verified_key, inbound_mode)
+        VALUES ($1, $2, 'did:aw:bob', 'bob', 'global', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN $2 END, 'open')
         RETURNING agent_id
         """,
-        team_id, bob_did,
+        team_id,
+        bob_did,
     )
 
     return (
@@ -125,12 +127,16 @@ async def test_ensure_session_idempotent(aweb_cloud_db):
     alice, bob = await _setup_team_and_agents(aweb_cloud_db.aweb_db)
 
     s1 = await ensure_session(
-        db_shim, team_id="backend:acme.com",
-        participant_rows=[alice, bob], created_by="alice",
+        db_shim,
+        team_id="backend:acme.com",
+        participant_rows=[alice, bob],
+        created_by="alice",
     )
     s2 = await ensure_session(
-        db_shim, team_id="backend:acme.com",
-        participant_rows=[alice, bob], created_by="alice",
+        db_shim,
+        team_id="backend:acme.com",
+        participant_rows=[alice, bob],
+        created_by="alice",
     )
 
     assert s1 == s2
@@ -155,11 +161,15 @@ async def test_ensure_session_isolates_reused_alias(aweb_cloud_db, replaced_inde
         participant["address"] = f"acme.com/{participant['alias']}"
     original_ids = {participant["agent_id"] for participant in participants}
     old_session = await ensure_session(
-        db, team_id="backend:acme.com",
-        participant_rows=participants, created_by="alice",
+        db,
+        team_id="backend:acme.com",
+        participant_rows=participants,
+        created_by="alice",
     )
     await send_in_session(
-        db, session_id=old_session, sender_did=participants[0]["did_aw"],
+        db,
+        session_id=old_session,
+        sender_did=participants[0]["did_aw"],
         body="Original private history",
     )
 
@@ -170,17 +180,22 @@ async def test_ensure_session_isolates_reused_alias(aweb_cloud_db, replaced_inde
     )
     replacement = await aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, address, identity_scope, did_aw_verified_key)
-        VALUES ($1, $2, $3, $4, $5, 'global', CASE WHEN NULLIF($3, '') IS NOT NULL THEN $2 END)
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, address, identity_scope, did_aw_verified_key, inbound_mode)
+        VALUES ($1, $2, $3, $4, $5, 'global', CASE WHEN NULLIF($3, '') IS NOT NULL THEN $2 END, 'open')
         RETURNING *
         """,
-        old["team_id"], _make_did_key(), "did:aw:replacement",
-        old["alias"], old["address"],
+        old["team_id"],
+        _make_did_key(),
+        "did:aw:replacement",
+        old["alias"],
+        old["address"],
     )
     participants[replaced_index] = dict(replacement)
     new_session = await ensure_session(
-        db, team_id="backend:acme.com",
-        participant_rows=participants, created_by="alice",
+        db,
+        team_id="backend:acme.com",
+        participant_rows=participants,
+        created_by="alice",
     )
 
     assert new_session != old_session
@@ -192,18 +207,28 @@ async def test_ensure_session_isolates_reused_alias(aweb_cloud_db, replaced_inde
         )
         assert len(rows) == 2
         assert {row["agent_id"] for row in rows} == original_ids
-    assert await get_message_history(
-        db, session_id=new_session, participant_did=replacement["did_aw"],
-    ) == []
-    assert await send_in_session(
-        db, session_id=new_session, sender_did=replacement["did_aw"],
-        body="New identity can send",
-    ) is not None
+    assert (
+        await get_message_history(
+            db,
+            session_id=new_session,
+            participant_did=replacement["did_aw"],
+        )
+        == []
+    )
+    assert (
+        await send_in_session(
+            db,
+            session_id=new_session,
+            sender_did=replacement["did_aw"],
+            body="New identity can send",
+        )
+        is not None
+    )
 
 
 @pytest.mark.asyncio
-async def test_legacy_session_does_not_adopt_a_new_local_key(aweb_cloud_db):
-    aweb_db = aweb_cloud_db.aweb_db
+async def test_legacy_session_does_not_adopt_a_new_local_key(pre_chat_coverage_db, chat_coverage_upgrade):
+    aweb_db = pre_chat_coverage_db.aweb_db
     alice, bob = await _setup_team_and_agents(aweb_db)
     # A new local key is a new identity; the retained actor ID grants no continuity.
     await aweb_db.execute(
@@ -223,38 +248,50 @@ async def test_legacy_session_does_not_adopt_a_new_local_key(aweb_cloud_db):
             INSERT INTO {{tables.chat_participants}} (session_id, did, agent_id, alias)
             VALUES ($1, $2, $3, $4)
             """,
-            session["session_id"], participant["did_key"],
-            participant["agent_id"], participant["alias"],
+            session["session_id"],
+            participant["did_key"],
+            participant["agent_id"],
+            participant["alias"],
         )
         participant["did_key"] = _make_did_key()
         participant["did_aw"] = None
         await aweb_db.execute(
             "UPDATE {{tables.agents}} SET did_key = $2, did_aw = NULL WHERE agent_id = $1",
-            participant["agent_id"], participant["did_key"],
+            participant["agent_id"],
+            participant["did_key"],
         )
+    await chat_coverage_upgrade.apply()
     new_session = await ensure_session(
-        _DbShim(aweb_db), team_id="backend:acme.com",
-        participant_rows=[alice, bob], created_by="alice",
+        _DbShim(aweb_db),
+        team_id="backend:acme.com",
+        participant_rows=[alice, bob],
+        created_by="alice",
     )
     assert new_session != session["session_id"]
     with pytest.raises(NotFoundError):
-        await get_message_history(_DbShim(aweb_db), session_id=session["session_id"],
-                                  participant_did=alice["did_key"])
+        await get_message_history(
+            _DbShim(aweb_db),
+            session_id=session["session_id"],
+            participant_did=alice["did_key"],
+        )
 
 
 @pytest.mark.asyncio
-async def test_ensure_session_backfills_conversation_for_existing_chat_session(aweb_cloud_db):
-    db_shim = _DbShim(aweb_cloud_db.aweb_db)
-    alice, bob = await _setup_team_and_agents(aweb_cloud_db.aweb_db)
+async def test_ensure_session_reuses_the_migrated_chat_conversation(
+    pre_chat_coverage_db,
+    chat_coverage_upgrade,
+):
+    db_shim = _DbShim(pre_chat_coverage_db.aweb_db)
+    alice, bob = await _setup_team_and_agents(pre_chat_coverage_db.aweb_db)
 
-    session = await aweb_cloud_db.aweb_db.fetch_one(
+    session = await pre_chat_coverage_db.aweb_db.fetch_one(
         """
         INSERT INTO {{tables.chat_sessions}} (team_id, created_by)
         VALUES ('backend:acme.com', 'alice')
         RETURNING session_id
         """
     )
-    await aweb_cloud_db.aweb_db.execute(
+    await pre_chat_coverage_db.aweb_db.execute(
         """
         INSERT INTO {{tables.chat_participants}} (session_id, did, agent_id, alias, address)
         VALUES
@@ -266,6 +303,7 @@ async def test_ensure_session_backfills_conversation_for_existing_chat_session(a
         bob["agent_id"],
     )
 
+    await chat_coverage_upgrade.apply()
     reused = await ensure_session(
         db_shim,
         team_id="backend:acme.com",
@@ -274,7 +312,7 @@ async def test_ensure_session_backfills_conversation_for_existing_chat_session(a
     )
 
     assert reused == session["session_id"]
-    conversation = await aweb_cloud_db.aweb_db.fetch_one(
+    conversation = await pre_chat_coverage_db.aweb_db.fetch_one(
         """
         SELECT conversation_id, conversation_type
         FROM {{tables.conversations}}
@@ -282,7 +320,7 @@ async def test_ensure_session_backfills_conversation_for_existing_chat_session(a
         """,
         reused,
     )
-    participants = await aweb_cloud_db.aweb_db.fetch_all(
+    participants = await pre_chat_coverage_db.aweb_db.fetch_all(
         """
         SELECT did, transport_hint
         FROM {{tables.conversation_participants}}
@@ -301,8 +339,10 @@ async def test_send_and_read_message(aweb_cloud_db):
     alice, bob = await _setup_team_and_agents(aweb_cloud_db.aweb_db)
 
     session_id = await ensure_session(
-        db_shim, team_id="backend:acme.com",
-        participant_rows=[alice, bob], created_by="alice",
+        db_shim,
+        team_id="backend:acme.com",
+        participant_rows=[alice, bob],
+        created_by="alice",
     )
 
     msg = await send_in_session(
@@ -317,7 +357,8 @@ async def test_send_and_read_message(aweb_cloud_db):
     assert msg["message_id"] is not None
 
     history = await get_message_history(
-        db_shim, session_id=session_id,
+        db_shim,
+        session_id=session_id,
         participant_did="did:aw:bob",
     )
 
@@ -327,7 +368,9 @@ async def test_send_and_read_message(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
-async def test_pending_conversations_require_the_canonical_did_despite_actor_projection(aweb_cloud_db):
+async def test_pending_conversations_require_the_canonical_did_despite_actor_projection(
+    aweb_cloud_db,
+):
     db_shim = _DbShim(aweb_cloud_db.aweb_db)
     alice, bob = await _setup_team_and_agents(aweb_cloud_db.aweb_db)
 
@@ -365,16 +408,18 @@ async def test_send_non_participant_returns_none(aweb_cloud_db):
     alice, bob = await _setup_team_and_agents(aweb_cloud_db.aweb_db)
 
     session_id = await ensure_session(
-        db_shim, team_id="backend:acme.com",
-        participant_rows=[alice, bob], created_by="alice",
+        db_shim,
+        team_id="backend:acme.com",
+        participant_rows=[alice, bob],
+        created_by="alice",
     )
 
     # Create a third agent not in the session
     charlie_did = _make_did_key()
     charlie = await aweb_cloud_db.aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, identity_scope, did_aw_verified_key)
-        VALUES ('backend:acme.com', $1, 'did:aw:charlie', 'charlie', 'local', CASE WHEN NULLIF('did:aw:charlie', '') IS NOT NULL THEN $1 END)
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, identity_scope, did_aw_verified_key, inbound_mode)
+        VALUES ('backend:acme.com', $1, 'did:aw:charlie', 'charlie', 'local', CASE WHEN NULLIF('did:aw:charlie', '') IS NOT NULL THEN $1 END, 'open')
         RETURNING agent_id
         """,
         charlie_did,
@@ -394,7 +439,9 @@ async def test_send_non_participant_returns_none(aweb_cloud_db):
 @pytest.mark.asyncio
 async def test_ensure_session_reuses_identity_pair_across_teams(aweb_cloud_db):
     db_shim = _DbShim(aweb_cloud_db.aweb_db)
-    alice, _ = await _setup_team_and_agents(aweb_cloud_db.aweb_db, team_id="backend:acme.com")
+    alice, _ = await _setup_team_and_agents(
+        aweb_cloud_db.aweb_db, team_id="backend:acme.com"
+    )
     await _setup_team_and_agents(aweb_cloud_db.aweb_db, team_id="ops:acme.com")
     bob_other = await aweb_cloud_db.aweb_db.fetch_one(
         """
@@ -428,7 +475,9 @@ async def test_ensure_session_reuses_identity_pair_across_teams(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
-async def test_ensure_session_does_not_promote_a_key_only_participant_from_actor_id(aweb_cloud_db):
+async def test_ensure_session_does_not_promote_a_key_only_participant_from_actor_id(
+    aweb_cloud_db,
+):
     db_shim = _DbShim(aweb_cloud_db.aweb_db)
     alice, bob = await _setup_team_and_agents(aweb_cloud_db.aweb_db)
 
@@ -463,17 +512,25 @@ async def test_ensure_session_does_not_promote_a_key_only_participant_from_actor
     )
 
     assert session_from_current != session_from_stable
-    for session, did in ((session_from_current, alice["did_key"]), (session_from_stable, alice["did_aw"])):
+    for session, did in (
+        (session_from_current, alice["did_key"]),
+        (session_from_stable, alice["did_aw"]),
+    ):
         rows = await aweb_cloud_db.aweb_db.fetch_all(
-            "SELECT did FROM {{tables.chat_participants}} WHERE session_id=$1", session,
+            "SELECT did FROM {{tables.chat_participants}} WHERE session_id=$1",
+            session,
         )
         assert {row["did"] for row in rows} == {did, bob["did_aw"]}
 
 
 @pytest.mark.asyncio
-async def test_ensure_session_reuses_the_same_identity_across_membership_projections(aweb_cloud_db):
+async def test_ensure_session_reuses_the_same_identity_across_membership_projections(
+    aweb_cloud_db,
+):
     db_shim = _DbShim(aweb_cloud_db.aweb_db)
-    _, bob = await _setup_team_and_agents(aweb_cloud_db.aweb_db, team_id="backend:acme.com")
+    _, bob = await _setup_team_and_agents(
+        aweb_cloud_db.aweb_db, team_id="backend:acme.com"
+    )
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
@@ -487,8 +544,8 @@ async def test_ensure_session_reuses_the_same_identity_across_membership_project
     alice_new_did_key = _make_did_key()
     old_row = await aweb_cloud_db.aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, identity_scope, did_aw_verified_key)
-        VALUES ('backend:acme.com', $1, $2, 'alice-old', 'global', CASE WHEN NULLIF($2, '') IS NOT NULL THEN $1 END)
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, identity_scope, did_aw_verified_key, inbound_mode)
+        VALUES ('backend:acme.com', $1, $2, 'alice-old', 'global', CASE WHEN NULLIF($2, '') IS NOT NULL THEN $1 END, 'open')
         RETURNING agent_id
         """,
         alice_old_did_key,
@@ -496,8 +553,8 @@ async def test_ensure_session_reuses_the_same_identity_across_membership_project
     )
     new_row = await aweb_cloud_db.aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, identity_scope, did_aw_verified_key)
-        VALUES ('ops:acme.com', $1, $2, 'alice-new', 'global', CASE WHEN NULLIF($2, '') IS NOT NULL THEN $1 END)
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, identity_scope, did_aw_verified_key, inbound_mode)
+        VALUES ('ops:acme.com', $1, $2, 'alice-new', 'global', CASE WHEN NULLIF($2, '') IS NOT NULL THEN $1 END, 'open')
         RETURNING agent_id
         """,
         alice_new_did_key,
@@ -537,67 +594,101 @@ async def test_ensure_session_reuses_the_same_identity_across_membership_project
 
     assert new_session == old_session
     participants = await aweb_cloud_db.aweb_db.fetch_all(
-        "SELECT did, agent_id FROM {{tables.chat_participants}} WHERE session_id=$1", old_session,
+        "SELECT did, agent_id FROM {{tables.chat_participants}} WHERE session_id=$1",
+        old_session,
     )
     assert {row["did"] for row in participants} == {shared_did_aw, bob["did_aw"]}
-    assert next(row["agent_id"] for row in participants if row["did"] == shared_did_aw) == old_row["agent_id"]
+    assert (
+        next(row["agent_id"] for row in participants if row["did"] == shared_did_aw)
+        == old_row["agent_id"]
+    )
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("state", ["time_expired", "closed", "expired", "active", "legacy_only"])
-async def test_session_reuse_respects_canonical_conversation_lifecycle(aweb_cloud_db, state):
-    db = _DbShim(aweb_cloud_db.aweb_db)
-    alice, bob = await _setup_team_and_agents(aweb_cloud_db.aweb_db)
+@pytest.mark.parametrize(
+    "state", ["time_expired", "closed", "expired", "active", "migrated_history"]
+)
+async def test_session_reuse_respects_canonical_conversation_lifecycle(
+    pre_chat_coverage_db, state, chat_coverage_upgrade
+):
+    if state != "migrated_history":
+        await chat_coverage_upgrade.apply()
+    db = _DbShim(pre_chat_coverage_db.aweb_db)
+    alice, bob = await _setup_team_and_agents(pre_chat_coverage_db.aweb_db)
     old_id = await ensure_session(
-        db, team_id="backend:acme.com", participant_rows=[alice, bob], created_by="alice",
+        db,
+        team_id="backend:acme.com",
+        participant_rows=[alice, bob],
+        created_by="alice",
     )
-    if state == "legacy_only":
-        await aweb_cloud_db.aweb_db.execute(
-            "DELETE FROM {{tables.conversations}} WHERE conversation_id = $1", old_id,
+    if state == "migrated_history":
+        await pre_chat_coverage_db.aweb_db.execute(
+            "DELETE FROM {{tables.conversations}} WHERE conversation_id = $1",
+            old_id,
         )
+        await chat_coverage_upgrade.apply()
     elif state == "time_expired":
-        await aweb_cloud_db.aweb_db.execute(
+        await pre_chat_coverage_db.aweb_db.execute(
             "UPDATE {{tables.conversations}} SET expires_at = NOW() - INTERVAL '1 day' WHERE conversation_id = $1",
             old_id,
         )
     elif state in {"closed", "expired"}:
-        await aweb_cloud_db.aweb_db.execute(
-            "UPDATE {{tables.conversations}} SET status = $2 WHERE conversation_id = $1", old_id, state,
+        await pre_chat_coverage_db.aweb_db.execute(
+            "UPDATE {{tables.conversations}} SET status = $2 WHERE conversation_id = $1",
+            old_id,
+            state,
         )
 
     new_id = await ensure_session(
-        db, team_id="backend:acme.com", participant_rows=[alice, bob], created_by="alice",
+        db,
+        team_id="backend:acme.com",
+        participant_rows=[alice, bob],
+        created_by="alice",
     )
-    if state in {"active", "legacy_only"}:
+    if state in {"active", "migrated_history"}:
         assert new_id == old_id
     else:
         assert new_id != old_id
-    assert await aweb_cloud_db.aweb_db.fetch_value(
-        "SELECT status FROM {{tables.conversations}} WHERE conversation_id = $1", new_id,
-    ) == "active"
+    assert (
+        await pre_chat_coverage_db.aweb_db.fetch_value(
+            "SELECT status FROM {{tables.conversations}} WHERE conversation_id = $1",
+            new_id,
+        )
+        == "active"
+    )
 
 
 @pytest.mark.asyncio
-async def test_a_chat_message_and_its_senders_read_receipt_are_one_statement(aweb_cloud_db, monkeypatch):
+async def test_a_chat_message_and_its_senders_read_receipt_are_one_statement(
+    aweb_cloud_db, monkeypatch
+):
     import asyncpg.connection
 
     db_shim = _DbShim(aweb_cloud_db.aweb_db)
     alice, bob = await _setup_team_and_agents(aweb_cloud_db.aweb_db)
     session_id = await ensure_session(
-        db_shim, team_id="backend:acme.com", participant_rows=[alice, bob], created_by="alice",
+        db_shim,
+        team_id="backend:acme.com",
+        participant_rows=[alice, bob],
+        created_by="alice",
     )
     writes: list[str] = []
     execute = asyncpg.connection.Connection._execute
 
     async def observed(connection, query, *args, **kwargs):
-        if "INSERT INTO" in query and ("chat_messages" in query or "chat_read_receipts" in query):
+        if "INSERT INTO" in query and (
+            "chat_messages" in query or "chat_read_receipts" in query
+        ):
             writes.append(query)
         return await execute(connection, query, *args, **kwargs)
 
     monkeypatch.setattr(asyncpg.connection.Connection, "_execute", observed)
     msg = await send_in_session(
-        db_shim, session_id=session_id, sender_did="did:aw:alice",
-        sender_agent_id=str(alice["agent_id"]), body="Hello Bob!",
+        db_shim,
+        session_id=session_id,
+        sender_did="did:aw:alice",
+        sender_agent_id=str(alice["agent_id"]),
+        body="Hello Bob!",
     )
 
     assert msg is not None

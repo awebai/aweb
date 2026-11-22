@@ -357,7 +357,7 @@ func TestHostedSiblingInviteAcceptsIntoFreshExternalHome(t *testing.T) {
 	fresh := filepath.Join(dir, "fresh", ".aw")
 	accept := exec.CommandContext(ctx, bin, "--identity-home", fresh, "id", "team", "accept-invite", created["token"].(string), "--name", "bob", "--local", "--json")
 	accept.Dir = cwd
-	accept.Env = append(testCommandEnv(dir), "AWEB_IDENTITY_HOME=", "AWEB_URL=", "AWID_REGISTRY_URL=", "AW_NO_UPDATE_CHECK=1", "AW_TRACE=")
+	accept.Env = append(testCommandEnv(dir), "AWEB_IDENTITY_HOME=", "AWEB_URL=", "AW_NO_UPDATE_CHECK=1", "AW_TRACE=")
 	accepted, err := accept.CombinedOutput()
 	if err != nil {
 		t.Fatalf("accept: %v\n%s", err, accepted)

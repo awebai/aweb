@@ -32,7 +32,7 @@ function text(value: unknown): string {
 
 // v2 signs the complete JSON envelope except signature. Object keys are sorted;
 // arrays retain their order. Do not project away unknown signed fields.
-export function canonicalEncryptedJSON(value: unknown): string {
+function canonicalEncryptedJSON(value: unknown): string {
   return canonicalJSONValue(value, "unsupported encrypted envelope value");
 }
 // Go/Python v2 canonicalization omits these optional empty strings. In

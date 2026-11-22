@@ -73,10 +73,32 @@ or invalid row policy fails closed with the migration-required refusal. A mode
 change by the identity updates all those rows; a new membership inherits the
 current effective mode. Team ownership alone does not authorize a policy change.
 A global-scope row without a raw `did:aw` has no link to other memberships:
-its policy is its own explicit mode, with NULL or invalid still migration-required.
+its policy is its own explicit mode. Migration 056 backfills legacy NULL rows
+to `contacts_only` and preserves explicitly selected policies. The old rows
+were closed to delivery and their original policy cannot be recovered.
 This does not grant it authority to set an identity-wide policy.
 The identity-signed "my inbound mode" route uses the authenticated, AWID-bound
 `did:aw` for the change; a stored membership claim cannot select its write scope.
+
+`aweb.messaging.delivery_policy.authorize_delivery` owns this rule for native
+and federated sends. Same-team admission intersects all current active team
+memberships of both verified identities through the native member owner. A
+caller-selected team, retired row, superseded team key or revoked admitting
+certificate adds no membership. The same native certificate-standing owner used
+by authentication checks revocation and the staged registration requirement.
+Address residence and human classification remain independent of membership.
+Exact active identity-contact matching has one owner and retains contact locks
+through an existing delivery transaction. Send refusals end with a concrete
+recovery sentence. A named `recipient_policy_rejected` refusal retains that code
+as `reason` in both HTTP and MCP, beside its actionable human detail. Federation
+retains its stable reason separately from that human detail.
+
+Native sends keep their current policy decision through the message commit.
+Mail rechecks admission inside its new-thread or continuation transaction.
+Local chat locks the identity's policy rows and rechecks the same shared rule
+inside the transaction that stores the session/message. Registry contact
+resolution and host callbacks run after that transaction commits; a refused
+native chat leaves no newly created session or conversation behind.
 
 The modes are:
 
@@ -92,6 +114,14 @@ The modes are:
 
 Rows without an explicit `inbound_mode` require migration and must fail with an
 explicit migration-required diagnostic rather than silently widening to open.
+
+Sending to a saved identity contact carries its stored DID constraint into the
+ordinary mail/chat address resolver. The resolver checks that constraint against
+its one selected identity before signing or delivery; the tool does not resolve
+an address once for a contact check and again without that identity binding.
+A mismatch requires explicit rebinding and cannot switch an existing chat to
+the address's replacement identity. Ordinary local visibility, address authority
+and pair-session reuse keep their existing owners.
 
 An authenticated global subject participates as its `did:aw`; its current
 `did:key` proves signatures and is not a second participant reference. Local
@@ -129,13 +159,22 @@ For a send to a global address (`domain/name`):
    resolved recipient identity binding (`to`, `to_stable_id`, `to_did`).
 4. The aweb server authenticates the sender and validates that behavior-shaping
    outer fields match the signed payload.
+   Plaintext send admission also verifies the original signed bytes under the
+   authenticated sender's current signing key before storing any message or
+   conversation effects. Optional recipient claims remain optional for released
+   clients; supplied claims must match the resolved recipient. Stored rows can
+   predate this admission check. Readers independently verify their original
+   signature and report `failed` for an invalid signature or `unverified` when
+   signed bytes or a signature are absent; storage alone never establishes
+   `verified`. These checks preserve the original signed bytes and conversation
+   ID.
    A thread participant is the identity (`did:aw` for a global identity), not
-   a per-team actor. The address selects that identity and its route, never a
-   different address from a membership projection. `agent_id` is nullable
-   display/admission metadata: explicit-address participants leave it null;
-   a team-scoped alias may record its selected membership. Read access and
-   continuation compare participant DIDs, not actor IDs or address equality.
-   Native admission's actor/team facts are a separate current membership
+   a per-team actor. The address selects identity and route, not a membership.
+   Originating address sends leave recipient membership metadata null; a team
+   alias may retain its selected member. Receiving services retain known native
+   row references for storage and delivery events, without identity/team authority.
+   Continuations preserve known references; access still compares participant DIDs.
+   Native admission's actor/team authority uses a separate current-membership
    projection for the target identity in the authenticated endpoint team.
 5. Federation delivery uses the resolved delivery origin and the target identity
    binding. The recipient server re-resolves the target address/key and fails
@@ -227,7 +266,11 @@ equal it. Unknown local first contact and route injection fail closed. Target
 registry or PostgreSQL/lease publication dependency failure uses
 `federation_authority_coordination_unavailable` (503, retryable).
 
-Federation's first-contact source budget uses the socket peer by default and
+Inbound and outbound federation first-contact HTTP source budgets share
+`aweb.client_address.request_client_address`. Mounted MCP sends and contact
+lookups use `mcp:<authenticated sender DID>` instead, so users behind one proxy
+retain independent budgets even without a trusted client-address header.
+The HTTP source budget uses the socket peer by default and
 ignores forwarded client-address headers. A deployment behind a trusted proxy
 can set `AWEB_CLIENT_ADDRESS_HEADER` to the header carrying the client address.
 The shared `aweb_naapp.client_identity.ClientIdentity` resolver uses its final
@@ -306,6 +349,53 @@ Reusing the UUID with a different kind, sender, target, conversation/session,
 signature, signed payload, or
 protected encrypted bytes returns `federation_message_replay_conflict`.
 Receipts survive ordinary message garbage collection.
+
+For native signed mail, an exact retry whose identical signed payload is
+already stored returns that stored result before applying the attestation age
+limit. Signature, sender/recipient binding, encryption and current delivery
+admission checks still precede returning the stored answer. An exact encrypted
+artifact may identify its own recorded mail target when the outer selector
+carries only the key and its protected routing binds the recorded stable
+identity. This lookup locates only that accepted target, supplies no new-send
+authority, and does not skip ordinary encryption freshness or current policy.
+A stored answer is not a new
+attestation; a new message still requires a timestamp within the accepted skew.
+Age refusal is HTTP 422 with the existing human `detail` plus a signing action
+and additive `X-AWEB-Error-Code: message_timestamp_outside_skew` header. Shape
+errors do not carry that age code. A client may re-sign a new submission after
+that specific age refusal; it must retain the original payload for exact retry.
+
+The same plaintext age exemption applies to an exact stored outbound mail or
+chat projection and to an established federation ingress receipt. The outbound
+projection must match the sender, conversation, message ID, signature and signed
+payload; the receiver requires its identical canonical envelope receipt. The
+signature, recipient binding and current authority checks still run. An outbound
+mail retry retains the remote call to recover its original established response,
+then returns the existing local projection without another send event. Chat
+create and continuation return the identical accepted message from local storage
+after current admission; they do not repeat session, wait, contact or event effects.
+If an exact chat artifact's requested participants differ from the stored
+conversation, the caller is told to retry the original conversation and recipient
+identities unchanged. It must not choose a new message ID merely to recover a
+lost answer: that would submit another message. Choosing a new ID is appropriate
+only when intentionally sending a different signed artifact.
+A departed party is removed from the session's participants. A plaintext
+continuation compares the recorded parties that remain. A named retry can recognize an original local
+`did:key` party as the currently admitted global `did:aw` only when that identity's
+current key is still the exact recorded key; this acknowledgement does not rewrite
+participants or grant another membership. Signature and current admission checks
+remain in front of the answer; encrypted integrity and freshness checks are unchanged.
+Inside the existing encrypted window an exact encrypted chat retry also returns
+its stored message; it does not gain the plaintext age exemption. A changed
+artifact or missing proof is a new attestation and takes the age check, including
+a changed artifact reusing an accepted UUID. The encrypted ingestion window is
+unchanged. Native, outbound and attachment retries use the same stored-artifact
+comparison; an established federation receipt additionally matches its complete
+outer envelope hash and kind. Ingress and Phase B share that receipt identity
+check, and Phase B binds its canonical metadata under current authority. Stored
+proof does not by itself mean signature verification or current admission.
+This is Antares ruling69b3a50a (relay a491ccc8).
+
 
 Migration backfill marks historical rows whose exact original envelope cannot
 be reconstructed as `legacy_unreplayable`; any attempt that reaches a new
@@ -438,6 +528,13 @@ requires an active, nondeleted member with a certificate that is not revoked
 under the existing revocation check. A revoked or inactive member is
 `inactive`; missing provenance or unavailable revocation authority is `unknown`.
 The projection includes humans without publishing them in the agent roster.
+HTTP and MCP inbox and contact-mail reads use this same projection owner after
+participant authorization; MCP carries the stored delivery team and sender ID
+rather than selecting a different membership row. Incoming attribution lives
+in `aweb.messaging.mail_attribution`. Event wakes consume its preloaded
+thread-evidence form, retaining the establishment/reconcile snapshot rather
+than querying succession tables on every tick.
+
 Encrypted-envelope normalization never overwrites this server-attested field.
 
 For an addressless global sender, the client reports `verified` only when the
@@ -483,10 +580,14 @@ display/routing label: neither client looks up its address or alias or creates a
 global address pin. Same-team locals retain the authenticated live roster path;
 global `did:aw` senders retain their existing key/log and address checks.
 
-Both clients implement this decision matrix, exercised by
-`TestReceivedLocalSenderMatrix` and channel-core's `cross-team received local
-sender` tests. Real two-team mail tests cover a global resident grant, plaintext
-and encrypted-v2, CLI reads, channel presentation and wake presentation.
+The [`sender-standing-v1` vector](../test-vectors/trust/sender-standing-v1.json)
+pins the same registered, unregistered and revoked evidence in the native
+Python server, Python AWID certificate helper and Go registry status reader.
+Go and channel-core also consume the resulting server projection and check
+the received-message outcomes in the matrix below. Channel-core has no
+certificate on these reads and uses the delivery server's standing
+attestation. Real two-team mail tests cover plaintext and encrypted-v2,
+including CLI reads, channel presentation and wake presentation.
 
 | Evidence after signature and recipient checks | Result |
 | --- | --- |

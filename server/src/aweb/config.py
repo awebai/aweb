@@ -19,6 +19,9 @@ from aweb_naapp.key_file import read_key_file
 from aweb_naapp.egress import EgressRefused, InternalDestinations
 from aweb_naapp.egress.addresses import check_internal_cidr
 
+from aweb.app_registry import canonical_app_origin
+from aweb.service_errors import ServiceError
+
 
 def _env_bool(*names: str, default: bool = False) -> bool:
     for name in names:
@@ -58,31 +61,40 @@ def get_app_internal_origins() -> AppInternalOrigins:
     Unset, every app origin is public: a manifest on a private address is
     refused. These are operator startup settings; no install request names them.
     """
-    from aweb.app_registry import canonical_app_origin
-    from aweb.service_errors import ServiceError
-
     raw_origins = (os.getenv("AWEB_APP_INTERNAL_ORIGINS") or "").strip()
     raw_cidr = (os.getenv("AWEB_APP_INTERNAL_CIDR") or "").strip()
     if not raw_origins and not raw_cidr:
         return AppInternalOrigins()
     if not raw_origins or not raw_cidr:
-        raise ValueError("AWEB_APP_INTERNAL_ORIGINS and AWEB_APP_INTERNAL_CIDR must be supplied together")
+        raise ValueError(
+            "AWEB_APP_INTERNAL_ORIGINS and AWEB_APP_INTERNAL_CIDR must be supplied together"
+        )
     try:
         listed = json.loads(raw_origins)
     except json.JSONDecodeError as exc:
-        raise ValueError("AWEB_APP_INTERNAL_ORIGINS must be a JSON list of exact HTTPS origins") from exc
-    if not isinstance(listed, list) or not listed or not all(isinstance(entry, str) for entry in listed):
+        raise ValueError(
+            "AWEB_APP_INTERNAL_ORIGINS must be a JSON list of exact HTTPS origins"
+        ) from exc
+    if (
+        not isinstance(listed, list)
+        or not listed
+        or not all(isinstance(entry, str) for entry in listed)
+    ):
         raise ValueError("AWEB_APP_INTERNAL_ORIGINS must be a JSON list of exact HTTPS origins")
     origins = set()
     for entry in listed:
         try:
             origins.add(canonical_app_origin(entry))
         except (ServiceError, EgressRefused, ValueError) as exc:
-            raise ValueError(f"AWEB_APP_INTERNAL_ORIGINS: {entry!r} is not an exact HTTPS origin") from exc
+            raise ValueError(
+                f"AWEB_APP_INTERNAL_ORIGINS: {entry!r} is not an exact HTTPS origin"
+            ) from exc
     try:
         cidr = check_internal_cidr(ip_network(raw_cidr, strict=True))
     except (ValueError, EgressRefused) as exc:
-        raise ValueError("AWEB_APP_INTERNAL_CIDR must be an exact, permitted internal network") from exc
+        raise ValueError(
+            "AWEB_APP_INTERNAL_CIDR must be an exact, permitted internal network"
+        ) from exc
     return AppInternalOrigins(frozenset(origins), cidr)
 
 
@@ -137,7 +149,9 @@ def parse_federation_outbound(raw: str | None) -> FederationOutbound:
                 "set it to off, or to a comma-separated list of origins such as https://aweb.example.com"
             ) from None
     if not origins:
-        raise ValueError(f"{FEDERATION_OUTBOUND_SETTING} lists no origin: leave it unset, set it to off, or list origins")
+        raise ValueError(
+            f"{FEDERATION_OUTBOUND_SETTING} lists no origin: leave it unset, set it to off, or list origins"
+        )
     return FederationOutbound(origins=frozenset(origins))
 
 
@@ -150,7 +164,9 @@ def get_federation_outbound() -> FederationOutbound:
     try:
         return parse_federation_outbound(os.getenv(FEDERATION_OUTBOUND_SETTING))
     except ValueError:
-        return FederationOutbound(origins=frozenset(), refusal=f"{FEDERATION_OUTBOUND_SETTING} is not a valid setting")
+        return FederationOutbound(
+            origins=frozenset(), refusal=f"{FEDERATION_OUTBOUND_SETTING} is not a valid setting"
+        )
 
 
 @dataclass
@@ -233,7 +249,9 @@ def get_awid_member_signing_keys() -> dict[str, bytes]:
         return load_member_signing_keys(Path(filename))
     except (OSError, ValueError, TypeError):
         # Do not echo file contents or key-parser details into startup logs.
-        raise ValueError("AWID_MEMBER_KEYS_FILE must name a nonempty JSON map of canonical team IDs to readable Ed25519 PEM key files") from None
+        raise ValueError(
+            "AWID_MEMBER_KEYS_FILE must name a nonempty JSON map of canonical team IDs to readable Ed25519 PEM key files"
+        ) from None
 
 
 def require_registered_certificates() -> bool:
@@ -389,7 +407,9 @@ def _key_time(kid: str, name: str, value: object) -> datetime:
         ) from exc
 
 
-def _url_from_environment_or_file(variable: str, fallback: str, file_variable: str, what: str) -> str:
+def _url_from_environment_or_file(
+    variable: str, fallback: str, file_variable: str, what: str
+) -> str:
     """The URL from its environment variable, or the whole content of the file
     the file variable names, read with the shared key-file checks. The file
     holds a password, so no error repeats its content."""
@@ -406,6 +426,23 @@ def _url_from_environment_or_file(variable: str, fallback: str, file_variable: s
     if not url:
         raise ValueError(f"{file_variable} must name a readable file that holds the {what}")
     return url
+
+
+def get_presence_ttl_seconds() -> int:
+    """Read the shared heartbeat window (docs/aweb-sot.md:1199–1205).
+
+    Default is thirty minutes; deployments may configure the presence TTL.
+    """
+    presence_ttl_str = os.getenv("AWEB_PRESENCE_TTL_SECONDS", "1800")
+    try:
+        presence_ttl = int(presence_ttl_str)
+    except ValueError as exc:
+        raise ValueError(
+            f"AWEB_PRESENCE_TTL_SECONDS must be a valid integer, got '{presence_ttl_str}'"
+        ) from exc
+    if presence_ttl < 10:
+        raise ValueError("AWEB_PRESENCE_TTL_SECONDS must be at least 10")
+    return presence_ttl
 
 
 def get_settings() -> Settings:
@@ -425,31 +462,21 @@ def get_settings() -> Settings:
         )
 
     redis_url = (
-        _url_from_environment_or_file("AWEB_REDIS_URL", "REDIS_URL", "AWEB_REDIS_URL_FILE", "Redis URL")
+        _url_from_environment_or_file(
+            "AWEB_REDIS_URL", "REDIS_URL", "AWEB_REDIS_URL_FILE", "Redis URL"
+        )
         or "redis://localhost:6379/0"
     )
 
     port_str = os.getenv("AWEB_PORT", "8000")
     try:
         port = int(port_str)
-        if not 1 <= port <= 65535:
-            raise ValueError(f"AWEB_PORT must be between 1 and 65535, got {port}")
-    except ValueError as e:
-        if "invalid literal" in str(e):
-            raise ValueError(f"AWEB_PORT must be a valid integer, got '{port_str}'")
-        raise
+    except ValueError as exc:
+        raise ValueError(f"AWEB_PORT must be a valid integer, got '{port_str}'") from exc
+    if not 1 <= port <= 65535:
+        raise ValueError(f"AWEB_PORT must be between 1 and 65535, got {port}")
 
-    presence_ttl_str = os.getenv("AWEB_PRESENCE_TTL_SECONDS", "1800")
-    try:
-        presence_ttl = int(presence_ttl_str)
-        if presence_ttl < 10:
-            raise ValueError("AWEB_PRESENCE_TTL_SECONDS must be at least 10")
-    except ValueError as e:
-        if "invalid literal" in str(e):
-            raise ValueError(
-                f"AWEB_PRESENCE_TTL_SECONDS must be a valid integer, got '{presence_ttl_str}'"
-            )
-        raise
+    presence_ttl = get_presence_ttl_seconds()
 
     service_token = get_awid_service_token()
     member_keys = get_awid_member_signing_keys()

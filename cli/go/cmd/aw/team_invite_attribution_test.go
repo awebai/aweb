@@ -104,6 +104,13 @@ func TestInviteResumeRequiresTheSameRecipientAndKey(t *testing.T) {
 }
 
 func TestExistingLocalIdentityDoesNotAcquireAnInviteParent(t *testing.T) {
+	log, err := os.CreateTemp(t.TempDir(), "stderr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldStderr := os.Stderr
+	os.Stderr = log
+	t.Cleanup(func() { os.Stderr = oldStderr; log.Close() })
 	v := loadWhoVectors(t)
 	dir := whoIdentity(t, v, false, false)
 	invite := &awconfig.TeamInvite{IDChild: &awconfig.TeamInviteIDChild{IssuerHome: "unavailable"}}
@@ -111,17 +118,29 @@ func TestExistingLocalIdentityDoesNotAcquireAnInviteParent(t *testing.T) {
 	if err != nil || issue {
 		t.Fatalf("existing identity changed parent: %v %v", issue, err)
 	}
+	raw, err := os.ReadFile(log.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != "Joining membership only; this existing identity keeps its parentage.\n" {
+		t.Fatalf("notice=%q", raw)
+	}
+
 }
 
 // Enrollment is carried on key resolution even when the domain has no tree
 // root. The external registry boundary is HTTP; no TXT or status is supplied.
 func TestTeamInviteChainlessGlobalEnrollmentWithoutTreeRoot(t *testing.T) {
 	for _, tc := range []struct {
-		name    string
-		tree    any
-		omit    bool
-		allowed bool
+		name           string
+		tree           any
+		omit           bool
+		allowed        bool
+		membershipOnly bool
 	}{
+		{name: "unknown membership-only", omit: true, membershipOnly: true},
+		{name: "enrolled membership-only", tree: map[string]any{"enrolled": true, "domain": "example.com"}, membershipOnly: true},
+		{name: "not enrolled membership-only", tree: map[string]any{"enrolled": false}, membershipOnly: true, allowed: true},
 		{name: "not enrolled", tree: map[string]any{"enrolled": false}, allowed: true},
 		{name: "unknown", omit: true},
 		{name: "malformed", tree: map[string]any{"enrolled": "false"}},
@@ -378,5 +397,44 @@ func TestLinkedInviteRegistryHonorsCurrentHomeAndNamespace(t *testing.T) {
 	}
 	if reads != before {
 		t.Fatal("queried contradicted retained route")
+	}
+}
+
+func TestInviteAbsentFilesDifferFromUnreadableOrMalformedFiles(t *testing.T) {
+	for _, scenario := range []string{"absent identity", "malformed identity", "unreadable identity", "malformed chain", "unreadable chain"} {
+		t.Run(scenario, func(t *testing.T) {
+			var dir string
+			if strings.Contains(scenario, "chain") {
+				dir = whoIdentity(t, loadWhoVectors(t), false, false)
+			} else {
+				dir = t.TempDir()
+				if err := os.MkdirAll(filepath.Join(dir, ".aw"), 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			file := "identity.yaml"
+			if strings.Contains(scenario, "chain") {
+				file = "id-chain.json"
+			}
+			path := filepath.Join(dir, ".aw", file)
+			if strings.Contains(scenario, "unreadable") {
+				os.Remove(path)
+				if err := os.Mkdir(path, 0700); err != nil {
+					t.Fatal(err)
+				}
+			} else if scenario != "absent identity" {
+				if err := os.WriteFile(path, []byte("[bad:"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			_, err := prepareTeamInviteIDChild(context.Background(), idChildOptions{WorkingDir: dir, IdentityHome: filepath.Join(dir, ".aw")})
+			if scenario == "absent identity" {
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else if err == nil {
+				t.Fatalf("%s treated as chainless", scenario)
+			}
+		})
 	}
 }

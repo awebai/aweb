@@ -61,7 +61,12 @@ async def test_registry_scan_accepts_final_page_at_budget(route):
         nonlocal calls
         calls += 1
         return httpx.Response(
-            200, json={route: [], "has_more": calls < 500, "next_cursor": str(calls)}
+            200,
+            json={
+                route: [],
+                "has_more": calls < 500,
+                "next_cursor": str(calls) if calls < 500 else None,
+            },
         )
 
     client = RegistryClient(

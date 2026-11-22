@@ -27,10 +27,10 @@ ID-certificate writes this way, so a registry that has served those already has
 the setting; one that has served only team, certificate and address writes may
 not.
 
-Clients address a registry by its origin. `aw` and the Python client refuse a
-registry URL with a path, so a registry served under a path prefix is not
-supported for their controller writes, although the registry itself verifies a
-prefixed path (see [AWID controller requests](awid-controller-requests.md)).
+Clients address a registry by its origin; `aw` also accepts its equivalent `/api`
+and `/api/` aliases. A path-prefix reverse proxy is not supported: put the registry
+on its own host name. Registry URLs never contain credentials; front-door
+authentication is a separate concern (see [AWID controller requests](awid-controller-requests.md)).
 
 ## 1. Try It Locally
 

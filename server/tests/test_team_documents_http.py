@@ -10,6 +10,8 @@ from aweb.coordination.team_documents import MAX_TEAM_DOCUMENT_BYTES
 from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
 from test_operator_audit_http import _request
 
+__all__ = ["privacy_app"]
+
 
 async def _instruction_audit_rows(env):
     return await env.db.fetch_all(

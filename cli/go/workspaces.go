@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/awebai/aw/awid"
@@ -136,10 +137,8 @@ func (c *Client) WorkspaceTeam(ctx context.Context, params WorkspaceTeamParams) 
 	return &out, nil
 }
 
-// The two 404s a workspace delete can produce say different things, and a caller
-// that collapses them reports an outcome it did not observe. The server carries a
-// structured code for exactly this reason; keying on it rather than on the message
-// text means rewording the message cannot silently reclassify the result.
+// Structured workspace-delete refusals distinguish a deleted row whose identity
+// remains from a workspace the caller cannot see. Message text is not evidence.
 var (
 	// ErrWorkspaceAlreadyDeleted establishes two facts: the workspace row is
 	// deleted, and its bound identity is NOT - that is why the server refused.
@@ -151,20 +150,24 @@ var (
 
 // WorkspaceDelete soft-deletes a workspace by its ID.
 //
-// A 404 is returned as ErrWorkspaceAlreadyDeleted or ErrWorkspaceNotFound rather
-// than as a nil response. It used to return nil, nil - which the server
-// anticipated and warned against in coordination/routes/workspaces.py: "Re-enter
-// the idempotent post-commit step instead of turning 404 into false terminal
-// success at the client."
+// A structured 404 or 409 workspace_already_deleted becomes
+// ErrWorkspaceAlreadyDeleted. Structured 404 workspace_not_found becomes
+// ErrWorkspaceNotFound. Other refusals retain their HTTP error.
 func (c *Client) WorkspaceDelete(ctx context.Context, workspaceID string) (*DeleteWorkspaceResponse, error) {
 	var out DeleteWorkspaceResponse
 	err := c.Do(ctx, "DELETE", "/v1/workspaces/"+urlPathEscape(workspaceID), nil, &out)
 	if err != nil {
-		if code, ok := awid.HTTPStatusCode(err); ok && code == 404 {
-			switch workspaceDeleteRefusalCode(err) {
-			case "workspace_already_deleted":
+		if status, ok := awid.HTTPStatusCode(err); ok {
+			reason := workspaceDeleteRefusalCode(err)
+			if (status == http.StatusNotFound || status == http.StatusConflict) && reason == "workspace_already_deleted" {
 				return nil, fmt.Errorf("%w: %s", ErrWorkspaceAlreadyDeleted, workspaceID)
-			case "workspace_not_found":
+			}
+			if status != http.StatusNotFound {
+				return nil, err
+			}
+			// Hosted Cloud uses a privacy 404 without workspace_not_found;
+			// the structured branch remains for OSS servers.
+			if reason == "workspace_not_found" {
 				return nil, fmt.Errorf("%w: %s", ErrWorkspaceNotFound, workspaceID)
 			}
 			// An unrecognised 404 establishes nothing, so it must not be reported

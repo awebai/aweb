@@ -1,0 +1,24 @@
+{
+  "profiles": [
+    {
+      "client_class": "ordinary",
+      "source_tag": "aw-v1.0.25",
+      "source_commit": "17c6cc4a8ed5e3437d74e1e72e0d06dd78b6252c",
+      "signing_go_sha256": "e74b82d210583454acf99b14681e482709654e10986692c42e4170ff40c2823e",
+      "payloads": {
+        "chat": "{\"body\":\"released <tag> café \\n line  \",\"from\":\"alice\",\"from_did\":\"@SENDER_DID@\",\"message_id\":\"@MESSAGE_ID@\",\"subject\":\"\",\"timestamp\":\"@TIMESTAMP@\",\"to\":\"bob\",\"to_did\":\"@RECIPIENT_DID@\",\"type\":\"chat\"}",
+        "mail": "{\"body\":\"released <tag> café \\n line  \",\"from\":\"alice\",\"from_did\":\"@SENDER_DID@\",\"message_id\":\"@MESSAGE_ID@\",\"subject\":\"released fixture\",\"timestamp\":\"@TIMESTAMP@\",\"to\":\"bob\",\"to_did\":\"@RECIPIENT_DID@\",\"type\":\"mail\"}"
+      }
+    },
+    {
+      "client_class": "resident-custody",
+      "source_tag": "aw-v1.36.58",
+      "source_commit": "679d50066d4160748f6f9cfa0537161992399573",
+      "signing_go_sha256": "d534055449ce80c65b351f6e2f2b9379fdb982b9c269b6c38d6cba5a1dda9b17",
+      "payloads": {
+        "chat": "{\"body\":\"released <tag> café \\n line  \",\"conversation_id\":\"@CONVERSATION_ID@\",\"from\":\"alice\",\"from_did\":\"@SENDER_DID@\",\"message_id\":\"@MESSAGE_ID@\",\"subject\":\"\",\"timestamp\":\"@TIMESTAMP@\",\"to\":\"bob\",\"to_did\":\"@RECIPIENT_DID@\",\"type\":\"chat\"}",
+        "mail": "{\"body\":\"released <tag> café \\n line  \",\"conversation_id\":\"@CONVERSATION_ID@\",\"from\":\"alice\",\"from_did\":\"@SENDER_DID@\",\"message_id\":\"@MESSAGE_ID@\",\"subject\":\"released fixture\",\"timestamp\":\"@TIMESTAMP@\",\"to\":\"bob\",\"to_did\":\"@RECIPIENT_DID@\",\"type\":\"mail\"}"
+      }
+    }
+  ]
+}

@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -24,9 +25,10 @@ type commandStack struct {
 }
 
 type commandStackAuthority struct {
-	Domain                 string
-	ControllerDID          string
-	CertificateObstruction string
+	Domain                  string
+	ControllerDID           string
+	CertificateDestination  string
+	LoseCertificateResponse bool
 }
 
 func realCommandStack(t *testing.T, ctx context.Context, authority commandStackAuthority) commandStack {
@@ -38,7 +40,8 @@ func realCommandStack(t *testing.T, ctx context.Context, authority commandStackA
 	project := filepath.Join(awTestBinary.sourceDir, "../../server")
 	command := exec.CommandContext(ctx, "uv", "run", "--offline", "--frozen", "--project", project, "python", script)
 	command.Env = append(append([]string{}, awTestBinary.env...), "AW_COMMAND_DOMAIN="+authority.Domain, "AW_COMMAND_CONTROLLER="+authority.ControllerDID)
-	command.Env = append(command.Env, "AW_COMMAND_CERTIFICATE_OBSTRUCTION="+authority.CertificateObstruction)
+	command.Env = append(command.Env, "AW_COMMAND_CERTIFICATE_DESTINATION="+authority.CertificateDestination,
+		"AW_COMMAND_CERTIFICATE_RESPONSE_LOSS="+strconv.FormatBool(authority.LoseCertificateResponse))
 	command.Stderr = os.Stderr
 	input, err := command.StdinPipe()
 	if err != nil {
@@ -91,10 +94,15 @@ type commandMember struct {
 
 func newRealCommandWorld(t *testing.T) *realCommandWorld {
 	t.Helper()
-	return newRealCommandWorldWithCertificateObstruction(t, "")
+	return newRealCommandWorldWithRecipientFault(t, "", false)
 }
 
 func newRealCommandWorldWithCertificateObstruction(t *testing.T, recipientHome string) *realCommandWorld {
+	t.Helper()
+	return newRealCommandWorldWithRecipientFault(t, recipientHome, false)
+}
+
+func newRealCommandWorldWithRecipientFault(t *testing.T, recipientHome string, loseCertificateResponse bool) *realCommandWorld {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	t.Cleanup(cancel)
@@ -105,10 +113,10 @@ func newRealCommandWorldWithCertificateObstruction(t *testing.T, recipientHome s
 	}
 	buildAwBinary(t, ctx, world.Binary)
 	world.TeamID = awid.BuildTeamID(world.Domain, "backend")
-	authority := commandStackAuthority{Domain: world.Domain, ControllerDID: didOf(world.NamespaceKey)}
+	authority := commandStackAuthority{Domain: world.Domain, ControllerDID: didOf(world.NamespaceKey), LoseCertificateResponse: loseCertificateResponse}
 	if recipientHome != "" {
 		var err error
-		authority.CertificateObstruction, err = awconfig.TeamCertificatePathFromIdentityHome(recipientHome, world.TeamID)
+		authority.CertificateDestination, err = awconfig.TeamCertificatePathFromIdentityHome(recipientHome, world.TeamID)
 		if err != nil {
 			t.Fatal(err)
 		}

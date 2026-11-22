@@ -30,7 +30,13 @@ from test_awid_transport import awid, db_infra  # noqa: F401  (fixtures)
 from test_dashboard_privacy import TEAM, _request, privacy_app  # noqa: F401  (fixture)
 from test_app_events_http import _make_app_keypair, _signed_app_headers
 from test_messages_http import _signed_team_headers
-from test_team_room import metadata as room_metadata, post as room_post, post_payload as room_post_payload
+from test_team_room import (
+    metadata as room_metadata,
+    post as room_post,
+    post_payload as room_post_payload,
+)
+
+__all__ = ["awid", "db_infra", "privacy_app", "route_pair"]
 
 WAKE_LATENCY_BOUND_SECONDS = 1.0
 
@@ -39,7 +45,9 @@ WAKE_LATENCY_BOUND_SECONDS = 1.0
 async def wake_app(privacy_app, monkeypatch):  # noqa: F811
     env = privacy_app
     monkeypatch.setattr(events_routes, "EVENTS_RECONCILE_INTERVAL", 3600.0)
-    monkeypatch.setattr(events_routes, "random", SimpleNamespace(uniform=lambda low, high: high))
+    monkeypatch.setattr(
+        events_routes, "random", SimpleNamespace(uniform=lambda low, high: high)
+    )
     hub = AgentWakeHub(env.redis)
     await hub.start()
     publisher = AgentWakePublisher(env.redis)
@@ -59,7 +67,10 @@ async def agent_stream(env, alias):
     deadline = (datetime.now(timezone.utc) + timedelta(seconds=120)).isoformat()
     headers = _signed_team_headers(actor.sk, actor.did, TEAM, actor.certificate)
     async with env.client.stream(
-        "GET", "/v1/events/stream", params={"deadline": deadline}, headers=headers,
+        "GET",
+        "/v1/events/stream",
+        params={"deadline": deadline},
+        headers=headers,
         timeout=None,
     ) as response:
         assert response.status_code == 200
@@ -110,9 +121,17 @@ async def test_rest_mail_send_wakes_recipient(wake_app):
     async with agent_stream(env, "bob") as next_event:
         await _quiet(next_event)
         started = time.monotonic()
-        response = await _request(env, "alice", "POST", "/v1/messages", {
-            "to_did": env.actors["bob"].did, "subject": "wake", "body": "now",
-        })
+        response = await _request(
+            env,
+            "alice",
+            "POST",
+            "/v1/messages",
+            {
+                "to_did": env.actors["bob"].did,
+                "subject": "wake",
+                "body": "now",
+            },
+        )
         assert response.status_code == 200, response.text
         event = await next_event(WAKE_LATENCY_BOUND_SECONDS)
         assert time.monotonic() - started < WAKE_LATENCY_BOUND_SECONDS
@@ -123,23 +142,40 @@ async def test_rest_mail_send_wakes_recipient(wake_app):
 async def _team_request(env, actor, method, path, body=None):
     identity = env.actors[actor]
     content = json.dumps(body).encode() if body is not None else b""
-    headers = _signed_team_headers(identity.sk, identity.did, TEAM, identity.certificate, content)
+    headers = _signed_team_headers(
+        identity.sk, identity.did, TEAM, identity.certificate, content
+    )
     headers["Content-Type"] = "application/json"
     return await env.client.request(method, path, content=content, headers=headers)
 
 
 async def _send_mail(env, sender="alice", recipient="bob", subject="wake"):
-    response = await _request(env, sender, "POST", "/v1/messages", {
-        "to_did": env.actors[recipient].did, "subject": subject, "body": "now",
-    })
+    response = await _request(
+        env,
+        sender,
+        "POST",
+        "/v1/messages",
+        {
+            "to_did": env.actors[recipient].did,
+            "subject": subject,
+            "body": "now",
+        },
+    )
     assert response.status_code == 200, response.text
     return response.json()
 
 
 async def _open_chat(env, sender="alice", recipient="bob", message="hello"):
-    response = await _request(env, sender, "POST", "/v1/chat/sessions", {
-        "to_dids": [env.actors[recipient].did], "message": message,
-    })
+    response = await _request(
+        env,
+        sender,
+        "POST",
+        "/v1/chat/sessions",
+        {
+            "to_dids": [env.actors[recipient].did],
+            "message": message,
+        },
+    )
     assert response.status_code == 200, response.text
     return response.json()
 
@@ -160,7 +196,9 @@ async def test_rest_mail_ack_wakes_reader_with_new_unread_count(wake_app):
         assert {(await next_event(2))["unread_count"] for _ in range(2)} == {2}
         await _quiet(next_event)
         started = time.monotonic()
-        ack = await _request(env, "bob", "POST", f"/v1/messages/{first['message_id']}/ack")
+        ack = await _request(
+            env, "bob", "POST", f"/v1/messages/{first['message_id']}/ack"
+        )
         assert ack.status_code == 200, ack.text
         event = await _expect_within_bound(next_event, started, "actionable_mail")
     assert event["unread_count"] == 1
@@ -185,9 +223,15 @@ async def test_rest_chat_reply_wakes_recipient(wake_app):
         assert (await next_event(2))["unread_count"] == 1
         await _quiet(next_event)
         started = time.monotonic()
-        reply = await _request(env, "alice", "POST", f"/v1/chat/sessions/{chat['session_id']}/messages", {
-            "body": "again",
-        })
+        reply = await _request(
+            env,
+            "alice",
+            "POST",
+            f"/v1/chat/sessions/{chat['session_id']}/messages",
+            {
+                "body": "again",
+            },
+        )
         assert reply.status_code == 200, reply.text
         event = await _expect_within_bound(next_event, started, "actionable_chat")
     assert event["unread_count"] == 2
@@ -197,24 +241,38 @@ async def test_rest_chat_reply_wakes_recipient(wake_app):
 async def test_rest_chat_read_wakes_reader_with_new_unread_count(wake_app):
     env = wake_app
     chat = await _open_chat(env)
-    reply = await _request(env, "alice", "POST", f"/v1/chat/sessions/{chat['session_id']}/messages", {
-        "body": "again",
-    })
+    reply = await _request(
+        env,
+        "alice",
+        "POST",
+        f"/v1/chat/sessions/{chat['session_id']}/messages",
+        {
+            "body": "again",
+        },
+    )
     assert reply.status_code == 200, reply.text
     async with agent_stream(env, "bob") as next_event:
         assert (await next_event(2))["unread_count"] == 2
         await _quiet(next_event)
         started = time.monotonic()
-        read = await _request(env, "bob", "POST", f"/v1/chat/sessions/{chat['session_id']}/read", {
-            "message_ids": [chat["message_id"]],
-        })
+        read = await _request(
+            env,
+            "bob",
+            "POST",
+            f"/v1/chat/sessions/{chat['session_id']}/read",
+            {
+                "message_ids": [chat["message_id"]],
+            },
+        )
         assert read.status_code == 200, read.text
         event = await _expect_within_bound(next_event, started, "actionable_chat")
     assert event["unread_count"] == 1
 
 
 @pytest.mark.asyncio
-async def test_chat_waiting_register_and_unregister_wake_the_other_participant(wake_app):
+async def test_chat_waiting_register_and_unregister_wake_the_other_participant(
+    wake_app,
+):
     env = wake_app
     chat = await _open_chat(env)
     alice = env.actors["alice"]
@@ -225,8 +283,11 @@ async def test_chat_waiting_register_and_unregister_wake_the_other_participant(w
         deadline = (datetime.now(timezone.utc) + timedelta(seconds=60)).isoformat()
         started = time.monotonic()
         async with env.client.stream(
-            "GET", f"/v1/chat/sessions/{chat['session_id']}/stream", params={"deadline": deadline},
-            headers=_signed_team_headers(alice.sk, alice.did, TEAM, alice.certificate), timeout=None,
+            "GET",
+            f"/v1/chat/sessions/{chat['session_id']}/stream",
+            params={"deadline": deadline},
+            headers=_signed_team_headers(alice.sk, alice.did, TEAM, alice.certificate),
+            timeout=None,
         ) as waiting:
             assert waiting.status_code == 200
             event = await _expect_within_bound(next_event, started, "actionable_chat")
@@ -249,7 +310,9 @@ async def test_rest_control_signal_wakes_target(wake_app):
     async with agent_stream(env, "bob") as next_event:
         await _quiet(next_event)
         started = time.monotonic()
-        sent = await _team_request(env, "alice", "POST", "/v1/agents/bob/control", {"signal": "pause"})
+        sent = await _team_request(
+            env, "alice", "POST", "/v1/agents/bob/control", {"signal": "pause"}
+        )
         assert sent.status_code == 200, sent.text
         event = await _expect_within_bound(next_event, started, "control_pause")
     assert event["signal_id"] == sent.json()["signal_id"]
@@ -287,9 +350,14 @@ async def _install_emitting_app(env):
 
 
 async def _emit_app_event(env, signing_key, did_key, resource_ref="doc-1"):
-    body = json.dumps({"type": "folio/doc.changed", "resource_ref": resource_ref, "payload": {}}).encode()
+    body = json.dumps(
+        {"type": "folio/doc.changed", "resource_ref": resource_ref, "payload": {}}
+    ).encode()
     headers = _signed_app_headers(
-        signing_key=signing_key, did_key=did_key, body=body, team_id=TEAM,
+        signing_key=signing_key,
+        did_key=did_key,
+        body=body,
+        team_id=TEAM,
         aud=env.app.state.public_origin,
     )
     response = await env.client.post("/v1/events/app", content=body, headers=headers)
@@ -301,11 +369,20 @@ async def _emit_app_event(env, signing_key, did_key, resource_ref="doc-1"):
 async def test_app_event_wakes_subscribed_agents_only(wake_app):
     env = wake_app
     signing_key, did_key = await _install_emitting_app(env)
-    subscribed = await _team_request(env, "bob", "POST", "/v1/events/subscriptions", {
-        "type": "folio/doc.changed",
-    })
+    subscribed = await _team_request(
+        env,
+        "bob",
+        "POST",
+        "/v1/events/subscriptions",
+        {
+            "type": "folio/doc.changed",
+        },
+    )
     assert subscribed.status_code == 200, subscribed.text
-    async with agent_stream(env, "bob") as bob_events, agent_stream(env, "carol") as carol_events:
+    async with (
+        agent_stream(env, "bob") as bob_events,
+        agent_stream(env, "carol") as carol_events,
+    ):
         await _quiet(bob_events)
         started = time.monotonic()
         emitted = await _emit_app_event(env, signing_key, did_key)
@@ -322,9 +399,15 @@ async def test_app_subscription_wakes_its_agent_with_recent_events(wake_app):
     async with agent_stream(env, "bob") as next_event:
         await _quiet(next_event)
         started = time.monotonic()
-        subscribed = await _team_request(env, "bob", "POST", "/v1/events/subscriptions", {
-            "type": "folio/doc.changed",
-        })
+        subscribed = await _team_request(
+            env,
+            "bob",
+            "POST",
+            "/v1/events/subscriptions",
+            {
+                "type": "folio/doc.changed",
+            },
+        )
         assert subscribed.status_code == 200, subscribed.text
         event = await _expect_within_bound(next_event, started, "app_event")
     assert event["event_id"] == emitted["event_id"]
@@ -337,23 +420,37 @@ async def mcp_call(wake_app):
     origin = env.app.state.public_origin
     authority = build_federation_authority_activation(env.infra, public_origin=origin)
     mcp = create_mcp_app(
-        db_infra=env.infra, redis=env.redis, registry_client=env.app.state.awid_registry_client,
-        federation_authority=authority, public_origin=origin,
+        db_infra=env.infra,
+        redis=env.redis,
+        registry_client=env.app.state.awid_registry_client,
+        federation_authority=authority,
+        public_origin=origin,
     )
     env.app.mount("/wake-mcp", mcp)
     await mcp.startup()
 
     async def call(actor, name, **arguments):
         identity = env.actors[actor]
-        body = json.dumps({
-            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-            "params": {"name": name, "arguments": arguments},
-        }).encode()
-        response = await env.client.post("/wake-mcp/", content=body, headers={
-            **_signed_team_headers(identity.sk, identity.did, TEAM, identity.certificate, body),
-            "Content-Type": "application/json",
-            "Accept": "application/json, text/event-stream",
-        }, timeout=30)
+        body = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": name, "arguments": arguments},
+            }
+        ).encode()
+        response = await env.client.post(
+            "/wake-mcp/",
+            content=body,
+            headers={
+                **_signed_team_headers(
+                    identity.sk, identity.did, TEAM, identity.certificate, body
+                ),
+                "Content-Type": "application/json",
+                "Accept": "application/json, text/event-stream",
+            },
+            timeout=30,
+        )
         assert response.status_code == 200, response.text
         result = response.json()
         assert "error" not in result, result
@@ -376,7 +473,9 @@ async def test_mcp_send_mail_wakes_recipient(wake_app, mcp_call):
     async with agent_stream(env, "bob") as next_event:
         await _quiet(next_event)
         started = time.monotonic()
-        sent = await mcp_call("alice", "send_mail", to="bob", subject="wake", body="now")
+        sent = await mcp_call(
+            "alice", "send_mail", to="bob", subject="wake", body="now"
+        )
         event = await _expect_within_bound(next_event, started, "actionable_mail")
     assert event["message_id"] == sent["message_id"]
 
@@ -414,10 +513,16 @@ async def test_mcp_chat_wait_wakes_recipient_as_interrupt(wake_app, mcp_call):
         assert (await next_event(2))["sender_waiting"] is False
         await _quiet(next_event)
         started = time.monotonic()
-        waiting = asyncio.create_task(mcp_call(
-            "alice", "send_chat", conversation_id=chat["session_id"], message="still there?",
-            wait=True, wait_seconds=2,
-        ))
+        waiting = asyncio.create_task(
+            mcp_call(
+                "alice",
+                "send_chat",
+                conversation_id=chat["session_id"],
+                message="still there?",
+                wait=True,
+                wait_seconds=2,
+            )
+        )
         try:
             events = [await next_event(WAKE_LATENCY_BOUND_SECONDS)]
             if not events[0]["sender_waiting"]:
@@ -436,16 +541,26 @@ async def test_mcp_chat_wait_wakes_recipient_as_interrupt(wake_app, mcp_call):
 async def test_mcp_mark_chat_read_wakes_reader(wake_app, mcp_call):
     env = wake_app
     chat = await _open_chat(env)
-    reply = await _request(env, "alice", "POST", f"/v1/chat/sessions/{chat['session_id']}/messages", {
-        "body": "again",
-    })
+    reply = await _request(
+        env,
+        "alice",
+        "POST",
+        f"/v1/chat/sessions/{chat['session_id']}/messages",
+        {
+            "body": "again",
+        },
+    )
     assert reply.status_code == 200, reply.text
     async with agent_stream(env, "bob") as next_event:
         assert (await next_event(2))["unread_count"] == 2
         await _quiet(next_event)
         started = time.monotonic()
-        await mcp_call("bob", "mark_chat_read", conversation_id=chat["session_id"],
-                       message_ids=[chat["message_id"]])
+        await mcp_call(
+            "bob",
+            "mark_chat_read",
+            conversation_id=chat["session_id"],
+            message_ids=[chat["message_id"]],
+        )
         event = await _expect_within_bound(next_event, started, "actionable_chat")
     assert event["unread_count"] == 1
 
@@ -457,30 +572,40 @@ async def test_mcp_room_post_wakes_team_members(wake_app, mcp_call):
     async with agent_stream(env, "bob") as next_event:
         await _quiet(next_event)
         started = time.monotonic()
-        posted = await mcp_call("alice", "room_post", signed_post=room_post_payload(env, room))
+        posted = await mcp_call(
+            "alice", "room_post", signed_post=room_post_payload(env, room)
+        )
         event = await _expect_within_bound(next_event, started, "actionable_room_post")
     assert event["message_id"] == posted["message_id"]
 
 
 @pytest.mark.asyncio
-async def test_stream_on_a_host_without_agent_wakes_says_so_once(privacy_app, monkeypatch, caplog):  # noqa: F811
+async def test_stream_on_a_host_without_agent_wakes_says_so_once(
+    privacy_app, monkeypatch, caplog
+):  # noqa: F811
     env = privacy_app
     monkeypatch.setattr(events_routes, "_missing_wake_hub_reported", False)
     with caplog.at_level("WARNING", logger="aweb.routes.events"):
         for _ in range(2):
             async with agent_stream(env, "bob") as next_event:
                 await _quiet(next_event, seconds=0.1)
-    reports = [r for r in caplog.records if "Agent wakes are not started" in r.getMessage()]
+    reports = [
+        r for r in caplog.records if "Agent wakes are not started" in r.getMessage()
+    ]
     assert len(reports) == 1
 
 
 @pytest.mark.asyncio
-async def test_stream_on_a_host_with_agent_wakes_reports_nothing(wake_app, monkeypatch, caplog):
+async def test_stream_on_a_host_with_agent_wakes_reports_nothing(
+    wake_app, monkeypatch, caplog
+):
     monkeypatch.setattr(events_routes, "_missing_wake_hub_reported", False)
     with caplog.at_level("WARNING", logger="aweb.routes.events"):
         async with agent_stream(wake_app, "bob") as next_event:
             await _quiet(next_event, seconds=0.1)
-    assert not [r for r in caplog.records if "Agent wakes are not started" in r.getMessage()]
+    assert not [
+        r for r in caplog.records if "Agent wakes are not started" in r.getMessage()
+    ]
 
 
 @pytest.mark.asyncio
@@ -506,7 +631,9 @@ async def test_succession_addressed_mail_wakes_the_successor(route_pair):  # noq
         )
     hub = node.server.app.state.agent_wake_hub
     # The successor's stream subscribes only to its own DIDs.
-    async with hub.subscribe([did_wake_key(successor.stable), did_wake_key(successor.did)]) as wakes:
+    async with hub.subscribe(
+        [did_wake_key(successor.stable), did_wake_key(successor.did)]
+    ) as wakes:
         started = time.monotonic()
         response = await _post(agent, queued)
         assert response.status_code == 200, response.text
@@ -521,27 +648,40 @@ async def test_succession_addressed_mail_wakes_the_successor(route_pair):  # noq
 
 
 @pytest.mark.asyncio
-async def test_a_send_that_commits_then_fails_still_wakes_the_recipient(wake_app, monkeypatch):
-    import aweb.messaging.messages as messages_module
+async def test_a_send_that_commits_then_fails_still_wakes_the_recipient(
+    wake_app, monkeypatch
+):
+    import aweb.messaging.mail_send as mail_send_module
 
     env = wake_app
-    record_did_wakes = messages_module.record_did_wakes
+    commit_continuation = mail_send_module._commit_mail_continuation
 
-    def record_then_fail(dids, kind):
-        record_did_wakes(dids, kind)
+    async def commit_then_fail(db, *, message, recipient, sender, registry_client):
+        await commit_continuation(
+            db, message=message, recipient=recipient, sender=sender,
+            registry_client=registry_client,
+        )
         raise RuntimeError("failed after the message committed")
 
     first = await _send_mail(env, subject="opening")
     await _request(env, "bob", "POST", f"/v1/messages/{first['message_id']}/ack")
-    # A first send commits its conversation and message together, so a
-    # failure inside it commits nothing; a continuation's message commits alone.
-    monkeypatch.setattr(messages_module, "record_did_wakes", record_then_fail)
+    # Fail only after the actual continuation transaction commits; its wake scope
+    # must flush on this exceptional exit as well as on a successful response.
+    monkeypatch.setattr(mail_send_module, "_commit_mail_continuation", commit_then_fail)
     async with agent_stream(env, "bob") as next_event:
         await _quiet(next_event)
         started = time.monotonic()
-        response = await _request(env, "alice", "POST", "/v1/messages", {
-            "conversation_id": first["conversation_id"], "subject": "committed", "body": "then failed",
-        })
+        response = await _request(
+            env,
+            "alice",
+            "POST",
+            "/v1/messages",
+            {
+                "conversation_id": first["conversation_id"],
+                "subject": "committed",
+                "body": "then failed",
+            },
+        )
         assert response.status_code == 500
         event = await _expect_within_bound(next_event, started, "actionable_mail")
     assert event["subject"] == "committed"
