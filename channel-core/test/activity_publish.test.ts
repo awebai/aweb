@@ -29,11 +29,13 @@ beforeEach(async () => {
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
 });
 afterEach(async () => {
+  // No client connection outlives the server it targeted.
+  server.closeAllConnections();
   await new Promise<void>(resolve => server.close(() => resolve()));
 });
 
-function client(): APIClient {
-  const { port } = server.address() as AddressInfo;
+function client(target: Server = server): APIClient {
+  const { port } = target.address() as AddressInfo;
   return new APIClient(`http://127.0.0.1:${port}`, {
     did: computeDIDKey(ed.getPublicKey(SEED)),
     stableID: "",
@@ -83,11 +85,16 @@ describe("publishActivity", () => {
     expect(await publishActivity(client(), BODY)).toEqual({ kind: "failed" });
   });
 
-  test("an unreachable server is a failed publish", async () => {
-    const unreachable = client();
-    await new Promise<void>(resolve => server.close(() => resolve()));
-    server = createServer();
-    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
-    expect(await publishActivity(unreachable, BODY)).toEqual({ kind: "failed" });
+  test("a server that drops the connection is a failed publish", async () => {
+    // The dropping server holds its port until the publish answers, so no
+    // other listener can take that port and answer in its place.
+    const dropping = createServer();
+    dropping.on("connection", socket => socket.destroy());
+    await new Promise<void>(resolve => dropping.listen(0, "127.0.0.1", resolve));
+    try {
+      expect(await publishActivity(client(dropping), BODY)).toEqual({ kind: "failed" });
+    } finally {
+      await new Promise<void>(resolve => dropping.close(() => resolve()));
+    }
   });
 });
