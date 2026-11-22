@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -188,6 +189,7 @@ func newManagedHTTPReplyFixture(t *testing.T, options managedHTTPReplyOptions) *
 		t.Fatal(err)
 	}
 	f.gatewayDID = awid.ComputeDIDKey(pub)
+	f.gatewayKey = gatewayKey
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		write := func(value any) {
 			if err := json.NewEncoder(w).Encode(value); err != nil {
@@ -276,6 +278,74 @@ func newManagedHTTPReplyFixture(t *testing.T, options managedHTTPReplyOptions) *
 	t.Cleanup(runtime.bridge.Close)
 	t.Cleanup(f.server.Close)
 	return f
+}
+
+func TestHTTPManagedProviderOpensHostedReply(t *testing.T) {
+	f := newManagedHTTPReplyFixture(t, managedHTTPReplyOptions{})
+	task := sentHTTPTask(t, f.callOK(t, sendHTTPInput("hosted-reply")))
+	f.mu.Lock()
+	conversation := f.mailTasks[task.ID]
+	f.mu.Unlock()
+
+	now := time.Now().UTC().Truncate(time.Second)
+	gatewayStable := awid.ComputeStableID(f.gatewayKey.Public().(ed25519.PublicKey))
+	sender := awid.E2EESenderKey{
+		Address: "a2a.aweb.ai/personal", DID: f.targetDID, StableID: f.targetStable,
+		SigningKey: f.targetKey,
+	}
+	_, senderPublic, err := awid.GenerateX25519Keypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sender.EncryptionKey, err = awid.BuildEncryptionKeyAssertion(f.targetKey, f.targetDID, f.targetStable, senderPublic, "", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gatewayPrivate, gatewayPublic, err := awid.GenerateX25519Keypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	gatewayAssertion, err := awid.BuildEncryptionKeyAssertion(f.gatewayKey, f.gatewayDID, gatewayStable, gatewayPublic, "", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	messageID, err := awid.GenerateUUID4()
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := fmt.Sprintf("```a2a-reply\n{\"task_id\":%q,\"context_id\":%q,\"state\":\"completed\",\"text\":\"Opened by the hosted provider\"}\n```", task.ID, task.ContextID)
+	envelope, err := awid.EncryptE2EEMail(awid.E2EEEncryptMailParams{
+		Sender: sender, Recipients: []awid.E2EERecipientKey{{
+			DID: f.gatewayDID, StableID: gatewayStable, EncryptionKey: gatewayAssertion,
+		}},
+		Subject: "A2A answer", Body: body, ConversationID: conversation, MessageID: messageID, CreatedAt: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Open under the provider's recipient key. The gateway receives the
+	// projection and original signed envelope, never this private key.
+	opened, err := awid.DecryptE2EEMessage(envelope, awid.E2EEDecryptIdentity{
+		DID: f.gatewayDID, StableID: gatewayStable, EncryptionKeyID: gatewayAssertion.EncryptionKeyID, PrivateKey: gatewayPrivate,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	f.inbox[conversation] = append(f.inbox[conversation], awid.InboxMessage{
+		MessageID: messageID, ConversationID: conversation, ContentMode: awid.ContentModeEncryptedV2,
+		MessageVersion: awid.E2EEMessageVersion, Encrypted: envelope, Decryptable: true,
+		Subject: opened.Subject, Body: opened.Body, FromDID: f.targetDID, FromStableID: f.targetStable,
+		FromAddress: sender.Address, ToDID: f.gatewayDID, ToStableID: gatewayStable,
+		VerificationStatus: awid.VerifiedCustodial,
+	})
+	f.mu.Unlock()
+
+	got := f.waitForTaskReply(t, task)
+	if got.Status.State != a2agw.TaskStateCompleted || got.Metadata["reply_verification"] != string(awid.Verified) ||
+		len(got.Artifacts) != 1 || len(got.Artifacts[0].Parts) != 1 || got.Artifacts[0].Parts[0].Text != "Opened by the hosted provider" {
+		t.Fatalf("managed reply did not retain the completed answer and independently verified tier: %#v", got)
+	}
 }
 
 func TestHTTPManagedProviderMissingRecipientFailsTask(t *testing.T) {
