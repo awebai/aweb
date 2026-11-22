@@ -171,8 +171,9 @@ same default or requested lifetime without creating anything. Saved invitations
 without an explicit expiry use their creation time plus 24 hours. Native
 acceptance reads routing and lifetime from the saved issuer record, never from
 unsigned token hints. Unknown or expired invitations refuse with
-`invite_unknown_or_expired` and the issuer-reissue action. An attempted issuance
-always takes precedence over age and retains its exact recovery record.
+`invite_unknown_or_expired` and the issuer-reissue action. Malformed positional
+tokens keep the released `error` code and token-decoder message. Attempted
+issuance takes precedence over age and retains its exact recovery record.
 
 `aw id team revoke-invite --invite-id ID --json` locally cancels an unused
 controller enrollment. It makes no network request. `status` and `code` are

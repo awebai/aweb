@@ -1715,7 +1715,7 @@ func acceptTeamInviteWithDetails(input teamInviteAcceptanceRequest) (*acceptedTe
 
 	decoded, err := awconfig.DecodeInviteToken(token)
 	if err != nil {
-		return nil, nativeInviteRenewalRefusal(err)
+		return nil, err
 	}
 
 	invite, err := awconfig.LoadTeamInvite(decoded.InviteID)
