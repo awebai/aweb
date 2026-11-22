@@ -5,7 +5,6 @@ routes run here. Removing the external team's publication supplies the same
 team_server_unpublished cause as the retained Run40 failure.
 """
 
-import asyncio
 from time import monotonic_ns
 
 import httpx
@@ -14,6 +13,7 @@ from aweb_naapp.console import CONSOLE_HEADERS
 from aweb_naapp_testing import Member
 from aweb_naapp_testing.human_members import registered_human
 from aweb_naapp_testing.webauthn import SoftAuthenticator
+from aweb.config import APP_GRANT_MAX_AGE_CEILING_SECONDS
 
 from tests.production_authority import SERVER
 from tests.test_production_bootstrap import root as root
@@ -52,11 +52,22 @@ async def test_holder_credential_outage_is_503_without_writes_and_recovers(
         alias="holder-http",
         certificate_id="holder-http",
     )
-    # Configuration of the real observation windows, before their first read.
-    # No cache entry is cleared or made authoritative by the test.
-    monkeypatch.setenv("AWEB_APP_GRANT_MAX_AGE_SECONDS", "1")
+    # Use the real healthy freshness window and advance its clock only after
+    # the test withdraws the signed publication. Setup scheduling must not
+    # expire the SQL fence between permit() and the healthy credential read.
+    now = monotonic_ns()
+
+    def clock():
+        return now
+
+    monkeypatch.setenv("AWEB_APP_GRANT_MAX_AGE_SECONDS", str(APP_GRANT_MAX_AGE_CEILING_SECONDS))
     directory = service.runtime.team_server_directory()
-    monkeypatch.setattr(directory, "_ttl", 1)
+    grants = service.runtime.installation_grants()
+    fence = service.runtime.installation_fence()
+    monkeypatch.setattr(directory, "_clock", clock)
+    monkeypatch.setattr(grants, "_monotonic", clock)
+    monkeypatch.setattr(grants._cache, "_monotonic", clock)
+    monkeypatch.setattr(fence, "monotonic", clock)
     async with registered_human(registry, member) as human:
         _, _, raw, headers = start_request(root, member, human.principal)
         started = await client.post(
@@ -81,9 +92,9 @@ async def test_holder_credential_outage_is_503_without_writes_and_recovers(
 
         # Warm a real active observation so the outage must invalidate its SQL
         # freshness, including on the first browser GET in the observed journey.
-        await service.runtime.installation_fence().permit(member.team_id)
-        grant = await service.runtime.installation_grants().status_for(member.team_id)
-        assert grant is not None and grant.max_age_seconds == 1
+        await fence.permit(member.team_id)
+        grant = await grants.status_for(member.team_id)
+        assert grant is not None and grant.max_age_seconds == APP_GRANT_MAX_AGE_CEILING_SECONDS
         published = await directory.resolve(member.team_id)
         deadline = max(grant.fresh_until, published.expires_at)
         name, domain = member.team_id.split(":", 1)
@@ -95,7 +106,7 @@ async def test_holder_credential_outage_is_503_without_writes_and_recovers(
             name,
         )
         assert removed is not None
-        await asyncio.sleep(max(0, (deadline - monotonic_ns()) / 1e9) + 0.01)
+        now = deadline + 1
         db = service.runtime.db()
         before = await unchanged_authority_and_handoff(db, handoff)
         endpoint = origin + path + ("" if step == "state" else "/" + step)
