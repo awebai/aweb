@@ -96,6 +96,11 @@ jobs:
         working-directory: naapp-lib
         run: uv sync --locked
 
+      # The production AWID fixture starts this pinned project as prepared
+      # here, and never syncs it during the tests.
+      - name: Prepare the pinned production AWID
+        run: make production-awid-sync
+
       # The runtime's console tests exercise real WebAuthn in Chromium.
       - name: Install the runtime test browser
         working-directory: naapp-lib

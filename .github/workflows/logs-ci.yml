@@ -61,6 +61,11 @@ jobs:
         working-directory: naapp/logs
         run: uv sync --locked
 
+      # The production AWID fixture starts this pinned project as prepared
+      # here, and never syncs it during the tests.
+      - name: Prepare the pinned production AWID
+        run: make production-awid-sync
+
       - name: Lint and type-check
         working-directory: naapp/logs
         run: make lint
