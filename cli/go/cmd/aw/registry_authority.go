@@ -26,21 +26,22 @@ const (
 )
 
 type registryAuthorityRequest struct {
-	Kind         registryAuthorityKind
-	Registry     *awid.RegistryClient
-	Override     string
-	DefaultURL   string
-	Domain       string
-	TeamID       string
-	Identity     *awconfig.ResolvedIdentity
-	LookupDID    string
-	WorkingDir   string
-	IdentityHome string
-	AwebURL      string
-	Authority    awid.DomainAuthority
-	TXTResolver  awid.TXTResolver
-	TeamDomain   string
-	TeamRegistry string
+	Kind             registryAuthorityKind
+	Registry         *awid.RegistryClient
+	DeliveryResolver *awid.RegistryResolver
+	Override         string
+	DefaultURL       string
+	Domain           string
+	TeamID           string
+	Identity         *awconfig.ResolvedIdentity
+	LookupDID        string
+	WorkingDir       string
+	IdentityHome     string
+	AwebURL          string
+	Authority        awid.DomainAuthority
+	TXTResolver      awid.TXTResolver
+	TeamDomain       string
+	TeamRegistry     string
 }
 
 // resolveRegistryAuthority selects the origin for the subject of the operation.
@@ -73,6 +74,10 @@ func resolveRegistryAuthority(ctx context.Context, req registryAuthorityRequest)
 		if err != nil {
 			return "", err
 		}
+		if legacyOrigin := legacyLocalMembershipRegistryOrigin(membership, req.WorkingDir, req.IdentityHome); legacyOrigin != "" {
+			trustRecordedRegistryOrigin(req.DeliveryResolver, legacyOrigin, legacyOrigin)
+			return awid.CanonicalRegistryServerOrigin(legacyOrigin)
+		}
 		if membership != nil && strings.TrimSpace(membership.RegistryURL) != "" {
 			return awid.CanonicalRegistryServerOrigin(membership.RegistryURL)
 		}
@@ -88,7 +93,7 @@ func resolveRegistryAuthority(ctx context.Context, req registryAuthorityRequest)
 		}
 		if meta != nil && strings.TrimSpace(meta.RegistryURL) != "" {
 			if req.Registry != nil {
-				trustRecordedRegistryOrigin(req.Registry.Resolver, meta.RegistryURL, meta.RegistryOperatorOrigin)
+				trustRecordedRegistryOrigin(req.Registry.Resolver, meta.RegistryURL, controllerRegistryOperatorOrigin(domain, meta))
 			}
 			return awid.CanonicalRegistryServerOrigin(meta.RegistryURL)
 		}

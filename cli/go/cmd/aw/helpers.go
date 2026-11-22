@@ -833,6 +833,7 @@ func configureResolvedClientWithRoster(c, rosterClient *aweb.Client, sel *awconf
 	trustStoredRegistryOrigins(teamRegistry, sel.WorkingDir, sel.IdentityHome)
 	teamRegistryURL, err := resolveRegistryAuthority(context.Background(), registryAuthorityRequest{
 		Kind: registryDeliveryTeamRoute, TeamID: sel.TeamID, IdentityHome: sel.IdentityHome,
+		WorkingDir: sel.WorkingDir, DeliveryResolver: teamRegistry,
 	})
 	if err != nil {
 		return err

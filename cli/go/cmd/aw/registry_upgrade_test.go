@@ -7,16 +7,20 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 )
 
 func TestRegistryUpgradeFrom13658(t *testing.T) {
+	t.Run("implicit local init", testLegacyLocalRegistryUpgrade)
 	t.Setenv("AWID_REGISTRY_URL", "")
 	t.Setenv("AWEB_IDENTITY_HOME", "")
 	t.Setenv("APP_ENV", "production")
@@ -143,4 +147,149 @@ func TestRegistryUpgradeFrom13658(t *testing.T) {
 		}
 	})
 
+}
+
+func testLegacyLocalRegistryUpgrade(t *testing.T) {
+	root, home := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("AWEB_IDENTITY_HOME", "")
+	t.Setenv("AWID_REGISTRY_URL", "")
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("AWEB_FEDERATION_TEST", "")
+	const teamID = "default:local"
+	const teamPath = "/v1/namespaces/local/teams/default"
+	var mu sync.Mutex
+	var teamKey, memberDID string
+	var lists, resolves atomic.Int32
+	registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && (r.URL.Path == "/v1/namespaces/local" || r.URL.Path == teamPath):
+			http.NotFound(w, r)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces":
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			_ = json.NewEncoder(w).Encode(body)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/local/teams":
+			var body struct {
+				TeamKey string `json:"team_did_key"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			teamKey = body.TeamKey
+			_ = json.NewEncoder(w).Encode(map[string]string{"domain": "local", "name": "default", "team_did_key": teamKey})
+		case r.Method == http.MethodPost && r.URL.Path == teamPath+"/certificates":
+			var body struct {
+				MemberDID string `json:"member_did_key"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			memberDID = body.MemberDID
+			w.WriteHeader(http.StatusCreated)
+		case r.Method == http.MethodGet && (r.URL.Path == "/health" || r.URL.Path == "/v1/agents/heartbeat" || r.URL.Path == "/api/v1/agents/heartbeat"):
+			_, _ = fmt.Fprint(w, `{}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+			_ = json.NewEncoder(w).Encode(map[string]string{"team_id": teamID, "alias": "alice", "agent_id": "agent-1", "workspace_id": "ws-1", "team_did_key": teamKey})
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-1", teamID, "alice")
+		case r.Method == http.MethodGet && r.URL.Path == teamPath+"/certificates":
+			lists.Add(1)
+			_, _ = fmt.Fprint(w, `{"certificates":[]}`)
+		case r.Method == http.MethodGet && r.URL.Path == teamPath+"/members/alice":
+			resolves.Add(1)
+			_ = json.NewEncoder(w).Encode(map[string]string{"alias": "alice", "member_did_key": memberDID, "identity_scope": "local"})
+		default:
+			t.Errorf("unexpected fixture request %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer registry.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	command := func(binary string, args ...string) *exec.Cmd {
+		cmd := exec.CommandContext(ctx, binary, args...)
+		cmd.Dir = root
+		cmd.Env = append(testCommandEnv(home), "AW_NO_UPDATE_CHECK=1", "AWEB_API_KEY=", "AWEB_URL="+registry.URL)
+		return cmd
+	}
+	if released := os.Getenv("AW_TEST_AW_13658"); released != "" {
+		cmd := command(released, "init", "--new-team", "--name", "alice", "--do-not-touch-agents-md", "--json")
+		cmd.Env = append(cmd.Env, "AWID_REGISTRY_URL="+registry.URL)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("released implicit init: %v\n%s", err, out)
+		}
+	} else {
+		// Use the released wire shape in routine tests. Set AW_TEST_AW_13658
+		// to exercise the actual released writer against the same endpoints.
+		t.Setenv("AWID_REGISTRY_URL", registry.URL)
+		if _, err := runImplicitLocalInit(implicitLocalInitRequest{WorkingDir: root, AwebURL: registry.URL, RegistryURL: registry.URL, Alias: "alice"}); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("AWID_REGISTRY_URL", "")
+		controllerPath, err := awconfig.ControllerMetaPath("local")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, path := range []string{controllerPath, awconfig.TeamStatePath(root)} {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var legacy []string
+			for _, line := range strings.Split(string(data), "\n") {
+				field := strings.TrimSpace(line)
+				if strings.HasPrefix(field, "registry_operator_origin:") || (path != controllerPath && strings.HasPrefix(field, "registry_url:")) {
+					continue
+				}
+				legacy = append(legacy, line)
+			}
+			if err := os.WriteFile(path, []byte(strings.Join(legacy, "\n")), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	state, err := awconfig.LoadTeamState(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if membership := state.Membership(teamID); membership == nil || membership.RegistryURL != "" {
+		t.Fatalf("released implicit init did not leave its registry in controller metadata only: %#v", membership)
+	}
+	controller, err := awconfig.LoadControllerMeta("local")
+	if err != nil || controller.RegistryURL != registry.URL || !controller.LegacyRegistryOrigin {
+		t.Fatalf("expected the released controller record with the init origin: %#v, %v", controller, err)
+	}
+	if _, err := os.Stat(filepath.Join(root, awconfig.DefaultWorktreeIdentityRelativePath())); !os.IsNotExist(err) {
+		t.Fatalf("implicit local init should have no identity.yaml: %v", err)
+	}
+	current := filepath.Join(t.TempDir(), awBinaryNameForTest())
+	buildAwBinary(t, ctx, current)
+	t.Run("later command", func(t *testing.T) {
+		cmd := command(current, "id", "team", "members", "--json")
+		if out, err := cmd.CombinedOutput(); err != nil || lists.Load() != 1 {
+			t.Fatalf("later CLI did not list members at the original registry: %v\n%s", err, out)
+		}
+	})
+	checkWake := func(t *testing.T) {
+		t.Helper()
+		client, _, err := wakeIdentityClient(ctx, awconfig.WorktreeIdentityHome(root), teamID, func(_ context.Context, stored string) (string, error) { return stored, nil })
+		if err != nil {
+			t.Fatal(err)
+		}
+		delivery := client.Resolver().(*awid.ChainResolver).DeliveryTeamRegistry
+		delivery.DNSResolver = failingTXTResolver{}
+		before := resolves.Load()
+		got, err := delivery.Resolve(ctx, teamID+"/alice")
+		if err != nil || got.RegistryURL != registry.URL || resolves.Load() != before+1 {
+			t.Fatalf("wake did not resolve the local team at the original registry: %#v, %v", got, err)
+		}
+	}
+	t.Run("wake identity", checkWake)
+	t.Run("wake after team state rewrite", func(t *testing.T) {
+		if err := awconfig.SaveTeamState(root, state); err != nil {
+			t.Fatal(err)
+		}
+		checkWake(t)
+	})
 }

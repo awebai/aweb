@@ -5,9 +5,11 @@
 - Self-hosted CLI and wake processes retain access to private or HTTP AWID
   registries chosen by the operator. `aw` records a saved `--registry`,
   `--awid-registry` or `AWID_REGISTRY_URL` choice, and treats the identity’s
-  own `registry_url` from a 1.36.58 home as an operator choice. An invite’s
-  team registry, DNS, service discovery and other unmarked origins still
-  require public HTTPS. If you operate or trust an unmarked registry stored
+  own `registry_url` from a 1.36.58 home as an operator choice. A 1.36.58
+  implicit local team can recover its operator’s registry from the local
+  controller record when this installation still holds the controller and
+  team keys. Invite, DNS, service discovery and other unmarked origins
+  still require public HTTPS. If you operate or trust an unmarked registry stored
   in your home, run `aw id registry-trust <origin>` once from that home.
 - `aw check --online` exits nonzero if an online check fails.
 

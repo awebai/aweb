@@ -21,7 +21,8 @@ type TeamMembership struct {
 	RegistryURL string                `yaml:"registry_url,omitempty"`
 	AwebURL     string                `yaml:"aweb_url,omitempty"`
 
-	RegistryOperatorOrigin string `yaml:"registry_operator_origin,omitempty"`
+	RegistryOperatorOrigin string `yaml:"registry_operator_origin"`
+	LegacyRegistryOrigin   bool   `yaml:"-"`
 }
 
 type TeamState struct {
@@ -43,7 +44,7 @@ type teamMembershipYAML struct {
 	RegistryURL string                `yaml:"registry_url,omitempty"`
 	AwebURL     string                `yaml:"aweb_url,omitempty"`
 
-	RegistryOperatorOrigin string `yaml:"registry_operator_origin,omitempty"`
+	RegistryOperatorOrigin *string `yaml:"registry_operator_origin"`
 }
 
 func (m *TeamMembership) normalize() {
@@ -232,6 +233,10 @@ func (s *TeamState) UnmarshalYAML(value *yaml.Node) error {
 func (raw teamStateYAML) normalizedTeamState() TeamState {
 	memberships := make([]TeamMembership, 0, len(raw.Memberships))
 	for _, membership := range raw.Memberships {
+		origin := ""
+		if membership.RegistryOperatorOrigin != nil {
+			origin = *membership.RegistryOperatorOrigin
+		}
 		memberships = append(memberships, TeamMembership{
 			TeamID:                 membership.TeamID,
 			TeamKey:                membership.TeamKey,
@@ -239,7 +244,8 @@ func (raw teamStateYAML) normalizedTeamState() TeamState {
 			CertPath:               membership.CertPath,
 			JoinedAt:               membership.JoinedAt,
 			RegistryURL:            membership.RegistryURL,
-			RegistryOperatorOrigin: membership.RegistryOperatorOrigin,
+			RegistryOperatorOrigin: origin,
+			LegacyRegistryOrigin:   membership.RegistryOperatorOrigin == nil,
 			AwebURL:                membership.AwebURL,
 		})
 	}
@@ -265,7 +271,7 @@ func (s TeamState) MarshalYAML() (any, error) {
 			CertPath:               membership.CertPath,
 			JoinedAt:               membership.JoinedAt,
 			RegistryURL:            membership.RegistryURL,
-			RegistryOperatorOrigin: membership.RegistryOperatorOrigin,
+			RegistryOperatorOrigin: &membership.RegistryOperatorOrigin,
 			AwebURL:                membership.AwebURL,
 		})
 	}

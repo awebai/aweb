@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/ed25519"
 	"errors"
 	"fmt"
 	"net/http"
@@ -100,11 +101,62 @@ func trustRecordedRegistryOrigin(r *awid.RegistryResolver, registryURL, operator
 	}
 }
 
+func controllerRegistryOperatorOrigin(domain string, meta *awconfig.ControllerMeta) string {
+	if !meta.LegacyRegistryOrigin {
+		return matchingRegistryOrigin(meta.RegistryURL, meta.RegistryOperatorOrigin)
+	}
+	// Released implicit init stored the operator's URL in the reserved local
+	// namespace controller record. Other legacy controller URLs could come
+	// from discovery, so only the local controller's own record qualifies.
+	if domain != implicitLocalDomain || meta.Domain != domain {
+		return ""
+	}
+	key, err := awconfig.LoadControllerKey(domain)
+	if err != nil || awid.ComputeDIDKey(key.Public().(ed25519.PublicKey)) != meta.ControllerDID {
+		return ""
+	}
+	return meta.RegistryURL
+}
+
 func trustControllerRegistryOrigin(r *awid.RegistryResolver, domain, origin string) {
 	meta, err := awconfig.LoadControllerMeta(domain)
 	if err == nil {
-		trustRecordedRegistryOrigin(r, origin, matchingRegistryOrigin(meta.RegistryURL, meta.RegistryOperatorOrigin))
+		trustRecordedRegistryOrigin(r, origin, controllerRegistryOperatorOrigin(domain, meta))
 	}
+}
+
+// legacyLocalMembershipRegistryOrigin recovers implicit-local init's team
+// route. An old teams.yaml entry alone cannot establish provenance, since a
+// join wrote invite origins to the same field. Require this team's locally
+// held controller key and the same origin as the local namespace controller.
+func legacyLocalMembershipRegistryOrigin(membership *awconfig.TeamMembership, workingDir, identityHome string) string {
+	if membership == nil || (membership.RegistryURL != "" && !membership.LegacyRegistryOrigin) {
+		return ""
+	}
+	domain, name, err := awid.ParseTeamID(membership.TeamID)
+	if err != nil || domain != implicitLocalDomain {
+		return ""
+	}
+	meta, err := awconfig.LoadControllerMeta(domain)
+	if err != nil {
+		return ""
+	}
+	origin := controllerRegistryOperatorOrigin(domain, meta)
+	if origin == "" || (membership.RegistryURL != "" && !awid.SameRegistryOrigin(membership.RegistryURL, origin)) {
+		return ""
+	}
+	key, err := awconfig.LoadTeamKey(domain, name)
+	if err != nil {
+		return ""
+	}
+	cert, err := loadTeamCertificateAt(workingDir, identityHome, membership.TeamID)
+	if err != nil || cert.Team != membership.TeamID || awid.NormalizeIdentityScope(cert.IdentityScope) != awid.IdentityModeLocal {
+		return ""
+	}
+	if err := awid.CheckDecodedTeamCertificate(cert, awid.ComputeDIDKey(key.Public().(ed25519.PublicKey))); err != nil {
+		return ""
+	}
+	return origin
 }
 
 func trustStoredRegistryOrigins(r *awid.RegistryResolver, workingDir, identityHome string) {
