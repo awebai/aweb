@@ -774,6 +774,27 @@ as `aweb.team_auth_deps.resolve_team_identity_with_grant_scope(request, db, *,
 grant_scope)`. Hosts apply account-specific fences to its result; they do not
 copy its grant or certificate policy.
 
+A host that needs member facts before its route policy can call
+`read_team_member_snapshot(db, cert_info, request=request, overlay_sql=...)`
+from `aweb.team_auth_deps` after the native certificate verifier succeeds. The
+manager executes one statement outside any surrounding transaction, with SHARE
+locks on the native team and member. The optional host SELECT receives
+`native_member` as a CTE and binds canonical team ID, member DID key and
+presented certificate ID as `$1`, `$2` and `$3`. It returns one row of host
+facts even when the native member is absent. The native projection and host row
+are separate fields of the returned snapshot.
+
+The host then passes that snapshot to `resolve_team_membership` at the normal
+native admission point, after host policy. The snapshot is usable for the
+same ASGI request and verified credential. The resolver checks the native
+member's active status, removal and current team key and returns the admitted
+identity and the snapshot. An unchanged certificate and a warm identity
+binding require no second SELECT. Reacceptance or a fresh binding uses a
+separate UPDATE transaction and rereads the same projection. The optional
+synchronous `before_write(snapshot)` checks any host fences on that reread
+before a native write. It does no I/O. A verifier-only route can use the
+read-only snapshot with its existing policy and no local admission.
+
 ## Session grants
 
 A session grant lets a worker process act as an identity until revoked (or for an explicit finite window)

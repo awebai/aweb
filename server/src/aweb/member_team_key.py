@@ -11,6 +11,7 @@ member until each is accepted under the new key.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from collections.abc import Collection, Iterator, Mapping
@@ -195,6 +196,17 @@ async def read_member_projection(
     """
     if (did_key is None) == (agent_id is None) or (did_key is not None and not team_id):
         raise ValueError("Select a native member by team and did_key, or by agent_id")
+    selector = "a.agent_id=$1::uuid" if agent_id is not None else "a.did_key=$1"
+    selected = UUID(str(agent_id)) if agent_id is not None else did_key
+    row = await db.fetch_one(
+        _member_projection_select(selector + " AND ($2::text IS NULL OR a.team_id=$2)", read_lock),
+        selected,
+        team_id,
+    )
+    return MemberProjection.from_row(row) if row is not None else None
+
+
+def _member_projection_select(selector: str, read_lock: MemberReadLock) -> str:
     if not isinstance(read_lock, MemberReadLock):
         raise TypeError("Member reads require a named MemberReadLock")
     locked = read_lock is not MemberReadLock.NONE
@@ -206,23 +218,51 @@ async def read_member_projection(
             if read_lock is MemberReadLock.UPDATE
             else " FOR SHARE OF t, a"
         )
-    selector = "a.agent_id=$1::uuid" if agent_id is not None else "a.did_key=$1"
-    selected = UUID(str(agent_id)) if agent_id is not None else did_key
-    row = await db.fetch_one(
+    return (
         "SELECT "
         + member_projection_columns_sql("a", team="t" if locked else None)
-        + """
-        FROM {{tables.agents}} a
-        """
+        + " FROM {{tables.agents}} a"
         + join_sql
         + " WHERE "
         + selector
-        + " AND ($2::text IS NULL OR a.team_id=$2)"
-        + lock_sql,
-        selected,
-        team_id,
+        + lock_sql
     )
-    return MemberProjection.from_row(row) if row is not None else None
+
+
+async def read_member_with_overlay(
+    db,
+    *,
+    team_id: str,
+    did_key: str,
+    certificate_id: str,
+    read_lock: MemberReadLock,
+    overlay_sql: str,
+) -> tuple[MemberProjection | None, Mapping[str, Any]]:
+    """Read native member facts and a host overlay in one statement.
+
+    The host supplies a trusted SELECT that may reference ``native_member``
+    and the three bound credential arguments. The native projection is
+    returned independently of the overlay, and may be absent.
+    """
+    member_select = _member_projection_select("a.team_id=$1 AND a.did_key=$2", read_lock)
+    row = await db.fetch_one(
+        f"""
+        WITH native_member AS MATERIALIZED ({member_select}),
+             member_overlay AS ({overlay_sql})
+        SELECT to_jsonb(native_member) AS native_member_projection, member_overlay.*
+        FROM (SELECT $3::text) AS credential
+        LEFT JOIN native_member ON TRUE
+        LEFT JOIN member_overlay ON TRUE
+        """,
+        team_id,
+        did_key,
+        certificate_id,
+    )
+    assert row is not None
+    member = row.pop("native_member_projection")
+    if isinstance(member, str):
+        member = json.loads(member)
+    return MemberProjection.from_row(member) if member is not None else None, MappingProxyType(row)
 
 
 async def lock_member_projections(tx, *, agent_ids: list[UUID]) -> list[MemberProjection]:
