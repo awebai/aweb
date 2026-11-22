@@ -14,8 +14,10 @@ from aweb_layout import (
 from fastapi.testclient import TestClient
 
 import folio.api as folio_api
+import folio.present_routes as present_routes
 import folio.surfaces as surfaces
 from folio.config import Settings
+from folio.repository import TeamImage
 
 
 def _client() -> TestClient:
@@ -178,7 +180,10 @@ def test_seo_meta_social_card_and_design_assets() -> None:
     assert '<link rel="canonical" href="https://folio.aweb.ai/">' in text
     assert '<meta property="og:title"' in text
     assert '<meta name="twitter:card" content="summary_large_image">' in text
-    assert '<meta property="og:image" content="https://folio.aweb.ai/brand/field-v1/folio-card.png">' in text
+    assert (
+        '<meta property="og:image" content="https://folio.aweb.ai/brand/field-v1/folio-card.png">'
+        in text
+    )
     # The social card image is served as a real PNG.
     og = client.get("/og-card.png")
     assert og.status_code == 200
@@ -187,7 +192,7 @@ def test_seo_meta_social_card_and_design_assets() -> None:
 
     css = client.get("/css/aweb.css")
     assert css.status_code == 200
-    assert '/fonts/Archivo-Latin-Variable.woff2' in css.text
+    assert "/fonts/Archivo-Latin-Variable.woff2" in css.text
     font = client.get("/fonts/Archivo-Latin-Variable.woff2")
     assert font.status_code == 200
     assert font.headers["content-type"] == "font/woff2"
@@ -284,11 +289,13 @@ def test_linked_manifest_paths_serve_filled_bytes() -> None:
     assert catalog.json() == {
         "catalog_version": 1,
         "app_id": "folio",
-        "variants": [{
-            "manifest_version": 2,
-            "url": "/manifests/v2.json",
-            "digest": "sha256:" + hashlib.sha256(expected).hexdigest(),
-        }],
+        "variants": [
+            {
+                "manifest_version": 2,
+                "url": "/manifests/v2.json",
+                "digest": "sha256:" + hashlib.sha256(expected).hexdigest(),
+            }
+        ],
     }
     assert client.get("/.well-known/aweb-app.json").status_code == 404
     # Guard against drift: the surfaces actually link /aweb-app.json.
@@ -327,7 +334,15 @@ def test_skills_surface_serves_index_and_individual_skills() -> None:
 
 def test_served_skills_do_not_reference_removed_python_cli() -> None:
     client = _client()
-    forbidden = ("folio create", "folio version", "folio upload", "folio theme", "folio show", "folio revoke", "aw-folio")
+    forbidden = (
+        "folio create",
+        "folio version",
+        "folio upload",
+        "folio theme",
+        "folio show",
+        "folio revoke",
+        "aw-folio",
+    )
     for name in surfaces.SKILLS.names():
         response = client.get(f"/skills/{name}/SKILL.md")
         assert response.status_code == 200
@@ -369,21 +384,22 @@ def test_user_content_paths_are_noindex_even_when_not_found() -> None:
     assert response.headers["x-robots-tag"] == "noindex, nofollow, noarchive"
 
 
-def test_user_content_asset_route_is_noindex(monkeypatch) -> None:
+def test_presented_image_is_private_noindex_user_content(monkeypatch) -> None:
     app = folio_api.create_app(Settings(public_origin="https://folio.aweb.ai"))
-    _override_db_for_path(app, "/assets/{asset_id}")
+    _override_db_for_path(app, "/present/{token}/assets/{asset_id}")
     asset_id = UUID("11111111-1111-4111-8111-111111111111")
 
-    async def fake_get_public_asset(_database, *, asset_id: UUID) -> dict:
-        return {"bytes": b"fake-png", "content_type": "image/png"}
+    async def fake_presented_image(_database, *, runtime, token: str, asset_id: UUID):
+        return TeamImage(content=b"fake-png", content_type="image/png")
 
-    monkeypatch.setattr(folio_api, "get_public_asset", fake_get_public_asset)
+    monkeypatch.setattr(present_routes, "presented_image", fake_presented_image)
 
-    response = TestClient(app).get(f"/assets/{asset_id}")
+    response = TestClient(app).get(f"/present/private-token/assets/{asset_id}")
 
     assert response.status_code == 200
     assert response.headers["x-robots-tag"] == "noindex, nofollow, noarchive"
     assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["cache-control"] == "no-store"
 
 
 def test_present_route_keeps_noindex_header(monkeypatch) -> None:
@@ -393,7 +409,7 @@ def test_present_route_keeps_noindex_header(monkeypatch) -> None:
     async def fake_get_presented_document(_database, *, runtime, token: str) -> dict:
         return {"body": "# Private", "theme": None, "allowed_assets": {}}
 
-    monkeypatch.setattr(folio_api, "presented_document", fake_get_presented_document)
+    monkeypatch.setattr(present_routes, "presented_document", fake_get_presented_document)
 
     response = TestClient(app).get("/present/private-token")
 

@@ -91,6 +91,9 @@ PY
 aw id request POST "$FOLIO_ORIGIN/v1/assets" --team-auth --raw \
   --body-file image-upload.json
 # Embed the returned url in Markdown: ![chart](http://127.0.0.1:8765/assets/<asset_id>)
+# The url is a reference, not an address: a present page serves the image under
+# its own link, and team members read the bytes with team auth:
+aw id request GET "$FOLIO_ORIGIN/v1/assets/<asset_id>/content" --team-auth --raw > chart.png
 
 aw id request POST "$FOLIO_ORIGIN/v1/assets/video/direct-upload" --team-auth --raw \
   --body '{"content_type":"video/mp4","max_duration_seconds":600}'
@@ -105,7 +108,7 @@ aw id request POST "$FOLIO_ORIGIN/v1/present" --team-auth --raw \
   --body '{"slug":"pitch","ttl_seconds":2592000}'
 ```
 
-The present response includes a public capability URL under `/present/<token>`; the URL is the human-facing permission. User content under `/present/*` and `/assets/*` is marked `noindex, nofollow, noarchive` and disallowed in `robots.txt`. Revoke it when access should end:
+The present response includes a public capability URL under `/present/<token>`; the URL is the human-facing permission, and the images the page shows are served only under it. User content under `/present/*` and `/assets/*` is marked `noindex, nofollow, noarchive` and disallowed in `robots.txt`. Revoke it when access should end; its images end with it:
 
 ```bash
 aw id request POST "$FOLIO_ORIGIN/v1/present/<token>/revoke" --team-auth --raw
