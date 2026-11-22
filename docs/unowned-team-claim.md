@@ -53,7 +53,7 @@ timestamp after waiting for its locks.
 
 The shared controller reader returns 404 `awid_team_not_found` for a confirmed
 missing team, 503 `team_control_authority_unavailable` for an unavailable read,
-and 422 `team_control_registry_data_invalid` for invalid registry data. Claims
+and 422 `registry_response_unusable` for invalid registry data. Claims
 preserve these outcomes and the existing key-pin refusal. A malformed claim,
 incorrect target, and wrong current controller return 422 with the distinct
 codes `team_control_artifact_invalid`, `team_control_target_mismatch`, and
