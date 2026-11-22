@@ -393,12 +393,13 @@ Once a response is retained, recovery installs and connects from that response
 without submitting another signup. The API key is saved before the connect
 request; successful installation leaves it in the workspace before output.
 
-Availability prompting happens before preparation. A refusal or lost response
-after submission does not prove that the account was never created. An
-unclassified response retains the request; a collision alone never authorizes
-a new signer or handle. Replaying that request requires the service's signup
-replay contract. An expired private response must follow the service's account
-recovery outcome rather than minting another credential.
+Availability prompting happens before preparation. A 409 from the first local
+signup submission clears the recovery record and allows a new username. If
+signup created the identity directory just for that request, it removes the
+empty directory too. A conflict on a replay or after global DID registration
+keeps recovery, as does an unknown result such as a lost response or 500.
+Replaying that request requires the service's signup replay contract. An expired
+private response must follow the service's account recovery outcome.
 
 `aw doctor --offline` names a leftover signup record and tells the operator to
 run `aw init`. To abandon local recovery, first check whether signup created the

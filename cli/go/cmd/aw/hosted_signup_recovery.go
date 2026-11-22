@@ -2,11 +2,13 @@ package main
 
 import (
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,6 +31,8 @@ type hostedSignupContext struct {
 }
 
 const hostedSignupPrepared awconfig.RecoveryState = "prepared"
+
+var errHostedSignupUsernameTaken = errors.New("hosted signup username taken")
 
 type hostedSignupRecovery struct {
 	awconfig.RecoveryProgress
@@ -180,6 +184,7 @@ func (state *hostedSignupRecovery) provision() (hostedIdentityProvision, error) 
 		return hostedIdentityProvision{}, errors.New("signup retry signing key changed; restore the original home")
 	}
 	if state.State != awconfig.RecoveryConfirmed {
+		firstLocalSubmission := state.State == hostedSignupPrepared && request.DIDAW == ""
 		state.State = awconfig.RecoveryAttempted
 		if err := state.save(); err != nil {
 			return hostedIdentityProvision{}, err
@@ -200,6 +205,12 @@ func (state *hostedSignupRecovery) provision() (hostedIdentityProvision, error) 
 		}
 		response, err := awid.SubmitCliSignup(ctx, awid.CliSignupSubmission{OnboardingURL: state.Context.OnboardingURL, RequestJSON: state.RequestJSON, SigningKey: key})
 		if err != nil {
+			// This endpoint's 409 rejects the username. On a replay an
+			// earlier request may have committed, so keep its original signer.
+			var refusal *awid.RegistryError
+			if firstLocalSubmission && errors.As(err, &refusal) && refusal.StatusCode == http.StatusConflict {
+				return hostedIdentityProvision{}, errHostedSignupUsernameTaken
+			}
 			return hostedIdentityProvision{}, fmt.Errorf("signup attempt retained in %s; rerun aw init in this directory to resume the same request: %w", hostedSignupRecoveryFile, err)
 		}
 		raw, err := json.Marshal(response)
@@ -237,16 +248,14 @@ func completeRecoverableHostedSignup(input hostedSignupCompletion) (result *guid
 	if !filepath.IsAbs(req.WorkingDir) || input.Creation.Context.WorkingDir != req.WorkingDir {
 		return nil, errors.New("signup recovery requires the original absolute working directory")
 	}
-	home := awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(req.WorkingDir)}
-	lockPath, err := awconfig.IdentityHomePath(home, "signup-recovery.lock")
+	// Keep the per-checkout lock outside .aw so a refused first signup can
+	// remove its empty home without unlinking a lock used by another process.
+	checkout, err := filepath.EvalSymlinks(req.WorkingDir)
 	if err != nil {
 		return nil, err
 	}
-	if info, err := os.Lstat(home.Root); err == nil {
-		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0700 {
-			return nil, errors.New("signup recovery requires a private identity directory with mode 0700")
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
+	lockPath, err := awconfig.PathInUserState("signup-locks", fmt.Sprintf("%x.lock", sha256.Sum256([]byte(checkout))))
+	if err != nil {
 		return nil, err
 	}
 	lock, err := awconfig.LockExclusive(lockPath)
@@ -254,27 +263,62 @@ func completeRecoverableHostedSignup(input hostedSignupCompletion) (result *guid
 		return nil, err
 	}
 	defer func() { resultErr = errors.Join(resultErr, lock.Close()) }()
-	state, err := prepareHostedSignup(input.Creation)
-	if err != nil {
+
+	home := awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(req.WorkingDir)}
+	info, err := os.Lstat(home.Root)
+	freshHome := errors.Is(err, os.ErrNotExist)
+	if err == nil {
+		if !info.IsDir() || info.Mode().Perm() != 0700 {
+			return nil, errors.New("signup recovery requires a private identity directory with mode 0700")
+		}
+	} else if !freshHome {
 		return nil, err
 	}
-	provisioned, err := state.provision()
-	if err != nil {
-		return nil, err
+
+	var provisioned hostedIdentityProvision
+	for {
+		state, err := prepareHostedSignup(input.Creation)
+		if err != nil {
+			return nil, err
+		}
+		provisioned, err = state.provision()
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, errHostedSignupUsernameTaken) {
+			return nil, err
+		}
+		if err := signupRecoveryFile(req.WorkingDir).Remove(); err != nil {
+			return nil, fmt.Errorf("remove refused signup recovery: %w", err)
+		}
+		if freshHome {
+			if err := os.Remove(home.Root); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return nil, fmt.Errorf("remove empty signup home: %w", err)
+			}
+		}
+		username := input.Creation.Username
+		if req.NonInteractive {
+			return nil, usageError("username %q is not available (taken)", username)
+		}
+		fmt.Fprintf(req.PromptOut, "Username %q was taken during signup. Choose another.\n", username)
+		input.Creation.Username, err = promptAvailableHostedUsername(req.PromptIn, req.PromptOut, input.Creation.Context.OnboardingURL)
+		if err != nil {
+			return nil, err
+		}
 	}
 	scope := localHostedIdentity
 	if input.Creation.Scope == awid.IdentityScopeGlobal {
 		scope = globalHostedIdentity
 	}
-	if err := persistHostedIdentityState(hostedStatePersistence{WorkingDir: req.WorkingDir, IdentityHome: awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(req.WorkingDir)}, RegistryURL: provisioned.RegistryURL, SigningKey: provisioned.SigningKey, Certificate: provisioned.Certificate, DIDKey: provisioned.DIDKey, DIDAW: provisioned.DIDAW, MemberAddress: provisioned.MemberAddress, Scope: scope}); err != nil {
+	if err := persistHostedIdentityState(hostedStatePersistence{WorkingDir: req.WorkingDir, IdentityHome: home, RegistryURL: provisioned.RegistryURL, SigningKey: provisioned.SigningKey, Certificate: provisioned.Certificate, DIDKey: provisioned.DIDKey, DIDAW: provisioned.DIDAW, MemberAddress: provisioned.MemberAddress, Scope: scope}); err != nil {
 		return nil, err
 	}
-	connected, err := guidedOnboardingConnect(req.WorkingDir, state.Context.AwebURL, certificateConnectOptions{ContextFile: req.ContextFile, Role: req.Role, HumanName: req.HumanName, AgentType: req.AgentType, APIKey: provisioned.APIKey})
+	connected, err := guidedOnboardingConnect(req.WorkingDir, input.Creation.Context.AwebURL, certificateConnectOptions{ContextFile: req.ContextFile, Role: req.Role, HumanName: req.HumanName, AgentType: req.AgentType, APIKey: provisioned.APIKey})
 	if err != nil {
 		return nil, err
 	}
 	if req.Global && strings.TrimSpace(req.InboundMode) != "" {
-		if err := requireCreatedIdentityInboundMode(nil, req.WorkingDir, "", state.Context.AwebURL, provisioned.Certificate.Team, req.InboundMode); err != nil {
+		if err := requireCreatedIdentityInboundMode(nil, req.WorkingDir, "", input.Creation.Context.AwebURL, provisioned.Certificate.Team, req.InboundMode); err != nil {
 			return nil, err
 		}
 	}
@@ -287,7 +331,7 @@ func completeRecoverableHostedSignup(input hostedSignupCompletion) (result *guid
 		return nil, err
 	}
 	if req.AskPostCreateSetup && !req.NonInteractive {
-		if err := promptHostedClaimHuman(req, state.Context.OnboardingURL); err != nil {
+		if err := promptHostedClaimHuman(req, input.Creation.Context.OnboardingURL); err != nil {
 			return nil, err
 		}
 	}

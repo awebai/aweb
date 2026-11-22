@@ -158,7 +158,7 @@ These fixtures govern shipped non-A2A protocol behavior.
 
 ### `cli-integration-codes-v1.json`
 
-Additive CLI error codes, invite cancellation and inspection states, and wake
+CLI error codes and classifications, invite cancellation and inspection states, and wake
 readiness codes consumed by OATS. The native invite issuance test reads this
 root file to check the pending-issuance refusal and operator recovery contract.
 See [the CLI integration contract](../cli-integration-contract.md).

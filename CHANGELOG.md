@@ -10,6 +10,11 @@
   send-and-wait` verified while another agent on the host was writing its own
   pins was reported `verification_stale`; it is now verified.
 
+- `aw id team show-server` and `aw id team create` preserve the released
+  error codes and messages for missing server records and team name conflicts.
+  JSON output adds `error.classification` to distinguish a missing record,
+  a confirmed foreign pin, and an unconfirmed name conflict.
+
 - Hosted invite acceptance awaiting an agent signature exits with JSON error
   code `native_agent_signature_pending`. Resume the exchange using the retained
   child key and invite.
