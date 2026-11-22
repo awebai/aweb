@@ -57,6 +57,7 @@ class RoutedOwner:
     installation: dict[str, Any]
     holder: EnrolledOwner = field(repr=False)
     client: httpx.AsyncClient = field(repr=False)
+    smtp: SmtpServer = field(repr=False)
 
 
 async def _grant_install_owner(coordination: Coordination, member: Member) -> None:
@@ -309,7 +310,9 @@ async def production_routed_owner(
             holder = await _designate(
                 service, client, config, coordination, member, installation, dns
             )
-            yield RoutedOwner(service, coordination, member, config, installation, holder, client)
+            yield RoutedOwner(
+                service, coordination, member, config, installation, holder, client, smtp
+            )
     finally:
         dns.close()
 
